@@ -1,0 +1,64 @@
+# Reverse proxy in front of the app container. Copy to
+# /etc/nginx/sites-available/<domain>, replace the placeholders, symlink it into
+# sites-enabled, then `nginx -t && systemctl reload nginx`.
+#
+#   CRM_DOMAIN   public host name, e.g. crm.example.com
+#   CRM_PORT     loopback port the app publishes — APP_PORT from .env (8099 by default)
+#
+# Assumes a certificate already covers the domain; point ssl_certificate at
+# wherever certbot put it.
+
+# Websocket handshakes need `Connection: upgrade`, plain requests need it
+# closed. The variable is prefixed so it cannot collide with a map another
+# vhost or a global include may already define.
+map $http_upgrade $crm_connection_upgrade {
+    default upgrade;
+    ''      close;
+}
+
+server {
+    listen 80;
+    server_name CRM_DOMAIN;
+    return 301 https://$host$request_uri;
+}
+
+server {
+    listen 443 ssl http2;
+    server_name CRM_DOMAIN;
+
+    ssl_certificate     /etc/letsencrypt/live/example.com/fullchain.pem;
+    ssl_certificate_key /etc/letsencrypt/live/example.com/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
+
+    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
+    add_header X-Frame-Options "SAMEORIGIN" always;
+    add_header X-Content-Type-Options "nosniff" always;
+    add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    # A demo instance must not end up in search results. Drop this line on a
+    # deployment that is meant to be found.
+    add_header X-Robots-Tag "noindex, nofollow" always;
+
+    # Headroom for document and attachment uploads.
+    client_max_body_size 32m;
+
+    access_log /var/log/nginx/crm_access.log;
+    error_log  /var/log/nginx/crm_error.log;
+
+    # One location only: nginx drops inherited add_header directives inside a
+    # location that declares its own, so the security headers above would be
+    # silently lost for anything served from a second block.
+    location / {
+        proxy_pass http://127.0.0.1:CRM_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $crm_connection_upgrade;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_connect_timeout 60s;
+        proxy_send_timeout 120s;
+        proxy_read_timeout 120s;
+    }
+}

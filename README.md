@@ -46,6 +46,12 @@ pnpm run check:all
 
 Подробности — в [`docs/development.md`](docs/development.md).
 
+## Деплой
+
+Развёртывание на сервере — отдельный оверрайд `docker-compose.prod.yml` (приложение слушает
+только loopback, лимиты памяти, конфигурация из `.env`) и шаблон vhost
+`deploy/nginx/crm.conf.example`. Пошагово — в [`docs/deployment.md`](docs/deployment.md).
+
 ## Лицензия
 
 MIT, см. [LICENSE](LICENSE).
