@@ -31,6 +31,10 @@ COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/build ./build
 COPY --chown=node:node drizzle ./drizzle
 COPY --chown=node:node scripts ./scripts
+# Начальные данные заливает обычный процесс Node, а не приложение, поэтому
+# схема базы, контракты и хеширование паролей нужны ему исходниками: в `build/`
+# они попадают только внутри бандла, откуда их не импортировать.
+COPY --chown=node:node src/lib ./src/lib
 # Файлы шаблонов документов читаются с диска на первом обращении к шаблону,
 # поэтому каталог обязан быть в образе рядом с рабочим каталогом процесса.
 COPY --chown=node:node templates ./templates
@@ -47,5 +51,8 @@ EXPOSE 3000
 HEALTHCHECK --interval=10s --timeout=5s --start-period=20s --retries=6 \
 	CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/api/health').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
-# Migrate, then hand PID 1 to the server so it receives stop signals directly.
-CMD ["sh", "-c", "node scripts/migrate.ts && exec node build/index.js"]
+# Migrate, fill the demo stand (only when DEMO_MODE=true — that is what
+# `--if-demo` checks), then hand PID 1 to the server so it receives stop
+# signals directly. A failure at any step stops the container instead of
+# starting the app on a half-prepared database.
+CMD ["sh", "-c", "node scripts/migrate.ts && node scripts/seed/index.ts --if-demo && exec node build/index.js"]

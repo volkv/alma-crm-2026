@@ -26,8 +26,6 @@ const configSchema = z.object({
 	SMTP_PORT: z.coerce.number().int().min(1).max(65535),
 	/** Public origin of the app; adapter-node needs it to validate form posts. */
 	ORIGIN: z.url({ protocol: /^https?$/ }),
-	/** Key for signing session cookies. Must not be guessable. */
-	SESSION_SECRET: z.string().min(32, 'must be at least 32 characters long'),
 	/**
 	 * Public demo: the read-only account may sign in and destructive actions are
 	 * refused. Off by default is not an option — the deployment has to say which

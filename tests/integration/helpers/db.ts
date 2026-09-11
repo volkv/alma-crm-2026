@@ -53,7 +53,6 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 	process.env.SMTP_HOST = 'localhost';
 	process.env.SMTP_PORT = '1025';
 	process.env.ORIGIN = 'http://localhost:5173';
-	process.env.SESSION_SECRET = 'integration-tests-only-session-secret';
 	process.env.DEMO_MODE = 'false';
 	process.env.TRUST_PROXY = 'false';
 	process.env.DATA_DIR = './.test-data';

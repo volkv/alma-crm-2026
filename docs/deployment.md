@@ -25,19 +25,19 @@ PostgreSQL, Redis, Gotenberg и Mailpit доступны исключитель�
 (`src/lib/server/config.ts`). Шаблон — `.env.example`; на сервере `.env` отличается от него
 адресами (внутри сети Compose это имена сервисов, а не `localhost`) и двумя добавками.
 
-| Переменная       | Значение на сервере                                                                |
-| ---------------- | ---------------------------------------------------------------------------------- |
-| `NODE_ENV`       | `production`                                                                       |
-| `DATABASE_URL`   | `postgres://lct:lct@postgres:5432/lct`                                             |
-| `REDIS_URL`      | `redis://redis:6379`                                                               |
-| `GOTENBERG_URL`  | `http://gotenberg:3000`                                                            |
-| `SMTP_HOST`      | `mailpit`                                                                          |
-| `SMTP_PORT`      | `1025`                                                                             |
-| `ORIGIN`         | `https://<домен>` — ровно тот адрес, по которому открывается приложение в браузере |
-| `SESSION_SECRET` | `openssl rand -hex 32`, минимум 32 символа, свой на каждой установке               |
-| `DEMO_MODE`      | `true` на публичном стенде, `false` у заказчика; ровно `true` или `false`          |
-| `TRUST_PROXY`    | `true` — приложение стоит за nginx и берёт адрес клиента из `X-Forwarded-For`      |
-| `APP_PORT`       | порт на `127.0.0.1`, куда смотрит прокси; по умолчанию `8099`                      |
+| Переменная           | Значение на сервере                                                                |
+| -------------------- | ---------------------------------------------------------------------------------- |
+| `NODE_ENV`           | `production`                                                                       |
+| `DATABASE_URL`       | `postgres://lct:lct@postgres:5432/lct`                                             |
+| `REDIS_URL`          | `redis://redis:6379`                                                               |
+| `GOTENBERG_URL`      | `http://gotenberg:3000`                                                            |
+| `SMTP_HOST`          | `mailpit`                                                                          |
+| `SMTP_PORT`          | `1025`                                                                             |
+| `ORIGIN`             | `https://<домен>` — ровно тот адрес, по которому открывается приложение в браузере |
+| `DEMO_MODE`          | `true` на публичном стенде, `false` у заказчика; ровно `true` или `false`          |
+| `SEED_DEMO_PASSWORD` | Общий пароль демонстрационных учётных записей; нужен только при `DEMO_MODE=true`   |
+| `TRUST_PROXY`        | `true` — приложение стоит за nginx и берёт адрес клиента из `X-Forwarded-For`      |
+| `APP_PORT`           | порт на `127.0.0.1`, куда смотрит прокси; по умолчанию `8099`                      |
 
 `DATA_DIR`, `ADDRESS_HEADER` и `XFF_DEPTH` в `.env` не пишут: их задаёт
 `docker-compose.prod.yml`, потому что они описывают устройство развёртывания, а не его
@@ -62,8 +62,14 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 
 Compose поднимает PostgreSQL, Redis, Gotenberg и Mailpit, ждёт их healthcheck'ов и только
 потом запускает приложение. Контейнер приложения при старте сам применяет миграции
-(`node scripts/migrate.ts && exec node build/index.js` в `Dockerfile`) — отдельного шага
-миграции в развёртывании нет. Миграции идемпотентны: применённые пропускаются.
+(`node scripts/migrate.ts` в `Dockerfile`) — отдельного шага миграции в развёртывании нет.
+Миграции идемпотентны: применённые пропускаются.
+
+Следом, и только при `DEMO_MODE=true`, контейнер заливает демонстрационные данные
+(`node scripts/seed/index.ts --if-demo`): справочники, три демонстрационные учётные записи и
+двух сотрудников. Сид тоже идемпотентен и не затирает правки, сделанные на стенде руками;
+при `DEMO_MODE=false` он не делает ничего. Что именно заливается и как это устроено —
+в [`seeds.md`](seeds.md).
 
 Проверить, что всё поднялось:
 

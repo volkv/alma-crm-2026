@@ -37,7 +37,6 @@ export default defineConfig({
 			GOTENBERG_URL: 'http://localhost:3001',
 			SMTP_HOST: 'localhost',
 			SMTP_PORT: '1025',
-			SESSION_SECRET: 'end-to-end-tests-only-session-secret',
 			// Демонстрационный вход — часть проверяемого поведения.
 			DEMO_MODE: 'true',
 			TRUST_PROXY: 'false',

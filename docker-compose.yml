@@ -65,10 +65,12 @@ services:
       SMTP_HOST: mailpit
       SMTP_PORT: '1025'
       ORIGIN: http://localhost:3000
-      # Local-stack value. Any real deployment must pass its own secret,
-      # for example `SESSION_SECRET=$(openssl rand -base64 48) docker compose up`.
-      SESSION_SECRET: ${SESSION_SECRET:-local-stack-only-session-secret-0000}
-      DEMO_MODE: 'false'
+      # Demo stand: `DEMO_MODE=true docker compose up -d --build app` turns on the
+      # sign-in buttons and makes the container seed demo data after migrating.
+      DEMO_MODE: ${DEMO_MODE:-false}
+      # Read by the seed script, never by the server. The value below is good
+      # enough for a local stack; a public stand passes its own.
+      SEED_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-Demo-Password-2026!}
       # Nothing sits in front of the app in the local stack, so the client
       # address is the socket address and forwarding headers must not be trusted.
       TRUST_PROXY: 'false'

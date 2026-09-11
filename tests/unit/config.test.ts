@@ -9,7 +9,6 @@ const completeEnv = {
 	SMTP_HOST: 'localhost',
 	SMTP_PORT: '1025',
 	ORIGIN: 'http://localhost:5173',
-	SESSION_SECRET: 'a'.repeat(32),
 	DEMO_MODE: 'false',
 	TRUST_PROXY: 'false',
 	DATA_DIR: './data'
@@ -28,12 +27,6 @@ describe('parseConfig', () => {
 		const { DATABASE_URL: _omitted, ...withoutDatabaseUrl } = completeEnv;
 
 		expect(() => parseConfig(withoutDatabaseUrl)).toThrowError(/DATABASE_URL/);
-	});
-
-	it('rejects a SESSION_SECRET shorter than 32 characters', () => {
-		expect(() => parseConfig({ ...completeEnv, SESSION_SECRET: 'too-short' })).toThrowError(
-			/SESSION_SECRET: must be at least 32 characters long/
-		);
 	});
 
 	it('rejects a DATABASE_URL that is not a postgres connection string', () => {
@@ -62,8 +55,8 @@ describe('parseConfig', () => {
 	});
 
 	it('reports every broken variable at once, not just the first', () => {
-		expect(() =>
-			parseConfig({ ...completeEnv, SMTP_HOST: '', SESSION_SECRET: 'short' })
-		).toThrowError(/SMTP_HOST[\s\S]*SESSION_SECRET/);
+		expect(() => parseConfig({ ...completeEnv, SMTP_HOST: '', DATA_DIR: '' })).toThrowError(
+			/SMTP_HOST[\s\S]*DATA_DIR/
+		);
 	});
 });
