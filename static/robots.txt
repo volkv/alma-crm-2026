@@ -1,0 +1,3 @@
+# Internal system: keep it out of search engines.
+User-agent: *
+Disallow: /

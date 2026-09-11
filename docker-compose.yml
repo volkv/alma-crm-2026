@@ -1,0 +1,83 @@
+name: lct-crm
+
+services:
+  postgres:
+    image: postgres:17-alpine
+    environment:
+      POSTGRES_USER: lct
+      POSTGRES_PASSWORD: lct
+      POSTGRES_DB: lct
+    # Host ports are shifted so the stack does not collide with a PostgreSQL or
+    # Redis already running on the machine.
+    ports:
+      - '55432:5432'
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U lct -d lct']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  redis:
+    image: redis:8-alpine
+    command: ['redis-server', '--appendonly', 'yes']
+    ports:
+      - '56379:6379'
+    volumes:
+      - redis-data:/data
+    healthcheck:
+      test: ['CMD', 'redis-cli', 'ping']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  gotenberg:
+    image: gotenberg/gotenberg:8
+    ports:
+      - '3001:3000'
+    healthcheck:
+      test: ['CMD', 'curl', '--silent', '--fail', 'http://localhost:3000/health']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  mailpit:
+    image: axllent/mailpit:v1.31.1
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
+  app:
+    build: .
+    ports:
+      - '3000:3000'
+    environment:
+      NODE_ENV: production
+      DATABASE_URL: postgres://lct:lct@postgres:5432/lct
+      REDIS_URL: redis://redis:6379
+      GOTENBERG_URL: http://gotenberg:3000
+      SMTP_HOST: mailpit
+      SMTP_PORT: '1025'
+      ORIGIN: http://localhost:3000
+      # Local-stack value. Any real deployment must pass its own secret,
+      # for example `SESSION_SECRET=$(openssl rand -base64 48) docker compose up`.
+      SESSION_SECRET: ${SESSION_SECRET:-local-stack-only-session-secret-0000}
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      gotenberg:
+        condition: service_healthy
+      mailpit:
+        condition: service_healthy
+
+volumes:
+  postgres-data:
+  redis-data:

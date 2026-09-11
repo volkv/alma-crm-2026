@@ -1,0 +1,56 @@
+{
+	"name": "lct-crm",
+	"private": true,
+	"version": "0.1.0",
+	"type": "module",
+	"packageManager": "pnpm@10.26.2",
+	"engines": {
+		"node": ">=24"
+	},
+	"scripts": {
+		"dev": "vite dev",
+		"build": "vite build",
+		"preview": "vite preview",
+		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
+		"lint": "svelte-kit sync && eslint . && prettier --check .",
+		"format": "prettier --write .",
+		"test:unit": "vitest run --project unit",
+		"test:integration": "vitest run --project integration",
+		"test:e2e": "docker compose up -d --wait postgres redis && playwright test",
+		"db:generate": "drizzle-kit generate",
+		"db:migrate": "node --env-file-if-exists=.env scripts/migrate.ts",
+		"db:studio": "drizzle-kit studio",
+		"check:all": "pnpm run lint && pnpm run check && pnpm run test:unit && pnpm run test:integration && pnpm run build && pnpm run test:e2e"
+	},
+	"dependencies": {
+		"drizzle-orm": "^0.45.2",
+		"ioredis": "^6.0.0",
+		"postgres": "^3.4.9",
+		"zod": "^4.6.2"
+	},
+	"devDependencies": {
+		"@eslint/js": "^10.0.1",
+		"@playwright/test": "^1.60.0",
+		"@sveltejs/adapter-node": "^5.5.4",
+		"@sveltejs/kit": "^2.63.0",
+		"@sveltejs/vite-plugin-svelte": "^7.1.2",
+		"@tailwindcss/vite": "^4.3.0",
+		"@testcontainers/postgresql": "^12.1.0",
+		"@types/node": "^24",
+		"drizzle-kit": "^0.31.10",
+		"eslint": "^10.4.1",
+		"eslint-config-prettier": "^10.1.8",
+		"eslint-plugin-svelte": "^3.19.0",
+		"globals": "^17.6.0",
+		"prettier": "^3.8.3",
+		"prettier-plugin-svelte": "^4.1.0",
+		"prettier-plugin-tailwindcss": "^0.8.0",
+		"svelte": "^5.56.1",
+		"svelte-check": "^4.6.0",
+		"tailwindcss": "^4.3.0",
+		"typescript": "^6.0.3",
+		"typescript-eslint": "^8.60.1",
+		"vite": "^8.0.16",
+		"vitest": "^5.0.0"
+	}
+}

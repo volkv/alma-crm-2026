@@ -1,0 +1,17 @@
+.git
+.github
+.svelte-kit
+node_modules
+build
+coverage
+playwright-report
+test-results
+blob-report
+.env
+.env.*
+!.env.example
+*.log
+.DS_Store
+.vscode
+docs
+README.md

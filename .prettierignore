@@ -1,0 +1,11 @@
+# Package managers
+pnpm-lock.yaml
+
+# Generated
+/.svelte-kit/
+/build/
+/static/
+/drizzle/
+/playwright-report/
+/test-results/
+/coverage/
