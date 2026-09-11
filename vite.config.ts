@@ -20,6 +20,24 @@ export default defineConfig({
 			adapter: adapter(),
 			// Exposed as `version` from `$app/environment` and reported by /api/health.
 			version: { name: pkg.version },
+			// Everything the app needs comes from its own origin. `auto` lets Kit hash
+			// the scripts and styles it inlines itself, so no blanket `unsafe-inline`
+			// is needed for scripts. Widen a directive only together with the feature
+			// that needs it.
+			csp: {
+				mode: 'auto',
+				directives: {
+					'default-src': ['self'],
+					'script-src': ['self'],
+					// Svelte sets element styles inline; there is no hash for those.
+					'style-src': ['self', 'unsafe-inline'],
+					'img-src': ['self', 'data:'],
+					'font-src': ['self'],
+					'frame-ancestors': ['none'],
+					'object-src': ['none'],
+					'base-uri': ['self']
+				}
+			},
 			typescript: {
 				config: (config) => {
 					config.include.push(

@@ -26,9 +26,11 @@
 | `pnpm run db:generate`      | Генерирует SQL-миграцию по изменениям схемы в `drizzle/`                          |
 | `pnpm run db:migrate`       | Применяет миграции из `drizzle/` к базе из `DATABASE_URL`                         |
 | `pnpm run db:studio`        | Drizzle Studio — браузер по данным                                                |
+| `pnpm run check:fast`       | Быстрый круг: lint → check → unit; без Docker и без сборки                        |
 | `pnpm run check:all`        | Полный гейт: lint → check → unit → integration → build → e2e                      |
 
-`check:all` — единственная команда, которую нужно помнить: то же самое гоняет CI.
+`check:fast` гоняем в цикле правки, `check:all` — перед тем, как считать работу законченной:
+то же самое гоняет CI.
 
 ## Структура каталогов
 
@@ -36,11 +38,18 @@
 src/
   app.html                     каркас документа, lang="ru"
   app.css                      Tailwind 4: @import и @theme с токенами
-  hooks.server.ts              валидация конфигурации при старте сервера
+  hooks.server.ts              init (валидация конфигурации) и sequence из хуков
+  app.d.ts                     App.Locals и App.Error
   lib/
+    nav.ts                     разделы главной навигации
+    utils.ts                   cn() и служебные типы shadcn-svelte
+    components/ui/             компоненты shadcn-svelte, вендорятся в репозиторий
     server/                    код, который никогда не попадает в браузер
       config.ts                схема переменных окружения (Zod) и getConfig()
       redis.ts                 клиент ioredis и pingRedis()
+      auth/types.ts            SessionUser
+      api/types.ts             ApiKeyContext
+      hooks/                   по файлу на аспект запроса, см. «Хуки»
       db/
         index.ts               postgres.js + Drizzle, pingDatabase()
         schema/index.ts        реэкспорт всех таблиц схемы
@@ -60,12 +69,23 @@ static/                        файлы, отдаваемые как есть
 
 `svelte.config.js` в проекте нет: начиная с SvelteKit 2.63 настройки Kit передаются прямо в плагин
 `sveltekit()` внутри `vite.config.ts` — там же адаптер, принудительный runes-режим, `version.name`
-(его отдаёт `/api/health`) и список дополнительных файлов для tsconfig.
+(его отдаёт `/api/health`), `csp` и список дополнительных файлов для tsconfig. Это единственное
+место с настройками Kit: `svelte-check` (4.7+) и Vite читают их отсюда, заводить второй файл не надо.
+
+`kit.csp` описывает Content-Security-Policy: всё грузится только со своего origin, `mode: 'auto'`
+проставляет хэши и nonce скриптам и стилям, которые Kit вставляет сам. Директиву расширяют вместе с
+фичей, которой она понадобилась, а не заранее. Остальные security-заголовки ставит хук
+`security-headers` — они не часть CSP.
 
 `vite.config.ts` также описывает два проекта Vitest — `unit` и `integration`. Поэтому
 `pnpm run test:unit` и `pnpm run test:integration` — это один Vitest с `--project`.
 
-## Svelte 5: runes
+## Шпаргалка
+
+Места, где проект расходится с тем, что подскажут статьи и память: почти везде стоят мажорные
+версии, в которых привычный синтаксис уже не работает.
+
+### Svelte 5: runes
 
 Проект собирается в runes-режиме принудительно (`compilerOptions.runes` в `vite.config.ts`), поэтому
 синтаксис Svelte 4 не просто нежелателен — он не скомпилируется.
@@ -122,7 +142,7 @@ static/                        файлы, отдаваемые как есть
 
 Реактивное состояние вне компонентов живёт в файлах `*.svelte.ts` — только там работают руны.
 
-## Tailwind 4
+### Tailwind 4
 
 `tailwind.config.js` нет и не будет: Tailwind 4 настраивается в CSS. Точка входа — `src/app.css`:
 
@@ -138,6 +158,118 @@ static/                        файлы, отдаваемые как есть
 Каждая переменная в `@theme` порождает утилиты (`--color-brand-500` → `bg-brand-500`,
 `text-brand-500`, `border-brand-500`). Плагин подключён в `vite.config.ts` как `@tailwindcss/vite`,
 отдельного PostCSS-конфига нет. Prettier сортирует классы по `tailwindStylesheet: './src/app.css'`.
+
+Блок `<style>` внутри компонента про `@theme` ничего не знает: это отдельный файл для Tailwind, и
+`@apply` там падает с «Cannot apply unknown utility class». Лечится импортом таблицы токенов:
+
+```svelte
+<style>
+	@reference "../app.css";
+
+	.card {
+		@apply rounded-lg border p-4;
+	}
+</style>
+```
+
+Обычно проще обойтись без `@apply` — писать утилиты прямо в `class`.
+
+### Zod 4
+
+```ts
+const schema = z.object({
+	email: z.email(), // не z.string().email() — тот помечен deprecated
+	site: z.url(),
+	role: z.enum(['admin', 'manager']),
+	// Сообщение об ошибке — параметр `error`; `message`, `required_error` и `errorMap` из Zod 3 больше нет.
+	title: z.string({ error: 'Укажите название' }).min(1, { error: 'Название не может быть пустым' }),
+	// У z.record теперь два обязательных аргумента: тип ключа и тип значения.
+	counters: z.record(z.string(), z.number())
+});
+
+type Input = z.input<typeof schema>; // до преобразований (например, до coerce)
+type Output = z.output<typeof schema>; // после; z.infer — синоним z.output
+```
+
+Ошибки разбираем функциями, а не методами: `z.treeifyError(err)` вместо `err.format()`,
+`z.flattenError(err)` вместо `err.flatten()`, `z.prettifyError(err)` — для текста в лог.
+
+### Формы: superforms
+
+Адаптер для Zod 4 лежит отдельно от адаптера для Zod 3 — берём `zod4`, иначе схема не соберётся:
+
+```ts
+// +page.server.ts
+import { superValidate } from 'sveltekit-superforms';
+import { zod4 } from 'sveltekit-superforms/adapters';
+
+export const load = async () => ({ form: await superValidate(zod4(schema)) });
+```
+
+```svelte
+<!-- +page.svelte -->
+<script lang="ts">
+	import { superForm } from 'sveltekit-superforms';
+	import { zod4Client } from 'sveltekit-superforms/adapters';
+
+	let { data } = $props();
+	const { form, errors, enhance } = superForm(data.form, { validators: zod4Client(schema) });
+</script>
+```
+
+### Таблицы: TanStack Table
+
+Стоит v9 (`@tanstack/svelte-table`) — именно её документирует data-table в shadcn-svelte. Примеры
+для v8 не подойдут: адаптер для Svelte 5 стал рунным (ни сторов, ни `$table`), нужные возможности
+объявляются через `tableFeatures` — что не объявлено, то вырезается из бандла, — а колонки строит
+`createColumnHelper`.
+
+```svelte
+<script lang="ts" generics="TData extends RowData">
+	import { createTable, FlexRender, type ColumnDef, type RowData } from '@tanstack/svelte-table';
+	import { features, type DataTableFeatures } from './features';
+
+	let { data, columns }: { data: TData[]; columns: ColumnDef<DataTableFeatures, TData>[] } =
+		$props();
+
+	// Геттер, а не значение: так таблица видит новые данные без пересоздания.
+	const table = createTable({
+		features,
+		get data() {
+			return data;
+		},
+		columns
+	});
+</script>
+```
+
+Разметку берём у `Table.*` из `$lib/components/ui/table`, ячейки рисует `<FlexRender {cell} />`;
+компонент в ячейке — `renderComponent(Comp, props)`, кусок разметки — `renderSnippet`.
+
+### Хуки: sequence
+
+`src/hooks.server.ts` не содержит логики — только порядок аспектов:
+
+```ts
+export const handle = sequence(requestId, securityHeaders, session, guard, rateLimit);
+```
+
+Каждый аспект — отдельный файл в `src/lib/server/hooks/`. Хуки вложены друг в друга: то, что до
+`await resolve(event)`, выполняется сверху вниз (так `requestId` кладёт `locals.requestId` раньше
+всех), то, что после — снизу вверх (поэтому `securityHeaders` уже видит `locals.user`, который
+проставил `session`). Новый сквозной аспект — новый файл и новая позиция в этом списке, а не `if`
+внутри существующего хука и не код в `+layout.server.ts`.
+
+### Куда класть зависимость
+
+Vite отдаёт наружу (`external`) то, что лежит в `dependencies`, и вшивает в сборку всё остальное, а
+в продовый образ (`pnpm install --prod`) попадают только `dependencies`. Отсюда правило:
+
+- серверная библиотека, которая должна быть в образе как есть — нативные модули (`@node-rs/argon2`),
+  пакеты со своими файлами и динамическими `require` (`exceljs`, `docxtemplater`, `swagger-ui-dist`), —
+  идёт в `dependencies`;
+- всё, что нужно только на сборку, и все Svelte-библиотеки (их всё равно компилирует Vite) —
+  в `devDependencies`.
 
 ## Drizzle
 

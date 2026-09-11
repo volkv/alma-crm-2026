@@ -45,6 +45,13 @@ export default defineConfig(
 		}
 	},
 	{
+		// Primitives vendored from shadcn-svelte. They take `href` as a prop and
+		// render it as-is, so there is nothing here to resolve — the rule still
+		// applies at the call sites in our own routes and components.
+		files: ['src/lib/components/ui/**'],
+		rules: { 'svelte/no-navigation-without-resolve': 'off' }
+	},
+	{
 		// Override or add rule settings here, such as:
 		// 'svelte/button-has-type': 'error'
 		rules: {}
