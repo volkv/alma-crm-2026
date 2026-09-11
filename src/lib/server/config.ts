@@ -6,6 +6,14 @@ import { z } from 'zod';
  * defaults: a missing or malformed value must stop the process at startup
  * rather than surface as a confusing failure later.
  */
+/**
+ * Флаг из окружения. Переменные окружения — всегда строки, а `Boolean('false')`
+ * равно `true`, поэтому допустимы ровно два написания и ничего больше.
+ */
+const booleanFlag = z
+	.enum(['true', 'false'], { error: 'must be exactly "true" or "false"' })
+	.transform((value) => value === 'true');
+
 const configSchema = z.object({
 	NODE_ENV: z.enum(['development', 'test', 'production']),
 	/** postgres:// connection string for the primary database. */
@@ -19,7 +27,22 @@ const configSchema = z.object({
 	/** Public origin of the app; adapter-node needs it to validate form posts. */
 	ORIGIN: z.url({ protocol: /^https?$/ }),
 	/** Key for signing session cookies. Must not be guessable. */
-	SESSION_SECRET: z.string().min(32, 'must be at least 32 characters long')
+	SESSION_SECRET: z.string().min(32, 'must be at least 32 characters long'),
+	/**
+	 * Public demo: the read-only account may sign in and destructive actions are
+	 * refused. Off by default is not an option — the deployment has to say which
+	 * of the two it is.
+	 */
+	DEMO_MODE: booleanFlag,
+	/**
+	 * The app sits behind a reverse proxy, so `X-Forwarded-For` and
+	 * `X-Forwarded-Proto` describe the real client. Never turn this on when the
+	 * app is reachable directly: the client would then choose its own IP for the
+	 * audit log and the rate limiter.
+	 */
+	TRUST_PROXY: booleanFlag,
+	/** Directory for uploaded and generated files; must be writable and persist. */
+	DATA_DIR: z.string().min(1)
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

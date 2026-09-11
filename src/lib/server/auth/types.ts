@@ -1,3 +1,5 @@
+import type { AccessScope } from '../actor';
+
 /**
  * The user behind the current request, resolved from the session cookie.
  * Kept free of database types on purpose: everything a request handler needs
@@ -12,4 +14,9 @@ export type SessionUser = {
 	permissions: ReadonlySet<string>;
 	/** The read-only account the public demo signs in as. */
 	isDemo: boolean;
+	/**
+	 * Which organisations this user may see. Decided once, when the session is
+	 * built, and copied into every `ActorContext` from there.
+	 */
+	scope: AccessScope;
 };

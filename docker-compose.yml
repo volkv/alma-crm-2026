@@ -68,6 +68,13 @@ services:
       # Local-stack value. Any real deployment must pass its own secret,
       # for example `SESSION_SECRET=$(openssl rand -base64 48) docker compose up`.
       SESSION_SECRET: ${SESSION_SECRET:-local-stack-only-session-secret-0000}
+      DEMO_MODE: 'false'
+      # Nothing sits in front of the app in the local stack, so the client
+      # address is the socket address and forwarding headers must not be trusted.
+      TRUST_PROXY: 'false'
+      DATA_DIR: /data
+    volumes:
+      - app-data:/data
     depends_on:
       postgres:
         condition: service_healthy
@@ -81,3 +88,6 @@ services:
 volumes:
   postgres-data:
   redis-data:
+  # Uploaded and generated documents. Lives outside the image: it must survive
+  # a rebuild, and `docker compose down` without `-v` must not take it away.
+  app-data:

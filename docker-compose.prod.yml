@@ -56,9 +56,17 @@ services:
     # file publishes 3000 on every interface, which must not happen here.
     ports: !override
       - '127.0.0.1:${APP_PORT:-8099}:3000'
-    # `!reset` drops the development values from the base file so that nothing
-    # silently shadows `.env` — `environment` wins over `env_file` in Compose.
-    environment: !reset null
+    # `!override` replaces the development values from the base file instead of
+    # merging with them, so nothing silently shadows `.env` — `environment` wins
+    # over `env_file` in Compose. What stays here describes the shape of the
+    # deployment, not its secrets: adapter-node reads ADDRESS_HEADER and
+    # XFF_DEPTH to resolve the client address behind the reverse proxy (depth 1
+    # means «the last entry in X-Forwarded-For was added by our own proxy»), and
+    # DATA_DIR has to match the mount point of the `app-data` volume.
+    environment: !override
+      ADDRESS_HEADER: X-Forwarded-For
+      XFF_DEPTH: '1'
+      DATA_DIR: /data
     env_file:
       - .env
     deploy:

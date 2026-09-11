@@ -30,3 +30,18 @@ export function getDb(): PostgresJsDatabase<typeof schema> {
 export async function pingDatabase(): Promise<void> {
 	await getClient()`select 1`;
 }
+
+/**
+ * Closes the pool and forgets the handle. Needed wherever the process has to
+ * end on its own — a test run, a one-off script — because open sockets keep
+ * Node alive long after the work is done.
+ */
+export async function closeDatabase(): Promise<void> {
+	const open = client;
+	client = undefined;
+	database = undefined;
+
+	if (open !== undefined) {
+		await open.end();
+	}
+}

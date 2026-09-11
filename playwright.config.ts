@@ -34,7 +34,10 @@ export default defineConfig({
 			GOTENBERG_URL: 'http://localhost:3001',
 			SMTP_HOST: 'localhost',
 			SMTP_PORT: '1025',
-			SESSION_SECRET: 'end-to-end-tests-only-session-secret'
+			SESSION_SECRET: 'end-to-end-tests-only-session-secret',
+			DEMO_MODE: 'false',
+			TRUST_PROXY: 'false',
+			DATA_DIR: '.playwright/data'
 		}
 	}
 });
