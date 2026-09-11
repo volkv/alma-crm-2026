@@ -42,8 +42,13 @@ src/
   app.d.ts                     App.Locals и App.Error
   lib/
     nav.ts                     разделы главной навигации
+    format.ts                  даты, числа, склонение, инициалы
     utils.ts                   cn() и служебные типы shadcn-svelte
-    components/ui/             компоненты shadcn-svelte, вендорятся в репозиторий
+    components/ui/             примитивы shadcn-svelte, вендорятся в репозиторий
+    components/                составные компоненты продукта (см. «Дизайн-система»)
+      app-shell/               навигация, верхняя панель, палитра поиска
+      data-table/              список: состояние в query string
+      form/                    поля и кнопки формы поверх superforms
     server/                    код, который никогда не попадает в браузер
       config.ts                схема переменных окружения (Zod) и getConfig()
       redis.ts                 клиент ioredis и pingRedis()
@@ -54,8 +59,12 @@ src/
         index.ts               postgres.js + Drizzle, pingDatabase()
         schema/index.ts        реэкспорт всех таблиц схемы
   routes/
-    +layout.svelte             корневой layout
-    +page.svelte               главная страница
+    +layout.svelte             корневой layout: только app.css
+    (app)/                     всё, что живёт внутри оболочки приложения
+      +layout.server.ts        locals.user для оболочки
+      +layout.svelte           AppShell
+      +page.svelte             главная
+      ui-kit/                  витрина компонентов
     api/health/+server.ts      GET /api/health
 drizzle/                       SQL-миграции и журнал drizzle-kit
 scripts/migrate.ts             применение миграций (локально и в контейнере)
@@ -270,6 +279,169 @@ Vite отдаёт наружу (`external`) то, что лежит в `dependen
   идёт в `dependencies`;
 - всё, что нужно только на сборку, и все Svelte-библиотеки (их всё равно компилирует Vite) —
   в `devDependencies`.
+
+## Дизайн-система
+
+Интерфейс собран из трёх слоёв. Токены в `src/app.css` задают язык (цвет, плотность, радиусы,
+тени). Примитивы в `src/lib/components/ui/**` — вендоренный shadcn-svelte, переписанный под эти
+токены. Составные компоненты в `src/lib/components/**` — то, из чего собирается страница продукта.
+Витрина всего этого — `/ui-kit`, и она же первое место, куда стоит заглянуть.
+
+### Токены
+
+Tailwind 4 настраивается в CSS, `tailwind.config.js` нет. В `src/app.css` сначала идёт сырая
+палитра обычными custom properties (`--grey-*`, `--accent-*`, статусные оттенки), затем блок
+`@theme`, который раскладывает её по семантическим именам. Утилиты порождает именно `@theme`:
+`--color-surface` даёт `bg-surface`, `text-surface`, `border-surface`.
+
+| Группа      | Имена                                                                                               |
+| ----------- | --------------------------------------------------------------------------------------------------- |
+| Поверхности | `canvas` (фон приложения), `surface` (панели, карточки), `surface-muted` (шапка таблицы, наведение) |
+| Текст       | `foreground`, `muted-foreground`, `faint` — все три дают ≥ 4.5:1 на `surface`                       |
+| Линии       | `border`, `border-strong`                                                                           |
+| Акцент      | `primary`, `primary-hover`, `primary-foreground`, `primary-soft`, `primary-soft-border`             |
+| Статусы     | `success`, `warning`, `danger`, `info` — у каждого `*-soft` и `*-soft-foreground`                   |
+| Плотность   | `h-row` (36px, строка таблицы), `h-control` (32px, контрол)                                         |
+| Радиусы     | `rounded-sm` / `rounded-md` / `rounded-lg`, `rounded-xl` для карточек, `rounded-4xl` — пилюля       |
+| Тени        | две ступени: `shadow-xs`/`shadow-sm` — на холсте, `shadow-md`/`shadow-lg` — поверх страницы         |
+
+Правила, по которым это держится:
+
+- **Цвет в разметке — только через токен.** `bg-blue-500`, `text-slate-600` и `#hex` в компонентах
+  недопустимы: тогда тему нельзя поменять, не переписав компоненты. Нужен новый оттенок — он
+  добавляется в `@theme` с именем, объясняющим смысл, а не вид.
+- **Имена `background`, `card`, `popover`, `accent`, `muted`, `input`, `destructive`** оставлены
+  ради вендоренных примитивов и являются псевдонимами той же шкалы. `accent` там — нейтральная
+  подсветка при наведении; фирменный акцент называется `primary`.
+- **Базовый размер текста — 14px** (`text-sm` на `body`), 12px (`text-xs`) — для подписей,
+  20px (`text-xl`) — для `<h1>`. Шрифт — Inter Variable из `@fontsource-variable/inter`, лежит в
+  сборке, в сеть за ним никто не ходит. Цифры везде моноширинные (`font-variant-numeric:
+tabular-nums`): колонки чисел и дат должны выравниваться сами.
+- **Фокус с клавиатуры виден всегда.** У примитивов это `focus-visible:ring-3 ring-ring/50`, у
+  наших компонентов — утилита `focus-ring` из `src/app.css`. Убирать `outline` без замены нельзя.
+- **Тёмная тема** пока не включена, но заложена: ни один компонент не называет цвет напрямую.
+  Чтобы её добавить, нужно определить те же токены в блоке `.dark { … }` и вешать класс `dark` на
+  `<html>`. Вариант `@custom-variant dark` в `app.css` удалять нельзя: без него `dark:`-утилиты
+  внутри примитивов начнут срабатывать по системной теме пользователя поверх светлой палитры.
+
+### Добавить примитив shadcn-svelte
+
+```bash
+pnpm dlx shadcn-svelte@1.6.1 add <название>
+```
+
+CLI кладёт файлы в `src/lib/components/ui/<название>/` — и заодно правит `package.json` под свой
+реестр. После команды обязательно `git diff package.json pnpm-lock.yaml` и откатить всё, кроме
+самих новых файлов: версии зависимостей в проекте зафиксированы осознанно.
+
+Дальше компонент — наш код, а не библиотека: его правят напрямую. Что проверить сразу после
+установки: высота контролов (`h-control`), радиусы и кольцо фокуса — из токенов; дефолтная палитра
+shadcn (`oklch(0.205 0 0)` и подобное) в файле не осталась.
+
+### Составные компоненты
+
+У каждого — JSDoc над `$props()` с описанием, когда его брать. Коротко:
+
+- `app-shell/AppShell` — оболочка приложения: разделы из `src/lib/nav.ts`, сворачиваемая
+  навигация (выбор хранится в `localStorage`), поиск по `Ctrl+K`, меню пользователя, выход
+  POST-формой на `/logout`. На узком экране навигация уезжает в `Sheet`.
+- `StageTimeline` — цикл взаимодействия по этапам: `done` / `current` / `paused` / `overdue` /
+  `blocked` / `skipped` / `pending`. Полный режим — для карточки, `compact` — полоска для списка.
+  Данные приходят типизированным пропом, запросов компонент не делает.
+- `PageHeader` (владеет `<h1>` страницы), `EmptyState`, `ErrorState`, `ConfirmDialog`,
+  `KeyValue` + `KeyValueRow`, `StatusBadge`, `SlaChip`, `InlineHint`.
+- Тосты — `Toaster` из `ui/sonner`, он уже стоит в `AppShell`; со страницы вызывается
+  `toast(...)` из `svelte-sonner`.
+
+### Списки: `DataTable`
+
+Состояние списка живёт в query string: `page`, `size`, `sort` (`name` — по возрастанию, `-name` —
+по убыванию), `q`. Значит, список — это ссылка: её можно послать коллеге, она переживает «назад» и
+её же читает сервер. Разбирает и собирает эти параметры один модуль,
+`src/lib/components/data-table/query.ts`, и пользуются им обе стороны.
+
+Компонент ничего не загружает: сервер отдаёт одну страницу и общее число строк.
+
+```ts
+// +page.server.ts
+import { readTableQuery } from '$lib/components/data-table/query';
+
+export const load: PageServerLoad = async ({ url }) => {
+	const query = readTableQuery(url);
+
+	return { rows: await listOrganizations(query), total: await countOrganizations(query) };
+};
+```
+
+```svelte
+<!-- +page.svelte -->
+<script lang="ts">
+	import DataTable from '$lib/components/data-table/data-table.svelte';
+	import type { DataTableFeatures } from '$lib/components/data-table/features';
+	import type { ColumnDef } from '@tanstack/svelte-table';
+
+	let { data }: PageProps = $props();
+
+	const columns: ColumnDef<DataTableFeatures, Organization>[] = [
+		{ accessorKey: 'name', header: 'Название', meta: { title: 'Название' } },
+		// `align: 'end'` выравнивает колонку вправо — для всего числового.
+		{ accessorKey: 'contacts', header: 'Контакты', meta: { title: 'Контакты', align: 'end' } }
+	];
+</script>
+
+<DataTable
+	{columns}
+	rows={data.rows}
+	total={data.total}
+	getRowId={(organization) => organization.id}
+	searchPlaceholder="Поиск по названию"
+	onopen={(organization) => goto(resolve('/organizations/[id]', { id: organization.id }))}
+/>
+```
+
+Что уже внутри: липкая шапка, выбор строк с панелью массовых действий (появляется, если передан
+сниппет `bulkActions`), переключение колонок, пустое состояние, скелет на `loading`, клавиатура
+(`↑`/`↓` или `j`/`k` — по строкам, `Enter` — открыть, `/` — в поиск), горизонтальная прокрутка на
+узком экране. Набор возможностей TanStack объявлен в `data-table/features.ts` — что не объявлено,
+того в сборке нет.
+
+### Формы
+
+`sveltekit-superforms` с адаптером `zod4`, схема одна на сервер и на браузер. Поля —
+`FieldInput`, `FieldTextarea`, `FieldSelect`; внутри они собирают `FormField`, который связывает
+подпись, описание и ошибку с контролом (`id`, `aria-describedby`, `aria-invalid`). Кнопки —
+`FormActions`, он же блокирует повторную отправку.
+
+```svelte
+<script lang="ts">
+	const { form, errors, enhance, submitting } = superForm(
+		untrack(() => data.form),
+		{
+			validators: zod4Client(organizationSchema),
+			// beforeNavigate внутри superforms: уйти со страницы с несохранённым вводом просто так нельзя.
+			taintedMessage: 'Введённые данные не сохранены. Уйти со страницы?'
+		}
+	);
+</script>
+
+<!-- novalidate: проверяет схема и говорит по-русски, а не браузер на своём языке. -->
+<form method="POST" use:enhance novalidate>
+	<FieldInput name="name" label="Название" required bind:value={$form.name} errors={$errors.name} />
+	<FormActions submitting={$submitting} submitLabel="Сохранить организацию" />
+</form>
+```
+
+Сообщения об ошибках пишем словами и по делу: «Название не короче трёх символов», а не «Invalid
+input». Текст ошибки — часть схемы (параметр `error` в Zod 4), чтобы сервер и браузер говорили
+одно и то же.
+
+### Форматирование значений
+
+`src/lib/format.ts` — единственное место, где строятся даты, числа и русские словоформы:
+`formatDate` (`12.09.2026`), `formatDateTime`, `formatDayAndMonth`, `formatNumber`, `daysUntil`,
+`pluralForm` / `pluralize` («3 дня», «5 дней»), `initials`. Время считается по Москве — и у
+заказчика, и в тестах результат один и тот же. Невалидная дата или нечисло бросают `RangeError`:
+«Invalid Date» в таблице — это молча испорченные данные.
 
 ## Drizzle
 

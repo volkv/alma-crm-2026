@@ -2,142 +2,197 @@
 @import 'tw-animate-css';
 @import 'shadcn-svelte/tailwind.css';
 @import '@fontsource-variable/inter';
+
 /*
- ---break---
+ * The interface is light-only for now. This variant is still required: without
+ * it Tailwind's `dark:` utilities — and the vendored primitives use plenty of
+ * them — follow `prefers-color-scheme`, so a visitor whose system is dark would
+ * get dark fragments on top of a light palette. Bound to a class nobody sets,
+ * those fragments stay inert. A dark theme is added later by redefining the
+ * tokens below under `.dark` and putting that class on <html>; the components
+ * themselves do not change, because none of them names a colour directly.
  */
 @custom-variant dark (&:is(.dark *));
 
 /*
- * Design tokens live here: Tailwind 4 is configured in CSS, there is no
- * tailwind.config.js. Every custom property declared inside `@theme` becomes a
- * utility class (`--color-brand-500` -> `bg-brand-500`, `text-brand-500`, ...).
- * The full design system is added on top of this baseline.
- */
-@theme {
-	--font-sans: 'Inter Variable', sans-serif;
-	--color-sidebar-ring: var(--sidebar-ring);
-	--color-sidebar-border: var(--sidebar-border);
-	--color-sidebar-accent-foreground: var(--sidebar-accent-foreground);
-	--color-sidebar-accent: var(--sidebar-accent);
-	--color-sidebar-primary-foreground: var(--sidebar-primary-foreground);
-	--color-sidebar-primary: var(--sidebar-primary);
-	--color-sidebar-foreground: var(--sidebar-foreground);
-	--color-sidebar: var(--sidebar);
-	--color-chart-5: var(--chart-5);
-	--color-chart-4: var(--chart-4);
-	--color-chart-3: var(--chart-3);
-	--color-chart-2: var(--chart-2);
-	--color-chart-1: var(--chart-1);
-	--color-ring: var(--ring);
-	--color-input: var(--input);
-	--color-border: var(--border);
-	--color-destructive: var(--destructive);
-	--color-accent-foreground: var(--accent-foreground);
-	--color-accent: var(--accent);
-	--color-muted-foreground: var(--muted-foreground);
-	--color-muted: var(--muted);
-	--color-secondary-foreground: var(--secondary-foreground);
-	--color-secondary: var(--secondary);
-	--color-primary-foreground: var(--primary-foreground);
-	--color-primary: var(--primary);
-	--color-popover-foreground: var(--popover-foreground);
-	--color-popover: var(--popover);
-	--color-card-foreground: var(--card-foreground);
-	--color-card: var(--card);
-	--color-foreground: var(--foreground);
-	--color-background: var(--background);
-	--radius-sm: calc(var(--radius) * 0.6);
-	--radius-md: calc(var(--radius) * 0.8);
-	--radius-lg: var(--radius);
-	--radius-xl: calc(var(--radius) * 1.4);
-	--radius-2xl: calc(var(--radius) * 1.8);
-	--radius-3xl: calc(var(--radius) * 2.2);
-	--radius-4xl: calc(var(--radius) * 2.6);
-}
-/*
- ---break---
+ * Design tokens. Tailwind 4 is configured in CSS — there is no
+ * tailwind.config.js. The raw palette lives here as plain custom properties and
+ * is never written in markup; the `@theme` block below maps it onto semantic
+ * names, and every semantic name generates utilities (`--color-surface` ->
+ * `bg-surface`, `text-surface`, `border-surface`, ...).
  */
 :root {
-	--background: oklch(1 0 0);
-	--foreground: oklch(0.145 0 0);
-	--card: oklch(1 0 0);
-	--card-foreground: oklch(0.145 0 0);
-	--popover: oklch(1 0 0);
-	--popover-foreground: oklch(0.145 0 0);
-	--primary: oklch(0.205 0 0);
-	--primary-foreground: oklch(0.985 0 0);
-	--secondary: oklch(0.97 0 0);
-	--secondary-foreground: oklch(0.205 0 0);
-	--muted: oklch(0.97 0 0);
-	--muted-foreground: oklch(0.556 0 0);
-	--accent: oklch(0.97 0 0);
-	--accent-foreground: oklch(0.205 0 0);
-	--destructive: oklch(0.577 0.245 27.325);
-	--border: oklch(0.922 0 0);
-	--input: oklch(0.922 0 0);
-	--ring: oklch(0.708 0 0);
-	--chart-1: oklch(0.87 0 0);
-	--chart-2: oklch(0.556 0 0);
-	--chart-3: oklch(0.439 0 0);
-	--chart-4: oklch(0.371 0 0);
-	--chart-5: oklch(0.269 0 0);
-	--radius: 0.625rem;
-	--sidebar: oklch(0.985 0 0);
-	--sidebar-foreground: oklch(0.145 0 0);
-	--sidebar-primary: oklch(0.205 0 0);
-	--sidebar-primary-foreground: oklch(0.985 0 0);
-	--sidebar-accent: oklch(0.97 0 0);
-	--sidebar-accent-foreground: oklch(0.205 0 0);
-	--sidebar-border: oklch(0.922 0 0);
-	--sidebar-ring: oklch(0.708 0 0);
+	/*
+	 * Neutral ramp: a cold grey (hue 264), so surfaces stay quiet next to the
+	 * accent instead of drifting warm.
+	 */
+	--grey-0: oklch(1 0 0);
+	--grey-50: oklch(0.978 0.003 264);
+	--grey-100: oklch(0.962 0.004 264);
+	--grey-200: oklch(0.915 0.006 264);
+	--grey-300: oklch(0.845 0.008 264);
+	--grey-500: oklch(0.565 0.013 264);
+	--grey-600: oklch(0.505 0.014 264);
+	--grey-900: oklch(0.225 0.012 264);
+
+	/* One accent for the whole product. Contrast with white is 5.5:1. */
+	--accent-base: oklch(0.52 0.19 266);
+	--accent-strong: oklch(0.46 0.185 266);
+	--accent-soft: oklch(0.962 0.021 266);
+	--accent-soft-border: oklch(0.895 0.048 266);
+
+	/* Status hues: a solid tone plus a soft background with readable text on it. */
+	--danger-base: oklch(0.52 0.19 27);
+	--danger-soft: oklch(0.963 0.022 27);
+	--danger-soft-foreground: oklch(0.46 0.17 27);
+	--warning-base: oklch(0.62 0.15 68);
+	--warning-soft: oklch(0.966 0.04 74);
+	--warning-soft-foreground: oklch(0.47 0.11 62);
+	--success-base: oklch(0.53 0.13 153);
+	--success-soft: oklch(0.958 0.03 153);
+	--success-soft-foreground: oklch(0.43 0.11 153);
+	--info-base: oklch(0.55 0.12 245);
+	--info-soft: oklch(0.961 0.026 245);
+	--info-soft-foreground: oklch(0.45 0.12 245);
+
+	/*
+	 * Two elevation levels, and only two: `raised` for what sits on the canvas
+	 * (cards, the sticky table header) and `overlay` for what floats above the
+	 * page (menus, dialogs, toasts).
+	 */
+	--elevation-raised:
+		0 1px 2px -1px oklch(0.225 0.02 264 / 0.1), 0 1px 1px oklch(0.225 0.02 264 / 0.06);
+	--elevation-overlay:
+		0 12px 28px -8px oklch(0.225 0.02 264 / 0.18), 0 4px 10px -4px oklch(0.225 0.02 264 / 0.12);
+
+	--radius: 0.5rem;
+
+	/*
+	 * Aliases the vendored primitives read through `var(...)` rather than through
+	 * a utility class, so they have to keep exactly these names.
+	 */
+	--foreground: var(--grey-900);
+	--secondary: var(--grey-100);
 }
-/*
- ---break---
- */
-.dark {
-	--background: oklch(0.145 0 0);
-	--foreground: oklch(0.985 0 0);
-	--card: oklch(0.205 0 0);
-	--card-foreground: oklch(0.985 0 0);
-	--popover: oklch(0.205 0 0);
-	--popover-foreground: oklch(0.985 0 0);
-	--primary: oklch(0.922 0 0);
-	--primary-foreground: oklch(0.205 0 0);
-	--secondary: oklch(0.269 0 0);
-	--secondary-foreground: oklch(0.985 0 0);
-	--muted: oklch(0.269 0 0);
-	--muted-foreground: oklch(0.708 0 0);
-	--accent: oklch(0.269 0 0);
-	--accent-foreground: oklch(0.985 0 0);
-	--destructive: oklch(0.704 0.191 22.216);
-	--border: oklch(1 0 0 / 10%);
-	--input: oklch(1 0 0 / 15%);
-	--ring: oklch(0.556 0 0);
-	--chart-1: oklch(0.87 0 0);
-	--chart-2: oklch(0.556 0 0);
-	--chart-3: oklch(0.439 0 0);
-	--chart-4: oklch(0.371 0 0);
-	--chart-5: oklch(0.269 0 0);
-	--sidebar: oklch(0.205 0 0);
-	--sidebar-foreground: oklch(0.985 0 0);
-	--sidebar-primary: oklch(0.488 0.243 264.376);
-	--sidebar-primary-foreground: oklch(0.985 0 0);
-	--sidebar-accent: oklch(0.269 0 0);
-	--sidebar-accent-foreground: oklch(0.985 0 0);
-	--sidebar-border: oklch(1 0 0 / 10%);
-	--sidebar-ring: oklch(0.556 0 0);
+
+@theme {
+	--font-sans:
+		'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
+		Arial, 'Noto Sans', sans-serif;
+
+	/* Surfaces: the app backdrop, the panels on it, recessed areas inside panels. */
+	--color-canvas: var(--grey-50);
+	--color-surface: var(--grey-0);
+	--color-surface-muted: var(--grey-100);
+
+	/* Text: primary, muted, faint. All three clear 4.5:1 on a white surface. */
+	--color-foreground: var(--grey-900);
+	--color-muted-foreground: var(--grey-600);
+	--color-faint: var(--grey-500);
+
+	/* Lines: the default hairline and the stronger one for interactive edges. */
+	--color-border: var(--grey-200);
+	--color-border-strong: var(--grey-300);
+
+	/*
+	 * The accent. `primary` is the name the vendored primitives already use for
+	 * it, so the product uses that name too instead of inventing a second one.
+	 */
+	--color-primary: var(--accent-base);
+	--color-primary-hover: var(--accent-strong);
+	--color-primary-foreground: var(--grey-0);
+	--color-primary-soft: var(--accent-soft);
+	--color-primary-soft-border: var(--accent-soft-border);
+
+	/* Status, each with a soft background and the text colour that reads on it. */
+	--color-danger: var(--danger-base);
+	--color-danger-soft: var(--danger-soft);
+	--color-danger-soft-foreground: var(--danger-soft-foreground);
+	--color-warning: var(--warning-base);
+	--color-warning-soft: var(--warning-soft);
+	--color-warning-soft-foreground: var(--warning-soft-foreground);
+	--color-success: var(--success-base);
+	--color-success-soft: var(--success-soft);
+	--color-success-soft-foreground: var(--success-soft-foreground);
+	--color-info: var(--info-base);
+	--color-info-soft: var(--info-soft);
+	--color-info-soft-foreground: var(--info-soft-foreground);
+
+	/*
+	 * Remaining names the vendored primitives are written against. They are
+	 * aliases onto the scale above, not a second palette: `background` and `card`
+	 * are the panel surface, `accent` is the neutral hover wash (not the brand
+	 * accent — that is `primary`), `input` is the stronger line.
+	 */
+	--color-background: var(--grey-0);
+	--color-card: var(--grey-0);
+	--color-card-foreground: var(--grey-900);
+	--color-popover: var(--grey-0);
+	--color-popover-foreground: var(--grey-900);
+	--color-secondary: var(--grey-100);
+	--color-secondary-foreground: var(--grey-900);
+	--color-muted: var(--grey-100);
+	--color-accent: var(--grey-100);
+	--color-accent-foreground: var(--grey-900);
+	--color-destructive: var(--danger-base);
+	--color-input: var(--grey-300);
+	--color-ring: var(--accent-base);
+
+	/*
+	 * Density. A CRM is read in rows, so the two heights that repeat thousands of
+	 * times are tokens: 36px for a table row, 32px for a control. The rest of the
+	 * spacing scale is Tailwind's 4px step.
+	 */
+	--spacing-row: 2.25rem;
+	--spacing-control: 2rem;
+
+	/* Radii. `4xl` is the pill used by badges, not a fourth step on the scale. */
+	--radius-sm: calc(var(--radius) * 0.5);
+	--radius-md: calc(var(--radius) * 0.75);
+	--radius-lg: var(--radius);
+	--radius-xl: calc(var(--radius) * 1.5);
+	--radius-4xl: 999px;
+
+	/* Four Tailwind names, two levels: the primitives reach for all four. */
+	--shadow-xs: var(--elevation-raised);
+	--shadow-sm: var(--elevation-raised);
+	--shadow-md: var(--elevation-overlay);
+	--shadow-lg: var(--elevation-overlay);
 }
-/*
- ---break---
- */
+
 @layer base {
 	* {
 		@apply border-border outline-ring/50;
 	}
-	body {
-		@apply bg-background text-foreground;
-	}
+
 	html {
 		@apply font-sans;
+	}
+
+	body {
+		@apply bg-background text-sm text-foreground;
+		/*
+		 * Figures are read in columns — counts, dates, sums, identifiers — so
+		 * digits keep the same advance width everywhere. Add `proportional-nums`
+		 * on the rare piece of prose where that looks wrong.
+		 */
+		font-variant-numeric: tabular-nums;
+		font-feature-settings: 'tnum' 1;
+		-webkit-font-smoothing: antialiased;
+	}
+
+	::selection {
+		@apply bg-primary-soft text-foreground;
+	}
+}
+
+/**
+ * The keyboard focus ring for the components we write ourselves; the vendored
+ * primitives spell the same ring out in utilities.
+ */
+@utility focus-ring {
+	&:focus-visible {
+		outline: none;
+		box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-ring) 45%, transparent);
 	}
 }
