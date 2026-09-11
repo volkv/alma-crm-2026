@@ -31,6 +31,9 @@ COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/build ./build
 COPY --chown=node:node drizzle ./drizzle
 COPY --chown=node:node scripts ./scripts
+# Файлы шаблонов документов читаются с диска на первом обращении к шаблону,
+# поэтому каталог обязан быть в образе рядом с рабочим каталогом процесса.
+COPY --chown=node:node templates ./templates
 
 # Uploaded and generated files live outside the image, on a volume mounted here.
 # The directory is created in the image so the app can write to it even when the
