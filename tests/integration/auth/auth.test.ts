@@ -1,0 +1,485 @@
+import { randomUUID } from 'node:crypto';
+import { asc, eq } from 'drizzle-orm';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { ActorContext } from '$lib/server/actor';
+import { auditEvents, users } from '$lib/server/db/schema';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '$lib/server/errors';
+import { pageQuerySchema } from '$lib/contracts/common';
+import { demoLogin, listDemoAccounts, login } from '$lib/server/auth/login';
+import { withinAddressLimit } from '$lib/server/auth/lockout';
+import {
+	createSession,
+	loadSessionUser,
+	revokeAllSessions,
+	touchSession
+} from '$lib/server/auth/session';
+import { changePassword, createUser, deactivateUser, listUsers } from '$lib/server/auth/users';
+import { getRedis } from '$lib/server/redis';
+import { setSetting } from '$lib/server/settings';
+import { startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
+
+// См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
+vi.mock('$env/dynamic/private', () => ({ env: process.env }));
+
+/**
+ * `DEMO_MODE` читается из конфигурации, а она разбирается один раз за процесс —
+ * переставить переменную окружения между тестами уже нельзя. Подменяем саму
+ * функцию: остальные значения остаются настоящими, включая адрес контейнера,
+ * который `startTestDatabase` кладёт в окружение перед первым обращением.
+ */
+const demo = vi.hoisted(() => ({ mode: false }));
+
+vi.mock('$lib/server/config', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('$lib/server/config')>();
+
+	return { ...actual, getConfig: () => ({ ...actual.getConfig(), DEMO_MODE: demo.mode }) };
+});
+
+let database: TestDatabase;
+
+/**
+ * Redis у интеграционных тестов общий с разработчиком — база поднимается в
+ * контейнере, а Redis берётся из compose. Поэтому ключи теста помечены меткой
+ * прогона и удаляются после каждого теста: чужие сессии в той же базе Redis
+ * остаются нетронутыми.
+ */
+const runId = randomUUID().slice(0, 8);
+const createdUserIds = new Set<string>();
+const usedAddresses = new Set<string>();
+
+function email(name: string): string {
+	return `${name}-${runId}@example.org`;
+}
+
+function address(last: number): string {
+	const ip = `198.51.100.${last}`;
+	usedAddresses.add(ip);
+	return ip;
+}
+
+/** Контекст анонимного посетителя: именно он приходит на форму входа. */
+function anonymous(ip: string): ActorContext {
+	return {
+		requestId: randomUUID(),
+		source: 'ui',
+		user: null,
+		apiKeyId: null,
+		ip,
+		userAgent: 'vitest',
+		scope: { kind: 'organizations', organizationIds: new Set() }
+	};
+}
+
+async function newUser(options: {
+	name: string;
+	password: string;
+	roleId?: string;
+	isDemo?: boolean;
+}): Promise<{ id: string; email: string }> {
+	const created = await createUser(testActor(), {
+		email: email(options.name),
+		fullName: 'Иванов Иван',
+		roleId: options.roleId ?? 'manager',
+		password: options.password,
+		isDemo: options.isDemo
+	});
+
+	createdUserIds.add(created.id);
+
+	return { id: created.id, email: created.email };
+}
+
+async function forgetRedisKeys(): Promise<void> {
+	const redis = getRedis();
+
+	for (const userId of createdUserIds) {
+		await revokeAllSessions(userId);
+	}
+	createdUserIds.clear();
+
+	const failureKeys = await redis.keys(`login_fail:*${runId}*`);
+	const addressKeys = [...usedAddresses].map((ip) => `login_ip:${ip}`);
+	usedAddresses.clear();
+
+	if (failureKeys.length + addressKeys.length > 0) {
+		await redis.del(...failureKeys, ...addressKeys);
+	}
+}
+
+const PASSWORD = 'Надёжный-Пароль1';
+
+beforeAll(async () => {
+	database = await startTestDatabase();
+}, 300_000);
+
+afterAll(async () => {
+	await forgetRedisKeys();
+	getRedis().disconnect();
+	await database?.stop();
+});
+
+beforeEach(async () => {
+	await forgetRedisKeys();
+	await database.reset();
+	demo.mode = false;
+});
+
+/** События журнала по типу, в порядке появления. */
+async function auditOf(type: string): Promise<{ outcome: string; details: unknown }[]> {
+	return database.db
+		.select({ outcome: auditEvents.outcome, details: auditEvents.details })
+		.from(auditEvents)
+		.where(eq(auditEvents.eventType, type))
+		.orderBy(asc(auditEvents.occurredAt));
+}
+
+describe('вход', () => {
+	it('впускает с верным паролем, заводит сессию и пишет в журнал', async () => {
+		const user = await newUser({ name: 'ivanov', password: PASSWORD });
+
+		const outcome = await login(anonymous(address(1)), { email: user.email, password: PASSWORD });
+
+		expect(outcome).toMatchObject({ ok: true });
+		if (!outcome.ok) return;
+
+		expect(await touchSession(outcome.sessionId)).toBe(user.id);
+
+		const session = await loadSessionUser(user.id);
+		expect(session).toMatchObject({ id: user.id, roleId: 'manager' });
+		expect(session?.permissions.has('interactions.write')).toBe(true);
+
+		expect(await auditOf('auth.login')).toEqual([
+			{ outcome: 'success', details: { userId: user.id } }
+		]);
+
+		// Почта в разных регистрах — один и тот же человек.
+		const again = await login(anonymous(address(1)), {
+			email: user.email.toUpperCase(),
+			password: PASSWORD
+		});
+		expect(again.ok).toBe(true);
+	});
+
+	it('отказывает одинаково неверному паролю и незаведённой почте', async () => {
+		const user = await newUser({ name: 'petrov', password: PASSWORD });
+		const ip = address(2);
+
+		const wrongPassword = await login(anonymous(ip), {
+			email: user.email,
+			password: 'Другой-Пароль1'
+		});
+		const unknownEmail = await login(anonymous(ip), {
+			email: email('never-existed'),
+			password: PASSWORD
+		});
+
+		expect(wrongPassword).toEqual({
+			ok: false,
+			reason: 'invalid',
+			message: 'Неверная почта или пароль'
+		});
+		expect(unknownEmail).toEqual(wrongPassword);
+
+		// Неудача записывается всегда, даже когда записывать нечего, кроме факта.
+		const failures = await auditOf('auth.login_failed');
+		expect(failures).toEqual([
+			{ outcome: 'failure', details: { userId: user.id } },
+			{ outcome: 'failure', details: {} }
+		]);
+	});
+
+	it('не впускает выключенного пользователя и гасит его сессии', async () => {
+		const user = await newUser({ name: 'uvolen', password: PASSWORD });
+		const first = await createSession(user.id, { ip: null, userAgent: null });
+		const second = await createSession(user.id, { ip: null, userAgent: null });
+
+		await deactivateUser(testActor(), user.id);
+
+		expect(await touchSession(first)).toBeNull();
+		expect(await touchSession(second)).toBeNull();
+
+		const outcome = await login(anonymous(address(3)), { email: user.email, password: PASSWORD });
+		expect(outcome).toMatchObject({ ok: false, reason: 'invalid' });
+	});
+});
+
+describe('блокировка после неудачных попыток', () => {
+	beforeEach(async () => {
+		await setSetting(testActor(), 'lockout_policy', { attempts: 3, minutes: 1 });
+	});
+
+	it('закрывает вход после заданного числа неудач и открывает по истечении срока', async () => {
+		const user = await newUser({ name: 'podbor', password: PASSWORD });
+		const ip = address(4);
+
+		for (let attempt = 0; attempt < 3; attempt += 1) {
+			const refusal = await login(anonymous(ip), { email: user.email, password: 'Мимо-Пароля1' });
+			expect(refusal).toMatchObject({ reason: 'invalid' });
+		}
+
+		// Четвёртая попытка не доходит до проверки пароля — даже с верным.
+		const locked = await login(anonymous(ip), { email: user.email, password: PASSWORD });
+		expect(locked).toMatchObject({ ok: false, reason: 'locked' });
+		expect(locked.ok === false && locked.message).toMatch(/ещё 1 минуту/);
+
+		expect(await auditOf('auth.locked')).toEqual([
+			{ outcome: 'denied', details: { userId: user.id } }
+		]);
+
+		const key = `login_fail:${user.email}:${ip}`;
+		const redis = getRedis();
+		expect(await redis.ttl(key)).toBeGreaterThan(50);
+		expect(await redis.ttl(key)).toBeLessThanOrEqual(60);
+
+		// Срок жизни счётчика и есть срок блокировки: как только ключ ушёл,
+		// вход открыт снова.
+		await redis.pexpire(key, 1);
+		await new Promise((resolve) => setTimeout(resolve, 40));
+
+		expect(await login(anonymous(ip), { email: user.email, password: PASSWORD })).toMatchObject({
+			ok: true
+		});
+	});
+
+	it('снимает счётчик после удачного входа', async () => {
+		const user = await newUser({ name: 'oshibsya', password: PASSWORD });
+		const ip = address(5);
+
+		await login(anonymous(ip), { email: user.email, password: 'Мимо-Пароля1' });
+		await login(anonymous(ip), { email: user.email, password: PASSWORD });
+
+		expect(await getRedis().exists(`login_fail:${user.email}:${ip}`)).toBe(0);
+	});
+
+	it('не закрывает демонстрационную учётную запись, пока включён демо-режим', async () => {
+		demo.mode = true;
+		const user = await newUser({ name: 'demo', password: PASSWORD, isDemo: true });
+		const ip = address(6);
+
+		for (let attempt = 0; attempt < 5; attempt += 1) {
+			await login(anonymous(ip), { email: user.email, password: 'Мимо-Пароля1' });
+		}
+
+		expect(await getRedis().exists(`login_fail:${user.email}:${ip}`)).toBe(0);
+		expect(await login(anonymous(ip), { email: user.email, password: PASSWORD })).toMatchObject({
+			ok: true
+		});
+
+		// Вне демо-режима та же учётная запись — обычная.
+		demo.mode = false;
+		for (let attempt = 0; attempt < 3; attempt += 1) {
+			await login(anonymous(ip), { email: user.email, password: 'Мимо-Пароля1' });
+		}
+
+		expect(await login(anonymous(ip), { email: user.email, password: PASSWORD })).toMatchObject({
+			ok: false,
+			reason: 'locked'
+		});
+	});
+
+	it('считает попытки с одного адреса и отсекает после тридцати', async () => {
+		const ip = address(7);
+
+		for (let attempt = 1; attempt <= 30; attempt += 1) {
+			expect(await withinAddressLimit(ip)).toBe(true);
+		}
+
+		expect(await withinAddressLimit(ip)).toBe(false);
+		expect(await getRedis().ttl(`login_ip:${ip}`)).toBeGreaterThan(60);
+	});
+});
+
+describe('срок жизни сессии', () => {
+	it('живёт ровно столько, сколько разрешает бездействие', async () => {
+		const user = await newUser({ name: 'session', password: PASSWORD });
+		const sessionId = await createSession(user.id, { ip: '198.51.100.9', userAgent: 'vitest' });
+
+		const ttl = await getRedis().ttl(`session:${sessionId}`);
+		expect(ttl).toBeGreaterThan(30 * 60 - 5);
+		expect(ttl).toBeLessThanOrEqual(30 * 60);
+	});
+
+	it('продлевается при активности, но не чаще раза в минуту', async () => {
+		const user = await newUser({ name: 'active', password: PASSWORD });
+		const sessionId = await createSession(user.id, { ip: null, userAgent: null });
+		const key = `session:${sessionId}`;
+		const redis = getRedis();
+
+		// Сессия, которой никто не касался две минуты, и вот-вот истечёт.
+		const stored = JSON.parse((await redis.get(key)) as string);
+		await redis.set(
+			key,
+			JSON.stringify({ ...stored, lastSeenAt: new Date(Date.now() - 120_000).toISOString() }),
+			'EX',
+			100
+		);
+
+		expect(await touchSession(sessionId)).toBe(user.id);
+		expect(await redis.ttl(key)).toBeGreaterThan(100);
+
+		// Вторая активность в ту же минуту Redis не трогает.
+		await redis.expire(key, 100);
+		expect(await touchSession(sessionId)).toBe(user.id);
+		expect(await redis.ttl(key)).toBeLessThanOrEqual(100);
+	});
+
+	it('не переживает предельный срок, сколько бы ни было активности', async () => {
+		const user = await newUser({ name: 'longlived', password: PASSWORD });
+		const sessionId = await createSession(user.id, { ip: null, userAgent: null });
+		const key = `session:${sessionId}`;
+		const redis = getRedis();
+
+		const stored = JSON.parse((await redis.get(key)) as string);
+		await redis.set(
+			key,
+			JSON.stringify({
+				...stored,
+				createdAt: new Date(Date.now() - 13 * 3600 * 1000).toISOString(),
+				lastSeenAt: new Date().toISOString()
+			}),
+			'EX',
+			1800
+		);
+
+		expect(await touchSession(sessionId)).toBeNull();
+		expect(await redis.exists(key)).toBe(0);
+	});
+});
+
+describe('демонстрационный вход', () => {
+	it('впускает без пароля под ролью и помечает это в журнале', async () => {
+		demo.mode = true;
+		const user = await newUser({
+			name: 'demo-viewer',
+			password: PASSWORD,
+			roleId: 'viewer',
+			isDemo: true
+		});
+
+		expect(await listDemoAccounts()).toEqual([{ roleId: 'viewer', roleName: 'Наблюдатель' }]);
+
+		const sessionId = await demoLogin(anonymous(address(8)), 'viewer');
+		expect(await touchSession(sessionId)).toBe(user.id);
+
+		expect(await auditOf('auth.login')).toEqual([
+			{ outcome: 'success', details: { userId: user.id, demo: true } }
+		]);
+	});
+
+	it('вне демо-режима не существует', async () => {
+		demo.mode = true;
+		await newUser({ name: 'demo-off', password: PASSWORD, roleId: 'viewer', isDemo: true });
+
+		demo.mode = false;
+		expect(await listDemoAccounts()).toEqual([]);
+		await expect(demoLogin(anonymous(address(10)), 'viewer')).rejects.toBeInstanceOf(NotFoundError);
+	});
+
+	it('не впускает под ролью, для которой учётной записи нет', async () => {
+		demo.mode = true;
+		await newUser({ name: 'demo-only-viewer', password: PASSWORD, roleId: 'viewer', isDemo: true });
+
+		await expect(demoLogin(anonymous(address(11)), 'admin')).rejects.toBeInstanceOf(NotFoundError);
+	});
+});
+
+describe('пользователи', () => {
+	it('требует существующей роли и не допускает двух одинаковых почт', async () => {
+		await newUser({ name: 'pervyi', password: PASSWORD });
+
+		await expect(
+			createUser(testActor(), {
+				email: email('pervyi'),
+				fullName: 'Другой Человек',
+				roleId: 'manager',
+				password: PASSWORD
+			})
+		).rejects.toBeInstanceOf(ConflictError);
+
+		await expect(
+			createUser(testActor(), {
+				email: email('bez-roli'),
+				fullName: 'Человек Без Роли',
+				roleId: 'superuser',
+				password: PASSWORD
+			})
+		).rejects.toSatisfy(
+			(error: unknown) =>
+				error instanceof ValidationError && error.issues.some((issue) => /superuser/.test(issue))
+		);
+	});
+
+	it('не заводит пользователя со слабым паролем', async () => {
+		await expect(
+			createUser(testActor(), {
+				email: email('slaboe'),
+				fullName: 'Человек Иванов',
+				roleId: 'viewer',
+				password: 'qwerty'
+			})
+		).rejects.toSatisfy(
+			(error: unknown) => error instanceof ValidationError && error.issues.length === 2
+		);
+	});
+
+	it('пускает к списку и к заведению только с правом users.manage', async () => {
+		const page = pageQuerySchema.parse({});
+		const viewer = testActor({ roleId: 'viewer' });
+
+		await expect(listUsers(viewer, page)).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(
+			createUser(viewer, {
+				email: email('chuzhoi'),
+				fullName: 'Человек Иванов',
+				roleId: 'viewer',
+				password: PASSWORD
+			})
+		).rejects.toBeInstanceOf(ForbiddenError);
+
+		await newUser({ name: 'v-spiske', password: PASSWORD });
+		const listed = await listUsers(testActor(), page);
+
+		// Три пользователя завела фикстура — по одному на роль.
+		expect(listed.total).toBe(4);
+		expect(listed.items.some((item) => item.email === email('v-spiske'))).toBe(true);
+	});
+
+	it('не даёт выключить собственную учётную запись', async () => {
+		const actor = testActor();
+
+		await expect(deactivateUser(actor, actor.user?.id as string)).rejects.toBeInstanceOf(
+			ConflictError
+		);
+	});
+
+	it('меняет пароль, проверяя текущий, и гасит все сессии', async () => {
+		const created = await newUser({ name: 'smena', password: PASSWORD });
+		const user = await loadSessionUser(created.id);
+		expect(user).not.toBeNull();
+
+		const ctx: ActorContext = { ...anonymous(address(12)), user, scope: { kind: 'all' } };
+		const sessionId = await createSession(created.id, { ip: null, userAgent: null });
+
+		await expect(
+			changePassword(ctx, { current: 'Совсем-Другой1', next: 'Новый-Пароль1' })
+		).rejects.toBeInstanceOf(ValidationError);
+
+		await changePassword(ctx, { current: PASSWORD, next: 'Новый-Пароль1' });
+
+		expect(await touchSession(sessionId)).toBeNull();
+		expect(
+			await login(anonymous(address(12)), { email: created.email, password: PASSWORD })
+		).toMatchObject({ ok: false });
+		expect(
+			await login(anonymous(address(12)), { email: created.email, password: 'Новый-Пароль1' })
+		).toMatchObject({ ok: true });
+
+		expect(await auditOf('auth.password_changed')).toEqual([{ outcome: 'success', details: {} }]);
+
+		const [row] = await database.db
+			.select({ hash: users.passwordHash })
+			.from(users)
+			.where(eq(users.id, created.id));
+		expect(row.hash).toMatch(/^\$argon2id\$/);
+	});
+});

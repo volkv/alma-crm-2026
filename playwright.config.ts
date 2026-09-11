@@ -17,6 +17,9 @@ export default defineConfig({
 	retries: 0,
 	reporter: 'list',
 	use: { baseURL: origin, trace: 'on-first-retry' },
+	// Миграции, каталог ролей и учётные записи прогона — до старта сервера:
+	// страница входа читает настройки из базы с первого же запроса.
+	globalSetup: './e2e/global-setup.ts',
 	projects: [{ name: 'chromium', use: devices['Desktop Chrome'] }],
 	webServer: {
 		command: 'pnpm run build && node build/index.js',
@@ -35,7 +38,8 @@ export default defineConfig({
 			SMTP_HOST: 'localhost',
 			SMTP_PORT: '1025',
 			SESSION_SECRET: 'end-to-end-tests-only-session-secret',
-			DEMO_MODE: 'false',
+			// Демонстрационный вход — часть проверяемого поведения.
+			DEMO_MODE: 'true',
 			TRUST_PROXY: 'false',
 			DATA_DIR: '.playwright/data'
 		}

@@ -20,10 +20,25 @@ describe('validateAuditDetails', () => {
 		}
 	});
 
-	it('отвергает любой ключ, который не является ссылкой', () => {
+	it('пропускает служебные поля запроса и признак демонстрационного входа', () => {
+		expect(
+			validateAuditDetails({ route: '/api/v1/organizations', method: 'GET', status: 200 })
+		).toEqual([]);
+		expect(validateAuditDetails({ demo: true })).toEqual([]);
+	});
+
+	it('отвергает любой ключ, который не является ни ссылкой, ни служебным полем', () => {
 		expect(validateAuditDetails({ comment: 'позвонили в вуз' })).toEqual([
-			'comment: в подробностях допустимы только ссылки вида <что-то>Id'
+			'comment: в подробностях допустимы ссылки вида <что-то>Id и поля route, method, status, demo'
 		]);
+	});
+
+	it('требует у служебных полей их тип', () => {
+		expect(validateAuditDetails({ status: '200' })).toEqual([
+			'status: ожидается значение типа number'
+		]);
+		expect(validateAuditDetails({ route: 42 })).toEqual(['route: ожидается значение типа string']);
+		expect(validateAuditDetails({ demo: 'да' })).toEqual(['demo: ожидается значение типа boolean']);
 	});
 
 	it('требует строку в ссылке и список строк в изменённых полях', () => {

@@ -74,14 +74,36 @@ export const AUDIT_EVENT_TYPES = [
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
 
 /**
- * Подробности события. Разрешены только ссылки на другие записи (ключ
- * заканчивается на `Id`) и список изменённых полей — то есть то, что позволяет
- * найти объект, но само по себе ничего не рассказывает о человеке.
+ * Подробности события. Разрешены ссылки на другие записи (ключ заканчивается на
+ * `Id`), список изменённых полей и закрытый список служебных полей запроса —
+ * то есть то, что позволяет найти объект и понять, что происходило, но само по
+ * себе ничего не рассказывает о человеке.
  */
 export type AuditDetails = {
 	changedFields?: readonly string[];
+	/** Маршрут, по которому пришёл запрос к API: `/api/v1/organizations/[id]`. */
+	route?: string;
+	/** Метод запроса: `GET`, `POST`, … */
+	method?: string;
+	/** Код ответа, которым кончился запрос. */
+	status?: number;
+	/** Вход в публичную демонстрацию: учётная запись общая, а не личная. */
+	demo?: boolean;
 	[key: `${string}Id`]: string | undefined;
 };
+
+/**
+ * Служебные поля и их типы. Список закрыт намеренно: маршрут, метод, код ответа
+ * и признак демонстрационного входа персональных данных не несут, а любое поле
+ * «ещё немного контекста» рано или поздно окажется текстом, который писал
+ * человек.
+ */
+const REQUEST_DETAIL_KEYS = new Map<string, 'string' | 'number' | 'boolean'>([
+	['route', 'string'],
+	['method', 'string'],
+	['status', 'number'],
+	['demo', 'boolean']
+]);
 
 /** Ключи, которые в журнале запрещены прямо: за ними всегда стоят перс. данные. */
 const FORBIDDEN_DETAIL_KEYS = new Set([
@@ -114,8 +136,18 @@ export function validateAuditDetails(details: object): string[] {
 			continue;
 		}
 
+		const expected = REQUEST_DETAIL_KEYS.get(key);
+		if (expected !== undefined) {
+			if (typeof value !== expected) {
+				issues.push(`${key}: ожидается значение типа ${expected}`);
+			}
+			continue;
+		}
+
 		if (!key.endsWith('Id')) {
-			issues.push(`${key}: в подробностях допустимы только ссылки вида <что-то>Id`);
+			issues.push(
+				`${key}: в подробностях допустимы ссылки вида <что-то>Id и поля ${[...REQUEST_DETAIL_KEYS.keys()].join(', ')}`
+			);
 			continue;
 		}
 

@@ -23,10 +23,13 @@
 	 */
 	let {
 		user,
+		demoMode = false,
 		children
 	}: {
 		/** `null` until the session lands; the shell then shows no account menu. */
 		user: SessionUser | null;
+		/** Public demo: say so on every page, the data behind it is invented. */
+		demoMode?: boolean;
 		children: Snippet;
 	} = $props();
 
@@ -89,6 +92,14 @@
 	</aside>
 
 	<div class="flex min-w-0 flex-1 flex-col">
+		{#if demoMode}
+			<p
+				class="shrink-0 bg-warning-soft px-3 py-1 text-center text-xs text-warning-soft-foreground sm:px-4"
+			>
+				Демо-режим: данные синтетические
+			</p>
+		{/if}
+
 		<header
 			class="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-surface px-3 sm:px-4"
 		>
