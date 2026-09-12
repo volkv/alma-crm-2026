@@ -12,6 +12,13 @@
  * (`external_source = 'site'`, `external_id` — идентификатор заявки), и на ней
  * стоит частичная уникальность. Повторный запрос с тем же идентификатором
  * возвращает ту же запись и `created: false`.
+ *
+ * Сборка идёт одной транзакцией. Иначе три запроса с одним идентификатором,
+ * посланные одновременно, оставляли бы в справочнике три организации и трёх
+ * человек, из которых двое ни к чему не относятся: внешняя ссылка отсекает
+ * только само взаимодействие, и отсекает она его последней. Проигравший в
+ * гонке откатывается целиком и отвечает тем же, чем ответил бы обычный
+ * повтор, — прежней записью и `created: false`.
  */
 import { and, eq } from 'drizzle-orm';
 import type { ApplicationIntakeInput, ApplicationResult } from '$lib/contracts/integrations';
@@ -22,16 +29,49 @@ import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
 import { affiliations, interactions, people, products, programs } from '../db/schema';
+import { withTransaction, type Tx } from '../db/transaction';
 import { createAffiliation, createOrganization, createPerson } from '../directory/write';
 import { findOrganizationByInn } from '../directory/read';
-import { ValidationError } from '../errors';
-import { createInteraction } from '../interactions/write';
+import { ConflictError, ValidationError } from '../errors';
+import { createInteractionIn } from '../interactions/write';
 import { requirePermission } from '../rbac';
 import { addComment } from '../stages/commands';
 import { getDefaultRoute } from '../stages/routes';
 
 /** Внешняя система, из которой приходят заявки. */
 const EXTERNAL_SOURCE = 'site';
+
+/** Код PostgreSQL «нарушена уникальность». */
+const UNIQUE_VIOLATION = '23505';
+
+/**
+ * Разошлись ли две одновременные заявки на уникальности.
+ *
+ * Ограничений тут два, и какое сработает — зависит от того, прислал ли сайт
+ * ИНН: внешняя ссылка взаимодействия (`interactions_external_ref_key`) или ИНН
+ * организации (`organizations_inn_key`, его сервис справочника уже перевёл в
+ * `ConflictError`). Что именно сработало — не важно: важно, что запись,
+ * которую мы заводили, завёл кто-то другой. Сам по себе этот признак ничего не
+ * решает — ответ повтором даётся только после того, как найдено готовое
+ * взаимодействие с тем же идентификатором заявки.
+ */
+function isUniqueRace(error: unknown): boolean {
+	if (error instanceof ConflictError) {
+		return true;
+	}
+
+	let current: unknown = error;
+
+	while (current instanceof Error) {
+		if ((current as { code?: unknown }).code === UNIQUE_VIOLATION) {
+			return true;
+		}
+
+		current = current.cause;
+	}
+
+	return false;
+}
 
 /**
  * Должность контактного лица, когда сайт её не спросил. Это не выдуманные
@@ -64,8 +104,8 @@ async function findExistingInteraction(externalId: string): Promise<string | nul
 }
 
 /** Человек, который уже числится в этой организации под тем же адресом почты. */
-async function findContact(organizationId: string, email: string): Promise<string | null> {
-	const [row] = await getDb()
+async function findContact(tx: Tx, organizationId: string, email: string): Promise<string | null> {
+	const [row] = await tx
 		.select({ id: affiliations.id })
 		.from(affiliations)
 		.innerJoin(people, eq(people.id, affiliations.personId))
@@ -75,8 +115,8 @@ async function findContact(organizationId: string, email: string): Promise<strin
 	return row?.id ?? null;
 }
 
-async function assertProgramExists(programId: string): Promise<void> {
-	const [row] = await getDb()
+async function assertProgramExists(tx: Tx, programId: string): Promise<void> {
+	const [row] = await tx
 		.select({ id: programs.id })
 		.from(programs)
 		.where(eq(programs.id, programId))
@@ -89,8 +129,8 @@ async function assertProgramExists(programId: string): Promise<void> {
 	}
 }
 
-async function assertProductExists(productId: string): Promise<void> {
-	const [row] = await getDb()
+async function assertProductExists(tx: Tx, productId: string): Promise<void> {
+	const [row] = await tx
 		.select({ id: products.id })
 		.from(products)
 		.where(eq(products.id, productId))
@@ -150,109 +190,148 @@ export async function receiveApplication(
 		return { interactionId: existing, created: false };
 	}
 
-	if (input.programId !== null) {
-		await assertProgramExists(input.programId);
-	}
-
-	if (input.productId !== null) {
-		await assertProductExists(input.productId);
-	}
-
-	// Сверка только по ИНН: по названию организации не объединяются — «Сибирский
-	// институт» и «СИВТ» одно и то же лицо или два разных, знает человек, а не
-	// строка из формы.
-	const found =
-		input.organization.inn === null
-			? null
-			: await findOrganizationByInn(ctx, input.organization.inn);
-
-	const organizationId =
-		found?.id ??
-		(
-			await createOrganization(ctx, {
-				kind: input.organization.kind,
-				educationLevel: input.organization.educationLevel,
-				// С сайта приходит одно название; полным и кратким становится оно же,
-				// пока сотрудник не уточнит реквизиты.
-				legalName: input.organization.name,
-				shortName: input.organization.name.slice(0, 200),
-				inn: input.organization.inn,
-				kpp: null,
-				ogrn: null,
-				region: null,
-				website: null,
-				notes: null,
-				isActive: true,
-				externalSource: null,
-				externalId: null
-			})
-		).id;
-
-	let affiliationId = await findContact(organizationId, input.contact.email);
-
-	if (affiliationId === null) {
-		const person = await createPerson(ctx, {
-			lastName: input.contact.lastName,
-			firstName: input.contact.firstName,
-			middleName: input.contact.middleName,
-			email: input.contact.email,
-			phone: input.contact.phone,
-			notes: null
-		});
-
-		const affiliation = await createAffiliation(ctx, {
-			personId: person.id,
-			organizationId,
-			siteId: null,
-			position: input.contact.position ?? DEFAULT_POSITION,
-			roleKind: 'other',
-			isPrimary: true,
-			validFrom: formatIsoDay(),
-			validTo: null,
-			channel: null
-		});
-
-		affiliationId = affiliation.id;
-	}
-
+	// Маршрут по умолчанию читается до транзакции: он опубликован задолго до
+	// заявки, и держать его чтение внутри операции незачем.
 	const route = await getDefaultRoute(ctx);
 
-	const interaction = await createInteraction(ctx, {
-		title: interactionTitle(input.organization.name, input.interest),
-		routeId: route.id,
-		agreementPeriodStart: null,
-		agreementPeriodEnd: null,
-		academicPeriodStart: null,
-		academicPeriodEnd: null,
-		ownerUserId,
-		parties: [
-			{
-				organizationId,
-				partyRole: PARTY_ROLE_BY_KIND[input.organization.kind],
-				isPrimary: true,
-				contactAffiliationId: affiliationId,
-				siteIds: []
+	try {
+		return await withTransaction(ctx, async (tx) => {
+			if (input.programId !== null) {
+				await assertProgramExists(tx, input.programId);
 			}
-		],
-		programs:
-			input.programId === null ? [] : [{ programId: input.programId, programVersionId: null }],
-		productIds: input.productId === null ? [] : [input.productId],
-		externalSource: EXTERNAL_SOURCE,
-		externalId: input.externalId
-	});
 
-	const comment = intakeComment(input);
+			if (input.productId !== null) {
+				await assertProductExists(tx, input.productId);
+			}
 
-	if (comment !== null) {
-		await addComment(ctx, { interactionId: interaction.id, body: comment });
+			// Сверка только по ИНН: по названию организации не объединяются —
+			// «Сибирский институт» и «СИВТ» одно и то же лицо или два разных, знает
+			// человек, а не строка из формы.
+			const found =
+				input.organization.inn === null
+					? null
+					: await findOrganizationByInn(ctx, input.organization.inn, tx);
+
+			const organizationId =
+				found?.id ??
+				(
+					await createOrganization(
+						ctx,
+						{
+							kind: input.organization.kind,
+							educationLevel: input.organization.educationLevel,
+							// С сайта приходит одно название; полным и кратким становится оно
+							// же, пока сотрудник не уточнит реквизиты.
+							legalName: input.organization.name,
+							shortName: input.organization.name.slice(0, 200),
+							inn: input.organization.inn,
+							kpp: null,
+							ogrn: null,
+							region: null,
+							website: null,
+							notes: null,
+							isActive: true,
+							externalSource: null,
+							externalId: null
+						},
+						tx
+					)
+				).id;
+
+			let affiliationId = await findContact(tx, organizationId, input.contact.email);
+
+			if (affiliationId === null) {
+				const person = await createPerson(
+					ctx,
+					{
+						lastName: input.contact.lastName,
+						firstName: input.contact.firstName,
+						middleName: input.contact.middleName,
+						email: input.contact.email,
+						phone: input.contact.phone,
+						notes: null
+					},
+					tx
+				);
+
+				const affiliation = await createAffiliation(
+					ctx,
+					{
+						personId: person.id,
+						organizationId,
+						siteId: null,
+						position: input.contact.position ?? DEFAULT_POSITION,
+						roleKind: 'other',
+						isPrimary: true,
+						validFrom: formatIsoDay(),
+						validTo: null,
+						channel: null
+					},
+					tx
+				);
+
+				affiliationId = affiliation.id;
+			}
+
+			const interactionId = await createInteractionIn(ctx, tx, {
+				title: interactionTitle(input.organization.name, input.interest),
+				routeId: route.id,
+				agreementPeriodStart: null,
+				agreementPeriodEnd: null,
+				academicPeriodStart: null,
+				academicPeriodEnd: null,
+				ownerUserId,
+				parties: [
+					{
+						organizationId,
+						partyRole: PARTY_ROLE_BY_KIND[input.organization.kind],
+						isPrimary: true,
+						contactAffiliationId: affiliationId,
+						siteIds: []
+					}
+				],
+				programs:
+					input.programId === null ? [] : [{ programId: input.programId, programVersionId: null }],
+				productIds: input.productId === null ? [] : [input.productId],
+				externalSource: EXTERNAL_SOURCE,
+				externalId: input.externalId
+			});
+
+			const comment = intakeComment(input);
+
+			if (comment !== null) {
+				await addComment(ctx, { interactionId, body: comment }, tx);
+			}
+
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'integrations.application_received',
+					outcome: 'success',
+					subject: { type: 'interaction', id: interactionId },
+					details: { interactionId, organizationId }
+				},
+				tx
+			);
+
+			return { interactionId, created: true };
+		});
+	} catch (error) {
+		if (!isUniqueRace(error)) {
+			throw error;
+		}
+
+		// Пока шла наша транзакция, эту же заявку завёл соседний запрос: наша
+		// откатилась целиком, а ответ обязан быть тем же, что у обычного повтора.
+		const created = await findExistingInteraction(input.externalId);
+
+		// Взаимодействия нет — значит, столкнулись не две одинаковые заявки, а
+		// что-то другое (например, ИНН занят организацией из чужой заявки).
+		// Такой отказ уходит наверх как есть: повтором он не является.
+		if (created === null) {
+			throw error;
+		}
+
+		return { interactionId: created, created: false };
 	}
-
-	await recordAuditEvent(ctx, {
-		type: 'integrations.application_received',
-		outcome: 'success',
-		subject: { type: 'interaction', id: interaction.id },
-		details: { interactionId: interaction.id, organizationId }
-	});
-
-	return { interactionId: interaction.id, created: true };
 }

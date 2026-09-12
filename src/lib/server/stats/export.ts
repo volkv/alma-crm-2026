@@ -13,8 +13,8 @@
  *   сортируется, а выглядит как число — то есть врёт молча;
  * - **текст обезвреживается.** Значение, начинающееся с `=`, `+`, `-` или `@`,
  *   таблица читает как формулу, и название организации из чужой выгрузки
- *   выполнится у того, кто открыл файл. Правило то же, что у выгрузки журнала
- *   в CSV: впереди ставится апостроф, которым таблицы помечают «это текст».
+ *   выполнится у того, кто открыл файл. Правило одно на все выгрузки продукта —
+ *   `spreadsheetText` (`src/lib/server/spreadsheet.ts`).
  */
 import ExcelJS from 'exceljs';
 import {
@@ -30,26 +30,12 @@ import {
 	type StatMeasures
 } from '$lib/contracts/stats';
 import { formatDate, formatDateTime, formatIsoDay } from '$lib/format';
+import { spreadsheetText } from '../spreadsheet';
 import { statFileMime } from './format';
-
-/**
- * Символы, с которых Excel, LibreOffice и Google Sheets начинают читать ячейку
- * как формулу. Табуляция и возврат каретки в том же списке: таблица съедает их
- * при разборе, и следующий за ними знак равенства оказывается первым.
- */
-const FORMULA_STARTS = ['=', '+', '-', '@', '\t', '\r'];
-
-/**
- * Текст в ячейку. Апостроф впереди не показывается в самой ячейке, но снимает
- * с содержимого значение формулы.
- */
-export function excelText(value: string): string {
-	return FORMULA_STARTS.some((start) => value.startsWith(start)) ? `'${value}` : value;
-}
 
 /** Текст, которого может не быть: пустая ячейка вместо выдуманного значения. */
 function optionalText(value: string | null): string | null {
-	return value === null ? null : excelText(value);
+	return value === null ? null : spreadsheetText(value);
 }
 
 export type StatsReport = {
@@ -111,7 +97,7 @@ function fillSummary(workbook: ExcelJS.Workbook, view: StatDashboardView, day: s
 	sheet.columns = [{ width: 34 }, { width: 16 }, { width: 46 }, { width: 14 }, { width: 14 }];
 
 	const head = (label: string, value: string): void => {
-		sheet.addRow([excelText(label), excelText(value)]);
+		sheet.addRow([spreadsheetText(label), spreadsheetText(value)]);
 	};
 
 	head('Отчётный период', `${formatDate(view.period.start)} — ${formatDate(view.period.end)}`);
@@ -129,14 +115,14 @@ function fillSummary(workbook: ExcelJS.Workbook, view: StatDashboardView, day: s
 
 	for (const tile of statDashboardTiles(view.totals)) {
 		sheet.addRow([
-			excelText(tile.unit === 'percent' ? `${tile.label}, %` : tile.label),
+			spreadsheetText(tile.unit === 'percent' ? `${tile.label}, %` : tile.label),
 			tile.value,
-			excelText(tile.value === null ? 'нет данных' : tile.hint)
+			spreadsheetText(tile.value === null ? 'нет данных' : tile.hint)
 		]);
 
 		for (const extra of tile.extra) {
 			sheet.addRow([
-				excelText(`    ${extra.label}`),
+				spreadsheetText(`    ${extra.label}`),
 				extra.value,
 				extra.value === null ? 'нет данных' : null
 			]);
@@ -154,7 +140,7 @@ function fillSummary(workbook: ExcelJS.Workbook, view: StatDashboardView, day: s
 
 	for (const group of view.groups) {
 		sheet.addRow([
-			excelText(STAT_PROGRAM_GROUP_LABELS[group.group]),
+			spreadsheetText(STAT_PROGRAM_GROUP_LABELS[group.group]),
 			group.programCount,
 			...measureCells(group)
 		]);
@@ -178,8 +164,8 @@ function fillPrograms(workbook: ExcelJS.Workbook, view: StatDashboardView): void
 	view.ranking.forEach((item, index) => {
 		sheet.addRow([
 			index + 1,
-			excelText(item.programCode),
-			excelText(item.programName),
+			spreadsheetText(item.programCode),
+			spreadsheetText(item.programName),
 			item.score,
 			item.organizationCount,
 			...item.explanation.flatMap((part) => [part.value, part.contribution])
@@ -195,7 +181,7 @@ function fillOrganizations(workbook: ExcelJS.Workbook, view: StatDashboardView):
 	]);
 
 	for (const row of view.organizations) {
-		sheet.addRow([excelText(row.organizationName), row.programCount, ...measureCells(row)]);
+		sheet.addRow([spreadsheetText(row.organizationName), row.programCount, ...measureCells(row)]);
 	}
 }
 
@@ -211,8 +197,8 @@ function fillSources(workbook: ExcelJS.Workbook, view: StatDashboardView): void 
 
 	for (const source of view.sources) {
 		sheet.addRow([
-			excelText(STAT_SOURCE_LABELS[source.source]),
-			excelText(STAT_SNAPSHOT_MODE_LABELS[source.mode]),
+			spreadsheetText(STAT_SOURCE_LABELS[source.source]),
+			spreadsheetText(STAT_SNAPSHOT_MODE_LABELS[source.mode]),
 			optionalText(source.fileName),
 			optionalText(source.authorName),
 			source.confirmedAt === null ? null : formatDateTime(source.confirmedAt),

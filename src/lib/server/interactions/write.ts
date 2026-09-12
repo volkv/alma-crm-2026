@@ -188,57 +188,72 @@ async function writeRelations(
 	}
 }
 
-export async function createInteraction(
+/**
+ * Заведение взаимодействия внутри уже открытой транзакции. Возвращает
+ * идентификатор, а не представление: собрать представление можно только после
+ * фиксации — до неё записи нет ни для одного другого соединения.
+ *
+ * Отдельной функцией по тому же образцу, что `startInteractionIn`: транзакцию
+ * открывает тот, кто отвечает за операцию целиком, а заявка с сайта заводит
+ * организацию, человека, его роль и взаимодействие одной операцией.
+ */
+export async function createInteractionIn(
 	ctx: ActorContext,
+	tx: Tx,
 	input: CreateInteractionInput
-): Promise<InteractionView> {
+): Promise<string> {
 	requirePermission(ctx, 'interactions.write');
 
 	const definition = parseCreate(input);
 
-	const interactionId = await withTransaction(ctx, async (tx) => {
-		await assertRoutePublished(tx, definition.routeId);
-		await assertPartiesAllowed(ctx, tx, definition.parties);
-		await assertOwnerExists(tx, definition.ownerUserId);
+	await assertRoutePublished(tx, definition.routeId);
+	await assertPartiesAllowed(ctx, tx, definition.parties);
+	await assertOwnerExists(tx, definition.ownerUserId);
 
-		const [created] = await tx
-			.insert(interactions)
-			.values({
-				title: definition.title,
-				routeId: definition.routeId,
-				agreementPeriodStart: definition.agreementPeriodStart,
-				agreementPeriodEnd: definition.agreementPeriodEnd,
-				academicPeriodStart: definition.academicPeriodStart,
-				academicPeriodEnd: definition.academicPeriodEnd,
-				ownerUserId: definition.ownerUserId,
-				externalSource: definition.externalSource,
-				externalId: definition.externalId
-			})
-			.returning({ id: interactions.id, routeId: interactions.routeId });
+	const [created] = await tx
+		.insert(interactions)
+		.values({
+			title: definition.title,
+			routeId: definition.routeId,
+			agreementPeriodStart: definition.agreementPeriodStart,
+			agreementPeriodEnd: definition.agreementPeriodEnd,
+			academicPeriodStart: definition.academicPeriodStart,
+			academicPeriodEnd: definition.academicPeriodEnd,
+			ownerUserId: definition.ownerUserId,
+			externalSource: definition.externalSource,
+			externalId: definition.externalId
+		})
+		.returning({ id: interactions.id, routeId: interactions.routeId });
 
-		await writeRelations(tx, created.id, definition);
+	await writeRelations(tx, created.id, definition);
 
-		await recordAuditEvent(
-			ctx,
-			{
-				type: 'interactions.created',
-				outcome: 'success',
-				subject: { type: 'interaction', id: created.id },
-				details: { routeId: definition.routeId }
-			},
-			tx
-		);
+	await recordAuditEvent(
+		ctx,
+		{
+			type: 'interactions.created',
+			outcome: 'success',
+			subject: { type: 'interaction', id: created.id },
+			details: { routeId: definition.routeId }
+		},
+		tx
+	);
 
-		// Взаимодействие начинает путь сразу: запись, которая ни на какой стадии
-		// не стоит, не отвечает на вопрос «что с ней происходит».
-		await startInteractionIn(ctx, tx, {
-			id: created.id,
-			routeId: created.routeId,
-			ownerUserId: definition.ownerUserId
-		});
-
-		return created.id;
+	// Взаимодействие начинает путь сразу: запись, которая ни на какой стадии
+	// не стоит, не отвечает на вопрос «что с ней происходит».
+	await startInteractionIn(ctx, tx, {
+		id: created.id,
+		routeId: created.routeId,
+		ownerUserId: definition.ownerUserId
 	});
+
+	return created.id;
+}
+
+export async function createInteraction(
+	ctx: ActorContext,
+	input: CreateInteractionInput
+): Promise<InteractionView> {
+	const interactionId = await withTransaction(ctx, (tx) => createInteractionIn(ctx, tx, input));
 
 	return getInteraction(ctx, interactionId);
 }

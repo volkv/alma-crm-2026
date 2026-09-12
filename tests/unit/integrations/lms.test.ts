@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { lmsSettingsFormSchema, lmsSettingsSchema } from '$lib/contracts/integrations';
 import { hasCompleted, isStudent, type MoodleClient } from '$lib/server/integrations/lms/moodle';
 import { academicYearOf, collectRows, toCsv } from '$lib/server/integrations/lms/sync';
 import {
@@ -177,6 +178,25 @@ describe('сборка строк выгрузки', () => {
 		expect(toCsv(await collectRows(client), period)).toBe(toCsv(await collectRows(client), period));
 	});
 
+	it('обезвреживает название вуза, приехавшее из чужой системы', () => {
+		// Поле `institution` заполняет тот, кто ведёт слушателей в LMS, а
+		// собранный CSV лежит в разделе документов и открывается таблицей.
+		const csv = toCsv(
+			[
+				{
+					organization: '=HYPERLINK("http://attacker.example","Отчёт")',
+					program: 'VO-MAG-01',
+					enrolled: 1,
+					completed: 0
+				}
+			],
+			{ start: '2026-09-01', end: '2027-08-31' }
+		);
+
+		expect(csv).toContain('"\'=HYPERLINK');
+		expect(csv).not.toContain('"=HYPERLINK');
+	});
+
 	it('не заводит колонку заявок: LMS о них ничего не знает', async () => {
 		const csv = toCsv(await collectRows(client), { start: '2026-09-01', end: '2027-08-31' });
 
@@ -184,6 +204,38 @@ describe('сборка строк выгрузки', () => {
 			'Организация;Программа;Начало периода;Конец периода;Зачислено;Завершили обучение'
 		);
 		expect(csv).not.toContain('Заявки');
+	});
+});
+
+describe('адрес системы обучения', () => {
+	const settings = (baseUrl: string) =>
+		lmsSettingsSchema.safeParse({ baseUrl, token: 'x', enabled: false, syncIntervalMinutes: 60 });
+
+	it('принимает https и адрес на этой же машине', () => {
+		expect(settings('https://lms.example.org').success).toBe(true);
+		expect(settings('http://localhost:3000/mock-lms').success).toBe(true);
+		expect(settings('http://127.0.0.1:8080').success).toBe(true);
+	});
+
+	it('не принимает http на чужую машину: сервер несёт туда токен веб-сервиса', () => {
+		expect(settings('http://lms.internal/moodle').success).toBe(false);
+		expect(settings('http://10.0.0.7:8080').success).toBe(false);
+	});
+
+	it('то же правило действует и в форме настроек', () => {
+		const form = (baseUrl: string) =>
+			lmsSettingsFormSchema.safeParse({
+				baseUrl,
+				token: '',
+				enabled: false,
+				syncIntervalMinutes: 60
+			});
+
+		expect(form('https://lms.example.org').success).toBe(true);
+		// Пустое поле означает «адреса нет», а не «адрес не годится».
+		expect(form('').success).toBe(true);
+		expect(form('http://lms.internal/moodle').success).toBe(false);
+		expect(form('ftp://lms.example.org').success).toBe(false);
 	});
 });
 

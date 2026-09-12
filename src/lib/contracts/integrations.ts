@@ -58,19 +58,23 @@ export function matchesWebhookEvent(patterns: readonly string[], type: string): 
 }
 
 /**
- * Куда можно слать вебхук.
+ * Куда система вообще ходит сама — и в приёмник вебхука, и в систему обучения.
  *
- * Только `https`: тело несёт коды событий и ссылки на записи, и по открытому
- * каналу их читает любой посредник. Исключение — адрес на этой же машине
- * (`http://localhost`, `127.0.0.1`, `[::1]`) и `host.docker.internal`: на
- * демонстрации приёмник поднимают рядом, и требовать от него сертификат
- * значило бы запретить проверку самой связки.
+ * Только `https`: наружу уходят коды событий, ссылки на записи и токен чужого
+ * веб-сервиса, и по открытому каналу их читает любой посредник. Исключение —
+ * адрес на этой же машине (`http://localhost`, `127.0.0.1`, `[::1]`) и
+ * `host.docker.internal`: на демонстрации и приёмник, и заглушка LMS
+ * поднимаются рядом, и требовать от них сертификат значило бы запретить
+ * проверку самой связки.
+ *
+ * Правило одно на оба случая намеренно: адрес, который задаёт человек, а идёт
+ * по нему сервер, — это одна и та же опасность, откуда бы его ни ввели.
  *
  * Возвращает претензию словами или `null`, если адрес годится.
  */
 const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1', 'host.docker.internal']);
 
-export function webhookUrlIssue(raw: string): string | null {
+export function outboundUrlIssue(raw: string): string | null {
 	let parsed: URL;
 
 	try {
@@ -84,12 +88,12 @@ export function webhookUrlIssue(raw: string): string | null {
 	}
 
 	if (parsed.protocol !== 'http:') {
-		return 'Вебхук отправляется по http или https';
+		return 'Адрес указывают по http или https';
 	}
 
 	return LOOPBACK_HOSTS.has(parsed.hostname)
 		? null
-		: 'По http принимает только адрес на этой же машине (localhost, 127.0.0.1, host.docker.internal); остальным нужен https';
+		: 'По http принимается только адрес на этой же машине (localhost, 127.0.0.1, host.docker.internal); остальным нужен https';
 }
 
 const webhookUrlField = z
@@ -97,8 +101,8 @@ const webhookUrlField = z
 	.trim()
 	.min(1, { error: 'Укажите адрес приёмника' })
 	.max(2000, { error: 'Адрес не длиннее 2000 символов' })
-	.refine((value) => webhookUrlIssue(value) === null, {
-		error: (issue) => webhookUrlIssue(String(issue.input)) ?? 'Адрес не годится'
+	.refine((value) => outboundUrlIssue(value) === null, {
+		error: (issue) => outboundUrlIssue(String(issue.input)) ?? 'Адрес не годится'
 	});
 
 const webhookEventField = z
@@ -146,8 +150,8 @@ export const WEBHOOK_STATES = ['idle', 'delivering', 'failed'] as const;
 export type WebhookState = (typeof WEBHOOK_STATES)[number];
 
 export const WEBHOOK_STATE_LABELS: Record<WebhookState, string> = {
-	idle: 'Доставляется',
-	delivering: 'Есть неотправленные',
+	idle: 'Нет неотправленных',
+	delivering: 'Доставляется',
 	failed: 'Доставка не удалась'
 };
 
@@ -224,9 +228,16 @@ export const INTEGRATION_SETTING_KEYS = {
 } as const;
 
 export const lmsSettingsSchema = z.object({
-	/** Адрес Moodle без хвоста: `https://lms.example.org`. */
+	/**
+	 * Адрес Moodle без хвоста: `https://lms.example.org`. Правило то же, что у
+	 * приёмника вебхука: сервер идёт по этому адресу сам и несёт туда токен
+	 * веб-сервиса.
+	 */
 	baseUrl: z
-		.url({ error: 'Адрес указывают полностью, вместе с https://', protocol: /^https?$/ })
+		.string()
+		.refine((value) => outboundUrlIssue(value) === null, {
+			error: (issue) => outboundUrlIssue(String(issue.input)) ?? 'Адрес не годится'
+		})
 		.nullable()
 		.default(null),
 	/** Токен веб-сервиса. Наружу не отдаётся — только признак «сохранён». */
@@ -256,8 +267,10 @@ export const lmsSettingsFormSchema = z.object({
 		.string()
 		.trim()
 		.max(2000)
-		.refine((value) => value === '' || /^https?:\/\/\S+$/.test(value), {
-			error: 'Адрес указывают полностью, вместе с https://'
+		.refine((value) => value === '' || outboundUrlIssue(value) === null, {
+			error: (issue) =>
+				(String(issue.input) === '' ? null : outboundUrlIssue(String(issue.input))) ??
+				'Адрес не годится'
 		}),
 	token: optionalText(500),
 	enabled: z.boolean().default(false),

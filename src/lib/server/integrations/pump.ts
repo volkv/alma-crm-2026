@@ -55,6 +55,24 @@ import { LMS_LAST_RUN_KEY, PUMP_LOCK_KEY, webhookSentKey } from './redis-keys';
 const BATCH = 50;
 
 /**
+ * Насколько цикл отстаёт от настоящего времени, читая журнал.
+ *
+ * Курсор подписки идёт по паре «момент события и идентификатор», а момент — это
+ * `now()` PostgreSQL, то есть время **начала** транзакции, в которой событие
+ * записано. Транзакция может закоммититься позже соседней, а момент у неё
+ * останется более ранним: событие появится в журнале уже позади курсора, и
+ * подписка не увидит его никогда.
+ *
+ * Поэтому курсор не подходит к настоящему времени ближе, чем на этот срок:
+ * пока транзакция короче него, её событие успевает стать видимым до того, как
+ * курсор дойдёт до соответствующего момента. Цена — доставка идёт с задержкой
+ * до этого срока; гарантия — событие из транзакции короче него не теряется.
+ * Повторное чтение того же окна безопасно: вторую отправку гасит отметка
+ * `claimEvent`.
+ */
+export const JOURNAL_LAG_SECONDS = 30;
+
+/**
  * Сколько живёт отметка «это событие в эту подписку уже уходило». Дольше
  * последнего повтора: отметка страхует от второй отправки, и исчезнуть она
  * должна позже, чем событие перестанут пытаться доставить.
@@ -118,7 +136,8 @@ function filterCondition(events: readonly string[]): SQL | undefined {
 /** События журнала после курсора, подходящие под фильтр подписки. */
 async function readJournalAfter(
 	cursor: JournalCursor,
-	events: readonly string[]
+	events: readonly string[],
+	lagSeconds: number
 ): Promise<
 	{
 		id: string;
@@ -153,7 +172,11 @@ async function readJournalAfter(
 				// Пара «момент и идентификатор»: у событий одной миллисекунды
 				// порядок задаёт `id`, иначе запись с границы выборки уехала бы
 				// дважды или не уехала вовсе.
-				sql`(${auditEvents.occurredAt}, ${auditEvents.id}) > (${cursor.at}::timestamptz, ${cursor.id}::uuid)`
+				sql`(${auditEvents.occurredAt}, ${auditEvents.id}) > (${cursor.at}::timestamptz, ${cursor.id}::uuid)`,
+				// Верхняя граница — по часам той же базы, что проставила момент:
+				// сравнивать её собственный `now()` с часами приложения значило бы
+				// добавить к сроку ещё и расхождение двух машин.
+				sql`${auditEvents.occurredAt} <= now() - make_interval(secs => ${lagSeconds}::double precision)`
 			)
 		)
 		.orderBy(asc(auditEvents.occurredAt), asc(auditEvents.id))
@@ -223,7 +246,8 @@ async function handleFailure(
 async function pumpSubscription(
 	ctx: ActorContext,
 	subscription: StoredWebhook,
-	report: DeliveryReport
+	report: DeliveryReport,
+	lagSeconds: number
 ): Promise<void> {
 	const failedEventIds: string[] = [];
 	let delivered = 0;
@@ -252,7 +276,7 @@ async function pumpSubscription(
 
 	let moved = cursor;
 
-	for (const row of await readJournalAfter(cursor, subscription.events)) {
+	for (const row of await readJournalAfter(cursor, subscription.events, lagSeconds)) {
 		moved = { at: row.occurredAt.toISOString(), id: row.id };
 
 		if (!(await claimEvent(subscription.id, row.id))) {
@@ -305,8 +329,16 @@ async function pumpSubscription(
 /**
  * Проход по всем включённым подпискам. Зовётся таймером и проверками; своего
  * замка не берёт — им распоряжается `runIntegrationsCycle`.
+ *
+ * `lagSeconds` — отставание курсора от настоящего времени (`JOURNAL_LAG_SECONDS`
+ * по умолчанию). Значение задаётся параметром, потому что иначе проверка этой
+ * самой гарантии ждала бы полминуты вместо того, чтобы её проверять.
  */
-export async function runDeliveryCycle(ctx: ActorContext): Promise<DeliveryReport> {
+export async function runDeliveryCycle(
+	ctx: ActorContext,
+	options: { lagSeconds?: number } = {}
+): Promise<DeliveryReport> {
+	const lagSeconds = options.lagSeconds ?? JOURNAL_LAG_SECONDS;
 	const report: DeliveryReport = { subscriptions: 0, delivered: 0, failed: 0, retried: 0 };
 
 	for (const subscription of await readSubscriptions()) {
@@ -315,7 +347,7 @@ export async function runDeliveryCycle(ctx: ActorContext): Promise<DeliveryRepor
 		}
 
 		report.subscriptions += 1;
-		await pumpSubscription(ctx, subscription, report);
+		await pumpSubscription(ctx, subscription, report, lagSeconds);
 	}
 
 	return report;

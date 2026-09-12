@@ -177,6 +177,14 @@ export const actions: Actions = {
 			id: FORM_IDS.lms
 		});
 
+		const token = form.data.token;
+
+		// Токен не возвращается в браузер ни при каком исходе — как пароль на
+		// странице входа: ответ действия перерисовывает форму её же данными, и
+		// токен веб-сервиса оказался бы в разметке ответа, хотя на экране его не
+		// показывают даже сохранённым.
+		form.data.token = null;
+
 		if (!form.valid) {
 			return fail(400, { form });
 		}
@@ -187,7 +195,7 @@ export const actions: Actions = {
 				// Пустое поле означает «оставить прежний токен»: показать сохранённый
 				// нельзя, и требовать набирать его заново ради смены адреса значило
 				// бы заставлять хранить его в переписке.
-				token: form.data.token,
+				token,
 				enabled: form.data.enabled,
 				syncIntervalMinutes: form.data.syncIntervalMinutes
 			});

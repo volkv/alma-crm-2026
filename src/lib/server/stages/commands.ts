@@ -859,23 +859,29 @@ export async function setResponsible(
 	});
 }
 
+/**
+ * Комментарий к взаимодействию. `tx` передаёт тот, кто уже открыл транзакцию:
+ * первый комментарий заявки с сайта пишется в той же операции, что и сама
+ * заявка, — своей транзакции вложенный вызов не начинает.
+ */
 export async function addComment(
 	ctx: ActorContext,
-	input: CreateCommentInput
+	input: CreateCommentInput,
+	tx?: Tx
 ): Promise<{ id: string }> {
 	requirePermission(ctx, 'interactions.write');
 
 	const authorId = actingUserId(ctx);
 
-	return withTransaction(ctx, async (tx) => {
-		await lockInteraction(ctx, tx, input.interactionId);
+	const write = async (executor: Tx): Promise<{ id: string }> => {
+		await lockInteraction(ctx, executor, input.interactionId);
 
-		const [comment] = await tx
+		const [comment] = await executor
 			.insert(comments)
 			.values({ interactionId: input.interactionId, authorId, body: input.body })
 			.returning({ id: comments.id });
 
-		await touchInteraction(tx, input.interactionId);
+		await touchInteraction(executor, input.interactionId);
 
 		await recordAuditEvent(
 			ctx,
@@ -885,11 +891,13 @@ export async function addComment(
 				subject: { type: 'interaction', id: input.interactionId },
 				details: { commentId: comment.id }
 			},
-			tx
+			executor
 		);
 
 		return comment;
-	});
+	};
+
+	return tx === undefined ? withTransaction(ctx, write) : write(tx);
 }
 
 /**

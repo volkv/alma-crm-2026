@@ -58,11 +58,20 @@ import {
 	programVersions,
 	sites
 } from '../db/schema';
+import type { Tx } from '../db/transaction';
 import { NotFoundError } from '../errors';
 import { withPiiTrace } from '../people/pii-trace';
 import { retentionExpired } from '../people/retention';
 import { toPersonView } from '../people/serialize';
 import { can, requirePermission, scopeFilter } from '../rbac';
+
+/**
+ * Кто выполняет выборку: транзакция вызывающего или общий пул. Чтение внутри
+ * чужой транзакции обязано видеть то, что она уже записала, но ещё не
+ * закоммитила, — иначе заведение организации и роли в ней одной операцией
+ * распадается на «организации нет».
+ */
+type Executor = Tx | ReturnType<typeof getDb>;
 
 export function toOrganizationView(row: typeof organizations.$inferSelect): OrganizationView {
 	return {
@@ -131,10 +140,14 @@ export async function listOrganizations(
 	};
 }
 
-export async function getOrganization(ctx: ActorContext, id: string): Promise<OrganizationView> {
+export async function getOrganization(
+	ctx: ActorContext,
+	id: string,
+	executor: Executor = getDb()
+): Promise<OrganizationView> {
 	requirePermission(ctx, 'organizations.read');
 
-	const [row] = await getDb()
+	const [row] = await executor
 		.select()
 		.from(organizations)
 		.where(and(eq(organizations.id, id), scopeFilter(ctx, organizations.id)))
@@ -436,11 +449,12 @@ export async function listOrganizationRows(
  */
 export async function findOrganizationByInn(
 	ctx: ActorContext,
-	inn: string
+	inn: string,
+	executor: Executor = getDb()
 ): Promise<LookupOption | null> {
 	requirePermission(ctx, 'organizations.read');
 
-	const [row] = await getDb()
+	const [row] = await executor
 		.select({ id: organizations.id, label: organizations.shortName })
 		.from(organizations)
 		.where(and(eq(organizations.inn, inn), scopeFilter(ctx, organizations.id)))
@@ -449,10 +463,14 @@ export async function findOrganizationByInn(
 	return row ?? null;
 }
 
-export async function getSite(ctx: ActorContext, id: string): Promise<SiteView> {
+export async function getSite(
+	ctx: ActorContext,
+	id: string,
+	executor: Executor = getDb()
+): Promise<SiteView> {
 	requirePermission(ctx, 'organizations.read');
 
-	const [row] = await getDb()
+	const [row] = await executor
 		.select({
 			id: sites.id,
 			organizationId: sites.organizationId,

@@ -14,7 +14,7 @@
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
 import type { StatDashboardView } from '$lib/contracts/stats';
-import { buildStatsReport, excelText, statsReportFileName } from '$lib/server/stats/export';
+import { buildStatsReport, statsReportFileName } from '$lib/server/stats/export';
 
 /** Название, которое таблица прочитает как формулу, если его не обезвредить. */
 const DANGEROUS_NAME = '=HYPERLINK("http://attacker.example","Отчёт")';
@@ -149,17 +149,8 @@ function findRow(worksheet: ExcelJS.Worksheet, text: string): unknown[] {
 }
 
 describe('обезвреживание формул', () => {
-	it('помечает как текст всё, что таблица прочитала бы формулой', () => {
-		for (const start of ['=', '+', '-', '@', '\t', '\r']) {
-			expect(excelText(`${start}CMD()`)).toBe(`'${start}CMD()`);
-		}
-	});
-
-	it('не трогает обычный текст', () => {
-		expect(excelText('Академия связи')).toBe('Академия связи');
-		expect(excelText('Программа 2+2')).toBe('Программа 2+2');
-	});
-
+	// Само правило проверяется в `tests/unit/spreadsheet.test.ts`; здесь — то,
+	// что книга через него действительно проходит.
 	it('уносит в книгу название организации текстом, а не формулой', async () => {
 		const workbook = await readReport();
 		const organizations = sheet(workbook, 'Вузы и площадки');

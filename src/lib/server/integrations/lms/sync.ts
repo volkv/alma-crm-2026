@@ -15,21 +15,31 @@
  * состоянии «проверен», и его видно в разделе «Данные».
  *
  * Повторный заход за тот же период с тем же содержимым снимка не создаёт:
- * отпечаток выгрузки лежит в Redis (`lms:claim:<отпечаток>`), и второй такой
- * же заход честно сообщает, что изменений нет.
+ * ответ на вопрос «это уже загружено?» даёт сама база — снимок источника `lms`
+ * за тот же период, собранный из файла с тем же отпечатком.
  */
-import { createHash } from 'node:crypto';
+import { and, eq, ne } from 'drizzle-orm';
 import type { LmsSyncState } from '$lib/contracts/integrations';
 import type { StatMapping } from '$lib/contracts/stats';
 import { formatIsoDay } from '$lib/format';
 import type { ActorContext } from '../../actor';
 import { recordAuditEvent } from '../../audit';
+import { getDb } from '../../db';
+import { documents, statSnapshots } from '../../db/schema';
+import { sha256Hex } from '../../documents/storage';
 import { requirePermission } from '../../rbac';
 import { getRedis } from '../../redis';
+import { spreadsheetText } from '../../spreadsheet';
 import { applyMapping, createSnapshot, validateSnapshot } from '../../stats/import';
-import { LMS_STATE_KEY, lmsClaimKey } from '../redis-keys';
+import { LMS_STATE_KEY } from '../redis-keys';
 import { getLmsSettings } from '../settings';
-import { createMoodleClient, hasCompleted, isStudent, type MoodleClient } from './moodle';
+import {
+	createMoodleClient,
+	hasCompleted,
+	isStudent,
+	MoodleError,
+	type MoodleClient
+} from './moodle';
 
 /** Источник снимка: тот же код, что в справочнике источников `STAT_SOURCES`. */
 const SOURCE = 'lms';
@@ -61,9 +71,6 @@ const MAPPING: StatMapping = {
 	[COLUMNS.completed]: 'completed'
 };
 
-/** Сколько живёт отпечаток выгрузки: дольше самого редкого расписания. */
-const CLAIM_TTL_SECONDS = 30 * 24 * 60 * 60;
-
 /**
  * Учебный год, в котором мы сейчас: с 1 сентября по 31 августа. Считается по
  * московскому календарю — как и всё остальное время в продукте.
@@ -83,9 +90,16 @@ type SyncRow = {
 	completed: number;
 };
 
-/** Значение в CSV: разделитель и кавычки внутри значения не должны его рвать. */
+/**
+ * Значение в CSV. Разделитель и кавычки внутри значения не должны его рвать, а
+ * само значение — выполниться формулой: названия вузов приезжают из чужой
+ * системы, и `=HYPERLINK(...)` в поле `institution` иначе сработал бы у того,
+ * кто открыл файл выгрузки в разделе документов.
+ */
 function csvCell(value: string): string {
-	return /[";\r\n]/.test(value) ? `"${value.replaceAll('"', '""')}"` : value;
+	const safe = spreadsheetText(value);
+
+	return /[";\r\n]/.test(safe) ? `"${safe.replaceAll('"', '""')}"` : safe;
 }
 
 export function toCsv(rows: readonly SyncRow[], period: { start: string; end: string }): string {
@@ -171,11 +185,39 @@ export async function collectRows(client: MoodleClient): Promise<SyncRow[]> {
 	);
 }
 
-/** Отпечаток выгрузки: источник, период и содержимое таблицы. */
-export function fingerprintOf(period: { start: string; end: string }, csv: string): string {
-	return createHash('sha256')
-		.update(`${SOURCE}|${period.start}|${period.end}|${csv}`, 'utf8')
-		.digest('hex');
+/**
+ * Загружена ли уже такая выгрузка.
+ *
+ * Вопрос задаётся базе, а не отметке в Redis. «Та же выгрузка» — это снимок
+ * источника `lms` за тот же период, собранный из файла с тем же отпечатком, и
+ * всё это в базе уже есть: отдельная отметка со своим сроком жизни была бы
+ * вторым ответом на тот же вопрос — и расходилась бы с первым, стоило снимку
+ * исчезнуть вместе с базой стенда.
+ *
+ * Отклонённый снимок в счёт не идёт: его отклонили именно для того, чтобы
+ * загрузить данные заново, и отметка, пережившая отклонение, оставила бы
+ * период без данных до конца своего срока.
+ */
+async function isAlreadyLoaded(
+	period: { start: string; end: string },
+	sha256: string
+): Promise<boolean> {
+	const [row] = await getDb()
+		.select({ id: statSnapshots.id })
+		.from(statSnapshots)
+		.innerJoin(documents, eq(documents.id, statSnapshots.fileDocumentId))
+		.where(
+			and(
+				eq(statSnapshots.source, SOURCE),
+				eq(statSnapshots.periodStart, period.start),
+				eq(statSnapshots.periodEnd, period.end),
+				ne(statSnapshots.status, 'rejected'),
+				eq(documents.sha256, sha256)
+			)
+		)
+		.limit(1);
+
+	return row !== undefined;
 }
 
 async function writeState(state: LmsSyncState): Promise<void> {
@@ -196,6 +238,11 @@ export async function readLmsState(): Promise<LmsSyncState | null> {
  * увидеть его словами в разделе «Интеграции» и строкой в журнале. Отказ по
  * правам — другое дело: он выносится до всякой работы и летит наверх, как у
  * любого другого действия.
+ *
+ * Отказ самой LMS сотрудник видит одним текстом, без её кода ответа: адрес
+ * площадки задаёт человек, и раздел, различающий «ответила 403» и
+ * «недоступна», рассказывал бы ему про чужую сеть. Код ответа остаётся в
+ * журнале, машинный код причины — в логе сервера.
  */
 export async function syncLms(ctx: ActorContext): Promise<LmsSyncState> {
 	requirePermission(ctx, 'integrations.manage');
@@ -208,7 +255,7 @@ export async function syncLms(ctx: ActorContext): Promise<LmsSyncState> {
 	const startedAt = new Date().toISOString();
 	const period = academicYearOf();
 
-	const fail = async (message: string): Promise<LmsSyncState> => {
+	const fail = async (message: string, status?: number): Promise<LmsSyncState> => {
 		const state: LmsSyncState = {
 			startedAt,
 			finishedAt: new Date().toISOString(),
@@ -219,7 +266,14 @@ export async function syncLms(ctx: ActorContext): Promise<LmsSyncState> {
 		};
 
 		await writeState(state);
-		await recordAuditEvent(ctx, { type: 'integrations.lms_sync_failed', outcome: 'failure' });
+		await recordAuditEvent(ctx, {
+			type: 'integrations.lms_sync_failed',
+			outcome: 'failure',
+			// Код ответа — единственная подробность, которую журнал принимает от
+			// чужой системы: словарь подробностей (`validateAuditDetails`) не берёт
+			// произвольный текст, и это правильно — в нём не должно быть чужих строк.
+			details: status === undefined ? undefined : { status }
+		});
 
 		return state;
 	};
@@ -229,9 +283,6 @@ export async function syncLms(ctx: ActorContext): Promise<LmsSyncState> {
 	if (settings.baseUrl === null || settings.token === null) {
 		return fail('Не настроено: укажите адрес системы обучения и токен веб-сервиса');
 	}
-
-	/** Отпечаток, который эта попытка успела занять: при сбое его надо вернуть. */
-	let claimedFingerprint: string | null = null;
 
 	try {
 		const client = createMoodleClient({ baseUrl: settings.baseUrl, token: settings.token });
@@ -247,17 +298,9 @@ export async function syncLms(ctx: ActorContext): Promise<LmsSyncState> {
 		}
 
 		const csv = toCsv(rows, period);
-		const fingerprint = fingerprintOf(period, csv);
+		const bytes = new TextEncoder().encode(csv);
 
-		const claimed = await getRedis().set(
-			lmsClaimKey(fingerprint),
-			startedAt,
-			'EX',
-			CLAIM_TTL_SECONDS,
-			'NX'
-		);
-
-		if (claimed !== 'OK') {
+		if (await isAlreadyLoaded(period, sha256Hex(bytes))) {
 			const state: LmsSyncState = {
 				startedAt,
 				finishedAt: new Date().toISOString(),
@@ -272,8 +315,6 @@ export async function syncLms(ctx: ActorContext): Promise<LmsSyncState> {
 			return state;
 		}
 
-		claimedFingerprint = fingerprint;
-
 		const created = await createSnapshot(ctx, {
 			source: SOURCE,
 			// Полная выгрузка: подтверждение вытеснит прежнюю выгрузку LMS за тот
@@ -285,7 +326,7 @@ export async function syncLms(ctx: ActorContext): Promise<LmsSyncState> {
 			note: `Выгрузка из системы обучения «${site.sitename}» (${settings.baseUrl})`,
 			file: {
 				name: `lms-${period.start}.csv`,
-				bytes: new TextEncoder().encode(csv)
+				bytes
 			}
 		});
 
@@ -315,11 +356,15 @@ export async function syncLms(ctx: ActorContext): Promise<LmsSyncState> {
 
 		return state;
 	} catch (error) {
-		if (claimedFingerprint !== null) {
-			// Отпечаток занимается до записи снимка: не сложилось — значит, эта
-			// выгрузка ещё не загружена, и следующая попытка обязана её принять, а
-			// не отчитаться, что изменений нет.
-			await getRedis().del(lmsClaimKey(claimedFingerprint));
+		if (error instanceof MoodleError) {
+			// Причина отказа нужна тому, кто разбирается с обменом, и не нужна на
+			// экране: в логе сервера она полная, на экране — общий текст.
+			console.error('[integrations] система обучения отказала', {
+				code: error.code,
+				status: error.status
+			});
+
+			return fail(error.message, error.status ?? undefined);
 		}
 
 		return fail(error instanceof Error ? error.message : String(error));

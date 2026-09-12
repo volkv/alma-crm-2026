@@ -24,6 +24,7 @@ import { auditEvents } from '../db/schema';
 import type { Tx } from '../db/transaction';
 import { ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
+import { spreadsheetText } from '../spreadsheet';
 
 export type { AuditEventType } from '$lib/contracts/audit';
 
@@ -240,13 +241,6 @@ const CSV_COLUMNS = [
 	'details'
 ] as const;
 
-/**
- * Символы, с которых Excel, LibreOffice и Google Sheets начинают читать ячейку
- * как формулу. Табуляция и возврат каретки в этом же списке: таблица съедает их
- * при разборе, и следующий за ними знак равенства оказывается первым.
- */
-const CSV_FORMULA_STARTS = ['=', '+', '-', '@', '\t', '\r'];
-
 function csvCell(value: unknown): string {
 	if (value === null || value === undefined) {
 		return '';
@@ -256,11 +250,9 @@ function csvCell(value: unknown): string {
 
 	// Кавычки вокруг ячейки формулу не обезвреживают: таблица разбирает
 	// содержимое уже после них, и `=HYPERLINK(...)`, приехавший строкой клиента
-	// в журнал, выполнится у того, кто открыл выгрузку. Обезвреживает апостроф —
-	// им таблицы помечают «это текст», и в самой ячейке он не показывается.
-	const safe = CSV_FORMULA_STARTS.some((start) => text.startsWith(start)) ? `'${text}` : text;
-
-	return `"${safe.replaceAll('"', '""')}"`;
+	// в журнал, выполнится у того, кто открыл выгрузку. Обезвреживает
+	// `spreadsheetText` — правило одно на все выгрузки продукта.
+	return `"${spreadsheetText(text).replaceAll('"', '""')}"`;
 }
 
 export async function exportAuditEvents(

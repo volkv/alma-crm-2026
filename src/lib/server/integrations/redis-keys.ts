@@ -58,11 +58,3 @@ export const LMS_STATE_KEY = `${INTEGRATIONS_REDIS_PREFIX}lms:state`;
 
 /** Когда цикл последний раз ходил в систему обучения. */
 export const LMS_LAST_RUN_KEY = `${INTEGRATIONS_REDIS_PREFIX}lms:last-run`;
-
-/**
- * Заявка на загрузку: источник, период и отпечаток содержимого. Пока ключ
- * жив, та же выгрузка за тот же период второй раз снимком не становится.
- */
-export function lmsClaimKey(fingerprint: string): string {
-	return `${INTEGRATIONS_REDIS_PREFIX}lms:claim:${fingerprint}`;
-}

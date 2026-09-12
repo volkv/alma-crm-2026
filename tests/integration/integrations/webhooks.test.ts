@@ -35,9 +35,16 @@ let database: TestDatabase;
 let server: Server;
 let port: number;
 
+/** Приёмник по другому адресу: на него никто не подписывался. */
+let elsewhere: Server;
+let elsewherePort: number;
+let elsewhereReceived: { headers: Record<string, string>; body: string }[] = [];
+
 /** Что приёмник получил и чем он отвечает: и то и другое меняется по ходу. */
 let received: { headers: Record<string, string>; body: string }[] = [];
 let replyStatus = 200;
+/** Куда приёмник перенаправляет; `null` — отвечает сам. */
+let replyLocation: string | null = null;
 
 beforeAll(async () => {
 	database = await startTestDatabase();
@@ -57,18 +64,51 @@ beforeAll(async () => {
 				body
 			});
 
+			if (replyLocation !== null) {
+				response.statusCode = 307;
+				response.setHeader('location', replyLocation);
+				response.end();
+				return;
+			}
+
 			response.statusCode = replyStatus;
+			response.end('ok');
+		});
+	});
+
+	elsewhere = createServer((request, response) => {
+		let body = '';
+
+		request.on('data', (chunk: Buffer) => {
+			body += chunk.toString('utf8');
+		});
+
+		request.on('end', () => {
+			elsewhereReceived.push({
+				headers: Object.fromEntries(
+					Object.entries(request.headers).map(([name, value]) => [name, String(value)])
+				),
+				body
+			});
+
+			response.statusCode = 200;
 			response.end('ok');
 		});
 	});
 
 	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 	port = (server.address() as AddressInfo).port;
+
+	await new Promise<void>((resolve) => elsewhere.listen(0, '127.0.0.1', resolve));
+	elsewherePort = (elsewhere.address() as AddressInfo).port;
 }, 300_000);
 
 afterAll(async () => {
 	await new Promise<void>((resolve, reject) =>
 		server.close((error) => (error ? reject(error) : resolve()))
+	);
+	await new Promise<void>((resolve, reject) =>
+		elsewhere.close((error) => (error ? reject(error) : resolve()))
 	);
 	await getRedis().quit();
 	await database?.stop();
@@ -77,11 +117,14 @@ afterAll(async () => {
 beforeEach(async () => {
 	await database.reset();
 	received = [];
+	elsewhereReceived = [];
 	replyStatus = 200;
+	replyLocation = null;
 });
 
 afterEach(() => {
 	replyStatus = 200;
+	replyLocation = null;
 });
 
 const ctx = () => testActor();
@@ -111,6 +154,7 @@ async function journalEvent(id: string): Promise<void> {
 
 const ORG_ID = '00000000-0000-4000-8000-000000000101';
 const OTHER_ORG_ID = '00000000-0000-4000-8000-000000000102';
+const SLOW_ORG_ID = '00000000-0000-4000-8000-000000000103';
 
 async function eventTypes(): Promise<string[]> {
 	const rows = await database.db
@@ -131,7 +175,7 @@ describe('доставка события журнала', () => {
 
 		await journalEvent(ORG_ID);
 
-		const report = await runDeliveryCycle(background());
+		const report = await runDeliveryCycle(background(), { lagSeconds: 0 });
 
 		expect(report).toMatchObject({ subscriptions: 1, delivered: 1, failed: 0 });
 		expect(received).toHaveLength(1);
@@ -159,8 +203,8 @@ describe('доставка события журнала', () => {
 		await subscribe();
 		await journalEvent(ORG_ID);
 
-		await runDeliveryCycle(background());
-		await runDeliveryCycle(background());
+		await runDeliveryCycle(background(), { lagSeconds: 0 });
+		await runDeliveryCycle(background(), { lagSeconds: 0 });
 
 		expect(received).toHaveLength(1);
 	});
@@ -170,7 +214,7 @@ describe('доставка события журнала', () => {
 		await journalEvent(ORG_ID);
 		await journalEvent(OTHER_ORG_ID);
 
-		await runDeliveryCycle(background());
+		await runDeliveryCycle(background(), { lagSeconds: 0 });
 
 		expect(received).toHaveLength(2);
 		expect(
@@ -186,8 +230,8 @@ describe('доставка события журнала', () => {
 		await subscribe(['integrations.*', 'organizations.*']);
 		await journalEvent(ORG_ID);
 
-		await runDeliveryCycle(background());
-		await runDeliveryCycle(background());
+		await runDeliveryCycle(background(), { lagSeconds: 0 });
+		await runDeliveryCycle(background(), { lagSeconds: 0 });
 
 		const types = received.map((delivery) => (JSON.parse(delivery.body) as { type: string }).type);
 
@@ -198,7 +242,7 @@ describe('доставка события журнала', () => {
 		const created = await subscribe(['documents.uploaded']);
 		await journalEvent(ORG_ID);
 
-		await runDeliveryCycle(background());
+		await runDeliveryCycle(background(), { lagSeconds: 0 });
 		expect(received).toHaveLength(0);
 
 		await updateWebhook(ctx(), {
@@ -210,10 +254,71 @@ describe('доставка события журнала', () => {
 		});
 		await journalEvent(OTHER_ORG_ID);
 
-		const report = await runDeliveryCycle(background());
+		const report = await runDeliveryCycle(background(), { lagSeconds: 0 });
 
 		expect(report.subscriptions).toBe(0);
 		expect(received).toHaveLength(0);
+	});
+});
+
+describe('курсор по журналу', () => {
+	it('не теряет событие транзакции, закоммиченной позже соседней', async () => {
+		await subscribe();
+
+		// Транзакция, которая началась раньше, а закончилась позже соседней. Её
+		// событие получает момент начала транзакции — заведомо более ранний, чем
+		// у соседнего, — но становится видимым только после её коммита.
+		let insideWritten = (): void => {};
+		let release = (): void => {};
+		const written = new Promise<void>((resolve) => {
+			insideWritten = resolve;
+		});
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+
+		const slow = database.db.transaction(async (tx) => {
+			await recordAuditEvent(
+				ctx(),
+				{
+					type: 'organizations.created',
+					outcome: 'success',
+					subject: { type: 'organization', id: SLOW_ORG_ID }
+				},
+				tx
+			);
+
+			insideWritten();
+			await held;
+		});
+
+		try {
+			await written;
+			await journalEvent(ORG_ID);
+
+			// Проход между записью и коммитом: курсор, дошедший до соседнего
+			// события, оставил бы событие незакоммиченной транзакции позади себя
+			// навсегда.
+			const first = await runDeliveryCycle(background());
+
+			expect(first.delivered).toBe(0);
+			expect(received).toHaveLength(0);
+		} finally {
+			// Транзакцию надо закрыть в любом случае: с ней висит соединение, и
+			// упавшая проверка иначе подвесила бы весь файл.
+			release();
+			await slow;
+		}
+
+		// Отставание курсора прошло: видно оба события, и уезжают оба.
+		const second = await runDeliveryCycle(background(), { lagSeconds: 0 });
+
+		expect(second.delivered).toBe(2);
+		expect(
+			received
+				.map((delivery) => (JSON.parse(delivery.body) as { subject: { id: string } }).subject.id)
+				.sort()
+		).toEqual([ORG_ID, SLOW_ORG_ID].sort());
 	});
 });
 
@@ -223,7 +328,7 @@ describe('повторы', () => {
 		replyStatus = 500;
 
 		await journalEvent(ORG_ID);
-		await runDeliveryCycle(background());
+		await runDeliveryCycle(background(), { lagSeconds: 0 });
 
 		expect(received).toHaveLength(1);
 		expect(await countPending(created.webhook.id)).toBe(1);
@@ -239,7 +344,7 @@ describe('повторы', () => {
 		await getRedis().zadd(queue, String(Date.now()), eventId);
 
 		replyStatus = 200;
-		const report = await runDeliveryCycle(background());
+		const report = await runDeliveryCycle(background(), { lagSeconds: 0 });
 
 		expect(report).toMatchObject({ retried: 1, delivered: 1 });
 		expect(received).toHaveLength(2);
@@ -251,7 +356,7 @@ describe('повторы', () => {
 		replyStatus = 500;
 
 		await journalEvent(ORG_ID);
-		await runDeliveryCycle(background());
+		await runDeliveryCycle(background(), { lagSeconds: 0 });
 
 		const queue = webhookRetryQueueKey(created.webhook.id);
 		const [eventId] = await getRedis().zrange(queue, '0', '0');
@@ -265,7 +370,7 @@ describe('повторы', () => {
 		);
 		await getRedis().zadd(queue, String(Date.now()), eventId);
 
-		const report = await runDeliveryCycle(background());
+		const report = await runDeliveryCycle(background(), { lagSeconds: 0 });
 
 		expect(report.failed).toBe(1);
 		expect(await countPending(created.webhook.id)).toBe(0);
@@ -277,6 +382,28 @@ describe('повторы', () => {
 
 		expect(rows).toHaveLength(1);
 		expect(rows[0].details).toMatchObject({ webhookId: created.webhook.id, eventId });
+	});
+});
+
+describe('перенаправление получателя', () => {
+	it('не уносит тело и подпись на адрес, которого никто не проверял', async () => {
+		const created = await subscribe();
+		replyLocation = `http://127.0.0.1:${elsewherePort}/hook`;
+
+		await journalEvent(ORG_ID);
+		const report = await runDeliveryCycle(background(), { lagSeconds: 0 });
+
+		// До проверенного адреса запрос дошёл, дальше — нет: за `Location` мы не
+		// идём, иначе подпись и тело события оказались бы на машине, которую
+		// правило адреса не проверяло.
+		expect(received).toHaveLength(1);
+		expect(elsewhereReceived).toHaveLength(0);
+		expect(report.delivered).toBe(0);
+
+		const [attempt] = await listDeliveries(created.webhook.id);
+
+		expect(attempt).toMatchObject({ ok: false, status: 307 });
+		expect(attempt.error).toContain('перенаправляет');
 	});
 });
 

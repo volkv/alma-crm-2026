@@ -12,10 +12,13 @@ import { createApiKey } from '$lib/server/api/keys';
 import {
 	auditEvents,
 	interactions,
+	organizations,
+	people,
 	programs,
 	statRows,
 	statSnapshots
 } from '$lib/server/db/schema';
+import { LMS_REFUSAL } from '$lib/server/integrations/lms/moodle';
 import { syncLms } from '$lib/server/integrations/lms/sync';
 import {
 	MOCK_LMS_TOKEN,
@@ -23,7 +26,8 @@ import {
 	mockToken,
 	readParams
 } from '$lib/server/integrations/mock-lms/server';
-import { setLmsSettings } from '$lib/server/integrations/settings';
+import { getLmsSettings, setLmsSettings } from '$lib/server/integrations/settings';
+import { rejectSnapshot } from '$lib/server/stats/import';
 import { getRedis } from '$lib/server/redis';
 import { ensureDemoRoute } from '$lib/server/stages/routes';
 import {
@@ -33,6 +37,7 @@ import {
 	TEST_USER_IDS,
 	type TestDatabase
 } from '../helpers/db';
+import { pageEvent } from '../helpers/event';
 
 /**
  * Выгрузка из системы обучения и приём заявки с сайта.
@@ -46,14 +51,36 @@ let database: TestDatabase;
 let server: Server;
 let port: number;
 
+/** Чужой адрес, на который площадка пробует нас увести. */
+let elsewhere: Server;
+let elsewherePort: number;
+let elsewhereReceived: string[] = [];
+/** Куда заглушка перенаправляет; `null` — отвечает сама. */
+let redirectTo: string | null = null;
+
 const intake = (await import('../../../src/routes/api/v1/applications/+server')).POST as (
 	event: RequestEvent
 ) => Promise<Response>;
+
+const settingsActions = (
+	await import('../../../src/routes/(app)/settings/integrations/+page.server')
+).actions as Record<string, (event: RequestEvent) => Promise<unknown>>;
 
 beforeAll(async () => {
 	database = await startTestDatabase();
 
 	server = createServer((request, response) => {
+		if (redirectTo !== null) {
+			// Перенаправление «как у переехавшей площадки»: строка запроса едет
+			// вместе с адресом, а в ней — токен веб-сервиса.
+			const incoming = new URL(request.url ?? '/', `http://127.0.0.1:${port}`);
+
+			response.statusCode = 307;
+			response.setHeader('location', `${redirectTo}${incoming.search}`);
+			response.end();
+			return;
+		}
+
 		void (async () => {
 			const url = new URL(request.url ?? '/', `http://127.0.0.1:${port}`);
 			const params = await readParams(
@@ -76,13 +103,26 @@ beforeAll(async () => {
 		})();
 	});
 
+	elsewhere = createServer((request, response) => {
+		elsewhereReceived.push(request.url ?? '');
+		response.statusCode = 200;
+		response.setHeader('content-type', 'application/json');
+		response.end('[]');
+	});
+
 	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
 	port = (server.address() as AddressInfo).port;
+
+	await new Promise<void>((resolve) => elsewhere.listen(0, '127.0.0.1', resolve));
+	elsewherePort = (elsewhere.address() as AddressInfo).port;
 }, 300_000);
 
 afterAll(async () => {
 	await new Promise<void>((resolve, reject) =>
 		server.close((error) => (error ? reject(error) : resolve()))
+	);
+	await new Promise<void>((resolve, reject) =>
+		elsewhere.close((error) => (error ? reject(error) : resolve()))
 	);
 	await getRedis().quit();
 	await database?.stop();
@@ -90,6 +130,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
 	await database.reset();
+	elsewhereReceived = [];
+	redirectTo = null;
 });
 
 const ctx = () => testActor();
@@ -181,21 +223,62 @@ describe('выгрузка из системы обучения', () => {
 		expect(snapshots.map((row) => row.id)).toEqual([first.snapshotId]);
 	});
 
-	it('называет отказ веб-сервиса словами и пишет неудачу в журнал', async () => {
+	it('после отклонения снимка та же выгрузка загружается заново', async () => {
+		await seedDirectory();
+		await configureLms();
+
+		const first = await syncLms(ctx());
+		await rejectSnapshot(ctx(), first.snapshotId!, 'Числа не сошлись с отчётом вуза');
+
+		const second = await syncLms(ctx());
+
+		expect(second.ok).toBe(true);
+		expect(second.snapshotId).not.toBeNull();
+		expect(second.snapshotId).not.toBe(first.snapshotId);
+
+		const snapshots = await database.db.select({ id: statSnapshots.id }).from(statSnapshots);
+
+		expect(snapshots).toHaveLength(2);
+	});
+
+	it('отказывает одним текстом, не пересказывая ответ чужой системы', async () => {
 		await configureLms('чужой-токен');
 
 		const state = await syncLms(ctx());
 
 		expect(state.ok).toBe(false);
-		expect(state.message).toContain('Invalid token');
 		expect(state.snapshotId).toBeNull();
+		// Один текст на любой отказ: по разнице формулировок («отказала»,
+		// «ответила 403», «не в формате JSON») раздел настроек превратился бы в
+		// определитель чужой сети.
+		expect(state.message).toBe(LMS_REFUSAL);
 
 		const journal = await database.db
-			.select({ type: auditEvents.eventType, outcome: auditEvents.outcome })
+			.select({
+				type: auditEvents.eventType,
+				outcome: auditEvents.outcome,
+				details: auditEvents.details
+			})
 			.from(auditEvents)
 			.where(eq(auditEvents.eventType, 'integrations.lms_sync_failed'));
 
-		expect(journal).toMatchObject([{ outcome: 'failure' }]);
+		// В журнале остаётся код ответа — и ничего из тела ответа.
+		expect(journal).toMatchObject([{ outcome: 'failure', details: { status: 200 } }]);
+		expect(JSON.stringify(journal[0].details)).not.toContain('token');
+	});
+
+	it('не идёт за перенаправлением и не уносит туда токен веб-сервиса', async () => {
+		await configureLms();
+		redirectTo = `http://127.0.0.1:${elsewherePort}/webservice/rest/server.php`;
+
+		const state = await syncLms(ctx());
+
+		expect(state.ok).toBe(false);
+		expect(state.message).toBe(LMS_REFUSAL);
+		// Токен уходит параметром строки запроса: пойди клиент за `Location`, он
+		// оказался бы на машине, которую правило адреса не проверяло.
+		expect(elsewhereReceived).toHaveLength(0);
+		expect(elsewhereReceived.join(' ')).not.toContain(MOCK_LMS_TOKEN);
 	});
 
 	it('не молчит о ненастроенной интеграции', async () => {
@@ -209,6 +292,31 @@ describe('выгрузка из системы обучения', () => {
 		await expect(syncLms(testActor({ roleId: 'manager' }))).rejects.toMatchObject({
 			code: 'forbidden'
 		});
+	});
+});
+
+describe('форма настроек системы обучения', () => {
+	it('не возвращает токен веб-сервиса в ответ действия', async () => {
+		const secret = 'ws-token-0f3a9c';
+
+		const result = await settingsActions.lms(
+			pageEvent({
+				path: '/settings/integrations',
+				routeId: '/(app)/settings/integrations',
+				form: {
+					baseUrl: lmsUrl(),
+					token: secret,
+					syncIntervalMinutes: '60'
+				}
+			})
+		);
+
+		// Ответ действия перерисовывает форму её же данными — и токен уехал бы в
+		// разметку страницы, хотя сохранённым его не показывают вовсе.
+		expect(JSON.stringify(result)).not.toContain(secret);
+
+		// При этом он именно сохранён, а не потерян по дороге.
+		expect((await getLmsSettings()).token).toBe(secret);
 	});
 });
 
@@ -384,6 +492,70 @@ describe('приём заявки с сайта', () => {
 
 		expect(body.error.code).toBe('validation');
 		expect(body.error.details.issues.join(' ')).toContain('почта');
+	});
+
+	it('три одновременных заявки с одним идентификатором дают одну запись', async () => {
+		const key = await issueKey();
+		// Без ИНН: сверять организацию не с чем, и до одной транзакции каждая из
+		// трёх заявок заводила свою организацию и своего человека, а двое из трёх
+		// получали 500 на уникальности внешней ссылки.
+		const body = { ...APPLICATION, organization: { ...APPLICATION.organization, inn: null } };
+
+		const responses = await Promise.all([
+			intake(apiEvent({ body, key })),
+			intake(apiEvent({ body, key })),
+			intake(apiEvent({ body, key }))
+		]);
+
+		expect(responses.map((response) => response.status)).toEqual([200, 200, 200]);
+
+		const bodies = (await Promise.all(responses.map((response) => response.json()))) as {
+			interactionId: string;
+			created: boolean;
+		}[];
+
+		// Заведена запись одна, и все три ответа указывают на неё; завёл её
+		// ровно один запрос, остальные ответили как обычный повтор.
+		expect(new Set(bodies.map((item) => item.interactionId)).size).toBe(1);
+		expect(bodies.filter((item) => item.created)).toHaveLength(1);
+
+		expect(await database.db.select({ id: interactions.id }).from(interactions)).toHaveLength(1);
+		// Сирот в справочнике не остаётся: проигравшая транзакция откатилась целиком.
+		expect(await database.db.select({ id: organizations.id }).from(organizations)).toHaveLength(1);
+		expect(await database.db.select({ id: people.id }).from(people)).toHaveLength(1);
+
+		// И след в журнале один: записи отката не пережили.
+		const journal = await database.db
+			.select({ type: auditEvents.eventType })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'organizations.created'));
+
+		expect(journal).toHaveLength(1);
+	});
+
+	it('три одновременных заявки с ИНН тоже дают одну запись', async () => {
+		const key = await issueKey();
+
+		// С ИНН гонка расходится на другом ограничении — уникальности ИНН
+		// организации, — и ответ обязан быть тем же: заявка одна.
+		const responses = await Promise.all([
+			intake(apiEvent({ body: APPLICATION, key })),
+			intake(apiEvent({ body: APPLICATION, key })),
+			intake(apiEvent({ body: APPLICATION, key }))
+		]);
+
+		expect(responses.map((response) => response.status)).toEqual([200, 200, 200]);
+
+		const bodies = (await Promise.all(responses.map((response) => response.json()))) as {
+			interactionId: string;
+			created: boolean;
+		}[];
+
+		expect(new Set(bodies.map((item) => item.interactionId)).size).toBe(1);
+		expect(bodies.filter((item) => item.created)).toHaveLength(1);
+		expect(await database.db.select({ id: interactions.id }).from(interactions)).toHaveLength(1);
+		expect(await database.db.select({ id: organizations.id }).from(organizations)).toHaveLength(1);
+		expect(await database.db.select({ id: people.id }).from(people)).toHaveLength(1);
 	});
 
 	it('повтор с ключом идемпотентности отдаёт прежний ответ', async () => {

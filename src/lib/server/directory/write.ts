@@ -121,20 +121,20 @@ async function withUniqueConflicts<TResult>(run: () => Promise<TResult>): Promis
 async function assertInnIsFree(
 	ctx: ActorContext,
 	inn: string | null,
-	exceptId?: string
+	exceptId?: string,
+	executor: Tx | ReturnType<typeof getDb> = getDb()
 ): Promise<void> {
 	if (inn === null) {
 		return;
 	}
 
-	const db = getDb();
 	const conditions = [eq(organizations.inn, inn)];
 
 	if (exceptId !== undefined) {
 		conditions.push(ne(organizations.id, exceptId));
 	}
 
-	const [clash] = await db
+	const [clash] = await executor
 		.select({ id: organizations.id })
 		.from(organizations)
 		.where(and(...conditions))
@@ -144,7 +144,7 @@ async function assertInnIsFree(
 		return;
 	}
 
-	const visible = await findOrganizationByInn(ctx, inn);
+	const visible = await findOrganizationByInn(ctx, inn, executor);
 
 	throw new ConflictError(
 		visible === null
@@ -153,30 +153,37 @@ async function assertInnIsFree(
 	);
 }
 
+/**
+ * Заведение организации. `tx` передаёт тот, кто уже открыл транзакцию и
+ * отвечает за целостность операции целиком: заявка с сайта заводит организацию,
+ * человека, его роль и взаимодействие — либо всё, либо ничего. Своей
+ * транзакции вложенный вызов не начинает, и запись в журнал уходит в ту же.
+ */
 export async function createOrganization(
 	ctx: ActorContext,
-	input: CreateOrganizationInput
+	input: CreateOrganizationInput,
+	tx?: Tx
 ): Promise<OrganizationView> {
 	await requirePermission(ctx, 'organizations.write', { type: 'organizations.created' });
-	await assertInnIsFree(ctx, input.inn);
+	await assertInnIsFree(ctx, input.inn, undefined, tx);
 
-	return withUniqueConflicts(() =>
-		withTransaction(ctx, async (tx) => {
-			const [row] = await tx.insert(organizations).values(input).returning();
+	const write = async (executor: Tx): Promise<OrganizationView> => {
+		const [row] = await executor.insert(organizations).values(input).returning();
 
-			await recordAuditEvent(
-				ctx,
-				{
-					type: 'organizations.created',
-					outcome: 'success',
-					subject: { type: 'organization', id: row.id }
-				},
-				tx
-			);
+		await recordAuditEvent(
+			ctx,
+			{
+				type: 'organizations.created',
+				outcome: 'success',
+				subject: { type: 'organization', id: row.id }
+			},
+			executor
+		);
 
-			return toOrganizationView(row);
-		})
-	);
+		return toOrganizationView(row);
+	};
+
+	return withUniqueConflicts(() => (tx === undefined ? withTransaction(ctx, write) : write(tx)));
 }
 
 export async function updateOrganization(
@@ -387,29 +394,31 @@ export async function updateSite(ctx: ActorContext, input: UpdateSiteInput): Pro
 	);
 }
 
+/** Заведение человека; `tx` — как у `createOrganization`. */
 export async function createPerson(
 	ctx: ActorContext,
-	input: CreatePersonInput
+	input: CreatePersonInput,
+	tx?: Tx
 ): Promise<PersonView> {
 	await requirePermission(ctx, 'people.write', { type: 'people.created' });
 
+	const write = async (executor: Tx): Promise<PersonView> => {
+		const [row] = await executor.insert(people).values(input).returning();
+
+		await recordAuditEvent(
+			ctx,
+			{ type: 'people.created', outcome: 'success', subject: { type: 'person', id: row.id } },
+			executor
+		);
+
+		// Даже автор записи получает её обратно через сериализатор: право на
+		// запись и право видеть контакты — разные права.
+		return toPersonView(ctx, row);
+	};
+
 	// Ответ уносит контакты наружу — значит, и он оставляет след просмотра:
 	// правило одно на чтения и на возвраты записи.
-	return withPiiTrace(ctx, () =>
-		withTransaction(ctx, async (tx) => {
-			const [row] = await tx.insert(people).values(input).returning();
-
-			await recordAuditEvent(
-				ctx,
-				{ type: 'people.created', outcome: 'success', subject: { type: 'person', id: row.id } },
-				tx
-			);
-
-			// Даже автор записи получает её обратно через сериализатор: право на
-			// запись и право видеть контакты — разные права.
-			return toPersonView(ctx, row);
-		})
-	);
+	return withPiiTrace(ctx, () => (tx === undefined ? withTransaction(ctx, write) : write(tx)));
 }
 
 /**
@@ -510,41 +519,44 @@ async function toAffiliationView(
  */
 export async function createAffiliation(
 	ctx: ActorContext,
-	input: CreateAffiliationInput
+	input: CreateAffiliationInput,
+	tx?: Tx
 ): Promise<AffiliationView> {
 	await requirePermission(ctx, 'people.write', {
 		type: 'people.affiliation_created',
 		subject: { type: 'organization', id: input.organizationId }
 	});
 
-	await getOrganization(ctx, input.organizationId);
+	// Проверки идут тем же исполнителем, что и запись: организацию могли завести
+	// в этой же транзакции, и общий пул её ещё не видит.
+	await getOrganization(ctx, input.organizationId, tx);
 
 	if (input.siteId !== null) {
-		const site = await getSite(ctx, input.siteId);
+		const site = await getSite(ctx, input.siteId, tx);
 
 		if (site.organizationId !== input.organizationId) {
 			throw new ValidationError('Роль не сохранена', ['Площадка принадлежит другой организации']);
 		}
 	}
 
-	return withPiiTrace(ctx, () =>
-		withTransaction(ctx, async (tx) => {
-			const [row] = await tx.insert(affiliations).values(input).returning();
+	const write = async (executor: Tx): Promise<AffiliationView> => {
+		const [row] = await executor.insert(affiliations).values(input).returning();
 
-			await recordAuditEvent(
-				ctx,
-				{
-					type: 'people.affiliation_created',
-					outcome: 'success',
-					subject: { type: 'affiliation', id: row.id },
-					details: { personId: row.personId, organizationId: row.organizationId }
-				},
-				tx
-			);
+		await recordAuditEvent(
+			ctx,
+			{
+				type: 'people.affiliation_created',
+				outcome: 'success',
+				subject: { type: 'affiliation', id: row.id },
+				details: { personId: row.personId, organizationId: row.organizationId }
+			},
+			executor
+		);
 
-			return toAffiliationView(ctx, tx, row);
-		})
-	);
+		return toAffiliationView(ctx, executor, row);
+	};
+
+	return withPiiTrace(ctx, () => (tx === undefined ? withTransaction(ctx, write) : write(tx)));
 }
 
 /**

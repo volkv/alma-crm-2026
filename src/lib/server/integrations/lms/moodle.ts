@@ -30,14 +30,33 @@ export const MOODLE_FUNCTIONS = [
 export type MoodleFunction = (typeof MOODLE_FUNCTIONS)[number];
 
 /**
+ * Единственный текст отказа для сотрудника.
+ *
+ * Один на все случаи намеренно. Адрес системы обучения задаёт человек, и
+ * раздел настроек, различающий «ответила 403», «ответила не в формате JSON» и
+ * «недоступна», превращается в определитель внутренней сети: по тексту отказа
+ * видно, что живёт за каждым адресом. Что именно случилось, остаётся в
+ * журнале и в логе сервера, а сотруднику остаётся то, что он может поправить.
+ */
+export const LMS_REFUSAL =
+	'Обмен с системой обучения не удался: проверьте адрес и токен веб-сервиса в настройках раздела';
+
+/**
  * Отказ со стороны LMS: недоступна, ответила не тем или пожаловалась
- * `errorcode`. Отдельный класс, потому что выгрузка обязана показать причину
- * сотруднику словами, а не «синхронизация не удалась».
+ * `errorcode`. Отдельный класс, потому что сообщение сотруднику и причина для
+ * журнала — разные вещи: сообщение одно на все отказы, а причина машинная.
  */
 export class MoodleError extends Error {
-	constructor(message: string) {
-		super(message);
+	/** Машинный код отказа: уходит в лог сервера, но не на экран. */
+	readonly code: string;
+	/** Код ответа, если он был; `null` — до ответа дело не дошло. */
+	readonly status: number | null;
+
+	constructor(code: string, status: number | null = null) {
+		super(LMS_REFUSAL);
 		this.name = 'MoodleError';
+		this.code = code;
+		this.status = status;
 	}
 }
 
@@ -90,6 +109,13 @@ function serviceUrl(baseUrl: string): string {
 	return `${baseUrl.replace(/\/+$/, '')}/webservice/rest/server.php`;
 }
 
+/** Код отказа веб-сервиса в том виде, в каком его можно писать в лог. */
+function safeErrorCode(value: unknown): string {
+	return String(value)
+		.replace(/[^a-z0-9_-]/gi, '')
+		.slice(0, 60);
+}
+
 function isMoodleException(body: unknown): body is { errorcode: string; message: string } {
 	return (
 		typeof body === 'object' &&
@@ -120,19 +146,26 @@ async function call(
 	try {
 		response = await fetch(url, {
 			headers: { accept: 'application/json' },
+			// За перенаправлением не идём: адрес площадки проверен правилом
+			// `outboundUrlIssue`, а `Location` ведёт куда угодно — и унёс бы туда
+			// токен веб-сервиса, то есть ключ к чужим данным.
+			redirect: 'manual',
 			signal: AbortSignal.timeout(MOODLE_TIMEOUT_MS)
 		});
 	} catch (error) {
-		const reason =
+		throw new MoodleError(
 			error instanceof Error && (error.name === 'TimeoutError' || error.name === 'AbortError')
-				? `не ответила за ${MOODLE_TIMEOUT_MS / 1000} с`
-				: `недоступна: ${error instanceof Error ? error.message : String(error)}`;
+				? 'timeout'
+				: 'unreachable'
+		);
+	}
 
-		throw new MoodleError(`Система обучения ${reason}`);
+	if (response.status >= 300 && response.status < 400) {
+		throw new MoodleError('redirect', response.status);
 	}
 
 	if (!response.ok) {
-		throw new MoodleError(`Система обучения ответила ${response.status}`);
+		throw new MoodleError('http_status', response.status);
 	}
 
 	let body: unknown;
@@ -141,15 +174,14 @@ async function call(
 		body = await response.json();
 	} catch {
 		// Вместо JSON обычно приезжает страница входа или ошибка веб-сервера —
-		// разбирать её нечем, а сказать об этом надо.
-		throw new MoodleError('Система обучения ответила не в формате JSON');
+		// разбирать её нечем.
+		throw new MoodleError('not_json', response.status);
 	}
 
 	if (isMoodleException(body)) {
-		// Код отказа — в тексте, а не отдельным полем: читает его человек в
-		// разделе интеграций, и `invalidtoken` рядом с фразой объясняет больше,
-		// чем фраза одна.
-		throw new MoodleError(`Система обучения отказала: ${body.message} (${body.errorcode})`);
+		// Код отказа веб-сервиса (`invalidtoken` и подобные) — машинный: он
+		// объясняет причину тому, кто читает лог сервера, а на экран не выходит.
+		throw new MoodleError(`ws:${safeErrorCode(body.errorcode)}`, response.status);
 	}
 
 	return body;
@@ -157,7 +189,7 @@ async function call(
 
 function expectArray(body: unknown, wsfunction: MoodleFunction): unknown[] {
 	if (!Array.isArray(body)) {
-		throw new MoodleError(`Ответ ${wsfunction} — не список, как обещает контракт Moodle`);
+		throw new MoodleError(`shape:${wsfunction}`);
 	}
 
 	return body;
@@ -171,7 +203,7 @@ export function createMoodleClient(options: { baseUrl: string; token: string }):
 			const body = await call(baseUrl, token, 'core_webservice_get_site_info', {});
 
 			if (typeof body !== 'object' || body === null || !('sitename' in body)) {
-				throw new MoodleError('Ответ core_webservice_get_site_info не описывает площадку');
+				throw new MoodleError('shape:core_webservice_get_site_info');
 			}
 
 			return body as MoodleSiteInfo;
@@ -197,7 +229,7 @@ export function createMoodleClient(options: { baseUrl: string; token: string }):
 			});
 
 			if (typeof body !== 'object' || body === null || !('usergrades' in body)) {
-				throw new MoodleError('Ответ gradereport_user_get_grade_items не содержит usergrades');
+				throw new MoodleError('shape:gradereport_user_get_grade_items');
 			}
 
 			return expectArray(

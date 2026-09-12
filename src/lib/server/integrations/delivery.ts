@@ -107,6 +107,12 @@ export type DeliveryTarget = { id: string; url: string; secret: string };
 /**
  * Одна попытка доставки. Исключений не бросает: неудача — это обычный исход
  * доставки, и решение о повторе принимает цикл, а не обработчик ошибки.
+ *
+ * За перенаправлением запрос не идёт. Адрес подписки проверен правилом
+ * `outboundUrlIssue`, а перенаправление ведёт куда угодно — и унесло бы туда и
+ * тело события, и подпись, то есть отдало бы чужой машине и данные, и право
+ * выдавать себя за нас. Ответ `3xx` — такая же неудача, как и любая другая, и
+ * получатель узнаёт о ней словами.
  */
 export async function postWebhook(
 	target: DeliveryTarget,
@@ -125,11 +131,20 @@ export async function postWebhook(
 				'X-Webhook-Signature': signPayload(target.secret, timestamp, body)
 			},
 			body,
+			redirect: 'manual',
 			signal: AbortSignal.timeout(WEBHOOK_TIMEOUT_MS)
 		});
 
 		if (response.ok) {
 			return { ok: true, status: response.status, error: null };
+		}
+
+		if (response.status >= 300 && response.status < 400) {
+			return {
+				ok: false,
+				status: response.status,
+				error: `Получатель перенаправляет запрос (${response.status}); тело и подпись уходят только на проверенный адрес — укажите в подписке конечный`
+			};
 		}
 
 		return {

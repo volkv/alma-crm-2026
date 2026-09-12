@@ -4,7 +4,7 @@ import {
 	matchesWebhookEvent,
 	normalizeWebhookEvents,
 	prefixPattern,
-	webhookUrlIssue
+	outboundUrlIssue
 } from '$lib/contracts/integrations';
 import {
 	MAX_DELIVERY_ATTEMPTS,
@@ -76,21 +76,21 @@ describe('фильтр событий', () => {
 	});
 });
 
-describe('адрес приёмника', () => {
+describe('адрес, по которому сервер ходит сам', () => {
 	it('принимает https куда угодно', () => {
-		expect(webhookUrlIssue('https://partner.example.org/hooks')).toBeNull();
+		expect(outboundUrlIssue('https://partner.example.org/hooks')).toBeNull();
 	});
 
 	it('принимает http только на этой же машине', () => {
-		expect(webhookUrlIssue('http://localhost:4000/hook')).toBeNull();
-		expect(webhookUrlIssue('http://127.0.0.1:4000/hook')).toBeNull();
-		expect(webhookUrlIssue('http://host.docker.internal:4000/hook')).toBeNull();
-		expect(webhookUrlIssue('http://partner.example.org/hook')).toMatch(/https/);
+		expect(outboundUrlIssue('http://localhost:4000/hook')).toBeNull();
+		expect(outboundUrlIssue('http://127.0.0.1:4000/hook')).toBeNull();
+		expect(outboundUrlIssue('http://host.docker.internal:4000/hook')).toBeNull();
+		expect(outboundUrlIssue('http://partner.example.org/hook')).toMatch(/https/);
 	});
 
 	it('отвергает всё, что не http и не https', () => {
-		expect(webhookUrlIssue('ftp://partner.example.org')).toMatch(/http/);
-		expect(webhookUrlIssue('partner.example.org')).toMatch(/полностью/);
+		expect(outboundUrlIssue('ftp://partner.example.org')).toMatch(/http/);
+		expect(outboundUrlIssue('partner.example.org')).toMatch(/полностью/);
 	});
 });
 
