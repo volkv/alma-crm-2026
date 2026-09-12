@@ -868,6 +868,91 @@ export type InteractionSummaryView = {
 };
 
 /**
+ * Каким представлением показан раздел взаимодействий. Список и доска — это
+ * один и тот же отобранный набор записей, показанный двумя способами, поэтому
+ * выбор живёт в адресе рядом с фильтрами, а не в памяти страницы.
+ */
+export const INTERACTION_VIEW_MODES = ['table', 'board'] as const;
+
+export type InteractionViewMode = (typeof INTERACTION_VIEW_MODES)[number];
+
+/**
+ * Что происходит с карточкой на доске — теми же словами, что на ленте стадий.
+ * Пройденных и предстоящих стадий у карточки не бывает: она стоит ровно на
+ * одной, и вопрос только в том, что с этой стадией сейчас.
+ */
+export type BoardCardState = Extract<
+	StageProgressState,
+	'current' | 'overdue' | 'paused' | 'blocked'
+>;
+
+/**
+ * Переход, предложенный карточке доски, вместе с приговором движка. Причина
+ * отказа приезжает сюда целиком: недоступный переход остаётся в меню с
+ * объяснением, а не исчезает из него.
+ */
+export type BoardTransitionOption = {
+	toStageId: string;
+	toStageName: string;
+	kind: StageTransitionKind;
+	/** Возврат и пропуск требуют объяснения — его спрашивают перед командой. */
+	requiresReason: boolean;
+	allowed: boolean;
+	reasons: string[];
+};
+
+/** Карточка доски: по чему дело узнают и из-за чего берутся за него сейчас. */
+export type InteractionBoardCard = {
+	id: string;
+	title: string;
+	/** Учебное заведение — основная сторона процесса. */
+	organizationName: string | null;
+	/** Программы и продукты взаимодействия: чем именно занимаемся. */
+	offerings: string[];
+	ownerName: string;
+	stageId: string;
+	dueAt: Date | null;
+	state: BoardCardState;
+	openBlockers: number;
+	/** Переходы с текущей стадии в порядке стадий маршрута. */
+	transitions: BoardTransitionOption[];
+};
+
+/** Колонка доски — стадия маршрута вместе с тем, что на ней стоит. */
+export type InteractionBoardColumn = {
+	stageId: string;
+	key: string;
+	name: string;
+	position: number;
+	category: StageCategory;
+	/** Сколько карточек стоит на стадии всего, а не сколько показано. */
+	count: number;
+	overdue: number;
+	cards: InteractionBoardCard[];
+};
+
+/** Версия маршрута в выборе над доской. */
+export type InteractionBoardRoute = {
+	id: string;
+	name: string;
+	version: number;
+	/** Сколько взаимодействий области доступа идут по этой версии. */
+	interactions: number;
+};
+
+/** Доска: стадии одной версии маршрута и карточки, разложенные по ним. */
+export type InteractionBoardView = {
+	routes: InteractionBoardRoute[];
+	/** Версия, чьи стадии стали колонками; пусто, когда маршрутов нет вовсе. */
+	routeId: string | null;
+	columns: InteractionBoardColumn[];
+	/** Сколько карточек показано на доске. */
+	total: number;
+	/** Потолок карточек в колонке: столько их влезает на экран. */
+	cardsPerColumn: number;
+};
+
+/**
  * Представление взаимодействия для публичного API: моменты времени — строки
  * ISO 8601, а не `Date`. Перевод описан явно, иначе формат ответа менялся бы
  * вместе с внутренним типом, о котором интегратор ничего не знает.

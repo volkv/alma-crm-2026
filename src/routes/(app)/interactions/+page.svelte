@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
 	import { toast } from 'svelte-sonner';
+	import KanbanIcon from '@lucide/svelte/icons/kanban';
 	import PlusIcon from '@lucide/svelte/icons/plus';
+	import TableIcon from '@lucide/svelte/icons/table';
 	import UserCogIcon from '@lucide/svelte/icons/user-cog';
 	import { enhance } from '$app/forms';
 	import { goto } from '$app/navigation';
@@ -20,12 +22,15 @@
 	import SlaChip from '$lib/components/sla-chip.svelte';
 	import StageTimeline from '$lib/components/stage-timeline.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
+	import Board from '$lib/components/interactions/board.svelte';
 	import { toTimelineStages } from '$lib/components/interactions/timeline';
+	import { filterHref } from '$lib/components/directory/query';
 	import {
 		INTERACTION_STATUSES,
 		PARTY_ROLE_LABELS,
 		STAGE_CATEGORIES,
-		type InteractionListItem
+		type InteractionListItem,
+		type InteractionViewMode
 	} from '$lib/contracts/interactions';
 	import { formatDateTime } from '$lib/format';
 	import {
@@ -52,14 +57,20 @@
 	let assignIds = $state<string[]>([]);
 	let assignUserId = $state('');
 
+	// Массовое назначение живёт в таблице: выбирают строки в ней, и в режиме
+	// доски выбирать нечего — список ответственных туда не грузится.
+	const users = $derived(data.view === 'table' ? data.users : []);
+
 	const assignUserName = $derived.by(() => {
-		const user = data.users.find((candidate) => candidate.id === assignUserId);
+		const user = users.find((candidate) => candidate.id === assignUserId);
 
 		return user === undefined ? 'Выберите ответственного' : `${user.name} — ${user.roleName}`;
 	});
 
 	$effect(() => {
-		if (form && 'assigned' in form) {
+		if (form && 'moved' in form) {
+			toast.success('Взаимодействие переведено на другую стадию');
+		} else if (form && 'assigned' in form) {
 			toast.success(`Ответственный назначен: ${form.assigned}`);
 		} else if (form && 'message' in form) {
 			toast.error(form.message);
@@ -131,6 +142,14 @@
 
 	function go(changes: Partial<InteractionFilters>) {
 		return goto(filtersHref(page.url, changes), { keepFocus: true, noScroll: true });
+	}
+
+	/**
+	 * Представление живёт в адресе рядом с фильтрами: отобранный набор один, и
+	 * ссылка на него должна переносить и способ, которым на него смотрят.
+	 */
+	function viewHref(mode: InteractionViewMode) {
+		return filterHref(page.url, 'view', mode === 'board' ? 'board' : '');
 	}
 </script>
 
@@ -226,9 +245,44 @@
 		>
 			Мои
 		</Button>
+
+		<!-- Поиск принадлежит таблице и живёт в её строке поиска; на доске такой
+			строки нет, поэтому унаследованный из адреса запрос показан рядом с
+			фильтрами — иначе отобранный набор нечем было бы объяснить и снять. -->
+		{#if data.view === 'board' && data.search !== ''}
+			<span class="flex items-center gap-1 text-xs text-muted-foreground">
+				Поиск: «{data.search}»
+				<Button href={filterHref(page.url, 'q', '')} variant="ghost" size="xs">Сбросить</Button>
+			</span>
+		{/if}
+
+		<!-- Представление — часть адреса: ссылкой на список делятся вместе с тем,
+			каким его смотрели. -->
+		<div class="ms-auto flex items-center gap-1" role="group" aria-label="Представление">
+			<Button
+				href={viewHref('table')}
+				variant={data.view === 'table' ? 'default' : 'outline'}
+				size="sm"
+				aria-current={data.view === 'table' ? 'page' : undefined}
+			>
+				<TableIcon aria-hidden="true" />
+				Таблица
+			</Button>
+			<Button
+				href={viewHref('board')}
+				variant={data.view === 'board' ? 'default' : 'outline'}
+				size="sm"
+				aria-current={data.view === 'board' ? 'page' : undefined}
+			>
+				<KanbanIcon aria-hidden="true" />
+				Доска
+			</Button>
+		</div>
 	</div>
 
-	{#if data.total === 0 && !data.isFiltered}
+	{#if data.view === 'board'}
+		<Board board={data.board} canTransition={data.canTransition} isFiltered={data.isFiltered} />
+	{:else if data.total === 0 && !data.isFiltered}
 		<div class="rounded-lg border border-border bg-surface">
 			<EmptyState
 				title="Взаимодействий пока нет"
@@ -261,7 +315,7 @@
 						size="sm"
 						onclick={() => {
 							assignIds = ids;
-							assignUserId = data.users[0]?.id ?? '';
+							assignUserId = users[0]?.id ?? '';
 							assignOpen = true;
 							clear();
 						}}
@@ -305,7 +359,7 @@
 				<Select.Root type="single" name="userId" bind:value={assignUserId}>
 					<Select.Trigger id="assignUserId" class="w-full">{assignUserName}</Select.Trigger>
 					<Select.Content>
-						{#each data.users as user (user.id)}
+						{#each users as user (user.id)}
 							<Select.Item value={user.id} label="{user.name} — {user.roleName}" />
 						{/each}
 					</Select.Content>
