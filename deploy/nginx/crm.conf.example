@@ -60,5 +60,13 @@ server {
         proxy_connect_timeout 60s;
         proxy_send_timeout 120s;
         proxy_read_timeout 120s;
+
+        # SvelteKit answers with a `Link` header that preloads the modules a page
+        # needs; on pages with many of them it runs to 4-5 KB. The default
+        # 4k response-header buffer cannot hold that, and nginx turns the whole
+        # page into 502 with "upstream sent too big header" in the error log.
+        proxy_buffer_size 32k;
+        proxy_buffers 8 32k;
+        proxy_busy_buffers_size 64k;
     }
 }

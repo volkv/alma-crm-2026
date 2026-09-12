@@ -86,6 +86,15 @@ curl -s http://127.0.0.1:8099/api/health
 `CRM_PORT` и пути к сертификату, положить в `sites-available`, слинковать в `sites-enabled`
 и перезагрузить nginx после `nginx -t`.
 
+Буферы заголовков в шаблоне увеличены не про запас. SvelteKit отдаёт заголовок `Link` со
+ссылками на модули, которые странице понадобятся (`rel=modulepreload`); на страницах со
+списками и диалогами он вырастает до 4–5 КБ. Дефолтного `proxy_buffer_size 4k` на такой ответ
+не хватает: nginx не режет заголовок, а отвечает 502 и пишет в `crm_error.log`
+«upstream sent too big header while reading response header from upstream». Приложение при
+этом исправно — в его логе обычный 200. Отсюда `proxy_buffer_size 32k`, `proxy_buffers 8 32k`
+и `proxy_busy_buffers_size 64k` в `location /`: если прокси на стенде настраивают не по
+шаблону, эти три строки нужно перенести руками.
+
 ## Обновление
 
 ```bash

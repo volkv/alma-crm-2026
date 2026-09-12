@@ -7,7 +7,7 @@
  * который лежит на диске.
  */
 import { z } from 'zod';
-import { id, optionalId, optionalText, pageQuerySchema, requiredText, searchQuery } from './common';
+import { id, optionalId, pageQuerySchema, requiredText, searchQuery } from './common';
 
 /**
  * Три факта по документу фиксируются отдельно: согласован, утверждён, вступил
@@ -75,10 +75,77 @@ export const documentTemplateVariableSchema = z.object({
 
 export type DocumentTemplateVariable = z.output<typeof documentTemplateVariableSchema>;
 
+/**
+ * Метка вида, под которой генерация записывает свои файлы в `documents.kind`.
+ * Отдельного столбца «откуда взялся файл» в схеме нет, и эта метка — всё, что
+ * отличает собранный по шаблону документ от загруженного руками.
+ */
+export const GENERATED_DOCUMENT_KIND = 'generated';
+
+/**
+ * Вид документа в списке: загружен человеком или собран по шаблону.
+ *
+ * У загруженного файла в `documents.kind` лежит вид, который назвал человек
+ * («соглашение», «акт»), у собранного — метка `generated`. Значит, «вид» в
+ * списке — это ответ на вопрос «откуда файл», а названный человеком вид
+ * показывается рядом с названием отдельно.
+ */
+export const DOCUMENT_KINDS = ['uploaded', 'generated'] as const;
+
+export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
+
+/**
+ * Формат файла: то, что человек называет словом «DOCX», и тип, которым он
+ * записан. Тип в базе — произвольная строка, поэтому соответствие объявлено
+ * явно, а неизвестный тип формата не получает вовсе.
+ */
+export const DOCUMENT_FORMAT_MIME_TYPES = {
+	pdf: 'application/pdf',
+	docx: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+	xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+	pptx: 'application/vnd.openxmlformats-officedocument.presentationml.presentation',
+	doc: 'application/msword',
+	xls: 'application/vnd.ms-excel',
+	png: 'image/png',
+	jpeg: 'image/jpeg',
+	txt: 'text/plain',
+	zip: 'application/zip'
+} as const satisfies Record<string, (typeof ALLOWED_DOCUMENT_MIME_TYPES)[number]>;
+
+export type DocumentFormat = keyof typeof DOCUMENT_FORMAT_MIME_TYPES;
+
+export const DOCUMENT_FORMATS = Object.keys(DOCUMENT_FORMAT_MIME_TYPES) as DocumentFormat[];
+
+/** Формат по типу файла или `null`, если тип неизвестен. */
+export function documentFormat(mime: string): DocumentFormat | null {
+	return DOCUMENT_FORMATS.find((format) => DOCUMENT_FORMAT_MIME_TYPES[format] === mime) ?? null;
+}
+
+/**
+ * Отбор по отметкам: либо конкретный факт поставлен, либо не поставлено ни
+ * одного. «Ни одного» — это не отсутствие фильтра, а отдельный вопрос: какие
+ * документы ещё никто не согласовал.
+ */
+export const DOCUMENT_FACT_FILTERS = [...DOCUMENT_STATUS_FACTS, 'none'] as const;
+
+export type DocumentFactFilter = (typeof DOCUMENT_FACT_FILTERS)[number];
+
+/** Колонки, по которым список сортируется на сервере. */
+export const DOCUMENT_SORT_KEYS = ['title', 'format', 'sizeBytes', 'createdAt'] as const;
+
+/**
+ * Разбор строки запроса — это чтение пользовательского ввода: `format=чушь` в
+ * адресе не должен ронять страницу, он просто не фильтр. Поэтому у полей
+ * списка стоит `catch`, а не `parse`, который бросает.
+ */
 export const documentListQuerySchema = z.object({
 	interactionId: optionalId('Некорректный идентификатор взаимодействия'),
-	kind: optionalText(100),
+	kind: z.enum(DOCUMENT_KINDS).nullable().catch(null),
+	format: z.enum(DOCUMENT_FORMATS).nullable().catch(null),
+	fact: z.enum(DOCUMENT_FACT_FILTERS).nullable().catch(null),
 	q: searchQuery,
+	sortBy: z.enum(DOCUMENT_SORT_KEYS).catch('createdAt'),
+	sortDirection: z.enum(['asc', 'desc']).catch('desc'),
 	...pageQuerySchema.shape
 });
 
@@ -86,6 +153,28 @@ export type UploadDocumentInput = z.output<typeof uploadDocumentSchema>;
 export type GenerateDocumentInput = z.output<typeof generateDocumentSchema>;
 export type MarkDocumentStatusInput = z.output<typeof markDocumentStatusSchema>;
 export type DocumentListQuery = z.output<typeof documentListQuerySchema>;
+
+/**
+ * Строка списка документов. Взаимодействие и автор приходят уже названиями:
+ * список показывает их текстом и ссылкой, а второй запрос за именами
+ * превратил бы страницу в N+1.
+ */
+export type DocumentListItem = {
+	id: string;
+	title: string;
+	kind: DocumentKind;
+	/** Вид, который назвал человек при загрузке; у собранных файлов его нет. */
+	uploadedKind: string | null;
+	mime: string;
+	sizeBytes: number;
+	createdAt: Date;
+	agreedAt: Date | null;
+	approvedAt: Date | null;
+	inEffectAt: Date | null;
+	interaction: { id: string; title: string } | null;
+	/** Кто загрузил или собрал файл; `null` — если учётной записи уже нет. */
+	authorName: string | null;
+};
 
 export type DocumentView = {
 	id: string;

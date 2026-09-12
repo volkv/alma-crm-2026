@@ -6,13 +6,18 @@ import { eq } from 'drizzle-orm';
 import PizZip from 'pizzip';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
+	documentListQuerySchema,
+	type DocumentListQuery,
+	type DocumentView
+} from '$lib/contracts/documents';
+import {
 	auditEvents,
 	documentTemplates,
 	documents,
 	interactionParties
 } from '$lib/server/db/schema';
 import { generateDocument } from '$lib/server/documents/generate';
-import { readDocumentForDownload } from '$lib/server/documents/read';
+import { listDocuments, readDocumentForDownload } from '$lib/server/documents/read';
 import { markDocument } from '$lib/server/documents/status';
 import { resolveStoredPath } from '$lib/server/documents/storage';
 import { ensureTemplateRegistered } from '$lib/server/documents/templates';
@@ -475,5 +480,175 @@ describe('отметки по документу', () => {
 		await expect(
 			markDocument(testActor({ roleId: 'viewer' }), document.id, 'agreed')
 		).rejects.toBeInstanceOf(ForbiddenError);
+	});
+});
+
+describe('список документов', () => {
+	const pdfBytes = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n', 'latin1');
+
+	/** Полный запрос списка: значения по умолчанию плюс то, что проверяет тест. */
+	function listQuery(overrides: Partial<DocumentListQuery> = {}): DocumentListQuery {
+		return { ...documentListQuerySchema.parse({}), ...overrides };
+	}
+
+	/**
+	 * Три документа: загруженный и собранный по шаблону — по взаимодействию,
+	 * третий — вне его. На этом наборе видно и вид, и формат, и область доступа.
+	 */
+	async function threeDocuments(): Promise<{
+		interactionId: string;
+		organizationId: string;
+		scan: DocumentView;
+		built: DocumentView;
+		form: DocumentView;
+	}> {
+		const ctx = testActor();
+		const { interactionId, organizationId } = await interactionWithParty();
+
+		const scan = await uploadDocument(ctx, {
+			interactionId,
+			kind: 'agreement',
+			title: 'Скан соглашения',
+			file: { mime: 'application/pdf', bytes: pdfBytes }
+		});
+
+		// Только DOCX: он собирается в памяти, PDF ушёл бы в Gotenberg, а
+		// проверяется здесь список, а не конвертация.
+		const [built] = await generateDocument(ctx, {
+			templateKey: 'agreement',
+			interactionId,
+			title: 'Соглашение по шаблону',
+			data: AGREEMENT,
+			formats: ['docx']
+		});
+
+		const form = await uploadDocument(ctx, {
+			kind: 'report_form',
+			title: 'Типовая форма отчёта',
+			file: { mime: 'application/pdf', bytes: pdfBytes }
+		});
+
+		return { interactionId, organizationId, scan, built, form };
+	}
+
+	it('отдаёт строки с видом, взаимодействием и автором', async () => {
+		const { interactionId, scan, built, form } = await threeDocuments();
+
+		const page = await listDocuments(testActor(), listQuery());
+
+		expect(page.total).toBe(3);
+		expect(page.page).toBe(1);
+		expect(page.items).toHaveLength(3);
+
+		const uploaded = page.items.find((item) => item.id === scan.id);
+
+		expect(uploaded?.kind).toBe('uploaded');
+		// Вид, названный человеком, из списка не пропадает: он единственный,
+		// кто отличает акт от отчёта.
+		expect(uploaded?.uploadedKind).toBe('agreement');
+		expect(uploaded?.interaction).toEqual({
+			id: interactionId,
+			title: 'Тестовое взаимодействие'
+		});
+		expect(uploaded?.authorName).toBe('Тестовый Администратор');
+		expect(uploaded?.sizeBytes).toBe(pdfBytes.byteLength);
+
+		const generated = page.items.find((item) => item.id === built.id);
+
+		expect(generated?.kind).toBe('generated');
+		expect(generated?.uploadedKind).toBeNull();
+
+		// Документ вне взаимодействия ссылки на карточку не получает.
+		expect(page.items.find((item) => item.id === form.id)?.interaction).toBeNull();
+	});
+
+	it('не показывает документы чужих взаимодействий, а документ вне взаимодействия показывает', async () => {
+		const { organizationId, scan, built, form } = await threeDocuments();
+
+		const own = await listDocuments(
+			testActor({ roleId: 'manager', organizationIds: [organizationId] }),
+			listQuery()
+		);
+
+		expect(own.total).toBe(3);
+		expect(own.items.map((item) => item.id).sort()).toEqual([scan.id, built.id, form.id].sort());
+
+		const stranger = await insertOrganization(database.db, { shortName: 'Чужой вуз' });
+		const outside = await listDocuments(
+			testActor({ roleId: 'manager', organizationIds: [stranger] }),
+			listQuery()
+		);
+
+		// Область доступа не применяется только к документу без взаимодействия:
+		// это типовая форма оператора, а не имущество организации.
+		expect(outside.total).toBe(1);
+		expect(outside.items.map((item) => item.id)).toEqual([form.id]);
+	});
+
+	it('отбирает по виду, формату и отметкам', async () => {
+		const ctx = testActor();
+		const { scan, built, form } = await threeDocuments();
+
+		await markDocument(ctx, scan.id, 'agreed');
+
+		const uploaded = await listDocuments(ctx, listQuery({ kind: 'uploaded' }));
+		expect(uploaded.items.map((item) => item.id).sort()).toEqual([scan.id, form.id].sort());
+
+		const generated = await listDocuments(ctx, listQuery({ kind: 'generated' }));
+		expect(generated.items.map((item) => item.id)).toEqual([built.id]);
+
+		const docx = await listDocuments(ctx, listQuery({ format: 'docx' }));
+		expect(docx.items.map((item) => item.id)).toEqual([built.id]);
+
+		const pdf = await listDocuments(ctx, listQuery({ format: 'pdf' }));
+		expect(pdf.items.map((item) => item.id).sort()).toEqual([scan.id, form.id].sort());
+
+		const agreed = await listDocuments(ctx, listQuery({ fact: 'agreed' }));
+		expect(agreed.items.map((item) => item.id)).toEqual([scan.id]);
+
+		const untouched = await listDocuments(ctx, listQuery({ fact: 'none' }));
+		expect(untouched.items.map((item) => item.id).sort()).toEqual([built.id, form.id].sort());
+	});
+
+	it('сортирует по названию в обе стороны и ищет по названию взаимодействия', async () => {
+		await threeDocuments();
+		const ctx = testActor();
+
+		const ascending = await listDocuments(
+			ctx,
+			listQuery({ sortBy: 'title', sortDirection: 'asc' })
+		);
+
+		expect(ascending.items.map((item) => item.title)).toEqual([
+			'Скан соглашения',
+			'Соглашение по шаблону',
+			'Типовая форма отчёта'
+		]);
+
+		const descending = await listDocuments(
+			ctx,
+			listQuery({ sortBy: 'title', sortDirection: 'desc' })
+		);
+
+		expect(descending.items.map((item) => item.title)).toEqual([
+			'Типовая форма отчёта',
+			'Соглашение по шаблону',
+			'Скан соглашения'
+		]);
+
+		// Файл ищут по делу, к которому он приложен, не реже, чем по названию.
+		const byInteraction = await listDocuments(ctx, listQuery({ q: 'Тестовое взаимодействие' }));
+
+		expect(byInteraction.total).toBe(2);
+		expect(byInteraction.items.map((item) => item.title).sort()).toEqual([
+			'Скан соглашения',
+			'Соглашение по шаблону'
+		]);
+	});
+
+	it('требует право на чтение документов', async () => {
+		await expect(listDocuments(testActor({ permissions: [] }), listQuery())).rejects.toBeInstanceOf(
+			ForbiddenError
+		);
 	});
 });

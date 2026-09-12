@@ -71,7 +71,9 @@ describe('заведение взаимодействия', () => {
 		const ctx = admin();
 		const routeId = await demoRoute();
 		const institutionId = await insertOrganization(database.db, { shortName: 'МГТУ' });
-		const customerId = await insertOrganization(database.db, { shortName: 'РТК ИТ' });
+		const customerId = await insertOrganization(database.db, {
+			shortName: 'Северный центр цифровых компетенций'
+		});
 		const programId = await insertProgram('09.03.01');
 		const productId = await insertProduct('LMS-1');
 
@@ -95,7 +97,10 @@ describe('заведение взаимодействия', () => {
 		const card = await getInteraction(ctx, created.id);
 		const status = await getInteractionStatus(ctx, created.id);
 
-		expect(card.parties.map((party) => party.organizationName).sort()).toEqual(['МГТУ', 'РТК ИТ']);
+		expect(card.parties.map((party) => party.organizationName).sort()).toEqual([
+			'МГТУ',
+			'Северный центр цифровых компетенций'
+		]);
 		expect(card.programs[0].code).toBe('09.03.01');
 		expect(card.products[0].code).toBe('LMS-1');
 		expect(card.agreementPeriodStart).toBe('2026-09-01');

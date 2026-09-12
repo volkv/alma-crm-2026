@@ -6,13 +6,35 @@
  * привязан к взаимодействию, а взаимодействие — к организациям-сторонам:
  * значит, документ виден тому, в чью область попала хотя бы одна из сторон.
  */
-import { and, eq, exists, sql } from 'drizzle-orm';
+import {
+	and,
+	asc,
+	count,
+	desc,
+	eq,
+	exists,
+	ilike,
+	isNotNull,
+	isNull,
+	ne,
+	or,
+	sql,
+	type SQL
+} from 'drizzle-orm';
+import type { PgColumn } from 'drizzle-orm/pg-core';
 import { id as idSchema } from '$lib/contracts/common';
-import type { DocumentView } from '$lib/contracts/documents';
+import type { PageResult } from '$lib/contracts/common';
+import {
+	DOCUMENT_FORMAT_MIME_TYPES,
+	GENERATED_DOCUMENT_KIND,
+	type DocumentListItem,
+	type DocumentListQuery,
+	type DocumentView
+} from '$lib/contracts/documents';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
-import { documents, interactionParties, interactions } from '../db/schema';
+import { documents, interactionParties, interactions, users } from '../db/schema';
 import { NotFoundError } from '../errors';
 import { requirePermission, scopeFilter } from '../rbac';
 import { documentFileName } from './filename';
@@ -104,6 +126,177 @@ export async function assertInteractionAccessible(
 	if (!(await isInteractionAccessible(ctx, interactionId))) {
 		throw new NotFoundError('Взаимодействие не найдено');
 	}
+}
+
+/**
+ * Условие «этот документ виден вызывающему» для выборок из `documents`.
+ * Коррелирует со столбцом `documents.interaction_id`, поэтому годится только
+ * там, где выборка идёт из этой таблицы.
+ *
+ * Правило то же, что у `assertDocumentAccessible`: документ без взаимодействия
+ * — типовая форма оператора, а не имущество организации, и область доступа к
+ * нему не применяется.
+ */
+function documentScopeFilter(ctx: ActorContext): SQL {
+	if (ctx.scope.kind === 'all') {
+		// Полный доступ видит и документ взаимодействия, у которого сторон ещё
+		// нет; подзапрос ниже такой документ отверг бы — сверять не с чем.
+		return sql`true`;
+	}
+
+	const partyInScope = exists(
+		getDb()
+			.select({ one: sql`1` })
+			.from(interactionParties)
+			.where(
+				and(
+					eq(interactionParties.interactionId, documents.interactionId),
+					scopeFilter(ctx, interactionParties.organizationId)
+				)
+			)
+	);
+
+	// `or()` в drizzle объявлен как «SQL или undefined» — он выбрасывает пустые
+	// ветки. Область доступа обязана быть условием, а не «может быть, условием»,
+	// поэтому ветки соединяются шаблоном.
+	return sql`(${isNull(documents.interactionId)} or ${partyInScope})`;
+}
+
+const DOCUMENT_SORT_COLUMNS = {
+	title: documents.title,
+	// Формат — это тип файла, названный словом; сортировка по типу ставит рядом
+	// одинаковые форматы, а колонку «Формат» открывают именно за этим.
+	format: documents.mime,
+	sizeBytes: documents.sizeBytes,
+	createdAt: documents.createdAt
+} as const satisfies Record<DocumentListQuery['sortBy'], PgColumn>;
+
+const FACT_COLUMNS = {
+	agreed: documents.agreedAt,
+	approved: documents.approvedAt,
+	in_effect: documents.inEffectAt
+} as const;
+
+function factCondition(fact: NonNullable<DocumentListQuery['fact']>): SQL {
+	if (fact === 'none') {
+		return sql`(${isNull(documents.agreedAt)} and ${isNull(documents.approvedAt)} and ${isNull(
+			documents.inEffectAt
+		)})`;
+	}
+
+	return isNotNull(FACT_COLUMNS[fact]);
+}
+
+function ordered(column: PgColumn, direction: 'asc' | 'desc'): SQL {
+	return direction === 'desc' ? desc(column) : asc(column);
+}
+
+function toDocumentListItem(
+	row: typeof documents.$inferSelect,
+	interactionTitle: string | null,
+	authorName: string | null
+): DocumentListItem {
+	const generated = row.kind === GENERATED_DOCUMENT_KIND;
+
+	return {
+		id: row.id,
+		title: row.title,
+		kind: generated ? 'generated' : 'uploaded',
+		uploadedKind: generated ? null : row.kind,
+		mime: row.mime,
+		sizeBytes: row.sizeBytes,
+		createdAt: row.createdAt,
+		agreedAt: row.agreedAt,
+		approvedAt: row.approvedAt,
+		inEffectAt: row.inEffectAt,
+		interaction:
+			row.interactionId === null || interactionTitle === null
+				? null
+				: { id: row.interactionId, title: interactionTitle },
+		authorName
+	};
+}
+
+/**
+ * Страница списка документов: одна выборка со страницей строк и счётчиком,
+ * всё остальное — отбор в условии. Название взаимодействия и имя автора
+ * приходят соединением: список показывает их текстом, а запрос за каждым
+ * именем отдельно превратил бы страницу в N+1.
+ */
+export async function listDocuments(
+	ctx: ActorContext,
+	query: DocumentListQuery
+): Promise<PageResult<DocumentListItem>> {
+	requirePermission(ctx, 'documents.read');
+
+	const conditions: SQL[] = [documentScopeFilter(ctx)];
+
+	if (query.interactionId !== null) {
+		conditions.push(eq(documents.interactionId, query.interactionId));
+	}
+
+	if (query.kind !== null) {
+		// Столбца «откуда файл» в схеме нет: генерация помечает свои записи
+		// видом `generated`, поэтому всё остальное — загруженное человеком.
+		conditions.push(
+			query.kind === 'generated'
+				? eq(documents.kind, GENERATED_DOCUMENT_KIND)
+				: ne(documents.kind, GENERATED_DOCUMENT_KIND)
+		);
+	}
+
+	if (query.format !== null) {
+		conditions.push(eq(documents.mime, DOCUMENT_FORMAT_MIME_TYPES[query.format]));
+	}
+
+	if (query.fact !== null) {
+		conditions.push(factCondition(query.fact));
+	}
+
+	if (query.q !== null) {
+		const pattern = `%${query.q}%`;
+		const search = or(ilike(documents.title, pattern), ilike(interactions.title, pattern));
+
+		if (search !== undefined) {
+			conditions.push(search);
+		}
+	}
+
+	const where = and(...conditions);
+	const db = getDb();
+
+	const [rows, totals] = await Promise.all([
+		db
+			.select({
+				document: documents,
+				interactionTitle: interactions.title,
+				authorName: users.fullName
+			})
+			.from(documents)
+			.leftJoin(interactions, eq(interactions.id, documents.interactionId))
+			.leftJoin(users, eq(users.id, documents.uploadedBy))
+			.where(where)
+			// Второй ключ сортировки — первичный: DOCX и PDF одного соглашения
+			// пишутся одной командой, и без него они меняются местами между
+			// страницами.
+			.orderBy(ordered(DOCUMENT_SORT_COLUMNS[query.sortBy], query.sortDirection), asc(documents.id))
+			.limit(query.pageSize)
+			.offset((query.page - 1) * query.pageSize),
+		db
+			.select({ value: count() })
+			.from(documents)
+			.leftJoin(interactions, eq(interactions.id, documents.interactionId))
+			.where(where)
+	]);
+
+	return {
+		items: rows.map((row) =>
+			toDocumentListItem(row.document, row.interactionTitle, row.authorName)
+		),
+		total: totals[0]?.value ?? 0,
+		page: query.page,
+		pageSize: query.pageSize
+	};
 }
 
 /**
