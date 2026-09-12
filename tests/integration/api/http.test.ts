@@ -6,11 +6,7 @@ import type { AuditEventType } from '$lib/contracts/audit';
 import type { SessionUser } from '$lib/server/auth/types';
 import { apiHandler, type ApiEndpointConfig } from '$lib/server/api/handler';
 import { createApiKey, listApiKeys, revokeApiKey } from '$lib/server/api/keys';
-import {
-	API_RATE_LIMIT_PER_KEY,
-	API_REDIS_PREFIX,
-	consumeRateLimit
-} from '$lib/server/api/rate-limit';
+import { API_RATE_LIMIT_PER_KEY, consumeRateLimit } from '$lib/server/api/rate-limit';
 import { apiKeys, auditEvents, organizations, roles, users } from '$lib/server/db/schema';
 import { getRedis } from '$lib/server/redis';
 import {
@@ -48,28 +44,14 @@ beforeAll(async () => {
 }, 300_000);
 
 afterAll(async () => {
-	const redis = getRedis();
-	const leftovers = await redis.keys(`${API_REDIS_PREFIX}*`);
-	if (leftovers.length > 0) {
-		await redis.del(...leftovers);
-	}
-	await redis.quit();
-
+	await getRedis().quit();
 	await database?.stop();
 });
 
 beforeEach(async () => {
+	// `reset()` стирает и Redis: счётчики лимита и пачек живут окно в целую
+	// минуту, и без этого тест видел бы то, что насчитал предыдущий.
 	await database.reset();
-
-	// Счётчики лимита и пачек живут в Redis, общем с разработкой, и переживают
-	// очистку базы: окно — целая минута, и без сброса тест видел бы то, что
-	// насчитал предыдущий.
-	const redis = getRedis();
-	const keys = await redis.keys(`${API_REDIS_PREFIX}*`);
-
-	if (keys.length > 0) {
-		await redis.del(...keys);
-	}
 });
 
 type EventOptions = {

@@ -9,9 +9,14 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# Одна задача на весь гейт, и внутри неё — ровно тот же `check:all`, который
+# разработчик гоняет у себя. Разъезжаться этим двум спискам нельзя: проверка,
+# которой нет на машине, ловится только после push, а проверка, которой нет в CI,
+# не ловится вовсе. Поэтому и `docker build`, и аудит зависимостей живут внутри
+# `check:all`, а не отдельными задачами workflow.
 jobs:
   check:
-    name: Lint, types, tests, build
+    name: Lint, types, tests, build, image, audit
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
@@ -43,27 +48,13 @@ jobs:
           path: playwright-report/
           retention-days: 7
 
-  docker:
-    name: Docker image
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-      - run: docker build .
-
-  audit:
-    name: Dependency audit
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v5
-
-      - uses: pnpm/action-setup@v6
-
-      - uses: actions/setup-node@v5
+      # Трассы, снимки экрана и видео упавших проверок: отчёт ссылается на них,
+      # и без них он показывает только текст ошибки.
+      - name: Upload the Playwright artifacts on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
         with:
-          node-version-file: .nvmrc
-          # No `pnpm install` runs in this job, so there is no store to cache
-          # yet; leaving package-manager-cache on makes the post-step fail
-          # trying to save a path that was never created.
-          package-manager-cache: false
-
-      - run: pnpm audit --prod --audit-level=high
+          name: test-results
+          path: test-results/
+          retention-days: 7
+          if-no-files-found: ignore

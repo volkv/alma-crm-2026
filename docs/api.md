@@ -252,7 +252,8 @@ await revokeApiKey(ctx, apiKeyId);
 
 - `tests/unit/api/` — формат и хеш ключа, разбор `Authorization`, окно ограничителя (с
   подставленным временем и поддельным Redis), конверт ошибки, сборка документа OpenAPI.
-- `tests/integration/api/http.test.ts` — эндпоинты целиком: PostgreSQL в testcontainers, Redis
-  из `docker compose up -d redis`, обработчики зовутся так же, как их зовёт SvelteKit.
+- `tests/integration/api/http.test.ts` — эндпоинты целиком: PostgreSQL и Redis в testcontainers,
+  обработчики зовутся так же, как их зовёт SvelteKit.
 
-Интеграционный тест чистит за собой ключи `lct:api:*` и закрывает соединение с Redis.
+Счётчики ограничителя стирает между проверками `reset()` из `tests/integration/helpers/db.ts` —
+вместе с таблицами: окно у них целая минута, и без этого тест видел бы то, что насчитал предыдущий.

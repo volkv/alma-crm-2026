@@ -15,14 +15,16 @@
 		"lint": "svelte-kit sync && eslint . && prettier --check .",
 		"format": "prettier --write .",
 		"test:unit": "vitest run --project unit",
-		"test:integration": "docker compose up -d --wait redis gotenberg && vitest run --project integration",
+		"test:integration": "docker compose up -d --wait gotenberg && vitest run --project integration",
 		"test:e2e": "docker compose up -d --wait postgres redis gotenberg && playwright test",
 		"db:generate": "drizzle-kit generate",
 		"db:migrate": "node --env-file-if-exists=.env scripts/migrate.ts",
 		"db:seed": "node --env-file-if-exists=.env scripts/seed/index.ts",
 		"db:studio": "drizzle-kit studio",
+		"check:audit": "pnpm audit --prod --audit-level=high",
+		"check:docker": "docker build .",
 		"check:fast": "pnpm run lint && pnpm run check && pnpm run test:unit",
-		"check:all": "pnpm run lint && pnpm run check && pnpm run test:unit && pnpm run test:integration && pnpm run build && pnpm run test:e2e"
+		"check:all": "pnpm run check:audit && pnpm run lint && pnpm run check && pnpm run test:unit && pnpm run test:integration && pnpm run build && pnpm run test:e2e && pnpm run check:docker"
 	},
 	"dependencies": {
 		"@asteasolutions/zod-to-openapi": "^9.1.0",
@@ -49,6 +51,7 @@
 		"@tailwindcss/vite": "^4.3.0",
 		"@tanstack/svelte-table": "^9.2.4",
 		"@testcontainers/postgresql": "^12.1.0",
+		"@testcontainers/redis": "^12.1.0",
 		"@types/node": "^24",
 		"@types/swagger-ui-dist": "^3.30.6",
 		"bits-ui": "^2.19.2",

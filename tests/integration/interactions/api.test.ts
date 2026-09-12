@@ -8,7 +8,6 @@ import type { RequestEvent } from '@sveltejs/kit';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInteractionSchema } from '$lib/contracts/interactions';
 import { createApiKey } from '$lib/server/api/keys';
-import { API_REDIS_PREFIX } from '$lib/server/api/rate-limit';
 import { createInteraction } from '$lib/server/interactions/write';
 import { getRedis } from '$lib/server/redis';
 import { ensureDemoRoute, getRoute } from '$lib/server/stages/routes';
@@ -42,14 +41,7 @@ beforeAll(async () => {
 }, 300_000);
 
 afterAll(async () => {
-	const redis = getRedis();
-	const leftovers = await redis.keys(`${API_REDIS_PREFIX}*`);
-
-	if (leftovers.length > 0) {
-		await redis.del(...leftovers);
-	}
-
-	await redis.quit();
+	await getRedis().quit();
 	await database?.stop();
 });
 

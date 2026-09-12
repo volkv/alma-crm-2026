@@ -1,10 +1,16 @@
 /**
- * Настоящая база для интеграционных тестов.
+ * Настоящее окружение для интеграционных тестов.
  *
- * Контейнер PostgreSQL 17 поднимается на файл тестов, к нему применяются
- * миграции из `drizzle/` и заливается каталог прав. Проверять схему на
- * заглушке бессмысленно: триггеры, частичные индексы, CHECK и представление —
- * это и есть то, что проверяется.
+ * Контейнеры PostgreSQL 17 и Redis 8 поднимаются на файл тестов, к базе
+ * применяются миграции из `drizzle/` и заливается каталог прав. Проверять схему
+ * на заглушке бессмысленно: триггеры, частичные индексы, CHECK и представление —
+ * это и есть то, что проверяется; то же и с Redis: счётчики попыток, лимиты и
+ * сессии живут в нём, и подделка проверяла бы подделку.
+ *
+ * Своё хранилище на файл, а не общее из `docker-compose.yml`: прогон не должен
+ * ни зависеть от того, что насчитал предыдущий, ни мешать соседнему. Из compose
+ * остаётся только Gotenberg (`GOTENBERG_URL`) — он тяжёлый, тянуть по контейнеру
+ * на файл ради тестов документов дороже, чем держать один на машину.
  *
  * Файл теста обязан объявить в самом верху
  *
@@ -16,8 +22,10 @@
  * Vitest, и сервисы пойдут не в контейнер, а в базу разработчика.
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
+import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import { Redis } from 'ioredis';
 import postgres from 'postgres';
 import type { StageSnapshot } from '$lib/contracts/interactions';
 import type { ActorContext } from '$lib/server/actor';
@@ -32,15 +40,26 @@ export type TestDatabase = {
 	db: PostgresJsDatabase<typeof schema>;
 	/** Отдельное соединение для сырого SQL: DDL, проверки ограничений. */
 	raw: postgres.Sql;
-	/** Очищает данные и заново заливает каталог прав. */
+	/**
+	 * Возвращает окружение к началу: чистит таблицы, заново заливает каталог
+	 * прав и стирает Redis целиком.
+	 *
+	 * Redis сюда входит наравне с базой. Счётчики лимитов и пачек живут окно в
+	 * целую минуту и очистку таблиц переживают: без этой строки тест видел бы
+	 * то, что насчитал предыдущий, и порядок тестов в файле стал бы значимым.
+	 */
 	reset: () => Promise<void>;
 	stop: () => Promise<void>;
 };
 
 export async function startTestDatabase(): Promise<TestDatabase> {
-	const container: StartedPostgreSqlContainer = await new PostgreSqlContainer(
-		'postgres:17-alpine'
-	).start();
+	// Параллельно: Redis поднимается заметно быстрее PostgreSQL и на общем
+	// времени файла не сказывается.
+	const [container, redisContainer]: [StartedPostgreSqlContainer, StartedRedisContainer] =
+		await Promise.all([
+			new PostgreSqlContainer('postgres:17-alpine').start(),
+			new RedisContainer('redis:8-alpine').start()
+		]);
 
 	const uri = container.getConnectionUri();
 
@@ -48,7 +67,7 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 	// иначе `getConfig()` справедливо упадёт на первой же недостающей переменной.
 	process.env.NODE_ENV = 'test';
 	process.env.DATABASE_URL = uri;
-	process.env.REDIS_URL = 'redis://localhost:56379';
+	process.env.REDIS_URL = redisContainer.getConnectionUrl();
 	process.env.GOTENBERG_URL = 'http://localhost:3001';
 	process.env.SMTP_HOST = 'localhost';
 	process.env.SMTP_PORT = '1025';
@@ -60,12 +79,18 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 	const raw = postgres(uri, { max: 1 });
 	await migrate(drizzle(raw), { migrationsFolder });
 
+	// Своё соединение, а не общее `getRedis()`: тестам его отдавать незачем, а
+	// закрывают они своё сами — и закрытое общее не годилось бы для уборки.
+	const redis = new Redis(redisContainer.getConnectionUrl());
+
 	// Динамический импорт: к этому моменту окружение уже выставлено, поэтому
 	// первый же `getConfig()` внутри увидит адрес контейнера.
 	const { closeDatabase, getDb } = await import('$lib/server/db');
 	const db = getDb();
 
 	const reset = async (): Promise<void> => {
+		await redis.flushall();
+
 		const tables = await raw<{ name: string }[]>`
 			select table_name as name
 			from information_schema.tables
@@ -105,7 +130,8 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 		stop: async () => {
 			await closeDatabase();
 			await raw.end();
-			await container.stop();
+			await redis.quit();
+			await Promise.all([container.stop(), redisContainer.stop()]);
 		}
 	};
 }

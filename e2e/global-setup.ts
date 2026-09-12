@@ -11,8 +11,9 @@ import { hashPassword } from '$lib/server/auth/password';
 import { DEMO_EMAILS, STAFF_ADMIN_EMAIL } from '../scripts/seed/users';
 
 /**
- * Готовит прогон: применяет миграции, заливает те же начальные данные, что и
- * стенд, и один раз входит в систему за каждую роль, которая нужна тестам.
+ * Готовит прогон: заводит его базу, применяет миграции, заливает те же начальные
+ * данные, что и стенд, и один раз входит в систему за каждую роль, которая нужна
+ * тестам.
  *
  * Данные заливает не этот файл, а `scripts/seed` — обычным дочерним процессом.
  * Сервисы приложения здесь недоступны (Playwright запускает файл обычным Node,
@@ -82,6 +83,42 @@ function serverEnvironment(config: FullConfig): ServerEnv {
 }
 
 /**
+ * Заводит базу прогона, если её ещё нет.
+ *
+ * База у каждого порта своя (см. `playwright.config.ts`), поэтому её нельзя ни
+ * взять из `docker-compose.yml`, ни завести руками перед прогоном: имя знает
+ * только конфигурация. `CREATE DATABASE` идёт через служебную базу `postgres` —
+ * подключиться к той, которой ещё нет, нельзя.
+ */
+async function ensureDatabase(url: string): Promise<void> {
+	const target = new URL(url);
+	const name = decodeURIComponent(target.pathname.slice(1));
+
+	if (name === '') {
+		throw new Error(`DATABASE_URL must name a database: ${url}`);
+	}
+
+	const maintenance = new URL(url);
+	maintenance.pathname = '/postgres';
+
+	const sql = postgres(maintenance.toString(), { max: 1, connect_timeout: 10 });
+
+	try {
+		const existing = await sql<{ one: number }[]>`
+			select 1 as one from pg_database where datname = ${name}
+		`;
+
+		if (existing.length === 0) {
+			// Имя собирает конфигурация из номера порта, снаружи оно не приходит;
+			// кавычки — чтобы оно осталось именем, а не разъехалось по регистру.
+			await sql.unsafe(`create database "${name}"`);
+		}
+	} finally {
+		await sql.end();
+	}
+}
+
+/**
  * Заливка данных тем же входом, что и на стенде. Вывод сида показывается
  * целиком: по нему видно, сколько строк в базе и собрались ли документы.
  */
@@ -142,6 +179,9 @@ function byPassword(email: string, password: string): (page: Page) => Promise<vo
 
 export default async function globalSetup(config: FullConfig): Promise<void> {
 	const env = serverEnvironment(config);
+
+	await ensureDatabase(env.DATABASE_URL);
+
 	const sql = postgres(env.DATABASE_URL, { max: 1, connect_timeout: 10 });
 
 	try {
