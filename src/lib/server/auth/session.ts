@@ -17,7 +17,7 @@ import type { SessionUser } from './types';
 import { getConfig } from '../config';
 import { getDb } from '../db';
 import { roles, users } from '../db/schema';
-import { loadRolePermissions } from '../rbac';
+import { demoSessionPermissions, loadRolePermissions } from '../rbac';
 import { getRedis } from '../redis';
 import { getSetting } from '../settings';
 
@@ -183,6 +183,11 @@ export async function revokeAllSessions(userId: string): Promise<void> {
  * Пользователь запроса: строится из базы каждый раз, потому что роль, права и
  * признак активности меняются без участия владельца сессии. Деактивированный
  * пользователь не собирается вовсе — сессия для него всё равно что погашена.
+ *
+ * Здесь же проходит граница публичной демонстрации. Она проходит по правам, а
+ * не по интерфейсу, и именно в этом месте, потому что через него собирается
+ * действующее лицо и для браузера, и для ключа доступа: спрятать кнопку мало,
+ * а вычесть право один раз — достаточно для обоих входов.
  */
 export async function loadSessionUser(userId: string): Promise<SessionUser | null> {
 	const [row] = await getDb()
@@ -203,13 +208,18 @@ export async function loadSessionUser(userId: string): Promise<SessionUser | nul
 		return null;
 	}
 
+	// Вне демо-режима запись с `is_demo` — обычная учётная запись: признак
+	// поднимает не столбец сам по себе, а столбец вместе с режимом стенда.
+	const isDemo = row.isDemo && getConfig().DEMO_MODE;
+	const rolePermissions = await loadRolePermissions(row.roleId);
+
 	return {
 		id: row.id,
 		email: row.email,
 		fullName: row.fullName,
 		roleId: row.roleId,
-		permissions: await loadRolePermissions(row.roleId),
-		isDemo: row.isDemo,
+		permissions: isDemo ? demoSessionPermissions(rolePermissions) : rolePermissions,
+		isDemo,
 		// Область доступа пока полная у всех ролей: столбца, который сужал бы её до
 		// списка организаций, в схеме ещё нет. Сужение появится здесь — в одном
 		// месте, а не в выборках, которые уже зовут `scopeFilter`.

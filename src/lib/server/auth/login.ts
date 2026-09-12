@@ -18,7 +18,13 @@ import { roles, users } from '../db/schema';
 import { ConflictError, NotFoundError } from '../errors';
 import { DEFAULT_ROLES } from '../rbac/permissions';
 import { getSetting } from '../settings';
-import { clearLoginFailures, lockoutState, registerLoginFailure, UNKNOWN_ADDRESS } from './lockout';
+import {
+	clearAddressAttempts,
+	clearLoginFailures,
+	lockoutState,
+	registerLoginFailure,
+	UNKNOWN_ADDRESS
+} from './lockout';
 import { verifyPassword } from './password';
 import { createSession, loadSessionUser, markSignedIn } from './session';
 import { normalizeEmail } from './users';
@@ -87,7 +93,7 @@ export async function login(ctx: ActorContext, input: LoginInput): Promise<Login
 
 	await clearLoginFailures(email, ip);
 
-	return { ok: true, sessionId: await startSession(ctx, account.id, false) };
+	return { ok: true, sessionId: await startSession(ctx, account.id) };
 }
 
 /**
@@ -111,10 +117,10 @@ export async function demoLogin(ctx: ActorContext, roleId: string): Promise<stri
 		throw new NotFoundError('Демонстрационная учётная запись с этой ролью не заведена');
 	}
 
-	return startSession(ctx, account.id, true);
+	return startSession(ctx, account.id);
 }
 
-async function startSession(ctx: ActorContext, userId: string, demo: boolean): Promise<string> {
+async function startSession(ctx: ActorContext, userId: string): Promise<string> {
 	// Форму входа заполняет ещё анонимный посетитель, но удачный вход — действие
 	// самого владельца учётной записи: в журнале на этой строке должен стоять
 	// он, иначе «кто вошёл» отвечается только по подробностям события. Тот же
@@ -135,8 +141,15 @@ async function startSession(ctx: ActorContext, userId: string, demo: boolean): P
 		type: 'auth.login',
 		outcome: 'success',
 		subject: { type: 'user', id: userId },
-		details: demo ? { userId, demo: true } : { userId }
+		// Признак берётся у собранной сессии, а не у того, по кнопке пришли или
+		// по паролю: демонстрационная запись остаётся общей при любом входе, и
+		// журнал должен помечать сессию, а не способ её открыть.
+		details: user.isDemo ? { userId, demo: true } : { userId }
 	});
+
+	// Лимит по адресу считает перебор: удачный вход его снимает, иначе десяток
+	// человек за одним NAT выбирает общий счётчик обычной работой.
+	await clearAddressAttempts(ctx.ip ?? UNKNOWN_ADDRESS);
 
 	return createSession(userId, { ip: ctx.ip, userAgent: ctx.userAgent });
 }

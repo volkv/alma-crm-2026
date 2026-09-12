@@ -10,6 +10,7 @@ import type { UserView } from '$lib/contracts/auth';
 import type { PageQuery, PageResult } from '$lib/contracts/common';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
+import { getConfig } from '../config';
 import { getDb } from '../db';
 import { roles, users } from '../db/schema';
 import { withTransaction } from '../db/transaction';
@@ -119,15 +120,44 @@ export async function createUser(ctx: ActorContext, input: CreateUserInput): Pro
 	});
 }
 
+/** Состояние учётной записи, от которого зависит, можно ли её переключать. */
+async function readAccountState(userId: string): Promise<{ isActive: boolean; isDemo: boolean }> {
+	const [row] = await getDb()
+		.select({ isActive: users.isActive, isDemo: users.isDemo })
+		.from(users)
+		.where(eq(users.id, userId))
+		.limit(1);
+
+	if (row === undefined) {
+		throw new NotFoundError('Пользователь не найден');
+	}
+
+	return row;
+}
+
 /**
  * Выключает учётную запись и немедленно гасит её сессии: иначе уволенный
  * сотрудник доработал бы в системе до конца своего рабочего дня.
+ *
+ * Демонстрационные записи при включённом демо-режиме выключить нельзя. Ими
+ * входят все, кто открыл стенд, и восстановить выключенную некому: кнопка
+ * «Войти как …» пропадает со страницы входа вместе с ней, а раздел, где её
+ * можно было бы включить обратно, закрыт для самой демонстрации. Одно нажатие
+ * — и показывать нечего до следующего вмешательства в базу.
  */
 export async function deactivateUser(ctx: ActorContext, userId: string): Promise<void> {
 	requirePermission(ctx, 'users.manage');
 
 	if (ctx.user?.id === userId) {
 		throw new ConflictError('Нельзя выключить собственную учётную запись');
+	}
+
+	const account = await readAccountState(userId);
+
+	if (account.isDemo && getConfig().DEMO_MODE) {
+		throw new ConflictError(
+			'Демонстрационную учётную запись нельзя выключить, пока включён демо-режим'
+		);
 	}
 
 	await withTransaction(ctx, async (tx) => {
@@ -149,6 +179,39 @@ export async function deactivateUser(ctx: ActorContext, userId: string): Promise
 	});
 
 	await revokeAllSessions(userId);
+}
+
+/**
+ * Включает выключенную учётную запись обратно.
+ *
+ * Пароль при этом не трогается: он в базе и остался, а выключение его не
+ * отменяло — человек возвращается к работе с тем же паролем, что и до ухода.
+ * Сессий у выключенной записи нет (их погасило выключение), поэтому включение
+ * ничего не восстанавливает — оно только открывает вход.
+ */
+export async function activateUser(ctx: ActorContext, userId: string): Promise<void> {
+	requirePermission(ctx, 'users.manage');
+
+	const account = await readAccountState(userId);
+
+	// Журнал — доказательство того, что произошло: записать включение того, что
+	// и так работает, значит положить в него событие, которого не было.
+	if (account.isActive) {
+		throw new ConflictError('Учётная запись и так работает');
+	}
+
+	await withTransaction(ctx, async (tx) => {
+		await tx
+			.update(users)
+			.set({ isActive: true, deactivatedAt: null, updatedAt: sql`now()` })
+			.where(eq(users.id, userId));
+
+		await recordAuditEvent(
+			ctx,
+			{ type: 'users.activated', outcome: 'success', subject: { type: 'user', id: userId } },
+			tx
+		);
+	});
 }
 
 /** Страница списка пользователей и отбор в нём. */

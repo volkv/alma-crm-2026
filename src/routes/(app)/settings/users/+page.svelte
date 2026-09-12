@@ -50,11 +50,11 @@
 		}
 	);
 
-	/** Результат выключения приходит обычным `fail`, а не через superforms. */
-	const deactivateMessage = $derived(
+	/** Результат включения и выключения приходит обычным `fail`, а не через superforms. */
+	const switchMessage = $derived(
 		actionResult !== null && 'message' in actionResult ? actionResult.message : null
 	);
-	const deactivateFailed = $derived(
+	const switchFailed = $derived(
 		actionResult !== null && 'issues' in actionResult && (actionResult.issues?.length ?? 0) > 0
 	);
 
@@ -112,6 +112,19 @@
 		}
 	];
 
+	/**
+	 * Можно ли выключить эту запись. Демонстрационная при включённом демо-режиме
+	 * не выключается: ею входят все, кто открыл стенд, а включить её обратно
+	 * оттуда же будет некому — сервис отказывает, и кнопки тут быть не должно.
+	 *
+	 * Режим стенда приезжает из `(app)/+layout.server.ts` вместе с оболочкой:
+	 * он один на всё приложение, и спрашивать его второй раз в этом загрузчике
+	 * значило бы завести второй ответ на тот же вопрос.
+	 */
+	function canDeactivate(user: UserView): boolean {
+		return user.isActive && !(user.isDemo && data.demoMode);
+	}
+
 	function askDeactivate(user: UserView) {
 		pending = user;
 		confirmOpen = true;
@@ -134,14 +147,22 @@
 {/snippet}
 
 {#snippet actionsCell({ user }: { user: UserView })}
-	{#if user.isActive}
+	{#if canDeactivate(user)}
 		<Button variant="outline" size="sm" onclick={() => askDeactivate(user)}>Выключить</Button>
+	{:else if !user.isActive}
+		<!-- Включение обратно не спрашивает подтверждения: оно ничего не отнимает и
+		     отменяется тем же выключением. Поэтому не диалог, а форма прямо в
+		     строке — со своим идентификатором, без общего состояния страницы. -->
+		<form method="POST" action="?/activate">
+			<input type="hidden" name="userId" value={user.id} />
+			<Button type="submit" variant="outline" size="sm">Включить</Button>
+		</form>
 	{/if}
 {/snippet}
 
-{#if deactivateMessage}
-	<Alert.Root variant={deactivateFailed ? 'destructive' : 'default'}>
-		<Alert.Description>{deactivateMessage}</Alert.Description>
+{#if switchMessage}
+	<Alert.Root variant={switchFailed ? 'destructive' : 'default'}>
+		<Alert.Description>{switchMessage}</Alert.Description>
 	</Alert.Root>
 {/if}
 
@@ -150,7 +171,7 @@
 		<Card.Title>Пользователи</Card.Title>
 		<Card.Description>
 			Учётные записи не удаляются, а выключаются: за каждой стоят записи журнала, и удаление стёрло
-			бы историю. Выключение гасит сессии сразу.
+			бы историю. Выключение гасит сессии сразу, включение открывает вход с прежним паролем.
 		</Card.Description>
 		<Card.Action>
 			<Button size="sm" onclick={() => (createOpen = true)}>
@@ -246,7 +267,7 @@
 	title="Выключить учётную запись?"
 	description={pending === null
 		? undefined
-		: `${pending.fullName} (${pending.email}) потеряет доступ немедленно: все его сессии завершатся. Включить запись обратно из интерфейса пока нельзя.`}
+		: `${pending.fullName} (${pending.email}) потеряет доступ немедленно: все его сессии завершатся. Включить запись обратно можно здесь же.`}
 	confirmLabel="Выключить"
 	tone="danger"
 	onconfirm={() => deactivateForm?.requestSubmit()}

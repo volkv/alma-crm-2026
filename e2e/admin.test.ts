@@ -1,21 +1,28 @@
 import { expect, test as base, type Locator } from '@playwright/test';
 import { seedId } from '../scripts/seed/ids';
-import { ADMIN_STATE } from './global-setup';
+import { DEMO_EMAILS } from '../scripts/seed/users';
+import { ADMIN_STATE, STAFF_ADMIN, STAFF_ADMIN_STATE } from './global-setup';
 
 /**
  * Журнал и настройки глазами администратора.
  *
  * Общая фикстура (`./fixtures`) впускает менеджера, а журнал и настройки для
- * него закрыты правами, поэтому здесь своя сессия — та, что приготовил
+ * него закрыты правами, поэтому здесь свои сессии — те, что приготовил
  * глобальный сетап.
+ *
+ * Администраторов два, и разница между ними — предмет отдельной проверки.
+ * `test` — демонстрационный: стенд идёт с `DEMO_MODE=true`, и такая сессия не
+ * получает прав, которые пережили бы демонстрацию. `staff` — штатный
+ * администратор оператора, вошедший по паролю; ему доступно всё.
  */
 const test = base.extend<object>({ storageState: ADMIN_STATE });
+const staff = base.extend<object>({ storageState: STAFF_ADMIN_STATE });
 
 /**
  * Проверки идут по порядку и в одном рабочем процессе: тесты, которые читают
  * один и тот же журнал, понятнее, когда известно, что в нём уже произошло.
  */
-test.describe.configure({ mode: 'serial' });
+base.describe.configure({ mode: 'serial' });
 
 /** Почта у каждого прогона своя: учётные записи не удаляются, а выключаются. */
 const runId = Date.now().toString(36);
@@ -67,7 +74,7 @@ test('строка журнала раскрывается в карточку �
 	await expect(card.getByText('Демонстрационный вход')).toBeVisible();
 });
 
-test('заведение пользователя видно в списке', async ({ page }) => {
+staff('заведение пользователя видно в списке', async ({ page }) => {
 	const email = `vetrov-${runId}@example.org`;
 
 	await page.goto('/settings/users');
@@ -104,9 +111,40 @@ test('заведение пользователя видно в списке', a
 	await expect(page.getByText('Учётная запись выключена, её сессии завершены')).toBeVisible();
 
 	await page.goto(`/settings/users?q=${encodeURIComponent(email)}`);
-	await expect(
-		page.getByRole('row').filter({ hasText: email }).getByText('Выключен')
-	).toBeVisible();
+
+	const off = page.getByRole('row').filter({ hasText: email });
+	await expect(off.getByText('Выключен')).toBeVisible();
+
+	// Выключение обратимо: человек, которого выключили по ошибке, возвращается
+	// к работе с прежним паролем, а не заводится заново другой почтой.
+	await off.getByRole('button', { name: 'Включить' }).click();
+	await expect(page.getByText('Учётная запись включена, вход открыт')).toBeVisible();
+
+	await page.goto(`/settings/users?q=${encodeURIComponent(email)}`);
+
+	const on = page.getByRole('row').filter({ hasText: email });
+	await expect(on.getByText('Работает')).toBeVisible();
+
+	// И снова выключается: действующей в общем списке записи прогона делать нечего.
+	await openLayer(on.getByRole('button', { name: 'Выключить' }), confirmation);
+	await confirmation.getByRole('button', { name: 'Выключить' }).click();
+	await expect(page.getByText('Учётная запись выключена, её сессии завершены')).toBeVisible();
+});
+
+staff('демонстрационную учётную запись выключить нечем', async ({ page }) => {
+	const email = DEMO_EMAILS.viewer;
+
+	await page.goto(`/settings/users?q=${encodeURIComponent(email)}`);
+
+	const row = page.getByRole('row').filter({ hasText: email });
+
+	// Именно значок в колонке состояния: слово «Демо» стоит ещё и в имени.
+	await expect(row.getByTitle('Учётная запись публичной демонстрации')).toBeVisible();
+	await expect(row.getByText('Работает')).toBeVisible();
+
+	// Ею входят все, кто открыл стенд, а включить её обратно оттуда же будет
+	// некому: кнопка «Войти как …» исчезнет вместе с записью.
+	await expect(row.getByRole('button', { name: 'Выключить' })).toHaveCount(0);
 });
 
 test('фильтр по типу события меняет список и адрес', async ({ page }) => {
@@ -130,7 +168,7 @@ test('фильтр по типу события меняет список и а�
 	await expect(logins).toHaveCount(await rows.count());
 });
 
-test('выпущенный ключ показывается один раз', async ({ page }) => {
+staff('выпущенный ключ показывается один раз', async ({ page }) => {
 	await page.goto('/settings/api-keys');
 
 	const form = page.getByRole('dialog');
@@ -156,7 +194,43 @@ test('выпущенный ключ показывается один раз', a
 	await expect(page.getByText(/^lct_/)).toHaveCount(0);
 });
 
-test('правка баннера видна на странице входа после выхода', async ({ page }) => {
+test('журнал демонстрации открыт, но без выгрузки и без чужих адресов', async ({ page }) => {
+	await page.goto('/audit');
+
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Журнал действий');
+
+	// Выгрузка уносит со стенда адреса, клиентов и всю историю действий — её у
+	// демонстрации нет ни кнопкой, ни ссылкой.
+	await expect(page.getByRole('link', { name: 'Экспорт CSV' })).toHaveCount(0);
+	await expect(page.getByRole('link', { name: 'Экспорт JSON' })).toHaveCount(0);
+
+	const denied = await page.request.get('/audit/export?format=csv');
+	expect(denied.status()).toBe(403);
+
+	// Адрес в журнале настоящий и принадлежит посетителю, а не стенду: демонстрации
+	// он показывается огрублённым до сети.
+	const address = page
+		.locator('[data-slot="data-table"] tbody tr td')
+		.filter({ hasText: /^\d+\.\d+\.\*\.\*$/ });
+
+	await expect(address.first()).toBeVisible();
+});
+
+test('разделы, которые переживают демонстрацию, ей не принадлежат', async ({ page }) => {
+	await page.goto('/settings/profile');
+
+	// Меню настроек собирается из прав: чего нет в нём, того нет и по ссылке.
+	for (const section of ['Пользователи', 'Ключи доступа', 'Общие настройки']) {
+		await expect(page.getByRole('link', { name: section })).toHaveCount(0);
+	}
+
+	for (const path of ['/settings/users', '/settings/api-keys', '/settings/general']) {
+		const response = await page.request.get(path);
+		expect(response.status()).toBe(403);
+	}
+});
+
+staff('правка баннера видна на странице входа после выхода', async ({ page }) => {
 	const marker = `Проверка баннера ${runId}`;
 
 	await page.goto('/settings/general');
@@ -175,8 +249,14 @@ test('правка баннера видна на странице входа п
 
 	await expect(page.getByText(marker)).toBeVisible();
 
-	// Настройка общая на всю базу, поэтому текст возвращается как был.
-	await page.getByRole('button', { name: 'Войти как администратор' }).click();
+	// Настройка общая на всю базу, поэтому текст возвращается как был. Входим
+	// паролем штатного администратора: кнопка «Войти как администратор» открывает
+	// демонстрационную сессию, а ей настройки не принадлежат.
+	await page.getByLabel('Рабочая почта').fill(STAFF_ADMIN.email);
+	await page.getByLabel('Пароль').fill(STAFF_ADMIN.password);
+	await page.getByRole('button', { name: 'Войти', exact: true }).click();
+	await page.waitForURL('/');
+
 	await page.goto('/settings/general');
 	await page.getByLabel('Текст').fill(original);
 	await page.getByRole('button', { name: 'Сохранить баннер' }).click();

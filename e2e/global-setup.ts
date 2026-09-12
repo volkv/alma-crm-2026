@@ -3,7 +3,7 @@ import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { Redis } from 'ioredis';
-import { chromium, type FullConfig } from '@playwright/test';
+import { chromium, type FullConfig, type Page } from '@playwright/test';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
@@ -41,8 +41,32 @@ const authDirectory = new URL('../.playwright/auth/', import.meta.url).pathname;
 /** Сессия менеджера: под ней идут почти все проверки. */
 export const MANAGER_STATE = path.join(authDirectory, 'manager.json');
 
-/** Сессия администратора: журнал и настройки закрыты для менеджера правами. */
+/**
+ * Сессия демонстрационного администратора: журнал и настройки закрыты для
+ * менеджера правами. Она демонстрационная — со всеми ограничениями стенда: без
+ * управления пользователями, ключами, настройками и без выгрузки журнала.
+ */
 export const ADMIN_STATE = path.join(authDirectory, 'admin.json');
+
+/**
+ * Сессия штатного администратора: обычная учётная запись оператора, не
+ * демонстрационная. Ею проверяется то, чего публичной демонстрации делать
+ * нельзя, — заведение сотрудников, выпуск ключей, правка настроек.
+ */
+export const STAFF_ADMIN_STATE = path.join(authDirectory, 'staff-admin.json');
+
+/**
+ * Штатный администратор прогона. Сид заводит только демонстрационные записи и
+ * менеджеров, а стенд идёт с `DEMO_MODE=true`, где демонстрационная сессия
+ * прав на эти разделы не получает вовсе. Поэтому учётную запись оператора
+ * прогон заводит себе сам — с тем же паролем, что и остальные.
+ */
+export const STAFF_ADMIN = {
+	id: '00000000-0000-4000-8000-0000000051a1',
+	email: 'admin@staff.lct-crm.local',
+	fullName: 'Администратор Оператора',
+	password: DEMO_PASSWORD
+};
 
 const run = promisify(execFile);
 
@@ -72,8 +96,12 @@ async function seedDatabase(env: ServerEnv): Promise<void> {
 	process.stdout.write(stdout);
 }
 
-/** Вход демонстрационной кнопкой и сохранение сессии в файл. */
-async function signIn(baseURL: string, roleName: string, file: string): Promise<void> {
+/** Вход и сохранение сессии в файл; чем входить — решает `enter`. */
+async function signIn(
+	baseURL: string,
+	file: string,
+	enter: (page: Page) => Promise<void>
+): Promise<void> {
 	const browser = await chromium.launch();
 
 	try {
@@ -81,7 +109,7 @@ async function signIn(baseURL: string, roleName: string, file: string): Promise<
 		const page = await context.newPage();
 
 		await page.goto('/login');
-		await page.getByRole('button', { name: `Войти как ${roleName}` }).click();
+		await enter(page);
 		await page.waitForURL('/');
 
 		await context.storageState({ path: file });
@@ -89,6 +117,22 @@ async function signIn(baseURL: string, roleName: string, file: string): Promise<
 	} finally {
 		await browser.close();
 	}
+}
+
+/** Вход демонстрационной кнопкой: под ней общая учётная запись стенда. */
+function byDemoButton(roleName: string): (page: Page) => Promise<void> {
+	return async (page) => {
+		await page.getByRole('button', { name: `Войти как ${roleName}` }).click();
+	};
+}
+
+/** Вход по паролю: так входит штатный сотрудник, и сессия выходит не демо. */
+function byPassword(email: string, password: string): (page: Page) => Promise<void> {
+	return async (page) => {
+		await page.getByLabel('Рабочая почта').fill(email);
+		await page.getByLabel('Пароль').fill(password);
+		await page.getByRole('button', { name: 'Войти', exact: true }).click();
+	};
 }
 
 export default async function globalSetup(config: FullConfig): Promise<void> {
@@ -121,6 +165,23 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
 			update users set password_hash = ${await hashPassword(DEMO_PASSWORD)}
 			where email = any(${demoEmails})
 		`;
+
+		// Штатный администратор прогона: сид его не знает — он не часть стенда,
+		// который показывают, — а без него на стенде с `DEMO_MODE=true` некому
+		// проверить разделы, закрытые для самой демонстрации.
+		await sql`
+			insert into users (id, email, full_name, role_id, password_hash, is_demo)
+			values (
+				${STAFF_ADMIN.id}, ${STAFF_ADMIN.email}, ${STAFF_ADMIN.fullName},
+				'admin', ${await hashPassword(STAFF_ADMIN.password)}, false
+			)
+			on conflict (id) do update set
+				password_hash = excluded.password_hash,
+				role_id = excluded.role_id,
+				is_demo = false,
+				is_active = true,
+				deactivated_at = null
+		`;
 	} finally {
 		await sql.end();
 	}
@@ -146,6 +207,7 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
 	}
 
 	await mkdir(authDirectory, { recursive: true });
-	await signIn(baseURL, 'менеджер', MANAGER_STATE);
-	await signIn(baseURL, 'администратор', ADMIN_STATE);
+	await signIn(baseURL, MANAGER_STATE, byDemoButton('менеджер'));
+	await signIn(baseURL, ADMIN_STATE, byDemoButton('администратор'));
+	await signIn(baseURL, STAFF_ADMIN_STATE, byPassword(STAFF_ADMIN.email, STAFF_ADMIN.password));
 }

@@ -27,9 +27,14 @@ const configSchema = z.object({
 	/** Public origin of the app; adapter-node needs it to validate form posts. */
 	ORIGIN: z.url({ protocol: /^https?$/ }),
 	/**
-	 * Public demo: the read-only account may sign in and destructive actions are
-	 * refused. Off by default is not an option — the deployment has to say which
-	 * of the two it is.
+	 * Public demo. Accounts marked `is_demo` may sign in without a password, the
+	 * sessions they open never get the permissions listed in
+	 * `demoSessionPermissions` (managing users and API keys, writing settings,
+	 * configuring routes, exporting the audit log), those accounts cannot be
+	 * switched off, the audit log masks addresses and clients for them, and the
+	 * per-address login limit is raised — a demo is watched by many people from
+	 * behind one NAT. Off by default is not an option: the deployment has to say
+	 * which of the two it is.
 	 */
 	DEMO_MODE: booleanFlag,
 	/**

@@ -60,7 +60,12 @@ export const users = pgTable(
 		passwordHash: text().notNull(),
 		passwordChangedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 		isActive: boolean().notNull().default(true),
-		/** Учётная запись публичной демонстрации: только чтение. */
+		/**
+		 * Учётная запись публичной демонстрации. Пока `DEMO_MODE` включён, она
+		 * входит без пароля, не выключается, а открытая ею сессия не получает прав
+		 * из `demoSessionPermissions` (см. `$lib/server/rbac`). При выключенном
+		 * режиме столбец ни на что не влияет: это обычная учётная запись.
+		 */
 		isDemo: boolean().notNull().default(false),
 		lastLoginAt: timestamp({ withTimezone: true }),
 		deactivatedAt: timestamp({ withTimezone: true }),

@@ -5,12 +5,27 @@ import type { AuditEventType, AuditOutcome, AuditSource } from '$lib/contracts/a
 import type { SessionUser } from '$lib/server/auth/types';
 import { listApiKeys } from '$lib/server/api/keys';
 import { createUser } from '$lib/server/auth/users';
-import { auditEvents } from '$lib/server/db/schema';
+import { loadSessionUser } from '$lib/server/auth/session';
+import { auditEvents, users } from '$lib/server/db/schema';
 import { getRedis } from '$lib/server/redis';
 import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
+
+/**
+ * `DEMO_MODE` разбирается один раз за процесс, поэтому переменная окружения тут
+ * уже не поможет — подменяется сама функция (тот же приём, что в
+ * `auth/auth.test.ts`). Граница демонстрации проходит по правам, а права
+ * собирает `loadSessionUser`: экранам её видно только через него.
+ */
+const demo = vi.hoisted(() => ({ mode: false }));
+
+vi.mock('$lib/server/config', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('$lib/server/config')>();
+
+	return { ...actual, getConfig: () => ({ ...actual.getConfig(), DEMO_MODE: demo.mode }) };
+});
 
 /**
  * Экраны администратора целиком: журнал, его выгрузка и формы настроек.
@@ -31,11 +46,16 @@ const auditExport = await import('../../../src/routes/(app)/audit/export/+server
 const usersPage = await import('../../../src/routes/(app)/settings/users/+page.server');
 const profilePage = await import('../../../src/routes/(app)/settings/profile/+page.server');
 const keysPage = await import('../../../src/routes/(app)/settings/api-keys/+page.server');
+const generalPage = await import('../../../src/routes/(app)/settings/general/+page.server');
 
 const loadAudit = auditPage.load as unknown as PageLoad;
 const loadUsers = usersPage.load as unknown as PageLoad;
+const loadKeys = keysPage.load as unknown as PageLoad;
+const loadGeneral = generalPage.load as unknown as PageLoad;
 const exportAudit = auditExport.GET as unknown as Endpoint;
 const createUserAction = usersPage.actions.create as unknown as FormAction;
+const deactivateUserAction = usersPage.actions.deactivate as unknown as FormAction;
+const activateUserAction = usersPage.actions.activate as unknown as FormAction;
 const changePasswordAction = profilePage.actions.password as unknown as FormAction;
 const createKeyAction = keysPage.actions.create as unknown as FormAction;
 
@@ -54,6 +74,7 @@ afterAll(async () => {
 
 beforeEach(async () => {
 	await database.reset();
+	demo.mode = false;
 });
 
 /** Пользователь запроса: тот же, что кладёт в `locals` хук сессии. */
@@ -62,6 +83,30 @@ function sessionUser(roleId: string): SessionUser {
 
 	if (user === null) {
 		throw new Error('testActor обязан вернуть пользователя');
+	}
+
+	return user;
+}
+
+/**
+ * Пользователь публичной демонстрации, собранный тем же `loadSessionUser`, что
+ * и на живом запросе: набор прав у демо-сессии — не список в тесте, а то, что
+ * сервер действительно кладёт в `locals`. Зовётся при включённом `demo.mode`:
+ * вне демо-режима такая запись — обычная.
+ */
+async function demoSessionUser(roleId: string): Promise<SessionUser> {
+	const created = await createUser(testActor(), {
+		email: `demo-${roleId}@example.org`,
+		fullName: `${roleId} Демо`,
+		roleId,
+		password: 'Проверка-Входа1',
+		isDemo: true
+	});
+
+	const user = await loadSessionUser(created.id);
+
+	if (user === null || !user.isDemo) {
+		throw new Error('демонстрационная учётная запись обязана собираться в демо-сессию');
 	}
 
 	return user;
@@ -118,6 +163,7 @@ type EventFixture = {
 	actorUserId?: string | null;
 	subjectType?: string;
 	subjectId?: string;
+	userAgent?: string;
 };
 
 /** Запись журнала с заданным моментом времени: `now()` для периода не годится. */
@@ -131,6 +177,7 @@ async function insertEvent(event: EventFixture): Promise<void> {
 		actorUserId: event.actorUserId === undefined ? TEST_USER_IDS.admin : event.actorUserId,
 		actorLabel: 'Тестовый Пользователь',
 		ip: '198.51.100.10',
+		userAgent: event.userAgent ?? null,
 		subjectType: event.subjectType ?? null,
 		subjectId: event.subjectId ?? null
 	});
@@ -146,7 +193,15 @@ type UsersPageData = {
 };
 
 type PageData = {
-	events: { items: { eventType: string; actorUserId: string | null }[]; total: number };
+	events: {
+		items: {
+			eventType: string;
+			actorUserId: string | null;
+			ip: string | null;
+			userAgent: string | null;
+		}[];
+		total: number;
+	};
 	canExport: boolean;
 	actors: { id: string }[];
 };
@@ -310,12 +365,138 @@ describe('выгрузка журнала', () => {
 		expect(exported).toHaveLength(1);
 	});
 
-	it('закрыта для роли без права на выгрузку', async () => {
+	it('закрыта для роли без права на выгрузку и оставляет след отказа', async () => {
 		await expect(
 			exportAudit(
 				pageEvent({ path: '/audit/export', query: '?format=csv', user: sessionUser('manager') })
 			)
 		).rejects.toMatchObject({ status: 403 });
+
+		// Выгрузка уносит адреса, клиентов и всю историю: попытка её забрать —
+		// то, о чём администратор должен узнать, а не молчаливая ошибка в ответе.
+		const denied = await database.db
+			.select({ outcome: auditEvents.outcome, actorUserId: auditEvents.actorUserId })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'audit.exported'));
+
+		expect(denied).toEqual([{ outcome: 'denied', actorUserId: TEST_USER_IDS.manager }]);
+	});
+});
+
+describe('граница демонстрационной сессии', () => {
+	beforeEach(() => {
+		demo.mode = true;
+	});
+
+	it('оставляет журнал открытым, но прячет адреса и клиентов посетителей', async () => {
+		const user = await demoSessionUser('admin');
+
+		await insertEvent({
+			type: 'auth.login',
+			occurredAt: moscow('2026-09-10T10:00:00'),
+			userAgent:
+				'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36'
+		});
+
+		// Отбор по типу: заведение демонстрационной записи само попало в журнал.
+		const data = (await loadAudit(pageEvent({ user, query: '?type=auth.login' }))) as PageData;
+
+		// Журнал — часть того, что показывают, поэтому он остаётся; настоящими в
+		// нём остаются только те поля, которые ничего не говорят о посетителе.
+		expect(data.events.total).toBe(1);
+		expect(data.events.items[0].eventType).toBe('auth.login');
+		expect(data.events.items[0].ip).toBe('198.51.*.*');
+		expect(data.events.items[0].userAgent).toBe('Chrome');
+
+		// Кнопок выгрузки нет и выбора действующего лица тоже: список
+		// пользователей демонстрации не принадлежит.
+		expect(data.canExport).toBe(false);
+		expect(data.actors).toEqual([]);
+	});
+
+	it('не отдаёт демонстрации выгрузку журнала', async () => {
+		const user = await demoSessionUser('admin');
+
+		await insertEvent({ type: 'auth.login', occurredAt: moscow('2026-09-10T10:00:00') });
+
+		await expect(
+			exportAudit(pageEvent({ path: '/audit/export', query: '?format=csv', user }))
+		).rejects.toMatchObject({ status: 403 });
+
+		const denied = await database.db
+			.select({ outcome: auditEvents.outcome, actorUserId: auditEvents.actorUserId })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'audit.exported'));
+
+		expect(denied).toEqual([{ outcome: 'denied', actorUserId: user.id }]);
+	});
+
+	it('не пускает демонстрацию в раздел пользователей и не даёт ей завести учётную запись', async () => {
+		const user = await demoSessionUser('admin');
+
+		await expect(loadUsers(pageEvent({ path: '/settings/users', user }))).rejects.toMatchObject({
+			status: 403
+		});
+
+		// Отказ не в разметке, а в правах: форма, отправленная мимо страницы,
+		// получает то же самое — и не претензию к полям, а 403.
+		const result = await createUserAction(
+			pageEvent({
+				path: '/settings/users',
+				user,
+				form: {
+					email: 'postoyannyi@example.org',
+					fullName: 'Постоянный Администратор',
+					roleId: 'admin',
+					password: 'Проверка-Входа1'
+				}
+			})
+		);
+
+		expect(result).toMatchObject({
+			status: 403,
+			data: { message: 'Недостаточно прав: требуется «users.manage»' }
+		});
+
+		// Постоянного администратора после демонстрации не остаётся.
+		const created = await database.db
+			.select({ email: users.email })
+			.from(users)
+			.where(eq(users.email, 'postoyannyi@example.org'));
+
+		expect(created).toEqual([]);
+	});
+
+	it('не даёт демонстрации выпустить ключ доступа', async () => {
+		const user = await demoSessionUser('admin');
+
+		await expect(loadKeys(pageEvent({ path: '/settings/api-keys', user }))).rejects.toMatchObject({
+			status: 403
+		});
+
+		const result = await createKeyAction(
+			pageEvent({
+				path: '/settings/api-keys',
+				user,
+				form: { name: 'Ключ мимо стенда', ownerUserId: user.id }
+			})
+		);
+
+		expect(result).toMatchObject({
+			status: 403,
+			data: { message: 'Недостаточно прав: требуется «api_keys.manage»' }
+		});
+
+		// Ключ пережил бы демонстрацию и пускал бы в API после неё — его нет.
+		expect(await listApiKeys(testActor())).toEqual([]);
+	});
+
+	it('не даёт демонстрации переписать настройки', async () => {
+		const user = await demoSessionUser('admin');
+
+		await expect(loadGeneral(pageEvent({ path: '/settings/general', user }))).rejects.toMatchObject(
+			{ status: 403 }
+		);
 	});
 });
 
@@ -392,6 +573,52 @@ describe('пользователи', () => {
 		const all = (await loadUsers(pageEvent({ path: '/settings/users' }))) as UsersPageData;
 
 		expect(all.users.total).toBe(5);
+	});
+
+	it('включает выключенную запись обратно и говорит об этом', async () => {
+		const created = await createUser(testActor(), {
+			email: 'orlova@example.org',
+			fullName: 'Орлова Мария',
+			roleId: 'manager',
+			password: 'Проверка-Входа1'
+		});
+
+		const off = await deactivateUserAction(
+			pageEvent({ path: '/settings/users', form: { userId: created.id } })
+		);
+		expect(off).toEqual({ message: 'Учётная запись выключена, её сессии завершены', issues: [] });
+
+		const on = await activateUserAction(
+			pageEvent({ path: '/settings/users', form: { userId: created.id } })
+		);
+		expect(on).toEqual({ message: 'Учётная запись включена, вход открыт', issues: [] });
+
+		const activated = await database.db
+			.select({ subjectId: auditEvents.subjectId })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'users.activated'));
+
+		expect(activated).toEqual([{ subjectId: created.id }]);
+	});
+
+	it('переводит отказ выключить демонстрационную запись в сообщение формы', async () => {
+		demo.mode = true;
+		const created = await createUser(testActor(), {
+			email: 'demo-viewer@example.org',
+			fullName: 'Наблюдатель Демо',
+			roleId: 'viewer',
+			password: 'Проверка-Входа1',
+			isDemo: true
+		});
+
+		const result = await deactivateUserAction(
+			pageEvent({ path: '/settings/users', form: { userId: created.id } })
+		);
+
+		expect((result as { status: number }).status).toBe(409);
+		expect((result as { data: { message: string } }).data.message).toBe(
+			'Демонстрационную учётную запись нельзя выключить, пока включён демо-режим'
+		);
 	});
 
 	it('говорит словами, что почта занята', async () => {

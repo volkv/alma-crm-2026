@@ -10,9 +10,22 @@ export type SessionUser = {
 	email: string;
 	fullName: string;
 	roleId: string;
-	/** Permission codes granted by the role, as a set for O(1) checks. */
+	/**
+	 * Permission codes this session may act on, as a set for O(1) checks. Those
+	 * of the role, minus what a demo session never gets — see
+	 * `demoSessionPermissions` in `$lib/server/rbac`.
+	 */
 	permissions: ReadonlySet<string>;
-	/** The read-only account the public demo signs in as. */
+	/**
+	 * This session belongs to the public demo: it was opened on an account
+	 * marked `is_demo` while `DEMO_MODE` is on, whether through the password
+	 * form or the "sign in as …" button. Outside demo mode such an account is an
+	 * ordinary one and this is `false`.
+	 *
+	 * It is a boundary, not a badge: permissions are already narrowed by it, and
+	 * what is still readable is narrowed where it is read (the audit log masks
+	 * the addresses and clients of everyone who visited before).
+	 */
 	isDemo: boolean;
 	/**
 	 * Which organisations this user may see. Decided once, when the session is

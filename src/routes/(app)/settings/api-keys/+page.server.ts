@@ -5,7 +5,7 @@ import { createApiKeySchema } from '$lib/contracts/api';
 import { actorFromEvent } from '$lib/server/actor';
 import { createApiKey, listApiKeys, revokeApiKey } from '$lib/server/api/keys';
 import { listUsers } from '$lib/server/auth/users';
-import { AppError, ValidationError } from '$lib/server/errors';
+import { AppError, ForbiddenError, ValidationError } from '$lib/server/errors';
 import { toActionFailure } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import type { Actions, PageServerLoad } from './$types';
@@ -59,6 +59,13 @@ export const actions: Actions = {
 			// у того, кто его забрал.
 			return message(form, { name: created.name, key: created.key });
 		} catch (failure) {
+			// Отказ по правам — не претензия к заполнению: правкой полей он не
+			// поправляется. Загрузчик до этого места и не пустит — но форму можно
+			// отправить и мимо страницы.
+			if (failure instanceof ForbiddenError) {
+				return toActionFailure(failure);
+			}
+
 			if (failure instanceof AppError) {
 				return setError(form, '', [
 					failure.message,

@@ -197,6 +197,61 @@ export const AUDIT_EXPORT_FORMATS = ['csv', 'json'] as const;
 
 export type AuditExportFormat = (typeof AUDIT_EXPORT_FORMATS)[number];
 
+/**
+ * Что публичная демонстрация видит вместо адреса и клиента.
+ *
+ * Журнал стенда пишется не только о синтетических данных: адрес и строка
+ * клиента приезжают от живого посетителя, и следующий посетитель прочитает в
+ * ленте, откуда и чем заходили до него. Отобрать у демонстрации сам журнал
+ * нельзя — он часть того, что показывают, — поэтому убирается ровно то, что
+ * указывает на человека, а не на событие.
+ *
+ * Это не шифрование и не хеш: значение подменяется на более грубое, обратно
+ * оно не собирается.
+ */
+
+/** Первые два октета адреса: «откуда примерно», без указания на машину. */
+export function maskIp(ip: string | null): string | null {
+	if (ip === null) {
+		return null;
+	}
+
+	const octets = /^(\d{1,3})\.(\d{1,3})\.\d{1,3}\.\d{1,3}$/.exec(ip);
+
+	// IPv6 и всё, что не разобралось в четыре октета, огрублению не поддаётся:
+	// в адресе вида `2001:db8::1` префикс — это по-прежнему адрес сети.
+	return octets === null ? 'скрыто' : `${octets[1]}.${octets[2]}.*.*`;
+}
+
+/** Семейства браузеров: порядок значим — Edge и Яндекс называют себя Chrome. */
+const USER_AGENT_FAMILIES: readonly [RegExp, string][] = [
+	[/YaBrowser\//, 'Яндекс.Браузер'],
+	[/Edg[A-Z]?\//, 'Edge'],
+	[/OPR\/|Opera\//, 'Opera'],
+	[/Firefox\//, 'Firefox'],
+	[/Chrome\//, 'Chrome'],
+	[/Safari\//, 'Safari']
+];
+
+/**
+ * Семейство браузера вместо полной строки клиента. Полная строка — это версии
+ * системы и сборки, по которым браузер узнаётся среди прочих; семейства
+ * достаточно, чтобы понять, чем открывали.
+ */
+export function maskUserAgent(userAgent: string | null): string | null {
+	if (userAgent === null) {
+		return null;
+	}
+
+	for (const [pattern, family] of USER_AGENT_FAMILIES) {
+		if (pattern.test(userAgent)) {
+			return family;
+		}
+	}
+
+	return 'скрыто';
+}
+
 export type AuditEventView = {
 	id: string;
 	occurredAt: Date;
@@ -213,3 +268,12 @@ export type AuditEventView = {
 	subjectId: string | null;
 	details: Record<string, unknown>;
 };
+
+/**
+ * Событие журнала в том виде, в каком его показывают публичной демонстрации.
+ * Маскируются только адрес и клиент: всё остальное в записи — про систему, а
+ * не про того, кто её открыл.
+ */
+export function maskAuditEvent(event: AuditEventView): AuditEventView {
+	return { ...event, ip: maskIp(event.ip), userAgent: maskUserAgent(event.userAgent) };
+}

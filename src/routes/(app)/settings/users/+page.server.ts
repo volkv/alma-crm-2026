@@ -3,8 +3,8 @@ import { fail, message, setError, superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { readTableQuery } from '$lib/components/data-table/query';
 import { actorFromEvent } from '$lib/server/actor';
-import { createUser, deactivateUser, listUsers } from '$lib/server/auth/users';
-import { AppError, ConflictError, ValidationError } from '$lib/server/errors';
+import { activateUser, createUser, deactivateUser, listUsers } from '$lib/server/auth/users';
+import { AppError, ConflictError, ForbiddenError, ValidationError } from '$lib/server/errors';
 import { DEFAULT_ROLES } from '$lib/server/rbac/permissions';
 import { can } from '$lib/server/rbac';
 import { toActionFailure } from '$lib/server/http';
@@ -63,6 +63,14 @@ export const actions: Actions = {
 				return setError(form, 'email', failure.message);
 			}
 
+			// Отказ по правам — не претензия к заполнению: он не поправляется
+			// правкой полей, и отвечать на него ошибкой формы значило бы обещать
+			// обратное. Загрузчик до этого места и не пустит — но форму можно
+			// отправить и мимо страницы.
+			if (failure instanceof ForbiddenError) {
+				return toActionFailure(failure);
+			}
+
 			// Претензии к паролю приходят из политики, а не из схемы формы: их
 			// знает только сервер. Предметная ошибка не говорит, какого поля
 			// касается, поэтому показываются они над формой целиком — угадывать
@@ -92,5 +100,21 @@ export const actions: Actions = {
 		}
 
 		return { message: 'Учётная запись выключена, её сессии завершены', issues: [] };
+	},
+
+	activate: async (event) => {
+		const userId = (await event.request.formData()).get('userId');
+
+		if (typeof userId !== 'string' || userId === '') {
+			return fail(400, { message: 'Не указано, какую учётную запись включать', issues: [] });
+		}
+
+		try {
+			await activateUser(actorFromEvent(event), userId);
+		} catch (failure) {
+			return toActionFailure(failure);
+		}
+
+		return { message: 'Учётная запись включена, вход открыт', issues: [] };
 	}
 };

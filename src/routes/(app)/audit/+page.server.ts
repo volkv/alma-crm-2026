@@ -1,5 +1,6 @@
 import { error } from '@sveltejs/kit';
 import { readTableQuery } from '$lib/components/data-table/query';
+import { maskAuditEvent } from '$lib/contracts/audit';
 import { actorFromEvent } from '$lib/server/actor';
 import { AUDIT_EXPORT_MAX_ROWS, listAuditEvents } from '$lib/server/audit';
 import { listUsers } from '$lib/server/auth/users';
@@ -29,6 +30,12 @@ export const load: PageServerLoad = async (event) => {
 
 	const events = await listAuditEvents(ctx, filter, { page: query.page, pageSize: query.size });
 
+	// Данные стенда синтетические, а вот адрес и клиент в журнале — настоящие, и
+	// приезжают они от живых посетителей. Демонстрации журнал оставлен целиком,
+	// кроме этих двух полей: читать в ленте, откуда и чем заходили до тебя,
+	// незачем ни для показа, ни вообще.
+	const items = ctx.user?.isDemo === true ? events.items.map(maskAuditEvent) : events.items;
+
 	// Выбор действующего лица строится по списку пользователей, а он доступен
 	// только тому, кто ими управляет. Без этого права фильтр по актору остаётся
 	// в адресе и ставится со строки журнала — просто без выпадающего списка.
@@ -40,7 +47,7 @@ export const load: PageServerLoad = async (event) => {
 		: [];
 
 	return {
-		events,
+		events: { ...events, items },
 		actors,
 		canExport: can(ctx, 'audit.export'),
 		exportLimit: AUDIT_EXPORT_MAX_ROWS

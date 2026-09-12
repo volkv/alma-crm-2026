@@ -75,43 +75,52 @@
 			</Alert.Root>
 		{/if}
 
-		<!-- novalidate: проверяет схема и говорит по-русски, а не браузер на своём языке. -->
-		<form method="POST" action={loginAction} use:enhance novalidate class="flex flex-col gap-4">
-			<FieldInput
-				name="email"
-				type="email"
-				label="Рабочая почта"
-				required
-				placeholder="name@example.org"
-				bind:value={$form.email}
-				errors={$errors.email}
-			/>
-			<FieldInput
-				name="password"
-				type="password"
-				label="Пароль"
-				required
-				bind:value={$form.password}
-				errors={$errors.password}
-			/>
-			<FormActions submitting={$submitting} submitLabel="Войти" />
-		</form>
+		<!-- Адрес выбрал лимит попыток: ни форма, ни кнопки отсюда всё равно не
+		     пройдут — их POST развернёт обратно сюда. Показывать нерабочие
+		     органы управления хуже, чем не показывать ничего. -->
+		{#if data.rateLimited}
+			<Alert.Root variant="destructive">
+				<Alert.Description>{data.rateLimited}</Alert.Description>
+			</Alert.Root>
+		{:else}
+			<!-- novalidate: проверяет схема и говорит по-русски, а не браузер на своём языке. -->
+			<form method="POST" action={loginAction} use:enhance novalidate class="flex flex-col gap-4">
+				<FieldInput
+					name="email"
+					type="email"
+					label="Рабочая почта"
+					required
+					placeholder="name@example.org"
+					bind:value={$form.email}
+					errors={$errors.email}
+				/>
+				<FieldInput
+					name="password"
+					type="password"
+					label="Пароль"
+					required
+					bind:value={$form.password}
+					errors={$errors.password}
+				/>
+				<FormActions submitting={$submitting} submitLabel="Войти" />
+			</form>
 
-		{#if data.demoAccounts.length > 0}
-			<div class="flex flex-col gap-2 border-t border-border pt-4">
-				<p class="text-sm font-medium">Демо-режим</p>
-				<p class="text-xs text-muted-foreground">
-					Вход без пароля под одной из ролей. Данные в системе синтетические.
-				</p>
-				<form method="POST" action={demoAction} class="flex flex-wrap gap-2">
-					{#each data.demoAccounts as account (account.roleId)}
-						<Button type="submit" name="role" value={account.roleId} variant="outline" size="sm">
-							<LogInIcon aria-hidden="true" />
-							Войти как {account.roleName.toLocaleLowerCase('ru-RU')}
-						</Button>
-					{/each}
-				</form>
-			</div>
+			{#if data.demoAccounts.length > 0}
+				<div class="flex flex-col gap-2 border-t border-border pt-4">
+					<p class="text-sm font-medium">Демо-режим</p>
+					<p class="text-xs text-muted-foreground">
+						Вход без пароля под одной из ролей. Данные в системе синтетические.
+					</p>
+					<form method="POST" action={demoAction} class="flex flex-wrap gap-2">
+						{#each data.demoAccounts as account (account.roleId)}
+							<Button type="submit" name="role" value={account.roleId} variant="outline" size="sm">
+								<LogInIcon aria-hidden="true" />
+								Войти как {account.roleName.toLocaleLowerCase('ru-RU')}
+							</Button>
+						{/each}
+					</form>
+				</div>
+			{/if}
 		{/if}
 	</Card.Content>
 </Card.Root>

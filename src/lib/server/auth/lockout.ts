@@ -6,6 +6,7 @@
  * записей с одной машины. Оба живут в Redis, а не в базе: это состояние
  * попытки, оно должно само истекать и не должно переживать очистку кеша.
  */
+import { getConfig } from '../config';
 import { getRedis } from '../redis';
 
 const failureKey = (email: string, ip: string): string =>
@@ -16,6 +17,23 @@ const addressKey = (ip: string): string => `login_ip:${ip}`;
 /** Сколько попыток с одного адреса и за какое окно. */
 const ADDRESS_ATTEMPT_LIMIT = 30;
 const ADDRESS_WINDOW_SECONDS = 15 * 60;
+
+/**
+ * Во сколько раз щедрее лимит на публичной демонстрации.
+ *
+ * Порог рассчитан на одну машину одного человека, а демонстрацию смотрят
+ * десятками из-за одного NAT: для счётчика это один адрес, и тридцати попыток
+ * на всех не хватит. Порог остаётся константой, а не настройкой: настройку
+ * правит администратор из интерфейса, а на демонстрации именно этого права и
+ * нет — да и сам лимит защищает не данные, а систему.
+ */
+const DEMO_ADDRESS_MULTIPLIER = 5;
+
+function addressAttemptLimit(): number {
+	return getConfig().DEMO_MODE
+		? ADDRESS_ATTEMPT_LIMIT * DEMO_ADDRESS_MULTIPLIER
+		: ADDRESS_ATTEMPT_LIMIT;
+}
 
 /** Адрес, под которым считаются попытки, когда транспорт его не знает. */
 export const UNKNOWN_ADDRESS = 'unknown';
@@ -64,8 +82,8 @@ export async function clearLoginFailures(email: string, ip: string): Promise<voi
 }
 
 /**
- * Отмечает попытку входа с адреса. `false` — адрес исчерпал лимит окна; отвечать
- * такому вызывающему надо 429, не разбирая, чей пароль он прислал.
+ * Отмечает попытку входа с адреса. `false` — адрес исчерпал лимит окна; такому
+ * вызывающему отказывают, не разбирая, чей пароль он прислал.
  */
 export async function withinAddressLimit(ip: string): Promise<boolean> {
 	const key = addressKey(ip);
@@ -78,5 +96,40 @@ export async function withinAddressLimit(ip: string): Promise<boolean> {
 		await redis.expire(key, ADDRESS_WINDOW_SECONDS);
 	}
 
-	return attempts <= ADDRESS_ATTEMPT_LIMIT;
+	return attempts <= addressAttemptLimit();
+}
+
+export type AddressLimitState = {
+	/** Лимит окна исчерпан: следующая попытка с этого адреса не пройдёт. */
+	exhausted: boolean;
+	/** Сколько секунд осталось до конца окна; 0 — счётчика нет. */
+	remainingSeconds: number;
+};
+
+/**
+ * Состояние счётчика адреса, ничего не меняя. Нужно странице входа: если
+ * попытки с этого адреса всё равно не пройдут, форму надо не рисовать, а
+ * объяснить словами — иначе человек жмёт «Войти» и получает пустой отказ.
+ */
+export async function addressLimitState(ip: string): Promise<AddressLimitState> {
+	const redis = getRedis();
+	const key = addressKey(ip);
+	const [value, ttl] = await Promise.all([redis.get(key), redis.ttl(key)]);
+	const attempts = value === null ? 0 : Number.parseInt(value, 10);
+
+	return {
+		exhausted: attempts >= addressAttemptLimit(),
+		remainingSeconds: ttl > 0 ? ttl : 0
+	};
+}
+
+/**
+ * Снимает счётчик адреса. Зовётся при удачном входе: лимит по адресу считает
+ * перебор, а вошедший ничего не перебирал. Без этого жюри или класс за одним
+ * NAT выбирает общий лимит обычными входами и упирается в отказ, которого
+ * ничем не заслужил. Подбор это не открывает: счётчик по паре «учётная запись
+ * и адрес» живёт отдельно, а чтобы снять адресный, нужен верный пароль.
+ */
+export async function clearAddressAttempts(ip: string): Promise<void> {
+	await getRedis().del(addressKey(ip));
 }

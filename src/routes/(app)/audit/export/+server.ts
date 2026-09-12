@@ -1,9 +1,10 @@
 import { error } from '@sveltejs/kit';
 import { AUDIT_EXPORT_FORMATS, type AuditExportFormat } from '$lib/contracts/audit';
 import { actorFromEvent } from '$lib/server/actor';
-import { exportAuditEvents } from '$lib/server/audit';
+import { exportAuditEvents, recordAuditEvent } from '$lib/server/audit';
 import { contentDisposition } from '$lib/server/documents/filename';
 import { ForbiddenError, ValidationError } from '$lib/server/errors';
+import { can } from '$lib/server/rbac';
 import { readAuditFilter } from '../filters';
 import type { RequestHandler } from './$types';
 
@@ -14,6 +15,11 @@ import type { RequestHandler } from './$types';
  * страницы, сюда приходят с сессионной кукой и ошибку ждут страницей, а не
  * конвертом JSON. Файл собирается целиком в памяти — потолок в 50 000 строк
  * держит сервис, и он же объясняет словами, что фильтр надо сузить.
+ *
+ * Отказ по правам сначала ложится в журнал: выгрузка уносит из системы адреса,
+ * клиентов и всю историю действий, поэтому попытка её забрать — то, о чём
+ * администратор должен узнать, а не молчаливая ошибка в ответе. Сервис проверяет
+ * право ещё раз: маршрут — не единственный способ его позвать.
  */
 export const GET: RequestHandler = async (event) => {
 	const requested = event.url.searchParams.get('format') ?? 'csv';
@@ -23,6 +29,13 @@ export const GET: RequestHandler = async (event) => {
 	}
 
 	const ctx = actorFromEvent(event);
+
+	if (!can(ctx, 'audit.export')) {
+		await recordAuditEvent(ctx, { type: 'audit.exported', outcome: 'denied' });
+
+		error(403, 'Выгрузка журнала доступна только с правом «Выгрузка журнала действий»');
+	}
+
 	const filter = readAuditFilter(event.url);
 
 	try {

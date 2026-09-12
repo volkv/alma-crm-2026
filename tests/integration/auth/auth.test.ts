@@ -1,12 +1,14 @@
 import { randomUUID } from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
+import type { RequestEvent } from '@sveltejs/kit';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActorContext } from '$lib/server/actor';
+import { rateLimit } from '$lib/server/hooks/rate-limit';
 import { auditEvents, users } from '$lib/server/db/schema';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '$lib/server/errors';
 import { pageQuerySchema } from '$lib/contracts/common';
 import { demoLogin, listDemoAccounts, login } from '$lib/server/auth/login';
-import { withinAddressLimit } from '$lib/server/auth/lockout';
+import { addressLimitState, withinAddressLimit } from '$lib/server/auth/lockout';
 import {
 	createSession,
 	loadSessionUser,
@@ -14,6 +16,7 @@ import {
 	touchSession
 } from '$lib/server/auth/session';
 import {
+	activateUser,
 	changePassword,
 	createUser,
 	deactivateUser,
@@ -61,6 +64,43 @@ function address(last: number): string {
 	const ip = `198.51.100.${last}`;
 	usedAddresses.add(ip);
 	return ip;
+}
+
+/** Загрузчик страницы входа: он решает, показывать форму или объяснять отказ. */
+const loginPage = await import('../../../src/routes/(auth)/login/+page.server');
+
+const loadLogin = loginPage.load as unknown as (
+	event: RequestEvent
+) => Promise<{ rateLimited: string | null }>;
+
+/**
+ * Запрос к странице входа в том виде, в каком его собирает SvelteKit. Хуку и
+ * загрузчику нужны адрес вызывающего, метод, маршрут и `locals` — остальное в
+ * подделке не участвует.
+ */
+function loginEvent(ip: string, options: { method?: string; query?: string } = {}): RequestEvent {
+	const url = new URL(`http://localhost/login${options.query ?? ''}`);
+
+	return {
+		request: new Request(url, { method: options.method ?? 'GET' }),
+		url,
+		params: {},
+		cookies: { get: () => undefined, set: () => {}, delete: () => {} },
+		route: { id: '/(auth)/login' },
+		locals: { requestId: randomUUID(), user: null, apiKey: null },
+		getClientAddress: () => ip,
+		setHeaders: () => {},
+		isDataRequest: false,
+		isSubRequest: false
+	} as unknown as RequestEvent;
+}
+
+/** Один POST на форму входа через хук лимита. */
+async function postLogin(ip: string, query?: string): Promise<Response> {
+	return rateLimit({
+		event: loginEvent(ip, { method: 'POST', query }),
+		resolve: async () => new Response('форма принята')
+	} as unknown as Parameters<typeof rateLimit>[0]);
 }
 
 /** Контекст анонимного посетителя: именно он приходит на форму входа. */
@@ -318,6 +358,173 @@ describe('блокировка после неудачных попыток', ()
 
 		expect(await withinAddressLimit(ip)).toBe(false);
 		expect(await getRedis().ttl(`login_ip:${ip}`)).toBeGreaterThan(60);
+
+		// Страница входа спрашивает то же состояние, ничего не считая: по нему она
+		// решает, рисовать форму или объяснять, сколько ждать.
+		const state = await addressLimitState(ip);
+		expect(state.exhausted).toBe(true);
+		expect(state.remainingSeconds).toBeGreaterThan(60);
+	});
+
+	it('не тратит лимит адреса на удачные входы', async () => {
+		const user = await newUser({ name: 'za-natom', password: PASSWORD });
+		const ip = address(13);
+
+		// Жюри и класс сидят за одним NAT: для счётчика это один адрес. Тридцать
+		// первый обычный вход не должен упираться в защиту от перебора — перебора
+		// тут нет, каждый раз подходит пароль.
+		for (let attempt = 1; attempt <= 31; attempt += 1) {
+			expect(await withinAddressLimit(ip)).toBe(true);
+			expect(await login(anonymous(ip), { email: user.email, password: PASSWORD })).toMatchObject({
+				ok: true
+			});
+		}
+
+		expect(await getRedis().exists(`login_ip:${ip}`)).toBe(0);
+		expect((await addressLimitState(ip)).exhausted).toBe(false);
+	});
+
+	it('разворачивает исчерпавший лимит POST обратно на страницу входа', async () => {
+		const ip = address(17);
+
+		for (let attempt = 1; attempt <= 30; attempt += 1) {
+			expect((await postLogin(ip)).status).toBe(200);
+		}
+
+		// Голый 429 человеку ничего не объясняет, поэтому отказ уводит на ту же
+		// страницу входа — она видит тот же счётчик и говорит словами.
+		await expect(postLogin(ip)).rejects.toMatchObject({ status: 303, location: '/login' });
+
+		// Куда человек шёл, из-за отказа теряться не должно.
+		await expect(postLogin(ip, '?next=%2Faudit')).rejects.toMatchObject({
+			status: 303,
+			location: '/login?next=%2Faudit'
+		});
+
+		const data = await loadLogin(loginEvent(ip));
+
+		// Форму и кнопки страница по этому сообщению и прячет: жать их незачем,
+		// POST с них всё равно развернёт сюда же.
+		expect(data.rateLimited).toBe('Слишком много входов с этого адреса. Попробуйте через 15 минут');
+	});
+
+	it('до исчерпания лимита страница входа ничего не сообщает', async () => {
+		const ip = address(18);
+
+		expect((await postLogin(ip)).status).toBe(200);
+		expect((await loadLogin(loginEvent(ip))).rateLimited).toBeNull();
+	});
+
+	it('поднимает лимит адреса в демо-режиме', async () => {
+		demo.mode = true;
+		const ip = address(14);
+
+		for (let attempt = 1; attempt <= 150; attempt += 1) {
+			expect(await withinAddressLimit(ip)).toBe(true);
+		}
+
+		expect(await withinAddressLimit(ip)).toBe(false);
+	});
+});
+
+describe('граница демонстрационной сессии', () => {
+	/** Права, которых демонстрация не получает ни под какой ролью. */
+	const DENIED = [
+		'users.manage',
+		'api_keys.manage',
+		'settings.write',
+		'audit.export',
+		'stages.configure'
+	] as const;
+
+	it('вычитает необратимые права у сессии демонстрационной учётной записи', async () => {
+		demo.mode = true;
+		const user = await newUser({
+			name: 'demo-admin',
+			password: PASSWORD,
+			roleId: 'admin',
+			isDemo: true
+		});
+
+		const session = await loadSessionUser(user.id);
+
+		expect(session?.isDemo).toBe(true);
+		for (const key of DENIED) {
+			expect(session?.permissions.has(key)).toBe(false);
+		}
+
+		// Остальное остаётся: демонстрация показывает работу, а не пустой экран.
+		expect(session?.permissions.has('audit.read')).toBe(true);
+		expect(session?.permissions.has('interactions.write')).toBe(true);
+		expect(session?.permissions.has('documents.generate')).toBe(true);
+	});
+
+	it('держит границу и на входе по паролю, и на ключе доступа', async () => {
+		demo.mode = true;
+		const user = await newUser({
+			name: 'demo-parol',
+			password: PASSWORD,
+			roleId: 'admin',
+			isDemo: true
+		});
+
+		// Кнопкой «Войти как …» или паролем — сессия одна и та же: общая учётная
+		// запись остаётся общей, каким бы способом в неё ни вошли.
+		expect(
+			await login(anonymous(address(15)), { email: user.email, password: PASSWORD })
+		).toMatchObject({ ok: true });
+
+		const ctx: ActorContext = {
+			...anonymous(address(15)),
+			user: await loadSessionUser(user.id),
+			scope: { kind: 'all' }
+		};
+
+		await expect(listUsers(ctx, pageQuerySchema.parse({}))).rejects.toBeInstanceOf(ForbiddenError);
+
+		// Журнал помечает сессию, а не способ её открыть: кнопки тут не было.
+		expect(await auditOf('auth.login')).toEqual([
+			{ outcome: 'success', details: { userId: user.id, demo: true } }
+		]);
+	});
+
+	it('вне демо-режима та же учётная запись получает права роли целиком', async () => {
+		demo.mode = true;
+		const user = await newUser({
+			name: 'demo-vykl',
+			password: PASSWORD,
+			roleId: 'admin',
+			isDemo: true
+		});
+
+		demo.mode = false;
+		const session = await loadSessionUser(user.id);
+
+		expect(session?.isDemo).toBe(false);
+		for (const key of DENIED) {
+			expect(session?.permissions.has(key)).toBe(true);
+		}
+	});
+
+	it('не даёт выключить демонстрационную учётную запись, пока включён демо-режим', async () => {
+		demo.mode = true;
+		const user = await newUser({
+			name: 'demo-neubit',
+			password: PASSWORD,
+			roleId: 'viewer',
+			isDemo: true
+		});
+
+		// Выключить её некому и включить обратно тоже: раздел пользователей для
+		// самой демонстрации закрыт, а кнопка «Войти как …» исчезнет вместе с
+		// записью — стенд останется без входа.
+		await expect(deactivateUser(testActor(), user.id)).rejects.toBeInstanceOf(ConflictError);
+		expect((await loadSessionUser(user.id))?.id).toBe(user.id);
+
+		// Вне демо-режима это обычная учётная запись, и запрета на неё нет.
+		demo.mode = false;
+		await deactivateUser(testActor(), user.id);
+		expect(await loadSessionUser(user.id)).toBeNull();
 	});
 });
 
@@ -538,6 +745,50 @@ describe('пользователи', () => {
 		await expect(deactivateUser(actor, actor.user?.id as string)).rejects.toBeInstanceOf(
 			ConflictError
 		);
+	});
+
+	it('включает выключенную запись обратно и открывает ей вход', async () => {
+		const user = await newUser({ name: 'vernulsya', password: PASSWORD });
+
+		await deactivateUser(testActor(), user.id);
+		expect(
+			await login(anonymous(address(16)), { email: user.email, password: PASSWORD })
+		).toMatchObject({ ok: false, reason: 'invalid' });
+
+		await activateUser(testActor(), user.id);
+
+		// Пароль выключение не отменяло: человек возвращается к работе с тем же.
+		expect(
+			await login(anonymous(address(16)), { email: user.email, password: PASSWORD })
+		).toMatchObject({ ok: true });
+
+		expect(await auditOf('users.activated')).toEqual([{ outcome: 'success', details: {} }]);
+
+		const [row] = await database.db
+			.select({ deactivatedAt: users.deactivatedAt })
+			.from(users)
+			.where(eq(users.id, user.id));
+		expect(row.deactivatedAt).toBeNull();
+	});
+
+	it('не записывает включение того, что и так работает, и не знает чужих записей', async () => {
+		const user = await newUser({ name: 'uzhe-rabotaet', password: PASSWORD });
+
+		await expect(activateUser(testActor(), user.id)).rejects.toBeInstanceOf(ConflictError);
+		await expect(
+			activateUser(testActor(), '00000000-0000-4000-8000-00000000dead')
+		).rejects.toBeInstanceOf(NotFoundError);
+
+		// Журнал — доказательство того, что произошло: отказ ничего в него не кладёт.
+		expect(await auditOf('users.activated')).toEqual([]);
+	});
+
+	it('включать и выключать может только тот, кто управляет пользователями', async () => {
+		const user = await newUser({ name: 'ne-tvoyo', password: PASSWORD });
+		const viewer = testActor({ roleId: 'viewer' });
+
+		await expect(deactivateUser(viewer, user.id)).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(activateUser(viewer, user.id)).rejects.toBeInstanceOf(ForbiddenError);
 	});
 
 	it('меняет пароль, проверяя текущий, и гасит все сессии', async () => {

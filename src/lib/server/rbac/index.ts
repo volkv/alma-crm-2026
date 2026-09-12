@@ -67,6 +67,45 @@ export async function loadRolePermissions(roleId: string): Promise<ReadonlySet<P
 	return granted;
 }
 
+/**
+ * Права, которых не получает публичная демонстрация, какой бы ролью ни вошли.
+ *
+ * Демонстрация — это открытый стенд с общими учётными записями: тот, кто на
+ * него зашёл, не сотрудник оператора и не должен уметь оставить после себя
+ * ничего постоянного. Заведение учётной записи и выпуск ключа переживают
+ * демонстрацию и дают доступ дальше неё; правка настроек и маршрутов меняет
+ * стенд для всех следующих посетителей; выгрузка журнала уносит адреса и
+ * клиентов тех, кто заходил до тебя. Всё остальное — чтение и работа с
+ * синтетическими данными — остаётся: иначе показывать нечего.
+ */
+const DEMO_DENIED_PERMISSIONS: readonly PermissionKey[] = [
+	'users.manage',
+	'api_keys.manage',
+	'settings.write',
+	'audit.export',
+	'stages.configure'
+];
+
+/**
+ * Права демонстрационной сессии: те же, что у её роли, минус перечисленные.
+ *
+ * Граница проходит по правам, а не по интерфейсу: `can()` читают и загрузчики
+ * страниц, и сервисы, и публичный API, поэтому спрятанной кнопки достаточно
+ * ровно настолько, насколько её достаточно от `curl`. Набор роли при этом
+ * остаётся нетронутым — он общий и кэшируется на процесс.
+ */
+export function demoSessionPermissions(
+	granted: ReadonlySet<PermissionKey>
+): ReadonlySet<PermissionKey> {
+	const allowed = new Set(granted);
+
+	for (const key of DEMO_DENIED_PERMISSIONS) {
+		allowed.delete(key);
+	}
+
+	return allowed;
+}
+
 /** Сбрасывает кэш прав. Зовут после любого изменения ролей. */
 export function invalidateRoleCache(): void {
 	roleCache.clear();
