@@ -3,9 +3,12 @@ import {
 	daysUntil,
 	formatDate,
 	formatDateTime,
+	formatBytes,
 	formatDayAndMonth,
+	formatIsoDay,
 	formatNumber,
 	initials,
+	parseRuDay,
 	pluralForm,
 	pluralize
 } from '$lib/format';
@@ -41,6 +44,52 @@ describe('formatDayAndMonth', () => {
 	});
 });
 
+describe('formatIsoDay', () => {
+	it('renders the calendar day as yyyy-mm-dd', () => {
+		expect(formatIsoDay('2026-09-12T10:00:00Z')).toBe('2026-09-12');
+	});
+
+	it('takes the day from the Moscow clock, not from UTC', () => {
+		// 21:30 UTC on the 11th is already the 12th for everyone in the office.
+		expect(formatIsoDay('2026-09-11T21:30:00Z')).toBe('2026-09-12');
+	});
+
+	it('refuses an unparseable value', () => {
+		expect(() => formatIsoDay('позавчера')).toThrow(RangeError);
+	});
+});
+
+describe('parseRuDay', () => {
+	it('turns the form a person types into the form a schema expects', () => {
+		expect(parseRuDay('12.09.2026')).toBe('2026-09-12');
+	});
+
+	it('ignores the whitespace around the date', () => {
+		expect(parseRuDay(' 05.01.2026 ')).toBe('2026-01-05');
+	});
+
+	it('has no value for an empty or half-typed date', () => {
+		expect(parseRuDay('')).toBeNull();
+		expect(parseRuDay('12.09')).toBeNull();
+		expect(parseRuDay('12.09.20')).toBeNull();
+	});
+
+	it('refuses a day that does not exist instead of shifting it forward', () => {
+		expect(parseRuDay('31.02.2026')).toBeNull();
+		expect(parseRuDay('00.09.2026')).toBeNull();
+		expect(parseRuDay('12.13.2026')).toBeNull();
+	});
+
+	it('accepts the leap day of a leap year and refuses it otherwise', () => {
+		expect(parseRuDay('29.02.2028')).toBe('2028-02-29');
+		expect(parseRuDay('29.02.2026')).toBeNull();
+	});
+
+	it('reads back what formatDate wrote', () => {
+		expect(parseRuDay(formatDate('2026-09-12T10:00:00Z'))).toBe('2026-09-12');
+	});
+});
+
 describe('formatNumber', () => {
 	it('groups thousands with a non-breaking space', () => {
 		expect(formatNumber(1234567)).toBe('1 234 567');
@@ -53,6 +102,24 @@ describe('formatNumber', () => {
 	it('refuses a value that is not a finite number', () => {
 		expect(() => formatNumber(Number.NaN)).toThrow(RangeError);
 		expect(() => formatNumber(Number.POSITIVE_INFINITY)).toThrow(RangeError);
+	});
+});
+
+describe('formatBytes', () => {
+	it('names the unit a person reads, not the byte count', () => {
+		expect(formatBytes(512)).toBe('512 Б');
+		expect(formatBytes(2048)).toBe('2 КБ');
+		expect(formatBytes(2_411_059)).toBe('2,3 МБ');
+	});
+
+	it('stops at megabytes: the upload ceiling is 25 MiB', () => {
+		// Разряды числа ru-RU разделяет неразрывным пробелом — тем же, что в `formatNumber`.
+		expect(formatBytes(5 * 1024 * 1024 * 1024)).toBe('5\u00a0120 МБ');
+	});
+
+	it('refuses a size that is not a size', () => {
+		expect(() => formatBytes(-1)).toThrow(RangeError);
+		expect(() => formatBytes(Number.NaN)).toThrow(RangeError);
 	});
 });
 

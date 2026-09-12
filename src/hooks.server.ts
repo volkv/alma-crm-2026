@@ -1,6 +1,7 @@
 import type { HandleServerError, ServerInit } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 import { getConfig } from '$lib/server/config';
+import { csrf } from '$lib/server/hooks/csrf';
 import { guard } from '$lib/server/hooks/guard';
 import { rateLimit } from '$lib/server/hooks/rate-limit';
 import { requestId } from '$lib/server/hooks/request-id';
@@ -18,11 +19,15 @@ export const init: ServerInit = () => {
 
 /**
  * Every cross-cutting concern of a request, in the order it has to happen:
- * an id to log under, headers that must be on every response, who the caller is,
- * whether they may proceed, and how often they may do so. A new aspect goes into
- * its own file under `lib/server/hooks` and into this list — never inline here.
+ * an id to log under, headers that must be on every response, whether the
+ * request came from our own pages at all, who the caller is, whether they may
+ * proceed, and how often they may do so. A new aspect goes into its own file
+ * under `lib/server/hooks` and into this list — never inline here.
+ *
+ * `csrf` stands before `session`: a form posted from a foreign page is rejected
+ * before the session behind it is even looked up.
  */
-export const handle = sequence(requestId, securityHeaders, session, guard, rateLimit);
+export const handle = sequence(requestId, securityHeaders, csrf, session, guard, rateLimit);
 
 /**
  * Отказы, которые сочиняет не приложение, а сам фреймворк: до нашего кода такой
@@ -32,7 +37,8 @@ export const handle = sequence(requestId, securityHeaders, session, guard, rateL
  * `BODY_SIZE_LIMIT`, — это загрузка файла крупнее потолка, и потолок в тексте
  * назван, иначе человек не знает, насколько ужимать. 415 — это форма, поданная
  * не как форма: так выглядит чужой скрипт или наш собственный `fetch` с
- * неправильным заголовком.
+ * неправильным заголовком. 403 сюда не попадает: запрос с чужого адреса
+ * отвергает хук `csrf` и пишет причину сам, по-русски.
  */
 const REJECTIONS: Record<number, string> = {
 	404: 'Страница не найдена',

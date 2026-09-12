@@ -4,6 +4,7 @@
 	import { enhance } from '$app/forms';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { Label } from '$lib/components/ui/label/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import { actionEnhance } from '$lib/components/interactions/action-enhance';
 	import type { InteractionClosingView } from '$lib/contracts/interactions';
@@ -23,37 +24,37 @@
 </script>
 
 <div class="flex flex-col gap-2 border-t border-border pt-2">
-	<div class="flex flex-col gap-1" title={closing.complete.reasons.join('; ')}>
+	<div class="flex flex-col gap-1">
 		<Button
 			type="button"
 			size="sm"
 			variant="outline"
-			class="w-full min-w-0"
+			class="w-full min-w-0 justify-start"
 			disabled={!closing.complete.allowed}
 			onclick={() => (completeOpen = true)}
 		>
 			<CircleCheckIcon aria-hidden="true" />
-			<span class="truncate">Завершить</span>
+			Завершить
 		</Button>
 		{#if !closing.complete.allowed}
-			<p class="text-xs text-muted-foreground">{closing.complete.reasons[0]}</p>
+			<p class="text-xs text-muted-foreground">{closing.complete.reasons.join('; ')}</p>
 		{/if}
 	</div>
 
-	<div class="flex flex-col gap-1" title={closing.cancel.reasons.join('; ')}>
+	<div class="flex flex-col gap-1">
 		<Button
 			type="button"
 			size="sm"
 			variant="outline"
-			class="w-full min-w-0"
+			class="w-full min-w-0 justify-start"
 			disabled={!closing.cancel.allowed}
 			onclick={() => (cancelOpen = true)}
 		>
 			<CircleXIcon aria-hidden="true" />
-			<span class="truncate">Отменить</span>
+			Отменить
 		</Button>
 		{#if !closing.cancel.allowed}
-			<p class="text-xs text-muted-foreground">{closing.cancel.reasons[0]}</p>
+			<p class="text-xs text-muted-foreground">{closing.cancel.reasons.join('; ')}</p>
 		{/if}
 	</div>
 </div>
@@ -82,15 +83,18 @@
 				<input type="hidden" name="force" value="true" />
 			{/if}
 
-			<label class="flex flex-col gap-1.5 text-sm">
-				<span>Итог{closing.complete.requiresForce ? '' : ' (необязательно)'}</span>
+			<div class="flex flex-col gap-1.5">
+				<Label for="completeSummary">
+					Итог{closing.complete.requiresForce ? '' : ' (необязательно)'}
+				</Label>
 				<Textarea
+					id="completeSummary"
 					name="summary"
 					rows={3}
 					required={closing.complete.requiresForce}
 					placeholder="Чем кончилось взаимодействие"
 				/>
-			</label>
+			</div>
 
 			<Dialog.Footer>
 				<Button type="button" variant="outline" onclick={() => (completeOpen = false)}>
@@ -117,10 +121,16 @@
 			use:enhance={actionEnhance({ onsuccess: () => (cancelOpen = false) })}
 			class="flex flex-col gap-4"
 		>
-			<label class="flex flex-col gap-1.5 text-sm">
-				<span>Причина</span>
-				<Textarea name="reason" rows={3} required placeholder="Почему работа прекращается" />
-			</label>
+			<div class="flex flex-col gap-1.5">
+				<Label for="cancelReason">Причина</Label>
+				<Textarea
+					id="cancelReason"
+					name="reason"
+					rows={3}
+					required
+					placeholder="Почему работа прекращается"
+				/>
+			</div>
 
 			<Dialog.Footer>
 				<Button type="button" variant="outline" onclick={() => (cancelOpen = false)}>

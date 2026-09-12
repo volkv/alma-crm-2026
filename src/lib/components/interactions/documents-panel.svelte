@@ -20,7 +20,7 @@
 		UPLOADED_DOCUMENT_KINDS
 	} from '$lib/contracts/documents';
 	import type { InteractionDocumentView, InteractionView } from '$lib/contracts/interactions';
-	import { formatDateTime, formatNumber } from '$lib/format';
+	import { formatBytes, formatDateTime } from '$lib/format';
 	import { actionEnhance } from './action-enhance';
 
 	/**
@@ -84,11 +84,17 @@
 					{#each documents as document (document.id)}
 						<li class="flex flex-wrap items-center gap-2 py-2">
 							<span class="min-w-0 flex-1">
-								<span class="block truncate text-sm font-medium">{document.title}</span>
+								<a
+									class="block truncate rounded text-sm font-medium underline-offset-4 focus-ring hover:underline"
+									title={document.title}
+									href={resolve('/(app)/documents/[id=uuid]', { id: document.id })}
+								>
+									{document.title}
+								</a>
 								<span class="text-xs text-muted-foreground">
-									{documentKindLabel(document.kind)} · {format(document.mime)} · {formatNumber(
-										Math.ceil(document.sizeBytes / 1024)
-									)} КБ · {formatDateTime(document.createdAt)}
+									{documentKindLabel(document.kind)} · {format(document.mime)} · {formatBytes(
+										document.sizeBytes
+									)} · {formatDateTime(document.createdAt)}
 								</span>
 							</span>
 							{#if document.agreedAt}
@@ -101,6 +107,7 @@
 								variant="outline"
 								size="sm"
 								href={resolve('/(app)/documents/[id=uuid]/download', { id: document.id })}
+								data-sveltekit-reload
 							>
 								<DownloadIcon aria-hidden="true" />
 								Скачать
@@ -112,7 +119,7 @@
 		</Card.Content>
 	</Card.Root>
 
-	<div class="grid gap-4 lg:grid-cols-2">
+	<div class="grid items-start gap-4 lg:grid-cols-2">
 		{#if canUpload}
 			<Card.Root size="sm">
 				<Card.Header>

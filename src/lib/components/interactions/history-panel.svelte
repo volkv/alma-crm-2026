@@ -1,5 +1,7 @@
 <script lang="ts">
+	import PencilIcon from '@lucide/svelte/icons/pencil-line';
 	import * as Card from '$lib/components/ui/card/index.js';
+	import EmptyState from '$lib/components/empty-state.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type {
 		InteractionChangeView,
@@ -67,7 +69,7 @@
 	}
 </script>
 
-<div class="grid gap-4 lg:grid-cols-2">
+<div class="grid items-start gap-4 lg:grid-cols-2">
 	<Card.Root size="sm">
 		<Card.Header>
 			<Card.Title>Стадии</Card.Title>
@@ -121,7 +123,12 @@
 		</Card.Header>
 		<Card.Content class="flex flex-col gap-3">
 			{#if changes.length === 0}
-				<p class="text-sm text-muted-foreground">План не менялся.</p>
+				<EmptyState
+					icon={PencilIcon}
+					class="px-0 py-6"
+					title="Изменений плана не было"
+					description="Здесь появятся правки сроков, названия и ответственного — вместе с причиной, которую укажет автор правки."
+				/>
 			{/if}
 
 			{#each changes as change (change.id)}

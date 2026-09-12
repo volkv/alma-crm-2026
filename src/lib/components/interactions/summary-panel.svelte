@@ -8,7 +8,9 @@
 	import { enhance } from '$app/forms';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { Label } from '$lib/components/ui/label/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import SlaChip from '$lib/components/sla-chip.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
@@ -16,7 +18,8 @@
 		blockerReasonLabel,
 		PAUSE_REASONS,
 		PAUSE_REASON_LABELS,
-		type InteractionSummaryView
+		type InteractionSummaryView,
+		type PauseReason
 	} from '$lib/contracts/interactions';
 	import { formatDateTime } from '$lib/format';
 	import { actionEnhance } from './action-enhance';
@@ -47,11 +50,21 @@
 		null
 	);
 	let pauseOpen = $state(false);
+	// Список причин отправляет выбранное скрытым полем, поэтому в нём всегда
+	// что-то выбрано: у нативного списка первый пункт выбран сам.
+	let pauseReason = $state<PauseReason>(PAUSE_REASONS[0]);
 
 	const can = (action: string) => summary.canDo.actions.includes(action as 'pause');
 </script>
 
-<div class="grid gap-4 lg:grid-cols-4">
+<!--
+	Четыре вопроса стоят сеткой 2×2, а не в строку из четырёх колонок: в строке
+	каждая панель получала четверть ширины ноутбука, название перехода не
+	помещалось в кнопку, а высоту всем четырём задавала самая длинная — три
+	карточки из четырёх наполовину пустые. `items-start` оставляет каждой высоту
+	по её содержимому.
+-->
+<div class="grid items-start gap-4 md:grid-cols-2">
 	<Card.Root size="sm">
 		<Card.Header>
 			<Card.Title>Что происходит</Card.Title>
@@ -140,10 +153,7 @@
 						: option.transition.kind === 'return'
 							? `Вернуть: ${option.toStage.name}`
 							: `Пропустить до: ${option.toStage.name}`}
-				<div
-					class="flex flex-col gap-1"
-					title={option.allowed ? undefined : option.reasons.join('; ')}
-				>
+				<div class="flex flex-col gap-1">
 					{#if option.transition.kind === 'forward'}
 						<form method="POST" action="?/advance" use:enhance={actionEnhance()}>
 							<input type="hidden" name="fromStageId" value={currentStageId} />
@@ -155,12 +165,11 @@
 								type="submit"
 								size="sm"
 								variant={option.allowed ? 'default' : 'outline'}
-								class="w-full min-w-0"
-								title={label}
+								class="h-auto min-h-7 w-full min-w-0 justify-start py-1 text-left whitespace-normal"
 								disabled={!option.allowed}
 							>
 								<ArrowRightIcon aria-hidden="true" />
-								<span class="truncate">{label}</span>
+								<span class="min-w-0">{label}</span>
 							</Button>
 						</form>
 					{:else}
@@ -168,8 +177,7 @@
 							type="button"
 							size="sm"
 							variant="outline"
-							class="w-full min-w-0"
-							title={label}
+							class="h-auto min-h-7 w-full min-w-0 justify-start py-1 text-left whitespace-normal"
 							disabled={!option.allowed}
 							onclick={() =>
 								(reasonDialog = {
@@ -183,17 +191,26 @@
 							{:else}
 								<SkipForwardIcon aria-hidden="true" />
 							{/if}
-							<span class="truncate">{label}</span>
+							<span class="min-w-0">{label}</span>
 						</Button>
 					{/if}
 					{#if !option.allowed}
-						<p class="text-xs text-muted-foreground">{option.reasons[0]}</p>
+						<!-- Причины целиком, а не первая из них: недоступный переход
+							объясняется рядом с кнопкой, и остальные условия человеку
+							нужны так же, как первое. -->
+						<p class="text-xs text-muted-foreground">{option.reasons.join('; ')}</p>
 					{/if}
 				</div>
 			{/each}
 
 			{#if can('pause')}
-				<Button type="button" size="sm" variant="outline" onclick={() => (pauseOpen = true)}>
+				<Button
+					type="button"
+					size="sm"
+					variant="outline"
+					class="w-full justify-start"
+					onclick={() => (pauseOpen = true)}
+				>
 					<PauseIcon aria-hidden="true" />
 					Поставить на паузу
 				</Button>
@@ -202,7 +219,7 @@
 			{#if can('resume')}
 				<form method="POST" action="?/resume" use:enhance={actionEnhance()}>
 					<input type="hidden" name="fromStageId" value={currentStageId} />
-					<Button type="submit" size="sm" variant="outline" class="w-full">
+					<Button type="submit" size="sm" variant="outline" class="w-full justify-start">
 						<PlayIcon aria-hidden="true" />
 						Снять паузу
 					</Button>
@@ -239,10 +256,16 @@
 			<input type="hidden" name="fromStageId" value={currentStageId} />
 			<input type="hidden" name="toStageId" value={reasonDialog?.toStageId ?? ''} />
 
-			<label class="flex flex-col gap-1.5 text-sm">
-				<span>Причина</span>
-				<Textarea name="reason" rows={3} required placeholder="Что именно пошло не так" />
-			</label>
+			<div class="flex flex-col gap-1.5">
+				<Label for="transitionReason">Причина</Label>
+				<Textarea
+					id="transitionReason"
+					name="reason"
+					rows={3}
+					required
+					placeholder="Что именно пошло не так"
+				/>
+			</div>
 
 			<Dialog.Footer>
 				<Button type="button" variant="outline" onclick={() => (reasonDialog = null)}>Отмена</Button
@@ -270,27 +293,44 @@
 		>
 			<input type="hidden" name="fromStageId" value={currentStageId} />
 
-			<label class="flex flex-col gap-1.5 text-sm">
-				<span>Причина</span>
-				<select
+			<div class="flex flex-col gap-1.5 text-sm">
+				<Label for="pauseReason">Причина</Label>
+				<Select.Root
+					type="single"
 					name="reason"
-					class="h-control rounded-md border border-input bg-background px-2 text-sm focus-ring"
+					bind:value={() => pauseReason, (next) => (pauseReason = next as PauseReason)}
 				>
-					{#each PAUSE_REASONS as reason (reason)}
-						<option value={reason}>{PAUSE_REASON_LABELS[reason]}</option>
-					{/each}
-				</select>
-			</label>
+					<Select.Trigger id="pauseReason" class="w-full">
+						{PAUSE_REASON_LABELS[pauseReason]}
+					</Select.Trigger>
+					<Select.Content>
+						{#each PAUSE_REASONS as reason (reason)}
+							<Select.Item value={reason} label={PAUSE_REASON_LABELS[reason]} />
+						{/each}
+					</Select.Content>
+				</Select.Root>
+			</div>
 
-			<label class="flex flex-col gap-1.5 text-sm">
-				<span>Чего ждём</span>
-				<Textarea name="note" rows={2} required placeholder="Например: подписи ректора" />
-			</label>
+			<div class="flex flex-col gap-1.5">
+				<Label for="pauseNote">Чего ждём</Label>
+				<Textarea
+					id="pauseNote"
+					name="note"
+					rows={2}
+					required
+					placeholder="Например: подписи ректора"
+				/>
+			</div>
 
-			<label class="flex flex-col gap-1.5 text-sm">
-				<span>Следующий шаг</span>
-				<Textarea name="nextAction" rows={2} placeholder="Что сделаем, когда дождёмся" />
-			</label>
+			<div class="flex flex-col gap-1.5">
+				<Label for="pauseNextAction">Следующий шаг</Label>
+				<Textarea
+					id="pauseNextAction"
+					name="nextAction"
+					rows={2}
+					placeholder="Что сделаем, когда дождёмся"
+				/>
+			</div>
 
 			<Dialog.Footer>
 				<Button type="button" variant="outline" onclick={() => (pauseOpen = false)}>Отмена</Button>

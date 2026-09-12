@@ -33,7 +33,7 @@
 	let reasonCode = $state('');
 </script>
 
-<div class="grid gap-4 lg:grid-cols-2">
+<div class="grid items-start gap-4 lg:grid-cols-2">
 	<Card.Root size="sm">
 		<Card.Header>
 			<Card.Title>Открытые помехи</Card.Title>

@@ -8,9 +8,13 @@
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { Label } from '$lib/components/ui/label/index.js';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
+	import FilterSelect from '$lib/components/directory/filter-select.svelte';
+	import type { FieldOption } from '$lib/components/form/field-select.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import PageHeader from '$lib/components/page-header.svelte';
 	import SlaChip from '$lib/components/sla-chip.svelte';
@@ -18,10 +22,10 @@
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { toTimelineStages } from '$lib/components/interactions/timeline';
 	import {
+		INTERACTION_STATUSES,
+		PARTY_ROLE_LABELS,
 		STAGE_CATEGORIES,
-		type InteractionListItem,
-		type InteractionStatus,
-		type StageCategory
+		type InteractionListItem
 	} from '$lib/contracts/interactions';
 	import { formatDateTime } from '$lib/format';
 	import {
@@ -34,9 +38,25 @@
 
 	let { data, form }: PageProps = $props();
 
+	const STATUS_OPTIONS: readonly FieldOption[] = INTERACTION_STATUSES.map((status) => ({
+		value: status,
+		label: INTERACTION_STATUS_LABELS[status]
+	}));
+
+	const STAGE_OPTIONS: readonly FieldOption[] = STAGE_CATEGORIES.map((category) => ({
+		value: category,
+		label: STAGE_CATEGORY_LABELS[category]
+	}));
+
 	let assignOpen = $state(false);
 	let assignIds = $state<string[]>([]);
 	let assignUserId = $state('');
+
+	const assignUserName = $derived.by(() => {
+		const user = data.users.find((candidate) => candidate.id === assignUserId);
+
+		return user === undefined ? 'Выберите ответственного' : `${user.name} — ${user.roleName}`;
+	});
 
 	$effect(() => {
 		if (form && 'assigned' in form) {
@@ -56,15 +76,15 @@
 		},
 		{
 			accessorKey: 'institutionName',
-			header: 'Учебное заведение',
-			meta: { title: 'Учебное заведение' },
+			header: PARTY_ROLE_LABELS.educational_institution,
+			meta: { title: PARTY_ROLE_LABELS.educational_institution },
 			enableSorting: false,
 			cell: ({ row }) => renderSnippet(nameCell, row.original.institutionName)
 		},
 		{
 			accessorKey: 'customerName',
-			header: 'Заказчик',
-			meta: { title: 'Заказчик' },
+			header: PARTY_ROLE_LABELS.customer,
+			meta: { title: PARTY_ROLE_LABELS.customer },
 			enableSorting: false,
 			cell: ({ row }) => renderSnippet(nameCell, row.original.customerName)
 		},
@@ -98,9 +118,9 @@
 	/**
 	 * Колонки, с которых список начинается свёрнутым на ноутбуке.
 	 *
-	 * Заказчик здесь потому, что взаимодействие ведут с учебным заведением, а
-	 * компания за ним у большинства строк одна и та же и в списке ничего не
-	 * различает. Ужатая до нечитаемости колонка срока стоит дороже: срок — то,
+	 * Компания-заказчик здесь потому, что взаимодействие ведут с учебным
+	 * заведением, а компания за ним у большинства строк одна и та же и в списке
+	 * ничего не различает. Ужатая до нечитаемости колонка срока стоит дороже: срок — то,
 	 * ради чего список открывают. Меню «Колонки» возвращает любую из них.
 	 */
 	const HIDDEN_ON_LAPTOP = ['customerName', 'ownerName', 'lastActivityAt'];
@@ -186,44 +206,9 @@
 </PageHeader>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
-	<div class="flex flex-wrap items-center gap-2">
-		<label class="flex items-center gap-2 text-sm">
-			<span class="text-muted-foreground">Статус</span>
-			<select
-				class="h-control rounded-md border border-input bg-background px-2 text-sm focus-ring"
-				value={data.filters.status ?? ''}
-				onchange={(event) =>
-					go({
-						status:
-							event.currentTarget.value === ''
-								? null
-								: (event.currentTarget.value as InteractionStatus)
-					})}
-			>
-				<option value="">Любой</option>
-				{#each Object.entries(INTERACTION_STATUS_LABELS) as [value, label] (value)}
-					<option {value}>{label}</option>
-				{/each}
-			</select>
-		</label>
-
-		<label class="flex items-center gap-2 text-sm">
-			<span class="text-muted-foreground">Стадия</span>
-			<select
-				class="h-control rounded-md border border-input bg-background px-2 text-sm focus-ring"
-				value={data.filters.stageCategory ?? ''}
-				onchange={(event) =>
-					go({
-						stageCategory:
-							event.currentTarget.value === '' ? null : (event.currentTarget.value as StageCategory)
-					})}
-			>
-				<option value="">Любая</option>
-				{#each STAGE_CATEGORIES as category (category)}
-					<option value={category}>{STAGE_CATEGORY_LABELS[category]}</option>
-				{/each}
-			</select>
-		</label>
+	<div class="flex flex-wrap items-center gap-3">
+		<FilterSelect param="status" label="Статус" options={STATUS_OPTIONS} allLabel="Любой" />
+		<FilterSelect param="stage" label="Стадия" options={STAGE_OPTIONS} allLabel="Любая" />
 
 		<Button
 			variant={data.filters.overdue ? 'default' : 'outline'}
@@ -315,18 +300,17 @@
 				<input type="hidden" name="interactionId" value={id} />
 			{/each}
 
-			<label class="flex flex-col gap-1.5 text-sm">
-				<span>Ответственный</span>
-				<select
-					name="userId"
-					bind:value={assignUserId}
-					class="h-control rounded-md border border-input bg-background px-2 text-sm focus-ring"
-				>
-					{#each data.users as user (user.id)}
-						<option value={user.id}>{user.name} — {user.roleName}</option>
-					{/each}
-				</select>
-			</label>
+			<div class="flex flex-col gap-1.5">
+				<Label for="assignUserId">Ответственный</Label>
+				<Select.Root type="single" name="userId" bind:value={assignUserId}>
+					<Select.Trigger id="assignUserId" class="w-full">{assignUserName}</Select.Trigger>
+					<Select.Content>
+						{#each data.users as user (user.id)}
+							<Select.Item value={user.id} label="{user.name} — {user.roleName}" />
+						{/each}
+					</Select.Content>
+				</Select.Root>
+			</div>
 
 			<Dialog.Footer>
 				<Button type="button" variant="outline" onclick={() => (assignOpen = false)}>Отмена</Button>

@@ -7,6 +7,7 @@ import { actorFromEvent } from '$lib/server/actor';
 import { getProgram } from '$lib/server/directory/read';
 import { addProgramVersion } from '$lib/server/directory/write';
 import { ConflictError, ValidationError } from '$lib/server/errors';
+import { formatIsoDay } from '$lib/format';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { requirePermission } from '$lib/server/rbac';
 import type { Actions, PageServerLoad } from './$types';
@@ -24,9 +25,7 @@ export const load: PageServerLoad = async (event) => {
 			form: await superValidate(
 				{
 					programId: program.id,
-					effectiveFrom: new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(
-						new Date()
-					)
+					effectiveFrom: formatIsoDay()
 				},
 				zod4(createProgramVersionSchema),
 				{ errors: false }

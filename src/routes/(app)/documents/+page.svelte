@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
 	import DownloadIcon from '@lucide/svelte/icons/download';
@@ -19,7 +20,7 @@
 		DOCUMENT_ORIGIN_LABELS,
 		type DocumentListItem
 	} from '$lib/contracts/documents';
-	import { formatDate, formatDateTime, formatNumber } from '$lib/format';
+	import { formatBytes, formatDate, formatDateTime, formatNumber } from '$lib/format';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -41,25 +42,6 @@
 		{ value: 'in_effect', label: 'Введён в действие' },
 		{ value: 'none', label: 'Без отметок' }
 	];
-
-	/**
-	 * Размер файла словами. Читать «2 411 059 байт» человек не умеет, а решение
-	 * «скачивать ли это сейчас» принимает именно по размеру.
-	 */
-	const SIZE_UNITS = ['Б', 'КБ', 'МБ'] as const;
-	const sizeFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 });
-
-	function formatSize(bytes: number): string {
-		let value = bytes;
-		let unit = 0;
-
-		while (value >= 1024 && unit < SIZE_UNITS.length - 1) {
-			value /= 1024;
-			unit += 1;
-		}
-
-		return `${sizeFormat.format(value)} ${SIZE_UNITS[unit]}`;
-	}
 
 	const columns: ColumnDef<DataTableFeatures, DocumentListItem>[] = [
 		{
@@ -98,7 +80,7 @@
 			accessorFn: (row) => row.sizeBytes,
 			header: 'Размер',
 			meta: { title: 'Размер', align: 'end' },
-			cell: ({ row }) => formatSize(row.original.sizeBytes)
+			cell: ({ row }) => formatBytes(row.original.sizeBytes)
 		},
 		{
 			id: 'facts',
@@ -138,7 +120,14 @@
 		справа от него важнее, поэтому оно урезается, а целиком показывается
 		подсказкой. -->
 	<span class="flex max-w-80 items-baseline gap-2">
-		<span class="truncate font-medium" title={row.title}>{row.title}</span>
+		<a
+			class="truncate rounded font-medium underline-offset-4 focus-ring hover:underline"
+			title={row.title}
+			href={resolve('/(app)/documents/[id=uuid]', { id: row.id })}
+			onclick={(event) => event.stopPropagation()}
+		>
+			{row.title}
+		</a>
 		{#if row.uploadedKind}
 			<span class="shrink-0 text-xs text-muted-foreground">
 				{documentKindLabel(row.uploadedKind)}
@@ -192,10 +181,14 @@
 {/snippet}
 
 {#snippet downloadCell(row: DocumentListItem)}
+	<!-- Ссылка на файл живёт внутри строки, которая открывает карточку: без
+		остановки всплытия одно нажатие и качало бы файл, и уводило со списка. -->
 	<Button
 		variant="outline"
 		size="sm"
 		href={resolve('/(app)/documents/[id=uuid]/download', { id: row.id })}
+		data-sveltekit-reload
+		onclick={(event: MouseEvent) => event.stopPropagation()}
 	>
 		<DownloadIcon aria-hidden="true" />
 		Скачать
@@ -238,6 +231,7 @@
 			searchPlaceholder="Поиск по названию и взаимодействию"
 			emptyTitle="Под фильтр ничего не подошло"
 			emptyDescription="Смягчите условия или очистите поиск."
+			onopen={(row) => goto(resolve('/(app)/documents/[id=uuid]', { id: row.id }))}
 		/>
 	{/if}
 </div>

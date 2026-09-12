@@ -3,6 +3,7 @@
 	import type { SuperForm } from 'sveltekit-superforms';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
+	import FieldDate from '$lib/components/form/field-date.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import type {
@@ -95,19 +96,19 @@
 </div>
 
 <div class="grid gap-4 sm:grid-cols-2">
-	<FieldInput
+	<FieldDate
 		name="validFrom"
 		label="Полномочия с"
-		type="date"
 		required
+		max={$form.validTo ?? undefined}
 		errors={$errors.validFrom}
 		bind:value={$form.validFrom}
 	/>
-	<FieldInput
+	<FieldDate
 		name="validTo"
 		label="Полномочия по"
-		type="date"
 		description="Оставьте пустым, пока полномочия действуют."
+		min={$form.validFrom}
 		errors={$errors.validTo}
 		bind:value={() => $form.validTo ?? '', (next) => ($form.validTo = next || null)}
 	/>

@@ -22,6 +22,8 @@
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
+	import { Label } from '$lib/components/ui/label/index.js';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import { Skeleton } from '$lib/components/ui/skeleton/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import { formatNumber } from '$lib/format';
@@ -432,18 +434,25 @@
 		</p>
 
 		<div class="flex items-center gap-3">
-			<label class="flex items-center gap-2">
-				<span class="hidden sm:inline">Строк на странице</span>
-				<select
-					class="h-control rounded-md border border-input bg-background px-2 text-sm focus-ring"
-					value={query.size}
-					onchange={(event) => go({ size: Number(event.currentTarget.value), page: 1 })}
+			<div class="flex items-center gap-2">
+				<Label for="page-size" class="hidden font-normal text-muted-foreground sm:inline">
+					Строк на странице
+				</Label>
+				<Select.Root
+					type="single"
+					value={String(query.size)}
+					onValueChange={(size) => void go({ size: Number(size), page: 1 })}
 				>
-					{#each PAGE_SIZES as size (size)}
-						<option value={size}>{size}</option>
-					{/each}
-				</select>
-			</label>
+					<Select.Trigger id="page-size" size="sm" aria-label="Строк на странице">
+						{query.size}
+					</Select.Trigger>
+					<Select.Content>
+						{#each PAGE_SIZES as size (size)}
+							<Select.Item value={String(size)} label={String(size)} />
+						{/each}
+					</Select.Content>
+				</Select.Root>
+			</div>
 
 			<div class="flex items-center gap-1">
 				<Button

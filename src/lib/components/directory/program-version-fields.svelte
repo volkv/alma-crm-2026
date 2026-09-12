@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import type { SuperForm } from 'sveltekit-superforms';
-	import FieldInput from '$lib/components/form/field-input.svelte';
+	import FieldDate from '$lib/components/form/field-date.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import type { CreateProgramVersionInput } from '$lib/contracts/directory';
 
@@ -27,10 +27,9 @@
 	bind:value={$form.summary}
 />
 
-<FieldInput
+<FieldDate
 	name="effectiveFrom"
 	label="Действует с"
-	type="date"
 	required
 	errors={$errors.effectiveFrom}
 	bind:value={$form.effectiveFrom}

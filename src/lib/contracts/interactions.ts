@@ -68,6 +68,21 @@ export type StageOutcome = (typeof STAGE_OUTCOMES)[number];
 export type PauseReason = (typeof PAUSE_REASONS)[number];
 export type BlockerReason = (typeof BLOCKER_REASONS)[number];
 
+/**
+ * Кем организация участвует — словами, и словами теми же, что в справочнике
+ * организаций (`ORGANIZATION_KIND_LABELS`).
+ *
+ * Единственное место, где роль стороны называется по-русски. Пока названий было
+ * три — «Заказчик» в колонке списка, «Заказчик подготовки» в форме,
+ * «Компания-заказчик» в справочнике, — на демонстрации это читалось как три
+ * разные сущности процесса.
+ */
+export const PARTY_ROLE_LABELS: Record<PartyRole, string> = {
+	educational_institution: 'Учебное заведение',
+	customer: 'Компания-заказчик',
+	operator: 'Оператор'
+};
+
 /** Почему часы стадии остановлены — словами. */
 export const PAUSE_REASON_LABELS: Record<PauseReason, string> = {
 	waiting_counterparty: 'Ждём ответа контрагента',
@@ -864,7 +879,7 @@ export const apiInteractionSchema = z.object({
 	ownerUserId: z.uuid(),
 	ownerName: z.string(),
 	institutionName: z.string().nullable().describe('Основное учебное заведение взаимодействия'),
-	customerName: z.string().nullable().describe('Заказчик подготовки, если он указан'),
+	customerName: z.string().nullable().describe('Компания-заказчик, если она указана'),
 	stageKey: z.string().nullable().describe('Ключ текущей стадии маршрута'),
 	stageName: z.string().nullable(),
 	stagePosition: z.number().int().nullable(),

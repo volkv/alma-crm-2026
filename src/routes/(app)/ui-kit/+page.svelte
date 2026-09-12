@@ -38,6 +38,8 @@
 	import StatusBadge, { type StatusTone } from '$lib/components/status-badge.svelte';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
+	import DateField from '$lib/components/form/date-field.svelte';
+	import FieldDate from '$lib/components/form/field-date.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
@@ -78,6 +80,8 @@
 			}
 		}
 	);
+
+	let kitDate = $state('2026-09-12');
 
 	const kindTone: Record<OrganizationKind, StatusTone> = {
 		university: 'accent',
@@ -289,6 +293,13 @@
 					<div class="flex flex-col gap-1.5">
 						<Label for="kit-textarea">Многострочное поле</Label>
 						<Textarea id="kit-textarea" rows={2} placeholder="Комментарий" />
+					</div>
+					<div class="flex flex-col gap-1.5">
+						<Label for="kit-date">Дата</Label>
+						<!-- Дата пишется и читается как 12.09.2026 и выбирается тем же
+							всплывающим слоем, что и остальные списки продукта: нативный
+							`type="date"` рисовал бы её порядком полей локали браузера. -->
+						<DateField id="kit-date" bind:value={kitDate} />
 					</div>
 				</div>
 				<div class="flex flex-wrap items-center gap-6">
@@ -562,6 +573,13 @@
 						required
 						bind:value={$form.email}
 						errors={$errors.email}
+					/>
+					<FieldDate
+						name="agreedOn"
+						label="Дата подписания"
+						description="Необязательно; пустое поле означает «не подписано»."
+						bind:value={() => $form.agreedOn ?? '', (next) => ($form.agreedOn = next || null)}
+						errors={$errors.agreedOn}
 					/>
 					<FieldTextarea
 						name="comment"

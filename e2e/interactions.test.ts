@@ -304,7 +304,7 @@ test('на ноутбуке срок виден целиком, а не крае
 
 	// Стартовая видимость ставится после того, как страница ожила: до этого
 	// момента на экране ещё все колонки, и мерить нечего.
-	await expect(header.getByText('Заказчик')).toBeHidden();
+	await expect(header.getByText('Компания-заказчик')).toBeHidden();
 
 	const columns = await header.locator('th').allTextContents();
 	const due = columns.findIndex((title) => title.includes('Срок'));
@@ -335,7 +335,7 @@ test('на ноутбуке список начинается без второ�
 
 	await expect(header.getByText('Стадия')).toBeVisible();
 	await expect(header.getByText('Срок')).toBeVisible();
-	await expect(header.getByText('Заказчик')).toBeHidden();
+	await expect(header.getByText('Компания-заказчик')).toBeHidden();
 	await expect(header.getByText('Ответственный')).toBeHidden();
 	await expect(header.getByText('Активность')).toBeHidden();
 

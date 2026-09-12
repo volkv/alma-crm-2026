@@ -4,6 +4,7 @@ import { endAffiliationSchema } from '$lib/contracts/directory';
 import { actorFromEvent } from '$lib/server/actor';
 import { getPerson, listPersonAffiliations } from '$lib/server/directory/read';
 import { endAffiliation } from '$lib/server/directory/write';
+import { formatIsoDay } from '$lib/format';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import type { Actions, PageServerLoad } from './$types';
@@ -22,7 +23,7 @@ export const load: PageServerLoad = async (event) => {
 			affiliations,
 			canWrite: can(ctx, 'people.write'),
 			// Полномочия закрывают сегодняшним днём по Москве — по нему живёт процесс.
-			today: new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(new Date())
+			today: formatIsoDay()
 		};
 	} catch (error) {
 		toPageError(error);

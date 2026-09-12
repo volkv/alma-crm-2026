@@ -168,6 +168,17 @@ test('фильтр по типу события меняет список и а�
 	await expect(logins).toHaveCount(await rows.count());
 });
 
+test('фильтр по периоду принимает дату в русском виде и уносит её в адрес', async ({ page }) => {
+	await page.goto('/audit');
+
+	// Поле пишет и читает `01.01.2026`, а в адрес уходит календарный день так,
+	// как его понимает сервер.
+	await page.getByLabel('Период с').fill('01.01.2026');
+
+	await expect(page).toHaveURL(/[?&]from=2026-01-01(&|$)/);
+	await expect(page.getByLabel('Период с')).toHaveValue('01.01.2026');
+});
+
 staff('выпущенный ключ показывается один раз', async ({ page }) => {
 	await page.goto('/settings/api-keys');
 

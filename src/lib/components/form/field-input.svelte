@@ -22,8 +22,12 @@
 		description?: string;
 		errors?: string[];
 		required?: boolean;
-		/** `file` is not supported here — it needs its own handling. */
-		type?: Exclude<HTMLInputTypeAttribute, 'file'>;
+		/**
+		 * `file` and `date` are not supported here: the browser draws both of
+		 * them itself, in its own language, so each has its own component —
+		 * `FileInput` and `FieldDate`.
+		 */
+		type?: Exclude<HTMLInputTypeAttribute, 'file' | 'date'>;
 		placeholder?: string;
 		value?: string;
 	} = $props();

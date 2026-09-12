@@ -25,7 +25,14 @@
 	const title = $derived(
 		TITLES[status] ?? (status >= 500 ? 'Что-то пошло не так' : 'Запрос не принят')
 	);
+	/**
+	 * Фраза сервера — но только если она добавляет что-то к заголовку. На 404 по
+	 * несуществующему адресу их пишут разные места («Страница не найдена» в
+	 * таблице отказов фреймворка и здесь), и человек получал одну и ту же строку
+	 * дважды: крупно и мелко.
+	 */
 	const message = $derived(page.error?.message ?? '');
+	const detail = $derived(message === title ? '' : message);
 	// У ожидаемого отказа тело пишет `error()`, у неожиданного — `handleError`;
 	// корневой макет кладёт тот же идентификатор в данные страницы, поэтому код
 	// обращения есть и там, и там.
@@ -40,8 +47,8 @@
 
 	<div class="space-y-2">
 		<h1 class="text-lg font-semibold tracking-tight">{title}</h1>
-		{#if message}
-			<p class="mx-auto max-w-md text-sm text-muted-foreground">{message}</p>
+		{#if detail}
+			<p class="mx-auto max-w-md text-sm text-muted-foreground">{detail}</p>
 		{/if}
 		{#if requestId}
 			<p class="text-xs text-faint">

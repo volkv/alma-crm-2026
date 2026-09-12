@@ -7,6 +7,7 @@ import { actorFromEvent } from '$lib/server/actor';
 import { getOrganization, listPersonOptions, listSites } from '$lib/server/directory/read';
 import { createAffiliation } from '$lib/server/directory/write';
 import { ConflictError, ValidationError } from '$lib/server/errors';
+import { formatIsoDay } from '$lib/format';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { requirePermission } from '$lib/server/rbac';
 import type { Actions, PageServerLoad } from './$types';
@@ -31,9 +32,7 @@ export const load: PageServerLoad = async (event) => {
 				{
 					organizationId: organization.id,
 					roleKind: 'coordinator' as const,
-					validFrom: new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(
-						new Date()
-					)
+					validFrom: formatIsoDay()
 				},
 				zod4(createAffiliationSchema),
 				{ errors: false }

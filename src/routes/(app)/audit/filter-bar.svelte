@@ -4,8 +4,8 @@
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
-	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
+	import DateField from '$lib/components/form/date-field.svelte';
 	import { AUDIT_OUTCOMES, AUDIT_SOURCES } from '$lib/contracts/audit';
 	import {
 		AUDIT_EVENT_GROUPS,
@@ -65,25 +65,23 @@
 <div class="flex flex-wrap items-end gap-3">
 	<div class="flex flex-col gap-1.5">
 		<Label for="audit-from" class="text-xs text-muted-foreground">Период с</Label>
-		<Input
+		<DateField
 			id="audit-from"
-			type="date"
-			class="w-40"
+			class="w-48"
 			value={selected.from}
 			max={selected.to || undefined}
-			onchange={(event) => go({ from: event.currentTarget.value })}
+			onchange={(from) => void go({ from })}
 		/>
 	</div>
 
 	<div class="flex flex-col gap-1.5">
 		<Label for="audit-to" class="text-xs text-muted-foreground">по</Label>
-		<Input
+		<DateField
 			id="audit-to"
-			type="date"
-			class="w-40"
+			class="w-48"
 			value={selected.to}
 			min={selected.from || undefined}
-			onchange={(event) => go({ to: event.currentTarget.value })}
+			onchange={(to) => void go({ to })}
 		/>
 	</div>
 

@@ -54,7 +54,7 @@
 		/>
 	</HomeSection>
 
-	<div class="grid grid-cols-1 gap-4 lg:grid-cols-2">
+	<div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
 		<HomeSection title="Ждём вуз" description="Стадии, часы которых остановлены ожиданием">
 			<WaitingList items={overview.waiting} now={overview.generatedAt} />
 		</HomeSection>

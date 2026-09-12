@@ -79,7 +79,7 @@ export const LIFECYCLE_STATUS_TONES: Record<LifecycleStatus, StatusTone> = {
 	archived: 'neutral'
 };
 
-/** Значение, которым `<select>` обозначает «ничего не выбрано». */
+/** Значение, которым список обозначает «ничего не выбрано». */
 export const NO_OPTION = 'none';
 
 function toOptions<TKey extends string>(

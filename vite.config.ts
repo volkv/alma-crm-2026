@@ -20,6 +20,11 @@ export default defineConfig({
 			adapter: adapter(),
 			// Exposed as `version` from `$app/environment` and reported by /api/health.
 			version: { name: pkg.version },
+			// Проверку происхождения формы делает хук `csrf`: встроенная отвечает
+			// английской фразой фреймворка, которую нельзя ни перевести, ни
+			// дополнить. Доверие «любому адресу» здесь означает «фреймворк не
+			// проверяет», а не «проверки нет» — см. `src/lib/server/hooks/csrf.ts`.
+			csrf: { trustedOrigins: ['*'] },
 			// Everything the app needs comes from its own origin. `auto` lets Kit hash
 			// the scripts and styles it inlines itself, so no blanket `unsafe-inline`
 			// is needed for scripts. Widen a directive only together with the feature

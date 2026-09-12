@@ -6,6 +6,13 @@
 	import type { ButtonVariant } from '../button/button.svelte';
 	import type { Snippet } from 'svelte';
 
+	/**
+	 * Заголовок месяца — подпись, а не два выпадающих списка: в вендоренном
+	 * варианте они были нативными `<select>`, единственным местом продукта, где
+	 * раскрывающийся список рисовал бы браузер по-своему. Месяц листают
+	 * стрелками, а далёкую дату быстрее набрать в поле, чем искать в списке из
+	 * ста лет.
+	 */
 	let {
 		ref = $bindable(null),
 		value = $bindable(),
@@ -13,30 +20,16 @@
 		class: className,
 		weekdayFormat = 'short',
 		buttonVariant = 'ghost',
-		captionLayout = 'label',
-		locale = 'en-US',
-		months: monthsProp,
-		years,
-		monthFormat: monthFormatProp,
+		locale = 'ru-RU',
+		monthFormat = 'long',
 		yearFormat = 'numeric',
 		day,
 		disableDaysOutsideMonth = false,
 		...restProps
 	}: WithoutChildrenOrChild<CalendarPrimitive.RootProps> & {
 		buttonVariant?: ButtonVariant;
-		captionLayout?: 'dropdown' | 'dropdown-months' | 'dropdown-years' | 'label';
-		months?: CalendarPrimitive.MonthSelectProps['months'];
-		years?: CalendarPrimitive.YearSelectProps['years'];
-		monthFormat?: CalendarPrimitive.MonthSelectProps['monthFormat'];
-		yearFormat?: CalendarPrimitive.YearSelectProps['yearFormat'];
 		day?: Snippet<[{ day: DateValue; outsideMonth: boolean }]>;
 	} = $props();
-
-	const monthFormat = $derived.by(() => {
-		if (monthFormatProp) return monthFormatProp;
-		if (captionLayout.startsWith('dropdown')) return 'short';
-		return 'long';
-	});
 </script>
 
 <!--
@@ -64,20 +57,10 @@ get along, so we shut typescript up by casting `value` to `never`.
 				<Calendar.PrevButton variant={buttonVariant} />
 				<Calendar.NextButton variant={buttonVariant} />
 			</Calendar.Nav>
-			{#each months as month, monthIndex (month)}
+			{#each months as month (month)}
 				<Calendar.Month>
 					<Calendar.Header>
-						<Calendar.Caption
-							{captionLayout}
-							months={monthsProp}
-							{monthFormat}
-							{years}
-							{yearFormat}
-							month={month.value}
-							bind:placeholder
-							{locale}
-							{monthIndex}
-						/>
+						<Calendar.Heading />
 					</Calendar.Header>
 					<Calendar.Grid>
 						<Calendar.GridHead>

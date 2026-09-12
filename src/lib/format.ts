@@ -34,6 +34,17 @@ const monthDayFormat = new Intl.DateTimeFormat('ru-RU', {
 	month: 'long'
 });
 
+/**
+ * `en-CA` is the shortest way to ask `Intl` for `yyyy-mm-dd`: the calendar day
+ * as the schemas, the database and the `date` inputs of the browser spell it.
+ */
+const isoDayFormat = new Intl.DateTimeFormat('en-CA', {
+	timeZone: TIME_ZONE,
+	year: 'numeric',
+	month: '2-digit',
+	day: '2-digit'
+});
+
 const numberFormat = new Intl.NumberFormat('ru-RU');
 
 /** Anything that can carry a moment in time before it is formatted. */
@@ -64,6 +75,44 @@ export function formatDayAndMonth(value: DateInput): string {
 	return monthDayFormat.format(toDate(value));
 }
 
+/**
+ * `2026-09-12` — the calendar day in Moscow, the form every schema, column and
+ * date control stores. The zone matters: at 01:00 Moscow the machine clock in
+ * UTC still says yesterday, and a plan that starts "today" would be dated a day
+ * back for everyone who reads it.
+ */
+export function formatIsoDay(value: DateInput = Date.now()): string {
+	return isoDayFormat.format(toDate(value));
+}
+
+/** `12.09.2026`, exactly as {@link formatDate} writes it. */
+const RU_DAY = /^(\d{2})\.(\d{2})\.(\d{4})$/;
+
+/**
+ * The reverse of {@link formatDate} for a typed-in day: `12.09.2026` becomes
+ * `2026-09-12`, and anything else becomes `null`. A half-typed or impossible
+ * date is not an error worth throwing — the field simply has no value yet —
+ * but it must not silently become another day either, which is what `new Date`
+ * does with `31.02`.
+ */
+export function parseRuDay(text: string): string | null {
+	const match = RU_DAY.exec(text.trim());
+
+	if (match === null) {
+		return null;
+	}
+
+	const [, day, month, year] = match;
+	const iso = `${year}-${month}-${day}`;
+	const date = new Date(`${iso}T00:00:00Z`);
+
+	if (Number.isNaN(date.getTime()) || date.toISOString().slice(0, 10) !== iso) {
+		return null;
+	}
+
+	return iso;
+}
+
 /** `1 234 567`, with the non-breaking group separator Russian typography uses. */
 export function formatNumber(value: number): string {
 	if (!Number.isFinite(value)) {
@@ -71,6 +120,30 @@ export function formatNumber(value: number): string {
 	}
 
 	return numberFormat.format(value);
+}
+
+/**
+ * Sizes people read: `2,3 МБ`, not `2 411 059 байт`. The unit is the one a
+ * Russian file manager shows, and the step is 1024 — the same one the storage
+ * limit is written in.
+ */
+const SIZE_UNITS = ['Б', 'КБ', 'МБ'] as const;
+const sizeFormat = new Intl.NumberFormat('ru-RU', { maximumFractionDigits: 1 });
+
+export function formatBytes(bytes: number): string {
+	if (!Number.isFinite(bytes) || bytes < 0) {
+		throw new RangeError(`Не удалось отформатировать размер: ${String(bytes)}`);
+	}
+
+	let value = bytes;
+	let unit = 0;
+
+	while (value >= 1024 && unit < SIZE_UNITS.length - 1) {
+		value /= 1024;
+		unit += 1;
+	}
+
+	return `${sizeFormat.format(value)} ${SIZE_UNITS[unit]}`;
 }
 
 /**

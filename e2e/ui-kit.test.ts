@@ -61,6 +61,37 @@ test('the form explains a wrong e-mail in words', async ({ page }) => {
 	await expect(page.getByText('Проверьте адрес электронной почты')).toBeVisible();
 });
 
+test('a date is typed in the Russian order and picked from the same popover layer', async ({
+	page
+}) => {
+	await page.goto('/ui-kit');
+
+	const field = page.getByLabel('Дата', { exact: true });
+	await expect(field).toHaveValue('12.09.2026');
+
+	await field.fill('01.03.2027');
+	await expect(field).toHaveValue('01.03.2027');
+
+	// The calendar is opened by the page's own code, so a click before hydration
+	// is lost — hence the retry, as with every other layer.
+	const calendar = page.locator('[data-slot="popover-content"]');
+	const grid = calendar.getByRole('grid');
+
+	await expect(async () => {
+		await page.getByRole('button', { name: 'Открыть календарь' }).first().click();
+		await expect(grid).toBeVisible({ timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+
+	// The calendar opens on the month of the value and names it in Russian.
+	await expect(calendar).toContainText(/март/i);
+	await grid.getByText('15', { exact: true }).click();
+
+	await expect(field).toHaveValue('15.03.2027');
+
+	await page.getByRole('button', { name: 'Очистить дату' }).first().click();
+	await expect(field).toHaveValue('');
+});
+
 test('navigation moves into a sheet on a phone', async ({ page }) => {
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto('/ui-kit');

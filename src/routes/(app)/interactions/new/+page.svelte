@@ -8,6 +8,7 @@
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
+	import FieldDate from '$lib/components/form/field-date.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
@@ -15,8 +16,9 @@
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import PageHeader from '$lib/components/page-header.svelte';
 	import OrganizationPicker from '$lib/components/interactions/organization-picker.svelte';
+	import { NO_OPTION, toLookupOptions } from '$lib/components/directory/labels';
 	import type { LookupOption } from '$lib/contracts/directory';
-	import { createInteractionSchema } from '$lib/contracts/interactions';
+	import { createInteractionSchema, PARTY_ROLE_LABELS } from '$lib/contracts/interactions';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -156,13 +158,14 @@
 			<Card.Header>
 				<Card.Title>Стороны</Card.Title>
 				<Card.Description>
-					Учебное заведение обязательно: с ним ведётся процесс. Заказчик подготовки — если он есть.
+					Учебное заведение обязательно: с ним ведётся процесс. Компания-заказчик — если подготовку
+					заказывает она.
 				</Card.Description>
 			</Card.Header>
 			<Card.Content class="flex flex-col gap-4">
 				<FormField
 					name="institution"
-					label="Учебное заведение"
+					label={PARTY_ROLE_LABELS.educational_institution}
 					required
 					errors={partyError === '' ? undefined : [partyError]}
 				>
@@ -198,23 +201,18 @@
 				{/if}
 
 				{#if institutionContacts.length > 0}
-					<FormField name="contactAffiliationId" label="Контактное лицо вуза">
-						{#snippet control({ id })}
-							<select
-								{id}
-								bind:value={contactAffiliationId}
-								class="h-control w-full rounded-md border border-input bg-background px-2 text-sm focus-ring"
-							>
-								<option value={null}>Не выбрано</option>
-								{#each institutionContacts as contact (contact.id)}
-									<option value={contact.id}>{contact.label}</option>
-								{/each}
-							</select>
-						{/snippet}
-					</FormField>
+					<FieldSelect
+						name="contactAffiliationId"
+						label="Контактное лицо вуза"
+						options={toLookupOptions(institutionContacts, 'Не выбрано')}
+						bind:value={
+							() => contactAffiliationId ?? NO_OPTION,
+							(next) => (contactAffiliationId = next === NO_OPTION ? null : next)
+						}
+					/>
 				{/if}
 
-				<FormField name="customer" label="Заказчик подготовки">
+				<FormField name="customer" label={PARTY_ROLE_LABELS.customer}>
 					{#snippet control({ id, describedBy, invalid })}
 						<OrganizationPicker
 							{id}
@@ -262,31 +260,31 @@
 				/>
 
 				<div class="grid gap-4 sm:grid-cols-2">
-					<FieldInput
+					<FieldDate
 						name="agreementPeriodStart"
 						label="Соглашение: с"
-						type="date"
+						max={periods.agreementPeriodEnd}
 						bind:value={periods.agreementPeriodStart}
 						errors={$errors.agreementPeriodStart}
 					/>
-					<FieldInput
+					<FieldDate
 						name="agreementPeriodEnd"
 						label="Соглашение: по"
-						type="date"
+						min={periods.agreementPeriodStart}
 						bind:value={periods.agreementPeriodEnd}
 						errors={$errors.agreementPeriodEnd}
 					/>
-					<FieldInput
+					<FieldDate
 						name="academicPeriodStart"
 						label="Учебный период: с"
-						type="date"
+						max={periods.academicPeriodEnd}
 						bind:value={periods.academicPeriodStart}
 						errors={$errors.academicPeriodStart}
 					/>
-					<FieldInput
+					<FieldDate
 						name="academicPeriodEnd"
 						label="Учебный период: по"
-						type="date"
+						min={periods.academicPeriodStart}
 						bind:value={periods.academicPeriodEnd}
 						errors={$errors.academicPeriodEnd}
 					/>

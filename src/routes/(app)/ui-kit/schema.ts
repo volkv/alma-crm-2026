@@ -23,7 +23,17 @@ export const showcaseOrganizationSchema = z.object({
 	region: z.enum(REGIONS, { error: 'Выберите регион из списка' }),
 	site: z.url({ error: 'Адрес сайта начинается с http:// или https://' }),
 	email: z.email({ error: 'Проверьте адрес электронной почты' }),
-	comment: z.string().trim().max(500, { error: 'Комментарий не длиннее 500 символов' }).default('')
+	comment: z.string().trim().max(500, { error: 'Комментарий не длиннее 500 символов' }).default(''),
+	/**
+	 * Дата в форме — всегда календарный день `2026-09-12`: так её пишет схема,
+	 * так её хранит база, и так её отдаёт `FieldDate`, что бы человек ни набрал
+	 * в поле.
+	 */
+	agreedOn: z.iso
+		.date({ error: 'Дата в виде дд.мм.гггг' })
+		.nullable()
+		.default(null)
+		.describe('День подписания')
 });
 
 export type ShowcaseOrganizationInput = z.input<typeof showcaseOrganizationSchema>;

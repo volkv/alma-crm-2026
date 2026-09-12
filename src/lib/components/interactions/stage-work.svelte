@@ -2,7 +2,9 @@
 	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
 	import * as Card from '$lib/components/ui/card/index.js';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
@@ -34,7 +36,25 @@
 	// те доли секунды, пока ответ в пути, и заменяется новым ответом сама.
 	let optimistic = $derived<Record<string, boolean>>({ ...(entry?.checklistState ?? {}) });
 	let forms = $state<Record<string, HTMLFormElement | null>>({});
-	let confirmKind = $state<'mark' | 'file' | 'lms_record'>('mark');
+
+	/** Чем закрывают стадию; список отправляет выбранное скрытым полем. */
+	const CONFIRM_KINDS = [
+		{ value: 'mark', label: 'Отметка ответственного' },
+		{ value: 'file', label: 'Документ взаимодействия' },
+		{ value: 'lms_record', label: 'Запись в системе обучения' }
+	] as const;
+
+	type ConfirmKind = (typeof CONFIRM_KINDS)[number]['value'];
+
+	let confirmKind = $state<ConfirmKind>('mark');
+	let documentId = $state('');
+
+	const confirmKindLabel = $derived(
+		CONFIRM_KINDS.find((kind) => kind.value === confirmKind)?.label ?? ''
+	);
+	const documentTitle = $derived(
+		documents.find((document) => document.id === documentId)?.title ?? 'Выберите документ'
+	);
 
 	async function toggle(key: string, checked: boolean) {
 		optimistic = { ...optimistic, [key]: checked };
@@ -46,7 +66,7 @@
 {#if entry === null}
 	<InlineHint>Взаимодействие не стоит ни на одной стадии.</InlineHint>
 {:else}
-	<div class="grid gap-4 lg:grid-cols-2">
+	<div class="grid items-start gap-4 lg:grid-cols-2">
 		<Card.Root size="sm">
 			<Card.Header>
 				<Card.Title>Чек-лист стадии</Card.Title>
@@ -144,43 +164,49 @@
 						<input type="hidden" name="fromStageId" value={entry.stageId} />
 
 						<Label for="confirmKind">Чем подтверждаем</Label>
-						<select
-							id="confirmKind"
+						<Select.Root
+							type="single"
 							name="kind"
-							bind:value={confirmKind}
 							disabled={!canWork}
-							class="h-control rounded-md border border-input bg-background px-2 text-sm focus-ring"
+							bind:value={() => confirmKind, (next) => (confirmKind = next as ConfirmKind)}
 						>
-							<option value="mark">Отметка ответственного</option>
-							<option value="file">Документ взаимодействия</option>
-							<option value="lms_record">Запись в системе обучения</option>
-						</select>
+							<Select.Trigger id="confirmKind" class="w-full">{confirmKindLabel}</Select.Trigger>
+							<Select.Content>
+								{#each CONFIRM_KINDS as kind (kind.value)}
+									<Select.Item value={kind.value} label={kind.label} />
+								{/each}
+							</Select.Content>
+						</Select.Root>
 
 						{#if confirmKind === 'file'}
-							<select
-								name="documentId"
-								class="h-control rounded-md border border-input bg-background px-2 text-sm focus-ring"
-							>
-								{#each documents as document (document.id)}
-									<option value={document.id}>{document.title}</option>
-								{/each}
-							</select>
+							<Select.Root type="single" name="documentId" bind:value={documentId}>
+								<Select.Trigger aria-label="Документ подтверждения" class="w-full">
+									{documentTitle}
+								</Select.Trigger>
+								<Select.Content>
+									{#each documents as document (document.id)}
+										<Select.Item value={document.id} label={document.title} />
+									{/each}
+								</Select.Content>
+							</Select.Root>
 							{#if documents.length === 0}
 								<p class="text-xs text-muted-foreground">
 									Документов пока нет — загрузите файл во вкладке «Документы».
 								</p>
+							{:else if documentId === ''}
+								<!-- Документ подтверждения уходит в историю стадии, поэтому он
+									выбирается, а не подставляется первым из списка. -->
+								<p class="text-xs text-muted-foreground">
+									Выберите документ: он останется в истории как подтверждение стадии.
+								</p>
 							{/if}
 						{:else if confirmKind === 'lms_record'}
 							<div class="grid gap-2 sm:grid-cols-2">
-								<input
-									name="source"
-									placeholder="Система, например moodle"
-									class="h-control rounded-md border border-input bg-background px-2 text-sm focus-ring"
-								/>
-								<input
+								<Input name="source" aria-label="Система обучения" placeholder="Например, moodle" />
+								<Input
 									name="recordId"
+									aria-label="Идентификатор записи"
 									placeholder="Идентификатор записи"
-									class="h-control rounded-md border border-input bg-background px-2 text-sm focus-ring"
 								/>
 							</div>
 						{/if}
@@ -189,7 +215,8 @@
 							<Button
 								type="submit"
 								size="sm"
-								disabled={!canWork || (confirmKind === 'file' && documents.length === 0)}
+								disabled={!canWork ||
+									(confirmKind === 'file' && (documents.length === 0 || documentId === ''))}
 							>
 								Подтвердить стадию
 							</Button>
