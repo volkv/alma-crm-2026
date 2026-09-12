@@ -22,10 +22,14 @@ import {
 	sites,
 	stageEntries,
 	stageEntryStatus,
+	statProgramIndicators,
+	statRows,
+	statSnapshots,
 	users
 } from '$lib/server/db/schema';
 import { DEMO_ROUTE } from '$lib/server/stages/demo-route';
 import { DIRECTORY_SEED_SIZES } from '../../../scripts/seed/directory';
+import { STATS_SEED_SIZES } from '../../../scripts/seed/stats';
 import { INTERACTION_SEED_SIZES } from '../../../scripts/seed/interactions';
 import { seedAll } from '../../../scripts/seed/run';
 import { DEMO_EMAILS, STAFF_ADMIN_EMAIL } from '../../../scripts/seed/users';
@@ -182,6 +186,49 @@ describe('сид', () => {
 			INTERACTION_SEED_SIZES.completed * DEMO_ROUTE.stages.length
 		);
 		expect(completedEntries.filter((entry) => entry.leftAt === null)).toStrictEqual([]);
+	});
+
+	it('заливает данные об обучении и считает по ним показатели', async () => {
+		await runSeed();
+
+		await expect(countRows(statSnapshots)).resolves.toBe(STATS_SEED_SIZES.snapshots);
+		await expect(countRows(statRows)).resolves.toBe(STATS_SEED_SIZES.rows);
+
+		const current = await database.db
+			.select({ id: statSnapshots.id })
+			.from(statSnapshots)
+			.where(eq(statSnapshots.isCurrent, true));
+
+		expect(current).toHaveLength(STATS_SEED_SIZES.confirmed);
+
+		const invalid = await database.db
+			.select({ id: statRows.id })
+			.from(statRows)
+			.where(eq(statRows.isValid, false));
+
+		// Снимок, который ждёт решения, обязан быть на стенде: без ошибочных
+		// строк проверка выглядит формальностью.
+		expect(invalid).toHaveLength(STATS_SEED_SIZES.invalidRows);
+
+		const indicators = await database.db
+			.select({
+				applications: statProgramIndicators.applications,
+				completed: statProgramIndicators.completed
+			})
+			.from(statProgramIndicators);
+
+		expect(indicators.length).toBeGreaterThan(0);
+		// В наборе есть и ноль, и пропуск: показатель обязан их различать.
+		expect(indicators.some((row) => row.applications === 0)).toBe(true);
+		expect(indicators.some((row) => row.completed === null)).toBe(true);
+	});
+
+	it('повторный сид не плодит строк данных об обучении', async () => {
+		await runSeed();
+		await runSeed();
+
+		await expect(countRows(statSnapshots)).resolves.toBe(STATS_SEED_SIZES.snapshots);
+		await expect(countRows(statRows)).resolves.toBe(STATS_SEED_SIZES.rows);
 	});
 
 	it('заполняет срок соглашения у каждого взаимодействия', async () => {

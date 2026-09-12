@@ -21,12 +21,14 @@ import { SETTING_DEFAULTS } from '$lib/server/settings';
 import { ensureDemoRoute } from '$lib/server/stages/routes';
 import { seedDirectory } from './directory';
 import { seedInteractions } from './interactions';
+import { seedStats } from './stats';
 import { seedUsers, STAFF_ADMIN_EMAIL, type SeededUsers } from './users';
 
 /**
  * Порядок наборов: сначала права и роли, потом пользователи (у них внешний
- * ключ на роль), потом справочники (версия программы ссылается на автора) и
- * маршрут, и только затем взаимодействия, которым нужно всё перечисленное.
+ * ключ на роль), потом справочники (версия программы ссылается на автора),
+ * данные об обучении и маршрут, и только затем взаимодействия, которым нужно
+ * всё перечисленное.
  * Отдельная функция, потому что этот же порядок проверяют тесты.
  */
 export async function seedAll(options: {
@@ -46,6 +48,9 @@ export async function seedAll(options: {
 		await seedRolesAndPermissions(tx);
 		const seededUsers = await seedUsers(tx, options);
 		await seedDirectory(tx, { authorUserId: seededUsers.employees[0] });
+		// Данные об обучении ссылаются на организации и программы, поэтому идут
+		// после справочника и в той же транзакции.
+		await seedStats(tx, { authorUserId: seededUsers.employees[0] });
 
 		return { users: seededUsers, routeId: await ensureDemoRoute(tx) };
 	});
@@ -98,7 +103,9 @@ const REPORTED_TABLES: Record<string, PgTable> = {
 	products: schema.products,
 	interactions: schema.interactions,
 	stage_entries: schema.stageEntries,
-	documents: schema.documents
+	documents: schema.documents,
+	stat_snapshots: schema.statSnapshots,
+	stat_rows: schema.statRows
 };
 
 export async function main(argv: readonly string[]): Promise<void> {

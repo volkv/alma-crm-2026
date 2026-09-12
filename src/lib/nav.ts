@@ -1,5 +1,6 @@
 import type { LucideIcon } from '@lucide/svelte';
 import BuildingIcon from '@lucide/svelte/icons/building';
+import DatabaseIcon from '@lucide/svelte/icons/database';
 import FileTextIcon from '@lucide/svelte/icons/file-text';
 import GraduationCapIcon from '@lucide/svelte/icons/graduation-cap';
 import HandshakeIcon from '@lucide/svelte/icons/handshake';
@@ -42,6 +43,7 @@ export const navSections: readonly NavSection[] = [
 	{ href: '/people', label: 'Контакты', icon: UsersIcon, permission: 'people.read' },
 	{ href: '/programs', label: 'Программы', icon: GraduationCapIcon, permission: 'programs.read' },
 	{ href: '/products', label: 'Продукты', icon: PackageIcon, permission: 'products.read' },
+	{ href: '/data', label: 'Данные', icon: DatabaseIcon, permission: 'stats.read' },
 	{ href: '/documents', label: 'Документы', icon: FileTextIcon, permission: 'documents.read' },
 	{ href: '/audit', label: 'Журнал', icon: ScrollTextIcon, permission: 'audit.read' },
 	{ href: '/settings', label: 'Настройки', icon: SettingsIcon, permission: null }

@@ -7,3 +7,4 @@ export * from './directory';
 export * from './documents';
 export * from './interactions';
 export * from './settings';
+export * from './stats';

@@ -15,6 +15,13 @@
       "when": 1789163837139,
       "tag": "0001_audit_guard_and_stage_status",
       "breakpoints": true
+    },
+    {
+      "idx": 2,
+      "version": "7",
+      "when": 1789195044284,
+      "tag": "0002_stats_snapshots",
+      "breakpoints": true
     }
   ]
 }
