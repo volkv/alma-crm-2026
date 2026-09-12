@@ -1,5 +1,22 @@
 # Разработка
 
+## Документация
+
+| Файл                             | Что внутри                                                                  |
+| -------------------------------- | --------------------------------------------------------------------------- |
+| [`data-model.md`](data-model.md) | Схема базы, контракты, как звать сервисы, ошибки и права                    |
+| [`auth.md`](auth.md)             | Пароли, сессии, защита маршрутов, блокировка перебора, демо-режим           |
+| [`directory.md`](directory.md)   | Справочники: организации, площадки, люди, программы, продукты               |
+| [`stages.md`](stages.md)         | Маршруты и стадии взаимодействия: команды движка, готовность перехода       |
+| [`documents.md`](documents.md)   | Хранилище файлов, шаблоны, генерация, загрузка, скачивание                  |
+| [`admin.md`](admin.md)           | Журнал действий с выгрузкой и разделы настроек                              |
+| [`api.md`](api.md)               | Публичный API: ключи, лимиты, идемпотентность, как добавить эндпоинт        |
+| [`seeds.md`](seeds.md)           | Начальные данные: каталог прав, учётные записи, демонстрационный справочник |
+| [`deployment.md`](deployment.md) | Развёртывание на сервере, конфигурация, обновление, резервные копии         |
+
+Этот файл — про то, как работать с репозиторием: окружение, команды, устройство каталогов и те
+места, где проект расходится с привычками (Svelte 5, Tailwind 4, Zod 4).
+
 ## Окружение
 
 - **Node.js 24** — версия в `.nvmrc`, `engines.node` в `package.json`, `.npmrc` с `engine-strict=true`.
@@ -12,22 +29,22 @@
 
 ## Скрипты
 
-| Скрипт                      | Что делает                                                                        |
-| --------------------------- | --------------------------------------------------------------------------------- |
-| `pnpm dev`                  | Dev-сервер Vite на http://localhost:5173 с HMR                                    |
-| `pnpm build`                | Production-сборка в `build/` (adapter-node)                                       |
-| `pnpm preview`              | Просмотр production-сборки через Vite                                             |
-| `pnpm run check`            | `svelte-check` — типы в `.ts` и `.svelte`                                         |
-| `pnpm run lint`             | ESLint + проверка форматирования Prettier                                         |
-| `pnpm run format`           | Форматирование всего репозитория                                                  |
-| `pnpm run test:unit`        | Модульные тесты (`tests/unit`), Vitest, без внешних сервисов                      |
-| `pnpm run test:integration` | Интеграционные тесты (`tests/integration`); поднимают PostgreSQL в testcontainers |
-| `pnpm run test:e2e`         | Поднимает `postgres` и `redis` в compose и гоняет Playwright по `e2e/`            |
-| `pnpm run db:generate`      | Генерирует SQL-миграцию по изменениям схемы в `drizzle/`                          |
-| `pnpm run db:migrate`       | Применяет миграции из `drizzle/` к базе из `DATABASE_URL`                         |
-| `pnpm run db:studio`        | Drizzle Studio — браузер по данным                                                |
-| `pnpm run check:fast`       | Быстрый круг: lint → check → unit; без Docker и без сборки                        |
-| `pnpm run check:all`        | Полный гейт: lint → check → unit → integration → build → e2e                      |
+| Скрипт                      | Что делает                                                                                           |
+| --------------------------- | ---------------------------------------------------------------------------------------------------- |
+| `pnpm dev`                  | Dev-сервер Vite на http://localhost:5173 с HMR                                                       |
+| `pnpm build`                | Production-сборка в `build/` (adapter-node)                                                          |
+| `pnpm preview`              | Просмотр production-сборки через Vite                                                                |
+| `pnpm run check`            | `svelte-check` — типы в `.ts` и `.svelte`                                                            |
+| `pnpm run lint`             | ESLint + проверка форматирования Prettier                                                            |
+| `pnpm run format`           | Форматирование всего репозитория                                                                     |
+| `pnpm run test:unit`        | Модульные тесты (`tests/unit`), Vitest, без внешних сервисов                                         |
+| `pnpm run test:integration` | Интеграционные тесты: `gotenberg` из compose, PostgreSQL — в testcontainers, `pdftotext` — в системе |
+| `pnpm run test:e2e`         | Поднимает `postgres` и `redis` в compose и гоняет Playwright по `e2e/`                               |
+| `pnpm run db:generate`      | Генерирует SQL-миграцию по изменениям схемы в `drizzle/`                                             |
+| `pnpm run db:migrate`       | Применяет миграции из `drizzle/` к базе из `DATABASE_URL`                                            |
+| `pnpm run db:studio`        | Drizzle Studio — браузер по данным                                                                   |
+| `pnpm run check:fast`       | Быстрый круг: lint → check → unit; без Docker и без сборки                                           |
+| `pnpm run check:all`        | Полный гейт: lint → check → unit → integration → build → e2e                                         |
 
 `check:fast` гоняем в цикле правки, `check:all` — перед тем, как считать работу законченной:
 то же самое гоняет CI.
