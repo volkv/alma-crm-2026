@@ -73,7 +73,8 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'documents.downloaded': 'Документ скачан',
 	'documents.status_changed': 'Статус документа изменён',
 	'audit.exported': 'Журнал выгружен',
-	'api.request': 'Обращение к API'
+	'api.request': 'Обращение к API',
+	'api.unauthenticated_burst': 'Обращения к API без ключа'
 };
 
 /** Первая часть кода события — раздел, к которому оно относится. */

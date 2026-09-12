@@ -13,6 +13,7 @@ import { documents } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
+import { touchInteraction } from '../stages/commands';
 import { assertInteractionAccessible, toDocumentView } from './read';
 import { discardStaged, promoteBlob, stageBlob } from './storage';
 
@@ -80,6 +81,7 @@ export async function uploadDocument(
 
 			if (interactionId !== null) {
 				details.interactionId = interactionId;
+				await touchInteraction(tx, interactionId);
 			}
 
 			await recordAuditEvent(

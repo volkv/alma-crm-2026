@@ -2,6 +2,7 @@ import type { RequestEvent } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
+import type { AuditEventType } from '$lib/contracts/audit';
 import type { SessionUser } from '$lib/server/auth/types';
 import { apiHandler, type ApiEndpointConfig } from '$lib/server/api/handler';
 import { createApiKey, revokeApiKey } from '$lib/server/api/keys';
@@ -59,6 +60,16 @@ afterAll(async () => {
 
 beforeEach(async () => {
 	await database.reset();
+
+	// Счётчики лимита и пачек живут в Redis, общем с разработкой, и переживают
+	// очистку базы: окно — целая минута, и без сброса тест видел бы то, что
+	// насчитал предыдущий.
+	const redis = getRedis();
+	const keys = await redis.keys(`${API_REDIS_PREFIX}*`);
+
+	if (keys.length > 0) {
+		await redis.del(...keys);
+	}
 });
 
 type EventOptions = {
@@ -130,9 +141,9 @@ async function issueKeyWithoutPermissions(): Promise<string> {
 	return created.key;
 }
 
-async function auditRecords(): Promise<
-	{ outcome: string; details: Record<string, unknown>; apiKeyId: string | null }[]
-> {
+type AuditRecord = { outcome: string; details: Record<string, unknown>; apiKeyId: string | null };
+
+async function recordsOfType(eventType: AuditEventType): Promise<AuditRecord[]> {
 	const rows = await database.db
 		.select({
 			outcome: auditEvents.outcome,
@@ -140,9 +151,19 @@ async function auditRecords(): Promise<
 			apiKeyId: auditEvents.apiKeyId
 		})
 		.from(auditEvents)
-		.where(eq(auditEvents.eventType, 'api.request'));
+		.where(eq(auditEvents.eventType, eventType));
 
 	return rows.map((row) => ({ ...row, details: row.details as Record<string, unknown> }));
+}
+
+/** Построчные записи об обращениях к API. */
+async function auditRecords(): Promise<AuditRecord[]> {
+	return recordsOfType('api.request');
+}
+
+/** Агрегированные записи об отказах тем, кто не представился. */
+async function unauthenticatedRecords(): Promise<AuditRecord[]> {
+	return recordsOfType('api.unauthenticated_burst');
 }
 
 async function body(response: Response): Promise<Record<string, never>> {
@@ -151,17 +172,48 @@ async function body(response: Response): Promise<Record<string, never>> {
 
 describe('вход по ключу', () => {
 	it('не пускает без заголовка Authorization и пишет отказ в журнал', async () => {
-		const response = await listOrganizations(apiEvent());
+		const response = await listOrganizations(apiEvent({ ip: '198.51.100.71' }));
 
 		expect(response.status).toBe(401);
 		expect(await body(response)).toMatchObject({ error: { code: 'unauthorized' } });
-		expect(await auditRecords()).toEqual([
+
+		// Обращением такой запрос не считается: до сервиса он не дошёл, и пишется
+		// он агрегированно — см. «пачка запросов без ключа».
+		expect(await auditRecords()).toEqual([]);
+		expect(await unauthenticatedRecords()).toEqual([
 			{
 				outcome: 'denied',
 				apiKeyId: null,
 				details: { route: '/api/v1/organizations', method: 'GET', status: 401 }
 			}
 		]);
+	});
+
+	it('на пачку запросов без ключа пишет одну запись в минуту на адрес', async () => {
+		// Минута прибита: окно ограничителя календарное, и пачка, начатая в
+		// 10:59:59, легла бы в журнал двумя записями по совершенно верной причине.
+		vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-09-12T10:00:00Z') });
+
+		try {
+			for (let index = 0; index < 25; index += 1) {
+				const response = await listOrganizations(apiEvent({ ip: '198.51.100.72' }));
+
+				expect(response.status).toBe(401);
+			}
+
+			// Перебор ключей не должен вытеснять из ленты то, что в системе
+			// действительно происходило: 25 запросов — одна строка.
+			expect(await unauthenticatedRecords()).toHaveLength(1);
+			expect(await auditRecords()).toEqual([]);
+
+			// Счётчик на адрес, а не общий: пачка с одного адреса не глушит запись
+			// о другом — иначе за шумом перебора спрятался бы соседний перебор.
+			await listOrganizations(apiEvent({ ip: '198.51.100.73' }));
+
+			expect(await unauthenticatedRecords()).toHaveLength(2);
+		} finally {
+			vi.useRealTimers();
+		}
 	});
 
 	it('не пускает по сессии браузера: у API есть только ключ', async () => {

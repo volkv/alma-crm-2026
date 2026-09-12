@@ -21,7 +21,7 @@ import { SETTING_DEFAULTS } from '$lib/server/settings';
 import { ensureDemoRoute } from '$lib/server/stages/routes';
 import { seedDirectory } from './directory';
 import { seedInteractions } from './interactions';
-import { seedUsers, type SeededUsers } from './users';
+import { seedUsers, STAFF_ADMIN_EMAIL, type SeededUsers } from './users';
 
 /**
  * Порядок наборов: сначала права и роли, потом пользователи (у них внешний
@@ -29,7 +29,19 @@ import { seedUsers, type SeededUsers } from './users';
  * маршрут, и только затем взаимодействия, которым нужно всё перечисленное.
  * Отдельная функция, потому что этот же порядок проверяют тесты.
  */
-export async function seedAll(options: { demoPassword: string }): Promise<SeededUsers> {
+export async function seedAll(options: {
+	demoPassword: string;
+	/** Пароль администратора стенда; без него запись не заводится вовсе. */
+	staffAdminPassword?: string;
+}): Promise<SeededUsers> {
+	// Проверка здесь, а не в `main`: пароль, положенный сидом, обязан отвечать
+	// той же политике, что и заведённый руками, кто бы сид ни звал.
+	checkPassword('SEED_DEMO_PASSWORD', options.demoPassword);
+
+	if (options.staffAdminPassword !== undefined) {
+		checkPassword('SEED_STAFF_ADMIN_PASSWORD', options.staffAdminPassword);
+	}
+
 	const { users, routeId } = await getDb().transaction(async (tx) => {
 		await seedRolesAndPermissions(tx);
 		const seededUsers = await seedUsers(tx, options);
@@ -54,6 +66,21 @@ function requireEnv(name: string, explanation: string): string {
 	}
 
 	return value;
+}
+
+/** Необязательная переменная: пустая строка — то же самое, что незаданная. */
+function optionalEnv(name: string): string | undefined {
+	const value = process.env[name];
+
+	return value === undefined || value === '' ? undefined : value;
+}
+
+function checkPassword(name: string, password: string): void {
+	const issues = validatePassword(SETTING_DEFAULTS.password_policy, password);
+
+	if (issues.length > 0) {
+		throw new Error(`${name} не отвечает политике паролей: ${issues.join('; ')}`);
+	}
 }
 
 /** Таблицы, по которым сид отчитывается: по ним видно, что он сделал. */
@@ -93,10 +120,12 @@ export async function main(argv: readonly string[]): Promise<void> {
 		'это общий пароль демонстрационных учётных записей стенда'
 	);
 
-	const issues = validatePassword(SETTING_DEFAULTS.password_policy, demoPassword);
+	const staffAdminPassword = optionalEnv('SEED_STAFF_ADMIN_PASSWORD');
 
-	if (issues.length > 0) {
-		throw new Error(`SEED_DEMO_PASSWORD не отвечает политике паролей: ${issues.join('; ')}`);
+	if (staffAdminPassword === undefined) {
+		console.log(
+			`seed: SEED_STAFF_ADMIN_PASSWORD не задана — учётная запись ${STAFF_ADMIN_EMAIL} не заводится`
+		);
 	}
 
 	// Подключение — то же самое, что у приложения: сид зовёт его сервисы, и
@@ -104,7 +133,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 	const db = getDb();
 
 	try {
-		await seedAll({ demoPassword });
+		await seedAll({ demoPassword, staffAdminPassword });
 
 		const counts = await Promise.all(
 			Object.entries(REPORTED_TABLES).map(async ([name, table]) => {

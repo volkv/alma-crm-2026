@@ -14,7 +14,8 @@ import {
 	auditEvents,
 	documentTemplates,
 	documents,
-	interactionParties
+	interactionParties,
+	interactions
 } from '$lib/server/db/schema';
 import { generateDocument } from '$lib/server/documents/generate';
 import { listDocuments, readDocumentForDownload } from '$lib/server/documents/read';
@@ -480,6 +481,82 @@ describe('отметки по документу', () => {
 		await expect(
 			markDocument(testActor({ roleId: 'viewer' }), document.id, 'agreed')
 		).rejects.toBeInstanceOf(ForbiddenError);
+	});
+});
+
+describe('отметка активности взаимодействия', () => {
+	const pdfBytes = Buffer.from('%PDF-1.7\ntrailer\n%%EOF\n', 'latin1');
+
+	/** Отметка, отодвинутая в прошлое: иначе «двинулась» не отличить от «была». */
+	async function staleInteraction(): Promise<{ interactionId: string; at: Date }> {
+		const { interactionId } = await interactionWithParty();
+		const at = new Date('2026-01-01T00:00:00.000Z');
+
+		await database.db
+			.update(interactions)
+			.set({ lastActivityAt: at })
+			.where(eq(interactions.id, interactionId));
+
+		return { interactionId, at };
+	}
+
+	async function lastActivityAt(interactionId: string): Promise<Date> {
+		const [row] = await database.db
+			.select({ at: interactions.lastActivityAt })
+			.from(interactions)
+			.where(eq(interactions.id, interactionId));
+
+		return row.at;
+	}
+
+	it('двигает её загрузка документа', async () => {
+		const { interactionId, at } = await staleInteraction();
+
+		await uploadDocument(testActor(), {
+			interactionId,
+			kind: 'agreement',
+			title: 'Скан подписанного соглашения',
+			file: { mime: 'application/pdf', bytes: pdfBytes }
+		});
+
+		// Протухание — про тишину вокруг записи, а работа с её документами тишиной
+		// не является: иначе карточка позовёт поторопить того, кто как раз занят.
+		expect((await lastActivityAt(interactionId)).getTime()).toBeGreaterThan(at.getTime());
+	});
+
+	it('двигает её генерация документа', async () => {
+		const { interactionId, at } = await staleInteraction();
+
+		await generateDocument(testActor(), {
+			templateKey: 'agreement',
+			interactionId,
+			title: 'Соглашение',
+			data: AGREEMENT,
+			formats: ['docx']
+		});
+
+		expect((await lastActivityAt(interactionId)).getTime()).toBeGreaterThan(at.getTime());
+	});
+
+	it('двигает её отметка по документу', async () => {
+		const { interactionId } = await interactionWithParty();
+
+		const document = await uploadDocument(testActor(), {
+			interactionId,
+			kind: 'agreement',
+			title: 'Соглашение',
+			file: { mime: 'application/pdf', bytes: pdfBytes }
+		});
+
+		const at = new Date('2026-01-01T00:00:00.000Z');
+		await database.db
+			.update(interactions)
+			.set({ lastActivityAt: at })
+			.where(eq(interactions.id, interactionId));
+
+		await markDocument(testActor(), document.id, 'agreed');
+
+		expect((await lastActivityAt(interactionId)).getTime()).toBeGreaterThan(at.getTime());
 	});
 });
 

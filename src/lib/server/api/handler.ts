@@ -19,6 +19,7 @@ import { recordAuditEvent } from '../audit';
 import { AppError, statusForError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
 import type { PermissionKey } from '../rbac/permissions';
+import { getRedis } from '../redis';
 import {
 	completeIdempotency,
 	hashRequestBody,
@@ -29,9 +30,12 @@ import { authenticateApiKey, parseBearerToken } from './keys';
 import {
 	API_RATE_LIMIT_PER_IP,
 	API_RATE_LIMIT_PER_KEY,
+	API_RATE_LIMIT_WINDOW_SECONDS,
+	API_REDIS_PREFIX,
 	consumeRateLimit,
 	rateLimitHeaders,
 	tighter,
+	windowFor,
 	type RateLimitVerdict
 } from './rate-limit';
 
@@ -143,6 +147,38 @@ function outcomeFor(status: number): AuditOutcome {
 	return status === 401 || status === 403 || status === 429 ? 'denied' : 'failure';
 }
 
+/**
+ * Первый ли это за минуту запрос с адреса, которому отказано на входе.
+ *
+ * Отказ «не представился» приходит не по одному: перебор ключей или чужой
+ * сканер дают сотни таких запросов в минуту с одного адреса. Построчная запись
+ * превратила бы журнал в лог этого перебора — и вытеснила бы из ленты всё, что
+ * в системе действительно происходило. Поэтому на адрес пишется одна
+ * агрегированная запись в минуту, а `true` возвращается тому запросу, который
+ * её пишет.
+ *
+ * Счётчика в записи нет намеренно: он известен только к концу минуты, а в
+ * подробностях события произвольным полям не место. Сколько было запросов,
+ * видно по ограничителю частоты — он считает те же самые обращения.
+ */
+async function startsUnauthenticatedMinute(ip: string): Promise<boolean> {
+	const { start } = windowFor(Date.now());
+	const key = `${API_REDIS_PREFIX}unauth:${ip}:${start}`;
+	const redis = getRedis();
+
+	const hits = await redis.incr(key);
+
+	if (hits > 1) {
+		return false;
+	}
+
+	// Срок жизни ставится один раз, при первом обращении: иначе каждое
+	// следующее продлевало бы ключ и он пережил бы своё окно.
+	await redis.expire(key, API_RATE_LIMIT_WINDOW_SECONDS);
+
+	return true;
+}
+
 function toFailure(error: unknown, requestId: string): ApiFailure {
 	if (error instanceof ApiFailure) {
 		return error;
@@ -210,11 +246,24 @@ export function apiHandler<TConfig extends ApiEndpointConfig>(
 			}
 
 			try {
-				await recordAuditEvent(ctx, {
-					type: 'api.request',
-					outcome: outcomeFor(status),
-					details: { route, method, status }
-				});
+				// 401 отдаётся только транспортом — ключа нет или он негоден, до
+				// сервиса запрос не дошёл. Такие отказы пишутся агрегированно, см.
+				// `startsUnauthenticatedMinute`.
+				if (status === 401) {
+					if (await startsUnauthenticatedMinute(ip)) {
+						await recordAuditEvent(ctx, {
+							type: 'api.unauthenticated_burst',
+							outcome: outcomeFor(status),
+							details: { route, method, status }
+						});
+					}
+				} else {
+					await recordAuditEvent(ctx, {
+						type: 'api.request',
+						outcome: outcomeFor(status),
+						details: { route, method, status }
+					});
+				}
 			} catch (error) {
 				// Ответ уже сложился: запрос либо выполнен, либо отклонён, и клиент
 				// должен узнать именно это, а не про неудачу записи в журнал. Сама

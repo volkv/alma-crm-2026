@@ -566,7 +566,7 @@ export async function listPeople(
 	if (query.q !== null) {
 		const pattern = `%${query.q}%`;
 		// Поиск идёт и по названию организации: человека чаще ищут «кто у нас в
-		// Бауманке», чем по фамилии, которую ещё надо вспомнить.
+		// политехе», чем по фамилии, которую ещё надо вспомнить.
 		const byOrganization = exists(
 			db
 				.select({ one: sql`1` })

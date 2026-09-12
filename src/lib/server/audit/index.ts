@@ -45,6 +45,39 @@ function actorLabel(ctx: ActorContext): string {
 	return ctx.source === 'system' ? 'Система' : 'Аноним';
 }
 
+/**
+ * Потолок строки клиента. Её задаёт тот, кто обращается: заголовок
+ * `User-Agent` не проверяет никто, и без потолка одна запись журнала унесёт в
+ * базу столько, сколько влезло в запрос. 512 байт — вдвое больше самой длинной
+ * строки настоящего браузера.
+ */
+const USER_AGENT_MAX_BYTES = 512;
+
+/**
+ * Потолок подписи действующего лица. Имя приходит из учётной записи и уже
+ * ограничено контрактом, но журнал пишется и с той стороны, где контракта нет
+ * (сид, фоновые задачи), а столбец — `text` без длины.
+ */
+const ACTOR_LABEL_MAX_BYTES = 200;
+
+/**
+ * Обрезка строки по числу байт в UTF-8.
+ *
+ * Считается байтами, а не символами: место в базе и потолок на запись меряются
+ * байтами, и кириллическая строка «в 512 символов» весит вдвое больше. Хвост
+ * незавершённой последовательности отбрасывает потоковый декодер — иначе на
+ * срезе посреди буквы в журнал легла бы «замена» вместо символа.
+ */
+function truncateBytes(value: string, maxBytes: number): string {
+	const bytes = Buffer.from(value, 'utf8');
+
+	if (bytes.byteLength <= maxBytes) {
+		return value;
+	}
+
+	return new TextDecoder().decode(bytes.subarray(0, maxBytes), { stream: true });
+}
+
 export async function recordAuditEvent(
 	ctx: ActorContext,
 	event: AuditEventInput,
@@ -70,9 +103,9 @@ export async function recordAuditEvent(
 		outcome: event.outcome,
 		actorUserId: ctx.user?.id ?? null,
 		apiKeyId: ctx.apiKeyId,
-		actorLabel: actorLabel(ctx),
+		actorLabel: truncateBytes(actorLabel(ctx), ACTOR_LABEL_MAX_BYTES),
 		ip: ctx.ip,
-		userAgent: ctx.userAgent,
+		userAgent: ctx.userAgent === null ? null : truncateBytes(ctx.userAgent, USER_AGENT_MAX_BYTES),
 		subjectType: event.subject?.type ?? null,
 		subjectId: event.subject?.id ?? null,
 		details
@@ -207,13 +240,27 @@ const CSV_COLUMNS = [
 	'details'
 ] as const;
 
+/**
+ * Символы, с которых Excel, LibreOffice и Google Sheets начинают читать ячейку
+ * как формулу. Табуляция и возврат каретки в этом же списке: таблица съедает их
+ * при разборе, и следующий за ними знак равенства оказывается первым.
+ */
+const CSV_FORMULA_STARTS = ['=', '+', '-', '@', '\t', '\r'];
+
 function csvCell(value: unknown): string {
 	if (value === null || value === undefined) {
 		return '';
 	}
 
 	const text = value instanceof Date ? value.toISOString() : String(value);
-	return `"${text.replaceAll('"', '""')}"`;
+
+	// Кавычки вокруг ячейки формулу не обезвреживают: таблица разбирает
+	// содержимое уже после них, и `=HYPERLINK(...)`, приехавший строкой клиента
+	// в журнал, выполнится у того, кто открыл выгрузку. Обезвреживает апостроф —
+	// им таблицы помечают «это текст», и в самой ячейке он не показывается.
+	const safe = CSV_FORMULA_STARTS.some((start) => text.startsWith(start)) ? `'${text}` : text;
+
+	return `"${safe.replaceAll('"', '""')}"`;
 }
 
 export async function exportAuditEvents(

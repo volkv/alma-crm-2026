@@ -21,6 +21,7 @@ import { documents } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
+import { touchInteraction } from '../stages/commands';
 import { DocumentConversionError, hideServiceAddresses } from './errors';
 import { DOCX_MIME, PDF_MIME, sniffDocumentMime, type AllowedDocumentMime } from './mime';
 import { assertInteractionAccessible, toDocumentView } from './read';
@@ -251,6 +252,10 @@ export async function generateDocument(
 
 		return await withTransaction(ctx, async (tx) => {
 			const views: DocumentView[] = [];
+
+			if (interactionId !== null) {
+				await touchInteraction(tx, interactionId);
+			}
 
 			for (const blob of staged) {
 				await promoteBlob(blob);

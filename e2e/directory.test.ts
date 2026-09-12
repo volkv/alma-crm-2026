@@ -81,7 +81,7 @@ test('на карточке организации добавляется пло
 
 	await page.getByRole('link', { name: 'Добавить площадку' }).click();
 	await page.getByLabel('Название площадки').fill(siteName);
-	await page.getByLabel('Адрес').fill('Москва, 2-я Бауманская, 5');
+	await page.getByLabel('Адрес').fill('Москва, Приборостроительная улица, 5');
 	await page.getByRole('button', { name: 'Добавить площадку' }).click();
 
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText(shortName);

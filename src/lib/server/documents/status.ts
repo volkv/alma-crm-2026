@@ -16,6 +16,7 @@ import { documents } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { ConflictError } from '../errors';
 import { requirePermission } from '../rbac';
+import { touchInteraction } from '../stages/commands';
 import { assertDocumentAccessible, selectDocumentRow, toDocumentView } from './read';
 
 type FactDefinition = {
@@ -77,6 +78,10 @@ export async function markDocument(
 
 		if (row === undefined) {
 			throw new ConflictError(`Документ уже ${definition.label}`);
+		}
+
+		if (row.interactionId !== null) {
+			await touchInteraction(tx, row.interactionId);
 		}
 
 		await recordAuditEvent(

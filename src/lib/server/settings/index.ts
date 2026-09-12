@@ -14,6 +14,7 @@ import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
 import { appSettings } from '../db/schema';
+import { withTransaction } from '../db/transaction';
 import { ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
 
@@ -58,7 +59,10 @@ export async function setSetting<TKey extends SettingKey>(
 	key: TKey,
 	value: SettingValue<TKey>
 ): Promise<SettingValue<TKey>> {
-	requirePermission(ctx, 'settings.write');
+	// Отказ по правам пишется в журнал: настройки — это правила, по которым
+	// работает вход и блокировка, и попытка их переписать без права стоит того,
+	// чтобы администратор о ней узнал.
+	await requirePermission(ctx, 'settings.write', { type: 'settings.updated' });
 
 	const result = settingSchemas[key].safeParse(value);
 
@@ -71,20 +75,24 @@ export async function setSetting<TKey extends SettingKey>(
 
 	const stored = result.data as SettingValue<TKey>;
 
-	await getDb()
-		.insert(appSettings)
-		.values({ key, value: stored, updatedBy: ctx.user?.id ?? null })
-		.onConflictDoUpdate({
-			target: appSettings.key,
-			set: { value: stored, updatedAt: new Date(), updatedBy: ctx.user?.id ?? null }
-		});
+	// Значение и запись о нём — одной транзакцией: настройка безопасности,
+	// поменянная без следа в журнале, ничем не отличается от подменённой.
+	await withTransaction(ctx, async (tx) => {
+		await tx
+			.insert(appSettings)
+			.values({ key, value: stored, updatedBy: ctx.user?.id ?? null })
+			.onConflictDoUpdate({
+				target: appSettings.key,
+				set: { value: stored, updatedAt: new Date(), updatedBy: ctx.user?.id ?? null }
+			});
 
-	// Ключ настройки — не UUID, поэтому он попадает в `changedFields`, а не в
-	// `subject`: столбец `subject_id` типизирован как ссылка на запись.
-	await recordAuditEvent(ctx, {
-		type: 'settings.updated',
-		outcome: 'success',
-		details: { changedFields: [key] }
+		// Ключ настройки — не UUID, поэтому он попадает в `changedFields`, а не в
+		// `subject`: столбец `subject_id` типизирован как ссылка на запись.
+		await recordAuditEvent(
+			ctx,
+			{ type: 'settings.updated', outcome: 'success', details: { changedFields: [key] } },
+			tx
+		);
 	});
 
 	return stored;

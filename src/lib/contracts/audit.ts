@@ -78,7 +78,8 @@ export const AUDIT_EVENT_TYPES = [
 	'documents.downloaded',
 	'documents.status_changed',
 	'audit.exported',
-	'api.request'
+	'api.request',
+	'api.unauthenticated_burst'
 ] as const;
 
 export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];

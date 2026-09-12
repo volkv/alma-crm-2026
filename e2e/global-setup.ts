@@ -8,7 +8,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { hashPassword } from '$lib/server/auth/password';
-import { DEMO_EMAILS } from '../scripts/seed/users';
+import { DEMO_EMAILS, STAFF_ADMIN_EMAIL } from '../scripts/seed/users';
 
 /**
  * Готовит прогон: применяет миграции, заливает те же начальные данные, что и
@@ -56,15 +56,13 @@ export const ADMIN_STATE = path.join(authDirectory, 'admin.json');
 export const STAFF_ADMIN_STATE = path.join(authDirectory, 'staff-admin.json');
 
 /**
- * Штатный администратор прогона. Сид заводит только демонстрационные записи и
- * менеджеров, а стенд идёт с `DEMO_MODE=true`, где демонстрационная сессия
- * прав на эти разделы не получает вовсе. Поэтому учётную запись оператора
- * прогон заводит себе сам — с тем же паролем, что и остальные.
+ * Штатный администратор прогона. Его заводит сид — тот же, что и на стенде:
+ * учётную запись оператора там нельзя ни завести, ни восстановить изнутри
+ * демонстрации, поэтому её пароль приходит переменной окружения. Прогон
+ * передаёт сиду свой пароль и входит им.
  */
 export const STAFF_ADMIN = {
-	id: '00000000-0000-4000-8000-0000000051a1',
-	email: 'admin@staff.lct-crm.local',
-	fullName: 'Администратор Оператора',
+	email: STAFF_ADMIN_EMAIL,
 	password: DEMO_PASSWORD
 };
 
@@ -90,7 +88,14 @@ function serverEnvironment(config: FullConfig): ServerEnv {
 async function seedDatabase(env: ServerEnv): Promise<void> {
 	const { stdout } = await run(process.execPath, ['scripts/seed/index.ts'], {
 		cwd: new URL('..', import.meta.url).pathname,
-		env: { ...process.env, ...env, SEED_DEMO_PASSWORD: DEMO_PASSWORD }
+		env: {
+			...process.env,
+			...env,
+			SEED_DEMO_PASSWORD: DEMO_PASSWORD,
+			// Пароль администратора стенда задаёт прогон, а не окружение машины:
+			// иначе вход штатной учётной записью зависел бы от чужого `.env`.
+			SEED_STAFF_ADMIN_PASSWORD: STAFF_ADMIN.password
+		}
 	});
 
 	process.stdout.write(stdout);
@@ -164,23 +169,6 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
 		await sql`
 			update users set password_hash = ${await hashPassword(DEMO_PASSWORD)}
 			where email = any(${demoEmails})
-		`;
-
-		// Штатный администратор прогона: сид его не знает — он не часть стенда,
-		// который показывают, — а без него на стенде с `DEMO_MODE=true` некому
-		// проверить разделы, закрытые для самой демонстрации.
-		await sql`
-			insert into users (id, email, full_name, role_id, password_hash, is_demo)
-			values (
-				${STAFF_ADMIN.id}, ${STAFF_ADMIN.email}, ${STAFF_ADMIN.fullName},
-				'admin', ${await hashPassword(STAFF_ADMIN.password)}, false
-			)
-			on conflict (id) do update set
-				password_hash = excluded.password_hash,
-				role_id = excluded.role_id,
-				is_demo = false,
-				is_active = true,
-				deactivated_at = null
 		`;
 	} finally {
 		await sql.end();

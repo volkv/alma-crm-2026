@@ -28,7 +28,7 @@ import { DEMO_ROUTE } from '$lib/server/stages/demo-route';
 import { DIRECTORY_SEED_SIZES } from '../../../scripts/seed/directory';
 import { INTERACTION_SEED_SIZES } from '../../../scripts/seed/interactions';
 import { seedAll } from '../../../scripts/seed/run';
-import { DEMO_EMAILS } from '../../../scripts/seed/users';
+import { DEMO_EMAILS, STAFF_ADMIN_EMAIL } from '../../../scripts/seed/users';
 import { startTestDatabase, type TestDatabase } from '../helpers/db';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
@@ -45,9 +45,12 @@ const ADDRESS = '198.51.100.31';
 /** Сессии, открытые проверкой входа: их гасит `afterEach`. */
 let sessions: string[] = [];
 
-async function runSeed(): Promise<void> {
-	await seedAll({ demoPassword: DEMO_PASSWORD });
+async function runSeed(staffAdminPassword?: string): Promise<void> {
+	await seedAll({ demoPassword: DEMO_PASSWORD, staffAdminPassword });
 }
+
+/** Пароль администратора стенда: задаётся только переменной окружения. */
+const STAFF_PASSWORD = 'Стенд-Админ-2026';
 
 /** Записи стадий, на которых взаимодействия стоят прямо сейчас. */
 async function openEntries(): Promise<
@@ -100,7 +103,7 @@ afterEach(async () => {
 	// убирает за собой ровно свои ключи. Гасить все сессии демонстрационных
 	// записей нельзя: идентификаторы у них вычисляемые, а значит те же, что и
 	// у стенда и у прогона e2e, — этот тест выбил бы их из системы.
-	for (const email of Object.values(DEMO_EMAILS)) {
+	for (const email of [...Object.values(DEMO_EMAILS), STAFF_ADMIN_EMAIL]) {
 		await clearLoginFailures(email, ADDRESS);
 	}
 
@@ -330,6 +333,114 @@ describe('сид', () => {
 		});
 
 		expect(refused.ok).toBe(false);
+	});
+
+	it('без пароля в окружении не заводит администратора стенда', async () => {
+		await runSeed();
+
+		// Учётная запись оператора переживает демонстрацию и пускает в разделы,
+		// которых у самой демонстрации нет: без явно заданного пароля её нет.
+		const rows = await database.db
+			.select({ email: users.email })
+			.from(users)
+			.where(eq(users.email, STAFF_ADMIN_EMAIL));
+
+		expect(rows).toStrictEqual([]);
+		await expect(countRows(users)).resolves.toBe(8);
+	});
+
+	it('с паролем заводит администратора стенда, и он не демонстрационный', async () => {
+		await runSeed(STAFF_PASSWORD);
+
+		const [account] = await database.db
+			.select({ roleId: users.roleId, isDemo: users.isDemo, isActive: users.isActive })
+			.from(users)
+			.where(eq(users.email, STAFF_ADMIN_EMAIL));
+
+		expect(account).toStrictEqual({ roleId: 'admin', isDemo: false, isActive: true });
+
+		const outcome = await login(anonymous(), {
+			email: STAFF_ADMIN_EMAIL,
+			password: STAFF_PASSWORD
+		});
+
+		expect(outcome.ok).toBe(true);
+
+		if (outcome.ok) {
+			sessions.push(outcome.sessionId);
+		}
+	});
+
+	it('переписывает пароль администратора стенда на повторном запуске', async () => {
+		await runSeed(STAFF_PASSWORD);
+
+		const changed = `${STAFF_PASSWORD}-другой`;
+		await runSeed(changed);
+
+		// Единственная запись, чей пароль сид трогает: поменять его из интерфейса
+		// может только она сама, и забытый пароль иначе не вернуть.
+		const outcome = await login(anonymous(), { email: STAFF_ADMIN_EMAIL, password: changed });
+
+		expect(outcome.ok).toBe(true);
+
+		if (outcome.ok) {
+			sessions.push(outcome.sessionId);
+		}
+
+		const refused = await login(anonymous(), {
+			email: STAFF_ADMIN_EMAIL,
+			password: STAFF_PASSWORD
+		});
+
+		expect(refused.ok).toBe(false);
+		await expect(countRows(users)).resolves.toBe(9);
+	});
+
+	it('узнаёт заведённого администратора по почте, а не по идентификатору', async () => {
+		// Учётную запись с этим адресом мог завести человек руками. Второй с той
+		// же почтой база не примет, а пароль менять надо именно этой.
+		const id = '00000000-0000-4000-8000-0000000051a1';
+
+		await database.db.insert(users).values({
+			id,
+			email: STAFF_ADMIN_EMAIL,
+			fullName: 'Администратор, заведённый руками',
+			roleId: 'admin',
+			passwordHash: 'not-a-real-hash'
+		});
+
+		await runSeed(STAFF_PASSWORD);
+
+		const rows = await database.db
+			.select({ id: users.id, fullName: users.fullName })
+			.from(users)
+			.where(eq(users.email, STAFF_ADMIN_EMAIL));
+
+		expect(rows).toStrictEqual([{ id, fullName: 'Администратор, заведённый руками' }]);
+
+		const outcome = await login(anonymous(), {
+			email: STAFF_ADMIN_EMAIL,
+			password: STAFF_PASSWORD
+		});
+
+		expect(outcome.ok).toBe(true);
+
+		if (outcome.ok) {
+			sessions.push(outcome.sessionId);
+		}
+	});
+
+	it('не принимает пароль администратора стенда против политики', async () => {
+		await expect(runSeed('короткий')).rejects.toThrow('не отвечает политике паролей');
+
+		// Упасть сид обязан до записи: учётной записи с негодным паролем в базе
+		// не появляется.
+		const rows = await database.db
+			.select({ email: users.email })
+			.from(users)
+			.where(eq(users.email, STAFF_ADMIN_EMAIL));
+
+		expect(rows).toStrictEqual([]);
 	});
 
 	it('кладёт в базу только ИНН, проходящие контрольную сумму', async () => {

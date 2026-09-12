@@ -207,8 +207,15 @@ async function closeOpenPause(tx: Tx, stageEntryId: string): Promise<void> {
 		.where(and(eq(stagePauses.stageEntryId, stageEntryId), isNull(stagePauses.endedAt)));
 }
 
-/** Взаимодействие ожило: по этому моменту считается протухание. */
-async function touchInteraction(tx: Tx, interactionId: string): Promise<void> {
+/**
+ * Взаимодействие ожило: по этому моменту считается протухание.
+ *
+ * Зовут не только команды движка: документ, загруженный или собранный по
+ * взаимодействию, — такая же работа по нему, как комментарий, и оставлять
+ * запись «протухшей» после неё значит подсказывать менеджеру помешать тому,
+ * кто как раз занят делом.
+ */
+export async function touchInteraction(tx: Tx, interactionId: string): Promise<void> {
 	await tx
 		.update(interactions)
 		.set({ lastActivityAt: now, updatedAt: now })
