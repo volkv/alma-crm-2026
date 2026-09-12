@@ -34,6 +34,7 @@ import { createAffiliation, createOrganization, createPerson } from '../director
 import { findOrganizationByInn } from '../directory/read';
 import { ConflictError, ValidationError } from '../errors';
 import { createInteractionIn } from '../interactions/write';
+import { withPiiTrace } from '../people/pii-trace';
 import { requirePermission } from '../rbac';
 import { addComment } from '../stages/commands';
 import { getDefaultRoute } from '../stages/routes';
@@ -195,127 +196,136 @@ export async function receiveApplication(
 	const route = await getDefaultRoute(ctx);
 
 	try {
-		return await withTransaction(ctx, async (tx) => {
-			if (input.programId !== null) {
-				await assertProgramExists(tx, input.programId);
-			}
+		// Одна область следа просмотра на всю сборку: заявка — это один запрос, и
+		// событие о раскрытых контактах у него одно, а не по событию на каждую
+		// запись справочника, которую она завела. Область снаружи транзакции ещё и
+		// потому, что след пишется другим соединением: открытая транзакция ждала
+		// бы его из пула, не отпуская своего.
+		return await withPiiTrace(ctx, () =>
+			withTransaction(ctx, async (tx) => {
+				if (input.programId !== null) {
+					await assertProgramExists(tx, input.programId);
+				}
 
-			if (input.productId !== null) {
-				await assertProductExists(tx, input.productId);
-			}
+				if (input.productId !== null) {
+					await assertProductExists(tx, input.productId);
+				}
 
-			// Сверка только по ИНН: по названию организации не объединяются —
-			// «Сибирский институт» и «СИВТ» одно и то же лицо или два разных, знает
-			// человек, а не строка из формы.
-			const found =
-				input.organization.inn === null
-					? null
-					: await findOrganizationByInn(ctx, input.organization.inn, tx);
+				// Сверка только по ИНН: по названию организации не объединяются —
+				// «Сибирский институт» и «СИВТ» одно и то же лицо или два разных, знает
+				// человек, а не строка из формы.
+				const found =
+					input.organization.inn === null
+						? null
+						: await findOrganizationByInn(ctx, input.organization.inn, tx);
 
-			const organizationId =
-				found?.id ??
-				(
-					await createOrganization(
+				const organizationId =
+					found?.id ??
+					(
+						await createOrganization(
+							ctx,
+							{
+								kind: input.organization.kind,
+								educationLevel: input.organization.educationLevel,
+								// С сайта приходит одно название; полным и кратким становится оно
+								// же, пока сотрудник не уточнит реквизиты.
+								legalName: input.organization.name,
+								shortName: input.organization.name.slice(0, 200),
+								inn: input.organization.inn,
+								kpp: null,
+								ogrn: null,
+								region: null,
+								website: null,
+								notes: null,
+								isActive: true,
+								externalSource: null,
+								externalId: null
+							},
+							tx
+						)
+					).id;
+
+				let affiliationId = await findContact(tx, organizationId, input.contact.email);
+
+				if (affiliationId === null) {
+					const person = await createPerson(
 						ctx,
 						{
-							kind: input.organization.kind,
-							educationLevel: input.organization.educationLevel,
-							// С сайта приходит одно название; полным и кратким становится оно
-							// же, пока сотрудник не уточнит реквизиты.
-							legalName: input.organization.name,
-							shortName: input.organization.name.slice(0, 200),
-							inn: input.organization.inn,
-							kpp: null,
-							ogrn: null,
-							region: null,
-							website: null,
-							notes: null,
-							isActive: true,
-							externalSource: null,
-							externalId: null
+							lastName: input.contact.lastName,
+							firstName: input.contact.firstName,
+							middleName: input.contact.middleName,
+							email: input.contact.email,
+							phone: input.contact.phone,
+							notes: null
 						},
 						tx
-					)
-				).id;
+					);
 
-			let affiliationId = await findContact(tx, organizationId, input.contact.email);
+					const affiliation = await createAffiliation(
+						ctx,
+						{
+							personId: person.id,
+							organizationId,
+							siteId: null,
+							position: input.contact.position ?? DEFAULT_POSITION,
+							roleKind: 'other',
+							isPrimary: true,
+							validFrom: formatIsoDay(),
+							validTo: null,
+							channel: null
+						},
+						tx
+					);
 
-			if (affiliationId === null) {
-				const person = await createPerson(
+					affiliationId = affiliation.id;
+				}
+
+				const interactionId = await createInteractionIn(ctx, tx, {
+					title: interactionTitle(input.organization.name, input.interest),
+					routeId: route.id,
+					agreementPeriodStart: null,
+					agreementPeriodEnd: null,
+					academicPeriodStart: null,
+					academicPeriodEnd: null,
+					ownerUserId,
+					parties: [
+						{
+							organizationId,
+							partyRole: PARTY_ROLE_BY_KIND[input.organization.kind],
+							isPrimary: true,
+							contactAffiliationId: affiliationId,
+							siteIds: []
+						}
+					],
+					programs:
+						input.programId === null
+							? []
+							: [{ programId: input.programId, programVersionId: null }],
+					productIds: input.productId === null ? [] : [input.productId],
+					externalSource: EXTERNAL_SOURCE,
+					externalId: input.externalId
+				});
+
+				const comment = intakeComment(input);
+
+				if (comment !== null) {
+					await addComment(ctx, { interactionId, body: comment }, tx);
+				}
+
+				await recordAuditEvent(
 					ctx,
 					{
-						lastName: input.contact.lastName,
-						firstName: input.contact.firstName,
-						middleName: input.contact.middleName,
-						email: input.contact.email,
-						phone: input.contact.phone,
-						notes: null
+						type: 'integrations.application_received',
+						outcome: 'success',
+						subject: { type: 'interaction', id: interactionId },
+						details: { interactionId, organizationId }
 					},
 					tx
 				);
 
-				const affiliation = await createAffiliation(
-					ctx,
-					{
-						personId: person.id,
-						organizationId,
-						siteId: null,
-						position: input.contact.position ?? DEFAULT_POSITION,
-						roleKind: 'other',
-						isPrimary: true,
-						validFrom: formatIsoDay(),
-						validTo: null,
-						channel: null
-					},
-					tx
-				);
-
-				affiliationId = affiliation.id;
-			}
-
-			const interactionId = await createInteractionIn(ctx, tx, {
-				title: interactionTitle(input.organization.name, input.interest),
-				routeId: route.id,
-				agreementPeriodStart: null,
-				agreementPeriodEnd: null,
-				academicPeriodStart: null,
-				academicPeriodEnd: null,
-				ownerUserId,
-				parties: [
-					{
-						organizationId,
-						partyRole: PARTY_ROLE_BY_KIND[input.organization.kind],
-						isPrimary: true,
-						contactAffiliationId: affiliationId,
-						siteIds: []
-					}
-				],
-				programs:
-					input.programId === null ? [] : [{ programId: input.programId, programVersionId: null }],
-				productIds: input.productId === null ? [] : [input.productId],
-				externalSource: EXTERNAL_SOURCE,
-				externalId: input.externalId
-			});
-
-			const comment = intakeComment(input);
-
-			if (comment !== null) {
-				await addComment(ctx, { interactionId, body: comment }, tx);
-			}
-
-			await recordAuditEvent(
-				ctx,
-				{
-					type: 'integrations.application_received',
-					outcome: 'success',
-					subject: { type: 'interaction', id: interactionId },
-					details: { interactionId, organizationId }
-				},
-				tx
-			);
-
-			return { interactionId, created: true };
-		});
+				return { interactionId, created: true };
+			})
+		);
 	} catch (error) {
 		if (!isUniqueRace(error)) {
 			throw error;

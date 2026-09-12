@@ -418,7 +418,7 @@ export async function createPerson(
 
 	// Ответ уносит контакты наружу — значит, и он оставляет след просмотра:
 	// правило одно на чтения и на возвраты записи.
-	return withPiiTrace(ctx, () => (tx === undefined ? withTransaction(ctx, write) : write(tx)));
+	return withPiiTrace(ctx, () => (tx === undefined ? withTransaction(ctx, write) : write(tx)), tx);
 }
 
 /**
@@ -556,7 +556,7 @@ export async function createAffiliation(
 		return toAffiliationView(ctx, executor, row);
 	};
 
-	return withPiiTrace(ctx, () => (tx === undefined ? withTransaction(ctx, write) : write(tx)));
+	return withPiiTrace(ctx, () => (tx === undefined ? withTransaction(ctx, write) : write(tx)), tx);
 }
 
 /**

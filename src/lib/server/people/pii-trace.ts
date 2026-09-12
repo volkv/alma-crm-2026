@@ -16,6 +16,7 @@
  */
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
+import type { Tx } from '../db/transaction';
 
 type Trace = {
 	/** Сколько областей сбора сейчас открыто для этого запроса. */
@@ -34,18 +35,29 @@ const traces = new Map<string, Trace>();
  * Область сбора следа. Вложенный вызов присоединяется к уже открытой области
  * того же запроса, а не заводит свою: карточка человека читает и его самого, и
  * его роли, и это одно обращение к персональным данным, а не два.
+ *
+ * `tx` передаёт тот, кто открывает область внутри своей транзакции: тогда
+ * событие пишется её же исполнителем. Без этого запись уходила бы другим
+ * соединением, пока транзакция держит своё, и десяток одновременных операций
+ * запирал бы пул — все ждут второго соединения, отдать первое некому.
  */
 export async function withPiiTrace<TResult>(
 	ctx: ActorContext,
-	read: () => Promise<TResult>
+	read: () => Promise<TResult>,
+	tx?: Tx
 ): Promise<TResult> {
 	const trace = traces.get(ctx.requestId) ?? { depth: 0, personIds: new Set<string>() };
 
 	trace.depth += 1;
 	traces.set(ctx.requestId, trace);
 
+	let succeeded = false;
+
 	try {
-		return await read();
+		const result = await read();
+		succeeded = true;
+
+		return result;
 	} finally {
 		trace.depth -= 1;
 
@@ -53,11 +65,22 @@ export async function withPiiTrace<TResult>(
 			traces.delete(ctx.requestId);
 
 			if (trace.personIds.size > 0) {
-				await recordAuditEvent(ctx, {
-					type: 'people.pii_viewed',
-					outcome: 'success',
-					details: { personIds: [...trace.personIds] }
-				});
+				// Упавшее чтение пишет событие вне транзакции, даже когда её
+				// исполнитель известен. Причин две. Транзакция после ошибки базы уже
+				// в состоянии `25P02`: вставка в ней не пройдёт и заменит собой
+				// исходную ошибку, а на неё смотрит вызывающий — приём заявки,
+				// например, различает по ней гонку на уникальности и отвечает
+				// повтором. И по смыслу так же: контакты человеку уже показали, а
+				// откат унёс бы запись об этом.
+				await recordAuditEvent(
+					ctx,
+					{
+						type: 'people.pii_viewed',
+						outcome: 'success',
+						details: { personIds: [...trace.personIds] }
+					},
+					succeeded ? tx : undefined
+				);
 			}
 		}
 	}

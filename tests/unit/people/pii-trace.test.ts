@@ -8,6 +8,7 @@
  */
 import { beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActorContext } from '$lib/server/actor';
+import type { Tx } from '$lib/server/db/transaction';
 import type { PersonRecord } from '$lib/server/people/serialize';
 
 const recordAuditEvent = vi.fn();
@@ -67,6 +68,19 @@ function details(): Record<string, unknown> {
 
 	return event.details;
 }
+
+/** Кому досталась запись единственного события: исполнитель транзакции или никто. */
+function writer(): unknown {
+	expect(recordAuditEvent).toHaveBeenCalledTimes(1);
+
+	return (recordAuditEvent.mock.calls[0] as unknown[])[2];
+}
+
+/**
+ * Исполнитель транзакции. Настоящий не нужен: журнал здесь подменён, и
+ * проверяется не запись в базу, а то, кому её отдали.
+ */
+const transaction = { label: 'tx' } as unknown as Tx;
 
 beforeEach(() => {
 	recordAuditEvent.mockClear();
@@ -142,6 +156,51 @@ describe('след просмотра персональных данных', ()
 		// И область не осталась открытой: следующая отметка вне чтения пропадает.
 		notePiiView(ctx, OTHER_ID);
 		expect(recordAuditEvent).toHaveBeenCalledTimes(1);
+	});
+
+	it('пишет событие исполнителем транзакции, внутри которой открыта область', async () => {
+		const ctx = actor('request-in-transaction', ['people.read', 'people.read_pii']);
+
+		await withPiiTrace(ctx, async () => toPersonView(ctx, person(PERSON_ID)), transaction);
+
+		// Иначе запись ушла бы другим соединением, пока транзакция держит своё, и
+		// десяток одновременных операций запер бы пул.
+		expect(writer()).toBe(transaction);
+	});
+
+	it('после ошибки чтения пишет событие вне транзакции, даже когда она известна', async () => {
+		const ctx = actor('request-failed-in-transaction', ['people.read', 'people.read_pii']);
+
+		await expect(
+			withPiiTrace(
+				ctx,
+				async () => {
+					toPersonView(ctx, person(PERSON_ID));
+					throw new Error('выборка упала');
+				},
+				transaction
+			)
+		).rejects.toThrow('выборка упала');
+
+		// Транзакция после ошибки базы вставки уже не примет, а её отказ заменил бы
+		// собой исходную ошибку — ту самую, по которой вызывающий и разбирается,
+		// что случилось. Да и откат унёс бы запись о показанных контактах.
+		expect(writer()).toBeUndefined();
+	});
+
+	it('отдаёт запись той области, что закрылась последней: внешняя — значит, после транзакции', async () => {
+		const ctx = actor('request-around-transaction', ['people.read', 'people.read_pii']);
+
+		// Так устроен приём заявки: область на весь запрос, внутри неё транзакция,
+		// а внутри транзакции — чтения, которые объявляют свою область со своим
+		// исполнителем. Событие одно, и пишется оно уже после коммита.
+		await withPiiTrace(ctx, async () => {
+			await withPiiTrace(ctx, async () => toPersonView(ctx, person(PERSON_ID)), transaction);
+			await withPiiTrace(ctx, async () => toPersonView(ctx, person(OTHER_ID)), transaction);
+		});
+
+		expect(writer()).toBeUndefined();
+		expect(details()).toEqual({ personIds: [PERSON_ID, OTHER_ID] });
 	});
 
 	it('разводит запросы по идентификатору: чужое чтение в чужое событие не попадает', async () => {

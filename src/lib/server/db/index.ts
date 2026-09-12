@@ -6,8 +6,28 @@ import * as schema from './schema';
 let client: postgres.Sql | undefined;
 let database: PostgresJsDatabase<typeof schema> | undefined;
 
+/**
+ * Connections in the pool.
+ *
+ * A transaction holds one connection from `begin` to `commit`, and while it is
+ * open the code inside it still needs a second one: refusals of the audit log
+ * and the personal-data view trace are written on their own connection by
+ * design, so that a rollback cannot take them with it. A pool sized to the
+ * number of simultaneous transactions therefore locks up for good — every
+ * transaction holds a connection and waits for one nobody is left to release.
+ *
+ * Twenty four leaves room for a dozen simultaneous transactions together with
+ * the writes that happen next to them. The ceiling on transactions is the
+ * number of requests in flight and nothing else: adapter-node serves them from
+ * a single process. On the other side PostgreSQL allows 100 connections by
+ * default, so a pool this size still leaves room for migrations, a psql session
+ * and a second instance of the app.
+ */
+const POOL_MAX = 24;
+
 function getClient(): postgres.Sql {
 	client ??= postgres(getConfig().DATABASE_URL, {
+		max: POOL_MAX,
 		// Fail a stuck connection attempt instead of hanging a request forever.
 		connect_timeout: 10
 	});
