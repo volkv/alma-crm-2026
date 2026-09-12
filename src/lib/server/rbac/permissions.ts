@@ -13,6 +13,7 @@ export const PERMISSIONS = {
 	'people.read': 'Просмотр людей и их ролей в организациях',
 	'people.write': 'Создание и изменение людей и их ролей',
 	'people.read_pii': 'Просмотр контактов людей без маскирования',
+	'people.manage_consents': 'Учёт согласий на обработку персональных данных и сроков хранения',
 	'programs.read': 'Просмотр образовательных программ',
 	'programs.write': 'Создание и изменение образовательных программ',
 	'products.read': 'Просмотр продуктов',
@@ -30,7 +31,8 @@ export const PERMISSIONS = {
 	'audit.export': 'Выгрузка журнала действий',
 	'settings.write': 'Изменение настроек приложения',
 	'users.manage': 'Управление пользователями и ролями',
-	'api_keys.manage': 'Управление ключами доступа к API'
+	'api_keys.manage': 'Управление ключами доступа к API',
+	'integrations.manage': 'Настройка вебхуков и интеграций с внешними системами'
 } as const;
 
 export type PermissionKey = keyof typeof PERMISSIONS;
@@ -75,7 +77,8 @@ export const DEFAULT_ROLES: readonly RoleDefinition[] = [
 			'audit.export',
 			'settings.write',
 			'users.manage',
-			'api_keys.manage'
+			'api_keys.manage',
+			'integrations.manage'
 		)
 	},
 	{

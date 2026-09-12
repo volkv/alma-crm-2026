@@ -23,6 +23,11 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'auth.login_failed': 'Неудачная попытка входа',
 	'auth.locked': 'Вход закрыт блокировкой',
 	'auth.password_changed': 'Смена пароля',
+	'auth.mfa_enrolled': 'Двухфакторная аутентификация подключена',
+	'auth.mfa_disabled': 'Двухфакторная аутентификация отключена',
+	'auth.mfa_verified': 'Код двухфакторной аутентификации подтверждён',
+	'auth.mfa_failed': 'Неверный код двухфакторной аутентификации',
+	'auth.mfa_reset': 'Двухфакторная аутентификация сброшена',
 	'users.created': 'Пользователь заведён',
 	'users.updated': 'Пользователь изменён',
 	'users.role_changed': 'Роль пользователя изменена',
@@ -43,6 +48,10 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'people.affiliation_created': 'Роль в организации заведена',
 	'people.affiliation_updated': 'Роль в организации изменена',
 	'people.pii_viewed': 'Просмотр контактов человека',
+	'people.consent_recorded': 'Согласие на обработку персональных данных зафиксировано',
+	'people.consent_withdrawn': 'Согласие на обработку персональных данных отозвано',
+	'people.retention_changed': 'Срок хранения персональных данных изменён',
+	'people.anonymized': 'Персональные данные обезличены',
 	'programs.created': 'Программа заведена',
 	'programs.updated': 'Программа изменена',
 	'programs.version_created': 'Версия программы создана',
@@ -76,10 +85,18 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'documents.generated': 'Документ сгенерирован',
 	'documents.downloaded': 'Документ скачан',
 	'documents.status_changed': 'Статус документа изменён',
+	'documents.version_uploaded': 'Загружена новая редакция документа',
 	'stats.snapshot_created': 'Снимок данных загружен',
 	'stats.snapshot_mapped': 'Колонки снимка сопоставлены',
 	'stats.snapshot_confirmed': 'Снимок данных подтверждён',
 	'stats.snapshot_rejected': 'Снимок данных отклонён',
+	'integrations.webhook_created': 'Вебхук заведён',
+	'integrations.webhook_updated': 'Вебхук изменён',
+	'integrations.webhook_delivered': 'Вебхук доставлен',
+	'integrations.webhook_failed': 'Доставка вебхука не удалась',
+	'integrations.lms_synced': 'Данные из LMS синхронизированы',
+	'integrations.lms_sync_failed': 'Синхронизация с LMS не удалась',
+	'integrations.application_received': 'Заявка получена от внешней системы',
 	'audit.exported': 'Журнал выгружен',
 	'api.request': 'Обращение к API',
 	'api.unauthenticated_burst': 'Обращения к API без ключа'
@@ -101,6 +118,7 @@ const GROUP_LABELS: Record<EventPrefix, string> = {
 	stages: 'Маршруты и стадии',
 	documents: 'Документы',
 	stats: 'Данные об обучении',
+	integrations: 'Интеграции',
 	audit: 'Журнал',
 	api: 'API'
 };
@@ -163,6 +181,7 @@ const SUBJECT_LABELS: Record<string, string> = {
 	site: 'Площадка',
 	person: 'Человек',
 	affiliation: 'Роль человека в организации',
+	consent: 'Согласие',
 	program: 'Программа',
 	program_version: 'Версия программы',
 	product: 'Продукт',
@@ -171,7 +190,8 @@ const SUBJECT_LABELS: Record<string, string> = {
 	document: 'Документ',
 	stat_snapshot: 'Снимок данных',
 	user: 'Пользователь',
-	api_key: 'Ключ доступа'
+	api_key: 'Ключ доступа',
+	webhook: 'Вебхук'
 };
 
 export function subjectTypeLabel(type: string): string {
@@ -188,9 +208,11 @@ export const SUBJECT_TYPES: readonly string[] = Object.keys(SUBJECT_LABELS);
 const SUBJECT_SECTIONS: Record<string, string> = {
 	organization: '/organizations',
 	person: '/people',
+	consent: '/people',
 	interaction: '/interactions',
 	document: '/documents',
-	stat_snapshot: '/data'
+	stat_snapshot: '/data',
+	webhook: '/settings/integrations'
 };
 
 /**

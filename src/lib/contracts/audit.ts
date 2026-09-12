@@ -28,6 +28,14 @@ export const AUDIT_EVENT_TYPES = [
 	'auth.login_failed',
 	'auth.locked',
 	'auth.password_changed',
+	'auth.mfa_enrolled',
+	'auth.mfa_disabled',
+	// Успешная проверка кода при входе: не факт входа как такового, а именно
+	// второй фактор — отдельно от `auth.login`, потому что вход возможен и без
+	// него, пока MFA не включена.
+	'auth.mfa_verified',
+	'auth.mfa_failed',
+	'auth.mfa_reset',
 	'users.created',
 	'users.updated',
 	'users.role_changed',
@@ -53,6 +61,10 @@ export const AUDIT_EVENT_TYPES = [
 	'people.affiliation_created',
 	'people.affiliation_updated',
 	'people.pii_viewed',
+	'people.consent_recorded',
+	'people.consent_withdrawn',
+	'people.retention_changed',
+	'people.anonymized',
 	'programs.created',
 	'programs.updated',
 	'programs.version_created',
@@ -90,10 +102,20 @@ export const AUDIT_EVENT_TYPES = [
 	'documents.generated',
 	'documents.downloaded',
 	'documents.status_changed',
+	// Новая редакция файла со ссылкой на предыдущую версию в подробностях.
+	'documents.version_uploaded',
 	'stats.snapshot_created',
 	'stats.snapshot_mapped',
 	'stats.snapshot_confirmed',
 	'stats.snapshot_rejected',
+	'integrations.webhook_created',
+	'integrations.webhook_updated',
+	'integrations.webhook_delivered',
+	'integrations.webhook_failed',
+	'integrations.lms_synced',
+	'integrations.lms_sync_failed',
+	// Заявка, пришедшая от внешней системы, а не заведённая руками в интерфейсе.
+	'integrations.application_received',
 	'audit.exported',
 	'api.request',
 	'api.unauthenticated_burst'
