@@ -108,6 +108,11 @@ export const AUDIT_EVENT_TYPES = [
 	'stats.snapshot_mapped',
 	'stats.snapshot_confirmed',
 	'stats.snapshot_rejected',
+	// Отчёт по данным об обучении, унесённый книгой. Смотреть те же числа на
+	// дашборде можно сколько угодно и в журнал это не пишется, а выгрузка
+	// выносит их из системы: дальше файл живёт сам по себе, и знать, кто его
+	// собрал, можно только отсюда.
+	'stats.exported',
 	'integrations.webhook_created',
 	'integrations.webhook_updated',
 	'integrations.webhook_delivered',

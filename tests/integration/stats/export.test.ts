@@ -2,13 +2,18 @@
  * Выгрузка отчёта на настоящих данных.
  *
  * Модульная проверка собирает книгу из готового представления; здесь важно
- * другое — что в неё попадает то же, что показывает дашборд, и что название
- * организации доезжает до ячейки из базы обезвреженным: вуз называет себя сам,
- * а строку с ведущим знаком равенства таблица выполнит у того, кто открыл файл.
+ * другое — что в неё попадает то же, что показывает дашборд, что название
+ * организации доезжает до ячейки из базы обезвреженным (вуз называет себя сам,
+ * а строку с ведущим знаком равенства таблица выполнит у того, кто открыл файл)
+ * и что сама выгрузка остаётся в журнале: файл уезжает из системы, и кто его
+ * собрал, видно только оттуда.
  */
+import type { RequestEvent } from '@sveltejs/kit';
+import { eq } from 'drizzle-orm';
 import ExcelJS from 'exceljs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { programs } from '$lib/server/db/schema';
+import { statPeriodKey } from '$lib/contracts/stats';
+import { auditEvents, programs } from '$lib/server/db/schema';
 import { ForbiddenError } from '$lib/server/errors';
 import { getRedis } from '$lib/server/redis';
 import { getStatsDashboard } from '$lib/server/stats/dashboard';
@@ -21,10 +26,22 @@ import {
 } from '$lib/server/stats/import';
 import { suggestMapping } from '$lib/server/stats/mapping';
 import { getSnapshotPreview } from '$lib/server/stats/read';
-import { insertOrganization, startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
+import {
+	insertOrganization,
+	startTestDatabase,
+	testActor,
+	TEST_USER_IDS,
+	type TestDatabase
+} from '../helpers/db';
+import { pageEvent } from '../helpers/event';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
+
+/** Маршрут типизирован своим `$types`; подделка события — общим типом. */
+type Endpoint = (event: RequestEvent) => Promise<Response>;
+
+const exportRoute = await import('../../../src/routes/(app)/data/export/+server');
 
 let database: TestDatabase;
 
@@ -134,5 +151,24 @@ describe('отчёт по данным об обучении', () => {
 		const ctx = testActor({ permissions: [] });
 
 		await expect(getStatsDashboard(ctx, PERIOD_KEY)).rejects.toBeInstanceOf(ForbiddenError);
+	});
+
+	it('сама попадает в журнал одной записью', async () => {
+		await confirmedSnapshot(testActor());
+
+		const response = await (exportRoute.GET as Endpoint)(
+			pageEvent({ path: '/data/export', query: `?period=${statPeriodKey(PERIOD_KEY)}` })
+		);
+
+		expect(response.status).toBe(200);
+
+		// Загрузка снимка пишет в журнал свои события; здесь считается только
+		// выгрузка — и ровно одна, а не по записи на лист книги.
+		const exported = await database.db
+			.select({ outcome: auditEvents.outcome, actorUserId: auditEvents.actorUserId })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'stats.exported'));
+
+		expect(exported).toStrictEqual([{ outcome: 'success', actorUserId: TEST_USER_IDS.admin }]);
 	});
 });

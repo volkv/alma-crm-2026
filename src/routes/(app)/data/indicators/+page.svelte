@@ -197,7 +197,10 @@
 		{/if}
 
 		<Tabs.Root value={data.tab} onValueChange={selectTab}>
-			<Tabs.List>
+			<!-- Две подписи в строку шире телефона: на узком экране список
+			     прокручивается сам, а не уносит вправо весь документ (так же
+			     сделано на карточке взаимодействия и в `stats/section-tabs`). -->
+			<Tabs.List class="max-w-full overflow-x-auto">
 				<Tabs.Trigger value="indicators">По программам и организациям</Tabs.Trigger>
 				<Tabs.Trigger value="ranking">Рейтинг программ</Tabs.Trigger>
 			</Tabs.List>

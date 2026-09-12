@@ -45,6 +45,12 @@ const ORGANIZATIONS: readonly { key: string; name: string }[] = [
 	{ key: 'batse', name: 'БАЦЭ' }
 ];
 
+/**
+ * Программы выгрузки и их коды в файле. Коды обязаны совпадать со справочником
+ * (`directory.ts`, те же ключи): в `raw` лежит строка, которую видит человек в
+ * построчной проверке, и код, которого в справочнике нет, читается как ошибка
+ * загрузки — хотя строка разобралась и посчиталась.
+ */
 const PROGRAMS: readonly { key: string; code: string }[] = [
 	{ key: 'vo-bak-01', code: 'VO-BAK-01' },
 	{ key: 'vo-bak-02', code: 'VO-BAK-02' },
@@ -53,7 +59,7 @@ const PROGRAMS: readonly { key: string; code: string }[] = [
 	{ key: 'vo-mag-02', code: 'VO-MAG-02' },
 	{ key: 'spo-01', code: 'SPO-01' },
 	{ key: 'spo-02', code: 'SPO-02' },
-	{ key: 'school-01', code: 'SCHOOL-01' },
+	{ key: 'school-01', code: 'SCH-01' },
 	{ key: 'dpo-01', code: 'DPO-01' },
 	{ key: 'dpo-02', code: 'DPO-02' }
 ];

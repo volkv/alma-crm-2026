@@ -226,6 +226,42 @@ describe('сид', () => {
 		expect(indicators.some((row) => row.completed === null)).toBe(true);
 	});
 
+	it('называет в строках снимков те коды программ, что есть в справочнике', async () => {
+		await runSeed();
+
+		const [snapshots, rows, catalog] = await Promise.all([
+			database.db
+				.select({ id: statSnapshots.id, mapping: statSnapshots.mapping })
+				.from(statSnapshots),
+			database.db.select({ snapshotId: statRows.snapshotId, raw: statRows.raw }).from(statRows),
+			database.db.select({ code: programs.code }).from(programs)
+		]);
+
+		const known = new Set(catalog.map((program) => program.code));
+		// Колонку с программой называет сопоставление снимка — то же самое, по
+		// которому её читает и продукт, а не имя колонки, переписанное в тест.
+		const programColumn = new Map(
+			snapshots.map((snapshot) => [
+				snapshot.id,
+				Object.entries(snapshot.mapping).find(([, field]) => field === 'program')?.[0]
+			])
+		);
+
+		const codes = rows.map((row) => {
+			const column = programColumn.get(row.snapshotId);
+
+			if (column === undefined) {
+				throw new Error('у снимка сида колонка программы обязана быть сопоставлена');
+			}
+
+			return row.raw[column];
+		});
+
+		// Есть на чём проверять: иначе тест зелен от того, что строк нет.
+		expect(codes.length).toBe(STATS_SEED_SIZES.rows);
+		expect(codes.filter((code) => !known.has(code))).toStrictEqual([]);
+	});
+
 	it('повторный сид не плодит строк данных об обучении', async () => {
 		await runSeed();
 		await runSeed();

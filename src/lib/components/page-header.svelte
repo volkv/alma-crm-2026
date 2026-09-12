@@ -64,7 +64,13 @@
 			{/if}
 		</div>
 		{#if actions}
-			<div class="flex shrink-0 flex-wrap items-center gap-2">
+			<!-- No `shrink-0` here on purpose. With it the row keeps its full
+			     one-line width even after wrapping under the title, so a card
+			     that shows a status, a download and a next step pushes the whole
+			     document sideways on a phone. Allowed to shrink, the row never
+			     goes below the widest button — that is its automatic minimum
+			     size — and the rest wrap onto further lines. -->
+			<div class="flex flex-wrap items-center gap-2">
 				{@render actions()}
 			</div>
 		{/if}

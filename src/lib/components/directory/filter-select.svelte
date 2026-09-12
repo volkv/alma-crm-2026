@@ -46,10 +46,14 @@
 	}
 </script>
 
-<div class="flex items-center gap-2">
+<div class="flex max-w-full min-w-0 items-center gap-2">
 	<Label for={id} class="font-normal whitespace-nowrap text-muted-foreground">{label}</Label>
 	<Select.Root type="single" {value} onValueChange={select}>
-		<Select.Trigger {id}>{selected}</Select.Trigger>
+		<!-- Метка выбранного пункта бывает длиннее экрана — «Учебный год:
+		     01.09.2026 — 31.08.2027», названия вузов целиком. Контрол сжимается
+		     и усекает её, а не растягивает страницу вбок (тот же приём, что в
+		     `stats/period-select.svelte`). -->
+		<Select.Trigger {id} class="min-w-0"><span class="truncate">{selected}</span></Select.Trigger>
 		<Select.Content>
 			<Select.Item value={ANY} label={allLabel} />
 			{#each options as option (option.value)}

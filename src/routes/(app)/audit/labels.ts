@@ -90,6 +90,7 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'stats.snapshot_mapped': 'Колонки снимка сопоставлены',
 	'stats.snapshot_confirmed': 'Снимок данных подтверждён',
 	'stats.snapshot_rejected': 'Снимок данных отклонён',
+	'stats.exported': 'Отчёт по данным об обучении выгружен',
 	'integrations.webhook_created': 'Вебхук заведён',
 	'integrations.webhook_updated': 'Вебхук изменён',
 	'integrations.webhook_delivered': 'Вебхук доставлен',

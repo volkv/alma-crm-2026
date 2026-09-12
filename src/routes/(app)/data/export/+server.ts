@@ -1,6 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { parseStatPeriodKey } from '$lib/contracts/stats';
 import { actorFromEvent } from '$lib/server/actor';
+import { recordAuditEvent } from '$lib/server/audit';
 import { contentDisposition } from '$lib/server/documents/filename';
 import { toPageError } from '$lib/server/http';
 import { getStatsDashboard } from '$lib/server/stats/dashboard';
@@ -41,6 +42,13 @@ export const GET: RequestHandler = async (event) => {
 		}
 
 		const file = await buildStatsReport(await getStatsDashboard(ctx, period));
+
+		// Период в подробности не кладётся: `validateAuditDetails` принимает
+		// только ссылки вида `<что-то>Id` и закрытый список служебных полей, а
+		// записи, на которую можно сослаться, у отчётного периода нет. Что
+		// именно выгрузили, видно по времени события и по тому, какие снимки
+		// были подтверждены на тот момент.
+		await recordAuditEvent(ctx, { type: 'stats.exported', outcome: 'success' });
 
 		return new Response(file.body, {
 			headers: {
