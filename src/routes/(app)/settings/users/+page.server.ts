@@ -30,7 +30,7 @@ export const load: PageServerLoad = async (event) => {
 	const query = readTableQuery(event.url);
 
 	return {
-		users: await listUsers(ctx, { page: query.page, pageSize: query.size }),
+		users: await listUsers(ctx, { page: query.page, pageSize: query.size, q: query.search }),
 		roles: DEFAULT_ROLES.map((role) => ({ id: role.id, name: role.name })),
 		policy: await getSetting('password_policy'),
 		form: await superValidate(zod4(createUserSchema))

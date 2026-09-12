@@ -33,6 +33,7 @@ const profilePage = await import('../../../src/routes/(app)/settings/profile/+pa
 const keysPage = await import('../../../src/routes/(app)/settings/api-keys/+page.server');
 
 const loadAudit = auditPage.load as unknown as PageLoad;
+const loadUsers = usersPage.load as unknown as PageLoad;
 const exportAudit = auditExport.GET as unknown as Endpoint;
 const createUserAction = usersPage.actions.create as unknown as FormAction;
 const changePasswordAction = profilePage.actions.password as unknown as FormAction;
@@ -139,6 +140,10 @@ async function insertEvent(event: EventFixture): Promise<void> {
 function moscow(iso: string): Date {
 	return new Date(`${iso}+03:00`);
 }
+
+type UsersPageData = {
+	users: { items: { email: string }[]; total: number };
+};
 
 type PageData = {
 	events: { items: { eventType: string; actorUserId: string | null }[]; total: number };
@@ -350,6 +355,43 @@ describe('пользователи', () => {
 		);
 
 		expect(formOf(result).message).toBe('Пользователь Новиков Пётр заведён');
+	});
+
+	it('ищет по почте и имени', async () => {
+		const account = (email: string, fullName: string) => ({
+			email,
+			fullName,
+			roleId: 'manager',
+			password: 'Проверка-Входа1'
+		});
+
+		await createUserAction(
+			pageEvent({ path: '/settings/users', form: account('novikov@example.org', 'Новиков Пётр') })
+		);
+		await createUserAction(
+			pageEvent({ path: '/settings/users', form: account('orlova@example.org', 'Орлова Мария') })
+		);
+
+		const byEmail = (await loadUsers(
+			pageEvent({ path: '/settings/users', query: '?q=novikov@example' })
+		)) as UsersPageData;
+
+		expect(byEmail.users.items.map((user) => user.email)).toEqual(['novikov@example.org']);
+
+		// Счётчик тоже под отбором: иначе пагинация обещала бы страницы, которых
+		// под поиском нет.
+		const byName = (await loadUsers(
+			pageEvent({ path: '/settings/users', query: '?q=Орлова' })
+		)) as UsersPageData;
+
+		expect(byName.users.items.map((user) => user.email)).toEqual(['orlova@example.org']);
+		expect(byName.users.total).toBe(1);
+
+		// Без поиска список прежний: по пользователю на каждую системную роль
+		// плюс двое заведённых.
+		const all = (await loadUsers(pageEvent({ path: '/settings/users' }))) as UsersPageData;
+
+		expect(all.users.total).toBe(5);
 	});
 
 	it('говорит словами, что почта занята', async () => {

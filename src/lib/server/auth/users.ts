@@ -5,7 +5,7 @@
  * нет ничего про HTTP и формы. Пароль наружу не выходит никогда — ни в списке,
  * ни в журнале: в базе лежит только хеш.
  */
-import { and, count, eq, ilike, inArray, sql } from 'drizzle-orm';
+import { and, count, eq, ilike, inArray, or, sql } from 'drizzle-orm';
 import type { UserView } from '$lib/contracts/auth';
 import type { PageQuery, PageResult } from '$lib/contracts/common';
 import type { ActorContext } from '../actor';
@@ -151,23 +151,45 @@ export async function deactivateUser(ctx: ActorContext, userId: string): Promise
 	await revokeAllSessions(userId);
 }
 
-export async function listUsers(ctx: ActorContext, page: PageQuery): Promise<PageResult<UserView>> {
+/** Страница списка пользователей и отбор в нём. */
+export type UserListQuery = PageQuery & {
+	/** Почта или имя целиком либо куском; пусто — весь штат. */
+	q?: string | null;
+};
+
+/**
+ * Список учётных записей: и действующих, и выключенных — раздел управления
+ * доступом показывает штат целиком.
+ *
+ * Отбор идёт по почте и имени: это два способа назвать человека, и
+ * администратор приходит сюда с одним из них. Поиск по подстроке без учёта
+ * регистра — как в справочниках, иначе на четвёртой сотне записей найти
+ * заведённого вчера сотрудника можно только перелистыванием.
+ */
+export async function listUsers(
+	ctx: ActorContext,
+	query: UserListQuery
+): Promise<PageResult<UserView>> {
 	requirePermission(ctx, 'users.manage');
 
 	const db = getDb();
+	const q = query.q?.trim() ?? '';
+	const where =
+		q === '' ? undefined : or(ilike(users.email, `%${q}%`), ilike(users.fullName, `%${q}%`));
 
 	const [items, totals] = await Promise.all([
 		db
 			.select(userColumns)
 			.from(users)
 			.innerJoin(roles, eq(roles.id, users.roleId))
+			.where(where)
 			.orderBy(users.email)
-			.limit(page.pageSize)
-			.offset((page.page - 1) * page.pageSize),
-		db.select({ value: count() }).from(users)
+			.limit(query.pageSize)
+			.offset((query.page - 1) * query.pageSize),
+		db.select({ value: count() }).from(users).where(where)
 	]);
 
-	return { items, total: totals[0]?.value ?? 0, page: page.page, pageSize: page.pageSize };
+	return { items, total: totals[0]?.value ?? 0, page: query.page, pageSize: query.pageSize };
 }
 
 /** Сотрудник в выпадающем списке: кого можно назначить ответственным. */

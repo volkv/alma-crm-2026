@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { page } from '$app/state';
 	import { superForm } from 'sveltekit-superforms';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { toast } from 'svelte-sonner';
@@ -12,6 +13,7 @@
 	import ConfirmDialog from '$lib/components/confirm-dialog.svelte';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
+	import { readTableQuery } from '$lib/components/data-table/query';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
@@ -55,6 +57,9 @@
 	const deactivateFailed = $derived(
 		actionResult !== null && 'issues' in actionResult && (actionResult.issues?.length ?? 0) > 0
 	);
+
+	/** Пустой список под поиском и пустой список вообще — разные вещи. */
+	const search = $derived(readTableQuery(page.url).search);
 
 	const policyHint = $derived(
 		`Не короче ${pluralize(data.policy.minLength, ['символа', 'символов', 'символов'])}; ` +
@@ -160,7 +165,11 @@
 			rows={data.users.items}
 			total={data.users.total}
 			getRowId={(user) => user.id}
-			emptyTitle="Пользователей пока нет"
+			searchPlaceholder="Поиск по почте и имени"
+			emptyTitle={search === '' ? 'Пользователей пока нет' : 'Ничего не найдено'}
+			emptyDescription={search === ''
+				? undefined
+				: 'Поиск идёт по почте и имени — проверьте, что ищете именно их.'}
 		/>
 	</Card.Content>
 </Card.Root>

@@ -1,4 +1,4 @@
-import { expect, test as base } from '@playwright/test';
+import { expect, test as base, type Locator } from '@playwright/test';
 import { seedId } from '../scripts/seed/ids';
 import { ADMIN_STATE } from './global-setup';
 
@@ -27,6 +27,22 @@ const runId = Date.now().toString(36);
  */
 const ADMIN_ID = seedId('user', 'demo-admin');
 
+/**
+ * Открывает всплывающий слой — диалог, меню, список выбора — и дожидается его.
+ *
+ * Слой открывает код страницы, а не браузер: нажатие до того, как страница
+ * ожила, до обработчика не доходит и теряется совсем, второго шанса нет.
+ * Поэтому нажимаем, пока слой не появится, — ждать фиксированную паузу значило
+ * бы закладываться на скорость машины (см. `docs/development.md`, «Всплывающие
+ * слои»).
+ */
+async function openLayer(trigger: Locator, layer: Locator): Promise<void> {
+	await expect(async () => {
+		await trigger.click();
+		await expect(layer).toBeVisible({ timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+}
+
 test('журнал показывает событие входа', async ({ page }) => {
 	await page.goto(`/audit?actor=${ADMIN_ID}`);
 
@@ -43,14 +59,10 @@ test('строка журнала раскрывается в карточку �
 
 	const card = page.getByRole('dialog');
 
-	// Строку раскрывает код страницы, а не браузер: нажатие до того, как страница
-	// ожила, до обработчика не доходит. Поэтому нажимаем, пока карточка не
-	// откроется, — ждать фиксированную паузу значило бы закладываться на скорость
-	// машины.
-	await expect(async () => {
-		await page.getByRole('cell', { name: 'Вход в систему' }).first().click();
-		await expect(card.getByText('auth.login')).toBeVisible({ timeout: 2000 });
-	}).toPass({ timeout: 20_000 });
+	await openLayer(
+		page.getByRole('cell', { name: 'Вход в систему' }).first(),
+		card.getByText('auth.login')
+	);
 
 	await expect(card.getByText('Демонстрационный вход')).toBeVisible();
 });
@@ -59,43 +71,78 @@ test('заведение пользователя видно в списке', a
 	const email = `vetrov-${runId}@example.org`;
 
 	await page.goto('/settings/users');
-	await page.getByRole('button', { name: 'Добавить пользователя' }).click();
 
 	const dialog = page.getByRole('dialog');
+	await openLayer(page.getByRole('button', { name: 'Добавить пользователя' }), dialog);
+
 	await dialog.getByLabel('Рабочая почта').fill(email);
 	await dialog.getByLabel('Имя и фамилия').fill('Ветров Игорь');
 	// Не `getByLabel('Роль')`: «Пароль» содержит то же слово внутри себя.
-	await dialog.getByRole('button', { name: /^Роль/ }).click();
-	await page.getByRole('option', { name: 'Наблюдатель' }).click();
+	const role = page.getByRole('option', { name: 'Наблюдатель' });
+	await openLayer(dialog.getByRole('button', { name: /^Роль/ }), role);
+	await role.click();
 	await dialog.getByLabel('Пароль').fill('Проверка-Входа1');
 	await dialog.getByRole('button', { name: 'Завести пользователя' }).click();
 
-	await expect(page.getByRole('cell', { name: email })).toBeVisible();
+	await expect(page.getByText('Пользователь Ветров Игорь заведён')).toBeVisible();
+
+	// Список общий на всю базу и от прогона к прогону только растёт, поэтому
+	// свежей записи на первой странице может не быть вовсе. Ищем её тем же
+	// способом, каким ищет человек, — отбором по почте.
+	await page.goto(`/settings/users?q=${encodeURIComponent(email)}`);
+
+	const row = page.getByRole('row').filter({ hasText: email });
+	await expect(row.getByRole('cell', { name: email })).toBeVisible();
+	await expect(row.getByText('Работает')).toBeVisible();
+
+	// Учётная запись прогона тут же выключается: удалить её нельзя — за ней
+	// стоят записи журнала, — а действующей в общем списке ей делать нечего.
+	const confirmation = page.getByRole('alertdialog');
+	await openLayer(row.getByRole('button', { name: 'Выключить' }), confirmation);
+	await confirmation.getByRole('button', { name: 'Выключить' }).click();
+
+	await expect(page.getByText('Учётная запись выключена, её сессии завершены')).toBeVisible();
+
+	await page.goto(`/settings/users?q=${encodeURIComponent(email)}`);
+	await expect(
+		page.getByRole('row').filter({ hasText: email }).getByText('Выключен')
+	).toBeVisible();
 });
 
 test('фильтр по типу события меняет список и адрес', async ({ page }) => {
 	await page.goto('/audit');
 
-	await expect(page.getByRole('cell', { name: 'Вход в систему' }).first()).toBeVisible();
-
-	await page.getByRole('button', { name: 'Событие' }).click();
-	await page.getByRole('menuitemcheckbox', { name: 'Пользователь заведён' }).click();
+	const option = page.getByRole('menuitemcheckbox', { name: 'Вход в систему' });
+	await openLayer(page.getByRole('button', { name: /^Событие/ }), option);
+	await option.click();
 	await page.keyboard.press('Escape');
 
-	await expect(page).toHaveURL(/[?&]type=users\.created/);
-	await expect(page.getByRole('cell', { name: 'Пользователь заведён' }).first()).toBeVisible();
-	await expect(page.getByRole('cell', { name: 'Вход в систему' })).toHaveCount(0);
+	await expect(page).toHaveURL(/[?&]type=auth\.login(&|$)/);
+
+	// Журнал общий на всю базу, пишется без остановки и соседними проверками
+	// тоже, поэтому что попало в него до фильтра — не проверка. Проверка в том,
+	// что после фильтра на странице нет ни одной строки другого события: входы
+	// в журнале есть всегда (ими начинается прогон), а всё прочее отобрано.
+	const logins = page.getByRole('cell', { name: 'Вход в систему', exact: true });
+	await expect(logins.first()).toBeVisible();
+
+	const rows = page.locator('[data-slot="data-table"] tbody tr');
+	await expect(logins).toHaveCount(await rows.count());
 });
 
 test('выпущенный ключ показывается один раз', async ({ page }) => {
 	await page.goto('/settings/api-keys');
-	await page.getByRole('button', { name: 'Выпустить ключ' }).click();
 
 	const form = page.getByRole('dialog');
+	// Кнопка раздела, а не такая же кнопка внутри диалога: он уезжает порталом
+	// в конец страницы и в `main` не попадает.
+	await openLayer(page.getByRole('main').getByRole('button', { name: 'Выпустить ключ' }), form);
+
 	await form.getByLabel('Название').fill(`Выгрузка ${runId}`);
-	await form.getByLabel('Владелец').click();
 	// Именно в списке владельцев: на странице есть ещё и выбор размера страницы.
-	await page.getByRole('listbox').getByRole('option').first().click();
+	const owners = page.getByRole('listbox');
+	await openLayer(form.getByLabel('Владелец'), owners);
+	await owners.getByRole('option').first().click();
 	await form.getByRole('button', { name: 'Выпустить ключ' }).click();
 
 	const issued = page.getByRole('dialog');
