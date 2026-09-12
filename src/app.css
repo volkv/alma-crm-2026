@@ -1,4 +1,14 @@
 @import 'tailwindcss';
+/*
+ * Появление и исчезновение всплывающих слоёв держится на этих двух импортах, и
+ * ни один из них не заменяется утилитами Tailwind. `tw-animate-css` даёт
+ * `animate-in` / `fade-in-0` / `zoom-in-95` вместе с кадрами `enter` и `exit`;
+ * `shadcn-svelte/tailwind.css` — варианты `data-open:` и `data-closed:`, которые
+ * разворачиваются в `[data-state="open"]` и `[data-state="closed"]`, то есть в
+ * атрибуты, которые ставит bits-ui. Уберёшь любой — диалог или меню либо
+ * останется прозрачным навсегда, либо появится рывком; ошибки при этом не будет
+ * нигде, ни в сборке, ни в консоли.
+ */
 @import 'tw-animate-css';
 @import 'shadcn-svelte/tailwind.css';
 @import '@fontsource-variable/inter';

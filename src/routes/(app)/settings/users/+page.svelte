@@ -194,7 +194,7 @@
 				type="email"
 				label="Рабочая почта"
 				required
-				placeholder="ivanov@rtkit.ru"
+				placeholder="name@example.org"
 				bind:value={$form.email}
 				errors={$errors.email}
 			/>
