@@ -50,6 +50,18 @@ describe('parseConfig', () => {
 		expect(() => parseConfig({ ...completeEnv, TRUST_PROXY: 'True' })).toThrowError(/TRUST_PROXY/);
 	});
 
+	it('leaves the LMS stand-in off when nothing says otherwise', () => {
+		// The flag is absent from `completeEnv` on purpose: a deployment that never
+		// heard of the stand-in must not get a second source of learning data.
+		expect(parseConfig(completeEnv).MOCK_LMS).toBe(false);
+		expect(parseConfig({ ...completeEnv, MOCK_LMS: 'true' }).MOCK_LMS).toBe(true);
+	});
+
+	it('rejects anything but "true" or "false" in MOCK_LMS', () => {
+		expect(() => parseConfig({ ...completeEnv, MOCK_LMS: 'yes' })).toThrowError(/MOCK_LMS/);
+		expect(() => parseConfig({ ...completeEnv, MOCK_LMS: '' })).toThrowError(/MOCK_LMS/);
+	});
+
 	it('rejects an empty DATA_DIR', () => {
 		expect(() => parseConfig({ ...completeEnv, DATA_DIR: '' })).toThrowError(/DATA_DIR/);
 	});

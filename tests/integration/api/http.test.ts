@@ -558,6 +558,7 @@ describe('описание API', () => {
 
 		const paths = document.paths as unknown as Record<string, Record<string, unknown>>;
 		expect(Object.keys(paths).sort()).toEqual([
+			'/v1/applications',
 			'/v1/interactions',
 			'/v1/interactions/{id}',
 			'/v1/interactions/{id}/transitions',

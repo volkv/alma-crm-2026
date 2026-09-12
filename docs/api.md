@@ -141,6 +141,11 @@ curl -sS -X POST "$BASE/v1/interactions" \
 | `GET /v1/interactions`                   | `interactions.read`  | страница списка: состояние, стадия, просрочка, поиск |
 | `GET /v1/interactions/{id}`              | `interactions.read`  | карточка: стороны, программы, продукты, лента стадий |
 | `POST /v1/interactions/{id}/transitions` | `stages.transition`  | шаг вперёд, возврат или пропуск; с `Idempotency-Key` |
+| `POST /v1/applications`                  | `interactions.write` | заявка с сайта: организация, контакт, взаимодействие |
+
+Заявка с сайта (`POST /v1/applications`) — единственный эндпоинт, который заводит записи
+справочника: организацию, человека и его роль. Поля, правила сверки и пример запроса —
+в [`integrations.md`](integrations.md).
 
 Записи организаций через API пока нет: в `src/lib/server/directory/` есть только чтение.
 Эндпоинт появится вместе с сервисом записи — обёртка для этого готова.

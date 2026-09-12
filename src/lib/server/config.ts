@@ -44,6 +44,18 @@ const configSchema = z.object({
 	 * audit log and the rate limiter.
 	 */
 	TRUST_PROXY: booleanFlag,
+	/**
+	 * Заглушка системы обучения на адресах `/mock-lms/**`: те же ответы, что у
+	 * веб-сервиса Moodle 4.x, на выдуманных данных. Нужна для демонстрации
+	 * обмена — настоящая LMS заказчика наружу не смотрит, — и поэтому по
+	 * умолчанию выключена: на стенде с настоящими данными вторая система данных
+	 * об обучении не нужна. Ровно `true` или `false`, как у остальных флагов;
+	 * отсутствие переменной значит «заглушки нет».
+	 */
+	MOCK_LMS: z
+		.enum(['true', 'false'], { error: 'must be exactly "true" or "false"' })
+		.default('false')
+		.transform((value) => value === 'true'),
 	/** Directory for uploaded and generated files; must be writable and persist. */
 	DATA_DIR: z.string().min(1)
 });

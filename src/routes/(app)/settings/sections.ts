@@ -12,7 +12,8 @@ export type SettingsHref =
 	| '/settings/users'
 	| '/settings/api-keys'
 	| '/settings/general'
-	| '/settings/routes';
+	| '/settings/routes'
+	| '/settings/integrations';
 
 export type SettingsSection = {
 	href: SettingsHref;
@@ -52,6 +53,12 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 		label: 'Маршруты стадий',
 		description: 'Версии процесса: стадии, переходы и маршрут по умолчанию',
 		permission: 'stages.configure'
+	},
+	{
+		href: '/settings/integrations',
+		label: 'Интеграции',
+		description: 'Вебхуки, обмен с системой обучения и приём заявок с сайта',
+		permission: 'integrations.manage'
 	}
 ];
 

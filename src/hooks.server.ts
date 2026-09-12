@@ -7,14 +7,22 @@ import { rateLimit } from '$lib/server/hooks/rate-limit';
 import { requestId } from '$lib/server/hooks/request-id';
 import { securityHeaders } from '$lib/server/hooks/security-headers';
 import { session } from '$lib/server/hooks/session';
+import { startIntegrationsTimer } from '$lib/server/integrations/pump';
 
 /**
  * Runs once while the server starts, before it accepts any request — and not
  * during the build. A missing or malformed variable stops the process here
  * rather than surfacing as a broken page later.
+ *
+ * Здесь же заводится таймер интеграций: доставка вебхуков и выгрузка из
+ * системы обучения идут без человека, а отдельного фонового процесса в системе
+ * нет — от него понадобилась бы вторая единица развёртывания ради работы,
+ * которая занимает секунду в минуту. Два процесса приложения друг другу не
+ * мешают: проход берёт замок в Redis (см. `integrations/pump.ts`).
  */
 export const init: ServerInit = () => {
 	getConfig();
+	startIntegrationsTimer();
 };
 
 /**

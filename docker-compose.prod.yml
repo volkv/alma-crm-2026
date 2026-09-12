@@ -73,6 +73,13 @@ services:
       XFF_DEPTH: '1'
       DATA_DIR: /data
       BODY_SIZE_LIMIT: 27M
+      # The Moodle stand-in is a demonstration prop: a deployment that talks to a
+      # real LMS must not have a second source of learning data next to it, so it
+      # is off unless the deployment asks for it. A stand that is itself the demo
+      # sets MOCK_LMS=true in its own `.env`, which Compose substitutes here —
+      # `environment` wins over `env_file`, so the variable has to be named here
+      # to be settable at all.
+      MOCK_LMS: ${MOCK_LMS:-false}
     env_file:
       - .env
     deploy:

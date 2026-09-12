@@ -91,6 +91,10 @@ export default defineConfig({
 			BODY_SIZE_LIMIT: '27M',
 			// Демонстрационный вход — часть проверяемого поведения.
 			DEMO_MODE: 'true',
+			// Заглушка системы обучения: обмен с LMS проверяется целиком — от
+			// настроек раздела до снимка в разделе «Данные», — а настоящей LMS в
+			// прогоне нет и быть не может.
+			MOCK_LMS: 'true',
 			TRUST_PROXY: 'false',
 			DATA_DIR: '.playwright/data'
 		}
