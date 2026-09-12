@@ -29,6 +29,13 @@
       "when": 1789205736967,
       "tag": "0003_consents_and_document_revisions",
       "breakpoints": true
+    },
+    {
+      "idx": 4,
+      "version": "7",
+      "when": 1789209016745,
+      "tag": "0004_user_second_factor",
+      "breakpoints": true
     }
   ]
 }

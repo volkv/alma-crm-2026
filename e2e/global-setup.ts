@@ -1,5 +1,5 @@
 import { execFile } from 'node:child_process';
-import { mkdir } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { Redis } from 'ioredis';
@@ -8,6 +8,7 @@ import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { hashPassword } from '$lib/server/auth/password';
+import { totpCodeAt } from '../src/lib/server/auth/totp';
 import { DEMO_EMAILS, STAFF_ADMIN_EMAIL } from '../scripts/seed/users';
 
 /**
@@ -66,6 +67,20 @@ export const STAFF_ADMIN = {
 	email: STAFF_ADMIN_EMAIL,
 	password: DEMO_PASSWORD
 };
+
+/**
+ * Второй фактор штатного администратора: секрет и резервные коды, которые
+ * выдала регистрация.
+ *
+ * Политика по умолчанию требует фактор от роли администратора, поэтому сетап
+ * проходит регистрацию через интерфейс — как прошёл бы её человек, — а спекам
+ * нужно то же, что унёс бы он: секрет, чтобы посчитать код, и коды на случай,
+ * когда приложения нет. Файл, а не переменная модуля: рабочие процессы
+ * Playwright друг друга не видят.
+ */
+export const STAFF_ADMIN_FACTOR = path.join(authDirectory, 'staff-admin-factor.json');
+
+export type StoredFactor = { secret: string; backupCodes: string[] };
 
 const run = promisify(execFile);
 
@@ -138,12 +153,16 @@ async function seedDatabase(env: ServerEnv): Promise<void> {
 	process.stdout.write(stdout);
 }
 
-/** Вход и сохранение сессии в файл; чем входить — решает `enter`. */
-async function signIn(
+/**
+ * Вход и сохранение сессии в файл; чем входить — решает `enter`. Всё, что он
+ * вернул, возвращается наружу: второй фактор рождается по дороге, а нужен он
+ * спекам.
+ */
+async function signIn<TResult>(
 	baseURL: string,
 	file: string,
-	enter: (page: Page) => Promise<void>
-): Promise<void> {
+	enter: (page: Page) => Promise<TResult>
+): Promise<TResult> {
 	const browser = await chromium.launch();
 
 	try {
@@ -151,11 +170,13 @@ async function signIn(
 		const page = await context.newPage();
 
 		await page.goto('/login');
-		await enter(page);
+		const result = await enter(page);
 		await page.waitForURL('/');
 
 		await context.storageState({ path: file });
 		await context.close();
+
+		return result;
 	} finally {
 		await browser.close();
 	}
@@ -175,6 +196,32 @@ function byPassword(email: string, password: string): (page: Page) => Promise<vo
 		await page.getByLabel('Пароль').fill(password);
 		await page.getByRole('button', { name: 'Войти', exact: true }).click();
 	};
+}
+
+/**
+ * Регистрация второго фактора — тем же путём, каким её проходит человек:
+ * страница показывает ключ, приложение считает по нему код, код подтверждает
+ * перенос, резервные коды показываются один раз.
+ *
+ * Обойти этот шаг нельзя и не нужно: политика по умолчанию требует фактор от
+ * администратора, и прогон, который бы её обошёл, проверял бы систему, которой
+ * не существует.
+ */
+async function enrollSecondFactor(page: Page): Promise<StoredFactor> {
+	await page.waitForURL('**/login/mfa**');
+
+	const secret = (await page.getByTestId('totp-secret').innerText()).replace(/\s/g, '');
+
+	await page.getByLabel('Код из приложения').fill(totpCodeAt(secret, Date.now()));
+	await page.getByRole('button', { name: 'Подключить', exact: true }).click();
+
+	const list = page.getByTestId('backup-codes');
+	await list.waitFor();
+	const backupCodes = await list.getByRole('listitem').allInnerTexts();
+
+	await page.getByRole('button', { name: 'Я записал коды, продолжить' }).click();
+
+	return { secret, backupCodes };
 }
 
 export default async function globalSetup(config: FullConfig): Promise<void> {
@@ -210,6 +257,15 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
 			update users set password_hash = ${await hashPassword(DEMO_PASSWORD)}
 			where email = any(${demoEmails})
 		`;
+
+		// Второй фактор снимается со всех: база прогона переживает прогон, а
+		// секрет — нет. Иначе второй запуск подряд встречал бы шаг «введите код»
+		// от секрета, которого уже никто не знает.
+		await sql`
+			update users
+			set totp_secret = null, totp_enabled_at = null, totp_backup_codes = null
+			where totp_secret is not null or totp_enabled_at is not null
+		`;
 	} finally {
 		await sql.end();
 	}
@@ -237,5 +293,14 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
 	await mkdir(authDirectory, { recursive: true });
 	await signIn(baseURL, MANAGER_STATE, byDemoButton('менеджер'));
 	await signIn(baseURL, ADMIN_STATE, byDemoButton('администратор'));
-	await signIn(baseURL, STAFF_ADMIN_STATE, byPassword(STAFF_ADMIN.email, STAFF_ADMIN.password));
+
+	// Демонстрационные кнопки второго фактора не спрашивают: учётная запись за
+	// ними общая. А штатный администратор — роль из политики, и пароля ему мало.
+	const factor = await signIn(baseURL, STAFF_ADMIN_STATE, async (page) => {
+		await byPassword(STAFF_ADMIN.email, STAFF_ADMIN.password)(page);
+
+		return enrollSecondFactor(page);
+	});
+
+	await writeFile(STAFF_ADMIN_FACTOR, JSON.stringify(factor), 'utf8');
 }

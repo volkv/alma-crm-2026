@@ -25,15 +25,27 @@ import {
 	registerLoginFailure,
 	UNKNOWN_ADDRESS
 } from './lockout';
+import { mfaRequired } from './mfa';
 import { verifyPassword } from './password';
-import { createSession, loadSessionUser, markSignedIn } from './session';
+import { completeMfa, createSession, loadSessionUser, markSignedIn } from './session';
+import type { SessionUser } from './types';
 import { normalizeEmail } from './users';
 
 /** Один текст на все причины отказа: он не должен ничего сообщать о чужих учётных записях. */
 const REFUSED = 'Неверная почта или пароль';
 
 export type LoginOutcome =
-	{ ok: true; sessionId: string } | { ok: false; reason: 'invalid' | 'locked'; message: string };
+	| {
+			ok: true;
+			sessionId: string;
+			/**
+			 * Пароль приняли, но по политике нужен второй фактор: сессия заведена
+			 * неполной, и страница входа обязана увести человека на второй шаг, а не
+			 * в приложение.
+			 */
+			mfaPending: boolean;
+	  }
+	| { ok: false; reason: 'invalid' | 'locked'; message: string };
 
 function lockedMessage(remainingSeconds: number): string {
 	const minutes = Math.max(1, Math.ceil(remainingSeconds / 60));
@@ -99,7 +111,7 @@ export async function login(ctx: ActorContext, input: LoginInput): Promise<Login
 	// счётчик значило бы отдать обход лимита каждому, кто открыл страницу.
 	await clearAddressAttempts(ip);
 
-	return { ok: true, sessionId: await startSession(ctx, account.id) };
+	return { ok: true, ...(await startSession(ctx, account.id)) };
 }
 
 /**
@@ -123,10 +135,24 @@ export async function demoLogin(ctx: ActorContext, roleId: string): Promise<stri
 		throw new NotFoundError('Демонстрационная учётная запись с этой ролью не заведена');
 	}
 
-	return startSession(ctx, account.id);
+	// Второго фактора демонстрационный вход не спрашивает никогда: учётная
+	// запись общая, прав у неё меньше, а регистрировать фактор на неё было бы
+	// то же самое, что отдать вход одному телефону из всех зрителей стенда.
+	return (await startSession(ctx, account.id)).sessionId;
 }
 
-async function startSession(ctx: ActorContext, userId: string): Promise<string> {
+/**
+ * Заводит сессию после того, как вызывающий доказал право войти.
+ *
+ * Здесь же решается, полная она или неполная. Неполная — это пароль без
+ * второго фактора: `auth.login` по ней не пишется и отметка о последнем входе
+ * не ставится, потому что входом это ещё не стало. И то и другое поставит
+ * `finishSecondFactor`, когда код подтвердят.
+ */
+async function startSession(
+	ctx: ActorContext,
+	userId: string
+): Promise<{ sessionId: string; mfaPending: boolean }> {
 	// Форму входа заполняет ещё анонимный посетитель, но удачный вход — действие
 	// самого владельца учётной записи: в журнале на этой строке должен стоять
 	// он, иначе «кто вошёл» отвечается только по подробностям события. Тот же
@@ -140,20 +166,62 @@ async function startSession(ctx: ActorContext, userId: string): Promise<string> 
 	}
 
 	const actor: ActorContext = { ...ctx, user, scope: user.scope };
+	const mfaPending = mfaRequired(await getSetting('mfa_policy'), user, ctx.ip);
 
-	await markSignedIn(userId);
+	if (!mfaPending) {
+		await recordSignIn(actor, user);
+	}
+
+	return {
+		sessionId: await createSession(
+			userId,
+			{ ip: ctx.ip, userAgent: ctx.userAgent },
+			{ mfaPending }
+		),
+		mfaPending
+	};
+}
+
+/**
+ * Отметка о состоявшемся входе: последний вход в учётной записи и строка в
+ * журнале. Одна на оба пути — пароль без второго фактора и подтверждённый
+ * второй шаг, — потому что вход в обоих случаях один и тот же.
+ */
+async function recordSignIn(actor: ActorContext, user: SessionUser): Promise<void> {
+	await markSignedIn(user.id);
 
 	await recordAuditEvent(actor, {
 		type: 'auth.login',
 		outcome: 'success',
-		subject: { type: 'user', id: userId },
+		subject: { type: 'user', id: user.id },
 		// Признак берётся у собранной сессии, а не у того, по кнопке пришли или
 		// по паролю: демонстрационная запись остаётся общей при любом входе, и
 		// журнал должен помечать сессию, а не способ её открыть.
-		details: user.isDemo ? { userId, demo: true } : { userId }
+		details: user.isDemo ? { userId: user.id, demo: true } : { userId: user.id }
 	});
+}
 
-	return createSession(userId, { ip: ctx.ip, userAgent: ctx.userAgent });
+/**
+ * Второй фактор подтверждён: сессия становится полной и получает обычный срок
+ * жизни, а в журнале появляется вход. До этой строки человек предъявил только
+ * пароль, и записи о входе не было.
+ */
+export async function finishSecondFactor(ctx: ActorContext, sessionId: string): Promise<void> {
+	const user = ctx.user;
+
+	if (user === null) {
+		throw new ConflictError('Сессия истекла, войдите заново');
+	}
+
+	// Закрывать нечего, если второй шаг не начинался: полная сессия, дошедшая
+	// сюда, получила бы вторую запись о входе и продление срока в обход того,
+	// что его назначило.
+	if (!user.mfaPending) {
+		throw new ConflictError('Второй шаг входа уже пройден');
+	}
+
+	await completeMfa(sessionId);
+	await recordSignIn(ctx, user);
 }
 
 /** Порядок ролей на странице входа — тот же, что в каталоге ролей. */

@@ -5,13 +5,16 @@
 	import { toast } from 'svelte-sonner';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
+	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
+	import { Label } from '$lib/components/ui/label/index.js';
+	import { Switch } from '$lib/components/ui/switch/index.js';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import FormField from '$lib/components/form/form-field.svelte';
 	import { settingSchemas } from '$lib/contracts/settings';
-	import { sessionLimitsSchema } from './schema';
+	import { mfaPolicySchema, sessionLimitsSchema } from './schema';
 	import type { PageProps } from './$types';
 
 	let { data, form: actionResult }: PageProps = $props();
@@ -80,6 +83,28 @@
 			onUpdated: ({ form }) => notifySaved(form)
 		}
 	);
+
+	const {
+		form: mfaData,
+		errors: mfaErrors,
+		enhance: mfaEnhance,
+		submitting: mfaSubmitting
+	} = superForm(
+		untrack(() => data.mfaForm),
+		{
+			validators: zod4Client(mfaPolicySchema),
+			// Список ролей — массив, и обычной формой он не едет.
+			dataType: 'json',
+			onUpdated: ({ form }) => notifySaved(form)
+		}
+	);
+
+	/** Включает и выключает роль в списке обязательных. */
+	function toggleRole(roleId: string, required: boolean) {
+		$mfaData.requiredForRoles = required
+			? [...$mfaData.requiredForRoles, roleId]
+			: $mfaData.requiredForRoles.filter((id) => id !== roleId);
+	}
 </script>
 
 <svelte:head>
@@ -287,6 +312,62 @@
 				})}
 			</div>
 			<FormActions submitting={$lockoutSubmitting} submitLabel="Сохранить политику" />
+		</form>
+	</Card.Content>
+</Card.Root>
+
+<Card.Root>
+	<Card.Header>
+		<Card.Title>Второй фактор входа</Card.Title>
+		<Card.Description>
+			Одноразовый код из приложения-аутентификатора вдобавок к паролю. Роли из списка получают его
+			принудительно: при следующем входе система попросит подключить приложение и до этого в систему
+			не пустит. Остальные могут подключить фактор себе сами в профиле.
+		</Card.Description>
+	</Card.Header>
+	<Card.Content>
+		{@render formErrors($mfaErrors._errors)}
+		<form method="POST" action="?/mfa" use:mfaEnhance novalidate class="flex flex-col gap-4">
+			<fieldset class="flex flex-col gap-2">
+				<legend class="text-sm font-medium">Роли, которым фактор обязателен</legend>
+				{#each data.roles as role (role.id)}
+					<Label class="flex items-center gap-2 font-normal">
+						<Checkbox
+							checked={$mfaData.requiredForRoles.includes(role.id)}
+							onCheckedChange={(checked) => toggleRole(role.id, checked === true)}
+						/>
+						{role.name}
+					</Label>
+				{/each}
+				{#if $mfaErrors.requiredForRoles}
+					<p class="text-xs text-danger-soft-foreground">{$mfaErrors.requiredForRoles}</p>
+				{/if}
+			</fieldset>
+
+			<Label class="flex items-start gap-3 font-normal">
+				<Switch
+					checked={$mfaData.remoteOnly}
+					onCheckedChange={(checked) => ($mfaData.remoteOnly = checked)}
+				/>
+				<span class="flex flex-col gap-1">
+					<span class="text-sm font-medium">Только при удалённом доступе</span>
+					<span class="text-xs text-muted-foreground">
+						Код спрашивается, когда адрес не попал ни в одну доверенную сеть. Пока список сетей
+						пуст, удалённым считается любой адрес.
+					</span>
+				</span>
+			</Label>
+
+			<FieldTextarea
+				name="trustedNetworks"
+				label="Доверенные сети"
+				description="По одной на строку, в виде 198.51.100.0/24 или 2001:db8::/32. Адрес — начало сети, а не адрес машины."
+				rows={3}
+				bind:value={$mfaData.trustedNetworks}
+				errors={$mfaErrors.trustedNetworks}
+			/>
+
+			<FormActions submitting={$mfaSubmitting} submitLabel="Сохранить политику" />
 		</form>
 	</Card.Content>
 </Card.Root>

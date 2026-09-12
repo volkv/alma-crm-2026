@@ -29,13 +29,16 @@ export const session: Handle = async ({ event, resolve }) => {
 	const sessionId = event.cookies.get(SESSION_COOKIE);
 
 	if (sessionId !== undefined) {
-		const userId = await touchSession(sessionId);
-		const user = userId === null ? null : await loadSessionUser(userId);
+		const state = await touchSession(sessionId);
+		const user = state === null ? null : await loadSessionUser(state.userId);
 
-		if (user === null) {
+		if (user === null || state === null) {
 			clearSessionCookie(event.cookies);
 		} else {
-			event.locals.user = user;
+			// Полнота сессии — свойство записи в Redis, а не учётной записи: её
+			// знает только тот, кто эту запись прочитал. Дальше по признаку решает
+			// гвардия, а сервисы видят его в `ctx.user`.
+			event.locals.user = { ...user, mfaPending: state.mfaPending };
 		}
 	}
 

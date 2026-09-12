@@ -8,6 +8,7 @@
 import { relations } from 'drizzle-orm';
 import {
 	boolean,
+	jsonb,
 	pgTable,
 	primaryKey,
 	text,
@@ -67,6 +68,23 @@ export const users = pgTable(
 		 * режиме столбец ни на что не влияет: это обычная учётная запись.
 		 */
 		isDemo: boolean().notNull().default(false),
+		/**
+		 * Секрет второго фактора в base32 (TOTP, RFC 6238). Лежит как есть:
+		 * проверка кода требует самого секрета, поэтому хеш здесь невозможен, а
+		 * шифровать его нечем — ключ пришлось бы держать рядом, в том же
+		 * приложении. Граница проходит по доступу к базе: наружу — ни в API, ни
+		 * в интерфейс, ни в журнал — секрет не выходит никогда.
+		 */
+		totpSecret: text(),
+		/** Когда фактор подтвердили кодом. `null` — фактора у записи нет. */
+		totpEnabledAt: timestamp({ withTimezone: true }),
+		/**
+		 * Резервные коды: SHA-256 от каждого, использованный удаляется из списка.
+		 * Медленный хеш здесь не нужен — коды случайные и длинные, перебирать их
+		 * нечем, — а рядом в той же строке всё равно лежит секрет, из которого
+		 * коды и восстанавливаются. Подробно — `docs/auth.md`.
+		 */
+		totpBackupCodes: jsonb().$type<string[]>(),
 		lastLoginAt: timestamp({ withTimezone: true }),
 		deactivatedAt: timestamp({ withTimezone: true }),
 		...timestamps

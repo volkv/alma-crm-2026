@@ -197,7 +197,11 @@ describe('вход', () => {
 		expect(outcome).toMatchObject({ ok: true });
 		if (!outcome.ok) return;
 
-		expect(await touchSession(outcome.sessionId)).toBe(user.id);
+		// Сессия полная: политика второго фактора роли менеджера его не требует.
+		expect(await touchSession(outcome.sessionId)).toEqual({
+			userId: user.id,
+			mfaPending: false
+		});
 
 		const session = await loadSessionUser(user.id);
 		expect(session).toMatchObject({ id: user.id, roleId: 'manager' });
@@ -567,12 +571,12 @@ describe('срок жизни сессии', () => {
 			100
 		);
 
-		expect(await touchSession(sessionId)).toBe(user.id);
+		expect(await touchSession(sessionId)).toEqual({ userId: user.id, mfaPending: false });
 		expect(await redis.ttl(key)).toBeGreaterThan(100);
 
 		// Вторая активность в ту же минуту Redis не трогает.
 		await redis.expire(key, 100);
-		expect(await touchSession(sessionId)).toBe(user.id);
+		expect(await touchSession(sessionId)).toEqual({ userId: user.id, mfaPending: false });
 		expect(await redis.ttl(key)).toBeLessThanOrEqual(100);
 	});
 
@@ -612,7 +616,7 @@ describe('демонстрационный вход', () => {
 		expect(await listDemoAccounts()).toEqual([{ roleId: 'viewer', roleName: 'Наблюдатель' }]);
 
 		const sessionId = await demoLogin(anonymous(address(8)), 'viewer');
-		expect(await touchSession(sessionId)).toBe(user.id);
+		expect(await touchSession(sessionId)).toEqual({ userId: user.id, mfaPending: false });
 
 		// Демонстрационный вход отличается от обычного одной подробностью — по ней
 		// журнал и показывает, что учётная запись общая, а не личная.

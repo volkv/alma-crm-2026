@@ -1,7 +1,8 @@
 import { expect, test as base, type Locator } from '@playwright/test';
 import { seedId } from '../scripts/seed/ids';
 import { DEMO_EMAILS } from '../scripts/seed/users';
-import { ADMIN_STATE, STAFF_ADMIN, STAFF_ADMIN_STATE } from './global-setup';
+import { ADMIN_STATE, STAFF_ADMIN_STATE } from './global-setup';
+import { loginStaffAdmin } from './helpers/mfa';
 
 /**
  * Журнал и настройки глазами администратора.
@@ -261,12 +262,10 @@ staff('правка баннера видна на странице входа �
 	await expect(page.getByText(marker)).toBeVisible();
 
 	// Настройка общая на всю базу, поэтому текст возвращается как был. Входим
-	// паролем штатного администратора: кнопка «Войти как администратор» открывает
-	// демонстрационную сессию, а ей настройки не принадлежат.
-	await page.getByLabel('Рабочая почта').fill(STAFF_ADMIN.email);
-	await page.getByLabel('Пароль').fill(STAFF_ADMIN.password);
-	await page.getByRole('button', { name: 'Войти', exact: true }).click();
-	await page.waitForURL('/');
+	// штатным администратором: кнопка «Войти как администратор» открывает
+	// демонстрационную сессию, а ей настройки не принадлежат. Пароля ему мало —
+	// его роль по политике защищена вторым фактором (см. `helpers/mfa`).
+	await loginStaffAdmin(page);
 
 	await page.goto('/settings/general');
 	await page.getByLabel('Текст').fill(original);

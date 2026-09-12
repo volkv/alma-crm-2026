@@ -19,16 +19,19 @@
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatDateTime, pluralize } from '$lib/format';
-	import type { UserView } from '$lib/contracts/auth';
+	import type { UserWithMfa } from '$lib/contracts/auth';
 	import { createUserSchema } from './schema';
 	import type { PageProps } from './$types';
 
 	let { data, form: actionResult }: PageProps = $props();
 
 	let createOpen = $state(false);
-	let pending = $state<UserView | null>(null);
+	let pending = $state<UserWithMfa | null>(null);
 	let confirmOpen = $state(false);
 	let deactivateForm = $state<HTMLFormElement | null>(null);
+	let resetting = $state<UserWithMfa | null>(null);
+	let resetOpen = $state(false);
+	let resetMfaForm = $state<HTMLFormElement | null>(null);
 
 	const {
 		form,
@@ -66,7 +69,7 @@
 			`минимум ${pluralize(data.policy.minClasses, ['вид', 'вида', 'видов'])} символов из четырёх`
 	);
 
-	const columns: ColumnDef<DataTableFeatures, UserView>[] = [
+	const columns: ColumnDef<DataTableFeatures, UserWithMfa>[] = [
 		{
 			accessorKey: 'email',
 			header: 'Почта',
@@ -96,6 +99,13 @@
 				renderSnippet(stateCell, { active: row.original.isActive, demo: row.original.isDemo })
 		},
 		{
+			id: 'mfa',
+			header: 'Второй фактор',
+			meta: { title: 'Второй фактор' },
+			enableSorting: false,
+			cell: ({ row }) => renderSnippet(factorCell, { enabled: row.original.mfaEnabled })
+		},
+		{
 			accessorKey: 'lastLoginAt',
 			header: 'Последний вход',
 			meta: { title: 'Последний вход' },
@@ -121,13 +131,18 @@
 	 * он один на всё приложение, и спрашивать его второй раз в этом загрузчике
 	 * значило бы завести второй ответ на тот же вопрос.
 	 */
-	function canDeactivate(user: UserView): boolean {
+	function canDeactivate(user: UserWithMfa): boolean {
 		return user.isActive && !(user.isDemo && data.demoMode);
 	}
 
-	function askDeactivate(user: UserView) {
+	function askDeactivate(user: UserWithMfa) {
 		pending = user;
 		confirmOpen = true;
+	}
+
+	function askResetMfa(user: UserWithMfa) {
+		resetting = user;
+		resetOpen = true;
 	}
 </script>
 
@@ -146,18 +161,33 @@
 	</span>
 {/snippet}
 
-{#snippet actionsCell({ user }: { user: UserView })}
-	{#if canDeactivate(user)}
-		<Button variant="outline" size="sm" onclick={() => askDeactivate(user)}>Выключить</Button>
-	{:else if !user.isActive}
-		<!-- Включение обратно не спрашивает подтверждения: оно ничего не отнимает и
+{#snippet factorCell({ enabled }: { enabled: boolean })}
+	{#if enabled}
+		<StatusBadge tone="success">Подключён</StatusBadge>
+	{:else}
+		<span class="text-muted-foreground">нет</span>
+	{/if}
+{/snippet}
+
+{#snippet actionsCell({ user }: { user: UserWithMfa })}
+	<span class="flex flex-wrap justify-end gap-2">
+		{#if user.mfaEnabled}
+			<!-- Сброс нужен, когда телефон потерян: без него человеку с обязательным
+			     фактором вход закрыт совсем. -->
+			<Button variant="outline" size="sm" onclick={() => askResetMfa(user)}>Сбросить фактор</Button>
+		{/if}
+		{#if canDeactivate(user)}
+			<Button variant="outline" size="sm" onclick={() => askDeactivate(user)}>Выключить</Button>
+		{:else if !user.isActive}
+			<!-- Включение обратно не спрашивает подтверждения: оно ничего не отнимает и
 		     отменяется тем же выключением. Поэтому не диалог, а форма прямо в
 		     строке — со своим идентификатором, без общего состояния страницы. -->
-		<form method="POST" action="?/activate">
-			<input type="hidden" name="userId" value={user.id} />
-			<Button type="submit" variant="outline" size="sm">Включить</Button>
-		</form>
-	{/if}
+			<form method="POST" action="?/activate">
+				<input type="hidden" name="userId" value={user.id} />
+				<Button type="submit" variant="outline" size="sm">Включить</Button>
+			</form>
+		{/if}
+	</span>
 {/snippet}
 
 {#if switchMessage}
@@ -277,4 +307,19 @@
 	то же самое, что от любой другой формы раздела, и действие одно на все пути. -->
 <form method="POST" action="?/deactivate" bind:this={deactivateForm} class="hidden">
 	<input type="hidden" name="userId" value={pending?.id ?? ''} />
+</form>
+
+<ConfirmDialog
+	bind:open={resetOpen}
+	title="Сбросить второй фактор?"
+	description={resetting === null
+		? undefined
+		: `${resetting.fullName} (${resetting.email}) останется без второго фактора, а все его сессии завершатся. Если фактор обязателен для его роли, при следующем входе система попросит подключить приложение заново.`}
+	confirmLabel="Сбросить"
+	tone="danger"
+	onconfirm={() => resetMfaForm?.requestSubmit()}
+/>
+
+<form method="POST" action="?/resetMfa" bind:this={resetMfaForm} class="hidden">
+	<input type="hidden" name="userId" value={resetting?.id ?? ''} />
 </form>

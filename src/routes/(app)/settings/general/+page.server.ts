@@ -5,9 +5,11 @@ import { settingSchemas } from '$lib/contracts/settings';
 import { actorFromEvent } from '$lib/server/actor';
 import { AppError, ForbiddenError } from '$lib/server/errors';
 import { errorIssues, toActionFailure, type ActionErrorPayload } from '$lib/server/http';
+import { parseNetwork } from '$lib/server/auth/networks';
 import { can } from '$lib/server/rbac';
+import { DEFAULT_ROLES } from '$lib/server/rbac/permissions';
 import { getSetting, setSetting } from '$lib/server/settings';
-import { sessionLimitsSchema } from './schema';
+import { mfaPolicySchema, sessionLimitsSchema, splitNetworks } from './schema';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -22,7 +24,8 @@ const FORM_IDS = {
 	banner: 'login-banner',
 	session: 'session-limits',
 	password: 'password-policy',
-	lockout: 'lockout-policy'
+	lockout: 'lockout-policy',
+	mfa: 'mfa-policy'
 } as const;
 
 export const load: PageServerLoad = async (event) => {
@@ -32,15 +35,27 @@ export const load: PageServerLoad = async (event) => {
 		error(403, 'Раздел доступен только с правом «Изменение настроек приложения»');
 	}
 
-	const [banner, idleMinutes, absoluteHours, passwordPolicy, lockoutPolicy] = await Promise.all([
-		getSetting('login_banner'),
-		getSetting('session_idle_minutes'),
-		getSetting('session_absolute_hours'),
-		getSetting('password_policy'),
-		getSetting('lockout_policy')
-	]);
+	const [banner, idleMinutes, absoluteHours, passwordPolicy, lockoutPolicy, mfaPolicy] =
+		await Promise.all([
+			getSetting('login_banner'),
+			getSetting('session_idle_minutes'),
+			getSetting('session_absolute_hours'),
+			getSetting('password_policy'),
+			getSetting('lockout_policy'),
+			getSetting('mfa_policy')
+		]);
 
 	return {
+		roles: DEFAULT_ROLES.map((role) => ({ id: role.id, name: role.name })),
+		mfaForm: await superValidate(
+			{
+				requiredForRoles: mfaPolicy.requiredForRoles,
+				remoteOnly: mfaPolicy.remoteOnly,
+				trustedNetworks: mfaPolicy.trustedNetworks.join('\n')
+			},
+			zod4(mfaPolicySchema),
+			{ id: FORM_IDS.mfa }
+		),
 		bannerForm: await superValidate(banner, zod4(settingSchemas.login_banner), {
 			id: FORM_IDS.banner
 		}),
@@ -158,5 +173,40 @@ export const actions: Actions = {
 		}
 
 		return message(form, 'Политика блокировки сохранена');
+	},
+
+	mfa: async (event) => {
+		const form = await superValidate(event.request, zod4(mfaPolicySchema), { id: FORM_IDS.mfa });
+
+		if (!form.valid) {
+			return fail(400, { form });
+		}
+
+		const trustedNetworks = splitNetworks(form.data.trustedNetworks);
+		// Схема настройки проверяет запись сети по форме — она читается и
+		// браузером, куда серверный разбор не попадает. Здесь запись проходит
+		// настоящий разбор: правило доступа, которое не разобралось, обязано
+		// остановить сохранение, а не всплыть отказом во входе.
+		const malformed = trustedNetworks.filter((network) => parseNetwork(network) === null);
+
+		if (malformed.length > 0) {
+			return setError(
+				form,
+				'trustedNetworks',
+				`Не разобраны как сеть: ${malformed.join(', ')}. Ожидается 198.51.100.0/24 или 2001:db8::/32, адрес — начало сети`
+			);
+		}
+
+		try {
+			await setSetting(actorFromEvent(event), 'mfa_policy', {
+				requiredForRoles: form.data.requiredForRoles,
+				remoteOnly: form.data.remoteOnly,
+				trustedNetworks
+			});
+		} catch (failure) {
+			return asFormError(form, failure);
+		}
+
+		return message(form, 'Политика второго фактора сохранена');
 	}
 };

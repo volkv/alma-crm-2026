@@ -48,6 +48,7 @@ import {
 	stageSnapshotSchema,
 	updateInteractionSchema
 } from '$lib/contracts/interactions';
+import { secondFactorSchema, totpCodeSchema } from '$lib/contracts/auth';
 import { settingSchemas } from '$lib/contracts/settings';
 
 const ID = '11111111-2222-4333-8444-555555555555';
@@ -408,6 +409,37 @@ const cases: Case[] = [
 		schema: settingSchemas.lockout_policy,
 		valid: { attempts: 5, minutes: 15 },
 		invalid: { attempts: 5, minutes: 0 }
+	},
+	{
+		name: 'setting: mfa_policy',
+		schema: settingSchemas.mfa_policy,
+		valid: { requiredForRoles: ['admin'], remoteOnly: true, trustedNetworks: ['198.51.100.0/24'] },
+		// Длина префикса больше, чем бывает даже у IPv6: такая запись не сеть.
+		invalid: {
+			requiredForRoles: ['admin'],
+			remoteOnly: true,
+			trustedNetworks: ['198.51.100.0/240']
+		}
+	},
+	{
+		name: 'setting: mfa_policy — сеть без префикса',
+		schema: settingSchemas.mfa_policy,
+		valid: { requiredForRoles: [], remoteOnly: false, trustedNetworks: [] },
+		invalid: { requiredForRoles: [], remoteOnly: false, trustedNetworks: ['198.51.100.0'] }
+	},
+	{
+		name: 'код из приложения',
+		schema: totpCodeSchema,
+		// Пробел между группами — то, как код показывает приложение.
+		valid: { code: '123 456' },
+		invalid: { code: '12345' }
+	},
+	{
+		name: 'второй шаг входа',
+		schema: secondFactorSchema,
+		// Резервный код тоже приходит этим полем: какой именно, решает сервер.
+		valid: { code: 'A1B2-C3D4-E5F6' },
+		invalid: { code: '' }
 	}
 ];
 

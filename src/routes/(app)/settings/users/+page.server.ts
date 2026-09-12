@@ -4,6 +4,7 @@ import { zod4 } from 'sveltekit-superforms/adapters';
 import { readTableQuery } from '$lib/components/data-table/query';
 import { id } from '$lib/contracts/common';
 import { actorFromEvent } from '$lib/server/actor';
+import { mfaEnabledFor, resetMfa } from '$lib/server/auth/mfa';
 import { activateUser, createUser, deactivateUser, listUsers } from '$lib/server/auth/users';
 import { AppError, ConflictError, ForbiddenError, ValidationError } from '$lib/server/errors';
 import { DEFAULT_ROLES } from '$lib/server/rbac/permissions';
@@ -29,9 +30,18 @@ export const load: PageServerLoad = async (event) => {
 	}
 
 	const query = readTableQuery(event.url);
+	const page = await listUsers(ctx, { page: query.page, pageSize: query.size, q: query.search });
+
+	// Состояние второго фактора приходит отдельным запросом: список штата
+	// собирает модуль пользователей, а про фактор знает модуль MFA — и знает он
+	// это по той же строке, но спрашивают их порознь.
+	const withFactor = await mfaEnabledFor(page.items.map((user) => user.id));
 
 	return {
-		users: await listUsers(ctx, { page: query.page, pageSize: query.size, q: query.search }),
+		users: {
+			...page,
+			items: page.items.map((user) => ({ ...user, mfaEnabled: withFactor.has(user.id) }))
+		},
 		roles: DEFAULT_ROLES.map((role) => ({ id: role.id, name: role.name })),
 		policy: await getSetting('password_policy'),
 		form: await superValidate(zod4(createUserSchema))
@@ -135,5 +145,32 @@ export const actions: Actions = {
 		}
 
 		return { message: 'Учётная запись включена, вход открыт', issues: [] };
+	},
+
+	/**
+	 * Сброс второго фактора: телефон потерян, приложение стёрто, резервные коды
+	 * кончились. Администратор снимает фактор, и при следующем входе человек
+	 * регистрирует его заново — если политика этого требует.
+	 */
+	resetMfa: async (event) => {
+		const userId = readUserId(
+			await event.request.formData(),
+			'Не указано, у какой учётной записи сбрасывать фактор'
+		);
+
+		if (typeof userId !== 'string') {
+			return userId;
+		}
+
+		try {
+			await resetMfa(actorFromEvent(event), userId);
+		} catch (failure) {
+			return toActionFailure(failure);
+		}
+
+		return {
+			message: 'Второй фактор сброшен, сессии этой учётной записи завершены',
+			issues: []
+		};
 	}
 };

@@ -17,6 +17,7 @@ import type { SessionUser } from './types';
 import { getConfig } from '../config';
 import { getDb } from '../db';
 import { roles, users } from '../db/schema';
+import { ConflictError } from '../errors';
 import { demoSessionPermissions, loadRolePermissions } from '../rbac';
 import { getRedis } from '../redis';
 import { getSetting } from '../settings';
@@ -25,6 +26,17 @@ export const SESSION_COOKIE = 'lct_session';
 
 /** Как часто продлевается сессия: чаще раза в минуту Redis дёргать незачем. */
 const TOUCH_INTERVAL_MS = 60_000;
+
+/**
+ * Сколько живёт сессия, которой не хватает второго фактора.
+ *
+ * Пять минут — это время набрать код из приложения или зарегистрировать
+ * фактор, а не половина рабочего дня: до подтверждения такая сессия открыта на
+ * одном лишь пароле, и срок жизни у неё должен быть свой, короткий. Активность
+ * его не продлевает — иначе открытая вкладка держала бы неполную сессию сколько
+ * угодно.
+ */
+const MFA_PENDING_SECONDS = 5 * 60;
 
 const sessionKey = (sessionId: string): string => `session:${sessionId}`;
 const userSessionsKey = (userId: string): string => `user_sessions:${userId}`;
@@ -45,6 +57,18 @@ type SessionRecord = {
 	lastSeenAt: string;
 	ip: string | null;
 	userAgent: string | null;
+	/**
+	 * Пароль приняли, второго фактора ещё нет. Такая сессия существует только
+	 * ради второго шага входа: в приложение она не пускает, и держит её не
+	 * обычный срок бездействия, а `MFA_PENDING_SECONDS`.
+	 */
+	mfaPending?: true;
+};
+
+/** Состояние сессии, которое нужно хуку: кто и пускать ли его дальше входа. */
+export type SessionState = {
+	userId: string;
+	mfaPending: boolean;
 };
 
 function parseRecord(raw: string): SessionRecord | null {
@@ -73,18 +97,21 @@ async function lifetimes(): Promise<{ idleSeconds: number; absoluteSeconds: numb
 
 export async function createSession(
 	userId: string,
-	origin: { ip: string | null; userAgent: string | null }
+	origin: { ip: string | null; userAgent: string | null },
+	options: { mfaPending?: boolean } = {}
 ): Promise<string> {
 	const { idleSeconds, absoluteSeconds } = await lifetimes();
 	const sessionId = newSessionId();
 	const now = new Date().toISOString();
+	const mfaPending = options.mfaPending === true;
 
 	const record: SessionRecord = {
 		userId,
 		createdAt: now,
 		lastSeenAt: now,
 		ip: origin.ip,
-		userAgent: origin.userAgent
+		userAgent: origin.userAgent,
+		...(mfaPending ? { mfaPending: true as const } : {})
 	};
 
 	await getRedis()
@@ -93,7 +120,9 @@ export async function createSession(
 			sessionKey(sessionId),
 			JSON.stringify(record),
 			'EX',
-			Math.min(idleSeconds, absoluteSeconds)
+			mfaPending
+				? Math.min(idleSeconds, absoluteSeconds, MFA_PENDING_SECONDS)
+				: Math.min(idleSeconds, absoluteSeconds)
 		)
 		.sadd(userSessionsKey(userId), sessionId)
 		// Список сессий пользователя переживает самую долгую из них и не больше:
@@ -105,11 +134,15 @@ export async function createSession(
 }
 
 /**
- * Читает сессию и продлевает её. Возвращает идентификатор пользователя или
- * `null`, если сессии нет, она просрочена по бездействию (истёк ключ) или
- * перешагнула предельный срок.
+ * Читает сессию и продлевает её. Возвращает состояние сессии или `null`, если
+ * сессии нет, она просрочена по бездействию (истёк ключ) или перешагнула
+ * предельный срок.
+ *
+ * Неполная сессия — та, которой не хватает второго фактора, — не продлевается
+ * вовсе: её пять минут отсчитываются от входа по паролю, и открытая вкладка не
+ * должна их растягивать.
  */
-export async function touchSession(sessionId: string): Promise<string | null> {
+export async function touchSession(sessionId: string): Promise<SessionState | null> {
 	const redis = getRedis();
 	const raw = await redis.get(sessionKey(sessionId));
 
@@ -133,6 +166,10 @@ export async function touchSession(sessionId: string): Promise<string | null> {
 		return null;
 	}
 
+	if (record.mfaPending === true) {
+		return { userId: record.userId, mfaPending: true };
+	}
+
 	if (now - Date.parse(record.lastSeenAt) >= TOUCH_INTERVAL_MS) {
 		const remaining = Math.ceil((expiresAt - now) / 1000);
 		const next: SessionRecord = { ...record, lastSeenAt: new Date(now).toISOString() };
@@ -145,7 +182,44 @@ export async function touchSession(sessionId: string): Promise<string | null> {
 		);
 	}
 
-	return record.userId;
+	return { userId: record.userId, mfaPending: false };
+}
+
+/**
+ * Снимает с сессии признак неполной и возвращает ей обычный срок жизни. Иначе
+ * человек, подтвердивший код, работал бы до конца тех же пяти минут.
+ *
+ * Сессии, которой нет, здесь не бывает: её только что прочитал хук, а пять
+ * минут между запросом и этой строкой не проходит. Если всё же прошло —
+ * подтверждать нечего, и это отказ, а не молчаливый успех.
+ */
+export async function completeMfa(sessionId: string): Promise<void> {
+	const redis = getRedis();
+	const raw = await redis.get(sessionKey(sessionId));
+	const record = raw === null ? null : parseRecord(raw);
+
+	if (record === null) {
+		throw new ConflictError('Сессия истекла, войдите заново');
+	}
+
+	const { idleSeconds, absoluteSeconds } = await lifetimes();
+	const now = Date.now();
+	const expiresAt = Date.parse(record.createdAt) + absoluteSeconds * 1000;
+	const remaining = Math.ceil((expiresAt - now) / 1000);
+
+	if (!Number.isFinite(expiresAt) || remaining <= 0) {
+		await destroySession(sessionId);
+		throw new ConflictError('Сессия истекла, войдите заново');
+	}
+
+	const { mfaPending: _pending, ...completed } = record;
+
+	await redis.set(
+		sessionKey(sessionId),
+		JSON.stringify({ ...completed, lastSeenAt: new Date(now).toISOString() }),
+		'EX',
+		Math.min(idleSeconds, remaining)
+	);
 }
 
 export async function destroySession(sessionId: string): Promise<void> {
@@ -220,6 +294,10 @@ export async function loadSessionUser(userId: string): Promise<SessionUser | nul
 		roleId: row.roleId,
 		permissions: isDemo ? demoSessionPermissions(rolePermissions) : rolePermissions,
 		isDemo,
+		// Полнота сессии — свойство самой сессии, а не учётной записи: здесь
+		// собирается и владелец ключа доступа, у которого сессии нет вовсе.
+		// Признак проставляет хук, прочитавший запись сессии.
+		mfaPending: false,
 		// Область доступа пока полная у всех ролей: столбца, который сужал бы её до
 		// списка организаций, в схеме ещё нет. Сужение появится здесь — в одном
 		// месте, а не в выборках, которые уже зовут `scopeFilter`.

@@ -1,4 +1,5 @@
 import { redirect } from '@sveltejs/kit';
+import { resolve } from '$app/paths';
 import { fail, message, superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { loginSchema } from '$lib/contracts/auth';
@@ -38,9 +39,16 @@ function rateLimitNotice(remainingSeconds: number): string {
 
 export const load: PageServerLoad = async (event) => {
 	// Вошедшему на странице входа делать нечего — и ссылка на неё из закладок не
-	// должна выглядеть как выход из системы.
+	// должна выглядеть как выход из системы. Тому, кто остановился на втором
+	// шаге, здесь тоже делать нечего: пароль он уже назвал, и форма предложила
+	// бы назвать его второй раз.
 	if (event.locals.user !== null) {
-		redirect(303, safeNextPath(event.url.searchParams.get('next')));
+		redirect(
+			303,
+			event.locals.user.mfaPending
+				? secondFactorPath(event.url)
+				: safeNextPath(event.url.searchParams.get('next'))
+		);
 	}
 
 	const [banner, demoAccounts, limit] = await Promise.all([
@@ -59,6 +67,18 @@ export const load: PageServerLoad = async (event) => {
 		form: await superValidate(zod4(loginSchema))
 	};
 };
+
+/**
+ * Второй шаг входа вместе с тем, куда человек шёл: `next` переживает и его,
+ * иначе после кода человек попадал бы на главную вместо страницы, с которой
+ * его развернули.
+ */
+function secondFactorPath(url: URL): string {
+	const next = url.searchParams.get('next');
+	const path = resolve('/login/mfa');
+
+	return next === null ? path : `${path}?next=${encodeURIComponent(safeNextPath(next))}`;
+}
 
 export const actions: Actions = {
 	// Обе формы страницы названы: SvelteKit не разрешает держать действие по
@@ -83,7 +103,14 @@ export const actions: Actions = {
 
 		await setSessionCookie(event.cookies, outcome.sessionId);
 
-		redirect(303, safeNextPath(event.url.searchParams.get('next')));
+		// Пароль приняли, но политика требует второго фактора: сессия заведена
+		// неполной, и до подтверждения кода приложение для неё закрыто.
+		redirect(
+			303,
+			outcome.mfaPending
+				? secondFactorPath(event.url)
+				: safeNextPath(event.url.searchParams.get('next'))
+		);
 	},
 
 	demo: async (event) => {
