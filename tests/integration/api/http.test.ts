@@ -5,7 +5,7 @@ import { z } from 'zod';
 import type { AuditEventType } from '$lib/contracts/audit';
 import type { SessionUser } from '$lib/server/auth/types';
 import { apiHandler, type ApiEndpointConfig } from '$lib/server/api/handler';
-import { createApiKey, revokeApiKey } from '$lib/server/api/keys';
+import { createApiKey, listApiKeys, revokeApiKey } from '$lib/server/api/keys';
 import {
 	API_RATE_LIMIT_PER_KEY,
 	API_REDIS_PREFIX,
@@ -445,6 +445,46 @@ describe('лимит частоты', () => {
 		const denied = (await auditRecords()).filter((row) => row.outcome === 'denied');
 		expect(denied).toMatchObject([{ details: { status: 429 } }]);
 	});
+
+	it('сводит наплыв без ключа в одну запись, чем бы он ни кончился', async () => {
+		const ip = '198.51.100.99';
+
+		// Перебор с одного адреса выбирает сперва лимит адреса (600 запросов), и
+		// после него тот же самый наплыв перестаёт получать 401 и начинает
+		// получать 429. Обе части — про одного безымянного вызывающего, и в
+		// журнале им место в одной агрегированной строке: построчная запись
+		// вытеснила бы из ленты всё, что в системе действительно происходило.
+		for (let attempt = 0; attempt < 700; attempt += 1) {
+			await listOrganizations(apiEvent({ ip }));
+		}
+
+		// Две — это стык минут: окно фиксированное, и наплыв мог начаться в конце
+		// одной минуты и кончиться в начале следующей.
+		const records = await unauthenticatedRecords();
+		expect(records.length).toBeGreaterThanOrEqual(1);
+		expect(records.length).toBeLessThanOrEqual(2);
+		expect(records.every((row) => row.outcome === 'denied')).toBe(true);
+
+		// Построчных записей об этом наплыве нет ни одной.
+		expect(await auditRecords()).toEqual([]);
+	});
+
+	it('отказ по лимиту самого ключа агрегации не подлежит', async () => {
+		const issued = await issueKey();
+
+		for (let index = 0; index < API_RATE_LIMIT_PER_KEY; index += 1) {
+			await consumeRateLimit(`key:${issued.id}`, API_RATE_LIMIT_PER_KEY);
+		}
+
+		await listOrganizations(apiEvent({ headers: bearer(issued.key) }));
+
+		// За таким отказом стоит известный владелец: это строка про него, а не
+		// про наплыв с адреса.
+		expect(await unauthenticatedRecords()).toEqual([]);
+		expect(await auditRecords()).toMatchObject([
+			{ outcome: 'denied', details: { status: 429 }, apiKeyId: issued.id }
+		]);
+	});
 });
 
 describe('идемпотентность', () => {
@@ -659,6 +699,45 @@ describe('ключи доступа', () => {
 
 		const issued = await issueKey();
 		await expect(revokeApiKey(manager, issued.id)).rejects.toMatchObject({ code: 'forbidden' });
+	});
+
+	it('пишет в журнал отказ выпустить, отозвать и прочитать ключи', async () => {
+		const manager = testActor({ roleId: 'manager' });
+		const issued = await issueKey();
+
+		await expect(
+			createApiKey(manager, { name: 'Ключ', ownerUserId: TEST_USER_IDS.manager })
+		).rejects.toMatchObject({ code: 'forbidden' });
+		await expect(revokeApiKey(manager, issued.id)).rejects.toMatchObject({ code: 'forbidden' });
+		await expect(listApiKeys(manager)).rejects.toMatchObject({ code: 'forbidden' });
+
+		const denied = await database.db
+			.select({
+				eventType: auditEvents.eventType,
+				subjectId: auditEvents.subjectId,
+				actorUserId: auditEvents.actorUserId
+			})
+			.from(auditEvents)
+			.where(eq(auditEvents.outcome, 'denied'));
+
+		// Попытка выпустить ключ на себя, отозвать чужой и пересчитать все —
+		// три разных намерения, и в журнале они тремя строками и стоят.
+		expect(denied).toEqual([
+			{
+				eventType: 'api_keys.created',
+				subjectId: null,
+				actorUserId: TEST_USER_IDS.manager
+			},
+			{
+				eventType: 'api_keys.revoked',
+				subjectId: issued.id,
+				actorUserId: TEST_USER_IDS.manager
+			},
+			{ eventType: 'api_keys.viewed', subjectId: null, actorUserId: TEST_USER_IDS.manager }
+		]);
+
+		// Ключ при этом остался действующим: отказ ничего не изменил.
+		expect(await listApiKeys(testActor())).toMatchObject([{ id: issued.id, revokedAt: null }]);
 	});
 
 	it('не отзывает ключ дважды', async () => {

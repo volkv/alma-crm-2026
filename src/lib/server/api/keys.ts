@@ -71,7 +71,7 @@ export async function createApiKey(
 	ctx: ActorContext,
 	input: CreateApiKeyInput
 ): Promise<CreatedApiKey> {
-	requirePermission(ctx, 'api_keys.manage');
+	await requirePermission(ctx, 'api_keys.manage', { type: 'api_keys.created' });
 
 	const rawKey = generateApiKey();
 
@@ -109,7 +109,10 @@ export async function createApiKey(
 }
 
 export async function revokeApiKey(ctx: ActorContext, apiKeyId: string): Promise<ApiKeyView> {
-	requirePermission(ctx, 'api_keys.manage');
+	await requirePermission(ctx, 'api_keys.manage', {
+		type: 'api_keys.revoked',
+		subject: { type: 'api_key', id: apiKeyId }
+	});
 
 	return withTransaction(ctx, async (tx) => {
 		const [row] = await tx
@@ -139,7 +142,7 @@ export async function revokeApiKey(ctx: ActorContext, apiKeyId: string): Promise
 
 /** Отозванные ключи остаются в списке: их видно в журнале, и это часть истории. */
 export async function listApiKeys(ctx: ActorContext): Promise<ApiKeyView[]> {
-	requirePermission(ctx, 'api_keys.manage');
+	await requirePermission(ctx, 'api_keys.manage', { type: 'api_keys.viewed' });
 
 	const rows = await getDb().select().from(apiKeys).orderBy(desc(apiKeys.createdAt));
 

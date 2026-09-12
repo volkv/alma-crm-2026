@@ -20,6 +20,7 @@ vi.mock('$env/dynamic/private', () => ({ env: process.env }));
 type PageLoad = (event: RequestEvent) => Promise<unknown>;
 type Endpoint = (event: RequestEvent) => Promise<Response>;
 
+const hooks = await import('../../../src/hooks.server');
 const overviewPage = await import('../../../src/routes/(app)/+page.server');
 const newInteractionPage = await import('../../../src/routes/(app)/interactions/new/+page.server');
 const lookupEndpoint = await import('../../../src/routes/(app)/interactions/lookup/+server');
@@ -58,6 +59,65 @@ function userWithoutPermissions(): SessionUser {
 
 	return user;
 }
+
+describe('отказ, который сочинил не мы', () => {
+	/**
+	 * Часть отказов приходит от самого фреймворка: тело больше потолка (413) или
+	 * форма подана не как форма (415). До нашего кода такой запрос не доходит, и
+	 * человеку без этой таблицы досталась бы «внутренняя ошибка сервера» — то
+	 * есть обещание поломки там, где система работает правильно.
+	 */
+	async function rejection(status: number, message: string): Promise<{ message: string }> {
+		return (await hooks.handleError({
+			error: new Error(message),
+			event: pageEvent({}),
+			status,
+			message
+		})) as { message: string };
+	}
+
+	it('называет потолок, а не «внутреннюю ошибку», на слишком большом теле', async () => {
+		const failed = await rejection(413, 'Payload Too Large');
+
+		expect(failed.message).toBe('Файл или запрос больше, чем принимает сервер (до 25 МиБ)');
+	});
+
+	it('говорит про формат запроса, а не про поломку, на чужом content-type', async () => {
+		const failed = await rejection(415, 'Unsupported Media Type');
+
+		expect(failed.message).toBe('Неподдерживаемый формат запроса');
+	});
+
+	it('незнакомый сбой остаётся внутренней ошибкой и уходит в лог', async () => {
+		const logged = vi.spyOn(console, 'error').mockImplementation(() => {});
+
+		try {
+			const failed = await rejection(500, 'что-то сломалось');
+
+			expect(failed.message).toBe('Внутренняя ошибка сервера');
+			expect(logged).toHaveBeenCalledOnce();
+		} finally {
+			logged.mockRestore();
+		}
+	});
+
+	it('отвергнутый по форме запрос не выдаётся за сбой приложения', async () => {
+		const failed = vi.spyOn(console, 'error').mockImplementation(() => {});
+		const warned = vi.spyOn(console, 'warn').mockImplementation(() => {});
+
+		try {
+			await rejection(413, 'Payload Too Large');
+
+			// Стек описывает наш код, а причина лежит в самом запросе: в логе от
+			// него остаётся строка, а не трасса, и не строка про наш сбой.
+			expect(failed).not.toHaveBeenCalled();
+			expect(warned).toHaveBeenCalledOnce();
+		} finally {
+			failed.mockRestore();
+			warned.mockRestore();
+		}
+	});
+});
 
 describe('отказ вместо пятисотой', () => {
 	it('сводка рабочего дня без права на взаимодействия отвечает 403', async () => {

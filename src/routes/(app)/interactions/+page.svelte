@@ -95,6 +95,16 @@
 		}
 	];
 
+	/**
+	 * Колонки, с которых список начинается свёрнутым на ноутбуке.
+	 *
+	 * Заказчик здесь потому, что взаимодействие ведут с учебным заведением, а
+	 * компания за ним у большинства строк одна и та же и в списке ничего не
+	 * различает. Ужатая до нечитаемости колонка срока стоит дороже: срок — то,
+	 * ради чего список открывают. Меню «Колонки» возвращает любую из них.
+	 */
+	const HIDDEN_ON_LAPTOP = ['customerName', 'ownerName', 'lastActivityAt'];
+
 	function open(row: InteractionListItem) {
 		return goto(resolve('/(app)/interactions/[id=uuid]', { id: row.id }));
 	}
@@ -133,12 +143,17 @@
 	</div>
 {/snippet}
 
+<!-- Колонка стадии ограничена по ширине так же, как колонки организаций: и
+	название стадии, и полоса из четырнадцати сегментов растянули бы её на треть
+	таблицы, а справа стоит срок — то, ради чего список и открывают. -->
 {#snippet stageCell(row: InteractionListItem)}
 	{#if row.stage === null}
 		<span class="text-faint">не начато</span>
 	{:else}
-		<div class="flex min-w-40 flex-col gap-1">
-			<span class="truncate text-xs text-muted-foreground">{row.stage.name}</span>
+		<div class="flex max-w-40 min-w-0 flex-col gap-1">
+			<span class="truncate text-xs text-muted-foreground" title={row.stage.name}>
+				{row.stage.name}
+			</span>
 			<StageTimeline stages={toTimelineStages(row.progress)} compact />
 		</div>
 	{/if}
@@ -251,7 +266,7 @@
 			searchPlaceholder="Поиск по названию и организации"
 			emptyTitle="Ничего не найдено"
 			emptyDescription="Измените запрос или сбросьте фильтры."
-			initialHiddenColumns={['ownerName', 'lastActivityAt']}
+			initialHiddenColumns={HIDDEN_ON_LAPTOP}
 			onopen={open}
 		>
 			{#snippet bulkActions({ ids, clear })}

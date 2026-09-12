@@ -104,14 +104,36 @@ test('выход возвращает к форме входа и закрыва
 	await expect(page).toHaveURL('/login?next=%2Fui-kit');
 });
 
-test('перенаправление гвардии несёт код обращения', async ({ page }) => {
+test('гвардия разворачивает анонима на вход и помнит, куда он шёл', async ({ page }) => {
 	const response = await page.request.get('/audit', { maxRedirects: 0 });
 
-	// Ответ собран в хуке, а не маршрутом, — и всё равно проходит через ту же
-	// цепочку: по этому заголовку обращение человека находится в логе.
 	expect(response.status()).toBe(303);
 	expect(response.headers()['location']).toBe('/login?next=%2Faudit');
-	expect(response.headers()['x-request-id']).toMatch(/^[0-9a-f-]{36}$/);
+});
+
+test('форма на странице с погасшей сессией уводит на вход, а не в пятисотую', async ({ page }) => {
+	await page.goto('/login');
+	await page.getByRole('button', { name: 'Войти как менеджер' }).click();
+	await expect(page).toHaveURL('/');
+
+	await page.goto('/organizations/new');
+	await page.getByLabel('Полное наименование').fill('Организация без сессии');
+	await page.getByLabel('Краткое наименование').fill('Без сессии');
+
+	// Сессия гаснет между открытием страницы и отправкой формы — ровно так это и
+	// выглядит у человека, который заполнял её полчаса.
+	await page.context().clearCookies();
+
+	await page.getByRole('button', { name: 'Создать организацию' }).click();
+
+	// Форму отправляет код страницы, и ответом ему обязан быть конверт, который
+	// он умеет читать. Готовая разметка страницы входа вместо него ломала бы
+	// разбор, и человек вместо формы входа видел бы «внутреннюю ошибку».
+	await expect(page).toHaveURL(/\/login\?next=%2Forganizations%2Fnew/);
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText(
+		'Система контроля взаимодействия с учебными заведениями'
+	);
+	await expect(page.getByRole('button', { name: 'Войти как менеджер' })).toBeVisible();
 });
 
 test('отказ по правам остаётся внутри оболочки приложения', async ({ page }) => {

@@ -7,7 +7,12 @@ import type { SessionUser } from '$lib/server/auth/types';
 import { listApiKeys } from '$lib/server/api/keys';
 import { recordAuditEvent } from '$lib/server/audit';
 import { createUser } from '$lib/server/auth/users';
-import { loadSessionUser } from '$lib/server/auth/session';
+import {
+	createSession,
+	destroySession,
+	loadSessionUser,
+	touchSession
+} from '$lib/server/auth/session';
 import { auditEvents, users } from '$lib/server/db/schema';
 import { getRedis } from '$lib/server/redis';
 import { getSetting, setSetting, SETTING_DEFAULTS } from '$lib/server/settings';
@@ -85,7 +90,11 @@ const createUserAction = usersPage.actions.create as unknown as FormAction;
 const deactivateUserAction = usersPage.actions.deactivate as unknown as FormAction;
 const activateUserAction = usersPage.actions.activate as unknown as FormAction;
 const changePasswordAction = profilePage.actions.password as unknown as FormAction;
+const revokeAllAction = profilePage.actions.revokeAll as unknown as FormAction;
+const loadProfile = profilePage.load as unknown as PageLoad;
 const createKeyAction = keysPage.actions.create as unknown as FormAction;
+const revokeKeyAction = keysPage.actions.revoke as unknown as FormAction;
+const bannerAction = generalPage.actions.banner as unknown as FormAction;
 
 let database: TestDatabase;
 
@@ -129,6 +138,19 @@ async function demoSessionUser(roleId: string): Promise<SessionUser> {
 
 	return user;
 }
+
+/** Хеш пароля учётной записи: по нему видно, тронули пароль или нет. */
+async function passwordHashOf(userId: string): Promise<string> {
+	const [row] = await database.db
+		.select({ passwordHash: users.passwordHash })
+		.from(users)
+		.where(eq(users.id, userId));
+
+	return row.passwordHash;
+}
+
+/** Идентификатор, которого нет ни в одной таблице, но по форме — наш. */
+const ABSENT_ID = '00000000-0000-4000-8000-0000000000ff';
 
 type EventFixture = {
 	type: AuditEventType;
@@ -178,6 +200,7 @@ type PageData = {
 		total: number;
 	};
 	canExport: boolean;
+	exportDenied: boolean;
 	actors: { id: string }[];
 };
 
@@ -355,6 +378,38 @@ describe('выгрузка журнала', () => {
 			.where(eq(auditEvents.eventType, 'audit.exported'));
 
 		expect(denied).toEqual([{ outcome: 'denied', actorUserId: TEST_USER_IDS.manager }]);
+	});
+
+	it('браузеру показывает отказ страницей журнала, а не страницей ошибки', async () => {
+		// Сюда приходят по ссылке со списка, и вернуть человека надо туда же: на
+		// странице журнала отказ стоит рядом с кнопками, которых он не может
+		// нажать, а не вместо всего раздела.
+		await expect(
+			exportAudit(
+				pageEvent({
+					path: '/audit/export',
+					query: '?format=csv',
+					user: sessionUser('manager'),
+					headers: { accept: 'text/html,application/xhtml+xml' }
+				})
+			)
+		).rejects.toMatchObject({ status: 303, location: '/audit?denied=export' });
+
+		// След отказа в журнале остаётся тот же: показ отказа его не отменяет.
+		const denied = await database.db
+			.select({ outcome: auditEvents.outcome })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'audit.exported'));
+
+		expect(denied).toEqual([{ outcome: 'denied' }]);
+	});
+
+	it('страница журнала объясняет отказ, когда её об этом попросили', async () => {
+		const withHint = (await loadAudit(pageEvent({ query: '?denied=export' }))) as PageData;
+		const without = (await loadAudit(pageEvent())) as PageData;
+
+		expect(withHint.exportDenied).toBe(true);
+		expect(without.exportDenied).toBe(false);
 	});
 });
 
@@ -567,6 +622,87 @@ describe('граница демонстрационной сессии', () => {
 			{ status: 403 }
 		);
 	});
+
+	it('отвечает демонстрации 403 и на форму настроек, отправленную мимо страницы', async () => {
+		const user = await demoSessionUser('admin');
+
+		const result = await bannerAction(
+			pageEvent({
+				path: '/settings/general',
+				user,
+				form: { title: 'Свой баннер', text: 'Свой текст' }
+			})
+		);
+
+		// Отказ по правам — не претензия к заполнению: правкой полей он не
+		// поправляется, и отвечать на него 400 значило бы обещать обратное.
+		expect(result).toMatchObject({
+			status: 403,
+			data: { message: 'Недостаточно прав: требуется «settings.write»' }
+		});
+
+		expect(await getSetting('login_banner')).toEqual(SETTING_DEFAULTS.login_banner);
+	});
+
+	it('не даёт демонстрации завершить сессии общей учётной записи', async () => {
+		const user = await demoSessionUser('admin');
+		const sessionId = await createSession(user.id, { ip: null, userAgent: null });
+
+		// Учётная запись у демонстрации общая: «завершить все сессии» выкинуло бы
+		// со стенда всех, кто его сейчас смотрит, а не автора нажатия.
+		const result = await revokeAllAction(pageEvent({ path: '/settings/profile', user }));
+
+		expect((result as { status: number }).status).toBe(403);
+		expect((result as { data: { message: string } }).data.message).toContain(
+			'Демонстрационная учётная запись общая'
+		);
+
+		// Чужая сессия пережила попытку.
+		expect(await touchSession(sessionId)).toBe(user.id);
+		await destroySession(sessionId);
+	});
+
+	it('не даёт демонстрации сменить пароль общей учётной записи', async () => {
+		const user = await demoSessionUser('admin');
+		const hashBefore = await passwordHashOf(user.id);
+
+		const result = await changePasswordAction(
+			pageEvent({
+				path: '/settings/profile',
+				user,
+				form: {
+					current: 'Проверка-Входа1',
+					next: 'Другой-Пароль-9',
+					repeat: 'Другой-Пароль-9'
+				}
+			})
+		);
+
+		expect((result as { status: number }).status).toBe(403);
+
+		// Пароль не тронут — иначе администратор стенда потерял бы вход в него, а
+		// живые сессии посетителей погасли бы все разом.
+		expect(await passwordHashOf(user.id)).toBe(hashBefore);
+
+		const changed = await database.db
+			.select({ id: auditEvents.id })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'auth.password_changed'));
+
+		expect(changed).toEqual([]);
+	});
+
+	it('рисует раздел профиля без обоих действий', async () => {
+		const user = await demoSessionUser('admin');
+
+		const data = (await loadProfile(pageEvent({ path: '/settings/profile', user }))) as {
+			isDemo: boolean;
+		};
+
+		// Спрятанная кнопка отказ не заменяет, но и оставлять её нажимаемой
+		// незачем: страница говорит, почему действия нет.
+		expect(data.isDemo).toBe(true);
+	});
 });
 
 describe('пользователи', () => {
@@ -690,6 +826,24 @@ describe('пользователи', () => {
 		);
 	});
 
+	it('не роняет запрос на идентификаторе, который не может быть нашим', async () => {
+		// `abc` — это не «не нашли», а «прислали не то»: без разбора схемой строка
+		// доехала бы до запроса к `uuid`-столбцу и вернулась ошибкой PostgreSQL,
+		// то есть пятисотой на месте обычной претензии к запросу.
+		for (const action of [deactivateUserAction, activateUserAction]) {
+			const result = await action(pageEvent({ path: '/settings/users', form: { userId: 'abc' } }));
+
+			expect((result as { status: number }).status).toBe(400);
+		}
+
+		// Идентификатор нашей формы, за которым никого нет, — это 404.
+		const absent = await deactivateUserAction(
+			pageEvent({ path: '/settings/users', form: { userId: ABSENT_ID } })
+		);
+
+		expect((absent as { status: number }).status).toBe(404);
+	});
+
 	it('говорит словами, что почта занята', async () => {
 		const form = {
 			email: 'novikov@example.org',
@@ -723,6 +877,20 @@ describe('ключи доступа', () => {
 		const keys = await listApiKeys(testActor());
 		expect(keys).toHaveLength(1);
 		expect(JSON.stringify(keys)).not.toContain(issued.key);
+	});
+
+	it('не роняет отзыв на идентификаторе, который не может быть нашим', async () => {
+		const result = await revokeKeyAction(
+			pageEvent({ path: '/settings/api-keys', form: { apiKeyId: 'abc' } })
+		);
+
+		expect((result as { status: number }).status).toBe(400);
+
+		const absent = await revokeKeyAction(
+			pageEvent({ path: '/settings/api-keys', form: { apiKeyId: ABSENT_ID } })
+		);
+
+		expect((absent as { status: number }).status).toBe(404);
 	});
 });
 

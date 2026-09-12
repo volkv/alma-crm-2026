@@ -1,5 +1,4 @@
-import type { Handle } from '@sveltejs/kit';
-import { hookRedirect } from './redirect';
+import { redirect, type Handle } from '@sveltejs/kit';
 
 /**
  * Decides whether the resolved caller may reach the requested route at all.
@@ -15,15 +14,22 @@ import { hookRedirect } from './redirect';
  * Per-route permissions are checked by the loads and services that know what
  * they are protecting; this hook only answers "is there anybody there".
  *
- * The redirect is built rather than thrown: a thrown one leaves the hook chain
- * altogether, and the response it turns into never gets the security headers or
- * the request id that the outer hooks put on everything else.
+ * Перенаправление именно бросается, а не собирается ответом: у брошенного есть
+ * три разных вида — заголовок `location` для обычной навигации, конверт JSON
+ * для запроса данных клиентского маршрутизатора и ещё один для отправки формы
+ * через `use:enhance`, — и выбирает между ними SvelteKit. Готовый 303 такого
+ * разбора не проходит: форма на странице с погасшей сессией получила бы в
+ * ответ HTML страницы входа вместо ожидаемого JSON и сломалась бы разбором.
+ * Отложенные в `event.cookies` SvelteKit дописывает и к брошенному
+ * перенаправлению — чем и пользуется хук `session`. Цена одна: заголовки,
+ * которые ставят внешние хуки, на такой ответ не попадают (см.
+ * `docs/development.md`).
  */
 export const guard: Handle = async ({ event, resolve }) => {
 	if (event.route.id?.startsWith('/(app)') && event.locals.user === null) {
 		const next = `${event.url.pathname}${event.url.search}`;
 
-		return hookRedirect(`/login?next=${encodeURIComponent(next)}`);
+		redirect(303, `/login?next=${encodeURIComponent(next)}`);
 	}
 
 	return resolve(event);

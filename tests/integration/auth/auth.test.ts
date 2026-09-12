@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
-import type { RequestEvent } from '@sveltejs/kit';
+import { isRedirect, type RequestEvent } from '@sveltejs/kit';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActorContext } from '$lib/server/actor';
 import { rateLimit } from '$lib/server/hooks/rate-limit';
@@ -25,7 +25,7 @@ import {
 } from '$lib/server/auth/users';
 import { getRedis } from '$lib/server/redis';
 import { setSetting } from '$lib/server/settings';
-import { startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
+import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
@@ -95,12 +95,21 @@ function loginEvent(ip: string, options: { method?: string; query?: string } = {
 	} as unknown as RequestEvent;
 }
 
-/** Один POST на форму входа через хук лимита. */
-async function postLogin(ip: string, query?: string): Promise<Response> {
-	return rateLimit({
-		event: loginEvent(ip, { method: 'POST', query }),
-		resolve: async () => new Response('форма принята')
-	} as unknown as Parameters<typeof rateLimit>[0]);
+/**
+ * Один POST на форму входа через хук лимита. Возвращает либо ответ маршрута,
+ * либо то, что хук бросил: исчерпанный лимит — это брошенное перенаправление, и
+ * проверять надо именно его, а не собранный ответ.
+ */
+async function postLogin(ip: string, query?: string): Promise<unknown> {
+	return Promise.resolve(
+		rateLimit({
+			event: loginEvent(ip, { method: 'POST', query }),
+			resolve: async () => new Response('форма принята')
+		} as unknown as Parameters<typeof rateLimit>[0])
+	).then(
+		(response) => response,
+		(failure: unknown) => failure
+	);
 }
 
 /** Контекст анонимного посетителя: именно он приходит на форму входа. */
@@ -388,21 +397,23 @@ describe('блокировка после неудачных попыток', ()
 		const ip = address(17);
 
 		for (let attempt = 1; attempt <= 30; attempt += 1) {
-			expect((await postLogin(ip)).status).toBe(200);
+			expect(await postLogin(ip)).toMatchObject({ status: 200 });
 		}
 
 		// Голый 429 человеку ничего не объясняет, поэтому отказ уводит на ту же
-		// страницу входа — она видит тот же счётчик и говорит словами. Ответ хук
-		// собирает сам, а не бросает `redirect()`: брошенное перенаправление ушло
-		// бы наружу мимо внешних хуков — без заголовков и без `x-request-id`.
+		// страницу входа — она видит тот же счётчик и говорит словами.
+		// Перенаправление именно бросается: форму входа отправляет `use:enhance`,
+		// и вид ответа для неё выбирает SvelteKit. Готовый 303 приехал бы к ней
+		// разметкой страницы входа вместо конверта, и форма сломалась бы на его
+		// разборе вместо того, чтобы показать отказ.
 		const refused = await postLogin(ip);
-		expect(refused.status).toBe(303);
-		expect(refused.headers.get('location')).toBe('/login');
+		expect(isRedirect(refused)).toBe(true);
+		expect(refused).toMatchObject({ status: 303, location: '/login' });
 
 		// Куда человек шёл, из-за отказа теряться не должно.
 		const withNext = await postLogin(ip, '?next=%2Faudit');
-		expect(withNext.status).toBe(303);
-		expect(withNext.headers.get('location')).toBe('/login?next=%2Faudit');
+		expect(isRedirect(withNext)).toBe(true);
+		expect(withNext).toMatchObject({ status: 303, location: '/login?next=%2Faudit' });
 
 		const data = await loadLogin(loginEvent(ip));
 
@@ -414,7 +425,7 @@ describe('блокировка после неудачных попыток', ()
 	it('до исчерпания лимита страница входа ничего не сообщает', async () => {
 		const ip = address(18);
 
-		expect((await postLogin(ip)).status).toBe(200);
+		expect(await postLogin(ip)).toMatchObject({ status: 200 });
 		expect((await loadLogin(loginEvent(ip))).rateLimited).toBeNull();
 	});
 
@@ -628,11 +639,112 @@ describe('демонстрационный вход', () => {
 		await expect(demoLogin(anonymous(address(10)), 'viewer')).rejects.toBeInstanceOf(NotFoundError);
 	});
 
+	it('не снимает счётчик адреса: пароля он не спрашивает', async () => {
+		demo.mode = true;
+		await newUser({ name: 'demo-limit', password: PASSWORD, roleId: 'viewer', isDemo: true });
+		const ip = address(12);
+
+		// Счётчик адреса защищает от перебора учётных записей с одной машины.
+		// Снимает его верный пароль — а демонстрационный вход пароля не знает:
+		// снимай он счётчик, обход лимита стоил бы одно нажатие кнопки.
+		expect(await withinAddressLimit(ip)).toBe(true);
+		expect(await getRedis().exists(`login_ip:${ip}`)).toBe(1);
+
+		await demoLogin(anonymous(ip), 'viewer');
+
+		expect(await getRedis().exists(`login_ip:${ip}`)).toBe(1);
+	});
+
 	it('не впускает под ролью, для которой учётной записи нет', async () => {
 		demo.mode = true;
 		await newUser({ name: 'demo-only-viewer', password: PASSWORD, roleId: 'viewer', isDemo: true });
 
 		await expect(demoLogin(anonymous(address(11)), 'admin')).rejects.toBeInstanceOf(NotFoundError);
+	});
+});
+
+describe('отказ по правам в журнале', () => {
+	/**
+	 * Попытка сделать то, на что права нет, — это то, о чём администратор должен
+	 * узнать, а не молчаливая ошибка в ответе одному вызывающему. Проверяется
+	 * пара «отказ и запись»: без записи отказ невидим, а без отказа запись врёт.
+	 */
+	const viewer = (): ActorContext => testActor({ roleId: 'viewer' });
+
+	/** Исход и субъект события данного вида. */
+	async function denialsOf(
+		type: string
+	): Promise<{ outcome: string; subjectId: string | null; actorUserId: string | null }[]> {
+		return database.db
+			.select({
+				outcome: auditEvents.outcome,
+				subjectId: auditEvents.subjectId,
+				actorUserId: auditEvents.actorUserId
+			})
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, type))
+			.orderBy(asc(auditEvents.occurredAt));
+	}
+
+	it('пишет отказ завести учётную запись', async () => {
+		const actor = viewer();
+
+		await expect(
+			createUser(actor, {
+				email: email('mimo-prav'),
+				fullName: 'Мимо Прав',
+				roleId: 'manager',
+				password: PASSWORD
+			})
+		).rejects.toBeInstanceOf(ForbiddenError);
+
+		expect(await denialsOf('users.created')).toEqual([
+			{ outcome: 'denied', subjectId: null, actorUserId: actor.user?.id }
+		]);
+
+		// И учётной записи после отказа не осталось.
+		const created = await database.db
+			.select({ id: users.id })
+			.from(users)
+			.where(eq(users.email, email('mimo-prav')));
+		expect(created).toEqual([]);
+	});
+
+	it('пишет отказ выключить и включить учётную запись — вместе с тем, кого трогали', async () => {
+		const target = await newUser({ name: 'tselevoi', password: PASSWORD });
+		const actor = viewer();
+
+		await expect(deactivateUser(actor, target.id)).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(activateUser(actor, target.id)).rejects.toBeInstanceOf(ForbiddenError);
+
+		expect(await denialsOf('users.deactivated')).toEqual([
+			{ outcome: 'denied', subjectId: target.id, actorUserId: actor.user?.id }
+		]);
+		expect(await denialsOf('users.activated')).toEqual([
+			{ outcome: 'denied', subjectId: target.id, actorUserId: actor.user?.id }
+		]);
+	});
+
+	it('пишет отказ прочитать штат', async () => {
+		const actor = viewer();
+
+		await expect(listUsers(actor, pageQuerySchema.parse({}))).rejects.toBeInstanceOf(
+			ForbiddenError
+		);
+
+		expect(await denialsOf('users.viewed')).toEqual([
+			{ outcome: 'denied', subjectId: null, actorUserId: actor.user?.id }
+		]);
+	});
+
+	it('удачное действие отказом не помечает', async () => {
+		const target = await newUser({ name: 'obychnyi', password: PASSWORD });
+
+		await deactivateUser(testActor(), target.id);
+
+		expect(await denialsOf('users.deactivated')).toEqual([
+			{ outcome: 'success', subjectId: target.id, actorUserId: TEST_USER_IDS.admin }
+		]);
 	});
 });
 

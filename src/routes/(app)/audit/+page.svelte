@@ -177,6 +177,13 @@
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<FilterBar url={page.url} actors={data.actors} />
 
+	{#if data.exportDenied}
+		<InlineHint tone="warning">
+			Выгрузка журнала закрыта: она уносит из системы адреса, клиентов и всю историю действий, и
+			право на неё выдаётся отдельно. Сам журнал остаётся здесь целиком.
+		</InlineHint>
+	{/if}
+
 	{#if data.canExport && tooManyToExport}
 		<InlineHint tone="warning">
 			Под фильтр попало {formatNumber(data.events.total)} записей — за один раз выгружается не больше

@@ -25,6 +25,22 @@ export const init: ServerInit = () => {
 export const handle = sequence(requestId, securityHeaders, session, guard, rateLimit);
 
 /**
+ * Отказы, которые сочиняет не приложение, а сам фреймворк: до нашего кода такой
+ * запрос не доходит, и объяснить его некому, кроме этой таблицы.
+ *
+ * 413 приезжает из `adapter-node`, когда тело запроса перевалило за
+ * `BODY_SIZE_LIMIT`, — это загрузка файла крупнее потолка, и потолок в тексте
+ * назван, иначе человек не знает, насколько ужимать. 415 — это форма, поданная
+ * не как форма: так выглядит чужой скрипт или наш собственный `fetch` с
+ * неправильным заголовком.
+ */
+const REJECTIONS: Record<number, string> = {
+	404: 'Страница не найдена',
+	413: 'Файл или запрос больше, чем принимает сервер (до 25 МиБ)',
+	415: 'Неподдерживаемый формат запроса'
+};
+
+/**
  * Everything nobody planned for: a load that threw, a route that does not
  * exist, a page that failed to render. The visitor gets a short sentence and
  * the request id — the same id the log line carries, so one report maps to one
@@ -35,15 +51,20 @@ export const handle = sequence(requestId, securityHeaders, session, guard, rateL
  * keeps their body as written, which is exactly what the services mean by
  * "сказать человеку, что случилось".
  */
-export const handleError: HandleServerError = ({ error, event, status }) => {
-	// A missing address is not a failure of ours: logging it would fill the log
-	// with other people's scanners.
-	if (status !== 404) {
+export const handleError: HandleServerError = ({ error, event, status, message }) => {
+	const rejection = REJECTIONS[status];
+
+	if (rejection === undefined) {
 		console.error(`[app] необработанная ошибка запроса ${event.locals.requestId}`, error);
+	} else if (status !== 404) {
+		// Отвергнутый по форме запрос — не сбой приложения: стек описывает наш
+		// код, а причина лежит в самом запросе, и строки о ней достаточно.
+		// Ненайденный адрес не пишется вовсе: им лог забивают чужие сканеры.
+		console.warn(`[app] запрос ${event.locals.requestId} отвергнут: ${status} ${message}`);
 	}
 
 	return {
-		message: status === 404 ? 'Страница не найдена' : 'Внутренняя ошибка сервера',
+		message: rejection ?? 'Внутренняя ошибка сервера',
 		requestId: event.locals.requestId
 	};
 };

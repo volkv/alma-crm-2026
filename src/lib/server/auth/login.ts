@@ -93,6 +93,12 @@ export async function login(ctx: ActorContext, input: LoginInput): Promise<Login
 
 	await clearLoginFailures(email, ip);
 
+	// Лимит по адресу считает перебор: верный пароль его снимает, иначе десяток
+	// человек за одним NAT выбирает общий счётчик обычной работой. Снимается он
+	// только здесь: демонстрационный вход пароля не спрашивает, и снимать им
+	// счётчик значило бы отдать обход лимита каждому, кто открыл страницу.
+	await clearAddressAttempts(ip);
+
 	return { ok: true, sessionId: await startSession(ctx, account.id) };
 }
 
@@ -146,10 +152,6 @@ async function startSession(ctx: ActorContext, userId: string): Promise<string> 
 		// журнал должен помечать сессию, а не способ её открыть.
 		details: user.isDemo ? { userId, demo: true } : { userId }
 	});
-
-	// Лимит по адресу считает перебор: удачный вход его снимает, иначе десяток
-	// человек за одним NAT выбирает общий счётчик обычной работой.
-	await clearAddressAttempts(ctx.ip ?? UNKNOWN_ADDRESS);
 
 	return createSession(userId, { ip: ctx.ip, userAgent: ctx.userAgent });
 }

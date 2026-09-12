@@ -32,6 +32,8 @@ export type EventOptions = {
 	params?: Record<string, string>;
 	user?: SessionUser;
 	form?: Record<string, string>;
+	/** Заголовки запроса; нужны тому, кто решает по `Accept`, чем отвечать. */
+	headers?: Record<string, string>;
 };
 
 export function pageEvent(options: EventOptions = {}): RequestEvent {
@@ -46,7 +48,11 @@ export function pageEvent(options: EventOptions = {}): RequestEvent {
 	}
 
 	return {
-		request: new Request(url, { method: options.method ?? (body ? 'POST' : 'GET'), body }),
+		request: new Request(url, {
+			method: options.method ?? (body ? 'POST' : 'GET'),
+			headers: options.headers,
+			body
+		}),
 		url,
 		params: options.params ?? {},
 		// Действия профиля снимают cookie сессии; больше от неё ничего не нужно.

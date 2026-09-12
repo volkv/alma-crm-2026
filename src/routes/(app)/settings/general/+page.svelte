@@ -14,7 +14,16 @@
 	import { sessionLimitsSchema } from './schema';
 	import type { PageProps } from './$types';
 
-	let { data }: PageProps = $props();
+	let { data, form: actionResult }: PageProps = $props();
+
+	/**
+	 * Отказ по правам приходит обычным `fail`, мимо superforms: у него нет поля,
+	 * к которому его можно отнести, и правкой полей он не поправляется. Показать
+	 * его всё равно надо — страница открыта, а сохранение уже не проходит.
+	 */
+	const refusal = $derived(
+		actionResult !== null && 'message' in actionResult ? actionResult.message : null
+	);
 
 	/** Сохранённая настройка — повод для тоста, а не для ещё одной строки на странице. */
 	function notifySaved(updated: { message?: unknown }) {
@@ -76,6 +85,13 @@
 <svelte:head>
 	<title>Общие настройки — LCT CRM</title>
 </svelte:head>
+
+{#if refusal}
+	<Alert.Root variant="destructive">
+		<Alert.Title>Настройка не сохранена</Alert.Title>
+		<Alert.Description>{refusal}</Alert.Description>
+	</Alert.Root>
+{/if}
 
 {#snippet formErrors(issues: string[] | undefined)}
 	{#if issues}

@@ -14,6 +14,13 @@ import { auditFilterSchema, type AuditExportFormat, type AuditFilter } from '$li
 export type AuditFilterParam =
 	'from' | 'to' | 'type' | 'outcome' | 'source' | 'actor' | 'subjectType' | 'subject';
 
+/**
+ * Признак того, что выгрузку не отдали: его ставит перенаправление из
+ * `/audit/export`, а страница по нему рисует объяснение. Это не фильтр, и в
+ * следующей ссылке ему делать нечего — любая правка списка его убирает.
+ */
+export const AUDIT_DENIED_PARAM = 'denied';
+
 /** Все параметры фильтра; порядок — тот же, в каком они стоят в панели. */
 export const AUDIT_FILTER_PARAMS: readonly AuditFilterParam[] = [
 	'from',
@@ -108,6 +115,7 @@ export function auditHref(url: URL, changes: AuditFilterChanges): ResolvedPathna
 	// Под новым условием третьей страницы может не быть вовсе, поэтому смена
 	// фильтра всегда возвращает к первой.
 	params.delete('page');
+	params.delete(AUDIT_DENIED_PARAM);
 
 	return withQuery(url.pathname as Pathname, params);
 }
@@ -116,7 +124,7 @@ export function auditHref(url: URL, changes: AuditFilterChanges): ResolvedPathna
 export function clearedAuditHref(url: URL): ResolvedPathname {
 	const params = new URLSearchParams(url.searchParams);
 
-	for (const name of [...AUDIT_FILTER_PARAMS, 'q', 'page']) {
+	for (const name of [...AUDIT_FILTER_PARAMS, 'q', 'page', AUDIT_DENIED_PARAM]) {
 		params.delete(name);
 	}
 

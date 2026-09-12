@@ -3,8 +3,8 @@ import { fail, message, setError, superValidate, type SuperValidated } from 'sve
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { settingSchemas } from '$lib/contracts/settings';
 import { actorFromEvent } from '$lib/server/actor';
-import { AppError } from '$lib/server/errors';
-import { errorIssues } from '$lib/server/http';
+import { AppError, ForbiddenError } from '$lib/server/errors';
+import { errorIssues, toActionFailure, type ActionErrorPayload } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import { getSetting, setSetting } from '$lib/server/settings';
 import { sessionLimitsSchema } from './schema';
@@ -62,15 +62,19 @@ export const load: PageServerLoad = async (event) => {
  * значит сломаться на первой же правке текста. Разбирает ошибку общий
  * переводчик — форма только решает, куда положить его текст.
  *
- * Отказ по правам тоже остаётся над формой, а не уходит голым 403: страница
- * открывается только с правом на запись настроек, поэтому сюда он доезжает
- * лишь у того, у кого право сняли на полпути, — и увидеть причину ему нужнее,
- * чем пустой экран.
+ * Отказ по правам из этого правила выведен: он не претензия к заполнению и
+ * правкой полей не поправляется, поэтому уходит своим кодом — 403, а не 400 от
+ * ошибки формы. Текст при этом не теряется: страница показывает его над
+ * карточками, как это делает раздел пользователей.
  */
 function asFormError<Out extends Record<string, unknown>, M, In extends Record<string, unknown>>(
 	form: SuperValidated<Out, M, In>,
 	failure: unknown
-): ActionFailure<{ form: SuperValidated<Out, M, In> }> {
+): ActionFailure<{ form: SuperValidated<Out, M, In> } | ActionErrorPayload> {
+	if (failure instanceof ForbiddenError) {
+		return toActionFailure(failure);
+	}
+
 	if (failure instanceof AppError) {
 		return setError(form, '', [failure.message, ...errorIssues(failure)]);
 	}

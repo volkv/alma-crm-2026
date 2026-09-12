@@ -9,13 +9,19 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
+	import InlineHint from '$lib/components/inline-hint.svelte';
 	import KeyValue from '$lib/components/key-value.svelte';
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
 	import { pluralize } from '$lib/format';
 	import { changePasswordSchema } from './schema';
 	import type { PageProps } from './$types';
 
-	let { data }: PageProps = $props();
+	let { data, form: actionResult }: PageProps = $props();
+
+	/** Отказ демонстрации приходит обычным `fail`, мимо superforms. */
+	const refusal = $derived(
+		actionResult !== null && 'message' in actionResult ? actionResult.message : null
+	);
 
 	const { form, errors, enhance, submitting, message } = superForm(
 		untrack(() => data.form),
@@ -32,6 +38,13 @@
 <svelte:head>
 	<title>Профиль — LCT CRM</title>
 </svelte:head>
+
+{#if refusal}
+	<Alert.Root variant="destructive">
+		<Alert.Title>Действие не выполнено</Alert.Title>
+		<Alert.Description>{refusal}</Alert.Description>
+	</Alert.Root>
+{/if}
 
 {#if $message}
 	<Alert.Root>
@@ -69,47 +82,54 @@
 		</Card.Description>
 	</Card.Header>
 	<Card.Content>
-		{#if $errors._errors}
-			<Alert.Root variant="destructive" class="mb-4">
-				<Alert.Description>
-					<ul class="list-inside list-disc">
-						{#each $errors._errors as issue (issue)}
-							<li>{issue}</li>
-						{/each}
-					</ul>
-				</Alert.Description>
-			</Alert.Root>
-		{/if}
+		{#if data.isDemo}
+			<InlineHint tone="warning">
+				Учётная запись демонстрации общая: под ней на стенде работают все сразу. Смена её пароля
+				увела бы вход у остальных, поэтому из демонстрации пароль не меняется.
+			</InlineHint>
+		{:else}
+			{#if $errors._errors}
+				<Alert.Root variant="destructive" class="mb-4">
+					<Alert.Description>
+						<ul class="list-inside list-disc">
+							{#each $errors._errors as issue (issue)}
+								<li>{issue}</li>
+							{/each}
+						</ul>
+					</Alert.Description>
+				</Alert.Root>
+			{/if}
 
-		<!-- novalidate: проверяет схема и говорит по-русски, а не браузер на своём языке. -->
-		<form method="POST" action="?/password" use:enhance novalidate class="flex flex-col gap-4">
-			<FieldInput
-				name="current"
-				type="password"
-				label="Текущий пароль"
-				required
-				bind:value={$form.current}
-				errors={$errors.current}
-			/>
-			<FieldInput
-				name="next"
-				type="password"
-				label="Новый пароль"
-				description={policyHint}
-				required
-				bind:value={$form.next}
-				errors={$errors.next}
-			/>
-			<FieldInput
-				name="repeat"
-				type="password"
-				label="Новый пароль ещё раз"
-				required
-				bind:value={$form.repeat}
-				errors={$errors.repeat}
-			/>
-			<FormActions submitting={$submitting} submitLabel="Сменить пароль" />
-		</form>
+			<!-- novalidate: проверяет схема и говорит по-русски, а не браузер на своём языке. -->
+			<form method="POST" action="?/password" use:enhance novalidate class="flex flex-col gap-4">
+				<FieldInput
+					name="current"
+					type="password"
+					label="Текущий пароль"
+					required
+					bind:value={$form.current}
+					errors={$errors.current}
+				/>
+				<FieldInput
+					name="next"
+					type="password"
+					label="Новый пароль"
+					description={policyHint}
+					required
+					bind:value={$form.next}
+					errors={$errors.next}
+				/>
+				<FieldInput
+					name="repeat"
+					type="password"
+					label="Новый пароль ещё раз"
+					required
+					bind:value={$form.repeat}
+					errors={$errors.repeat}
+				/>
+				<FormActions submitting={$submitting} submitLabel="Сменить пароль" />
+			</form>
+		{/if}
 	</Card.Content>
 </Card.Root>
 
@@ -122,8 +142,15 @@
 		</Card.Description>
 	</Card.Header>
 	<Card.Content>
-		<form method="POST" action="?/revokeAll">
-			<Button type="submit" variant="outline">Завершить все сессии</Button>
-		</form>
+		{#if data.isDemo}
+			<InlineHint tone="warning">
+				Сессии демонстрации принадлежат не одному человеку: завершить их все — значит выкинуть со
+				стенда всех, кто сейчас его смотрит. Из демонстрации это действие закрыто.
+			</InlineHint>
+		{:else}
+			<form method="POST" action="?/revokeAll">
+				<Button type="submit" variant="outline">Завершить все сессии</Button>
+			</form>
+		{/if}
 	</Card.Content>
 </Card.Root>

@@ -159,7 +159,7 @@ export async function createRoute(
 	ctx: ActorContext,
 	input: CreateRouteInput
 ): Promise<StageRouteView> {
-	requirePermission(ctx, 'stages.configure');
+	await requirePermission(ctx, 'stages.configure', { type: 'stages.route_created' });
 
 	const parsed = createRouteSchema.safeParse(input);
 
@@ -208,7 +208,10 @@ export async function updateRoute(
 	ctx: ActorContext,
 	input: UpdateRouteInput
 ): Promise<StageRouteView> {
-	requirePermission(ctx, 'stages.configure');
+	// Отказ отмечается до разбора входа, поэтому записи, над которой действовали,
+	// в событии нет: идентификатор в `input` пока никем не проверен, а журнал —
+	// не место для строки, про которую неизвестно, идентификатор ли это вообще.
+	await requirePermission(ctx, 'stages.configure', { type: 'stages.route_updated' });
 
 	const parsed = updateRouteSchema.safeParse(input);
 
@@ -273,7 +276,7 @@ export async function updateRoute(
  * взаимодействия; маршрут по умолчанию при этом ровно один.
  */
 export async function publishRoute(ctx: ActorContext, routeId: string): Promise<StageRouteView> {
-	requirePermission(ctx, 'stages.configure');
+	await requirePermission(ctx, 'stages.configure', { type: 'stages.route_published' });
 
 	return withTransaction(ctx, async (tx) => {
 		const [route] = await tx

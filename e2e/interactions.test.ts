@@ -268,6 +268,62 @@ test('список и карточка держат ширину экрана и
 	await page.screenshot({ path: 'test-results/interactions-list-mobile.png', fullPage: true });
 });
 
+/**
+ * Правый край колонки против правого края её скроллера. Меряется по прямоугольникам
+ * на экране: «поместилось» — это про пиксели, а не про классы разметки.
+ */
+async function fitsInScroller(
+	page: import('@playwright/test').Page,
+	cell: import('@playwright/test').Locator
+): Promise<{ cellRight: number; scrollerRight: number }> {
+	const scroller = page.locator('[data-slot="data-table"] [data-slot="table-container"]');
+	const cellBox = await cell.boundingBox();
+	const scrollerBox = await scroller.boundingBox();
+
+	if (cellBox === null || scrollerBox === null) {
+		throw new Error('и ячейка, и её скроллер обязаны быть на экране');
+	}
+
+	return {
+		cellRight: cellBox.x + cellBox.width,
+		scrollerRight: scrollerBox.x + scrollerBox.width
+	};
+}
+
+test('на ноутбуке срок виден целиком, а не краем', async ({ page }) => {
+	await createInteraction(page);
+
+	// 1280 — это обычный ноутбук, и список на нём открывают чаще всего. Срок —
+	// то, ради чего его открывают: он решает, за что браться сегодня. Колонка,
+	// которая уехала за правый край, отвечает на этот вопрос только прокруткой.
+	await page.setViewportSize({ width: 1280, height: 900 });
+	await page.goto('/interactions');
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Взаимодействия');
+
+	const header = page.locator('[data-slot="data-table"] thead');
+
+	// Стартовая видимость ставится после того, как страница ожила: до этого
+	// момента на экране ещё все колонки, и мерить нечего.
+	await expect(header.getByText('Заказчик')).toBeHidden();
+
+	const columns = await header.locator('th').allTextContents();
+	const due = columns.findIndex((title) => title.includes('Срок'));
+	expect(due).toBeGreaterThan(-1);
+
+	const cell = page.locator('[data-slot="data-table"] tbody tr').first().locator('td').nth(due);
+	const { cellRight, scrollerRight } = await fitsInScroller(page, cell);
+
+	expect(cellRight).toBeLessThanOrEqual(scrollerRight);
+
+	// И сама таблица никуда вбок не уехала: строку целиком видно без прокрутки.
+	const overflow = await page
+		.locator('[data-slot="data-table"] [data-slot="table-container"]')
+		.evaluate((node) => node.scrollWidth - node.clientWidth);
+	expect(overflow).toBeLessThanOrEqual(0);
+
+	await page.screenshot({ path: 'test-results/interactions-list-1280.png', fullPage: true });
+});
+
 test('на ноутбуке список начинается без второстепенных колонок', async ({ page }) => {
 	await createInteraction(page);
 
@@ -278,6 +334,8 @@ test('на ноутбуке список начинается без второ�
 	const header = page.locator('[data-slot="data-table"] thead');
 
 	await expect(header.getByText('Стадия')).toBeVisible();
+	await expect(header.getByText('Срок')).toBeVisible();
+	await expect(header.getByText('Заказчик')).toBeHidden();
 	await expect(header.getByText('Ответственный')).toBeHidden();
 	await expect(header.getByText('Активность')).toBeHidden();
 

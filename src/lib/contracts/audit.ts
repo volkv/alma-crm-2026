@@ -33,9 +33,16 @@ export const AUDIT_EVENT_TYPES = [
 	'users.role_changed',
 	'users.activated',
 	'users.deactivated',
+	// Чтение штата: успешное не пишется — его совершают десятками за смену, —
+	// а вот попытка прочитать штат без права на него и есть то, ради чего
+	// событие заведено. В журнале оно встречается с исходом `denied`.
+	'users.viewed',
 	'settings.updated',
 	'api_keys.created',
 	'api_keys.revoked',
+	// То же, что и `users.viewed`: список ключей читают постоянно, а записывать
+	// стоит попытку прочитать его без права.
+	'api_keys.viewed',
 	'organizations.created',
 	'organizations.updated',
 	'organizations.deactivated',

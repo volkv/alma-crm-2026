@@ -109,7 +109,8 @@
 	 * The cycle of an interaction, stage by stage: what is behind, what is
 	 * happening now, and what is holding it up. This is the frame the record
 	 * card opens with, and in `compact` mode the same route fits into a table
-	 * cell as a bar of segments.
+	 * cell as a bar of segments — never wider than `COMPACT_WIDTH`, whatever the
+	 * cell around it allows.
 	 *
 	 * The stages arrive as a typed prop — the component fetches nothing and
 	 * decides nothing about the process; it only shows the state it is given and
@@ -131,6 +132,17 @@
 		class?: string;
 	} = $props();
 
+	/**
+	 * Потолок ширины компактного вида.
+	 *
+	 * Индикатор стоит в колонке списка, а справа от него — колонки, ради которых
+	 * список и открывают: срок и ответственный. Маршрут из четырнадцати стадий
+	 * растянул бы полосу на треть таблицы и вытеснил бы их за край, поэтому
+	 * ширину задаёт не число стадий, а эта константа: полоса — это «докуда
+	 * дошли», и на неё хватает 160 px на любом маршруте.
+	 */
+	const COMPACT_WIDTH = 'max-w-40';
+
 	const passed = $derived(stages.filter((stage) => stage.state === 'done').length);
 
 	function describe(stage: Stage): string {
@@ -144,15 +156,20 @@
 </script>
 
 {#if compact}
-	<div class={cn('flex items-center gap-2', className)} data-slot="stage-timeline">
+	<div
+		class={cn('flex w-full items-center gap-2', COMPACT_WIDTH, className)}
+		data-slot="stage-timeline"
+	>
 		<div
 			class="flex flex-1 items-center gap-0.5"
 			role="img"
 			aria-label="Пройдено этапов: {passed} из {stages.length}"
 		>
 			{#each stages as stage (stage.id)}
+				<!-- min-w-0: у четырнадцати сегментов собственная ширина не важна,
+					важно, чтобы полоса целиком укладывалась в отведённые ей 160 px. -->
 				<span
-					class={cn('h-1.5 flex-1 rounded-full', looks[stage.state].bar)}
+					class={cn('h-1.5 min-w-0 flex-1 rounded-full', looks[stage.state].bar)}
 					title={describe(stage)}
 				></span>
 			{/each}

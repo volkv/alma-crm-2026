@@ -2,6 +2,7 @@ import { error } from '@sveltejs/kit';
 import { fail, message, setError, superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { createApiKeySchema } from '$lib/contracts/api';
+import { id } from '$lib/contracts/common';
 import { actorFromEvent } from '$lib/server/actor';
 import { createApiKey, listApiKeys, revokeApiKey } from '$lib/server/api/keys';
 import { listUsers } from '$lib/server/auth/users';
@@ -78,14 +79,19 @@ export const actions: Actions = {
 	},
 
 	revoke: async (event) => {
-		const apiKeyId = (await event.request.formData()).get('apiKeyId');
+		// Идентификатор разбирается схемой, а не проверкой на непустую строку: в
+		// базе это `uuid`, и строка «abc» дошла бы до запроса и вернулась ошибкой
+		// PostgreSQL — пятисотой на месте обычного «не то прислали».
+		const apiKeyId = id('Некорректный идентификатор ключа').safeParse(
+			(await event.request.formData()).get('apiKeyId')
+		);
 
-		if (typeof apiKeyId !== 'string' || apiKeyId === '') {
+		if (!apiKeyId.success) {
 			return fail(400, { message: 'Не указано, какой ключ отзывать', issues: [] });
 		}
 
 		try {
-			await revokeApiKey(actorFromEvent(event), apiKeyId);
+			await revokeApiKey(actorFromEvent(event), apiKeyId.data);
 		} catch (failure) {
 			return toActionFailure(failure);
 		}

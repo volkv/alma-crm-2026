@@ -5,7 +5,7 @@ import { actorFromEvent } from '$lib/server/actor';
 import { AUDIT_EXPORT_MAX_ROWS, listAuditEvents } from '$lib/server/audit';
 import { listUsers } from '$lib/server/auth/users';
 import { can } from '$lib/server/rbac';
-import { readAuditFilter } from './filters';
+import { AUDIT_DENIED_PARAM, readAuditFilter } from './filters';
 import type { PageServerLoad } from './$types';
 
 /**
@@ -50,6 +50,9 @@ export const load: PageServerLoad = async (event) => {
 		events: { ...events, items },
 		actors,
 		canExport: can(ctx, 'audit.export'),
-		exportLimit: AUDIT_EXPORT_MAX_ROWS
+		exportLimit: AUDIT_EXPORT_MAX_ROWS,
+		// Сюда разворачивают того, кто открыл ссылку выгрузки без права на неё:
+		// отказ объясняется на списке, а не страницей ошибки вместо него.
+		exportDenied: event.url.searchParams.get(AUDIT_DENIED_PARAM) === 'export'
 	};
 };

@@ -1,6 +1,6 @@
 import type { Handle } from '@sveltejs/kit';
 import {
-	clearedSessionCookie,
+	clearSessionCookie,
 	loadSessionUser,
 	SESSION_COOKIE,
 	touchSession
@@ -14,36 +14,30 @@ import {
  * the session record: a revoked permission, a changed role or a deactivated
  * account has to take effect now, not at the end of the working day.
  *
- * A cookie that no longer resolves is removed right here. Leaving it in place
- * would send the browser back to the sign-in page on every navigation while it
- * keeps presenting the same dead identifier. The header is written onto the
- * response rather than left in `event.cookies`, because the response may well
- * be the guard's redirect — one built inside the hook chain, which SvelteKit
- * never gets to add the pending cookies to.
+ * A cookie that no longer resolves is dropped before the request goes any
+ * further. Leaving it in place would send the browser back to the sign-in page
+ * on every navigation while it keeps presenting the same dead identifier. The
+ * reset is left pending in `event.cookies`, which covers both outcomes:
+ * SvelteKit attaches pending cookies to a route's response and to the redirect
+ * the guard throws alike. A sign-in later in the same request sets the cookie
+ * again, and that value wins over the reset.
  */
 export const session: Handle = async ({ event, resolve }) => {
 	event.locals.user = null;
 	event.locals.apiKey = null;
 
 	const sessionId = event.cookies.get(SESSION_COOKIE);
-	let stale = false;
 
 	if (sessionId !== undefined) {
 		const userId = await touchSession(sessionId);
 		const user = userId === null ? null : await loadSessionUser(userId);
 
 		if (user === null) {
-			stale = true;
+			clearSessionCookie(event.cookies);
 		} else {
 			event.locals.user = user;
 		}
 	}
 
-	const response = await resolve(event);
-
-	if (stale) {
-		response.headers.append('set-cookie', clearedSessionCookie(event.cookies));
-	}
-
-	return response;
+	return resolve(event);
 };

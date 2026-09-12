@@ -12,9 +12,11 @@ export const REQUEST_ID_HEADER = 'x-request-id';
  * an id supplied by the caller would let anyone forge or collide with the ids
  * in our logs.
  *
- * Being the outermost hook, this one stamps every response the chain produces,
- * including the ones a hook builds itself — which is why those are returned
- * rather than thrown (see `hookRedirect`).
+ * Being the outermost hook, this one stamps every response that comes back
+ * through the chain. A redirect a hook throws is the exception: SvelteKit
+ * builds that response outside the chain, so it carries no id and no security
+ * headers — the price of letting SvelteKit choose the right envelope for it
+ * (see `docs/development.md`).
  */
 export const requestId: Handle = async ({ event, resolve }) => {
 	event.locals.requestId = randomUUID();

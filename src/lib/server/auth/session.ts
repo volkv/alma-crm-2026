@@ -258,14 +258,3 @@ export async function setSessionCookie(cookies: Cookies, sessionId: string): Pro
 export function clearSessionCookie(cookies: Cookies): void {
 	cookies.delete(SESSION_COOKIE, cookieOptions());
 }
-
-/**
- * Тот же сброс, но строкой заголовка `Set-Cookie`.
- *
- * Cookie, отложенные в `event.cookies`, SvelteKit подставляет только ответу,
- * который вышел из маршрута. Ответ, собранный хуком (перенаправление гвардии),
- * до маршрута не доходит, поэтому сброс мёртвой cookie он несёт сам.
- */
-export function clearedSessionCookie(cookies: Cookies): string {
-	return cookies.serialize(SESSION_COOKIE, '', { ...cookieOptions(), maxAge: 0 });
-}

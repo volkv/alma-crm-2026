@@ -47,7 +47,7 @@ const userColumns = {
 };
 
 export async function createUser(ctx: ActorContext, input: CreateUserInput): Promise<UserView> {
-	requirePermission(ctx, 'users.manage');
+	await requirePermission(ctx, 'users.manage', { type: 'users.created' });
 
 	const email = normalizeEmail(input.email);
 	const fullName = input.fullName.trim();
@@ -146,7 +146,10 @@ async function readAccountState(userId: string): Promise<{ isActive: boolean; is
  * — и показывать нечего до следующего вмешательства в базу.
  */
 export async function deactivateUser(ctx: ActorContext, userId: string): Promise<void> {
-	requirePermission(ctx, 'users.manage');
+	await requirePermission(ctx, 'users.manage', {
+		type: 'users.deactivated',
+		subject: { type: 'user', id: userId }
+	});
 
 	if (ctx.user?.id === userId) {
 		throw new ConflictError('Нельзя выключить собственную учётную запись');
@@ -190,7 +193,10 @@ export async function deactivateUser(ctx: ActorContext, userId: string): Promise
  * ничего не восстанавливает — оно только открывает вход.
  */
 export async function activateUser(ctx: ActorContext, userId: string): Promise<void> {
-	requirePermission(ctx, 'users.manage');
+	await requirePermission(ctx, 'users.manage', {
+		type: 'users.activated',
+		subject: { type: 'user', id: userId }
+	});
 
 	const account = await readAccountState(userId);
 
@@ -233,7 +239,7 @@ export async function listUsers(
 	ctx: ActorContext,
 	query: UserListQuery
 ): Promise<PageResult<UserView>> {
-	requirePermission(ctx, 'users.manage');
+	await requirePermission(ctx, 'users.manage', { type: 'users.viewed' });
 
 	const db = getDb();
 	const q = query.q?.trim() ?? '';

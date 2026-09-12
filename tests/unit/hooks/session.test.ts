@@ -1,4 +1,4 @@
-import type { RequestEvent } from '@sveltejs/kit';
+import { isRedirect, type Cookies, type RequestEvent } from '@sveltejs/kit';
 import { describe, expect, it, vi } from 'vitest';
 
 const { session: sessionState } = vi.hoisted(() => ({
@@ -9,7 +9,7 @@ vi.mock('$lib/server/auth/session', () => ({
 	SESSION_COOKIE: 'lct_session',
 	touchSession: () => Promise.resolve(sessionState.userId),
 	loadSessionUser: (id: string) => Promise.resolve({ id, permissions: new Set() }),
-	clearedSessionCookie: () => 'lct_session=; Path=/; Max-Age=0'
+	clearSessionCookie: (cookies: Cookies) => cookies.delete('lct_session', { path: '/' })
 }));
 
 const { session } = await import('$lib/server/hooks/session');
@@ -17,23 +17,27 @@ const { guard } = await import('$lib/server/hooks/guard');
 
 /**
  * Cookie, которую браузер приносит, а сервер больше ни во что не разрешает,
- * обязана уехать вместе с ответом — в том числе с тем, который собрала гвардия.
+ * обязана уехать вместе с ответом — в том числе с перенаправлением гвардии.
  *
- * Это и есть цена за ответ, собранный в хуке: отложенные в `event.cookies`
- * SvelteKit подставляет только тому, что вышло из маршрута. Забыть про это —
- * значит оставить браузеру мёртвый идентификатор, с которым он будет ходить на
- * форму входа и обратно.
+ * Сброс для этого кладётся в `event.cookies` до того, как запрос пойдёт дальше:
+ * отложенные cookie SvelteKit дописывает и к ответу маршрута, и к брошенному
+ * перенаправлению, а вот ответу, который хук собрал бы сам, — нет. Забыть про
+ * сброс значит оставить браузеру мёртвый идентификатор, с которым он будет
+ * ходить на форму входа и обратно.
  */
-function eventWithCookie(cookie: string | undefined): RequestEvent {
+function eventWithCookie(cookie: string | undefined): { event: RequestEvent; deleted: string[] } {
 	const url = new URL('https://crm.example.org/audit');
+	const deleted: string[] = [];
 
-	return {
+	const event = {
 		url,
 		request: new Request(url),
 		route: { id: '/(app)/audit' },
-		cookies: { get: () => cookie },
+		cookies: { get: () => cookie, delete: (name: string) => deleted.push(name) },
 		locals: { requestId: 'test', user: null, apiKey: null }
 	} as unknown as RequestEvent;
+
+	return { event, deleted };
 }
 
 /** Та же вложенность, что в `hooks.server.ts`: `session` снаружи, `guard` внутри. */
@@ -47,34 +51,44 @@ function chain(event: RequestEvent): Promise<Response> {
 }
 
 describe('хук сессии', () => {
-	it('снимает мёртвую cookie с ответа, собранного гвардией', async () => {
+	it('снимает мёртвую cookie до того, как гвардия развернёт запрос', async () => {
 		sessionState.userId = null;
 
-		const response = await chain(eventWithCookie('протухший-идентификатор'));
+		const { event, deleted } = eventWithCookie('протухший-идентификатор');
 
-		// Гвардия развернула анонима на вход — и сброс cookie уехал вместе с её
-		// ответом, а не потерялся по дороге.
-		expect(response.status).toBe(303);
-		expect(response.headers.get('set-cookie')).toBe('lct_session=; Path=/; Max-Age=0');
+		const thrown = await chain(event).then(
+			(response) => response,
+			(failure: unknown) => failure
+		);
+
+		// Гвардия развернула анонима на вход, а сброс cookie уже отложен — и
+		// поедет вместе с её перенаправлением.
+		expect(isRedirect(thrown)).toBe(true);
+		expect(deleted).toEqual(['lct_session']);
 	});
 
 	it('живую сессию не трогает', async () => {
 		sessionState.userId = 'b0b4b0de-0000-4000-8000-000000000001';
 
-		const event = eventWithCookie('живой-идентификатор');
+		const { event, deleted } = eventWithCookie('живой-идентификатор');
 		const response = await chain(event);
 
 		expect(response.status).toBe(200);
-		expect(response.headers.get('set-cookie')).toBeNull();
+		expect(deleted).toEqual([]);
 		expect(event.locals.user).toMatchObject({ id: sessionState.userId });
 	});
 
 	it('запросу без cookie сбрасывать нечего', async () => {
 		sessionState.userId = null;
 
-		const response = await chain(eventWithCookie(undefined));
+		const { event, deleted } = eventWithCookie(undefined);
 
-		expect(response.status).toBe(303);
-		expect(response.headers.get('set-cookie')).toBeNull();
+		const thrown = await chain(event).then(
+			(response) => response,
+			(failure: unknown) => failure
+		);
+
+		expect(isRedirect(thrown)).toBe(true);
+		expect(deleted).toEqual([]);
 	});
 });

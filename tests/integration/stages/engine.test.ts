@@ -10,8 +10,8 @@ import {
 	type CreateInteractionInput,
 	type StageRouteView
 } from '$lib/contracts/interactions';
-import { auditEvents, stageEntries } from '$lib/server/db/schema';
-import { ConflictError } from '$lib/server/errors';
+import { auditEvents, stageEntries, stageRoutes } from '$lib/server/db/schema';
+import { ConflictError, ForbiddenError } from '$lib/server/errors';
 import { createInteraction } from '$lib/server/interactions/write';
 import { getInteractionSummary } from '$lib/server/interactions/summary';
 import {
@@ -30,7 +30,14 @@ import {
 	skipStage,
 	startInteraction
 } from '$lib/server/stages/commands';
-import { ensureDemoRoute, getRoute } from '$lib/server/stages/routes';
+import { DEMO_ROUTE } from '$lib/server/stages/demo-route';
+import {
+	createRoute,
+	ensureDemoRoute,
+	getRoute,
+	publishRoute,
+	updateRoute
+} from '$lib/server/stages/routes';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import type { ActorContext } from '$lib/server/actor';
 import {
@@ -661,5 +668,37 @@ describe('журнал действий', () => {
 				'interactions.stage_advanced'
 			])
 		);
+	});
+
+	it('записывает отказ настроить маршрут стадий', async () => {
+		const manager = testActor({ roleId: 'manager' });
+		const definition = { ...DEMO_ROUTE, key: `mimo-prav-${crypto.randomUUID().slice(0, 8)}` };
+
+		// Маршрут — это устройство процесса: он меняет правила для всех
+		// взаимодействий сразу, и попытка его тронуть без права должна остаться
+		// в журнале, а не только в ответе тому, кто её сделал.
+		await expect(createRoute(manager, definition)).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(
+			updateRoute(manager, { ...definition, id: crypto.randomUUID() })
+		).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(publishRoute(manager, crypto.randomUUID())).rejects.toBeInstanceOf(ForbiddenError);
+
+		const denied = await database.db
+			.select({ type: auditEvents.eventType, actorUserId: auditEvents.actorUserId })
+			.from(auditEvents)
+			.where(eq(auditEvents.outcome, 'denied'));
+
+		expect(denied).toEqual([
+			{ type: 'stages.route_created', actorUserId: TEST_USER_IDS.manager },
+			{ type: 'stages.route_updated', actorUserId: TEST_USER_IDS.manager },
+			{ type: 'stages.route_published', actorUserId: TEST_USER_IDS.manager }
+		]);
+
+		// Черновика после отказа не появилось.
+		const drafts = await database.db
+			.select({ id: stageRoutes.id })
+			.from(stageRoutes)
+			.where(eq(stageRoutes.key, definition.key));
+		expect(drafts).toEqual([]);
 	});
 });
