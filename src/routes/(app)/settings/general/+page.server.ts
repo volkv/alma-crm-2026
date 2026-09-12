@@ -3,7 +3,8 @@ import { fail, message, setError, superValidate, type SuperValidated } from 'sve
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { settingSchemas } from '$lib/contracts/settings';
 import { actorFromEvent } from '$lib/server/actor';
-import { AppError, ValidationError } from '$lib/server/errors';
+import { AppError } from '$lib/server/errors';
+import { errorIssues } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import { getSetting, setSetting } from '$lib/server/settings';
 import { sessionLimitsSchema } from './schema';
@@ -58,17 +59,20 @@ export const load: PageServerLoad = async (event) => {
 /**
  * Предметная ошибка записи настройки показывается над формой целиком: у неё
  * нет поля, к которому её можно отнести, а угадывать поле по тексту сообщения
- * значит сломаться на первой же правке текста.
+ * значит сломаться на первой же правке текста. Разбирает ошибку общий
+ * переводчик — форма только решает, куда положить его текст.
+ *
+ * Отказ по правам тоже остаётся над формой, а не уходит голым 403: страница
+ * открывается только с правом на запись настроек, поэтому сюда он доезжает
+ * лишь у того, у кого право сняли на полпути, — и увидеть причину ему нужнее,
+ * чем пустой экран.
  */
 function asFormError<Out extends Record<string, unknown>, M, In extends Record<string, unknown>>(
 	form: SuperValidated<Out, M, In>,
 	failure: unknown
 ): ActionFailure<{ form: SuperValidated<Out, M, In> }> {
 	if (failure instanceof AppError) {
-		return setError(form, '', [
-			failure.message,
-			...(failure instanceof ValidationError ? failure.issues : [])
-		]);
+		return setError(form, '', [failure.message, ...errorIssues(failure)]);
 	}
 
 	throw failure;

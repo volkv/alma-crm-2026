@@ -16,7 +16,7 @@ import type { ApiErrorBody, ApiErrorCode } from '$lib/contracts/api';
 import type { AuditOutcome } from '$lib/contracts/audit';
 import type { AccessScope, ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
-import { AppError, ValidationError, type AppErrorCode } from '../errors';
+import { AppError, statusForError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
 import type { PermissionKey } from '../rbac/permissions';
 import {
@@ -66,13 +66,6 @@ const IDEMPOTENT_METHODS = new Set(['POST', 'PUT', 'PATCH']);
 
 /** Область доступа того, кто ещё не представился: ничего. */
 const NO_ACCESS: AccessScope = { kind: 'organizations', organizationIds: new Set() };
-
-const STATUS_BY_ERROR_CODE: Record<AppErrorCode, number> = {
-	validation: 400,
-	forbidden: 403,
-	not_found: 404,
-	conflict: 409
-};
 
 /**
  * Отказ, случившийся в транспорте: до сервиса запрос не дошёл, и предметной
@@ -161,7 +154,7 @@ function toFailure(error: unknown, requestId: string): ApiFailure {
 				? { issues: [...error.issues] }
 				: undefined;
 
-		return new ApiFailure(STATUS_BY_ERROR_CODE[error.code], error.code, error.message, details);
+		return new ApiFailure(statusForError(error), error.code, error.message, details);
 	}
 
 	// Наружу не уходит ни текст ошибки, ни тем более стек: по ним восстанавливают

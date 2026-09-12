@@ -11,6 +11,11 @@ declare global {
 			requestId?: string;
 		}
 
+		interface PageData {
+			/** Set by the root layout; the error page quotes it. */
+			requestId?: string;
+		}
+
 		interface Locals {
 			/** Set by the `requestId` hook before anything else runs. */
 			requestId: string;

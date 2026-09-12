@@ -2,8 +2,9 @@
  * Ошибки предметной области.
  *
  * Сервисы бросают их, не зная ничего про HTTP: превращает ошибку в ответ
- * транспорт — form action, эндпоинт API или консольный скрипт. Соответствие
- * кодов и статусов описано в `docs/data-model.md`.
+ * транспорт — form action, эндпоинт API или консольный скрипт. Но статус,
+ * которым отвечает каждый код, один на все транспорты, поэтому таблица
+ * `code → status` лежит здесь же, рядом с кодами (`docs/data-model.md`).
  */
 
 /** Машиночитаемый код ошибки; по нему транспорт выбирает статус ответа. */
@@ -61,4 +62,23 @@ export class ConflictError extends AppError {
 	constructor(message: string) {
 		super(message);
 	}
+}
+
+/**
+ * Статус ответа для каждого кода. Таблица закрыта типом: новый вид отказа
+ * заводится вместе со своим статусом, а не подбирается транспортом на месте.
+ */
+const STATUS_BY_CODE: Record<AppErrorCode, number> = {
+	validation: 400,
+	forbidden: 403,
+	not_found: 404,
+	conflict: 409
+};
+
+/**
+ * Каким статусом отвечать на эту ошибку. Единственный источник соответствия для
+ * страниц (`toPageError`), форм (`toActionFailure`) и публичного API.
+ */
+export function statusForError(error: AppError): number {
+	return STATUS_BY_CODE[error.code];
 }

@@ -1,8 +1,8 @@
 import { readTableQuery } from '$lib/components/data-table/query';
 import { peopleListQuerySchema } from '$lib/contracts/directory';
 import { actorFromEvent } from '$lib/server/actor';
-import { toPageError } from '$lib/server/directory/page';
 import { listOrganizationOptions, listPeople } from '$lib/server/directory/read';
+import { toPageError } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import type { PageServerLoad } from './$types';
 

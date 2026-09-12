@@ -1,4 +1,5 @@
-import { redirect, type Handle } from '@sveltejs/kit';
+import type { Handle } from '@sveltejs/kit';
+import { hookRedirect } from './redirect';
 
 /**
  * Decides whether the resolved caller may reach the requested route at all.
@@ -13,12 +14,16 @@ import { redirect, type Handle } from '@sveltejs/kit';
  *
  * Per-route permissions are checked by the loads and services that know what
  * they are protecting; this hook only answers "is there anybody there".
+ *
+ * The redirect is built rather than thrown: a thrown one leaves the hook chain
+ * altogether, and the response it turns into never gets the security headers or
+ * the request id that the outer hooks put on everything else.
  */
 export const guard: Handle = async ({ event, resolve }) => {
 	if (event.route.id?.startsWith('/(app)') && event.locals.user === null) {
 		const next = `${event.url.pathname}${event.url.search}`;
 
-		redirect(303, `/login?next=${encodeURIComponent(next)}`);
+		return hookRedirect(`/login?next=${encodeURIComponent(next)}`);
 	}
 
 	return resolve(event);

@@ -5,8 +5,9 @@ import { catalogListQuerySchema } from '$lib/contracts/directory';
 import { createInteractionSchema } from '$lib/contracts/interactions';
 import { actorFromEvent } from '$lib/server/actor';
 import { listProducts, listPrograms } from '$lib/server/directory/read';
-import { toActionFailure } from '$lib/server/http';
+import { toActionFailure, toPageError } from '$lib/server/http';
 import { createInteraction } from '$lib/server/interactions/write';
+import { requirePermission } from '$lib/server/rbac';
 import { getDefaultRoute } from '$lib/server/stages/routes';
 import { responsibleOptions } from '../responsible';
 import type { Actions, PageServerLoad } from './$types';
@@ -15,6 +16,15 @@ const catalogPage = catalogListQuerySchema.parse({ status: 'active', pageSize: 1
 
 export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
+
+	// Форма заведения открывается только с правом на запись: без него страница
+	// показала бы заполняемые поля и отказала бы в самом конце — как и у
+	// остальных «new», отказ здесь, а не после работы.
+	try {
+		requirePermission(ctx, 'interactions.write');
+	} catch (cause) {
+		toPageError(cause);
+	}
 
 	const [route, programs, products, users, form] = await Promise.all([
 		getDefaultRoute(ctx),

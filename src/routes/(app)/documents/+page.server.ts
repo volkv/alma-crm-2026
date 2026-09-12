@@ -1,8 +1,8 @@
 import { readTableQuery } from '$lib/components/data-table/query';
 import { documentListQuerySchema } from '$lib/contracts/documents';
 import { actorFromEvent } from '$lib/server/actor';
-import { toPageError } from '$lib/server/directory/page';
 import { listDocuments } from '$lib/server/documents/read';
+import { toPageError } from '$lib/server/http';
 import type { PageServerLoad } from './$types';
 
 /**

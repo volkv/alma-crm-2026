@@ -88,12 +88,12 @@ const firstPeoplePage = peopleListQuerySchema.parse({});
 describe('организации', () => {
 	it('не пускает второй ИНН и называет организацию, которая его заняла', async () => {
 		const ctx = testActor();
-		await createOrganization(ctx, organizationInput({ shortName: 'МГТУ', inn: INN }));
+		await createOrganization(ctx, organizationInput({ shortName: 'СЗПУ', inn: INN }));
 
 		await expect(
 			createOrganization(ctx, organizationInput({ shortName: 'Двойник', inn: INN }))
 		).rejects.toSatisfy(
-			(error: unknown) => error instanceof ConflictError && /МГТУ/.test(error.message)
+			(error: unknown) => error instanceof ConflictError && /СЗПУ/.test(error.message)
 		);
 
 		const rows = await listOrganizationRows(ctx, firstPage);
@@ -549,10 +549,7 @@ describe('права и область доступа', () => {
 
 	it('ищет людей и по названию организации', async () => {
 		const ctx = testActor();
-		const organization = await createOrganization(
-			ctx,
-			organizationInput({ shortName: 'Бауманка' })
-		);
+		const organization = await createOrganization(ctx, organizationInput({ shortName: 'Политех' }));
 		const person = await createPerson(ctx, {
 			lastName: 'Кузнецов',
 			firstName: 'Олег',
@@ -583,9 +580,9 @@ describe('права и область доступа', () => {
 			notes: null
 		});
 
-		const found = await listPeople(ctx, peopleListQuerySchema.parse({ q: 'Бауманка' }));
+		const found = await listPeople(ctx, peopleListQuerySchema.parse({ q: 'Политех' }));
 		expect(found.items.map((item) => item.person.lastName)).toEqual(['Кузнецов']);
-		expect(found.items[0].organizations.map((item) => item.label)).toEqual(['Бауманка']);
+		expect(found.items[0].organizations.map((item) => item.label)).toEqual(['Политех']);
 	});
 
 	it('показывает людей чужой организации только тем, кто её видит', async () => {

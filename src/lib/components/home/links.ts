@@ -48,5 +48,5 @@ export function interactionsHref(filter: InteractionsFilter): ResolvedPathname {
 
 /** Карточка взаимодействия: из любой строки сводки открывается она же. */
 export function interactionHref(id: string): ResolvedPathname {
-	return resolve('/(app)/interactions/[id]', { id });
+	return resolve('/(app)/interactions/[id=uuid]', { id });
 }

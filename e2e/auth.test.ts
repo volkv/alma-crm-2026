@@ -1,12 +1,23 @@
-import { expect, test } from '@playwright/test';
+import { expect, test, type Page } from '@playwright/test';
 import { E2E_USER } from './global-setup';
 
 /**
  * Вход глазами посетителя: без сессии внутрь не попасть, после входа человек
  * оказывается там, куда шёл, а после выхода — снова у формы. Тесты нарочно
  * берут обычный `test`, а не фикстуру с готовой сессией: проверяется именно то,
- * что фикстура для остальных обходит.
+ * что фикстура для остальных обходит. Здесь же — то, что человек видит вместо
+ * страницы: отказ и «нет такой записи» остаются внутри приложения.
  */
+
+/** Идентификатор верной формы, которого нет ни в одной таблице стенда. */
+const ABSENT_ID = '00000000-0000-4000-8000-0000000000ff';
+
+/** Вход демонстрационной кнопкой наблюдателя: у него нет права на журнал. */
+async function signInAsObserver(page: Page): Promise<void> {
+	await page.goto('/login');
+	await page.getByRole('button', { name: 'Войти как наблюдатель' }).click();
+	await expect(page).toHaveURL('/');
+}
 
 test('без сессии любая страница приложения отправляет на вход', async ({ page }) => {
 	await page.goto('/');
@@ -91,4 +102,47 @@ test('выход возвращает к форме входа и закрыва
 
 	await page.goto('/ui-kit');
 	await expect(page).toHaveURL('/login?next=%2Fui-kit');
+});
+
+test('перенаправление гвардии несёт код обращения', async ({ page }) => {
+	const response = await page.request.get('/audit', { maxRedirects: 0 });
+
+	// Ответ собран в хуке, а не маршрутом, — и всё равно проходит через ту же
+	// цепочку: по этому заголовку обращение человека находится в логе.
+	expect(response.status()).toBe(303);
+	expect(response.headers()['location']).toBe('/login?next=%2Faudit');
+	expect(response.headers()['x-request-id']).toMatch(/^[0-9a-f-]{36}$/);
+});
+
+test('отказ по правам остаётся внутри оболочки приложения', async ({ page }) => {
+	await signInAsObserver(page);
+
+	const response = await page.goto('/audit');
+	expect(response?.status()).toBe(403);
+
+	// Разделы и меню учётной записи на месте: человек не выпал из системы.
+	await expect(page.getByRole('button', { name: 'Наблюдатель Демо' })).toBeVisible();
+
+	// Текст — тот, что написал сервер, а не общее «что-то пошло не так».
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Доступ закрыт');
+	await expect(
+		page.getByText('Журнал действий доступен только с правом «Просмотр журнала действий»')
+	).toBeVisible();
+	await expect(page.getByRole('link', { name: 'На главную' })).toBeVisible();
+});
+
+test('записи нет — 404 в оболочке, адреса нет — 404 без неё', async ({ page }) => {
+	await signInAsObserver(page);
+
+	const missing = await page.goto(`/organizations/${ABSENT_ID}`);
+	expect(missing?.status()).toBe(404);
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Страница не найдена');
+	await expect(page.getByRole('button', { name: 'Наблюдатель Демо' })).toBeVisible();
+
+	// Идентификатор, который не может быть нашим, до загрузчика не доходит:
+	// такого адреса в приложении нет, и оболочка тут ни при чём.
+	const malformed = await page.goto('/organizations/abc');
+	expect(malformed?.status()).toBe(404);
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Страница не найдена');
+	await expect(page.getByRole('button', { name: 'Наблюдатель Демо' })).toBeHidden();
 });

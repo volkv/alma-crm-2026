@@ -9,6 +9,7 @@ import { loadSessionUser } from '$lib/server/auth/session';
 import { auditEvents, users } from '$lib/server/db/schema';
 import { getRedis } from '$lib/server/redis';
 import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
+import { pageEvent, sessionUser } from '../helpers/event';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
@@ -77,17 +78,6 @@ beforeEach(async () => {
 	demo.mode = false;
 });
 
-/** Пользователь запроса: тот же, что кладёт в `locals` хук сессии. */
-function sessionUser(roleId: string): SessionUser {
-	const user = testActor({ roleId }).user;
-
-	if (user === null) {
-		throw new Error('testActor обязан вернуть пользователя');
-	}
-
-	return user;
-}
-
 /**
  * Пользователь публичной демонстрации, собранный тем же `loadSessionUser`, что
  * и на живом запросе: набор прав у демо-сессии — не список в тесте, а то, что
@@ -110,49 +100,6 @@ async function demoSessionUser(roleId: string): Promise<SessionUser> {
 	}
 
 	return user;
-}
-
-type EventOptions = {
-	path?: string;
-	query?: string;
-	method?: string;
-	user?: SessionUser;
-	form?: Record<string, string>;
-};
-
-/**
- * Событие запроса в том виде, в каком его собирает SvelteKit. Загрузчику и
- * действию нужны адрес, тело, `locals` и адрес вызывающего — остальное в
- * подделке не участвует.
- */
-function pageEvent(options: EventOptions = {}): RequestEvent {
-	const url = new URL(`http://localhost${options.path ?? '/audit'}${options.query ?? ''}`);
-
-	let body: FormData | undefined;
-	if (options.form !== undefined) {
-		body = new FormData();
-		for (const [name, value] of Object.entries(options.form)) {
-			body.set(name, value);
-		}
-	}
-
-	return {
-		request: new Request(url, { method: options.method ?? (body ? 'POST' : 'GET'), body }),
-		url,
-		params: {},
-		// Действия профиля снимают cookie сессии; больше от неё ничего не нужно.
-		cookies: { get: () => undefined, set: () => {}, delete: () => {} },
-		route: { id: '/(app)/audit' },
-		locals: {
-			requestId: crypto.randomUUID(),
-			user: options.user ?? sessionUser('admin'),
-			apiKey: null
-		},
-		getClientAddress: () => '198.51.100.10',
-		setHeaders: () => {},
-		isDataRequest: false,
-		isSubRequest: false
-	} as unknown as RequestEvent;
 }
 
 type EventFixture = {

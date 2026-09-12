@@ -59,12 +59,12 @@ describe('варианты выбора', () => {
 	});
 
 	it('переводят строки справочника в варианты как есть', () => {
-		const rows = [{ id: 'a1', label: 'МГТУ' }];
+		const rows = [{ id: 'a1', label: 'СЗПУ' }];
 
-		expect(toLookupOptions(rows)).toEqual([{ value: 'a1', label: 'МГТУ' }]);
+		expect(toLookupOptions(rows)).toEqual([{ value: 'a1', label: 'СЗПУ' }]);
 		expect(toLookupOptions(rows, 'Без площадки')).toEqual([
 			{ value: NO_OPTION, label: 'Без площадки' },
-			{ value: 'a1', label: 'МГТУ' }
+			{ value: 'a1', label: 'СЗПУ' }
 		]);
 	});
 

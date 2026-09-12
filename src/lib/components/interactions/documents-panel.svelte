@@ -100,7 +100,7 @@
 							<Button
 								variant="outline"
 								size="sm"
-								href={resolve('/(app)/documents/[id]/download', { id: document.id })}
+								href={resolve('/(app)/documents/[id=uuid]/download', { id: document.id })}
 							>
 								<DownloadIcon aria-hidden="true" />
 								Скачать

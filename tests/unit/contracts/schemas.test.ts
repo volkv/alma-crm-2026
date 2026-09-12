@@ -63,7 +63,7 @@ const organization = {
 	kind: 'educational_institution',
 	educationLevel: 'vo',
 	legalName: 'Федеральное государственное автономное образовательное учреждение',
-	shortName: 'МФТИ',
+	shortName: 'ПУПИ',
 	inn: '7707083893'
 };
 
@@ -321,7 +321,7 @@ const cases: Case[] = [
 	{
 		name: 'generateDocument',
 		schema: generateDocumentSchema,
-		valid: { templateKey: 'agreement', interactionId: ID, variables: { university: 'МФТИ' } },
+		valid: { templateKey: 'agreement', interactionId: ID, variables: { university: 'ПУПИ' } },
 		invalid: { templateKey: 'agreement', interactionId: ID, variables: { university: 2026 } }
 	},
 	{

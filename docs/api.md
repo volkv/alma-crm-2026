@@ -32,7 +32,7 @@ KEY='lct_5Fj2Xq8pR0mN4vH7yB1cW6tK3sL9dZaQ'
 BASE='https://crm.example.org/api'
 
 # Список организаций: страница, фильтр по типу, поиск по наименованию и ИНН
-curl -sS "$BASE/v1/organizations?page=1&pageSize=20&kind=educational_institution&q=МГТУ" \
+curl -sS "$BASE/v1/organizations?page=1&pageSize=20&kind=educational_institution&q=СЗПУ" \
   -H "Authorization: Bearer $KEY"
 
 # Одна организация
@@ -84,7 +84,7 @@ curl -sS -X POST "$BASE/v1/interactions" \
   -H "Authorization: Bearer $KEY" \
   -H 'Content-Type: application/json' \
   -H 'Idempotency-Key: 6b1f0f4c-6a1a-4f0e-9a5d-2c9a5f0d1e77' \
-  -d '{"title":"Переговоры с МГТУ"}'
+  -d '{"title":"Переговоры с СЗПУ"}'
 ```
 
 Ответ запоминается на 24 часа вместе с отпечатком тела:

@@ -158,7 +158,7 @@
 		<a
 			class="block max-w-64 truncate rounded underline-offset-4 focus-ring hover:underline"
 			title={row.interaction.title}
-			href={resolve('/(app)/interactions/[id]', { id: row.interaction.id })}
+			href={resolve('/(app)/interactions/[id=uuid]', { id: row.interaction.id })}
 		>
 			{row.interaction.title}
 		</a>
@@ -195,7 +195,7 @@
 	<Button
 		variant="outline"
 		size="sm"
-		href={resolve('/(app)/documents/[id]/download', { id: row.id })}
+		href={resolve('/(app)/documents/[id=uuid]/download', { id: row.id })}
 	>
 		<DownloadIcon aria-hidden="true" />
 		Скачать

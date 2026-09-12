@@ -71,7 +71,7 @@
 	];
 
 	function open(row: ProgramListItem) {
-		return goto(resolve('/(app)/programs/[id]', { id: row.program.id }));
+		return goto(resolve('/(app)/programs/[id=uuid]', { id: row.program.id }));
 	}
 </script>
 

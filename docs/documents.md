@@ -2,7 +2,7 @@
 
 Всё, что связано с файлами: где они лежат, как попадают в систему, как генерируются по шаблонам
 и как отдаются человеку. Код — `src/lib/server/documents/`, маршрут скачивания —
-`src/routes/(app)/documents/[id]/download/+server.ts`.
+`src/routes/(app)/documents/[id=uuid]/download/+server.ts`.
 
 ## Хранилище
 

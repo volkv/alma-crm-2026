@@ -70,7 +70,7 @@
 	];
 
 	function open(row: OrganizationRow) {
-		return goto(resolve('/(app)/organizations/[id]', { id: row.organization.id }));
+		return goto(resolve('/(app)/organizations/[id=uuid]', { id: row.organization.id }));
 	}
 </script>
 

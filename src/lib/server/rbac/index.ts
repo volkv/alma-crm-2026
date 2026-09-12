@@ -4,10 +4,16 @@
  * Право — про действие («можно ли вообще»), область — про строки («какие
  * организации видно»). Оба вопроса решаются здесь и нигде больше: сервис
  * вызывает `requirePermission` и подмешивает `scopeFilter` в условие выборки.
+ *
+ * Отказ, о котором должен узнать администратор, записывается в журнал здесь же:
+ * у `requirePermission` есть форма с описанием события, и другой формы «проверил
+ * право и отметил отказ» в приложении нет.
  */
 import { eq, inArray, sql, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
+import type { AuditEventType } from '$lib/contracts/audit';
 import type { ActorContext } from '../actor';
+import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
 import { rolePermissions } from '../db/schema';
 import { ForbiddenError } from '../errors';
@@ -28,11 +34,67 @@ export function can(ctx: ActorContext, key: PermissionKey): boolean {
 	return ctx.user?.permissions.has(key) ?? false;
 }
 
+/**
+ * Чем отказ должен отметиться в журнале: видом события и, если есть, записью,
+ * над которой действовали.
+ */
+export type PermissionDenial = {
+	type: AuditEventType;
+	subject?: { type: string; id: string };
+};
+
 /** То же самое, но отказ — это ошибка, а не `false`. */
-export function requirePermission(ctx: ActorContext, key: PermissionKey): void {
-	if (!can(ctx, key)) {
-		throw new ForbiddenError(`Недостаточно прав: требуется «${key}»`);
+export function requirePermission(ctx: ActorContext, key: PermissionKey): void;
+/**
+ * Проверка с отметкой в журнале: попытка сделать то, на что нет права, —
+ * это то, о чём администратор должен узнать, а не молчаливая ошибка в ответе.
+ * Отсюда и вторая форма: со `denial` функция асинхронная, потому что перед
+ * тем, как бросить ошибку, она дописывает событие.
+ */
+export function requirePermission(
+	ctx: ActorContext,
+	key: PermissionKey,
+	denial: PermissionDenial
+): Promise<void>;
+export function requirePermission(
+	ctx: ActorContext,
+	key: PermissionKey,
+	denial?: PermissionDenial
+): void | Promise<void> {
+	if (denial !== undefined) {
+		return denyWithRecord(ctx, key, denial);
 	}
+
+	if (!can(ctx, key)) {
+		throw forbidden(key);
+	}
+}
+
+function forbidden(key: PermissionKey): ForbiddenError {
+	return new ForbiddenError(`Недостаточно прав: требуется «${key}»`);
+}
+
+/**
+ * Запись об отказе идёт отдельным соединением: транзакции вокруг проверки ещё
+ * нет, а начинать её ради одной строки незачем — и откат того, что не
+ * случилось, не должен унести с собой след попытки.
+ */
+async function denyWithRecord(
+	ctx: ActorContext,
+	key: PermissionKey,
+	denial: PermissionDenial
+): Promise<void> {
+	if (can(ctx, key)) {
+		return;
+	}
+
+	await recordAuditEvent(ctx, {
+		type: denial.type,
+		outcome: 'denied',
+		subject: denial.subject
+	});
+
+	throw forbidden(key);
 }
 
 /**

@@ -392,14 +392,17 @@ describe('блокировка после неудачных попыток', ()
 		}
 
 		// Голый 429 человеку ничего не объясняет, поэтому отказ уводит на ту же
-		// страницу входа — она видит тот же счётчик и говорит словами.
-		await expect(postLogin(ip)).rejects.toMatchObject({ status: 303, location: '/login' });
+		// страницу входа — она видит тот же счётчик и говорит словами. Ответ хук
+		// собирает сам, а не бросает `redirect()`: брошенное перенаправление ушло
+		// бы наружу мимо внешних хуков — без заголовков и без `x-request-id`.
+		const refused = await postLogin(ip);
+		expect(refused.status).toBe(303);
+		expect(refused.headers.get('location')).toBe('/login');
 
 		// Куда человек шёл, из-за отказа теряться не должно.
-		await expect(postLogin(ip, '?next=%2Faudit')).rejects.toMatchObject({
-			status: 303,
-			location: '/login?next=%2Faudit'
-		});
+		const withNext = await postLogin(ip, '?next=%2Faudit');
+		expect(withNext.status).toBe(303);
+		expect(withNext.headers.get('location')).toBe('/login?next=%2Faudit');
 
 		const data = await loadLogin(loginEvent(ip));
 

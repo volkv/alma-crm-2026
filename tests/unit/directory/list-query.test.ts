@@ -33,7 +33,7 @@ describe('список организаций', () => {
 			organizationDirectoryQuerySchema.parse({
 				kind: 'operator',
 				educationLevel: 'spo',
-				q: '  Бауманка  ',
+				q: '  Политех  ',
 				sortBy: 'region',
 				sortDirection: 'desc',
 				page: 3,
@@ -42,7 +42,7 @@ describe('список организаций', () => {
 		).toEqual({
 			kind: 'operator',
 			educationLevel: 'spo',
-			q: 'Бауманка',
+			q: 'Политех',
 			sortBy: 'region',
 			sortDirection: 'desc',
 			page: 3,

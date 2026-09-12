@@ -121,6 +121,35 @@ describe('права ролей', () => {
 		expect(() => requirePermission(viewer, 'organizations.write')).toThrow(ForbiddenError);
 		expect(() => requirePermission(admin, 'organizations.write')).not.toThrow();
 	});
+
+	it('отказ с описанием события оставляет след в журнале, а разрешение — нет', async () => {
+		const viewer = testActor({ roleId: 'viewer' });
+		const admin = testActor({ roleId: 'admin' });
+		const subjectId = '00000000-0000-4000-8000-0000000000bb';
+
+		await expect(
+			requirePermission(viewer, 'organizations.write', {
+				type: 'organizations.created',
+				subject: { type: 'organization', id: subjectId }
+			})
+		).rejects.toBeInstanceOf(ForbiddenError);
+
+		await expect(
+			requirePermission(admin, 'organizations.write', { type: 'organizations.created' })
+		).resolves.toBeUndefined();
+
+		// Ровно одна строка: запись об отказе, и только о нём. Проверка, которая
+		// прошла, — это не событие: её следом будет само действие.
+		const rows = await database.db
+			.select({
+				outcome: auditEvents.outcome,
+				eventType: auditEvents.eventType,
+				subjectId: auditEvents.subjectId
+			})
+			.from(auditEvents);
+
+		expect(rows).toEqual([{ outcome: 'denied', eventType: 'organizations.created', subjectId }]);
+	});
 });
 
 describe('область доступа', () => {

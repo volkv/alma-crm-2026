@@ -96,7 +96,7 @@
 	];
 
 	function open(row: InteractionListItem) {
-		return goto(resolve('/(app)/interactions/[id]', { id: row.id }));
+		return goto(resolve('/(app)/interactions/[id=uuid]', { id: row.id }));
 	}
 
 	function go(changes: Partial<InteractionFilters>) {

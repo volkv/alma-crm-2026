@@ -1,6 +1,6 @@
 import type { Handle } from '@sveltejs/kit';
 import {
-	clearSessionCookie,
+	clearedSessionCookie,
 	loadSessionUser,
 	SESSION_COOKIE,
 	touchSession
@@ -16,24 +16,34 @@ import {
  *
  * A cookie that no longer resolves is removed right here. Leaving it in place
  * would send the browser back to the sign-in page on every navigation while it
- * keeps presenting the same dead identifier.
+ * keeps presenting the same dead identifier. The header is written onto the
+ * response rather than left in `event.cookies`, because the response may well
+ * be the guard's redirect — one built inside the hook chain, which SvelteKit
+ * never gets to add the pending cookies to.
  */
 export const session: Handle = async ({ event, resolve }) => {
 	event.locals.user = null;
 	event.locals.apiKey = null;
 
 	const sessionId = event.cookies.get(SESSION_COOKIE);
+	let stale = false;
 
 	if (sessionId !== undefined) {
 		const userId = await touchSession(sessionId);
 		const user = userId === null ? null : await loadSessionUser(userId);
 
 		if (user === null) {
-			clearSessionCookie(event.cookies);
+			stale = true;
 		} else {
 			event.locals.user = user;
 		}
 	}
 
-	return resolve(event);
+	const response = await resolve(event);
+
+	if (stale) {
+		response.headers.append('set-cookie', clearedSessionCookie(event.cookies));
+	}
+
+	return response;
 };

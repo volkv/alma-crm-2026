@@ -170,7 +170,7 @@ describe('генерация документа', () => {
 		const [document] = await generateDocument(ctx, {
 			templateKey: 'agreement',
 			interactionId,
-			title: 'Соглашение с МГТУ',
+			title: 'Соглашение с СЗПУ',
 			data: AGREEMENT,
 			formats: ['docx']
 		});
@@ -204,7 +204,7 @@ describe('генерация документа', () => {
 
 		const created = await generateDocument(ctx, {
 			templateKey: 'agreement',
-			title: 'Соглашение с МГТУ',
+			title: 'Соглашение с СЗПУ',
 			data: AGREEMENT,
 			formats: ['pdf', 'docx']
 		});
@@ -395,7 +395,7 @@ describe('скачивание', () => {
 		const document = await uploadDocument(testActor(), {
 			interactionId,
 			kind: 'agreement',
-			title: 'Соглашение с МГТУ',
+			title: 'Соглашение с СЗПУ',
 			file: {
 				mime: 'application/pdf',
 				bytes: Buffer.from('%PDF-1.7\ntrailer\n%%EOF\n', 'latin1')
@@ -407,7 +407,7 @@ describe('скачивание', () => {
 			document.id
 		);
 
-		expect(download.fileName).toBe('Соглашение с МГТУ.pdf');
+		expect(download.fileName).toBe('Соглашение с СЗПУ.pdf');
 		expect(download.sizeBytes).toBe(document.sizeBytes);
 
 		const [event] = await database.db

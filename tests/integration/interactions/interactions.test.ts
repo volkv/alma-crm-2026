@@ -70,7 +70,7 @@ describe('заведение взаимодействия', () => {
 	it('сохраняет стороны, состав и сразу ставит на первую стадию', async () => {
 		const ctx = admin();
 		const routeId = await demoRoute();
-		const institutionId = await insertOrganization(database.db, { shortName: 'МГТУ' });
+		const institutionId = await insertOrganization(database.db, { shortName: 'СЗПУ' });
 		const customerId = await insertOrganization(database.db, {
 			shortName: 'Северный центр цифровых компетенций'
 		});
@@ -98,7 +98,7 @@ describe('заведение взаимодействия', () => {
 		const status = await getInteractionStatus(ctx, created.id);
 
 		expect(card.parties.map((party) => party.organizationName).sort()).toEqual([
-			'МГТУ',
+			'СЗПУ',
 			'Северный центр цифровых компетенций'
 		]);
 		expect(card.programs[0].code).toBe('09.03.01');

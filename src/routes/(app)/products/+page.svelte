@@ -53,7 +53,7 @@
 	];
 
 	function open(row: ProductDetail) {
-		return goto(resolve('/(app)/products/[id]', { id: row.product.id }));
+		return goto(resolve('/(app)/products/[id=uuid]', { id: row.product.id }));
 	}
 </script>
 

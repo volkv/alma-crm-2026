@@ -4,11 +4,10 @@ import { zod4 } from 'sveltekit-superforms/adapters';
 import { resolve } from '$app/paths';
 import { createOrganizationSchema } from '$lib/contracts/directory';
 import { actorFromEvent } from '$lib/server/actor';
-import { toPageError } from '$lib/server/directory/page';
 import { findOrganizationByInn } from '$lib/server/directory/read';
 import { createOrganization } from '$lib/server/directory/write';
 import { ConflictError, ValidationError } from '$lib/server/errors';
-import { toActionFailure } from '$lib/server/http';
+import { toActionFailure, toPageError } from '$lib/server/http';
 import { requirePermission } from '$lib/server/rbac';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -57,7 +56,7 @@ export const actions: Actions = {
 							? {}
 							: {
 									conflictsWith: existing,
-									conflictHref: resolve('/(app)/organizations/[id]', { id: existing.id })
+									conflictHref: resolve('/(app)/organizations/[id=uuid]', { id: existing.id })
 								})
 					},
 					{ status: 409 }
@@ -71,6 +70,6 @@ export const actions: Actions = {
 			return toActionFailure(error);
 		}
 
-		redirect(303, `${resolve('/(app)/organizations/[id]', { id: created.id })}?done=created`);
+		redirect(303, `${resolve('/(app)/organizations/[id=uuid]', { id: created.id })}?done=created`);
 	}
 };

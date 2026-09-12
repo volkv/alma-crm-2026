@@ -53,7 +53,7 @@
 	];
 
 	function open(row: PersonListItem) {
-		return goto(resolve('/(app)/people/[id]', { id: row.person.id }));
+		return goto(resolve('/(app)/people/[id=uuid]', { id: row.person.id }));
 	}
 </script>
 

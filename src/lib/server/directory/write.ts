@@ -6,12 +6,12 @@
  * организация уходит в архив (`is_active = false`), роль человека закрывается
  * датой, программа получает новую версию. На них ссылаются взаимодействия и
  * документы, и задним числом «этого вуза у нас не было» быть не должно.
- * Второе: отказ по правам — это событие журнала, а не молчание. Третье:
+ * Второе: отказ по правам — это событие журнала, а не молчание, поэтому право
+ * спрашивается формой `requirePermission` с описанием отказа. Третье:
  * уникальность проверяет база, а сервис переводит её нарушение в понятную
  * фразу — иначе гонка двух вкладок покажет человеку код PostgreSQL.
  */
 import { and, eq, max, ne, sql } from 'drizzle-orm';
-import type { AuditEventType } from '$lib/contracts/audit';
 import type {
 	AffiliationView,
 	CreateAffiliationInput,
@@ -47,34 +47,10 @@ import {
 	sites
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
+import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { toPersonView } from '../people/serialize';
-import { can, scopeFilter } from '../rbac';
-import type { PermissionKey } from '../rbac/permissions';
+import { requirePermission, scopeFilter } from '../rbac';
 import { findOrganizationByInn, getOrganization, getSite, toOrganizationView } from './read';
-
-/**
- * Право на запись вместе со следом в журнале.
- *
- * Попытка изменить справочник без права — это то, о чём администратор должен
- * узнать: `requirePermission` бросил бы ошибку молча, а здесь отказ сначала
- * ложится в журнал. Пишется он отдельным соединением — транзакции ещё нет, и
- * начинать её ради записи об отказе незачем.
- */
-async function requireWrite(
-	ctx: ActorContext,
-	permission: PermissionKey,
-	type: AuditEventType,
-	subject?: { type: string; id: string }
-): Promise<void> {
-	if (can(ctx, permission)) {
-		return;
-	}
-
-	await recordAuditEvent(ctx, { type, outcome: 'denied', subject });
-
-	throw new ForbiddenError(`Недостаточно прав: требуется «${permission}»`);
-}
 
 /** Поля, значение которых изменилось: их список идёт в журнал вместо значений. */
 function changedFields<TRow extends object>(before: TRow, after: Partial<TRow>): string[] {
@@ -180,7 +156,7 @@ export async function createOrganization(
 	ctx: ActorContext,
 	input: CreateOrganizationInput
 ): Promise<OrganizationView> {
-	await requireWrite(ctx, 'organizations.write', 'organizations.created');
+	await requirePermission(ctx, 'organizations.write', { type: 'organizations.created' });
 	await assertInnIsFree(ctx, input.inn);
 
 	return withUniqueConflicts(() =>
@@ -206,9 +182,9 @@ export async function updateOrganization(
 	ctx: ActorContext,
 	input: UpdateOrganizationInput
 ): Promise<OrganizationView> {
-	await requireWrite(ctx, 'organizations.write', 'organizations.updated', {
-		type: 'organization',
-		id: input.id
+	await requirePermission(ctx, 'organizations.write', {
+		type: 'organizations.updated',
+		subject: { type: 'organization', id: input.id }
 	});
 
 	// Организация вне области доступа отдаётся как «не найдена» — тем же путём,
@@ -250,9 +226,9 @@ export async function archiveOrganization(
 	ctx: ActorContext,
 	id: string
 ): Promise<OrganizationView> {
-	await requireWrite(ctx, 'organizations.write', 'organizations.deactivated', {
-		type: 'organization',
-		id
+	await requirePermission(ctx, 'organizations.write', {
+		type: 'organizations.deactivated',
+		subject: { type: 'organization', id }
 	});
 
 	const before = await getOrganization(ctx, id);
@@ -294,9 +270,9 @@ export async function restoreOrganization(
 	ctx: ActorContext,
 	id: string
 ): Promise<OrganizationView> {
-	await requireWrite(ctx, 'organizations.write', 'organizations.updated', {
-		type: 'organization',
-		id
+	await requirePermission(ctx, 'organizations.write', {
+		type: 'organizations.updated',
+		subject: { type: 'organization', id }
 	});
 
 	const before = await getOrganization(ctx, id);
@@ -339,9 +315,9 @@ function toSiteView(row: typeof sites.$inferSelect): SiteView {
 }
 
 export async function createSite(ctx: ActorContext, input: CreateSiteInput): Promise<SiteView> {
-	await requireWrite(ctx, 'organizations.write', 'organizations.site_created', {
-		type: 'organization',
-		id: input.organizationId
+	await requirePermission(ctx, 'organizations.write', {
+		type: 'organizations.site_created',
+		subject: { type: 'organization', id: input.organizationId }
 	});
 
 	await getOrganization(ctx, input.organizationId);
@@ -367,9 +343,9 @@ export async function createSite(ctx: ActorContext, input: CreateSiteInput): Pro
 }
 
 export async function updateSite(ctx: ActorContext, input: UpdateSiteInput): Promise<SiteView> {
-	await requireWrite(ctx, 'organizations.write', 'organizations.site_updated', {
-		type: 'site',
-		id: input.id
+	await requirePermission(ctx, 'organizations.write', {
+		type: 'organizations.site_updated',
+		subject: { type: 'site', id: input.id }
 	});
 
 	const before = await getSite(ctx, input.id);
@@ -414,7 +390,7 @@ export async function createPerson(
 	ctx: ActorContext,
 	input: CreatePersonInput
 ): Promise<PersonView> {
-	await requireWrite(ctx, 'people.write', 'people.created');
+	await requirePermission(ctx, 'people.write', { type: 'people.created' });
 
 	return withTransaction(ctx, async (tx) => {
 		const [row] = await tx.insert(people).values(input).returning();
@@ -440,8 +416,14 @@ export async function updatePerson(
 	ctx: ActorContext,
 	input: UpdatePersonInput
 ): Promise<PersonView> {
-	await requireWrite(ctx, 'people.write', 'people.updated', { type: 'person', id: input.id });
-	await requireWrite(ctx, 'people.read_pii', 'people.updated', { type: 'person', id: input.id });
+	await requirePermission(ctx, 'people.write', {
+		type: 'people.updated',
+		subject: { type: 'person', id: input.id }
+	});
+	await requirePermission(ctx, 'people.read_pii', {
+		type: 'people.updated',
+		subject: { type: 'person', id: input.id }
+	});
 
 	const { id, ...fields } = input;
 	const db = getDb();
@@ -510,9 +492,9 @@ export async function createAffiliation(
 	ctx: ActorContext,
 	input: CreateAffiliationInput
 ): Promise<AffiliationView> {
-	await requireWrite(ctx, 'people.write', 'people.affiliation_created', {
-		type: 'organization',
-		id: input.organizationId
+	await requirePermission(ctx, 'people.write', {
+		type: 'people.affiliation_created',
+		subject: { type: 'organization', id: input.organizationId }
 	});
 
 	await getOrganization(ctx, input.organizationId);
@@ -551,9 +533,9 @@ export async function endAffiliation(
 	ctx: ActorContext,
 	input: EndAffiliationInput
 ): Promise<AffiliationView> {
-	await requireWrite(ctx, 'people.write', 'people.affiliation_updated', {
-		type: 'affiliation',
-		id: input.id
+	await requirePermission(ctx, 'people.write', {
+		type: 'people.affiliation_updated',
+		subject: { type: 'affiliation', id: input.id }
 	});
 
 	const db = getDb();
@@ -619,7 +601,7 @@ export async function createProgram(
 	ctx: ActorContext,
 	input: CreateProgramInput
 ): Promise<ProgramView> {
-	await requireWrite(ctx, 'programs.write', 'programs.created');
+	await requirePermission(ctx, 'programs.write', { type: 'programs.created' });
 
 	return withUniqueConflicts(() =>
 		withTransaction(ctx, async (tx) => {
@@ -644,9 +626,9 @@ export async function updateProgram(
 	ctx: ActorContext,
 	input: UpdateProgramInput
 ): Promise<ProgramView> {
-	await requireWrite(ctx, 'programs.write', 'programs.updated', {
-		type: 'program',
-		id: input.id
+	await requirePermission(ctx, 'programs.write', {
+		type: 'programs.updated',
+		subject: { type: 'program', id: input.id }
 	});
 
 	const { id, ...fields } = input;
@@ -695,9 +677,9 @@ export async function addProgramVersion(
 	ctx: ActorContext,
 	input: CreateProgramVersionInput
 ): Promise<ProgramVersionView> {
-	await requireWrite(ctx, 'programs.write', 'programs.version_created', {
-		type: 'program',
-		id: input.programId
+	await requirePermission(ctx, 'programs.write', {
+		type: 'programs.version_created',
+		subject: { type: 'program', id: input.programId }
 	});
 
 	return withUniqueConflicts(() =>
@@ -767,7 +749,7 @@ export async function createProduct(
 	ctx: ActorContext,
 	input: CreateProductInput
 ): Promise<ProductView> {
-	await requireWrite(ctx, 'products.write', 'products.created');
+	await requirePermission(ctx, 'products.write', { type: 'products.created' });
 
 	if (input.vendorOrganizationId !== null) {
 		await getOrganization(ctx, input.vendorOrganizationId);
@@ -796,9 +778,9 @@ export async function updateProduct(
 	ctx: ActorContext,
 	input: UpdateProductInput
 ): Promise<ProductView> {
-	await requireWrite(ctx, 'products.write', 'products.updated', {
-		type: 'product',
-		id: input.id
+	await requirePermission(ctx, 'products.write', {
+		type: 'products.updated',
+		subject: { type: 'product', id: input.id }
 	});
 
 	const { id, ...fields } = input;
