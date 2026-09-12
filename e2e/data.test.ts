@@ -2,6 +2,7 @@ import { readFile } from 'node:fs/promises';
 import ExcelJS from 'exceljs';
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { waitForHydration } from './helpers/hydration';
 
 /**
  * Раздел «Данные» глазами менеджера: мастер загрузки из трёх шагов, построчная
@@ -54,6 +55,11 @@ async function uploadFile(
 	await page.goto('/data');
 	await page.getByRole('link', { name: 'Загрузить файл' }).click();
 	await expect(page.getByRole('heading', { name: 'Загрузка данных' })).toBeVisible();
+
+	// Значение поля даты держит компонент: до того, как страница ожила, набранное
+	// остаётся в разметке, а в скрытое поле формы не попадает — и повторный ввод
+	// этого уже не исправит.
+	await waitForHydration(page);
 
 	await page.locator('input[name="file"]').setInputFiles(file);
 	// Поле даты — своё (`DateField`): человек пишет `01.09.2024`, а форме

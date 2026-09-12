@@ -1,5 +1,6 @@
 import { type Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { waitForHydration } from './helpers/hydration';
 
 /**
  * The kit page is where every shared component is on screen at once, so it is
@@ -122,6 +123,10 @@ test('a date is typed in the Russian order and picked from the same popover laye
 test('navigation moves into a sheet on a phone', async ({ page }) => {
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto('/ui-kit');
+	// The sheet is opened by the page's own code, and the button toggles it, so a
+	// press cannot be repeated until it works: a second one would close what the
+	// first opened. Wait for the page to come alive instead, then press once.
+	await waitForHydration(page);
 
 	// The sidebar is still in the markup at this width, only hidden by CSS.
 	await expect(page.getByRole('dialog')).toHaveCount(0);

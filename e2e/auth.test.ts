@@ -1,5 +1,6 @@
 import { expect, test, type Page } from '@playwright/test';
 import { E2E_USER } from './global-setup';
+import { waitForHydration } from './helpers/hydration';
 
 /**
  * Вход глазами посетителя: без сессии внутрь не попасть, после входа человек
@@ -68,6 +69,11 @@ test('вход по паролю открывает оболочку прило�
 
 test('неверный пароль объясняется словами и не пускает дальше', async ({ page }) => {
 	await page.goto('/login');
+	// Отправку формы берёт на себя `use:enhance`, и только он оставляет человека
+	// на `/login`: форма, ушедшая до того, как страница ожила, уходит обычным
+	// POST-ом на `?/login` — отказ виден, но адрес уже не тот. Повтор здесь не
+	// поможет, страница с формой к этому моменту сменилась.
+	await waitForHydration(page);
 
 	await page.getByLabel('Рабочая почта').fill(E2E_USER.email);
 	await page.getByLabel('Пароль').fill('совсем не тот пароль');

@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures';
+import { waitForHydration } from './helpers/hydration';
 
 /**
  * Справочники в браузере: форма, список и карточка.
@@ -113,6 +114,11 @@ test('справочник организаций снят для обзора',
 	const shortName = `Вуз ${tag()}`;
 
 	await page.goto('/organizations/new');
+	// Форму ведёт `use:enhance`: пока он не встал, отправка уходит обычным
+	// POST-ом на `?/create`, и снимок карточки достаётся странице, которая ещё
+	// не ожила. Повторить отправку нечем — она одна и уводит со страницы.
+	await waitForHydration(page);
+
 	await page.getByLabel('Полное наименование').fill(`Полное наименование: ${shortName}`);
 	await page.getByLabel('Краткое наименование').fill(shortName);
 	await page.getByLabel('ИНН').fill(validInn());

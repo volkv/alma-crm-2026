@@ -2,6 +2,7 @@ import { expect, test as base, type Locator } from '@playwright/test';
 import { seedId } from '../scripts/seed/ids';
 import { DEMO_EMAILS } from '../scripts/seed/users';
 import { ADMIN_STATE, STAFF_ADMIN_STATE } from './global-setup';
+import { waitForHydration } from './helpers/hydration';
 import { loginStaffAdmin } from './helpers/mfa';
 
 /**
@@ -171,6 +172,9 @@ test('фильтр по типу события меняет список и а�
 
 test('фильтр по периоду принимает дату в русском виде и уносит её в адрес', async ({ page }) => {
 	await page.goto('/audit');
+	// Значение поля даты держит компонент: набранное до того, как страница ожила,
+	// не доходит ни до него, ни до адреса.
+	await waitForHydration(page);
 
 	// Поле пишет и читает `01.01.2026`, а в адрес уходит календарный день так,
 	// как его понимает сервер.

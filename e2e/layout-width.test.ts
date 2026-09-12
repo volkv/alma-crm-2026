@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { waitForHydration } from './helpers/hydration';
 
 /**
  * Экран телефона против шапки страницы.
@@ -50,6 +51,10 @@ test('карточка загруженного снимка держит шир
 	// бейджем состояния и кнопкой следующего шага. Три элемента в ряд и есть тот
 	// набор, который на телефоне не помещается.
 	await page.goto('/data/new');
+	// Значение поля даты держит компонент: набранное до того, как страница ожила,
+	// остаётся в разметке и в скрытое поле формы не попадает.
+	await waitForHydration(page);
+
 	await page.locator('input[name="file"]').setInputFiles({
 		name: `ширина-${TAG}.csv`,
 		mimeType: 'text/csv',

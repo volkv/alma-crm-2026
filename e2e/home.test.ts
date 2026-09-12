@@ -2,6 +2,7 @@ import postgres from 'postgres';
 import type { Page } from '@playwright/test';
 import type { StageSnapshot } from '$lib/contracts/interactions';
 import { expect, test } from './fixtures';
+import { waitForHydration } from './helpers/hydration';
 
 /**
  * Главная глазами менеджера: плитки портфеля, список «требуют действия»,
@@ -289,6 +290,10 @@ function section(page: Page, title: string) {
 
 test('плитки показывают числа и ведут в список с фильтром', async ({ page }) => {
 	await page.goto('/');
+	// Переход по плитке отдан клиентскому маршрутизатору: нажатие, пришедшее
+	// раньше, чем он встал, не доходит ни до него, ни до браузера — ссылка
+	// остаётся на месте, а повторить нажатие нельзя, второе увело бы дальше.
+	await waitForHydration(page);
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Сводка');
 
 	// В подпись ссылки попадает само число: пустая плитка провалит проверку.
