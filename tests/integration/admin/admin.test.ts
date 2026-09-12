@@ -261,6 +261,25 @@ describe('выгрузка журнала', () => {
 		expect(lines.filter((line) => line !== '')).toHaveLength(3);
 	});
 
+	it('называет файл московской датой, а не датой по Гринвичу', async () => {
+		// 21:30 по Гринвичу — это уже следующие сутки в Москве. Оператор работает
+		// по Москве, границы фильтра — тоже московские сутки, и выгрузка за
+		// сегодня не должна приезжать с вчерашним числом в имени.
+		vi.useFakeTimers({ toFake: ['Date'], now: new Date('2026-09-12T21:30:00Z') });
+
+		try {
+			const response = await exportAudit(
+				pageEvent({ path: '/audit/export', query: '?format=json' })
+			);
+
+			expect(response.headers.get('content-disposition')).toContain(
+				'filename="audit-2026-09-13.json"'
+			);
+		} finally {
+			vi.useRealTimers();
+		}
+	});
+
 	it('отдаёт JSON массивом и под тем же фильтром, что список', async () => {
 		const response = await exportAudit(
 			pageEvent({ path: '/audit/export', query: '?format=json&type=auth.login' })
@@ -401,18 +420,21 @@ describe('профиль', () => {
 		]);
 	});
 
-	it('меняет пароль, говорит о завершённых сессиях и пишет это в журнал', async () => {
+	it('меняет пароль, уводит на вход с причиной и пишет это в журнал', async () => {
 		const user = await account();
 
-		const result = await changePasswordAction(
-			pageEvent({
-				path: '/settings/profile',
-				user,
-				form: { current: password, next: 'Другой-Пароль-9', repeat: 'Другой-Пароль-9' }
-			})
-		);
-
-		expect(formOf(result).message).toBe('Пароль изменён. Все сессии завершены — войдите заново.');
+		// Сессии погашены все, включая текущую, поэтому действие не возвращает
+		// страницу, а разворачивает на форму входа — и называет ей причину, чтобы
+		// та не выглядела внезапным выходом из системы.
+		await expect(
+			changePasswordAction(
+				pageEvent({
+					path: '/settings/profile',
+					user,
+					form: { current: password, next: 'Другой-Пароль-9', repeat: 'Другой-Пароль-9' }
+				})
+			)
+		).rejects.toMatchObject({ status: 303, location: '/login?reason=password-changed' });
 
 		const changed = await database.db
 			.select()

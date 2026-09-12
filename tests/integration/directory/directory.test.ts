@@ -33,6 +33,7 @@ import {
 	createProgram,
 	createSite,
 	endAffiliation,
+	restoreOrganization,
 	updateOrganization,
 	updatePerson,
 	updateProduct,
@@ -142,6 +143,35 @@ describe('организации', () => {
 
 		await expect(archiveOrganization(ctx, organization.id)).rejects.toBeInstanceOf(ConflictError);
 		expect((await listOrganizationRows(ctx, firstPage)).total).toBe(1);
+	});
+
+	it('возвращает из архива, пишет это правкой одного поля и второй раз отказывает', async () => {
+		const ctx = testActor();
+		const organization = await createOrganization(ctx, organizationInput());
+		await archiveOrganization(ctx, organization.id);
+
+		const restored = await restoreOrganization(ctx, organization.id);
+		expect(restored.isActive).toBe(true);
+
+		// В журнале это правка состояния, а не новая организация: по списку
+		// изменённых полей видно, что вернули именно из архива.
+		const updates = await database.db
+			.select({ details: auditEvents.details })
+			.from(auditEvents)
+			.where(
+				and(eq(auditEvents.eventType, 'organizations.updated'), eq(auditEvents.outcome, 'success'))
+			);
+
+		expect(updates).toEqual([{ details: { changedFields: ['isActive'] } }]);
+
+		// Организация уже действует — возвращать нечего, и это конфликт, а не
+		// молчаливый успех.
+		await expect(restoreOrganization(ctx, organization.id)).rejects.toBeInstanceOf(ConflictError);
+
+		// Возврат меняет справочник, поэтому требует того же права, что и архив.
+		await expect(
+			restoreOrganization(testActor({ roleId: 'viewer' }), organization.id)
+		).rejects.toBeInstanceOf(ForbiddenError);
 	});
 
 	it('считает площадки в строке списка', async () => {

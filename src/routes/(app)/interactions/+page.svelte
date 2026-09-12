@@ -297,7 +297,7 @@
 					class="h-control rounded-md border border-input bg-background px-2 text-sm focus-ring"
 				>
 					{#each data.users as user (user.id)}
-						<option value={user.id}>{user.name}</option>
+						<option value={user.id}>{user.name} — {user.roleName}</option>
 					{/each}
 				</select>
 			</label>

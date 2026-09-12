@@ -129,10 +129,13 @@ curl -sS -X POST "$BASE/v1/interactions" \
 
 ## Что уже есть
 
-| Метод и путь                 | Право                | Что делает                                |
-| ---------------------------- | -------------------- | ----------------------------------------- |
-| `GET /v1/organizations`      | `organizations.read` | страница списка, фильтр `kind`, поиск `q` |
-| `GET /v1/organizations/{id}` | `organizations.read` | карточка организации                      |
+| Метод и путь                             | Право                | Что делает                                           |
+| ---------------------------------------- | -------------------- | ---------------------------------------------------- |
+| `GET /v1/organizations`                  | `organizations.read` | страница списка, фильтр `kind`, поиск `q`            |
+| `GET /v1/organizations/{id}`             | `organizations.read` | карточка организации                                 |
+| `GET /v1/interactions`                   | `interactions.read`  | страница списка: состояние, стадия, просрочка, поиск |
+| `GET /v1/interactions/{id}`              | `interactions.read`  | карточка: стороны, программы, продукты, лента стадий |
+| `POST /v1/interactions/{id}/transitions` | `stages.transition`  | шаг вперёд, возврат или пропуск; с `Idempotency-Key` |
 
 Записи организаций через API пока нет: в `src/lib/server/directory/` есть только чтение.
 Эндпоинт появится вместе с сервисом записи — обёртка для этого готова.

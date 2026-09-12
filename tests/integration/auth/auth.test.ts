@@ -13,7 +13,13 @@ import {
 	revokeAllSessions,
 	touchSession
 } from '$lib/server/auth/session';
-import { changePassword, createUser, deactivateUser, listUsers } from '$lib/server/auth/users';
+import {
+	changePassword,
+	createUser,
+	deactivateUser,
+	listUsers,
+	lookupUsers
+} from '$lib/server/auth/users';
 import { getRedis } from '$lib/server/redis';
 import { setSetting } from '$lib/server/settings';
 import { startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
@@ -185,6 +191,32 @@ describe('вход', () => {
 		expect(failures).toEqual([
 			{ outcome: 'failure', details: { userId: user.id } },
 			{ outcome: 'failure', details: {} }
+		]);
+	});
+
+	it('записывает удачный вход от лица вошедшего, а не анонимного посетителя', async () => {
+		const user = await newUser({ name: 'akter', password: PASSWORD });
+
+		// Форму входа заполняет ещё аноним: пользователя в контексте нет ни у
+		// неудачной попытки, ни у удачной.
+		await login(anonymous(address(20)), { email: user.email, password: 'Мимо-Пароля1' });
+		expect(
+			await login(anonymous(address(20)), { email: user.email, password: PASSWORD })
+		).toMatchObject({ ok: true });
+
+		const events = await database.db
+			.select({
+				type: auditEvents.eventType,
+				actorUserId: auditEvents.actorUserId,
+				actorLabel: auditEvents.actorLabel
+			})
+			.from(auditEvents)
+			.where(eq(auditEvents.actorUserId, user.id));
+
+		// Кто вошёл — это и есть ответ на вопрос «кто действовал»; неудачная
+		// попытка остаётся анонимной, её мог сделать кто угодно.
+		expect(events).toEqual([
+			{ type: 'auth.login', actorUserId: user.id, actorLabel: 'Иванов Иван' }
 		]);
 	});
 
@@ -361,9 +393,20 @@ describe('демонстрационный вход', () => {
 		const sessionId = await demoLogin(anonymous(address(8)), 'viewer');
 		expect(await touchSession(sessionId)).toBe(user.id);
 
+		// Демонстрационный вход отличается от обычного одной подробностью — по ней
+		// журнал и показывает, что учётная запись общая, а не личная.
 		expect(await auditOf('auth.login')).toEqual([
 			{ outcome: 'success', details: { userId: user.id, demo: true } }
 		]);
+
+		// И подписан он тем же, кем обычный вход: демонстрационная запись — тоже
+		// учётная запись, а не аноним.
+		const [event] = await database.db
+			.select({ actorUserId: auditEvents.actorUserId, actorLabel: auditEvents.actorLabel })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'auth.login'));
+
+		expect(event).toEqual({ actorUserId: user.id, actorLabel: 'Иванов Иван' });
 	});
 
 	it('вне демо-режима не существует', async () => {
@@ -442,6 +485,51 @@ describe('пользователи', () => {
 		// Три пользователя завела фикстура — по одному на роль.
 		expect(listed.total).toBe(4);
 		expect(listed.items.some((item) => item.email === email('v-spiske'))).toBe(true);
+	});
+
+	it('отдаёт штат для выбора ответственного тому, кто ведёт взаимодействия', async () => {
+		const manager = testActor({ roleId: 'manager' });
+		const created = await newUser({ name: 'v-vybore', password: PASSWORD });
+
+		// Раздел пользователей закрыт правом администратора, а выбор
+		// ответственного — нет: иначе менеджер не смог бы назначить работу коллеге.
+		await expect(listUsers(manager, pageQuerySchema.parse({}))).rejects.toBeInstanceOf(
+			ForbiddenError
+		);
+
+		const staff = await lookupUsers(manager);
+		expect(staff.map((item) => item.id)).toContain(created.id);
+		expect(staff.find((item) => item.id === created.id)).toMatchObject({
+			fullName: 'Иванов Иван',
+			roleId: 'manager',
+			roleName: 'Менеджер'
+		});
+
+		// Наблюдателю назначать нечего — и штата он не видит.
+		await expect(lookupUsers(testActor({ roleId: 'viewer' }))).rejects.toBeInstanceOf(
+			ForbiddenError
+		);
+	});
+
+	it('не предлагает выключенных и сужает список поиском и ролью', async () => {
+		const manager = testActor({ roleId: 'manager' });
+		const uvolen = await newUser({ name: 'uvolen-iz-vybora', password: PASSWORD });
+		await deactivateUser(testActor(), uvolen.id);
+		await newUser({ name: 'ostalsya-v-shtate', password: PASSWORD });
+
+		// Назначить работу на уволенного нельзя, поэтому его нет и в выборе.
+		expect((await lookupUsers(manager)).map((item) => item.id)).not.toContain(uvolen.id);
+
+		const found = await lookupUsers(manager, { q: 'иванов' });
+		expect(found.length).toBeGreaterThan(0);
+		expect(found.every((item) => item.fullName.includes('Иванов'))).toBe(true);
+
+		const admins = await lookupUsers(manager, { roleIds: ['admin'] });
+		expect(admins.length).toBeGreaterThan(0);
+		expect(admins.every((item) => item.roleId === 'admin')).toBe(true);
+
+		// Пустой список ролей — это «ни одна не подходит», а не «любая».
+		expect(await lookupUsers(manager, { roleIds: [] })).toEqual([]);
 	});
 
 	it('не даёт выключить собственную учётную запись', async () => {

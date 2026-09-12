@@ -15,12 +15,12 @@ import { recordAuditEvent } from '../audit';
 import { getConfig } from '../config';
 import { getDb } from '../db';
 import { roles, users } from '../db/schema';
-import { NotFoundError } from '../errors';
+import { ConflictError, NotFoundError } from '../errors';
 import { DEFAULT_ROLES } from '../rbac/permissions';
 import { getSetting } from '../settings';
 import { clearLoginFailures, lockoutState, registerLoginFailure, UNKNOWN_ADDRESS } from './lockout';
 import { verifyPassword } from './password';
-import { createSession, markSignedIn } from './session';
+import { createSession, loadSessionUser, markSignedIn } from './session';
 import { normalizeEmail } from './users';
 
 /** Один текст на все причины отказа: он не должен ничего сообщать о чужих учётных записях. */
@@ -115,9 +115,23 @@ export async function demoLogin(ctx: ActorContext, roleId: string): Promise<stri
 }
 
 async function startSession(ctx: ActorContext, userId: string, demo: boolean): Promise<string> {
+	// Форму входа заполняет ещё анонимный посетитель, но удачный вход — действие
+	// самого владельца учётной записи: в журнале на этой строке должен стоять
+	// он, иначе «кто вошёл» отвечается только по подробностям события. Тот же
+	// пользователь собирается на каждом следующем запросе хуком сессии.
+	const user = await loadSessionUser(userId);
+
+	if (user === null) {
+		// Учётную запись выключили между проверкой пароля и этой строкой: заводить
+		// сессию уже не на кого.
+		throw new ConflictError('Учётная запись недоступна');
+	}
+
+	const actor: ActorContext = { ...ctx, user, scope: user.scope };
+
 	await markSignedIn(userId);
 
-	await recordAuditEvent(ctx, {
+	await recordAuditEvent(actor, {
 		type: 'auth.login',
 		outcome: 'success',
 		subject: { type: 'user', id: userId },

@@ -8,12 +8,13 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Toaster } from '$lib/components/ui/sonner/index.js';
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
+	import { visibleSections } from '$lib/nav';
 	import type { SessionUser } from '$lib/server/auth/types';
 	import AppNav from './app-nav.svelte';
 	import CommandPalette from './command-palette.svelte';
 	import UserMenu from './user-menu.svelte';
 	import { createNavCollapse } from './nav-collapse.svelte';
-	import { sectionFor } from './nav-links';
+	import { navLinks, sectionFor } from './nav-links';
 
 	/**
 	 * The frame every page of the application sits in: sections on the left, the
@@ -39,6 +40,9 @@
 	let searchOpen = $state(false);
 
 	const sectionTitle = $derived(sectionFor(page.url.pathname)?.label ?? 'LCT CRM');
+	// Раздел, на который у человека нет права, в меню не показывается: ссылка,
+	// отвечающая 403, — это не навигация.
+	const links = $derived(user === null ? [] : visibleSections(navLinks, user.permissions));
 
 	function onWindowKeydown(event: KeyboardEvent) {
 		if (event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)) {
@@ -71,7 +75,7 @@
 		</div>
 
 		<div class="min-h-0 flex-1 overflow-y-auto">
-			<AppNav collapsed={nav.collapsed} />
+			<AppNav {links} collapsed={nav.collapsed} />
 		</div>
 
 		<div class="border-t border-border p-2">
@@ -122,7 +126,7 @@
 						<Sheet.Title class="text-sm font-semibold">LCT CRM</Sheet.Title>
 						<Sheet.Description class="sr-only">Разделы системы</Sheet.Description>
 					</Sheet.Header>
-					<AppNav onnavigate={() => (mobileNavOpen = false)} />
+					<AppNav {links} onnavigate={() => (mobileNavOpen = false)} />
 				</Sheet.Content>
 			</Sheet.Root>
 

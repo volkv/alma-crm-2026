@@ -10,6 +10,15 @@ import { toActionFailure } from '$lib/server/http';
 import { getSetting } from '$lib/server/settings';
 import type { Actions, PageServerLoad } from './$types';
 
+/**
+ * Почему человек оказался на форме входа, если пришёл сюда не сам. Список
+ * закрыт: текст сообщения пишем мы, а не адресная строка, — иначе ссылкой на
+ * форму входа можно показать посетителю любую фразу от имени системы.
+ */
+const REASON_NOTICES: Record<string, string> = {
+	'password-changed': 'Пароль изменён, войдите заново'
+};
+
 export const load: PageServerLoad = async (event) => {
 	// Вошедшему на странице входа делать нечего — и ссылка на неё из закладок не
 	// должна выглядеть как выход из системы.
@@ -22,7 +31,14 @@ export const load: PageServerLoad = async (event) => {
 		listDemoAccounts()
 	]);
 
-	return { banner, demoAccounts, form: await superValidate(zod4(loginSchema)) };
+	const reason = event.url.searchParams.get('reason');
+
+	return {
+		banner,
+		demoAccounts,
+		notice: reason === null ? null : (REASON_NOTICES[reason] ?? null),
+		form: await superValidate(zod4(loginSchema))
+	};
 };
 
 export const actions: Actions = {

@@ -237,19 +237,23 @@
 					{/snippet}
 				</DropdownMenu.Trigger>
 				<DropdownMenu.Content align="end" class="w-52">
-					<DropdownMenu.GroupHeading>Показывать колонки</DropdownMenu.GroupHeading>
-					<DropdownMenu.Separator />
-					{#each table
-						.getAllLeafColumns()
-						.filter((column) => column.getCanHide()) as column (column.id)}
-						<DropdownMenu.CheckboxItem
-							checked={column.getIsVisible()}
-							onCheckedChange={(checked) => column.toggleVisibility(checked)}
-							closeOnSelect={false}
-						>
-							{columnTitle(column)}
-						</DropdownMenu.CheckboxItem>
-					{/each}
+					<!-- Заголовок обязан стоять внутри группы: без неё bits-ui не находит
+						контекст и всё содержимое меню не отрисовывается вовсе. -->
+					<DropdownMenu.Group>
+						<DropdownMenu.GroupHeading>Показывать колонки</DropdownMenu.GroupHeading>
+						<DropdownMenu.Separator />
+						{#each table
+							.getAllLeafColumns()
+							.filter((column) => column.getCanHide()) as column (column.id)}
+							<DropdownMenu.CheckboxItem
+								checked={column.getIsVisible()}
+								onCheckedChange={(checked) => column.toggleVisibility(checked)}
+								closeOnSelect={false}
+							>
+								{columnTitle(column)}
+							</DropdownMenu.CheckboxItem>
+						{/each}
+					</DropdownMenu.Group>
 				</DropdownMenu.Content>
 			</DropdownMenu.Root>
 		</div>

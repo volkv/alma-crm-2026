@@ -1,16 +1,19 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { cn } from '$lib/utils';
-	import { navLinks } from './nav-links';
+	import type { NavLink } from './nav-links';
 
 	/**
 	 * The list of sections. Shared by the desktop sidebar and the sheet on a
 	 * phone, so a section is described once and looks the same in both.
 	 */
 	let {
+		links,
 		collapsed = false,
 		onnavigate
 	}: {
+		/** Sections this user may open; the shell filters them by permission. */
+		links: readonly NavLink[];
 		/** Icons only; the label moves into the tooltip. */
 		collapsed?: boolean;
 		/** Called on every link click — the sheet uses it to close itself. */
@@ -19,7 +22,7 @@
 </script>
 
 <nav class="flex flex-col gap-0.5 p-2" aria-label="Разделы">
-	{#each navLinks as link (link.href)}
+	{#each links as link (link.href)}
 		{@const Icon = link.icon}
 		{@const active =
 			page.url.pathname === link.href || page.url.pathname.startsWith(`${link.href}/`)}

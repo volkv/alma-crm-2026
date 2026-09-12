@@ -282,6 +282,51 @@ export async function archiveOrganization(
 	});
 }
 
+/**
+ * Возврат из архива — обратная операция к архивированию: вуз, с которым снова
+ * начали работать, не заводят второй записью, иначе история взаимодействий
+ * разъедется на две организации. Событие журнала то же, что у правки, с одним
+ * изменённым полем: отдельного кода на это ничего не спрашивают, а вопрос
+ * «когда вернули» читается по нему. Повторный возврат — конфликт, а не
+ * молчаливый успех.
+ */
+export async function restoreOrganization(
+	ctx: ActorContext,
+	id: string
+): Promise<OrganizationView> {
+	await requireWrite(ctx, 'organizations.write', 'organizations.updated', {
+		type: 'organization',
+		id
+	});
+
+	const before = await getOrganization(ctx, id);
+
+	if (before.isActive) {
+		throw new ConflictError('Организация и так не в архиве');
+	}
+
+	return withTransaction(ctx, async (tx) => {
+		const [row] = await tx
+			.update(organizations)
+			.set({ isActive: true, updatedAt: sql`now()` })
+			.where(eq(organizations.id, id))
+			.returning();
+
+		await recordAuditEvent(
+			ctx,
+			{
+				type: 'organizations.updated',
+				outcome: 'success',
+				subject: { type: 'organization', id },
+				details: { changedFields: ['isActive'] }
+			},
+			tx
+		);
+
+		return toOrganizationView(row);
+	});
+}
+
 function toSiteView(row: typeof sites.$inferSelect): SiteView {
 	return {
 		id: row.id,

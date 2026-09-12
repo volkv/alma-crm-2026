@@ -1,28 +1,25 @@
 import type { RequestEvent } from '@sveltejs/kit';
-import { pageQuerySchema } from '$lib/contracts/common';
 import { actorFromEvent } from '$lib/server/actor';
-import { listUsers } from '$lib/server/auth/users';
+import { lookupUsers } from '$lib/server/auth/users';
 import { can } from '$lib/server/rbac';
 
-/** Кого можно назначить ответственным: идентификатор и подпись для списка. */
-export type ResponsibleOption = { id: string; name: string };
+/** Кого можно назначить ответственным: идентификатор, имя и роль для списка. */
+export type ResponsibleOption = { id: string; name: string; roleName: string };
 
 /**
- * Полный список сотрудников — право администратора (`users.manage`). Менеджеру
- * оно не положено, поэтому ему предлагается он сам: назначить ответственным
- * себя можно всегда, а знать поимённо весь штат ради одной кнопки не нужно.
+ * Ответственного выбирают из действующих сотрудников — всех, а не из одного
+ * себя: вести взаимодействие может любой менеджер, и назначение работы коллеге
+ * и есть смысл этого поля. Право на список то же, что и на само назначение
+ * (`interactions.write`); без него выбирать некого, и список пуст.
  */
 export async function responsibleOptions(event: RequestEvent): Promise<ResponsibleOption[]> {
 	const ctx = actorFromEvent(event);
-	const user = event.locals.user;
 
-	if (!can(ctx, 'users.manage')) {
-		return user === null ? [] : [{ id: user.id, name: user.fullName }];
+	if (!can(ctx, 'interactions.write')) {
+		return [];
 	}
 
-	const page = await listUsers(ctx, pageQuerySchema.parse({ pageSize: 100 }));
+	const staff = await lookupUsers(ctx);
 
-	return page.items
-		.filter((item) => item.isActive)
-		.map((item) => ({ id: item.id, name: item.fullName }));
+	return staff.map((user) => ({ id: user.id, name: user.fullName, roleName: user.roleName }));
 }

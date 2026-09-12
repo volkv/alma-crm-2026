@@ -178,6 +178,19 @@ export type AuditExport = {
 	body: string;
 };
 
+/**
+ * Календарные сутки по Москве — те же, которыми задаются границы фильтра. По
+ * UTC выгрузка, снятая вечером, называлась бы вчерашним числом, и два файла за
+ * один рабочий день оператора разъехались бы по датам. `en-CA` даёт ровно
+ * `2026-09-12`: имя файла читают и глазами, и сортировкой по имени.
+ */
+const exportStampFormat = new Intl.DateTimeFormat('en-CA', {
+	timeZone: 'Europe/Moscow',
+	year: 'numeric',
+	month: '2-digit',
+	day: '2-digit'
+});
+
 const CSV_COLUMNS = [
 	'occurred_at',
 	'request_id',
@@ -229,7 +242,7 @@ export async function exportAuditEvents(
 		.orderBy(asc(auditEvents.occurredAt), asc(auditEvents.id));
 
 	const views = rows.map(toAuditEventView);
-	const stamp = new Date().toISOString().slice(0, 10);
+	const stamp = exportStampFormat.format(new Date());
 
 	await recordAuditEvent(ctx, { type: 'audit.exported', outcome: 'success' });
 

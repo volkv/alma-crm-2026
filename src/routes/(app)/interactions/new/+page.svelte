@@ -253,7 +253,10 @@
 					name="ownerUserId"
 					label="Ответственный"
 					required
-					options={data.users.map((user) => ({ value: user.id, label: user.name }))}
+					options={data.users.map((user) => ({
+						value: user.id,
+						label: `${user.name} — ${user.roleName}`
+					}))}
 					bind:value={$form.ownerUserId}
 					errors={$errors.ownerUserId}
 				/>

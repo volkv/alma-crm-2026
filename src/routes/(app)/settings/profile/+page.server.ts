@@ -1,4 +1,5 @@
-import { error } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
+import { resolve } from '$app/paths';
 import { fail, message, setError, superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { actorFromEvent } from '$lib/server/actor';
@@ -15,9 +16,10 @@ import type { Actions, PageServerLoad } from './$types';
  * свой пароль меняет любой сотрудник, — но и чужую учётную запись отсюда не
  * тронуть: сервис работает только с `ctx.user`.
  *
- * Оба действия гасят все сессии владельца, включая текущую. Поэтому после них
- * страница остаётся с сообщением и кнопкой «Войти заново», а cookie снимается:
+ * Оба действия гасят все сессии владельца, включая текущую, и снимают cookie:
  * следующий запрос должен быть анонимным, а не биться о погашенную сессию.
+ * Смена пароля уводит на форму входа с причиной в адресе, «завершить все
+ * сессии» оставляет человека здесь с сообщением и кнопкой «Войти заново».
  */
 export const load: PageServerLoad = async (event) => {
 	const user = event.locals.user;
@@ -61,7 +63,11 @@ export const actions: Actions = {
 
 		clearSessionCookie(event.cookies);
 
-		return message(form, 'Пароль изменён. Все сессии завершены — войдите заново.');
+		// Сессии погашены все, включая текущую, поэтому на странице раздела
+		// человеку делать нечего: следующий же запрос отсюда развернуло бы на
+		// вход. Причина едет в адресе — форма входа объясняет, почему человек на
+		// ней оказался, вместо того чтобы выглядеть внезапным выходом из системы.
+		redirect(303, `${resolve('/login')}?reason=password-changed`);
 	},
 
 	revokeAll: async (event) => {

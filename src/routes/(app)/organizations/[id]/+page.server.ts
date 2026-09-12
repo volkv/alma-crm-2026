@@ -9,7 +9,11 @@ import {
 	listAffiliations,
 	listSites
 } from '$lib/server/directory/read';
-import { archiveOrganization, endAffiliation } from '$lib/server/directory/write';
+import {
+	archiveOrganization,
+	endAffiliation,
+	restoreOrganization
+} from '$lib/server/directory/write';
 import { toActionFailure } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import type { Actions, PageServerLoad } from './$types';
@@ -52,6 +56,18 @@ export const actions: Actions = {
 		}
 
 		redirect(303, `${resolve('/(app)/organizations')}?done=archived`);
+	},
+
+	restore: async (event) => {
+		try {
+			await restoreOrganization(actorFromEvent(event), event.params.id);
+		} catch (error) {
+			return toActionFailure(error);
+		}
+
+		// Возврат оставляет человека на карточке: он вернул организацию, чтобы
+		// тут же продолжить с ней работать, а не чтобы уйти в список.
+		redirect(303, `${resolve('/(app)/organizations/[id]', { id: event.params.id })}?done=restored`);
 	},
 
 	endAffiliation: async (event) => {

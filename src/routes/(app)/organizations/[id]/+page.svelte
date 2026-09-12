@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import ArchiveIcon from '@lucide/svelte/icons/archive';
+	import ArchiveRestoreIcon from '@lucide/svelte/icons/archive-restore';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -33,6 +34,9 @@
 	let archiveForm = $state<HTMLFormElement | null>(null);
 	let archiveOpen = $state(false);
 
+	let restoreForm = $state<HTMLFormElement | null>(null);
+	let restoreOpen = $state(false);
+
 	let endForm = $state<HTMLFormElement | null>(null);
 	let closing = $state<AffiliationView | null>(null);
 	let closeOpen = $state(false);
@@ -58,7 +62,8 @@
 		site_created: 'Площадка добавлена',
 		site_updated: 'Площадка сохранена',
 		affiliation_created: 'Контакт добавлен',
-		affiliation_ended: 'Полномочия закрыты'
+		affiliation_ended: 'Полномочия закрыты',
+		restored: 'Организация возвращена из архива'
 	}}
 />
 
@@ -80,6 +85,11 @@
 				<Button variant="outline" onclick={() => (archiveOpen = true)}>
 					<ArchiveIcon aria-hidden="true" />
 					В архив
+				</Button>
+			{:else}
+				<Button variant="outline" onclick={() => (restoreOpen = true)}>
+					<ArchiveRestoreIcon aria-hidden="true" />
+					Вернуть из архива
 				</Button>
 			{/if}
 		{/if}
@@ -291,6 +301,7 @@
 </div>
 
 <form method="POST" action="?/archive" bind:this={archiveForm} hidden></form>
+<form method="POST" action="?/restore" bind:this={restoreForm} hidden></form>
 
 <ConfirmDialog
 	bind:open={archiveOpen}
@@ -299,6 +310,14 @@
 	confirmLabel="В архив"
 	tone="danger"
 	onconfirm={() => archiveForm?.requestSubmit()}
+/>
+
+<ConfirmDialog
+	bind:open={restoreOpen}
+	title="Вернуть организацию из архива?"
+	description="Организация снова будет предлагаться в формах и списках выбора."
+	confirmLabel="Вернуть"
+	onconfirm={() => restoreForm?.requestSubmit()}
 />
 
 <form method="POST" action="?/endAffiliation" bind:this={endForm} hidden>

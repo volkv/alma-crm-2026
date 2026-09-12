@@ -5,7 +5,7 @@
  * нет ничего про HTTP и формы. Пароль наружу не выходит никогда — ни в списке,
  * ни в журнале: в базе лежит только хеш.
  */
-import { count, eq, sql } from 'drizzle-orm';
+import { and, count, eq, ilike, inArray, sql } from 'drizzle-orm';
 import type { UserView } from '$lib/contracts/auth';
 import type { PageQuery, PageResult } from '$lib/contracts/common';
 import type { ActorContext } from '../actor';
@@ -168,6 +168,65 @@ export async function listUsers(ctx: ActorContext, page: PageQuery): Promise<Pag
 	]);
 
 	return { items, total: totals[0]?.value ?? 0, page: page.page, pageSize: page.pageSize };
+}
+
+/** Сотрудник в выпадающем списке: кого можно назначить ответственным. */
+export type UserLookupItem = {
+	id: string;
+	fullName: string;
+	roleId: string;
+	roleName: string;
+};
+
+/** Сколько сотрудников попадает в выпадающий список за раз. */
+const LOOKUP_LIMIT = 100;
+
+/**
+ * Сотрудники для выбора ответственного.
+ *
+ * Право здесь `interactions.write`, а не `users.manage`: назначать
+ * ответственного — работа менеджера, и штат ему для этого нужен весь, а вот
+ * заводить и выключать учётные записи он не может. Поэтому наружу идут только
+ * имя и роль: почты, состояния и отметок о последнем входе для выпадающего
+ * списка не нужно, а видит его куда более широкий круг, чем раздел
+ * пользователей. Выключенные записи не показываются — назначить работу на
+ * уволенного нельзя.
+ */
+export async function lookupUsers(
+	ctx: ActorContext,
+	input: { q?: string; roleIds?: readonly string[] } = {}
+): Promise<UserLookupItem[]> {
+	requirePermission(ctx, 'interactions.write');
+
+	const conditions = [eq(users.isActive, true)];
+	const q = input.q?.trim() ?? '';
+
+	if (q !== '') {
+		conditions.push(ilike(users.fullName, `%${q}%`));
+	}
+
+	if (input.roleIds !== undefined) {
+		// Пустой список ролей — это «ни одна роль не подходит», а не «любая»:
+		// молча расширять запрос до всего штата нельзя.
+		if (input.roleIds.length === 0) {
+			return [];
+		}
+
+		conditions.push(inArray(users.roleId, [...input.roleIds]));
+	}
+
+	return getDb()
+		.select({
+			id: users.id,
+			fullName: users.fullName,
+			roleId: users.roleId,
+			roleName: roles.name
+		})
+		.from(users)
+		.innerJoin(roles, eq(roles.id, users.roleId))
+		.where(and(...conditions))
+		.orderBy(users.fullName)
+		.limit(LOOKUP_LIMIT);
 }
 
 /**
