@@ -1,0 +1,48 @@
+<script lang="ts">
+	import type { Snippet } from 'svelte';
+	import { cn } from '$lib/utils';
+
+	/**
+	 * Блок сводки: заголовок, пояснение к нему и содержимое в панели. Главная
+	 * собрана из нескольких таких блоков, и общая рамка нужна ровно затем, чтобы
+	 * они читались как один экран, а не как несколько разных страниц подряд.
+	 *
+	 * Заголовок блока — `<h2>`: `<h1>` на странице один и принадлежит
+	 * `PageHeader`.
+	 */
+	let {
+		title,
+		description,
+		action,
+		class: className,
+		children
+	}: {
+		title: string;
+		description?: string;
+		/** Одна ссылка или кнопка справа от заголовка. */
+		action?: Snippet;
+		class?: string;
+		children: Snippet;
+	} = $props();
+</script>
+
+<section
+	class={cn('flex min-w-0 flex-col rounded-lg border border-border bg-surface', className)}
+	data-slot="home-section"
+>
+	<header
+		class="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3"
+	>
+		<div class="min-w-0">
+			<h2 class="text-sm font-semibold">{title}</h2>
+			{#if description}
+				<p class="mt-0.5 text-xs text-muted-foreground">{description}</p>
+			{/if}
+		</div>
+		{#if action}
+			<div class="shrink-0">{@render action()}</div>
+		{/if}
+	</header>
+
+	{@render children()}
+</section>

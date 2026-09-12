@@ -55,6 +55,14 @@
 	</Card.Header>
 
 	<Card.Content class="flex flex-col gap-4">
+		<!-- Объяснение, почему человек снова здесь: это не отказ, поэтому и не
+		     `destructive`. Ошибка входа стоит ниже — ближе к форме. -->
+		{#if data.notice}
+			<Alert.Root>
+				<Alert.Description>{data.notice}</Alert.Description>
+			</Alert.Root>
+		{/if}
+
 		{#if $message}
 			<Alert.Root variant="destructive">
 				<Alert.Description>{$message}</Alert.Description>
@@ -74,7 +82,7 @@
 				type="email"
 				label="Рабочая почта"
 				required
-				placeholder="ivanov@rtkit.ru"
+				placeholder="name@example.org"
 				bind:value={$form.email}
 				errors={$errors.email}
 			/>

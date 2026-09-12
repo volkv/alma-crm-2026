@@ -1,9 +1,12 @@
 import { expect, test } from './fixtures';
 
-test('the home page renders the product name', async ({ page }) => {
+// The product name lives in the document title and in the shell; the page
+// itself is the daily overview, so its heading names the page, not the product.
+test('the home page renders the daily overview', async ({ page }) => {
 	await page.goto('/');
 
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText('LCT CRM');
+	await expect(page).toHaveTitle(/LCT CRM/);
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Сводка');
 });
 
 test('the health endpoint reports every dependency as ok', async ({ request }) => {
