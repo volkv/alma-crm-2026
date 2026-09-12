@@ -4,6 +4,7 @@ import { fail, message, setError, superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { secondFactorSchema, totpCodeSchema } from '$lib/contracts/auth';
 import { actorFromEvent } from '$lib/server/actor';
+import { addressLimitNotice } from '$lib/server/auth/address-limit';
 import { finishSecondFactor } from '$lib/server/auth/login';
 import {
 	BACKUP_CODE_COUNT,
@@ -64,30 +65,46 @@ export const load: PageServerLoad = async (event) => {
 		redirect(303, next);
 	}
 
-	const state = await mfaStateFor(user.id);
+	// Второй шаг отправляется тем же POST на маршрут `(auth)`, что и пароль, и
+	// считается тем же счётчиком адреса. Исчерпанный лимит разворачивает его
+	// хук, поэтому страница объясняет отказ словами и не рисует органов
+	// управления, которые всё равно не сработают, — как и форма пароля.
+	const [state, rateLimited] = await Promise.all([
+		mfaStateFor(user.id),
+		addressLimitNotice(event.getClientAddress())
+	]);
+
+	const common = {
+		next,
+		account: { email: user.email },
+		backupCodeCount: BACKUP_CODE_COUNT,
+		rateLimited
+	};
 
 	if (state.enabled) {
 		return {
+			...common,
 			mode: 'verify' as const,
-			next,
-			account: { email: user.email },
 			enrollment: null,
-			backupCodeCount: BACKUP_CODE_COUNT,
 			form: await superValidate(zod4(secondFactorSchema), { id: FORM_ID })
 		};
 	}
 
-	const enrollment = await pendingEnrollment(actorFromEvent(event), sessionId(event.cookies));
+	// Регистрацию, которую всё равно нельзя подтвердить, не начинаем: секрет на
+	// экране остался бы висеть неподтверждённым, а человек унёс бы его в
+	// приложение впустую.
+	const enrollment =
+		rateLimited === null
+			? await pendingEnrollment(actorFromEvent(event), sessionId(event.cookies))
+			: null;
 
 	return {
+		...common,
 		mode: 'enroll' as const,
-		next,
-		account: { email: user.email },
-		enrollment: {
-			uri: enrollment.uri,
-			secret: formatSecretForHuman(enrollment.secret)
-		},
-		backupCodeCount: BACKUP_CODE_COUNT,
+		enrollment:
+			enrollment === null
+				? null
+				: { uri: enrollment.uri, secret: formatSecretForHuman(enrollment.secret) },
 		form: await superValidate(zod4(totpCodeSchema), { id: FORM_ID })
 	};
 };
@@ -107,13 +124,21 @@ export const actions: Actions = {
 		}
 
 		const ctx = actorFromEvent(event);
-		const outcome = await verifySecondFactor(ctx, { code });
 
-		if (!outcome.ok) {
-			return message(form, outcome.message, { status: 400 });
+		// Отказ по состоянию сессии — предметная ошибка, а не сбой: шаг мог
+		// закрыться в соседней вкладке, пока здесь набирали код. Без перевода
+		// такой отказ становится 500 и выглядит поломкой системы.
+		try {
+			const outcome = await verifySecondFactor(ctx, { code });
+
+			if (!outcome.ok) {
+				return message(form, outcome.message, { status: 400 });
+			}
+
+			await finishSecondFactor(ctx, sessionId(event.cookies));
+		} catch (failure) {
+			return toActionFailure(failure);
 		}
-
-		await finishSecondFactor(ctx, sessionId(event.cookies));
 
 		redirect(303, safeNextPath(event.url.searchParams.get('next')));
 	},

@@ -12,11 +12,31 @@ import { E2E_USER } from './global-setup';
 /** Идентификатор верной формы, которого нет ни в одной таблице стенда. */
 const ABSENT_ID = '00000000-0000-4000-8000-0000000000ff';
 
+/**
+ * Вход демонстрационной кнопкой.
+ *
+ * Страница входа в момент нажатия ещё гидратируется, и узел, на который
+ * пришёлся клик, SvelteKit заменяет — клик уходит вместе с ним («Всплывающие
+ * слои» в `docs/development.md`). Поэтому нажимаем, пока не окажемся внутри, а
+ * не ждём фиксированную паузу. Повтор безопасен: после удачного нажатия кнопки
+ * на странице уже нет, и блок только сверяет адрес.
+ */
+async function enterByDemoButton(page: Page, roleName: string, landing = '/'): Promise<void> {
+	const button = page.getByRole('button', { name: `Войти как ${roleName}` });
+
+	await expect(async () => {
+		if ((await button.count()) > 0) {
+			await button.click({ timeout: 5_000 });
+		}
+
+		await expect(page).toHaveURL(landing, { timeout: 5_000 });
+	}).toPass({ timeout: 30_000 });
+}
+
 /** Вход демонстрационной кнопкой наблюдателя: у него нет права на журнал. */
 async function signInAsObserver(page: Page): Promise<void> {
 	await page.goto('/login');
-	await page.getByRole('button', { name: 'Войти как наблюдатель' }).click();
-	await expect(page).toHaveURL('/');
+	await enterByDemoButton(page, 'наблюдатель');
 }
 
 test('без сессии любая страница приложения отправляет на вход', async ({ page }) => {
@@ -39,7 +59,11 @@ test('вход по паролю открывает оболочку прило�
 	await page.getByRole('button', { name: 'Войти', exact: true }).click();
 
 	await expect(page).toHaveURL('/');
-	await expect(page.getByRole('button', { name: E2E_USER.fullName })).toBeVisible();
+	// Между нажатием и этой проверкой стоит переход: POST, перенаправление и
+	// загрузка оболочки. Пяти секунд умолчания на это мало, когда машина занята.
+	await expect(page.getByRole('button', { name: E2E_USER.fullName })).toBeVisible({
+		timeout: 15_000
+	});
 });
 
 test('неверный пароль объясняется словами и не пускает дальше', async ({ page }) => {
@@ -56,9 +80,8 @@ test('неверный пароль объясняется словами и н�
 test('демонстрационная кнопка впускает и показывает плашку демо-режима', async ({ page }) => {
 	await page.goto('/login');
 
-	await page.getByRole('button', { name: 'Войти как наблюдатель' }).click();
+	await enterByDemoButton(page, 'наблюдатель');
 
-	await expect(page).toHaveURL('/');
 	await expect(page.getByText('Демо-режим: данные синтетические')).toBeVisible();
 	await expect(page.getByRole('button', { name: 'Наблюдатель Демо' })).toBeVisible();
 });
@@ -68,24 +91,22 @@ test('после входа человек возвращается туда, к
 
 	await expect(page).toHaveURL('/login?next=%2Fui-kit');
 
-	await page.getByRole('button', { name: 'Войти как менеджер' }).click();
+	await enterByDemoButton(page, 'менеджер', '/ui-kit');
 
-	await expect(page).toHaveURL('/ui-kit');
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('UI-кит');
 });
 
 test('адрес на чужой сайт в next никуда не уводит', async ({ page }) => {
 	await page.goto('/login?next=https://example.org/steal');
 
-	await page.getByRole('button', { name: 'Войти как менеджер' }).click();
-
-	await expect(page).toHaveURL('/');
+	// Проверка — в самом ожидаемом адресе: вход обязан привести на главную, а не
+	// на чужой сайт из строки запроса.
+	await enterByDemoButton(page, 'менеджер', '/');
 });
 
 test('выход возвращает к форме входа и закрывает страницы приложения', async ({ page }) => {
 	await page.goto('/login');
-	await page.getByRole('button', { name: 'Войти как менеджер' }).click();
-	await expect(page).toHaveURL('/');
+	await enterByDemoButton(page, 'менеджер');
 
 	// Меню учётной записи открывается кодом на странице, а не браузером:
 	// нажатие до того, как страница ожила, не доходит до компонента. Поэтому
@@ -113,8 +134,7 @@ test('гвардия разворачивает анонима на вход и 
 
 test('форма на странице с погасшей сессией уводит на вход, а не в пятисотую', async ({ page }) => {
 	await page.goto('/login');
-	await page.getByRole('button', { name: 'Войти как менеджер' }).click();
-	await expect(page).toHaveURL('/');
+	await enterByDemoButton(page, 'менеджер');
 
 	await page.goto('/organizations/new');
 	await page.getByLabel('Полное наименование').fill('Организация без сессии');

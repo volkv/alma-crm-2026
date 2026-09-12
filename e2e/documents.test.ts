@@ -86,6 +86,24 @@ function option(page: Page, label: string): Locator {
  * {@link upload} — тесту, который смотрит на код ответа, нужно успеть подписаться
  * на ответ до отправки.
  */
+/**
+ * Вкладка «Документы» на карточке взаимодействия.
+ *
+ * Вкладки — контрол bits-ui: переключает их код страницы, и нажатие до
+ * гидратации до компонента не доходит и теряется совсем («Всплывающие слои» в
+ * `docs/development.md`). Без переключения карточка загрузки не появляется, и
+ * ожидание её полей упирается в таймаут вместо внятного отказа. Повтор
+ * безопасен: открытая вкладка от второго нажатия не закрывается.
+ */
+async function openDocumentsTab(page: Page): Promise<void> {
+	const uploadCard = page.locator('[data-slot="card"]').filter({ hasText: 'Загрузить документ' });
+
+	await expect(async () => {
+		await page.getByRole('tab', { name: 'Документы' }).click({ timeout: 5_000 });
+		await expect(uploadCard).toBeVisible({ timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+}
+
 async function submitUpload(
 	page: Page,
 	title: string,
@@ -118,7 +136,7 @@ test('раздел показывает загруженные документ�
 }) => {
 	await test.step('файлы загружаются из карточки взаимодействия', async () => {
 		await page.goto(`/interactions/${INTERACTION_ID}`);
-		await page.getByRole('tab', { name: 'Документы' }).click();
+		await openDocumentsTab(page);
 
 		await upload(page, PDF_TITLE, 'Соглашение', {
 			name: 'agreement.pdf',
@@ -197,7 +215,7 @@ test('новая редакция заменяет файл в деле, а пр
 	const title = `Скан соглашения ${REVISION_TAG}`;
 
 	await page.goto(`/interactions/${INTERACTION_ID}`);
-	await page.getByRole('tab', { name: 'Документы' }).click();
+	await openDocumentsTab(page);
 
 	await upload(page, title, 'Соглашение', {
 		name: 'agreement.pdf',
@@ -272,7 +290,7 @@ test('скан на 1,2 МБ доходит до приложения, а не �
 	page
 }) => {
 	await page.goto(`/interactions/${INTERACTION_ID}`);
-	await page.getByRole('tab', { name: 'Документы' }).click();
+	await openDocumentsTab(page);
 
 	// Подписка до отправки: ответ на форму нужен целиком, а не по следам в UI.
 	const posted = page.waitForResponse(

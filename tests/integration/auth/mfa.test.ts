@@ -3,8 +3,10 @@ import { asc, eq } from 'drizzle-orm';
 import { isRedirect, type RequestEvent } from '@sveltejs/kit';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActorContext } from '$lib/server/actor';
+import type { SessionUser } from '$lib/server/auth/types';
 import { auditEvents, users } from '$lib/server/db/schema';
 import { ConflictError, ForbiddenError, ValidationError } from '$lib/server/errors';
+import { withinAddressLimit } from '$lib/server/auth/lockout';
 import { finishSecondFactor, login } from '$lib/server/auth/login';
 import {
 	confirmEnrollment,
@@ -24,9 +26,16 @@ import { session as sessionHook } from '$lib/server/hooks/session';
 import { getRedis } from '$lib/server/redis';
 import { setSetting } from '$lib/server/settings';
 import { startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
+import { pageEvent } from '../helpers/event';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
+
+/** Страница второго шага: её загрузчик и её форма — отдельный от сервиса слой. */
+const mfaPage = await import('../../../src/routes/(auth)/login/mfa/+page.server');
+
+const loadMfa = mfaPage.load as unknown as (event: RequestEvent) => Promise<unknown>;
+const verifyAction = mfaPage.actions.verify as unknown as (event: RequestEvent) => Promise<unknown>;
 
 /**
  * Второй фактор целиком: политика решает, регистрация записывает секрет,
@@ -60,18 +69,28 @@ function anonymous(ip: string): ActorContext {
 	};
 }
 
-/** Контекст владельца неполной сессии: пароль назван, второго шага ещё нет. */
-async function signedIn(userId: string, options: { mfaPending?: boolean } = {}) {
+/**
+ * Пользователь запроса: тот же, что собирает хук сессии, с признаком неполной
+ * сессии поверх. По умолчанию — тот, кто пароль назвал, а кода ещё нет.
+ */
+async function sessionUserFor(userId: string, mfaPending = true): Promise<SessionUser> {
 	const user = await loadSessionUser(userId);
 
 	if (user === null) {
 		throw new Error('Пользователь прогона обязан собираться');
 	}
 
+	return { ...user, mfaPending };
+}
+
+/** Контекст владельца неполной сессии: пароль назван, второго шага ещё нет. */
+async function signedIn(userId: string, options: { mfaPending?: boolean } = {}) {
+	const user = await sessionUserFor(userId, options.mfaPending ?? true);
+
 	const ctx: ActorContext = {
 		requestId: randomUUID(),
 		source: 'ui',
-		user: { ...user, mfaPending: options.mfaPending ?? true },
+		user,
 		apiKeyId: null,
 		ip: '198.51.100.7',
 		userAgent: 'vitest',
@@ -79,6 +98,34 @@ async function signedIn(userId: string, options: { mfaPending?: boolean } = {}) 
 	};
 
 	return ctx;
+}
+
+/**
+ * Отправка формы второго шага в том виде, в каком её собирает SvelteKit.
+ * Общей подделки события здесь мало: действию нужна cookie сессии, которую она
+ * не отдаёт.
+ */
+function verifyEvent(options: {
+	user: SessionUser;
+	sessionId: string;
+	code: string;
+}): RequestEvent {
+	const url = new URL('http://localhost/login/mfa?/verify');
+	const body = new FormData();
+	body.set('code', options.code);
+
+	return {
+		request: new Request(url, { method: 'POST', body }),
+		url,
+		params: {},
+		cookies: { get: () => options.sessionId, set: () => {}, delete: () => {} },
+		route: { id: '/(auth)/login/mfa' },
+		locals: { requestId: randomUUID(), user: options.user, apiKey: null },
+		getClientAddress: () => '198.51.100.7',
+		setHeaders: () => {},
+		isDataRequest: false,
+		isSubRequest: false
+	} as unknown as RequestEvent;
 }
 
 async function newUser(options: {
@@ -421,6 +468,35 @@ describe('проверка кода', () => {
 		]);
 	});
 
+	it('списывает резервный код один раз, сколько бы попыток ни пришло разом', async () => {
+		const user = await newUser({ name: 'backup-race' });
+		const { backupCodes } = await enrolled(user.id);
+		const code = backupCodes[0];
+
+		// Один листок с кодами в трёх руках: три неполные сессии одной учётной
+		// записи предъявляют один и тот же код одновременно. Проверка и списание
+		// обязаны быть неделимы — иначе все трое читают полный набор, все трое
+		// вычитают из него один и тот же код, и войти успевает каждый.
+		const contexts = await Promise.all([signedIn(user.id), signedIn(user.id), signedIn(user.id)]);
+		const outcomes = await Promise.all(contexts.map((ctx) => verifySecondFactor(ctx, { code })));
+
+		expect(outcomes.filter((outcome) => outcome.ok)).toHaveLength(1);
+		expect(await mfaStateFor(user.id)).toMatchObject({ backupCodesLeft: 9 });
+	});
+
+	it('не тратит резервный код на сессии, которая второй шаг уже прошла', async () => {
+		const user = await newUser({ name: 'backup-full' });
+		const { backupCodes } = await enrolled(user.id);
+		const ctx = await signedIn(user.id, { mfaPending: false });
+
+		// Подтверждать нечего: шаг пройден. Расход кода здесь — потеря одного из
+		// десяти ключей ни за что.
+		await expect(verifySecondFactor(ctx, { code: backupCodes[0] })).rejects.toBeInstanceOf(
+			ConflictError
+		);
+		expect(await mfaStateFor(user.id)).toMatchObject({ backupCodesLeft: 10 });
+	});
+
 	it('терпит резервный код, переписанный без дефисов и в нижнем регистре', async () => {
 		const user = await newUser({ name: 'backup-format' });
 		const { backupCodes } = await enrolled(user.id);
@@ -512,8 +588,14 @@ describe('управление фактором', () => {
 
 		expect(fresh).toHaveLength(10);
 		expect(fresh.filter((code) => backupCodes.includes(code))).toEqual([]);
-		expect(await verifySecondFactor(ctx, { code: backupCodes[0] })).toMatchObject({ ok: false });
-		expect(await verifySecondFactor(ctx, { code: fresh[0] })).toMatchObject({ ok: true });
+
+		// Проверяются коды на следующем входе, то есть на неполной сессии: полная
+		// второй шаг не проходит и кода не тратит.
+		const next = await signedIn(user.id);
+		expect(await verifySecondFactor(next, { code: backupCodes[0] })).toMatchObject({
+			ok: false
+		});
+		expect(await verifySecondFactor(next, { code: fresh[0] })).toMatchObject({ ok: true });
 	});
 
 	it('сбрасывается администратором вместе с сессиями владельца', async () => {
@@ -560,5 +642,50 @@ describe('управление фактором', () => {
 		expect(enabled.has(withFactor.id)).toBe(true);
 		expect(enabled.has(without.id)).toBe(false);
 		expect(await mfaEnabledFor([])).toEqual(new Set());
+	});
+});
+
+describe('страница второго шага', () => {
+	it('говорит про исчерпанный лимит адреса, а не показывает нерабочую форму', async () => {
+		const user = await newUser({ name: 'page-limit' });
+		await enrolled(user.id);
+		const pending = await sessionUserFor(user.id);
+		const event = () => pageEvent({ path: '/login/mfa', user: pending });
+
+		type MfaPageData = { rateLimited: string | null };
+
+		expect((await loadMfa(event())) as MfaPageData).toMatchObject({ rateLimited: null });
+
+		// Окно выбирается тем же вызовом, которым его считает хук: порог здесь не
+		// повторяется числом, иначе тест разошёлся бы с настройкой молча.
+		let allowed = true;
+		while (allowed) {
+			allowed = await withinAddressLimit('198.51.100.10');
+		}
+
+		// Форма второго шага отправляется тем же POST на маршрут `(auth)`: его
+		// развернёт хук, и человек будет жать «Подтвердить» в пустоту, если
+		// страница не скажет, что происходит.
+		const data = (await loadMfa(event())) as MfaPageData;
+		expect(data.rateLimited).toMatch(/^Слишком много входов с этого адреса/);
+	});
+
+	it('отказывает форме второго шага на полной сессии, не тратя резервный код', async () => {
+		const user = await newUser({ name: 'page-full' });
+		const { backupCodes } = await enrolled(user.id);
+		const pending = await sessionUserFor(user.id, false);
+		const sessionId = await createSession(user.id, { ip: null, userAgent: null });
+
+		// Шаг уже пройден: закрыть его второй раз нечем, и ответ на это — отказ
+		// формы, а не сбой сервера. Код при этом обязан остаться неизрасходованным.
+		const failure = await verifyAction(
+			verifyEvent({ user: pending, sessionId, code: backupCodes[0] })
+		);
+
+		expect(failure).toMatchObject({
+			status: 409,
+			data: { message: 'Второй шаг входа уже пройден' }
+		});
+		expect(await mfaStateFor(user.id)).toMatchObject({ backupCodesLeft: 10 });
 	});
 });

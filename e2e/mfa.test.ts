@@ -166,6 +166,33 @@ base('резервный код впускает один раз и больше
 	await expect(page.getByText('Код не подошёл')).toBeVisible();
 });
 
+base('со второго шага можно уйти и войти другой учётной записью', async ({ page }) => {
+	await signInWithPassword(page, PROBE.email, PROBE.password);
+	await page.waitForURL('**/login/mfa**');
+
+	// Человек, вошедший не в ту учётную запись или оставшийся без приложения,
+	// иначе заперт: гвардия неполную сессию никуда не пускает, а форма входа
+	// уводит обратно на этот же шаг.
+	//
+	// Клик обёрнут по той же причине, что и открытие слоёв выше: страница
+	// перезагрузилась после отправки пароля, и первый клик может прийтись на
+	// разметку, которую гидратация вот-вот заменит. Повтор безопасен — выход
+	// гасит сессию, которой уже нет, и всё равно ведёт на форму входа.
+	await expect(async () => {
+		await page.getByRole('button', { name: 'Войти другой учётной записью' }).click();
+		await expect(page).toHaveURL('/login', { timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+
+	await expect(page.getByLabel('Рабочая почта')).toBeVisible();
+
+	// Неполная сессия погашена, а не просто оставлена позади: второй шаг больше
+	// не открывается и уводит на форму входа. Перенаправление загрузчика
+	// относительное («../login»), поэтому сверяется хвост, а не строка целиком.
+	const step = await page.request.get('/login/mfa', { maxRedirects: 0 });
+	expect(step.status()).toBe(303);
+	expect(step.headers()['location']).toMatch(/login\?next=%2F$/);
+});
+
 staff('администратор видит фактор в списке и сбрасывает его', async ({ page }) => {
 	await page.goto(`/settings/users?q=${encodeURIComponent(PROBE.email)}`);
 

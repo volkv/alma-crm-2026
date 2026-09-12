@@ -106,9 +106,14 @@ export async function setRetention(
  * Условие «ещё не обезличен» живёт в самом `UPDATE`: между чтением и записью
  * то же самое мог сделать кто-то другой, и второй проход стёр бы уже пустое,
  * но переписал бы дату уничтожения.
+ *
+ * Право своё, а не общее с учётом согласий: назначить срок и отозвать согласие
+ * — решения, которые переигрывают, а это не переигрывают никак. Поэтому вести
+ * основания обработки может тот, кто с данными работает, а стирать их —
+ * только тот, кому это поручено отдельно.
  */
 export async function anonymizePerson(ctx: ActorContext, personId: string): Promise<PersonView> {
-	await requirePermission(ctx, 'people.manage_consents', {
+	await requirePermission(ctx, 'people.anonymize', {
 		type: 'people.anonymized',
 		subject: { type: 'person', id: personId }
 	});

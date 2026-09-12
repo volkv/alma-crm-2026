@@ -287,4 +287,28 @@ describe('обезличивание', () => {
 		expect(denied).toHaveLength(1);
 		expect(denied[0].outcome).toBe('denied');
 	});
+
+	it('не идёт по праву на учёт согласий: уничтожение — отдельное полномочие', async () => {
+		const personId = await insertPerson(database.db, { retentionUntil: '2020-01-01' });
+		const keeper = testActor({
+			permissions: ['people.read', 'people.write', 'people.manage_consents']
+		});
+
+		// Тот, кто ведёт основания обработки, распоряжается отменяемым: срок
+		// хранения переназначают, согласие отзывают. Уничтожение не переигрывают
+		// никак, поэтому оно за своим правом.
+		await expect(
+			setRetention(keeper, { personId, retentionUntil: '2030-01-01' })
+		).resolves.toMatchObject({ retentionUntil: '2030-01-01' });
+
+		await expect(anonymizePerson(keeper, personId)).rejects.toBeInstanceOf(ForbiddenError);
+
+		const denied = await events('people.anonymized');
+		expect(denied).toHaveLength(1);
+		expect(denied[0].outcome).toBe('denied');
+
+		// Данные на месте: отказ не должен стирать половину.
+		const [row] = await database.db.select().from(people).where(eq(people.id, personId));
+		expect(row.anonymizedAt).toBeNull();
+	});
 });

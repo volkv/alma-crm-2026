@@ -397,6 +397,15 @@ export async function verifySecondFactor(
 	input: { code: string }
 ): Promise<SecondFactorOutcome> {
 	const user = actor(ctx);
+
+	// Второй шаг существует только для сессии, которая его не прошла. Полная
+	// сессия, дошедшая сюда, всё равно ничего бы не закрыла (`finishSecondFactor`
+	// откажет), но код предъявлен — и резервный код списался бы с учётной записи
+	// ни за что. Поэтому отказ идёт до всякого расхода.
+	if (!user.mfaPending) {
+		throw new ConflictError('Второй шаг входа уже пройден');
+	}
+
 	const email = normalizeEmail(user.email);
 	const ip = ctx.ip ?? UNKNOWN_ADDRESS;
 	const policy = await getSetting('lockout_policy');
@@ -445,43 +454,81 @@ export async function verifySecondFactor(
 		return { ok: true, kind: 'totp', backupCodesLeft: row.totpBackupCodes?.length ?? 0 };
 	}
 
-	const stored = row.totpBackupCodes ?? [];
-	const presented = hashBackupCode(input.code);
-	const matched = stored.find((hash) => sameHash(hash, presented));
+	const claimed = await claimBackupCode(ctx, user.id, input.code);
 
-	if (matched === undefined) {
+	if (claimed === null) {
 		return refuseCode(ctx, user, email, ip, policy.minutes, 'Код не подошёл');
 	}
 
-	// Резервный код одноразовый: он уходит из списка сразу, до того как человек
-	// попадёт внутрь. Иначе подсмотренный код работает столько раз, сколько его
-	// успели ввести.
-	const left = stored.filter((hash) => hash !== matched);
+	await clearLoginFailures(email, ip);
 
-	await withTransaction(ctx, async (tx) => {
+	return { ok: true, kind: 'backup', backupCodesLeft: claimed.left };
+}
+
+/**
+ * Списывает резервный код из набора. `null` — такого кода в наборе нет, в том
+ * числе потому, что его только что забрала другая попытка.
+ *
+ * Код одноразовый, и «одноразовый» здесь означает «при любом числе
+ * одновременных предъявлений». Поэтому проверка и списание — одна транзакция, а
+ * строка на её время заперта (`for update`): без замка три параллельные попытки
+ * читают один и тот же полный набор, каждая вычитает из него один и тот же код
+ * и записывает одинаковый результат — код списан один раз, а впущены все трое.
+ * Второй попытке замок даёт дождаться первой и увидеть уже укороченный набор.
+ *
+ * Отметки в Redis, как у шага TOTP (`claimCounter`), здесь не нужно: набор
+ * резервных кодов и есть эта строка, и спор о нём должно решать то хранилище, в
+ * котором он записан, а не второе рядом.
+ */
+async function claimBackupCode(
+	ctx: ActorContext,
+	userId: string,
+	code: string
+): Promise<{ left: number } | null> {
+	const presented = hashBackupCode(code);
+
+	return withTransaction(ctx, async (tx) => {
+		const [row] = await tx
+			.select({ codes: users.totpBackupCodes })
+			.from(users)
+			.where(eq(users.id, userId))
+			.limit(1)
+			.for('update');
+
+		if (row === undefined) {
+			throw new NotFoundError('Пользователь не найден');
+		}
+
+		const stored = row.codes ?? [];
+		const matched = stored.find((hash) => sameHash(hash, presented));
+
+		if (matched === undefined) {
+			return null;
+		}
+
+		const left = stored.filter((hash) => hash !== matched);
+
 		await tx
 			.update(users)
 			.set({ totpBackupCodes: left, updatedAt: sql`now()` })
-			.where(eq(users.id, user.id));
+			.where(eq(users.id, userId));
 
 		await recordAuditEvent(
 			ctx,
 			{
 				type: 'auth.mfa_verified',
 				outcome: 'success',
-				subject: { type: 'user', id: user.id },
+				subject: { type: 'user', id: userId },
 				// Списанный резервный код — это изменение самой учётной записи, а не
 				// просто удачная проверка: по этой отметке видно, что человек вошёл
 				// не приложением.
-				details: { userId: user.id, changedFields: ['totpBackupCodes'] }
+				details: { userId, changedFields: ['totpBackupCodes'] }
 			},
 			tx
 		);
+
+		return { left: left.length };
 	});
-
-	await clearLoginFailures(email, ip);
-
-	return { ok: true, kind: 'backup', backupCodesLeft: left.length };
 }
 
 /** Неудачный код: попытка засчитывается в блокировку и попадает в журнал. */

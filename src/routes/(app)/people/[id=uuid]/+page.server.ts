@@ -6,7 +6,7 @@ import {
 	setRetentionSchema,
 	withdrawConsentSchema
 } from '$lib/contracts/directory';
-import { actorFromEvent } from '$lib/server/actor';
+import { actorFromEvent, type ActorContext } from '$lib/server/actor';
 import { getPerson, listPersonAffiliations } from '$lib/server/directory/read';
 import { endAffiliation } from '$lib/server/directory/write';
 import { formatIsoDay } from '$lib/format';
@@ -15,6 +15,23 @@ import { listConsents, recordConsent, withdrawConsent } from '$lib/server/people
 import { anonymizePerson, setRetention } from '$lib/server/people/retention';
 import { can } from '$lib/server/rbac';
 import type { Actions, PageServerLoad, RequestEvent } from './$types';
+
+/**
+ * Почему уничтожить данные нельзя — словами и с сервера.
+ *
+ * Приговор выносит право, интерфейс его показывает: второго свода правил на
+ * клиенте нет. Демонстрации причина называется своя — там дело не в роли, под
+ * которой вошли, а в том, что стенд общий и стёртого на нём никто не вернёт.
+ */
+function anonymizeDenial(ctx: ActorContext): string | null {
+	if (can(ctx, 'people.anonymize')) {
+		return null;
+	}
+
+	return ctx.user?.isDemo === true
+		? 'Уничтожение данных на демонстрационном стенде закрыто: он общий, а обезличивание необратимо — стёртого не увидит и следующий посетитель.'
+		: 'Права на уничтожение данных у вас нет: его выдают отдельно от учёта согласий, потому что отменить обезличивание нельзя.';
+}
 
 export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
@@ -29,12 +46,17 @@ export const load: PageServerLoad = async (event) => {
 			managesPii ? listConsents(ctx, event.params.id) : []
 		]);
 
+		const denial = anonymizeDenial(ctx);
+
 		return {
 			person,
 			affiliations,
 			consents,
 			canWrite: can(ctx, 'people.write'),
 			managesPii,
+			// Уничтожение — не то же самое, что учёт согласий: панель видна по
+			// одному праву, а кнопка в ней живёт по другому.
+			anonymize: { allowed: denial === null, reason: denial },
 			// Полномочия закрывают сегодняшним днём по Москве — по нему живёт процесс.
 			today: formatIsoDay()
 		};

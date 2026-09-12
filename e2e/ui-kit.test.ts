@@ -19,36 +19,53 @@ test('the kit page opens with the table and the form on it', async ({ page }) =>
 	await expect(page.getByRole('button', { name: 'Сохранить организацию' })).toBeVisible();
 });
 
+/**
+ * Sorting, like paging, is the page's own code (`onclick` → `go`): a press
+ * before hydration reaches nobody and is lost for good. Press until the address
+ * carries the order asked for, and only while it does not — a press too many
+ * would turn the order back.
+ */
+async function sortByName(page: Page, expected: RegExp): Promise<void> {
+	const header = page.locator('thead').getByRole('button', { name: /Название/ });
+
+	await expect(async () => {
+		if (!expected.test(page.url())) {
+			await header.click({ timeout: 5_000 });
+		}
+
+		await expect(page).toHaveURL(expected, { timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+}
+
 test('sorting a column reorders the rows and lands in the address', async ({ page }) => {
 	await page.goto('/ui-kit');
 
 	const before = await firstRowName(page).innerText();
 
-	await page
-		.locator('thead')
-		.getByRole('button', { name: /Название/ })
-		.click();
-
-	await expect(page).toHaveURL(/[?&]sort=name(&|$)/);
+	await sortByName(page, /[?&]sort=name(&|$)/);
 	await expect(firstRowName(page)).not.toHaveText(before);
 
 	const ascending = await firstRowName(page).innerText();
 
-	await page
-		.locator('thead')
-		.getByRole('button', { name: /Название/ })
-		.click();
-
-	await expect(page).toHaveURL(/[?&]sort=-name(&|$)/);
+	await sortByName(page, /[?&]sort=-name(&|$)/);
 	await expect(firstRowName(page)).not.toHaveText(ascending);
 });
 
 test('paging keeps the rows in the address bar', async ({ page }) => {
 	await page.goto('/ui-kit');
 
-	await page.getByRole('button', { name: 'Следующая страница' }).click();
+	// Paging is the page's own code (`onclick` → `go`), so a press before
+	// hydration never reaches the component and is lost for good — retry, as with
+	// every other control the page owns. A page already on 2 is not pressed
+	// again: that would carry it to 3.
+	await expect(async () => {
+		if (!/[?&]page=2(&|$)/.test(page.url())) {
+			await page.getByRole('button', { name: 'Следующая страница' }).click({ timeout: 5_000 });
+		}
 
-	await expect(page).toHaveURL(/[?&]page=2(&|$)/);
+		await expect(page).toHaveURL(/[?&]page=2(&|$)/, { timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+
 	await expect(page.locator('[data-slot="data-table"] tbody tr')).toHaveCount(15);
 });
 
@@ -69,21 +86,31 @@ test('a date is typed in the Russian order and picked from the same popover laye
 	const field = page.getByLabel('Дата', { exact: true });
 	await expect(field).toHaveValue('12.09.2026');
 
-	await field.fill('01.03.2027');
-	await expect(field).toHaveValue('01.03.2027');
-
-	// The calendar is opened by the page's own code, so a click before hydration
-	// is lost — hence the retry, as with every other layer.
 	const calendar = page.locator('[data-slot="popover-content"]');
 	const grid = calendar.getByRole('grid');
 
+	// Both halves of this need a live page, and for the same reason. Text put
+	// into the input before hydration stays in the DOM but never runs the
+	// component's `oninput`, so the component keeps the date it was rendered
+	// with — and the calendar, which reads that date, would open on September.
+	// The trigger is the page's own code too, and it toggles. So: retype and
+	// reopen until the calendar agrees with what was typed, pressing only while
+	// it is closed.
 	await expect(async () => {
-		await page.getByRole('button', { name: 'Открыть календарь' }).first().click();
+		await field.fill('01.03.2027');
+		await expect(field).toHaveValue('01.03.2027', { timeout: 2000 });
+
+		if (!(await grid.isVisible())) {
+			await page.getByRole('button', { name: 'Открыть календарь' }).first().click({
+				timeout: 5_000
+			});
+		}
+
 		await expect(grid).toBeVisible({ timeout: 2000 });
+		// The calendar opens on the month of the value and names it in Russian.
+		await expect(calendar).toContainText(/март/i, { timeout: 2000 });
 	}).toPass({ timeout: 20_000 });
 
-	// The calendar opens on the month of the value and names it in Russian.
-	await expect(calendar).toContainText(/март/i);
 	await grid.getByText('15', { exact: true }).click();
 
 	await expect(field).toHaveValue('15.03.2027');
@@ -110,10 +137,18 @@ test('rows answer the keyboard and selection opens the bulk bar', async ({ page 
 	await page.goto('/ui-kit');
 
 	const rows = page.locator('[data-slot="data-table"] tbody tr[data-row]');
-	await rows.first().focus();
-	await page.keyboard.press('j');
 
-	await expect(rows.nth(1)).toBeFocused();
+	// The key is handled by the page's own code: pressed before hydration it
+	// reaches nobody. Retry until the focus moves, and press only while it has
+	// not — a second `j` would carry the focus one row further.
+	await expect(async () => {
+		if (!(await rows.nth(1).evaluate((row) => row === document.activeElement))) {
+			await rows.first().focus();
+			await page.keyboard.press('j');
+		}
+
+		await expect(rows.nth(1)).toBeFocused({ timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
 
 	await rows.nth(1).getByRole('checkbox').click();
 
@@ -126,10 +161,19 @@ test('the search palette opens on its shortcut', async ({ page }) => {
 	// Give the document focus first, the way a real visitor's click would.
 	await page.getByRole('heading', { level: 1 }).click();
 
-	await page.keyboard.press('ControlOrMeta+k');
-
 	const palette = page.getByRole('dialog');
-	await expect(palette).toBeVisible();
+
+	// The shortcut is the page's own handler, and a key pressed before hydration
+	// is lost. Retry, but only while the palette is closed: the same shortcut
+	// closes it again.
+	await expect(async () => {
+		if (!(await palette.isVisible())) {
+			await page.keyboard.press('ControlOrMeta+k');
+		}
+
+		await expect(palette).toBeVisible({ timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+
 	await expect(palette.getByText('Поиск заработает вместе с разделами.')).toBeVisible();
 });
 

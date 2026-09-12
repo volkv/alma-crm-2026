@@ -93,7 +93,12 @@
 	</section>
 
 	{#if data.managesPii}
-		<PersonalDataPanel person={data.person} consents={data.consents} today={data.today} />
+		<PersonalDataPanel
+			person={data.person}
+			consents={data.consents}
+			today={data.today}
+			anonymize={data.anonymize}
+		/>
 	{/if}
 
 	<section class="rounded-lg border border-border bg-surface">

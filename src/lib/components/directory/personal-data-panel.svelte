@@ -21,6 +21,8 @@
 	 *
 	 * Панель показывается только тому, у кого есть право на учёт согласий:
 	 * это не часть карточки контакта, а работа с основаниями обработки.
+	 * Уничтожение внутри неё живёт по своему праву: вести основания и стирать
+	 * данные — разные полномочия, и второе необратимо.
 	 *
 	 * Формы отправляются через `use:enhance`: действие кончается переходом на ту
 	 * же карточку, и переход этот должен остаться внутри приложения — иначе
@@ -30,12 +32,15 @@
 	let {
 		person,
 		consents,
-		today
+		today,
+		anonymize
 	}: {
 		person: PersonView;
 		consents: readonly ConsentView[];
 		/** Сегодняшний день по Москве: по нему видно, что срок прошёл. */
 		today: string;
+		/** Можно ли уничтожить данные и почему нельзя, если нельзя. Решает сервер. */
+		anonymize: { allowed: boolean; reason: string | null };
 	} = $props();
 
 	const anonymized = $derived(person.anonymizedAt !== null);
@@ -206,10 +211,23 @@
 					ссылаются роли в организациях и взаимодействия, где человек был контактом. Отменить это
 					нельзя.
 				</p>
-				<div>
-					<Button variant="destructive" size="sm" onclick={() => (anonymizeOpen = true)}>
-						Обезличить данные
-					</Button>
+				<!-- Недоступную команду не прячем: кнопка с причиной рядом объясняет
+				     правило, отсутствие кнопки не объясняет ничего. Заливка при этом
+				     остаётся только у того, что действительно можно нажать. -->
+				<div class="flex flex-col gap-1">
+					<div>
+						<Button
+							variant={anonymize.allowed ? 'destructive' : 'outline'}
+							size="sm"
+							disabled={!anonymize.allowed}
+							onclick={() => (anonymizeOpen = true)}
+						>
+							Обезличить данные
+						</Button>
+					</div>
+					{#if anonymize.reason}
+						<p class="text-xs text-muted-foreground">{anonymize.reason}</p>
+					{/if}
 				</div>
 			</div>
 		{/if}
@@ -217,21 +235,26 @@
 </section>
 
 {#if !anonymized}
-	<form method="POST" action="?/anonymize" use:enhance bind:this={anonymizeForm} hidden></form>
+	<!-- Формы уничтожения нет у того, кому оно не разрешено: отправить её мимо
+	     выключенной кнопки было бы ровно тем, от чего право и защищает. Сервер
+	     откажет и так, но и разметке незачем предлагать отказ. -->
+	{#if anonymize.allowed}
+		<form method="POST" action="?/anonymize" use:enhance bind:this={anonymizeForm} hidden></form>
+
+		<ConfirmDialog
+			bind:open={anonymizeOpen}
+			title="Обезличить данные человека?"
+			description="Фамилия, имя, отчество, контакты и заметки будут стёрты безвозвратно. Роли и история взаимодействий останутся."
+			confirmLabel="Обезличить"
+			tone="danger"
+			onconfirm={() => anonymizeForm?.requestSubmit()}
+		/>
+	{/if}
 
 	<form method="POST" action="?/withdrawConsent" use:enhance bind:this={withdrawForm} hidden>
 		<input type="hidden" name="id" value={withdrawing?.id ?? ''} />
 		<input type="hidden" name="withdrawnAt" value={today} />
 	</form>
-
-	<ConfirmDialog
-		bind:open={anonymizeOpen}
-		title="Обезличить данные человека?"
-		description="Фамилия, имя, отчество, контакты и заметки будут стёрты безвозвратно. Роли и история взаимодействий останутся."
-		confirmLabel="Обезличить"
-		tone="danger"
-		onconfirm={() => anonymizeForm?.requestSubmit()}
-	/>
 
 	<ConfirmDialog
 		bind:open={withdrawOpen}

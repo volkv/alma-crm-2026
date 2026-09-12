@@ -5,6 +5,7 @@
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
+	import { Button } from '$lib/components/ui/button/index.js';
 	import BackupCodes from '$lib/components/auth/backup-codes.svelte';
 	import TotpEnrollment from '$lib/components/auth/totp-enrollment.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
@@ -92,7 +93,15 @@
 			</Alert.Root>
 		{/if}
 
-		{#if backupCodes !== null}
+		{#if data.rateLimited}
+			<!-- Адрес выбрал лимит попыток: отправка второго шага — это тот же POST
+			     на маршрут входа, и его развернёт хук. Показывать нерабочие органы
+			     управления хуже, чем не показывать ничего; выход ниже остаётся —
+			     он на маршрут входа не приходится и лимитом не считается. -->
+			<Alert.Root variant="destructive">
+				<Alert.Description>{data.rateLimited}</Alert.Description>
+			</Alert.Root>
+		{:else if backupCodes !== null}
 			<!-- Регистрация закончена, но вход ещё нет: пока человек не подтвердил,
 			     что записал коды, сессия остаётся неполной. -->
 			<BackupCodes codes={backupCodes} />
@@ -147,5 +156,16 @@
 				ни приложения, ни кодов, фактор сбросит администратор.
 			</p>
 		{/if}
+
+		<!-- Выход со второго шага: сюда попадают и те, кто вошёл не в ту учётную
+		     запись, и те, у кого фактора при себе нет. Без этого неполная сессия
+		     держит человека на странице, с которой некуда деться: гвардия никуда
+		     её не пускает, а форма входа уводит обратно сюда. Форма, а не ссылка:
+		     выход гасит сессию, и дёргать его предзагрузкой браузера нельзя. -->
+		<form method="POST" action="/logout" class="border-t border-border pt-4">
+			<Button type="submit" variant="link" size="sm" class="h-auto p-0">
+				Войти другой учётной записью
+			</Button>
+		</form>
 	</Card.Content>
 </Card.Root>

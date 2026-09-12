@@ -1,5 +1,6 @@
 import type { Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { STAFF_ADMIN_STATE } from './global-setup';
 
 /**
  * Персональные данные в браузере: согласия, срок хранения, обезличивание.
@@ -8,7 +9,20 @@ import { expect, test } from './fixtures';
  * для этого не годятся: обезличивание необратимо, и первый же прогон унёс бы
  * контакт, на который опираются другие проверки и демонстрация.
  *
+ * Учёт согласий и сроков идёт под демонстрационным менеджером — это часть того,
+ * что на стенде показывают. Уничтожение данных демонстрации не принадлежит
+ * (`people.anonymize` вычитается из демо-сессии), поэтому оно идёт под штатным
+ * администратором, а демонстрации остаётся выключенная кнопка с причиной.
+ *
+ * Порядок значим: карточку заводит первая проверка, уничтожает последняя.
  */
+test.describe.configure({ mode: 'serial' });
+
+/** Штатный администратор: обычная учётная запись оператора, не демонстрационная. */
+const staff = test.extend<object>({ storageState: STAFF_ADMIN_STATE });
+
+/** Карточка, заведённая под менеджером: её же добивает штатный администратор. */
+let retentionCardUrl: string | null = null;
 
 /** Метка прогона: делает фамилию уникальной в общей базе. */
 function tag(): string {
@@ -95,11 +109,12 @@ test('согласие фиксируется и отзывается на ка�
 	await page.screenshot({ path: 'test-results/people-personal-data.png', fullPage: true });
 });
 
-test('истёкший срок хранения виден в списке, а обезличивание стирает контакты', async ({
+const RETENTION_LAST_NAME = `Хранимов${tag()}`;
+
+test('истёкший срок хранения виден в списке, а уничтожить его из демонстрации нельзя', async ({
 	page
 }) => {
-	const lastName = `Хранимов${tag()}`;
-	const cardUrl = await createPerson(page, lastName);
+	retentionCardUrl = await createPerson(page, RETENTION_LAST_NAME);
 
 	const card = panel(page);
 
@@ -118,15 +133,34 @@ test('истёкший срок хранения виден в списке, а 
 
 		await expect(page).toHaveURL(/retention=expired/);
 
-		await page.getByLabel('Поиск по ФИО и организации').fill(lastName);
+		await page.getByLabel('Поиск по ФИО и организации').fill(RETENTION_LAST_NAME);
 
 		const rows = page.locator('[data-slot="data-table"] tbody tr[data-row]');
 		await expect(rows).toHaveCount(1);
 		await expect(rows.first()).toContainText('Срок истёк');
 	});
 
-	await test.step('обезличивание уносит имя и контакты, но не запись', async () => {
-		await page.goto(cardUrl);
+	await test.step('кнопка уничтожения выключена и объясняет, почему', async () => {
+		await page.goto(retentionCardUrl ?? '');
+
+		// Недоступную команду не прячем: демонстрация должна видеть, что такое
+		// действие в системе есть, и почему его здесь не дают.
+		const button = panel(page).getByRole('button', { name: 'Обезличить данные' });
+		await expect(button).toBeVisible();
+		await expect(button).toBeDisabled();
+		await expect(
+			panel(page).getByText(/Уничтожение данных на демонстрационном стенде закрыто/)
+		).toBeVisible();
+	});
+});
+
+staff(
+	'штатный администратор уничтожает данные: имя и контакты уходят, запись нет',
+	async ({ page }) => {
+		expect(retentionCardUrl).not.toBeNull();
+		if (retentionCardUrl === null) return;
+
+		await page.goto(retentionCardUrl);
 
 		const confirm = page
 			.getByRole('alertdialog')
@@ -138,6 +172,6 @@ test('истёкший срок хранения виден в списке, а 
 		await expect(page.getByRole('heading', { level: 1 })).toHaveText('Обезличено');
 		// Правки у обезличенной записи нет: стёртое не возвращают той же строкой.
 		await expect(page.getByRole('link', { name: 'Изменить' })).toHaveCount(0);
-		await expect(page.getByText(lastName)).toHaveCount(0);
-	});
-});
+		await expect(page.getByText(RETENTION_LAST_NAME)).toHaveCount(0);
+	}
+);

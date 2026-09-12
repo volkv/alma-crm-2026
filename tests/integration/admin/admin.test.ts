@@ -14,6 +14,7 @@ import {
 	touchSession
 } from '$lib/server/auth/session';
 import { auditEvents, users } from '$lib/server/db/schema';
+import { loadRolePermissions } from '$lib/server/rbac';
 import { getRedis } from '$lib/server/redis';
 import { getSetting, setSetting, SETTING_DEFAULTS } from '$lib/server/settings';
 import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
@@ -536,6 +537,24 @@ describe('граница демонстрационной сессии', () => {
 		// пользователей демонстрации не принадлежит.
 		expect(data.canExport).toBe(false);
 		expect(data.actors).toEqual([]);
+	});
+
+	it('оставляет демонстрации учёт согласий, но не уничтожение данных', async () => {
+		const user = await demoSessionUser('admin');
+
+		// Согласия и сроки хранения — это и есть то, что на стенде показывают про
+		// 152-ФЗ, и записанное там переигрывается: срок переназначают, согласие
+		// отзывают.
+		expect(user.permissions.has('people.manage_consents')).toBe(true);
+
+		// Обезличивание не переигрывается: имя и контакты стираются насовсем, а
+		// сид их не возвращает — посетитель стенда стёр бы справочник для всех,
+		// кто придёт после него.
+		expect(user.permissions.has('people.anonymize')).toBe(false);
+
+		// Вычитание — у сессии, а не у роли: сама роль права не лишается.
+		const role = await loadRolePermissions('admin');
+		expect(role.has('people.anonymize')).toBe(true);
 	});
 
 	it('не отдаёт демонстрации выгрузку журнала', async () => {
