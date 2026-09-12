@@ -3,11 +3,12 @@
 </p>
 
 <p align="center">
-  <a href="https://crm.volkv.com"><b>Прод-превью: crm.volkv.com</b></a> — вход в одно нажатие, данные синтетические
+  <a href="https://crm.volkv.com"><img src="docs/media/cta-demo.svg" alt="Открыть демо-стенд crm.volkv.com" height="64"></a>
+  &nbsp;
+  <a href="https://crm.volkv.com/api/docs"><img src="docs/media/cta-api.svg" alt="Документация API" height="64"></a>
 </p>
 
 <p align="center">
-  <a href="https://crm.volkv.com/api/docs"><b>API (Swagger)</b></a> ·
   <a href="#быстрый-старт"><b>Запуск одной командой</b></a> ·
   <a href="#демо-за-пять-минут"><b>Демо-проход</b></a> ·
   <a href="#документация"><b>Документация</b></a>
