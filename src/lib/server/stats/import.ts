@@ -38,6 +38,7 @@ import { discardStaged, promoteBlob, stageBlob } from '../documents/storage';
 import { ConflictError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
 import { buildRows, missingRequiredFields, type StatRowDraft } from './build';
+import { invalidateStatsDashboard } from './dashboard';
 import { detectStatFile } from './format';
 import { loadDirectoryIndex } from './lookup';
 import { readTable } from './parse';
@@ -503,7 +504,7 @@ export async function confirmSnapshot(
 	// строка — это запрос несуществующей записи.
 	await selectSnapshotRow(snapshotId);
 
-	return withTransaction(ctx, async (tx) => {
+	const result = await withTransaction(ctx, async (tx) => {
 		// Состояние перечитывается под блокировкой строки: между проверкой и
 		// записью снимок мог подтвердить кто-то другой.
 		const [snapshot] = await tx
@@ -564,6 +565,14 @@ export async function confirmSnapshot(
 
 		return { snapshot: toStatSnapshotView(row), replacedRows };
 	});
+
+	// Подтверждение — единственное действие, которое меняет показатели, поэтому
+	// собранный дашборд после него недействителен. Инвалидация идёт после
+	// фиксации транзакции: изнутри неё показателей ещё нет, и дашборд, собранный
+	// в этот момент соседним запросом, лёг бы в кэш прежним.
+	await invalidateStatsDashboard();
+
+	return result;
 }
 
 export async function rejectSnapshot(

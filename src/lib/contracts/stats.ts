@@ -17,6 +17,7 @@
  */
 import { z } from 'zod';
 import { optionalId, optionalText, pageQuerySchema, searchQuery } from './common';
+import type { ProgramLevel } from './directory';
 
 /** Откуда пришли данные снимка. */
 export const STAT_SOURCES = ['file', 'lms', 'site', 'manual'] as const;
@@ -457,3 +458,231 @@ export function explainScore(values: Record<RankingComponentKey, number | null>)
 		explanation
 	};
 }
+
+/**
+ * Группы программ на дашборде: школьные отдельно от вузовских.
+ *
+ * Уровень программы (`ProgramLevel`) — это справочник, а группа — то, как на
+ * портфель смотрит оператор: бакалавриат, магистратура и специалитет для него
+ * одно, а школа — совсем другое, и складывать их в одно число значит потерять
+ * разницу между вузовским набором и профориентацией школьников.
+ */
+export const STAT_PROGRAM_GROUPS = ['university', 'vocational', 'school', 'professional'] as const;
+
+export type StatProgramGroup = (typeof STAT_PROGRAM_GROUPS)[number];
+
+export const STAT_PROGRAM_GROUP_LABELS: Record<StatProgramGroup, string> = {
+	university: 'Вузовские программы',
+	vocational: 'Программы СПО',
+	school: 'Школьные программы',
+	professional: 'Программы ДПО'
+};
+
+const PROGRAM_GROUP_BY_LEVEL: Record<ProgramLevel, StatProgramGroup> = {
+	bachelor: 'university',
+	master: 'university',
+	specialist: 'university',
+	spo: 'vocational',
+	school: 'school',
+	dpo: 'professional'
+};
+
+export function statProgramGroupOf(level: ProgramLevel): StatProgramGroup {
+	return PROGRAM_GROUP_BY_LEVEL[level];
+}
+
+/**
+ * Числа показателей в одном месте: у каждого тип `number | null`, потому что
+ * ноль и отсутствие данных — разные ответы (см. заголовок файла).
+ */
+export type StatMeasures = {
+	applications: number | null;
+	enrolled: number | null;
+	parallelStreams: number | null;
+	completed: number | null;
+	coveragePlan: number | null;
+	coverageFact: number | null;
+};
+
+/** Портфель периода целиком: счётчики записей и сумма показателей. */
+export type StatDashboardTotals = StatMeasures & {
+	/** Программ, по которым за период есть подтверждённые строки. */
+	programCount: number;
+	organizationCount: number;
+	/** Площадок, названных в этих строках; площадка в строке необязательна. */
+	siteCount: number;
+};
+
+/** Строка разбивки по группам программ. */
+export type StatDashboardGroupRow = StatMeasures & {
+	group: StatProgramGroup;
+	/**
+	 * Программ в группе. Организации здесь не считаются: один вуз ведёт
+	 * программы разных уровней, и сумма по группам была бы больше, чем вузов.
+	 */
+	programCount: number;
+};
+
+/** Строка распределения по вузам. */
+export type StatDashboardOrganizationRow = StatMeasures & {
+	organizationId: string;
+	organizationName: string;
+	programCount: number;
+};
+
+/**
+ * Снимок, из которого сложилась картина периода. Момент подтверждения —
+ * строкой ISO: представление дашборда лежит в кэше как JSON, а `Date` через
+ * него не переживает.
+ */
+export type StatDashboardSource = {
+	snapshotId: string;
+	source: StatSource;
+	mode: StatSnapshotMode;
+	fileName: string | null;
+	/** Кто загрузил; `null` — если учётной записи уже нет. */
+	authorName: string | null;
+	confirmedAt: string | null;
+	/** Строк этого снимка, попавших в период. */
+	rowCount: number;
+};
+
+/**
+ * Дашборд портфеля данных за один отчётный период.
+ *
+ * Период всегда один: пересекающиеся периоды не складываются, иначе одни и те
+ * же обучающиеся посчитались бы дважды (правило показателей).
+ */
+export type StatDashboardView = {
+	period: StatPeriod;
+	totals: StatDashboardTotals;
+	groups: StatDashboardGroupRow[];
+	organizations: StatDashboardOrganizationRow[];
+	/** Рейтинг за тот же период: тот же расчёт, что и на вкладке «Рейтинг». */
+	ranking: ProgramRankingItem[];
+	sources: StatDashboardSource[];
+	/**
+	 * Когда картина периода последний раз менялась: момент подтверждения
+	 * последнего снимка. Актуальность данных — это подтверждение импорта, а не
+	 * время загрузки файла.
+	 */
+	updatedAt: string | null;
+};
+
+/**
+ * Доля факта от плана в процентах.
+ *
+ * `null` — доли нет: либо одного из чисел нет вовсе, либо план нулевой, и
+ * тогда доля не определена. Ноль вместо этого означал бы «плана не выполнили
+ * совсем» — утверждение, которого данные не делают.
+ */
+export function coverageShare(plan: number | null, fact: number | null): number | null {
+	if (plan === null || fact === null || plan === 0) {
+		return null;
+	}
+
+	return Math.round((fact / plan) * 100);
+}
+
+export const STAT_DASHBOARD_TILE_KEYS = [
+	'programs',
+	'organizations',
+	'applications',
+	'enrolled',
+	'parallelStreams',
+	'coverage'
+] as const;
+
+export type StatDashboardTileKey = (typeof STAT_DASHBOARD_TILE_KEYS)[number];
+
+/**
+ * Плитка дашборда. `value === null` — данных нет, и показывать вместо них ноль
+ * нельзя: ноль это результат, а прочерк — незаполненная колонка.
+ */
+export type StatDashboardTile = {
+	key: StatDashboardTileKey;
+	label: string;
+	value: number | null;
+	unit: 'count' | 'percent';
+	/** Что именно посчитано. */
+	hint: string;
+	/** Числа, без которых первое не объясняется; пусто у большинства плиток. */
+	extra: { label: string; value: number | null }[];
+};
+
+/**
+ * Плитки из итогов периода. Функция чистая и общая для экрана и для выгрузки:
+ * лист «Сводка» обязан показывать те же числа, что и дашборд, а собранные по
+ * отдельности они однажды разойдутся.
+ */
+export function statDashboardTiles(totals: StatDashboardTotals): StatDashboardTile[] {
+	return [
+		{
+			key: 'programs',
+			label: 'Программы',
+			value: totals.programCount,
+			unit: 'count',
+			hint: 'программ с данными за период',
+			extra: []
+		},
+		{
+			key: 'organizations',
+			label: 'Вузы и площадки',
+			value: totals.organizationCount,
+			unit: 'count',
+			hint: 'организаций с данными за период',
+			extra: [{ label: 'площадок названо', value: totals.siteCount }]
+		},
+		{
+			key: 'applications',
+			label: 'Заявки',
+			value: totals.applications,
+			unit: 'count',
+			hint: 'подано за период',
+			extra: []
+		},
+		{
+			key: 'enrolled',
+			label: 'Обучающиеся',
+			value: totals.enrolled,
+			unit: 'count',
+			hint: 'зачислено на программы',
+			extra: [{ label: 'завершили обучение', value: totals.completed }]
+		},
+		{
+			key: 'parallelStreams',
+			label: 'Параллельные потоки',
+			value: totals.parallelStreams,
+			unit: 'count',
+			hint: 'групп идёт одновременно',
+			extra: []
+		},
+		{
+			key: 'coverage',
+			label: 'Охват, факт к плану',
+			value: coverageShare(totals.coveragePlan, totals.coverageFact),
+			unit: 'percent',
+			hint: 'факт от плана за период',
+			extra: [
+				{ label: 'план', value: totals.coveragePlan },
+				{ label: 'факт', value: totals.coverageFact }
+			]
+		}
+	];
+}
+
+/**
+ * Колонки, по которым сортируется распределение по вузам на дашборде.
+ *
+ * Список объявлен в контрактах, а не в загрузчике страницы: ключ едет в адрес,
+ * а адрес читают обе стороны — и загрузчик, и ссылки в заголовках таблицы.
+ */
+export const STAT_DASHBOARD_SORT_KEYS = [
+	'organization',
+	'programs',
+	'applications',
+	'enrolled',
+	'coverage'
+] as const;
+
+export type StatDashboardSortKey = (typeof STAT_DASHBOARD_SORT_KEYS)[number];

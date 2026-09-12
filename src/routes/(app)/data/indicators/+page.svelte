@@ -4,6 +4,7 @@
 	import { resolve } from '$app/paths';
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
 	import ChartNoAxesColumnIcon from '@lucide/svelte/icons/chart-no-axes-column';
+	import DownloadIcon from '@lucide/svelte/icons/download';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import * as Tabs from '$lib/components/ui/tabs/index.js';
@@ -14,6 +15,7 @@
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import PageHeader from '$lib/components/page-header.svelte';
 	import ScoreBreakdown from '$lib/components/stats/score-breakdown.svelte';
+	import SectionTabs from '$lib/components/stats/section-tabs.svelte';
 	import { measureText } from '$lib/components/stats/labels';
 	import type { FieldOption } from '$lib/components/form/field-select.svelte';
 	import {
@@ -120,6 +122,13 @@
 		}
 	];
 
+	/** Выгрузка — про тот же период, что выбран здесь. */
+	const periodKey = $derived(data.selected === null ? '' : statPeriodKey(data.selected));
+
+	const exportHref = $derived(
+		periodKey === '' ? undefined : `${resolve('/(app)/data/export')}?period=${periodKey}`
+	);
+
 	/** Вкладка живёт в адресе: открытый рейтинг — это ссылка, а не состояние экрана. */
 	function selectTab(value: string) {
 		return goto(filterHref(page.url, 'tab', value === 'ranking' ? 'ranking' : ''), {
@@ -148,11 +157,18 @@
 	breadcrumbs={[{ label: 'Данные', href: resolve('/(app)/data') }]}
 >
 	{#snippet actions()}
-		<Button variant="outline" href={resolve('/(app)/data')}>К снимкам</Button>
+		<!-- Выгрузка всегда про один период: без выбора кнопка выключена, а
+		     причина написана словами ниже, а не спрятана в подсказке мыши. -->
+		<Button variant="outline" href={exportHref} disabled={data.selected === null}>
+			<DownloadIcon aria-hidden="true" />
+			Выгрузить отчёт (xlsx)
+		</Button>
 	{/snippet}
 </PageHeader>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
+	<SectionTabs />
+
 	{#if data.periods.length === 0}
 		<div class="rounded-lg border border-border bg-surface shadow-xs">
 			<EmptyState
@@ -175,7 +191,8 @@
 		{#if data.selected === null}
 			<p class="text-sm text-muted-foreground">
 				Период не выбран: строки показаны как есть, по одной на период. Пересекающиеся периоды не
-				складываются — одни и те же обучающиеся посчитались бы дважды.
+				складываются — одни и те же обучающиеся посчитались бы дважды. По той же причине выключена и
+				выгрузка отчёта: она собирается по одному отчётному периоду.
 			</p>
 		{/if}
 

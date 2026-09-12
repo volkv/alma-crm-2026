@@ -2,7 +2,6 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
-	import ChartNoAxesColumnIcon from '@lucide/svelte/icons/chart-no-axes-column';
 	import DatabaseIcon from '@lucide/svelte/icons/database';
 	import UploadIcon from '@lucide/svelte/icons/upload';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -12,6 +11,7 @@
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import PageHeader from '$lib/components/page-header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
+	import SectionTabs from '$lib/components/stats/section-tabs.svelte';
 	import { STAT_SNAPSHOT_STATUS_TONES } from '$lib/components/stats/labels';
 	import type { FieldOption } from '$lib/components/form/field-select.svelte';
 	import {
@@ -167,10 +167,6 @@
 	description="Загрузки статистики с сопоставлением колонок, построчной проверкой и подтверждением: показатели считаются только по подтверждённым снимкам."
 >
 	{#snippet actions()}
-		<Button variant="outline" href={resolve('/(app)/data/indicators')}>
-			<ChartNoAxesColumnIcon aria-hidden="true" />
-			Показатели
-		</Button>
 		{#if data.canImport}
 			<Button href={resolve('/(app)/data/new')}>
 				<UploadIcon aria-hidden="true" />
@@ -181,6 +177,8 @@
 </PageHeader>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
+	<SectionTabs />
+
 	{#if data.total === 0 && !data.filtered}
 		<div class="rounded-lg border border-border bg-surface shadow-xs">
 			<EmptyState

@@ -6,18 +6,25 @@
  * актуальным» обязано быть одно. Второй раз изложенное на TypeScript, оно
  * однажды разойдётся с первым — и разойдётся молча, в отчёте.
  */
-import { and, asc, count, desc, eq, ilike, or, sql, type SQL } from 'drizzle-orm';
+import { and, asc, count, desc, eq, ilike, isNull, or, sql, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { id as idSchema, type PageResult } from '$lib/contracts/common';
 import {
 	explainScore,
+	statProgramGroupOf,
 	STAT_PREVIEW_PARSE_LIMIT,
+	STAT_PROGRAM_GROUPS,
 	type MappingAdvice,
 	type ProgramRankingItem,
 	type RankingComponentKey,
+	type StatDashboardGroupRow,
+	type StatDashboardOrganizationRow,
+	type StatDashboardSource,
 	type StatIndicatorQuery,
 	type StatIndicatorRow,
 	type StatMapping,
+	type StatMeasures,
+	type StatProgramGroup,
 	type StatPeriod,
 	type StatRowView,
 	type StatSnapshotListItem,
@@ -555,4 +562,214 @@ export async function rankPrograms(
 					right.score - left.score || left.programCode.localeCompare(right.programCode)
 			)
 	);
+}
+
+/**
+ * Суммы показателей за период. Складываются уже сложенные представлением
+ * числа, и `sum` по-прежнему пропускает `NULL`: сумма по пустой колонке — это
+ * `NULL`, а не ноль.
+ */
+const INDICATOR_SUMS = {
+	applications: sql<number | null>`sum(${statProgramIndicators.applications})::integer`,
+	enrolled: sql<number | null>`sum(${statProgramIndicators.enrolled})::integer`,
+	parallelStreams: sql<number | null>`sum(${statProgramIndicators.parallelStreams})::integer`,
+	completed: sql<number | null>`sum(${statProgramIndicators.completed})::integer`,
+	coveragePlan: sql<number | null>`sum(${statProgramIndicators.coveragePlan})::integer`,
+	coverageFact: sql<number | null>`sum(${statProgramIndicators.coverageFact})::integer`
+} as const;
+
+const PROGRAM_COUNT = sql<number>`count(distinct ${statProgramIndicators.programId})::integer`;
+const ORGANIZATION_COUNT = sql<number>`count(distinct ${statProgramIndicators.organizationId})::integer`;
+
+/** Пустые показатели: период есть, а строк под него в области доступа нет. */
+const NO_MEASURES: StatMeasures = {
+	applications: null,
+	enrolled: null,
+	parallelStreams: null,
+	completed: null,
+	coveragePlan: null,
+	coverageFact: null
+};
+
+function dashboardWhere(
+	ctx: ActorContext,
+	period: { start: string; end: string }
+): SQL | undefined {
+	return and(scopeFilter(ctx, statProgramIndicators.organizationId), ...periodCondition(period));
+}
+
+/** Портфель периода целиком — без площадок: их представление не хранит. */
+export async function readDashboardTotals(
+	ctx: ActorContext,
+	period: { start: string; end: string }
+): Promise<StatMeasures & { programCount: number; organizationCount: number }> {
+	requirePermission(ctx, 'stats.read');
+
+	const [row] = await getDb()
+		.select({
+			programCount: PROGRAM_COUNT,
+			organizationCount: ORGANIZATION_COUNT,
+			...INDICATOR_SUMS
+		})
+		.from(statProgramIndicators)
+		.where(dashboardWhere(ctx, period));
+
+	return row ?? { programCount: 0, organizationCount: 0, ...NO_MEASURES };
+}
+
+/**
+ * Разбивка по группам программ: школьные отдельно от вузовских.
+ *
+ * Группу считает не база, а `statProgramGroupOf`: уровень программы лежит в
+ * справочнике, а то, как уровни сводятся в группы, — правило показателей, и
+ * изложенное вторым языком в SQL оно разойдётся с первым.
+ */
+export async function readDashboardGroups(
+	ctx: ActorContext,
+	period: { start: string; end: string }
+): Promise<StatDashboardGroupRow[]> {
+	requirePermission(ctx, 'stats.read');
+
+	const rows = await getDb()
+		.select({ level: programs.level, programCount: PROGRAM_COUNT, ...INDICATOR_SUMS })
+		.from(statProgramIndicators)
+		.innerJoin(programs, eq(programs.id, statProgramIndicators.programId))
+		.where(dashboardWhere(ctx, period))
+		.groupBy(programs.level);
+
+	const byGroup = new Map<StatProgramGroup, StatDashboardGroupRow>();
+
+	for (const row of rows) {
+		const group = statProgramGroupOf(row.level);
+		const current = byGroup.get(group) ?? { group, programCount: 0, ...NO_MEASURES };
+
+		byGroup.set(group, {
+			group,
+			programCount: current.programCount + row.programCount,
+			...addMeasures(current, row)
+		});
+	}
+
+	// Порядок групп — объявленный, а не тот, в каком PostgreSQL вернул уровни.
+	return STAT_PROGRAM_GROUPS.map((group) => byGroup.get(group)).filter(
+		(row): row is StatDashboardGroupRow => row !== undefined
+	);
+}
+
+/**
+ * Сложение показателей, в котором `null` остаётся `null`, пока не встретилось
+ * ни одного числа: «нет данных» плюс «нет данных» — это по-прежнему нет данных,
+ * а не ноль.
+ */
+function addMeasures(left: StatMeasures, right: StatMeasures): StatMeasures {
+	const add = (a: number | null, b: number | null): number | null =>
+		a === null ? b : b === null ? a : a + b;
+
+	return {
+		applications: add(left.applications, right.applications),
+		enrolled: add(left.enrolled, right.enrolled),
+		parallelStreams: add(left.parallelStreams, right.parallelStreams),
+		completed: add(left.completed, right.completed),
+		coveragePlan: add(left.coveragePlan, right.coveragePlan),
+		coverageFact: add(left.coverageFact, right.coverageFact)
+	};
+}
+
+/** Распределение по вузам: по строке на организацию, порядок — по названию. */
+export async function readDashboardOrganizations(
+	ctx: ActorContext,
+	period: { start: string; end: string }
+): Promise<StatDashboardOrganizationRow[]> {
+	requirePermission(ctx, 'stats.read');
+
+	return getDb()
+		.select({
+			organizationId: statProgramIndicators.organizationId,
+			organizationName: organizations.shortName,
+			programCount: PROGRAM_COUNT,
+			...INDICATOR_SUMS
+		})
+		.from(statProgramIndicators)
+		.innerJoin(organizations, eq(organizations.id, statProgramIndicators.organizationId))
+		.where(dashboardWhere(ctx, period))
+		.groupBy(statProgramIndicators.organizationId, organizations.shortName)
+		.orderBy(asc(organizations.shortName), asc(statProgramIndicators.organizationId));
+}
+
+/**
+ * Строки, из которых представление сложило период.
+ *
+ * Условия те же, что у `stat_program_indicators`, и повторены они ровно
+ * потому, что представление складывает строки, а здесь нужно обратное — какие
+ * загрузки за ними стоят и какие площадки в них названы. Числа по-прежнему
+ * считает представление: отсюда приходят только происхождение и счётчики строк.
+ */
+function dashboardRowsWhere(
+	ctx: ActorContext,
+	period: { start: string; end: string }
+): SQL | undefined {
+	return and(
+		eq(statSnapshots.status, 'confirmed'),
+		eq(statSnapshots.isCurrent, true),
+		eq(statRows.isValid, true),
+		isNull(statRows.replacedByRowId),
+		eq(statRows.periodStart, period.start),
+		eq(statRows.periodEnd, period.end),
+		scopeFilter(ctx, statRows.organizationId)
+	);
+}
+
+export type DashboardOrigin = {
+	sources: StatDashboardSource[];
+	/** Площадок, названных в строках периода; площадка в строке необязательна. */
+	siteCount: number;
+};
+
+export async function readDashboardOrigin(
+	ctx: ActorContext,
+	period: { start: string; end: string }
+): Promise<DashboardOrigin> {
+	requirePermission(ctx, 'stats.read');
+
+	const db = getDb();
+	const where = dashboardRowsWhere(ctx, period);
+
+	const [rows, siteTotals] = await Promise.all([
+		db
+			.select({
+				snapshotId: statSnapshots.id,
+				source: statSnapshots.source,
+				mode: statSnapshots.mode,
+				confirmedAt: statSnapshots.confirmedAt,
+				fileName: documents.title,
+				authorName: users.fullName,
+				rowCount: sql<number>`count(*)::integer`
+			})
+			.from(statRows)
+			.innerJoin(statSnapshots, eq(statSnapshots.id, statRows.snapshotId))
+			.leftJoin(documents, eq(documents.id, statSnapshots.fileDocumentId))
+			.leftJoin(users, eq(users.id, statSnapshots.createdBy))
+			.where(where)
+			.groupBy(statSnapshots.id, documents.title, users.fullName)
+			.orderBy(desc(statSnapshots.confirmedAt), asc(statSnapshots.id)),
+		db
+			.select({ value: sql<number>`count(distinct ${statRows.siteId})::integer` })
+			.from(statRows)
+			.innerJoin(statSnapshots, eq(statSnapshots.id, statRows.snapshotId))
+			.where(where)
+	]);
+
+	return {
+		sources: rows.map((row) => ({
+			snapshotId: row.snapshotId,
+			source: row.source,
+			mode: row.mode,
+			fileName: row.fileName,
+			authorName: row.authorName,
+			// Строкой, а не `Date`: представление дашборда лежит в кэше как JSON.
+			confirmedAt: row.confirmedAt?.toISOString() ?? null,
+			rowCount: row.rowCount
+		})),
+		siteCount: siteTotals[0]?.value ?? 0
+	};
 }
