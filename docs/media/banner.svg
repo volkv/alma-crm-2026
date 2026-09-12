@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="LCT CRM — система контроля взаимодействия с учебными заведениями">
+  <defs>
+    <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#0f172a"/>
+      <stop offset="1" stop-color="#1e3a8a"/>
+    </linearGradient>
+    <linearGradient id="glow" x1="0" y1="0" x2="1" y2="0">
+      <stop offset="0" stop-color="#60a5fa" stop-opacity="0"/>
+      <stop offset="0.5" stop-color="#60a5fa" stop-opacity="0.9"/>
+      <stop offset="1" stop-color="#60a5fa" stop-opacity="0"/>
+    </linearGradient>
+    <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
+      <path d="M40 0H0V40" fill="none" stroke="#ffffff" stroke-opacity="0.05"/>
+    </pattern>
+  </defs>
+  <rect width="1200" height="300" rx="24" fill="url(#bg)"/>
+  <rect width="1200" height="300" rx="24" fill="url(#grid)"/>
+
+  <!-- stage timeline motif -->
+  <g transform="translate(214 250)" stroke-linecap="round">
+    <line x1="0" y1="0" x2="910" y2="0" stroke="#ffffff" stroke-opacity="0.16" stroke-width="3"/>
+    <line x1="0" y1="0" x2="390" y2="0" stroke="#60a5fa" stroke-width="3"/>
+    <g fill="#60a5fa">
+      <circle cx="0" cy="0" r="8"/>
+      <circle cx="130" cy="0" r="8"/>
+      <circle cx="260" cy="0" r="8"/>
+      <circle cx="390" cy="0" r="8"/>
+    </g>
+    <circle cx="390" cy="0" r="15" fill="none" stroke="#60a5fa" stroke-width="3" stroke-opacity="0.55"/>
+    <g fill="#0f172a" stroke="#ffffff" stroke-opacity="0.4" stroke-width="3">
+      <circle cx="520" cy="0" r="8"/>
+      <circle cx="650" cy="0" r="8"/>
+      <circle cx="780" cy="0" r="8"/>
+      <circle cx="910" cy="0" r="8"/>
+    </g>
+    <g fill="#ffffff" font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" font-size="12" text-anchor="middle">
+      <text x="0" y="28" fill-opacity="0.65">контакты</text>
+      <text x="130" y="28" fill-opacity="0.65">сверка</text>
+      <text x="260" y="28" fill-opacity="0.65">документы</text>
+      <text x="390" y="28" fill="#93c5fd" font-weight="600">соглашение</text>
+      <text x="520" y="28" fill-opacity="0.45">передача</text>
+      <text x="650" y="28" fill-opacity="0.45">обучение</text>
+      <text x="780" y="28" fill-opacity="0.45">актуализация</text>
+      <text x="910" y="28" fill-opacity="0.45">контроль</text>
+    </g>
+  </g>
+
+  <!-- mark -->
+  <g transform="translate(72 74)">
+    <rect width="108" height="108" rx="24" fill="#2563eb"/>
+    <path d="M30 30v48h22M67 30h11v48H67z" fill="none" stroke="#ffffff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+  </g>
+
+  <!-- wordmark -->
+  <g font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" fill="#ffffff">
+    <text x="212" y="118" font-size="64" font-weight="700" letter-spacing="-1.5">LCT CRM</text>
+    <text x="214" y="160" font-size="21" fill-opacity="0.82">Система контроля взаимодействия с учебными заведениями</text>
+    <text x="214" y="192" font-size="15" fill="#93c5fd">воронка стадий · документы · данные об обучении · API</text>
+  </g>
+</svg>
