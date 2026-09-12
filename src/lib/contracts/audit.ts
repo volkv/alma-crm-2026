@@ -80,10 +80,20 @@ export const AUDIT_EVENT_TYPES = [
 	'stages.route_created',
 	'stages.route_updated',
 	'stages.route_published',
+	'stages.route_default_changed',
+	// То же, что и `users.viewed`: маршруты читает каждый, кто открыл раздел
+	// настроек, и успешное чтение в журнале не нужно — а вот попытка открыть
+	// устройство процесса без права на его настройку и есть то, ради чего
+	// событие заведено. В журнале оно встречается с исходом `denied`.
+	'stages.routes_viewed',
 	'documents.uploaded',
 	'documents.generated',
 	'documents.downloaded',
 	'documents.status_changed',
+	'stats.snapshot_created',
+	'stats.snapshot_mapped',
+	'stats.snapshot_confirmed',
+	'stats.snapshot_rejected',
 	'audit.exported',
 	'api.request',
 	'api.unauthenticated_burst'

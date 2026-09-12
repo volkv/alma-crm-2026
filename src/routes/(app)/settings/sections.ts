@@ -8,7 +8,11 @@
 import type { PermissionKey } from '$lib/server/rbac/permissions';
 
 export type SettingsHref =
-	'/settings/profile' | '/settings/users' | '/settings/api-keys' | '/settings/general';
+	| '/settings/profile'
+	| '/settings/users'
+	| '/settings/api-keys'
+	| '/settings/general'
+	| '/settings/routes';
 
 export type SettingsSection = {
 	href: SettingsHref;
@@ -42,6 +46,12 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 		label: 'Общие настройки',
 		description: 'Страница входа, сроки сессий, политики пароля и блокировки',
 		permission: 'settings.write'
+	},
+	{
+		href: '/settings/routes',
+		label: 'Маршруты стадий',
+		description: 'Версии процесса: стадии, переходы и маршрут по умолчанию',
+		permission: 'stages.configure'
 	}
 ];
 

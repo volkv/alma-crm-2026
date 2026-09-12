@@ -70,10 +70,16 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'stages.route_created': 'Маршрут стадий создан',
 	'stages.route_updated': 'Маршрут стадий изменён',
 	'stages.route_published': 'Маршрут стадий опубликован',
+	'stages.route_default_changed': 'Маршрут стадий назначен основным',
+	'stages.routes_viewed': 'Обращение к маршрутам стадий',
 	'documents.uploaded': 'Документ загружен',
 	'documents.generated': 'Документ сгенерирован',
 	'documents.downloaded': 'Документ скачан',
 	'documents.status_changed': 'Статус документа изменён',
+	'stats.snapshot_created': 'Снимок данных загружен',
+	'stats.snapshot_mapped': 'Колонки снимка сопоставлены',
+	'stats.snapshot_confirmed': 'Снимок данных подтверждён',
+	'stats.snapshot_rejected': 'Снимок данных отклонён',
 	'audit.exported': 'Журнал выгружен',
 	'api.request': 'Обращение к API',
 	'api.unauthenticated_burst': 'Обращения к API без ключа'
@@ -94,6 +100,7 @@ const GROUP_LABELS: Record<EventPrefix, string> = {
 	interactions: 'Взаимодействия',
 	stages: 'Маршруты и стадии',
 	documents: 'Документы',
+	stats: 'Данные об обучении',
 	audit: 'Журнал',
 	api: 'API'
 };
@@ -162,6 +169,7 @@ const SUBJECT_LABELS: Record<string, string> = {
 	interaction: 'Взаимодействие',
 	stage_route: 'Маршрут стадий',
 	document: 'Документ',
+	stat_snapshot: 'Снимок данных',
 	user: 'Пользователь',
 	api_key: 'Ключ доступа'
 };
@@ -181,7 +189,8 @@ const SUBJECT_SECTIONS: Record<string, string> = {
 	organization: '/organizations',
 	person: '/people',
 	interaction: '/interactions',
-	document: '/documents'
+	document: '/documents',
+	stat_snapshot: '/data'
 };
 
 /**
