@@ -13,7 +13,12 @@ export type NavLink = Omit<NavSection, 'href'> & { href: ResolvedPathname };
  */
 export const navLinks: readonly NavLink[] = navSections.map((section) => ({
 	...section,
-	href: resolve(section.href as Pathname)
+	// `resolve()` разбирает аргумент по ветвям объединения `Pathname`, и начиная
+	// примерно с двадцати пяти маршрутов TypeScript перестаёт сопоставлять
+	// объединение целиком хоть с одной ветвью. Путь раздела параметров не
+	// содержит — `resolve()` только добавит базовый путь, — поэтому он подаётся
+	// как одна ветвь объединения.
+	href: resolve(section.href as Pathname & '/')
 }));
 
 /**

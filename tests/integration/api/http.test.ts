@@ -483,7 +483,13 @@ describe('описание API', () => {
 		expect(document.openapi).toBe('3.1.0');
 
 		const paths = document.paths as unknown as Record<string, Record<string, unknown>>;
-		expect(Object.keys(paths).sort()).toEqual(['/v1/organizations', '/v1/organizations/{id}']);
+		expect(Object.keys(paths).sort()).toEqual([
+			'/v1/interactions',
+			'/v1/interactions/{id}',
+			'/v1/interactions/{id}/transitions',
+			'/v1/organizations',
+			'/v1/organizations/{id}'
+		]);
 		expect(paths['/v1/organizations'].get).toMatchObject({ security: [{ bearerAuth: [] }] });
 
 		const components = document.components as unknown as {

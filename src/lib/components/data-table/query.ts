@@ -90,7 +90,12 @@ export function tableHref(url: URL, changes: Partial<TableQuery>): ResolvedPathn
 	// this app; `resolve` only prefixes the configured base path.
 	const path = url.pathname as Pathname;
 
-	return query ? resolve(`${path}?${query}` as `${Pathname}?${string}`) : resolve(path);
+	// `resolve()` разбирает аргумент по ветвям объединения `Pathname`, и начиная
+	// примерно с двадцати пяти маршрутов TypeScript перестаёт сопоставлять
+	// объединение целиком хоть с одной ветвью. Путь здесь уже собран и
+	// параметров в нём нет — `resolve()` только добавит базовый путь, — поэтому
+	// он подаётся как одна ветвь объединения.
+	return query ? resolve(`${path}?${query}` as `/?${string}`) : resolve(path as Pathname & '/');
 }
 
 /** The slice of a full data set this query asks for. Useful for fixtures. */

@@ -16,6 +16,7 @@ import {
 	requiredText,
 	searchQuery
 } from './common';
+import type { PersonView } from './directory';
 
 /** Смысловая группа стадии; по ней раскрашивают ленту и считают сводки. */
 export const STAGE_CATEGORIES = [
@@ -200,10 +201,30 @@ export const updateInteractionSchema = createInteractionSchema.extend({
 	reason: optionalText(1000)
 });
 
+/** По какому столбцу и в какую сторону упорядочен список взаимодействий. */
+export const INTERACTION_SORTS = [
+	'lastActivityAt',
+	'-lastActivityAt',
+	'title',
+	'-title',
+	'dueAt',
+	'-dueAt'
+] as const;
+
+export type InteractionSort = (typeof INTERACTION_SORTS)[number];
+
 export const interactionListQuerySchema = z.object({
 	status: z.enum(INTERACTION_STATUSES).nullable().default(null),
 	ownerUserId: optionalId('Некорректный идентификатор ответственного'),
 	organizationId: optionalId('Некорректный идентификатор организации'),
+	/** Смысловая группа текущей стадии: «на каком участке процесса стоим». */
+	stageCategory: z.enum(STAGE_CATEGORIES).nullable().default(null),
+	/** Только просроченные: срок текущей стадии уже прошёл. */
+	overdue: z
+		.union([z.boolean(), z.enum(['true', 'false'])])
+		.default(false)
+		.transform((value) => value === true || value === 'true'),
+	sort: z.enum(INTERACTION_SORTS).default('-lastActivityAt'),
 	q: searchQuery,
 	...pageQuerySchema.shape
 });
@@ -289,6 +310,129 @@ export const createCommentSchema = z.object({
 	body: requiredText(4000, 'Комментарий не может быть пустым')
 });
 
+/** Отметка по одному пункту чек-листа текущей стадии. */
+export const setChecklistItemSchema = z.object({
+	interactionId: id('Некорректный идентификатор взаимодействия'),
+	key: requiredText(100, 'Укажите пункт чек-листа'),
+	done: z.boolean()
+});
+
+/** Результат текущей стадии — текстом, без перехода. */
+export const setStageResultSchema = z.object({
+	interactionId: id('Некорректный идентификатор взаимодействия'),
+	resultText: requiredText(4000, 'Опишите результат стадии')
+});
+
+/**
+ * Смена ответственного за взаимодействие. Отдельная команда, а не поле формы
+ * правки: её отдают из списка сразу по нескольким записям, и она обязана
+ * оставлять след в истории изменений.
+ */
+export const setResponsibleSchema = z.object({
+	interactionIds: z
+		.array(id('Некорректный идентификатор взаимодействия'))
+		.min(1, { error: 'Выберите хотя бы одно взаимодействие' }),
+	userId: id('Выберите ответственного')
+});
+
+/**
+ * Конфигурация маршрута: стадии и переходы между ними.
+ *
+ * Стадии и переходы адресуются ключами, а не идентификаторами: конфигурацию
+ * пишут руками (демонстрационный маршрут — константа в коде), а идентификаторы
+ * появляются только в базе.
+ */
+export const stageDefinitionSchema = z.object({
+	key: requiredText(100, 'У стадии должен быть ключ'),
+	name: requiredText(300, 'У стадии должно быть название'),
+	category: z.enum(STAGE_CATEGORIES, { error: 'Выберите смысловую группу стадии' }),
+	/** Норматив стадии в днях; из него считается срок в представлении статуса. */
+	slaDays: z
+		.number({ error: 'Норматив стадии — целое число дней' })
+		.int()
+		.min(0, { error: 'Норматив стадии не может быть отрицательным' })
+		.max(365, { error: 'Норматив стадии не длиннее года' }),
+	/** Через сколько дней без событий стадия считается протухшей. */
+	staleAfterDays: z
+		.number({ error: 'Срок протухания — целое число дней' })
+		.int()
+		.min(1, { error: 'Срок протухания — хотя бы один день' })
+		.max(365, { error: 'Срок протухания не длиннее года' })
+		.nullable()
+		.default(null),
+	requiresResult: z.boolean().default(false),
+	requiresConfirmation: z.boolean().default(false),
+	checklist: z.array(checklistItemSchema).default([])
+});
+
+export const stageTransitionDefinitionSchema = z.object({
+	fromStageKey: requiredText(100, 'Укажите стадию, с которой возможен переход'),
+	toStageKey: requiredText(100, 'Укажите стадию, на которую ведёт переход'),
+	kind: z.enum(STAGE_TRANSITION_KINDS, { error: 'Выберите вид перехода' }),
+	/** Право, без которого переход недоступен. */
+	requiredPermissionKey: requiredText(100, 'Укажите право, которое требует переход'),
+	requiresReason: z.boolean().default(false)
+});
+
+type RouteDefinition = {
+	stages: { key: string }[];
+	transitions: { fromStageKey: string; toStageKey: string }[];
+};
+
+function stageKeysAreDistinct(value: RouteDefinition): boolean {
+	return new Set(value.stages.map((stage) => stage.key)).size === value.stages.length;
+}
+
+function transitionsReferenceStages(value: RouteDefinition): boolean {
+	const keys = new Set(value.stages.map((stage) => stage.key));
+
+	return value.transitions.every(
+		(transition) => keys.has(transition.fromStageKey) && keys.has(transition.toStageKey)
+	);
+}
+
+function transitionsAreDistinct(value: RouteDefinition): boolean {
+	const pairs = value.transitions.map(
+		(transition) => `${transition.fromStageKey}→${transition.toStageKey}`
+	);
+
+	return new Set(pairs).size === pairs.length;
+}
+
+function transitionsGoSomewhereElse(value: RouteDefinition): boolean {
+	return value.transitions.every((transition) => transition.fromStageKey !== transition.toStageKey);
+}
+
+export const createRouteSchema = z
+	.object({
+		key: requiredText(100, 'Укажите ключ маршрута'),
+		name: requiredText(300, 'Укажите название маршрута'),
+		description: optionalText(1000),
+		/** Маршрут, который предлагается для новых взаимодействий. */
+		isDefault: z.boolean().default(false),
+		stages: z
+			.array(stageDefinitionSchema)
+			.min(1, { error: 'В маршруте должна быть хотя бы одна стадия' }),
+		transitions: z.array(stageTransitionDefinitionSchema).default([])
+	})
+	.refine(stageKeysAreDistinct, { error: 'Ключи стадий не повторяются', path: ['stages'] })
+	.refine(transitionsReferenceStages, {
+		error: 'Переход ссылается на стадию, которой нет в маршруте',
+		path: ['transitions']
+	})
+	.refine(transitionsAreDistinct, {
+		error: 'Между двумя стадиями возможен только один переход',
+		path: ['transitions']
+	})
+	.refine(transitionsGoSomewhereElse, {
+		error: 'Переход не может вести на ту же стадию',
+		path: ['transitions']
+	});
+
+export const updateRouteSchema = createRouteSchema.extend({
+	id: id('Некорректный идентификатор маршрута')
+});
+
 export type CreateInteractionInput = z.output<typeof createInteractionSchema>;
 export type UpdateInteractionInput = z.output<typeof updateInteractionSchema>;
 export type InteractionListQuery = z.output<typeof interactionListQuerySchema>;
@@ -301,3 +445,495 @@ export type ConfirmStageInput = z.output<typeof confirmStageSchema>;
 export type RaiseBlockerInput = z.output<typeof raiseBlockerSchema>;
 export type ResolveBlockerInput = z.output<typeof resolveBlockerSchema>;
 export type CreateCommentInput = z.output<typeof createCommentSchema>;
+export type SetChecklistItemInput = z.output<typeof setChecklistItemSchema>;
+export type SetStageResultInput = z.output<typeof setStageResultSchema>;
+export type SetResponsibleInput = z.output<typeof setResponsibleSchema>;
+export type StageDefinitionInput = z.output<typeof stageDefinitionSchema>;
+export type StageTransitionDefinitionInput = z.output<typeof stageTransitionDefinitionSchema>;
+export type CreateRouteInput = z.output<typeof createRouteSchema>;
+export type UpdateRouteInput = z.output<typeof updateRouteSchema>;
+
+/**
+ * Представления, которые сервер отдаёт наружу. Строки таблиц Drizzle за
+ * границу сервера не выходят: тип ответа описан здесь и не меняется от того,
+ * что происходит со схемой базы.
+ */
+export type StageView = {
+	id: string;
+	routeId: string;
+	position: number;
+	key: string;
+	name: string;
+	category: StageCategory;
+	slaDays: number;
+	staleAfterDays: number | null;
+	requiresResult: boolean;
+	requiresConfirmation: boolean;
+	checklist: ChecklistItem[];
+};
+
+export type StageTransitionView = {
+	id: string;
+	fromStageId: string;
+	toStageId: string;
+	kind: StageTransitionKind;
+	requiredPermissionKey: string;
+	requiresReason: boolean;
+};
+
+export type StageRouteView = {
+	id: string;
+	key: string;
+	version: number;
+	name: string;
+	description: string | null;
+	isDefault: boolean;
+	publishedAt: Date | null;
+	stages: StageView[];
+	transitions: StageTransitionView[];
+};
+
+/** Как стадия выглядит на ленте взаимодействия. */
+export const STAGE_PROGRESS_STATES = [
+	'pending',
+	'done',
+	'current',
+	'paused',
+	'overdue',
+	'blocked',
+	'skipped'
+] as const;
+
+export type StageProgressState = (typeof STAGE_PROGRESS_STATES)[number];
+
+export type StageProgressItem = {
+	stageId: string;
+	key: string;
+	name: string;
+	position: number;
+	category: StageCategory;
+	state: StageProgressState;
+	/** Срок текущей стадии; у остальных пусто. */
+	dueAt: Date | null;
+	note: string | null;
+};
+
+export type StagePauseView = {
+	id: string;
+	reason: PauseReason;
+	waitingPartyId: string | null;
+	nextAction: string | null;
+	note: string;
+	startedAt: Date;
+	endedAt: Date | null;
+};
+
+/**
+ * Запись о пребывании на стадии вместе со сроком из представления
+ * `stage_entry_status`: часы стадии считает база, а не интерфейс.
+ */
+export type StageEntryView = {
+	id: string;
+	stageId: string;
+	snapshot: StageSnapshot;
+	enteredAt: Date;
+	leftAt: Date | null;
+	outcome: StageOutcome | null;
+	outcomeReason: string | null;
+	responsibleUserId: string | null;
+	responsibleName: string | null;
+	waitingPartyId: string | null;
+	resultText: string | null;
+	confirmation: StageConfirmation | null;
+	confirmedAt: Date | null;
+	checklistState: ChecklistState;
+	dueAt: Date;
+	pausedSeconds: number;
+	activeSeconds: number;
+	remainingSeconds: number;
+	overdueSeconds: number;
+	isOverdue: boolean;
+	isPaused: boolean;
+	pauses: StagePauseView[];
+};
+
+export type BlockerView = {
+	id: string;
+	interactionId: string;
+	stageEntryId: string | null;
+	reasonCode: string;
+	description: string;
+	blocksTransition: boolean;
+	raisedBy: string;
+	raisedByName: string;
+	assigneeUserId: string | null;
+	raisedAt: Date;
+	resolvedAt: Date | null;
+	resolvedBy: string | null;
+	resolution: string | null;
+};
+
+export type CommentView = {
+	id: string;
+	authorId: string;
+	authorName: string;
+	body: string;
+	createdAt: Date;
+};
+
+export type InteractionChangeView = {
+	id: string;
+	changedAt: Date;
+	authorId: string;
+	authorName: string;
+	field: string;
+	oldValue: unknown;
+	newValue: unknown;
+	reason: string | null;
+};
+
+export type InteractionPartyView = {
+	id: string;
+	organizationId: string;
+	organizationName: string;
+	partyRole: PartyRole;
+	isPrimary: boolean;
+	contactAffiliationId: string | null;
+	/** Контактное лицо участника; контакты маскирует `toPersonView`. */
+	contact: PersonView | null;
+	contactPosition: string | null;
+	sites: { id: string; name: string }[];
+};
+
+export type InteractionProgramView = {
+	programId: string;
+	code: string;
+	name: string;
+	programVersionId: string | null;
+};
+
+export type InteractionProductView = {
+	productId: string;
+	code: string;
+	name: string;
+};
+
+/** Взаимодействие целиком — то, из чего собирается карточка. */
+export type InteractionView = {
+	id: string;
+	title: string;
+	status: InteractionStatus;
+	routeId: string;
+	routeName: string;
+	agreementPeriodStart: string | null;
+	agreementPeriodEnd: string | null;
+	academicPeriodStart: string | null;
+	academicPeriodEnd: string | null;
+	ownerUserId: string;
+	ownerName: string;
+	lastActivityAt: Date;
+	externalSource: string | null;
+	externalId: string | null;
+	createdAt: Date;
+	updatedAt: Date;
+	parties: InteractionPartyView[];
+	programs: InteractionProgramView[];
+	products: InteractionProductView[];
+	documents: InteractionDocumentView[];
+};
+
+/** Документ взаимодействия в списке карточки: только то, что видно в строке. */
+export type InteractionDocumentView = {
+	id: string;
+	kind: string;
+	title: string;
+	mime: string;
+	sizeBytes: number;
+	createdAt: Date;
+	agreedAt: Date | null;
+	approvedAt: Date | null;
+	inEffectAt: Date | null;
+};
+
+/** Строка списка взаимодействий. */
+export type InteractionListItem = {
+	id: string;
+	title: string;
+	status: InteractionStatus;
+	ownerUserId: string;
+	ownerName: string;
+	lastActivityAt: Date;
+	/** Основные стороны процесса, по одной на роль. */
+	institutionName: string | null;
+	customerName: string | null;
+	stage: {
+		id: string;
+		key: string;
+		name: string;
+		position: number;
+		category: StageCategory;
+	} | null;
+	progress: StageProgressItem[];
+	dueAt: Date | null;
+	remainingSeconds: number | null;
+	isOverdue: boolean;
+	isPaused: boolean;
+	/** Вокруг записи тихо дольше, чем допускает стадия. */
+	isStale: boolean;
+	openBlockers: number;
+};
+
+/** Состояние взаимодействия: где стоим, сколько осталось, что мешает. */
+export type InteractionStatusView = {
+	interactionId: string;
+	routeId: string;
+	current: StageEntryView | null;
+	history: StageEntryView[];
+	progress: StageProgressItem[];
+	blockers: BlockerView[];
+	isStale: boolean;
+	lastActivityAt: Date;
+};
+
+/** Что можно сделать помимо перехода по стадиям. */
+export const INTERACTION_ACTIONS = [
+	'pause',
+	'resume',
+	'raise_blocker',
+	'resolve_blocker',
+	'set_result',
+	'confirm',
+	'set_checklist',
+	'set_responsible',
+	'upload_document',
+	'generate_document',
+	'comment',
+	'edit'
+] as const;
+
+export type InteractionAction = (typeof INTERACTION_ACTIONS)[number];
+
+/** Переход вместе с приговором: можно ли им воспользоваться и почему нет. */
+export type TransitionOptionView = {
+	transition: StageTransitionView;
+	toStage: { id: string; key: string; name: string; position: number; category: StageCategory };
+	allowed: boolean;
+	reasons: string[];
+};
+
+/**
+ * Сводка карточки: что происходит, что мешает, кто должен действовать и что
+ * можно сделать прямо сейчас. Это ответ на четыре вопроса, с которыми человек
+ * открывает взаимодействие, — поэтому он собирается на сервере целиком.
+ */
+export type InteractionSummaryView = {
+	happening: {
+		stage: {
+			id: string;
+			key: string;
+			name: string;
+			position: number;
+			category: StageCategory;
+		} | null;
+		dueAt: Date | null;
+		remainingSeconds: number | null;
+		isOverdue: boolean;
+		isPaused: boolean;
+		pause: StagePauseView | null;
+		waitingParty: { id: string; organizationName: string } | null;
+		nextAction: string | null;
+	};
+	blocking: {
+		blockers: BlockerView[];
+		openChecklist: ChecklistItem[];
+	};
+	whoActs: {
+		responsibleUser: { id: string; name: string } | null;
+		waitingParty: { id: string; organizationName: string } | null;
+	};
+	canDo: {
+		transitions: TransitionOptionView[];
+		actions: InteractionAction[];
+	};
+};
+
+/**
+ * Представление взаимодействия для публичного API: моменты времени — строки
+ * ISO 8601, а не `Date`. Перевод описан явно, иначе формат ответа менялся бы
+ * вместе с внутренним типом, о котором интегратор ничего не знает.
+ */
+export const apiInteractionSchema = z.object({
+	id: z.uuid(),
+	title: z.string(),
+	status: z.enum(INTERACTION_STATUSES),
+	ownerUserId: z.uuid(),
+	ownerName: z.string(),
+	institutionName: z.string().nullable().describe('Основное учебное заведение взаимодействия'),
+	customerName: z.string().nullable().describe('Заказчик подготовки, если он указан'),
+	stageKey: z.string().nullable().describe('Ключ текущей стадии маршрута'),
+	stageName: z.string().nullable(),
+	stagePosition: z.number().int().nullable(),
+	stageCategory: z.enum(STAGE_CATEGORIES).nullable(),
+	dueAt: z.iso.datetime().nullable().describe('Срок текущей стадии с учётом пауз'),
+	isOverdue: z.boolean(),
+	isPaused: z.boolean(),
+	isStale: z.boolean().describe('Вокруг записи тихо дольше, чем допускает стадия'),
+	openBlockers: z.number().int().nonnegative(),
+	lastActivityAt: z.iso.datetime()
+});
+
+export type ApiInteraction = z.output<typeof apiInteractionSchema>;
+
+export function toApiInteraction(view: InteractionListItem): ApiInteraction {
+	return {
+		id: view.id,
+		title: view.title,
+		status: view.status,
+		ownerUserId: view.ownerUserId,
+		ownerName: view.ownerName,
+		institutionName: view.institutionName,
+		customerName: view.customerName,
+		stageKey: view.stage?.key ?? null,
+		stageName: view.stage?.name ?? null,
+		stagePosition: view.stage?.position ?? null,
+		stageCategory: view.stage?.category ?? null,
+		dueAt: view.dueAt === null ? null : view.dueAt.toISOString(),
+		isOverdue: view.isOverdue,
+		isPaused: view.isPaused,
+		isStale: view.isStale,
+		openBlockers: view.openBlockers,
+		lastActivityAt: view.lastActivityAt.toISOString()
+	};
+}
+
+/**
+ * Карточка взаимодействия для интегратора. Контактов людей здесь нет: их
+ * отдаёт только интерфейс, где маскирование делает `toPersonView`.
+ */
+export const apiInteractionDetailSchema = apiInteractionSchema.extend({
+	routeId: z.uuid(),
+	routeName: z.string(),
+	agreementPeriodStart: z.iso.date().nullable(),
+	agreementPeriodEnd: z.iso.date().nullable(),
+	academicPeriodStart: z.iso.date().nullable(),
+	academicPeriodEnd: z.iso.date().nullable(),
+	parties: z.array(
+		z.object({
+			organizationId: z.uuid(),
+			organizationName: z.string(),
+			partyRole: z.enum(PARTY_ROLES),
+			isPrimary: z.boolean()
+		})
+	),
+	programs: z.array(z.object({ programId: z.uuid(), code: z.string(), name: z.string() })),
+	products: z.array(z.object({ productId: z.uuid(), code: z.string(), name: z.string() })),
+	/** Стадии маршрута с состоянием каждой: пройдена, текущая, пропущена. */
+	progress: z.array(
+		z.object({
+			key: z.string(),
+			name: z.string(),
+			position: z.number().int(),
+			category: z.enum(STAGE_CATEGORIES),
+			state: z.enum(STAGE_PROGRESS_STATES)
+		})
+	),
+	externalSource: z.string().nullable(),
+	externalId: z.string().nullable(),
+	createdAt: z.iso.datetime(),
+	updatedAt: z.iso.datetime()
+});
+
+export type ApiInteractionDetail = z.output<typeof apiInteractionDetailSchema>;
+
+export function toApiInteractionDetail(
+	view: InteractionView,
+	status: InteractionStatusView,
+	extra: { isStale: boolean; openBlockers: number }
+): ApiInteractionDetail {
+	const current = status.current;
+
+	return {
+		id: view.id,
+		title: view.title,
+		status: view.status,
+		ownerUserId: view.ownerUserId,
+		ownerName: view.ownerName,
+		institutionName:
+			view.parties.find((party) => party.partyRole === 'educational_institution')
+				?.organizationName ?? null,
+		customerName:
+			view.parties.find((party) => party.partyRole === 'customer')?.organizationName ?? null,
+		stageKey: current?.snapshot.key ?? null,
+		stageName: current?.snapshot.name ?? null,
+		stagePosition: current?.snapshot.position ?? null,
+		stageCategory: current?.snapshot.category ?? null,
+		dueAt: current?.dueAt.toISOString() ?? null,
+		isOverdue: current?.isOverdue ?? false,
+		isPaused: current?.isPaused ?? false,
+		isStale: extra.isStale,
+		openBlockers: extra.openBlockers,
+		lastActivityAt: view.lastActivityAt.toISOString(),
+		routeId: view.routeId,
+		routeName: view.routeName,
+		agreementPeriodStart: view.agreementPeriodStart,
+		agreementPeriodEnd: view.agreementPeriodEnd,
+		academicPeriodStart: view.academicPeriodStart,
+		academicPeriodEnd: view.academicPeriodEnd,
+		parties: view.parties.map((party) => ({
+			organizationId: party.organizationId,
+			organizationName: party.organizationName,
+			partyRole: party.partyRole,
+			isPrimary: party.isPrimary
+		})),
+		programs: view.programs.map((program) => ({
+			programId: program.programId,
+			code: program.code,
+			name: program.name
+		})),
+		products: view.products.map((product) => ({
+			productId: product.productId,
+			code: product.code,
+			name: product.name
+		})),
+		progress: status.progress.map((item) => ({
+			key: item.key,
+			name: item.name,
+			position: item.position,
+			category: item.category,
+			state: item.state
+		})),
+		externalSource: view.externalSource,
+		externalId: view.externalId,
+		createdAt: view.createdAt.toISOString(),
+		updatedAt: view.updatedAt.toISOString()
+	};
+}
+
+/**
+ * Переход по стадиям через API. Стадия, с которой отдана команда, обязательна:
+ * сервер сверит её с открытой записью и откажет, если взаимодействие успели
+ * сдвинуть, — иначе повторная попытка интеграции двигала бы процесс дальше.
+ */
+export const apiTransitionRequestSchema = z.object({
+	kind: z.enum(STAGE_TRANSITION_KINDS, { error: 'Выберите вид перехода' }),
+	fromStageId: id('Некорректный идентификатор стадии'),
+	toStageId: id('Выберите стадию, на которую переходим'),
+	/** Обязательна для возврата и пропуска. */
+	reason: optionalText(1000),
+	resultText: optionalText(4000)
+});
+
+export type ApiTransitionRequest = z.output<typeof apiTransitionRequestSchema>;
+
+/** Ответ на переход по стадиям: где взаимодействие оказалось. */
+export const apiTransitionResultSchema = z.object({
+	interactionId: z.uuid(),
+	stageId: z.uuid(),
+	stageKey: z.string().describe('Ключ стадии, на которой взаимодействие оказалось'),
+	stageName: z.string(),
+	stagePosition: z.number().int(),
+	enteredAt: z.iso.datetime(),
+	dueAt: z.iso.datetime()
+});
+
+export type ApiTransitionResult = z.output<typeof apiTransitionResultSchema>;
