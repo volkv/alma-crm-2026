@@ -7,6 +7,7 @@
 	import ActionAlert from '$lib/components/directory/action-alert.svelte';
 	import Flash from '$lib/components/directory/flash.svelte';
 	import { AFFILIATION_ROLE_LABELS } from '$lib/components/directory/labels';
+	import PersonalDataPanel from '$lib/components/directory/personal-data-panel.svelte';
 	import ConfirmDialog from '$lib/components/confirm-dialog.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
@@ -43,13 +44,19 @@
 		created: 'Человек заведён',
 		updated: 'Изменения сохранены',
 		affiliation_created: 'Роль добавлена',
-		affiliation_ended: 'Полномочия закрыты'
+		affiliation_ended: 'Полномочия закрыты',
+		retention_changed: 'Срок хранения сохранён',
+		consent_recorded: 'Согласие зафиксировано',
+		consent_withdrawn: 'Согласие отозвано',
+		anonymized: 'Данные обезличены'
 	}}
 />
 
 <PageHeader title={fullName} breadcrumbs={[{ label: 'Контакты', href: resolve('/(app)/people') }]}>
 	{#snippet actions()}
-		{#if data.canWrite}
+		<!-- Обезличенную запись не правят: стёртые данные не возвращают той же
+			строкой, и кнопка, которая это предлагает, врёт. -->
+		{#if data.canWrite && data.person.anonymizedAt === null}
 			<Button
 				variant="outline"
 				href={resolve('/(app)/people/[id=uuid]/edit', { id: data.person.id })}
@@ -84,6 +91,10 @@
 			<p class="mt-4 text-sm whitespace-pre-line">{data.person.notes}</p>
 		{/if}
 	</section>
+
+	{#if data.managesPii}
+		<PersonalDataPanel person={data.person} consents={data.consents} today={data.today} />
+	{/if}
 
 	<section class="rounded-lg border border-border bg-surface">
 		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">

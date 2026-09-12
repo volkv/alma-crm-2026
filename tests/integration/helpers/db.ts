@@ -244,6 +244,63 @@ export async function insertOrganization(
 	return row.id;
 }
 
+/** Человек справочника: контакты заполнены, потому что их и проверяют. */
+export async function insertPerson(
+	database: PostgresJsDatabase<typeof schema>,
+	options: {
+		lastName?: string;
+		email?: string | null;
+		phone?: string | null;
+		retentionUntil?: string | null;
+	} = {}
+): Promise<string> {
+	const [row] = await database
+		.insert(schema.people)
+		.values({
+			lastName: options.lastName ?? 'Тестов',
+			firstName: 'Тест',
+			email: options.email === undefined ? 'test@example.org' : options.email,
+			phone: options.phone === undefined ? '+7 900 000-00-00' : options.phone,
+			retentionUntil: options.retentionUntil ?? null
+		})
+		.returning({ id: schema.people.id });
+
+	return row.id;
+}
+
+/**
+ * Строка документа без файла на диске: тесты схемы и цепочки редакций
+ * проверяют ограничения базы, а не хранилище. Всё, что идёт через хранилище
+ * (загрузка, скачивание), зовёт настоящие сервисы.
+ */
+export async function insertDocument(
+	database: PostgresJsDatabase<typeof schema>,
+	options: {
+		interactionId?: string | null;
+		supersedesId?: string | null;
+		kind?: string;
+		title?: string;
+		uploadedBy?: string | null;
+	} = {}
+): Promise<string> {
+	const [row] = await database
+		.insert(schema.documents)
+		.values({
+			interactionId: options.interactionId ?? null,
+			supersedesId: options.supersedesId ?? null,
+			kind: options.kind ?? 'agreement',
+			title: options.title ?? 'Соглашение',
+			filePath: `files/${crypto.randomUUID()}`,
+			mime: 'application/pdf',
+			sizeBytes: 1024,
+			sha256: crypto.randomUUID().replaceAll('-', '').repeat(2),
+			uploadedBy: options.uploadedBy ?? null
+		})
+		.returning({ id: schema.documents.id });
+
+	return row.id;
+}
+
 /** Маршрут с одной стадией и взаимодействие на нём. */
 export async function insertInteractionWithStage(
 	database: PostgresJsDatabase<typeof schema>,

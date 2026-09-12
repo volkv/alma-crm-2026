@@ -11,6 +11,7 @@
 import type { PersonView } from '$lib/contracts/directory';
 import type { ActorContext } from '../actor';
 import { can } from '../rbac';
+import { notePiiView } from './pii-trace';
 
 /** Поля человека, которые нужны сериализатору. */
 export type PersonRecord = {
@@ -21,6 +22,8 @@ export type PersonRecord = {
 	email: string | null;
 	phone: string | null;
 	notes: string | null;
+	retentionUntil: string | null;
+	anonymizedAt: Date | null;
 };
 
 /** `ivanov@vuz.ru` → `i***@vuz.ru`: домен остаётся, имя ящика — нет. */
@@ -47,6 +50,13 @@ function maskPhone(phone: string): string {
 export function toPersonView(ctx: ActorContext, person: PersonRecord): PersonView {
 	const full = can(ctx, 'people.read_pii');
 
+	// Раскрытие контактов — событие журнала, и отмечается оно здесь, в
+	// единственном месте, которое знает, показали их или замаскировали. Пустые
+	// контакты не в счёт: показывать было нечего.
+	if (full && (person.email !== null || person.phone !== null)) {
+		notePiiView(ctx, person.id);
+	}
+
 	return {
 		id: person.id,
 		lastName: person.lastName,
@@ -55,6 +65,8 @@ export function toPersonView(ctx: ActorContext, person: PersonRecord): PersonVie
 		email: person.email === null ? null : full ? person.email : maskEmail(person.email),
 		phone: person.phone === null ? null : full ? person.phone : maskPhone(person.phone),
 		notes: person.notes,
-		contactsMasked: !full
+		contactsMasked: !full,
+		retentionUntil: person.retentionUntil,
+		anonymizedAt: person.anonymizedAt
 	};
 }

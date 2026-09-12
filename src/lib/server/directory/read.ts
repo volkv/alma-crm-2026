@@ -15,6 +15,7 @@ import {
 	exists,
 	ilike,
 	inArray,
+	isNull,
 	max,
 	notExists,
 	or,
@@ -58,6 +59,8 @@ import {
 	sites
 } from '../db/schema';
 import { NotFoundError } from '../errors';
+import { withPiiTrace } from '../people/pii-trace';
+import { retentionExpired } from '../people/retention';
 import { toPersonView } from '../people/serialize';
 import { can, requirePermission, scopeFilter } from '../rbac';
 
@@ -169,30 +172,36 @@ export async function listAffiliations(
 ): Promise<AffiliationView[]> {
 	requirePermission(ctx, 'people.read');
 
-	const rows = await getDb()
-		.select({ affiliation: affiliations, person: people })
-		.from(affiliations)
-		.innerJoin(people, eq(people.id, affiliations.personId))
-		.where(
-			and(
-				eq(affiliations.organizationId, organizationId),
-				scopeFilter(ctx, affiliations.organizationId)
+	// Контакты уходят наружу — значит, чтение объявляет себя областью сбора
+	// следа просмотра: одно событие журнала на запрос, а не на строку таблицы.
+	// Область открывается до выборки: тогда чтения, запущенные загрузчиком
+	// страницы разом, попадают в одну область, а не в две подряд.
+	return withPiiTrace(ctx, async () => {
+		const rows = await getDb()
+			.select({ affiliation: affiliations, person: people })
+			.from(affiliations)
+			.innerJoin(people, eq(people.id, affiliations.personId))
+			.where(
+				and(
+					eq(affiliations.organizationId, organizationId),
+					scopeFilter(ctx, affiliations.organizationId)
+				)
 			)
-		)
-		.orderBy(asc(people.lastName), asc(people.firstName));
+			.orderBy(asc(people.lastName), asc(people.firstName));
 
-	return rows.map(({ affiliation, person }) => ({
-		id: affiliation.id,
-		person: toPersonView(ctx, person),
-		organizationId: affiliation.organizationId,
-		siteId: affiliation.siteId,
-		position: affiliation.position,
-		roleKind: affiliation.roleKind,
-		isPrimary: affiliation.isPrimary,
-		validFrom: affiliation.validFrom,
-		validTo: affiliation.validTo,
-		channel: affiliation.channel
-	}));
+		return rows.map(({ affiliation, person }) => ({
+			id: affiliation.id,
+			person: toPersonView(ctx, person),
+			organizationId: affiliation.organizationId,
+			siteId: affiliation.siteId,
+			position: affiliation.position,
+			roleKind: affiliation.roleKind,
+			isPrimary: affiliation.isPrimary,
+			validFrom: affiliation.validFrom,
+			validTo: affiliation.validTo,
+			channel: affiliation.channel
+		}));
+	});
 }
 
 /**
@@ -523,17 +532,19 @@ const PEOPLE_SORT_COLUMNS = {
 export async function getPerson(ctx: ActorContext, id: string): Promise<PersonView> {
 	requirePermission(ctx, 'people.read');
 
-	const [row] = await getDb()
-		.select()
-		.from(people)
-		.where(and(eq(people.id, id), personInScope(ctx)))
-		.limit(1);
+	return withPiiTrace(ctx, async () => {
+		const [row] = await getDb()
+			.select()
+			.from(people)
+			.where(and(eq(people.id, id), personInScope(ctx)))
+			.limit(1);
 
-	if (row === undefined) {
-		throw new NotFoundError('Человек не найден');
-	}
+		if (row === undefined) {
+			throw new NotFoundError('Человек не найден');
+		}
 
-	return toPersonView(ctx, row);
+		return toPersonView(ctx, row);
+	});
 }
 
 export async function listPeople(
@@ -545,6 +556,10 @@ export async function listPeople(
 	const conditions: SQL[] = [personInScope(ctx)];
 
 	const db = getDb();
+
+	if (query.retention === 'expired') {
+		conditions.push(retentionExpired);
+	}
 
 	if (query.organizationId !== null) {
 		conditions.push(
@@ -586,50 +601,58 @@ export async function listPeople(
 
 	const where = and(...conditions);
 
-	const [rows, totals] = await Promise.all([
-		db
-			.select()
-			.from(people)
-			.where(where)
-			.orderBy(ordered(PEOPLE_SORT_COLUMNS[query.sortBy], query.sortDirection), asc(people.id))
-			.limit(query.pageSize)
-			.offset((query.page - 1) * query.pageSize),
-		db.select({ value: count() }).from(people).where(where)
-	]);
+	return withPiiTrace(ctx, async () => {
+		const [rows, totals] = await Promise.all([
+			db
+				// Истёкший срок хранения считает база: «сегодня» у неё и у приложения
+				// должно быть одно, иначе строка то помечена, то нет.
+				.select({ person: people, retentionExpired })
+				.from(people)
+				.where(where)
+				.orderBy(ordered(PEOPLE_SORT_COLUMNS[query.sortBy], query.sortDirection), asc(people.id))
+				.limit(query.pageSize)
+				.offset((query.page - 1) * query.pageSize),
+			db.select({ value: count() }).from(people).where(where)
+		]);
 
-	const ids = rows.map((row) => row.id);
-	const links =
-		ids.length === 0
-			? []
-			: await db
-					.selectDistinct({
-						personId: affiliations.personId,
-						id: organizations.id,
-						label: organizations.shortName
-					})
-					.from(affiliations)
-					.innerJoin(organizations, eq(organizations.id, affiliations.organizationId))
-					.where(
-						and(inArray(affiliations.personId, ids), scopeFilter(ctx, affiliations.organizationId))
-					)
-					.orderBy(asc(organizations.shortName));
+		const ids = rows.map((row) => row.person.id);
+		const links =
+			ids.length === 0
+				? []
+				: await db
+						.selectDistinct({
+							personId: affiliations.personId,
+							id: organizations.id,
+							label: organizations.shortName
+						})
+						.from(affiliations)
+						.innerJoin(organizations, eq(organizations.id, affiliations.organizationId))
+						.where(
+							and(
+								inArray(affiliations.personId, ids),
+								scopeFilter(ctx, affiliations.organizationId)
+							)
+						)
+						.orderBy(asc(organizations.shortName));
 
-	const byPerson = new Map<string, LookupOption[]>();
-	for (const link of links) {
-		const list = byPerson.get(link.personId) ?? [];
-		list.push({ id: link.id, label: link.label });
-		byPerson.set(link.personId, list);
-	}
+		const byPerson = new Map<string, LookupOption[]>();
+		for (const link of links) {
+			const list = byPerson.get(link.personId) ?? [];
+			list.push({ id: link.id, label: link.label });
+			byPerson.set(link.personId, list);
+		}
 
-	return {
-		items: rows.map((row) => ({
-			person: toPersonView(ctx, row),
-			organizations: byPerson.get(row.id) ?? []
-		})),
-		total: totals[0]?.value ?? 0,
-		page: query.page,
-		pageSize: query.pageSize
-	};
+		return {
+			items: rows.map((row) => ({
+				person: toPersonView(ctx, row.person),
+				organizations: byPerson.get(row.person.id) ?? [],
+				retentionExpired: row.retentionExpired
+			})),
+			total: totals[0]?.value ?? 0,
+			page: query.page,
+			pageSize: query.pageSize
+		};
+	});
 }
 
 /** Роли одного человека — вместе с названиями организации и площадки. */
@@ -639,31 +662,40 @@ export async function listPersonAffiliations(
 ): Promise<PersonAffiliationView[]> {
 	requirePermission(ctx, 'people.read');
 
-	const rows = await getDb()
-		.select({ affiliation: affiliations, person: people, organization: organizations, site: sites })
-		.from(affiliations)
-		.innerJoin(people, eq(people.id, affiliations.personId))
-		.innerJoin(organizations, eq(organizations.id, affiliations.organizationId))
-		.leftJoin(sites, eq(sites.id, affiliations.siteId))
-		.where(and(eq(affiliations.personId, personId), scopeFilter(ctx, affiliations.organizationId)))
-		.orderBy(desc(affiliations.validFrom), asc(organizations.shortName));
+	return withPiiTrace(ctx, async () => {
+		const rows = await getDb()
+			.select({
+				affiliation: affiliations,
+				person: people,
+				organization: organizations,
+				site: sites
+			})
+			.from(affiliations)
+			.innerJoin(people, eq(people.id, affiliations.personId))
+			.innerJoin(organizations, eq(organizations.id, affiliations.organizationId))
+			.leftJoin(sites, eq(sites.id, affiliations.siteId))
+			.where(
+				and(eq(affiliations.personId, personId), scopeFilter(ctx, affiliations.organizationId))
+			)
+			.orderBy(desc(affiliations.validFrom), asc(organizations.shortName));
 
-	return rows.map(({ affiliation, person, organization, site }) => ({
-		affiliation: {
-			id: affiliation.id,
-			person: toPersonView(ctx, person),
-			organizationId: affiliation.organizationId,
-			siteId: affiliation.siteId,
-			position: affiliation.position,
-			roleKind: affiliation.roleKind,
-			isPrimary: affiliation.isPrimary,
-			validFrom: affiliation.validFrom,
-			validTo: affiliation.validTo,
-			channel: affiliation.channel
-		},
-		organization: { id: organization.id, label: organization.shortName },
-		site: site === null ? null : { id: site.id, label: site.name }
-	}));
+		return rows.map(({ affiliation, person, organization, site }) => ({
+			affiliation: {
+				id: affiliation.id,
+				person: toPersonView(ctx, person),
+				organizationId: affiliation.organizationId,
+				siteId: affiliation.siteId,
+				position: affiliation.position,
+				roleKind: affiliation.roleKind,
+				isPrimary: affiliation.isPrimary,
+				validFrom: affiliation.validFrom,
+				validTo: affiliation.validTo,
+				channel: affiliation.channel
+			},
+			organization: { id: organization.id, label: organization.shortName },
+			site: site === null ? null : { id: site.id, label: site.name }
+		}));
+	});
 }
 
 const PROGRAM_SORT_COLUMNS = {
@@ -896,14 +928,18 @@ export async function listOrganizationOptions(ctx: ActorContext): Promise<Lookup
 		.limit(OPTIONS_LIMIT);
 }
 
-/** Люди для выпадающего списка формы; ФИО собирается на стороне базы. */
+/**
+ * Люди для выпадающего списка формы; ФИО собирается на стороне базы.
+ * Обезличенных в подборе нет: выбирать контактом того, чьи данные уничтожены,
+ * незачем, а в уже заведённых ролях он остаётся.
+ */
 export async function listPersonOptions(ctx: ActorContext): Promise<LookupOption[]> {
 	requirePermission(ctx, 'people.read');
 
 	return getDb()
 		.select({ id: people.id, label: fullNameExpression })
 		.from(people)
-		.where(personInScope(ctx))
+		.where(and(personInScope(ctx), isNull(people.anonymizedAt)))
 		.orderBy(asc(people.lastName), asc(people.firstName))
 		.limit(OPTIONS_LIMIT);
 }

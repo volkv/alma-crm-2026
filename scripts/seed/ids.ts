@@ -23,6 +23,7 @@ export type SeedKind =
 	| 'organization'
 	| 'site'
 	| 'person'
+	| 'consent'
 	| 'affiliation'
 	| 'program'
 	| 'program-version'

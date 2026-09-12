@@ -16,12 +16,14 @@ import {
 	pgEnum,
 	pgTable,
 	text,
+	timestamp,
 	unique,
 	uniqueIndex,
 	uuid
 } from 'drizzle-orm/pg-core';
 import {
 	AFFILIATION_ROLE_KINDS,
+	CONSENT_BASES,
 	EDUCATION_LEVELS,
 	LIFECYCLE_STATUSES,
 	ORGANIZATION_KINDS,
@@ -37,6 +39,7 @@ export const siteKindEnum = pgEnum('site_kind', SITE_KINDS);
 export const affiliationRoleKindEnum = pgEnum('affiliation_role_kind', AFFILIATION_ROLE_KINDS);
 export const programLevelEnum = pgEnum('program_level', PROGRAM_LEVELS);
 export const lifecycleStatusEnum = pgEnum('lifecycle_status', LIFECYCLE_STATUSES);
+export const consentBasisEnum = pgEnum('consent_basis', CONSENT_BASES);
 
 export const organizations = pgTable(
 	'organizations',
@@ -104,8 +107,57 @@ export const people = pgTable('people', {
 	email: text(),
 	phone: text(),
 	notes: text(),
+	/**
+	 * До какого дня хранятся персональные данные этого человека. `null` —
+	 * срок не назначен: назначает его человек, а не умолчание.
+	 */
+	retentionUntil: date(),
+	/**
+	 * Когда данные уничтожили обезличиванием. Строка остаётся — на неё
+	 * ссылаются роли и взаимодействия, — но персональных данных в ней больше
+	 * нет, и обратного хода у этого нет тоже.
+	 */
+	anonymizedAt: timestamp({ withTimezone: true }),
 	...timestamps
 });
+
+/**
+ * Согласия на обработку персональных данных.
+ *
+ * Согласие — не галочка на карточке, а запись: у него есть основание, версия
+ * текста, дата получения и, возможно, дата отзыва. Отозванное согласие не
+ * удаляется, иначе на вопрос «на каком основании данные лежали до отзыва»
+ * ответить будет нечем.
+ */
+export const consents = pgTable(
+	'consents',
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		personId: uuid()
+			.notNull()
+			.references(() => people.id, { onDelete: 'cascade' }),
+		basis: consentBasisEnum().notNull(),
+		/** Версия текста, под которым человек подписался: `2026-09-01`, `v3`. */
+		textVersion: text().notNull(),
+		givenAt: date().notNull(),
+		withdrawnAt: date(),
+		withdrawnBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+		recordedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+		...timestamps
+	},
+	(table) => [
+		check(
+			'consents_withdrawal_ordered',
+			sql`${table.withdrawnAt} is null or ${table.withdrawnAt} >= ${table.givenAt}`
+		),
+		// Автор отзыва без самого отзыва — запись ни о чём. Обратное допустимо:
+		// внешний ключ на учётную запись гасится при её удалении.
+		check(
+			'consents_withdrawn_by_requires_withdrawal',
+			sql`${table.withdrawnBy} is null or ${table.withdrawnAt} is not null`
+		)
+	]
+);
 
 export const affiliations = pgTable(
 	'affiliations',
@@ -211,7 +263,12 @@ export const sitesRelations = relations(sites, ({ one }) => ({
 }));
 
 export const peopleRelations = relations(people, ({ many }) => ({
-	affiliations: many(affiliations)
+	affiliations: many(affiliations),
+	consents: many(consents)
+}));
+
+export const consentsRelations = relations(consents, ({ one }) => ({
+	person: one(people, { fields: [consents.personId], references: [people.id] })
 }));
 
 export const affiliationsRelations = relations(affiliations, ({ one }) => ({

@@ -44,6 +44,12 @@ export const AFFILIATION_ROLE_KINDS = [
 export const PROGRAM_LEVELS = ['bachelor', 'master', 'specialist', 'spo', 'school', 'dpo'] as const;
 /** Жизненный цикл записи справочника: черновик → действует → в архиве. */
 export const LIFECYCLE_STATUSES = ['draft', 'active', 'archived'] as const;
+/**
+ * На каком основании обрабатываются персональные данные человека. Список
+ * закрытый: основание — это ссылка на норму закона, а не заметка, и по нему
+ * отвечают на вопрос «почему эти данные вообще у нас лежат».
+ */
+export const CONSENT_BASES = ['consent', 'contract', 'legal'] as const;
 
 export type OrganizationKind = (typeof ORGANIZATION_KINDS)[number];
 export type EducationLevel = (typeof EDUCATION_LEVELS)[number];
@@ -51,6 +57,7 @@ export type SiteKind = (typeof SITE_KINDS)[number];
 export type AffiliationRoleKind = (typeof AFFILIATION_ROLE_KINDS)[number];
 export type ProgramLevel = (typeof PROGRAM_LEVELS)[number];
 export type LifecycleStatus = (typeof LIFECYCLE_STATUSES)[number];
+export type ConsentBasis = (typeof CONSENT_BASES)[number];
 
 type ExternalRef = { externalSource: string | null; externalId: string | null };
 
@@ -156,6 +163,47 @@ const personFields = {
 export const createPersonSchema = z.object(personFields);
 export const updatePersonSchema = createPersonSchema.extend({
 	id: id('Некорректный идентификатор человека')
+});
+
+/**
+ * Фамилия обезличенного человека. Имя и отчество при обезличивании стираются,
+ * поэтому в списках и карточках остаётся одно это слово: запись нужна тем
+ * взаимодействиям, где человек был контактом, а его данных в ней уже нет.
+ */
+export const ANONYMIZED_PERSON_LAST_NAME = 'Обезличено';
+
+/**
+ * Согласие на обработку персональных данных как запись, а не галочка: у него
+ * есть основание, версия текста, дата получения и, возможно, дата отзыва.
+ * Дата здесь календарная: согласие подписывают днём, на бумаге или в кабинете,
+ * и точность до секунды в нём ничего не значит.
+ */
+export const recordConsentSchema = z.object({
+	personId: id('Некорректный идентификатор человека'),
+	basis: z.enum(CONSENT_BASES, { error: 'Выберите основание обработки' }),
+	/** Версия текста, под которым человек подписался: `2026-09-01`, `v3`. */
+	textVersion: requiredText(50, 'Укажите версию текста согласия'),
+	givenAt: isoDate('Укажите дату получения согласия')
+});
+
+/**
+ * Отзыв согласия. Запись не удаляется: отозванное согласие — это факт, который
+ * обязан остаться, иначе на вопрос «на каком основании данные лежали до
+ * отзыва» ответить будет нечем.
+ */
+export const withdrawConsentSchema = z.object({
+	id: id('Некорректный идентификатор согласия'),
+	withdrawnAt: isoDate('Укажите дату отзыва согласия')
+});
+
+/**
+ * Срок хранения персональных данных. Пустое значение — «срок не назначен», а
+ * не «хранить вечно»: назначает его человек, и до тех пор запись просто ждёт
+ * решения.
+ */
+export const setRetentionSchema = z.object({
+	personId: id('Некорректный идентификатор человека'),
+	retentionUntil: optionalIsoDate('Срок хранения указан неверно')
 });
 
 const affiliationFields = {
@@ -281,9 +329,18 @@ export const organizationDirectoryQuerySchema = z.object({
 
 export const PEOPLE_SORT_KEYS = ['lastName', 'firstName'] as const;
 
+/**
+ * Отбор по сроку хранения. Ответ на вопрос «чьи данные пора уничтожать»:
+ * срок назначен и прошёл, а человек ещё не обезличен.
+ */
+export const PEOPLE_RETENTION_FILTERS = ['expired'] as const;
+
+export type PeopleRetentionFilter = (typeof PEOPLE_RETENTION_FILTERS)[number];
+
 export const peopleListQuerySchema = z.object({
 	/** Показать только тех, у кого есть роль в этой организации. */
 	organizationId: optionalId('Некорректный идентификатор организации'),
+	retention: z.enum(PEOPLE_RETENTION_FILTERS).nullable().catch(null),
 	q: searchQuery,
 	sortBy: z.enum(PEOPLE_SORT_KEYS).catch('lastName'),
 	sortDirection,
@@ -314,6 +371,9 @@ export type CreateSiteInput = z.output<typeof createSiteSchema>;
 export type UpdateSiteInput = z.output<typeof updateSiteSchema>;
 export type CreatePersonInput = z.output<typeof createPersonSchema>;
 export type UpdatePersonInput = z.output<typeof updatePersonSchema>;
+export type RecordConsentInput = z.output<typeof recordConsentSchema>;
+export type WithdrawConsentInput = z.output<typeof withdrawConsentSchema>;
+export type SetRetentionInput = z.output<typeof setRetentionSchema>;
 export type CreateAffiliationInput = z.output<typeof createAffiliationSchema>;
 export type UpdateAffiliationInput = z.output<typeof updateAffiliationSchema>;
 export type EndAffiliationInput = z.output<typeof endAffiliationSchema>;
@@ -375,6 +435,23 @@ export type PersonView = {
 	phone: string | null;
 	notes: string | null;
 	contactsMasked: boolean;
+	/** До какого дня хранятся данные; `null` — срок не назначен. */
+	retentionUntil: string | null;
+	/** Когда данные уничтожили. Обезличивание необратимо. */
+	anonymizedAt: Date | null;
+};
+
+/** Согласие на обработку данных в том виде, в каком его показывает карточка. */
+export type ConsentView = {
+	id: string;
+	personId: string;
+	basis: ConsentBasis;
+	textVersion: string;
+	givenAt: string;
+	withdrawnAt: string | null;
+	/** Кто зафиксировал и кто отозвал; `null` — если учётной записи уже нет. */
+	recordedByName: string | null;
+	withdrawnByName: string | null;
 };
 
 export type AffiliationView = {
@@ -452,6 +529,8 @@ export type OrganizationRow = {
 export type PersonListItem = {
 	person: PersonView;
 	organizations: LookupOption[];
+	/** Срок хранения назначен и прошёл: данные пора уничтожать. */
+	retentionExpired: boolean;
 };
 
 /** Роль человека вместе с названиями организации и площадки. */

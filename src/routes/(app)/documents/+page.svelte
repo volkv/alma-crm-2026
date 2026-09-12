@@ -36,6 +36,13 @@
 		label: format.toUpperCase()
 	}));
 
+	/**
+	 * Раздел по умолчанию показывает действующие редакции, поэтому «все» —
+	 * это выбор, а не снятый фильтр: отсутствие параметра в адресе означает
+	 * «только действующие».
+	 */
+	const REVISION_OPTIONS: readonly FieldOption[] = [{ value: 'all', label: 'Все редакции' }];
+
 	const FACT_OPTIONS: readonly FieldOption[] = [
 		{ value: 'agreed', label: 'Согласован' },
 		{ value: 'approved', label: 'Утверждён' },
@@ -133,6 +140,14 @@
 				{documentKindLabel(row.uploadedKind)}
 			</span>
 		{/if}
+		{#if row.supersededBy}
+			<StatusBadge
+				tone="neutral"
+				title="Заменён редакцией от {formatDate(row.supersededBy.createdAt)}"
+			>
+				Заменён
+			</StatusBadge>
+		{/if}
 	</span>
 {/snippet}
 
@@ -220,6 +235,12 @@
 			<FilterSelect param="kind" label="Вид" options={KIND_OPTIONS} />
 			<FilterSelect param="format" label="Формат" options={FORMAT_OPTIONS} />
 			<FilterSelect param="fact" label="Отметки" options={FACT_OPTIONS} allLabel="Любые" />
+			<FilterSelect
+				param="revisions"
+				label="Редакции"
+				options={REVISION_OPTIONS}
+				allLabel="Только действующие"
+			/>
 			<span class="text-sm text-muted-foreground">Всего: {formatNumber(data.total)}</span>
 		</div>
 

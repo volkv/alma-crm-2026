@@ -112,6 +112,7 @@
 			<DocumentsPanel
 				interaction={data.interaction}
 				documents={data.interaction.documents}
+				supersessions={data.supersessions}
 				canUpload={can('upload_document')}
 				canGenerate={can('generate_document')}
 			/>

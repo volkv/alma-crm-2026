@@ -2,6 +2,7 @@ import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	auditEvents,
+	consents,
 	organizations,
 	stageEntries,
 	stageEntryStatus,
@@ -10,7 +11,9 @@ import {
 import {
 	daysFrom,
 	failureCode,
+	insertDocument,
 	insertInteractionWithStage,
+	insertPerson,
 	insertUser,
 	startTestDatabase,
 	type TestDatabase
@@ -49,11 +52,11 @@ describe('миграции', () => {
 				'interaction_party_sites', 'interaction_programs', 'interaction_products',
 				'interaction_changes', 'stage_entries', 'stage_pauses', 'blockers',
 				'comments', 'document_templates', 'documents', 'api_keys',
-				'stage_entry_status'
+				'consents', 'stage_entry_status'
 			]) as name
 		`;
 
-		expect(rows).toHaveLength(30);
+		expect(rows).toHaveLength(31);
 		expect(rows.filter((row) => row.name === null)).toEqual([]);
 	});
 });
@@ -84,6 +87,88 @@ describe('журнал действий', () => {
 
 		const [row] = await database.raw<{ count: string }[]>`select count(*) from audit_events`;
 		expect(Number(row.count)).toBe(1);
+	});
+});
+
+describe('редакции документов', () => {
+	async function insertRevision(supersedesId: string | null): Promise<string> {
+		return insertDocument(database.db, { supersedesId, title: 'Соглашение' });
+	}
+
+	it('не даёт заменить одну редакцию дважды', async () => {
+		const first = await insertRevision(null);
+		await insertRevision(first);
+
+		// Частичный уникальный индекс: у документа не бывает двух «следующих»
+		// редакций, иначе на вопрос «какая действует» ответа нет.
+		expect(await failureCode(insertRevision(first))).toBe('23505');
+	});
+
+	it('не мешает первым редакциям — их в базе сколько угодно', async () => {
+		await insertRevision(null);
+		await insertRevision(null);
+
+		const rows = await database.raw<{ count: string }[]>`select count(*) from documents`;
+		expect(Number(rows[0].count)).toBe(2);
+	});
+
+	it('не позволяет документу заменить сам себя', async () => {
+		const id = await insertRevision(null);
+
+		expect(
+			await failureCode(database.raw`update documents set supersedes_id = id where id = ${id}`)
+		).toBe('23514');
+	});
+});
+
+describe('согласия на обработку данных', () => {
+	it('не принимает отзыв раньше получения согласия', async () => {
+		const personId = await insertPerson(database.db);
+
+		expect(
+			await failureCode(
+				database.db.insert(consents).values({
+					personId,
+					basis: 'consent',
+					textVersion: '2026-01-01',
+					givenAt: '2026-02-01',
+					withdrawnAt: '2026-01-15'
+				})
+			)
+		).toBe('23514');
+	});
+
+	it('не принимает автора отзыва без самого отзыва', async () => {
+		const personId = await insertPerson(database.db);
+		const userId = await insertUser(database.db);
+
+		expect(
+			await failureCode(
+				database.db.insert(consents).values({
+					personId,
+					basis: 'consent',
+					textVersion: '2026-01-01',
+					givenAt: '2026-02-01',
+					withdrawnBy: userId
+				})
+			)
+		).toBe('23514');
+	});
+
+	it('уходит вместе с человеком: согласие без субъекта ничего не значит', async () => {
+		const personId = await insertPerson(database.db);
+
+		await database.db.insert(consents).values({
+			personId,
+			basis: 'legal',
+			textVersion: '2026-01-01',
+			givenAt: '2026-02-01'
+		});
+
+		await database.raw`delete from people where id = ${personId}`;
+
+		const rows = await database.raw<{ count: string }[]>`select count(*) from consents`;
+		expect(Number(rows[0].count)).toBe(0);
 	});
 });
 

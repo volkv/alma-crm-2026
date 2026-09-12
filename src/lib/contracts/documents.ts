@@ -38,6 +38,12 @@ export const MAX_DOCUMENT_SIZE_BYTES = 25 * 1024 * 1024;
 export const uploadDocumentSchema = z.object({
 	/** Документ может жить вне взаимодействия — например, типовая форма. */
 	interactionId: optionalId('Некорректный идентификатор взаимодействия'),
+	/**
+	 * Редакция, которую заменяет загружаемый файл. Вид, название и
+	 * взаимодействие новая редакция берёт у неё: это тот же документ в новой
+	 * редакции, а не второй документ рядом.
+	 */
+	supersedesId: optionalId('Некорректный идентификатор заменяемой редакции'),
 	/** Вид документа: соглашение, приказ, акт, отчёт. Справочник настраивается. */
 	kind: requiredText(100, 'Укажите вид документа'),
 	title: requiredText(300, 'Укажите название документа'),
@@ -175,6 +181,16 @@ export function documentFormat(mime: string): DocumentFormat | null {
 }
 
 /**
+ * Отбор по редакциям. По умолчанию раздел показывает только действующие: файл
+ * неизменяем, и заменённая редакция остаётся в базе навсегда — без отбора
+ * список соглашения из трёх редакций выглядел бы как три разных соглашения.
+ * Заменённые никуда не деваются и открываются переключателем.
+ */
+export const DOCUMENT_REVISION_FILTERS = ['current', 'all'] as const;
+
+export type DocumentRevisionFilter = (typeof DOCUMENT_REVISION_FILTERS)[number];
+
+/**
  * Отбор по отметкам: либо конкретный факт поставлен, либо не поставлено ни
  * одного. «Ни одного» — это не отсутствие фильтра, а отдельный вопрос: какие
  * документы ещё никто не согласовал.
@@ -196,6 +212,8 @@ export const documentListQuerySchema = z.object({
 	kind: z.enum(DOCUMENT_KINDS).nullable().catch(null),
 	format: z.enum(DOCUMENT_FORMATS).nullable().catch(null),
 	fact: z.enum(DOCUMENT_FACT_FILTERS).nullable().catch(null),
+	/** Отсутствие параметра в адресе означает «только действующие редакции». */
+	revisions: z.enum(DOCUMENT_REVISION_FILTERS).catch('current'),
 	q: searchQuery,
 	sortBy: z.enum(DOCUMENT_SORT_KEYS).catch('createdAt'),
 	sortDirection: z.enum(['asc', 'desc']).catch('desc'),
@@ -227,11 +245,42 @@ export type DocumentListItem = {
 	interaction: { id: string; title: string } | null;
 	/** Кто загрузил или собрал файл; `null` — если учётной записи уже нет. */
 	authorName: string | null;
+	/** Редакция, которая заменила этот файл, или `null` у действующей. */
+	supersededBy: { id: string; createdAt: Date } | null;
+};
+
+/**
+ * Одна редакция в цепочке документа: от первой к действующей. Файл
+ * неизменяем, поэтому цепочка — это записи, а не версии одной строки.
+ */
+export type DocumentRevisionView = {
+	id: string;
+	title: string;
+	mime: string;
+	sizeBytes: number;
+	createdAt: Date;
+	/** Кто загрузил редакцию; `null` — если учётной записи уже нет. */
+	authorName: string | null;
+	/** Действующая редакция — та, которую никто не заменил. */
+	isCurrent: boolean;
+};
+
+/**
+ * Заменённая редакция и та, что пришла ей на смену. Панель документов
+ * взаимодействия прячет заменённые по умолчанию, и чтобы объяснить, почему
+ * файла нет в списке, ей нужна дата замены.
+ */
+export type DocumentSupersession = {
+	documentId: string;
+	supersededById: string;
+	supersededAt: Date;
 };
 
 export type DocumentView = {
 	id: string;
 	interactionId: string | null;
+	/** Редакция, которую этот файл заменил, или `null` у первой. */
+	supersedesId: string | null;
 	kind: string;
 	title: string;
 	mime: string;

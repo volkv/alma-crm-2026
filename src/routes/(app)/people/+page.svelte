@@ -10,12 +10,16 @@
 	import { toLookupOptions } from '$lib/components/directory/labels';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import PageHeader from '$lib/components/page-header.svelte';
+	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type { PersonListItem } from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 
 	const masked = $derived(data.rows.some((row) => row.person.contactsMasked));
+
+	/** Единственный вопрос, который задают сроку хранения: чей уже прошёл. */
+	const RETENTION_OPTIONS = [{ value: 'expired', label: 'Срок хранения истёк' }];
 
 	const columns: ColumnDef<DataTableFeatures, PersonListItem>[] = [
 		{
@@ -58,10 +62,19 @@
 </script>
 
 {#snippet nameCell(row: PersonListItem)}
-	<span class="font-medium">
-		{[row.person.lastName, row.person.firstName, row.person.middleName]
-			.filter((part) => part !== null && part !== '')
-			.join(' ')}
+	<span class="flex flex-wrap items-center gap-2">
+		<span class="font-medium">
+			{[row.person.lastName, row.person.firstName, row.person.middleName]
+				.filter((part) => part !== null && part !== '')
+				.join(' ')}
+		</span>
+		{#if row.person.anonymizedAt !== null}
+			<StatusBadge tone="neutral">Обезличен</StatusBadge>
+		{:else if row.retentionExpired}
+			<StatusBadge tone="warning" dot title="Срок хранения истёк {row.person.retentionUntil}">
+				Срок истёк
+			</StatusBadge>
+		{/if}
 	</span>
 {/snippet}
 
@@ -95,6 +108,9 @@
 			label="Организация"
 			options={toLookupOptions(data.organizations)}
 		/>
+		{#if data.managesPii}
+			<FilterSelect param="retention" label="Срок хранения" options={RETENTION_OPTIONS} />
+		{/if}
 	</div>
 
 	{#if masked}

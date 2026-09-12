@@ -14,6 +14,7 @@ import {
 	eq,
 	exists,
 	ilike,
+	inArray,
 	isNotNull,
 	isNull,
 	ne,
@@ -21,7 +22,7 @@ import {
 	sql,
 	type SQL
 } from 'drizzle-orm';
-import type { PgColumn } from 'drizzle-orm/pg-core';
+import { alias, type PgColumn } from 'drizzle-orm/pg-core';
 import { id as idSchema } from '$lib/contracts/common';
 import type { PageResult } from '$lib/contracts/common';
 import {
@@ -29,6 +30,8 @@ import {
 	GENERATED_DOCUMENT_KIND,
 	type DocumentListItem,
 	type DocumentListQuery,
+	type DocumentRevisionView,
+	type DocumentSupersession,
 	type DocumentView
 } from '$lib/contracts/documents';
 import type { ActorContext } from '../actor';
@@ -42,10 +45,14 @@ import { storedFileSize } from './storage';
 
 const documentIdSchema = idSchema('Некорректный идентификатор документа');
 
+/** Редакция, заменившая документ, входит в запрос под своим именем. */
+const successor = alias(documents, 'successor');
+
 export function toDocumentView(row: typeof documents.$inferSelect): DocumentView {
 	return {
 		id: row.id,
 		interactionId: row.interactionId,
+		supersedesId: row.supersedesId,
 		kind: row.kind,
 		title: row.title,
 		mime: row.mime,
@@ -194,7 +201,8 @@ function ordered(column: PgColumn, direction: 'asc' | 'desc'): SQL {
 function toDocumentListItem(
 	row: typeof documents.$inferSelect,
 	interactionTitle: string | null,
-	authorName: string | null
+	authorName: string | null,
+	supersededBy: { id: string | null; createdAt: Date | null }
 ): DocumentListItem {
 	const generated = row.kind === GENERATED_DOCUMENT_KIND;
 
@@ -213,7 +221,11 @@ function toDocumentListItem(
 			row.interactionId === null || interactionTitle === null
 				? null
 				: { id: row.interactionId, title: interactionTitle },
-		authorName
+		authorName,
+		supersededBy:
+			supersededBy.id === null || supersededBy.createdAt === null
+				? null
+				: { id: supersededBy.id, createdAt: supersededBy.createdAt }
 	};
 }
 
@@ -253,6 +265,13 @@ export async function listDocuments(
 		conditions.push(factCondition(query.fact));
 	}
 
+	// Действующая редакция — та, которую никто не заменил. Отбор идёт по базе, а
+	// не прячет строки в разметке: иначе страница из двадцати пяти строк
+	// показывала бы пять, а счётчик — двадцать пять.
+	if (query.revisions === 'current') {
+		conditions.push(isNull(successor.id));
+	}
+
 	if (query.q !== null) {
 		const pattern = `%${query.q}%`;
 		const search = or(ilike(documents.title, pattern), ilike(interactions.title, pattern));
@@ -270,11 +289,14 @@ export async function listDocuments(
 			.select({
 				document: documents,
 				interactionTitle: interactions.title,
-				authorName: users.fullName
+				authorName: users.fullName,
+				supersededById: successor.id,
+				supersededAt: successor.createdAt
 			})
 			.from(documents)
 			.leftJoin(interactions, eq(interactions.id, documents.interactionId))
 			.leftJoin(users, eq(users.id, documents.uploadedBy))
+			.leftJoin(successor, eq(successor.supersedesId, documents.id))
 			.where(where)
 			// Второй ключ сортировки — первичный: DOCX и PDF одного соглашения
 			// пишутся одной командой, и без него они меняются местами между
@@ -286,12 +308,16 @@ export async function listDocuments(
 			.select({ value: count() })
 			.from(documents)
 			.leftJoin(interactions, eq(interactions.id, documents.interactionId))
+			.leftJoin(successor, eq(successor.supersedesId, documents.id))
 			.where(where)
 	]);
 
 	return {
 		items: rows.map((row) =>
-			toDocumentListItem(row.document, row.interactionTitle, row.authorName)
+			toDocumentListItem(row.document, row.interactionTitle, row.authorName, {
+				id: row.supersededById,
+				createdAt: row.supersededAt
+			})
 		),
 		total: totals[0]?.value ?? 0,
 		page: query.page,
@@ -319,6 +345,112 @@ export async function selectDocumentRow(
 	}
 
 	return row;
+}
+
+/**
+ * Редакция, заменившая этот документ, или `null` у действующей. Отдельный
+ * запрос, потому что спрашивают об этом там, где документ уже прочитан.
+ */
+export async function supersedingDocumentId(documentId: string): Promise<string | null> {
+	const [row] = await getDb()
+		.select({ id: documents.id })
+		.from(documents)
+		.where(eq(documents.supersedesId, documentId))
+		.limit(1);
+
+	return row?.id ?? null;
+}
+
+/**
+ * Цепочка редакций документа: от первой к действующей.
+ *
+ * Считается рекурсивным запросом в обе стороны — сначала вверх, до редакции,
+ * которая никого не заменяла, потом вниз по заменившим. Иначе пришлось бы
+ * ходить в базу по разу на редакцию, а карточка открывается ради всей истории
+ * сразу.
+ */
+export async function listDocumentRevisions(
+	ctx: ActorContext,
+	documentId: string
+): Promise<DocumentRevisionView[]> {
+	requirePermission(ctx, 'documents.read');
+
+	const row = await selectDocumentRow(documentId);
+	await assertDocumentAccessible(ctx, row);
+
+	const db = getDb();
+
+	const ids = await db.execute<{ id: string }>(sql`
+		with recursive earlier as (
+			select ${documents.id} as id, ${documents.supersedesId} as supersedes_id
+			from ${documents}
+			where ${documents.id} = ${row.id}
+			union all
+			select d.id, d.supersedes_id
+			from ${documents} d
+			join earlier on d.id = earlier.supersedes_id
+		),
+		first_revision as (
+			select id from earlier where supersedes_id is null
+		),
+		line as (
+			select id from first_revision
+			union all
+			select d.id
+			from ${documents} d
+			join line on d.supersedes_id = line.id
+		)
+		select id from line
+	`);
+
+	const chain = [...ids].map((item) => item.id);
+
+	const rows = await db
+		.select({
+			document: documents,
+			authorName: users.fullName,
+			supersededById: successor.id
+		})
+		.from(documents)
+		.leftJoin(users, eq(users.id, documents.uploadedBy))
+		.leftJoin(successor, eq(successor.supersedesId, documents.id))
+		.where(inArray(documents.id, chain))
+		.orderBy(asc(documents.createdAt), asc(documents.id));
+
+	return rows.map((item) => ({
+		id: item.document.id,
+		title: item.document.title,
+		mime: item.document.mime,
+		sizeBytes: item.document.sizeBytes,
+		createdAt: item.document.createdAt,
+		authorName: item.authorName,
+		isCurrent: item.supersededById === null
+	}));
+}
+
+/**
+ * Замены среди документов взаимодействия. Панель документов карточки по
+ * умолчанию показывает только действующие редакции, и чтобы объяснить, почему
+ * остальные скрыты, ей нужно знать, чем именно их заменили.
+ */
+export async function listInteractionSupersessions(
+	ctx: ActorContext,
+	interactionId: string
+): Promise<DocumentSupersession[]> {
+	requirePermission(ctx, 'interactions.read');
+	await assertInteractionAccessible(ctx, interactionId);
+
+	const rows = await getDb()
+		.select({
+			documentId: documents.id,
+			supersededById: successor.id,
+			supersededAt: successor.createdAt
+		})
+		.from(documents)
+		.innerJoin(successor, eq(successor.supersedesId, documents.id))
+		.where(eq(documents.interactionId, interactionId));
+
+	return rows;
 }
 
 /** Всё, что нужно, чтобы отдать файл: путь в хранилище, имя и размер. */

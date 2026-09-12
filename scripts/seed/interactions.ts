@@ -42,6 +42,7 @@ import {
 import type { Tx } from '$lib/server/db/transaction';
 import { DocumentConversionError } from '$lib/server/documents/errors';
 import { generateDocument } from '$lib/server/documents/generate';
+import { uploadDocument, uploadDocumentRevision } from '$lib/server/documents/upload';
 import { getInteraction } from '$lib/server/interactions/read';
 import { defaultRolePermissions } from '$lib/server/rbac/seed';
 import {
@@ -103,6 +104,11 @@ type InteractionSeed = {
 	comments?: readonly string[];
 	/** Собрать соглашение по шаблону — нужен доступный Gotenberg. */
 	document?: boolean;
+	/**
+	 * Приложить скан и его вторую редакцию. Внешняя служба для этого не нужна:
+	 * файл собирается здесь же, а показать цепочку редакций на стенде нужно.
+	 */
+	scanWithRevision?: boolean;
 	/** Стадия, на которую сходили и вернулись назад: след в истории. */
 	returnedFrom?: string;
 	/** Кому передали взаимодействие: смена ответственного попадает в историю плана. */
@@ -388,6 +394,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		lastActivityDaysAgo: 6,
 		agreement: ['2026-09-01', '2027-08-31'],
 		document: true,
+		scanWithRevision: true,
 		comments: ['Подписанты подтверждены с обеих сторон, скан ждём до пятницы.']
 	},
 	{
@@ -684,6 +691,8 @@ export const INTERACTION_SEED_SIZES = {
 	blockers: INTERACTIONS.filter((seed) => seed.blocker !== undefined).length,
 	comments: INTERACTIONS.reduce((total, seed) => total + (seed.comments?.length ?? 0), 0),
 	documents: INTERACTIONS.filter((seed) => seed.document === true).length,
+	// Скан и его вторая редакция — две записи на каждое такое взаимодействие.
+	scans: INTERACTIONS.filter((seed) => seed.scanWithRevision === true).length * 2,
 	handovers: INTERACTIONS.filter((seed) => seed.handedTo !== undefined).length
 } as const;
 
@@ -1078,6 +1087,37 @@ async function generateAgreement(ctx: ActorContext, interactionId: string): Prom
 	}
 }
 
+/**
+ * Текстовый «скан» соглашения. Настоящий PDF набору не нужен: в хранилище
+ * проверяется соответствие содержимого заявленному типу, и `text/plain` этой
+ * проверке отвечает честнее, чем подделанный заголовок PDF.
+ */
+function scanBytes(revision: number): Uint8Array {
+	return new TextEncoder().encode(
+		`Соглашение о сотрудничестве. Редакция ${revision}.\n` +
+			'Скан подписанного экземпляра, приложенный к взаимодействию.\n'
+	);
+}
+
+/**
+ * Скан и его вторая редакция: исправленный документ не затирает прежний файл, а
+ * встаёт рядом со ссылкой на него. Без такой пары на стенде нечем показать ни
+ * цепочку редакций, ни фильтр «только действующие».
+ */
+async function uploadScanWithRevision(ctx: ActorContext, interactionId: string): Promise<void> {
+	const first = await uploadDocument(ctx, {
+		interactionId,
+		kind: 'agreement',
+		title: 'Скан подписанного соглашения',
+		file: { mime: 'text/plain', bytes: scanBytes(1) }
+	});
+
+	await uploadDocumentRevision(ctx, {
+		supersedesId: first.id,
+		file: { mime: 'text/plain', bytes: scanBytes(2) }
+	});
+}
+
 /** Паузы, помехи, комментарии и отметки чек-листа текущей стадии. */
 async function applyState(
 	ctx: ActorContext,
@@ -1119,6 +1159,10 @@ async function applyState(
 
 	if (seed.document === true) {
 		generated = await generateAgreement(ctx, interactionId);
+	}
+
+	if (seed.scanWithRevision === true) {
+		await uploadScanWithRevision(ctx, interactionId);
 	}
 
 	// Передача другому менеджеру: команда сама пишет строку в историю плана —

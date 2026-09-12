@@ -21,7 +21,8 @@ import { formatDate } from '$lib/format';
 import { actorFromEvent } from '$lib/server/actor';
 import { DocumentConversionError } from '$lib/server/documents/errors';
 import { generateDocument } from '$lib/server/documents/generate';
-import { uploadDocument } from '$lib/server/documents/upload';
+import { listInteractionSupersessions } from '$lib/server/documents/read';
+import { uploadDocument, uploadDocumentRevision } from '$lib/server/documents/upload';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import {
 	getInteraction,
@@ -56,17 +57,21 @@ export const load: PageServerLoad = async (event) => {
 	const { id } = event.params;
 
 	try {
-		const [interaction, status, summary, closing, comments, changes, users] = await Promise.all([
-			getInteraction(ctx, id),
-			getInteractionStatus(ctx, id),
-			getInteractionSummary(ctx, id),
-			getInteractionClosing(ctx, id),
-			listComments(ctx, id),
-			listInteractionChanges(ctx, id),
-			responsibleOptions(event)
-		]);
+		const [interaction, status, summary, closing, comments, changes, users, supersessions] =
+			await Promise.all([
+				getInteraction(ctx, id),
+				getInteractionStatus(ctx, id),
+				getInteractionSummary(ctx, id),
+				getInteractionClosing(ctx, id),
+				listComments(ctx, id),
+				listInteractionChanges(ctx, id),
+				responsibleOptions(event),
+				// Панель документов по умолчанию показывает только действующие
+				// редакции, и объяснить скрытые она может, лишь зная, чем их заменили.
+				listInteractionSupersessions(ctx, id)
+			]);
 
-		return { interaction, status, summary, closing, comments, changes, users };
+		return { interaction, status, summary, closing, comments, changes, users, supersessions };
 	} catch (cause) {
 		toPageError(cause);
 	}
@@ -290,6 +295,33 @@ export const actions: Actions = {
 				interactionId: event.params.id,
 				kind,
 				title,
+				file: { mime: file.type, bytes }
+			})
+		);
+	},
+
+	/**
+	 * Новая редакция приложенного файла. Название, вид и само дело сервис берёт
+	 * у заменяемой редакции — форма спрашивает только файл.
+	 */
+	uploadRevision: async (event) => {
+		const data = await event.request.formData();
+		const file = data.get('file');
+		const supersedesId = text(data, 'supersedesId');
+
+		if (supersedesId === null) {
+			return fail(400, { message: 'Не указано, какую редакцию заменяем', issues: [] as string[] });
+		}
+
+		if (!(file instanceof File) || file.size === 0) {
+			return fail(400, { message: 'Выберите файл новой редакции', issues: [] as string[] });
+		}
+
+		const bytes = new Uint8Array(await file.arrayBuffer());
+
+		return run(() =>
+			uploadDocumentRevision(actorFromEvent(event), {
+				supersedesId,
 				file: { mime: file.type, bytes }
 			})
 		);

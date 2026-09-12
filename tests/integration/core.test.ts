@@ -182,7 +182,9 @@ describe('сериализатор человека', () => {
 		middleName: 'Иванович',
 		email: 'ivanov@vuz.ru',
 		phone: '+7 (999) 123-45-67',
-		notes: null
+		notes: null,
+		retentionUntil: null,
+		anonymizedAt: null
 	};
 
 	it('маскирует контакты без права и показывает их с правом', () => {

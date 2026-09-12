@@ -171,8 +171,11 @@ describe('сид', () => {
 		// Смена ответственного попадает в историю плана: вкладка «Правки плана»
 		// на стенде не должна быть пустой у всех до единого.
 		await expect(countRows(interactionChanges)).resolves.toBe(INTERACTION_SEED_SIZES.handovers);
-		// Каждое соглашение собирается сразу в двух форматах: DOCX и PDF.
-		await expect(countRows(documents)).resolves.toBe(INTERACTION_SEED_SIZES.documents * 2);
+		// Каждое соглашение собирается сразу в двух форматах: DOCX и PDF, а к
+		// одному делу приложен скан и его вторая редакция.
+		await expect(countRows(documents)).resolves.toBe(
+			INTERACTION_SEED_SIZES.documents * 2 + INTERACTION_SEED_SIZES.scans
+		);
 
 		// Завершённое взаимодействие прошло маршрут целиком: по записи на каждую
 		// стадию, и все они закрыты.

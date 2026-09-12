@@ -131,6 +131,13 @@ export type AuditEventType = (typeof AUDIT_EVENT_TYPES)[number];
  */
 export type AuditDetails = {
 	changedFields?: readonly string[];
+	/**
+	 * Люди, чьи контакты раскрыли в одном запросе. Единственный список
+	 * идентификаторов в подробностях: след просмотра персональных данных
+	 * пишется одной записью на запрос, а не строкой на каждого человека —
+	 * иначе открытый список из ста строк дал бы сто записей об одном действии.
+	 */
+	personIds?: readonly string[];
 	/** Маршрут, по которому пришёл запрос к API: `/api/v1/organizations/[id]`. */
 	route?: string;
 	/** Метод запроса: `GET`, `POST`, … */
@@ -154,6 +161,16 @@ const REQUEST_DETAIL_KEYS = new Map<string, 'string' | 'number' | 'boolean'>([
 	['status', 'number'],
 	['demo', 'boolean']
 ]);
+
+/**
+ * Ключ со списком идентификаторов. Он один: списки в подробностях запрещены,
+ * потому что произвольный массив рано или поздно окажется перечнем фамилий, а
+ * этот содержит только ссылки на записи и заведён под след просмотра.
+ */
+const ID_LIST_DETAIL_KEY = 'personIds';
+
+/** Идентификатор записи: только он и допустим внутри списка ссылок. */
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
 /** Ключи, которые в журнале запрещены прямо: за ними всегда стоят перс. данные. */
 const FORBIDDEN_DETAIL_KEYS = new Set([
@@ -181,6 +198,16 @@ export function validateAuditDetails(details: object): string[] {
 			continue;
 		}
 
+		if (key === ID_LIST_DETAIL_KEY) {
+			if (
+				!Array.isArray(value) ||
+				value.some((item) => typeof item !== 'string' || !UUID_PATTERN.test(item))
+			) {
+				issues.push(`${ID_LIST_DETAIL_KEY}: ожидается список идентификаторов записей`);
+			}
+			continue;
+		}
+
 		if (FORBIDDEN_DETAIL_KEYS.has(key)) {
 			issues.push(`${key}: персональные данные в журнал не записываются`);
 			continue;
@@ -196,7 +223,7 @@ export function validateAuditDetails(details: object): string[] {
 
 		if (!key.endsWith('Id')) {
 			issues.push(
-				`${key}: в подробностях допустимы ссылки вида <что-то>Id и поля ${[...REQUEST_DETAIL_KEYS.keys()].join(', ')}`
+				`${key}: в подробностях допустимы ссылки вида <что-то>Id, ${ID_LIST_DETAIL_KEY} и поля ${[...REQUEST_DETAIL_KEYS.keys()].join(', ')}`
 			);
 			continue;
 		}

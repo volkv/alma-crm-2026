@@ -40,7 +40,14 @@ import {
 	updateProgram
 } from '$lib/server/directory/write';
 import { ConflictError, ForbiddenError, ValidationError } from '$lib/server/errors';
-import { failureCode, startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
+import { anonymizePerson } from '$lib/server/people/retention';
+import {
+	failureCode,
+	insertPerson,
+	startTestDatabase,
+	testActor,
+	type TestDatabase
+} from '../helpers/db';
 
 // См. комментарий в `schema.test.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
@@ -440,6 +447,119 @@ describe('программы и продукты', () => {
 
 		await createProduct(ctx, product);
 		await expect(createProduct(ctx, product)).rejects.toBeInstanceOf(ConflictError);
+	});
+});
+
+describe('персональные данные в справочнике', () => {
+	it('отбирает в списке тех, чей срок хранения прошёл', async () => {
+		const admin = testActor();
+		const expired = await insertPerson(database.db, {
+			lastName: 'Срокистёк',
+			retentionUntil: '2020-01-01'
+		});
+		await insertPerson(database.db, { lastName: 'Ждёт', retentionUntil: '2099-01-01' });
+		await insertPerson(database.db, { lastName: 'Безсрока' });
+
+		const all = await listPeople(admin, firstPeoplePage);
+		expect(all.total).toBe(3);
+
+		const overdue = await listPeople(admin, { ...firstPeoplePage, retention: 'expired' });
+		expect(overdue.total).toBe(1);
+		expect(overdue.items[0].person.id).toBe(expired);
+		expect(overdue.items[0].retentionExpired).toBe(true);
+
+		// Строка списка сама говорит, что срок прошёл: иначе пометку пришлось бы
+		// считать в разметке по часам браузера, а не по календарю базы.
+		const flags = all.items.map((item) => item.retentionExpired);
+		expect(flags.filter(Boolean)).toHaveLength(1);
+	});
+
+	it('не показывает обезличенного человека в очереди на уничтожение', async () => {
+		const admin = testActor();
+		const personId = await insertPerson(database.db, {
+			lastName: 'Срокистёк',
+			retentionUntil: '2020-01-01'
+		});
+
+		await anonymizePerson(admin, personId);
+
+		const overdue = await listPeople(admin, { ...firstPeoplePage, retention: 'expired' });
+		expect(overdue.total).toBe(0);
+	});
+
+	it('пишет один след просмотра на чтение, а не на строку списка', async () => {
+		const admin = testActor();
+		await insertPerson(database.db, { lastName: 'Первый' });
+		await insertPerson(database.db, { lastName: 'Второй' });
+		await insertPerson(database.db, { lastName: 'Третий' });
+
+		const page = await listPeople(admin, firstPeoplePage);
+		expect(page.total).toBe(3);
+
+		const [event] = await database.db
+			.select()
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'people.pii_viewed'));
+
+		expect(event.outcome).toBe('success');
+		expect((event.details as { personIds: string[] }).personIds).toHaveLength(3);
+
+		const all = await database.db
+			.select()
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'people.pii_viewed'));
+		expect(all).toHaveLength(1);
+	});
+
+	it('не пишет следа, когда контакты показаны замаскированными', async () => {
+		await insertPerson(database.db, { lastName: 'Первый' });
+
+		await listPeople(testActor({ roleId: 'viewer' }), firstPeoplePage);
+
+		const events = await database.db
+			.select()
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'people.pii_viewed'));
+
+		expect(events).toEqual([]);
+	});
+
+	it('складывает карточку человека и его роли в одно событие следа', async () => {
+		const admin = testActor();
+		const organizationId = (await createOrganization(admin, organizationInput())).id;
+		const personId = await insertPerson(database.db, { lastName: 'Контактов' });
+
+		await createAffiliation(admin, {
+			personId,
+			organizationId,
+			siteId: null,
+			position: 'Проректор',
+			roleKind: 'vice_rector',
+			isPrimary: false,
+			validFrom: '2026-01-01',
+			validTo: null,
+			channel: null
+		});
+
+		// Свой идентификатор запроса: заведение роли тоже отдало контакты наружу
+		// и свой след уже оставило, а журнал неизменяем — чистить его нечем.
+		const reader = { ...admin, requestId: '00000000-0000-4000-8000-00000000ca7d' };
+
+		// Так их читает загрузчик карточки: одним заходом, а не по очереди.
+		await Promise.all([getPerson(reader, personId), listPersonAffiliations(reader, personId)]);
+
+		const events = await database.db
+			.select()
+			.from(auditEvents)
+			.where(
+				and(
+					eq(auditEvents.eventType, 'people.pii_viewed'),
+					eq(auditEvents.requestId, reader.requestId)
+				)
+			);
+
+		expect(events).toHaveLength(1);
+		expect((events[0].details as { personIds: string[] }).personIds).toEqual([personId]);
 	});
 });
 

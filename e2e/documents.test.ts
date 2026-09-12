@@ -24,6 +24,7 @@ const INTERACTION_ID = seedId('interaction', 'bit-telecom');
  */
 const TAG = crypto.randomUUID().slice(0, 8);
 const LARGE_TAG = crypto.randomUUID().slice(0, 8);
+const REVISION_TAG = crypto.randomUUID().slice(0, 8);
 
 const PDF_TITLE = `Скан соглашения ${TAG}`;
 const TEXT_TITLE = `Служебная записка ${TAG}`;
@@ -32,6 +33,9 @@ const LARGE_TITLE = `Скан крупного соглашения ${LARGE_TAG}
 /** Настоящий PDF, пусть и минимальный: тип проверяется по содержимому файла. */
 const PDF_BYTES = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n', 'latin1');
 const TEXT_BYTES = Buffer.from('Записка о составе пакета документов.\n', 'utf8');
+
+/** Вторая редакция того же скана: другой файл, тот же документ. */
+const REVISION_BYTES = Buffer.from('%PDF-1.7\n2 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n', 'latin1');
 
 /**
  * Скан размером с настоящий: 1,2 МБ. Содержимое — тот же PDF, добитый пробелами
@@ -184,6 +188,73 @@ test('раздел показывает загруженные документ�
 			`filename*=UTF-8''${encodeURIComponent(`${PDF_TITLE}.pdf`)}`
 		);
 		expect((await response.body()).byteLength).toBe(PDF_BYTES.byteLength);
+	});
+});
+
+test('новая редакция заменяет файл в деле, а прежний остаётся по переключателю', async ({
+	page
+}) => {
+	const title = `Скан соглашения ${REVISION_TAG}`;
+
+	await page.goto(`/interactions/${INTERACTION_ID}`);
+	await page.getByRole('tab', { name: 'Документы' }).click();
+
+	await upload(page, title, 'Соглашение', {
+		name: 'agreement.pdf',
+		mimeType: 'application/pdf',
+		buffer: PDF_BYTES
+	});
+
+	const panel = page.locator('[data-slot="card"]').filter({ hasText: 'Документы взаимодействия' });
+	const row = panel.locator('li').filter({ hasText: title });
+
+	await test.step('редакция загружается из строки документа', async () => {
+		await row.getByRole('button', { name: 'Новая редакция' }).click();
+
+		const dialog = page.getByRole('dialog');
+		await expect(dialog.getByText(title)).toBeVisible();
+
+		await dialog.getByLabel('Файл новой редакции').setInputFiles({
+			name: 'agreement-v2.pdf',
+			mimeType: 'application/pdf',
+			buffer: REVISION_BYTES
+		});
+		await dialog.getByRole('button', { name: 'Загрузить редакцию' }).click();
+
+		// Название у редакции то же, а строка в панели — одна: заменённая скрыта.
+		await expect(row).toHaveCount(1);
+		await expect(row.getByRole('button', { name: 'Новая редакция' })).toHaveCount(1);
+	});
+
+	await test.step('переключатель возвращает заменённую редакцию с пометкой', async () => {
+		await panel.getByLabel('Показывать заменённые редакции').click();
+
+		await expect(row).toHaveCount(2);
+		// Строки идут от свежих к старым, поэтому заменённая — последняя своя.
+		await expect(row.last().getByText(/Заменён редакцией от/)).toBeVisible();
+		await expect(row.first().getByText(/Заменён редакцией от/)).toHaveCount(0);
+	});
+
+	await test.step('карточка документа показывает цепочку редакций', async () => {
+		await row.last().getByRole('link', { name: title }).click();
+
+		const chain = page.locator('section').filter({ hasText: 'Редакции' });
+		await expect(chain.getByText('Редакция 1 ·')).toBeVisible();
+		await expect(chain.getByText('Редакция 2 ·')).toBeVisible();
+		await expect(chain.getByText('Действует')).toBeVisible();
+
+		await page.screenshot({ path: 'test-results/documents-revisions.png', fullPage: true });
+	});
+
+	await test.step('раздел показывает только действующую редакцию', async () => {
+		await page.goto('/documents');
+		await expect(taggedRows(page, REVISION_TAG)).toHaveCount(1);
+
+		await choose(page.getByLabel('Редакции'), option(page, 'Все редакции'));
+
+		await expect(page).toHaveURL(/revisions=all/);
+		await expect(taggedRows(page, REVISION_TAG)).toHaveCount(2);
+		await expect(taggedRows(page, REVISION_TAG).filter({ hasText: 'Заменён' })).toHaveCount(1);
 	});
 });
 

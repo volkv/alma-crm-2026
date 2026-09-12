@@ -48,6 +48,7 @@ import {
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
+import { withPiiTrace } from '../people/pii-trace';
 import { toPersonView } from '../people/serialize';
 import { requirePermission, scopeFilter } from '../rbac';
 import { findOrganizationByInn, getOrganization, getSite, toOrganizationView } from './read';
@@ -392,19 +393,23 @@ export async function createPerson(
 ): Promise<PersonView> {
 	await requirePermission(ctx, 'people.write', { type: 'people.created' });
 
-	return withTransaction(ctx, async (tx) => {
-		const [row] = await tx.insert(people).values(input).returning();
+	// Ответ уносит контакты наружу — значит, и он оставляет след просмотра:
+	// правило одно на чтения и на возвраты записи.
+	return withPiiTrace(ctx, () =>
+		withTransaction(ctx, async (tx) => {
+			const [row] = await tx.insert(people).values(input).returning();
 
-		await recordAuditEvent(
-			ctx,
-			{ type: 'people.created', outcome: 'success', subject: { type: 'person', id: row.id } },
-			tx
-		);
+			await recordAuditEvent(
+				ctx,
+				{ type: 'people.created', outcome: 'success', subject: { type: 'person', id: row.id } },
+				tx
+			);
 
-		// Даже автор записи получает её обратно через сериализатор: право на
-		// запись и право видеть контакты — разные права.
-		return toPersonView(ctx, row);
-	});
+			// Даже автор записи получает её обратно через сериализатор: право на
+			// запись и право видеть контакты — разные права.
+			return toPersonView(ctx, row);
+		})
+	);
 }
 
 /**
@@ -434,30 +439,45 @@ export async function updatePerson(
 		throw new NotFoundError('Человек не найден');
 	}
 
-	return withTransaction(ctx, async (tx) => {
-		const [row] = await tx
-			.update(people)
-			.set({ ...fields, updatedAt: sql`now()` })
-			.where(eq(people.id, id))
-			.returning();
+	// Обезличивание необратимо, и правка — единственный путь, которым стёртые
+	// данные могли бы вернуться в ту же запись. Нужен контакт с этим именем —
+	// заводят нового человека, а не воскрешают уничтоженного.
+	if (before.anonymizedAt !== null) {
+		throw new ConflictError('Данные человека обезличены: изменить их нельзя');
+	}
 
-		await recordAuditEvent(
-			ctx,
-			{
-				type: 'people.updated',
-				outcome: 'success',
-				subject: { type: 'person', id },
-				// В журнал попадают только имена изменённых полей: значения здесь —
-				// персональные данные, а журнал неизменяем.
-				details: { changedFields: changedFields(before, fields) }
-			},
-			tx
-		);
+	return withPiiTrace(ctx, () =>
+		withTransaction(ctx, async (tx) => {
+			const [row] = await tx
+				.update(people)
+				.set({ ...fields, updatedAt: sql`now()` })
+				.where(eq(people.id, id))
+				.returning();
 
-		return toPersonView(ctx, row);
-	});
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'people.updated',
+					outcome: 'success',
+					subject: { type: 'person', id },
+					// В журнал попадают только имена изменённых полей: значения здесь —
+					// персональные данные, а журнал неизменяем.
+					details: { changedFields: changedFields(before, fields) }
+				},
+				tx
+			);
+
+			return toPersonView(ctx, row);
+		})
+	);
 }
 
+/**
+ * Роль вместе с человеком, которому она принадлежит. Контакты в ответе те же,
+ * что в чтении, поэтому вызывающий обязан открыть область сбора следа
+ * просмотра — снаружи транзакции, чтобы событие не ушло в журнал раньше, чем
+ * запись подтвердится.
+ */
 async function toAffiliationView(
 	ctx: ActorContext,
 	tx: Tx,
@@ -507,22 +527,24 @@ export async function createAffiliation(
 		}
 	}
 
-	return withTransaction(ctx, async (tx) => {
-		const [row] = await tx.insert(affiliations).values(input).returning();
+	return withPiiTrace(ctx, () =>
+		withTransaction(ctx, async (tx) => {
+			const [row] = await tx.insert(affiliations).values(input).returning();
 
-		await recordAuditEvent(
-			ctx,
-			{
-				type: 'people.affiliation_created',
-				outcome: 'success',
-				subject: { type: 'affiliation', id: row.id },
-				details: { personId: row.personId, organizationId: row.organizationId }
-			},
-			tx
-		);
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'people.affiliation_created',
+					outcome: 'success',
+					subject: { type: 'affiliation', id: row.id },
+					details: { personId: row.personId, organizationId: row.organizationId }
+				},
+				tx
+			);
 
-		return toAffiliationView(ctx, tx, row);
-	});
+			return toAffiliationView(ctx, tx, row);
+		})
+	);
 }
 
 /**
@@ -560,30 +582,32 @@ export async function endAffiliation(
 		]);
 	}
 
-	return withTransaction(ctx, async (tx) => {
-		const [row] = await tx
-			.update(affiliations)
-			.set({ validTo: input.validTo, updatedAt: sql`now()` })
-			.where(eq(affiliations.id, input.id))
-			.returning();
+	return withPiiTrace(ctx, () =>
+		withTransaction(ctx, async (tx) => {
+			const [row] = await tx
+				.update(affiliations)
+				.set({ validTo: input.validTo, updatedAt: sql`now()` })
+				.where(eq(affiliations.id, input.id))
+				.returning();
 
-		await recordAuditEvent(
-			ctx,
-			{
-				type: 'people.affiliation_updated',
-				outcome: 'success',
-				subject: { type: 'affiliation', id: row.id },
-				details: {
-					personId: row.personId,
-					organizationId: row.organizationId,
-					changedFields: ['validTo']
-				}
-			},
-			tx
-		);
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'people.affiliation_updated',
+					outcome: 'success',
+					subject: { type: 'affiliation', id: row.id },
+					details: {
+						personId: row.personId,
+						organizationId: row.organizationId,
+						changedFields: ['validTo']
+					}
+				},
+				tx
+			);
 
-		return toAffiliationView(ctx, tx, row);
-	});
+			return toAffiliationView(ctx, tx, row);
+		})
+	);
 }
 
 function toProgramView(row: typeof programs.$inferSelect): ProgramView {

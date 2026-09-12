@@ -14,6 +14,7 @@ export const load: PageServerLoad = async (event) => {
 	const table = readTableQuery(event.url);
 	const query = peopleListQuerySchema.parse({
 		organizationId: event.url.searchParams.get('organization') ?? undefined,
+		retention: event.url.searchParams.get('retention') ?? undefined,
 		q: table.search,
 		sortBy: table.sortBy ?? undefined,
 		sortDirection: table.sortDirection,
@@ -33,8 +34,10 @@ export const load: PageServerLoad = async (event) => {
 			rows: result.items,
 			total: result.total,
 			organizations,
-			filtered: query.organizationId !== null || query.q !== null,
-			canWrite: can(ctx, 'people.write')
+			filtered: query.organizationId !== null || query.retention !== null || query.q !== null,
+			canWrite: can(ctx, 'people.write'),
+			// Фильтр по сроку хранения показывают тому, кто за этот срок отвечает.
+			managesPii: can(ctx, 'people.manage_consents')
 		};
 	} catch (error) {
 		toPageError(error);

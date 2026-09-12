@@ -4,10 +4,12 @@
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import * as Card from '$lib/components/ui/card/index.js';
+	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
+	import { Switch } from '$lib/components/ui/switch/index.js';
 	import ConfirmDialog from '$lib/components/confirm-dialog.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import FileInput from '$lib/components/form/file-input.svelte';
@@ -17,10 +19,11 @@
 		documentKindLabel,
 		DOCUMENT_KIND_LABELS,
 		GENERATED_DOCUMENT_KIND,
-		UPLOADED_DOCUMENT_KINDS
+		UPLOADED_DOCUMENT_KINDS,
+		type DocumentSupersession
 	} from '$lib/contracts/documents';
 	import type { InteractionDocumentView, InteractionView } from '$lib/contracts/interactions';
-	import { formatBytes, formatDateTime } from '$lib/format';
+	import { formatBytes, formatDate, formatDateTime } from '$lib/format';
 	import { actionEnhance } from './action-enhance';
 
 	/**
@@ -31,14 +34,31 @@
 	let {
 		interaction,
 		documents,
+		supersessions,
 		canUpload,
 		canGenerate
 	}: {
 		interaction: InteractionView;
 		documents: readonly InteractionDocumentView[];
+		/** Какие из этих файлов уже заменены новой редакцией и когда. */
+		supersessions: readonly DocumentSupersession[];
 		canUpload: boolean;
 		canGenerate: boolean;
 	} = $props();
+
+	/**
+	 * Заменённые редакции по умолчанию скрыты: панель отвечает на вопрос «что
+	 * приложено к делу сейчас». Они не исчезают — переключатель возвращает их
+	 * в список с пометкой, чем именно их заменили.
+	 */
+	let showSuperseded = $state(false);
+
+	const supersededBy = $derived(
+		new Map(supersessions.map((item) => [item.documentId, item.supersededAt]))
+	);
+	const visible = $derived(
+		showSuperseded ? documents : documents.filter((document) => !supersededBy.has(document.id))
+	);
 
 	const customer = $derived(
 		interaction.parties.find((party) => party.partyRole === 'customer')?.organizationName ?? ''
@@ -60,6 +80,13 @@
 	let uploadKind = $state<string>('agreement');
 	let generateForm = $state<HTMLFormElement | null>(null);
 	let confirmRepeat = $state(false);
+	let revisionOf = $state<InteractionDocumentView | null>(null);
+	let revisionOpen = $state(false);
+
+	function askRevision(document: InteractionDocumentView) {
+		revisionOf = document;
+		revisionOpen = true;
+	}
 
 	/** Формат словом; неизвестный тип показывается как записан, а не прячется. */
 	function format(mime: string): string {
@@ -71,6 +98,18 @@
 	<Card.Root size="sm">
 		<Card.Header>
 			<Card.Title>Документы взаимодействия</Card.Title>
+			{#if supersessions.length > 0}
+				<Card.Action>
+					<Label class="flex items-center gap-2 text-xs font-normal text-muted-foreground">
+						<Switch
+							checked={showSuperseded}
+							aria-label="Показывать заменённые редакции"
+							onCheckedChange={(checked) => (showSuperseded = checked === true)}
+						/>
+						Заменённые редакции
+					</Label>
+				</Card.Action>
+			{/if}
 		</Card.Header>
 		<Card.Content>
 			{#if documents.length === 0}
@@ -81,7 +120,7 @@
 				/>
 			{:else}
 				<ul class="flex flex-col divide-y divide-border">
-					{#each documents as document (document.id)}
+					{#each visible as document (document.id)}
 						<li class="flex flex-wrap items-center gap-2 py-2">
 							<span class="min-w-0 flex-1">
 								<a
@@ -97,11 +136,21 @@
 									)} · {formatDateTime(document.createdAt)}
 								</span>
 							</span>
+							{#if supersededBy.has(document.id)}
+								<StatusBadge tone="neutral">
+									Заменён редакцией от {formatDate(supersededBy.get(document.id) ?? new Date())}
+								</StatusBadge>
+							{/if}
 							{#if document.agreedAt}
 								<StatusBadge tone="success" dot>Согласован</StatusBadge>
 							{/if}
 							{#if document.approvedAt}
 								<StatusBadge tone="accent" dot>Утверждён</StatusBadge>
+							{/if}
+							{#if canUpload && !supersededBy.has(document.id)}
+								<Button variant="ghost" size="sm" onclick={() => askRevision(document)}>
+									Новая редакция
+								</Button>
 							{/if}
 							<Button
 								variant="outline"
@@ -115,6 +164,13 @@
 						</li>
 					{/each}
 				</ul>
+
+				{#if visible.length === 0}
+					<p class="text-sm text-muted-foreground">
+						Все файлы этого дела заменены новыми редакциями. Включите переключатель, чтобы увидеть
+						их.
+					</p>
+				{/if}
 			{/if}
 		</Card.Content>
 	</Card.Root>
@@ -231,6 +287,32 @@
 		{/if}
 	</div>
 </div>
+
+<Dialog.Root bind:open={revisionOpen}>
+	<Dialog.Content>
+		<Dialog.Header>
+			<Dialog.Title>Новая редакция документа</Dialog.Title>
+			<Dialog.Description>
+				«{revisionOf?.title ?? ''}» останется в деле и будет скачиваться по-прежнему: файл
+				неизменяем. Новая редакция встанет на его место с тем же названием и видом.
+			</Dialog.Description>
+		</Dialog.Header>
+
+		<form
+			method="POST"
+			action="?/uploadRevision"
+			enctype="multipart/form-data"
+			use:enhance={actionEnhance({ onsuccess: () => (revisionOpen = false) })}
+			class="flex flex-col gap-3"
+		>
+			<input type="hidden" name="supersedesId" value={revisionOf?.id ?? ''} />
+			<FileInput id="revisionFile" name="file" label="Файл новой редакции" required />
+			<Dialog.Footer>
+				<Button type="submit" size="sm">Загрузить редакцию</Button>
+			</Dialog.Footer>
+		</form>
+	</Dialog.Content>
+</Dialog.Root>
 
 <ConfirmDialog
 	bind:open={confirmRepeat}

@@ -21,10 +21,12 @@ import {
 	createProgramSchema,
 	createProgramVersionSchema,
 	createSiteSchema,
+	recordConsentSchema,
 	type AffiliationRoleKind
 } from '$lib/contracts/directory';
 import {
 	affiliations,
+	consents,
 	organizations,
 	people,
 	products,
@@ -505,7 +507,59 @@ type PersonSeed = z.input<typeof createPersonSchema> & {
 	key: string;
 	/** Первая роль человека; остальные — в `EXTRA_AFFILIATIONS`. */
 	affiliation: AffiliationSeedFields;
+	/**
+	 * До какого дня хранятся персональные данные. Даты абсолютные: набор должен
+	 * выглядеть одинаково и сегодня, и через месяц.
+	 */
+	retentionUntil?: string;
 };
+
+/** Согласие демонстрационного человека на обработку его данных. */
+type ConsentSeed = {
+	key: string;
+	personKey: string;
+	basis: z.input<typeof recordConsentSchema>['basis'];
+	textVersion: string;
+	givenAt: string;
+	withdrawnAt?: string;
+};
+
+/**
+ * Учёт персональных данных на стенде: согласия трёх видов, отозванное согласие
+ * и истёкший срок хранения. Без них панель «Персональные данные» на карточке
+ * человека пуста, и показать, чем она отвечает на 152-ФЗ, нечем.
+ */
+const CONSENTS: readonly ConsentSeed[] = [
+	{
+		key: 'belskaya-2026',
+		personKey: 'belskaya',
+		basis: 'consent',
+		textVersion: '2026-01-12',
+		givenAt: '2026-01-12'
+	},
+	{
+		key: 'astakhov-2025',
+		personKey: 'astakhov',
+		basis: 'contract',
+		textVersion: '2025-09-01',
+		givenAt: '2025-09-01'
+	},
+	{
+		key: 'guryev-2024',
+		personKey: 'guryev',
+		basis: 'consent',
+		textVersion: '2024-02-20',
+		givenAt: '2024-02-20',
+		withdrawnAt: '2026-03-04'
+	},
+	{
+		key: 'drozdova-2026',
+		personKey: 'drozdova',
+		basis: 'legal',
+		textVersion: '2026-02-01',
+		givenAt: '2026-02-01'
+	}
+];
 
 type AffiliationSeedFields = {
 	organizationKey: string;
@@ -537,6 +591,7 @@ const PEOPLE: readonly PersonSeed[] = [
 	},
 	{
 		key: 'belskaya',
+		retentionUntil: '2029-01-12',
 		lastName: 'Бельская',
 		firstName: 'Марина',
 		middleName: 'Юрьевна',
@@ -554,6 +609,9 @@ const PEOPLE: readonly PersonSeed[] = [
 	},
 	{
 		key: 'guryev',
+		// Согласие отозвано, а срок хранения прошёл: этот человек и есть очередь
+		// на уничтожение данных, которую показывает фильтр списка.
+		retentionUntil: '2026-06-30',
 		lastName: 'Гурьев',
 		firstName: 'Никита',
 		middleName: 'Павлович',
@@ -569,6 +627,7 @@ const PEOPLE: readonly PersonSeed[] = [
 	},
 	{
 		key: 'drozdova',
+		retentionUntil: '2028-02-01',
 		lastName: 'Дроздова',
 		firstName: 'Елена',
 		middleName: 'Аркадьевна',
@@ -1424,12 +1483,33 @@ export async function seedDirectory(tx: Tx, options: { authorUserId: string }): 
 	await tx
 		.insert(people)
 		.values(
-			PEOPLE.map(({ key, affiliation: _affiliation, ...raw }) => ({
+			PEOPLE.map(({ key, affiliation: _affiliation, retentionUntil, ...raw }) => ({
 				id: seedId('person', key),
+				// Срок хранения контракт создания человека не описывает: его
+				// назначают отдельным действием, и в наборе он лежит рядом.
+				retentionUntil: retentionUntil ?? null,
 				...checked(createPersonSchema, 'person', key, raw)
 			}))
 		)
 		.onConflictDoNothing({ target: people.id });
+
+	await tx
+		.insert(consents)
+		.values(
+			CONSENTS.map(({ key, personKey, withdrawnAt, ...raw }) => ({
+				id: seedId('consent', key),
+				withdrawnAt: withdrawnAt ?? null,
+				// Отозвал согласие тот же сотрудник, что и завёл справочник: автор
+				// у действия на стенде должен быть, а не «система».
+				withdrawnBy: withdrawnAt === undefined ? null : options.authorUserId,
+				recordedBy: options.authorUserId,
+				...checked(recordConsentSchema, 'consent', key, {
+					...raw,
+					personId: seedId('person', personKey)
+				})
+			}))
+		)
+		.onConflictDoNothing({ target: consents.id });
 
 	await tx
 		.insert(affiliations)
@@ -1497,6 +1577,7 @@ export const DIRECTORY_SEED_SIZES = {
 	organizations: ORGANIZATIONS.length,
 	sites: SITES.length,
 	people: PEOPLE.length,
+	consents: CONSENTS.length,
 	affiliations: PEOPLE.length + EXTRA_AFFILIATIONS.length,
 	programs: PROGRAMS.length,
 	programVersions: PROGRAMS.reduce((total, program) => total + program.versions.length, 0),

@@ -58,6 +58,7 @@ import {
 	users
 } from '../db/schema';
 import { NotFoundError } from '../errors';
+import { withPiiTrace } from '../people/pii-trace';
 import { toPersonView } from '../people/serialize';
 import { requirePermission } from '../rbac';
 import { buildProgress, isStale } from '../stages/status';
@@ -402,6 +403,16 @@ async function readBlockingInteractions(interactionIds: string[]): Promise<Set<s
 }
 
 async function readParties(
+	ctx: ActorContext,
+	interactionId: string
+): Promise<InteractionPartyView[]> {
+	// Карточка показывает контакты сторон, а значит, оставляет след просмотра
+	// персональных данных. Область сбора открывается до выборки: тогда чтения,
+	// запущенные загрузчиком страницы разом, складываются в одно событие.
+	return withPiiTrace(ctx, () => readPartyRows(ctx, interactionId));
+}
+
+async function readPartyRows(
 	ctx: ActorContext,
 	interactionId: string
 ): Promise<InteractionPartyView[]> {

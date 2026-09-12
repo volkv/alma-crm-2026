@@ -15,6 +15,7 @@ import {
 	PROGRAM_LEVELS,
 	SITE_KINDS,
 	type AffiliationRoleKind,
+	type ConsentBasis,
 	type EducationLevel,
 	type LifecycleStatus,
 	type OrganizationKind,
@@ -77,6 +78,16 @@ export const LIFECYCLE_STATUS_TONES: Record<LifecycleStatus, StatusTone> = {
 	draft: 'warning',
 	active: 'success',
 	archived: 'neutral'
+};
+
+/**
+ * Основание обработки персональных данных. Название длиннее кода намеренно:
+ * человек в карточке читает не `legal`, а норму, по которой данные лежат.
+ */
+export const CONSENT_BASIS_LABELS: Record<ConsentBasis, string> = {
+	consent: 'Согласие субъекта',
+	contract: 'Исполнение договора',
+	legal: 'Требование закона'
 };
 
 /** Значение, которым список обозначает «ничего не выбрано». */

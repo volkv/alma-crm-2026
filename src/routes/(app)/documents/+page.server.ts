@@ -16,6 +16,9 @@ export const load: PageServerLoad = async (event) => {
 		kind: event.url.searchParams.get('kind') ?? undefined,
 		format: event.url.searchParams.get('format') ?? undefined,
 		fact: event.url.searchParams.get('fact') ?? undefined,
+		// Пустой параметр — это «только действующие»: заменённая редакция
+		// остаётся в базе навсегда, и без отбора раздел показывал бы историю.
+		revisions: event.url.searchParams.get('revisions') ?? undefined,
 		q: table.search,
 		sortBy: table.sortBy ?? undefined,
 		// Раздел открывается свежими документами: пока колонку не выбрали, это
@@ -37,7 +40,11 @@ export const load: PageServerLoad = async (event) => {
 			// первом случае надо снять фильтр, во втором — завести первый документ
 			// в карточке взаимодействия.
 			filtered:
-				query.kind !== null || query.format !== null || query.fact !== null || query.q !== null
+				query.kind !== null ||
+				query.format !== null ||
+				query.fact !== null ||
+				query.revisions !== 'current' ||
+				query.q !== null
 		};
 	} catch (error) {
 		toPageError(error);

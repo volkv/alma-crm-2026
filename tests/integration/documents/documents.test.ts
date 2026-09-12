@@ -18,11 +18,16 @@ import {
 	interactions
 } from '$lib/server/db/schema';
 import { generateDocument } from '$lib/server/documents/generate';
-import { listDocuments, readDocumentForDownload } from '$lib/server/documents/read';
+import {
+	listDocumentRevisions,
+	listDocuments,
+	listInteractionSupersessions,
+	readDocumentForDownload
+} from '$lib/server/documents/read';
 import { markDocument } from '$lib/server/documents/status';
 import { resolveStoredPath } from '$lib/server/documents/storage';
 import { ensureTemplateRegistered } from '$lib/server/documents/templates';
-import { uploadDocument } from '$lib/server/documents/upload';
+import { uploadDocument, uploadDocumentRevision } from '$lib/server/documents/upload';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '$lib/server/errors';
 import {
 	insertInteractionWithStage,
@@ -384,6 +389,135 @@ describe('загрузка файла', () => {
 				kind: 'agreement',
 				title: 'Соглашение',
 				file: { mime: 'application/pdf', bytes: pdfBytes }
+			})
+		).rejects.toBeInstanceOf(ForbiddenError);
+	});
+});
+
+describe('редакции документа', () => {
+	const pdfBytes = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n', 'latin1');
+	const nextBytes = Buffer.from('%PDF-1.7\n2 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n', 'latin1');
+
+	/** Документ взаимодействия и его вторая редакция. */
+	async function withRevision() {
+		const ctx = testActor();
+		const { interactionId, organizationId } = await interactionWithParty();
+
+		const first = await uploadDocument(ctx, {
+			interactionId,
+			kind: 'agreement',
+			title: 'Скан подписанного соглашения',
+			file: { mime: 'application/pdf', bytes: pdfBytes }
+		});
+
+		const second = await uploadDocumentRevision(ctx, {
+			supersedesId: first.id,
+			file: { mime: 'application/pdf', bytes: nextBytes }
+		});
+
+		return { ctx, interactionId, organizationId, first, second };
+	}
+
+	it('наследует название, вид и взаимодействие и пишет отдельное событие', async () => {
+		const { first, second, interactionId } = await withRevision();
+
+		expect(second.id).not.toBe(first.id);
+		expect(second.supersedesId).toBe(first.id);
+		expect(second.title).toBe(first.title);
+		expect(second.kind).toBe(first.kind);
+		expect(second.interactionId).toBe(interactionId);
+		// Файл неизменяем: у редакции свой хеш и свой файл в хранилище.
+		expect(second.sha256).not.toBe(first.sha256);
+		expect(await readStoredDocument(first.id)).toEqual(pdfBytes);
+		expect(await readStoredDocument(second.id)).toEqual(nextBytes);
+
+		const [event] = await database.db
+			.select()
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'documents.version_uploaded'));
+
+		expect(event.subjectId).toBe(second.id);
+		expect(event.details).toEqual({
+			interactionId,
+			documentId: second.id,
+			supersededDocumentId: first.id
+		});
+	});
+
+	it('не даёт заменить одну редакцию дважды', async () => {
+		const { ctx, first } = await withRevision();
+
+		await expect(
+			uploadDocumentRevision(ctx, {
+				supersedesId: first.id,
+				file: { mime: 'application/pdf', bytes: nextBytes }
+			})
+		).rejects.toBeInstanceOf(ConflictError);
+	});
+
+	it('отдаёт цепочку от первой редакции к действующей', async () => {
+		const { ctx, first, second } = await withRevision();
+
+		const third = await uploadDocumentRevision(ctx, {
+			supersedesId: second.id,
+			file: { mime: 'application/pdf', bytes: Buffer.from('%PDF-1.7\n3\n%%EOF\n', 'latin1') }
+		});
+
+		// Цепочка одна и та же, с какой бы редакции её ни спросили.
+		for (const id of [first.id, second.id, third.id]) {
+			const chain = await listDocumentRevisions(ctx, id);
+
+			expect(chain.map((item) => item.id)).toEqual([first.id, second.id, third.id]);
+			expect(chain.map((item) => item.isCurrent)).toEqual([false, false, true]);
+			expect(chain.at(-1)?.authorName).toBe('Тестовый Администратор');
+		}
+	});
+
+	it('оставляет в списке действующую редакцию, а по запросу показывает обе', async () => {
+		const { first, second } = await withRevision();
+		const query = documentListQuerySchema.parse({});
+
+		const current = await listDocuments(testActor(), query);
+		expect(current.total).toBe(1);
+		expect(current.items.map((item) => item.id)).toEqual([second.id]);
+
+		const all = await listDocuments(testActor(), { ...query, revisions: 'all' });
+		expect(all.total).toBe(2);
+
+		const replaced = all.items.find((item) => item.id === first.id);
+		expect(replaced?.supersededBy?.id).toBe(second.id);
+		expect(all.items.find((item) => item.id === second.id)?.supersededBy).toBeNull();
+	});
+
+	it('называет замены среди документов взаимодействия', async () => {
+		const { ctx, interactionId, first, second } = await withRevision();
+
+		const supersessions = await listInteractionSupersessions(ctx, interactionId);
+
+		expect(supersessions).toHaveLength(1);
+		expect(supersessions[0].documentId).toBe(first.id);
+		expect(supersessions[0].supersededById).toBe(second.id);
+	});
+
+	it('не даёт заменить документ чужого взаимодействия', async () => {
+		const { first } = await withRevision();
+		const other = await insertOrganization(database.db);
+
+		await expect(
+			uploadDocumentRevision(testActor({ roleId: 'manager', organizationIds: [other] }), {
+				supersedesId: first.id,
+				file: { mime: 'application/pdf', bytes: nextBytes }
+			})
+		).rejects.toBeInstanceOf(NotFoundError);
+	});
+
+	it('требует право на запись', async () => {
+		const { first } = await withRevision();
+
+		await expect(
+			uploadDocumentRevision(testActor({ roleId: 'viewer' }), {
+				supersedesId: first.id,
+				file: { mime: 'application/pdf', bytes: nextBytes }
 			})
 		).rejects.toBeInstanceOf(ForbiddenError);
 	});

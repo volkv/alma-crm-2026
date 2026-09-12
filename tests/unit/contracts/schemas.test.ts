@@ -18,7 +18,11 @@ import {
 	createProgramVersionSchema,
 	createSiteSchema,
 	organizationListQuerySchema,
-	updateOrganizationSchema
+	peopleListQuerySchema,
+	recordConsentSchema,
+	setRetentionSchema,
+	updateOrganizationSchema,
+	withdrawConsentSchema
 } from '$lib/contracts/directory';
 import {
 	documentListQuerySchema,
@@ -150,6 +154,33 @@ const cases: Case[] = [
 			validFrom: '2026-09-01',
 			validTo: '2026-08-01'
 		}
+	},
+	{
+		name: 'recordConsent',
+		schema: recordConsentSchema,
+		valid: { personId: ID, basis: 'contract', textVersion: '2026-09-01', givenAt: '2026-09-01' },
+		// Основание — ссылка на норму закона, а не свободный текст.
+		invalid: { personId: ID, basis: 'по договорённости', textVersion: 'v1', givenAt: '2026-09-01' }
+	},
+	{
+		name: 'withdrawConsent',
+		schema: withdrawConsentSchema,
+		valid: { id: ID, withdrawnAt: '2026-09-01' },
+		invalid: { id: ID, withdrawnAt: 'вчера' }
+	},
+	{
+		name: 'setRetention',
+		schema: setRetentionSchema,
+		// Пустое значение — «срок не назначен», а не «хранить вечно».
+		valid: { personId: ID, retentionUntil: null },
+		invalid: { personId: ID, retentionUntil: '31.12.2030' }
+	},
+	{
+		name: 'peopleList: отбор по сроку хранения',
+		schema: peopleListQuerySchema,
+		valid: { retention: 'expired' },
+		// У полей списка стоит `catch`: чушь в адресе — это «без фильтра».
+		invalid: null
 	},
 	{
 		name: 'createProgram',
