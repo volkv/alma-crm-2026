@@ -1,66 +1,34 @@
-import { mkdir } from 'node:fs/promises';
-import path from 'node:path';
-import { expect, test as base, type Page } from '@playwright/test';
+import { expect, test as base } from '@playwright/test';
+import { seedId } from '../scripts/seed/ids';
+import { ADMIN_STATE } from './global-setup';
 
 /**
  * Журнал и настройки глазами администратора.
  *
- * Тест начинается с вошедшего администратора. Общая фикстура (`./fixtures`)
- * впускает менеджера, а журнал и настройки для него закрыты правами, поэтому
- * здесь свой вход. Делается он один раз на рабочий процесс: счётчик попыток
- * входа с адреса общий, и прогон не должен упираться в защиту, рассчитанную на
- * живого человека.
+ * Общая фикстура (`./fixtures`) впускает менеджера, а журнал и настройки для
+ * него закрыты правами, поэтому здесь своя сессия — та, что приготовил
+ * глобальный сетап.
  */
-const test = base.extend<object, { adminState: string }>({
-	adminState: [
-		async ({ browser }, use, workerInfo) => {
-			const baseURL = workerInfo.project.use.baseURL;
-
-			if (baseURL === undefined) {
-				throw new Error('playwright.config.ts must set baseURL');
-			}
-
-			const directory = path.join(workerInfo.project.outputDir, '.auth');
-			await mkdir(directory, { recursive: true });
-			const file = path.join(directory, `admin-${workerInfo.workerIndex}.json`);
-
-			const context = await browser.newContext({ baseURL });
-			const page = await context.newPage();
-
-			await page.goto('/login');
-			await page.getByRole('button', { name: 'Войти как администратор' }).click();
-			// Имя демонстрационной учётной записи зависит от того, чем залита база,
-			// поэтому вход подтверждается адресом, а не подписью в меню.
-			await expect(page).toHaveURL('/');
-
-			await context.storageState({ path: file });
-			await context.close();
-
-			await use(file);
-		},
-		{ scope: 'worker' }
-	],
-
-	storageState: ({ adminState }, use) => use(adminState)
-});
+const test = base.extend<object>({ storageState: ADMIN_STATE });
 
 /**
- * Проверки идут по порядку и в одном рабочем процессе: последняя из них выходит
- * из системы, а тесты, которые читают один и тот же журнал, понятнее, когда
- * известно, что в нём уже произошло.
+ * Проверки идут по порядку и в одном рабочем процессе: тесты, которые читают
+ * один и тот же журнал, понятнее, когда известно, что в нём уже произошло.
  */
 test.describe.configure({ mode: 'serial' });
 
 /** Почта у каждого прогона своя: учётные записи не удаляются, а выключаются. */
 const runId = Date.now().toString(36);
 
-/** Меню учётной записи в верхней панели: подпись в нём зависит от данных. */
-function accountMenu(page: Page) {
-	return page.getByRole('banner').getByRole('button').last();
-}
+/**
+ * Демонстрационный администратор — тот, которого завёл сид. Журнал общий на всю
+ * базу, и без отбора по действующему лицу самой свежей записью о входе
+ * оказывается чужая: рядом идут проверки входа по паролю.
+ */
+const ADMIN_ID = seedId('user', 'demo-admin');
 
 test('журнал показывает событие входа', async ({ page }) => {
-	await page.goto('/audit');
+	await page.goto(`/audit?actor=${ADMIN_ID}`);
 
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Журнал действий');
 
@@ -71,12 +39,19 @@ test('журнал показывает событие входа', async ({ pag
 });
 
 test('строка журнала раскрывается в карточку события', async ({ page }) => {
-	await page.goto('/audit?type=auth.login');
-
-	await page.getByRole('cell', { name: 'Вход в систему' }).first().click();
+	await page.goto(`/audit?type=auth.login&actor=${ADMIN_ID}`);
 
 	const card = page.getByRole('dialog');
-	await expect(card.getByText('auth.login')).toBeVisible();
+
+	// Строку раскрывает код страницы, а не браузер: нажатие до того, как страница
+	// ожила, до обработчика не доходит. Поэтому нажимаем, пока карточка не
+	// откроется, — ждать фиксированную паузу значило бы закладываться на скорость
+	// машины.
+	await expect(async () => {
+		await page.getByRole('cell', { name: 'Вход в систему' }).first().click();
+		await expect(card.getByText('auth.login')).toBeVisible({ timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+
 	await expect(card.getByText('Демонстрационный вход')).toBeVisible();
 });
 
@@ -145,10 +120,12 @@ test('правка баннера видна на странице входа п
 	await page.getByRole('button', { name: 'Сохранить баннер' }).click();
 	await expect(page.getByText('Баннер страницы входа сохранён')).toBeVisible();
 
-	await accountMenu(page).click();
-	await page.getByRole('menuitem', { name: 'Выйти' }).click();
+	// Сессия администратора одна на весь прогон, поэтому здесь не выход, а
+	// свежий браузер без кук: выход гасит сессию в Redis, и соседние файлы
+	// прогона остались бы без неё. Сам выход проверяет `auth.test.ts`.
+	await page.context().clearCookies();
+	await page.goto('/login');
 
-	await expect(page).toHaveURL('/login');
 	await expect(page.getByText(marker)).toBeVisible();
 
 	// Настройка общая на всю базу, поэтому текст возвращается как был.

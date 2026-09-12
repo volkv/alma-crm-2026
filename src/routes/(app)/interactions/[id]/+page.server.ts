@@ -2,6 +2,8 @@ import { error, fail } from '@sveltejs/kit';
 import type { z } from 'zod';
 import {
 	advanceStageSchema,
+	cancelInteractionSchema,
+	completeInteractionSchema,
 	confirmStageSchema,
 	createCommentSchema,
 	pauseStageSchema,
@@ -32,7 +34,10 @@ import { updateInteraction } from '$lib/server/interactions/write';
 import {
 	addComment,
 	advanceStage,
+	cancelInteraction,
+	completeInteraction,
 	confirmStage,
+	getInteractionClosing,
 	pauseStage,
 	raiseBlocker,
 	resolveBlocker,
@@ -52,16 +57,17 @@ export const load: PageServerLoad = async (event) => {
 	const { id } = event.params;
 
 	try {
-		const [interaction, status, summary, comments, changes, users] = await Promise.all([
+		const [interaction, status, summary, closing, comments, changes, users] = await Promise.all([
 			getInteraction(ctx, id),
 			getInteractionStatus(ctx, id),
 			getInteractionSummary(ctx, id),
+			getInteractionClosing(ctx, id),
 			listComments(ctx, id),
 			listInteractionChanges(ctx, id),
 			responsibleOptions(event)
 		]);
 
-		return { interaction, status, summary, comments, changes, users };
+		return { interaction, status, summary, closing, comments, changes, users };
 	} catch (cause) {
 		if (cause instanceof AppError) {
 			// Соответствие предметной ошибки и кода ответа описано один раз;
@@ -296,6 +302,31 @@ export const actions: Actions = {
 				file: { mime: file.type, bytes }
 			})
 		);
+	},
+
+	complete: async (event) => {
+		const data = await event.request.formData();
+		const parsed = parse(completeInteractionSchema, {
+			interactionId: event.params.id,
+			summary: text(data, 'summary'),
+			force: data.get('force') === 'true'
+		});
+
+		if (!parsed.ok) return parsed.failure;
+
+		return run(() => completeInteraction(actorFromEvent(event), parsed.data));
+	},
+
+	cancel: async (event) => {
+		const data = await event.request.formData();
+		const parsed = parse(cancelInteractionSchema, {
+			interactionId: event.params.id,
+			reason: data.get('reason')
+		});
+
+		if (!parsed.ok) return parsed.failure;
+
+		return run(() => cancelInteraction(actorFromEvent(event), parsed.data));
 	},
 
 	generate: async (event) => generateAgreement(event),

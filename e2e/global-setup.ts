@@ -1,121 +1,133 @@
+import { execFile } from 'node:child_process';
+import { mkdir } from 'node:fs/promises';
+import path from 'node:path';
+import { promisify } from 'node:util';
 import { Redis } from 'ioredis';
+import { chromium, type FullConfig } from '@playwright/test';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
-import type { FullConfig } from '@playwright/test';
 import { hashPassword } from '$lib/server/auth/password';
-import { DEFAULT_ROLES, PERMISSIONS, PERMISSION_KEYS } from '$lib/server/rbac/permissions';
+import { DEMO_EMAILS } from '../scripts/seed/users';
 
 /**
- * Готовит окружение прогона: применяет миграции, заливает каталог ролей и
- * заводит учётные записи, под которыми ходят тесты.
+ * Готовит прогон: применяет миграции, заливает те же начальные данные, что и
+ * стенд, и один раз входит в систему за каждую роль, которая нужна тестам.
  *
- * Делается это один раз и до старта сервера — иначе первая же страница, которой
- * нужны настройки или пользователь, упала бы на пустой базе. Сервисы приложения
- * здесь недоступны: Playwright запускает этот файл обычным Node, где нет
- * `$env/dynamic/private`, поэтому база правится напрямую. Всё, что можно взять
- * из кода приложения, берётся из него — каталог прав и хеширование пароля.
+ * Данные заливает не этот файл, а `scripts/seed` — обычным дочерним процессом.
+ * Сервисы приложения здесь недоступны (Playwright запускает файл обычным Node,
+ * где нет `$env/dynamic/private`), а держать рядом второй набор учётных записей
+ * значило бы проверять стенд, которого не существует: на демонстрации будут
+ * ровно эти вузы, взаимодействия и кнопки входа.
+ *
+ * Вход делается здесь, а не в фикстуре, потому что POST на `/login` ограничен
+ * по адресу: восемь рабочих процессов, каждый со своим входом, упирались в
+ * защиту, рассчитанную на живого человека. Сессии складываются в файлы, и
+ * тесты стартуют уже вошедшими.
  */
 
-/** Учётная запись для входа по паролю. Демонстрационные входят без него. */
+/** Пароль демонстрационных учётных записей прогона. */
+const DEMO_PASSWORD = 'Проверка-Входа1';
+
+/** Учётная запись, которой тесты входят по паролю; заводится сидом. */
 export const E2E_USER = {
-	email: 'e2e@example.org',
-	fullName: 'Егорова Елена',
-	password: 'Проверка-Входа1',
-	roleId: 'manager'
+	email: 'manager@demo.lct-crm.local',
+	fullName: 'Менеджер Демо',
+	password: DEMO_PASSWORD
 };
 
-type SeedUser = {
-	email: string;
-	full_name: string;
-	role_id: string;
-	password_hash: string;
-	is_demo: boolean;
-};
+const authDirectory = new URL('../.playwright/auth/', import.meta.url).pathname;
 
-export default async function globalSetup(config: FullConfig): Promise<void> {
+/** Сессия менеджера: под ней идут почти все проверки. */
+export const MANAGER_STATE = path.join(authDirectory, 'manager.json');
+
+/** Сессия администратора: журнал и настройки закрыты для менеджера правами. */
+export const ADMIN_STATE = path.join(authDirectory, 'admin.json');
+
+const run = promisify(execFile);
+
+type ServerEnv = Record<string, string>;
+
+function serverEnvironment(config: FullConfig): ServerEnv {
 	const server = Array.isArray(config.webServer) ? config.webServer[0] : config.webServer;
-	const databaseUrl = server?.env?.DATABASE_URL;
-	const redisUrl = server?.env?.REDIS_URL;
+	const env = server?.env;
 
-	if (databaseUrl === undefined || redisUrl === undefined) {
+	if (env === undefined || env.DATABASE_URL === undefined || env.REDIS_URL === undefined) {
 		throw new Error('playwright.config.ts must set DATABASE_URL and REDIS_URL for the web server');
 	}
 
-	const sql = postgres(databaseUrl, { max: 1, connect_timeout: 10 });
+	return env as ServerEnv;
+}
+
+/**
+ * Заливка данных тем же входом, что и на стенде. Вывод сида показывается
+ * целиком: по нему видно, сколько строк в базе и собрались ли документы.
+ */
+async function seedDatabase(env: ServerEnv): Promise<void> {
+	const { stdout } = await run(process.execPath, ['scripts/seed/index.ts'], {
+		cwd: new URL('..', import.meta.url).pathname,
+		env: { ...process.env, ...env, SEED_DEMO_PASSWORD: DEMO_PASSWORD }
+	});
+
+	process.stdout.write(stdout);
+}
+
+/** Вход демонстрационной кнопкой и сохранение сессии в файл. */
+async function signIn(baseURL: string, roleName: string, file: string): Promise<void> {
+	const browser = await chromium.launch();
+
+	try {
+		const context = await browser.newContext({ baseURL });
+		const page = await context.newPage();
+
+		await page.goto('/login');
+		await page.getByRole('button', { name: `Войти как ${roleName}` }).click();
+		await page.waitForURL('/');
+
+		await context.storageState({ path: file });
+		await context.close();
+	} finally {
+		await browser.close();
+	}
+}
+
+export default async function globalSetup(config: FullConfig): Promise<void> {
+	const env = serverEnvironment(config);
+	const sql = postgres(env.DATABASE_URL, { max: 1, connect_timeout: 10 });
 
 	try {
 		await migrate(drizzle(sql), {
 			migrationsFolder: new URL('../drizzle', import.meta.url).pathname
 		});
 
+		await seedDatabase(env);
+
+		const demoEmails = Object.values(DEMO_EMAILS);
+
+		// Кнопка «Войти как …» берёт первую демонстрационную запись роли по
+		// адресу, поэтому чужая запись из общей с разработкой базы может перехватить
+		// вход. Прогон идёт по данным сида — остальные демонстрационные записи в
+		// нём не участвуют.
 		await sql`
-			insert into permissions ${sql(
-				PERMISSION_KEYS.map((key) => ({ key, description: PERMISSIONS[key] }))
-			)}
-			on conflict (key) do update set description = excluded.description
+			update users set is_active = false, deactivated_at = now()
+			where is_demo = true and email <> all(${demoEmails})
 		`;
 
-		for (const role of DEFAULT_ROLES) {
-			await sql`
-				insert into roles ${sql({
-					id: role.id,
-					name: role.name,
-					description: role.description,
-					is_system: true
-				})}
-				on conflict (id) do update set name = excluded.name, description = excluded.description
-			`;
-
-			await sql`delete from role_permissions where role_id = ${role.id}`;
-			await sql`
-				insert into role_permissions ${sql(
-					role.permissions.map((key) => ({ role_id: role.id, permission_key: key }))
-				)}
-			`;
-		}
-
-		const passwordHash = await hashPassword(E2E_USER.password);
-		const demoHash = await hashPassword(`демо-${crypto.randomUUID()}`);
-
-		const accounts: SeedUser[] = [
-			{
-				email: E2E_USER.email,
-				full_name: E2E_USER.fullName,
-				role_id: E2E_USER.roleId,
-				password_hash: passwordHash,
-				is_demo: false
-			},
-			...DEFAULT_ROLES.map((role) => ({
-				email: `demo-${role.id}@example.org`,
-				full_name: `Демонстрация: ${role.name}`,
-				role_id: role.id,
-				// Пароля у демонстрационной записи нет: в неё входят кнопкой, а
-				// пустой хеш в столбце `not null` не положишь.
-				password_hash: demoHash,
-				is_demo: true
-			}))
-		];
-
-		for (const account of accounts) {
-			await sql`
-				insert into users ${sql(account)}
-				on conflict (lower(email)) do update
-				set full_name = excluded.full_name,
-					role_id = excluded.role_id,
-					password_hash = excluded.password_hash,
-					is_demo = excluded.is_demo,
-					is_active = true,
-					deactivated_at = null
-			`;
-		}
+		// Пароль демонстрационных записей задаёт прогон, а не сид: сид бережёт
+		// пароль уже заведённой записи — это дело администратора стенда, — и без
+		// этой строки проверка входа по паролю зависела бы от того, чем базу
+		// заливали в прошлый раз.
+		await sql`
+			update users set password_hash = ${await hashPassword(DEMO_PASSWORD)}
+			where email = any(${demoEmails})
+		`;
 	} finally {
 		await sql.end();
 	}
 
 	// Счётчик попыток входа с адреса общий на весь прогон: без сброса второй
 	// прогон подряд упёрся бы в предел, рассчитанный на живого человека.
-	const redis = new Redis(redisUrl);
+	const redis = new Redis(env.REDIS_URL);
 
 	try {
 		const keys = await redis.keys('login_ip:*');
@@ -126,4 +138,14 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
 	} finally {
 		await redis.quit();
 	}
+
+	const baseURL = config.projects[0]?.use.baseURL;
+
+	if (baseURL === undefined) {
+		throw new Error('playwright.config.ts must set baseURL');
+	}
+
+	await mkdir(authDirectory, { recursive: true });
+	await signIn(baseURL, 'менеджер', MANAGER_STATE);
+	await signIn(baseURL, 'администратор', ADMIN_STATE);
 }

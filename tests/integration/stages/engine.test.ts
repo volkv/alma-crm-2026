@@ -16,7 +16,10 @@ import { createInteraction } from '$lib/server/interactions/write';
 import { getInteractionSummary } from '$lib/server/interactions/summary';
 import {
 	advanceStage,
+	cancelInteraction,
+	completeInteraction,
 	confirmStage,
+	getInteractionClosing,
 	pauseStage,
 	raiseBlocker,
 	resolveBlocker,
@@ -467,6 +470,147 @@ describe('подтверждение стадии', () => {
 
 		const status = await getInteractionStatus(fixture.ctx, fixture.interactionId);
 		expect(status.current?.snapshot.key).toBe('implementation_support');
+	});
+});
+
+describe('закрытие взаимодействия', () => {
+	it('завершает с последней стадии и записывает итог', async () => {
+		const fixture = await createFixture();
+		await advanceTo(fixture, 'execution_control');
+		await closeRequiredChecklist(fixture.ctx, fixture.interactionId);
+
+		const before = await getInteractionClosing(fixture.ctx, fixture.interactionId);
+
+		expect(before.complete.allowed).toBe(true);
+		expect(before.complete.requiresForce).toBe(false);
+
+		await completeInteraction(fixture.ctx, {
+			interactionId: fixture.interactionId,
+			summary: 'Отчёт принят заказчиком',
+			force: false
+		});
+
+		const status = await getInteractionStatus(fixture.ctx, fixture.interactionId);
+		const last = status.history[0];
+
+		// Закрытое взаимодействие не стоит ни на одной стадии, поэтому команд
+		// стадий сводка больше не предлагает — двигать нечего.
+		expect(status.current).toBeNull();
+		expect(last.snapshot.key).toBe('execution_control');
+		expect(last.outcome).toBe('completed');
+		expect(last.outcomeReason).toBe('Отчёт принят заказчиком');
+
+		const summary = await getInteractionSummary(fixture.ctx, fixture.interactionId);
+		expect(summary.canDo.transitions).toStrictEqual([]);
+
+		const after = await getInteractionClosing(fixture.ctx, fixture.interactionId);
+		expect(after.complete.allowed).toBe(false);
+		expect(after.complete.reasons.join('; ')).toMatch(/уже завершено/);
+
+		// Повторное завершение — не «ещё раз получилось», а конфликт состояния.
+		await expect(
+			completeInteraction(fixture.ctx, {
+				interactionId: fixture.interactionId,
+				summary: null,
+				force: false
+			})
+		).rejects.toBeInstanceOf(ConflictError);
+
+		const events = await database.db
+			.select({ type: auditEvents.eventType })
+			.from(auditEvents)
+			.where(eq(auditEvents.subjectId, fixture.interactionId));
+
+		expect(events.map((event) => event.type)).toContain('interactions.completed');
+	});
+
+	it('не завершает с середины маршрута без явного досрочного закрытия', async () => {
+		const fixture = await createFixture();
+
+		const verdict = await getInteractionClosing(fixture.ctx, fixture.interactionId);
+
+		expect(verdict.complete.allowed).toBe(true);
+		expect(verdict.complete.requiresForce).toBe(true);
+
+		await expect(
+			completeInteraction(fixture.ctx, {
+				interactionId: fixture.interactionId,
+				summary: 'Вуз передумал',
+				force: false
+			})
+		).rejects.toSatisfy(
+			(error: unknown) =>
+				error instanceof ConflictError && /не на последней стадии/.test(error.message)
+		);
+
+		// Досрочное закрытие — отступление от процесса: менеджеру оно недоступно,
+		// и отказ объясняет почему.
+		const manager = testActor({ roleId: 'manager' });
+		const forManager = await getInteractionClosing(manager, fixture.interactionId);
+
+		expect(forManager.complete.allowed).toBe(false);
+		expect(forManager.complete.reasons.join('; ')).toMatch(/настраивает процесс/);
+
+		await expect(
+			completeInteraction(manager, {
+				interactionId: fixture.interactionId,
+				summary: 'Вуз передумал',
+				force: true
+			})
+		).rejects.toBeInstanceOf(ConflictError);
+
+		await completeInteraction(fixture.ctx, {
+			interactionId: fixture.interactionId,
+			summary: 'Вуз передумал: программа закрыта на его стороне',
+			force: true
+		});
+
+		const status = await getInteractionStatus(fixture.ctx, fixture.interactionId);
+
+		expect(status.current).toBeNull();
+		expect(status.history[0].snapshot.key).toBe('contact_search');
+	});
+
+	it('отмена закрывает запись с причиной и снимает паузу', async () => {
+		const fixture = await createFixture();
+		const fromStageId = stageId(fixture.route, 'contact_search');
+
+		await pauseStage(fixture.ctx, {
+			interactionId: fixture.interactionId,
+			fromStageId,
+			reason: 'waiting_counterparty',
+			waitingPartyId: null,
+			nextAction: null,
+			note: 'Ждём ответа вуза'
+		});
+
+		await cancelInteraction(fixture.ctx, {
+			interactionId: fixture.interactionId,
+			reason: 'Вуз отказался от сотрудничества в этом учебном году'
+		});
+
+		const status = await getInteractionStatus(fixture.ctx, fixture.interactionId);
+		const last = status.history[0];
+
+		expect(status.current).toBeNull();
+		// Стадию не прошли и не пропустили — исхода у записи нет, есть причина.
+		expect(last.outcome).toBeNull();
+		expect(last.outcomeReason).toBe('Вуз отказался от сотрудничества в этом учебном году');
+		expect(last.pauses[0].endedAt).not.toBeNull();
+
+		// Взаимодействие ушло с маршрута: двигать его больше нечем.
+		await expect(
+			advanceStage(fixture.ctx, {
+				interactionId: fixture.interactionId,
+				fromStageId,
+				toStageId: stageId(fixture.route, 'communication'),
+				resultText: null,
+				checklistState: {}
+			})
+		).rejects.toBeInstanceOf(ConflictError);
+
+		const verdict = await getInteractionClosing(fixture.ctx, fixture.interactionId);
+		expect(verdict.cancel.allowed).toBe(false);
 	});
 });
 

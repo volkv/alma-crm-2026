@@ -26,7 +26,8 @@ export type SeedKind =
 	| 'affiliation'
 	| 'program'
 	| 'program-version'
-	| 'product';
+	| 'product'
+	| 'interaction';
 
 /**
  * Идентификатор записи набора. Реализация UUID v5 по RFC 9562: биты версии и

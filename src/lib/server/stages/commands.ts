@@ -11,11 +11,15 @@
  * Можно ли переход вообще, решает `evaluateTransition` — та же функция, что
  * рисует кнопки в карточке. Команда не повторяет её правил.
  */
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import type {
 	AdvanceStageInput,
+	CancelInteractionInput,
+	CompleteInteractionInput,
 	ConfirmStageInput,
 	CreateCommentInput,
+	InteractionClosingView,
+	InteractionStatus,
 	PauseStageInput,
 	RaiseBlockerInput,
 	ResolveBlockerInput,
@@ -33,6 +37,7 @@ import type {
 import type { AuditEventType } from '$lib/contracts/audit';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
+import { getDb } from '../db';
 import {
 	blockers,
 	comments,
@@ -68,6 +73,9 @@ function actingUserId(ctx: ActorContext): string {
 
 type LockedInteraction = { id: string; routeId: string; ownerUserId: string };
 
+/** Кто выполняет запрос: транзакция команды или общий пул для чтения. */
+type Executor = Tx | ReturnType<typeof getDb>;
+
 /**
  * Блокировка строки взаимодействия на время команды. Область доступа проверяется
  * тем же запросом: чужую запись нельзя ни увидеть, ни сдвинуть.
@@ -96,10 +104,10 @@ async function lockInteraction(
 
 /** Открытая запись стадии. Её отсутствие — это состояние, а не поломка. */
 async function readOpenEntryRow(
-	tx: Tx,
+	executor: Executor,
 	interactionId: string
 ): Promise<typeof stageEntries.$inferSelect | null> {
-	const [row] = await tx
+	const [row] = await executor
 		.select()
 		.from(stageEntries)
 		.where(and(eq(stageEntries.interactionId, interactionId), isNull(stageEntries.leftAt)))
@@ -185,6 +193,18 @@ function toSnapshot(stage: typeof stages.$inferSelect): StageSnapshot {
 		requiresConfirmation: stage.requiresConfirmation,
 		checklist: stage.checklist
 	};
+}
+
+/**
+ * Закрывает открытую паузу записи стадии. Пауза принадлежит записи: со стадии
+ * уходят и по переходу, и закрывая взаимодействие, — и в обоих случаях
+ * незакрытая пауза в истории означала бы, что ждать не перестали никогда.
+ */
+async function closeOpenPause(tx: Tx, stageEntryId: string): Promise<void> {
+	await tx
+		.update(stagePauses)
+		.set({ endedAt: now, updatedAt: now })
+		.where(and(eq(stagePauses.stageEntryId, stageEntryId), isNull(stagePauses.endedAt)));
 }
 
 /** Взаимодействие ожило: по этому моменту считается протухание. */
@@ -384,12 +404,7 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 			})
 			.where(eq(stageEntries.id, entry.id));
 
-		// Пауза принадлежит записи стадии: уходя со стадии, её закрывают, иначе
-		// в истории останется пауза, которая никогда не кончилась.
-		await tx
-			.update(stagePauses)
-			.set({ endedAt: now, updatedAt: now })
-			.where(and(eq(stagePauses.stageEntryId, entry.id), isNull(stagePauses.endedAt)));
+		await closeOpenPause(tx, entry.id);
 
 		const [next] = await tx
 			.insert(stageEntries)
@@ -867,5 +882,222 @@ export async function addComment(
 		);
 
 		return comment;
+	});
+}
+
+/**
+ * Закрытие взаимодействия: завершение и отмена.
+ *
+ * Это не шаг по маршруту, поэтому требования стадии — результат, подтверждение,
+ * чек-лист — здесь не проверяются: их проверяет переход, а закрытие фиксирует
+ * исход, каким бы он ни был. Своё правило у закрытия ровно одно: завершают с
+ * последней стадии маршрута, а не посреди процесса. Досрочное закрытие —
+ * отступление от процесса, поэтому его разрешает только право настраивать
+ * маршруты и только вместе с объяснением.
+ */
+
+/** Стоит ли взаимодействие на последней стадии своего маршрута. */
+async function isLastStage(executor: Executor, routeId: string, stageId: string): Promise<boolean> {
+	const [last] = await executor
+		.select({ id: stages.id })
+		.from(stages)
+		.where(eq(stages.routeId, routeId))
+		.orderBy(desc(stages.position))
+		.limit(1);
+
+	return last?.id === stageId;
+}
+
+type ClosingState = {
+	status: InteractionStatus;
+	/** Где стоим: на последней стадии маршрута, раньше неё или нигде. */
+	openStage: 'last' | 'earlier' | null;
+	canWrite: boolean;
+	canForce: boolean;
+};
+
+/**
+ * Правило закрытия в одном месте: его спрашивает карточка, чтобы нарисовать
+ * кнопку и объяснить отказ, и оно же перепроверяется внутри команды под
+ * блокировкой строки.
+ */
+function closingVerdict(state: ClosingState): InteractionClosingView {
+	const shared: string[] = [];
+
+	if (!state.canWrite) {
+		shared.push('Недостаточно прав: требуется «interactions.write»');
+	}
+
+	if (state.status === 'completed') {
+		shared.push('Взаимодействие уже завершено');
+	} else if (state.status === 'cancelled') {
+		shared.push('Взаимодействие уже отменено');
+	}
+
+	if (state.openStage === null) {
+		shared.push('Взаимодействие не стоит ни на одной стадии');
+	}
+
+	const complete = [...shared];
+	const requiresForce = state.openStage === 'earlier';
+
+	if (requiresForce && !state.canForce) {
+		complete.push(
+			'Взаимодействие не дошло до последней стадии маршрута: закрыть его досрочно может только тот, кто настраивает процесс'
+		);
+	}
+
+	return {
+		complete: { allowed: complete.length === 0, requiresForce, reasons: complete },
+		cancel: { allowed: shared.length === 0, reasons: shared }
+	};
+}
+
+async function readClosingState(
+	ctx: ActorContext,
+	executor: Executor,
+	interaction: { id: string; routeId: string }
+): Promise<ClosingState> {
+	const [row] = await executor
+		.select({ status: interactions.status })
+		.from(interactions)
+		.where(eq(interactions.id, interaction.id))
+		.limit(1);
+
+	if (row === undefined) {
+		throw new NotFoundError('Взаимодействие не найдено');
+	}
+
+	const entry = await readOpenEntryRow(executor, interaction.id);
+
+	return {
+		status: row.status,
+		openStage:
+			entry === null
+				? null
+				: (await isLastStage(executor, interaction.routeId, entry.stageId))
+					? 'last'
+					: 'earlier',
+		canWrite: can(ctx, 'interactions.write'),
+		canForce: can(ctx, 'stages.configure')
+	};
+}
+
+/** Приговор по закрытию для карточки. Ничего не меняет. */
+export async function getInteractionClosing(
+	ctx: ActorContext,
+	interactionId: string
+): Promise<InteractionClosingView> {
+	requirePermission(ctx, 'interactions.read');
+
+	const db = getDb();
+	const [row] = await db
+		.select({ id: interactions.id, routeId: interactions.routeId })
+		.from(interactions)
+		.where(and(eq(interactions.id, interactionId), interactionScopeFilter(ctx)))
+		.limit(1);
+
+	if (row === undefined) {
+		throw new NotFoundError('Взаимодействие не найдено');
+	}
+
+	return closingVerdict(await readClosingState(ctx, db, row));
+}
+
+/** Закрывает открытую запись стадии вместе с её паузой. */
+async function closeOpenStage(
+	tx: Tx,
+	entry: typeof stageEntries.$inferSelect,
+	outcome: 'completed' | null,
+	outcomeReason: string | null
+): Promise<void> {
+	await tx
+		.update(stageEntries)
+		.set({ leftAt: now, outcome, outcomeReason, updatedAt: now })
+		.where(eq(stageEntries.id, entry.id));
+
+	await closeOpenPause(tx, entry.id);
+}
+
+export async function completeInteraction(
+	ctx: ActorContext,
+	input: CompleteInteractionInput
+): Promise<void> {
+	requirePermission(ctx, 'interactions.write');
+
+	await withTransaction(ctx, async (tx) => {
+		const interaction = await lockInteraction(ctx, tx, input.interactionId);
+		const state = await readClosingState(ctx, tx, interaction);
+		const verdict = closingVerdict(state);
+
+		if (!verdict.complete.allowed) {
+			throw new ConflictError(`Завершить нельзя. ${verdict.complete.reasons.join('; ')}`);
+		}
+
+		// Досрочное закрытие обязано быть намеренным: право у вызывающего есть,
+		// но команда всё равно требует сказать об этом явно.
+		if (verdict.complete.requiresForce && !input.force) {
+			throw new ConflictError(
+				'Взаимодействие стоит не на последней стадии маршрута: закрыть его можно только досрочно, с объяснением'
+			);
+		}
+
+		const entry = await requireOpenEntry(tx, input.interactionId);
+
+		await closeOpenStage(tx, entry, 'completed', input.summary);
+
+		await tx
+			.update(interactions)
+			.set({ status: 'completed', lastActivityAt: now, updatedAt: now })
+			.where(eq(interactions.id, input.interactionId));
+
+		await recordAuditEvent(
+			ctx,
+			{
+				type: 'interactions.completed',
+				outcome: 'success',
+				subject: { type: 'interaction', id: input.interactionId },
+				details: { stageEntryId: entry.id }
+			},
+			tx
+		);
+	});
+}
+
+export async function cancelInteraction(
+	ctx: ActorContext,
+	input: CancelInteractionInput
+): Promise<void> {
+	requirePermission(ctx, 'interactions.write');
+
+	await withTransaction(ctx, async (tx) => {
+		const interaction = await lockInteraction(ctx, tx, input.interactionId);
+		const verdict = closingVerdict(await readClosingState(ctx, tx, interaction));
+
+		if (!verdict.cancel.allowed) {
+			throw new ConflictError(`Отменить нельзя. ${verdict.cancel.reasons.join('; ')}`);
+		}
+
+		const entry = await requireOpenEntry(tx, input.interactionId);
+
+		// Исход записи остаётся пустым: стадию не прошли и не пропустили, работу
+		// на ней прекратили. Почему — в причине рядом.
+		await closeOpenStage(tx, entry, null, input.reason);
+
+		await tx
+			.update(interactions)
+			.set({ status: 'cancelled', lastActivityAt: now, updatedAt: now })
+			.where(eq(interactions.id, input.interactionId));
+
+		await recordAuditEvent(
+			ctx,
+			{
+				type: 'interactions.cancelled',
+				outcome: 'success',
+				subject: { type: 'interaction', id: input.interactionId },
+				details: { stageEntryId: entry.id }
+			},
+			tx
+		);
 	});
 }

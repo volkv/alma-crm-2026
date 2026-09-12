@@ -68,6 +68,8 @@ export const AUDIT_EVENT_TYPES = [
 	'interactions.result_recorded',
 	'interactions.responsible_changed',
 	'interactions.commented',
+	'interactions.completed',
+	'interactions.cancelled',
 	'stages.route_created',
 	'stages.route_updated',
 	'stages.route_published',

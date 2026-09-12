@@ -1,33 +1,44 @@
 /**
  * Заливка начальных данных: каталог прав и ролей, учётные записи стенда,
- * справочники.
+ * справочники, маршрут стадий и демонстрационные взаимодействия.
  *
- * Всё происходит в одной транзакции: половина справочника без ролей и
- * пользователей — это не «частично получилось», а сломанный стенд. Повторный
- * запуск ничего не дублирует и ничего не затирает, поэтому сид можно звать
- * при каждом старте контейнера.
+ * Заливка идёт в два приёма. Конфигурация и справочники — одной транзакцией:
+ * половина справочника без ролей и пользователей — это не «частично
+ * получилось», а сломанный стенд. Взаимодействия — после её фиксации, потому
+ * что их историю пишет сам движок стадий, а каждая его команда открывает
+ * собственную транзакцию и незафиксированных справочников не увидит.
+ *
+ * Повторный запуск ничего не дублирует и ничего не затирает, поэтому сид можно
+ * звать при каждом старте контейнера.
  */
 import { count } from 'drizzle-orm';
-import { drizzle } from 'drizzle-orm/postgres-js';
 import type { PgTable } from 'drizzle-orm/pg-core';
-import postgres from 'postgres';
 import { validatePassword } from '$lib/server/auth/password';
+import { closeDatabase, getDb } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
-import type { Tx } from '$lib/server/db/transaction';
 import { seedRolesAndPermissions } from '$lib/server/rbac/seed';
 import { SETTING_DEFAULTS } from '$lib/server/settings';
+import { ensureDemoRoute } from '$lib/server/stages/routes';
 import { seedDirectory } from './directory';
+import { seedInteractions } from './interactions';
 import { seedUsers, type SeededUsers } from './users';
 
 /**
  * Порядок наборов: сначала права и роли, потом пользователи (у них внешний
- * ключ на роль), потом справочники (версия программы ссылается на автора).
+ * ключ на роль), потом справочники (версия программы ссылается на автора) и
+ * маршрут, и только затем взаимодействия, которым нужно всё перечисленное.
  * Отдельная функция, потому что этот же порядок проверяют тесты.
  */
-export async function seedAll(tx: Tx, options: { demoPassword: string }): Promise<SeededUsers> {
-	await seedRolesAndPermissions(tx);
-	const users = await seedUsers(tx, options);
-	await seedDirectory(tx, { authorUserId: users.employees[0] });
+export async function seedAll(options: { demoPassword: string }): Promise<SeededUsers> {
+	const { users, routeId } = await getDb().transaction(async (tx) => {
+		await seedRolesAndPermissions(tx);
+		const seededUsers = await seedUsers(tx, options);
+		await seedDirectory(tx, { authorUserId: seededUsers.employees[0] });
+
+		return { users: seededUsers, routeId: await ensureDemoRoute(tx) };
+	});
+
+	await seedInteractions({ routeId });
 
 	return users;
 }
@@ -57,7 +68,10 @@ const REPORTED_TABLES: Record<string, PgTable> = {
 	affiliations: schema.affiliations,
 	programs: schema.programs,
 	program_versions: schema.programVersions,
-	products: schema.products
+	products: schema.products,
+	interactions: schema.interactions,
+	stage_entries: schema.stageEntries,
+	documents: schema.documents
 };
 
 export async function main(argv: readonly string[]): Promise<void> {
@@ -74,7 +88,6 @@ export async function main(argv: readonly string[]): Promise<void> {
 		return;
 	}
 
-	const databaseUrl = requireEnv('DATABASE_URL', 'сиду некуда писать');
 	const demoPassword = requireEnv(
 		'SEED_DEMO_PASSWORD',
 		'это общий пароль демонстрационных учётных записей стенда'
@@ -86,14 +99,12 @@ export async function main(argv: readonly string[]): Promise<void> {
 		throw new Error(`SEED_DEMO_PASSWORD не отвечает политике паролей: ${issues.join('; ')}`);
 	}
 
-	// `max: 1` — сид работает одной транзакцией, второе соединение ему не нужно.
-	const client = postgres(databaseUrl, { max: 1, connect_timeout: 10 });
-	const db = drizzle(client, { schema, casing: 'snake_case' });
+	// Подключение — то же самое, что у приложения: сид зовёт его сервисы, и
+	// второй пул рядом означал бы вторую конфигурацию и вторую точку отказа.
+	const db = getDb();
 
 	try {
-		await db.transaction(async (tx) => {
-			await seedAll(tx, { demoPassword });
-		});
+		await seedAll({ demoPassword });
 
 		const counts = await Promise.all(
 			Object.entries(REPORTED_TABLES).map(async ([name, table]) => {
@@ -105,6 +116,6 @@ export async function main(argv: readonly string[]): Promise<void> {
 
 		console.log(`seed: готово, в базе ${counts.join(', ')}`);
 	} finally {
-		await client.end();
+		await closeDatabase();
 	}
 }

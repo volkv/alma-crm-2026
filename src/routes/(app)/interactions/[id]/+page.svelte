@@ -12,6 +12,8 @@
 	import StageWork from '$lib/components/interactions/stage-work.svelte';
 	import SummaryPanel from '$lib/components/interactions/summary-panel.svelte';
 	import { toTimelineStages } from '$lib/components/interactions/timeline';
+	import { formatDateTime } from '$lib/format';
+	import ClosingActions from './closing-actions.svelte';
 	import { INTERACTION_STATUS_LABELS } from '../filters';
 	import type { PageProps } from './$types';
 
@@ -26,6 +28,11 @@
 			: [data.status.current, ...data.status.history]
 	);
 	const can = (action: string) => data.summary.canDo.actions.includes(action as 'pause');
+	// Итог закрытого взаимодействия лежит там же, где исход любой стадии, — в
+	// последней записи истории: закрытие и есть выход с последней стадии.
+	const closed = $derived(
+		data.interaction.status === 'active' ? null : (data.status.history[0] ?? null)
+	);
 </script>
 
 <svelte:head>
@@ -58,7 +65,28 @@
 		/>
 	</div>
 
-	<SummaryPanel summary={data.summary} currentStageId={data.status.current?.stageId ?? null} />
+	{#if closed !== null}
+		<div class="rounded-lg border border-border bg-surface p-4">
+			<p class="text-sm font-medium">
+				{INTERACTION_STATUS_LABELS[data.interaction.status]} — {closed.snapshot.position}. {closed
+					.snapshot.name}
+			</p>
+			<p class="text-xs text-muted-foreground">
+				{closed.leftAt ? formatDateTime(closed.leftAt) : ''}
+			</p>
+			{#if closed.outcomeReason}
+				<p class="mt-2 text-sm">Итог: {closed.outcomeReason}</p>
+			{/if}
+		</div>
+	{/if}
+
+	<SummaryPanel summary={data.summary} currentStageId={data.status.current?.stageId ?? null}>
+		{#snippet closing()}
+			{#if data.interaction.status === 'active'}
+				<ClosingActions closing={data.closing} />
+			{/if}
+		{/snippet}
+	</SummaryPanel>
 
 	<Tabs.Root value="work">
 		<Tabs.List>

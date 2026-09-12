@@ -4,6 +4,7 @@
 	import SkipForwardIcon from '@lucide/svelte/icons/skip-forward';
 	import PauseIcon from '@lucide/svelte/icons/pause';
 	import PlayIcon from '@lucide/svelte/icons/play';
+	import type { Snippet } from 'svelte';
 	import { enhance } from '$app/forms';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
@@ -23,11 +24,18 @@
 	 */
 	let {
 		summary,
-		currentStageId
+		currentStageId,
+		closing
 	}: {
 		summary: InteractionSummaryView;
 		/** Стадия, с которой отдаются команды; сервер сверит её со своей. */
 		currentStageId: string | null;
+		/**
+		 * Команды, которые закрывают взаимодействие целиком. Они не про стадию,
+		 * поэтому приезжают снаружи, но стоят там же, где остальные ответы на
+		 * вопрос «что могу сейчас».
+		 */
+		closing?: Snippet;
 	} = $props();
 
 	const PAUSE_LABELS: Record<(typeof PAUSE_REASONS)[number], string> = {
@@ -197,6 +205,8 @@
 					</Button>
 				</form>
 			{/if}
+
+			{@render closing?.()}
 		</Card.Content>
 	</Card.Root>
 </div>

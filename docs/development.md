@@ -39,7 +39,7 @@
 | `pnpm run format`           | Форматирование всего репозитория                                                                     |
 | `pnpm run test:unit`        | Модульные тесты (`tests/unit`), Vitest, без внешних сервисов                                         |
 | `pnpm run test:integration` | Интеграционные тесты: `gotenberg` из compose, PostgreSQL — в testcontainers, `pdftotext` — в системе |
-| `pnpm run test:e2e`         | Поднимает `postgres` и `redis` в compose и гоняет Playwright по `e2e/`                               |
+| `pnpm run test:e2e`         | Поднимает `postgres`, `redis` и `gotenberg` в compose и гоняет Playwright по `e2e/`                  |
 | `pnpm run db:generate`      | Генерирует SQL-миграцию по изменениям схемы в `drizzle/`                                             |
 | `pnpm run db:migrate`       | Применяет миграции из `drizzle/` к базе из `DATABASE_URL`                                            |
 | `pnpm run db:studio`        | Drizzle Studio — браузер по данным                                                                   |
@@ -494,10 +494,16 @@ pnpm exec vitest --project unit          # watch-режим
 pnpm run test:integration
 ```
 
-**E2E** (`e2e`) — Playwright, только chromium. Скрипт сам поднимает `postgres` и `redis` из
-compose, затем Playwright собирает приложение и запускает `node build/index.js` на порту 4173.
-Переменные окружения для этого сервера заданы прямо в `playwright.config.ts`, чтобы прогон был
-одинаковым на машине разработчика и в CI.
+**E2E** (`e2e`) — Playwright, только chromium. Скрипт сам поднимает `postgres`, `redis` и
+`gotenberg` из compose, затем Playwright собирает приложение и запускает `node build/index.js` на
+порту 4173. Переменные окружения для этого сервера заданы прямо в `playwright.config.ts`, чтобы
+прогон был одинаковым на машине разработчика и в CI.
+
+Начальные данные прогона заливает глобальный сетап — тем же `scripts/seed`, что и стенд, поэтому
+проверки работают с теми же вузами, взаимодействиями и учётными записями, которые увидит заказчик.
+Он же один раз входит менеджером и администратором и складывает сессии в `.playwright/auth`: POST
+на `/login` ограничен по адресу, и вход в каждом рабочем процессе упирался в защиту, рассчитанную
+на живого человека.
 
 ```bash
 pnpm exec playwright install chromium    # один раз

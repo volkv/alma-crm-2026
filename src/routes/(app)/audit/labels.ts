@@ -63,6 +63,8 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'interactions.result_recorded': 'Результат стадии записан',
 	'interactions.responsible_changed': 'Ответственный изменён',
 	'interactions.commented': 'Добавлен комментарий',
+	'interactions.completed': 'Взаимодействие завершено',
+	'interactions.cancelled': 'Взаимодействие отменено',
 	'stages.route_created': 'Маршрут стадий создан',
 	'stages.route_updated': 'Маршрут стадий изменён',
 	'stages.route_published': 'Маршрут стадий опубликован',

@@ -49,7 +49,7 @@ test('демонстрационная кнопка впускает и пока
 
 	await expect(page).toHaveURL('/');
 	await expect(page.getByText('Демо-режим: данные синтетические')).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Демонстрация: Наблюдатель' })).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Наблюдатель Демо' })).toBeVisible();
 });
 
 test('после входа человек возвращается туда, куда шёл', async ({ page }) => {
@@ -76,7 +76,15 @@ test('выход возвращает к форме входа и закрыва
 	await page.getByRole('button', { name: 'Войти как менеджер' }).click();
 	await expect(page).toHaveURL('/');
 
-	await page.getByRole('button', { name: 'Демонстрация: Менеджер' }).click();
+	// Меню учётной записи открывается кодом на странице, а не браузером:
+	// нажатие до того, как страница ожила, не доходит до компонента. Поэтому
+	// нажимаем, пока меню не откроется, — ждать фиксированную паузу значило бы
+	// закладываться на скорость машины.
+	await expect(async () => {
+		await page.getByRole('button', { name: E2E_USER.fullName }).click();
+		await expect(page.getByRole('menuitem', { name: 'Выйти' })).toBeVisible({ timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+
 	await page.getByRole('menuitem', { name: 'Выйти' }).click();
 
 	await expect(page).toHaveURL('/login');

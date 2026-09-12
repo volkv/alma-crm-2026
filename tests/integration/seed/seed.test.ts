@@ -1,23 +1,32 @@
 import { randomUUID } from 'node:crypto';
-import { count, eq } from 'drizzle-orm';
+import { count, eq, isNull } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isValidInn } from '$lib/validation/inn';
 import type { ActorContext } from '$lib/server/actor';
 import { login } from '$lib/server/auth/login';
 import { clearLoginFailures } from '$lib/server/auth/lockout';
-import { revokeAllSessions } from '$lib/server/auth/session';
+import { destroySession } from '$lib/server/auth/session';
 import {
 	affiliations,
+	blockers,
+	comments,
+	documents,
+	interactionChanges,
+	interactions,
 	organizations,
 	people,
 	products,
 	programs,
 	programVersions,
 	sites,
+	stageEntries,
+	stageEntryStatus,
 	users
 } from '$lib/server/db/schema';
+import { DEMO_ROUTE } from '$lib/server/stages/demo-route';
 import { DIRECTORY_SEED_SIZES } from '../../../scripts/seed/directory';
+import { INTERACTION_SEED_SIZES } from '../../../scripts/seed/interactions';
 import { seedAll } from '../../../scripts/seed/run';
 import { DEMO_EMAILS } from '../../../scripts/seed/users';
 import { startTestDatabase, type TestDatabase } from '../helpers/db';
@@ -33,10 +42,26 @@ const DEMO_PASSWORD = 'Проверка-Сидов-2026';
 /** Адрес, с которого тест ходит на вход: счётчики блокировки живут по адресу. */
 const ADDRESS = '198.51.100.31';
 
+/** Сессии, открытые проверкой входа: их гасит `afterEach`. */
+let sessions: string[] = [];
+
 async function runSeed(): Promise<void> {
-	await database.db.transaction(async (tx) => {
-		await seedAll(tx, { demoPassword: DEMO_PASSWORD });
-	});
+	await seedAll({ demoPassword: DEMO_PASSWORD });
+}
+
+/** Записи стадий, на которых взаимодействия стоят прямо сейчас. */
+async function openEntries(): Promise<
+	{ interactionId: string; isOverdue: boolean; isPaused: boolean }[]
+> {
+	return database.db
+		.select({
+			interactionId: stageEntries.interactionId,
+			isOverdue: stageEntryStatus.isOverdue,
+			isPaused: stageEntryStatus.isPaused
+		})
+		.from(stageEntries)
+		.innerJoin(stageEntryStatus, eq(stageEntryStatus.stageEntryId, stageEntries.id))
+		.where(isNull(stageEntries.leftAt));
 }
 
 async function countRows(table: PgTable): Promise<number> {
@@ -72,19 +97,18 @@ beforeEach(async () => {
 
 afterEach(async () => {
 	// Счётчики попыток и сессии живут в Redis, общем с разработчиком: прогон
-	// убирает за собой ровно свои ключи.
+	// убирает за собой ровно свои ключи. Гасить все сессии демонстрационных
+	// записей нельзя: идентификаторы у них вычисляемые, а значит те же, что и
+	// у стенда и у прогона e2e, — этот тест выбил бы их из системы.
 	for (const email of Object.values(DEMO_EMAILS)) {
 		await clearLoginFailures(email, ADDRESS);
 	}
 
-	const accounts = await database.db
-		.select({ id: users.id })
-		.from(users)
-		.where(eq(users.isDemo, true));
-
-	for (const account of accounts) {
-		await revokeAllSessions(account.id);
+	for (const sessionId of sessions) {
+		await destroySession(sessionId);
 	}
+
+	sessions = [];
 });
 
 describe('сид', () => {
@@ -111,6 +135,74 @@ describe('сид', () => {
 			DEMO_EMAILS.viewer
 		]);
 		expect(demo.map((account) => account.roleId)).toStrictEqual(['admin', 'manager', 'viewer']);
+	});
+
+	it('заводит взаимодействия на стадиях маршрута', async () => {
+		await runSeed();
+
+		await expect(countRows(interactions)).resolves.toBe(INTERACTION_SEED_SIZES.interactions);
+
+		const open = await openEntries();
+		const active = INTERACTION_SEED_SIZES.interactions - INTERACTION_SEED_SIZES.completed;
+
+		// Открытая запись ровно одна у каждого незакрытого взаимодействия, и ни
+		// одной у завершённых: закрытие выводит взаимодействие с маршрута.
+		expect(open).toHaveLength(active);
+		expect(new Set(open.map((entry) => entry.interactionId)).size).toBe(active);
+		expect(open.filter((entry) => entry.isOverdue)).toHaveLength(INTERACTION_SEED_SIZES.overdue);
+		expect(open.filter((entry) => entry.isPaused)).toHaveLength(INTERACTION_SEED_SIZES.paused);
+
+		const completed = await database.db
+			.select({ id: interactions.id })
+			.from(interactions)
+			.where(eq(interactions.status, 'completed'));
+
+		expect(completed).toHaveLength(INTERACTION_SEED_SIZES.completed);
+
+		await expect(countRows(comments)).resolves.toBe(INTERACTION_SEED_SIZES.comments);
+		await expect(countRows(blockers)).resolves.toBe(INTERACTION_SEED_SIZES.blockers);
+		// Смена ответственного попадает в историю плана: вкладка «Правки плана»
+		// на стенде не должна быть пустой у всех до единого.
+		await expect(countRows(interactionChanges)).resolves.toBe(INTERACTION_SEED_SIZES.handovers);
+		// Каждое соглашение собирается сразу в двух форматах: DOCX и PDF.
+		await expect(countRows(documents)).resolves.toBe(INTERACTION_SEED_SIZES.documents * 2);
+
+		// Завершённое взаимодействие прошло маршрут целиком: по записи на каждую
+		// стадию, и все они закрыты.
+		const completedEntries = await database.db
+			.select({ leftAt: stageEntries.leftAt })
+			.from(stageEntries)
+			.innerJoin(interactions, eq(interactions.id, stageEntries.interactionId))
+			.where(eq(interactions.status, 'completed'));
+
+		expect(completedEntries).toHaveLength(
+			INTERACTION_SEED_SIZES.completed * DEMO_ROUTE.stages.length
+		);
+		expect(completedEntries.filter((entry) => entry.leftAt === null)).toStrictEqual([]);
+	});
+
+	it('повторный сид не пересоздаёт историю взаимодействий', async () => {
+		await runSeed();
+
+		const before = await database.db
+			.select({ id: stageEntries.id })
+			.from(stageEntries)
+			.orderBy(stageEntries.id);
+
+		await runSeed();
+
+		const after = await database.db
+			.select({ id: stageEntries.id })
+			.from(stageEntries)
+			.orderBy(stageEntries.id);
+
+		expect(after).toStrictEqual(before);
+		await expect(countRows(interactions)).resolves.toBe(INTERACTION_SEED_SIZES.interactions);
+		await expect(countRows(comments)).resolves.toBe(INTERACTION_SEED_SIZES.comments);
+
+		const open = await openEntries();
+
+		expect(open.filter((entry) => entry.isOverdue)).toHaveLength(INTERACTION_SEED_SIZES.overdue);
 	});
 
 	it('на повторном запуске не плодит строк и не меняет идентификаторов', async () => {
@@ -174,6 +266,10 @@ describe('сид', () => {
 		});
 
 		expect(outcome.ok).toBe(true);
+
+		if (outcome.ok) {
+			sessions.push(outcome.sessionId);
+		}
 
 		const refused = await login(anonymous(), {
 			email: DEMO_EMAILS.viewer,

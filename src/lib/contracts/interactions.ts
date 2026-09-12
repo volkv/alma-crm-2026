@@ -336,6 +336,33 @@ export const setResponsibleSchema = z.object({
 });
 
 /**
+ * Закрытие взаимодействия как выполненного.
+ *
+ * Итог необязателен там, где взаимодействие дошло до конца маршрута: сама
+ * последняя стадия и её результат уже всё рассказали. У досрочного закрытия
+ * (`force`) итог обязателен — иначе в карточке останется взаимодействие,
+ * закрытое посреди процесса без единого слова о том, почему.
+ */
+export const completeInteractionSchema = z
+	.object({
+		interactionId: id('Некорректный идентификатор взаимодействия'),
+		/** Чем всё кончилось; попадает в историю как исход последней стадии. */
+		summary: optionalText(4000),
+		/** Закрыть не с последней стадии маршрута — отступление от процесса. */
+		force: z.boolean().default(false)
+	})
+	.refine((value) => !value.force || (value.summary ?? '').trim() !== '', {
+		error: 'Досрочное закрытие нужно объяснить: опишите итог',
+		path: ['summary']
+	});
+
+/** Отмена взаимодействия: причина обязательна на любой стадии. */
+export const cancelInteractionSchema = z.object({
+	interactionId: id('Некорректный идентификатор взаимодействия'),
+	reason: requiredText(1000, 'Опишите, почему взаимодействие отменяется')
+});
+
+/**
  * Конфигурация маршрута: стадии и переходы между ними.
  *
  * Стадии и переходы адресуются ключами, а не идентификаторами: конфигурацию
@@ -448,6 +475,8 @@ export type CreateCommentInput = z.output<typeof createCommentSchema>;
 export type SetChecklistItemInput = z.output<typeof setChecklistItemSchema>;
 export type SetStageResultInput = z.output<typeof setStageResultSchema>;
 export type SetResponsibleInput = z.output<typeof setResponsibleSchema>;
+export type CompleteInteractionInput = z.output<typeof completeInteractionSchema>;
+export type CancelInteractionInput = z.output<typeof cancelInteractionSchema>;
 export type StageDefinitionInput = z.output<typeof stageDefinitionSchema>;
 export type StageTransitionDefinitionInput = z.output<typeof stageTransitionDefinitionSchema>;
 export type CreateRouteInput = z.output<typeof createRouteSchema>;
@@ -712,6 +741,21 @@ export const INTERACTION_ACTIONS = [
 ] as const;
 
 export type InteractionAction = (typeof INTERACTION_ACTIONS)[number];
+
+/**
+ * Можно ли закрыть взаимодействие прямо сейчас. Приговор считает сервер — тот
+ * же код, который потом выполняет команду; карточка его только показывает,
+ * вместе с причиной отказа.
+ */
+export type InteractionClosingView = {
+	complete: {
+		allowed: boolean;
+		/** Закрытие не с последней стадии: нужны объяснение и право настраивать процесс. */
+		requiresForce: boolean;
+		reasons: string[];
+	};
+	cancel: { allowed: boolean; reasons: string[] };
+};
 
 /** Переход вместе с приговором: можно ли им воспользоваться и почему нет. */
 export type TransitionOptionView = {
