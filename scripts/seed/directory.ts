@@ -267,16 +267,16 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		website: 'https://skpa.example.org'
 	},
 	{
-		key: 'lyceum1812',
+		key: 'lyceum306',
 		kind: 'educational_institution',
 		educationLevel: 'school',
-		legalName: 'Государственное бюджетное общеобразовательное учреждение «Лицей № 1812»',
-		shortName: 'Лицей № 1812',
-		inn: '7709360334',
-		kpp: '770901360',
-		ogrn: '1017709360338',
-		region: 'г. Москва',
-		website: 'https://lyceum1812.example.org'
+		legalName: 'Государственное бюджетное общеобразовательное учреждение «Лицей № 306 „Гравитон“»',
+		shortName: 'Лицей № 306 «Гравитон»',
+		inn: '5009360335',
+		kpp: '500901360',
+		ogrn: '1015009360332',
+		region: 'Московская область',
+		website: 'https://lyceum306.example.org'
 	},
 	{
 		key: 'school47',
@@ -1090,10 +1090,10 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Морозов',
 		firstName: 'Пётр',
 		middleName: 'Аркадьевич',
-		email: 'p.morozov@lyceum1812.example.org',
+		email: 'p.morozov@lyceum306.example.org',
 		phone: '+7 900 000-00-38',
 		affiliation: {
-			organizationKey: 'lyceum1812',
+			organizationKey: 'lyceum306',
 			position: 'Директор лицея',
 			roleKind: 'other',
 			isPrimary: true,

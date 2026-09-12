@@ -17,22 +17,72 @@ import { expect, test } from './fixtures';
 /** Взаимодействие, в карточку которого проход кладёт свои файлы. */
 const INTERACTION_ID = seedId('interaction', 'bit-telecom');
 
-/** Метка прогона: делает названия уникальными в общей базе. */
+/**
+ * Метка прогона: делает названия уникальными в общей базе. У каждого теста своя
+ * — иначе тест, который считает свои строки, увидел бы ещё и чужие, когда оба
+ * попадут в один рабочий процесс.
+ */
 const TAG = crypto.randomUUID().slice(0, 8);
+const LARGE_TAG = crypto.randomUUID().slice(0, 8);
 
 const PDF_TITLE = `Скан соглашения ${TAG}`;
 const TEXT_TITLE = `Служебная записка ${TAG}`;
+const LARGE_TITLE = `Скан крупного соглашения ${LARGE_TAG}`;
 
 /** Настоящий PDF, пусть и минимальный: тип проверяется по содержимому файла. */
 const PDF_BYTES = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n', 'latin1');
 const TEXT_BYTES = Buffer.from('Записка о составе пакета документов.\n', 'utf8');
 
-/** Строки раздела, заведённые этим прогоном. */
-function ownRows(page: Page): Locator {
-	return page.locator('[data-slot="data-table"] tbody tr[data-row]').filter({ hasText: TAG });
+/**
+ * Скан размером с настоящий: 1,2 МБ. Содержимое — тот же PDF, добитый пробелами
+ * до нужного размера; тип определяется по первым байтам, остальное не важно.
+ */
+const LARGE_PDF_BYTES = largePdf(1_200_000);
+
+function largePdf(sizeBytes: number): Buffer {
+	const head = Buffer.from('%PDF-1.7\n% ', 'latin1');
+	const tail = Buffer.from('\n%%EOF\n', 'latin1');
+	const padding = Buffer.alloc(sizeBytes - head.byteLength - tail.byteLength, 0x20);
+
+	return Buffer.concat([head, padding, tail]);
 }
 
-async function upload(
+/** Строки раздела, заведённые прогоном с такой меткой. */
+function taggedRows(page: Page, tag: string): Locator {
+	return page.locator('[data-slot="data-table"] tbody tr[data-row]').filter({ hasText: tag });
+}
+
+/** Строки раздела, заведённые этим прогоном. */
+function ownRows(page: Page): Locator {
+	return taggedRows(page, TAG);
+}
+
+/**
+ * Выбор в раскрывающемся списке: и форма, и фильтры списка собраны не на
+ * нативном `select`, а на слое, который открывается только после гидратации
+ * страницы. Первый клик может прийтись на ещё неживую разметку, поэтому попытка
+ * повторяется.
+ */
+async function choose(trigger: Locator, option: Locator): Promise<void> {
+	await expect(async () => {
+		await trigger.click();
+		await expect(option).toBeVisible({ timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+
+	await option.click();
+}
+
+/** Пункт раскрывающегося списка: слой рисуется порталом, а не внутри формы. */
+function option(page: Page, label: string): Locator {
+	return page.getByRole('option', { name: label, exact: true });
+}
+
+/**
+ * Заполнить форму загрузки и отправить её, ничего не дожидаясь. Отдельно от
+ * {@link upload} — тесту, который смотрит на код ответа, нужно успеть подписаться
+ * на ответ до отправки.
+ */
+async function submitUpload(
 	page: Page,
 	title: string,
 	kind: string,
@@ -43,9 +93,18 @@ async function upload(
 	const form = page.locator('[data-slot="card"]').filter({ hasText: 'Загрузить документ' });
 
 	await form.getByLabel('Название').fill(title);
-	await form.getByLabel('Вид документа').fill(kind);
+	await choose(form.getByLabel('Вид документа'), option(page, kind));
 	await form.getByLabel('Файл').setInputFiles(file);
 	await form.getByRole('button', { name: 'Загрузить' }).click();
+}
+
+async function upload(
+	page: Page,
+	title: string,
+	kind: string,
+	file: { name: string; mimeType: string; buffer: Buffer }
+): Promise<void> {
+	await submitUpload(page, title, kind, file);
 
 	await expect(page.getByText(title)).toBeVisible();
 }
@@ -57,12 +116,12 @@ test('раздел показывает загруженные документ�
 		await page.goto(`/interactions/${INTERACTION_ID}`);
 		await page.getByRole('tab', { name: 'Документы' }).click();
 
-		await upload(page, PDF_TITLE, 'agreement', {
+		await upload(page, PDF_TITLE, 'Соглашение', {
 			name: 'agreement.pdf',
 			mimeType: 'application/pdf',
 			buffer: PDF_BYTES
 		});
-		await upload(page, TEXT_TITLE, 'note', {
+		await upload(page, TEXT_TITLE, 'Письмо', {
 			name: 'note.txt',
 			mimeType: 'text/plain',
 			buffer: TEXT_BYTES
@@ -94,7 +153,7 @@ test('раздел показывает загруженные документ�
 	});
 
 	await test.step('фильтр по формату оставляет только PDF', async () => {
-		await page.getByLabel('Формат').selectOption('pdf');
+		await choose(page.getByLabel('Формат'), option(page, 'PDF'));
 
 		await expect(page).toHaveURL(/format=pdf/);
 		await expect(ownRows(page)).toHaveCount(1);
@@ -126,4 +185,53 @@ test('раздел показывает загруженные документ�
 		);
 		expect((await response.body()).byteLength).toBe(PDF_BYTES.byteLength);
 	});
+});
+
+/**
+ * Сторож `BODY_SIZE_LIMIT`.
+ *
+ * adapter-node режет тело запроса по этому потолку и по умолчанию ставит его в
+ * 512 КиБ — в полсотни раз ниже потолка загрузки в контрактах. При умолчании
+ * скан любого настоящего документа получает 413 ещё до маршрута: сервер не
+ * дочитывает тело, приложение о запросе не узнаёт, а человек видит пустой отказ
+ * вместо объяснения. Значение задано в обоих compose и в `playwright.config.ts`;
+ * убрать его оттуда — уронить этот тест.
+ */
+test('скан на 1,2 МБ доходит до приложения, а не упирается в потолок тела запроса', async ({
+	page
+}) => {
+	await page.goto(`/interactions/${INTERACTION_ID}`);
+	await page.getByRole('tab', { name: 'Документы' }).click();
+
+	// Подписка до отправки: ответ на форму нужен целиком, а не по следам в UI.
+	const posted = page.waitForResponse(
+		(response) => response.request().method() === 'POST' && response.url().includes('?/upload')
+	);
+
+	await submitUpload(page, LARGE_TITLE, 'Соглашение', {
+		name: 'scan.pdf',
+		mimeType: 'application/pdf',
+		buffer: LARGE_PDF_BYTES
+	});
+
+	expect((await posted).status()).toBe(200);
+	await expect(page.getByText(LARGE_TITLE)).toBeVisible();
+
+	await page.goto('/documents');
+	await expect(taggedRows(page, LARGE_TAG)).toHaveCount(1);
+
+	const href = await taggedRows(page, LARGE_TAG)
+		.first()
+		.getByRole('link', { name: 'Скачать' })
+		.getAttribute('href');
+
+	if (href === null) {
+		throw new Error('В строке документа нет ссылки на скачивание');
+	}
+
+	const response = await page.request.get(href);
+
+	expect(response.status()).toBe(200);
+	// Файл дошёл целиком, а не куском: что отдали, то и легло в хранилище.
+	expect((await response.body()).byteLength).toBe(LARGE_PDF_BYTES.byteLength);
 });

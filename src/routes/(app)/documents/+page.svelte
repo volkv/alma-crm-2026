@@ -13,7 +13,10 @@
 	import type { FieldOption } from '$lib/components/form/field-select.svelte';
 	import {
 		documentFormat,
+		documentKindLabel,
 		DOCUMENT_FORMATS,
+		DOCUMENT_KINDS,
+		DOCUMENT_ORIGIN_LABELS,
 		type DocumentListItem
 	} from '$lib/contracts/documents';
 	import { formatDate, formatDateTime, formatNumber } from '$lib/format';
@@ -21,10 +24,10 @@
 
 	let { data }: PageProps = $props();
 
-	const KIND_OPTIONS: readonly FieldOption[] = [
-		{ value: 'uploaded', label: 'Загружен' },
-		{ value: 'generated', label: 'Сгенерирован' }
-	];
+	const KIND_OPTIONS: readonly FieldOption[] = DOCUMENT_KINDS.map((kind) => ({
+		value: kind,
+		label: DOCUMENT_ORIGIN_LABELS[kind]
+	}));
 
 	/** Формат человек называет расширением, а не типом: «DOCX», не «…wordprocessingml». */
 	const FORMAT_OPTIONS: readonly FieldOption[] = DOCUMENT_FORMATS.map((format) => ({
@@ -137,17 +140,17 @@
 	<span class="flex max-w-80 items-baseline gap-2">
 		<span class="truncate font-medium" title={row.title}>{row.title}</span>
 		{#if row.uploadedKind}
-			<span class="shrink-0 text-xs text-muted-foreground">{row.uploadedKind}</span>
+			<span class="shrink-0 text-xs text-muted-foreground">
+				{documentKindLabel(row.uploadedKind)}
+			</span>
 		{/if}
 	</span>
 {/snippet}
 
 {#snippet kindCell(row: DocumentListItem)}
-	{#if row.kind === 'generated'}
-		<StatusBadge tone="accent">Сгенерирован</StatusBadge>
-	{:else}
-		<StatusBadge tone="neutral">Загружен</StatusBadge>
-	{/if}
+	<StatusBadge tone={row.kind === 'generated' ? 'accent' : 'neutral'}>
+		{DOCUMENT_ORIGIN_LABELS[row.kind]}
+	</StatusBadge>
 {/snippet}
 
 {#snippet interactionCell(row: DocumentListItem)}

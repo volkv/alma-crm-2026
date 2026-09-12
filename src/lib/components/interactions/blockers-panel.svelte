@@ -2,6 +2,7 @@
 	import OctagonAlertIcon from '@lucide/svelte/icons/octagon-alert';
 	import { enhance } from '$app/forms';
 	import * as Card from '$lib/components/ui/card/index.js';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
@@ -9,7 +10,12 @@
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
-	import type { BlockerView } from '$lib/contracts/interactions';
+	import {
+		blockerReasonLabel,
+		BLOCKER_REASONS,
+		BLOCKER_REASON_LABELS,
+		type BlockerView
+	} from '$lib/contracts/interactions';
 	import { formatDateTime } from '$lib/format';
 	import { actionEnhance } from './action-enhance';
 
@@ -22,6 +28,9 @@
 
 	const open = $derived(blockers.filter((blocker) => blocker.resolvedAt === null));
 	const resolved = $derived(blockers.filter((blocker) => blocker.resolvedAt !== null));
+
+	/** Причина выбирается из справочника: по ней потом считают, на чём встаём. */
+	let reasonCode = $state('');
 </script>
 
 <div class="grid gap-4 lg:grid-cols-2">
@@ -45,7 +54,9 @@
 							{blocker.blocksTransition ? 'запрещает переход' : 'не запрещает переход'}
 						</StatusBadge>
 						<span class="text-xs text-muted-foreground">
-							{blocker.reasonCode} · {blocker.raisedByName} · {formatDateTime(blocker.raisedAt)}
+							{blockerReasonLabel(blocker.reasonCode)} · {blocker.raisedByName} · {formatDateTime(
+								blocker.raisedAt
+							)}
 						</span>
 					</div>
 					<p class="text-sm">{blocker.description}</p>
@@ -80,17 +91,21 @@
 					<form
 						method="POST"
 						action="?/raiseBlocker"
-						use:enhance={actionEnhance()}
+						use:enhance={actionEnhance({ onsuccess: () => (reasonCode = '') })}
 						class="flex flex-col gap-3"
 					>
 						<div class="flex flex-col gap-1.5">
-							<Label for="reasonCode">Код причины</Label>
-							<Input
-								id="reasonCode"
-								name="reasonCode"
-								required
-								placeholder="no-contact, waiting-legal, budget"
-							/>
+							<Label for="reasonCode">Причина</Label>
+							<Select.Root type="single" name="reasonCode" bind:value={reasonCode}>
+								<Select.Trigger id="reasonCode" class="w-full">
+									{reasonCode === '' ? 'Выберите причину' : blockerReasonLabel(reasonCode)}
+								</Select.Trigger>
+								<Select.Content>
+									{#each BLOCKER_REASONS as reason (reason)}
+										<Select.Item value={reason} label={BLOCKER_REASON_LABELS[reason]} />
+									{/each}
+								</Select.Content>
+							</Select.Root>
 						</div>
 						<div class="flex flex-col gap-1.5">
 							<Label for="blockerDescription">Что мешает</Label>
@@ -101,7 +116,7 @@
 							Запрещает переход на следующую стадию
 						</Label>
 						<div class="flex justify-end">
-							<Button type="submit" size="sm">Сообщить</Button>
+							<Button type="submit" size="sm" disabled={reasonCode === ''}>Сообщить</Button>
 						</div>
 					</form>
 				</Card.Content>

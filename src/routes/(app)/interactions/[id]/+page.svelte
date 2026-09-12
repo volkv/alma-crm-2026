@@ -88,8 +88,10 @@
 		{/snippet}
 	</SummaryPanel>
 
-	<Tabs.Root value="work">
-		<Tabs.List>
+	<Tabs.Root value="work" class="min-w-0">
+		<!-- Шесть вкладок в строку шире телефона: на узком экране список
+			прокручивается сам, а не уносит вправо весь документ. -->
+		<Tabs.List class="max-w-full overflow-x-auto">
 			<Tabs.Trigger value="work">Стадия</Tabs.Trigger>
 			<Tabs.Trigger value="documents">Документы</Tabs.Trigger>
 			<Tabs.Trigger value="blockers">Помехи</Tabs.Trigger>

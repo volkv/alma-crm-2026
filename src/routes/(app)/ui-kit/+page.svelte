@@ -41,6 +41,7 @@
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
+	import FileInput from '$lib/components/form/file-input.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import { formatDate, formatNumber } from '$lib/format';
 
@@ -414,7 +415,9 @@
 		<Card.Root>
 			<Card.Header>
 				<Card.Title>Северный университет прикладной информатики № 1</Card.Title>
-				<Card.Description>Взаимодействие № 2026-0147 · приказ № 270</Card.Description>
+				<Card.Description
+					>Взаимодействие № 2026-0147 · подготовка по прикладной информатике</Card.Description
+				>
 				<Card.Action>
 					<StatusBadge tone="accent" dot>В работе</StatusBadge>
 				</Card.Action>
@@ -565,6 +568,15 @@
 						label="Комментарий"
 						bind:value={$form.comment}
 						errors={$errors.comment}
+					/>
+					<!-- Форма витрины ничего не отправляет, но контрол выбора файла должен
+						быть виден рядом с остальными полями: он собран сам, а не отдан
+						браузеру. -->
+					<FileInput
+						id="uiKitFile"
+						label="Скан документа"
+						description="PDF или изображение, до 25 МиБ."
+						accept="application/pdf,image/png,image/jpeg"
 					/>
 					<FormActions
 						submitting={$submitting}

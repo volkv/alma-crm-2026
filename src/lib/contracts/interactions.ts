@@ -40,12 +40,63 @@ export const STAGE_OUTCOMES = ['completed', 'returned', 'skipped'] as const;
 /** Почему часы на стадии остановлены. */
 export const PAUSE_REASONS = ['waiting_counterparty', 'waiting_internal', 'other'] as const;
 
+/**
+ * Причины помех.
+ *
+ * Справочник, а не свободная строка: вопрос «на чём чаще всего встаёт работа с
+ * вузами» — половина ценности воронки, а по рукописным `no-contact`, «нет
+ * контакта» и `budget` он не считается. Код латиницей едет в
+ * `blockers.reason_code` и в журнал, на экран выходит название.
+ */
+export const BLOCKER_REASONS = [
+	'no-contact',
+	'no-answer',
+	'waiting-legal',
+	'waiting-decision',
+	'documents',
+	'budget',
+	'no-room',
+	'schedule',
+	'other'
+] as const;
+
 export type StageCategory = (typeof STAGE_CATEGORIES)[number];
 export type StageTransitionKind = (typeof STAGE_TRANSITION_KINDS)[number];
 export type InteractionStatus = (typeof INTERACTION_STATUSES)[number];
 export type PartyRole = (typeof PARTY_ROLES)[number];
 export type StageOutcome = (typeof STAGE_OUTCOMES)[number];
 export type PauseReason = (typeof PAUSE_REASONS)[number];
+export type BlockerReason = (typeof BLOCKER_REASONS)[number];
+
+/** Почему часы стадии остановлены — словами. */
+export const PAUSE_REASON_LABELS: Record<PauseReason, string> = {
+	waiting_counterparty: 'Ждём ответа контрагента',
+	waiting_internal: 'Ждём коллег внутри',
+	other: 'Другая причина'
+};
+
+export const BLOCKER_REASON_LABELS: Record<BlockerReason, string> = {
+	'no-contact': 'Нет выхода на ответственное лицо',
+	'no-answer': 'Не отвечают на запрос',
+	'waiting-legal': 'Ждём юридическую службу',
+	'waiting-decision': 'Ждём решения руководства',
+	documents: 'Не хватает документов',
+	budget: 'Нет финансирования',
+	'no-room': 'Нет помещения или оборудования',
+	schedule: 'Не согласован график',
+	other: 'Другая причина'
+};
+
+/**
+ * Название причины для показа. Код не из справочника печатается как записан:
+ * придумывать название за того, кто завёл помеху, значит показывать не то, что
+ * лежит в базе.
+ */
+export function blockerReasonLabel(reasonCode: string): string {
+	return reasonCode in BLOCKER_REASON_LABELS
+		? BLOCKER_REASON_LABELS[reasonCode as BlockerReason]
+		: reasonCode;
+}
 
 /** Пункт чек-листа стадии. `key` стабилен, по нему хранится отметка. */
 export const checklistItemSchema = z.object({

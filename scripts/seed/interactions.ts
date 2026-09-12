@@ -17,6 +17,7 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import {
 	createInteractionSchema,
+	type BlockerReason,
 	type CreateInteractionInput,
 	type StageView
 } from '$lib/contracts/interactions';
@@ -66,7 +67,8 @@ type OwnerKey = (typeof OWNER_KEYS)[number];
 
 type PauseSeed = { note: string; nextAction: string };
 
-type BlockerSeed = { reasonCode: string; description: string; blocksTransition: boolean };
+/** Причина берётся из справочника: в наборе не должно быть кода, которого нет в системе. */
+type BlockerSeed = { reasonCode: BlockerReason; description: string; blocksTransition: boolean };
 
 type InteractionSeed = {
 	key: string;
@@ -88,7 +90,11 @@ type InteractionSeed = {
 	sinceDaysAgo: number;
 	/** Сколько дней назад по нему что-то происходило. */
 	lastActivityDaysAgo: number;
-	agreement?: readonly [string, string];
+	/**
+	 * Срок действия соглашения. Есть у каждой записи набора: соглашение по
+	 * шаблону собирается из него, и запись без срока — тупик на демонстрации.
+	 */
+	agreement: readonly [string, string];
 	academic?: readonly [string, string];
 	/** Закрыть обязательные пункты чек-листа текущей стадии. */
 	closeChecklist?: boolean;
@@ -129,9 +135,9 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		academic: ['2026-09-01', '2027-06-30']
 	},
 	{
-		key: 'lyceum1812-school',
-		title: 'Лицей № 1812: основы программирования для старших классов',
-		institution: 'lyceum1812',
+		key: 'lyceum306-school',
+		title: 'Лицей № 306 «Гравитон»: основы программирования для старших классов',
+		institution: 'lyceum306',
 		contact: 'morozov',
 		customer: 'polarcode',
 		programs: ['school-01'],
@@ -139,7 +145,8 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		stage: 'contact_search',
 		startedDaysAgo: 6,
 		sinceDaysAgo: 6,
-		lastActivityDaysAgo: 2
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-06-30']
 	},
 	{
 		key: 'vts-spo',
@@ -152,7 +159,8 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		stage: 'contact_search',
 		startedDaysAgo: 4,
 		sinceDaysAgo: 4,
-		lastActivityDaysAgo: 1
+		lastActivityDaysAgo: 1,
+		agreement: ['2026-09-01', '2027-08-31']
 	},
 	{
 		key: 'paid-praktiki',
@@ -167,6 +175,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		startedDaysAgo: 5,
 		sinceDaysAgo: 5,
 		lastActivityDaysAgo: 3,
+		agreement: ['2026-09-01', '2027-08-31'],
 		closeChecklist: true
 	},
 	{
@@ -183,6 +192,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		startedDaysAgo: 20,
 		sinceDaysAgo: 12,
 		lastActivityDaysAgo: 8,
+		agreement: ['2026-09-01', '2027-08-31'],
 		pause: {
 			note: 'Ждём от вуза перечень дисциплин, которые готовы отдать под программу',
 			nextAction: 'Созвон с координатором после учёного совета'
@@ -201,6 +211,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		startedDaysAgo: 15,
 		sinceDaysAgo: 9,
 		lastActivityDaysAgo: 4,
+		agreement: ['2026-09-01', '2027-08-31'],
 		comments: [
 			'Колледж просит начать с одной группы и расширяться со второго семестра.',
 			'Отправили описание программ и требования к учебной среде.'
@@ -218,6 +229,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		startedDaysAgo: 11,
 		sinceDaysAgo: 6,
 		lastActivityDaysAgo: 5,
+		agreement: ['2026-09-01', '2027-05-31'],
 		closeChecklist: true
 	},
 	{
@@ -234,6 +246,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		startedDaysAgo: 30,
 		sinceDaysAgo: 9,
 		lastActivityDaysAgo: 6,
+		agreement: ['2026-10-01', '2027-09-30'],
 		blocker: {
 			reasonCode: 'no-room',
 			description: 'Под лабораторию не выделено помещение: вопрос завис у проректора по АХЧ',
@@ -254,6 +267,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		startedDaysAgo: 25,
 		sinceDaysAgo: 10,
 		lastActivityDaysAgo: 9,
+		agreement: ['2026-09-01', '2027-08-31'],
 		returnedFrom: 'document_exchange'
 	},
 	{
@@ -268,6 +282,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		startedDaysAgo: 22,
 		sinceDaysAgo: 7,
 		lastActivityDaysAgo: 2,
+		agreement: ['2026-11-01', '2027-10-31'],
 		closeChecklist: true
 	},
 	{
@@ -316,7 +331,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		lastActivityDaysAgo: 2,
 		agreement: ['2026-09-01', '2027-08-31'],
 		blocker: {
-			reasonCode: 'legal-review',
+			reasonCode: 'waiting-legal',
 			description: 'Юристы вуза просят изменить раздел об интеллектуальной собственности',
 			blocksTransition: false
 		},
@@ -768,8 +783,8 @@ function toCreateInput(
 	const raw = {
 		title: seed.title,
 		routeId,
-		agreementPeriodStart: seed.agreement?.[0] ?? null,
-		agreementPeriodEnd: seed.agreement?.[1] ?? null,
+		agreementPeriodStart: seed.agreement[0],
+		agreementPeriodEnd: seed.agreement[1],
 		academicPeriodStart: seed.academic?.[0] ?? null,
 		academicPeriodEnd: seed.academic?.[1] ?? null,
 		ownerUserId: seedId('user', seed.owner),
@@ -1181,34 +1196,60 @@ async function shiftTime(
 		}
 
 		// Пауза, помеха и комментарии появились не в момент входа на последнюю
-		// стадию: сначала работали, потом упёрлись в ожидание.
+		// стадию: сначала работали, потом упёрлись в ожидание. И не в одну
+		// секунду: события, слипшиеся в одну отметку времени, читаются как сбой
+		// системы, а не как ход работы, — поэтому каждое получает свой момент.
 		const lastEnteredAt = new Date(start.getTime() + step * (entries.length - 1));
 		const lastWindowEnd = openEntry === undefined ? end : runStart;
-		const happenedAt = new Date(
-			lastEnteredAt.getTime() + (lastWindowEnd.getTime() - lastEnteredAt.getTime()) * 0.4
-		);
+		const span = lastWindowEnd.getTime() - lastEnteredAt.getTime();
+		// Работа укладывается в первую треть стадии: дальше по этому же отрезку
+		// стоит пауза, и её начало двигать нельзя — из него считается,
+		// сколько часы стадии простояли, а значит и просрочка.
+		const moment = (index: number, total: number): Date =>
+			new Date(lastEnteredAt.getTime() + span * (0.05 + (0.3 * index) / Math.max(total, 1)));
 
-		if (openEntry !== undefined) {
-			await tx
-				.update(stagePauses)
-				.set({ startedAt: happenedAt })
-				.where(and(eq(stagePauses.stageEntryId, openEntry.id), isNull(stagePauses.endedAt)));
-		}
+		// Порядок тот же, в каком набор их заводил: помеха, разговор, передача.
+		const commentRows = await tx
+			.select({ id: comments.id })
+			.from(comments)
+			.where(eq(comments.interactionId, interactionId))
+			.orderBy(asc(comments.createdAt));
+		const changeRows = await tx
+			.select({ id: interactionChanges.id })
+			.from(interactionChanges)
+			.where(eq(interactionChanges.interactionId, interactionId))
+			.orderBy(asc(interactionChanges.changedAt));
+
+		const total = 1 + commentRows.length + changeRows.length;
 
 		await tx
 			.update(blockers)
-			.set({ raisedAt: happenedAt })
+			.set({ raisedAt: moment(0, total) })
 			.where(eq(blockers.interactionId, interactionId));
 
-		await tx
-			.update(comments)
-			.set({ createdAt: happenedAt, updatedAt: happenedAt })
-			.where(eq(comments.interactionId, interactionId));
+		for (const [index, comment] of commentRows.entries()) {
+			const at = moment(index + 1, total);
 
-		await tx
-			.update(interactionChanges)
-			.set({ changedAt: happenedAt })
-			.where(eq(interactionChanges.interactionId, interactionId));
+			await tx
+				.update(comments)
+				.set({ createdAt: at, updatedAt: at })
+				.where(eq(comments.id, comment.id));
+		}
+
+		for (const [index, change] of changeRows.entries()) {
+			await tx
+				.update(interactionChanges)
+				.set({ changedAt: moment(commentRows.length + index + 1, total) })
+				.where(eq(interactionChanges.id, change.id));
+		}
+
+		// Пауза — после работы: сначала делали, потом упёрлись в ожидание.
+		if (openEntry !== undefined) {
+			await tx
+				.update(stagePauses)
+				.set({ startedAt: new Date(lastEnteredAt.getTime() + span * 0.4) })
+				.where(and(eq(stagePauses.stageEntryId, openEntry.id), isNull(stagePauses.endedAt)));
+		}
 
 		await tx
 			.update(interactions)

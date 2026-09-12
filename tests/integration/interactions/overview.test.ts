@@ -18,7 +18,7 @@ import type { ActorContext } from '$lib/server/actor';
 import { interactionParties, interactions, stageEntries } from '$lib/server/db/schema';
 import { getWorkOverview } from '$lib/server/interactions/overview';
 import { createInteraction } from '$lib/server/interactions/write';
-import { pauseStage, raiseBlocker } from '$lib/server/stages/commands';
+import { addComment, pauseStage, raiseBlocker } from '$lib/server/stages/commands';
 import { ensureDemoRoute } from '$lib/server/stages/routes';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import {
@@ -312,6 +312,33 @@ describe('ожидание и лента', () => {
 			note: 'Соглашение у проректора',
 			nextAction: 'Напомнить через неделю'
 		});
+	});
+
+	it('не отдаёт всю ленту одной записи: не больше двух событий на взаимодействие', async () => {
+		const ctx = admin();
+		const routeId = await demoRoute();
+		const organizationId = await insertOrganization(database.db);
+
+		// Один активный день по одной записи — это десяток событий подряд, и
+		// плоская лента закрыла бы ими весь остальной портфель.
+		const loud = await makeInteraction(ctx, { routeId, title: 'Шумное', organizationId });
+
+		for (const body of ['Созвонились', 'Отправили программы', 'Ждём ответ', 'Напомнили']) {
+			await addComment(ctx, { interactionId: loud, body });
+		}
+
+		const quiet = await makeInteraction(ctx, { routeId, title: 'Тихое', organizationId });
+
+		const overview = await getWorkOverview(ctx);
+		const fromLoud = overview.activity.filter((event) => event.interactionId === loud);
+
+		expect(fromLoud).toHaveLength(2);
+		// Оставлены последние события записи, а не первые попавшиеся.
+		expect(fromLoud.map((event) => event.eventType)).toStrictEqual([
+			'interactions.commented',
+			'interactions.commented'
+		]);
+		expect(overview.activity.some((event) => event.interactionId === quiet)).toBe(true);
 	});
 
 	it('показывает менеджеру след работы по взаимодействиям', async () => {

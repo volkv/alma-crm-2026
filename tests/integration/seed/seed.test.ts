@@ -181,6 +181,59 @@ describe('сид', () => {
 		expect(completedEntries.filter((entry) => entry.leftAt === null)).toStrictEqual([]);
 	});
 
+	it('заполняет срок соглашения у каждого взаимодействия', async () => {
+		await runSeed();
+
+		// Соглашение по шаблону собирается из срока в плане: запись без него —
+		// тупик ровно на том пути, которым стенд и открывают.
+		const rows = await database.db
+			.select({
+				id: interactions.id,
+				start: interactions.agreementPeriodStart,
+				end: interactions.agreementPeriodEnd
+			})
+			.from(interactions);
+
+		expect(rows).toHaveLength(INTERACTION_SEED_SIZES.interactions);
+		expect(rows.filter((row) => row.start === null || row.end === null)).toStrictEqual([]);
+	});
+
+	it('разводит события истории по времени', async () => {
+		await runSeed();
+
+		const [commentRows, blockerRows, changeRows] = await Promise.all([
+			database.db
+				.select({ interactionId: comments.interactionId, at: comments.createdAt })
+				.from(comments),
+			database.db
+				.select({ interactionId: blockers.interactionId, at: blockers.raisedAt })
+				.from(blockers),
+			database.db
+				.select({
+					interactionId: interactionChanges.interactionId,
+					at: interactionChanges.changedAt
+				})
+				.from(interactionChanges)
+		]);
+
+		const byInteraction = new Map<string, number[]>();
+
+		for (const row of [...commentRows, ...blockerRows, ...changeRows]) {
+			byInteraction.set(row.interactionId, [
+				...(byInteraction.get(row.interactionId) ?? []),
+				row.at.getTime()
+			]);
+		}
+
+		const crowded = [...byInteraction.values()].filter((moments) => moments.length > 1);
+
+		// Есть на чём проверять: иначе тест зелен от того, что событий нет.
+		expect(crowded.length).toBeGreaterThan(0);
+		// Слипшиеся в одну отметку события читаются как сбой системы, а не как
+		// ход работы: у каждого события записи свой момент.
+		expect(crowded.filter((moments) => new Set(moments).size !== moments.length)).toStrictEqual([]);
+	});
+
 	it('повторный сид не пересоздаёт историю взаимодействий', async () => {
 		await runSeed();
 

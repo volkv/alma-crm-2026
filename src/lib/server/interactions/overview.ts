@@ -13,7 +13,7 @@
  * Порядок внутри списка — правило этой страницы, а не списка, поэтому он
  * считается здесь.
  */
-import { and, asc, count, desc, eq, gte, inArray, isNull, sql } from 'drizzle-orm';
+import { and, asc, count, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 import { AUDIT_EVENT_TYPES, type AuditEventType } from '$lib/contracts/audit';
 import {
 	STAGE_CATEGORIES,
@@ -47,6 +47,15 @@ const DUE_SOON_DAYS = 3;
 const NEEDS_ACTION_LIMIT = 10;
 const WAITING_LIMIT = 5;
 const ACTIVITY_LIMIT = 10;
+/**
+ * Сколько событий одного взаимодействия попадает в ленту.
+ *
+ * Лента отвечает на вопрос «что происходило в работе», а не «что было в
+ * журнале»: один активный день по одной записи даёт десяток событий подряд и
+ * закрывает собой весь остальной портфель. Журнал целиком лежит в разделе
+ * «Журнал действий» и ничего не теряет.
+ */
+const ACTIVITY_PER_INTERACTION = 2;
 /** Окно, за которое считаются завершённые взаимодействия. */
 const COMPLETED_WINDOW_DAYS = 30;
 /**
@@ -458,14 +467,27 @@ async function readActivity(ctx: ActorContext): Promise<OverviewActivity[]> {
 		else (${auditEvents.details} ->> 'interactionId')::uuid
 	end`;
 
-	const rows = await getDb()
+	const db = getDb();
+
+	// Место события в своей записи: по нему лента и обрезается до нескольких
+	// строк на взаимодействие. Считать это в приложении значило бы читать
+	// журнал «с запасом», не зная, какого запаса хватит.
+	const ranked = db
 		.select({
 			id: auditEvents.id,
 			occurredAt: auditEvents.occurredAt,
 			eventType: auditEvents.eventType,
 			actorLabel: auditEvents.actorLabel,
-			interactionId: interactions.id,
-			interactionTitle: interactions.title
+			// Своё имя каждому столбцу: у события и у взаимодействия оба ключа
+			// зовутся `id`, и подзапрос с двумя `id` неразличим для внешнего select.
+			interactionId: sql<string>`${interactions.id}`.as('interaction_id'),
+			interactionTitle: sql<string>`${interactions.title}`.as('interaction_title'),
+			place: sql<number>`row_number() over (
+				partition by ${interactions.id}
+				order by ${auditEvents.occurredAt} desc, ${auditEvents.id} desc
+			)`
+				.mapWith(Number)
+				.as('place')
 		})
 		.from(auditEvents)
 		.innerJoin(interactions, sql`${interactions.id} = ${subject}`)
@@ -476,7 +498,20 @@ async function readActivity(ctx: ActorContext): Promise<OverviewActivity[]> {
 				interactionScopeFilter(ctx)
 			)
 		)
-		.orderBy(desc(auditEvents.occurredAt), desc(auditEvents.id))
+		.as('ranked');
+
+	const rows = await db
+		.select({
+			id: ranked.id,
+			occurredAt: ranked.occurredAt,
+			eventType: ranked.eventType,
+			actorLabel: ranked.actorLabel,
+			interactionId: ranked.interactionId,
+			interactionTitle: ranked.interactionTitle
+		})
+		.from(ranked)
+		.where(lte(ranked.place, ACTIVITY_PER_INTERACTION))
+		.orderBy(desc(ranked.occurredAt), desc(ranked.id))
 		.limit(ACTIVITY_LIMIT);
 
 	return rows.map((row) => ({ ...row, eventType: row.eventType as AuditEventType }));

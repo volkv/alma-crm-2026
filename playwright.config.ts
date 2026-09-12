@@ -37,6 +37,10 @@ export default defineConfig({
 			GOTENBERG_URL: 'http://localhost:3001',
 			SMTP_HOST: 'localhost',
 			SMTP_PORT: '1025',
+			// Потолок тела запроса у adapter-node: тот же, что в compose. С его
+			// умолчанием (512K) загрузка обычного скана отваливается с 413 —
+			// `e2e/documents.test.ts` этим и сторожит значение.
+			BODY_SIZE_LIMIT: '27M',
 			// Демонстрационный вход — часть проверяемого поведения.
 			DEMO_MODE: 'true',
 			TRUST_PROXY: 'false',

@@ -52,6 +52,7 @@
 		searchPlaceholder,
 		emptyTitle = 'Ничего не найдено',
 		emptyDescription,
+		initialHiddenColumns = [],
 		onopen,
 		bulkActions,
 		class: className
@@ -68,12 +69,27 @@
 		searchPlaceholder?: string;
 		emptyTitle?: string;
 		emptyDescription?: string;
+		/**
+		 * Columns that start hidden on a narrow screen — the ones a reader can
+		 * live without when the important ones would otherwise be cut off. The
+		 * menu overrides this: the choice is the reader's, the width only decides
+		 * where the list starts.
+		 */
+		initialHiddenColumns?: readonly string[];
 		/** Opening a row: a click, `Enter`, or a double click. */
 		onopen?: (row: TData) => void;
 		/** Actions over the selected rows; selection is off when this is absent. */
 		bulkActions?: Snippet<[{ ids: string[]; clear: () => void }]>;
 		class?: string;
 	} = $props();
+
+	/**
+	 * Ширина окна, ниже которой второстепенные колонки стартуют скрытыми:
+	 * подрезанная справа таблица врёт о данных сильнее, чем честно спрятанная
+	 * колонка. Это порог удобства, а не обещание, что выше него поместится всё:
+	 * сколько места нужно списку, решают его собственные колонки и данные в них.
+	 */
+	const WIDE_VIEWPORT = 1440;
 
 	const query = $derived(readTableQuery(page.url));
 	const selectable = $derived(Boolean(bulkActions));
@@ -83,6 +99,23 @@
 	let searchInput = $state<HTMLElement | null>(null);
 	let tableRoot = $state<HTMLElement | null>(null);
 	let activeIndex = $state(-1);
+
+	/**
+	 * Ширину окна знает только браузер, поэтому стартовая видимость ставится
+	 * после гидратации и ровно один раз: дальше видимостью распоряжается
+	 * человек, и менять её за ним при повороте экрана нельзя.
+	 */
+	let widthApplied = false;
+
+	$effect(() => {
+		if (widthApplied || initialHiddenColumns.length === 0) return;
+
+		widthApplied = true;
+
+		if (window.innerWidth < WIDE_VIEWPORT) {
+			columnVisibility = Object.fromEntries(initialHiddenColumns.map((id) => [id, false]));
+		}
+	});
 
 	const table = createTable<DataTableFeatures, TData>({
 		features,

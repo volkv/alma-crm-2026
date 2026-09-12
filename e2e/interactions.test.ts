@@ -217,7 +217,17 @@ test('помеха запрещает переход и объясняет от�
 	await expect(page.getByRole('button', { name: /^Перейти:/ })).toBeEnabled();
 
 	await page.getByRole('tab', { name: 'Помехи' }).click();
-	await page.getByLabel('Код причины').fill('no-contact');
+
+	// Причина выбирается из справочника. Список bits-ui открывает клиентский
+	// код, и нажатие до гидратации теряется совсем — отсюда повтор.
+	const reason = page.getByRole('option', { name: 'Не отвечают на запрос' });
+
+	await expect(async () => {
+		await page.getByRole('button', { name: 'Причина', exact: true }).click();
+		await expect(reason).toBeVisible({ timeout: 3000 });
+	}).toPass({ timeout: 20_000 });
+
+	await reason.click();
 	await page.getByLabel('Что мешает').fill('Координатор не отвечает вторую неделю');
 	await page.getByRole('button', { name: 'Сообщить', exact: true }).click();
 
@@ -225,7 +235,16 @@ test('помеха запрещает переход и объясняет от�
 	await expect(page.getByRole('button', { name: /^Перейти:/ })).toBeDisabled();
 });
 
-test('список и карточка сняты для обзора', async ({ page }) => {
+/**
+ * Ширина документа против ширины окна. Таблица и лента вкладок прокручиваются
+ * внутри себя — это правильно; уехать вправо не должен сам документ, иначе на
+ * телефоне страница болтается вбок вся целиком.
+ */
+async function pageOverflow(page: import('@playwright/test').Page): Promise<number> {
+	return page.evaluate(() => document.body.scrollWidth - window.innerWidth);
+}
+
+test('список и карточка держат ширину экрана и сняты для обзора', async ({ page }) => {
 	const title = await createInteraction(page);
 
 	await page.screenshot({ path: 'test-results/interactions-card-desktop.png', fullPage: true });
@@ -233,6 +252,8 @@ test('список и карточка сняты для обзора', async ({
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.reload();
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText(title);
+	// Шесть вкладок карточки шире телефона: прокрутиться обязан их список.
+	expect(await pageOverflow(page)).toBeLessThanOrEqual(0);
 	await page.screenshot({ path: 'test-results/interactions-card-mobile.png', fullPage: true });
 
 	await page.setViewportSize({ width: 1280, height: 800 });
@@ -243,5 +264,32 @@ test('список и карточка сняты для обзора', async ({
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto('/interactions');
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Взаимодействия');
+	expect(await pageOverflow(page)).toBeLessThanOrEqual(0);
 	await page.screenshot({ path: 'test-results/interactions-list-mobile.png', fullPage: true });
+});
+
+test('на ноутбуке список начинается без второстепенных колонок', async ({ page }) => {
+	await createInteraction(page);
+
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await page.goto('/interactions');
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Взаимодействия');
+
+	const header = page.locator('[data-slot="data-table"] thead');
+
+	await expect(header.getByText('Стадия')).toBeVisible();
+	await expect(header.getByText('Ответственный')).toBeHidden();
+	await expect(header.getByText('Активность')).toBeHidden();
+
+	// Скрыта только стартовая видимость: меню «Колонки» возвращает колонку.
+	const option = page.getByRole('menuitemcheckbox', { name: 'Ответственный' });
+
+	await expect(async () => {
+		await page.getByRole('button', { name: 'Колонки' }).click();
+		await expect(option).toBeVisible({ timeout: 3000 });
+	}).toPass({ timeout: 20_000 });
+
+	await option.click();
+	await page.keyboard.press('Escape');
+	await expect(header.getByText('Ответственный')).toBeVisible();
 });

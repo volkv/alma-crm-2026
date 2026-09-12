@@ -39,7 +39,10 @@ server {
     # deployment that is meant to be found.
     add_header X-Robots-Tag "noindex, nofollow" always;
 
-    # Headroom for document and attachment uploads.
+    # Upload ceiling, outermost of three. Inside it the app container carries
+    # BODY_SIZE_LIMIT=27M (adapter-node) and the code enforces 25 MiB per file.
+    # This one must stay the widest: when nginx is the one to refuse, the client
+    # gets a bare 413 page instead of the message the form would have shown.
     client_max_body_size 32m;
 
     access_log /var/log/nginx/crm_access.log;
@@ -55,6 +58,11 @@ server {
         proxy_set_header Connection $crm_connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
+        # MANDATORY. `docker-compose.prod.yml` starts the app with
+        # ADDRESS_HEADER=X-Forwarded-For, and adapter-node then takes the client
+        # address from this header only — if the header is missing it throws, and
+        # every page turns into 500. A proxy configured by hand must carry this
+        # line too, or ADDRESS_HEADER has to go away with it.
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;

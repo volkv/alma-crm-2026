@@ -128,20 +128,31 @@ function listConditions(ctx: ActorContext, query: InteractionListQuery): SQL[] {
 	return conditions;
 }
 
+/**
+ * Порядок списка.
+ *
+ * Последним ключом всегда идёт идентификатор. Без него порядок строк с
+ * одинаковым значением — например, с одним и тем же моментом последнего
+ * события — Postgres не обещает вовсе: две страницы подряд собираются двумя
+ * запросами, и строка с границы может показаться дважды или не показаться ни
+ * разу. Идентификатор дописывает к любому ключу однозначность.
+ */
 function listOrder(query: InteractionListQuery): SQL[] {
+	const tiebreaker = asc(interactions.id);
+
 	switch (query.sort) {
 		case 'title':
-			return [asc(interactions.title)];
+			return [asc(interactions.title), tiebreaker];
 		case '-title':
-			return [desc(interactions.title)];
+			return [desc(interactions.title), tiebreaker];
 		case 'dueAt':
-			return [sql`${stageEntryStatus.dueAt} asc nulls last`];
+			return [sql`${stageEntryStatus.dueAt} asc nulls last`, tiebreaker];
 		case '-dueAt':
-			return [sql`${stageEntryStatus.dueAt} desc nulls last`];
+			return [sql`${stageEntryStatus.dueAt} desc nulls last`, tiebreaker];
 		case 'lastActivityAt':
-			return [asc(interactions.lastActivityAt)];
+			return [asc(interactions.lastActivityAt), tiebreaker];
 		default:
-			return [desc(interactions.lastActivityAt)];
+			return [desc(interactions.lastActivityAt), tiebreaker];
 	}
 }
 

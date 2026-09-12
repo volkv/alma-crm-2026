@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
+	import * as Select from '$lib/components/ui/select/index.js';
+	import { Label } from '$lib/components/ui/label/index.js';
 	import type { FieldOption } from '$lib/components/form/field-select.svelte';
 	import { filterHref } from './query';
 
@@ -25,26 +27,34 @@
 		allLabel?: string;
 	} = $props();
 
-	const value = $derived(page.url.searchParams.get(param) ?? '');
+	/**
+	 * Значение пункта «фильтра нет». Пустая строка тут не годится: для списка
+	 * она означает «ничего не выбрано», и пункт стал бы неотличим от пустоты, —
+	 * а в адрес всё равно уходит пустая строка, то есть параметр удаляется.
+	 */
+	const ANY = '__any';
 
-	function select(event: Event & { currentTarget: HTMLSelectElement }) {
-		return goto(filterHref(page.url, param, event.currentTarget.value), {
+	const id = $derived(`filter-${param}`);
+	const value = $derived(page.url.searchParams.get(param) ?? ANY);
+	const selected = $derived(options.find((option) => option.value === value)?.label ?? allLabel);
+
+	function select(next: string) {
+		return goto(filterHref(page.url, param, next === ANY ? '' : next), {
 			keepFocus: true,
 			noScroll: true
 		});
 	}
 </script>
 
-<label class="flex items-center gap-2 text-sm text-muted-foreground">
-	<span class="whitespace-nowrap">{label}</span>
-	<select
-		class="h-control rounded-md border border-input bg-background px-2 text-sm focus-ring"
-		{value}
-		onchange={select}
-	>
-		<option value="">{allLabel}</option>
-		{#each options as option (option.value)}
-			<option value={option.value}>{option.label}</option>
-		{/each}
-	</select>
-</label>
+<div class="flex items-center gap-2">
+	<Label for={id} class="font-normal whitespace-nowrap text-muted-foreground">{label}</Label>
+	<Select.Root type="single" {value} onValueChange={select}>
+		<Select.Trigger {id}>{selected}</Select.Trigger>
+		<Select.Content>
+			<Select.Item value={ANY} label={allLabel} />
+			{#each options as option (option.value)}
+				<Select.Item value={option.value} label={option.label} />
+			{/each}
+		</Select.Content>
+	</Select.Root>
+</div>

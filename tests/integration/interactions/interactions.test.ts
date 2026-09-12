@@ -6,7 +6,7 @@
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInteractionSchema, updateInteractionSchema } from '$lib/contracts/interactions';
-import { interactionChanges, products, programs } from '$lib/server/db/schema';
+import { interactionChanges, interactions, products, programs } from '$lib/server/db/schema';
 import { ConflictError, ForbiddenError, NotFoundError } from '$lib/server/errors';
 import { getInteraction, listInteractions } from '$lib/server/interactions/read';
 import { getInteractionSummary } from '$lib/server/interactions/summary';
@@ -355,6 +355,52 @@ describe('список и область доступа', () => {
 		expect(searched.items[0].institutionName).toBe('Политех');
 		expect(byCategory.total).toBe(2);
 		expect(overdue.total).toBe(0);
+	});
+
+	it('держит порядок страниц, когда ключ сортировки у строк одинаковый', async () => {
+		const ctx = admin();
+		const routeId = await demoRoute();
+		const organizationId = await insertOrganization(database.db, { shortName: 'Политех' });
+
+		for (const title of ['Первое', 'Второе', 'Третье', 'Четвёртое', 'Пятое', 'Шестое']) {
+			await createInteraction(
+				ctx,
+				createInteractionSchema.parse({
+					title,
+					routeId,
+					ownerUserId: TEST_USER_IDS.admin,
+					parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
+				})
+			);
+		}
+
+		// Один и тот же момент последнего события — обычное дело: записи заводят
+		// пачкой, импортом, набором. Порядок строк с равным ключом Postgres не
+		// обещает вовсе, и без второго ключа страницы разъезжаются.
+		await database.db
+			.update(interactions)
+			.set({ lastActivityAt: new Date('2026-05-01T10:00:00.000Z') });
+
+		const whole = await listInteractions(ctx, interactionListQuerySchema.parse({ pageSize: '50' }));
+		const ids = whole.items.map((item) => item.id);
+
+		// Второй ключ — идентификатор: он же делает порядок воспроизводимым.
+		expect(ids).toStrictEqual([...ids].sort());
+
+		const paged: string[] = [];
+
+		for (const page of [1, 2, 3, 4, 5, 6]) {
+			const slice = await listInteractions(
+				ctx,
+				interactionListQuerySchema.parse({ page: String(page), pageSize: '1' })
+			);
+
+			paged.push(...slice.items.map((item) => item.id));
+		}
+
+		// Ни одна запись не показана дважды и ни одна не пропущена.
+		expect(paged).toStrictEqual(ids);
+		expect(new Set(paged).size).toBe(6);
 	});
 
 	it('прячет чужие взаимодействия от пользователя с ограниченной областью', async () => {

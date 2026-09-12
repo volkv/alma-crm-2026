@@ -12,7 +12,12 @@
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import SlaChip from '$lib/components/sla-chip.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
-	import { PAUSE_REASONS, type InteractionSummaryView } from '$lib/contracts/interactions';
+	import {
+		blockerReasonLabel,
+		PAUSE_REASONS,
+		PAUSE_REASON_LABELS,
+		type InteractionSummaryView
+	} from '$lib/contracts/interactions';
 	import { formatDateTime } from '$lib/format';
 	import { actionEnhance } from './action-enhance';
 
@@ -37,12 +42,6 @@
 		 */
 		closing?: Snippet;
 	} = $props();
-
-	const PAUSE_LABELS: Record<(typeof PAUSE_REASONS)[number], string> = {
-		waiting_counterparty: 'Ждём ответа контрагента',
-		waiting_internal: 'Ждём коллег внутри',
-		other: 'Другая причина'
-	};
 
 	let reasonDialog = $state<{ action: 'return' | 'skip'; toStageId: string; name: string } | null>(
 		null
@@ -71,7 +70,7 @@
 				</div>
 				{#if summary.happening.pause !== null}
 					<p class="text-xs text-muted-foreground">
-						{PAUSE_LABELS[summary.happening.pause.reason]}: {summary.happening.pause.note}
+						{PAUSE_REASON_LABELS[summary.happening.pause.reason]}: {summary.happening.pause.note}
 					</p>
 					<p class="text-xs text-faint">
 						с {formatDateTime(summary.happening.pause.startedAt)}
@@ -97,7 +96,7 @@
 			{#each summary.blocking.blockers as blocker (blocker.id)}
 				<p class="text-sm">
 					<StatusBadge tone={blocker.blocksTransition ? 'danger' : 'warning'} dot>
-						{blocker.reasonCode}
+						{blockerReasonLabel(blocker.reasonCode)}
 					</StatusBadge>
 					<span class="ml-1">{blocker.description}</span>
 				</p>
@@ -149,9 +148,13 @@
 						<form method="POST" action="?/advance" use:enhance={actionEnhance()}>
 							<input type="hidden" name="fromStageId" value={currentStageId} />
 							<input type="hidden" name="toStageId" value={option.toStage.id} />
+							<!-- Первичный цвет — только тому, что действительно можно нажать:
+								самый заметный элемент панели «что могу сейчас» не должен
+								оказаться тем, чего сейчас нельзя. -->
 							<Button
 								type="submit"
 								size="sm"
+								variant={option.allowed ? 'default' : 'outline'}
 								class="w-full min-w-0"
 								title={label}
 								disabled={!option.allowed}
@@ -274,7 +277,7 @@
 					class="h-control rounded-md border border-input bg-background px-2 text-sm focus-ring"
 				>
 					{#each PAUSE_REASONS as reason (reason)}
-						<option value={reason}>{PAUSE_LABELS[reason]}</option>
+						<option value={reason}>{PAUSE_REASON_LABELS[reason]}</option>
 					{/each}
 				</select>
 			</label>

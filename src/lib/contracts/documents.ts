@@ -94,6 +94,59 @@ export const DOCUMENT_KINDS = ['uploaded', 'generated'] as const;
 
 export type DocumentKind = (typeof DOCUMENT_KINDS)[number];
 
+/** Откуда файл — словами. */
+export const DOCUMENT_ORIGIN_LABELS: Record<DocumentKind, string> = {
+	uploaded: 'Загружен',
+	generated: 'Сгенерирован'
+};
+
+/**
+ * Виды документа, которые человек выбирает при загрузке.
+ *
+ * Справочник закрытый и живёт здесь, а не в свободной строке: «соглашение»,
+ * «Соглашение» и «agreement», введённые тремя руками, — три разных вида, и
+ * отчёт «сколько актов ещё не подписано» по ним не собрать. Код остаётся
+ * латиницей (он едет в `documents.kind` и в журнал), а на экран выходит
+ * название из `DOCUMENT_KIND_LABELS`.
+ */
+export const UPLOADED_DOCUMENT_KINDS = [
+	'agreement',
+	'annex',
+	'order',
+	'act',
+	'report',
+	'letter',
+	'other'
+] as const;
+
+export type UploadedDocumentKind = (typeof UPLOADED_DOCUMENT_KINDS)[number];
+
+/**
+ * Русские названия видов. Собранный по шаблону документ стоит в том же ряду:
+ * в `documents.kind` у него метка `generated`, и человеку она видна как вид.
+ */
+export const DOCUMENT_KIND_LABELS: Record<UploadedDocumentKind | 'generated', string> = {
+	agreement: 'Соглашение',
+	annex: 'Приложение к соглашению',
+	order: 'Приказ',
+	act: 'Акт',
+	report: 'Отчёт',
+	letter: 'Письмо',
+	other: 'Другое',
+	generated: 'Собран по шаблону'
+};
+
+/**
+ * Название вида для показа. Вид пришёл не из справочника — печатается как
+ * записан: придумывать название за того, кто завёл документ до появления
+ * справочника, значит показывать не то, что лежит в базе.
+ */
+export function documentKindLabel(kind: string): string {
+	return kind in DOCUMENT_KIND_LABELS
+		? DOCUMENT_KIND_LABELS[kind as UploadedDocumentKind | 'generated']
+		: kind;
+}
+
 /**
  * Формат файла: то, что человек называет словом «DOCX», и тип, которым он
  * записан. Тип в базе — произвольная строка, поэтому соответствие объявлено

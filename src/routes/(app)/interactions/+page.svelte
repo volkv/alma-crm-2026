@@ -59,14 +59,14 @@
 			header: 'Учебное заведение',
 			meta: { title: 'Учебное заведение' },
 			enableSorting: false,
-			cell: ({ row }) => row.original.institutionName ?? '—'
+			cell: ({ row }) => renderSnippet(nameCell, row.original.institutionName)
 		},
 		{
 			accessorKey: 'customerName',
 			header: 'Заказчик',
 			meta: { title: 'Заказчик' },
 			enableSorting: false,
-			cell: ({ row }) => row.original.customerName ?? '—'
+			cell: ({ row }) => renderSnippet(nameCell, row.original.customerName)
 		},
 		{
 			id: 'stage',
@@ -104,8 +104,18 @@
 	}
 </script>
 
+<!-- Наименование организации бывает длиной в строку устава, а колонки справа от
+	него важнее: ширина ограничена, целиком читается подсказкой. -->
+{#snippet nameCell(value: string | null)}
+	{#if value === null}
+		<span class="text-faint">—</span>
+	{:else}
+		<span class="block max-w-48 truncate" title={value}>{value}</span>
+	{/if}
+{/snippet}
+
 {#snippet titleCell(row: InteractionListItem)}
-	<div class="flex min-w-0 flex-col gap-0.5">
+	<div class="flex max-w-64 min-w-0 flex-col gap-0.5">
 		<span class="truncate font-medium">{row.title}</span>
 		<span class="flex flex-wrap items-center gap-1">
 			{#if row.status !== 'active'}
@@ -241,6 +251,7 @@
 			searchPlaceholder="Поиск по названию и организации"
 			emptyTitle="Ничего не найдено"
 			emptyDescription="Измените запрос или сбросьте фильтры."
+			initialHiddenColumns={['ownerName', 'lastActivityAt']}
 			onopen={open}
 		>
 			{#snippet bulkActions({ ids, clear })}
