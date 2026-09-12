@@ -18,6 +18,13 @@ const PERIOD_START = '2024-09-01';
 const PERIOD_END = '2025-08-31';
 const PERIOD_KEY = `${PERIOD_START}..${PERIOD_END}`;
 
+/** День так, как его пишут в поле даты: `2024-09-01` → `01.09.2024`. */
+function ruDay(iso: string): string {
+	const [year, month, day] = iso.split('-');
+
+	return `${day}.${month}.${year}`;
+}
+
 /** Метка прогона: делает название файла уникальным в общей базе. */
 const TAG = crypto.randomUUID().slice(0, 8);
 
@@ -49,8 +56,12 @@ async function uploadFile(
 	await expect(page.getByRole('heading', { name: 'Загрузка данных' })).toBeVisible();
 
 	await page.locator('input[name="file"]').setInputFiles(file);
-	await page.locator('#periodStart').fill(PERIOD_START);
-	await page.locator('#periodEnd').fill(PERIOD_END);
+	// Поле даты — своё (`DateField`): человек пишет `01.09.2024`, а форме
+	// уходит `2024-09-01` скрытым полем.
+	await page.locator('#periodStart').fill(ruDay(PERIOD_START));
+	await page.locator('#periodEnd').fill(ruDay(PERIOD_END));
+	await expect(page.locator('input[name="periodStart"]')).toHaveValue(PERIOD_START);
+	await expect(page.locator('input[name="periodEnd"]')).toHaveValue(PERIOD_END);
 	await page.getByRole('button', { name: 'Дальше: сопоставление колонок' }).click();
 
 	await expect(page.getByRole('heading', { name: 'Сопоставление колонок' })).toBeVisible();
@@ -118,6 +129,16 @@ test('менеджер проходит мастер до подтвержден
 	await expect(breakdown).toContainText('Заявки');
 	await expect(breakdown).toContainText('Зачислено');
 	await expect(breakdown).toContainText('Параллельные потоки');
+
+	// Слагаемые переносятся внутри своей колонки: таблица рейтинга целиком
+	// помещается в отведённую ширину и вбок не уезжает.
+	const hidden = await page.evaluate(() => {
+		const box = document.querySelector('[data-slot="score-breakdown"]')?.closest('div');
+
+		return box === null || box === undefined ? null : box.scrollWidth - box.clientWidth;
+	});
+
+	expect(hidden).toBe(0);
 });
 
 test('мастер читает и книгу XLSX', async ({ page }) => {

@@ -151,7 +151,7 @@
 		<div class="grid gap-4 xl:grid-cols-2">
 			<Section
 				title="Топ программ по рейтингу"
-				description="Балл — сумма слагаемых в колонке «почему»; веса объявлены в контрактах."
+				description="Балл — сумма слагаемых, перечисленных под названием; веса объявлены в контрактах."
 			>
 				{#snippet action()}
 					<Button variant="outline" size="sm" href={rankingHref}>Весь рейтинг</Button>
@@ -163,40 +163,36 @@
 						description="За выбранный период нет подтверждённых данных ни по одной программе."
 					/>
 				{:else}
-					<div class="overflow-x-auto">
-						<Table.Root>
-							<Table.Header>
-								<Table.Row>
-									<Table.Head class="w-12 text-right">Место</Table.Head>
-									<Table.Head>Программа</Table.Head>
-									<Table.Head class="text-right">Балл</Table.Head>
-									<Table.Head class="w-72">Почему</Table.Head>
-								</Table.Row>
-							</Table.Header>
-							<Table.Body>
-								{#each data.topPrograms as item, index (item.programId)}
-									<Table.Row data-program={item.programCode}>
-										<Table.Cell class="text-right text-muted-foreground">{index + 1}</Table.Cell>
-										<Table.Cell>
-											<a
-												href={indicatorsHref(item.programId)}
-												class="flex min-w-0 flex-col focus-ring"
-											>
-												<span class="font-medium underline-offset-2 hover:underline">
-													{item.programName}
-												</span>
-												<span class="text-xs text-muted-foreground">{item.programCode}</span>
-											</a>
-										</Table.Cell>
-										<Table.Cell class="text-right font-medium"
-											>{formatNumber(item.score)}</Table.Cell
-										>
-										<Table.Cell><ScoreBreakdown explanation={item.explanation} /></Table.Cell>
-									</Table.Row>
-								{/each}
-							</Table.Body>
-						</Table.Root>
-					</div>
+					<!-- Не таблица: четыре колонки, из которых последняя — три строки
+						объяснения, на половине экрана 1280 или 1440 уезжали за край с
+						прокруткой, о которой ничего не сообщало. Балл и объяснение —
+						это и есть ответ рейтинга, и прятать их нельзя. -->
+					<ul class="flex flex-col divide-y divide-border" data-slot="program-ranking">
+						{#each data.topPrograms as item, index (item.programId)}
+							<li class="flex flex-col gap-1.5 px-4 py-3" data-program={item.programCode}>
+								<div class="flex items-baseline gap-2">
+									<span class="w-4 shrink-0 text-right text-xs text-muted-foreground">
+										{index + 1}
+									</span>
+									<a href={indicatorsHref(item.programId)} class="flex min-w-0 flex-col focus-ring">
+										<span class="font-medium underline-offset-2 hover:underline">
+											{item.programName}
+										</span>
+										<span class="text-xs text-muted-foreground">{item.programCode}</span>
+									</a>
+									<span class="ml-auto flex shrink-0 items-baseline gap-1">
+										<span class="text-xs text-muted-foreground">Балл</span>
+										<span class="font-medium" data-slot="score-value">
+											{formatNumber(item.score)}
+										</span>
+									</span>
+								</div>
+								<div class="pl-6">
+									<ScoreBreakdown explanation={item.explanation} />
+								</div>
+							</li>
+						{/each}
+					</ul>
 				{/if}
 			</Section>
 

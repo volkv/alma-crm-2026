@@ -4,7 +4,7 @@
 	import { resolve } from '$app/paths';
 	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 	import * as Alert from '$lib/components/ui/alert/index.js';
-	import FieldInput from '$lib/components/form/field-input.svelte';
+	import FieldDate from '$lib/components/form/field-date.svelte';
 	import FieldSelect, { type FieldOption } from '$lib/components/form/field-select.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FileInput from '$lib/components/form/file-input.svelte';
@@ -119,6 +119,9 @@
 				bind:value={mode}
 				required
 			/>
+		</div>
+
+		<div class="grid gap-4 sm:grid-cols-3">
 			<FieldSelect
 				name="periodKind"
 				label="Вид периода"
@@ -126,16 +129,14 @@
 				bind:value={periodKind}
 				required
 			/>
-			<div class="grid grid-cols-2 gap-3">
-				<FieldInput
-					name="periodStart"
-					label="Период с"
-					type="date"
-					bind:value={periodStart}
-					required
-				/>
-				<FieldInput name="periodEnd" label="по" type="date" bind:value={periodEnd} required />
-			</div>
+			<FieldDate
+				name="periodStart"
+				label="Период с"
+				max={periodEnd}
+				bind:value={periodStart}
+				required
+			/>
+			<FieldDate name="periodEnd" label="по" min={periodStart} bind:value={periodEnd} required />
 		</div>
 
 		<FieldTextarea

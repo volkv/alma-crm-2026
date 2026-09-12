@@ -1,3 +1,4 @@
+import type { Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 
 /**
@@ -133,3 +134,81 @@ test('на узком экране плитки становятся в две �
 
 	expect(overflow).toBe(true);
 });
+
+/**
+ * Ширины, на которых меряется верхушка рейтинга: телефон, два размера ноутбука
+ * и широкий монитор. 1280 и 1440 названы отдельно потому, что именно на них
+ * блок делит страницу с соседним и места остаётся меньше всего.
+ */
+const RANKING_WIDTHS = [390, 1280, 1440, 1920] as const;
+
+/**
+ * Где лежат балл и объяснение относительно рамки блока и есть ли под ними
+ * необозначенная прокрутка.
+ *
+ * Меряется в браузере, а не `boundingBox()`: `boundingBox()` отдаёт положение
+ * элемента, даже когда его увезли за край прокручиваемой области, и «видно»
+ * от «уехало» так не отличить.
+ */
+async function measureRanking(page: Page) {
+	return await page.evaluate(() => {
+		const row = document.querySelector('[data-program]');
+
+		if (row === null) {
+			throw new Error('В верхушке рейтинга нет ни одной программы');
+		}
+
+		const frame = row.closest('[data-slot="home-section"]');
+
+		if (frame === null) {
+			throw new Error('Верхушка рейтинга лежит вне блока сводки');
+		}
+
+		const score = row.querySelector('[data-slot="score-value"]');
+		const breakdown = row.querySelector('[data-slot="score-breakdown"]');
+
+		if (score === null || breakdown === null) {
+			throw new Error('В строке рейтинга нет балла или объяснения');
+		}
+
+		/** Сколько пикселей строки спрятано за краем прокрутки внутри блока. */
+		let hidden = 0;
+
+		for (
+			let node: Element | null = row;
+			node !== null && node !== frame;
+			node = node.parentElement
+		) {
+			hidden = Math.max(hidden, node.scrollWidth - node.clientWidth);
+		}
+
+		const box = (element: Element) => {
+			const rect = element.getBoundingClientRect();
+
+			return { left: rect.left, right: rect.right, width: rect.width };
+		};
+
+		return { frame: box(frame), score: box(score), breakdown: box(breakdown), hidden };
+	});
+}
+
+// Проверка на каждую ширину отдельная: одна на все четыре останавливалась бы на
+// первой же и молчала о том, что с остальными.
+for (const width of RANKING_WIDTHS) {
+	test(`балл и объяснение рейтинга видны целиком на ширине ${width}`, async ({ page }) => {
+		await page.setViewportSize({ width, height: 900 });
+		await page.goto(`/data/dashboard?period=${PERIOD_KEY}`);
+		await expect(page.locator('[data-program]').first()).toBeVisible();
+
+		const { frame, score, breakdown, hidden } = await measureRanking(page);
+
+		// Допуск в пиксель: рамка и содержимое считаются с дробями.
+		expect(hidden, 'скрытая прокрутка в блоке рейтинга').toBeLessThanOrEqual(1);
+		expect(score.width, 'балл схлопнут').toBeGreaterThan(0);
+		expect(breakdown.width, 'объяснение схлопнуто').toBeGreaterThan(0);
+		expect(score.left, 'балл левее рамки').toBeGreaterThanOrEqual(frame.left - 1);
+		expect(score.right, 'балл правее рамки').toBeLessThanOrEqual(frame.right + 1);
+		expect(breakdown.left, 'объяснение левее рамки').toBeGreaterThanOrEqual(frame.left - 1);
+		expect(breakdown.right, 'объяснение правее рамки').toBeLessThanOrEqual(frame.right + 1);
+	});
+}

@@ -1,7 +1,19 @@
 <script lang="ts">
-	import type { HTMLInputTypeAttribute } from 'svelte/elements';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import FormField from './form-field.svelte';
+
+	/**
+	 * Виды ввода, которые браузер рисует одинаковой однострочной клеткой и
+	 * отличает только клавиатурой и проверкой: их и принимает поле.
+	 *
+	 * Перечисление здесь закрытое, а не `Exclude<HTMLInputTypeAttribute, …>`:
+	 * тип атрибута из `svelte/elements` заканчивается на `(string & {})` ради
+	 * подсказок редактора, и вычитание из него ничего не запрещает — `date`,
+	 * `file`, `checkbox` и `range` проезжали в него как обычные строки. У даты,
+	 * файла и выбора свои контролы (`FieldDate`, `FileInput`, `FieldSelect`):
+	 * нативные браузер рисует сам, своими надписями по-английски.
+	 */
+	type FieldInputType = 'text' | 'email' | 'tel' | 'url' | 'search' | 'number' | 'password';
 
 	/**
 	 * A single-line field: label, control, description, error. Bind it straight
@@ -22,12 +34,7 @@
 		description?: string;
 		errors?: string[];
 		required?: boolean;
-		/**
-		 * `file` and `date` are not supported here: the browser draws both of
-		 * them itself, in its own language, so each has its own component —
-		 * `FileInput` and `FieldDate`.
-		 */
-		type?: Exclude<HTMLInputTypeAttribute, 'file' | 'date'>;
+		type?: FieldInputType;
 		placeholder?: string;
 		value?: string;
 	} = $props();

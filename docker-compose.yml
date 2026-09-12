@@ -81,6 +81,12 @@ services:
       # Read by the seed script, never by the server. The value below is good
       # enough for a local stack; a public stand passes its own.
       SEED_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-Demo-Password-2026!}
+      # The staff administrator — the one account that is not part of the demo.
+      # Deliberately without a default: an empty value is the same as unset for
+      # the seed, so the stand simply has no such account until someone passes
+      # a password (`SEED_STAFF_ADMIN_PASSWORD='…' docker compose up --build`).
+      # A default here would ship a known password to every public stand.
+      SEED_STAFF_ADMIN_PASSWORD: ${SEED_STAFF_ADMIN_PASSWORD:-}
       # The local stack is the demo stand, so the Moodle stand-in under /mock-lms
       # is on: the customer's real LMS is not reachable from outside, and the
       # exchange has nothing to be shown against without it. `MOCK_LMS=false

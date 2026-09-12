@@ -26,6 +26,13 @@ const FIXTURE = new URL('./fixtures/stats-sample.csv', import.meta.url).pathname
 /** Метка прогона: делает название файла уникальным в общей базе. */
 const TAG = crypto.randomUUID().slice(0, 8);
 
+/** День так, как его пишут в поле даты: `2023-09-01` → `01.09.2023`. */
+function ruDay(iso: string): string {
+	const [year, month, day] = iso.split('-');
+
+	return `${day}.${month}.${year}`;
+}
+
 /** Насколько документ шире экрана. Ноль и меньше — помещается. */
 async function documentOverflow(page: Page): Promise<number> {
 	return page.evaluate(() => {
@@ -48,8 +55,12 @@ test('карточка загруженного снимка держит шир
 		mimeType: 'text/csv',
 		buffer: await readFile(FIXTURE)
 	});
-	await page.locator('#periodStart').fill(UPLOAD_PERIOD.start);
-	await page.locator('#periodEnd').fill(UPLOAD_PERIOD.end);
+	// Поле даты — своё (`DateField`): человек пишет `01.09.2023`, а форме уходит
+	// `2023-09-01` скрытым полем.
+	await page.locator('#periodStart').fill(ruDay(UPLOAD_PERIOD.start));
+	await page.locator('#periodEnd').fill(ruDay(UPLOAD_PERIOD.end));
+	await expect(page.locator('input[name="periodStart"]')).toHaveValue(UPLOAD_PERIOD.start);
+	await expect(page.locator('input[name="periodEnd"]')).toHaveValue(UPLOAD_PERIOD.end);
 	await page.getByRole('button', { name: 'Дальше: сопоставление колонок' }).click();
 	await expect(page.getByRole('heading', { name: 'Сопоставление колонок' })).toBeVisible();
 
