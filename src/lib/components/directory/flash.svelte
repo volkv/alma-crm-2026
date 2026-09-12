@@ -1,5 +1,6 @@
 <script lang="ts">
-	import { replaceState } from '$app/navigation';
+	import { tick } from 'svelte';
+	import { afterNavigate, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import { toast } from 'svelte-sonner';
 	import { withoutParam } from './query';
@@ -15,22 +16,39 @@
 	 *
 	 * Коды закрытые: текст берётся из словаря страницы, а не из адреса, чтобы
 	 * подсунутой ссылкой нельзя было показать человеку произвольную фразу.
+	 *
+	 * Момент — `afterNavigate`, а не эффект. Форма без `use:enhance` уходит
+	 * браузером, и адрес с `?done` приходит обычной загрузкой страницы; эффект
+	 * на ней срабатывает посреди гидратации, когда маршрутизатора ещё нет, и
+	 * `replaceState` падает у него внутри. Исключение обрывает гидратацию
+	 * целиком: разметка на месте, а страница уже не отвечает ни на один
+	 * щелчок. `afterNavigate` одинаково срабатывает на обоих путях — и на
+	 * загрузке, и на переходе внутри приложения.
 	 */
 	let { messages }: { messages: Record<string, string> } = $props();
 
-	$effect(() => {
+	afterNavigate(async () => {
 		const code = page.url.searchParams.get('done');
 
 		if (code === null) {
 			return;
 		}
 
-		replaceState(withoutParam(page.url, 'done'), {});
-
+		// Адрес считается до ожидания: после него `page.url` — уже чужой, если
+		// человек успел уйти на другую страницу.
+		const cleaned = withoutParam(page.url, 'done');
 		const text = messages[code];
 
 		if (text !== undefined) {
 			toast.success(text);
 		}
+
+		// Приход страницы маршрутизатор объявляет на строку раньше, чем
+		// помечает себя готовым, а `replaceState` до этой отметки отказывает.
+		// Между объявлением и отметкой он ничего не ждёт, поэтому ближайший
+		// такт — уже за ней.
+		await tick();
+
+		replaceState(cleaned, {});
 	});
 </script>
