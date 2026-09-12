@@ -190,6 +190,16 @@ export const updateAffiliationSchema = createAffiliationSchema.extend({
 	id: id('Некорректный идентификатор роли')
 });
 
+/**
+ * Закрытие периода полномочий. Роль не удаляют: человек действительно занимал
+ * должность, и взаимодействия, где он был контактом, обязаны это помнить.
+ */
+export const endAffiliationSchema = z.object({
+	id: id('Некорректный идентификатор роли'),
+	/** Последний день полномочий; он ещё входит в период. */
+	validTo: isoDate('Укажите дату окончания полномочий')
+});
+
 const programFields = {
 	/** Код программы в номенклатуре оператора; по нему сверяют планы и отчёты. */
 	code: requiredText(50, 'Укажите код программы'),
@@ -239,6 +249,64 @@ export const catalogListQuerySchema = z.object({
 	...pageQuerySchema.shape
 });
 
+/**
+ * Сортировка списка. Направление транспорт уже разобрал (`-name` в адресе), а
+ * колонку выбирают из закрытого списка: имя столбца из запроса в `order by`
+ * подставлять нельзя.
+ */
+const sortDirection = z.enum(['asc', 'desc']).catch('asc');
+
+/**
+ * Разбор строки запроса — это чтение пользовательского ввода: `kind=чушь` в
+ * адресе не должен ронять страницу, он просто не фильтр. Поэтому у каждого
+ * поля есть `catch`, а не `parse`, который бросает.
+ */
+export const ORGANIZATION_SORT_KEYS = [
+	'shortName',
+	'kind',
+	'inn',
+	'region',
+	'siteCount',
+	'isActive'
+] as const;
+
+export const organizationDirectoryQuerySchema = z.object({
+	kind: z.enum(ORGANIZATION_KINDS).nullable().catch(null),
+	educationLevel: z.enum(EDUCATION_LEVELS).nullable().catch(null),
+	q: searchQuery,
+	sortBy: z.enum(ORGANIZATION_SORT_KEYS).catch('shortName'),
+	sortDirection,
+	...pageQuerySchema.shape
+});
+
+export const PEOPLE_SORT_KEYS = ['lastName', 'firstName'] as const;
+
+export const peopleListQuerySchema = z.object({
+	/** Показать только тех, у кого есть роль в этой организации. */
+	organizationId: optionalId('Некорректный идентификатор организации'),
+	q: searchQuery,
+	sortBy: z.enum(PEOPLE_SORT_KEYS).catch('lastName'),
+	sortDirection,
+	...pageQuerySchema.shape
+});
+
+export const PROGRAM_SORT_KEYS = ['code', 'name', 'level', 'status'] as const;
+
+export const programDirectoryQuerySchema = z.object({
+	level: z.enum(PROGRAM_LEVELS).nullable().catch(null),
+	sortBy: z.enum(PROGRAM_SORT_KEYS).catch('code'),
+	sortDirection,
+	...catalogListQuerySchema.shape
+});
+
+export const PRODUCT_SORT_KEYS = ['code', 'name', 'status'] as const;
+
+export const productDirectoryQuerySchema = z.object({
+	sortBy: z.enum(PRODUCT_SORT_KEYS).catch('code'),
+	sortDirection,
+	...catalogListQuerySchema.shape
+});
+
 export type CreateOrganizationInput = z.output<typeof createOrganizationSchema>;
 export type UpdateOrganizationInput = z.output<typeof updateOrganizationSchema>;
 export type OrganizationListQuery = z.output<typeof organizationListQuerySchema>;
@@ -248,12 +316,17 @@ export type CreatePersonInput = z.output<typeof createPersonSchema>;
 export type UpdatePersonInput = z.output<typeof updatePersonSchema>;
 export type CreateAffiliationInput = z.output<typeof createAffiliationSchema>;
 export type UpdateAffiliationInput = z.output<typeof updateAffiliationSchema>;
+export type EndAffiliationInput = z.output<typeof endAffiliationSchema>;
 export type CreateProgramInput = z.output<typeof createProgramSchema>;
 export type UpdateProgramInput = z.output<typeof updateProgramSchema>;
 export type CreateProgramVersionInput = z.output<typeof createProgramVersionSchema>;
 export type CreateProductInput = z.output<typeof createProductSchema>;
 export type UpdateProductInput = z.output<typeof updateProductSchema>;
 export type CatalogListQuery = z.output<typeof catalogListQuerySchema>;
+export type OrganizationDirectoryQuery = z.output<typeof organizationDirectoryQuerySchema>;
+export type PeopleListQuery = z.output<typeof peopleListQuerySchema>;
+export type ProgramDirectoryQuery = z.output<typeof programDirectoryQuerySchema>;
+export type ProductDirectoryQuery = z.output<typeof productDirectoryQuerySchema>;
 
 /**
  * Представления, которые сервер отдаёт наружу. Строки таблиц Drizzle за
@@ -339,4 +412,51 @@ export type ProductView = {
 export type LookupOption = {
 	id: string;
 	label: string;
+};
+
+/** Версия образовательной программы: что изменилось и с какого дня действует. */
+export type ProgramVersionView = {
+	id: string;
+	programId: string;
+	version: number;
+	summary: string;
+	effectiveFrom: string;
+	createdAt: Date;
+};
+
+/** Строка списка программ: программа и номер её последней версии. */
+export type ProgramListItem = {
+	program: ProgramView;
+	latestVersion: number | null;
+};
+
+/** Программа вместе с историей версий — то, что показывает её карточка. */
+export type ProgramDetail = {
+	program: ProgramView;
+	versions: ProgramVersionView[];
+};
+
+/** Продукт вместе с поставщиком: карточка и список показывают его названием. */
+export type ProductDetail = {
+	product: ProductView;
+	vendor: LookupOption | null;
+};
+
+/** Строка списка организаций: сама организация и число её площадок. */
+export type OrganizationRow = {
+	organization: OrganizationView;
+	siteCount: number;
+};
+
+/** Строка списка людей: человек и организации, где у него есть роль. */
+export type PersonListItem = {
+	person: PersonView;
+	organizations: LookupOption[];
+};
+
+/** Роль человека вместе с названиями организации и площадки. */
+export type PersonAffiliationView = {
+	affiliation: AffiliationView;
+	organization: LookupOption;
+	site: LookupOption | null;
 };

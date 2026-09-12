@@ -1,0 +1,42 @@
+import { readTableQuery } from '$lib/components/data-table/query';
+import { peopleListQuerySchema } from '$lib/contracts/directory';
+import { actorFromEvent } from '$lib/server/actor';
+import { toPageError } from '$lib/server/directory/page';
+import { listOrganizationOptions, listPeople } from '$lib/server/directory/read';
+import { can } from '$lib/server/rbac';
+import type { PageServerLoad } from './$types';
+
+/**
+ * Список людей. Поиск идёт и по ФИО, и по названию организации: человека чаще
+ * ищут «кто у нас в этом вузе», чем по фамилии, которую надо ещё вспомнить.
+ */
+export const load: PageServerLoad = async (event) => {
+	const table = readTableQuery(event.url);
+	const query = peopleListQuerySchema.parse({
+		organizationId: event.url.searchParams.get('organization') ?? undefined,
+		q: table.search,
+		sortBy: table.sortBy ?? undefined,
+		sortDirection: table.sortDirection,
+		page: table.page,
+		pageSize: table.size
+	});
+
+	const ctx = actorFromEvent(event);
+
+	try {
+		const [result, organizations] = await Promise.all([
+			listPeople(ctx, query),
+			listOrganizationOptions(ctx)
+		]);
+
+		return {
+			rows: result.items,
+			total: result.total,
+			organizations,
+			filtered: query.organizationId !== null || query.q !== null,
+			canWrite: can(ctx, 'people.write')
+		};
+	} catch (error) {
+		toPageError(error);
+	}
+};

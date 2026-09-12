@@ -6,26 +6,62 @@
  * пока все роли видят всё: правило, которое соблюдают не везде, — это не
  * правило, а совпадение.
  */
-import { and, asc, count, eq, ilike, or, type SQL } from 'drizzle-orm';
+import {
+	and,
+	asc,
+	count,
+	desc,
+	eq,
+	exists,
+	ilike,
+	inArray,
+	max,
+	notExists,
+	or,
+	sql,
+	type SQL
+} from 'drizzle-orm';
+import type { PgColumn } from 'drizzle-orm/pg-core';
 import type { PageResult } from '$lib/contracts/common';
 import type {
 	AffiliationView,
 	CatalogListQuery,
 	LookupOption,
+	OrganizationDirectoryQuery,
 	OrganizationListQuery,
+	OrganizationRow,
 	OrganizationView,
+	PeopleListQuery,
+	PersonAffiliationView,
+	PersonListItem,
+	PersonView,
+	ProductDetail,
+	ProductDirectoryQuery,
 	ProductView,
+	ProgramDetail,
+	ProgramDirectoryQuery,
+	ProgramListItem,
+	ProgramVersionView,
 	ProgramView,
 	SiteView
 } from '$lib/contracts/directory';
 import type { ActorContext } from '../actor';
 import { getDb } from '../db';
-import { affiliations, organizations, people, products, programs, sites } from '../db/schema';
+import {
+	affiliations,
+	interactionParties,
+	organizations,
+	people,
+	products,
+	programs,
+	programVersions,
+	sites
+} from '../db/schema';
 import { NotFoundError } from '../errors';
 import { toPersonView } from '../people/serialize';
-import { requirePermission, scopeFilter } from '../rbac';
+import { can, requirePermission, scopeFilter } from '../rbac';
 
-function toOrganizationView(row: typeof organizations.$inferSelect): OrganizationView {
+export function toOrganizationView(row: typeof organizations.$inferSelect): OrganizationView {
 	return {
 		id: row.id,
 		kind: row.kind,
@@ -290,4 +326,584 @@ export async function lookupOrganizations(
 		.limit(20);
 
 	return rows;
+}
+
+/**
+ * Списки разделов интерфейса.
+ *
+ * Они отличаются от выборок API тем, что умеют сортировку по колонке и
+ * возвращают то, что рисует таблица целиком — например, число площадок рядом с
+ * организацией. Схемы API при этом не меняются: у публичного контракта свой
+ * набор параметров и свой темп изменений.
+ */
+
+/** Колонка сортировки выбирается из закрытого словаря: имя из адреса в `order by` не попадает. */
+function ordered(column: PgColumn | SQL, direction: 'asc' | 'desc'): SQL {
+	return direction === 'desc' ? desc(column) : asc(column);
+}
+
+/**
+ * Число площадок считается соединением с группировкой, а не подзапросом в
+ * `sql`: в подзапросе Drizzle выводит имена столбцов без имени таблицы, и
+ * `sites.organization_id = id` попадает на `sites.id`, а не на организацию —
+ * запрос при этом остаётся синтаксически верным и молча возвращает нули.
+ */
+const siteCountExpression = count(sites.id);
+
+const ORGANIZATION_SORT_COLUMNS = {
+	shortName: organizations.shortName,
+	kind: organizations.kind,
+	inn: organizations.inn,
+	region: organizations.region,
+	isActive: organizations.isActive,
+	siteCount: siteCountExpression
+} as const;
+
+export async function listOrganizationRows(
+	ctx: ActorContext,
+	query: OrganizationDirectoryQuery
+): Promise<PageResult<OrganizationRow>> {
+	requirePermission(ctx, 'organizations.read');
+
+	const conditions: SQL[] = [scopeFilter(ctx, organizations.id)];
+
+	if (query.kind !== null) {
+		conditions.push(eq(organizations.kind, query.kind));
+	}
+
+	if (query.educationLevel !== null) {
+		conditions.push(eq(organizations.educationLevel, query.educationLevel));
+	}
+
+	if (query.q !== null) {
+		const pattern = `%${query.q}%`;
+		const search = or(
+			ilike(organizations.legalName, pattern),
+			ilike(organizations.shortName, pattern),
+			ilike(organizations.inn, pattern),
+			ilike(organizations.region, pattern)
+		);
+		if (search !== undefined) {
+			conditions.push(search);
+		}
+	}
+
+	const where = and(...conditions);
+	const db = getDb();
+
+	const [rows, totals] = await Promise.all([
+		db
+			.select({ organization: organizations, siteCount: siteCountExpression })
+			.from(organizations)
+			.leftJoin(sites, eq(sites.organizationId, organizations.id))
+			.where(where)
+			.groupBy(organizations.id)
+			// Второй ключ сортировки — первичный: без него строки с одинаковым
+			// значением в колонке могут поменяться местами между страницами.
+			.orderBy(
+				ordered(ORGANIZATION_SORT_COLUMNS[query.sortBy], query.sortDirection),
+				asc(organizations.id)
+			)
+			.limit(query.pageSize)
+			.offset((query.page - 1) * query.pageSize),
+		db.select({ value: count() }).from(organizations).where(where)
+	]);
+
+	return {
+		items: rows.map((row) => ({
+			organization: toOrganizationView(row.organization),
+			siteCount: row.siteCount
+		})),
+		total: totals[0]?.value ?? 0,
+		page: query.page,
+		pageSize: query.pageSize
+	};
+}
+
+/**
+ * Организация с таким ИНН в области доступа вызывающего — по ней форма строит
+ * ссылку на найденный дубль. Вне области доступа ответ пустой: сам факт занятого
+ * ИНН сообщает сервис записи, а вот чужую организацию по нему не показывают.
+ */
+export async function findOrganizationByInn(
+	ctx: ActorContext,
+	inn: string
+): Promise<LookupOption | null> {
+	requirePermission(ctx, 'organizations.read');
+
+	const [row] = await getDb()
+		.select({ id: organizations.id, label: organizations.shortName })
+		.from(organizations)
+		.where(and(eq(organizations.inn, inn), scopeFilter(ctx, organizations.id)))
+		.limit(1);
+
+	return row ?? null;
+}
+
+export async function getSite(ctx: ActorContext, id: string): Promise<SiteView> {
+	requirePermission(ctx, 'organizations.read');
+
+	const [row] = await getDb()
+		.select({
+			id: sites.id,
+			organizationId: sites.organizationId,
+			kind: sites.kind,
+			name: sites.name,
+			address: sites.address,
+			region: sites.region
+		})
+		.from(sites)
+		.where(and(eq(sites.id, id), scopeFilter(ctx, sites.organizationId)))
+		.limit(1);
+
+	if (row === undefined) {
+		throw new NotFoundError('Площадка не найдена');
+	}
+
+	return row;
+}
+
+/** Сколько взаимодействий идёт с организацией; `null` — если раздел закрыт правами. */
+export async function countOrganizationInteractions(
+	ctx: ActorContext,
+	organizationId: string
+): Promise<number | null> {
+	if (!can(ctx, 'interactions.read')) {
+		return null;
+	}
+
+	const [row] = await getDb()
+		.select({ value: count() })
+		.from(interactionParties)
+		.where(
+			and(
+				eq(interactionParties.organizationId, organizationId),
+				scopeFilter(ctx, interactionParties.organizationId)
+			)
+		);
+
+	return row?.value ?? 0;
+}
+
+/**
+ * Человек виден, если хотя бы одна его роль попадает в область доступа — или
+ * ролей у него пока нет. Справочник людей общий на оператора, но имена
+ * сотрудников чужого вуза — это уже сведения о чужой организации.
+ */
+function personInScope(ctx: ActorContext): SQL {
+	if (ctx.scope.kind === 'all') {
+		return sql`true`;
+	}
+
+	const db = getDb();
+	const anyRole = db
+		.select({ one: sql`1` })
+		.from(affiliations)
+		.where(eq(affiliations.personId, people.id));
+	const roleInScope = db
+		.select({ one: sql`1` })
+		.from(affiliations)
+		.where(
+			and(eq(affiliations.personId, people.id), scopeFilter(ctx, affiliations.organizationId))
+		);
+
+	return sql`(${notExists(anyRole)} or ${exists(roleInScope)})`;
+}
+
+/** ФИО одной строкой — по нему ищут человека в списке. */
+const fullNameExpression = sql<string>`trim(
+	${people.lastName} || ' ' || ${people.firstName} || ' ' || coalesce(${people.middleName}, '')
+)`;
+
+const PEOPLE_SORT_COLUMNS = {
+	lastName: people.lastName,
+	firstName: people.firstName
+} as const;
+
+export async function getPerson(ctx: ActorContext, id: string): Promise<PersonView> {
+	requirePermission(ctx, 'people.read');
+
+	const [row] = await getDb()
+		.select()
+		.from(people)
+		.where(and(eq(people.id, id), personInScope(ctx)))
+		.limit(1);
+
+	if (row === undefined) {
+		throw new NotFoundError('Человек не найден');
+	}
+
+	return toPersonView(ctx, row);
+}
+
+export async function listPeople(
+	ctx: ActorContext,
+	query: PeopleListQuery
+): Promise<PageResult<PersonListItem>> {
+	requirePermission(ctx, 'people.read');
+
+	const conditions: SQL[] = [personInScope(ctx)];
+
+	const db = getDb();
+
+	if (query.organizationId !== null) {
+		conditions.push(
+			exists(
+				db
+					.select({ one: sql`1` })
+					.from(affiliations)
+					.where(
+						and(
+							eq(affiliations.personId, people.id),
+							eq(affiliations.organizationId, query.organizationId),
+							scopeFilter(ctx, affiliations.organizationId)
+						)
+					)
+			)
+		);
+	}
+
+	if (query.q !== null) {
+		const pattern = `%${query.q}%`;
+		// Поиск идёт и по названию организации: человека чаще ищут «кто у нас в
+		// Бауманке», чем по фамилии, которую ещё надо вспомнить.
+		const byOrganization = exists(
+			db
+				.select({ one: sql`1` })
+				.from(affiliations)
+				.innerJoin(organizations, eq(organizations.id, affiliations.organizationId))
+				.where(
+					and(
+						eq(affiliations.personId, people.id),
+						scopeFilter(ctx, affiliations.organizationId),
+						or(ilike(organizations.shortName, pattern), ilike(organizations.legalName, pattern))
+					)
+				)
+		);
+
+		conditions.push(sql`(${fullNameExpression} ilike ${pattern} or ${byOrganization})`);
+	}
+
+	const where = and(...conditions);
+
+	const [rows, totals] = await Promise.all([
+		db
+			.select()
+			.from(people)
+			.where(where)
+			.orderBy(ordered(PEOPLE_SORT_COLUMNS[query.sortBy], query.sortDirection), asc(people.id))
+			.limit(query.pageSize)
+			.offset((query.page - 1) * query.pageSize),
+		db.select({ value: count() }).from(people).where(where)
+	]);
+
+	const ids = rows.map((row) => row.id);
+	const links =
+		ids.length === 0
+			? []
+			: await db
+					.selectDistinct({
+						personId: affiliations.personId,
+						id: organizations.id,
+						label: organizations.shortName
+					})
+					.from(affiliations)
+					.innerJoin(organizations, eq(organizations.id, affiliations.organizationId))
+					.where(
+						and(inArray(affiliations.personId, ids), scopeFilter(ctx, affiliations.organizationId))
+					)
+					.orderBy(asc(organizations.shortName));
+
+	const byPerson = new Map<string, LookupOption[]>();
+	for (const link of links) {
+		const list = byPerson.get(link.personId) ?? [];
+		list.push({ id: link.id, label: link.label });
+		byPerson.set(link.personId, list);
+	}
+
+	return {
+		items: rows.map((row) => ({
+			person: toPersonView(ctx, row),
+			organizations: byPerson.get(row.id) ?? []
+		})),
+		total: totals[0]?.value ?? 0,
+		page: query.page,
+		pageSize: query.pageSize
+	};
+}
+
+/** Роли одного человека — вместе с названиями организации и площадки. */
+export async function listPersonAffiliations(
+	ctx: ActorContext,
+	personId: string
+): Promise<PersonAffiliationView[]> {
+	requirePermission(ctx, 'people.read');
+
+	const rows = await getDb()
+		.select({ affiliation: affiliations, person: people, organization: organizations, site: sites })
+		.from(affiliations)
+		.innerJoin(people, eq(people.id, affiliations.personId))
+		.innerJoin(organizations, eq(organizations.id, affiliations.organizationId))
+		.leftJoin(sites, eq(sites.id, affiliations.siteId))
+		.where(and(eq(affiliations.personId, personId), scopeFilter(ctx, affiliations.organizationId)))
+		.orderBy(desc(affiliations.validFrom), asc(organizations.shortName));
+
+	return rows.map(({ affiliation, person, organization, site }) => ({
+		affiliation: {
+			id: affiliation.id,
+			person: toPersonView(ctx, person),
+			organizationId: affiliation.organizationId,
+			siteId: affiliation.siteId,
+			position: affiliation.position,
+			roleKind: affiliation.roleKind,
+			isPrimary: affiliation.isPrimary,
+			validFrom: affiliation.validFrom,
+			validTo: affiliation.validTo,
+			channel: affiliation.channel
+		},
+		organization: { id: organization.id, label: organization.shortName },
+		site: site === null ? null : { id: site.id, label: site.name }
+	}));
+}
+
+const PROGRAM_SORT_COLUMNS = {
+	code: programs.code,
+	name: programs.name,
+	level: programs.level,
+	status: programs.status
+} as const;
+
+/**
+ * Номер последней версии программы: в списке он важнее, чем вся их история.
+ * Считается соединением с группировкой по той же причине, что и число
+ * площадок, — Drizzle не квалифицирует столбцы в подзапросе внутри `sql`.
+ */
+const latestVersionExpression = max(programVersions.version);
+
+export async function listProgramRows(
+	ctx: ActorContext,
+	query: ProgramDirectoryQuery
+): Promise<PageResult<ProgramListItem>> {
+	requirePermission(ctx, 'programs.read');
+
+	const conditions: SQL[] = [];
+
+	if (query.status !== null) {
+		conditions.push(eq(programs.status, query.status));
+	}
+
+	if (query.level !== null) {
+		conditions.push(eq(programs.level, query.level));
+	}
+
+	if (query.q !== null) {
+		const pattern = `%${query.q}%`;
+		const search = or(
+			ilike(programs.name, pattern),
+			ilike(programs.code, pattern),
+			ilike(programs.directionCode, pattern)
+		);
+		if (search !== undefined) {
+			conditions.push(search);
+		}
+	}
+
+	const where = conditions.length === 0 ? undefined : and(...conditions);
+	const db = getDb();
+
+	const [rows, totals] = await Promise.all([
+		db
+			.select({
+				id: programs.id,
+				code: programs.code,
+				name: programs.name,
+				level: programs.level,
+				directionCode: programs.directionCode,
+				status: programs.status,
+				latestVersion: latestVersionExpression
+			})
+			.from(programs)
+			.leftJoin(programVersions, eq(programVersions.programId, programs.id))
+			.where(where)
+			.groupBy(programs.id)
+			.orderBy(ordered(PROGRAM_SORT_COLUMNS[query.sortBy], query.sortDirection), asc(programs.id))
+			.limit(query.pageSize)
+			.offset((query.page - 1) * query.pageSize),
+		db.select({ value: count() }).from(programs).where(where)
+	]);
+
+	return {
+		items: rows.map(({ latestVersion, ...program }) => ({ program, latestVersion })),
+		total: totals[0]?.value ?? 0,
+		page: query.page,
+		pageSize: query.pageSize
+	};
+}
+
+function toProgramVersionView(row: typeof programVersions.$inferSelect): ProgramVersionView {
+	return {
+		id: row.id,
+		programId: row.programId,
+		version: row.version,
+		summary: row.summary,
+		effectiveFrom: row.effectiveFrom,
+		createdAt: row.createdAt
+	};
+}
+
+export async function getProgram(ctx: ActorContext, id: string): Promise<ProgramDetail> {
+	requirePermission(ctx, 'programs.read');
+
+	const db = getDb();
+
+	const [program] = await db
+		.select({
+			id: programs.id,
+			code: programs.code,
+			name: programs.name,
+			level: programs.level,
+			directionCode: programs.directionCode,
+			status: programs.status
+		})
+		.from(programs)
+		.where(eq(programs.id, id))
+		.limit(1);
+
+	if (program === undefined) {
+		throw new NotFoundError('Программа не найдена');
+	}
+
+	const versions = await db
+		.select()
+		.from(programVersions)
+		.where(eq(programVersions.programId, id))
+		.orderBy(desc(programVersions.version));
+
+	return { program, versions: versions.map(toProgramVersionView) };
+}
+
+const PRODUCT_SORT_COLUMNS = {
+	code: products.code,
+	name: products.name,
+	status: products.status
+} as const;
+
+export async function listProductRows(
+	ctx: ActorContext,
+	query: ProductDirectoryQuery
+): Promise<PageResult<ProductDetail>> {
+	requirePermission(ctx, 'products.read');
+
+	const conditions: SQL[] = [];
+
+	if (query.status !== null) {
+		conditions.push(eq(products.status, query.status));
+	}
+
+	if (query.q !== null) {
+		const pattern = `%${query.q}%`;
+		const search = or(ilike(products.name, pattern), ilike(products.code, pattern));
+		if (search !== undefined) {
+			conditions.push(search);
+		}
+	}
+
+	const where = conditions.length === 0 ? undefined : and(...conditions);
+	const db = getDb();
+
+	const [rows, totals] = await Promise.all([
+		db
+			.select({
+				id: products.id,
+				code: products.code,
+				name: products.name,
+				vendorOrganizationId: products.vendorOrganizationId,
+				description: products.description,
+				status: products.status,
+				vendorName: organizations.shortName
+			})
+			.from(products)
+			.leftJoin(organizations, eq(organizations.id, products.vendorOrganizationId))
+			.where(where)
+			.orderBy(ordered(PRODUCT_SORT_COLUMNS[query.sortBy], query.sortDirection), asc(products.id))
+			.limit(query.pageSize)
+			.offset((query.page - 1) * query.pageSize),
+		db.select({ value: count() }).from(products).where(where)
+	]);
+
+	return {
+		items: rows.map(({ vendorName, ...product }) => ({
+			product,
+			vendor:
+				product.vendorOrganizationId === null || vendorName === null
+					? null
+					: { id: product.vendorOrganizationId, label: vendorName }
+		})),
+		total: totals[0]?.value ?? 0,
+		page: query.page,
+		pageSize: query.pageSize
+	};
+}
+
+export async function getProduct(ctx: ActorContext, id: string): Promise<ProductDetail> {
+	requirePermission(ctx, 'products.read');
+
+	const [row] = await getDb()
+		.select({
+			id: products.id,
+			code: products.code,
+			name: products.name,
+			vendorOrganizationId: products.vendorOrganizationId,
+			description: products.description,
+			status: products.status,
+			vendorName: organizations.shortName
+		})
+		.from(products)
+		.leftJoin(organizations, eq(organizations.id, products.vendorOrganizationId))
+		.where(eq(products.id, id))
+		.limit(1);
+
+	if (row === undefined) {
+		throw new NotFoundError('Продукт не найден');
+	}
+
+	const { vendorName, ...product } = row;
+
+	return {
+		product,
+		vendor:
+			product.vendorOrganizationId === null || vendorName === null
+				? null
+				: { id: product.vendorOrganizationId, label: vendorName }
+	};
+}
+
+/**
+ * Потолок выпадающего списка. Больше пятисот строк в `<select>` человек всё
+ * равно не разберёт — такой справочник пора искать, а не листать.
+ */
+const OPTIONS_LIMIT = 500;
+
+/** Действующие организации для выпадающего списка формы. */
+export async function listOrganizationOptions(ctx: ActorContext): Promise<LookupOption[]> {
+	requirePermission(ctx, 'organizations.read');
+
+	return getDb()
+		.select({ id: organizations.id, label: organizations.shortName })
+		.from(organizations)
+		.where(and(eq(organizations.isActive, true), scopeFilter(ctx, organizations.id)))
+		.orderBy(asc(organizations.shortName))
+		.limit(OPTIONS_LIMIT);
+}
+
+/** Люди для выпадающего списка формы; ФИО собирается на стороне базы. */
+export async function listPersonOptions(ctx: ActorContext): Promise<LookupOption[]> {
+	requirePermission(ctx, 'people.read');
+
+	return getDb()
+		.select({ id: people.id, label: fullNameExpression })
+		.from(people)
+		.where(personInScope(ctx))
+		.orderBy(asc(people.lastName), asc(people.firstName))
+		.limit(OPTIONS_LIMIT);
 }
