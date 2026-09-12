@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { count, eq, isNull } from 'drizzle-orm';
+import { count, eq, inArray, isNull } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isValidInn } from '$lib/validation/inn';
@@ -16,9 +16,12 @@ import {
 	interactions,
 	organizations,
 	people,
+	permissions,
 	products,
 	programs,
 	programVersions,
+	rolePermissions,
+	roles,
 	sites,
 	stageEntries,
 	stageEntryStatus,
@@ -27,11 +30,12 @@ import {
 	statSnapshots,
 	users
 } from '$lib/server/db/schema';
+import { DEFAULT_ROLES, PERMISSION_KEYS, type PermissionKey } from '$lib/server/rbac/permissions';
 import { DEMO_ROUTE } from '$lib/server/stages/demo-route';
 import { DIRECTORY_SEED_SIZES } from '../../../scripts/seed/directory';
 import { STATS_SEED_SIZES } from '../../../scripts/seed/stats';
 import { INTERACTION_SEED_SIZES } from '../../../scripts/seed/interactions';
-import { seedAll } from '../../../scripts/seed/run';
+import { main, seedAll, seedRolesOnly } from '../../../scripts/seed/run';
 import { DEMO_EMAILS, STAFF_ADMIN_EMAIL } from '../../../scripts/seed/users';
 import { startTestDatabase, type TestDatabase } from '../helpers/db';
 
@@ -538,5 +542,64 @@ describe('сид', () => {
 		expect(filled).toHaveLength(DIRECTORY_SEED_SIZES.organizations);
 		expect(filled.filter((inn) => !isValidInn(inn))).toStrictEqual([]);
 		expect(new Set(filled).size).toBe(filled.length);
+	});
+});
+
+describe('каталог прав', () => {
+	/** Право, которое проверка отбирает у базы: в коде его держат две роли из трёх. */
+	const REVOKED: PermissionKey = 'stats.import';
+
+	/** Сколько строк «роль — право» описано в коде: столько же обязано быть в базе. */
+	const GRANTS = DEFAULT_ROLES.reduce((total, role) => total + role.permissions.length, 0);
+
+	it('«--roles-only» возвращает отобранное право и не заливает ничего больше', async () => {
+		// Подготовка прогона каталог уже залила, поэтому право сначала отбирается:
+		// выдачи по нему уносит внешний ключ. Это тот же случай, что и релиз,
+		// добавивший право, — в базе его нет, а в коде есть.
+		await database.db.delete(permissions).where(eq(permissions.key, REVOKED));
+
+		await expect(countRows(permissions)).resolves.toBe(PERMISSION_KEYS.length - 1);
+
+		await seedRolesOnly();
+
+		await expect(countRows(permissions)).resolves.toBe(PERMISSION_KEYS.length);
+		await expect(countRows(roles)).resolves.toBe(DEFAULT_ROLES.length);
+		await expect(countRows(rolePermissions)).resolves.toBe(GRANTS);
+
+		const holders = await database.db
+			.select({ roleId: rolePermissions.roleId })
+			.from(rolePermissions)
+			.where(eq(rolePermissions.permissionKey, REVOKED))
+			.orderBy(rolePermissions.roleId);
+
+		expect(holders.map((row) => row.roleId)).toStrictEqual(
+			DEFAULT_ROLES.filter((role) => role.permissions.includes(REVOKED))
+				.map((role) => role.id)
+				.sort()
+		);
+
+		// Ни учётных записей сида, ни справочников: в базе остались ровно те
+		// пользователи, которых завела подготовка прогона, — по одному на роль.
+		await expect(countRows(users)).resolves.toBe(DEFAULT_ROLES.length);
+		await expect(countRows(organizations)).resolves.toBe(0);
+		await expect(countRows(people)).resolves.toBe(0);
+		await expect(countRows(programs)).resolves.toBe(0);
+		await expect(countRows(interactions)).resolves.toBe(0);
+
+		const seeded = await database.db
+			.select({ email: users.email })
+			.from(users)
+			.where(inArray(users.email, [...Object.values(DEMO_EMAILS), STAFF_ADMIN_EMAIL]));
+
+		expect(seeded).toStrictEqual([]);
+	});
+
+	it('не принимает «--roles-only» вместе с «--if-demo»', async () => {
+		// Флаги противоречат друг другу: каталог прав нужен любой установке, и
+		// «залей, если это стенд» о нём сказать нечего.
+		await expect(main(['--roles-only', '--if-demo'])).rejects.toThrow('вместе бессмысленны');
+
+		// Упасть разбор обязан до базы: каталог остался таким, каким был.
+		await expect(countRows(permissions)).resolves.toBe(PERMISSION_KEYS.length);
 	});
 });

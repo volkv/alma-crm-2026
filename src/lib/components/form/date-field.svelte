@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { parseDate, type DateValue } from '@internationalized/date';
 	import CalendarIcon from '@lucide/svelte/icons/calendar';
 	import XIcon from '@lucide/svelte/icons/x';
@@ -57,6 +57,8 @@
 	/** То, что набрано в поле: `12.09.2026`, недописанная дата или пустота. */
 	let text = $state(value === '' ? '' : formatDate(value));
 	let open = $state(false);
+	/** Видимое поле; нужно ровно для того, чтобы прочитать набранное до гидратации. */
+	let field = $state<HTMLInputElement | null>(null);
 
 	/**
 	 * Значение меняется и снаружи — загрузкой страницы, сбросом формы, вторым
@@ -71,6 +73,27 @@
 				text = incoming === '' ? '' : formatDate(incoming);
 			}
 		});
+	});
+
+	/**
+	 * Дата, набранная до того, как страница ожила.
+	 *
+	 * Разметку страница получает с сервера готовой, а обработчики к ней
+	 * развешивает браузер. В этом промежутке видимое поле уже принимает текст, но
+	 * `oninput` до компонента не доходит: скрытое поле остаётся с тем значением, с
+	 * каким страницу отдал сервер, и форма ушла бы с ним — с сегодняшним днём
+	 * вместо написанного. Поэтому на монтировании набранное читается прямо из
+	 * поля и проходит тот же путь, что и набранное после.
+	 */
+	onMount(() => {
+		// `null` здесь не бывает: `bind:this` внутри `Input` проставляется при
+		// монтировании, раньше этого эффекта. Проверка — ради типа.
+		if (field === null || field.value === text) {
+			return;
+		}
+
+		text = field.value;
+		commit(parseRuDay(text) ?? '');
 	});
 
 	const selected = $derived<DateValue | undefined>(value === '' ? undefined : parseDate(value));
@@ -122,6 +145,7 @@
 
 	<div class="relative min-w-0 flex-1">
 		<Input
+			bind:ref={field}
 			{id}
 			{disabled}
 			{required}

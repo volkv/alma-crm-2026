@@ -10,6 +10,11 @@
  *
  * Повторный запуск ничего не дублирует и ничего не затирает, поэтому сид можно
  * звать при каждом старте контейнера.
+ *
+ * Подключение — то же самое, что у приложения (`getDb()`): сид зовёт его
+ * сервисы, и второй пул рядом означал бы вторую конфигурацию и вторую точку
+ * отказа. Поэтому же вход закрывает его сам — открытые сокеты держат процесс
+ * живым и после того, как работа сделана.
  */
 import { count } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
@@ -60,8 +65,25 @@ export async function seedAll(options: {
 	return users;
 }
 
+/**
+ * Каталог прав и ролей — и ничего больше: ни учётных записей, ни справочников.
+ *
+ * То же самое делает `scripts/migrate.ts` на каждом применении миграций, и
+ * обычно ручка не нужна вовсе. Она нужна там, где каталог разошёлся с кодом, а
+ * перезапускать приложение ради этого нельзя: операция идемпотентна и данных не
+ * касается, поэтому её можно выполнить на работающей установке.
+ */
+export async function seedRolesOnly(): Promise<void> {
+	await getDb().transaction(async (tx) => {
+		await seedRolesAndPermissions(tx);
+	});
+}
+
 /** Флаг для контейнера: «залей данные, только если это демонстрационный стенд». */
 const IF_DEMO_FLAG = '--if-demo';
+
+/** Флаг ручного прогона: «приведи каталог прав к коду и на этом всё». */
+const ROLES_ONLY_FLAG = '--roles-only';
 
 function requireEnv(name: string, explanation: string): string {
 	const value = process.env[name];
@@ -88,11 +110,16 @@ function checkPassword(name: string, password: string): void {
 	}
 }
 
-/** Таблицы, по которым сид отчитывается: по ним видно, что он сделал. */
-const REPORTED_TABLES: Record<string, PgTable> = {
+/** Таблицы каталога прав: по ним видно, что сделал прогон с `--roles-only`. */
+const ROLE_TABLES: Record<string, PgTable> = {
 	permissions: schema.permissions,
 	roles: schema.roles,
-	role_permissions: schema.rolePermissions,
+	role_permissions: schema.rolePermissions
+};
+
+/** Таблицы, по которым сид отчитывается: по ним видно, что он сделал. */
+const REPORTED_TABLES: Record<string, PgTable> = {
+	...ROLE_TABLES,
 	users: schema.users,
 	organizations: schema.organizations,
 	sites: schema.sites,
@@ -108,13 +135,46 @@ const REPORTED_TABLES: Record<string, PgTable> = {
 	stat_rows: schema.statRows
 };
 
+/** Строка отчёта «в базе столько-то»: имя таблицы и число строк в ней. */
+async function countRows(tables: Record<string, PgTable>): Promise<string> {
+	const db = getDb();
+
+	const counts = await Promise.all(
+		Object.entries(tables).map(async ([name, table]) => {
+			const [row] = await db.select({ value: count() }).from(table);
+
+			return `${name} ${row.value}`;
+		})
+	);
+
+	return counts.join(', ');
+}
+
 export async function main(argv: readonly string[]): Promise<void> {
-	const unknown = argv.filter((argument) => argument !== IF_DEMO_FLAG);
+	const known = [IF_DEMO_FLAG, ROLES_ONLY_FLAG];
+	const unknown = argv.filter((argument) => !known.includes(argument));
 
 	if (unknown.length > 0) {
 		throw new Error(
-			`Неизвестные аргументы: ${unknown.join(', ')}. Допустим только ${IF_DEMO_FLAG}`
+			`Неизвестные аргументы: ${unknown.join(', ')}. Допустимы только ${known.join(', ')}`
 		);
+	}
+
+	if (argv.includes(ROLES_ONLY_FLAG)) {
+		if (argv.includes(IF_DEMO_FLAG)) {
+			throw new Error(
+				`${ROLES_ONLY_FLAG} и ${IF_DEMO_FLAG} вместе бессмысленны: каталог прав нужен любой установке, а не только демонстрационной`
+			);
+		}
+
+		try {
+			await seedRolesOnly();
+			console.log(`seed: каталог прав приведён к коду, в базе ${await countRows(ROLE_TABLES)}`);
+		} finally {
+			await closeDatabase();
+		}
+
+		return;
 	}
 
 	if (argv.includes(IF_DEMO_FLAG) && process.env.DEMO_MODE !== 'true') {
@@ -135,22 +195,10 @@ export async function main(argv: readonly string[]): Promise<void> {
 		);
 	}
 
-	// Подключение — то же самое, что у приложения: сид зовёт его сервисы, и
-	// второй пул рядом означал бы вторую конфигурацию и вторую точку отказа.
-	const db = getDb();
-
 	try {
 		await seedAll({ demoPassword, staffAdminPassword });
 
-		const counts = await Promise.all(
-			Object.entries(REPORTED_TABLES).map(async ([name, table]) => {
-				const [row] = await db.select({ value: count() }).from(table);
-
-				return `${name} ${row.value}`;
-			})
-		);
-
-		console.log(`seed: готово, в базе ${counts.join(', ')}`);
+		console.log(`seed: готово, в базе ${await countRows(REPORTED_TABLES)}`);
 	} finally {
 		await closeDatabase();
 	}

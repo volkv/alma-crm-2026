@@ -157,10 +157,11 @@ test('истёкший срок хранения виден в списке, а 
 staff(
 	'штатный администратор уничтожает данные: имя и контакты уходят, запись нет',
 	async ({ page }) => {
+		// Адрес карточки остаётся от проверки выше: без неё уничтожать нечего, и
+		// молча пропустить этот проход нельзя — он и есть проверяемое действие.
 		expect(retentionCardUrl).not.toBeNull();
-		if (retentionCardUrl === null) return;
 
-		await page.goto(retentionCardUrl);
+		await page.goto(retentionCardUrl!);
 
 		const confirm = page
 			.getByRole('alertdialog')
