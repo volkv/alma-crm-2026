@@ -83,6 +83,52 @@ services:
         limits:
           memory: 64M
 
+  # The imitators are a demonstration prop, like the Moodle stand-in: a
+  # deployment that talks to the real systems must not have a second source of
+  # applications and learning data next to them. The `stand` profile keeps them
+  # out of `docker compose up -d` unless the deployment is itself the demo
+  # stand, which starts them with `--profile stand`; naming a service on the
+  # command line enables its profile too, so `docker compose up -d mock-cms`
+  # still works. Neither is published: the exchange happens inside the compose
+  # network, and the state page shows every application the stand has seen.
+  mock-cms:
+    profiles: ['stand']
+    restart: unless-stopped
+    ports: !reset []
+    # `!override` instead of merging: the secret in the base file is a local
+    # development default, and a deployment must not silently fall back to it.
+    # Empty is honest — the imitator answers that the exchange is not
+    # configured — while a wrong secret would look like a working signature.
+    environment: !override
+      PORT: '8081'
+      CRM_BASE_URL: http://app:3000
+      CRM_API_KEY: ${EXCHANGE_API_KEY:-}
+      EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}
+      INSTANCE_NAME: ${MOCK_CMS_INSTANCE:-itschool-site}
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  mock-lms:
+    profiles: ['stand']
+    restart: unless-stopped
+    ports: !reset []
+    environment: !override
+      PORT: '8082'
+      CRM_BASE_URL: http://app:3000
+      CRM_API_KEY: ${EXCHANGE_API_KEY:-}
+      EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}
+      INSTANCE_NAME: ${MOCK_LMS_INSTANCE:-moodle-itschool}
+      # Not published, so a person opens a group through the same reverse proxy
+      # as the app; without APP_ORIGIN the link points at the compose name and
+      # is honest about being unreachable from outside.
+      PUBLIC_URL: ${MOCK_LMS_PUBLIC_URL:-http://mock-lms:8082}
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
   app:
     restart: unless-stopped
     # `!override` replaces the port list instead of appending to it: the base

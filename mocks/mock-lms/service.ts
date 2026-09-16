@@ -1,0 +1,485 @@
+/**
+ * Имитатор системы обучения: направления 3 и 4 контракта обмена и веб-сервис
+ * Moodle рядом с ними.
+ *
+ * Что он изображает: CRM просит завести учебную группу и получает её
+ * идентификатор (направление 3), а система обучения по окончании потока
+ * присылает результат — числа для отчёта и подтверждение стадии (направление
+ * 4). Плюс четыре функции веб-сервиса Moodle, которыми пользуется выгрузка
+ * данных об обучении, — второй протокол той же системы (`moodle.ts`).
+ *
+ * Чем он не является: настоящей LMS заказчика. Обмен с ней не считается
+ * проверенным по результатам имитатора.
+ */
+import { courseForProgram, stableGroupId } from './groups.ts';
+import { moodleRest, moodleToken, readParams } from './moodle.ts';
+import { controlRoutes } from '../shared/control.ts';
+import { crmIssue, postToCrm, type CrmTarget } from '../shared/crm.ts';
+import { buildEnvelope, parseEnvelope, SCHEMA_VERSION, type Envelope } from '../shared/envelope.ts';
+import {
+	problem,
+	startMockService,
+	type MockReply,
+	type MockRoute,
+	type MockService
+} from '../shared/http.ts';
+import { createJournal, DEFAULT_JOURNAL_SIZE, type Journal } from '../shared/journal.ts';
+import { createScenario } from '../shared/scenario.ts';
+import { checkSignature } from '../shared/signature.ts';
+
+/** Куда имитатор отправляет результат (`docs/exchange-contract.md`, раздел 6). */
+export const CRM_RESULTS_PATH = '/api/v1/exchange/learning-groups/results';
+
+export type MockLmsOptions = {
+	/** `0` — любой свободный порт: так сервис поднимается в тестах. */
+	port?: number;
+	host?: string;
+	/** Имя экземпляра LMS: входит в ключ дедупликации на стороне CRM. */
+	instance?: string;
+	/** Адрес, по которому группа видна человеку; уезжает в ответе на заявку. */
+	publicUrl?: string;
+	crm?: CrmTarget;
+	/** Секрет, которым CRM подписывает исходящие сообщения. */
+	exchangeSecret?: string | null;
+	journalSize?: number;
+};
+
+export type GroupCounters = { enrolled: number; completed: number; expelled: number };
+
+/** Учебная группа, какой её помнит система обучения. */
+type LearningGroup = {
+	/** Ключ заявки CRM: `crm-group-<взаимодействие>-<поток>`. */
+	requestExternalId: string;
+	groupExternalId: string;
+	courseExternalId: string;
+	url: string;
+	interactionId: string | null;
+	plannedSeats: number | null;
+	startsOn: string | null;
+	endsOn: string | null;
+	requestedAt: string;
+	/** Отправленные результаты: промежуточные и итоговый, свежий — последний. */
+	results: { at: string; eventId: string; counters: GroupCounters }[];
+};
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+function readString(value: unknown): string | null {
+	return typeof value === 'string' && value !== '' ? value : null;
+}
+
+function nested(data: Record<string, unknown>, key: string): Record<string, unknown> {
+	const value = data[key];
+
+	return isRecord(value) ? value : {};
+}
+
+/**
+ * Счётчики по умолчанию: восемь из десяти доучились, один отчислен. Числа
+ * выведены из числа мест, а не из генератора случайных чисел — стенд обязан
+ * выглядеть одинаково при каждом запуске.
+ */
+function defaultCounters(plannedSeats: number | null): GroupCounters {
+	const enrolled = plannedSeats ?? 30;
+
+	return {
+		enrolled,
+		completed: Math.floor(enrolled * 0.8),
+		expelled: Math.floor(enrolled * 0.1)
+	};
+}
+
+function parseCounters(value: unknown, plannedSeats: number | null): GroupCounters | string {
+	if (value === undefined) {
+		return defaultCounters(plannedSeats);
+	}
+
+	if (!isRecord(value)) {
+		return 'counters: ожидается объект с полями enrolled, completed, expelled';
+	}
+
+	const unknownFields = Object.keys(value).filter(
+		(name) => !['enrolled', 'completed', 'expelled'].includes(name)
+	);
+
+	if (unknownFields.length > 0) {
+		return `counters: неизвестные поля ${unknownFields.join(', ')}`;
+	}
+
+	const base = defaultCounters(plannedSeats);
+	const counters: GroupCounters = {
+		enrolled: value.enrolled === undefined ? base.enrolled : Number(value.enrolled),
+		completed: value.completed === undefined ? base.completed : Number(value.completed),
+		expelled: value.expelled === undefined ? base.expelled : Number(value.expelled)
+	};
+
+	for (const [name, number] of Object.entries(counters)) {
+		if (!Number.isInteger(number) || number < 0) {
+			return `counters.${name}: ожидается целое число от нуля`;
+		}
+	}
+
+	// То же ограничение, что стоит в базе CRM: «ещё учатся» — это остаток, и два
+	// поля, противоречащих друг другу, однажды разойдутся.
+	if (counters.completed + counters.expelled > counters.enrolled) {
+		return 'counters: completed + expelled не больше enrolled';
+	}
+
+	return counters;
+}
+
+function groupReply(
+	journal: Journal,
+	path: string,
+	status: number,
+	code: string,
+	message: string,
+	envelope: Envelope | null
+): MockReply {
+	journal.add({
+		direction: 'inbound',
+		summary: `POST ${path}`,
+		status,
+		eventId: envelope?.eventId ?? null,
+		eventType: envelope?.eventType ?? null,
+		note: `${code}: ${message}`,
+		payload: envelope
+	});
+
+	return problem(status, code, message);
+}
+
+export async function startMockLms(options: MockLmsOptions = {}): Promise<MockService> {
+	const instance = options.instance ?? 'moodle-itschool';
+	const crm: CrmTarget = options.crm ?? { baseUrl: null, apiKey: null };
+	const exchangeSecret = options.exchangeSecret ?? null;
+	const journal = createJournal(options.journalSize ?? DEFAULT_JOURNAL_SIZE);
+	const scenario = createScenario();
+
+	/** Группы по ключу заявки CRM. */
+	const groups = new Map<string, LearningGroup>();
+	/** Отправленные конверты: повтор события шлёт тот же самый, байт в байт. */
+	const sent = new Map<string, Envelope>();
+
+	function publicUrl(): string {
+		return (options.publicUrl ?? 'http://localhost:58082').replace(/\/+$/, '');
+	}
+
+	function findGroup(groupExternalId: string): LearningGroup | null {
+		for (const group of groups.values()) {
+			if (group.groupExternalId === groupExternalId) {
+				return group;
+			}
+		}
+
+		return null;
+	}
+
+	function forget(): void {
+		groups.clear();
+		sent.clear();
+		journal.clear();
+	}
+
+	const contract: MockRoute[] = [
+		{
+			// Направление 3: CRM заводит учебную группу.
+			method: 'POST',
+			path: '/api/groups',
+			contract: true,
+			handle: (request) => {
+				const path = request.path;
+				const refusal = checkSignature({
+					secret: exchangeSecret,
+					headers: request.headers,
+					body: request.rawBody
+				});
+
+				if (refusal !== null) {
+					return groupReply(journal, path, refusal.status, refusal.code, refusal.message, null);
+				}
+
+				const parsed = parseEnvelope(request.rawBody, {
+					eventType: 'learning_group.requested',
+					system: 'crm'
+				});
+
+				if (!parsed.ok) {
+					const { status, code, message } = parsed.refusal;
+
+					return groupReply(journal, path, status, code, message, null);
+				}
+
+				const envelope = parsed.envelope;
+				const requestExternalId = readString(envelope.data.externalId);
+
+				if (requestExternalId === null) {
+					return groupReply(
+						journal,
+						path,
+						400,
+						'validation',
+						'data.externalId обязателен: ключ заявки на группу',
+						envelope
+					);
+				}
+
+				const existing = groups.get(requestExternalId);
+
+				if (existing !== undefined) {
+					// Повторная заявка возвращает ту же группу, а не заводит вторую:
+					// это и есть защита от дубля на стороне LMS.
+					journal.add({
+						direction: 'inbound',
+						summary: `POST ${path}`,
+						status: 200,
+						eventId: envelope.eventId,
+						eventType: envelope.eventType,
+						note: `повтор заявки: группа ${existing.groupExternalId} уже заведена`,
+						payload: envelope
+					});
+
+					return {
+						status: 200,
+						json: {
+							schemaVersion: SCHEMA_VERSION,
+							result: 'unchanged',
+							data: {
+								externalId: existing.requestExternalId,
+								groupExternalId: existing.groupExternalId,
+								courseExternalId: existing.courseExternalId,
+								url: existing.url
+							}
+						}
+					};
+				}
+
+				const stream = nested(envelope.data, 'stream');
+				const course = courseForProgram(readString(nested(envelope.data, 'program').code));
+				const groupExternalId = stableGroupId(requestExternalId, (id) => findGroup(id) !== null);
+				const group: LearningGroup = {
+					requestExternalId,
+					groupExternalId,
+					courseExternalId: String(course.id),
+					url: `${publicUrl()}/course/view.php?id=${course.id}`,
+					interactionId: readString(envelope.data.interactionId),
+					plannedSeats: Number.isInteger(stream.plannedSeats)
+						? (stream.plannedSeats as number)
+						: null,
+					startsOn: readString(stream.startsOn),
+					endsOn: readString(stream.endsOn),
+					requestedAt: envelope.occurredAt,
+					results: []
+				};
+
+				groups.set(requestExternalId, group);
+
+				journal.add({
+					direction: 'inbound',
+					summary: `POST ${path}`,
+					status: 201,
+					eventId: envelope.eventId,
+					eventType: envelope.eventType,
+					note: `заведена группа ${group.groupExternalId} на курсе ${course.idnumber}`,
+					payload: envelope
+				});
+
+				return {
+					status: 201,
+					json: {
+						schemaVersion: SCHEMA_VERSION,
+						result: 'created',
+						data: {
+							externalId: group.requestExternalId,
+							groupExternalId: group.groupExternalId,
+							courseExternalId: group.courseExternalId,
+							url: group.url
+						}
+					}
+				};
+			}
+		}
+	];
+
+	/** Веб-сервис Moodle: тот же адрес и те же параметры, что у площадки. */
+	const moodle: MockRoute[] = (['GET', 'POST'] as const).flatMap((method) => [
+		{
+			method,
+			path: '/login/token.php',
+			contract: true,
+			handle: (request) => moodleToken(readParams(request))
+		},
+		{
+			method,
+			path: '/webservice/rest/server.php',
+			contract: true,
+			handle: (request) => moodleRest(readParams(request), new Date())
+		}
+	]);
+
+	const triggers: MockRoute[] = [
+		{
+			// Направление 4: «поток закончился, вот числа». Триггер проверки, а не
+			// эндпоинт контракта: у настоящей LMS его роль играет расписание.
+			method: 'POST',
+			path: '/__send-result',
+			contract: false,
+			handle: async (request) => {
+				let body: unknown;
+
+				try {
+					body = request.rawBody === '' ? {} : JSON.parse(request.rawBody);
+				} catch {
+					return problem(400, 'validation', 'Тело запроса не разбирается как JSON');
+				}
+
+				if (!isRecord(body)) {
+					return problem(400, 'validation', 'Тело запроса — объект');
+				}
+
+				const allowed = [
+					'groupExternalId',
+					'requestExternalId',
+					'counters',
+					'finishedOn',
+					'period',
+					'eventId'
+				];
+				const unknownFields = Object.keys(body).filter((name) => !allowed.includes(name));
+
+				if (unknownFields.length > 0) {
+					return problem(400, 'validation', `Неизвестные поля: ${unknownFields.join(', ')}`);
+				}
+
+				if (body.eventId !== undefined && typeof body.eventId !== 'string') {
+					return problem(400, 'validation', 'eventId: ожидается строка');
+				}
+
+				const requestExternalId = readString(body.requestExternalId);
+				const groupExternalId = readString(body.groupExternalId);
+				const group =
+					requestExternalId !== null
+						? (groups.get(requestExternalId) ?? null)
+						: groupExternalId !== null
+							? findGroup(groupExternalId)
+							: null;
+
+				if (group === null) {
+					return problem(
+						404,
+						'not_found',
+						'Такой группы в системе обучения нет: назовите groupExternalId или requestExternalId заведённой группы'
+					);
+				}
+
+				const counters = parseCounters(body.counters, group.plannedSeats);
+
+				if (typeof counters === 'string') {
+					return problem(400, 'validation', counters);
+				}
+
+				const issue = crmIssue(crm);
+
+				if (issue !== null) {
+					return problem(503, 'not_configured', issue);
+				}
+
+				const repeatOf = typeof body.eventId === 'string' ? (sent.get(body.eventId) ?? null) : null;
+
+				let envelope: Envelope;
+
+				if (repeatOf !== null) {
+					// Повтор того же события шлёт то же тело: иначе проверялась бы не
+					// идемпотентность приёмника, а сборка сообщения.
+					envelope = repeatOf;
+				} else {
+					const period = nested(body, 'period');
+					const finishedOn = readString(body.finishedOn) ?? group.endsOn;
+
+					envelope = buildEnvelope({
+						eventType: 'learning_group.result',
+						system: 'lms',
+						instance,
+						eventId: typeof body.eventId === 'string' ? body.eventId : undefined,
+						data: {
+							groupExternalId: group.groupExternalId,
+							requestExternalId: group.requestExternalId,
+							period: {
+								start: readString(period.start) ?? group.startsOn,
+								end: readString(period.end) ?? group.endsOn
+							},
+							finishedOn,
+							counters
+						}
+					});
+				}
+
+				const call = await postToCrm(crm, CRM_RESULTS_PATH, envelope);
+
+				sent.set(envelope.eventId, envelope);
+				group.results.push({
+					at: envelope.occurredAt,
+					eventId: envelope.eventId,
+					counters: envelope.data.counters as GroupCounters
+				});
+
+				journal.add({
+					direction: 'outbound',
+					summary: `POST ${call.url}`,
+					status: call.status,
+					eventId: envelope.eventId,
+					eventType: envelope.eventType,
+					note:
+						call.error ??
+						(repeatOf === null
+							? `результат группы ${group.groupExternalId} отправлен`
+							: 'повтор того же события (тот же eventId)'),
+					payload: envelope
+				});
+
+				return {
+					status: 200,
+					json: {
+						eventId: envelope.eventId,
+						groupExternalId: group.groupExternalId,
+						repeat: repeatOf !== null,
+						request: envelope,
+						crm: call
+					}
+				};
+			}
+		}
+	];
+
+	return startMockService({
+		name: 'mock-lms',
+		port: options.port ?? 8082,
+		host: options.host,
+		scenario,
+		journal,
+		routes: [
+			...contract,
+			...moodle,
+			...triggers,
+			...controlRoutes({
+				name: 'mock-lms',
+				title: 'Имитатор системы обучения',
+				journal,
+				scenario,
+				objects: () => ({ groups: [...groups.values()] }),
+				forget,
+				// Ни ключа, ни секрета, ни токена веб-сервиса: страница стенда
+				// открыта. Видно только, настроен ли обмен.
+				settings: () => ({
+					instance,
+					publicUrl: publicUrl(),
+					crmBaseUrl: crm.baseUrl,
+					crmApiKeyConfigured: crm.apiKey !== null && crm.apiKey !== '',
+					exchangeSecretConfigured: exchangeSecret !== null && exchangeSecret !== ''
+				})
+			})
+		]
+	});
+}

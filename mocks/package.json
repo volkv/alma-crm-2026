@@ -1,0 +1,6 @@
+{
+	"name": "lct-mocks",
+	"private": true,
+	"type": "module",
+	"description": "Имитаторы CMS и LMS для стенда обмена. Зависимостей нет: только стандартная библиотека Node."
+}

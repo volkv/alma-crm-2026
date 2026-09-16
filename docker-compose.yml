@@ -97,6 +97,79 @@ services:
       timeout: 5s
       retries: 10
 
+  # Imitators of the customer's systems: the CMS of the public site and the
+  # learning management system. They exist so the exchange can be shown and
+  # tested end to end — neither real system is reachable from outside — and
+  # they are not integrations: what they answer proves nothing about the real
+  # ones. Contract and endpoints: docs/exchange-contract.md, docs/integrations.md.
+  #
+  # Host ports are shifted the same way as PostgreSQL and Redis; inside the
+  # network they answer on the ports the contract names, 8081 and 8082.
+  mock-cms:
+    build:
+      context: ./mocks
+      args:
+        SERVICE: cms
+        PORT: '8081'
+    ports:
+      - '58081:8081'
+    environment:
+      PORT: '8081'
+      # Where the imitator sends an application and what it introduces itself
+      # with. The key is issued by the seed of the stand from the same variable;
+      # without it the imitator answers that the exchange is not configured
+      # instead of pretending it sent anything.
+      CRM_BASE_URL: http://app:3000
+      CRM_API_KEY: ${EXCHANGE_API_KEY:-}
+      # The secret the CRM signs its outgoing messages with. The imitator
+      # rejects an unsigned or badly signed status, so the signature is part of
+      # what the stand demonstrates. The default below is good enough for a
+      # local stack; a public stand passes its own.
+      EXCHANGE_SECRET: ${EXCHANGE_SECRET:-exchange-stand-secret}
+      # The instance name: the CRM deduplicates applications by system,
+      # instance and external id, so a second site would need a second name.
+      INSTANCE_NAME: itschool-site
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8081/__state').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
+  mock-lms:
+    build:
+      context: ./mocks
+      args:
+        SERVICE: lms
+        PORT: '8082'
+    ports:
+      - '58082:8082'
+    environment:
+      PORT: '8082'
+      CRM_BASE_URL: http://app:3000
+      CRM_API_KEY: ${EXCHANGE_API_KEY:-}
+      EXCHANGE_SECRET: ${EXCHANGE_SECRET:-exchange-stand-secret}
+      INSTANCE_NAME: moodle-itschool
+      # The address of a learning group as a person opens it. Published port,
+      # not the compose name: the link is followed from a browser on the host.
+      PUBLIC_URL: http://localhost:58082
+    healthcheck:
+      test:
+        [
+          'CMD',
+          'node',
+          '-e',
+          "fetch('http://127.0.0.1:8082/__state').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+        ]
+      interval: 10s
+      timeout: 5s
+      retries: 6
+
   app:
     build: .
     ports:
