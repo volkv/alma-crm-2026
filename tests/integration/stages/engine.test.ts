@@ -93,6 +93,74 @@ async function createFixture(): Promise<Fixture> {
 	return { ctx, route, interactionId: interaction.id, organizationId };
 }
 
+/**
+ * Маршрут из двух стадий, у которого шаг вперёд требует объяснения, и
+ * взаимодействие на нём.
+ *
+ * В демонстрационном маршруте такого перехода нет, а правило «причина
+ * обязательна» описано у перехода, а не у его вида: настроенное на шаге вперёд,
+ * оно обязано быть выполнимым, а не запирать стадию навсегда. Требований стадии
+ * здесь нет намеренно — проверяется ровно причина.
+ */
+async function createReasonFixture(): Promise<Fixture> {
+	const ctx = admin();
+
+	const draft = await createRoute(ctx, {
+		key: 'forward-reason',
+		name: 'Маршрут с объяснением шага вперёд',
+		description: null,
+		isDefault: false,
+		stages: [
+			{
+				key: 'first',
+				name: 'Первая стадия',
+				category: 'contact',
+				slaDays: 5,
+				staleAfterDays: null,
+				requiresResult: false,
+				requiresConfirmation: false,
+				checklist: []
+			},
+			{
+				key: 'second',
+				name: 'Вторая стадия',
+				category: 'control',
+				slaDays: 5,
+				staleAfterDays: null,
+				requiresResult: false,
+				requiresConfirmation: false,
+				checklist: []
+			}
+		],
+		transitions: [
+			{
+				fromStageKey: 'first',
+				toStageKey: 'second',
+				kind: 'forward',
+				requiredPermissionKey: 'stages.transition',
+				requiresReason: true
+			}
+		]
+	});
+
+	const route = await publishRoute(ctx, draft.id);
+	const organizationId = await insertOrganization(database.db, {
+		shortName: 'Вуз с объяснением перехода'
+	});
+
+	const interaction = await createInteraction(
+		ctx,
+		createInteractionSchema.parse({
+			title: 'Переход с объяснением',
+			routeId: route.id,
+			ownerUserId: TEST_USER_IDS.admin,
+			parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
+		})
+	);
+
+	return { ctx, route, interactionId: interaction.id, organizationId };
+}
+
 /** Стадия маршрута по ключу: тесты адресуют стадии именами, а не номерами. */
 function stageId(route: StageRouteView, key: string): string {
 	const stage = route.stages.find((item) => item.key === key);
@@ -159,6 +227,7 @@ async function advanceTo(fixture: Fixture, key: string): Promise<void> {
 			interactionId: fixture.interactionId,
 			fromStageId: current.stageId,
 			toStageId: next.toStageId,
+			reason: null,
 			resultText: null,
 			checklistState: {}
 		});
@@ -205,6 +274,7 @@ describe('шаг вперёд', () => {
 			interactionId: fixture.interactionId,
 			fromStageId: stageId(fixture.route, 'contact_search'),
 			toStageId: stageId(fixture.route, 'communication'),
+			reason: null,
 			resultText: null,
 			checklistState: {}
 		};
@@ -243,6 +313,7 @@ describe('шаг вперёд', () => {
 			interactionId: fixture.interactionId,
 			fromStageId: stageId(fixture.route, 'contact_search'),
 			toStageId: stageId(fixture.route, 'communication'),
+			reason: null,
 			resultText: null,
 			checklistState: {}
 		};
@@ -265,6 +336,43 @@ describe('шаг вперёд', () => {
 			);
 
 		expect(open).toHaveLength(1);
+	});
+
+	it('требует объяснение, когда его требует переход маршрута', async () => {
+		const fixture = await createReasonFixture();
+
+		const command = {
+			interactionId: fixture.interactionId,
+			fromStageId: stageId(fixture.route, 'first'),
+			toStageId: stageId(fixture.route, 'second'),
+			reason: null,
+			resultText: null,
+			checklistState: {}
+		};
+
+		await expect(advanceStage(fixture.ctx, command)).rejects.toSatisfy(
+			(error: unknown) =>
+				error instanceof ConflictError && /Нужно объяснить причину/.test(error.message)
+		);
+
+		// Сводка причину заранее не требует: её вводят в момент нажатия, и отказ
+		// до ввода сделал бы переход недоступным на вид.
+		const summary = await getInteractionSummary(fixture.ctx, fixture.interactionId);
+		const forward = summary.canDo.transitions.find(
+			(option) => option.transition.kind === 'forward'
+		);
+
+		expect(forward?.transition.requiresReason).toBe(true);
+		expect(forward?.allowed).toBe(true);
+
+		await advanceStage(fixture.ctx, { ...command, reason: 'Программа согласована деканатом' });
+
+		const status = await getInteractionStatus(fixture.ctx, fixture.interactionId);
+
+		expect(status.current?.snapshot.key).toBe('second');
+		expect(status.history[0].outcome).toBe('completed');
+		// Объяснение остаётся в истории стадии — иначе требовать его незачем.
+		expect(status.history[0].outcomeReason).toBe('Программа согласована деканатом');
 	});
 });
 
@@ -299,6 +407,7 @@ describe('пауза', () => {
 			interactionId: fixture.interactionId,
 			fromStageId,
 			toStageId: stageId(fixture.route, 'communication'),
+			reason: null,
 			resultText: null,
 			checklistState: {}
 		};
@@ -350,6 +459,7 @@ describe('помехи', () => {
 			interactionId: fixture.interactionId,
 			fromStageId: stageId(fixture.route, 'contact_search'),
 			toStageId: stageId(fixture.route, 'communication'),
+			reason: null,
 			resultText: null,
 			checklistState: {}
 		};
@@ -386,6 +496,7 @@ describe('возврат и пропуск', () => {
 			interactionId: fixture.interactionId,
 			fromStageId: stageId(fixture.route, 'contact_search'),
 			toStageId: stageId(fixture.route, 'communication'),
+			reason: null,
 			resultText: null,
 			checklistState: {}
 		});
@@ -442,6 +553,7 @@ describe('подтверждение стадии', () => {
 			interactionId: fixture.interactionId,
 			fromStageId,
 			toStageId: stageId(fixture.route, 'implementation_support'),
+			reason: null,
 			resultText: null,
 			checklistState: {}
 		};
@@ -611,6 +723,7 @@ describe('закрытие взаимодействия', () => {
 				interactionId: fixture.interactionId,
 				fromStageId,
 				toStageId: stageId(fixture.route, 'communication'),
+				reason: null,
 				resultText: null,
 				checklistState: {}
 			})
@@ -648,6 +761,7 @@ describe('журнал действий', () => {
 			interactionId: fixture.interactionId,
 			fromStageId,
 			toStageId: stageId(fixture.route, 'communication'),
+			reason: null,
 			resultText: null,
 			checklistState: {}
 		});

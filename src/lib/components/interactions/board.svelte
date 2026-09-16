@@ -69,11 +69,15 @@
 		new Map(board.columns.map((column) => [column.stageId, column.name]))
 	);
 
+	/** Собранный переход — шаг вперёд: от этого зависят слова в диалоге. */
+	const forward = $derived(pending?.option.kind === 'forward');
+
 	async function move(card: InteractionBoardCard, option: BoardTransitionOption) {
 		pending = { card, option };
 
-		// Возврат и пропуск требуют объяснения — его спрашивают до команды, а не
-		// показывают отказ после неё.
+		// Переход, которому маршрут назначил объяснение, спрашивает его до команды,
+		// а не показывает отказ после неё. Это и возврат с пропуском, и шаг вперёд
+		// там, где процесс требует сказать, чем закончили стадию.
 		if (option.requiresReason) {
 			reasonOpen = true;
 
@@ -279,14 +283,17 @@
 		</Dialog.Header>
 
 		<div class="flex flex-col gap-1.5">
-			<Label for="boardMoveReason">Причина</Label>
+			<!-- На шаге вперёд объяснение — это комментарий «чем закончили стадию»,
+				а не разбор неудачи: спрашивать «что пошло не так» там, где всё
+				прошло хорошо, значит сбивать с толку. -->
+			<Label for="boardMoveReason">{forward ? 'Комментарий' : 'Причина'}</Label>
 			<Textarea
 				id="boardMoveReason"
 				name="reason"
 				form="board-move"
 				rows={3}
 				required
-				placeholder="Что именно пошло не так"
+				placeholder={forward ? 'Чем закончилась стадия' : 'Что именно пошло не так'}
 			/>
 		</div>
 

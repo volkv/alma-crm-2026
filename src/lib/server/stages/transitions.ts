@@ -40,6 +40,7 @@ export type StageState = {
  * отказа нет.
  */
 export type TransitionIntent = {
+	/** Объяснение перехода: у возврата и пропуска — причина, у шага вперёд — комментарий. */
 	reason?: string | null;
 	/** Результат, который команда запишет вместе с переходом. */
 	resultText?: string | null;
@@ -120,6 +121,8 @@ export function evaluateTransition(
 		}
 	}
 
+	// Требование объяснения принадлежит переходу, а не его виду: маршрут вправе
+	// включить его и на шаге вперёд, и тогда оно проверяется здесь так же.
 	if (transition.requiresReason && intent !== null && isBlank(intent.reason)) {
 		reasons.push('Нужно объяснить причину');
 	}

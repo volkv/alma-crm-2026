@@ -954,6 +954,9 @@ async function stepForward(
 		interactionId,
 		fromStageId: from.id,
 		toStageId,
+		// Комментарий к шагу вперёд просит только маршрут, который так настроен;
+		// у демонстрационного такого перехода нет.
+		reason: null,
 		resultText: from.requiresResult ? (STAGE_RESULTS[from.key] ?? null) : null,
 		// Отметки чек-листа едут вместе с переходом: «закрыть последний пункт и
 		// сразу перейти» — законная операция движка, а не два круга.

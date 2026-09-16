@@ -156,6 +156,19 @@ describe('boardTransitions', () => {
 		expect(back).toMatchObject({ kind: 'return', requiresReason: true, allowed: true });
 	});
 
+	it('несёт требование причины и на шаге вперёд, не считая его отказом', () => {
+		const [forward] = boardTransitions(
+			actor(['stages.transition']),
+			state(),
+			route([transition(MEETING.id, DOCUMENTS.id, { requiresReason: true })])
+		);
+
+		// Причину человек вводит в диалоге карточки: отказ до ввода погасил бы
+		// пункт меню, которым её как раз и вводят.
+		expect(forward).toMatchObject({ kind: 'forward', requiresReason: true, allowed: true });
+		expect(forward.reasons).toEqual([]);
+	});
+
 	it('отказывает без права перехода и называет причину словами', () => {
 		const [forward] = boardTransitions(
 			actor(['interactions.read']),

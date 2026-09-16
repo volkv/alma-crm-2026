@@ -308,6 +308,12 @@ const stageCommandFields = {
 export const advanceStageSchema = z.object({
 	...stageCommandFields,
 	toStageId: id('Выберите стадию, на которую переходим'),
+	/**
+	 * Комментарий к шагу вперёд: чем закончили стадию. По умолчанию
+	 * необязателен, но переход маршрута может потребовать его (`requiresReason`),
+	 * и тогда отказывает движок — схема про настройку маршрута не знает.
+	 */
+	reason: optionalText(1000),
 	/** Результат стадии; обязателен, если стадия его требует. */
 	resultText: optionalText(4000),
 	checklistState: checklistStateSchema.default({})
@@ -895,7 +901,10 @@ export type BoardTransitionOption = {
 	toStageId: string;
 	toStageName: string;
 	kind: StageTransitionKind;
-	/** Возврат и пропуск требуют объяснения — его спрашивают перед командой. */
+	/**
+	 * Переход требует объяснения — его спрашивают перед командой. Возврат и
+	 * пропуск требуют его всегда, шаг вперёд — если так настроен маршрут.
+	 */
 	requiresReason: boolean;
 	allowed: boolean;
 	reasons: string[];
@@ -1113,7 +1122,10 @@ export const apiTransitionRequestSchema = z.object({
 	kind: z.enum(STAGE_TRANSITION_KINDS, { error: 'Выберите вид перехода' }),
 	fromStageId: id('Некорректный идентификатор стадии'),
 	toStageId: id('Выберите стадию, на которую переходим'),
-	/** Обязательна для возврата и пропуска. */
+	/**
+	 * Обязательна для возврата и пропуска, а на шаге вперёд — если этого требует
+	 * переход маршрута.
+	 */
 	reason: optionalText(1000),
 	resultText: optionalText(4000)
 });

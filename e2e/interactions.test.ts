@@ -2,6 +2,8 @@ import postgres from 'postgres';
 import { createRouteSchema } from '$lib/contracts/interactions';
 import { DEMO_ROUTE } from '$lib/server/stages/demo-route';
 import { expect, test } from './fixtures';
+import { E2E_USER } from './global-setup';
+import { waitForHydration } from './helpers/hydration';
 
 /**
  * Взаимодействие глазами менеджера: список, заведение через форму и работа на
@@ -22,6 +24,20 @@ const CUSTOMER = {
 	id: '1e2e0001-0000-4000-8000-000000000002',
 	shortName: `${MARK} Компания-заказчик`
 };
+
+/**
+ * Маршрут, у которого объяснения требует именно шаг вперёд. В демонстрационном
+ * маршруте такого перехода нет, а правило маршрута обязано быть выполнимым: без
+ * поля для объяснения переход вперёд стал бы невозможен вовсе.
+ */
+const REASON_ROUTE = {
+	key: 'e2e-forward-reason',
+	name: `${MARK} Маршрут с объяснением`,
+	stages: [
+		{ key: 'terms_agreed', name: 'Согласование условий', category: 'contact' },
+		{ key: 'terms_closed', name: 'Закрытие соглашения', category: 'documents' }
+	]
+} as const;
 
 function databaseUrl(): string {
 	const server = test.info().config.webServer;
@@ -64,58 +80,109 @@ async function seed(): Promise<void> {
 				select id from stage_routes where key = ${route.key} order by version desc limit 1
 			`;
 
-			if (existing.length > 0) {
-				return;
-			}
-
-			const [created] = await tx<{ id: string }[]>`
-				insert into stage_routes ${tx({
-					key: route.key,
-					version: 1,
-					name: route.name,
-					description: route.description,
-					is_default: true,
-					published_at: new Date()
-				})}
-				returning id
-			`;
-
-			const stageIds = new Map<string, string>();
-
-			for (const [index, stage] of route.stages.entries()) {
-				const [row] = await tx<{ id: string }[]>`
-					insert into stages ${tx({
-						route_id: created.id,
-						position: index + 1,
-						key: stage.key,
-						name: stage.name,
-						category: stage.category,
-						sla_days: stage.slaDays,
-						stale_after_days: stage.staleAfterDays,
-						requires_result: stage.requiresResult,
-						requires_confirmation: stage.requiresConfirmation,
-						checklist: JSON.stringify(stage.checklist)
+			if (existing.length === 0) {
+				const [created] = await tx<{ id: string }[]>`
+					insert into stage_routes ${tx({
+						key: route.key,
+						version: 1,
+						name: route.name,
+						description: route.description,
+						is_default: true,
+						published_at: new Date()
 					})}
 					returning id
 				`;
 
-				stageIds.set(stage.key, row.id);
+				const stageIds = new Map<string, string>();
+
+				for (const [index, stage] of route.stages.entries()) {
+					const [row] = await tx<{ id: string }[]>`
+						insert into stages ${tx({
+							route_id: created.id,
+							position: index + 1,
+							key: stage.key,
+							name: stage.name,
+							category: stage.category,
+							sla_days: stage.slaDays,
+							stale_after_days: stage.staleAfterDays,
+							requires_result: stage.requiresResult,
+							requires_confirmation: stage.requiresConfirmation,
+							checklist: JSON.stringify(stage.checklist)
+						})}
+						returning id
+					`;
+
+					stageIds.set(stage.key, row.id);
+				}
+
+				for (const transition of route.transitions) {
+					await tx`
+						insert into stage_transitions ${tx({
+							route_id: created.id,
+							from_stage_id: stageIds.get(transition.fromStageKey) ?? null,
+							to_stage_id: stageIds.get(transition.toStageKey) ?? null,
+							kind: transition.kind,
+							required_permission_key: transition.requiredPermissionKey,
+							requires_reason: transition.requiresReason
+						})}
+					`;
+				}
+
+				await tx`update stage_routes set is_default = false where id <> ${created.id}`;
 			}
 
-			for (const transition of route.transitions) {
+			const withReason = await tx<{ id: string }[]>`
+				select id from stage_routes where key = ${REASON_ROUTE.key} limit 1
+			`;
+
+			if (withReason.length === 0) {
+				const [created] = await tx<{ id: string }[]>`
+					insert into stage_routes ${tx({
+						key: REASON_ROUTE.key,
+						version: 1,
+						name: REASON_ROUTE.name,
+						description: null,
+						is_default: false,
+						published_at: new Date()
+					})}
+					returning id
+				`;
+
+				const ids: string[] = [];
+
+				for (const [index, stage] of REASON_ROUTE.stages.entries()) {
+					const [row] = await tx<{ id: string }[]>`
+						insert into stages ${tx({
+							route_id: created.id,
+							position: index + 1,
+							key: stage.key,
+							name: stage.name,
+							category: stage.category,
+							sla_days: 7,
+							stale_after_days: null,
+							requires_result: false,
+							requires_confirmation: false,
+							checklist: JSON.stringify([])
+						})}
+						returning id
+					`;
+
+					ids.push(row.id);
+				}
+
+				// Требований стадии здесь нет намеренно: переход упирается ровно в
+				// объяснение, и проверка говорит только о нём.
 				await tx`
 					insert into stage_transitions ${tx({
 						route_id: created.id,
-						from_stage_id: stageIds.get(transition.fromStageKey) ?? null,
-						to_stage_id: stageIds.get(transition.toStageKey) ?? null,
-						kind: transition.kind,
-						required_permission_key: transition.requiredPermissionKey,
-						requires_reason: transition.requiresReason
+						from_stage_id: ids[0],
+						to_stage_id: ids[1],
+						kind: 'forward',
+						required_permission_key: 'stages.transition',
+						requires_reason: true
 					})}
 				`;
 			}
-
-			await tx`update stage_routes set is_default = false where id <> ${created.id}`;
 		});
 	} finally {
 		await sql.end();
@@ -152,6 +219,70 @@ async function createInteraction(page: import('@playwright/test').Page): Promise
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText(title);
 
 	return title;
+}
+
+/**
+ * Взаимодействие на маршруте с обязательным объяснением. Заводится прямо в базе:
+ * форма заведения работает с маршрутом по умолчанию, а нужен здесь другой.
+ */
+async function createReasonInteraction(): Promise<string> {
+	const sql = postgres(databaseUrl(), { max: 1, connect_timeout: 10 });
+
+	try {
+		return await sql.begin(async (tx) => {
+			const [owner] = await tx<{ id: string }[]>`
+				select id from users where email = ${E2E_USER.email} limit 1
+			`;
+
+			const [stage] = await tx<{ id: string; route_id: string }[]>`
+				select s.id, s.route_id
+				from stages s
+				join stage_routes r on r.id = s.route_id
+				where r.key = ${REASON_ROUTE.key} and s.position = 1
+			`;
+
+			const [interaction] = await tx<{ id: string }[]>`
+				insert into interactions ${tx({
+					title: `${MARK} Объяснение ${crypto.randomUUID().slice(0, 8)}`,
+					route_id: stage.route_id,
+					owner_user_id: owner.id
+				})}
+				returning id
+			`;
+
+			await tx`
+				insert into interaction_parties ${tx({
+					interaction_id: interaction.id,
+					organization_id: INSTITUTION.id,
+					party_role: 'educational_institution',
+					is_primary: true
+				})}
+			`;
+
+			await tx`
+				insert into stage_entries ${tx({
+					interaction_id: interaction.id,
+					stage_id: stage.id,
+					responsible_user_id: owner.id,
+					stage_snapshot: JSON.stringify({
+						key: REASON_ROUTE.stages[0].key,
+						name: REASON_ROUTE.stages[0].name,
+						position: 1,
+						category: REASON_ROUTE.stages[0].category,
+						slaDays: 7,
+						staleAfterDays: null,
+						requiresResult: false,
+						requiresConfirmation: false,
+						checklist: []
+					})
+				})}
+			`;
+
+			return interaction.id;
+		});
+	} finally {
+		await sql.end();
+	}
 }
 
 test('список открывается, ищет и фильтрует по адресу', async ({ page }) => {
@@ -191,6 +322,34 @@ test('карточка ведёт по стадии: чек-лист, перех
 	await expect(
 		page.locator('[data-slot="stage-timeline"] [aria-current="step"]')
 	).toHaveAccessibleName(/Коммуникация и сверка программ — текущая/);
+});
+
+test('шаг вперёд с обязательным объяснением спрашивает комментарий', async ({ page }) => {
+	const comment = 'Условия согласованы протоколом встречи';
+	const interactionId = await createReasonInteraction();
+
+	await page.goto(`/interactions/${interactionId}`);
+	await waitForHydration(page);
+
+	const advance = page.getByRole('button', {
+		name: `Перейти: ${REASON_ROUTE.stages[1].name}`
+	});
+
+	// Переход доступен: объяснение спрашивают в диалоге, а не гасят им кнопку.
+	await expect(advance).toBeEnabled();
+	await advance.click();
+
+	const dialog = page.getByRole('dialog');
+	const field = dialog.getByLabel('Комментарий');
+
+	await expect(field).toBeVisible();
+	await field.fill(comment);
+	await dialog.getByRole('button', { name: 'Подтвердить' }).click();
+
+	// Стадия сменилась, а объяснение доехало до истории, а не осталось в форме.
+	await expect(advance).toHaveCount(0);
+	await page.getByRole('tab', { name: 'История' }).click();
+	await expect(page.getByText(`Причина: ${comment}`)).toBeVisible();
 });
 
 test('пауза останавливает часы стадии', async ({ page }) => {

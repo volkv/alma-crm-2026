@@ -448,6 +448,9 @@ export async function advanceStage(ctx: ActorContext, input: AdvanceStageInput):
 		fromStageId: input.fromStageId,
 		toStageId: input.toStageId,
 		kind: 'forward',
+		// Объяснение едет и на шаге вперёд: маршрут вправе потребовать его у любого
+		// перехода, и команда, которая его теряет, делает такое правило невыполнимым.
+		reason: input.reason,
 		resultText: input.resultText,
 		checklistState: input.checklistState
 	});

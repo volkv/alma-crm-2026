@@ -19,7 +19,8 @@
 		PAUSE_REASONS,
 		PAUSE_REASON_LABELS,
 		type InteractionSummaryView,
-		type PauseReason
+		type PauseReason,
+		type StageTransitionKind
 	} from '$lib/contracts/interactions';
 	import { formatDateTime } from '$lib/format';
 	import { actionEnhance } from './action-enhance';
@@ -46,16 +47,49 @@
 		closing?: Snippet;
 	} = $props();
 
-	let reasonDialog = $state<{ action: 'return' | 'skip'; toStageId: string; name: string } | null>(
-		null
-	);
+	/**
+	 * Переход, которому маршрут назначил объяснение: его спрашивают в диалоге до
+	 * команды. Возврат и пропуск требуют его всегда, шаг вперёд — только там, где
+	 * так настроен маршрут.
+	 */
+	let reasonDialog = $state<{
+		kind: StageTransitionKind;
+		toStageId: string;
+		name: string;
+	} | null>(null);
 	let pauseOpen = $state(false);
 	// Список причин отправляет выбранное скрытым полем, поэтому в нём всегда
 	// что-то выбрано: у нативного списка первый пункт выбран сам.
 	let pauseReason = $state<PauseReason>(PAUSE_REASONS[0]);
 
 	const can = (action: string) => summary.canDo.actions.includes(action as 'pause');
+
+	/** Куда уходит форма диалога: у каждого вида перехода своё действие страницы. */
+	const REASON_ACTIONS: Record<StageTransitionKind, string> = {
+		forward: '?/advance',
+		return: '?/return',
+		skip: '?/skip'
+	};
+
+	const REASON_TITLES: Record<StageTransitionKind, string> = {
+		forward: 'Перейти на следующую стадию',
+		return: 'Вернуть на стадию',
+		skip: 'Пропустить стадии'
+	};
+
+	const dialogKind = $derived(reasonDialog?.kind ?? 'return');
 </script>
+
+{#snippet transitionFace(kind: StageTransitionKind, text: string)}
+	{#if kind === 'forward'}
+		<ArrowRightIcon aria-hidden="true" />
+	{:else if kind === 'return'}
+		<CornerUpLeftIcon aria-hidden="true" />
+	{:else}
+		<SkipForwardIcon aria-hidden="true" />
+	{/if}
+	<span class="min-w-0">{text}</span>
+{/snippet}
 
 <!--
 	Четыре вопроса стоят сеткой 2×2, а не в строку из четырёх колонок: в строке
@@ -154,7 +188,7 @@
 							? `Вернуть: ${option.toStage.name}`
 							: `Пропустить до: ${option.toStage.name}`}
 				<div class="flex flex-col gap-1">
-					{#if option.transition.kind === 'forward'}
+					{#if option.transition.kind === 'forward' && !option.transition.requiresReason}
 						<form method="POST" action="?/advance" use:enhance={actionEnhance()}>
 							<input type="hidden" name="fromStageId" value={currentStageId} />
 							<input type="hidden" name="toStageId" value={option.toStage.id} />
@@ -168,30 +202,29 @@
 								class="h-auto min-h-7 w-full min-w-0 justify-start py-1 text-left whitespace-normal"
 								disabled={!option.allowed}
 							>
-								<ArrowRightIcon aria-hidden="true" />
-								<span class="min-w-0">{label}</span>
+								{@render transitionFace(option.transition.kind, label)}
 							</Button>
 						</form>
 					{:else}
+						<!-- Переход с обязательным объяснением сперва спрашивает его:
+							отправить команду, которую движок заведомо отклонит, значит
+							показать отказ вместо поля для ответа. -->
 						<Button
 							type="button"
 							size="sm"
-							variant="outline"
+							variant={option.transition.kind === 'forward' && option.allowed
+								? 'default'
+								: 'outline'}
 							class="h-auto min-h-7 w-full min-w-0 justify-start py-1 text-left whitespace-normal"
 							disabled={!option.allowed}
 							onclick={() =>
 								(reasonDialog = {
-									action: option.transition.kind === 'return' ? 'return' : 'skip',
+									kind: option.transition.kind,
 									toStageId: option.toStage.id,
 									name: option.toStage.name
 								})}
 						>
-							{#if option.transition.kind === 'return'}
-								<CornerUpLeftIcon aria-hidden="true" />
-							{:else}
-								<SkipForwardIcon aria-hidden="true" />
-							{/if}
-							<span class="min-w-0">{label}</span>
+							{@render transitionFace(option.transition.kind, label)}
 						</Button>
 					{/if}
 					{#if !option.allowed}
@@ -239,17 +272,15 @@
 >
 	<Dialog.Content>
 		<Dialog.Header>
-			<Dialog.Title>
-				{reasonDialog?.action === 'return' ? 'Вернуть на стадию' : 'Пропустить стадии'}
-			</Dialog.Title>
+			<Dialog.Title>{REASON_TITLES[dialogKind]}</Dialog.Title>
 			<Dialog.Description>
-				{reasonDialog === null ? '' : `Стадия: ${reasonDialog.name}.`} Причина попадёт в историю взаимодействия.
+				{reasonDialog === null ? '' : `Стадия: ${reasonDialog.name}.`} Объяснение попадёт в историю взаимодействия.
 			</Dialog.Description>
 		</Dialog.Header>
 
 		<form
 			method="POST"
-			action={reasonDialog?.action === 'return' ? '?/return' : '?/skip'}
+			action={REASON_ACTIONS[dialogKind]}
 			use:enhance={actionEnhance({ onsuccess: () => (reasonDialog = null) })}
 			class="flex flex-col gap-4"
 		>
@@ -257,13 +288,19 @@
 			<input type="hidden" name="toStageId" value={reasonDialog?.toStageId ?? ''} />
 
 			<div class="flex flex-col gap-1.5">
-				<Label for="transitionReason">Причина</Label>
+				<!-- На шаге вперёд объяснение — это комментарий «чем закончили стадию»,
+					а не разбор неудачи. -->
+				<Label for="transitionReason">
+					{dialogKind === 'forward' ? 'Комментарий' : 'Причина'}
+				</Label>
 				<Textarea
 					id="transitionReason"
 					name="reason"
 					rows={3}
 					required
-					placeholder="Что именно пошло не так"
+					placeholder={dialogKind === 'forward'
+						? 'Чем закончилась стадия'
+						: 'Что именно пошло не так'}
 				/>
 			</div>
 

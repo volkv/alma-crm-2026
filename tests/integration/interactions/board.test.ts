@@ -25,7 +25,7 @@ import {
 } from '$lib/server/interactions/board';
 import { createInteraction } from '$lib/server/interactions/write';
 import { pauseStage, setChecklistItem } from '$lib/server/stages/commands';
-import { ensureDemoRoute, readRoute } from '$lib/server/stages/routes';
+import { createRoute, ensureDemoRoute, publishRoute, readRoute } from '$lib/server/stages/routes';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import { getDb } from '$lib/server/db';
 import {
@@ -86,11 +86,60 @@ async function demoRoute(): Promise<StageRouteView> {
 	return readRoute(getDb(), routeId);
 }
 
+/**
+ * Маршрут из двух стадий, у которого объяснения требует именно шаг вперёд. В
+ * демонстрационном маршруте такого перехода нет, а доска обязана спрашивать
+ * объяснение у любого перехода, который его требует, а не только у возврата.
+ */
+async function reasonRoute(): Promise<StageRouteView> {
+	const ctx = admin();
+
+	const draft = await createRoute(ctx, {
+		key: 'board-forward-reason',
+		name: 'Маршрут с объяснением шага вперёд',
+		description: null,
+		isDefault: false,
+		stages: [
+			{
+				key: 'first',
+				name: 'Первая стадия',
+				category: 'contact',
+				slaDays: 5,
+				staleAfterDays: null,
+				requiresResult: false,
+				requiresConfirmation: false,
+				checklist: []
+			},
+			{
+				key: 'second',
+				name: 'Вторая стадия',
+				category: 'control',
+				slaDays: 5,
+				staleAfterDays: null,
+				requiresResult: false,
+				requiresConfirmation: false,
+				checklist: []
+			}
+		],
+		transitions: [
+			{
+				fromStageKey: 'first',
+				toStageKey: 'second',
+				kind: 'forward',
+				requiredPermissionKey: 'stages.transition',
+				requiresReason: true
+			}
+		]
+	});
+
+	return publishRoute(ctx, draft.id);
+}
+
 function stageIdOf(route: StageRouteView, key: string): string {
 	const stage = route.stages.find((candidate) => candidate.key === key);
 
 	if (stage === undefined) {
-		throw new Error(`В демонстрационном маршруте нет стадии «${key}»`);
+		throw new Error(`В маршруте нет стадии «${key}»`);
 	}
 
 	return stage.id;
@@ -551,6 +600,54 @@ describe('перевод карточки', () => {
 
 		expect(withReason).toEqual({ moved: true });
 		expect(await currentStageId(ctx, interactionId)).toBe(stageIdOf(route, 'contact_search'));
+	});
+
+	it('требует объяснение у шага вперёд, если так настроен маршрут', async () => {
+		const ctx = manager();
+		const route = await reasonRoute();
+		const organizationId = await insertOrganization(database.db, {
+			shortName: 'Вуз с объяснением шага'
+		});
+
+		const interactionId = await makeInteraction(ctx, {
+			routeId: route.id,
+			title: 'Шаг вперёд с объяснением',
+			organizationId,
+			ownerUserId: TEST_USER_IDS.manager
+		});
+
+		// Карточка знает о требовании заранее: доска спрашивает объяснение до
+		// команды, а не показывает отказ после неё.
+		const board = await getInteractionBoard(ctx, query({ routeId: route.id }));
+		const card = columnOf(board, 'Первая стадия').cards[0];
+
+		expect(card.transitions[0]).toMatchObject({
+			kind: 'forward',
+			requiresReason: true,
+			allowed: true
+		});
+
+		const move = {
+			interactionId,
+			fromStageId: stageIdOf(route, 'first'),
+			toStageId: stageIdOf(route, 'second'),
+			kind: 'forward'
+		};
+
+		const withoutReason = await transitionAction(transitionEvent(move));
+
+		expect(withoutReason).toMatchObject({ status: 409 });
+		expect((withoutReason as { data: { message: string } }).data.message).toContain(
+			'Нужно объяснить причину'
+		);
+		expect(await currentStageId(ctx, interactionId)).toBe(stageIdOf(route, 'first'));
+
+		const withReason = await transitionAction(
+			transitionEvent({ ...move, reason: 'Договорённости зафиксированы протоколом' })
+		);
+
+		expect(withReason).toEqual({ moved: true });
+		expect(await currentStageId(ctx, interactionId)).toBe(stageIdOf(route, 'second'));
 	});
 
 	it('не берёт вид перехода, которого нет', async () => {

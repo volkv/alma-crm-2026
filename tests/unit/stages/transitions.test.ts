@@ -207,6 +207,20 @@ describe('evaluateTransition', () => {
 		).toEqual({ allowed: true, reasons: [] });
 	});
 
+	it('требует причину и от шага вперёд, если так настроен переход', () => {
+		const forward = transition({ requiresReason: true });
+
+		// Требование принадлежит переходу, а не его виду: включённое на шаге
+		// вперёд, оно обязано и проверяться, и быть выполнимым.
+		expect(evaluateTransition(worker, state(), forward)).toEqual({ allowed: true, reasons: [] });
+		expect(evaluateTransition(worker, state(), forward, { reason: null }).reasons).toContain(
+			'Нужно объяснить причину'
+		);
+		expect(
+			evaluateTransition(worker, state(), forward, { reason: 'Программа согласована деканатом' })
+		).toEqual({ allowed: true, reasons: [] });
+	});
+
 	it('не требует от возврата закрытого чек-листа, результата и подтверждения', () => {
 		const stuck = state({
 			snapshot: snapshot({

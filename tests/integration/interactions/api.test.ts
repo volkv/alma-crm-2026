@@ -6,11 +6,11 @@
  */
 import type { RequestEvent } from '@sveltejs/kit';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createInteractionSchema } from '$lib/contracts/interactions';
+import { createInteractionSchema, type StageRouteView } from '$lib/contracts/interactions';
 import { createApiKey } from '$lib/server/api/keys';
 import { createInteraction } from '$lib/server/interactions/write';
 import { getRedis } from '$lib/server/redis';
-import { ensureDemoRoute, getRoute } from '$lib/server/stages/routes';
+import { createRoute, ensureDemoRoute, getRoute, publishRoute } from '$lib/server/stages/routes';
 import { setChecklistItem } from '$lib/server/stages/commands';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import {
@@ -119,6 +119,70 @@ async function seedInteraction(): Promise<{ id: string; routeId: string }> {
 	);
 
 	return { id: interaction.id, routeId };
+}
+
+/**
+ * Взаимодействие на маршруте, где объяснения требует шаг вперёд. В
+ * демонстрационном маршруте такого перехода нет, а интеграция обязана уметь
+ * пройти и его: правило, которое нельзя выполнить через API, запирает процесс.
+ */
+async function seedReasonInteraction(): Promise<{ id: string; route: StageRouteView }> {
+	const ctx = testActor();
+
+	const draft = await createRoute(ctx, {
+		key: 'api-forward-reason',
+		name: 'Маршрут с объяснением шага вперёд',
+		description: null,
+		isDefault: false,
+		stages: [
+			{
+				key: 'first',
+				name: 'Первая стадия',
+				category: 'contact',
+				slaDays: 5,
+				staleAfterDays: null,
+				requiresResult: false,
+				requiresConfirmation: false,
+				checklist: []
+			},
+			{
+				key: 'second',
+				name: 'Вторая стадия',
+				category: 'control',
+				slaDays: 5,
+				staleAfterDays: null,
+				requiresResult: false,
+				requiresConfirmation: false,
+				checklist: []
+			}
+		],
+		transitions: [
+			{
+				fromStageKey: 'first',
+				toStageKey: 'second',
+				kind: 'forward',
+				requiredPermissionKey: 'stages.transition',
+				requiresReason: true
+			}
+		]
+	});
+
+	const route = await publishRoute(ctx, draft.id);
+	const organizationId = await insertOrganization(database.db, {
+		shortName: 'Вуз с объяснением для API'
+	});
+
+	const interaction = await createInteraction(
+		ctx,
+		createInteractionSchema.parse({
+			title: 'Переход с объяснением через API',
+			routeId: route.id,
+			ownerUserId: TEST_USER_IDS.admin,
+			parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
+		})
+	);
+
+	return { id: interaction.id, route };
 }
 
 describe('GET /v1/interactions', () => {
@@ -268,6 +332,32 @@ describe('POST /v1/interactions/{id}/transitions', () => {
 		});
 
 		expect(response.status).toBe(409);
+	});
+
+	it('везёт объяснение шага вперёд туда, где его требует маршрут', async () => {
+		const ctx = testActor();
+		const seeded = await seedReasonInteraction();
+		const key = await issueKey('admin');
+
+		const [first, second] = seeded.route.stages;
+		const payload = { kind: 'forward', fromStageId: first.id, toStageId: second.id };
+
+		const withoutReason = await transition(key, seeded.id, payload);
+
+		expect(withoutReason.status).toBe(409);
+		expect(JSON.stringify(await body(withoutReason))).toContain('Нужно объяснить причину');
+
+		const withReason = await transition(key, seeded.id, {
+			...payload,
+			reason: 'Договорённости зафиксированы протоколом'
+		});
+
+		expect(withReason.status).toBe(200);
+		expect((await body(withReason)).stageKey).toBe(second.key);
+
+		// Объяснение доехало до истории, а не осталось в теле запроса.
+		const status = await getInteractionStatus(ctx, seeded.id);
+		expect(status.history[0].outcomeReason).toBe('Договорённости зафиксированы протоколом');
 	});
 
 	it('требует причину для возврата и права для перехода', async () => {
