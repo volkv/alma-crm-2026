@@ -15,6 +15,7 @@ import {
 } from '$lib/server/auth/session';
 import { auditEvents, users } from '$lib/server/db/schema';
 import { loadRolePermissions } from '$lib/server/rbac';
+import { DEFAULT_ROLES } from '$lib/server/rbac/permissions';
 import { getRedis } from '$lib/server/redis';
 import { getSetting, setSetting, SETTING_DEFAULTS } from '$lib/server/settings';
 import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
@@ -796,7 +797,7 @@ describe('пользователи', () => {
 		// плюс двое заведённых.
 		const all = (await loadUsers(pageEvent({ path: '/settings/users' }))) as UsersPageData;
 
-		expect(all.users.total).toBe(5);
+		expect(all.users.total).toBe(DEFAULT_ROLES.length + 2);
 	});
 
 	it('включает выключенную запись обратно и говорит об этом', async () => {

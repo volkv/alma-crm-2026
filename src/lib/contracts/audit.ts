@@ -56,6 +56,12 @@ export const AUDIT_EVENT_TYPES = [
 	'organizations.deactivated',
 	'organizations.site_created',
 	'organizations.site_updated',
+	// Ответственный за вуз: назначен, снят без замены, заменён другим. У замены
+	// в подробностях ещё и число переданных взаимодействий: вопрос «что стало с
+	// работой» задают сразу после вопроса «кто теперь ведёт».
+	'directory.responsible_assigned',
+	'directory.responsible_released',
+	'directory.responsible_reassigned',
 	'people.created',
 	'people.updated',
 	'people.affiliation_created',
@@ -65,6 +71,8 @@ export const AUDIT_EVENT_TYPES = [
 	'people.consent_withdrawn',
 	'people.retention_changed',
 	'people.anonymized',
+	'directions.created',
+	'directions.updated',
 	'programs.created',
 	'programs.updated',
 	'programs.version_created',
@@ -86,9 +94,33 @@ export const AUDIT_EVENT_TYPES = [
 	'interactions.checklist_changed',
 	'interactions.result_recorded',
 	'interactions.responsible_changed',
+	// Сменился владелец взаимодействия — не исполнитель стадии
+	// (`interactions.responsible_changed`), а тот, чья это работа.
+	'interactions.owner_changed',
+	// Запись стадии переехала при изменении процесса: строка на каждое
+	// переехавшее взаимодействие. На вопрос «почему моя запись стоит не там, где
+	// вчера» журнал обязан отвечать по самой записи, а не только по процессу.
+	'interactions.stage_migrated',
 	'interactions.commented',
 	'interactions.completed',
 	'interactions.cancelled',
+	// Договор контрагента и его позиции. Привязка договора к взаимодействию —
+	// это `interactions.updated` с полем в `changedFields`, отдельного кода у
+	// неё нет.
+	'contracts.created',
+	'contracts.updated',
+	'contracts.items_changed',
+	// Публикация изменённого процесса и перенос записей: две строки одной
+	// транзакции. Первая несёт диф в числах, вторая — сколько записей
+	// перепривязано и сколько взаимодействий переехало.
+	'stages.process_published',
+	'stages.process_migrated',
+	'stages.draft_created',
+	'stages.draft_updated',
+	'stages.draft_discarded',
+	// То же, что и `stages.routes_viewed`, под целевым именем раздела: попытка
+	// открыть устройство процесса без права на его настройку.
+	'stages.process_viewed',
 	'stages.route_created',
 	'stages.route_updated',
 	'stages.route_published',
@@ -121,6 +153,18 @@ export const AUDIT_EVENT_TYPES = [
 	'integrations.lms_sync_failed',
 	// Заявка, пришедшая от внешней системы, а не заведённая руками в интерфейсе.
 	'integrations.application_received',
+	// Журнал обмена: сообщение принято, отправлено, не доставлено после всех
+	// попыток, помечено разобранным вручную. Отправку учебной группы пишем
+	// отдельно — это действие сотрудника, а не работа цикла доставки.
+	'exchange.message_received',
+	'exchange.message_sent',
+	'exchange.message_failed',
+	'exchange.message_dismissed',
+	'exchange.group_requested',
+	// Отчёт по взаимодействиям, унесённый файлом: режим, период и число строк.
+	// Смотреть те же числа на экране можно сколько угодно, а выгрузка выносит их
+	// из системы — дальше файл живёт сам по себе.
+	'reports.exported',
 	'audit.exported',
 	'api.request',
 	'api.unauthenticated_burst'
@@ -151,7 +195,14 @@ export type AuditDetails = {
 	status?: number;
 	/** Вход в публичную демонстрацию: учётная запись общая, а не личная. */
 	demo?: boolean;
+	/** Режим отчёта: `snapshot`, `movement`. */
+	mode?: string;
+	/** Границы периода выгрузки — календарные дни `2026-10-01`. */
+	periodStart?: string;
+	periodEnd?: string;
 	[key: `${string}Id`]: string | undefined;
+	[key: `${string}Key`]: string | undefined;
+	[key: `${string}Count`]: number | undefined;
 };
 
 /**
@@ -168,6 +219,23 @@ const REQUEST_DETAIL_KEYS = new Map<string, 'string' | 'number' | 'boolean'>([
 ]);
 
 /**
+ * Поля выгрузки: режим отчёта и границы периода. Свободного текста не
+ * допускают и они — значение проверяется образцом, а не только типом.
+ */
+const SHAPED_DETAIL_KEYS = new Map<string, RegExp>([
+	['mode', /^[a-z][a-z0-9_-]{0,31}$/],
+	['periodStart', /^\d{4}-\d{2}-\d{2}$/],
+	['periodEnd', /^\d{4}-\d{2}-\d{2}$/]
+]);
+
+/**
+ * Устойчивое имя внутри системы: ключ стадии, ключ группы процесса, код
+ * направления. Образец закрывает форме `<что-то>Key` дорогу к свободному
+ * тексту: «позвонили в вуз» в неё не помещается.
+ */
+const KEY_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
+
+/**
  * Ключ со списком идентификаторов. Он один: списки в подробностях запрещены,
  * потому что произвольный массив рано или поздно окажется перечнем фамилий, а
  * этот содержит только ссылки на записи и заведён под след просмотра.
@@ -177,14 +245,22 @@ const ID_LIST_DETAIL_KEY = 'personIds';
 /** Идентификатор записи: только он и допустим внутри списка ссылок. */
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
-/** Ключи, которые в журнале запрещены прямо: за ними всегда стоят перс. данные. */
+/**
+ * Ключи, которые в журнале запрещены прямо. За первыми всегда стоят
+ * персональные данные; последние — секреты, и попали в список потому, что
+ * форма `<что-то>Key` пускает в подробности строку, а `apiKey` — это строка.
+ */
 const FORBIDDEN_DETAIL_KEYS = new Set([
 	'email',
 	'phone',
 	'password',
 	'lastName',
 	'firstName',
-	'middleName'
+	'middleName',
+	'apiKey',
+	'secretKey',
+	'signingKey',
+	'privateKey'
 ]);
 
 /**
@@ -226,9 +302,35 @@ export function validateAuditDetails(details: object): string[] {
 			continue;
 		}
 
+		const shape = SHAPED_DETAIL_KEYS.get(key);
+		if (shape !== undefined) {
+			if (typeof value !== 'string' || !shape.test(value)) {
+				issues.push(`${key}: значение не отвечает образцу ${shape.source}`);
+			}
+			continue;
+		}
+
+		// Счётчик: публикация процесса несёт диф в числах, переназначение —
+		// сколько записей передано, выгрузка — сколько строк ушло в файл.
+		if (key.endsWith('Count')) {
+			if (typeof value !== 'number' || !Number.isInteger(value) || value < 0) {
+				issues.push(`${key}: ожидается целое число не меньше нуля`);
+			}
+			continue;
+		}
+
+		// Устойчивое имя: ключ стадии, группы, направления. Не идентификатор
+		// записи — по ключу сопоставляют стадии разных редакций процесса.
+		if (key.endsWith('Key')) {
+			if (typeof value !== 'string' || !KEY_PATTERN.test(value)) {
+				issues.push(`${key}: ожидается устойчивое имя вида ${KEY_PATTERN.source}`);
+			}
+			continue;
+		}
+
 		if (!key.endsWith('Id')) {
 			issues.push(
-				`${key}: в подробностях допустимы ссылки вида <что-то>Id, ${ID_LIST_DETAIL_KEY} и поля ${[...REQUEST_DETAIL_KEYS.keys()].join(', ')}`
+				`${key}: в подробностях допустимы ссылки вида <что-то>Id, имена <что-то>Key, числа <что-то>Count, ${ID_LIST_DETAIL_KEY} и поля ${[...REQUEST_DETAIL_KEYS.keys(), ...SHAPED_DETAIL_KEYS.keys()].join(', ')}`
 			);
 			continue;
 		}

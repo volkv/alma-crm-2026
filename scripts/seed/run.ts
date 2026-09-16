@@ -1,6 +1,6 @@
 /**
  * Заливка начальных данных: каталог прав и ролей, учётные записи стенда,
- * справочники, маршрут стадий и демонстрационные взаимодействия.
+ * справочники, маршрут стадий, демонстрационные взаимодействия и договоры.
  *
  * Заливка идёт в два приёма. Конфигурация и справочники — одной транзакцией:
  * половина справочника без ролей и пользователей — это не «частично
@@ -24,8 +24,10 @@ import * as schema from '$lib/server/db/schema';
 import { seedRolesAndPermissions } from '$lib/server/rbac/seed';
 import { SETTING_DEFAULTS } from '$lib/server/settings';
 import { ensureDemoRoute } from '$lib/server/stages/routes';
+import { seedContracts } from './contracts';
 import { seedDirectory } from './directory';
 import { seedInteractions } from './interactions';
+import { assignProcessGroups, seedProcessGroup } from './process';
 import { seedStats } from './stats';
 import { seedUsers, STAFF_ADMIN_EMAIL, type SeededUsers } from './users';
 
@@ -57,10 +59,17 @@ export async function seedAll(options: {
 		// после справочника и в той же транзакции.
 		await seedStats(tx, { authorUserId: seededUsers.employees[0] });
 
-		return { users: seededUsers, routeId: await ensureDemoRoute(tx) };
+		const routeId = await ensureDemoRoute(tx);
+		await seedProcessGroup(tx, { routeId });
+
+		return { users: seededUsers, routeId };
 	});
 
 	await seedInteractions({ routeId });
+	// После взаимодействий: группа выводится из их основной стороны, а договор
+	// ссылается на уже заведённую запись.
+	await assignProcessGroups();
+	await seedContracts();
 
 	return users;
 }
@@ -128,7 +137,10 @@ const REPORTED_TABLES: Record<string, PgTable> = {
 	programs: schema.programs,
 	program_versions: schema.programVersions,
 	products: schema.products,
+	directions: schema.directions,
+	organization_responsibles: schema.organizationResponsibles,
 	interactions: schema.interactions,
+	contracts: schema.contracts,
 	stage_entries: schema.stageEntries,
 	documents: schema.documents,
 	stat_snapshots: schema.statSnapshots,

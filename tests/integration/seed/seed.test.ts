@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import { count, eq, inArray, isNull } from 'drizzle-orm';
+import { count, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isValidInn } from '$lib/validation/inn';
@@ -11,12 +11,20 @@ import {
 	affiliations,
 	blockers,
 	comments,
+	contractItems,
+	contracts,
+	directions,
 	documents,
 	interactionChanges,
+	interactionContractItems,
 	interactions,
+	organizationResponsibles,
 	organizations,
+	processGroups,
 	people,
 	permissions,
+	processStageKeys,
+	productDirections,
 	products,
 	programs,
 	programVersions,
@@ -32,6 +40,7 @@ import {
 } from '$lib/server/db/schema';
 import { DEFAULT_ROLES, PERMISSION_KEYS, type PermissionKey } from '$lib/server/rbac/permissions';
 import { DEMO_ROUTE } from '$lib/server/stages/demo-route';
+import { CONTRACT_SEED_SIZES } from '../../../scripts/seed/contracts';
 import { DIRECTORY_SEED_SIZES } from '../../../scripts/seed/directory';
 import { STATS_SEED_SIZES } from '../../../scripts/seed/stats';
 import { INTERACTION_SEED_SIZES } from '../../../scripts/seed/interactions';
@@ -133,6 +142,13 @@ describe('сид', () => {
 		await expect(countRows(programs)).resolves.toBe(DIRECTORY_SEED_SIZES.programs);
 		await expect(countRows(programVersions)).resolves.toBe(DIRECTORY_SEED_SIZES.programVersions);
 		await expect(countRows(products)).resolves.toBe(DIRECTORY_SEED_SIZES.products);
+		await expect(countRows(directions)).resolves.toBe(DIRECTORY_SEED_SIZES.directions);
+		await expect(countRows(productDirections)).resolves.toBe(
+			DIRECTORY_SEED_SIZES.productDirections
+		);
+		await expect(countRows(organizationResponsibles)).resolves.toBe(
+			DIRECTORY_SEED_SIZES.responsibles
+		);
 
 		const demo = await database.db
 			.select({ email: users.email, roleId: users.roleId })
@@ -142,10 +158,95 @@ describe('сид', () => {
 
 		expect(demo.map((account) => account.email)).toStrictEqual([
 			DEMO_EMAILS.admin,
+			DEMO_EMAILS.lead,
 			DEMO_EMAILS.manager,
 			DEMO_EMAILS.viewer
 		]);
-		expect(demo.map((account) => account.roleId)).toStrictEqual(['admin', 'manager', 'viewer']);
+		expect(demo.map((account) => account.roleId)).toStrictEqual([
+			'admin',
+			'lead',
+			'manager',
+			'viewer'
+		]);
+	});
+
+	it('ставит менеджерам руководителя: на иерархии держится область и эскалация', async () => {
+		await runSeed();
+
+		const rows = await database.db
+			.select({
+				id: users.id,
+				email: users.email,
+				roleId: users.roleId,
+				managerUserId: users.managerUserId
+			})
+			.from(users)
+			.orderBy(users.email);
+
+		const lead = rows.find((row) => row.email === DEMO_EMAILS.lead);
+		const demoManager = rows.find((row) => row.email === DEMO_EMAILS.manager);
+
+		expect(lead?.managerUserId).toBeNull();
+		expect(demoManager?.managerUserId).toBe(lead?.id);
+
+		// Демонстрационный менеджер и два сотрудника оператора: подготовка
+		// прогона заводит своих пользователей на роль, и они здесь ни при чём.
+		const reporting = rows.filter((row) => row.managerUserId === lead?.id);
+		expect(reporting).toHaveLength(3);
+	});
+
+	it('привязывает процесс к группе и проставляет её взаимодействиям', async () => {
+		await runSeed();
+
+		const [b2b] = await database.db
+			.select({ id: processGroups.id, activeRevisionId: processGroups.activeRevisionId })
+			.from(processGroups)
+			.where(eq(processGroups.key, 'b2b'));
+
+		// Действующая редакция группы — тот самый процесс, который завёл набор.
+		expect(b2b.activeRevisionId).not.toBeNull();
+
+		const keys = await database.db
+			.select({ key: processStageKeys.key })
+			.from(processStageKeys)
+			.where(eq(processStageKeys.groupId, b2b.id));
+
+		expect(keys.map((row) => row.key).sort()).toStrictEqual(
+			DEMO_ROUTE.stages.map((stage) => stage.key).sort()
+		);
+
+		// Группа выводится из вида основной стороны, и вуз ведут по `b2b`.
+		const grouped = await database.db
+			.select({ count: count() })
+			.from(interactions)
+			.where(eq(interactions.processGroupId, b2b.id));
+
+		expect(grouped[0].count).toBe(INTERACTION_SEED_SIZES.interactions);
+		const ungrouped = await database.db
+			.select({ count: count() })
+			.from(interactions)
+			.where(isNull(interactions.processGroupId));
+
+		expect(ungrouped[0].count).toBe(0);
+	});
+
+	it('заводит договоры и привязывает к взаимодействиям их позиции', async () => {
+		await runSeed();
+
+		await expect(countRows(contracts)).resolves.toBe(CONTRACT_SEED_SIZES.contracts);
+		await expect(countRows(contractItems)).resolves.toBe(CONTRACT_SEED_SIZES.items);
+		await expect(countRows(interactionContractItems)).resolves.toBe(
+			CONTRACT_SEED_SIZES.interactionItems
+		);
+
+		// Один договор обслуживает несколько взаимодействий: он принадлежит
+		// контрагенту, а не записи процесса.
+		const shared = await database.db
+			.select({ contractId: interactions.contractId })
+			.from(interactions)
+			.where(isNotNull(interactions.contractId));
+
+		expect(shared.length).toBeGreaterThan(new Set(shared.map((row) => row.contractId)).size);
 	});
 
 	it('заводит взаимодействия на стадиях маршрута', async () => {
@@ -375,7 +476,9 @@ describe('сид', () => {
 		expect(peopleAfter).toStrictEqual(peopleBefore);
 		await expect(countRows(affiliations)).resolves.toBe(DIRECTORY_SEED_SIZES.affiliations);
 		await expect(countRows(programVersions)).resolves.toBe(DIRECTORY_SEED_SIZES.programVersions);
-		await expect(countRows(users)).resolves.toBe(8);
+		// По записи на роль от подготовки прогона, четыре демонстрационные и два
+		// сотрудника оператора.
+		await expect(countRows(users)).resolves.toBe(DEFAULT_ROLES.length + 6);
 	});
 
 	it('не затирает правку, сделанную на стенде', async () => {
@@ -436,7 +539,9 @@ describe('сид', () => {
 			.where(eq(users.email, STAFF_ADMIN_EMAIL));
 
 		expect(rows).toStrictEqual([]);
-		await expect(countRows(users)).resolves.toBe(8);
+		// По записи на роль от подготовки прогона, четыре демонстрационные и два
+		// сотрудника оператора.
+		await expect(countRows(users)).resolves.toBe(DEFAULT_ROLES.length + 6);
 	});
 
 	it('с паролем заводит администратора стенда, и он не демонстрационный', async () => {
@@ -483,7 +588,8 @@ describe('сид', () => {
 		});
 
 		expect(refused.ok).toBe(false);
-		await expect(countRows(users)).resolves.toBe(9);
+		// То же самое плюс администратор стенда.
+		await expect(countRows(users)).resolves.toBe(DEFAULT_ROLES.length + 7);
 	});
 
 	it('узнаёт заведённого администратора по почте, а не по идентификатору', async () => {

@@ -23,6 +23,7 @@ import {
 	listUsers,
 	lookupUsers
 } from '$lib/server/auth/users';
+import { DEFAULT_ROLES } from '$lib/server/rbac/permissions';
 import { getRedis } from '$lib/server/redis';
 import { setSetting } from '$lib/server/settings';
 import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
@@ -808,8 +809,9 @@ describe('пользователи', () => {
 		await newUser({ name: 'v-spiske', password: PASSWORD });
 		const listed = await listUsers(testActor(), page);
 
-		// Три пользователя завела фикстура — по одному на роль.
-		expect(listed.total).toBe(4);
+		// По пользователю на каждую системную роль завела фикстура, ещё одного —
+		// сама проверка.
+		expect(listed.total).toBe(DEFAULT_ROLES.length + 1);
 		expect(listed.items.some((item) => item.email === email('v-spiske'))).toBe(true);
 	});
 

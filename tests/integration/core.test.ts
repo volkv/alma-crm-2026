@@ -98,7 +98,7 @@ describe('запись в журнал', () => {
 
 describe('права ролей', () => {
 	it('совпадают в базе и в коде для всех системных ролей', async () => {
-		for (const roleId of ['admin', 'manager', 'viewer']) {
+		for (const roleId of ['admin', 'lead', 'manager', 'viewer', 'service']) {
 			const fromDatabase = await loadRolePermissions(roleId);
 
 			expect(new Set(fromDatabase)).toEqual(new Set(defaultRolePermissions(roleId)));
@@ -107,6 +107,7 @@ describe('права ролей', () => {
 
 	it('разделяют чтение, запись и контакты людей', async () => {
 		const admin = testActor({ roleId: 'admin' });
+		const lead = testActor({ roleId: 'lead' });
 		const manager = testActor({ roleId: 'manager' });
 		const viewer = testActor({ roleId: 'viewer' });
 
@@ -118,8 +119,34 @@ describe('права ролей', () => {
 		expect(can(viewer, 'organizations.write')).toBe(false);
 		expect(can(viewer, 'people.read_pii')).toBe(false);
 
+		// Руководитель отличается от менеджера ровно распределением нагрузки и
+		// журналом — настройки и процесс остаются за администратором.
+		expect(can(lead, 'responsibles.manage')).toBe(true);
+		expect(can(lead, 'interactions.reassign')).toBe(true);
+		expect(can(lead, 'audit.read')).toBe(true);
+		expect(can(lead, 'stages.configure')).toBe(false);
+		expect(can(manager, 'responsibles.manage')).toBe(false);
+		expect(can(manager, 'audit.read')).toBe(false);
+
 		expect(() => requirePermission(viewer, 'organizations.write')).toThrow(ForbiddenError);
 		expect(() => requirePermission(admin, 'organizations.write')).not.toThrow();
+	});
+
+	it('оставляют машинному субъекту ровно три права обмена', () => {
+		const service = testActor({ roleId: 'service' });
+
+		expect([...defaultRolePermissions('service')].sort()).toStrictEqual([
+			'exchange.intake',
+			'exchange.results',
+			'stages.confirm'
+		]);
+
+		// Подтвердить стадию и двигать взаимодействие — разные полномочия, и
+		// внешняя система имеет только первое.
+		expect(can(service, 'stages.confirm')).toBe(true);
+		expect(can(service, 'stages.transition')).toBe(false);
+		expect(can(service, 'interactions.write')).toBe(false);
+		expect(can(service, 'interactions.read')).toBe(false);
 	});
 
 	it('отказ с описанием события оставляет след в журнале, а разрешение — нет', async () => {

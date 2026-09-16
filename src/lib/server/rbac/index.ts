@@ -156,6 +156,9 @@ const DEMO_DENIED_PERMISSIONS: readonly PermissionKey[] = [
 	'audit.export',
 	'stages.configure',
 	'integrations.manage',
+	// Адрес и секрет подключения уводят данные на чужой узел, и живут они
+	// дольше сессии посетителя.
+	'integrations.manage_endpoints',
 	'people.anonymize'
 ];
 

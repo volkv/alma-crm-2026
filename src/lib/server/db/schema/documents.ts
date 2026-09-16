@@ -13,6 +13,7 @@ import {
 	integer,
 	jsonb,
 	pgTable,
+	primaryKey,
 	text,
 	timestamp,
 	uniqueIndex,
@@ -21,8 +22,8 @@ import {
 } from 'drizzle-orm/pg-core';
 import type { DocumentTemplateVariable } from '$lib/contracts/documents';
 import { users } from './auth';
-import { interactions } from './interactions';
-import { timestamps } from './shared';
+import { interactions, stageEntries } from './interactions';
+import { createdAt, timestamps } from './shared';
 
 export const documentTemplates = pgTable('document_templates', {
 	id: uuid().primaryKey().defaultRandom(),
@@ -83,6 +84,41 @@ export const documents = pgTable(
 		)
 	]
 );
+
+/**
+ * Файлы, приложенные к записи стадии: чем подтверждён шаг процесса.
+ *
+ * Отдельной таблицей, а не колонкой в `documents`: один и тот же файл бывает
+ * приложен к нескольким шагам (соглашение подтверждает и подписание, и передачу
+ * материалов), а копия строки документа означала бы копию файла. Проверка
+ * «документ и запись принадлежат одному взаимодействию» — в сервисе загрузки:
+ * у связующей таблицы нет колонки взаимодействия, по которой её выразил бы
+ * составной внешний ключ.
+ */
+export const stageEntryDocuments = pgTable(
+	'stage_entry_documents',
+	{
+		stageEntryId: uuid()
+			.notNull()
+			.references((): AnyPgColumn => stageEntries.id, { onDelete: 'cascade' }),
+		documentId: uuid()
+			.notNull()
+			.references((): AnyPgColumn => documents.id, { onDelete: 'cascade' }),
+		...createdAt
+	},
+	(table) => [primaryKey({ columns: [table.stageEntryId, table.documentId] })]
+);
+
+export const stageEntryDocumentsRelations = relations(stageEntryDocuments, ({ one }) => ({
+	stageEntry: one(stageEntries, {
+		fields: [stageEntryDocuments.stageEntryId],
+		references: [stageEntries.id]
+	}),
+	document: one(documents, {
+		fields: [stageEntryDocuments.documentId],
+		references: [documents.id]
+	})
+}));
 
 export const documentsRelations = relations(documents, ({ one }) => ({
 	interaction: one(interactions, {

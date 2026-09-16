@@ -8,13 +8,16 @@
 import { relations } from 'drizzle-orm';
 import {
 	boolean,
+	check,
+	index,
 	jsonb,
 	pgTable,
 	primaryKey,
 	text,
 	timestamp,
 	uniqueIndex,
-	uuid
+	uuid,
+	type AnyPgColumn
 } from 'drizzle-orm/pg-core';
 import { sql } from 'drizzle-orm';
 import { timestamps } from './shared';
@@ -57,6 +60,19 @@ export const users = pgTable(
 		roleId: text()
 			.notNull()
 			.references(() => roles.id, { onDelete: 'restrict' }),
+		/**
+		 * Руководитель сотрудника. На этой иерархии держатся сразу две вещи:
+		 * область доступа руководителя (его подчинённые и их вузы) и адрес
+		 * эскалации зависшего взаимодействия. Считать их по-разному значило бы
+		 * завести в системе две иерархии, которые однажды разойдутся.
+		 */
+		managerUserId: uuid().references((): AnyPgColumn => users.id, { onDelete: 'set null' }),
+		/**
+		 * Идентификатор субъекта во внешнем каталоге пользователей (`sub` токена).
+		 * Пуст, пока запись ни разу не входила через него: связывание идёт при
+		 * первом входе по подтверждённой почте.
+		 */
+		externalSubject: text(),
 		/** Argon2id. Алгоритм и параметры — забота модуля аутентификации. */
 		passwordHash: text().notNull(),
 		passwordChangedAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
@@ -91,7 +107,16 @@ export const users = pgTable(
 	},
 	(table) => [
 		// Почта уникальна без учёта регистра: «Ivanov@» и «ivanov@» — один человек.
-		uniqueIndex('users_email_lower_key').on(sql`lower(${table.email})`)
+		uniqueIndex('users_email_lower_key').on(sql`lower(${table.email})`),
+		// Один субъект внешнего каталога — одна учётная запись. Частичная, потому
+		// что записей без внешнего субъекта в базе сколько угодно.
+		uniqueIndex('users_external_subject_key')
+			.on(table.externalSubject)
+			.where(sql`${table.externalSubject} is not null`),
+		index('users_manager_idx').on(table.managerUserId),
+		// Сам себе руководитель — цикл длиной один: замыкание подчинённых на нём
+		// не кончается, а эскалация уходит тому, кто её и поднял.
+		check('users_manager_not_self', sql`${table.managerUserId} <> ${table.id}`)
 	]
 );
 
@@ -112,6 +137,12 @@ export const rolePermissionsRelations = relations(rolePermissions, ({ one }) => 
 	})
 }));
 
-export const usersRelations = relations(users, ({ one }) => ({
-	role: one(roles, { fields: [users.roleId], references: [roles.id] })
+export const usersRelations = relations(users, ({ one, many }) => ({
+	role: one(roles, { fields: [users.roleId], references: [roles.id] }),
+	manager: one(users, {
+		fields: [users.managerUserId],
+		references: [users.id],
+		relationName: 'user_manager'
+	}),
+	reports: many(users, { relationName: 'user_manager' })
 }));

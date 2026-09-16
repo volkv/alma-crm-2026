@@ -35,8 +35,14 @@ export const STAGE_TRANSITION_KINDS = ['forward', 'return', 'skip'] as const;
 export const INTERACTION_STATUSES = ['active', 'completed', 'cancelled'] as const;
 /** Кем организация участвует в конкретном взаимодействии. */
 export const PARTY_ROLES = ['educational_institution', 'customer', 'operator'] as const;
-/** Чем закончилось пребывание на стадии. */
-export const STAGE_OUTCOMES = ['completed', 'returned', 'skipped'] as const;
+/**
+ * Чем закончилось пребывание на стадии. Исход `migrated` ставит не человек, а
+ * публикация изменённого процесса: запись закрыта переносом, а не работой, и
+ * движением по воронке она не считается.
+ */
+export const STAGE_OUTCOMES = ['completed', 'returned', 'skipped', 'migrated'] as const;
+/** Состояние договора: черновик, действует, закрыт. */
+export const CONTRACT_STATUSES = ['draft', 'active', 'closed'] as const;
 /** Почему часы на стадии остановлены. */
 export const PAUSE_REASONS = ['waiting_counterparty', 'waiting_internal', 'other'] as const;
 
@@ -65,6 +71,7 @@ export type StageTransitionKind = (typeof STAGE_TRANSITION_KINDS)[number];
 export type InteractionStatus = (typeof INTERACTION_STATUSES)[number];
 export type PartyRole = (typeof PARTY_ROLES)[number];
 export type StageOutcome = (typeof STAGE_OUTCOMES)[number];
+export type ContractStatus = (typeof CONTRACT_STATUSES)[number];
 export type PauseReason = (typeof PAUSE_REASONS)[number];
 export type BlockerReason = (typeof BLOCKER_REASONS)[number];
 

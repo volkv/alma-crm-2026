@@ -27,8 +27,11 @@ import {
 import {
 	affiliations,
 	consents,
+	directions,
+	organizationResponsibles,
 	organizations,
 	people,
+	productDirections,
 	products,
 	programs,
 	programVersions,
@@ -57,6 +60,145 @@ function checked<TSchema extends z.ZodType>(
 
 	return result.data;
 }
+
+/**
+ * ИТ-направления оператора. Разрез, в котором распределяют ответственность и
+ * собирают отчёт: по направлению назначают ответственного за вуз, к нему же
+ * привязаны продукты и программы.
+ */
+const DIRECTIONS: readonly { key: string; code: string; name: string }[] = [
+	{ key: 'development', code: 'DEV', name: 'Разработка' },
+	{ key: 'devops', code: 'OPS', name: 'Инфраструктура и DevOps' },
+	{ key: 'qa', code: 'QA', name: 'Тестирование' },
+	{ key: 'analytics', code: 'ANL', name: 'Данные и аналитика' },
+	{ key: 'security', code: 'SEC', name: 'Информационная безопасность' }
+];
+
+/** Направление программы: у каждой ровно одно, у направления — сколько угодно. */
+const PROGRAM_DIRECTIONS: Record<string, string> = {
+	'vo-bak-01': 'development',
+	'vo-bak-02': 'devops',
+	'vo-bak-03': 'development',
+	'vo-mag-01': 'analytics',
+	'vo-mag-02': 'security',
+	'spo-01': 'development',
+	'spo-02': 'devops',
+	'school-01': 'development',
+	'dpo-01': 'development',
+	'dpo-02': 'devops'
+};
+
+/** Направления продукта: их бывает несколько, и это не ошибка набора. */
+const PRODUCT_DIRECTIONS: readonly { productKey: string; directionKeys: readonly string[] }[] = [
+	{ productKey: 'lms', directionKeys: ['development'] },
+	{ productKey: 'analytics', directionKeys: ['analytics'] },
+	{ productKey: 'lab', directionKeys: ['devops'] },
+	{ productKey: 'cloud', directionKeys: ['development', 'devops'] },
+	{ productKey: 'security', directionKeys: ['security'] },
+	{ productKey: 'archive', directionKeys: ['analytics'] }
+];
+
+type ResponsibleSeed = {
+	key: string;
+	organizationKey: string;
+	userKey: string;
+	/** Направление назначения; без него — ответственный за вуз целиком. */
+	directionKey?: string;
+	validFrom: string;
+	/** Закрытое назначение: так на стенде видно историю, а не только «сейчас». */
+	validTo?: string;
+};
+
+/**
+ * Кто за какой вуз отвечает. У СЗПУ ответственность разделена по направлениям,
+ * а прежнее общее назначение закрыто: общее и назначения по направлениям на
+ * одном вузе не сосуществуют, и на стенде это видно историей, а не словами.
+ */
+const RESPONSIBLES: readonly ResponsibleSeed[] = [
+	{
+		key: 'szpu-general',
+		organizationKey: 'szpu',
+		userKey: 'zotov',
+		validFrom: '2025-09-01T09:00:00+03:00',
+		validTo: '2026-06-30T18:00:00+03:00'
+	},
+	{
+		key: 'szpu-development',
+		organizationKey: 'szpu',
+		userKey: 'demo-manager',
+		directionKey: 'development',
+		validFrom: '2026-06-30T18:00:00+03:00'
+	},
+	{
+		key: 'szpu-analytics',
+		organizationKey: 'szpu',
+		userKey: 'veresova',
+		directionKey: 'analytics',
+		validFrom: '2026-06-30T18:00:00+03:00'
+	},
+	{
+		key: 'paid',
+		organizationKey: 'paid',
+		userKey: 'demo-manager',
+		validFrom: '2026-01-15T09:00:00+03:00'
+	},
+	{
+		key: 'school47',
+		organizationKey: 'school47',
+		userKey: 'demo-manager',
+		validFrom: '2026-02-01T09:00:00+03:00'
+	},
+	{
+		key: 'sruit',
+		organizationKey: 'sruit',
+		userKey: 'demo-manager',
+		validFrom: '2026-02-01T09:00:00+03:00'
+	},
+	{
+		key: 'bit',
+		organizationKey: 'bit',
+		userKey: 'demo-manager',
+		validFrom: '2026-03-10T09:00:00+03:00'
+	},
+	{
+		key: 'nkis',
+		organizationKey: 'nkis',
+		userKey: 'demo-manager',
+		validFrom: '2026-03-10T09:00:00+03:00'
+	},
+	{
+		key: 'pupi',
+		organizationKey: 'pupi',
+		userKey: 'veresova',
+		validFrom: '2026-01-20T09:00:00+03:00'
+	},
+	{
+		key: 'uguis',
+		organizationKey: 'uguis',
+		userKey: 'veresova',
+		validFrom: '2026-01-20T09:00:00+03:00'
+	},
+	{
+		key: 'vkgtu',
+		organizationKey: 'vkgtu',
+		userKey: 'veresova',
+		validFrom: '2026-02-16T09:00:00+03:00'
+	},
+	{ key: 'vts', organizationKey: 'vts', userKey: 'zotov', validFrom: '2026-01-20T09:00:00+03:00' },
+	{
+		key: 'skpa',
+		organizationKey: 'skpa',
+		userKey: 'zotov',
+		validFrom: '2026-02-16T09:00:00+03:00'
+	},
+	{
+		key: 'ukct',
+		organizationKey: 'ukct',
+		userKey: 'zotov',
+		validFrom: '2026-03-02T09:00:00+03:00'
+	},
+	{ key: 'sivt', organizationKey: 'sivt', userKey: 'zotov', validFrom: '2026-03-02T09:00:00+03:00' }
+];
 
 type OrganizationSeed = { key: string } & z.input<typeof createOrganizationSchema>;
 
@@ -1458,6 +1600,18 @@ function affiliationValues(key: string, personKey: string, fields: AffiliationSe
  */
 export async function seedDirectory(tx: Tx, options: { authorUserId: string }): Promise<void> {
 	await tx
+		.insert(directions)
+		.values(
+			DIRECTIONS.map((direction, index) => ({
+				id: seedId('direction', direction.key),
+				code: direction.code,
+				name: direction.name,
+				position: index + 1
+			}))
+		)
+		.onConflictDoNothing({ target: directions.id });
+
+	await tx
 		.insert(organizations)
 		.values(
 			ORGANIZATIONS.map(({ key, ...raw }) => ({
@@ -1528,6 +1682,9 @@ export async function seedDirectory(tx: Tx, options: { authorUserId: string }): 
 		.values(
 			PROGRAMS.map(({ key, versions: _versions, ...raw }) => ({
 				id: seedId('program', key),
+				// ИТ-направление контракт программы не описывает: оно про разрез
+				// ответственности, а не про саму программу, и лежит в наборе рядом.
+				directionId: seedId('direction', PROGRAM_DIRECTIONS[key]),
 				...checked(createProgramSchema, 'program', key, raw)
 			}))
 		)
@@ -1567,6 +1724,38 @@ export async function seedDirectory(tx: Tx, options: { authorUserId: string }): 
 			}))
 		)
 		.onConflictDoNothing({ target: products.id });
+
+	await tx
+		.insert(productDirections)
+		.values(
+			PRODUCT_DIRECTIONS.flatMap(({ productKey, directionKeys }) =>
+				directionKeys.map((directionKey) => ({
+					productId: seedId('product', productKey),
+					directionId: seedId('direction', directionKey)
+				}))
+			)
+		)
+		.onConflictDoNothing();
+
+	await tx
+		.insert(organizationResponsibles)
+		.values(
+			RESPONSIBLES.map((responsible) => ({
+				id: seedId('responsible', responsible.key),
+				organizationId: seedId('organization', responsible.organizationKey),
+				userId: seedId('user', responsible.userKey),
+				directionId:
+					responsible.directionKey === undefined
+						? null
+						: seedId('direction', responsible.directionKey),
+				validFrom: new Date(responsible.validFrom),
+				validTo: responsible.validTo === undefined ? null : new Date(responsible.validTo),
+				// Назначает руководитель — он же тот, кто отвечает за распределение
+				// нагрузки. Автор справочника здесь не при чём.
+				assignedByUserId: seedId('user', 'demo-lead')
+			}))
+		)
+		.onConflictDoNothing({ target: organizationResponsibles.id });
 }
 
 /**
@@ -1574,6 +1763,12 @@ export async function seedDirectory(tx: Tx, options: { authorUserId: string }): 
  * оказалось в базе: расхождение означает, что часть строк молча не вставилась.
  */
 export const DIRECTORY_SEED_SIZES = {
+	directions: DIRECTIONS.length,
+	productDirections: PRODUCT_DIRECTIONS.reduce(
+		(total, product) => total + product.directionKeys.length,
+		0
+	),
+	responsibles: RESPONSIBLES.length,
 	organizations: ORGANIZATIONS.length,
 	sites: SITES.length,
 	people: PEOPLE.length,

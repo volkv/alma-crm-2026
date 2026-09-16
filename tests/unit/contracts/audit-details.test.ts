@@ -29,7 +29,7 @@ describe('validateAuditDetails', () => {
 
 	it('отвергает любой ключ, который не является ни ссылкой, ни служебным полем', () => {
 		expect(validateAuditDetails({ comment: 'позвонили в вуз' })).toEqual([
-			'comment: в подробностях допустимы ссылки вида <что-то>Id, personIds и поля route, method, status, demo'
+			'comment: в подробностях допустимы ссылки вида <что-то>Id, имена <что-то>Key, числа <что-то>Count, personIds и поля route, method, status, demo, mode, periodStart, periodEnd'
 		]);
 	});
 
@@ -64,7 +64,7 @@ describe('validateAuditDetails', () => {
 		expect(
 			validateAuditDetails({ organizationIds: ['11111111-2222-4333-8444-555555555555'] })
 		).toEqual([
-			'organizationIds: в подробностях допустимы ссылки вида <что-то>Id, personIds и поля route, method, status, demo'
+			'organizationIds: в подробностях допустимы ссылки вида <что-то>Id, имена <что-то>Key, числа <что-то>Count, personIds и поля route, method, status, demo, mode, periodStart, periodEnd'
 		]);
 		expect(
 			validateAuditDetails({ organizationId: ['11111111-2222-4333-8444-555555555555'] })
@@ -77,6 +77,59 @@ describe('validateAuditDetails', () => {
 		]);
 		expect(validateAuditDetails({ changedFields: 'shortName' })).toEqual([
 			'changedFields: ожидается список имён полей'
+		]);
+	});
+
+	it('пропускает счётчики: публикация и выгрузка несут диф в числах', () => {
+		expect(validateAuditDetails({ migratedCount: 12, rowCount: 0 })).toEqual([]);
+	});
+
+	it('требует у счётчика целое число не меньше нуля', () => {
+		const expected = (key: string) => [`${key}: ожидается целое число не меньше нуля`];
+
+		expect(validateAuditDetails({ rowCount: '12' })).toEqual(expected('rowCount'));
+		expect(validateAuditDetails({ rowCount: 1.5 })).toEqual(expected('rowCount'));
+		expect(validateAuditDetails({ rowCount: -1 })).toEqual(expected('rowCount'));
+	});
+
+	it('пропускает устойчивые имена: по ключу сопоставляют стадии разных редакций', () => {
+		expect(validateAuditDetails({ fromStageKey: 'contact_search', groupKey: 'b2b' })).toEqual([]);
+	});
+
+	it('не пускает под видом имени свободный текст', () => {
+		// Форма `<что-то>Key` — это ключ стадии или группы, а не строка, которую
+		// писал человек: иначе в неизменяемый журнал попадут персональные данные.
+		const expected = (key: string) => [
+			`${key}: ожидается устойчивое имя вида ^[a-z][a-z0-9_-]{0,63}$`
+		];
+
+		expect(validateAuditDetails({ stageKey: 'позвонили в вуз' })).toEqual(expected('stageKey'));
+		expect(validateAuditDetails({ stageKey: 'Contact Search' })).toEqual(expected('stageKey'));
+		expect(validateAuditDetails({ stageKey: 42 })).toEqual(expected('stageKey'));
+	});
+
+	it('запрещает секреты, хотя по форме они — имена', () => {
+		// `apiKey` подходит под `<что-то>Key` и без явного запрета лёг бы в журнал
+		// целиком.
+		for (const key of ['apiKey', 'secretKey', 'signingKey', 'privateKey']) {
+			expect(validateAuditDetails({ [key]: 'abcdef0123456789' })).toEqual([
+				`${key}: персональные данные в журнал не записываются`
+			]);
+		}
+	});
+
+	it('пропускает режим и период выгрузки', () => {
+		expect(
+			validateAuditDetails({ mode: 'snapshot', periodStart: '2026-10-01', periodEnd: '2026-12-31' })
+		).toEqual([]);
+	});
+
+	it('требует у режима и периода их образец', () => {
+		expect(validateAuditDetails({ mode: 'срез на конец периода' })).toEqual([
+			'mode: значение не отвечает образцу ^[a-z][a-z0-9_-]{0,31}$'
+		]);
+		expect(validateAuditDetails({ periodStart: '01.10.2026' })).toEqual([
+			'periodStart: значение не отвечает образцу ^\\d{4}-\\d{2}-\\d{2}$'
 		]);
 	});
 

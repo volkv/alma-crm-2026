@@ -28,7 +28,8 @@
 	const OUTCOME_LABELS: Record<StageOutcome, string> = {
 		completed: 'пройдена',
 		returned: 'возврат',
-		skipped: 'пропуск вперёд'
+		skipped: 'пропуск вперёд',
+		migrated: 'перенос при изменении процесса'
 	};
 
 	const FIELD_LABELS: Record<string, string> = {

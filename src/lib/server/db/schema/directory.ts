@@ -12,14 +12,17 @@ import {
 	check,
 	date,
 	foreignKey,
+	index,
 	integer,
 	pgEnum,
 	pgTable,
+	primaryKey,
 	text,
 	timestamp,
 	unique,
 	uniqueIndex,
-	uuid
+	uuid,
+	type AnyPgColumn
 } from 'drizzle-orm/pg-core';
 import {
 	AFFILIATION_ROLE_KINDS,
@@ -31,7 +34,7 @@ import {
 	SITE_KINDS
 } from '$lib/contracts/directory';
 import { users } from './auth';
-import { externalRef, externalRefUnique, timestamps } from './shared';
+import { createdAt, externalRef, externalRefUnique, timestamps } from './shared';
 
 export const organizationKindEnum = pgEnum('organization_kind', ORGANIZATION_KINDS);
 export const educationLevelEnum = pgEnum('education_level', EDUCATION_LEVELS);
@@ -41,6 +44,29 @@ export const programLevelEnum = pgEnum('program_level', PROGRAM_LEVELS);
 export const lifecycleStatusEnum = pgEnum('lifecycle_status', LIFECYCLE_STATUSES);
 export const consentBasisEnum = pgEnum('consent_basis', CONSENT_BASES);
 
+/**
+ * ИТ-направление, по которому идёт работа: DevOps, тестирование, аналитика.
+ *
+ * Это не код направления подготовки ФГОС (`programs.direction_code`), а разрез
+ * продуктов и ответственности: по направлению назначают ответственного за вуз и
+ * по нему же собирают отчёт. Позиция задаёт порядок в списках и подсказках —
+ * алфавит здесь не помогает, у направлений есть свой порядок значимости.
+ */
+export const directions = pgTable(
+	'directions',
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		code: text().notNull(),
+		name: text().notNull(),
+		position: integer().notNull(),
+		...timestamps
+	},
+	(table) => [
+		unique('directions_code_key').on(table.code),
+		unique('directions_position_key').on(table.position)
+	]
+);
+
 export const organizations = pgTable(
 	'organizations',
 	{
@@ -48,6 +74,20 @@ export const organizations = pgTable(
 		kind: organizationKindEnum().notNull(),
 		/** Заполнен ровно у учебных заведений — это же проверяет CHECK ниже. */
 		educationLevel: educationLevelEnum(),
+		/**
+		 * Человек, которым является этот контрагент. Заполнен ровно у вида
+		 * `individual` — это же проверяет CHECK ниже.
+		 *
+		 * Физическое лицо живёт строкой организации, а не отдельной таблицей
+		 * контрагентов: так ФИО, контакты, согласия, срок хранения и
+		 * обезличивание остаются в единственном контуре персональных данных, а
+		 * все внешние ключи на организацию продолжают работать. `restrict` —
+		 * потому что удалить человека, который сам является стороной
+		 * взаимодействий, значило бы оставить их без контрагента.
+		 */
+		personId: uuid()
+			.unique('organizations_person_key')
+			.references((): AnyPgColumn => people.id, { onDelete: 'restrict' }),
 		legalName: text().notNull(),
 		shortName: text().notNull(),
 		inn: text(),
@@ -70,6 +110,12 @@ export const organizations = pgTable(
 		check(
 			'organizations_education_level_matches_kind',
 			sql`(${table.educationLevel} is not null) = (${table.kind} = 'educational_institution')`
+		),
+		// Физлицо без человека — контрагент без имени; человек у вуза — лишняя
+		// связь, по которой обезличивание однажды дошло бы до организации.
+		check(
+			'organizations_person_matches_kind',
+			sql`(${table.personId} is not null) = (${table.kind} = 'individual')`
 		)
 	]
 );
@@ -200,6 +246,55 @@ export const affiliations = pgTable(
 	]
 );
 
+/**
+ * Кто отвечает за вуз и за какое направление в заданный период.
+ *
+ * Назначения не удаляются, а закрываются точной меткой времени: две смены
+ * ответственного за один день обязаны выстроиться в историю, иначе отчёт за
+ * прошлый период не сможет сказать, кто вёл вуз тогда. Отсюда же
+ * `timestamptz`, а не `date`.
+ *
+ * `direction_id is null` — общее назначение на весь вуз. Правило «общее
+ * назначение и назначения по направлениям на одном вузе не сосуществуют»
+ * уникальным индексом не выражается (`null` и значение — разные ключи) и
+ * держится сервисом назначений.
+ */
+export const organizationResponsibles = pgTable(
+	'organization_responsibles',
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		organizationId: uuid()
+			.notNull()
+			.references(() => organizations.id, { onDelete: 'cascade' }),
+		userId: uuid()
+			.notNull()
+			.references(() => users.id, { onDelete: 'restrict' }),
+		/** Направление назначения; `null` — ответственный за вуз целиком. */
+		directionId: uuid().references(() => directions.id, { onDelete: 'restrict' }),
+		validFrom: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		validTo: timestamp({ withTimezone: true }),
+		assignedByUserId: uuid().references(() => users.id, { onDelete: 'set null' }),
+		...timestamps
+	},
+	(table) => [
+		// Область доступа читает действующие назначения подзапросом на каждой
+		// выборке, поэтому оба индекса — частичные по `valid_to is null`.
+		index('organization_responsibles_organization_idx')
+			.on(table.organizationId, table.userId)
+			.where(sql`${table.validTo} is null`),
+		index('organization_responsibles_user_idx')
+			.on(table.userId)
+			.where(sql`${table.validTo} is null`),
+		check(
+			'organization_responsibles_period_ordered',
+			sql`${table.validTo} is null or ${table.validTo} > ${table.validFrom}`
+		)
+		// Уникальность «один действующий ответственный на вуз × направление»
+		// объявлена миграцией: ей нужен NULLS NOT DISTINCT, которого билдер
+		// индексов Drizzle не выражает. См. `docs/data-model.md`.
+	]
+);
+
 export const programs = pgTable(
 	'programs',
 	{
@@ -210,6 +305,8 @@ export const programs = pgTable(
 		level: programLevelEnum().notNull(),
 		/** Код направления подготовки, например 09.03.01. */
 		directionCode: text(),
+		/** ИТ-направление продукта — разрез ответственности, а не код ФГОС. */
+		directionId: uuid().references(() => directions.id, { onDelete: 'restrict' }),
 		status: lifecycleStatusEnum().notNull().default('draft'),
 		...externalRef,
 		...timestamps
@@ -249,10 +346,34 @@ export const products = pgTable(
 	(table) => [externalRefUnique('products_external_ref_key', table)]
 );
 
-export const organizationsRelations = relations(organizations, ({ many }) => ({
+/**
+ * Направления продукта. Их бывает несколько: один продукт закрывает и DevOps,
+ * и администрирование, и делить его надвое ради разреза отчёта — значит
+ * заводить два продукта там, где заказчик видит один.
+ */
+export const productDirections = pgTable(
+	'product_directions',
+	{
+		productId: uuid()
+			.notNull()
+			.references(() => products.id, { onDelete: 'cascade' }),
+		directionId: uuid()
+			.notNull()
+			.references(() => directions.id, { onDelete: 'restrict' }),
+		...createdAt
+	},
+	(table) => [
+		primaryKey({ columns: [table.productId, table.directionId] }),
+		index('product_directions_direction_idx').on(table.directionId)
+	]
+);
+
+export const organizationsRelations = relations(organizations, ({ many, one }) => ({
 	sites: many(sites),
 	affiliations: many(affiliations),
-	products: many(products)
+	products: many(products),
+	responsibles: many(organizationResponsibles),
+	person: one(people, { fields: [organizations.personId], references: [people.id] })
 }));
 
 export const sitesRelations = relations(sites, ({ one }) => ({
@@ -280,7 +401,38 @@ export const affiliationsRelations = relations(affiliations, ({ one }) => ({
 	site: one(sites, { fields: [affiliations.siteId], references: [sites.id] })
 }));
 
-export const programsRelations = relations(programs, ({ many }) => ({
+export const directionsRelations = relations(directions, ({ many }) => ({
+	programs: many(programs),
+	products: many(productDirections),
+	responsibles: many(organizationResponsibles)
+}));
+
+export const organizationResponsiblesRelations = relations(organizationResponsibles, ({ one }) => ({
+	organization: one(organizations, {
+		fields: [organizationResponsibles.organizationId],
+		references: [organizations.id]
+	}),
+	user: one(users, { fields: [organizationResponsibles.userId], references: [users.id] }),
+	direction: one(directions, {
+		fields: [organizationResponsibles.directionId],
+		references: [directions.id]
+	}),
+	assignedBy: one(users, {
+		fields: [organizationResponsibles.assignedByUserId],
+		references: [users.id]
+	})
+}));
+
+export const productDirectionsRelations = relations(productDirections, ({ one }) => ({
+	product: one(products, { fields: [productDirections.productId], references: [products.id] }),
+	direction: one(directions, {
+		fields: [productDirections.directionId],
+		references: [directions.id]
+	})
+}));
+
+export const programsRelations = relations(programs, ({ many, one }) => ({
+	direction: one(directions, { fields: [programs.directionId], references: [directions.id] }),
 	versions: many(programVersions)
 }));
 
@@ -289,9 +441,10 @@ export const programVersionsRelations = relations(programVersions, ({ one }) => 
 	createdByUser: one(users, { fields: [programVersions.createdBy], references: [users.id] })
 }));
 
-export const productsRelations = relations(products, ({ one }) => ({
+export const productsRelations = relations(products, ({ one, many }) => ({
 	vendor: one(organizations, {
 		fields: [products.vendorOrganizationId],
 		references: [organizations.id]
-	})
+	}),
+	directions: many(productDirections)
 }));

@@ -5,6 +5,7 @@ export * from './audit';
 export * from './auth';
 export * from './directory';
 export * from './documents';
+export * from './exchange';
 export * from './interactions';
 export * from './settings';
 export * from './stats';

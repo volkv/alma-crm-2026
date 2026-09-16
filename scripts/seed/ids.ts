@@ -25,9 +25,13 @@ export type SeedKind =
 	| 'person'
 	| 'consent'
 	| 'affiliation'
+	| 'direction'
+	| 'responsible'
 	| 'program'
 	| 'program-version'
 	| 'product'
+	| 'contract'
+	| 'contract-item'
 	| 'interaction';
 
 /**

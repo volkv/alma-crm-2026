@@ -83,6 +83,9 @@ const DEFAULT_POSITION = 'Контактное лицо (заявка с сай�
 
 /** Кем организация участвует во взаимодействии — по её виду в справочнике. */
 const PARTY_ROLE_BY_KIND: Record<OrganizationKind, PartyRole> = {
+	// Контрагент группы B2C учится сам и сам платит: в ролях сторон это заказчик.
+	individual: 'customer',
+	legal_entity: 'customer',
 	educational_institution: 'educational_institution',
 	customer_company: 'customer',
 	operator: 'operator'

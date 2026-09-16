@@ -20,11 +20,34 @@ import {
 	searchQuery
 } from './common';
 
-/** Кем организация приходится процессу: вуз, компания-заказчик, оператор. */
+/**
+ * Кем организация приходится процессу: вуз, юридическое или физическое лицо,
+ * компания-заказчик, оператор.
+ *
+ * Первые три бывают основной стороной взаимодействия, и по ним считается группа
+ * процесса; компания-заказчик и оператор стоят рядом, но процесс не задают.
+ * Физическое лицо — организация вида `individual` с обязательной ссылкой на
+ * человека: отдельного контура персональных данных для него не заводится.
+ * Порядок значений менять нельзя — он же порядок значений перечисления в базе.
+ */
 export const ORGANIZATION_KINDS = [
 	'educational_institution',
 	'customer_company',
-	'operator'
+	'operator',
+	'individual',
+	'legal_entity'
+] as const;
+
+/**
+ * Виды, которые заводит форма справочника. Физическое лицо в неё не входит: его
+ * строка неотделима от строки человека (`organizations.person_id`), и такой
+ * контрагент появляется вместе с заявкой, а не отдельной карточкой.
+ */
+export const ORGANIZATION_FORM_KINDS = [
+	'educational_institution',
+	'customer_company',
+	'operator',
+	'legal_entity'
 ] as const;
 /** Уровень образования: высшее, среднее профессиональное, школа. */
 export const EDUCATION_LEVELS = ['vo', 'spo', 'school'] as const;
@@ -119,10 +142,20 @@ const educationLevelError = {
 	path: ['educationLevel']
 };
 
+function kindIsCreatableByForm(value: { kind: OrganizationKind }): boolean {
+	return (ORGANIZATION_FORM_KINDS as readonly OrganizationKind[]).includes(value.kind);
+}
+
+const organizationKindError = {
+	error: 'Физическое лицо заводится вместе с карточкой человека, а не формой справочника',
+	path: ['kind']
+};
+
 export const createOrganizationSchema = z
 	.object(organizationFields)
 	.refine(externalRefIsPaired, externalRefError)
-	.refine(educationLevelMatchesKind, educationLevelError);
+	.refine(educationLevelMatchesKind, educationLevelError)
+	.refine(kindIsCreatableByForm, organizationKindError);
 
 export const updateOrganizationSchema = createOrganizationSchema.extend({
 	id: id('Некорректный идентификатор организации')

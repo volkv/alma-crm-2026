@@ -37,6 +37,9 @@ import { startTestStorage, type TestStorage } from './storage';
 
 const migrationsFolder = new URL('../../../drizzle', import.meta.url).pathname;
 
+/** Таблицы, строки которых приезжают с миграцией, а не с сидом или тестом. */
+const REFERENCE_TABLES = ['process_groups', 'process_group_counterparty_kinds'] as const;
+
 export type TestDatabase = {
 	/** Тот же самый handle, что получают сервисы через `getDb()`. */
 	db: PostgresJsDatabase<typeof schema>;
@@ -92,6 +95,16 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 	const raw = postgres(uri, { max: 1 });
 	await migrate(drizzle(raw), { migrationsFolder });
 
+	// Справочные строки продукта, которые кладёт миграция: группы процесса и
+	// соответствие «вид контрагента → группа». TRUNCATE в `reset()` уносит их
+	// вместе со всем остальным, а повторно применить миграцию нельзя — поэтому
+	// прогон снимает их один раз и возвращает после каждой чистки. Снимок, а не
+	// копия значений: копия разошлась бы с миграцией на первой же правке.
+	const reference = new Map<string, Record<string, unknown>[]>();
+	for (const table of REFERENCE_TABLES) {
+		reference.set(table, await raw.unsafe(`select * from "${table}"`));
+	}
+
 	// Своё соединение, а не общее `getRedis()`: тестам его отдавать незачем, а
 	// закрывают они своё сами — и закрытое общее не годилось бы для уборки.
 	const redis = new Redis(redisContainer.getConnectionUrl());
@@ -116,6 +129,15 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 			// журнал чистится вместе со всем остальным.
 			const list = tables.map((table) => `"${table.name}"`).join(', ');
 			await raw.unsafe(`truncate table ${list} restart identity cascade`);
+		}
+
+		// Порядок тот же, что в списке: соответствие видов ссылается на группы.
+		for (const table of REFERENCE_TABLES) {
+			const rows = reference.get(table) ?? [];
+
+			if (rows.length > 0) {
+				await raw`insert into ${raw(table)} ${raw(rows)}`;
+			}
 		}
 
 		await db.transaction(async (tx) => {

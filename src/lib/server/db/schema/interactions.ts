@@ -8,10 +8,12 @@
  */
 import { relations, sql } from 'drizzle-orm';
 import {
+	bigint,
 	boolean,
 	check,
 	date,
 	doublePrecision,
+	foreignKey,
 	index,
 	integer,
 	jsonb,
@@ -33,6 +35,7 @@ import type {
 	StageSnapshot
 } from '$lib/contracts/interactions';
 import {
+	CONTRACT_STATUSES,
 	INTERACTION_STATUSES,
 	PARTY_ROLES,
 	PAUSE_REASONS,
@@ -44,6 +47,7 @@ import { permissions, users } from './auth';
 import { documents } from './documents';
 import {
 	affiliations,
+	organizationKindEnum,
 	organizations,
 	products,
 	programs,
@@ -58,6 +62,82 @@ export const interactionStatusEnum = pgEnum('interaction_status', INTERACTION_ST
 export const partyRoleEnum = pgEnum('party_role', PARTY_ROLES);
 export const stageOutcomeEnum = pgEnum('stage_outcome', STAGE_OUTCOMES);
 export const pauseReasonEnum = pgEnum('pause_reason', PAUSE_REASONS);
+export const contractStatusEnum = pgEnum('contract_status', CONTRACT_STATUSES);
+
+/**
+ * Группа процесса: набор видов контрагента, работа с которыми идёт по одному
+ * сценарию. Их две — `b2b` и `b2c`, — и добавить третью можно строкой.
+ *
+ * Действующая редакция вынесена в колонку, а не выводится запросом «последняя
+ * опубликованная»: публикация обязана переключать процесс одним значением,
+ * которое читается под блокировкой группы, иначе переход и публикация
+ * разойдутся на гонке. Принадлежность редакции своей группе проверяет
+ * транзакция публикации.
+ */
+export const processGroups = pgTable(
+	'process_groups',
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		key: text().notNull(),
+		name: text().notNull(),
+		description: text(),
+		/**
+		 * Редакция, по которой идёт работа. Ссылка на `stage_routes` — это и есть
+		 * будущие `process_revisions`: таблицу переименовывает задача живого
+		 * процесса, внешний ключ переименование переживает.
+		 */
+		activeRevisionId: uuid().references((): AnyPgColumn => stageRoutes.id, {
+			onDelete: 'restrict'
+		}),
+		position: integer().notNull(),
+		...timestamps
+	},
+	(table) => [
+		unique('process_groups_key_key').on(table.key),
+		unique('process_groups_position_key').on(table.position)
+	]
+);
+
+/**
+ * Единственная таблица соответствия «вид контрагента → группа процесса». По ней
+ * группу выбирают и форма создания взаимодействия, и приём заявки с сайта.
+ *
+ * Первичный ключ по виду и есть ограничение «вид принадлежит ровно одной
+ * группе»: проверка в приложении гоночна и не переживает правку данных мимо
+ * приложения. Видов, которые основной стороной не бывают (`customer_company`,
+ * `operator`), в таблице нет вовсе.
+ */
+export const processGroupCounterpartyKinds = pgTable(
+	'process_group_counterparty_kinds',
+	{
+		kind: organizationKindEnum().primaryKey(),
+		groupId: uuid()
+			.notNull()
+			.references(() => processGroups.id, { onDelete: 'restrict' })
+	},
+	(table) => [index('process_group_counterparty_kinds_group_idx').on(table.groupId)]
+);
+
+/**
+ * Реестр ключей стадий группы. Строка заводится при первом появлении ключа и не
+ * удаляется никогда: идентичность стадии — пара «группа + ключ», и удалённый
+ * ключ обязан остаться занятым. Иначе под именем `signing` однажды появилась бы
+ * стадия с другим смыслом, и лента карточки, отчёт и перенос сопоставили бы по
+ * нему разные работы.
+ */
+export const processStageKeys = pgTable(
+	'process_stage_keys',
+	{
+		groupId: uuid()
+			.notNull()
+			.references(() => processGroups.id, { onDelete: 'cascade' }),
+		key: text().notNull(),
+		firstSeenAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		/** Ключ убрали из процесса; вернуть его с другим смыслом нельзя. */
+		archivedAt: timestamp({ withTimezone: true })
+	},
+	(table) => [primaryKey({ columns: [table.groupId, table.key] })]
+);
 
 /**
  * Версия маршрута стадий. Пока `published_at` пуст, маршрут — черновик и его
@@ -99,6 +179,13 @@ export const stages = pgTable(
 		staleAfterDays: integer(),
 		requiresResult: boolean().notNull().default(false),
 		requiresConfirmation: boolean().notNull().default(false),
+		/** Стадия завершает процесс: с неё взаимодействие закрывают, а не идут дальше. */
+		isFinal: boolean().notNull().default(false),
+		/**
+		 * Стадию подтверждают данными системы обучения: без факта по учебной
+		 * группе движение дальше не разрешается.
+		 */
+		requiresLmsData: boolean().notNull().default(false),
 		checklist: jsonb().$type<ChecklistItem[]>().notNull().default([]),
 		...timestamps
 	},
@@ -132,6 +219,95 @@ export const stageTransitions = pgTable(
 	(table) => [unique('stage_transitions_from_to_key').on(table.fromStageId, table.toStageId)]
 );
 
+/**
+ * Правила переноса записей при публикации: куда переехать взаимодействиям,
+ * стоявшим на стадии, которой в новой редакции больше нет.
+ *
+ * Правило принадлежит редакции, а не группе: убрали стадию — сказали в этой же
+ * публикации, куда девать тех, кто на ней стоял. Ключи, а не идентификаторы
+ * стадий: стадия новой редакции — другая строка, а ключ тот же.
+ */
+export const stageMigrationRules = pgTable(
+	'stage_migration_rules',
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		/** Редакция, в которой ключ исчез (`stage_routes` → `process_revisions`). */
+		revisionId: uuid()
+			.notNull()
+			.references(() => stageRoutes.id, { onDelete: 'cascade' }),
+		removedStageKey: text().notNull(),
+		targetStageKey: text().notNull(),
+		...timestamps
+	},
+	(table) => [
+		unique('stage_migration_rules_revision_key').on(table.revisionId, table.removedStageKey),
+		check(
+			'stage_migration_rules_keys_differ',
+			sql`${table.removedStageKey} <> ${table.targetStageKey}`
+		)
+	]
+);
+
+/**
+ * Договор с контрагентом. Принадлежит контрагенту, а не взаимодействию: один
+ * договор обслуживает несколько взаимодействий, и привязка к записи процесса
+ * означала бы копию договора на каждое.
+ */
+export const contracts = pgTable(
+	'contracts',
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		organizationId: uuid()
+			.notNull()
+			.references(() => organizations.id, { onDelete: 'restrict' }),
+		number: text().notNull(),
+		signedOn: date(),
+		validUntil: date(),
+		status: contractStatusEnum().notNull().default('draft'),
+		...timestamps
+	},
+	(table) => [
+		unique('contracts_organization_number_key').on(table.organizationId, table.number),
+		index('contracts_organization_idx').on(table.organizationId),
+		check(
+			'contracts_period_ordered',
+			sql`${table.validUntil} is null or ${table.signedOn} is null or ${table.validUntil} >= ${table.signedOn}`
+		)
+	]
+);
+
+/**
+ * Позиция договора: коммерческие условия по одному продукту.
+ *
+ * Источник истины о составе продуктов взаимодействия — `interaction_products`;
+ * позиция добавляет к продукту сроки лицензии и статус передачи, но состав не
+ * задаёт. Словарь `transfer_status` — свободный справочник до получения
+ * каталога заказчика, поэтому текст, а не перечисление.
+ */
+export const contractItems = pgTable(
+	'contract_items',
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		contractId: uuid()
+			.notNull()
+			.references(() => contracts.id, { onDelete: 'cascade' }),
+		productId: uuid()
+			.notNull()
+			.references(() => products.id, { onDelete: 'restrict' }),
+		licenseSignedAt: date(),
+		licenseUntil: date(),
+		transferStatus: text().notNull(),
+		...timestamps
+	},
+	(table) => [
+		unique('contract_items_contract_product_key').on(table.contractId, table.productId),
+		// Цель ключа — не уникальность (она есть у первичного), а возможность
+		// сослаться на пару «позиция + её договор»: так взаимодействие не выберет
+		// позицию чужого договора.
+		unique('contract_items_id_contract_key').on(table.id, table.contractId)
+	]
+);
+
 export const interactions = pgTable(
 	'interactions',
 	{
@@ -141,6 +317,21 @@ export const interactions = pgTable(
 		routeId: uuid()
 			.notNull()
 			.references(() => stageRoutes.id, { onDelete: 'restrict' }),
+		/**
+		 * Группа процесса. Выводится из вида основной стороны и меняется только
+		 * вместе с ней. Пока необязательна: заполнять её при создании начинает
+		 * задача живого процесса, она же делает колонку `not null` и убирает
+		 * `route_id`.
+		 */
+		processGroupId: uuid().references(() => processGroups.id, { onDelete: 'restrict' }),
+		/** Договор, по которому идёт работа; позиции выбираются из него. */
+		contractId: uuid().references((): AnyPgColumn => contracts.id, { onDelete: 'restrict' }),
+		/**
+		 * Последняя применённая ревизия источника заявки. Порядок сообщений не
+		 * гарантирован ни очередью, ни сетью: сообщение с ревизией не больше
+		 * применённой данных не меняет.
+		 */
+		externalRevision: bigint({ mode: 'number' }),
 		status: interactionStatusEnum().notNull().default('active'),
 		/** Срок действия договора или соглашения. */
 		agreementPeriodStart: date(),
@@ -162,6 +353,8 @@ export const interactions = pgTable(
 	},
 	(table) => [
 		index('interactions_status_idx').on(table.status),
+		index('interactions_group_status_idx').on(table.processGroupId, table.status),
+		index('interactions_contract_idx').on(table.contractId),
 		index('interactions_owner_idx').on(table.ownerUserId),
 		index('interactions_last_activity_idx').on(table.lastActivityAt),
 		externalRefUnique('interactions_external_ref_key', table)
@@ -189,7 +382,12 @@ export const interactionParties = pgTable(
 		unique('interaction_parties_interaction_organization_key').on(
 			table.interactionId,
 			table.organizationId
-		)
+		),
+		// От основной стороны зависят и группа процесса, и область доступа:
+		// вторая такая строка сделала бы обе величины зависящими от порядка строк.
+		uniqueIndex('interaction_parties_one_primary')
+			.on(table.interactionId)
+			.where(sql`${table.isPrimary}`)
 	]
 );
 
@@ -235,6 +433,31 @@ export const interactionProducts = pgTable(
 		...createdAt
 	},
 	(table) => [primaryKey({ columns: [table.interactionId, table.productId] })]
+);
+
+/**
+ * Позиции договора, выбранные этим взаимодействием. Принадлежность позиции
+ * договору взаимодействия держит составной внешний ключ, а не проверка в
+ * сервисе: иначе к записи прицепилась бы позиция чужого договора.
+ */
+export const interactionContractItems = pgTable(
+	'interaction_contract_items',
+	{
+		interactionId: uuid()
+			.notNull()
+			.references(() => interactions.id, { onDelete: 'cascade' }),
+		contractItemId: uuid().notNull(),
+		contractId: uuid().notNull(),
+		...createdAt
+	},
+	(table) => [
+		primaryKey({ columns: [table.interactionId, table.contractItemId] }),
+		foreignKey({
+			name: 'interaction_contract_items_item_belongs_to_contract',
+			columns: [table.contractItemId, table.contractId],
+			foreignColumns: [contractItems.id, contractItems.contractId]
+		}).onDelete('cascade')
+	]
 );
 
 /**
@@ -298,6 +521,19 @@ export const stageEntries = pgTable(
 		confirmedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
 		/** Отметки по чек-листу: ключ пункта → выполнен или нет. */
 		checklistState: jsonb().$type<ChecklistState>().notNull().default({}),
+		/**
+		 * Когда запись перенесли публикацией изменённого процесса. Заполнена
+		 * только у переехавших: карточка показывает по ней предупреждение
+		 * «стадия перенесена», пока запись открыта.
+		 */
+		migratedAt: timestamp({ withTimezone: true }),
+		/** Ключ стадии, на которой запись стояла до переноса. */
+		migratedFromStageKey: text(),
+		/**
+		 * Факты системы обучения, которыми подтверждена стадия: снимок того, что
+		 * видел исполнитель. Форму задаёт контракт обмена.
+		 */
+		lmsEvidence: jsonb(),
 		...timestamps
 	},
 	(table) => [
@@ -306,6 +542,11 @@ export const stageEntries = pgTable(
 			.on(table.interactionId)
 			.where(sql`${table.leftAt} is null`),
 		index('stage_entries_interaction_idx').on(table.interactionId, table.enteredAt),
+		// Отчёт на прошлую дату выбирает записи, чьё окно накрывает срез:
+		// открытые (`left_at is null`) и закрытые позже него.
+		index('stage_entries_window_idx').on(table.enteredAt, table.leftAt),
+		// Индекс по ключу стадии из снимка (`stage_snapshot ->> 'key'`) объявлен
+		// миграцией: индекс по выражению билдер Drizzle не выражает.
 		check(
 			'stage_entries_left_after_entered',
 			sql`${table.leftAt} is null or ${table.leftAt} >= ${table.enteredAt}`
@@ -410,6 +651,65 @@ export const stageEntryStatus = pgView('stage_entry_status', {
 	isOverdue: boolean().notNull()
 }).existing();
 
+export const processGroupsRelations = relations(processGroups, ({ one, many }) => ({
+	activeRevision: one(stageRoutes, {
+		fields: [processGroups.activeRevisionId],
+		references: [stageRoutes.id]
+	}),
+	counterpartyKinds: many(processGroupCounterpartyKinds),
+	stageKeys: many(processStageKeys),
+	interactions: many(interactions)
+}));
+
+export const processGroupCounterpartyKindsRelations = relations(
+	processGroupCounterpartyKinds,
+	({ one }) => ({
+		group: one(processGroups, {
+			fields: [processGroupCounterpartyKinds.groupId],
+			references: [processGroups.id]
+		})
+	})
+);
+
+export const processStageKeysRelations = relations(processStageKeys, ({ one }) => ({
+	group: one(processGroups, {
+		fields: [processStageKeys.groupId],
+		references: [processGroups.id]
+	})
+}));
+
+export const stageMigrationRulesRelations = relations(stageMigrationRules, ({ one }) => ({
+	revision: one(stageRoutes, {
+		fields: [stageMigrationRules.revisionId],
+		references: [stageRoutes.id]
+	})
+}));
+
+export const contractsRelations = relations(contracts, ({ one, many }) => ({
+	organization: one(organizations, {
+		fields: [contracts.organizationId],
+		references: [organizations.id]
+	}),
+	items: many(contractItems),
+	interactions: many(interactions)
+}));
+
+export const contractItemsRelations = relations(contractItems, ({ one }) => ({
+	contract: one(contracts, { fields: [contractItems.contractId], references: [contracts.id] }),
+	product: one(products, { fields: [contractItems.productId], references: [products.id] })
+}));
+
+export const interactionContractItemsRelations = relations(interactionContractItems, ({ one }) => ({
+	interaction: one(interactions, {
+		fields: [interactionContractItems.interactionId],
+		references: [interactions.id]
+	}),
+	item: one(contractItems, {
+		fields: [interactionContractItems.contractItemId],
+		references: [contractItems.id]
+	})
+}));
+
 export const stageRoutesRelations = relations(stageRoutes, ({ many }) => ({
 	stages: many(stages),
 	transitions: many(stageTransitions),
@@ -433,6 +733,12 @@ export const stageTransitionsRelations = relations(stageTransitions, ({ one }) =
 
 export const interactionsRelations = relations(interactions, ({ one, many }) => ({
 	route: one(stageRoutes, { fields: [interactions.routeId], references: [stageRoutes.id] }),
+	processGroup: one(processGroups, {
+		fields: [interactions.processGroupId],
+		references: [processGroups.id]
+	}),
+	contract: one(contracts, { fields: [interactions.contractId], references: [contracts.id] }),
+	contractItems: many(interactionContractItems),
 	owner: one(users, { fields: [interactions.ownerUserId], references: [users.id] }),
 	parties: many(interactionParties),
 	programs: many(interactionPrograms),

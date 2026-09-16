@@ -1,18 +1,31 @@
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	auditEvents,
 	consents,
+	contractItems,
+	contracts,
+	directions,
+	exchangeMessages,
+	interactionContractItems,
+	interactionParties,
+	learningGroupResults,
+	learningGroups,
+	organizationResponsibles,
 	organizations,
+	processGroupCounterpartyKinds,
+	processGroups,
 	stageEntries,
 	stageEntryStatus,
-	stagePauses
+	stagePauses,
+	users
 } from '$lib/server/db/schema';
 import {
 	daysFrom,
 	failureCode,
 	insertDocument,
 	insertInteractionWithStage,
+	insertOrganization,
 	insertPerson,
 	insertUser,
 	startTestDatabase,
@@ -52,11 +65,16 @@ describe('миграции', () => {
 				'interaction_party_sites', 'interaction_programs', 'interaction_products',
 				'interaction_changes', 'stage_entries', 'stage_pauses', 'blockers',
 				'comments', 'document_templates', 'documents', 'api_keys',
-				'consents', 'stage_entry_status'
+				'consents', 'stage_entry_status',
+				'directions', 'product_directions', 'organization_responsibles',
+				'process_groups', 'process_group_counterparty_kinds', 'process_stage_keys',
+				'stage_migration_rules', 'contracts', 'contract_items',
+				'interaction_contract_items', 'stage_entry_documents',
+				'learning_groups', 'learning_group_results', 'exchange_messages'
 			]) as name
 		`;
 
-		expect(rows).toHaveLength(31);
+		expect(rows).toHaveLength(45);
 		expect(rows.filter((row) => row.name === null)).toEqual([]);
 	});
 });
@@ -458,5 +476,342 @@ describe('представление stage_entry_status', () => {
 			.where(eq(stagePauses.id, pause.id));
 
 		expect((await status(open.entryId)).isPaused).toBe(false);
+	});
+});
+
+describe('группы процесса', () => {
+	/**
+	 * Строки групп кладёт миграция; `reset()` чистит таблицы целиком и
+	 * возвращает их снимком (`helpers/db.ts`). Что их кладёт именно миграция,
+	 * проверяет `db.test.ts` — там база не чистится.
+	 */
+	async function groupId(key: string): Promise<string> {
+		const [row] = await database.db
+			.select({ id: processGroups.id })
+			.from(processGroups)
+			.where(eq(processGroups.key, key));
+
+		expect(row).toBeDefined();
+
+		return row.id;
+	}
+
+	it('не позволяет виду контрагента принадлежать двум группам', async () => {
+		const b2c = await groupId('b2c');
+
+		// Первичный ключ по виду и есть ограничение «вид принадлежит ровно одной
+		// группе»: проверка в сервисе такого не удержит.
+		expect(
+			await failureCode(
+				database.db
+					.insert(processGroupCounterpartyKinds)
+					.values({ kind: 'educational_institution', groupId: b2c })
+			)
+		).toBe('23505');
+
+		const rows = await database.db
+			.select({ kind: processGroupCounterpartyKinds.kind, key: processGroups.key })
+			.from(processGroupCounterpartyKinds)
+			.innerJoin(processGroups, eq(processGroups.id, processGroupCounterpartyKinds.groupId))
+			.orderBy(processGroupCounterpartyKinds.kind);
+
+		expect(rows.map((row) => `${row.kind}:${row.key}`)).toStrictEqual([
+			'educational_institution:b2b',
+			'individual:b2c',
+			'legal_entity:b2c'
+		]);
+	});
+});
+
+describe('контрагент-физлицо', () => {
+	it('требует ссылку на человека ровно у вида «физическое лицо»', async () => {
+		const personId = await insertPerson(database.db);
+
+		// Физлицо без человека — контрагент без имени.
+		expect(
+			await failureCode(
+				database.db
+					.insert(organizations)
+					.values({ kind: 'individual', legalName: 'Иванов И. И.', shortName: 'Иванов И. И.' })
+			)
+		).toBe('23514');
+
+		// Человек у вуза — связь, по которой обезличивание дошло бы до организации.
+		expect(
+			await failureCode(
+				database.db.insert(organizations).values({
+					kind: 'customer_company',
+					legalName: 'ООО «Заказчик»',
+					shortName: 'Заказчик',
+					personId
+				})
+			)
+		).toBe('23514');
+
+		await database.db.insert(organizations).values({
+			kind: 'individual',
+			legalName: 'Иванов И. И.',
+			shortName: 'Иванов И. И.',
+			personId
+		});
+
+		const rows = await database.db.select({ id: organizations.id }).from(organizations);
+		expect(rows).toHaveLength(1);
+	});
+});
+
+describe('основная сторона взаимодействия', () => {
+	it('бывает ровно одна: от неё зависят и группа процесса, и область доступа', async () => {
+		const ownerUserId = await insertUser(database.db);
+		const { interactionId } = await insertInteractionWithStage(database.db, { ownerUserId });
+		const institution = await insertOrganization(database.db, { shortName: 'Вуз' });
+		const customer = await insertOrganization(database.db, { shortName: 'Заказчик' });
+
+		await database.db.insert(interactionParties).values({
+			interactionId,
+			organizationId: institution,
+			partyRole: 'educational_institution',
+			isPrimary: true
+		});
+
+		expect(
+			await failureCode(
+				database.db.insert(interactionParties).values({
+					interactionId,
+					organizationId: customer,
+					partyRole: 'customer',
+					isPrimary: true
+				})
+			)
+		).toBe('23505');
+
+		// Неосновных сторон сколько угодно: плательщик и оператор стоят рядом.
+		await database.db.insert(interactionParties).values({
+			interactionId,
+			organizationId: customer,
+			partyRole: 'customer',
+			isPrimary: false
+		});
+
+		const rows = await database.db.select({ id: interactionParties.id }).from(interactionParties);
+		expect(rows).toHaveLength(2);
+	});
+});
+
+describe('ответственные за вуз', () => {
+	async function insertDirection(code: string): Promise<string> {
+		const [row] = await database.db
+			.insert(directions)
+			.values({ code, name: `Направление ${code}`, position: code.length + code.charCodeAt(0) })
+			.returning({ id: directions.id });
+
+		return row.id;
+	}
+
+	it('допускает одно действующее назначение на вуз и направление', async () => {
+		const organizationId = await insertOrganization(database.db);
+		const first = await insertUser(database.db);
+		const second = await insertUser(database.db);
+		const devops = await insertDirection('OPS');
+		const analytics = await insertDirection('ANL');
+
+		await database.db
+			.insert(organizationResponsibles)
+			.values({ organizationId, userId: first, directionId: devops });
+
+		// По разным направлениям — разные ответственные: это рабочая картина.
+		await database.db
+			.insert(organizationResponsibles)
+			.values({ organizationId, userId: second, directionId: analytics });
+
+		expect(
+			await failureCode(
+				database.db
+					.insert(organizationResponsibles)
+					.values({ organizationId, userId: second, directionId: devops })
+			)
+		).toBe('23505');
+	});
+
+	it('считает два общих назначения столкновением, хотя направление пусто', async () => {
+		const organizationId = await insertOrganization(database.db);
+		const first = await insertUser(database.db);
+		const second = await insertUser(database.db);
+
+		await database.db.insert(organizationResponsibles).values({ organizationId, userId: first });
+
+		// NULLS NOT DISTINCT: без него «ответственный за вуз целиком» размножился
+		// бы, и вопрос «чей это вуз» остался бы без одного ответа.
+		expect(
+			await failureCode(
+				database.db.insert(organizationResponsibles).values({ organizationId, userId: second })
+			)
+		).toBe('23505');
+
+		// Закрытое назначение места не занимает: история и есть история.
+		await database.db
+			.update(organizationResponsibles)
+			.set({ validTo: new Date() })
+			.where(eq(organizationResponsibles.userId, first));
+
+		await database.db.insert(organizationResponsibles).values({ organizationId, userId: second });
+
+		const rows = await database.db
+			.select({ id: organizationResponsibles.id })
+			.from(organizationResponsibles);
+		expect(rows).toHaveLength(2);
+	});
+});
+
+describe('договоры', () => {
+	async function insertProduct(code: string): Promise<string> {
+		const [row] = await database.raw<{ id: string }[]>`
+			insert into products (code, name) values (${code}, ${`Продукт ${code}`}) returning id
+		`;
+
+		return row.id;
+	}
+
+	it('не пускает во взаимодействие позицию чужого договора', async () => {
+		const ownerUserId = await insertUser(database.db);
+		const { interactionId } = await insertInteractionWithStage(database.db, { ownerUserId });
+		const organizationId = await insertOrganization(database.db);
+		const productId = await insertProduct('PRD-01');
+
+		const [own, alien] = await database.db
+			.insert(contracts)
+			.values([
+				{ organizationId, number: 'Д-1' },
+				{ organizationId, number: 'Д-2' }
+			])
+			.returning({ id: contracts.id });
+
+		const [item] = await database.db
+			.insert(contractItems)
+			.values({ contractId: alien.id, productId, transferStatus: 'pending' })
+			.returning({ id: contractItems.id });
+
+		// Составной внешний ключ: позиция обязана принадлежать названному договору,
+		// и проверяет это база, а не сервис.
+		expect(
+			await failureCode(
+				database.db
+					.insert(interactionContractItems)
+					.values({ interactionId, contractItemId: item.id, contractId: own.id })
+			)
+		).toBe('23503');
+
+		await database.db
+			.insert(interactionContractItems)
+			.values({ interactionId, contractItemId: item.id, contractId: alien.id });
+
+		const rows = await database.db
+			.select({ interactionId: interactionContractItems.interactionId })
+			.from(interactionContractItems);
+		expect(rows).toHaveLength(1);
+	});
+});
+
+describe('обмен с внешними системами', () => {
+	async function insertMessage(eventId: string): Promise<void> {
+		await database.db.insert(exchangeMessages).values({
+			direction: 'inbound',
+			system: 'cms',
+			instance: 'site',
+			eventType: 'application.submitted',
+			eventId,
+			state: 'processed',
+			payload: {}
+		});
+	}
+
+	it('не заводит второй строки на повторную доставку того же сообщения', async () => {
+		await insertMessage('e-1');
+
+		expect(await failureCode(insertMessage('e-1'))).toBe('23505');
+
+		await insertMessage('e-2');
+
+		const rows = await database.db.select({ id: exchangeMessages.id }).from(exchangeMessages);
+		expect(rows).toHaveLength(2);
+	});
+
+	it('не заводит второй поток на повторное нажатие «отправить группу»', async () => {
+		const ownerUserId = await insertUser(database.db);
+		const { interactionId } = await insertInteractionWithStage(database.db, { ownerUserId });
+
+		const [group] = await database.db
+			.insert(learningGroups)
+			.values({ interactionId, streamNumber: 1, system: 'lms', instance: 'moodle' })
+			.returning({ id: learningGroups.id });
+
+		expect(
+			await failureCode(
+				database.db
+					.insert(learningGroups)
+					.values({ interactionId, streamNumber: 1, system: 'lms', instance: 'moodle' })
+			)
+		).toBe('23505');
+
+		// Счётчики результата не противоречат друг другу.
+		expect(
+			await failureCode(
+				database.db.insert(learningGroupResults).values({
+					learningGroupId: group.id,
+					occurredAt: new Date(),
+					enrolled: 10,
+					completed: 8,
+					expelled: 5
+				})
+			)
+		).toBe('23514');
+
+		await database.db.insert(learningGroupResults).values({
+			learningGroupId: group.id,
+			occurredAt: new Date(),
+			enrolled: 10,
+			completed: 8,
+			expelled: 2
+		});
+
+		const results = await database.db
+			.select({ id: learningGroupResults.id })
+			.from(learningGroupResults);
+		expect(results).toHaveLength(1);
+	});
+});
+
+describe('иерархия сотрудников', () => {
+	it('не даёт сотруднику быть руководителем самому себе', async () => {
+		const userId = await insertUser(database.db);
+
+		expect(
+			await failureCode(
+				database.raw`update users set manager_user_id = id where id = ${userId}::uuid`
+			)
+		).toBe('23514');
+	});
+
+	it('связывает запись с внешним субъектом ровно один раз', async () => {
+		const first = await insertUser(database.db);
+		const second = await insertUser(database.db);
+
+		await database.db
+			.update(users)
+			.set({ externalSubject: 'keycloak:1' })
+			.where(eq(users.id, first));
+
+		expect(
+			await failureCode(
+				database.db.update(users).set({ externalSubject: 'keycloak:1' }).where(eq(users.id, second))
+			)
+		).toBe('23505');
+
+		// Записей без внешнего субъекта в базе сколько угодно.
+		const rows = await database.db
+			.select({ count: sql<number>`count(*)::int` })
+			.from(users)
+			.where(sql`${users.externalSubject} is null`);
+		expect(rows[0].count).toBeGreaterThan(0);
 	});
 });

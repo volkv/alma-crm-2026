@@ -1,11 +1,15 @@
 /**
  * Учётные записи демонстрационного стенда.
  *
- * Три записи с `is_demo = true` — те, под которые пускает кнопка «Войти как …»
+ * Записи с `is_demo = true` — те, под которые пускает кнопка «Войти как …»
  * на странице входа при `DEMO_MODE=true`; у них общий пароль из окружения,
  * чтобы стенд можно было показать и без кнопок. Ещё две — обычные сотрудники:
  * они нужны, чтобы списки владельцев, авторов версий и исполнителей не
  * состояли из одного «Менеджера Демо».
+ *
+ * У менеджеров проставлен руководитель: на этой иерархии держится и область
+ * доступа руководителя, и адрес эскалации. Без неё роль «Руководитель» на
+ * стенде показывала бы ровно то же, что роль «Менеджер».
  *
  * Пароля у сотрудников нет: в столбец лёг хеш случайной строки, которой никто
  * не видел. Войти под ними нельзя и не нужно — настоящие учётные записи
@@ -26,6 +30,8 @@ type AccountSeed = {
 	email: string;
 	fullName: string;
 	roleId: string;
+	/** Ключ учётной записи руководителя. */
+	managerKey?: string;
 };
 
 /** Записи публичной демонстрации: по одной на системную роль. */
@@ -37,10 +43,17 @@ const DEMO_ACCOUNTS: readonly AccountSeed[] = [
 		roleId: 'admin'
 	},
 	{
+		key: 'demo-lead',
+		email: 'lead@demo.lct-crm.local',
+		fullName: 'Руководитель Демо',
+		roleId: 'lead'
+	},
+	{
 		key: 'demo-manager',
 		email: 'manager@demo.lct-crm.local',
 		fullName: 'Менеджер Демо',
-		roleId: 'manager'
+		roleId: 'manager',
+		managerKey: 'demo-lead'
 	},
 	{
 		key: 'demo-viewer',
@@ -56,13 +69,15 @@ const EMPLOYEES: readonly AccountSeed[] = [
 		key: 'veresova',
 		email: 'a.veresova@example.org',
 		fullName: 'Вересова Анна Сергеевна',
-		roleId: 'manager'
+		roleId: 'manager',
+		managerKey: 'demo-lead'
 	},
 	{
 		key: 'zotov',
 		email: 'p.zotov@example.org',
 		fullName: 'Зотов Павел Игоревич',
-		roleId: 'manager'
+		roleId: 'manager',
+		managerKey: 'demo-lead'
 	}
 ];
 
@@ -118,6 +133,7 @@ export async function seedUsers(
 				email: account.email,
 				fullName: account.fullName,
 				roleId: account.roleId,
+				managerUserId: account.managerKey === undefined ? null : seedId('user', account.managerKey),
 				passwordHash,
 				isDemo
 			}))

@@ -11,16 +11,17 @@
 
 `src/lib/server/db/schema/` — по файлу на предметную область, `index.ts` реэкспортирует всё.
 
-| Файл              | Что внутри                                                                           |
-| ----------------- | ------------------------------------------------------------------------------------ |
-| `shared.ts`       | Повторяющиеся столбцы: `createdAt`/`updatedAt`, внешняя ссылка и её уникальность     |
-| `auth.ts`         | `permissions`, `roles`, `role_permissions`, `users`                                  |
-| `settings.ts`     | `app_settings`                                                                       |
-| `audit.ts`        | `audit_events`                                                                       |
-| `directory.ts`    | `organizations`, `sites`, `people`, `affiliations`, `consents`, программы и продукты |
-| `interactions.ts` | Маршруты и стадии, взаимодействия, записи стадий, паузы, блокировки, комментарии     |
-| `documents.ts`    | `document_templates`, `documents`                                                    |
-| `api.ts`          | `api_keys`                                                                           |
+| Файл              | Что внутри                                                                                                                                            |
+| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shared.ts`       | Повторяющиеся столбцы: `createdAt`/`updatedAt`, внешняя ссылка и её уникальность                                                                      |
+| `auth.ts`         | `permissions`, `roles`, `role_permissions`, `users`                                                                                                   |
+| `settings.ts`     | `app_settings`                                                                                                                                        |
+| `audit.ts`        | `audit_events`                                                                                                                                        |
+| `directory.ts`    | `organizations`, `sites`, `people`, `affiliations`, `consents`, программы и продукты, `directions`, `product_directions`, `organization_responsibles` |
+| `interactions.ts` | Маршруты и стадии, взаимодействия, записи стадий, паузы, блокировки, комментарии, группы процесса и их реестры, договоры                              |
+| `documents.ts`    | `document_templates`, `documents`, `stage_entry_documents`                                                                                            |
+| `exchange.ts`     | `exchange_messages`, `learning_groups`, `learning_group_results`                                                                                      |
+| `api.ts`          | `api_keys`                                                                                                                                            |
 
 Соглашения:
 
@@ -44,16 +45,25 @@
 
 ### Ограничения, которые держат инварианты
 
-| Где             | Что                                                                                                    |
-| --------------- | ------------------------------------------------------------------------------------------------------ |
-| `organizations` | CHECK: уровень образования заполнен ровно у учебных заведений                                          |
-| `organizations` | Частичная уникальность ИНН `WHERE inn IS NOT NULL`                                                     |
-| `affiliations`  | Составной внешний ключ `(site_id, organization_id) → sites(id, organization_id)`                       |
-| `stage_entries` | Частичная уникальность `(interaction_id) WHERE left_at IS NULL`                                        |
-| `stage_pauses`  | Частичная уникальность `(stage_entry_id) WHERE ended_at IS NULL`, CHECK `ended_at > started_at`        |
-| `documents`     | Частичная уникальность `(supersedes_id) WHERE supersedes_id IS NOT NULL`, CHECK «не заменяет сам себя» |
-| `consents`      | CHECK `withdrawn_at >= given_at` и «автор отзыва только вместе с отзывом»                              |
-| `audit_events`  | Триггер `BEFORE UPDATE OR DELETE` → исключение                                                         |
+| Где                                | Что                                                                                                    |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| `organizations`                    | CHECK: уровень образования заполнен ровно у учебных заведений                                          |
+| `organizations`                    | Частичная уникальность ИНН `WHERE inn IS NOT NULL`                                                     |
+| `affiliations`                     | Составной внешний ключ `(site_id, organization_id) → sites(id, organization_id)`                       |
+| `stage_entries`                    | Частичная уникальность `(interaction_id) WHERE left_at IS NULL`                                        |
+| `stage_pauses`                     | Частичная уникальность `(stage_entry_id) WHERE ended_at IS NULL`, CHECK `ended_at > started_at`        |
+| `documents`                        | Частичная уникальность `(supersedes_id) WHERE supersedes_id IS NOT NULL`, CHECK «не заменяет сам себя» |
+| `consents`                         | CHECK `withdrawn_at >= given_at` и «автор отзыва только вместе с отзывом»                              |
+| `audit_events`                     | Триггер `BEFORE UPDATE OR DELETE` → исключение                                                         |
+| `organizations`                    | CHECK: ссылка на человека заполнена ровно у вида `individual`; уникальный `person_id`                  |
+| `interaction_parties`              | Частичная уникальность `(interaction_id) WHERE is_primary` — основная сторона одна                     |
+| `organization_responsibles`        | Частичная уникальность `(organization_id, direction_id) NULLS NOT DISTINCT WHERE valid_to IS NULL`     |
+| `process_group_counterparty_kinds` | Первичный ключ по виду контрагента: вид принадлежит ровно одной группе                                 |
+| `interaction_contract_items`       | Составной внешний ключ `(contract_item_id, contract_id) → contract_items(id, contract_id)`             |
+| `users`                            | Частичная уникальность `external_subject`, CHECK «сам себе не руководитель»                            |
+| `exchange_messages`                | Уникальность `(direction, system, instance, event_id)` — повтор доставки не плодит строк               |
+| `learning_groups`                  | Уникальность `(interaction_id, stream_number)`; частичная уникальность внешнего идентификатора         |
+| `learning_group_results`           | CHECK `completed + expelled <= enrolled`                                                               |
 
 Составной внешний ключ у `affiliations` заменяет триггер: при `site_id IS NULL` правило
 MATCH SIMPLE ничего не требует, а при заполненной площадке она обязана принадлежать той же
@@ -91,6 +101,61 @@ MATCH SIMPLE ничего не требует, а при заполненной 
 
 Протухание считается не здесь: оно про тишину вокруг взаимодействия, а не про часы на
 стадии, и опирается на `interactions.last_activity_at`, который обновляют сервисы.
+
+### Схема m2: что уже добавлено и кто доводит переход
+
+Предметная модель контура m2 описана в [`domain.md`](domain.md); здесь — состояние кода. Префлайт
+(`drizzle/0005_*`, `drizzle/0006_*`) добавил всё новое **и ничего не удалил и не переименовал**:
+приложение продолжает работать на прежних таблицах, а переименования и удаления делает та задача,
+которая владеет соответствующим кодом. Иначе схема и сервисы разъехались бы на середине волны.
+
+Добавлено: таблицы `directions`, `product_directions`, `organization_responsibles`,
+`process_groups`, `process_group_counterparty_kinds`, `process_stage_keys`, `stage_migration_rules`,
+`contracts`, `contract_items`, `interaction_contract_items`, `stage_entry_documents`,
+`learning_groups`, `learning_group_results`, `exchange_messages`; колонки `organizations.person_id`,
+`users.manager_user_id`, `users.external_subject`, `programs.direction_id`, `stages.is_final`,
+`stages.requires_lms_data`, `interactions.process_group_id`, `interactions.contract_id`,
+`interactions.external_revision`, `stage_entries.migrated_at`,
+`stage_entries.migrated_from_stage_key`, `stage_entries.lms_evidence`; значения перечислений
+`organization_kind` (`individual`, `legal_entity`) и `stage_outcome` (`migrated`).
+
+Что осталось сделать и кому:
+
+| Шаг                                                                              | Чья задача    |
+| -------------------------------------------------------------------------------- | ------------- |
+| `stage_routes` → `process_revisions`, `group_id` вместо `key`/`is_default`       | живой процесс |
+| `stages.route_id` и `stage_transitions.route_id` → `revision_id`                 | живой процесс |
+| Заполнение `interactions.process_group_id` командой создания и `not null` на ней | живой процесс |
+| Удаление `interactions.route_id` — последним шагом, после обеих проверок         | живой процесс |
+| Ведение `process_stage_keys` публикацией, архивирование удалённых ключей         | живой процесс |
+| Перевод пользователей `viewer` на `manager` и удаление роли                      | роли и доступ |
+| Удаление `users.password_hash`, `password_changed_at`, `totp_*`                  | Keycloak      |
+| `external_source = 'site'` → `<система>:<экземпляр>`                             | обмен         |
+| Перенос словарей `exchange_direction` и `exchange_message_state` в контракты     | обмен         |
+
+Пока `interactions.route_id` на месте, исходное соответствие «взаимодействие → редакция»
+восстановимо; после удаления — нет, поэтому оно и стоит последним.
+
+**Группы процесса кладёт миграция, а не сид.** Без них у взаимодействия нет процесса, а у заявки с
+сайта — сценария, поэтому `b2b` и `b2c` вместе с соответствием «вид контрагента → группа» приезжают
+на любую установку. Группа взаимодействия при переносе выведена из семейства его маршрута
+(`university-partnership` → `b2b`, прочие семейства — по группе на семейство), дальше её выводит вид
+основной стороны. `tests/integration/db.test.ts` проверяет, что миграция их действительно кладёт:
+`reset()` в остальных интеграционных тестах чистит таблицы целиком, и туда эти строки возвращает
+снимок, снятый прогоном сразу после миграций (`tests/integration/helpers/db.ts`).
+
+**Новое значение перечисления и одна транзакция.** Мигратор Drizzle применяет все непримененные
+файлы одной транзакцией, а PostgreSQL запрещает пользоваться значением перечисления, добавленным в
+незакрытой транзакции («unsafe use of new value»). Разнести добавление и использование по разным
+файлам поэтому недостаточно. Виды контрагента нужны уже в той же транзакции — проверке
+`organizations_person_matches_kind` и строкам соответствия видов, — поэтому перечисление
+`organization_kind` пересоздано: у типа, созданного в этой же транзакции, запрета нет. Значение
+`stage_outcome.migrated` в миграции не используется, и оно добавлено обычным `ALTER TYPE ... ADD VALUE`.
+
+**Чего не выражает билдер Drizzle**, поэтому лежит в custom-миграции рядом с представлениями и
+триггерами: частичная уникальность `organization_responsibles` с `NULLS NOT DISTINCT` и индекс по
+выражению `stage_entries ((stage_snapshot ->> 'key'))`. В схеме на них стоит комментарий: индекс,
+которого не видно в файле таблицы, однажды удалят, не заметив.
 
 ### Цикл изменения схемы
 

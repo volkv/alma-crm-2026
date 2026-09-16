@@ -11,6 +11,7 @@ import {
 	AFFILIATION_ROLE_KINDS,
 	EDUCATION_LEVELS,
 	LIFECYCLE_STATUSES,
+	ORGANIZATION_FORM_KINDS,
 	ORGANIZATION_KINDS,
 	PROGRAM_LEVELS,
 	SITE_KINDS,
@@ -26,13 +27,17 @@ import {
 export const ORGANIZATION_KIND_LABELS: Record<OrganizationKind, string> = {
 	educational_institution: 'Учебное заведение',
 	customer_company: 'Компания-заказчик',
-	operator: 'Оператор'
+	operator: 'Оператор',
+	individual: 'Физическое лицо',
+	legal_entity: 'Юридическое лицо'
 };
 
 export const ORGANIZATION_KIND_TONES: Record<OrganizationKind, StatusTone> = {
 	educational_institution: 'accent',
 	customer_company: 'info',
-	operator: 'neutral'
+	operator: 'neutral',
+	individual: 'info',
+	legal_entity: 'info'
 };
 
 export const EDUCATION_LEVEL_LABELS: Record<EducationLevel, string> = {
@@ -101,6 +106,15 @@ function toOptions<TKey extends string>(
 }
 
 export const ORGANIZATION_KIND_OPTIONS = toOptions(ORGANIZATION_KINDS, ORGANIZATION_KIND_LABELS);
+/**
+ * Виды для формы справочника — без физического лица: его карточка неотделима
+ * от карточки человека, и форма организации её не заводит. В фильтрах и
+ * подписях вид остаётся: такие контрагенты в базе есть.
+ */
+export const ORGANIZATION_FORM_KIND_OPTIONS = toOptions(
+	ORGANIZATION_FORM_KINDS,
+	ORGANIZATION_KIND_LABELS
+);
 export const EDUCATION_LEVEL_OPTIONS = toOptions(EDUCATION_LEVELS, EDUCATION_LEVEL_LABELS);
 export const SITE_KIND_OPTIONS = toOptions(SITE_KINDS, SITE_KIND_LABELS);
 export const AFFILIATION_ROLE_OPTIONS = toOptions(AFFILIATION_ROLE_KINDS, AFFILIATION_ROLE_LABELS);
