@@ -28,7 +28,7 @@ export const documentTemplates = pgTable('document_templates', {
 	id: uuid().primaryKey().defaultRandom(),
 	key: text().notNull().unique(),
 	name: text().notNull(),
-	/** Путь к файлу шаблона относительно каталога данных (`DATA_DIR`). */
+	/** Ключ объекта с файлом шаблона в хранилище документов (`files/<uuid>`). */
 	filePath: text().notNull(),
 	version: integer().notNull().default(1),
 	/** Переменные, которые шаблон умеет подставлять. */
@@ -55,7 +55,7 @@ export const documents = pgTable(
 		/** Вид документа: соглашение, приказ, акт, отчёт. */
 		kind: text().notNull(),
 		title: text().notNull(),
-		/** Путь к файлу относительно каталога данных (`DATA_DIR`). */
+		/** Ключ объекта с файлом в хранилище документов (`files/<uuid>`). */
 		filePath: text().notNull(),
 		mime: text().notNull(),
 		sizeBytes: bigint({ mode: 'number' }).notNull(),

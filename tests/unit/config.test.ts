@@ -11,7 +11,12 @@ const completeEnv = {
 	ORIGIN: 'http://localhost:5173',
 	DEMO_MODE: 'false',
 	TRUST_PROXY: 'false',
-	DATA_DIR: './data'
+	S3_ENDPOINT: 'http://localhost:59000',
+	S3_REGION: 'us-east-1',
+	S3_BUCKET: 'lct-documents',
+	S3_ACCESS_KEY: 'lct',
+	S3_SECRET_KEY: 'lct-secret-key',
+	S3_FORCE_PATH_STYLE: 'true'
 } satisfies Record<string, string>;
 
 describe('parseConfig', () => {
@@ -62,13 +67,29 @@ describe('parseConfig', () => {
 		expect(() => parseConfig({ ...completeEnv, MOCK_LMS: '' })).toThrowError(/MOCK_LMS/);
 	});
 
-	it('rejects an empty DATA_DIR', () => {
-		expect(() => parseConfig({ ...completeEnv, DATA_DIR: '' })).toThrowError(/DATA_DIR/);
+	it('rejects storage keys that are there but empty', () => {
+		// An empty key is not «no storage configured»: it signs every request with
+		// nothing and the storage answers 403 on the first upload.
+		expect(() => parseConfig({ ...completeEnv, S3_ACCESS_KEY: '' })).toThrowError(/S3_ACCESS_KEY/);
+		expect(() => parseConfig({ ...completeEnv, S3_SECRET_KEY: '' })).toThrowError(/S3_SECRET_KEY/);
+	});
+
+	it('rejects a bucket name S3 itself would refuse', () => {
+		expect(() => parseConfig({ ...completeEnv, S3_BUCKET: 'Lct_Documents' })).toThrowError(
+			/S3_BUCKET/
+		);
+		expect(() => parseConfig({ ...completeEnv, S3_BUCKET: 'ab' })).toThrowError(/S3_BUCKET/);
+	});
+
+	it('rejects an S3 endpoint without a scheme', () => {
+		expect(() => parseConfig({ ...completeEnv, S3_ENDPOINT: 'minio:9000' })).toThrowError(
+			/S3_ENDPOINT/
+		);
 	});
 
 	it('reports every broken variable at once, not just the first', () => {
-		expect(() => parseConfig({ ...completeEnv, SMTP_HOST: '', DATA_DIR: '' })).toThrowError(
-			/SMTP_HOST[\s\S]*DATA_DIR/
+		expect(() => parseConfig({ ...completeEnv, SMTP_HOST: '', S3_BUCKET: '' })).toThrowError(
+			/SMTP_HOST[\s\S]*S3_BUCKET/
 		);
 	});
 });

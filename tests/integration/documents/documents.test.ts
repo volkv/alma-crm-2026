@@ -1,7 +1,9 @@
 import { execFile } from 'node:child_process';
-import { readFile, readdir, rm } from 'node:fs/promises';
-import { join, resolve } from 'node:path';
+import { mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { promisify } from 'node:util';
+import type { RequestEvent } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import PizZip from 'pizzip';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -25,10 +27,10 @@ import {
 	readDocumentForDownload
 } from '$lib/server/documents/read';
 import { markDocument } from '$lib/server/documents/status';
-import { resolveStoredPath } from '$lib/server/documents/storage';
 import { ensureTemplateRegistered } from '$lib/server/documents/templates';
 import { uploadDocument, uploadDocumentRevision } from '$lib/server/documents/upload';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '$lib/server/errors';
+import type { SessionUser } from '$lib/server/auth/types';
 import {
 	insertInteractionWithStage,
 	insertOrganization,
@@ -37,27 +39,29 @@ import {
 	TEST_USER_IDS,
 	type TestDatabase
 } from '../helpers/db';
+import { pageEvent } from '../helpers/event';
 
 // См. комментарий в `schema.test.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
 
 const run = promisify(execFile);
 
+/**
+ * Маршрут скачивания: проверять его иначе нечем. Право на документ, заголовки
+ * ответа и сам поток байтов живут в нём, а не в сервисе.
+ */
+const downloadEndpoint =
+	await import('../../../src/routes/(app)/documents/[id=uuid]/download/+server');
+const downloadRoute = downloadEndpoint.GET as unknown as (event: RequestEvent) => Promise<Response>;
+
 let database: TestDatabase;
-/** Каталог данных, который `startTestDatabase` прописывает в окружение. */
-let dataDir: string;
 
 beforeAll(async () => {
 	database = await startTestDatabase();
-	dataDir = resolve(process.env.DATA_DIR ?? './.test-data');
-
-	// Предыдущий прогон мог упасть и оставить файлы; хранилище должно начинаться пустым.
-	await rm(dataDir, { recursive: true, force: true });
 }, 300_000);
 
 afterAll(async () => {
 	await database?.stop();
-	await rm(dataDir, { recursive: true, force: true });
 });
 
 beforeEach(async () => {
@@ -100,18 +104,55 @@ async function interactionWithParty(): Promise<{
 	return { interactionId, organizationId };
 }
 
-/** Сколько файлов лежит в хранилище и сколько осталось во временном каталоге. */
+/** Сколько объектов лежит в хранилище и сколько осталось под временным ключом. */
 async function storageCounts(): Promise<{ files: number; tmp: number }> {
-	const count = async (directory: string): Promise<number> => {
-		try {
-			return (await readdir(join(dataDir, directory))).length;
-		} catch {
-			// Каталога ещё нет — значит, в нём ноль файлов.
-			return 0;
-		}
-	};
+	const [files, tmp] = await Promise.all([
+		database.storage.keys('files/'),
+		database.storage.keys('tmp/')
+	]);
 
-	return { files: await count('files'), tmp: await count('tmp') };
+	return { files: files.length, tmp: tmp.length };
+}
+
+/**
+ * Временный файл на диске: `pdftotext` читает файл, а не поток, и хранилище
+ * ему не указ.
+ */
+async function withTempFile<TResult>(
+	bytes: Buffer,
+	use: (path: string) => Promise<TResult>
+): Promise<TResult> {
+	const directory = await mkdtemp(join(tmpdir(), 'lct-documents-'));
+
+	try {
+		const path = join(directory, 'document.pdf');
+		await writeFile(path, bytes);
+
+		return await use(path);
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+}
+
+/** Вошедший, у которого нет ни одного права: раздел документов ему не принадлежит. */
+function userWithoutPermissions(): SessionUser {
+	const user = testActor({ roleId: 'viewer', permissions: [] }).user;
+
+	if (user === null) {
+		throw new Error('testActor обязан вернуть пользователя');
+	}
+
+	return user;
+}
+
+/** Событие маршрута скачивания для документа. */
+function downloadEvent(documentId: string, user?: SessionUser): RequestEvent {
+	return pageEvent({
+		path: `/documents/${documentId}/download`,
+		routeId: '/(app)/documents/[id=uuid]/download',
+		params: { id: documentId },
+		user
+	});
 }
 
 /** Текст документа Word без разметки: подстановки видно как есть. */
@@ -125,13 +166,18 @@ function docxText(content: Buffer): string {
 	return part.asText().replace(/<[^>]*>/g, '');
 }
 
-async function readStoredDocument(documentId: string): Promise<Buffer> {
+/** Ключ объекта, под которым лежит файл документа. */
+async function storedKeyOf(documentId: string): Promise<string> {
 	const [row] = await database.db
 		.select({ filePath: documents.filePath })
 		.from(documents)
 		.where(eq(documents.id, documentId));
 
-	return readFile(resolveStoredPath(row.filePath));
+	return row.filePath;
+}
+
+async function readStoredDocument(documentId: string): Promise<Buffer> {
+	return database.storage.read(await storedKeyOf(documentId));
 }
 
 describe('регистрация шаблона', () => {
@@ -158,7 +204,7 @@ describe('регистрация шаблона', () => {
 		const ctx = testActor();
 		const first = await ensureTemplateRegistered(ctx, 'agreement');
 
-		await rm(resolveStoredPath(first.filePath));
+		await database.storage.remove(first.filePath);
 
 		const second = await ensureTemplateRegistered(ctx, 'agreement');
 
@@ -219,14 +265,9 @@ describe('генерация документа', () => {
 		expect(created.map((document) => document.mime)).toEqual([DOCX_MIME, 'application/pdf']);
 
 		const pdf = created[1];
-		const [row] = await database.db
-			.select({ filePath: documents.filePath })
-			.from(documents)
-			.where(eq(documents.id, pdf.id));
-
-		const { stdout } = await run('pdftotext', ['-layout', resolveStoredPath(row.filePath), '-'], {
-			maxBuffer: 8 * 1024 * 1024
-		});
+		const { stdout } = await withTempFile(await readStoredDocument(pdf.id), (path) =>
+			run('pdftotext', ['-layout', path, '-'], { maxBuffer: 8 * 1024 * 1024 })
+		);
 
 		expect(stdout).toContain('СОГЛАШЕНИЕ О СОТРУДНИЧЕСТВЕ');
 		expect(stdout).toContain('Московский технический университет');
@@ -381,6 +422,48 @@ describe('загрузка файла', () => {
 
 		expect(await database.db.select().from(documents)).toEqual([]);
 		expect(await storageCounts()).toEqual(before);
+	});
+
+	it('кладёт два одинаковых файла в разные объекты', async () => {
+		const ctx = testActor();
+		const before = await storageCounts();
+
+		const first = await uploadDocument(ctx, {
+			kind: 'agreement',
+			title: 'Соглашение, экземпляр вуза',
+			file: { mime: 'application/pdf', bytes: pdfBytes }
+		});
+		const second = await uploadDocument(ctx, {
+			kind: 'agreement',
+			title: 'Соглашение, экземпляр оператора',
+			file: { mime: 'application/pdf', bytes: pdfBytes }
+		});
+
+		// Хеш у файлов один, а объекты разные: дедупликации по содержимому здесь
+		// нет и быть не должно — документы живут своей жизнью, и отметка на одном
+		// не относится ко второму.
+		expect(second.sha256).toBe(first.sha256);
+
+		const keys = [await storedKeyOf(first.id), await storedKeyOf(second.id)];
+
+		expect(new Set(keys).size).toBe(2);
+		// Ключ — случайный идентификатор: ни названия документа, ни имени файла в
+		// нём нет, иначе ключи угадывались бы по списку вузов.
+		for (const key of keys) {
+			expect(key).toMatch(
+				/^files\/[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/
+			);
+		}
+
+		expect(await database.storage.read(keys[0])).toEqual(pdfBytes);
+		expect(await database.storage.read(keys[1])).toEqual(pdfBytes);
+
+		const after = await storageCounts();
+
+		expect(after.files).toBe(before.files + 2);
+		// Временный объект — это шаг протокола записи, а не след: после удачной
+		// записи под временным ключом не остаётся ничего.
+		expect(after.tmp).toBe(0);
 	});
 
 	it('требует право на запись', async () => {
@@ -564,6 +647,70 @@ describe('скачивание', () => {
 		await expect(readDocumentForDownload(testActor(), crypto.randomUUID())).rejects.toBeInstanceOf(
 			NotFoundError
 		);
+	});
+
+	it('отказывается отдавать документ, файла которого нет в хранилище', async () => {
+		const ctx = testActor();
+
+		const document = await uploadDocument(ctx, {
+			kind: 'agreement',
+			title: 'Соглашение без файла',
+			file: {
+				mime: 'application/pdf',
+				bytes: Buffer.from('%PDF-1.7\ntrailer\n%%EOF\n', 'latin1')
+			}
+		});
+
+		// Так выглядит стенд, которому подменили бакет: строки остались, объектов
+		// нет. Молча отдать пустой ответ нельзя — это выглядело бы как пустой файл.
+		await database.storage.remove(await storedKeyOf(document.id));
+
+		await expect(readDocumentForDownload(ctx, document.id)).rejects.toThrowError(
+			/отсутствует в хранилище/
+		);
+	});
+});
+
+describe('маршрут скачивания', () => {
+	const pdfBytes = Buffer.from('%PDF-1.7\n1 0 obj\n<<>>\nendobj\ntrailer\n%%EOF\n', 'latin1');
+
+	/** Документ вне взаимодействия: проверяется право на раздел, а не область. */
+	async function uploadedDocument(): Promise<string> {
+		const document = await uploadDocument(testActor(), {
+			kind: 'agreement',
+			title: 'Соглашение с СЗПУ',
+			file: { mime: 'application/pdf', bytes: pdfBytes }
+		});
+
+		return document.id;
+	}
+
+	it('отдаёт байты и заголовки тому, у кого есть право', async () => {
+		const documentId = await uploadedDocument();
+
+		const response = await downloadRoute(downloadEvent(documentId));
+
+		expect(response.status).toBe(200);
+		expect(response.headers.get('content-type')).toBe('application/pdf');
+		expect(response.headers.get('content-length')).toBe(String(pdfBytes.byteLength));
+		expect(response.headers.get('cache-control')).toBe('no-store');
+		expect(response.headers.get('x-content-type-options')).toBe('nosniff');
+		expect(response.headers.get('content-disposition')).toContain(
+			`filename*=UTF-8''${encodeURIComponent('Соглашение с СЗПУ.pdf')}`
+		);
+
+		// Файл доезжает целиком и ровно тот, который загрузили: ссылки наружу
+		// хранилище не выдаёт, байты идут через приложение.
+		expect(Buffer.from(await response.arrayBuffer())).toEqual(pdfBytes);
+	});
+
+	it('не отдаёт файл тому, у кого нет права на документы', async () => {
+		const documentId = await uploadedDocument();
+
+		// Отказ — до хранилища: право проверяется раньше, чем берётся объект.
+		await expect(
+			downloadRoute(downloadEvent(documentId, userWithoutPermissions()))
+		).rejects.toMatchObject({ status: 403 });
 	});
 });
 

@@ -485,7 +485,7 @@ export async function readDocumentForDownload(
 	// лазил мимо приложения, и отдавать такой файл как исходный нельзя.
 	if (sizeBytes !== row.sizeBytes) {
 		throw new Error(
-			`Размер файла документа ${row.id} на диске (${sizeBytes}) не совпадает с записью (${row.sizeBytes})`
+			`Размер файла документа ${row.id} в хранилище (${sizeBytes}) не совпадает с записью (${row.sizeBytes})`
 		);
 	}
 

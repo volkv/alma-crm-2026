@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { hideServiceAddresses } from '$lib/server/documents/errors';
+import { DocumentStorageError, hideServiceAddresses } from '$lib/server/documents/errors';
 
 describe('текст ошибки службы конвертации', () => {
 	it('не оставляет в сообщении внутренних адресов', () => {
@@ -27,5 +27,29 @@ describe('текст ошибки службы конвертации', () => {
 			'первая вторая строка'
 		);
 		expect(hideServiceAddresses('я'.repeat(500), 'http://localhost:3001')).toHaveLength(300);
+	});
+});
+
+describe('отказ хранилища файлов', () => {
+	it('называет код отказа и сохраняет причину', () => {
+		const cause = new Error('NoSuchBucket: the specified bucket does not exist');
+		const error = new DocumentStorageError('Не удалось записать файл в хранилище', {
+			code: 'NoSuchBucket',
+			status: 404,
+			cause
+		});
+
+		expect(error.message).toBe('Не удалось записать файл в хранилище (NoSuchBucket)');
+		expect(error.name).toBe('DocumentStorageError');
+		expect(error.status).toBe(404);
+		expect(error.cause).toBe(cause);
+	});
+
+	it('обходится без кода, когда хранилище не ответило вовсе', () => {
+		const error = new DocumentStorageError('Не удалось прочитать файл из хранилища');
+
+		expect(error.message).toBe('Не удалось прочитать файл из хранилища');
+		expect(error.code).toBeNull();
+		expect(error.status).toBeNull();
 	});
 });

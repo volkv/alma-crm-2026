@@ -96,7 +96,16 @@ export default defineConfig({
 			// прогоне нет и быть не может.
 			MOCK_LMS: 'true',
 			TRUST_PROXY: 'false',
-			DATA_DIR: '.playwright/data'
+			// Хранилище — тот же MinIO из `docker-compose.yml`, но свой бакет:
+			// объекты прогона не должны мешаться с файлами стенда, а стенд
+			// переживает `docker compose down` без `-v` вместе с ними. Бакет
+			// заводит `minio-init`, которого запускает `pnpm run test:e2e`.
+			S3_ENDPOINT: 'http://localhost:59000',
+			S3_REGION: 'us-east-1',
+			S3_BUCKET: 'lct-documents-e2e',
+			S3_ACCESS_KEY: 'lct',
+			S3_SECRET_KEY: 'lct-secret-key',
+			S3_FORCE_PATH_STYLE: 'true'
 		}
 	}
 });

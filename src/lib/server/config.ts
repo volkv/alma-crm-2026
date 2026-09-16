@@ -56,8 +56,29 @@ const configSchema = z.object({
 		.enum(['true', 'false'], { error: 'must be exactly "true" or "false"' })
 		.default('false')
 		.transform((value) => value === 'true'),
-	/** Directory for uploaded and generated files; must be writable and persist. */
-	DATA_DIR: z.string().min(1)
+	/**
+	 * S3-совместимое хранилище файлов документов (в поставке — MinIO).
+	 *
+	 * Адрес — с протоколом и портом (`http://minio:9000`), потому что своего
+	 * умолчания у S3-клиента для чужого хранилища нет. Регион MinIO не использует,
+	 * но подпись запроса без него не собирается, поэтому переменная обязательна
+	 * и здесь.
+	 */
+	S3_ENDPOINT: z.url({ protocol: /^https?$/ }),
+	S3_REGION: z.string().min(1),
+	/** Имя бакета по правилам S3: строчные буквы, цифры, дефис и точка. */
+	S3_BUCKET: z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, {
+		error: 'must be a valid S3 bucket name (3-63 chars, lowercase letters, digits, "-", ".")'
+	}),
+	S3_ACCESS_KEY: z.string().min(1),
+	S3_SECRET_KEY: z.string().min(1),
+	/**
+	 * Путь к бакету в адресе (`http://host/bucket/key`) вместо поддомена
+	 * (`http://bucket.host/key`). MinIO по адресу `http://minio:9000` понимает
+	 * только первый вариант: поддомен бакета некуда разрешать. Умолчания нет —
+	 * развёртывание обязано сказать, куда оно ходит.
+	 */
+	S3_FORCE_PATH_STYLE: booleanFlag
 });
 
 export type AppConfig = z.infer<typeof configSchema>;

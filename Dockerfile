@@ -40,12 +40,6 @@ COPY --chown=node:node src/lib ./src/lib
 # поэтому каталог обязан быть в образе рядом с рабочим каталогом процесса.
 COPY --chown=node:node templates ./templates
 
-# Uploaded and generated files live outside the image, on a volume mounted here.
-# The directory is created in the image so the app can write to it even when the
-# volume is missing — Docker would otherwise create the mount point as root.
-RUN mkdir -p /data && chown node:node /data
-VOLUME /data
-
 USER node
 EXPOSE 3000
 

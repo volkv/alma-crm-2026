@@ -10,12 +10,7 @@ node_modules/
 .env.*
 !.env.example
 
-# Uploaded and generated files (DATA_DIR)
-/data/
-
 # Tests
-# Каталог данных интеграционных тестов (DATA_DIR); чистится сам, но переживает падение прогона
-/.test-data/
 /playwright-report/
 /test-results/
 /coverage/

@@ -41,6 +41,39 @@ services:
         limits:
           memory: 768M
 
+  minio:
+    restart: unless-stopped
+    # Neither the S3 API nor the console is published: the app reaches the
+    # storage over the compose network, and the console shows every document
+    # the system keeps. Look at it through an SSH tunnel to 9001 when needed.
+    ports: !reset []
+    # `!override` instead of merging: the defaults from the base file are for a
+    # local stack, and a deployment must not silently fall back to them. `:?`
+    # stops `docker compose up` with the message below when the variable is
+    # missing from `.env`.
+    environment: !override
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  minio-init:
+    # No bucket for the end-to-end suite here: it never runs against a
+    # deployment, and an empty bucket nobody writes to is one more thing to
+    # explain during a backup.
+    command: !override
+      - mc alias set stack http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb --ignore-existing stack/lct-documents
+    environment: !override
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
   mailpit:
     restart: unless-stopped
     # The web UI is not exposed: it would show every message the system sends.
@@ -61,8 +94,9 @@ services:
     # over `env_file` in Compose. What stays here describes the shape of the
     # deployment, not its secrets: adapter-node reads ADDRESS_HEADER and
     # XFF_DEPTH to resolve the client address behind the reverse proxy (depth 1
-    # means «the last entry in X-Forwarded-For was added by our own proxy»),
-    # DATA_DIR has to match the mount point of the `app-data` volume, and
+    # means «the last entry in X-Forwarded-For was added by our own proxy»), the
+    # S3_* values below point at the MinIO of this stack (the keys themselves
+    # are secrets and come from `.env`), and
     # BODY_SIZE_LIMIT has to clear the upload ceiling the code enforces
     # (MAX_DOCUMENT_SIZE_BYTES, 25 MiB) plus the multipart envelope — with the
     # 512K default adapter-node answers 413 to any scan before the app sees it.
@@ -71,7 +105,10 @@ services:
     environment: !override
       ADDRESS_HEADER: X-Forwarded-For
       XFF_DEPTH: '1'
-      DATA_DIR: /data
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: lct-documents
+      S3_FORCE_PATH_STYLE: 'true'
       BODY_SIZE_LIMIT: 27M
       # The Moodle stand-in is a demonstration prop: a deployment that talks to a
       # real LMS must not have a second source of learning data next to it, so it

@@ -32,24 +32,24 @@
 
 ## Скрипты
 
-| Скрипт                      | Что делает                                                                                                   |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------ |
-| `pnpm dev`                  | Dev-сервер Vite на http://localhost:5173 с HMR                                                               |
-| `pnpm build`                | Production-сборка в `build/` (adapter-node)                                                                  |
-| `pnpm preview`              | Просмотр production-сборки через Vite                                                                        |
-| `pnpm run check`            | `svelte-check` — типы в `.ts` и `.svelte`                                                                    |
-| `pnpm run lint`             | ESLint + проверка форматирования Prettier                                                                    |
-| `pnpm run format`           | Форматирование всего репозитория                                                                             |
-| `pnpm run test:unit`        | Модульные тесты (`tests/unit`), Vitest, без внешних сервисов                                                 |
-| `pnpm run test:integration` | Интеграционные тесты: PostgreSQL и Redis — в testcontainers, `gotenberg` из compose, `pdftotext` — в системе |
-| `pnpm run test:e2e`         | Поднимает `postgres`, `redis` и `gotenberg` в compose и гоняет Playwright по `e2e/`                          |
-| `pnpm run db:generate`      | Генерирует SQL-миграцию по изменениям схемы в `drizzle/`                                                     |
-| `pnpm run db:migrate`       | Применяет миграции из `drizzle/` к базе из `DATABASE_URL`                                                    |
-| `pnpm run db:studio`        | Drizzle Studio — браузер по данным                                                                           |
-| `pnpm run check:audit`      | `pnpm audit --prod --audit-level=high` — уязвимости в том, что едет в образ                                  |
-| `pnpm run check:docker`     | `docker build .` — образ должен собираться                                                                   |
-| `pnpm run check:fast`       | Быстрый круг: lint → check → unit; без Docker и без сборки                                                   |
-| `pnpm run check:all`        | Полный гейт: audit → lint → check → unit → integration → build → e2e → образ                                 |
+| Скрипт                      | Что делает                                                                                                          |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
+| `pnpm dev`                  | Dev-сервер Vite на http://localhost:5173 с HMR                                                                      |
+| `pnpm build`                | Production-сборка в `build/` (adapter-node)                                                                         |
+| `pnpm preview`              | Просмотр production-сборки через Vite                                                                               |
+| `pnpm run check`            | `svelte-check` — типы в `.ts` и `.svelte`                                                                           |
+| `pnpm run lint`             | ESLint + проверка форматирования Prettier                                                                           |
+| `pnpm run format`           | Форматирование всего репозитория                                                                                    |
+| `pnpm run test:unit`        | Модульные тесты (`tests/unit`), Vitest, без внешних сервисов                                                        |
+| `pnpm run test:integration` | Интеграционные тесты: PostgreSQL, Redis и MinIO — в testcontainers, `gotenberg` из compose, `pdftotext` — в системе |
+| `pnpm run test:e2e`         | Поднимает `postgres`, `redis`, `gotenberg` и `minio` в compose, заводит бакеты и гоняет Playwright по `e2e/`        |
+| `pnpm run db:generate`      | Генерирует SQL-миграцию по изменениям схемы в `drizzle/`                                                            |
+| `pnpm run db:migrate`       | Применяет миграции из `drizzle/` к базе из `DATABASE_URL`                                                           |
+| `pnpm run db:studio`        | Drizzle Studio — браузер по данным                                                                                  |
+| `pnpm run check:audit`      | `pnpm audit --prod --audit-level=high` — уязвимости в том, что едет в образ                                         |
+| `pnpm run check:docker`     | `docker build .` — образ должен собираться                                                                          |
+| `pnpm run check:fast`       | Быстрый круг: lint → check → unit; без Docker и без сборки                                                          |
+| `pnpm run check:all`        | Полный гейт: audit → lint → check → unit → integration → build → e2e → образ                                        |
 
 `check:fast` гоняем в цикле правки, `check:all` — перед тем, как считать работу законченной.
 `check:all` — это и есть CI: задача workflow не делает ничего сверх него, поэтому зелёный
@@ -674,22 +674,26 @@ pnpm run test:unit
 pnpm exec vitest --project unit          # watch-режим
 ```
 
-**Интеграционные** (`tests/integration`) — поднимают настоящие PostgreSQL 17 и Redis 8 через
+**Интеграционные** (`tests/integration`) — поднимают настоящие PostgreSQL 17, Redis 8 и MinIO через
 testcontainers, применяют миграции из `drizzle/` и работают с реальными хранилищами. Контейнеры свои
 на каждый файл тестов, и `reset()` из `tests/integration/helpers/db.ts` между проверками чистит и
 таблицы, и Redis: прогон не зависит ни от того, что насчитал предыдущий, ни от того, что делает
-соседний. Из compose остаётся один `gotenberg` — он тяжёлый, и контейнер на файл ради тестов
-документов стоит дороже, чем один на машину. Нужен запущенный Docker; первый прогон тянет образы
-`postgres:17-alpine` и `redis:8-alpine`.
+соседний. Хранилище файлов заводит `tests/integration/helpers/storage.ts`: свой бакет на прогон и
+свой клиент, которым проверка смотрит на хранилище со стороны, а не глазами проверяемого кода. Из
+compose остаётся один `gotenberg` — он тяжёлый, и контейнер на файл ради тестов документов стоит
+дороже, чем один на машину. Нужен запущенный Docker; первый прогон тянет образы
+`postgres:17-alpine`, `redis:8-alpine` и `quay.io/minio/minio`.
 
 ```bash
 pnpm run test:integration
 ```
 
-**E2E** (`e2e`) — Playwright, только chromium. Скрипт сам поднимает `postgres`, `redis` и
-`gotenberg` из compose, затем Playwright собирает приложение и запускает `node build/index.js` на
-порту `E2E_PORT` (по умолчанию 4173). Переменные окружения для этого сервера заданы прямо в
-`playwright.config.ts`, чтобы прогон был одинаковым на машине разработчика и в CI.
+**E2E** (`e2e`) — Playwright, только chromium. Скрипт сам поднимает `postgres`, `redis`,
+`gotenberg` и `minio` из compose и прогоняет `minio-init` (бакеты), затем Playwright собирает
+приложение и запускает `node build/index.js` на порту `E2E_PORT` (по умолчанию 4173). Переменные
+окружения для этого сервера заданы прямо в `playwright.config.ts`, чтобы прогон был одинаковым на
+машине разработчика и в CI. Бакет у прогона свой (`lct-documents-e2e`): файлы стенда и файлы
+проверок не должны перемешиваться.
 
 Проектов Playwright два. `chromium` гоняет всё, кроме проверки лимита входа; `login-limit` — только
 её. Лимит попыток считается по адресу, а весь прогон приходит с одного, поэтому выбранный лимит

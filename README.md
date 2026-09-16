@@ -243,7 +243,7 @@ git clone https://github.com/volkv/lct-2026.git && cd lct-2026
 docker compose up --build
 ```
 
-Поднимаются приложение, PostgreSQL 17, Redis 8, Gotenberg и Mailpit. Миграции применяются автоматически,
+Поднимаются приложение, PostgreSQL 17, Redis 8, Gotenberg, MinIO и Mailpit. Миграции применяются автоматически,
 демо-данные заливаются при первом старте.
 
 | Адрес                          | Что там                       |
@@ -251,6 +251,7 @@ docker compose up --build
 | http://localhost:3000          | приложение                    |
 | http://localhost:3000/api/docs | Swagger UI                    |
 | http://localhost:8025          | Mailpit — вся исходящая почта |
+| http://localhost:59001         | MinIO — файлы документов      |
 
 Локальный стек — демонстрационный стенд: на странице входа есть кнопки «Войти как …» без пароля.
 Пустая база и обычная форма входа: `DEMO_MODE=false docker compose up --build`.
@@ -301,7 +302,7 @@ docker compose exec -e SEED_STAFF_ADMIN_PASSWORD='<пароль по полит�
 
 ```bash
 cp .env.example .env                                   # значения совпадают с compose
-docker compose up -d postgres redis gotenberg mailpit  # только инфраструктура
+docker compose up -d postgres redis gotenberg mailpit minio minio-init  # только инфраструктура
 pnpm install
 pnpm run db:migrate
 pnpm run db:seed
@@ -341,7 +342,7 @@ flowchart LR
     PG[("PostgreSQL 17<br/>Drizzle ORM · миграции")]
     R[("Redis 8<br/>сессии · лимиты")]
     G["Gotenberg<br/>DOCX → PDF"]
-    F["Файлы документов<br/>DATA_DIR"]
+    F[("MinIO<br/>файлы документов")]
 
     B --> H
     I --> H

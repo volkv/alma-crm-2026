@@ -42,6 +42,50 @@ services:
       timeout: 5s
       retries: 10
 
+  # Object storage for uploaded and generated documents. The image comes from
+  # quay.io: MinIO publishes its releases there, and the tag is pinned like
+  # every other image in the stack.
+  minio:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    command: ['server', '/data', '--console-address', ':9001']
+    environment:
+      # A single-node MinIO has one pair of keys, so the root pair is also the
+      # pair the app signs its requests with. Defaults are good enough for a
+      # local stack; a stand passes its own through the environment, and the
+      # production overlay refuses to start without them.
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-lct}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-lct-secret-key}
+    # 9000 is the S3 API, 9001 the web console; host ports are shifted the same
+    # way as PostgreSQL and Redis, because 9000 is a popular port.
+    ports:
+      - '59000:9000'
+      - '59001:9001'
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ['CMD', 'curl', '--silent', '--fail', 'http://localhost:9000/minio/health/live']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  # Creates the buckets and exits. Bucket creation is part of installing the
+  # stack, not of running it: the app only ever reads and writes objects, and
+  # its keys are not meant to be able to create or drop a bucket. The second
+  # bucket belongs to the end-to-end suite — `pnpm run test:e2e` runs against
+  # the same MinIO and must not mix its objects with the stand's.
+  minio-init:
+    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+    entrypoint: ['sh', '-c']
+    command:
+      - mc alias set stack http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb --ignore-existing stack/lct-documents stack/lct-documents-e2e
+    environment:
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-lct}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-lct-secret-key}
+    depends_on:
+      minio:
+        condition: service_healthy
+
   mailpit:
     image: axllent/mailpit:v1.31.1
     ports:
@@ -96,9 +140,15 @@ services:
       # Nothing sits in front of the app in the local stack, so the client
       # address is the socket address and forwarding headers must not be trusted.
       TRUST_PROXY: 'false'
-      DATA_DIR: /data
-    volumes:
-      - app-data:/data
+      # Object storage. Inside the compose network MinIO answers on its own
+      # name; path style is the only addressing that works there, because
+      # `bucket.minio` resolves nowhere.
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: lct-documents
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-lct}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-lct-secret-key}
+      S3_FORCE_PATH_STYLE: 'true'
     depends_on:
       postgres:
         condition: service_healthy
@@ -108,10 +158,14 @@ services:
         condition: service_healthy
       mailpit:
         condition: service_healthy
+      # Not `service_healthy`: the job creates the buckets and exits, and the
+      # app must not start against a storage without them.
+      minio-init:
+        condition: service_completed_successfully
 
 volumes:
   postgres-data:
   redis-data:
   # Uploaded and generated documents. Lives outside the image: it must survive
   # a rebuild, and `docker compose down` without `-v` must not take it away.
-  app-data:
+  minio-data:

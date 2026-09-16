@@ -141,7 +141,7 @@ export async function createSnapshot(
 	const command = parsed.data;
 	const { format, mime } = detectStatFile(input.file.bytes);
 
-	// Файл разбирается до записи в хранилище: принять и положить на диск то,
+	// Файл разбирается до записи в хранилище: принять и сохранить то,
 	// в чём нет ни одной строки, значит отложить отказ на шаг вперёд.
 	await readTable(format, input.file.bytes, STAT_PREVIEW_PARSE_LIMIT);
 

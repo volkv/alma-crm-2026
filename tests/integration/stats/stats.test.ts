@@ -6,8 +6,6 @@
  * выгрузки, версия строки после исправления и разница между нулём и
  * отсутствием данных — разница, которая живёт в `sum(...)` PostgreSQL.
  */
-import { rm } from 'node:fs/promises';
-import { resolve } from 'node:path';
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StatSnapshotView } from '$lib/contracts/stats';
@@ -35,7 +33,6 @@ import { insertOrganization, startTestDatabase, testActor, type TestDatabase } f
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
 
 let database: TestDatabase;
-let dataDir: string;
 
 const PERIOD = { periodStart: '2026-09-01', periodEnd: '2027-08-31' } as const;
 
@@ -99,16 +96,13 @@ async function importCsv(
 }
 
 beforeAll(async () => {
+	// Хранилище файлов у прогона своё и начинается пустым: и база, и бакет
+	// живут в контейнерах, которые поднимает `startTestDatabase`.
 	database = await startTestDatabase();
-	dataDir = resolve(process.env.DATA_DIR ?? './.test-data');
-
-	// Предыдущий прогон мог упасть и оставить файлы; хранилище начинается пустым.
-	await rm(dataDir, { recursive: true, force: true });
 }, 300_000);
 
 afterAll(async () => {
 	await database?.stop();
-	await rm(dataDir, { recursive: true, force: true });
 });
 
 beforeEach(async () => {

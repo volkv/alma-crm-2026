@@ -138,7 +138,7 @@ export async function ensureTemplateRegistered(
 		.where(eq(documentTemplates.key, key))
 		.limit(1);
 
-	// Файла в хранилище может не быть — например, том с данными подменили при
+	// Файла в хранилище может не быть — например, бакет завели заново при
 	// переезде. Тогда запись считается неактуальной и перерегистрируется.
 	if (existing !== undefined && (await storedFileSha256(existing.filePath)) === sha256Hex(source)) {
 		return toRecord(existing, key);
