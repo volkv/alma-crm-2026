@@ -7,16 +7,18 @@
 
 - Docker 25+ с плагином Compose 2.24+ (нужны теги слияния `!reset` / `!override`
   в `docker-compose.prod.yml`; проверить — `docker compose version`).
-- ~2,5 ГБ свободной оперативной памяти на стек и ~2 ГБ на сборку образа.
-  Суммарный лимит контейнеров — 2496 МБ (см. `docker-compose.prod.yml`).
+- ~3,5 ГБ свободной оперативной памяти на стек и ~2 ГБ на сборку образа.
+  Суммарный лимит контейнеров — 3264 МБ (см. `docker-compose.prod.yml`).
   Если памяти на сборку не хватает, образ собирают на другой машине и переносят:
   `docker save lct-crm-app | gzip | ssh <host> 'gunzip | docker load'`,
   а у сервиса `app` в оверрайде вместо `build` указывают `image: lct-crm-app`.
 - ~3 ГБ на диске под образы и тома.
 - nginx (или другой прокси), который терминирует TLS и проксирует на порт приложения.
 
-Наружу публикуется только приложение и только на loopback (`127.0.0.1:${APP_PORT}`).
-PostgreSQL, Redis, Gotenberg, MinIO и Mailpit доступны исключительно внутри сети Compose:
+Наружу публикуются только приложение и Keycloak, и только на loopback
+(`127.0.0.1:${APP_PORT}` и `127.0.0.1:${KEYCLOAK_PORT}`): перед обоими стоит один и тот же прокси,
+раздел «Keycloak» ниже. PostgreSQL, Redis, Gotenberg, MinIO и Mailpit доступны исключительно
+внутри сети Compose:
 у Mailpit веб-интерфейс показывает всю исходящую почту, у базы — все данные, а консоль MinIO —
 все документы системы. Понадобилась консоль MinIO — туннель на время работы
 (`ssh -L 9001:localhost:9001 <host>` вместе с `docker compose port minio 9001`), а не
@@ -38,12 +40,24 @@ PostgreSQL, Redis, Gotenberg, MinIO и Mailpit доступны исключит
 | `SMTP_PORT`                 | `1025`                                                                             |
 | `ORIGIN`                    | `https://<домен>` — ровно тот адрес, по которому открывается приложение в браузере |
 | `DEMO_MODE`                 | `true` на публичном стенде, `false` у заказчика; ровно `true` или `false`          |
-| `SEED_DEMO_PASSWORD`        | Общий пароль демонстрационных учётных записей; нужен только при `DEMO_MODE=true`   |
+| `SEED_DEMO_PASSWORD`        | Общий пароль демонстрационных записей — и сида, и импорта realm Keycloak           |
 | `SEED_STAFF_ADMIN_PASSWORD` | Пароль администратора стенда; необязательна, см. ниже                              |
 | `TRUST_PROXY`               | `true` — приложение стоит за nginx и берёт адрес клиента из `X-Forwarded-For`      |
 | `S3_ACCESS_KEY`             | Ключ доступа к хранилищу документов; он же корневой пользователь MinIO             |
 | `S3_SECRET_KEY`             | Секретный ключ хранилища; он же пароль корневого пользователя MinIO                |
 | `APP_PORT`                  | порт на `127.0.0.1`, куда смотрит прокси; по умолчанию `8099`                      |
+| `KEYCLOAK_ADMIN`            | Администратор самого Keycloak (realm `master`), не учётная запись CRM              |
+| `KEYCLOAK_ADMIN_PASSWORD`   | Его пароль; заводится при первом старте и больше переменной не управляется         |
+| `KEYCLOAK_PORT`             | порт на `127.0.0.1`, куда смотрит прокси для `/auth`; по умолчанию `8098`          |
+| `OIDC_PUBLIC_URL`           | `https://<домен>/auth` — публичный адрес Keycloak целиком, вместе с путём          |
+| `OIDC_ISSUER_URL`           | `https://<домен>/auth/realms/lct`                                                  |
+| `OIDC_CLIENT_ID`            | `lct-crm`                                                                          |
+| `OIDC_CLIENT_SECRET`        | Секрет клиента; он же попадает в realm при импорте                                 |
+
+`SEED_DEMO_PASSWORD` обязательна независимо от `DEMO_MODE`: сид без демонстрации ею не
+пользуется, но realm Keycloak импортируется с ней в любом случае, и без переменной
+`docker compose up` останавливается и называет её. Разными пароль быть не может: учётные записи в
+базе и в каталоге — одни и те же люди.
 
 Оба пароля в `.env.example` — заполнители (`change-me-before-deploy-Aa1!`), и заменить их надо до
 первого развёртывания: значение из шаблона знает всякий, кто открыл репозиторий, а сид на каждом
@@ -98,7 +112,7 @@ cp .env.example .env && chmod 600 .env      # дальше править по �
 docker compose -f docker-compose.yml -f docker-compose.prod.yml up -d --build
 ```
 
-Compose поднимает PostgreSQL, Redis, Gotenberg, MinIO и Mailpit, ждёт их healthcheck'ов,
+Compose поднимает PostgreSQL, Redis, Keycloak, Gotenberg, MinIO и Mailpit, ждёт их healthcheck'ов,
 прогоняет `minio-init` (бакет документов) и только потом запускает приложение. Контейнер приложения при старте сам применяет миграции
 (`node scripts/migrate.ts` в `Dockerfile`) — отдельного шага миграции в развёртывании нет.
 Миграции идемпотентны: применённые пропускаются.
@@ -190,6 +204,124 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml exec postgres \
 их гасит, прямая правка базы — нет; если фактор мог достаться кому-то ещё, вместе с этим стоит
 сменить и пароль.
 
+## Keycloak
+
+Каталог учётных записей и целевой вход в систему. Сейчас приложение пускает по своей форме входа
+(`auth.md`), а Keycloak стоит рядом готовым: realm, роли и демонстрационные учётные записи
+приезжают импортом, переключение входа — следующая работа. Устройство realm —
+[`../keycloak/README.md`](../keycloak/README.md), отображение ролей — [`access-matrix.md`](access-matrix.md),
+раздел 6.
+
+Образ `quay.io/keycloak/keycloak:26.7.4`, режим `start` (рабочий, не `start-dev`). `--optimized`
+не используется: он требует образа, собранного `kc.sh build` под PostgreSQL, а образ берётся
+готовым, поэтому Keycloak дособирает конфигурацию сам при старте — это около пяти секунд сверху.
+Измеренное время до `healthy` на чистой базе — 16 секунд, при перезапуске — 4. В покое контейнер
+занимает около 600 МБ при потолке 768 МБ; на 512 МБ он поднимается, но живёт впритык к потолку и
+первый же всплеск нагрузки означает OOM.
+
+### Своя база
+
+Keycloak хранит realm в **отдельной базе `keycloak`** того же PostgreSQL. В базе приложения ему
+места нет: миграции ходят по всей схеме, а дамп приложения не должен уносить учётные записи
+каталога.
+
+Базу заводит скрипт `keycloak/initdb-keycloak.sh`, подключённый томом в `docker-entrypoint-initdb.d`.
+Образ postgres выполняет такие скрипты **ровно один раз — при инициализации пустого тома**. На
+стенде, который уже работает, том не пуст, и базу заводят руками, до первого старта Keycloak:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml \
+  exec postgres psql -U lct -d lct -c 'create database keycloak owner "lct"'
+```
+
+Без базы контейнер не поднимется и напишет об этом в лог — молча на встроенную H2 он не съедет.
+
+### Импорт realm
+
+`start --import-realm` импортирует `keycloak/realm-lct.json` **только в пустую базу**: realm,
+заведённый раньше, импорт не трогает (стратегия `IGNORE_EXISTING`). Отсюда правило: значения,
+которые подставляются в realm, задают в `.env` **до первого запуска**.
+
+Подставляются три (подробно — `keycloak/README.md`):
+
+| Переменная           | Что задаёт                                 | Откуда берётся на стенде                   |
+| -------------------- | ------------------------------------------ | ------------------------------------------ |
+| `OIDC_CLIENT_SECRET` | Секрет клиента `lct-crm`                   | `.env`                                     |
+| `ORIGIN`             | Адрес приложения в списке адресов возврата | `.env`, та же переменная, что у приложения |
+| `SEED_DEMO_PASSWORD` | Общий пароль трёх демонстрационных записей | `.env`, та же переменная, что у сида       |
+
+Пароль демонстрации один и тот же в базе приложения и в каталоге: учётные записи те же самые, и
+разойтись им незачем. Поменять его **после** импорта переменная уже не может — это делают в
+каталоге:
+
+```bash
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec keycloak \
+  /opt/keycloak/bin/kcadm.sh config credentials --server http://localhost:8080/auth \
+  --realm master --user "$KEYCLOAK_ADMIN" --password "$KEYCLOAK_ADMIN_PASSWORD"
+
+docker compose -f docker-compose.yml -f docker-compose.prod.yml exec keycloak \
+  /opt/keycloak/bin/kcadm.sh set-password -r lct --username manager --new-password '<новый>'
+```
+
+Так же — `lead` и `admin`. То же самое делается мышью в консоли по адресу `https://<домен>/auth/admin`.
+
+### Путь, а не поддомен
+
+Keycloak стоит **под путём `/auth` того же домена**, а не на своём поддомене: у стенда один
+сертификат и одна запись в DNS, и поддомен стоил бы и того, и другого — ради демонстрации, которая
+живёт неделями. `KC_HTTP_RELATIVE_PATH=/auth` заставляет его и отвечать по этому пути, поэтому путь
+снаружи совпадает с путём внутри и ссылки, которые Keycloak строит сам, ведут туда же.
+
+Плата за это — общее происхождение с приложением: cookie Keycloak живут на том же домене, пусть и
+на своём пути. Они `HttpOnly`, но разделения по происхождению у них нет; поддомен дал бы его.
+Решение обратимо: меняются `KC_HOSTNAME`, `KC_HTTP_RELATIVE_PATH`, адреса возврата в realm и
+`location` в прокси.
+
+`KC_HOSTNAME`, `KC_HTTP_RELATIVE_PATH`, `KC_PROXY_HEADERS`, `KC_DB*` и проверку здоровья задаёт
+`docker-compose.prod.yml` — они описывают устройство развёртывания, а не его настройки, и в `.env`
+их не пишут.
+
+### Фрагмент прокси
+
+В шаблон `deploy/nginx/crm.conf.example` этот фрагмент не входит — шаблон описывает прокси перед
+приложением. Добавляется он в тот же `server`-блок, **до** `location /`:
+
+```nginx
+    # Keycloak: путь снаружи совпадает с KC_HTTP_RELATIVE_PATH, поэтому URI
+    # передаётся как есть — без слеша в конце proxy_pass.
+    location /auth/ {
+        proxy_pass http://127.0.0.1:8098;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        # Обязательны оба: с KC_PROXY_HEADERS=xforwarded Keycloak берёт схему и
+        # имя хоста отсюда. Без них он считает соединение незашифрованным и
+        # разворачивает вход обратно на http.
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_set_header X-Forwarded-Host $host;
+
+        # Страница входа отдаёт свои заголовки безопасности сама —
+        # Strict-Transport-Security, X-Frame-Options, X-Content-Type-Options,
+        # Referrer-Policy, Content-Security-Policy и X-Robots-Tag. Повторять их
+        # здесь через add_header нельзя: заголовки не заменяются, а
+        # дублируются.
+        proxy_buffer_size 32k;
+        proxy_buffers 8 32k;
+        proxy_busy_buffers_size 64k;
+    }
+```
+
+Проверка после перезагрузки nginx:
+
+```bash
+curl -s https://<домен>/auth/realms/lct/.well-known/openid-configuration | head -c 200
+```
+
+В ответе `"issuer":"https://<домен>/auth/realms/lct"` — ровно тот адрес, по которому открывается
+стенд. Если там оказался `http://` или имя контейнера, прокси не передаёт `X-Forwarded-*`, и вход
+сломается на первом же перенаправлении.
+
 ## Обновление
 
 ```bash
@@ -263,6 +395,12 @@ docker compose -f docker-compose.yml -f docker-compose.prod.yml run --rm --no-de
 
 Базу и хранилище снимают вместе: запись в базе без объекта — битая карточка документа, объект
 без записи — мусор, который никто не найдёт.
+
+База Keycloak в этот дамп не попадает — она отдельная, и снимается отдельной командой
+(`pg_dump -U lct -d keycloak -Fc`). Без неё восстановленный стенд поднимется, но войти в него будет
+некому: учётные записи, роли и клиент живут там. Если realm не правили руками, дешевле не
+восстанавливать её, а дать Keycloak импортировать `keycloak/realm-lct.json` в пустую базу заново —
+это то же состояние.
 
 Redis в бэкапе не нуждается: там сессии и кэш, они восстанавливаются сами.
 Gotenberg и Mailpit состояния не хранят.

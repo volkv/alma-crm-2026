@@ -74,6 +74,69 @@ services:
         limits:
           memory: 64M
 
+  # The account directory on a stand: PostgreSQL instead of the built-in H2, a
+  # pinned public name and the path `/auth` behind the same nginx as the app.
+  keycloak:
+    restart: unless-stopped
+    # `start` instead of `start-dev`: the production mode, without H2 and without
+    # «the hostname from the request». `--optimized` is not an option here — it
+    # needs an image built by `kc.sh build` against PostgreSQL, and the image is
+    # taken ready from quay; so Keycloak augments its configuration itself at
+    # startup, which costs about five seconds. `--import-realm` only fires on an
+    # empty database: a realm imported earlier is left alone, and edits to a realm
+    # of a running stand are made through the admin console (docs/deployment.md).
+    command: !override ['start', '--import-realm']
+    # Loopback only, like the app: Keycloak faces the world through nginx, the
+    # vhost fragment is in docs/deployment.md.
+    ports: !override
+      - '127.0.0.1:${KEYCLOAK_PORT:-8098}:8080'
+    # `!override` instead of merging: the values in the base file are for a local
+    # stack, and a deployment must not silently fall back to them. `:?` stops
+    # `docker compose up` with the message below when the variable is missing
+    # from `.env`.
+    environment: !override
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:?set KEYCLOAK_ADMIN in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}
+      KC_HEALTH_ENABLED: 'true'
+      # Its own database in the same PostgreSQL. The init script from `keycloak/`
+      # creates it when the volume is initialised; on a stand that already works
+      # it is the command from docs/deployment.md.
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: lct
+      KC_DB_PASSWORD: lct
+      # The public address of Keycloak in full, path included: it builds the links
+      # in its login pages and OIDC metadata from it, and it is the `iss` of every
+      # token it issues. The path has to match KC_HTTP_RELATIVE_PATH, otherwise
+      # those links lead past nginx.
+      KC_HOSTNAME: ${OIDC_PUBLIC_URL:?set OIDC_PUBLIC_URL in .env}
+      KC_HTTP_RELATIVE_PATH: /auth
+      # Keycloak carries the relative path over to the management port as well, so
+      # the health probe would move to `/auth/health/ready` — while it is declared
+      # in the base file and asks for `/health/ready`. The management port is not
+      # published at all, so its path goes back to the root instead of the probe
+      # being written twice.
+      KC_HTTP_MANAGEMENT_RELATIVE_PATH: /
+      # TLS is terminated by nginx and the request reaches the container over
+      # http; the scheme, the client address and the host name come from the
+      # X-Forwarded-* headers. Without `KC_PROXY_HEADERS` Keycloak considers the
+      # connection unencrypted and bounces the login back to http.
+      KC_HTTP_ENABLED: 'true'
+      KC_PROXY_HEADERS: xforwarded
+      CRM_ORIGIN: ${ORIGIN:?set ORIGIN in .env}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?set OIDC_CLIENT_SECRET in .env}
+      KEYCLOAK_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:?set SEED_DEMO_PASSWORD in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # 512M is enough to start on, but the container then lives right at the
+    # ceiling — 510 MB of 512 at rest, measured — and the first burst of load
+    # means an OOM kill. At 768 it sits at about 600 MB.
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
   mailpit:
     restart: unless-stopped
     # The web UI is not exposed: it would show every message the system sends.

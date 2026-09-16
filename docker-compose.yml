@@ -13,6 +13,11 @@ services:
       - '55432:5432'
     volumes:
       - postgres-data:/var/lib/postgresql/data
+      # Creates the second database — the one Keycloak keeps its realm in. The
+      # postgres image runs the scripts from this directory exactly once, when it
+      # initialises an empty volume; on a stand that already works the database is
+      # created by hand, see docs/deployment.md, section «Keycloak».
+      - ./keycloak/initdb-keycloak.sh:/docker-entrypoint-initdb.d/10-keycloak.sh:ro
     healthcheck:
       test: ['CMD-SHELL', 'pg_isready -U lct -d lct']
       interval: 5s
@@ -31,6 +36,62 @@ services:
       interval: 5s
       timeout: 5s
       retries: 20
+
+  # The account directory: realm `lct`, three roles and three demo accounts are
+  # imported from `keycloak/realm-lct.json`. The app still signs people in on its
+  # own (docs/auth.md); Keycloak stands next to it ready, so that switching the
+  # login over is a change to the app and not an installation of infrastructure.
+  # How realm roles map onto ours: docs/access-matrix.md, section 6.
+  keycloak:
+    image: quay.io/keycloak/keycloak:26.7.4
+    # `start-dev`: the built-in H2 database inside the container and a hostname
+    # taken from the request. In development Keycloak is reached both from
+    # outside (a browser, `localhost:58080`) and from inside the network
+    # (`keycloak:8080`), and start-dev answers on whichever address the request
+    # came to. A deployment cannot work that way — there it is PostgreSQL and a
+    # pinned `KC_HOSTNAME`, see docker-compose.prod.yml.
+    #
+    # That database deliberately has no volume: the realm is defined by a file,
+    # and a recreated container comes up as exactly what `keycloak/realm-lct.json`
+    # says, not as whatever someone clicked together in the console.
+    command: ['start-dev', '--import-realm']
+    environment:
+      # The administrator of Keycloak itself (realm `master`), not an account of
+      # the CRM. The defaults are good enough for a local stack; a stand passes
+      # its own through `.env`.
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:-admin}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
+      # Health endpoints answer on the management port 9000 and are off by default.
+      KC_HEALTH_ENABLED: 'true'
+      # Placeholders of the realm file: `${VAR:default}` is expanded at import
+      # time from the environment of this container (keycloak/README.md).
+      #
+      # CRM_ORIGIN is the address a browser opens the app at; it becomes a redirect
+      # URI of the client. In the local stack it is the published port of the app,
+      # on a stand it is its public address.
+      CRM_ORIGIN: http://localhost:3000
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-lct-crm-dev-secret}
+      # The shared password of the three demo accounts — the same one the seed
+      # gives them in the app's own database: the accounts are the same people,
+      # and their password is one.
+      KEYCLOAK_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-Demo-Password-2026!}
+    # The host port is shifted the same way as PostgreSQL and Redis; inside the
+    # network Keycloak answers on 8080.
+    ports:
+      - '58080:8080'
+    volumes:
+      - ./keycloak/realm-lct.json:/opt/keycloak/data/import/realm-lct.json:ro
+    healthcheck:
+      # The image carries neither curl nor wget — only bash, so the request to
+      # `/health/ready` on the management port goes through /dev/tcp.
+      test:
+        [
+          'CMD-SHELL',
+          'exec 3<>/dev/tcp/127.0.0.1/9000 && printf "GET /health/ready HTTP/1.1\r\nHost: localhost\r\nConnection: close\r\n\r\n" >&3 && grep -q "\"status\": \"UP\"" <&3'
+        ]
+      interval: 5s
+      timeout: 5s
+      retries: 30
 
   gotenberg:
     image: gotenberg/gotenberg:8
