@@ -21,10 +21,10 @@ jobs:
     steps:
       - uses: actions/checkout@v5
 
-      - name: Install poppler-utils (pdftotext, needed by the integration tests)
+      - name: Install poppler-utils (pdftotext) and LibreOffice (soffice), needed by the integration tests
         run: |
           sudo apt-get update
-          sudo apt-get install -y poppler-utils
+          sudo apt-get install -y poppler-utils libreoffice-calc
 
       - uses: pnpm/action-setup@v6
 
