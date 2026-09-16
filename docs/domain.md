@@ -1,0 +1,206 @@
+# Предметная модель и схема данных
+
+Один словарь и одна модель данных на весь контур m2. Всё, что здесь описано словами, миграция
+превращает в DDL; SQL в этом документе нет намеренно — два описания одной таблицы расходятся.
+
+**Связанные документы.** Каталог прав, роли и область доступа — `docs/access-matrix.md`. Правила
+живого процесса, публикации и переноса — `docs/workflow.md`. Семантика отчёта и DTO выгрузки —
+`docs/reports.md`. Формат сообщений и журнал обмена — `docs/exchange-contract.md`. Текущее устройство
+движка стадий — `docs/stages.md`, хранилище файлов — `docs/documents.md`, карта модулей —
+`docs/architecture.md`.
+
+Пометки: **сейчас** — то, что есть в коде и проверено чтением; **целевое** — то, что вводит эта
+модель. Смешивать нельзя: то, чего нет, не утверждается ни в README, ни в справке.
+
+## 1. Словарь
+
+| Термин               | Что это                                                                                                                     |
+| -------------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| **Контрагент**       | Сторона, с которой идёт работа: вуз, юридическое лицо или физическое лицо. Живёт строкой `organizations` с видом            |
+| **Вид контрагента**  | Значение `organizations.kind`. Определяет группу процесса, когда организация — основная сторона                             |
+| **Основная сторона** | Участник взаимодействия с `interaction_parties.is_primary`. Ровно один на взаимодействие; на нём считаются группа и область |
+| **Группа процесса**  | Набор видов контрагента, работа с которыми идёт по одному сценарию: `b2b` и `b2c`. Таблица `process_groups`                 |
+| **Редакция**         | Опубликованный или черновой снимок структуры процесса группы: стадии и переходы. Таблица `process_revisions`                |
+| **Стадия**           | Шаг процесса внутри редакции. Идентичность стадии — пара «группа + ключ», а не строка `stages`                              |
+| **Ключ стадии**      | Устойчивое имя стадии внутри группы (`contact_search`). Не меняется никогда; удалённый ключ становится архивным             |
+| **Запись стадии**    | Пребывание взаимодействия на одной стадии от входа до выхода — `stage_entries` со снимком правил на момент входа            |
+| **Назначение**       | Кто отвечает за вуз (и за какое направление) в заданный период — `organization_responsibles`                                |
+| **Направление**      | ИТ-направление продуктов и программ (DevOps, QA). Справочник `directions`; код ФГОС программы — другое                      |
+| **Договор**          | Соглашение с контрагентом — `contracts`; его **позиция** (`contract_items`) несёт коммерческие условия по одному продукту   |
+| **Учебная группа**   | Поток обучения в системе обучения, заведённый по взаимодействию — `learning_groups`; её **результат** — числа за период     |
+| **Сообщение обмена** | Одно входящее или исходящее сообщение контракта v1 со своим состоянием и попытками — `exchange_messages`                    |
+| **Машинный субъект** | Невходящая учётная запись роли `service`, от имени которой работают ключи обмена. Подробно — `docs/access-matrix.md`, §1    |
+
+## 2. Вид контрагента → группа процесса
+
+Единственная таблица соответствий. По ней группу выбирают и форма создания взаимодействия, и приём
+заявки с сайта; второго правила в продукте нет.
+
+| Вид `organizations.kind`  | Может быть основной стороной | Группа процесса | Кто это                                       |
+| ------------------------- | ---------------------------- | --------------- | --------------------------------------------- |
+| `educational_institution` | да                           | `b2b`           | учебное заведение                             |
+| `legal_entity`            | да                           | `b2c`           | юридическое лицо, обучающее своих сотрудников |
+| `individual`              | да                           | `b2c`           | физическое лицо                               |
+| `customer_company`        | нет                          | —               | плательщик рядом с вузом                      |
+| `operator`                | нет                          | —               | сам оператор: ООО «РТК ИТ» в своих процессах  |
+
+`customer_company` и `operator` участвуют ролью `interaction_parties.party_role`, но основной
+стороной не бывают: у процесса должен быть один контрагент, иначе группа зависит от порядка строк.
+Организация-вендор (на неё ссылается `products.vendor_organization_id`) стороной не бывает вовсе.
+Соответствие «вид → группа» хранится строками `process_group_counterparty_kinds`, а не набором в
+строке группы: «вид принадлежит ровно одной группе» должно держать ограничение, а не соглашение.
+
+**Физическое лицо** — это организация вида `individual` с обязательной ссылкой `person_id` на
+`people`. Отдельной таблицы контрагентов не заводим: так ФИО, контакты, согласия, маскирование,
+срок хранения и обезличивание остаются в единственном контуре персональных данных, а все внешние
+ключи на `organizations` продолжают работать. Цена решения — «лишняя» строка организации на каждое
+физическое лицо; названием такой строки служит ФИО из `people`, отдельной копии не появляется.
+
+## 3. Схема: новое и изменяемое
+
+Ниже только то, что префлайт добавляет или меняет. «Владелец» — модуль, который пишет в таблицу;
+читать её может кто угодно через сервис владельца.
+
+### 3.1 Контрагенты, люди, назначения, иерархия
+
+| Таблица                             | Колонки                                                                                                                                                                                                                    | Индексы и ограничения                                                                                                                                                                                                  | Владелец    |
+| ----------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------- |
+| `organizations` (правка)            | `+ person_id uuid null → people(id) on delete restrict`; `kind` получает значения `individual`, `legal_entity`                                                                                                             | `check`: `person_id is not null` тогда и только тогда, когда `kind = 'individual'`; существующий `check` про уровень образования сохраняется; уникальный `person_id`                                                   | `directory` |
+| `organization_responsibles` (новая) | `id uuid pk`, `organization_id not null → organizations`, `user_id not null → users`, `direction_id null → directions`, `valid_from timestamptz not null`, `valid_to timestamptz null`, `assigned_by_user_id null → users` | `unique nulls not distinct (organization_id, direction_id) where valid_to is null`; индексы `(organization_id, user_id) where valid_to is null` и `(user_id) where valid_to is null`; `check`: `valid_to > valid_from` | `directory` |
+| `users` (правка)                    | `+ manager_user_id uuid null → users(id) on delete set null`, `+ external_subject text null`                                                                                                                               | `unique (external_subject) where external_subject is not null`; индекс `(manager_user_id)`; `check`: `manager_user_id <> id`                                                                                           | `auth`      |
+
+Метки назначения — точные (`timestamptz`), а не даты: две смены ответственного за один день обязаны
+выстроиться в историю, а не в две строки с одинаковым днём. Поля собственной аутентификации
+(`password_hash`, `password_changed_at`, `totp_*`) префлайт **не** трогает — их удаляет задача
+Keycloak, когда вход через них перестанет существовать.
+
+### 3.2 Направления, договоры
+
+| Таблица                             | Колонки                                                                                                                                                                                                            | Индексы и ограничения                                                                                                               | Владелец       |
+| ----------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `directions` (новая)                | `id uuid pk`, `code text not null`, `name text not null`, `position integer not null`, `timestamps`                                                                                                                | `unique (code)`, `unique (position)`                                                                                                | `directory`    |
+| `product_directions` (новая)        | `product_id not null → products on delete cascade`, `direction_id not null → directions on delete restrict`, `created_at`                                                                                          | pk `(product_id, direction_id)`; индекс `(direction_id)`                                                                            | `directory`    |
+| `programs` (правка)                 | `+ direction_id uuid null → directions on delete restrict`                                                                                                                                                         | индекс `(direction_id)`; `direction_code` (код ФГОС) остаётся и смысла не меняет                                                    | `directory`    |
+| `contracts` (новая)                 | `id uuid pk`, `organization_id not null → organizations on delete restrict`, `number text not null`, `signed_on date null`, `valid_until date null`, `status` (`draft`/`active`/`closed`), `timestamps`            | `unique (organization_id, number)`; индекс `(organization_id)`; `check`: `valid_until >= signed_on`                                 | `interactions` |
+| `contract_items` (новая)            | `id uuid pk`, `contract_id not null → contracts on delete cascade`, `product_id not null → products on delete restrict`, `license_signed_at date null`, `license_until date null`, `transfer_status text not null` | `unique (contract_id, product_id)`; `unique (id, contract_id)` — чтобы на пару «позиция + её договор» можно было сослаться          | `interactions` |
+| `interactions` (правка)             | `+ contract_id uuid null → contracts on delete restrict`                                                                                                                                                           | индекс `(contract_id)`                                                                                                              | `interactions` |
+| `interaction_contract_items` (нов.) | `interaction_id not null → interactions on delete cascade`, `contract_item_id not null`, `contract_id not null`, `created_at`                                                                                      | pk `(interaction_id, contract_item_id)`; составной внешний ключ `(contract_item_id, contract_id) → contract_items(id, contract_id)` | `interactions` |
+
+Договор принадлежит контрагенту, а не взаимодействию: один договор обслуживает несколько
+взаимодействий. Взаимодействие выбирает договор и подмножество его позиций; принадлежность позиции
+именно этому договору держит составной внешний ключ, а не проверка в сервисе. **Источник истины о
+продуктах взаимодействия — `interaction_products`**; позиция договора добавляет к продукту
+коммерческие условия и статус передачи, но состав продуктов не задаёт. Словарь `transfer_status` —
+свободный справочник до получения каталога заказчика (`docs/reports.md`, открытые вопросы).
+
+### 3.3 Процесс: группы, редакции, стадии
+
+| Таблица                                    | Колонки                                                                                                                                                                          | Индексы и ограничения                                                                                                                                                  | Владелец |
+| ------------------------------------------ | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| `process_groups` (новая)                   | `id uuid pk`, `key text not null`, `name`, `description null`, `active_revision_id uuid null → process_revisions`, `position integer not null`, `timestamps`                     | `unique (key)`, `unique (position)`; принадлежность `active_revision_id` своей группе проверяет транзакция публикации                                                  | `stages` |
+| `process_group_counterparty_kinds` (новая) | `kind organization_kind pk`, `group_id not null → process_groups on delete restrict`                                                                                             | первичный ключ по `kind` и есть ограничение «вид принадлежит ровно одной группе»; индекс `(group_id)`                                                                  | `stages` |
+| `process_revisions` (из `stage_routes`)    | `id`, `group_id not null → process_groups on delete cascade`, `version integer not null`, `name`, `note null`, `published_at null`, `timestamps`; `key` и `is_default` удаляются | `unique (group_id, version)`; `unique (group_id) where published_at is null` — один черновик на группу                                                                 | `stages` |
+| `process_stage_keys` (новая)               | `group_id not null → process_groups`, `key text not null`, `first_seen_at`, `archived_at null`                                                                                   | pk `(group_id, key)`; строка заводится при первом появлении ключа и не удаляется никогда                                                                               | `stages` |
+| `stages` (правка)                          | `route_id` → `revision_id → process_revisions`; `+ is_final boolean not null default false`, `+ requires_lms_data boolean not null default false`                                | существующие `unique (revision_id, key)` и `(revision_id, position)` сохраняются; связь с реестром ключей ведёт сервис публикации: у `stages` нет своей колонки группы | `stages` |
+| `stage_transitions` (правка)               | `route_id` → `revision_id`                                                                                                                                                       | `unique (from_stage_id, to_stage_id)` сохраняется                                                                                                                      | `stages` |
+| `stage_migration_rules` (новая)            | `id uuid pk`, `revision_id not null → process_revisions on delete cascade`, `removed_stage_key text not null`, `target_stage_key text not null`                                  | `unique (revision_id, removed_stage_key)`; `check`: ключи различны                                                                                                     | `stages` |
+| `interactions` (правка)                    | `route_id` → `process_group_id not null → process_groups on delete restrict`                                                                                                     | индекс `(process_group_id, status)`                                                                                                                                    | `stages` |
+
+**Идентичность стадии — пара `(group_id, key)`.** Строка `stages` живёт внутри редакции и меняется с
+каждой публикацией; ключ внутри группы не меняется никогда. Поэтому лента карточки, отчёт и перенос
+сопоставляют записи по ключу, а `process_stage_keys` запрещает завести стадию со смыслом «другая
+работа» под ключом удалённой: удалённый ключ помечается архивным, и черновик с ним не публикуется.
+
+### 3.4 Записи стадий и вложения
+
+| Таблица                           | Колонки                                                                                                                                      | Индексы и ограничения                                                                                                                                          | Владелец       |
+| --------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------------- |
+| `stage_entries` (правка)          | `+ migrated_at timestamptz null`, `+ migrated_from_stage_key text null`, `+ lms_evidence jsonb null`; `outcome` получает значение `migrated` | существующие «одна открытая запись» и `(interaction_id, entered_at)` сохраняются; новый индекс по окну `(entered_at, left_at)` и по `(stage_snapshot->>'key')` | `stages`       |
+| `stage_entry_documents` (новая)   | `stage_entry_id not null → stage_entries on delete cascade`, `document_id not null → documents on delete cascade`, `created_at`              | pk `(stage_entry_id, document_id)`; проверка «документ и запись принадлежат одному взаимодействию» — в сервисе загрузки, тест обязателен                       | `documents`    |
+| `interaction_parties` (правка)    | без новых колонок                                                                                                                            | **новое**: `unique (interaction_id) where is_primary` — от основной стороны зависят и группа процесса, и область доступа                                       | `interactions` |
+| `documents`, `document_templates` | `file_path` сохраняет имя и начинает хранить **ключ объекта** в хранилище (`docs/documents.md`)                                              | без изменений                                                                                                                                                  | `documents`    |
+
+### 3.5 Обучение и обмен
+
+| Таблица                          | Колонки                                                                                                                                                                                                                                                                                                                                                                                                         | Индексы и ограничения                                                                                                                                            | Владелец   |
+| -------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------- |
+| `learning_groups` (новая)        | `id uuid pk`, `interaction_id not null → interactions on delete cascade`, `stream_number integer not null`, `system text not null`, `instance text not null`, `group_external_id text null`, `requested_at`, `planned_seats`, `starts_on`, `ends_on`, `last_result_at null`                                                                                                                                     | `unique (interaction_id, stream_number)`; `unique (system, instance, group_external_id) where group_external_id is not null`                                     | `exchange` |
+| `learning_group_results` (новая) | `id uuid pk`, `learning_group_id not null → learning_groups on delete cascade`, `occurred_at timestamptz not null`, `period_start`, `period_end`, `finished_on null`, `enrolled`, `completed`, `expelled`, `document_id null → documents`, `exchange_message_id null`                                                                                                                                           | `unique (learning_group_id, occurred_at)`; индекс `(learning_group_id, occurred_at desc)`; `check`: `completed + expelled <= enrolled`                           | `exchange` |
+| `exchange_messages` (новая)      | `id uuid pk`, `direction` (`inbound`/`outbound`), `system`, `instance`, `event_type`, `event_id`, `external_id null`, `interaction_id null → interactions on delete set null`, `state`, `attempt integer not null default 0`, `next_attempt_at null`, `response_status null`, `last_error null`, `payload jsonb not null`, `request_hash text null`, `response_body jsonb null`, `created_at`, `closed_at null` | `unique (direction, system, instance, event_id)`; индекс `(state, next_attempt_at) where state in ('pending','retrying')`; индекс `(interaction_id, created_at)` | `exchange` |
+| `interactions` (правка)          | `+ external_revision bigint null` — последняя применённая ревизия источника заявки; `external_source` начинает хранить `<система>:<экземпляр>`                                                                                                                                                                                                                                                                  | существующая частичная уникальность `(external_source, external_id)` сохраняется                                                                                 | `exchange` |
+
+История результатов группы хранится строками, а не перезаписью: подтверждённый снимок статистики
+неизменяем, и «последний результат» обязан быть выводом из истории, а не единственным сохранённым
+фактом. Актуальным считается результат с наибольшим `occurred_at`; он же лежит в `last_result_at`.
+
+## 4. Что удаляется из текущей схемы
+
+| Что                                                    | Почему                                                                |
+| ------------------------------------------------------ | --------------------------------------------------------------------- |
+| `stage_routes.key`, `stage_routes.is_default`          | маршрут по умолчанию исчез: группа выводится из вида основной стороны |
+| `interactions.route_id`                                | заменяется на `process_group_id`; удаляется последним шагом миграции  |
+| роль `viewer` в `roles` и `role_permissions`           | «только смотреть» не соответствует ни одному живому сценарию          |
+| `users.password_hash`, `password_changed_at`, `totp_*` | удаляет задача Keycloak после перевода входа, не префлайт             |
+
+Прежние редакции процесса не удаляются: на их стадии ссылаются закрытые записи истории.
+
+## 5. Отображение старых данных в новые
+
+Одним коммитом, но несколькими последовательными файлами миграции. Новые обязательные поля сначала
+заполняются, `not null` ставится после проверки.
+
+| Что было                                             | Во что переходит                                                                                                           | Проверка после шага                                  |
+| ---------------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------- |
+| значения enum (`organization_kind`, `stage_outcome`) | добавляются **отдельным файлом** миграции, идущим до того, который их использует                                           | значение доступно следующему файлу                   |
+| семейство маршрута `university-partnership`          | группа `b2b`; редакции привязываются к ней, номера сохраняются, действующая — последняя опубликованная                     | у группы ровно одна действующая редакция             |
+| прочие семейства ключей `stage_routes`               | по группе на семейство, `key` семейства становится ключом группы; данные не теряются, слияние семейств вручную не делается | число редакций до и после совпадает                  |
+| черновики (`published_at is null`)                   | в каждой группе остаётся последний, остальные удаляются вместе со стадиями и переходами                                    | частичная уникальность черновика выполняется         |
+| `interactions.route_id`                              | `process_group_id` = группа редакции, на которую ссылался маршрут                                                          | ни одного взаимодействия без группы                  |
+| открытые `stage_entries`                             | перепривязываются по **ключу** к стадии действующей редакции своей группы                                                  | ни одной открытой записи вне действующей редакции    |
+| закрытые `stage_entries`                             | **не трогаются**: остаются на стадиях своих редакций, снимки не меняются                                                   | число записей и байты снимков до и после совпадают   |
+| `interactions.route_id` (колонка)                    | удаляется последним шагом, после обеих проверок выше                                                                       | миграция не откатывается частично                    |
+| `external_source = 'site'`                           | `cms:<экземпляр из настроек обмена>`                                                                                       | частичная уникальность внешней ссылки не нарушена    |
+| роль `viewer` у существующих пользователей           | `manager`; только после этого роль исчезает из `roles` (`users.role_id` — `on delete restrict`)                            | ни одного пользователя с ролью `viewer`              |
+| существующие пользователи и Keycloak                 | `external_subject` остаётся пустым; первый вход связывает запись по подтверждённой почте из токена, иначе заводит новую    | идентификаторы пользователей не меняются             |
+| виды контрагента у существующих организаций          | не меняются: `educational_institution` → `b2b`, `customer_company` и `operator` основной стороной не были и не становятся  | у каждого взаимодействия ровно одна основная сторона |
+
+Перед префлайтом нужен прогон на данных с несколькими семействами маршрутов, несколькими редакциями,
+закрытыми взаимодействиями и существующими пользователями. Такой прогон **не проведён**.
+
+## 6. Инварианты
+
+### Держит база
+
+| Инвариант                                                         | Чем                                                                                |
+| ----------------------------------------------------------------- | ---------------------------------------------------------------------------------- |
+| У незавершённого взаимодействия ровно одна открытая запись стадии | частичный уникальный индекс по `interaction_id where left_at is null`              |
+| У взаимодействия ровно одна основная сторона                      | частичный уникальный индекс по `interaction_id where is_primary`                   |
+| Вид контрагента принадлежит ровно одной группе процесса           | первичный ключ `process_group_counterparty_kinds.kind`                             |
+| У группы не больше одного черновика                               | частичный уникальный индекс по `group_id where published_at is null`               |
+| Ключи и позиции стадий уникальны внутри редакции                  | `unique (revision_id, key)` и `(revision_id, position)`                            |
+| Позиция договора принадлежит договору взаимодействия              | составной внешний ключ `(contract_item_id, contract_id)`                           |
+| Один действующий ответственный на вуз × направление               | `unique nulls not distinct (organization_id, direction_id) where valid_to is null` |
+| Физлицо связано с человеком, остальные виды — нет                 | `check` по `person_id` и `kind`                                                    |
+| Повторная доставка сообщения не создаёт второй строки             | `unique (direction, system, instance, event_id)`                                   |
+| Повторное нажатие «Отправить группу» не заводит второй поток      | `unique (interaction_id, stream_number)`                                           |
+| Счётчики результата не противоречат друг другу                    | `check`: `completed + expelled <= enrolled`                                        |
+
+### Держит сервис
+
+| Инвариант                                                                       | Чем и чем доказывается                                                                         |
+| ------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------- |
+| Общее назначение и назначения по направлениям на одном вузе не сосуществуют     | проверка в `directory/write.ts`; `tests/integration/directory/responsibles.test.ts`            |
+| Открытая запись ссылается на стадию действующей редакции своей группы           | постусловие публикации; `tests/integration/stages/publish-migration.test.ts`                   |
+| Закрытые записи и их снимки публикация не меняет                                | там же, сравнение снимков до и после                                                           |
+| Публикация и создание взаимодействия не расходятся                              | блокировки раздела «Гонки» `docs/workflow.md`; `tests/integration/stages/publish-race.test.ts` |
+| Удалённый ключ стадии не переиспользуется с другим смыслом                      | проверка черновика; `tests/unit/stages/stage-keys.test.ts`                                     |
+| Область считается по основной стороне; оператор и вендор вне области            | `interactionScopeFilter`; `tests/integration/rbac/scope.test.ts`                               |
+| Входящее сообщение применяется ровно один раз, ответ сохраняется                | одна транзакция приёма; `tests/integration/exchange/inbound-atomicity.test.ts`                 |
+| Исходящее сообщение не теряется при падении после коммита                       | outbox в транзакции действия; `tests/integration/exchange/outbox.test.ts`                      |
+| Сообщение с ревизией старее применённой не меняет данных                        | сравнение под блокировкой взаимодействия; `tests/integration/exchange/stale-revision.test.ts`  |
+| Стадия, требующая данных LMS, подтверждается фактами по взаимодействию          | `stages/commands.ts`; `tests/integration/exchange/lms-evidence.test.ts`                        |
+| Числа отчёта на прошлую дату не меняются от публикации                          | эталонный набор `docs/reports.md`; `tests/integration/reports/history.test.ts`                 |
+| Строк в отчёте ровно столько, сколько в списке взаимодействий на том же фильтре | общий фильтр области; `tests/integration/reports/report-scope.test.ts`                         |
+
+Инварианты, которые может держать база, в сервис не переносятся: проверка в приложении гоночна и не
+переживает правку данных мимо приложения.
