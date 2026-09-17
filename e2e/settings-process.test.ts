@@ -1,6 +1,7 @@
 import postgres from 'postgres';
 import { expect, test as base, type Browser, type Locator } from '@playwright/test';
 import { MANAGER_STATE, STAFF_ADMIN_STATE, E2E_USER } from './global-setup';
+import { seedProcessGroup } from './helpers/process-group';
 
 /**
  * Процесс глазами администратора: черновик изменений, предпросмотр и
@@ -40,7 +41,7 @@ const STAGES = [
 	{ key: RENAMED_KEY, name: 'Середина', category: 'documents', isFinal: false },
 	{ key: REMOVED_KEY, name: REMOVED_NAME, category: 'documents', isFinal: false },
 	{ key: 'finish', name: 'Завершение', category: 'control', isFinal: true }
-];
+] as const;
 
 function databaseUrl(): string {
 	const server = base.info().config.webServer;
@@ -56,97 +57,28 @@ function databaseUrl(): string {
 /**
  * Группа прогона с нуля: прежняя удаляется вместе с редакциями, стадиями и
  * взаимодействиями. Изменение процесса необратимо, поэтому повторяемость
- * достигается не идемпотентностью, а чистым листом.
+ * достигается не идемпотентностью, а чистым листом, — об этом `reset` у общего
+ * хелпера, он же берёт замок на остальную подготовку.
  */
 async function seed(): Promise<void> {
 	const sql = postgres(databaseUrl(), { max: 1, connect_timeout: 10 });
 
 	try {
 		await sql.begin(async (tx) => {
-			await tx`select pg_advisory_xact_lock(918273647)`;
-
-			// Записи прошлого прогона сносятся по названию, а не только по группе:
-			// взаимодействие могло переехать в другую группу, а его записи стадий
-			// продолжали бы держать стадии этой.
-			await tx`delete from interactions where title = ${INTERACTION_TITLE}`;
-
-			const [group] = await tx<{ id: string }[]>`
-				select id from process_groups where key = ${GROUP_KEY}
-			`;
-
-			if (group !== undefined) {
-				await tx`delete from interactions where process_group_id = ${group.id}`;
-				await tx`update process_groups set active_revision_id = null where id = ${group.id}`;
-				await tx`delete from process_revisions where group_id = ${group.id}`;
-				await tx`delete from process_stage_keys where group_id = ${group.id}`;
-				await tx`delete from process_groups where id = ${group.id}`;
-			}
-
-			const [created] = await tx<{ id: string }[]>`
-				insert into process_groups ${tx({
-					key: GROUP_KEY,
-					name: 'Проверка изменения процесса',
-					description: 'Группа прогона: вида контрагента за ней не закреплено',
-					position: 102
-				})}
-				returning id
-			`;
-
-			const [revision] = await tx<{ id: string }[]>`
-				insert into process_revisions ${tx({
-					group_id: created.id,
-					version: 1,
-					name: 'Процесс прогона',
-					published_at: new Date()
-				})}
-				returning id
-			`;
-
-			const stageIds = new Map<string, string>();
-
-			for (const [index, stage] of STAGES.entries()) {
-				const [row] = await tx<{ id: string }[]>`
-					insert into stages ${tx({
-						revision_id: revision.id,
-						position: index + 1,
-						key: stage.key,
-						name: stage.name,
-						category: stage.category,
-						sla_days: 7,
-						stale_after_days: null,
-						is_final: stage.isFinal
-					})}
-					returning id
-				`;
-
-				stageIds.set(stage.key, row.id);
-
-				await tx`
-					insert into process_stage_keys ${tx({ group_id: created.id, key: stage.key })}
-					on conflict do nothing
-				`;
-			}
-
-			for (const [index, stage] of STAGES.entries()) {
-				const next = STAGES[index + 1];
-
-				if (next === undefined) {
-					continue;
-				}
-
-				await tx`
-					insert into stage_transitions ${tx({
-						revision_id: revision.id,
-						from_stage_id: stageIds.get(stage.key) ?? null,
-						to_stage_id: stageIds.get(next.key) ?? null,
-						kind: 'forward',
-						required_permission_key: 'stages.transition',
-						requires_reason: false
-					})}
-				`;
-			}
-
-			await tx`update process_groups set active_revision_id = ${revision.id} where id = ${created.id}`;
+			const { groupId, stageIds } = await seedProcessGroup(tx, {
+				key: GROUP_KEY,
+				name: 'Проверка изменения процесса',
+				description: 'Группа прогона: вида контрагента за ней не закреплено',
+				revisionName: 'Процесс прогона',
+				stages: STAGES.map((stage) => ({ ...stage, slaDays: 7 })),
+				transitions: STAGES.slice(0, -1).map((stage, index) => ({
+					fromStageKey: stage.key,
+					toStageKey: STAGES[index + 1].key,
+					kind: 'forward' as const,
+					requiredPermissionKey: 'stages.transition'
+				})),
+				reset: { interactionTitleLike: INTERACTION_TITLE }
+			});
 
 			await tx`
 				insert into organizations ${tx({
@@ -177,7 +109,7 @@ async function seed(): Promise<void> {
 			const [interaction] = await tx<{ id: string }[]>`
 				insert into interactions ${tx({
 					title: INTERACTION_TITLE,
-					process_group_id: created.id,
+					process_group_id: groupId,
 					owner_user_id: owner.id
 				})}
 				returning id

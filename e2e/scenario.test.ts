@@ -14,6 +14,7 @@ import { seedId } from '../scripts/seed/ids';
 import { DEMO_EMAILS } from '../scripts/seed/users';
 import { ADMIN_STATE, LEAD_STATE, MANAGER_STATE, STAFF_ADMIN_STATE } from './global-setup';
 import { waitForHydration } from './helpers/hydration';
+import { seedProcessGroup } from './helpers/process-group';
 
 /**
  * Сквозной проход по продукту одной историей: от заявки с сайта до отчёта.
@@ -209,90 +210,22 @@ async function seed(databaseUrl: string): Promise<{ main: string; moved: string 
 
 	try {
 		return await sql.begin(async (tx) => {
-			await tx`select pg_advisory_xact_lock(918273649)`;
-
-			// Записи прошлого прогона сносятся по метке, а не только по группе:
-			// взаимодействие заявки живёт в группе стенда, а взаимодействие
-			// прохода могло переехать.
-			await tx`delete from interactions where title like ${`%${MARK}%`}`;
-
-			const [group] = await tx<{ id: string }[]>`
-				select id from process_groups where key = ${GROUP_KEY}
-			`;
-
-			if (group !== undefined) {
-				await tx`delete from interactions where process_group_id = ${group.id}`;
-				await tx`update process_groups set active_revision_id = null where id = ${group.id}`;
-				await tx`delete from process_revisions where group_id = ${group.id}`;
-				await tx`delete from process_stage_keys where group_id = ${group.id}`;
-				await tx`delete from process_groups where id = ${group.id}`;
-			}
-
-			const [created] = await tx<{ id: string }[]>`
-				insert into process_groups ${tx({
-					key: GROUP_KEY,
-					name: GROUP_NAME,
-					description: 'Группа прохода: вида контрагента за ней не закреплено',
-					position: 103
-				})}
-				returning id
-			`;
-
-			const [revision] = await tx<{ id: string }[]>`
-				insert into process_revisions ${tx({
-					group_id: created.id,
-					version: 1,
-					name: 'Процесс прохода',
-					published_at: new Date()
-				})}
-				returning id
-			`;
-
-			const stageIds = new Map<string, string>();
-
-			for (const [index, stage] of STAGES.entries()) {
-				const [row] = await tx<{ id: string }[]>`
-					insert into stages ${tx({
-						revision_id: revision.id,
-						position: index + 1,
-						key: stage.key,
-						name: stage.name,
-						category: stage.category,
-						sla_days: 7,
-						stale_after_days: null,
-						is_final: stage.isFinal
-					})}
-					returning id
-				`;
-
-				stageIds.set(stage.key, row.id);
-
-				await tx`
-					insert into process_stage_keys ${tx({ group_id: created.id, key: stage.key })}
-					on conflict do nothing
-				`;
-			}
-
-			for (const [index, stage] of STAGES.entries()) {
-				const next = STAGES[index + 1];
-
-				if (next === undefined) {
-					continue;
-				}
-
-				await tx`
-					insert into stage_transitions ${tx({
-						revision_id: revision.id,
-						from_stage_id: stageIds.get(stage.key) ?? null,
-						to_stage_id: stageIds.get(next.key) ?? null,
-						kind: 'forward',
-						required_permission_key: 'stages.transition',
-						requires_reason: false
-					})}
-				`;
-			}
-
-			await tx`update process_groups set active_revision_id = ${revision.id} where id = ${created.id}`;
+			const { groupId, stageIds } = await seedProcessGroup(tx, {
+				key: GROUP_KEY,
+				name: GROUP_NAME,
+				description: 'Группа прохода: вида контрагента за ней не закреплено',
+				revisionName: 'Процесс прохода',
+				stages: STAGES.map((stage) => ({ ...stage, slaDays: 7 })),
+				transitions: STAGES.slice(0, -1).map((stage, index) => ({
+					fromStageKey: stage.key,
+					toStageKey: STAGES[index + 1].key,
+					kind: 'forward' as const,
+					requiredPermissionKey: 'stages.transition'
+				})),
+				// Взаимодействие заявки живёт в группе стенда, а взаимодействие прохода
+				// могло переехать: остатки сносятся по метке, а не только по группе.
+				reset: { interactionTitleLike: `%${MARK}%` }
+			});
 
 			for (const organization of [INSTITUTION, COLLEGE]) {
 				await tx`
@@ -354,7 +287,7 @@ async function seed(databaseUrl: string): Promise<{ main: string; moved: string 
 				const [row] = await tx<{ id: string }[]>`
 					insert into interactions ${tx({
 						title,
-						process_group_id: created.id,
+						process_group_id: groupId,
 						owner_user_id: ownerId
 					})}
 					returning id

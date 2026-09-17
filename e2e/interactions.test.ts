@@ -4,6 +4,7 @@ import { B2B_PROCESS } from '$lib/server/stages/definitions';
 import { expect, test } from './fixtures';
 import { E2E_USER } from './global-setup';
 import { waitForHydration } from './helpers/hydration';
+import { seedProcessGroup } from './helpers/process-group';
 
 /**
  * Взаимодействие глазами менеджера: список, заведение через форму и работа на
@@ -57,7 +58,8 @@ function databaseUrl(): string {
 }
 
 /**
- * Процессы групп и две организации. Идемпотентно и под блокировкой: файлы
+ * Процессы групп и две организации. Идемпотентно и под блокировкой: замок
+ * берёт общий хелпер первым же запросом, и под ним идёт вся подготовка — файлы
  * прогона выполняются параллельно, и два рабочих процесса не должны заводить
  * редакцию одновременно.
  */
@@ -67,7 +69,41 @@ async function seed(): Promise<void> {
 
 	try {
 		await sql.begin(async (tx) => {
-			await tx`select pg_advisory_xact_lock(918273645)`;
+			// Процесс учебных заведений: его кладёт набор данных стенда, но прогон
+			// не обязан на это полагаться — без стадий взаимодействие не завести.
+			// Группа при этом своя не бывает: за `b2b` закреплён вид контрагента.
+			await seedProcessGroup(tx, {
+				key: 'b2b',
+				name: null,
+				revisionName: process.name,
+				revisionNote: process.note,
+				stages: process.stages,
+				transitions: process.transitions
+			});
+
+			// Процесс с обязательным объяснением — в своей группе: там своя
+			// редакция и свои записи.
+			await seedProcessGroup(tx, {
+				key: REASON_ROUTE.group,
+				name: 'Проверка обязательного объяснения',
+				revisionName: REASON_ROUTE.name,
+				stages: REASON_ROUTE.stages.map((stage) => ({
+					...stage,
+					slaDays: 7,
+					isFinal: stage.key === 'terms_closed'
+				})),
+				transitions: [
+					{
+						fromStageKey: 'terms_agreed',
+						toStageKey: 'terms_closed',
+						kind: 'forward',
+						requiredPermissionKey: 'stages.transition',
+						// Требований стадии здесь нет намеренно: переход упирается ровно
+						// в объяснение, и проверка говорит только о нём.
+						requiresReason: true
+					}
+				]
+			});
 
 			for (const organization of [INSTITUTION, CUSTOMER]) {
 				await tx`
@@ -99,166 +135,10 @@ async function seed(): Promise<void> {
 					on conflict do nothing
 				`;
 			}
-
-			// Процесс учебных заведений: его кладёт набор данных стенда, но прогон
-			// не обязан на это полагаться — без стадий взаимодействие не завести.
-			await ensureProcess(
-				tx,
-				'b2b',
-				process.name,
-				process.note,
-				process.stages,
-				process.transitions
-			);
-
-			await tx`
-				insert into process_groups ${tx({
-					key: REASON_ROUTE.group,
-					name: 'Проверка обязательного объяснения',
-					position: 101
-				})}
-				on conflict (key) do nothing
-			`;
-
-			// Процесс с обязательным объяснением — в своей группе: там своя
-			// редакция и свои записи.
-			await ensureProcess(
-				tx,
-				REASON_ROUTE.group,
-				REASON_ROUTE.name,
-				null,
-				REASON_ROUTE.stages.map((stage) => ({
-					key: stage.key,
-					name: stage.name,
-					category: stage.category,
-					slaDays: 7,
-					staleAfterDays: null,
-					requiresResult: false,
-					requiresConfirmation: false,
-					requiresLmsData: false,
-					isFinal: stage.key === 'terms_closed',
-					checklist: []
-				})),
-				[
-					{
-						fromStageKey: 'terms_agreed',
-						toStageKey: 'terms_closed',
-						kind: 'forward',
-						requiredPermissionKey: 'stages.transition',
-						// Требований стадии здесь нет намеренно: переход упирается ровно
-						// в объяснение, и проверка говорит только о нём.
-						requiresReason: true
-					}
-				]
-			);
 		});
 	} finally {
 		await sql.end();
 	}
-}
-
-type SeedStage = {
-	key: string;
-	name: string;
-	category: string;
-	slaDays: number;
-	staleAfterDays: number | null;
-	requiresResult: boolean;
-	requiresConfirmation: boolean;
-	requiresLmsData: boolean;
-	isFinal: boolean;
-	checklist: { key: string; label: string; required: boolean }[];
-};
-
-type SeedTransition = {
-	fromStageKey: string;
-	toStageKey: string;
-	kind: string;
-	requiredPermissionKey: string;
-	requiresReason: boolean;
-};
-
-/**
- * Действующая редакция группы, если её ещё нет. Ставит и реестр ключей: он
- * заводится вместе с первой редакцией, и без него применение изменений
- * посчитало бы все ключи новыми.
- */
-async function ensureProcess(
-	tx: postgres.TransactionSql,
-	groupKey: string,
-	name: string,
-	note: string | null,
-	stages: readonly SeedStage[],
-	transitions: readonly SeedTransition[]
-): Promise<void> {
-	const [group] = await tx<{ id: string; active_revision_id: string | null }[]>`
-		select id, active_revision_id from process_groups where key = ${groupKey}
-	`;
-
-	if (group === undefined) {
-		throw new Error(`Группа процесса «${groupKey}» не заведена миграцией`);
-	}
-
-	if (group.active_revision_id !== null) {
-		return;
-	}
-
-	const [created] = await tx<{ id: string }[]>`
-		insert into process_revisions ${tx({
-			group_id: group.id,
-			version: 1,
-			name,
-			note,
-			published_at: new Date()
-		})}
-		returning id
-	`;
-
-	const stageIds = new Map<string, string>();
-
-	for (const [index, stage] of stages.entries()) {
-		const [row] = await tx<{ id: string }[]>`
-			insert into stages ${tx({
-				revision_id: created.id,
-				position: index + 1,
-				key: stage.key,
-				name: stage.name,
-				category: stage.category,
-				sla_days: stage.slaDays,
-				stale_after_days: stage.staleAfterDays,
-				requires_result: stage.requiresResult,
-				requires_confirmation: stage.requiresConfirmation,
-				requires_lms_data: stage.requiresLmsData,
-				is_final: stage.isFinal,
-				checklist: JSON.stringify(stage.checklist)
-			})}
-			returning id
-		`;
-
-		stageIds.set(stage.key, row.id);
-	}
-
-	for (const transition of transitions) {
-		await tx`
-			insert into stage_transitions ${tx({
-				revision_id: created.id,
-				from_stage_id: stageIds.get(transition.fromStageKey) ?? null,
-				to_stage_id: stageIds.get(transition.toStageKey) ?? null,
-				kind: transition.kind,
-				required_permission_key: transition.requiredPermissionKey,
-				requires_reason: transition.requiresReason
-			})}
-		`;
-	}
-
-	for (const stage of stages) {
-		await tx`
-			insert into process_stage_keys ${tx({ group_id: group.id, key: stage.key })}
-			on conflict do nothing
-		`;
-	}
-
-	await tx`update process_groups set active_revision_id = ${created.id} where id = ${group.id}`;
 }
 
 test.beforeAll(async () => {

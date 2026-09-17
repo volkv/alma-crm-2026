@@ -4,6 +4,7 @@ import type { Page } from '@playwright/test';
 import type { StageSnapshot } from '$lib/contracts/interactions';
 import { expect, test } from './fixtures';
 import { waitForHydration } from './helpers/hydration';
+import { seedProcessGroup } from './helpers/process-group';
 
 /**
  * Раздел отчётов глазами человека: режим, набор колонок, выгрузка и клик по
@@ -109,8 +110,18 @@ async function seed(): Promise<void> {
 
 	try {
 		await sql.begin(async (tx) => {
-			// Файлы прогона идут параллельно: редакцию заводит кто-то один.
-			await tx`select pg_advisory_xact_lock(918273699)`;
+			// Группу заводит общий хелпер: он же берёт замок, под которым идёт и
+			// остальная подготовка. Файлы прогона идут параллельно, и редакцию заводит
+			// кто-то один.
+			const { groupId, stageIds } = await seedProcessGroup(tx, {
+				key: GROUP_KEY,
+				name: 'Проверка раздела отчётов',
+				revisionName: 'Процесс проверки отчётов',
+				stages: STAGES.map((stage, index) => ({
+					...stage,
+					isFinal: index + 1 === STAGES.length
+				}))
+			});
 
 			await tx`
 				insert into organizations ${tx({
@@ -122,64 +133,6 @@ async function seed(): Promise<void> {
 				})}
 				on conflict (id) do nothing
 			`;
-
-			// Место в списке считается от занятых, а не берётся числом: группы
-			// заводят и миграции, и соседние прогоны, и фиксированная позиция
-			// рано или поздно совпадёт с чужой.
-			await tx`
-				insert into process_groups (key, name, position)
-				select ${GROUP_KEY}, 'Проверка раздела отчётов', coalesce(max(position), 0) + 1
-				from process_groups
-				on conflict (key) do nothing
-			`;
-
-			const [group] = await tx<{ id: string; active_revision_id: string | null }[]>`
-				select id, active_revision_id from process_groups where key = ${GROUP_KEY}
-			`;
-
-			let revisionId = group.active_revision_id;
-
-			if (revisionId === null) {
-				const [revision] = await tx<{ id: string }[]>`
-					insert into process_revisions ${tx({
-						group_id: group.id,
-						version: 1,
-						name: 'Процесс проверки отчётов',
-						published_at: new Date()
-					})}
-					returning id
-				`;
-
-				revisionId = revision.id;
-
-				for (const [index, stage] of STAGES.entries()) {
-					await tx`
-						insert into stages ${tx({
-							revision_id: revisionId,
-							position: index + 1,
-							key: stage.key,
-							name: stage.name,
-							category: stage.category,
-							sla_days: stage.slaDays,
-							is_final: index + 1 === STAGES.length
-						})}
-					`;
-
-					await tx`
-						insert into process_stage_keys ${tx({ group_id: group.id, key: stage.key })}
-						on conflict do nothing
-					`;
-				}
-
-				await tx`
-					update process_groups set active_revision_id = ${revisionId} where id = ${group.id}
-				`;
-			}
-
-			const stageRows = await tx<{ id: string; key: string }[]>`
-				select id, key from stages where revision_id = ${revisionId}
-			`;
-			const stageIds = new Map(stageRows.map((row) => [row.key, row.id]));
 
 			// Тот же выбор, что делает демонстрационный вход: запись заводится на
 			// учётную запись, под которой тест и войдёт.
@@ -196,7 +149,7 @@ async function seed(): Promise<void> {
 				insert into interactions ${tx({
 					id: SEEDED.interactionId,
 					title: SEEDED.title,
-					process_group_id: group.id,
+					process_group_id: groupId,
 					status: 'active',
 					owner_user_id: manager.id,
 					last_activity_at: daysAgo(SEEDED.movedDaysAgo)

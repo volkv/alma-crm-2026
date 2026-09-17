@@ -3,6 +3,7 @@ import type { Page } from '@playwright/test';
 import type { StageSnapshot } from '$lib/contracts/interactions';
 import { expect, test } from './fixtures';
 import { waitForHydration } from './helpers/hydration';
+import { seedProcessGroup } from './helpers/process-group';
 
 /**
  * Главная глазами менеджера: плитки портфеля, список «требуют действия»,
@@ -120,22 +121,27 @@ function snapshot(stageKey: string): StageSnapshot {
 }
 
 /**
- * Процесс проверки сводки, вуз и две записи менеджера. Под блокировкой: файлы
+ * Процесс проверки сводки, вуз и две записи менеджера. Группу заводит общий
+ * хелпер: он же берёт замок, под которым идёт и остальная подготовка, — файлы
  * прогона выполняются параллельно, и два рабочих процесса не должны заводить
  * редакцию одновременно. Записи не просто заводятся, а переписываются на каждом
  * прогоне: их сроки заданы относительно «сегодня», и оставленные от прошлого
  * раза они означали бы каждый раз другую просрочку.
- *
- * Редакция заводится в группе физических и юридических лиц: в группе учебных
- * заведений действует процесс стенда, и подменять его этому прогону незачем.
- * Действующей она становится только если у группы её ещё нет.
  */
 async function seed(): Promise<void> {
 	const sql = postgres(databaseUrl(), { max: 1, connect_timeout: 10 });
 
 	try {
 		await sql.begin(async (tx) => {
-			await tx`select pg_advisory_xact_lock(918273646)`;
+			const { groupId, stageIds } = await seedProcessGroup(tx, {
+				key: GROUP_KEY,
+				name: 'Проверка сводки главной',
+				revisionName: 'Процесс проверки сводки',
+				stages: STAGES.map((stage, index) => ({
+					...stage,
+					isFinal: index + 1 === STAGES.length
+				}))
+			});
 
 			await tx`
 				insert into organizations ${tx({
@@ -147,64 +153,6 @@ async function seed(): Promise<void> {
 				})}
 				on conflict (id) do nothing
 			`;
-
-			await tx`
-				insert into process_groups ${tx({
-					key: GROUP_KEY,
-					name: 'Проверка сводки главной',
-					position: 100
-				})}
-				on conflict (key) do nothing
-			`;
-
-			const [group] = await tx<{ id: string; active_revision_id: string | null }[]>`
-				select id, active_revision_id from process_groups where key = ${GROUP_KEY}
-			`;
-
-			let revisionId = group.active_revision_id;
-
-			if (revisionId === null) {
-				const [revision] = await tx<{ id: string }[]>`
-					insert into process_revisions ${tx({
-						group_id: group.id,
-						version: 1,
-						name: 'Процесс проверки сводки',
-						published_at: new Date()
-					})}
-					returning id
-				`;
-
-				revisionId = revision.id;
-
-				for (const [index, stage] of STAGES.entries()) {
-					await tx`
-						insert into stages ${tx({
-							revision_id: revisionId,
-							position: index + 1,
-							key: stage.key,
-							name: stage.name,
-							category: stage.category,
-							sla_days: stage.slaDays,
-							stale_after_days: stage.staleAfterDays,
-							is_final: index + 1 === STAGES.length
-						})}
-					`;
-
-					await tx`
-						insert into process_stage_keys ${tx({ group_id: group.id, key: stage.key })}
-						on conflict do nothing
-					`;
-				}
-
-				await tx`
-					update process_groups set active_revision_id = ${revisionId} where id = ${group.id}
-				`;
-			}
-
-			const stageRows = await tx<{ id: string; key: string }[]>`
-				select id, key from stages where revision_id = ${revisionId}
-			`;
-			const stageIds = new Map(stageRows.map((row) => [row.key, row.id]));
 
 			// Тот же выбор, что делает демонстрационный вход (`demoLogin`): записи
 			// заводятся на учётную запись, под которой тест и войдёт. Адрес почты
@@ -227,7 +175,7 @@ async function seed(): Promise<void> {
 					insert into interactions ${tx({
 						id: record.id,
 						title: record.title,
-						process_group_id: group.id,
+						process_group_id: groupId,
 						status: 'active',
 						owner_user_id: manager.id,
 						last_activity_at: daysAgo(record.silentDaysAgo)
