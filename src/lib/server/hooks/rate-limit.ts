@@ -1,5 +1,6 @@
 import { redirect, type Handle } from '@sveltejs/kit';
 import { UNKNOWN_ADDRESS, withinStartLimit } from '$lib/server/auth/start-limit';
+import { clientAddress } from '$lib/server/http';
 
 /**
  * Caps how often one caller may hit the expensive and abusable routes using the
@@ -25,7 +26,7 @@ import { UNKNOWN_ADDRESS, withinStartLimit } from '$lib/server/auth/start-limit'
  */
 export const rateLimit: Handle = async ({ event, resolve }) => {
 	if (event.route.id?.startsWith('/(auth)') && event.request.method === 'POST') {
-		const ip = event.getClientAddress() || UNKNOWN_ADDRESS;
+		const ip = clientAddress(event) || UNKNOWN_ADDRESS;
 
 		if (!(await withinStartLimit(ip))) {
 			const next = event.url.searchParams.get('next');

@@ -56,10 +56,13 @@ const configSchema = z
 		 */
 		DEMO_MODE: booleanFlag,
 		/**
-		 * The app sits behind a reverse proxy, so `X-Forwarded-For` and
-		 * `X-Forwarded-Proto` describe the real client. Never turn this on when the
-		 * app is reachable directly: the client would then choose its own IP for the
-		 * audit log and the rate limiter.
+		 * The app sits behind a reverse proxy, so the client address comes from
+		 * `X-Forwarded-For` instead of the socket. The header is read by the app
+		 * itself — `clientAddress()` in `http.ts` takes the last entry, the one
+		 * the proxy appended, and falls back to the socket address when the header
+		 * is absent, as it is on a request made inside the deployment network.
+		 * Never turn this on when the app is reachable directly: the client would
+		 * then choose its own address for the audit log and the rate limiter.
 		 */
 		TRUST_PROXY: booleanFlag,
 		/**

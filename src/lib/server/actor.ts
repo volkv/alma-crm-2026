@@ -10,6 +10,7 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import type { AuditSource } from '$lib/contracts/audit';
 import type { SessionUser } from './auth/types';
+import { clientAddress } from './http';
 
 /**
  * Что видит вызывающий. `all` — всё; `delegated` — записи перечисленных
@@ -51,7 +52,7 @@ export function actorFromEvent(event: RequestEvent): ActorContext {
 		source: apiKey === null ? 'ui' : 'api',
 		user,
 		apiKeyId: apiKey?.id ?? null,
-		ip: event.getClientAddress(),
+		ip: clientAddress(event),
 		userAgent: event.request.headers.get('user-agent'),
 		scope: user?.scope ?? NO_ACCESS
 	};

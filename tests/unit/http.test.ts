@@ -1,4 +1,5 @@
-import { describe, expect, it } from 'vitest';
+import type { RequestEvent } from '@sveltejs/kit';
+import { describe, expect, it, vi } from 'vitest';
 import {
 	ConflictError,
 	ForbiddenError,
@@ -6,7 +7,12 @@ import {
 	statusForError,
 	ValidationError
 } from '$lib/server/errors';
-import { toActionFailure, toPageError } from '$lib/server/http';
+import { clientAddress, toActionFailure, toPageError } from '$lib/server/http';
+
+/** Единственное, что `http.ts` берёт из конфигурации, — доверие к прокси. */
+const { config } = vi.hoisted(() => ({ config: { TRUST_PROXY: false } }));
+
+vi.mock('$lib/server/config', () => ({ getConfig: () => config }));
 
 /**
  * Один код — один статус, и так во всех трёх транспортах. Проверяется именно
@@ -53,5 +59,50 @@ describe('перевод предметной ошибки в ответ', () =>
 		// дойти до `handleError` как есть.
 		expect(() => toActionFailure(failure)).toThrow(failure);
 		expect(() => toPageError(failure)).toThrow(failure);
+	});
+});
+
+/** Адрес соединения — тот, который отдаёт транспорт. */
+const SOCKET = '192.0.2.50';
+
+/** Запрос в том объёме, в каком его читает `clientAddress`: адрес и заголовок. */
+function addressEvent(forwarded?: string): RequestEvent {
+	return {
+		request: new Request('http://localhost/api/v1/organizations', {
+			headers: forwarded === undefined ? undefined : { 'x-forwarded-for': forwarded }
+		}),
+		getClientAddress: () => SOCKET
+	} as unknown as RequestEvent;
+}
+
+describe('адрес вызывающего', () => {
+	it('за доверенным прокси берёт запись, которую дописал сам прокси', () => {
+		config.TRUST_PROXY = true;
+
+		// Прокси один, и наблюдённый им адрес он дописывает справа. Клиент пришёл
+		// без заголовка — в нём одна запись, и она же адрес.
+		expect(clientAddress(addressEvent('203.0.113.7'))).toBe('203.0.113.7');
+
+		// Клиент прислал заголовок сам: всё, что левее последней записи, — его
+		// сочинение, и адресом оно не становится. Иначе лимит входов и журнал
+		// обходились бы одним заголовком.
+		expect(clientAddress(addressEvent('10.0.0.9, 203.0.113.7'))).toBe('203.0.113.7');
+	});
+
+	it('за доверенным прокси без заголовка отдаёт адрес соединения', () => {
+		config.TRUST_PROXY = true;
+
+		// Так приходят запросы изнутри сети развёртывания — имитаторы систем
+		// заказчика и проверка здоровья. Это рабочий случай, а не ошибка.
+		expect(clientAddress(addressEvent())).toBe(SOCKET);
+		// Заголовок без адресов — то же самое отсутствие адреса.
+		expect(clientAddress(addressEvent(' , '))).toBe(SOCKET);
+	});
+
+	it('без доверия к прокси заголовок не читает вовсе', () => {
+		config.TRUST_PROXY = false;
+
+		// Приложение доступно напрямую: заголовок написал тот, кто пришёл.
+		expect(clientAddress(addressEvent('10.0.0.9, 203.0.113.7'))).toBe(SOCKET);
 	});
 });

@@ -58,11 +58,14 @@ server {
         proxy_set_header Connection $crm_connection_upgrade;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
-        # MANDATORY. `docker-compose.prod.yml` starts the app with
-        # ADDRESS_HEADER=X-Forwarded-For, and adapter-node then takes the client
-        # address from this header only — if the header is missing it throws, and
-        # every page turns into 500. A proxy configured by hand must carry this
-        # line too, or ADDRESS_HEADER has to go away with it.
+        # MANDATORY. The app runs with TRUST_PROXY=true and takes the client
+        # address from the last entry of this header — the one $proxy_add_x_forwarded_for
+        # appends here, the address nginx itself accepted the connection from.
+        # Without the line the app sees only the socket address, and every
+        # visitor lands in the audit log and in the sign-in rate limiter as this
+        # proxy: one address for all of them. A proxy configured by hand must
+        # carry this line too, or the app has to be started with
+        # TRUST_PROXY=false.
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_connect_timeout 60s;

@@ -6,6 +6,7 @@ import { authorizationUrl, newLoginAttempt } from '$lib/server/auth/oidc';
 import { safeNextPath } from '$lib/server/auth/redirect';
 import { startLimitNotice } from '$lib/server/auth/start-limit';
 import { getConfig } from '$lib/server/config';
+import { clientAddress } from '$lib/server/http';
 import { getSetting } from '$lib/server/settings';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -32,7 +33,7 @@ export const load: PageServerLoad = async (event) => {
 	// обновление страницы.
 	const [banner, rateLimited] = await Promise.all([
 		getSetting('login_banner'),
-		startLimitNotice(event.getClientAddress())
+		startLimitNotice(clientAddress(event))
 	]);
 
 	const reason = event.url.searchParams.get('reason');

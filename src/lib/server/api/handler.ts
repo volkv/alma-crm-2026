@@ -17,6 +17,7 @@ import type { AuditOutcome } from '$lib/contracts/audit';
 import type { AccessScope, ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { AppError, statusForError, ValidationError } from '../errors';
+import { clientAddress } from '../http';
 import { requirePermission } from '../rbac';
 import type { PermissionKey } from '../rbac/permissions';
 import { getRedis } from '../redis';
@@ -249,7 +250,7 @@ export async function recordApiRequest(
 
 	try {
 		if (status === 401 || (status === 429 && ctx.apiKeyId === null)) {
-			// Адрес у машинного запроса есть всегда (`getClientAddress`); `unknown` —
+			// Адрес у машинного запроса есть всегда (`clientAddress`); `unknown` —
 			// это про контекст без запроса, которого на этом пути не бывает.
 			if (await startsUnauthenticatedMinute(ctx.ip ?? 'unknown')) {
 				await recordAuditEvent(ctx, {
@@ -303,7 +304,7 @@ export function apiHandler<TConfig extends ApiEndpointConfig>(
 	return async (event: RequestEvent): Promise<Response> => {
 		const method = event.request.method;
 		const route = event.route.id ?? event.url.pathname;
-		const ip = event.getClientAddress();
+		const ip = clientAddress(event);
 
 		let ctx: ActorContext = {
 			requestId: event.locals.requestId,

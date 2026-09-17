@@ -1,6 +1,6 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import type { AuditEventType } from '$lib/contracts/audit';
 import type { SessionUser } from '$lib/server/auth/types';
@@ -20,6 +20,24 @@ import {
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
+
+/**
+ * Доверие к прокси — единственное, что в этом файле подменяется в конфигурации:
+ * `helpers/db.ts` заполняет окружение целиком и ставит `TRUST_PROXY=false`, а
+ * `getConfig()` разбирает его один раз на процесс, и переменной этот флаг после
+ * старта уже не переключить. Остальные значения остаются настоящими — база и
+ * Redis тестов живут в них.
+ */
+const { proxy } = vi.hoisted(() => ({ proxy: { trusted: false } }));
+
+vi.mock('$lib/server/config', async (importOriginal) => {
+	const actual = await importOriginal<typeof import('$lib/server/config')>();
+
+	return {
+		...actual,
+		getConfig: () => ({ ...actual.getConfig(), TRUST_PROXY: proxy.trusted })
+	};
+});
 
 /**
  * Обработчик маршрута типизирован своим маршрутом, а поддельное событие — общим
@@ -965,5 +983,64 @@ describe('ключ машинного субъекта', () => {
 		);
 
 		expect(response.status).toBe(404);
+	});
+});
+
+describe('адрес вызывающего за обратным прокси', () => {
+	beforeEach(() => {
+		proxy.trusted = true;
+	});
+
+	afterEach(() => {
+		proxy.trusted = false;
+	});
+
+	/** Адреса, с которыми обращения легли в журнал. */
+	async function requestAddresses(): Promise<(string | null)[]> {
+		const rows = await database.db
+			.select({ ip: auditEvents.ip })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'api.request'));
+
+		return rows.map((row) => row.ip);
+	}
+
+	it('пишет в журнал адрес, дописанный прокси, а не адрес соединения', async () => {
+		const issued = await issueKey('admin');
+
+		// Соединение пришло от nginx, а не от вызывающего; настоящий адрес прокси
+		// дописал справа. Слева — то, что прислал сам вызывающий: доверять этому
+		// нельзя, иначе адресом в журнале и в лимите распоряжался бы он.
+		const response = await listOrganizations(
+			apiEvent({
+				ip: '10.0.0.2',
+				headers: bearer(issued.key, { 'x-forwarded-for': '198.51.100.9, 203.0.113.77' })
+			})
+		);
+
+		expect(response.status).toBe(200);
+		expect(await requestAddresses()).toEqual(['203.0.113.77']);
+	});
+
+	it('отвечает по делу на запрос без X-Forwarded-For и берёт адрес соединения', async () => {
+		const issued = await issueKey('admin');
+
+		// Так к приложению ходят изнутри сети развёртывания — имитаторы систем
+		// заказчика. Прокси между ними нет, заголовка нет, и это рабочий запрос:
+		// разбирай заголовок транспорт (`ADDRESS_HEADER` у adapter-node), весь
+		// обмен на стенде отвечал бы 500.
+		const response = await listOrganizations(
+			apiEvent({ ip: '172.18.0.7', headers: bearer(issued.key) })
+		);
+
+		expect(response.status).toBe(200);
+		expect(await requestAddresses()).toEqual(['172.18.0.7']);
+	});
+
+	it('без ключа отказывает как обычно: адрес заголовка ничего не открывает', async () => {
+		const response = await listOrganizations(apiEvent({ ip: '172.18.0.7' }));
+
+		expect(response.status).toBe(401);
+		expect(await body(response)).toMatchObject({ error: { code: 'unauthorized' } });
 	});
 });

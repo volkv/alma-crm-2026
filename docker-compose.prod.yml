@@ -199,19 +199,23 @@ services:
     # `!override` replaces the development values from the base file instead of
     # merging with them, so nothing silently shadows `.env` — `environment` wins
     # over `env_file` in Compose. What stays here describes the shape of the
-    # deployment, not its secrets: adapter-node reads ADDRESS_HEADER and
-    # XFF_DEPTH to resolve the client address behind the reverse proxy (depth 1
-    # means «the last entry in X-Forwarded-For was added by our own proxy»), the
-    # S3_* values below point at the MinIO of this stack (the keys themselves
-    # are secrets and come from `.env`), and
+    # deployment, not its secrets: the S3_* values below point at the MinIO of
+    # this stack (the keys themselves are secrets and come from `.env`), and
     # BODY_SIZE_LIMIT has to clear the upload ceiling the code enforces
     # (MAX_DOCUMENT_SIZE_BYTES, 25 MiB) plus the multipart envelope — with the
     # 512K default adapter-node answers 413 to any scan before the app sees it.
     # A deployment does not get to lower it: `client_max_body_size` in the proxy
     # is the knob for that, see docs/deployment.md.
+    #
+    # ADDRESS_HEADER and XFF_DEPTH are deliberately NOT set. With them
+    # adapter-node resolves the client address itself and throws on every
+    # request that carries no X-Forwarded-For — and the imitators of the `stand`
+    # profile reach the app at http://app:3000 inside this network, with no
+    # proxy in between, so the whole exchange answered 500. The app reads the
+    # header on its own instead (TRUST_PROXY in `.env`, `clientAddress()` in
+    # src/lib/server/http.ts): header present — the address our proxy appended
+    # to it, header absent — the socket address.
     environment: !override
-      ADDRESS_HEADER: X-Forwarded-For
-      XFF_DEPTH: '1'
       # The directory answers the browser at its public address through nginx;
       # the app asks it from inside the network. The path has to match
       # KC_HTTP_RELATIVE_PATH of Keycloak below, or the request lands in the

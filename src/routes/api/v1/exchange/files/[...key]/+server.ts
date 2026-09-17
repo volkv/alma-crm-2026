@@ -15,6 +15,7 @@ import { recordAuditEvent } from '$lib/server/audit';
 import { contentDisposition, documentFileName } from '$lib/server/documents/filename';
 import { openStoredFile } from '$lib/server/documents/storage';
 import { AppError, statusForError } from '$lib/server/errors';
+import { clientAddress } from '$lib/server/http';
 import { readExchangeFile } from '$lib/server/integrations/exchange/files';
 import type { RequestHandler } from './$types';
 
@@ -90,7 +91,7 @@ function errorResponse(
 
 export const GET: RequestHandler = async (event) => {
 	const requestId = event.locals.requestId;
-	const ip = event.getClientAddress();
+	const ip = clientAddress(event);
 	const route = event.route.id ?? event.url.pathname;
 
 	let ctx: ActorContext = {
