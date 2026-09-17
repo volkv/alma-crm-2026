@@ -1,5 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { resolve } from '$app/paths';
+import { STAT_FILE_FORMATS_HINT } from '$lib/contracts/stats';
 import { formatIsoDay } from '$lib/format';
 import { actorFromEvent } from '$lib/server/actor';
 import { toActionFailure } from '$lib/server/http';
@@ -72,7 +73,7 @@ export const actions: Actions = {
 		if (!(file instanceof File) || file.size === 0) {
 			return fail(400, {
 				message: 'Выберите файл выгрузки',
-				issues: ['Импорт читает книгу XLSX и таблицу CSV в кодировке UTF-8'],
+				issues: [STAT_FILE_FORMATS_HINT],
 				values
 			});
 		}

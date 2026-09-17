@@ -18,6 +18,7 @@ import {
 	type StatMeasureField,
 	type StatRowIssue
 } from '$lib/contracts/stats';
+import { pluralize } from '$lib/format';
 import {
 	lookupOrganization,
 	lookupProgram,
@@ -25,7 +26,7 @@ import {
 	type DirectoryIndex,
 	type Resolution
 } from './lookup';
-import { parseCalendarDate, parseCount, type SheetTable } from './parse';
+import { describeRowOrigin, parseCalendarDate, parseCount, type StatTable } from './parse';
 
 /** Строка снимка до записи в базу. */
 export type StatRowDraft = {
@@ -47,7 +48,7 @@ export type StatRowDraft = {
 };
 
 export type BuildRowsInput = {
-	table: SheetTable;
+	table: StatTable;
 	mapping: StatMapping;
 	index: DirectoryIndex;
 	/** Период снимка: он же период строки, если в файле своего периода нет. */
@@ -199,22 +200,24 @@ function markDuplicates(rows: StatRowDraft[]): void {
 export function buildRows(input: BuildRowsInput): StatRowDraft[] {
 	const { table, mapping, index, period } = input;
 
-	const rows = table.rows.map((cells, position) => {
+	const rows = table.rows.map((row, position) => {
 		const issues: StatRowIssue[] = [];
 		const raw: Record<string, string> = {};
 
 		table.headers.forEach((header, column) => {
-			raw[header] = cells[column] ?? '';
+			raw[header] = row.cells[column] ?? '';
 		});
 
 		// Лишние ячейки — это сдвиг колонок, а не мусор в конце строки: без
 		// претензии числа поедут не в те поля, и заметить это будет нечем.
-		const extra = cells.slice(table.headers.length).filter((cell) => cell !== '');
+		// Место в файле названо прямо: по номеру строки снимка его не найти —
+		// пустые строки и шапка в него не считаются.
+		const extra = row.cells.slice(table.headers.length).filter((cell) => cell !== '');
 
 		if (extra.length > 0) {
 			issues.push({
 				field: null,
-				message: `В строке ${extra.length} значений сверх колонок шапки — проверьте разделители`
+				message: `${describeRowOrigin(table.file, row.origin)} файла: ${pluralize(extra.length, ['значение', 'значения', 'значений'])} сверх колонок шапки — проверьте разделители`
 			});
 		}
 

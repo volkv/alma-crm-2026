@@ -39,9 +39,9 @@ import { ConflictError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
 import { buildRows, missingRequiredFields, type StatRowDraft } from './build';
 import { invalidateStatsDashboard } from './dashboard';
-import { detectStatFile } from './format';
+import { statFileMime } from './format';
 import { loadDirectoryIndex } from './lookup';
-import { readTable } from './parse';
+import { readStatTable } from './parse';
 import { readSnapshotTable, selectSnapshotRow, toStatSnapshotView } from './read';
 
 /**
@@ -139,13 +139,13 @@ export async function createSnapshot(
 	}
 
 	const command = parsed.data;
-	const { format, mime } = detectStatFile(input.file.bytes);
 
 	// Файл разбирается до записи в хранилище: принять и сохранить то,
-	// в чём нет ни одной строки, значит отложить отказ на шаг вперёд.
-	await readTable(format, input.file.bytes, STAT_PREVIEW_PARSE_LIMIT);
+	// в чём нет ни одной строки, значит отложить отказ на шаг вперёд. Отсюда же
+	// берётся формат — по содержимому файла, а не по его имени.
+	const table = readStatTable(input.file.name, input.file.bytes, STAT_PREVIEW_PARSE_LIMIT);
 
-	const staged = await stageBlob(input.file.bytes, mime);
+	const staged = await stageBlob(input.file.bytes, statFileMime(table.file.format));
 
 	try {
 		return await withTransaction(ctx, async (tx) => {

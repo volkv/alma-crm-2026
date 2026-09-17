@@ -193,6 +193,84 @@ export function isEmptyCoverage(coverage: StatCoverage): boolean {
  */
 export const MAX_STAT_FILE_ROWS = 20_000;
 
+/**
+ * Потолок на число колонок. Шапку шире этой человек всё равно не разметит
+ * руками, а приходит она не из выгрузки, а из ошибки — развёрнутого в ширину
+ * JSON или книги, у которой размеченная область осталась на весь лист.
+ */
+export const MAX_STAT_FILE_COLUMNS = 200;
+
+/**
+ * Глубина вложенности JSON, дальше которой колонки не разворачиваются. Дерево
+ * глубже — это не таблица: колонок из него получится больше, чем строк.
+ */
+export const MAX_STAT_JSON_DEPTH = 5;
+
+/** Форматы файлов, которые читает импорт. */
+export const STAT_FILE_FORMATS = ['xls', 'xlsx', 'csv', 'json'] as const;
+
+export type StatFileFormat = (typeof STAT_FILE_FORMATS)[number];
+
+export const STAT_FILE_FORMAT_LABELS: Record<StatFileFormat, string> = {
+	xls: 'книга XLS',
+	xlsx: 'книга XLSX',
+	csv: 'текстовая таблица',
+	json: 'JSON'
+};
+
+/**
+ * Что импорт читает. Одна и та же фраза стоит в подсказке под полем файла и в
+ * отказе формы: два списка форматов однажды разошлись бы.
+ */
+export const STAT_FILE_FORMATS_HINT = 'Импорт читает книги XLS и XLSX, таблицы CSV и файлы JSON';
+
+/**
+ * Из чего прочитан файл снимка.
+ *
+ * Это показывается человеку на шаге сопоставления: «прочитано как текстовая
+ * таблица в windows-1251 с разделителем `;`» объясняет съехавшие колонки
+ * лучше, чем любое сообщение об ошибке, а «лист „Лист2“» — почему строк
+ * оказалось не столько, сколько он ждал.
+ */
+export type StatFileSummary = {
+	fileName: string;
+	format: StatFileFormat;
+	/** Кодировка текста; у книг её нет — там это внутреннее дело файла. */
+	encoding: string | null;
+	/** Разделитель колонок; у книг и JSON — `null`. */
+	delimiter: string | null;
+	/** Лист, с которого прочитаны строки; у JSON — `null`. */
+	sheetName: string | null;
+	/** Все листы книги: по ним видно, что прочитан не единственный. */
+	sheetNames: string[];
+};
+
+/** Разделители, у которых есть название: символ в тексте не разглядеть. */
+const DELIMITER_LABELS: Record<string, string> = {
+	';': 'точка с запятой',
+	',': 'запятая',
+	'\t': 'табуляция'
+};
+
+/** Как прочитан файл — одной строкой рядом с таблицей сопоставления. */
+export function describeStatFile(file: StatFileSummary): string {
+	const parts = [STAT_FILE_FORMAT_LABELS[file.format]];
+
+	if (file.encoding !== null) {
+		parts.push(`кодировка ${file.encoding}`);
+	}
+
+	if (file.delimiter !== null) {
+		parts.push(`разделитель — ${DELIMITER_LABELS[file.delimiter] ?? `«${file.delimiter}»`}`);
+	}
+
+	if (file.sheetName !== null) {
+		parts.push(`лист «${file.sheetName}»`);
+	}
+
+	return parts.join(', ');
+}
+
 /** Сколько строк файла разбирается ради превью на шаге сопоставления. */
 export const STAT_PREVIEW_PARSE_LIMIT = 200;
 

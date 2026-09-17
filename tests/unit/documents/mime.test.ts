@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import PizZip from 'pizzip';
 import { describe, expect, it } from 'vitest';
 import { MAX_DOCUMENT_SIZE_BYTES } from '$lib/contracts/documents';
@@ -20,6 +21,11 @@ function ooxml(mainPart: string): Uint8Array {
 
 function bytes(...values: number[]): Uint8Array {
 	return new Uint8Array(values);
+}
+
+/** Выгрузка русского Excel: те же строки, но в windows-1251. */
+function cp1251Fixture(): Uint8Array {
+	return readFileSync(new URL('../../fixtures/stats/enrollment-1251.csv', import.meta.url));
 }
 
 const DOCX = 'application/vnd.openxmlformats-officedocument.wordprocessingml.document';
@@ -46,8 +52,22 @@ describe('тип файла по содержимому', () => {
 		expect(sniffDocumentMime(Buffer.from('MZ\x90\x00\x03\x00\x00\x00', 'latin1'))).toBeNull();
 		expect(sniffDocumentMime(Buffer.from('<!DOCTYPE html><html><body>x', 'utf8'))).toBeNull();
 		expect(sniffDocumentMime(Buffer.from('<script>alert(1)</script>', 'utf8'))).toBeNull();
-		// Байты, не складывающиеся в UTF-8, текстом не считаются.
-		expect(sniffDocumentMime(bytes(0xc3, 0x28, 0xa0, 0xa1))).toBeNull();
+		// Разметка остаётся разметкой и в другой кодировке: проверка идёт по
+		// прочитанному тексту, а не по байтам.
+		expect(
+			sniffDocumentMime(Buffer.from('\ufeff<html><body>Договор</body></html>', 'utf16le'))
+		).toBeNull();
+		// Двоичный мусор: в тексте нашлись управляющие байты.
+		expect(sniffDocumentMime(bytes(0x0c, 0xc3, 0x28, 0xa0, 0xa1, 0x01, 0x02))).toBeNull();
+	});
+
+	it('признаёт текстом выгрузку в windows-1251', () => {
+		// Русский Excel сохраняет CSV именно так, и требовать UTF-8 значит не
+		// принимать самый частый файл заказчика.
+		expect(sniffDocumentMime(cp1251Fixture())).toBe('text/plain');
+		expect(sniffDocumentMime(bytes(0xc2, 0xf3, 0xe7, 0x3b, 0xc8, 0xcd, 0xcd))).toBe('text/plain');
+		// UTF-16 с меткой порядка байтов — тоже текст.
+		expect(sniffDocumentMime(Buffer.from('\ufeffОрганизация;ИНН', 'utf16le'))).toBe('text/plain');
 	});
 
 	it('отличает обычный zip от пакета Office', () => {
@@ -110,6 +130,10 @@ describe('проверка загружаемого файла', () => {
 		expect(() => assertContentMatchesMime(DOCX, ooxml('xl/workbook.xml'))).toThrow(
 			/не совпадает с его типом/
 		);
+	});
+
+	it('пропускает выгрузку в windows-1251, названную текстом', () => {
+		expect(() => assertContentMatchesMime('text/plain', cp1251Fixture())).not.toThrow();
 	});
 
 	it('держит границы размера', () => {

@@ -12,6 +12,7 @@
 	import PageHeader from '$lib/components/page-header.svelte';
 	import WizardSteps from '$lib/components/stats/wizard-steps.svelte';
 	import {
+		STAT_FILE_FORMATS_HINT,
 		STAT_PERIOD_KINDS,
 		STAT_PERIOD_KIND_LABELS,
 		STAT_SNAPSHOT_MODES,
@@ -98,8 +99,8 @@
 		<FileInput
 			id="file"
 			label="Файл выгрузки"
-			description="XLSX или CSV в кодировке UTF-8, до 25 МиБ. Первая строка — названия колонок."
-			accept=".xlsx,.csv,text/csv,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+			description="{STAT_FILE_FORMATS_HINT} — до 25 МиБ. В таблице первая строка — названия колонок; в JSON — массив записей или объект со списком строк."
+			accept=".xls,.xlsx,.csv,.json,text/csv,application/json,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 			required
 		/>
 

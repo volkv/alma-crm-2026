@@ -8,7 +8,8 @@
  *
  * Содержимое архивов при этом не разбирается: у zip состав читается только
  * чтобы отличить пакет Office от обычного архива, а gzip и rar опознаются одной
- * сигнатурой. Распаковка произвольного архива на сервере — работа, объём
+ * сигнатурой. Ослабить проверку сигнатур нельзя: текстом файл признаётся
+ * последним, только когда ни одна из них не подошла. Распаковка произвольного архива на сервере — работа, объём
  * которой заранее не ограничить.
  *
  * Список допустимых типов и потолок размера живут в контрактах: одна и та же
@@ -17,6 +18,7 @@
 import PizZip from 'pizzip';
 import { ALLOWED_DOCUMENT_MIME_TYPES, MAX_DOCUMENT_SIZE_BYTES } from '$lib/contracts/documents';
 import { ValidationError } from '../errors';
+import { decodeTextOrNull } from '../spreadsheet/encoding';
 
 export type AllowedDocumentMime = (typeof ALLOWED_DOCUMENT_MIME_TYPES)[number];
 
@@ -137,25 +139,25 @@ const MARKUP_START = /^(?:<!doctype|<html|<\?xml|<svg|<script|<!--)/i;
 
 /**
  * Похоже ли содержимое на обычный текст. Сигнатуры у `text/plain` нет, поэтому
- * проверяем от обратного: корректный UTF-8, без управляющих байтов и без
- * признаков разметки — переименованный HTML текстом не считается.
+ * проверяем от обратного: файл читается в известной кодировке, в нём нет
+ * управляющих байтов и нет признаков разметки — переименованный HTML текстом не
+ * считается.
+ *
+ * Кодировку определяет тот же код, что и при разборе таблиц
+ * (`spreadsheet/encoding.ts`): UTF-8, UTF-16 по метке порядка байтов и
+ * windows-1251 по остатку. Требовать здесь именно UTF-8 значило бы не принимать
+ * выгрузку русского Excel — а её и присылают чаще всего.
  */
 function looksLikeText(bytes: Uint8Array): boolean {
-	let text: string;
+	const decoded = decodeTextOrNull(bytes);
 
-	try {
-		text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-	} catch {
-		// Не UTF-8 — значит, не наш текстовый файл. Гадать о кодировке не будем.
+	// `null` — двоичное содержимое: ни в одну текстовую кодировку оно не легло
+	// или в нём нашлись управляющие байты.
+	if (decoded === null) {
 		return false;
 	}
 
-	// eslint-disable-next-line no-control-regex -- ищем именно управляющие байты
-	if (/[\u0000-\u0008\u000b\u000e-\u001f]/.test(text)) {
-		return false;
-	}
-
-	return !MARKUP_START.test(text.replace(/^\ufeff/, '').trimStart());
+	return !MARKUP_START.test(decoded.text.trimStart());
 }
 
 /**

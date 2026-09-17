@@ -74,6 +74,26 @@ describe('чтение таблицы', () => {
 		expect((rows[1][1] as Date).toISOString()).toBe('2026-09-12T00:00:00.000Z');
 	});
 
+	it('рядом со значением отдаёт текст, которым оно записано', () => {
+		// Текст нужен тому, кто разбирает выгрузку своими правилами: значение
+		// текстового файла — догадка разборщика («12,5» он читает как 125), и
+		// без исходного текста эту догадку не проверить.
+		const csv = readSpreadsheet(fixture('visits-1251.csv'), 'visits-1251.csv').sheets[0];
+
+		expect(csv.texts[0][0]).toBe('Организация');
+		expect(csv.texts[1][1]).toBe('2026-09-12');
+		expect(csv.rows[1][1]).toBeInstanceOf(Date);
+		// Пустая ячейка — пустой текст, а не слово «null».
+		expect(csv.texts[2][4]).toBe('');
+		expect(csv.texts).toHaveLength(csv.rows.length);
+		expect(csv.texts.every((row, index) => row.length === csv.rows[index].length)).toBe(true);
+
+		const guessed = readSpreadsheet(new TextEncoder().encode('Доля\n12,5\n'), 'доля.csv').sheets[0];
+
+		expect(guessed.rows[1][0]).toBe(125);
+		expect(guessed.texts[1][0]).toBe('12,5');
+	});
+
 	it('выравнивает строки по ширине таблицы', () => {
 		const rows = readSpreadsheet(fixture('visits.xlsx'), 'visits.xlsx').sheets[0].rows;
 

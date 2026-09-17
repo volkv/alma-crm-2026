@@ -23,6 +23,13 @@ const PERIOD_START = '2024-09-01';
 const PERIOD_END = '2025-08-31';
 const PERIOD_KEY = `${PERIOD_START}..${PERIOD_END}`;
 
+/**
+ * Период прохода по JSON — тоже свой. Снимок за тот же период вытеснил бы
+ * снимок соседнего прохода: полная выгрузка замещает прежнюю, и два прохода
+ * стали бы зависеть от порядка запуска.
+ */
+const JSON_PERIOD = { start: '2023-09-01', end: '2024-08-31' } as const;
+
 /** День так, как его пишут в поле даты: `2024-09-01` → `01.09.2024`. */
 function ruDay(iso: string): string {
 	const [year, month, day] = iso.split('-');
@@ -34,6 +41,8 @@ function ruDay(iso: string): string {
 const TAG = crypto.randomUUID().slice(0, 8);
 
 const FIXTURE = new URL('./fixtures/stats-sample.csv', import.meta.url).pathname;
+/** Та же выгрузка, но JSON: объект со списком строк по ключу `rows`. */
+const JSON_FIXTURE = new URL('./fixtures/stats-sample.json', import.meta.url).pathname;
 
 /**
  * Книга XLSX собирается в памяти прогоном: двоичный файл в репозитории нельзя
@@ -54,7 +63,8 @@ async function workbookBytes(): Promise<Buffer> {
 /** Шаг 1 мастера: файл, режим и период. */
 async function uploadFile(
 	page: Page,
-	file: { name: string; mimeType: string; buffer: Buffer }
+	file: { name: string; mimeType: string; buffer: Buffer },
+	period: { start: string; end: string } = { start: PERIOD_START, end: PERIOD_END }
 ): Promise<void> {
 	await page.goto('/data');
 	await page.getByRole('link', { name: 'Загрузить файл' }).click();
@@ -68,10 +78,10 @@ async function uploadFile(
 	await page.locator('input[name="file"]').setInputFiles(file);
 	// Поле даты — своё (`DateField`): человек пишет `01.09.2024`, а форме
 	// уходит `2024-09-01` скрытым полем.
-	await page.locator('#periodStart').fill(ruDay(PERIOD_START));
-	await page.locator('#periodEnd').fill(ruDay(PERIOD_END));
-	await expect(page.locator('input[name="periodStart"]')).toHaveValue(PERIOD_START);
-	await expect(page.locator('input[name="periodEnd"]')).toHaveValue(PERIOD_END);
+	await page.locator('#periodStart').fill(ruDay(period.start));
+	await page.locator('#periodEnd').fill(ruDay(period.end));
+	await expect(page.locator('input[name="periodStart"]')).toHaveValue(period.start);
+	await expect(page.locator('input[name="periodEnd"]')).toHaveValue(period.end);
 	await page.getByRole('button', { name: 'Дальше: сопоставление колонок' }).click();
 
 	await expect(page.getByRole('heading', { name: 'Сопоставление колонок' })).toBeVisible();
@@ -162,4 +172,39 @@ test('мастер читает и книгу XLSX', async ({ page }) => {
 	await expect(page.getByText('Предложено').first()).toBeVisible();
 	await expect(page.getByText('СЗПУ · ПУПИ')).toBeVisible();
 	await expect(page.getByText('В файле: 2 строки')).toBeVisible();
+});
+
+test('мастер читает JSON и доводит его до подтверждения', async ({ page }) => {
+	await uploadFile(
+		page,
+		{
+			name: `выгрузка-${TAG}.json`,
+			mimeType: 'application/json',
+			buffer: await readFile(JSON_FIXTURE)
+		},
+		JSON_PERIOD
+	);
+
+	// Мастер говорит, чем он счёл файл: ключи JSON стали колонками.
+	await expect(page.locator('[data-slot="file-summary"]')).toContainText('прочитан как JSON');
+	await expect(page.getByText('Предложено').first()).toBeVisible();
+	await expect(page.getByText('В файле: 4 строки')).toBeVisible();
+	await page.getByRole('button', { name: 'Дальше: проверка строк' }).click();
+
+	// Дальше — тот же путь, что у таблицы: строки, претензия к неизвестному вузу
+	// и подтверждение.
+	await expect(page.getByRole('heading', { name: 'Проверка загрузки' })).toBeVisible();
+	await expect(page.locator('tbody tr[data-row-no]')).toHaveCount(4);
+	await expect(page.getByText('не найдена в справочнике')).toBeVisible();
+
+	await page.getByRole('button', { name: 'Подтвердить снимок' }).click();
+
+	await expect(
+		page.locator('[data-slot="status-badge"]', { hasText: 'Подтверждён' })
+	).toBeVisible();
+
+	await page.goto(`/data/indicators?period=${JSON_PERIOD.start}..${JSON_PERIOD.end}`);
+	await expect(
+		page.locator('[data-slot="data-table"] tbody tr[data-row]', { hasText: 'VO-BAK-01' })
+	).toContainText('180');
 });

@@ -20,6 +20,7 @@ import {
 	type StatDashboardGroupRow,
 	type StatDashboardOrganizationRow,
 	type StatDashboardSource,
+	type StatFileSummary,
 	type StatIndicatorQuery,
 	type StatIndicatorRow,
 	type StatMapping,
@@ -47,8 +48,7 @@ import { readStoredFile } from '../documents/storage';
 import { NotFoundError } from '../errors';
 import { requirePermission, scopeFilter } from '../rbac';
 import { getMappingAdvisor } from './advisor';
-import { fileFormatOf } from './format';
-import { readTable, type SheetTable } from './parse';
+import { readStatTable, type StatTable } from './parse';
 
 const snapshotIdSchema = idSchema('Некорректный идентификатор снимка');
 
@@ -323,6 +323,8 @@ export async function listSnapshotRows(
 
 /** Превью файла на шаге сопоставления: шапка, первые строки и подсказка. */
 export type SnapshotPreview = {
+	/** Из чего прочитан файл: формат, кодировка, разделитель, лист. */
+	file: StatFileSummary;
 	headers: string[];
 	/** Первые строки файла: колонка → значение. */
 	sample: Record<string, string>[];
@@ -330,6 +332,8 @@ export type SnapshotPreview = {
 	advice: MappingAdvice[];
 	/** Сопоставление, которое уже применено к снимку; пусто до первого шага. */
 	mapping: StatMapping;
+	/** Что в файле странно, но отказом не стало. */
+	warnings: string[];
 };
 
 /**
@@ -348,16 +352,18 @@ export async function getSnapshotPreview(
 	const snapshot = await selectSnapshotRow(snapshotId);
 	const table = await readSnapshotTable(snapshot, STAT_PREVIEW_PARSE_LIMIT);
 
-	const sample = table.rows.map((cells) =>
-		Object.fromEntries(table.headers.map((header, column) => [header, cells[column] ?? '']))
+	const sample = table.rows.map((row) =>
+		Object.fromEntries(table.headers.map((header, column) => [header, row.cells[column] ?? '']))
 	);
 
 	return {
+		file: table.file,
 		headers: table.headers,
 		sample,
 		totalRows: table.totalRows,
 		advice: await getMappingAdvisor().suggest({ headers: table.headers, sample }),
-		mapping: snapshot.mapping
+		mapping: snapshot.mapping,
+		warnings: table.warnings
 	};
 }
 
@@ -365,13 +371,13 @@ export async function getSnapshotPreview(
 export async function readSnapshotTable(
 	snapshot: typeof statSnapshots.$inferSelect,
 	limit?: number
-): Promise<SheetTable> {
+): Promise<StatTable> {
 	if (snapshot.fileDocumentId === null) {
 		throw new NotFoundError('У снимка нет файла');
 	}
 
 	const [file] = await getDb()
-		.select({ filePath: documents.filePath, mime: documents.mime })
+		.select({ filePath: documents.filePath, title: documents.title })
 		.from(documents)
 		.where(eq(documents.id, snapshot.fileDocumentId))
 		.limit(1);
@@ -382,7 +388,9 @@ export async function readSnapshotTable(
 
 	const bytes = await readStoredFile(file.filePath);
 
-	return readTable(fileFormatOf(file.mime), bytes, limit);
+	// Формат читается из самого файла, а не из его типа в хранилище: и CSV, и
+	// JSON лежат там обычным текстом.
+	return readStatTable(file.title, bytes, limit);
 }
 
 /** Отчётные периоды, по которым есть подтверждённые данные. */

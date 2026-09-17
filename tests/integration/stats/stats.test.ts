@@ -6,6 +6,7 @@
  * выгрузки, версия строки после исправления и разница между нулём и
  * отсутствием данных — разница, которая живёт в `sum(...)` PostgreSQL.
  */
+import { readFileSync } from 'node:fs';
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StatSnapshotView } from '$lib/contracts/stats';
@@ -43,6 +44,11 @@ function csv(...rows: string[]): Uint8Array {
 	return new TextEncoder().encode([HEADER, ...rows].join('\r\n') + '\r\n');
 }
 
+/** Та же выгрузка книгой, текстом и JSON: `tests/fixtures/stats/README.md`. */
+function fixture(name: string): Uint8Array {
+	return readFileSync(new URL(`../../fixtures/stats/${name}`, import.meta.url));
+}
+
 /** Справочник, на который ссылается выгрузка. */
 async function directory(): Promise<{ szpu: string; pupi: string }> {
 	const szpu = await insertOrganization(database.db, { shortName: 'СЗПУ', inn: '7802450127' });
@@ -76,7 +82,7 @@ type ImportOptions = {
  * Сопоставление берётся из подсказки — путь «человек согласился с
  * предложением» проходится в каждом тесте, а не только в своём.
  */
-async function importCsv(
+async function importFile(
 	ctx: ReturnType<typeof testActor>,
 	bytes: Uint8Array,
 	options: ImportOptions = {}
@@ -182,12 +188,85 @@ describe('загрузка файла', () => {
 	});
 });
 
+/**
+ * Одна и та же выгрузка в четырёх файлах (`tests/fixtures/stats/README.md`):
+ * книгой, текстом и JSON обеих форм. Мастер обязан довести до подтверждения
+ * любой из них, и числа в показателях обязаны совпасть — иначе формат файла
+ * решает, что окажется в отчёте.
+ */
+describe('форматы файла', () => {
+	const FILES = [
+		{ name: 'enrollment.csv', format: 'csv', encoding: 'utf-8', sheetName: 'Sheet1' },
+		{ name: 'enrollment-1251.csv', format: 'csv', encoding: 'windows-1251', sheetName: 'Sheet1' },
+		{ name: 'enrollment.xls', format: 'xls', encoding: null, sheetName: 'enrollment' },
+		{ name: 'enrollment-array.json', format: 'json', encoding: 'utf-8', sheetName: null },
+		{ name: 'enrollment-rows.json', format: 'json', encoding: 'utf-8', sheetName: null }
+	] as const;
+
+	it.each(FILES)('$name: мастер доходит до подтверждения с теми же числами', async (file) => {
+		await directory();
+		const ctx = testActor({ roleId: 'lead' });
+
+		const created = await createSnapshot(ctx, {
+			source: 'file',
+			mode: 'full',
+			periodKind: 'academic',
+			...PERIOD,
+			file: { name: file.name, bytes: fixture(file.name) }
+		});
+
+		const preview = await getSnapshotPreview(ctx, created.id);
+
+		// Из чего прочитан файл, видно на шаге сопоставления: формат, кодировка,
+		// разделитель и лист — это ответ на «почему колонки не те».
+		expect(preview.file).toMatchObject({
+			fileName: file.name,
+			format: file.format,
+			encoding: file.encoding,
+			sheetName: file.sheetName
+		});
+		expect(preview.headers).toStrictEqual(HEADER.split(';'));
+		expect(preview.warnings).toStrictEqual([]);
+		expect(preview.sample[0]).toMatchObject({ Вуз: 'СЗПУ', 'Подано заявок': '120' });
+
+		await applyMapping(ctx, created.id, suggestMapping(preview.headers));
+
+		const validated = await validateSnapshot(ctx, created.id);
+
+		expect(validated).toMatchObject({ status: 'validated', rowCount: 2, errorCount: 0 });
+
+		await confirmSnapshot(ctx, created.id);
+
+		const indicators = await listIndicators(ctx, {
+			programId: null,
+			organizationId: null,
+			period: { start: PERIOD.periodStart, end: PERIOD.periodEnd },
+			page: 1,
+			pageSize: 20
+		});
+		const byProgram = new Map(indicators.items.map((item) => [item.programCode, item] as const));
+
+		expect(byProgram.get('VO-BAK-01')).toMatchObject({
+			applications: 120,
+			enrolled: 90,
+			parallelStreams: 3,
+			completed: 80
+		});
+		expect(byProgram.get('VO-MAG-01')).toMatchObject({
+			applications: 40,
+			enrolled: 30,
+			parallelStreams: 2,
+			completed: 25
+		});
+	});
+});
+
 describe('разбор строк', () => {
 	it('объясняет неизвестную организацию, нечисловое значение и дубль', async () => {
 		await directory();
 		const ctx = testActor({ roleId: 'lead' });
 
-		const snapshot = await importCsv(
+		const snapshot = await importFile(
 			ctx,
 			csv(
 				'СЗПУ;VO-BAK-01;120;90;3;80',
@@ -271,7 +350,7 @@ describe('подтверждение', () => {
 		const { szpu } = await directory();
 		const ctx = testActor({ roleId: 'lead' });
 
-		const snapshot = await importCsv(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
+		const snapshot = await importFile(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
 		const { snapshot: confirmed } = await confirmSnapshot(ctx, snapshot.id);
 
 		expect(confirmed.status).toBe('confirmed');
@@ -308,7 +387,7 @@ describe('подтверждение', () => {
 		await directory();
 		const ctx = testActor({ roleId: 'lead' });
 
-		const snapshot = await importCsv(ctx, csv('Неизвестный вуз;VO-BAK-01;1;1;1;1'));
+		const snapshot = await importFile(ctx, csv('Неизвестный вуз;VO-BAK-01;1;1;1;1'));
 
 		await expect(confirmSnapshot(ctx, snapshot.id)).rejects.toBeInstanceOf(ConflictError);
 	});
@@ -332,7 +411,7 @@ describe('подтверждение', () => {
 		await directory();
 		const ctx = testActor({ roleId: 'lead' });
 
-		const snapshot = await importCsv(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
+		const snapshot = await importFile(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
 		const rejected = await rejectSnapshot(ctx, snapshot.id, 'Вуз прислал не тот период');
 
 		expect(rejected.status).toBe('rejected');
@@ -365,10 +444,10 @@ describe('режимы', () => {
 		await directory();
 		const ctx = testActor({ roleId: 'lead' });
 
-		const first = await importCsv(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
+		const first = await importFile(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
 		await confirmSnapshot(ctx, first.id);
 
-		const second = await importCsv(ctx, csv('СЗПУ;VO-BAK-01;150;110;4;95'));
+		const second = await importFile(ctx, csv('СЗПУ;VO-BAK-01;150;110;4;95'));
 		const { snapshot: confirmed } = await confirmSnapshot(ctx, second.id);
 
 		expect(confirmed.supersedesSnapshotId).toBe(first.id);
@@ -397,10 +476,10 @@ describe('режимы', () => {
 		await directory();
 		const ctx = testActor({ roleId: 'lead' });
 
-		const base = await importCsv(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
+		const base = await importFile(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
 		await confirmSnapshot(ctx, base.id);
 
-		const extra = await importCsv(ctx, csv('ПУПИ;VO-MAG-01;40;30;2;25'), {
+		const extra = await importFile(ctx, csv('ПУПИ;VO-MAG-01;40;30;2;25'), {
 			mode: 'append',
 			source: 'lms'
 		});
@@ -430,10 +509,10 @@ describe('режимы', () => {
 		await directory();
 		const ctx = testActor({ roleId: 'lead' });
 
-		const base = await importCsv(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
+		const base = await importFile(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
 		await confirmSnapshot(ctx, base.id);
 
-		const correction = await importCsv(ctx, csv('СЗПУ;VO-BAK-01;130;95;3;80'), {
+		const correction = await importFile(ctx, csv('СЗПУ;VO-BAK-01;130;95;3;80'), {
 			mode: 'correction'
 		});
 		const { replacedRows } = await confirmSnapshot(ctx, correction.id);
@@ -475,7 +554,7 @@ describe('показатели', () => {
 
 		// У первой строки «завершили обучение» пусто — год ещё идёт; у второй
 		// везде записан ноль.
-		const snapshot = await importCsv(
+		const snapshot = await importFile(
 			ctx,
 			csv('СЗПУ;VO-BAK-01;120;90;3;', 'ПУПИ;VO-MAG-01;0;0;0;0')
 		);
@@ -499,7 +578,7 @@ describe('показатели', () => {
 		await directory();
 		const ctx = testActor({ roleId: 'lead' });
 
-		await importCsv(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
+		await importFile(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
 
 		const indicators = await listIndicators(ctx, {
 			programId: null,
@@ -516,7 +595,7 @@ describe('показатели', () => {
 		const { szpu } = await directory();
 		const ctx = testActor({ roleId: 'lead' });
 
-		const snapshot = await importCsv(
+		const snapshot = await importFile(
 			ctx,
 			csv('СЗПУ;VO-BAK-01;120;90;3;80', 'ПУПИ;VO-MAG-01;40;30;2;25')
 		);
@@ -551,7 +630,7 @@ describe('рейтинг', () => {
 		await directory();
 		const ctx = testActor({ roleId: 'lead' });
 
-		const snapshot = await importCsv(
+		const snapshot = await importFile(
 			ctx,
 			csv('СЗПУ;VO-BAK-01;120;90;3;80', 'ПУПИ;VO-MAG-01;40;30;2;25')
 		);
@@ -582,7 +661,7 @@ describe('рейтинг', () => {
 		await directory();
 		const ctx = testActor({ roleId: 'lead' });
 
-		const snapshot = await importCsv(
+		const snapshot = await importFile(
 			ctx,
 			csv('СЗПУ;VO-BAK-01;120;90;3;80', 'ПУПИ;VO-BAK-01;40;30;2;25')
 		);
@@ -605,7 +684,7 @@ describe('права', () => {
 
 		// Загрузку делает тот, у кого на неё право: подтверждённый снимок меняет
 		// числа всем сразу и сбрасывает общий кэш дашборда.
-		const snapshot = await importCsv(
+		const snapshot = await importFile(
 			testActor({ roleId: 'lead' }),
 			csv('СЗПУ;VO-BAK-01;120;90;3;80')
 		);
@@ -649,7 +728,7 @@ describe('права', () => {
 		await directory();
 		const ctx = testActor({ roleId: 'lead' });
 
-		const snapshot = await importCsv(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
+		const snapshot = await importFile(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
 		await confirmSnapshot(ctx, snapshot.id);
 
 		const events = await database.db

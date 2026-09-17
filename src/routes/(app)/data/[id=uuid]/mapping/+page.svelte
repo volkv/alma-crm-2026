@@ -4,10 +4,12 @@
 	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import FormActions from '$lib/components/form/form-actions.svelte';
+	import InlineHint from '$lib/components/inline-hint.svelte';
 	import PageHeader from '$lib/components/page-header.svelte';
 	import MappingTable from '$lib/components/stats/mapping-table.svelte';
 	import WizardSteps from '$lib/components/stats/wizard-steps.svelte';
 	import {
+		describeStatFile,
 		STAT_SNAPSHOT_MODE_LABELS,
 		STAT_SOURCE_LABELS,
 		type StatSnapshotListItem
@@ -39,6 +41,16 @@
 		<span>Период: {formatDate(snapshot.periodStart)} — {formatDate(snapshot.periodEnd)}</span>
 		<span>В файле: {pluralize(data.preview.totalRows, ['строка', 'строки', 'строк'])}</span>
 	</div>
+
+	<!-- Из чего собрана таблица: съехавшие колонки объясняет прочитанный
+		разделитель, а недостающие строки — прочитанный лист. -->
+	<p class="text-sm text-muted-foreground" data-slot="file-summary">
+		Файл «{data.preview.file.fileName}» прочитан как {describeStatFile(data.preview.file)}.
+	</p>
+
+	{#each data.preview.warnings as warning (warning)}
+		<InlineHint tone="warning">{warning}</InlineHint>
+	{/each}
 
 	{#if form?.message}
 		<Alert.Root variant="destructive">

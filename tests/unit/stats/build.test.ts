@@ -8,7 +8,7 @@ import { describe, expect, it } from 'vitest';
 import type { StatMapping } from '$lib/contracts/stats';
 import { buildRows, missingRequiredFields } from '$lib/server/stats/build';
 import type { DirectoryIndex } from '$lib/server/stats/lookup';
-import type { SheetTable } from '$lib/server/stats/parse';
+import type { StatTable } from '$lib/server/stats/parse';
 
 const ORGANIZATION = '00000000-0000-4000-8000-0000000000b1';
 const OTHER_ORGANIZATION = '00000000-0000-4000-8000-0000000000b2';
@@ -36,11 +36,23 @@ const MAPPING: StatMapping = {
 
 const PERIOD = { start: '2026-09-01', end: '2027-08-31' };
 
-function table(
-	rows: string[][],
-	headers = ['Вуз', 'Программа', 'Заявки', 'Зачислено']
-): SheetTable {
-	return { headers, rows, totalRows: rows.length };
+/** Таблица так, как её отдаёт разбор: со строкой файла у каждой строки. */
+function table(rows: string[][], headers = ['Вуз', 'Программа', 'Заявки', 'Зачислено']): StatTable {
+	return {
+		file: {
+			fileName: 'выгрузка.csv',
+			format: 'csv',
+			encoding: 'utf-8',
+			delimiter: ';',
+			sheetName: 'Sheet1',
+			sheetNames: ['Sheet1']
+		},
+		headers,
+		// Шапка — первая строка файла, поэтому данные начинаются со второй.
+		rows: rows.map((cells, index) => ({ origin: index + 2, cells })),
+		totalRows: rows.length,
+		warnings: []
+	};
 }
 
 function build(rows: string[][], mapping: StatMapping = MAPPING, headers?: string[]) {
@@ -186,10 +198,13 @@ describe('разбор строки', () => {
 		expect(row.isValid).toBe(false);
 	});
 
-	it('замечает значения сверх колонок шапки', () => {
+	it('замечает значения сверх колонок шапки и называет строку файла', () => {
 		const [row] = build([['СЗПУ', 'VO-BAK-01', '10', '5', 'лишнее']]);
 
 		expect(row.issues[0].message).toContain('сверх колонок шапки');
+		// Номер строки снимка ищут в файле руками: пустые строки и шапка в него
+		// не считаются, поэтому претензия называет место в файле.
+		expect(row.issues[0].message).toContain('строка 2 файла');
 		expect(row.isValid).toBe(false);
 	});
 

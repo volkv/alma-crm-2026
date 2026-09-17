@@ -28,6 +28,19 @@ export type SpreadsheetSheet = {
 	name: string;
 	/** Строки листа. Все строки одной длины — по ширине заполненной области. */
 	rows: SpreadsheetCell[][];
+	/**
+	 * Тот же лист текстом: как ячейка записана в файле.
+	 *
+	 * У книги это показ значения, и истина в ней — само значение. У текстового
+	 * файла наоборот: значение — догадка разборщика, а истина — написанное.
+	 * «12,5» в CSV он читает как 125 (запятая для него разделитель разрядов), а
+	 * «0278000000» — как число без ведущего нуля; тому, кто разбирает выгрузку
+	 * своими правилами, нужен исходный текст, иначе эти два числа уже не
+	 * вернуть.
+	 *
+	 * Размер совпадает с `rows` ячейка в ячейку.
+	 */
+	texts: string[][];
 };
 
 /** Из чего собрана таблица — то, что показываем человеку рядом с разбором. */
@@ -59,6 +72,20 @@ export type SpreadsheetContent = {
  * Гринвича становится одиннадцатым числом.
  */
 const PARSE_OPTIONS = { dense: true, cellDates: true, UTC: true } as const;
+
+/** Текст ячейки: то, что записано в файле, до разбора значения. */
+function toText(cell: CellObject | undefined): string {
+	if (cell === undefined || cell.t === 'z' || cell.t === 'e' || cell.v === undefined) {
+		return '';
+	}
+
+	if (cell.w !== undefined) {
+		return cell.w;
+	}
+
+	// Показа у ячейки может и не быть — тогда текстом становится само значение.
+	return cell.v instanceof Date ? cell.v.toISOString().slice(0, 10) : String(cell.v);
+}
 
 /** Значение ячейки SheetJS в нашем виде. */
 function toCell(cell: CellObject | undefined): SpreadsheetCell {
@@ -96,20 +123,22 @@ function toSheet(name: string, worksheet: WorkSheet | undefined): SpreadsheetShe
 	const data = worksheet?.['!data'];
 
 	if (ref === undefined || data === undefined) {
-		return { name, rows: [] };
+		return { name, rows: [], texts: [] };
 	}
 
 	const range = XLSX.utils.decode_range(ref);
 	const width = range.e.c + 1;
 	const rows: SpreadsheetCell[][] = [];
+	const texts: string[][] = [];
 
 	for (let rowIndex = 0; rowIndex <= range.e.r; rowIndex += 1) {
 		const row: CellObject[] = data[rowIndex] ?? [];
 
 		rows.push(Array.from({ length: width }, (_, column) => toCell(row[column])));
+		texts.push(Array.from({ length: width }, (_, column) => toText(row[column])));
 	}
 
-	return { name, rows };
+	return { name, rows, texts };
 }
 
 function toSheets(workbook: WorkBook, fileName: string): SpreadsheetSheet[] {

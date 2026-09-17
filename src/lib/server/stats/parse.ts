@@ -1,143 +1,114 @@
 /**
- * Разбор таблицы из файла.
+ * Разбор файла снимка: таблица или JSON — одна внутренняя форма.
  *
- * Наружу оба формата выглядят одинаково: шапка и строки текстовых ячеек. Это
- * и есть граница разбора — дальше работает сопоставление колонок, которому
- * безразлично, из чего таблица приехала.
+ * Таблицы (XLS, XLSX, CSV) читает общий модуль `spreadsheet/read`: формат по
+ * содержимому, кодировка, разделитель и листы — его работа, и второго места,
+ * где это решается, в продукте нет. JSON разбирается здесь: это не таблица, а
+ * список записей, и колонки у него получаются из ключей.
+ *
+ * Наружу оба пути выглядят одинаково — шапка, строки текстовых ячеек и
+ * происхождение каждой строки. Это и есть граница разбора: дальше работает
+ * сопоставление колонок, которому безразлично, из чего таблица приехала.
  *
  * Значения не приводятся к числам и датам здесь: «12 345» в ячейке — это
  * ответ вуза, и решать, число это или ошибка, должен тот, кто знает, в какое
  * поле колонка сопоставлена. Разбор отдаёт то, что написано.
  */
-import ExcelJS from 'exceljs';
-import type { CellValue } from 'exceljs';
-import { MAX_STAT_FILE_ROWS } from '$lib/contracts/stats';
+import {
+	MAX_STAT_FILE_COLUMNS,
+	MAX_STAT_FILE_ROWS,
+	MAX_STAT_JSON_DEPTH,
+	type StatFileSummary
+} from '$lib/contracts/stats';
 import { ValidationError } from '../errors';
+import { decodeText } from '../spreadsheet/encoding';
+import { readSpreadsheet, type SpreadsheetCell, type SpreadsheetSheet } from '../spreadsheet/read';
 
-/** Форматы, которые принимает импорт. */
-export const STAT_FILE_FORMATS = ['xlsx', 'csv'] as const;
-
-export type StatFileFormat = (typeof STAT_FILE_FORMATS)[number];
-
-/** Таблица файла: имена колонок и строки значений как есть. */
-export type SheetTable = {
-	headers: string[];
+/** Строка таблицы вместе с тем, откуда она взялась. */
+export type StatTableRow = {
 	/**
-	 * Строки данных без шапки. Длина строки может отличаться от длины шапки:
+	 * Место строки в источнике: номер строки листа (с единицы, шапка — тоже
+	 * строка) или индекс элемента в массиве JSON (с нуля, как его адресует
+	 * любой инструмент, которым файл откроют).
+	 */
+	origin: number;
+	/**
+	 * Ячейки строки как текст. Длина может отличаться от длины шапки:
 	 * выравнивать её здесь нельзя — недостающая и лишняя ячейка это разные
 	 * ошибки, и заметить их должен разбор строки, а не разбор файла.
 	 */
-	rows: string[][];
-	/** Сколько строк данных в файле всего, даже если прочитаны не все. */
-	totalRows: number;
+	cells: string[];
 };
 
-/** Разделители, которые встречаются в выгрузках: точка с запятой — у русского Excel. */
-const CSV_DELIMITERS = [';', ',', '\t'] as const;
+/** Таблица файла: откуда прочитана, имена колонок и строки значений как есть. */
+export type StatTable = {
+	file: StatFileSummary;
+	headers: string[];
+	rows: StatTableRow[];
+	/** Сколько строк данных в файле всего, даже если прочитаны не все. */
+	totalRows: number;
+	/**
+	 * Что в файле странно, но отказом не стало. Молчать об этом нельзя: лишний
+	 * лист книги и разные наборы ключей в JSON объясняют недостающие строки и
+	 * пустые колонки лучше, чем они сами.
+	 */
+	warnings: string[];
+};
 
-/**
- * Какой разделитель в файле. Считаются только те, что вне кавычек: название
- * организации с запятой внутри кавычек — обычное дело, и голый подсчёт
- * символов принял бы такой файл за таблицу из двух колонок.
- */
-function detectDelimiter(firstLine: string): string {
-	let best: string = CSV_DELIMITERS[0];
-	let bestCount = 0;
-
-	for (const delimiter of CSV_DELIMITERS) {
-		let count = 0;
-		let quoted = false;
-
-		for (let index = 0; index < firstLine.length; index += 1) {
-			const char = firstLine[index];
-
-			if (char === '"') {
-				quoted = !quoted;
-			} else if (char === delimiter && !quoted) {
-				count += 1;
-			}
-		}
-
-		if (count > bestCount) {
-			best = delimiter;
-			bestCount = count;
-		}
-	}
-
-	return best;
+/** Где лежит строка — словами, для претензии к ней. */
+export function describeRowOrigin(file: StatFileSummary, origin: number): string {
+	return file.format === 'json' ? `элемент ${origin}` : `строка ${origin}`;
 }
 
-/** Первая строка файла — по ней определяется разделитель. */
-function firstLineOf(text: string): string {
-	const end = text.indexOf('\n');
+/** Ключи, под которыми в JSON лежит список строк. */
+const JSON_ROW_KEYS = ['rows', 'items', 'data'] as const;
 
-	return end === -1 ? text : text.slice(0, end).replace(/\r$/, '');
-}
+/** Байты, которые могут стоять перед первым значащим символом JSON. */
+const JSON_LEAD_BYTES = new Set([
+	0x09, 0x0a, 0x0d, 0x20,
+	// Половинки BOM и старший байт UTF-16: файл может быть не в UTF-8.
+	0x00, 0xef, 0xbb, 0xbf, 0xfe, 0xff
+]);
+
+/** Сколько байт от начала файла смотрим, решая, JSON ли это. */
+const JSON_PROBE_BYTES = 64;
 
 /**
- * Разбор CSV по RFC 4180: кавычки, удвоенная кавычка внутри значения, перевод
- * строки внутри кавычек. Своя реализация, а не библиотека: правило короткое, а
- * зависимость ради него пришлось бы объяснять.
+ * Похож ли файл на JSON. Решает содержимое, а не расширение: `.json` в имени
+ * бывает у чего угодно, а выгрузку из чужой системы присылают и под именем
+ * `отчёт.txt`.
  */
-function splitCsv(text: string, delimiter: string): string[][] {
-	const rows: string[][] = [];
-	let row: string[] = [];
-	let value = '';
-	let quoted = false;
-
-	const pushValue = () => {
-		row.push(value.trim());
-		value = '';
-	};
-
-	const pushRow = () => {
-		pushValue();
-		rows.push(row);
-		row = [];
-	};
-
-	for (let index = 0; index < text.length; index += 1) {
-		const char = text[index];
-
-		if (quoted) {
-			if (char !== '"') {
-				value += char;
-				continue;
-			}
-
-			// Удвоенная кавычка внутри значения — это одна кавычка.
-			if (text[index + 1] === '"') {
-				value += '"';
-				index += 1;
-			} else {
-				quoted = false;
-			}
-
+function looksLikeJson(bytes: Uint8Array): boolean {
+	for (const byte of bytes.subarray(0, JSON_PROBE_BYTES)) {
+		if (JSON_LEAD_BYTES.has(byte)) {
 			continue;
 		}
 
-		if (char === '"') {
-			quoted = true;
-		} else if (char === delimiter) {
-			pushValue();
-		} else if (char === '\n') {
-			pushRow();
-		} else if (char !== '\r') {
-			value += char;
-		}
+		// `{` или `[` — начало объекта и массива; всё остальное читаем таблицей.
+		return byte === 0x7b || byte === 0x5b;
 	}
 
-	// Последняя строка без перевода в конце файла — такая же строка.
-	if (value !== '' || row.length > 0) {
-		pushRow();
-	}
-
-	return rows;
+	return false;
 }
 
 /** Пустая ли строка таблицы: в выгрузках между блоками попадаются пробелы. */
 function isBlankRow(row: readonly string[]): boolean {
 	return row.every((cell) => cell === '');
+}
+
+/**
+ * Хвост из пустых ячеек убирается: у книги ширина строки — это ширина
+ * размеченной области листа, и без обрезки каждая строка выглядела бы длиннее
+ * шапки. А вот пустая ячейка в середине значима — это пропуск в данных.
+ */
+function trimTrailing(cells: string[]): string[] {
+	let end = cells.length;
+
+	while (end > 0 && cells[end - 1] === '') {
+		end -= 1;
+	}
+
+	return cells.slice(0, end);
 }
 
 /**
@@ -158,8 +129,82 @@ function normalizeHeaders(raw: readonly string[]): string[] {
 	});
 }
 
-function toTable(rows: string[][], limit: number): SheetTable {
-	const meaningful = rows.filter((row) => !isBlankRow(row));
+/** Границы, общие для всех форматов: файл разбирается целиком в памяти. */
+function assertRowsFit(totalRows: number): void {
+	if (totalRows > MAX_STAT_FILE_ROWS) {
+		throw new ValidationError('В файле слишком много строк', [
+			`Строк данных — ${totalRows}, за один раз принимаем не больше ${MAX_STAT_FILE_ROWS}`
+		]);
+	}
+}
+
+function assertColumnsFit(headers: readonly string[]): void {
+	if (headers.length > MAX_STAT_FILE_COLUMNS) {
+		throw new ValidationError('В файле слишком много колонок', [
+			`Колонок — ${headers.length}, размечаем не больше ${MAX_STAT_FILE_COLUMNS}`,
+			'Оставьте в файле только те колонки, которые нужны показателям'
+		]);
+	}
+}
+
+/** Значение ячейки книги текстом. */
+function cellText(cell: SpreadsheetCell): string {
+	if (cell === null) {
+		return '';
+	}
+
+	if (cell instanceof Date) {
+		// Дата в выгрузке — это календарный день; время в ней всегда 00:00.
+		return cell.toISOString().slice(0, 10);
+	}
+
+	return typeof cell === 'string' ? cell.trim() : String(cell);
+}
+
+/**
+ * Строки листа текстом.
+ *
+ * У книги истина — значение ячейки: дата лежит датой, число числом, и
+ * читать вместо них показ значит зависеть от формата, которым их показывают.
+ * У текстового файла наоборот: значение — догадка разборщика («12,5» он
+ * принимает за 125, а ИНН «0278000000» — за число без ведущего нуля), и
+ * истина там — написанное.
+ */
+function sheetRows(sheet: SpreadsheetSheet, fromText: boolean): StatTableRow[] {
+	return sheet.rows.map((cells, index) => ({
+		origin: index + 1,
+		cells: trimTrailing(
+			fromText
+				? (sheet.texts[index] ?? []).map((text) => text.trim())
+				: cells.map((cell) => cellText(cell))
+		)
+	}));
+}
+
+function readSheetTable(fileName: string, bytes: Uint8Array, limit: number): StatTable {
+	const { info, sheets } = readSpreadsheet(bytes, fileName);
+	// `readSpreadsheet` отказывает книге без листов, поэтому лист здесь есть.
+	const sheet = sheets[0];
+	const warnings: string[] = [];
+
+	if (sheets.length > 1) {
+		warnings.push(
+			`В файле ${sheets.length} листов — прочитан первый, «${sheet.name}». Остальные не загружаются.`
+		);
+	}
+
+	const file: StatFileSummary = {
+		fileName,
+		format: info.format,
+		encoding: info.encoding,
+		delimiter: info.delimiter,
+		sheetName: sheet.name,
+		sheetNames: [...info.sheetNames]
+	};
+
+	const meaningful = sheetRows(sheet, info.format === 'csv').filter(
+		(row) => !isBlankRow(row.cells)
+	);
 	const [header, ...body] = meaningful;
 
 	if (header === undefined) {
@@ -168,121 +213,232 @@ function toTable(rows: string[][], limit: number): SheetTable {
 		]);
 	}
 
-	if (body.length > MAX_STAT_FILE_ROWS) {
-		throw new ValidationError('В файле слишком много строк', [
-			`Строк данных — ${body.length}, за один раз принимаем не больше ${MAX_STAT_FILE_ROWS}`
+	const headers = normalizeHeaders(header.cells);
+
+	assertColumnsFit(headers);
+	assertRowsFit(body.length);
+
+	return { file, headers, rows: body.slice(0, limit), totalRows: body.length, warnings };
+}
+
+/** Список записей в разобранном JSON: сам массив или массив по известному ключу. */
+function jsonRecords(parsed: unknown, fileName: string): unknown[] {
+	if (Array.isArray(parsed)) {
+		return parsed;
+	}
+
+	if (parsed === null || typeof parsed !== 'object') {
+		throw new ValidationError(`В файле «${fileName}» не список строк`, [
+			'Ждём массив объектов или объект с массивом строк внутри',
+			`В файле — ${parsed === null ? 'null' : typeof parsed}`
 		]);
 	}
 
-	return {
-		headers: normalizeHeaders(header),
-		rows: body.slice(0, limit),
-		totalRows: body.length
-	};
-}
+	const found = JSON_ROW_KEYS.filter((key) =>
+		Array.isArray((parsed as Record<string, unknown>)[key])
+	);
 
-function decodeUtf8(bytes: Uint8Array): string {
-	let text: string;
-
-	try {
-		text = new TextDecoder('utf-8', { fatal: true }).decode(bytes);
-	} catch (cause) {
-		throw new ValidationError('Файл читается не как UTF-8', [
-			'Сохраните выгрузку в кодировке UTF-8 или пришлите её в формате XLSX',
-			String(cause)
+	// Ключей-кандидатов три, потому что именно так называют список выгрузки
+	// разные системы. Когда их в файле сразу несколько, выбирать нельзя: не
+	// тот список — это молча не те числа в отчёте.
+	if (found.length > 1) {
+		throw new ValidationError(`В файле «${fileName}» несколько списков строк`, [
+			`Массивы лежат по ключам: ${found.join(', ')}`,
+			'Оставьте в файле один список — какой из них таблица, выбирать наугад нельзя'
 		]);
 	}
 
-	// BOM в начале файла Excel пишет сам; в имени первой колонки он не нужен.
-	return text.replace(/^\ufeff/, '');
+	if (found.length === 0) {
+		throw new ValidationError(`В файле «${fileName}» не найден список строк`, [
+			`Ждём массив объектов или объект с массивом по ключу ${JSON_ROW_KEYS.join(', ')}`,
+			`В файле ключи: ${Object.keys(parsed).slice(0, 10).join(', ') || 'ни одного'}`
+		]);
+	}
+
+	return (parsed as Record<string, unknown[]>)[found[0]];
 }
 
-export function parseCsv(bytes: Uint8Array, limit: number): SheetTable {
-	const text = decodeUtf8(bytes);
-
-	return toTable(splitCsv(text, detectDelimiter(firstLineOf(text))), limit);
-}
-
-/** Значение ячейки xlsx текстом: формулы, ссылки и форматированный текст — тоже текст. */
-function cellToText(value: CellValue): string {
+/**
+ * Запись JSON плоским набором колонок. Вложенный объект разворачивается через
+ * точку (`org.inn`), массив — через индекс (`tags.0`): колонка обязана быть
+ * адресуемой именем, а имя — говорить, откуда значение взялось.
+ */
+function flatten(value: unknown, path: string, depth: number, into: Map<string, string>): void {
 	if (value === null || value === undefined) {
-		return '';
-	}
+		into.set(path, '');
 
-	if (value instanceof Date) {
-		// Дата в выгрузке — это календарный день; время в ней всегда 00:00.
-		return value.toISOString().slice(0, 10);
+		return;
 	}
 
 	if (typeof value === 'object') {
-		if ('richText' in value) {
-			return value.richText
-				.map((part) => part.text)
-				.join('')
-				.trim();
+		if (depth >= MAX_STAT_JSON_DEPTH) {
+			throw new ValidationError('JSON вложен слишком глубоко', [
+				`Колонка «${path}» лежит глубже ${MAX_STAT_JSON_DEPTH} уровней`,
+				'Разложите записи в плоский список: колонка — это одно значение'
+			]);
 		}
 
-		if ('formula' in value || 'sharedFormula' in value) {
-			return cellToText(value.result ?? null);
+		const entries: [string, unknown][] = Array.isArray(value)
+			? value.map((item, index) => [String(index), item])
+			: Object.entries(value);
+
+		// Пустой объект — это пустое значение, а не отсутствие колонки: колонку
+		// в шапке он всё-таки занимает. Пустая же запись целиком (`path` ещё
+		// пуст) колонок не приносит — это строка, в которой ничего не заполнено.
+		if (entries.length === 0) {
+			if (path !== '') {
+				into.set(path, '');
+			}
+
+			return;
 		}
 
-		if ('text' in value) {
-			return String(value.text).trim();
+		for (const [key, item] of entries) {
+			flatten(item, path === '' ? key : `${path}.${key}`, depth + 1, into);
 		}
 
-		if ('error' in value) {
-			// Ошибка формулы — это не значение: строка получит претензию на
-			// разборе, а не молча превратится в текст «#DIV/0!».
-			return '';
-		}
+		return;
 	}
 
-	return String(value).trim();
+	into.set(path, typeof value === 'string' ? value.trim() : String(value));
 }
 
-export async function parseXlsx(bytes: Uint8Array, limit: number): Promise<SheetTable> {
-	const workbook = new ExcelJS.Workbook();
-
-	try {
-		// `load` объявлен через собственный `Buffer extends ArrayBuffer`, поэтому
-		// содержимое передаётся отдельным буфером: копия здесь дешевле, чем
-		// приведение мимо объявлений библиотеки.
-		await workbook.xlsx.load(bytes.slice().buffer as ArrayBuffer);
-	} catch (cause) {
-		throw new ValidationError('Файл не читается как книга XLSX', [String(cause)]);
-	}
-
-	const sheet = workbook.worksheets[0];
-
-	if (sheet === undefined) {
-		throw new ValidationError('В книге нет ни одного листа', [
-			'Данные берутся с первого листа книги'
+function flattenRecord(record: unknown, origin: number, fileName: string): Map<string, string> {
+	if (record === null || typeof record !== 'object' || Array.isArray(record)) {
+		throw new ValidationError(`В файле «${fileName}» есть запись без колонок`, [
+			`Элемент ${origin} — ${record === null ? 'null' : Array.isArray(record) ? 'массив' : typeof record}, а ждём объект «колонка: значение»`
 		]);
 	}
 
-	const rows: string[][] = [];
+	const values = new Map<string, string>();
 
-	sheet.eachRow({ includeEmpty: false }, (row) => {
-		const cells: string[] = [];
+	flatten(record, '', 0, values);
 
-		// `eachCell` пропускает пустые ячейки, а место колонки значимо: разбор
-		// идёт по номеру столбца, иначе пропуск в середине сдвинул бы всё вправо.
-		for (let column = 1; column <= sheet.columnCount; column += 1) {
-			cells.push(cellToText(row.getCell(column).value));
-		}
-
-		rows.push(cells);
-	});
-
-	return toTable(rows, limit);
+	return values;
 }
 
-export async function readTable(
-	format: StatFileFormat,
+/** Сколько предупреждений о разных наборах ключей показываем. */
+const MAX_KEY_WARNINGS = 5;
+
+/**
+ * Колонки JSON: ключи всех записей в порядке первой встречи и их имена в шапке.
+ *
+ * Имя и ключ разведены, потому что имя колонки может оказаться пустым (`{"": 1}`
+ * — законный JSON), а колонка обязана быть адресуемой; значения при этом
+ * достаются по исходному ключу.
+ *
+ * Разный набор ключей — не отказ: выгрузка, где у части записей нет
+ * необязательного поля, — обычное дело, и терять из-за неё весь файл нельзя.
+ * Но и молчать об этом нельзя: пустая колонка у половины строк объясняется
+ * именно этим.
+ */
+function jsonColumns(
+	records: readonly Map<string, string>[],
+	warnings: string[]
+): { keys: string[]; headers: string[] } {
+	const keys: string[] = [];
+	const seen = new Set<string>();
+
+	for (const record of records) {
+		for (const key of record.keys()) {
+			if (!seen.has(key)) {
+				seen.add(key);
+				keys.push(key);
+			}
+		}
+	}
+
+	const headers = normalizeHeaders(keys);
+	const reported = new Set<string>();
+
+	for (const [index, record] of records.entries()) {
+		keys.forEach((key, column) => {
+			if (record.has(key) || reported.has(key)) {
+				return;
+			}
+
+			reported.add(key);
+
+			if (reported.size <= MAX_KEY_WARNINGS) {
+				warnings.push(
+					`Колонка «${headers[column]}» есть не у всех записей: в элементе ${index} её нет. Значение останется пустым.`
+				);
+			}
+		});
+	}
+
+	if (reported.size > MAX_KEY_WARNINGS) {
+		warnings.push(`И ещё ${reported.size - MAX_KEY_WARNINGS} колонок есть не у всех записей.`);
+	}
+
+	return { keys, headers };
+}
+
+function readJsonTable(fileName: string, bytes: Uint8Array, limit: number): StatTable {
+	// Кодировку определяет тот же модуль, что и у таблиц: JSON из чужой системы
+	// приезжает и в windows-1251, и с меткой порядка байтов.
+	const { text, encoding } = decodeText(bytes, fileName);
+	let parsed: unknown;
+
+	try {
+		parsed = JSON.parse(text);
+	} catch (cause) {
+		throw new ValidationError(`Файл «${fileName}» не разбирается как JSON`, [
+			'Проверьте файл: лишняя запятая в конце списка или одинарные кавычки — самое частое',
+			String(cause instanceof Error ? cause.message : cause)
+		]);
+	}
+
+	const file: StatFileSummary = {
+		fileName,
+		format: 'json',
+		encoding,
+		delimiter: null,
+		sheetName: null,
+		sheetNames: []
+	};
+
+	const records = jsonRecords(parsed, fileName);
+	const warnings: string[] = [];
+
+	if (records.length === 0) {
+		throw new ValidationError('В файле нет ни одной строки', [
+			'Список записей пуст, и сопоставлять нечего'
+		]);
+	}
+
+	// Граница по строкам проверяется до разворота записей: разворачивать файл,
+	// который всё равно не примем, незачем.
+	assertRowsFit(records.length);
+
+	// Разворачиваются все записи, а не только те, что попадут в превью: шапка
+	// обязана быть одной и той же и на сопоставлении, и на разборе файла целиком.
+	const values = records.map((record, index) => flattenRecord(record, index, fileName));
+	const { keys, headers } = jsonColumns(values, warnings);
+
+	assertColumnsFit(headers);
+
+	const rows = values.slice(0, limit).map((record, index) => ({
+		origin: index,
+		cells: keys.map((key) => record.get(key) ?? '')
+	}));
+
+	return { file, headers, rows, totalRows: records.length, warnings };
+}
+
+/**
+ * Прочитать файл снимка. Формат определяется по содержимому: расширение и тип
+ * из браузера выбирает человек, и решать по ним значит разбирать файл не тем
+ * кодом.
+ */
+export function readStatTable(
+	fileName: string,
 	bytes: Uint8Array,
 	limit = MAX_STAT_FILE_ROWS
-): Promise<SheetTable> {
-	return format === 'xlsx' ? parseXlsx(bytes, limit) : parseCsv(bytes, limit);
+): StatTable {
+	return looksLikeJson(bytes)
+		? readJsonTable(fileName, bytes, limit)
+		: readSheetTable(fileName, bytes, limit);
 }
 
 /**

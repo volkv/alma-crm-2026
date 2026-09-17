@@ -71,10 +71,14 @@ function decodeStrict(bytes: Uint8Array, encoding: TextEncoding): string | null 
 }
 
 /**
- * Текст файла и кодировка, в которой он записан. Бросает `unknown_format`,
- * если содержимое оказалось двоичным.
+ * Текст файла и кодировка, в которой он записан, или `null`, если содержимое
+ * оказалось двоичным.
+ *
+ * Отдельно от `decodeText` затем, что «это не текст» — не всегда отказ: тот,
+ * кто выясняет тип принесённого файла, спрашивает именно так и ответ «нет»
+ * обрабатывает сам.
  */
-export function decodeText(bytes: Uint8Array, fileName: string): DecodedText {
+export function decodeTextOrNull(bytes: Uint8Array): DecodedText | null {
 	const bom = bomAt(bytes);
 	const encoding = bom?.encoding ?? 'utf-8';
 	const body = bom === undefined ? bytes : bytes.subarray(bom.bytes.length);
@@ -88,10 +92,7 @@ export function decodeText(bytes: Uint8Array, fileName: string): DecodedText {
 			: { text: strict, encoding };
 
 	if (decoded.text === null || BINARY_MARKERS.test(decoded.text)) {
-		throw new SpreadsheetError('unknown_format', `Файл «${fileName}» не похож на таблицу`, [
-			'Принимаем книги XLS и XLSX и текстовые файлы CSV',
-			'Если файл выгружен из другой системы, сохраните его как CSV или XLSX'
-		]);
+		return null;
 	}
 
 	// BOM в начале строки — это не данные: без него первая колонка называлась бы
@@ -101,6 +102,23 @@ export function decodeText(bytes: Uint8Array, fileName: string): DecodedText {
 		encoding: decoded.encoding,
 		bom: bom !== undefined
 	};
+}
+
+/**
+ * Текст файла и кодировка, в которой он записан. Бросает `unknown_format`,
+ * если содержимое оказалось двоичным.
+ */
+export function decodeText(bytes: Uint8Array, fileName: string): DecodedText {
+	const decoded = decodeTextOrNull(bytes);
+
+	if (decoded === null) {
+		throw new SpreadsheetError('unknown_format', `Файл «${fileName}» не похож на таблицу`, [
+			'Принимаем книги XLS и XLSX и текстовые файлы CSV',
+			'Если файл выгружен из другой системы, сохраните его как CSV или XLSX'
+		]);
+	}
+
+	return decoded;
 }
 
 /** Первая непустая строка: по ней считается разделитель. */

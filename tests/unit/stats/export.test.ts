@@ -114,8 +114,8 @@ async function readReport(view: StatDashboardView = VIEW): Promise<ExcelJS.Workb
 	const report = await buildStatsReport(view, DAY);
 	const workbook = new ExcelJS.Workbook();
 
-	// Так же, как читает книгу импорт: у exceljs собственный `Buffer extends
-	// ArrayBuffer`, и содержимое передаётся отдельным буфером.
+	// У exceljs собственный `Buffer extends ArrayBuffer`, поэтому содержимое
+	// передаётся отдельным буфером.
 	await workbook.xlsx.load(report.body.slice().buffer as ArrayBuffer);
 
 	return workbook;
