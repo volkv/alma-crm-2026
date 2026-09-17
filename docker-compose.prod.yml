@@ -214,6 +214,12 @@ services:
     environment: !override
       ADDRESS_HEADER: X-Forwarded-For
       XFF_DEPTH: '1'
+      # The directory answers the browser at its public address through nginx;
+      # the app asks it from inside the network. The path has to match
+      # KC_HTTP_RELATIVE_PATH of Keycloak below, or the request lands in the
+      # container's root. `iss` is still checked against OIDC_ISSUER_URL from
+      # `.env` — the public name.
+      OIDC_INTERNAL_URL: http://keycloak:8080/auth
       S3_ENDPOINT: http://minio:9000
       S3_REGION: us-east-1
       S3_BUCKET: lct-documents

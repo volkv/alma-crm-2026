@@ -42,12 +42,78 @@ export type IdentityClaims = {
  */
 let discovered: Promise<oauth.AuthorizationServer> | undefined;
 
+/**
+ * Адрес, по которому каталог знает сам себя, — и адрес, по которому до него
+ * достаёт сервер, — разные вещи.
+ *
+ * Браузер ходит к каталогу по публичному адресу, и этим же адресом каталог
+ * подписывается в `iss` каждого токена и в собственных метаданных. Сервер из
+ * контейнера туда может и не достать: в стеке приложение и каталог стоят в
+ * одной сети, и опубликованный порт для них — чужой адрес. Поэтому серверные
+ * запросы (метаданные, ключи подписи, обмен кода) переносятся на
+ * `OIDC_INTERNAL_URL`, а проверка `iss` остаётся по публичному: подменять то,
+ * чем токен подписан, нельзя ни при каких удобствах.
+ *
+ * Переменная необязательна: где приложение достаёт каталог по тому же адресу,
+ * что и человек, переносить нечего.
+ */
+export function rebaseEndpoint(endpoint: string, publicBase: string, internalBase: string): string {
+	if (!endpoint.startsWith(publicBase)) {
+		// Метаданные разошлись с настройкой: каталог называет себя не тем
+		// адресом, который объявлен публичным, и подставить внутренний адрес
+		// не к чему. Молчать здесь нельзя — вход упрётся в это позже и непонятно.
+		throw new Error(
+			`Адрес каталога «${endpoint}» не начинается с публичного «${publicBase}»: проверьте OIDC_PUBLIC_URL и KC_HOSTNAME`
+		);
+	}
+
+	return `${internalBase}${endpoint.slice(publicBase.length)}`;
+}
+
+/** Тот же перенос, но по текущей конфигурации; без `OIDC_INTERNAL_URL` — тождество. */
+function toInternal(endpoint: string): string {
+	const { OIDC_PUBLIC_URL, OIDC_INTERNAL_URL } = getConfig();
+
+	return OIDC_INTERNAL_URL === undefined
+		? endpoint
+		: rebaseEndpoint(endpoint, OIDC_PUBLIC_URL, OIDC_INTERNAL_URL);
+}
+
+/**
+ * Адреса, по которым ходит **сервер**. Адрес авторизации и адрес выхода в этот
+ * список не входят: по ним идёт браузер, и они обязаны остаться публичными.
+ */
+const SERVER_ENDPOINTS = [
+	'token_endpoint',
+	'jwks_uri',
+	'userinfo_endpoint',
+	'introspection_endpoint',
+	'revocation_endpoint'
+] as const;
+
 async function authorizationServer(): Promise<oauth.AuthorizationServer> {
 	discovered ??= (async () => {
 		const issuer = new URL(getConfig().OIDC_ISSUER_URL);
-		const response = await oauth.discoveryRequest(issuer, { algorithm: 'oidc', ...transport() });
 
-		return oauth.processDiscoveryResponse(issuer, response);
+		// Метаданные читаются по внутреннему адресу, а сверяются с публичным
+		// именем: `processDiscoveryResponse` требует, чтобы `issuer` в ответе
+		// совпал с ожидаемым, и это единственная защита от чужого каталога.
+		const response = await fetch(
+			toInternal(`${issuer.href.replace(/\/$/, '')}/.well-known/openid-configuration`),
+			{ headers: { accept: 'application/json' } }
+		);
+
+		const server = await oauth.processDiscoveryResponse(issuer, response);
+
+		return {
+			...server,
+			...Object.fromEntries(
+				SERVER_ENDPOINTS.filter((name) => typeof server[name] === 'string').map((name) => [
+					name,
+					toInternal(server[name] as string)
+				])
+			)
+		};
 	})();
 
 	try {
@@ -65,15 +131,16 @@ async function authorizationServer(): Promise<oauth.AuthorizationServer> {
  *
  * Библиотека по умолчанию отказывается ходить куда-либо, кроме `https`, и это
  * верное умолчание: токен, уехавший по открытому каналу, — это чужая сессия.
- * Исключение делается ровно тогда, когда развёртывание само объявило адрес
- * каталога незашифрованным (`OIDC_ISSUER_URL` начинается с `http://`): так
- * работает локальный стек, прогон e2e и контур за прокси, который TLS уже снял.
- * Подставить `http` снаружи нельзя — адрес приходит из конфигурации.
+ * Исключение делается ровно тогда, когда развёртывание само объявило незашифрованным
+ * тот адрес, по которому **ходит сервер**: внутри сети стека TLS не нужен и
+ * негде взять, а снаружи от неё этот адрес не виден. Подставить `http` извне
+ * нельзя — адрес приходит из конфигурации.
  */
 function transport(): { [oauth.allowInsecureRequests]?: boolean } {
-	return getConfig().OIDC_ISSUER_URL.startsWith('http://')
-		? { [oauth.allowInsecureRequests]: true }
-		: {};
+	const { OIDC_ISSUER_URL, OIDC_INTERNAL_URL } = getConfig();
+	const serverFacing = OIDC_INTERNAL_URL ?? OIDC_ISSUER_URL;
+
+	return serverFacing.startsWith('http://') ? { [oauth.allowInsecureRequests]: true } : {};
 }
 
 function client(): oauth.Client {
@@ -102,11 +169,9 @@ export function newLoginAttempt(): LoginAttempt {
 /**
  * Куда отправить браузер, чтобы человек назвался каталогу.
  *
- * Адрес собирается из метаданных realm, но происхождение берётся из
- * `OIDC_PUBLIC_URL`: метаданные приходят от имени, которым каталог знает сам
- * себя (`keycloak:8080` внутри сети стека), а идти по ссылке браузеру человека.
- * Путь, включая относительный путь установки Keycloak, при этом сохраняется —
- * подменяется ровно происхождение.
+ * Адрес берётся из метаданных как есть: каталог называет себя публичным именем
+ * (`KC_HOSTNAME`), им же подписывает токены, и по нему же идёт браузер. На
+ * внутренний адрес переносятся только серверные запросы — см. `toInternal`.
  */
 export async function authorizationUrl(
 	attempt: LoginAttempt,
@@ -118,7 +183,7 @@ export async function authorizationUrl(
 		throw new Error('В метаданных realm нет адреса авторизации');
 	}
 
-	const url = toPublicUrl(server.authorization_endpoint);
+	const url = new URL(server.authorization_endpoint);
 
 	url.searchParams.set('client_id', getConfig().OIDC_CLIENT_ID);
 	url.searchParams.set('redirect_uri', redirectUri);
@@ -133,17 +198,6 @@ export async function authorizationUrl(
 	url.searchParams.set('code_challenge_method', 'S256');
 
 	return url.toString();
-}
-
-/** Адрес каталога, переложенный на то происхождение, по которому к нему ходит браузер. */
-function toPublicUrl(endpoint: string): URL {
-	const url = new URL(endpoint);
-	const publicOrigin = new URL(getConfig().OIDC_PUBLIC_URL);
-
-	url.protocol = publicOrigin.protocol;
-	url.host = publicOrigin.host;
-
-	return url;
 }
 
 /**
@@ -240,7 +294,7 @@ export async function endSessionUrl(input: {
 		return null;
 	}
 
-	const url = toPublicUrl(server.end_session_endpoint);
+	const url = new URL(server.end_session_endpoint);
 
 	url.searchParams.set('id_token_hint', input.idToken);
 	url.searchParams.set('post_logout_redirect_uri', input.returnTo);

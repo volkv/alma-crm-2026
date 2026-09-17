@@ -88,7 +88,12 @@ describe('листы книги', () => {
 describe('JSON', () => {
 	const payload = JSON.parse(reportJson(VIEW).toString('utf8')) as {
 		schemaVersion: number;
-		rows: { interactionId: string; stageEntryId: string | null; values: Record<string, unknown> }[];
+		rows: {
+			rowKey: string;
+			interactionId: string;
+			stageEntryId: string | null;
+			values: Record<string, unknown>;
+		}[];
 	};
 
 	it('несёт версию схемы и все строки', () => {
@@ -105,7 +110,8 @@ describe('JSON', () => {
 		});
 	});
 
-	it('держит устойчивый идентификатор записи о стадии', () => {
+	it('держит устойчивое имя строки и идентификатор записи о стадии', () => {
+		expect(payload.rows.map((row) => row.rowKey)).toStrictEqual(VIEW.rows.map((row) => row.rowKey));
 		expect(payload.rows[0].stageEntryId).toBe('22222222-2222-4222-8222-222222222222');
 		expect(payload.rows[1].stageEntryId).toBeNull();
 	});
@@ -135,6 +141,7 @@ describe('страница на печать', () => {
 			sampleReportView({
 				rows: [
 					{
+						rowKey: '44444444-4444-4444-8444-444444444444',
 						interactionId: '44444444-4444-4444-8444-444444444444',
 						stageEntryId: null,
 						cells: [

@@ -21,10 +21,13 @@ const OWN_ORGANIZATION = { id: seedId('organization', 'bit'), name: 'БИТ' };
 const OTHER_ORGANIZATION = { id: seedId('organization', 'pupi'), name: 'ПУПИ' };
 
 managerTest('менеджер видит свои вузы и не видит чужих', async ({ page }) => {
-	await page.goto('/organizations');
-
-	// Ячейка названия несёт ещё и уровень образования, поэтому ищем строку.
+	// Отбор по названию, а не первая страница списка: база прогона живёт дольше
+	// прогона, и искомый вуз на ней уезжает на вторую страницу. Ячейка названия
+	// несёт ещё и уровень образования, поэтому ищем строку.
+	await page.goto(`/organizations?q=${encodeURIComponent(OWN_ORGANIZATION.name)}`);
 	await expect(page.getByRole('row').filter({ hasText: OWN_ORGANIZATION.name })).toHaveCount(1);
+
+	await page.goto(`/organizations?q=${encodeURIComponent(OTHER_ORGANIZATION.name)}`);
 	await expect(page.getByRole('row').filter({ hasText: OTHER_ORGANIZATION.name })).toHaveCount(0);
 });
 
@@ -47,10 +50,13 @@ managerTest('менеджеру нечем назначить ответстве
 });
 
 leadTest('руководитель видит вузы обоих своих менеджеров', async ({ page }) => {
-	await page.goto('/organizations');
+	// Отбор по названию, а не первая страница списка: база прогона живёт дольше
+	// прогона, и искомый вуз на ней уезжает на вторую страницу.
+	for (const name of [OWN_ORGANIZATION.name, OTHER_ORGANIZATION.name]) {
+		await page.goto(`/organizations?q=${encodeURIComponent(name)}`);
 
-	await expect(page.getByRole('row').filter({ hasText: OWN_ORGANIZATION.name })).toHaveCount(1);
-	await expect(page.getByRole('row').filter({ hasText: OTHER_ORGANIZATION.name })).toHaveCount(1);
+		await expect(page.getByRole('row').filter({ hasText: name })).toHaveCount(1);
+	}
 });
 
 /**

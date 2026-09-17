@@ -65,7 +65,7 @@
 				</Table.Row>
 			</Table.Header>
 			<Table.Body>
-				{#each rows as row, index (`${row.interactionId}-${row.stageEntryId ?? index}`)}
+				{#each rows as row (row.rowKey)}
 					<Table.Row data-row={row.interactionId}>
 						{#each row.cells as cell, position (columns[position].key)}
 							<Table.Cell class={columns[position].kind === 'number' ? 'text-right' : undefined}>

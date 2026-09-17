@@ -46,6 +46,7 @@ export function sampleReportView(overrides: Partial<ReportView> = {}): ReportVie
 		},
 		rows: [
 			{
+				rowKey: '11111111-1111-4111-8111-111111111111',
 				interactionId: '11111111-1111-4111-8111-111111111111',
 				stageEntryId: '22222222-2222-4222-8222-222222222222',
 				cells: [
@@ -60,6 +61,7 @@ export function sampleReportView(overrides: Partial<ReportView> = {}): ReportVie
 				]
 			},
 			{
+				rowKey: '33333333-3333-4333-8333-333333333333',
 				interactionId: '33333333-3333-4333-8333-333333333333',
 				stageEntryId: null,
 				cells: [

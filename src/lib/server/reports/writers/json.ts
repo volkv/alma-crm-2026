@@ -42,6 +42,7 @@ export function reportJson(view: ReportView): Buffer {
 		totals: view.totals,
 		charts: view.charts,
 		rows: view.rows.map((row) => ({
+			rowKey: row.rowKey,
 			interactionId: row.interactionId,
 			stageEntryId: row.stageEntryId,
 			url: row.cells.find((cell) => cell.kind === 'link')?.url ?? null,

@@ -63,6 +63,14 @@ services:
       KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:-admin}
       # Health endpoints answer on the management port 9000 and are off by default.
       KC_HEALTH_ENABLED: 'true'
+      # The address Keycloak knows itself by. Pinned on purpose: `start-dev`
+      # otherwise takes the hostname from the request, so a browser coming to
+      # the published port gets `iss=http://localhost:58080/...` while the app
+      # asking from inside the network gets `iss=http://keycloak:8080/...` — and
+      # the token then fails the `iss` check it is supposed to pass. One public
+      # name, and server-side calls go to `keycloak:8080` through
+      # OIDC_INTERNAL_URL of the app.
+      KC_HOSTNAME: http://localhost:58080
       # Placeholders of the realm file: `${VAR:default}` is expanded at import
       # time from the environment of this container (keycloak/README.md).
       #
@@ -261,8 +269,12 @@ services:
       # inside the network that is the container name. `OIDC_PUBLIC_URL` is where
       # the browser is sent instead: a person reaches Keycloak by the published
       # port, not by its name in the network.
-      OIDC_ISSUER_URL: http://keycloak:8080/realms/lct
+      OIDC_ISSUER_URL: http://localhost:58080/realms/lct
       OIDC_PUBLIC_URL: http://localhost:58080
+      # Inside the network the published port is somebody else's address, so
+      # metadata, signing keys and the code exchange go straight to the
+      # container; `iss` stays checked against the public name above.
+      OIDC_INTERNAL_URL: http://keycloak:8080
       OIDC_CLIENT_ID: lct-crm
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-lct-crm-dev-secret}
       # Exchange with the customer's systems. In the local stack both of them are

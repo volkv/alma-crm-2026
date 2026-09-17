@@ -1,4 +1,7 @@
 import { stat } from 'node:fs/promises';
+import postgres from 'postgres';
+import type { Page } from '@playwright/test';
+import type { StageSnapshot } from '$lib/contracts/interactions';
 import { expect, test } from './fixtures';
 import { waitForHydration } from './helpers/hydration';
 
@@ -15,6 +18,244 @@ import { waitForHydration } from './helpers/hydration';
 
 const SNAPSHOT_RULE = 'Каждое взаимодействие показано в той стадии';
 const MOVEMENT_RULE = 'Каждая строка — один переход';
+
+/**
+ * Своя группа процесса с одной записью: в ней взаимодействие и начинается, и
+ * уходит со своей первой стадии внутри одного периода. Это и есть выборка, на
+ * которой срез и движение обязаны показать разные числа — одно взаимодействие
+ * против двух событий.
+ *
+ * Данные готовятся прямо в базе: сервисы приложения Playwright недоступны, а
+ * историю за сорок дней через интерфейс не сделать — движок ставит `now()`.
+ * Группа своя, а не `b2b`: в ней действует процесс стенда, и подменять его
+ * ради проверки экрана незачем.
+ */
+const GROUP_KEY = 'e2e-reports';
+
+const STAGES = [
+	{ key: 'intake', name: 'Приём заявки', category: 'contact', slaDays: 7 },
+	{ key: 'work', name: 'Работа по заявке', category: 'documents', slaDays: 30 }
+] as const;
+
+const SEEDED = {
+	organizationId: '3e2e0001-0000-4000-8000-000000000001',
+	interactionId: '3e2e0002-0000-4000-8000-000000000001',
+	partyId: '3e2e0003-0000-4000-8000-000000000001',
+	firstEntryId: '3e2e0004-0000-4000-8000-000000000001',
+	secondEntryId: '3e2e0004-0000-4000-8000-000000000002',
+	title: 'E2E-ОТЧЁТЫ Заявка одного периода',
+	enteredDaysAgo: 40,
+	movedDaysAgo: 20,
+	periodDaysAgo: 60
+};
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/** Смещение Москвы постоянное, поэтому календарный день — это арифметика. */
+const MOSCOW_OFFSET_MS = 3 * 60 * 60 * 1000;
+
+function daysAgo(days: number): Date {
+	return new Date(Date.now() - days * DAY_MS);
+}
+
+function moscowDay(value: Date): string {
+	return new Date(value.getTime() + MOSCOW_OFFSET_MS).toISOString().slice(0, 10);
+}
+
+function databaseUrl(): string {
+	const server = test.info().config.webServer;
+	const url = (Array.isArray(server) ? server[0] : server)?.env?.DATABASE_URL;
+
+	if (typeof url !== 'string') {
+		throw new Error('playwright.config.ts must set DATABASE_URL for the web server');
+	}
+
+	return url;
+}
+
+/**
+ * Слепок стадии объектом, а не строкой: драйвер сам кладёт объект в `jsonb`, а
+ * готовую строку сохранит как строку JSON — и отчёт не найдёт в ней ключа.
+ */
+function snapshot(index: number): StageSnapshot {
+	const stage = STAGES[index];
+
+	return {
+		key: stage.key,
+		name: stage.name,
+		position: index + 1,
+		category: stage.category,
+		slaDays: stage.slaDays,
+		staleAfterDays: null,
+		requiresResult: false,
+		requiresConfirmation: false,
+		requiresLmsData: false,
+		isFinal: index + 1 === STAGES.length,
+		checklist: []
+	};
+}
+
+/** Копилка клиентских исключений вкладки: повторный ключ списка — это оно. */
+function clientErrors(page: Page): string[] {
+	const messages: string[] = [];
+
+	page.on('pageerror', (error) => messages.push(error.message));
+
+	return messages;
+}
+
+async function seed(): Promise<void> {
+	const sql = postgres(databaseUrl(), { max: 1, connect_timeout: 10 });
+
+	try {
+		await sql.begin(async (tx) => {
+			// Файлы прогона идут параллельно: редакцию заводит кто-то один.
+			await tx`select pg_advisory_xact_lock(918273699)`;
+
+			await tx`
+				insert into organizations ${tx({
+					id: SEEDED.organizationId,
+					kind: 'educational_institution',
+					education_level: 'vo',
+					legal_name: 'E2E-ОТЧЁТЫ Университет',
+					short_name: 'E2E-ОТЧЁТЫ Университет'
+				})}
+				on conflict (id) do nothing
+			`;
+
+			// Место в списке считается от занятых, а не берётся числом: группы
+			// заводят и миграции, и соседние прогоны, и фиксированная позиция
+			// рано или поздно совпадёт с чужой.
+			await tx`
+				insert into process_groups (key, name, position)
+				select ${GROUP_KEY}, 'Проверка раздела отчётов', coalesce(max(position), 0) + 1
+				from process_groups
+				on conflict (key) do nothing
+			`;
+
+			const [group] = await tx<{ id: string; active_revision_id: string | null }[]>`
+				select id, active_revision_id from process_groups where key = ${GROUP_KEY}
+			`;
+
+			let revisionId = group.active_revision_id;
+
+			if (revisionId === null) {
+				const [revision] = await tx<{ id: string }[]>`
+					insert into process_revisions ${tx({
+						group_id: group.id,
+						version: 1,
+						name: 'Процесс проверки отчётов',
+						published_at: new Date()
+					})}
+					returning id
+				`;
+
+				revisionId = revision.id;
+
+				for (const [index, stage] of STAGES.entries()) {
+					await tx`
+						insert into stages ${tx({
+							revision_id: revisionId,
+							position: index + 1,
+							key: stage.key,
+							name: stage.name,
+							category: stage.category,
+							sla_days: stage.slaDays,
+							is_final: index + 1 === STAGES.length
+						})}
+					`;
+
+					await tx`
+						insert into process_stage_keys ${tx({ group_id: group.id, key: stage.key })}
+						on conflict do nothing
+					`;
+				}
+
+				await tx`
+					update process_groups set active_revision_id = ${revisionId} where id = ${group.id}
+				`;
+			}
+
+			const stageRows = await tx<{ id: string; key: string }[]>`
+				select id, key from stages where revision_id = ${revisionId}
+			`;
+			const stageIds = new Map(stageRows.map((row) => [row.key, row.id]));
+
+			// Тот же выбор, что делает демонстрационный вход: запись заводится на
+			// учётную запись, под которой тест и войдёт.
+			const [manager] = await tx<{ id: string }[]>`
+				select id from users where role_id = 'manager' and is_demo and is_active
+				order by email limit 1
+			`;
+
+			if (manager === undefined) {
+				throw new Error('Демонстрационная учётная запись менеджера не заведена');
+			}
+
+			await tx`
+				insert into interactions ${tx({
+					id: SEEDED.interactionId,
+					title: SEEDED.title,
+					process_group_id: group.id,
+					status: 'active',
+					owner_user_id: manager.id,
+					last_activity_at: daysAgo(SEEDED.movedDaysAgo)
+				})}
+				on conflict (id) do update
+				set title = excluded.title,
+					status = excluded.status,
+					owner_user_id = excluded.owner_user_id,
+					last_activity_at = excluded.last_activity_at
+			`;
+
+			await tx`
+				insert into interaction_parties ${tx({
+					id: SEEDED.partyId,
+					interaction_id: SEEDED.interactionId,
+					organization_id: SEEDED.organizationId,
+					party_role: 'educational_institution',
+					is_primary: true
+				})}
+				on conflict (id) do nothing
+			`;
+
+			// Первая запись: и вход, и уход с неё внутри периода — два события
+			// движения на одну запись о стадии.
+			await tx`
+				insert into stage_entries ${tx({
+					id: SEEDED.firstEntryId,
+					interaction_id: SEEDED.interactionId,
+					stage_id: stageIds.get(STAGES[0].key) ?? null,
+					stage_snapshot: snapshot(0),
+					entered_at: daysAgo(SEEDED.enteredDaysAgo),
+					left_at: daysAgo(SEEDED.movedDaysAgo),
+					outcome: 'completed',
+					responsible_user_id: manager.id
+				})}
+				on conflict (id) do update
+				set entered_at = excluded.entered_at,
+					left_at = excluded.left_at,
+					outcome = excluded.outcome
+			`;
+
+			await tx`
+				insert into stage_entries ${tx({
+					id: SEEDED.secondEntryId,
+					interaction_id: SEEDED.interactionId,
+					stage_id: stageIds.get(STAGES[1].key) ?? null,
+					stage_snapshot: snapshot(1),
+					entered_at: daysAgo(SEEDED.movedDaysAgo),
+					responsible_user_id: manager.id
+				})}
+				on conflict (id) do update
+				set entered_at = excluded.entered_at,
+					left_at = null
+			`;
+		});
+	} finally {
+		await sql.end();
+	}
+}
 
 test('раздел открывается срезом и объясняет правило словами', async ({ page }) => {
 	await page.goto('/reports');
@@ -152,4 +393,35 @@ test('клик по столбцу воронки добавляет фильт�
 	await page.mouse.click(bar.target!.x, bar.target!.y);
 
 	await expect(page).toHaveURL(/stage=[a-z_]+/);
+});
+
+test('переключение режима пересчитывает итоги на той же выборке', async ({ page }) => {
+	await seed();
+
+	const errors = clientErrors(page);
+	const period = `from=${moscowDay(daysAgo(SEEDED.periodDaysAgo))}&to=${moscowDay(new Date())}`;
+	const address = `/reports?mode=snapshot&group=${GROUP_KEY}&${period}`;
+
+	await page.goto(address);
+	await waitForHydration(page);
+
+	// В группе одна запись: в срезе это одна строка, а в движении — два события,
+	// начало работы и уход с первой стадии. Обе строки опираются на одну запись
+	// о стадии, и различает их только имя строки.
+	await expect(page.getByTestId('report-row-count')).toHaveText('1');
+	await expect(page.getByText(SNAPSHOT_RULE)).toBeVisible();
+
+	await page.getByTestId('report-mode-movement').click();
+
+	await expect(page).toHaveURL(/mode=movement/);
+	await expect(page.getByText(MOVEMENT_RULE)).toBeVisible();
+	// Числа прошлого режима здесь и появлялись: список с повторяющимся ключом
+	// переставал обновляться, а выгрузка считала верно.
+	await expect(page.getByTestId('report-row-count')).toHaveText('2');
+	await expect(page.locator('[data-slot="report-table"] tbody tr')).toHaveCount(2);
+
+	await page.getByTestId('report-mode-snapshot').click();
+
+	await expect(page.getByTestId('report-row-count')).toHaveText('1');
+	expect(errors).toStrictEqual([]);
 });

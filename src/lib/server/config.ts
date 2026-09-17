@@ -35,111 +35,146 @@ function exchangeUrl(withExternalId: boolean) {
 		.transform((value) => (value === '' ? null : value));
 }
 
-const configSchema = z.object({
-	NODE_ENV: z.enum(['development', 'test', 'production']),
-	/** postgres:// connection string for the primary database. */
-	DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
-	/** redis:// connection string for sessions, caches and queues. */
-	REDIS_URL: z.url({ protocol: /^rediss?$/ }),
-	/** Base URL of the Gotenberg service used to render documents to PDF. */
-	GOTENBERG_URL: z.url({ protocol: /^https?$/ }),
-	SMTP_HOST: z.string().min(1),
-	SMTP_PORT: z.coerce.number().int().min(1).max(65535),
-	/** Public origin of the app; adapter-node needs it to validate form posts. */
-	ORIGIN: z.url({ protocol: /^https?$/ }),
-	/**
-	 * Public demo. The sign-in page lists the three demo accounts and their
-	 * shared password, the seed fills the stand with synthetic data, sessions
-	 * opened on an account marked `is_demo` never get the permissions listed in
-	 * `demoSessionPermissions`, those accounts cannot be switched off, and the
-	 * audit log masks addresses and clients for them. Off by default is not an
-	 * option: the deployment has to say which of the two it is.
-	 */
-	DEMO_MODE: booleanFlag,
-	/**
-	 * The app sits behind a reverse proxy, so `X-Forwarded-For` and
-	 * `X-Forwarded-Proto` describe the real client. Never turn this on when the
-	 * app is reachable directly: the client would then choose its own IP for the
-	 * audit log and the rate limiter.
-	 */
-	TRUST_PROXY: booleanFlag,
-	/**
-	 * Подключения обмена (`docs/exchange-contract.md`).
-	 *
-	 * Умолчания развёртывания, а не настройки продукта: адреса чужих систем и
-	 * секрет подписи задаёт тот, кто поднимает стенд, а сотрудник правит их на
-	 * экране «Внешние системы» — сохранённое им сильнее (`integrations/settings.ts`).
-	 * Пустая строка равна «не задано»: Compose подставляет пустое значение там,
-	 * где переменной нет в `.env`, и различать эти два случая было бы различением
-	 * без разницы.
-	 */
-	EXCHANGE_CMS_INSTANCE: z.string().min(1).default('itschool-site'),
-	EXCHANGE_LMS_INSTANCE: z.string().min(1).default('moodle-itschool'),
-	/**
-	 * Адрес карточки заявки на сайте. Содержит `{externalId}` — на его место
-	 * встаёт ключ заявки: карточку адресуют её же идентификатором.
-	 */
-	EXCHANGE_CMS_STATUS_URL: exchangeUrl(true),
-	/** Адрес, по которому заводится учебная группа. */
-	EXCHANGE_LMS_GROUPS_URL: exchangeUrl(false),
-	/** Адрес веб-сервиса системы обучения: подсказка в разделе интеграций. */
-	EXCHANGE_LMS_BASE_URL: exchangeUrl(false),
-	/** Секрет подписи исходящих сообщений обмена — общий для обоих подключений. */
-	EXCHANGE_SECRET: z
-		.string()
-		.default('')
-		.transform((value) => (value === '' ? null : value)),
-	/**
-	 * S3-совместимое хранилище файлов документов (в поставке — MinIO).
-	 *
-	 * Адрес — с протоколом и портом (`http://minio:9000`), потому что своего
-	 * умолчания у S3-клиента для чужого хранилища нет. Регион MinIO не использует,
-	 * но подпись запроса без него не собирается, поэтому переменная обязательна
-	 * и здесь.
-	 */
-	S3_ENDPOINT: z.url({ protocol: /^https?$/ }),
-	S3_REGION: z.string().min(1),
-	/** Имя бакета по правилам S3: строчные буквы, цифры, дефис и точка. */
-	S3_BUCKET: z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, {
-		error: 'must be a valid S3 bucket name (3-63 chars, lowercase letters, digits, "-", ".")'
-	}),
-	S3_ACCESS_KEY: z.string().min(1),
-	S3_SECRET_KEY: z.string().min(1),
-	/**
-	 * Путь к бакету в адресе (`http://host/bucket/key`) вместо поддомена
-	 * (`http://bucket.host/key`). MinIO по адресу `http://minio:9000` понимает
-	 * только первый вариант: поддомен бакета некуда разрешать. Умолчания нет —
-	 * развёртывание обязано сказать, куда оно ходит.
-	 */
-	S3_FORCE_PATH_STYLE: booleanFlag,
-	/**
-	 * Каталог учётных записей: адрес realm целиком.
-	 *
-	 * По нему сервер читает `<issuer>/.well-known/openid-configuration` и по нему
-	 * же сверяет `iss` каждого токена — поэтому строка обязана совпадать с тем,
-	 * что каталог пишет в токен, символ в символ. Завершающий слэш такого
-	 * совпадения не переживает, и его здесь быть не должно.
-	 */
-	OIDC_ISSUER_URL: z
-		.url({ protocol: /^https?$/ })
-		.refine((value) => !value.endsWith('/'), { error: 'must not end with a slash' }),
-	/**
-	 * Адрес каталога для браузера, без пути realm.
-	 *
-	 * В стеке он отличается от `OIDC_ISSUER_URL`: сервер ходит к Keycloak по
-	 * имени внутри сети, а человек — по опубликованному порту. Адреса из
-	 * метаданных realm собраны от имени, которым каталог знает сам себя, поэтому
-	 * ссылку на страницу входа приложение перекладывает на это происхождение.
-	 */
-	OIDC_PUBLIC_URL: z.url({ protocol: /^https?$/ }),
-	/** Клиент realm, которым представляется сервер. */
-	OIDC_CLIENT_ID: z.string().min(1),
-	/**
-	 * Секрет клиента. Клиент конфиденциальный: код на токены меняет сервер, а
-	 * PKCE (`S256`) стоит сверху и закрывает перехват кода в браузере.
-	 */
-	OIDC_CLIENT_SECRET: z.string().min(1)
-});
+const configSchema = z
+	.object({
+		NODE_ENV: z.enum(['development', 'test', 'production']),
+		/** postgres:// connection string for the primary database. */
+		DATABASE_URL: z.url({ protocol: /^postgres(ql)?$/ }),
+		/** redis:// connection string for sessions, caches and queues. */
+		REDIS_URL: z.url({ protocol: /^rediss?$/ }),
+		/** Base URL of the Gotenberg service used to render documents to PDF. */
+		GOTENBERG_URL: z.url({ protocol: /^https?$/ }),
+		SMTP_HOST: z.string().min(1),
+		SMTP_PORT: z.coerce.number().int().min(1).max(65535),
+		/** Public origin of the app; adapter-node needs it to validate form posts. */
+		ORIGIN: z.url({ protocol: /^https?$/ }),
+		/**
+		 * Public demo. The sign-in page lists the three demo accounts and their
+		 * shared password, the seed fills the stand with synthetic data, sessions
+		 * opened on an account marked `is_demo` never get the permissions listed in
+		 * `demoSessionPermissions`, those accounts cannot be switched off, and the
+		 * audit log masks addresses and clients for them. Off by default is not an
+		 * option: the deployment has to say which of the two it is.
+		 */
+		DEMO_MODE: booleanFlag,
+		/**
+		 * The app sits behind a reverse proxy, so `X-Forwarded-For` and
+		 * `X-Forwarded-Proto` describe the real client. Never turn this on when the
+		 * app is reachable directly: the client would then choose its own IP for the
+		 * audit log and the rate limiter.
+		 */
+		TRUST_PROXY: booleanFlag,
+		/**
+		 * Подключения обмена (`docs/exchange-contract.md`).
+		 *
+		 * Умолчания развёртывания, а не настройки продукта: адреса чужих систем и
+		 * секрет подписи задаёт тот, кто поднимает стенд, а сотрудник правит их на
+		 * экране «Внешние системы» — сохранённое им сильнее (`integrations/settings.ts`).
+		 * Пустая строка равна «не задано»: Compose подставляет пустое значение там,
+		 * где переменной нет в `.env`, и различать эти два случая было бы различением
+		 * без разницы.
+		 */
+		EXCHANGE_CMS_INSTANCE: z.string().min(1).default('itschool-site'),
+		EXCHANGE_LMS_INSTANCE: z.string().min(1).default('moodle-itschool'),
+		/**
+		 * Адрес карточки заявки на сайте. Содержит `{externalId}` — на его место
+		 * встаёт ключ заявки: карточку адресуют её же идентификатором.
+		 */
+		EXCHANGE_CMS_STATUS_URL: exchangeUrl(true),
+		/** Адрес, по которому заводится учебная группа. */
+		EXCHANGE_LMS_GROUPS_URL: exchangeUrl(false),
+		/** Адрес веб-сервиса системы обучения: подсказка в разделе интеграций. */
+		EXCHANGE_LMS_BASE_URL: exchangeUrl(false),
+		/** Секрет подписи исходящих сообщений обмена — общий для обоих подключений. */
+		EXCHANGE_SECRET: z
+			.string()
+			.default('')
+			.transform((value) => (value === '' ? null : value)),
+		/**
+		 * S3-совместимое хранилище файлов документов (в поставке — MinIO).
+		 *
+		 * Адрес — с протоколом и портом (`http://minio:9000`), потому что своего
+		 * умолчания у S3-клиента для чужого хранилища нет. Регион MinIO не использует,
+		 * но подпись запроса без него не собирается, поэтому переменная обязательна
+		 * и здесь.
+		 */
+		S3_ENDPOINT: z.url({ protocol: /^https?$/ }),
+		S3_REGION: z.string().min(1),
+		/** Имя бакета по правилам S3: строчные буквы, цифры, дефис и точка. */
+		S3_BUCKET: z.string().regex(/^[a-z0-9][a-z0-9.-]{1,61}[a-z0-9]$/, {
+			error: 'must be a valid S3 bucket name (3-63 chars, lowercase letters, digits, "-", ".")'
+		}),
+		S3_ACCESS_KEY: z.string().min(1),
+		S3_SECRET_KEY: z.string().min(1),
+		/**
+		 * Путь к бакету в адресе (`http://host/bucket/key`) вместо поддомена
+		 * (`http://bucket.host/key`). MinIO по адресу `http://minio:9000` понимает
+		 * только первый вариант: поддомен бакета некуда разрешать. Умолчания нет —
+		 * развёртывание обязано сказать, куда оно ходит.
+		 */
+		S3_FORCE_PATH_STYLE: booleanFlag,
+		/**
+		 * Каталог учётных записей: адрес realm целиком.
+		 *
+		 * По нему сервер читает `<issuer>/.well-known/openid-configuration` и по нему
+		 * же сверяет `iss` каждого токена — поэтому строка обязана совпадать с тем,
+		 * что каталог пишет в токен, символ в символ. Завершающий слэш такого
+		 * совпадения не переживает, и его здесь быть не должно.
+		 */
+		OIDC_ISSUER_URL: z
+			.url({ protocol: /^https?$/ })
+			.refine((value) => !value.endsWith('/'), { error: 'must not end with a slash' }),
+		/**
+		 * Публичное основание адресов каталога: всё, что он о себе рассказывает,
+		 * начинается с этой строки — и `OIDC_ISSUER_URL`, и адреса эндпоинтов в его
+		 * метаданных. Для Keycloak это `KC_HOSTNAME` вместе с относительным путём
+		 * установки (`https://<домен>/auth`), для локального стека — опубликованный
+		 * порт (`http://localhost:58080`). Завершающий слэш такого совпадения не
+		 * переживает, и его здесь быть не должно.
+		 */
+		OIDC_PUBLIC_URL: z
+			.url({ protocol: /^https?$/ })
+			.refine((value) => !value.endsWith('/'), { error: 'must not end with a slash' }),
+		/**
+		 * Адрес каталога для **серверных** запросов, если он не тот же, что для
+		 * браузера. Необязательна: где приложение достаёт каталог по тому же адресу,
+		 * что и человек, переносить нечего.
+		 *
+		 * В стеке они разные: человек приходит по опубликованному порту, а
+		 * приложение стоит в одной сети с каталогом, и опубликованный порт для него
+		 * чужой адрес. Тогда метаданные, ключи подписи и обмен кода уходят сюда, а
+		 * `iss` токена по-прежнему сверяется с `OIDC_ISSUER_URL`: подменять то, чем
+		 * токен подписан, нельзя ни при каких удобствах.
+		 *
+		 * Значение — основание, парное `OIDC_PUBLIC_URL`: с относительным путём
+		 * установки, если он есть (`http://keycloak:8080/auth`), и без завершающего
+		 * слэша.
+		 */
+		OIDC_INTERNAL_URL: z
+			.url({ protocol: /^https?$/ })
+			.refine((value) => !value.endsWith('/'), { error: 'must not end with a slash' })
+			.optional(),
+		/** Клиент realm, которым представляется сервер. */
+		OIDC_CLIENT_ID: z.string().min(1),
+		/**
+		 * Секрет клиента. Клиент конфиденциальный: код на токены меняет сервер, а
+		 * PKCE (`S256`) стоит сверху и закрывает перехват кода в браузере.
+		 */
+		OIDC_CLIENT_SECRET: z.string().min(1)
+	})
+	.superRefine((config, ctx) => {
+		// Метаданные каталога перекладываются на внутренний адрес заменой публичного
+		// основания, и работает это, только пока адрес realm с него и начинается.
+		// Проверка здесь, а не при первом входе: развёртывание обязано узнать о
+		// расхождении при старте, а не отказом в ответ на нажатие «Войти».
+		if (!config.OIDC_ISSUER_URL.startsWith(`${config.OIDC_PUBLIC_URL}/`)) {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['OIDC_ISSUER_URL'],
+				message: `must start with OIDC_PUBLIC_URL (${config.OIDC_PUBLIC_URL})`
+			});
+		}
+	});
 
 export type AppConfig = z.infer<typeof configSchema>;
 

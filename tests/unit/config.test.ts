@@ -132,4 +132,27 @@ describe('parseConfig', () => {
 			parseConfig({ ...completeEnv, OIDC_ISSUER_URL: 'http://localhost:58080/realms/lct/' })
 		).toThrowError(/OIDC_ISSUER_URL/);
 	});
+
+	it('accepts an optional internal address of the directory', () => {
+		const config = parseConfig({ ...completeEnv, OIDC_INTERNAL_URL: 'http://keycloak:8080' });
+
+		expect(config.OIDC_INTERNAL_URL).toBe('http://keycloak:8080');
+		expect(parseConfig(completeEnv).OIDC_INTERNAL_URL).toBeUndefined();
+	});
+
+	it('rejects an internal address with a trailing slash', () => {
+		// Перенос идёт склейкой оснований, и лишний слэш даёт двойной в пути.
+		expect(() =>
+			parseConfig({ ...completeEnv, OIDC_INTERNAL_URL: 'http://keycloak:8080/' })
+		).toThrowError(/OIDC_INTERNAL_URL/);
+	});
+
+	it('rejects an issuer that does not start with the public base', () => {
+		// Метаданные каталога переносятся на внутренний адрес заменой публичного
+		// основания: расхождение обязано остановить сервер при старте, а не
+		// всплыть отказом в ответ на нажатие «Войти».
+		expect(() =>
+			parseConfig({ ...completeEnv, OIDC_PUBLIC_URL: 'http://localhost:59999' })
+		).toThrowError(/OIDC_ISSUER_URL/);
+	});
 });

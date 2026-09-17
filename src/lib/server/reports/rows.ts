@@ -275,7 +275,10 @@ export async function buildReport(ctx: ActorContext, query: ReportQuery): Promis
 			}
 		}
 
-		const rows: ReportRow[] = events.map(({ row }) => ({
+		const rows: ReportRow[] = events.map(({ row, kind }) => ({
+			// Вид события плюс запись о стадии: одна запись даёт начало работы и
+			// уход с неё двумя строками, и различает их только вид.
+			rowKey: `${kind}:${row.entryId}`,
 			interactionId: row.interactionId,
 			stageEntryId: row.entryId,
 			cells: columns.map((column) => movementCell(column, row, index, origin))
@@ -364,6 +367,9 @@ export async function buildReport(ctx: ActorContext, query: ReportQuery): Promis
 	funnelBuckets.sort((left, right) => left.order - right.order);
 
 	const rows: ReportRow[] = raw.map((row) => ({
+		// В срезе каждое взаимодействие встречается ровно один раз (инвариант И2),
+		// поэтому его идентификатор и есть имя строки.
+		rowKey: row.interactionId,
 		interactionId: row.interactionId,
 		stageEntryId: row.entryId,
 		cells: columns.map((column) => snapshotCell(column, row, index, origin))

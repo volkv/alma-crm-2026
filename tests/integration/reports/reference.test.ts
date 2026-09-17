@@ -580,6 +580,38 @@ describe('граница окна записи', () => {
 		expect(kinds(await period('2026-11-01', '2026-11-30'))).toStrictEqual(['Вперёд']);
 	});
 
+	it('одна запись о стадии даёт две строки движения, и у них разные имена', async () => {
+		const boundary = await addBoundaryInteraction(database.db, ids, TEST_USER_IDS.admin);
+
+		// В-9 и начато, и ушло со своей первой стадии внутри октября — ноября:
+		// событий два, запись о стадии одна. Имя строки обязано их различать,
+		// иначе таблица на экране получает два одинаковых ключа и перестаёт
+		// обновляться, показывая числа прошлой выборки.
+		const view = await buildReport(
+			admin(),
+			query({ mode: 'movement', from: '2026-10-01', to: '2026-11-30' })
+		);
+
+		const rows = view.rows.filter((row) => row.interactionId === boundary);
+
+		expect(rows.length).toBe(2);
+		expect(new Set(rows.map((row) => row.stageEntryId)).size).toBe(1);
+		expect(new Set(rows.map((row) => row.rowKey)).size).toBe(2);
+	});
+
+	it('имена строк различны во всей выборке в обоих режимах', async () => {
+		await addBoundaryInteraction(database.db, ids, TEST_USER_IDS.admin);
+
+		for (const mode of ['snapshot', 'movement'] as const) {
+			const view = await buildReport(
+				admin(),
+				query({ mode, from: '2026-10-01', to: '2026-11-30' })
+			);
+
+			expect(new Set(view.rows.map((row) => row.rowKey)).size).toBe(view.rows.length);
+		}
+	});
+
 	it('событие последнего дня периода входит в движение, а следующего — нет', async () => {
 		const inside = await buildReport(
 			admin(),
