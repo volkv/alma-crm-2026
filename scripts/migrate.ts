@@ -33,8 +33,8 @@ if (!databaseUrl) {
 const migrationsFolder = new URL('../drizzle', import.meta.url).pathname;
 
 // Its own connection rather than `getDb()`: the app handle reads the whole
-// configuration, and migrating a database must not require an SMTP host or a
-// Redis address. `max: 1` — migrations must run on a single connection, in order.
+// configuration, and migrating a database must not require a Redis address or
+// an object storage. `max: 1` — migrations must run on a single connection, in order.
 const client = postgres(databaseUrl, { max: 1, connect_timeout: 10 });
 
 try {

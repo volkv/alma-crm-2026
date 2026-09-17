@@ -54,9 +54,14 @@
 		<p id="{name}-description" class="text-xs text-muted-foreground">{description}</p>
 	{/if}
 
-	{#if errors}
-		{#each errors as message (message)}
-			<p id="{name}-error" class="text-xs text-danger-soft-foreground">{message}</p>
-		{/each}
+	{#if invalid}
+		<!-- Претензий у поля бывает несколько, а идентификатор, на который смотрит
+			`aria-describedby`, один: строки стоят внутри него, каждая своим
+			абзацем. Склеенные в одну, они читались бы сломанной фразой. -->
+		<div id="{name}-error" class="flex flex-col gap-0.5">
+			{#each errors ?? [] as message (message)}
+				<p class="text-xs text-danger-soft-foreground">{message}</p>
+			{/each}
+		</div>
 	{/if}
 </div>

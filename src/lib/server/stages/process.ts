@@ -42,11 +42,13 @@ import {
 	processStageKeys,
 	stageEntries,
 	stageMigrationRules,
+	stagePauses,
 	stages,
 	stageTransitions
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
+import { enqueueApplicationStatus } from '../integrations/exchange/outbox';
 import { requirePermission } from '../rbac';
 
 /** Любой исполнитель запроса: транзакция вызывающего или общий пул. */
@@ -1341,18 +1343,7 @@ export async function publishProcess(
 		// очередь, а создание взаимодействия ждёт своей разделяемой блокировки.
 		const group = await lockGroup(tx, (await readGroupByKey(tx, groupKey)).id, 'update');
 
-		// 2. Момент операции — после ожиданий. `now()` в PostgreSQL это начало
-		// транзакции: публикация, простоявшая минуту в очереди, проставила бы
-		// переезжающим записям время раньше последнего входа на стадию, и окно
-		// записи вышло бы отрицательным.
-		const [moment] = (await tx.execute(sql`select clock_timestamp() as at`)) as unknown as {
-			at: Date | string;
-		}[];
-		// `execute` отдаёт значение так, как его прислал драйвер: обёртка нужна,
-		// потому что дальше момент уходит в колонки `timestamptz`.
-		const at = new Date(moment.at);
-
-		// 3. Перечитать черновик под блокировкой и проверить его целиком.
+		// 2. Перечитать черновик под блокировкой и проверить его целиком.
 		const draft = await readDraft(tx, group.id);
 
 		if (draft === null) {
@@ -1373,7 +1364,7 @@ export async function publishProcess(
 			throw new ValidationError('Черновик нельзя применить ко всем', issues);
 		}
 
-		// 4. Блокировка незавершённых взаимодействий группы по возрастанию
+		// 3. Блокировка незавершённых взаимодействий группы по возрастанию
 		// идентификатора: фиксированный порядок исключает взаимный замок.
 		const locked = await tx
 			.select({ id: interactions.id, ownerUserId: interactions.ownerUserId })
@@ -1381,6 +1372,21 @@ export async function publishProcess(
 			.where(and(eq(interactions.processGroupId, group.id), eq(interactions.status, 'active')))
 			.orderBy(asc(interactions.id))
 			.for('update');
+
+		// 4. Момент операции — после **всех** ожиданий, а не только после
+		// блокировки группы. `now()` в PostgreSQL это начало транзакции, а
+		// публикация ждёт дважды: строку группы и каждую строку взаимодействия.
+		// Момент, снятый до шага 3, оказался бы раньше входа на стадию у того,
+		// кто перешёл, пока публикация стояла в очереди за его строкой: `left_at`
+		// закрываемой записи вышел бы раньше её `entered_at`, и база отказала бы
+		// проверкой `stage_entries_left_after_entered` — сырой ошибкой драйвера
+		// вместо ответа по существу.
+		const [moment] = (await tx.execute(sql`select clock_timestamp() as at`)) as unknown as {
+			at: Date | string;
+		}[];
+		// `execute` отдаёт значение так, как его прислал драйвер: обёртка нужна,
+		// потому что дальше момент уходит в колонки `timestamptz`.
+		const at = new Date(moment.at);
 
 		// 5–6. Перепривязка открытых записей и переезд по правилам переноса.
 		const moved = await migrateEntries(tx, {
@@ -1459,6 +1465,18 @@ export async function publishProcess(
 				},
 				tx
 			);
+
+			// Запись взаимодействия сдвинута административно, и заявитель видит
+			// это на сайте: `updated_at` двигается, а снимок статуса уходит в
+			// очередь той же транзакцией. `last_activity_at` не трогаем — работы
+			// по взаимодействию никто не вёл, и подсказка «запись протухла»
+			// обязана считаться от последнего живого действия.
+			await tx
+				.update(interactions)
+				.set({ updatedAt: at })
+				.where(eq(interactions.id, move.interactionId));
+
+			await enqueueApplicationStatus(tx, move.interactionId);
 		}
 
 		return {
@@ -1480,6 +1498,40 @@ type MigratedInteraction = {
 	toStageId: string;
 	stageEntryId: string;
 };
+
+/**
+ * Отметки чек-листа, которые переезжают вместе с записью на другую стадию.
+ *
+ * Переезжает пункт, совпавший **и ключом, и подписью**. Ключи чек-листа
+ * уникальны внутри стадии, а не внутри группы: `papers` на «Документах» и
+ * `papers` на «Проверке» — два разных требования, и совпадение ключа при
+ * переезде случайно. Отметка описывает сделанную работу, и переносить её на
+ * требование с другой формулировкой значит засчитать невыполненное: шаг вперёд
+ * с целевой стадии прошёл бы без единого действия.
+ *
+ * Совпали ключ и подпись — работа та же, и отметка едет: иначе переезд стоил бы
+ * исполнителю повторного прохода по тем же пунктам. Отметки по пунктам, которых
+ * на целевой стадии нет вовсе, не переезжают: читать их некому, а в записи они
+ * выглядели бы выполненной работой.
+ */
+function keptChecklistMarks(
+	before: StageSnapshot['checklist'],
+	after: StageSnapshot['checklist'],
+	marks: Record<string, boolean>
+): Record<string, boolean> {
+	const labelByKey = new Map(before.map((item) => [item.key, item.label]));
+	const kept: Record<string, boolean> = {};
+
+	for (const item of after) {
+		const mark = marks[item.key];
+
+		if (mark !== undefined && labelByKey.get(item.key) === item.label) {
+			kept[item.key] = mark;
+		}
+	}
+
+	return kept;
+}
 
 /**
  * Перенос открытых записей на новую структуру.
@@ -1510,6 +1562,7 @@ export async function migrateEntries(
 			responsibleUserId: stageEntries.responsibleUserId,
 			waitingPartyId: stageEntries.waitingPartyId,
 			checklistState: stageEntries.checklistState,
+			stageSnapshot: stageEntries.stageSnapshot,
 			stageKey: stages.key
 		})
 		.from(stageEntries)
@@ -1576,13 +1629,45 @@ export async function migrateEntries(
 				enteredAt: input.at,
 				responsibleUserId: entry.responsibleUserId,
 				waitingPartyId: entry.waitingPartyId,
-				// Отметки по исчезнувшим пунктам переезжают вместе с записью: они
-				// описывают сделанную работу, а не структуру, и просто не читаются.
-				checklistState: entry.checklistState,
+				// Отметки переезжают только по пунктам, которые на целевой стадии
+				// означают ту же работу (`keptChecklistMarks`).
+				checklistState: keptChecklistMarks(
+					entry.stageSnapshot.checklist,
+					destination.checklist,
+					entry.checklistState
+				),
 				migratedAt: input.at,
 				migratedFromStageKey: entry.stageKey
 			})
 			.returning({ id: stageEntries.id });
+
+		// Пауза переезжает вместе с записью. Закрыть её и не открыть заново
+		// значило бы, что часы стадии пошли из-за правки процесса: ждать сторону
+		// взаимодействие не перестало, и решение об этом принимает исполнитель, а
+		// не администратор. Оставить открытой на закрытой записи тоже нельзя — в
+		// истории это читается как «ждать не перестали никогда». Обе строки
+		// получают момент публикации: между ними нет ни дыры, ни нахлёста.
+		const [paused] = await tx
+			.update(stagePauses)
+			.set({ endedAt: input.at, updatedAt: input.at })
+			.where(and(eq(stagePauses.stageEntryId, entry.entryId), isNull(stagePauses.endedAt)))
+			.returning({
+				reason: stagePauses.reason,
+				waitingPartyId: stagePauses.waitingPartyId,
+				nextAction: stagePauses.nextAction,
+				note: stagePauses.note
+			});
+
+		if (paused !== undefined) {
+			await tx.insert(stagePauses).values({
+				stageEntryId: opened.id,
+				reason: paused.reason,
+				waitingPartyId: paused.waitingPartyId,
+				nextAction: paused.nextAction,
+				note: paused.note,
+				startedAt: input.at
+			});
+		}
 
 		migrated.push({
 			interactionId: entry.interactionId,

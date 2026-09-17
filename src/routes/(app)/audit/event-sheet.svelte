@@ -8,10 +8,10 @@
 	import { formatDateTime } from '$lib/format';
 	import type { AuditEventView } from '$lib/contracts/audit';
 	import {
-		AUDIT_EVENT_LABELS,
 		AUDIT_OUTCOME_LABELS,
 		AUDIT_OUTCOME_TONES,
 		AUDIT_SOURCE_LABELS,
+		auditEventLabel,
 		detailLabel,
 		subjectHref,
 		subjectTypeLabel
@@ -59,7 +59,7 @@
 	<Sheet.Content side="right" class="w-full gap-0 overflow-y-auto sm:max-w-md">
 		{#if event}
 			<Sheet.Header class="border-b border-border">
-				<Sheet.Title>{AUDIT_EVENT_LABELS[event.eventType]}</Sheet.Title>
+				<Sheet.Title>{auditEventLabel(event.eventType)}</Sheet.Title>
 				<Sheet.Description>
 					{formatDateTime(event.occurredAt)} · {AUDIT_SOURCE_LABELS[event.source]}
 				</Sheet.Description>

@@ -7,18 +7,22 @@
  * хранилища мы тоже не раздаём: они переживают отзыв ключа.
  *
  * Проверяется принадлежность: объект обязан относиться к взаимодействию,
- * связанному с **настроенным подключением обмена** — заявкой с сайта того же
- * экземпляра CMS либо учебной группой того же экземпляра LMS. Чужой ключ
+ * связанному с **подключением того ключа, которым пришли**, — заявкой с сайта
+ * этого экземпляра CMS либо учебной группой этого экземпляра LMS. Чужой ключ
  * объекта — `404`, а не `403`: перебором ключей нельзя узнать, что у нас лежит.
+ *
+ * Именно ключа, а не «любого настроенного подключения»: право `exchange.intake`
+ * есть у каждого ключа обмена, и сверка с настройками означала бы, что сайт
+ * забирает вложения учебных групп, а система обучения — документы заявок.
  */
-import { and, eq, isNotNull, or, sql } from 'drizzle-orm';
+import { and, eq, isNotNull, sql } from 'drizzle-orm';
+import type { ApiKeyExchangeSystem } from '$lib/contracts/api';
 import { externalSourceOf } from '$lib/contracts/exchange';
 import type { ActorContext } from '../../actor';
 import { getDb } from '../../db';
 import { documents, interactions, learningGroups } from '../../db/schema';
 import { NotFoundError } from '../../errors';
 import { requirePermission } from '../../rbac';
-import { getExchangeSettings } from '../settings';
 
 export type ExchangeFile = {
 	documentId: string;
@@ -30,9 +34,12 @@ export type ExchangeFile = {
 	sha256: string;
 };
 
+/** Подключение обмена того ключа, которым пришли. */
+export type ExchangeBinding = { system: ApiKeyExchangeSystem; instance: string };
+
 /**
  * Запись документа по ключу объекта; `NotFoundError` — ключа нет либо объект не
- * относится ни к одному подключению обмена.
+ * относится к подключению этого ключа.
  *
  * Права отдельного у выдачи нет: `exchange.intake` есть у каждого ключа роли
  * `service`, а право без второго носителя ничего не разграничивает — доступ к
@@ -40,11 +47,26 @@ export type ExchangeFile = {
  */
 export async function readExchangeFile(
 	ctx: ActorContext,
-	storageKey: string
+	storageKey: string,
+	binding: ExchangeBinding
 ): Promise<ExchangeFile> {
 	requirePermission(ctx, 'exchange.intake');
 
-	const settings = await getExchangeSettings();
+	const belongs =
+		binding.system === 'cms'
+			? eq(interactions.externalSource, externalSourceOf('cms', binding.instance))
+			: // Взаимодействие связано с системой обучения не внешней ссылкой, а
+				// заведённым потоком: заявку на группу отправляли из карточки.
+				sql`exists (${getDb()
+					.select({ one: sql`1` })
+					.from(learningGroups)
+					.where(
+						and(
+							eq(learningGroups.interactionId, interactions.id),
+							eq(learningGroups.system, 'lms'),
+							eq(learningGroups.instance, binding.instance)
+						)
+					)})`;
 
 	const [row] = await getDb()
 		.select({
@@ -58,27 +80,7 @@ export async function readExchangeFile(
 		})
 		.from(documents)
 		.innerJoin(interactions, eq(interactions.id, documents.interactionId))
-		.where(
-			and(
-				eq(documents.filePath, storageKey),
-				isNotNull(documents.interactionId),
-				or(
-					eq(interactions.externalSource, externalSourceOf('cms', settings.cms.instance)),
-					// Взаимодействие связано с системой обучения не внешней ссылкой, а
-					// заведённым потоком: заявку на группу отправляли из карточки.
-					sql`exists (${getDb()
-						.select({ one: sql`1` })
-						.from(learningGroups)
-						.where(
-							and(
-								eq(learningGroups.interactionId, interactions.id),
-								eq(learningGroups.system, 'lms'),
-								eq(learningGroups.instance, settings.lms.instance)
-							)
-						)})`
-				)
-			)
-		)
+		.where(and(eq(documents.filePath, storageKey), isNotNull(documents.interactionId), belongs))
 		.limit(1);
 
 	if (row === undefined || row.interactionId === null) {

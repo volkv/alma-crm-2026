@@ -68,9 +68,13 @@ async function prepareRename(ctx: ActorContext): Promise<void> {
  * Единственное постусловие: ни одной открытой записи вне действующей редакции
  * своей группы. Считается по всем взаимодействиям, а не по одному: гонка тем и
  * опасна, что портит соседние записи.
+ *
+ * Считаются записи **на месте**, и их число сверяется с числом открытых: так
+ * инвариант выражается одним сравнением. При расхождении отчёт печатает два
+ * числа, поэтому заблудшие записи перечисляются отдельно.
  */
 async function assertNoStrayEntries(): Promise<number> {
-	const stray = await database.db
+	const settled = await database.db
 		.select({ id: stageEntries.id })
 		.from(stageEntries)
 		.innerJoin(interactions, eq(interactions.id, stageEntries.interactionId))
@@ -90,7 +94,10 @@ async function assertNoStrayEntries(): Promise<number> {
 		.from(stageEntries)
 		.where(isNull(stageEntries.leftAt));
 
-	expect(stray).toHaveLength(open.length);
+	const settledIds = new Set(settled.map((row) => row.id));
+
+	expect(open.filter((row) => !settledIds.has(row.id))).toStrictEqual([]);
+	expect(settled).toHaveLength(open.length);
 
 	return open.length;
 }
@@ -120,7 +127,17 @@ describe('применение изменений и заведение взаи
 		await sleep(100);
 
 		const publication = publishProcess(ctx, B2C_GROUP_KEY);
+		let settled = false;
+		void publication.then(
+			() => (settled = true),
+			() => (settled = true)
+		);
 		await sleep(300);
+
+		// Главное утверждение теста: публикация **ждёт** разделяемую блокировку.
+		// Без него постусловие ниже верно и без блокировки — публикация просто
+		// прошла бы раньше.
+		expect(settled).toBe(false);
 
 		release();
 		await holder;

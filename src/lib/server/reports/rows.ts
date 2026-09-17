@@ -7,16 +7,15 @@
  * ценой за единственное определение служит потолок выборки
  * (`REPORT_MAX_ROWS`): выше него отчёт отказывается словами, а не режет молча.
  */
+import { moscowDay, snapshotMoment } from '$lib/contracts/calendar';
 import { PAUSE_REASON_LABELS } from '$lib/contracts/interactions';
 import {
 	REPORT_EVENT_KIND_LABELS,
 	REPORT_MAX_ROWS,
 	REPORT_SCHEMA_VERSION,
 	REPORT_STATE_LABELS,
-	moscowDay,
 	resolveColumns,
 	reportSemantics,
-	snapshotMoment,
 	type ReportCell,
 	type ReportColumnDefinition,
 	type ReportColumnView,

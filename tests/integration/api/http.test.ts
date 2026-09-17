@@ -114,9 +114,21 @@ function bearer(key: string, extra: Record<string, string> = {}): Record<string,
 	return { authorization: `Bearer ${key}`, ...extra };
 }
 
-async function issueKey(roleId = 'admin'): Promise<{ id: string; key: string }> {
+/**
+ * Ключ доступа. У ключа машинного субъекта есть вторая половина — подключение
+ * обмена: права роли `service` одинаковы у всех таких ключей, и направление
+ * разграничивает только оно.
+ */
+async function issueKey(
+	roleId = 'admin',
+	exchangeSystem: 'cms' | 'lms' | null = roleId === 'service' ? 'cms' : null
+): Promise<{ id: string; key: string }> {
 	const ownerUserId = TEST_USER_IDS[roleId] ?? TEST_USER_IDS.admin;
-	const created = await createApiKey(testActor(), { name: `Ключ ${roleId}`, ownerUserId });
+	const created = await createApiKey(testActor(), {
+		name: `Ключ ${roleId}`,
+		ownerUserId,
+		exchangeSystem
+	});
 
 	return { id: created.id, key: created.key };
 }
@@ -128,7 +140,11 @@ async function issueKeyWithoutPermissions(): Promise<string> {
 		.values({ id: 'restricted', name: 'Без прав', description: 'Только для проверки отказа' });
 
 	const ownerUserId = await insertUser(database.db, { roleId: 'restricted' });
-	const created = await createApiKey(testActor(), { name: 'Ключ без прав', ownerUserId });
+	const created = await createApiKey(testActor(), {
+		name: 'Ключ без прав',
+		ownerUserId,
+		exchangeSystem: null
+	});
 
 	return created.key;
 }
@@ -680,7 +696,9 @@ describe('ключи доступа', () => {
 		const ownerUserId = await insertUser(database.db, { roleId: 'manager' });
 		await database.db.update(users).set({ isActive: false }).where(eq(users.id, ownerUserId));
 
-		await expect(createApiKey(testActor(), { name: 'Ключ', ownerUserId })).rejects.toMatchObject({
+		await expect(
+			createApiKey(testActor(), { name: 'Ключ', ownerUserId, exchangeSystem: null })
+		).rejects.toMatchObject({
 			code: 'validation'
 		});
 	});
@@ -689,7 +707,11 @@ describe('ключи доступа', () => {
 		const manager = testActor({ roleId: 'manager' });
 
 		await expect(
-			createApiKey(manager, { name: 'Ключ', ownerUserId: TEST_USER_IDS.manager })
+			createApiKey(manager, {
+				name: 'Ключ',
+				ownerUserId: TEST_USER_IDS.manager,
+				exchangeSystem: null
+			})
 		).rejects.toMatchObject({ code: 'forbidden' });
 
 		const issued = await issueKey();
@@ -701,7 +723,11 @@ describe('ключи доступа', () => {
 		const issued = await issueKey();
 
 		await expect(
-			createApiKey(manager, { name: 'Ключ', ownerUserId: TEST_USER_IDS.manager })
+			createApiKey(manager, {
+				name: 'Ключ',
+				ownerUserId: TEST_USER_IDS.manager,
+				exchangeSystem: null
+			})
 		).rejects.toMatchObject({ code: 'forbidden' });
 		await expect(revokeApiKey(manager, issued.id)).rejects.toMatchObject({ code: 'forbidden' });
 		await expect(listApiKeys(manager)).rejects.toMatchObject({ code: 'forbidden' });
@@ -863,8 +889,9 @@ describe('ключ машинного субъекта', () => {
 		expect(listing.status).toBe(200);
 	});
 
-	it('проходит границу на настоящих маршрутах обмена', async () => {
-		const issued = await issueKey('service');
+	it('проходит границу на настоящих маршрутах обмена — каждый своим ключом', async () => {
+		const site = await issueKey('service', 'cms');
+		const learning = await issueKey('service', 'lms');
 
 		// Тело намеренно пустое: проверяется не приём заявки — у него свой файл, —
 		// а то, что ключ роли `service` вообще пускают на эти маршруты. Отказ
@@ -874,7 +901,7 @@ describe('ключ машинного субъекта', () => {
 				method: 'POST',
 				path: '/api/v1/applications',
 				routeId: '/api/v1/applications',
-				headers: bearer(issued.key, { 'content-type': 'application/json' }),
+				headers: bearer(site.key, { 'content-type': 'application/json' }),
 				body: '{}'
 			})
 		);
@@ -886,12 +913,43 @@ describe('ключ машинного субъекта', () => {
 				method: 'POST',
 				path: '/api/v1/exchange/learning-groups/results',
 				routeId: '/api/v1/exchange/learning-groups/results',
-				headers: bearer(issued.key, { 'content-type': 'application/json' }),
+				headers: bearer(learning.key, { 'content-type': 'application/json' }),
 				body: '{}'
 			})
 		);
 
 		expect(result.status).toBe(400);
+
+		// А чужим — не проходит: право у обоих ключей одно и то же, и различает их
+		// только подключение, на которое ключ выпущен.
+		const crossed = await groupResults(
+			apiEvent({
+				method: 'POST',
+				path: '/api/v1/exchange/learning-groups/results',
+				routeId: '/api/v1/exchange/learning-groups/results',
+				headers: bearer(site.key, { 'content-type': 'application/json' }),
+				body: '{}'
+			})
+		);
+
+		expect(crossed.status).toBe(403);
+	});
+
+	it('не отдаёт вложение обмена по ключу без подключения', async () => {
+		// Ключ на человека никакой внешней системы не представляет, и сверять
+		// принадлежность файла не с чем.
+		const human = await issueKey('admin');
+
+		const response = await exchangeFile(
+			apiEvent({
+				path: '/api/v1/exchange/files/files/00000000-0000-4000-8000-000000000000',
+				routeId: '/api/v1/exchange/files/[...key]',
+				params: { key: 'files/00000000-0000-4000-8000-000000000000' },
+				headers: bearer(human.key)
+			})
+		);
+
+		expect(response.status).toBe(403);
 	});
 
 	it('не находит чужое вложение обмена: перебор ключей ничего не рассказывает', async () => {

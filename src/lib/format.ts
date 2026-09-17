@@ -4,6 +4,7 @@
  * themselves, so a date looks the same in a table cell, in a card and in a
  * toast.
  */
+import { MOSCOW_OFFSET_MS } from '$lib/contracts/calendar';
 
 /**
  * The operator works on Moscow time, and so do the deadlines in the process it
@@ -146,11 +147,10 @@ export function formatBytes(bytes: number): string {
 	return `${sizeFormat.format(value)} ${SIZE_UNITS[unit]}`;
 }
 
-/**
- * Moscow keeps a fixed +03:00 offset, so a calendar day starts at a fixed
- * instant and the day a deadline falls on is plain arithmetic.
- */
-const MOSCOW_OFFSET_MS = 3 * 60 * 60 * 1000;
+// Moscow keeps a fixed +03:00 offset, so a calendar day starts at a fixed
+// instant and the day a deadline falls on is plain arithmetic. The offset itself
+// is declared once, in `$lib/contracts/calendar`: screen figures and file
+// figures have to agree.
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 function moscowDayNumber(value: DateInput): number {

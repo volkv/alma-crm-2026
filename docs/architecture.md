@@ -34,16 +34,17 @@ input)`, не смотрит в `locals`, не читает заголовки �
 | `securityHeaders` | `security-headers.ts`          | `nosniff`, `Referrer-Policy`, `Permissions-Policy`, HSTS на https, `no-store` вошедшему |
 | `csrf`            | `csrf.ts`                      | форменный POST/PUT/PATCH/DELETE только со своим `Origin`, иначе 403 по-русски           |
 | `session`         | `session.ts`                   | читает куку `lct_session`, продлевает запись в Redis, кладёт `locals.user`              |
-| `guard`           | `guard.ts`                     | всё под `(app)` требует сессии; неполная (`mfaPending`) уходит на `/login/mfa`          |
-| `rateLimit`       | `rate-limit.ts`                | POST под `(auth)` считается по адресу (`withinAddressLimit`)                            |
+| `guard`           | `guard.ts`                     | всё под `(app)` требует сессии; без неё — на `/login?next=<куда шли>`                   |
+| `rateLimit`       | `rate-limit.ts`                | POST под `(auth)` считается по адресу (`withinStartLimit`, `auth/start-limit.ts`)       |
 
 Четыре вещи, которые стоит знать сразу:
 
 - **`csrf` стоит перед `session`** — запрос с чужой страницы отвергается раньше, чем будет прочитана
   сессия, которую он пытается использовать.
 - **Пользователь собирается заново на каждый запрос** (`loadSessionUser` в `auth/session.ts`): в
-  Redis лежит только идентификатор и признак незавершённого второго шага, а роль, права и активность
-  читаются из базы. Снятое право действует немедленно.
+  Redis лежит только запись сессии — идентификатор пользователя, время создания и последнего
+  обращения, адрес, клиент и id-токен для выхода из Keycloak, — а роль, права и активность читаются
+  из базы. Снятое право действует немедленно.
 - **Проверка прав в хуках не делается.** `guard` отвечает только на вопрос «есть ли тут кто-нибудь»;
   конкретное право спрашивают загрузчик и сервис — см. «Область доступа и права».
 - **Встроенная в SvelteKit проверка Origin выключена** (`csrf.trustedOrigins: ['*']` в
@@ -118,17 +119,20 @@ input)`, не смотрит в `locals`, не читает заголовки �
 | `redis.ts`       | общий клиент ioredis                                                         | `getRedis`, `pingRedis`                                                                      | `config`                                               |
 | `rbac/`          | каталог прав, роли, проверка права и области                                 | `can`, `requirePermission`, `scopeFilter`, `PERMISSIONS`, `seedRolesAndPermissions`          | `db`, `audit`                                          |
 | `audit/`         | журнал действий: запись, выборка, выгрузка                                   | `recordAuditEvent`, `listAuditEvents`, `exportAuditEvents`                                   | `db`, `rbac`, `spreadsheet`                            |
-| `auth/`          | сессии, вход, пароли, второй фактор, пользователи                            | `loadSessionUser`, `login`, `verifySecondFactor`, `createUser`                               | `db`, `redis`, `rbac`, `settings`, `audit`             |
+| `auth/`          | вход через Keycloak, сессии, роли из realm, пользователи                     | `authorizationUrl`, `exchangeCode`, `signInWithClaims`, `loadSessionUser`, `listUsers`       | `db`, `redis`, `rbac`, `settings`, `audit`, `config`   |
 | `api/`           | обёртка эндпоинта, ключи, лимиты, идемпотентность, OpenAPI                   | `apiHandler`, `registerRoute`, `authenticateApiKey`                                          | `rbac`, `audit`, `redis`, `auth/session`               |
 | `settings/`      | настройки приложения со значениями по умолчанию                              | `getSetting`, `setSetting`, `SETTING_DEFAULTS`                                               | `db`, `rbac`, `audit`                                  |
 | `directory/`     | организации, площадки, люди, роли, программы, продукты                       | `read.ts` (выборки), `write.ts` (команды)                                                    | `db`, `rbac`, `audit`, `people`                        |
 | `people/`        | персональные данные: маскирование, согласия, срок хранения, след просмотра   | `toPersonView`, `withPiiTrace`, `recordConsent`, `anonymizePerson`                           | `db`, `rbac`, `audit`                                  |
-| `stages/`        | маршруты и версии, правила перехода, команды движка, состояние стадии        | `evaluateTransition`, `advanceStage`…, `getInteractionStatus`, `readRoute`                   | `db`, `rbac`, `audit`, `interactions/access`           |
+| `stages/`        | группы процесса и их редакции, правила перехода, команды движка, состояние   | `evaluateTransition`, `advanceStage`…, `getInteractionStatus`, `publishProcess`              | `db`, `rbac`, `audit`, `interactions/access`           |
 | `interactions/`  | взаимодействие: создание, список, карточка, сводка, доска, сводная картина   | `createInteraction`, `listInteractions`, `getInteractionSummary`, `getWorkOverview`          | `db`, `rbac`, `audit`, `stages`, `people`              |
 | `documents/`     | хранилище файлов, проверка содержимого, шаблоны, генерация, отметки          | `stageBlob`/`promoteBlob`, `uploadDocument`, `generateDocument`, `readDocumentForDownload`   | `db`, `rbac`, `audit`, `config`, `stages/commands`     |
 | `stats/`         | данные об обучении: разбор файла, сопоставление, снимки, показатели, дашборд | `createSnapshot`, `applyMapping`, `confirmSnapshot`, `getStatsDashboard`, `buildStatsReport` | `db`, `rbac`, `audit`, `documents`, `spreadsheet`      |
-| `integrations/`  | вебхуки, цикл доставки, обмен с LMS, мок LMS, приём заявок                   | `runIntegrationsCycle`, `createWebhook`, `syncLms`, `receiveApplication`                     | `audit`, `redis`, `directory`, `interactions`, `stats` |
+| `integrations/`  | вебхуки, цикл доставки, обмен с CMS и LMS, приём заявок и результатов        | `runIntegrationsCycle`, `createWebhook`, `syncLms`, `receiveApplication`                     | `audit`, `redis`, `directory`, `interactions`, `stats` |
+| `reports/`       | отчёт по взаимодействиям: разбор адреса, строки, диаграммы, четыре формата   | `readReportQuery`, `buildReport`, `writers/*`                                                | `db`, `rbac`, `interactions/access`, `spreadsheet`     |
+| `demo/`          | сброс демонстрационного стенда к начальным данным                            | `resetDemoData`                                                                              | `db`, `rbac`, `redis`, `audit`, `config`               |
 | `spreadsheet.ts` | обезвреживание формул в ячейках выгрузок                                     | `spreadsheetText`                                                                            | —                                                      |
+| `spreadsheet/`   | чтение и запись книг: разбор загруженного файла, сборка `.xlsx`/`.xls`       | `readSpreadsheet`, `writeXlsx`, `writeXls`                                                   | —                                                      |
 
 Зависимости идут в одну сторону: `integrations` знает про `directory`, `interactions` и `stats`, а
 они про `integrations` — нет. Единственная пара, замкнутая друг на друга по смыслу, —
@@ -141,27 +145,34 @@ input)`, не смотрит в `locals`, не читает заголовки �
 Схема разложена по файлам `src/lib/server/db/schema/*.ts` и собрана барелем `schema/index.ts` —
 через него её видят и `drizzle()`, и drizzle-kit.
 
-| Файл схемы        | Таблицы                                                                                                                                                                                                                                         | Кто пишет                                                                                                                      |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------ |
-| `auth.ts`         | `permissions`, `roles`, `role_permissions`, `users`                                                                                                                                                                                             | `rbac/seed.ts` (каталог), `auth/users.ts`, `auth/mfa.ts`, `auth/session.ts`                                                    |
-| `api.ts`          | `api_keys`                                                                                                                                                                                                                                      | `api/keys.ts`                                                                                                                  |
-| `audit.ts`        | `audit_events`                                                                                                                                                                                                                                  | только `audit/index.ts`                                                                                                        |
-| `settings.ts`     | `app_settings`                                                                                                                                                                                                                                  | `settings/index.ts` и `integrations/settings.ts`                                                                               |
-| `directory.ts`    | `organizations`, `sites`, `people`, `consents`, `affiliations`, `programs`, `program_versions`, `products`                                                                                                                                      | `directory/write.ts`; `consents` и обезличивание `people` — `people/*`                                                         |
-| `interactions.ts` | `stage_routes`, `stages`, `stage_transitions`, `interactions`, `interaction_parties`, `interaction_party_sites`, `interaction_programs`, `interaction_products`, `interaction_changes`, `stage_entries`, `stage_pauses`, `blockers`, `comments` | маршруты — `stages/routes.ts`; взаимодействие и его связи — `interactions/write.ts`; всё, что движется, — `stages/commands.ts` |
-| `documents.ts`    | `document_templates`, `documents`                                                                                                                                                                                                               | `documents/templates.ts`, `upload.ts`, `generate.ts`, `status.ts`                                                              |
-| `stats.ts`        | `stat_snapshots`, `stat_rows`                                                                                                                                                                                                                   | `stats/import.ts`                                                                                                              |
+| Файл схемы        | Таблицы                                                                                                                                                                                                                                                                                                                                                                                                                | Кто пишет                                                                                                                                                                                 |
+| ----------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `auth.ts`         | `permissions`, `roles`, `role_permissions`, `users`                                                                                                                                                                                                                                                                                                                                                                    | `rbac/seed.ts` (каталог прав), `auth/identity.ts` (учётная запись по заявлению Keycloak), `auth/users.ts`, `auth/session.ts`                                                              |
+| `api.ts`          | `api_keys`                                                                                                                                                                                                                                                                                                                                                                                                             | `api/keys.ts`                                                                                                                                                                             |
+| `audit.ts`        | `audit_events`                                                                                                                                                                                                                                                                                                                                                                                                         | только `audit/index.ts`                                                                                                                                                                   |
+| `settings.ts`     | `app_settings`                                                                                                                                                                                                                                                                                                                                                                                                         | `settings/index.ts` и `integrations/settings.ts`                                                                                                                                          |
+| `directory.ts`    | `directions`, `organizations`, `sites`, `people`, `consents`, `affiliations`, `organization_responsibles`, `programs`, `program_versions`, `products`, `product_directions`                                                                                                                                                                                                                                            | `directory/write.ts`; ответственные — `directory/responsibles.ts`; `consents` и обезличивание `people` — `people/*`; заявка с сайта — `integrations/exchange/intake.ts`                   |
+| `interactions.ts` | `process_groups`, `process_group_counterparty_kinds`, `process_stage_keys`, `process_revisions`, `stages`, `stage_transitions`, `stage_migration_rules`, `contracts`, `contract_items`, `interactions`, `interaction_parties`, `interaction_party_sites`, `interaction_programs`, `interaction_products`, `interaction_contract_items`, `interaction_changes`, `stage_entries`, `stage_pauses`, `blockers`, `comments` | процесс и его редакции — `stages/process.ts`; взаимодействие и его связи — `interactions/write.ts`; всё, что движется, — `stages/commands.ts`; договоры и их позиции — сид и приём заявки |
+| `documents.ts`    | `document_templates`, `documents`, `stage_entry_documents`                                                                                                                                                                                                                                                                                                                                                             | `documents/templates.ts`, `upload.ts`, `generate.ts`, `status.ts`; отметка файла на стадии — `stages/commands.ts`                                                                         |
+| `stats.ts`        | `stat_snapshots`, `stat_rows`                                                                                                                                                                                                                                                                                                                                                                                          | `stats/import.ts`                                                                                                                                                                         |
+| `exchange.ts`     | `exchange_messages`, `learning_groups`, `learning_group_results`                                                                                                                                                                                                                                                                                                                                                       | `integrations/exchange/*`: `intake.ts`, `outbox.ts`, `delivery.ts`, `results.ts`, `groups.ts`, `messages.ts`                                                                              |
 
-Писатели через границу модуля — их четыре, и каждый объяснён в коде:
+Писатели через границу модуля — их шесть, и каждый объяснён в коде:
 
-- `stages/commands.ts` обновляет `interactions` (статус, ответственный, `last_activity_at`) — строка
+- `stages/commands.ts` обновляет `interactions` (статус, владелец, `last_activity_at`) — строка
   взаимодействия и есть то, что двигают команды;
 - `stages/commands.ts` и `interactions/write.ts` оба пишут `interaction_changes` — это предметная
   история изменений плана, которую показывают в карточке, а не журнал действий;
+- `stages/commands.ts` пишет `stage_entry_documents`: отметка «этот файл закрывает эту стадию» —
+  решение команды, а не свойство документа;
 - `stats/import.ts` создаёт запись в `documents`: исходный файл снимка обязан лежать в том же
   неизменяемом хранилище, что и остальные документы;
 - `people/retention.ts` обновляет `people`, которой владеет `directory`: обезличивание — необратимое
-  действие с собственным правом, и живёт оно рядом с согласиями, а не в общей записи справочника.
+  действие с собственным правом, и живёт оно рядом с согласиями, а не в общей записи справочника;
+- `integrations/exchange/intake.ts` заводит контрагента, человека, его роль и согласие: заявка с
+  сайта идёт через сервисы справочника (`createOrganization`, `createPerson`, `createAffiliation`,
+  `createInteractionIn`), а несколько связок вставляет сама — вся заявка обязана лечь одной
+  транзакцией, внутри которой сервисы своей не начинают.
 
 **Представления и триггеры** заводятся SQL-миграциями, а в Drizzle объявлены как `.existing()` —
 ORM про них знает, но ими не управляет:
@@ -172,9 +183,13 @@ ORM про них знает, но ими не управляет:
   складываются только строки подтверждённых текущих снимков;
 - триггер `audit_events_append_only` (`drizzle/0001_…`) запрещает `UPDATE` и `DELETE` в журнале на
   любой установке — не грантом, который живёт в базе, а триггером, который едет со схемой;
-- частичные уникальные индексы, которые держат инварианты: `stage_entries_one_open_per_interaction`,
-  `stage_pauses_one_open_per_entry`, `interactions_external_ref_key`, `organizations_inn_key`,
-  `documents_supersedes_key`, `users_email_lower_key`.
+- уникальные индексы, которые держат инварианты: `stage_entries_one_open_per_interaction`,
+  `stage_pauses_one_open_per_entry`, `process_revisions_one_draft_per_group`,
+  `interaction_parties_one_primary`, `organization_responsibles_current_key` (один действующий
+  ответственный на вуз × направление), `interactions_external_ref_key` и остальные
+  `*_external_ref_key` (повтор из внешней системы), `organizations_inn_key`,
+  `documents_supersedes_key`, `stat_rows_snapshot_row_key`, `users_email_lower_key`,
+  `users_external_subject_key`.
 
 **Миграции** лежат в `drizzle/` (SQL плюс журнал drizzle-kit) и применяются `scripts/migrate.ts`:
 `pnpm run db:migrate` руками и `CMD` контейнера перед стартом приложения. Тот же скрипт одной
@@ -222,7 +237,7 @@ ORM про них знает, но ими не управляет:
 
 **Правило перехода — одно на продукт.** `evaluateTransition(ctx, state, transition, intent)` в
 `stages/transitions.ts` — чистая функция: ни базы, ни HTTP. Она проверяет право перехода (код берётся
-из конфигурации маршрута и обязан быть в каталоге прав, иначе строка в базе стала бы обходом
+из описания перехода в действующей редакции процесса и обязан быть в каталоге прав, иначе строка в базе стала бы обходом
 проверки), совпадение текущей стадии, открытые помехи, а для шага вперёд — паузу, обязательные
 пункты чек-листа, результат и подтверждение. Причина требуется, когда её требует переход. Эту же
 функцию зовут три места: карточка (`interactions/summary.ts`), доска (`interactions/board.ts`) и сама
@@ -233,6 +248,22 @@ ORM про них знает, но ими не управляет:
 сервере, потому что три вопроса из четырёх — это правила, а не данные, и интерфейс не имеет права
 выводить доступность действия заново.
 
+## Вход
+
+Своих паролей у продукта нет: кто перед системой, решает Keycloak (realm `lct`). `POST /login`
+заводит `state`, `nonce` и проверочный код PKCE (`auth/flow.ts`), браузер уходит на адрес
+авторизации realm, возврат приходит на `GET /login/callback` — там код меняется на токены, а
+id-токен проверяется по ключам realm (`auth/oidc.ts::exchangeCode`). Роли realm приводятся к нашей
+роли (`auth/roles.ts`), учётная запись находится или заводится по `sub` (`auth/identity.ts`), и
+только после этого открывается своя серверная сессия в Redis (`auth/session.ts`). Выход гасит обе:
+и её, и сессию каталога (`endSessionUrl`).
+
+Два адреса каталога разведены намеренно: `OIDC_PUBLIC_URL` — тот, по которому идёт браузер и
+которым каталог подписывается в `iss`, `OIDC_INTERNAL_URL` — тот, по которому к нему ходит сервер
+внутри сети стека. Частота нажатий «Войти» ограничена по адресу (`auth/start-limit.ts`): каждое
+кладёт запись в Redis, и без потолка анонимный поток нажатий заполнил бы его, ни разу не назвавшись.
+Подробно — [`auth.md`](auth.md), права роли — [`access-matrix.md`](access-matrix.md).
+
 ## Область доступа и права
 
 Актор собирается один раз за запрос (`actorFromEvent`), а область доступа приезжает в нём из сессии
@@ -242,7 +273,8 @@ ORM про них знает, но ими не управляет:
 Вопросов всегда два, и отвечают на них разные функции `src/lib/server/rbac/index.ts`:
 
 - **право** — «можно ли вообще делать это действие»: `can(ctx, key)` и `requirePermission`. Каталог
-  прав — `rbac/permissions.ts` (26 кодов и роли по умолчанию `admin`/`manager`/`viewer`); он же
+  прав — `rbac/permissions.ts` (35 кодов и роли по умолчанию `admin`/`lead`/`manager` плюс
+  служебная `service` для входящего обмена); он же
   типизирует `PermissionKey`, сидируется в таблицы и синхронизируется миграцией. Право роли
   кэшируется на процесс, кэш сбрасывает `invalidateRoleCache()`. У `requirePermission` есть вторая,
   асинхронная форма — с описанием события: попытка сделать то, на что нет права, записывается в
@@ -255,10 +287,10 @@ ORM про них знает, но ими не управляет:
   Документы наследуют ту же проверку (`documents/read.ts::assertInteractionAccessible`).
 
 **Граница демонстрации** проходит по правам, а не по интерфейсу. `demoSessionPermissions` вычитает
-из набора роли семь кодов (`users.manage`, `api_keys.manage`, `settings.write`, `audit.export`,
-`stages.configure`, `integrations.manage`, `people.anonymize`), и это видно всем — загрузчикам,
-сервисам и API, — потому что спрятанной кнопки хватает ровно настолько, насколько её хватает от
-`curl`. Признак поднимает не столбец `users.is_demo` сам по себе, а он вместе с `DEMO_MODE`.
+из набора роли четыре кода (`users.manage`, `api_keys.manage`, `integrations.manage_endpoints`,
+`people.anonymize`) — то, что переживает саму демонстрацию или необратимо, — и вычет виден всем:
+загрузчикам, сервисам и API, — потому что спрятанной кнопки хватает ровно настолько, насколько её
+хватает от `curl`. Признак поднимает не столбец `users.is_demo` сам по себе, а он вместе с `DEMO_MODE`.
 
 **Маскирование ПДн — в одном сериализаторе.** `toPersonView` (`people/serialize.ts`) — единственный
 способ отдать человека наружу: без права `people.read_pii` почта и телефон уходят замаскированными
@@ -343,7 +375,8 @@ ORM про них знает, но ими не управляет:
 ## Клиент
 
 - `src/routes/(app)/**` — разделы приложения: взаимодействия, организации, контакты, программы,
-  продукты, данные, документы, журнал, настройки; `src/routes/(auth)/**` — вход и второй шаг.
+  продукты, данные, документы, отчёты, обмен, журнал, справка, настройки; `src/routes/(auth)/**` —
+  вход: страница со ссылкой в Keycloak и возврат с кодом (`login/callback`).
   Оболочка — `(app)/+layout.svelte` → `AppShell` (`components/app-shell/`): боковая навигация,
   верхняя панель, палитра поиска, место для всплывающих уведомлений.
 - `src/lib/components/ui/**` — примитивы shadcn-svelte/bits-ui, завендоренные в репозиторий;
@@ -367,28 +400,33 @@ ORM про них знает, но ими не управляет:
 
 ## Как найти
 
-| Вопрос                                         | Файл                                        | Что смотреть                                         |
-| ---------------------------------------------- | ------------------------------------------- | ---------------------------------------------------- |
-| правило перехода между стадиями                | `src/lib/server/stages/transitions.ts`      | `evaluateTransition`, `transitionPermission`         |
-| выполнение перехода, блокировки                | `src/lib/server/stages/commands.ts`         | `moveStage`, `lockInteraction`                       |
-| проверка права                                 | `src/lib/server/rbac/index.ts`              | `can`, `requirePermission`                           |
-| каталог прав и роли по умолчанию               | `src/lib/server/rbac/permissions.ts`        | `PERMISSIONS`, `DEFAULT_ROLES`                       |
-| сужение выборки по области доступа             | `src/lib/server/rbac/index.ts`              | `scopeFilter`                                        |
-| то же для взаимодействий и документов          | `src/lib/server/interactions/access.ts`     | `interactionScopeFilter`, `assertInteractionVisible` |
-| адаптер LMS                                    | `src/lib/server/integrations/lms/moodle.ts` | `createMoodleClient`, `MoodleError`                  |
-| что адаптер делает с ответами                  | `src/lib/server/integrations/lms/sync.ts`   | `collectRows`, `syncLms`                             |
-| подпись вебхука                                | `src/lib/server/integrations/delivery.ts`   | `signPayload`, `verifySignature`, `postWebhook`      |
-| журнал: запись и выгрузка                      | `src/lib/server/audit/index.ts`             | `recordAuditEvent`, `exportAuditEvents`              |
-| журнал: словарь событий и правила подробностей | `src/lib/contracts/audit.ts`                | `AUDIT_EVENT_TYPES`, `validateAuditDetails`          |
-| маскирование персональных данных               | `src/lib/server/people/serialize.ts`        | `toPersonView`                                       |
-| след просмотра персональных данных             | `src/lib/server/people/pii-trace.ts`        | `withPiiTrace`, `notePiiView`                        |
-| обёртка эндпоинта API                          | `src/lib/server/api/handler.ts`             | `apiHandler`                                         |
-| граница транзакции                             | `src/lib/server/db/transaction.ts`          | `withTransaction`                                    |
+| Вопрос                                         | Файл                                             | Что смотреть                                         |
+| ---------------------------------------------- | ------------------------------------------------ | ---------------------------------------------------- |
+| правило перехода между стадиями                | `src/lib/server/stages/transitions.ts`           | `evaluateTransition`, `transitionPermission`         |
+| выполнение перехода, блокировки                | `src/lib/server/stages/commands.ts`              | `moveStage`, `lockInteraction`                       |
+| проверка права                                 | `src/lib/server/rbac/index.ts`                   | `can`, `requirePermission`                           |
+| каталог прав и роли по умолчанию               | `src/lib/server/rbac/permissions.ts`             | `PERMISSIONS`, `DEFAULT_ROLES`                       |
+| сужение выборки по области доступа             | `src/lib/server/rbac/index.ts`                   | `scopeFilter`                                        |
+| то же для взаимодействий и документов          | `src/lib/server/interactions/access.ts`          | `interactionScopeFilter`, `assertInteractionVisible` |
+| адаптер LMS                                    | `src/lib/server/integrations/lms/moodle.ts`      | `createMoodleClient`, `MoodleError`                  |
+| что адаптер делает с ответами                  | `src/lib/server/integrations/lms/sync.ts`        | `collectRows`, `syncLms`                             |
+| подпись вебхука                                | `src/lib/server/integrations/delivery.ts`        | `signPayload`, `verifySignature`, `postWebhook`      |
+| журнал: запись и выгрузка                      | `src/lib/server/audit/index.ts`                  | `recordAuditEvent`, `exportAuditEvents`              |
+| журнал: словарь событий и правила подробностей | `src/lib/contracts/audit.ts`                     | `AUDIT_EVENT_TYPES`, `validateAuditDetails`          |
+| отчёт: адрес, строки, форматы                  | `src/lib/server/reports/query.ts`                | `readReportQuery`, `buildReport`, `writers/`         |
+| приём заявки с сайта                           | `src/lib/server/integrations/exchange/intake.ts` | `receiveApplication`                                 |
+| справка: статьи и их порядок                   | `src/lib/help/index.ts`                          | `helpPages`, `findHelpPage`                          |
+| вход: обмен кода на токены                     | `src/lib/server/auth/oidc.ts`                    | `authorizationUrl`, `exchangeCode`                   |
+| маскирование персональных данных               | `src/lib/server/people/serialize.ts`             | `toPersonView`                                       |
+| след просмотра персональных данных             | `src/lib/server/people/pii-trace.ts`             | `withPiiTrace`, `notePiiView`                        |
+| обёртка эндпоинта API                          | `src/lib/server/api/handler.ts`                  | `apiHandler`                                         |
+| граница транзакции                             | `src/lib/server/db/transaction.ts`               | `withTransaction`                                    |
 
 ## Окружение запуска
 
 `docker-compose.yml` — локальный стек и он же демонстрационный стенд: `postgres:17-alpine` (на хосте
-`55432`), `redis:8-alpine` (`56379`), `gotenberg:8` (`3001`), `mailpit` (`1025`/`8025`) и `app`
+`55432`), `redis:8-alpine` (`56379`), `keycloak` (`58080`), `gotenberg:8` (`3001`), `minio`
+(`59000`/`59001`), имитаторы систем заказчика `mock-cms` (`58081`) и `mock-lms` (`58082`) и `app`
 (`3000`). Порты на хосте сдвинуты, чтобы стек не спорил с уже запущенными на машине службами.
 `docker-compose.prod.yml` — наложение поверх базового файла: наружу смотрит только приложение и
 только на петлевом интерфейсе, у каждой службы перезапуск и потолок памяти, конфигурация приходит из
@@ -398,14 +436,15 @@ ORM про них знает, но ими не управляет:
 или неверная останавливает процесс при старте, а не всплывает страницей позже. Шаблон —
 `.env.example`.
 
-| Группа    | Переменные                                                           | Комментарий                                                                          |
-| --------- | -------------------------------------------------------------------- | ------------------------------------------------------------------------------------ |
-| Среда     | `NODE_ENV`, `ORIGIN`                                                 | `ORIGIN` сверяет хук `csrf` и по нему же решается `secure` у куки                    |
-| Данные    | `DATABASE_URL`, `REDIS_URL`, `S3_*`                                  | база, Redis, хранилище файлов документов (шесть переменных)                          |
-| Службы    | `GOTENBERG_URL`, `SMTP_HOST`, `SMTP_PORT`                            | конвертация в PDF и почта                                                            |
-| Режимы    | `DEMO_MODE`, `TRUST_PROXY`                                           | ровно `true`/`false`; `TRUST_PROXY` — только за обратным прокси                      |
-| Обмен     | `EXCHANGE_*`                                                         | адреса подключений, их имена и секрет подписи; пустая строка — направление выключено |
-| Вне схемы | `BODY_SIZE_LIMIT`, `SEED_DEMO_PASSWORD`, `SEED_STAFF_ADMIN_PASSWORD` | первую читает adapter-node, две другие — только сид                                  |
+| Группа    | Переменные                                                             | Комментарий                                                                                            |
+| --------- | ---------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------ |
+| Среда     | `NODE_ENV`, `ORIGIN`                                                   | `ORIGIN` сверяет хук `csrf`, по нему же решается `secure` у куки и собирается адрес возврата           |
+| Данные    | `DATABASE_URL`, `REDIS_URL`, `S3_*`                                    | база, Redis, хранилище файлов документов (шесть переменных)                                            |
+| Вход      | `OIDC_*`                                                               | realm, публичное и внутреннее основание каталога, клиент и его секрет (пять переменных)                |
+| Службы    | `GOTENBERG_URL`                                                        | конвертация DOCX → PDF; почты продукт не отправляет, почтового узла в конфигурации нет                 |
+| Режимы    | `DEMO_MODE`, `TRUST_PROXY`, `ALLOW_LOCAL_TARGETS`                      | ровно `true`/`false`; `TRUST_PROXY` — только за обратным прокси, `ALLOW_LOCAL_TARGETS` — стенд         |
+| Обмен     | `EXCHANGE_*`                                                           | адреса подключений, их имена и секрет подписи; пустая строка — направление выключено                   |
+| Вне схемы | `BODY_SIZE_LIMIT`, `ADDRESS_HEADER`, `XFF_DEPTH`, `SEED_DEMO_PASSWORD` | первые три читает adapter-node, последнюю — компоуз, заводя демонстрационные учётные записи в Keycloak |
 
 `Dockerfile` — пять стадий (`base` → `deps` → `prod-deps` → `build` → `runtime`). В образ
 кроме `build/` кладутся `drizzle/`, `scripts/`, `src/lib` и `templates/`: миграции, сид и чтение

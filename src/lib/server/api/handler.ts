@@ -12,7 +12,7 @@
  */
 import type { RequestEvent, RequestHandler } from '@sveltejs/kit';
 import { z } from 'zod';
-import type { ApiErrorBody, ApiErrorCode } from '$lib/contracts/api';
+import type { ApiErrorBody, ApiErrorCode, ApiKeyExchangeSystem } from '$lib/contracts/api';
 import type { AuditOutcome } from '$lib/contracts/audit';
 import type { AccessScope, ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
@@ -27,6 +27,7 @@ import {
 	reserveIdempotency
 } from './idempotency';
 import { authenticateApiKey, parseBearerToken } from './keys';
+import type { ApiKeyContext } from './types';
 import {
 	API_RATE_LIMIT_PER_IP,
 	API_RATE_LIMIT_PER_KEY,
@@ -63,6 +64,17 @@ export type ApiEndpointConfig = {
 	 * остальные маршруты остаются людям.
 	 */
 	service?: boolean;
+	/**
+	 * Подключение обмена, которому принадлежит маршрут: заявки приходят с сайта,
+	 * результаты групп — из системы обучения.
+	 *
+	 * Ключ обязан быть выпущен на это же подключение. Права здесь не помогут:
+	 * роль `service` несёт оба направления сразу, и без этой сверки ключ сайта
+	 * подавал бы результаты учебных групп — то есть правил бы данные обучения в
+	 * чужих взаимодействиях. Признак обязателен на каждом маршруте со
+	 * `service: true`.
+	 */
+	exchangeSystem?: ApiKeyExchangeSystem;
 	/** Разрешить `Idempotency-Key`; имеет смысл только для POST, PUT и PATCH. */
 	idempotent?: boolean;
 };
@@ -195,6 +207,74 @@ async function startsUnauthenticatedMinute(ip: string): Promise<boolean> {
 	return true;
 }
 
+/**
+ * Подходит ли ключ этому направлению обмена; `null` — подходит.
+ *
+ * Экземпляр сверяется вместе с системой: два сайта — это два подключения, и
+ * ключ одного не подаёт заявки от имени другого. Ключа без подключения на
+ * маршруте обмена быть не может — такой выпускали до того, как у ключей
+ * появилась вторая половина, и его отзывают и выпускают заново.
+ */
+function exchangeKeyIssue(
+	binding: ApiKeyContext['exchange'],
+	required: ApiKeyExchangeSystem
+): string | null {
+	if (binding === null) {
+		return 'Ключ не привязан к подключению обмена: выпустите его заново, указав систему';
+	}
+
+	return binding.system === required
+		? null
+		: `Ключ выпущен на подключение «${binding.system}»: этот маршрут принимает только «${required}»`;
+}
+
+/**
+ * Запись об ответе API в журнал.
+ *
+ * Общая для `apiHandler` и для маршрутов, которые отдают не JSON, — выдачи
+ * вложения обмена: «какой ответ как записывается» не должно существовать в двух
+ * видах, иначе один из них однажды перестанет писать отказы.
+ *
+ * Отказ безымянному вызывающему — ключа нет, он негоден или адрес исчерпал
+ * лимит — отдаёт только транспорт, до сервиса запрос не дошёл. Такие отказы
+ * пишутся агрегированно, см. `startsUnauthenticatedMinute`. Отказ по лимиту
+ * самого ключа сюда не относится: за ним стоит известный владелец, и такая
+ * строка в журнале про него, а не про наплыв с адреса.
+ */
+export async function recordApiRequest(
+	ctx: ActorContext,
+	options: { route: string; method: string; status: number }
+): Promise<void> {
+	const { route, method, status } = options;
+
+	try {
+		if (status === 401 || (status === 429 && ctx.apiKeyId === null)) {
+			// Адрес у машинного запроса есть всегда (`getClientAddress`); `unknown` —
+			// это про контекст без запроса, которого на этом пути не бывает.
+			if (await startsUnauthenticatedMinute(ctx.ip ?? 'unknown')) {
+				await recordAuditEvent(ctx, {
+					type: 'api.unauthenticated_burst',
+					outcome: outcomeFor(status),
+					details: { route, method, status }
+				});
+			}
+
+			return;
+		}
+
+		await recordAuditEvent(ctx, {
+			type: 'api.request',
+			outcome: outcomeFor(status),
+			details: { route, method, status }
+		});
+	} catch (error) {
+		// Ответ уже сложился: запрос либо выполнен, либо отклонён, и клиент должен
+		// узнать именно это, а не про неудачу записи в журнал. Сама неудача не
+		// теряется — она уходит в лог сервера.
+		console.error(`[api] не удалось записать событие журнала для ${ctx.requestId}`, error);
+	}
+}
+
 function toFailure(error: unknown, requestId: string): ApiFailure {
 	if (error instanceof ApiFailure) {
 		return error;
@@ -261,34 +341,7 @@ export function apiHandler<TConfig extends ApiEndpointConfig>(
 				headers.set(name, value);
 			}
 
-			try {
-				// Отказ безымянному вызывающему — ключа нет, он негоден или адрес
-				// исчерпал лимит — отдаёт только транспорт, до сервиса запрос не
-				// дошёл. Такие отказы пишутся агрегированно, см.
-				// `startsUnauthenticatedMinute`. Отказ по лимиту самого ключа сюда
-				// не относится: за ним стоит известный владелец, и такая строка в
-				// журнале про него, а не про наплыв с адреса.
-				if (status === 401 || (status === 429 && ctx.apiKeyId === null)) {
-					if (await startsUnauthenticatedMinute(ip)) {
-						await recordAuditEvent(ctx, {
-							type: 'api.unauthenticated_burst',
-							outcome: outcomeFor(status),
-							details: { route, method, status }
-						});
-					}
-				} else {
-					await recordAuditEvent(ctx, {
-						type: 'api.request',
-						outcome: outcomeFor(status),
-						details: { route, method, status }
-					});
-				}
-			} catch (error) {
-				// Ответ уже сложился: запрос либо выполнен, либо отклонён, и клиент
-				// должен узнать именно это, а не про неудачу записи в журнал. Сама
-				// неудача не теряется — она уходит в лог сервера.
-				console.error(`[api] не удалось записать событие журнала для ${ctx.requestId}`, error);
-			}
+			await recordApiRequest(ctx, { route, method, status });
 
 			return new Response(JSON.stringify(payload), { status, headers });
 		};
@@ -356,6 +409,14 @@ export function apiHandler<TConfig extends ApiEndpointConfig>(
 					'forbidden',
 					'Ключ внешней системы работает только на эндпоинтах обмена'
 				);
+			}
+
+			if (config.exchangeSystem !== undefined) {
+				const issue = exchangeKeyIssue(authenticated.key.exchange, config.exchangeSystem);
+
+				if (issue !== null) {
+					throw new ApiFailure(403, 'forbidden', issue);
+				}
 			}
 
 			if (config.permission !== undefined) {

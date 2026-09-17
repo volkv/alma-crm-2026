@@ -10,6 +10,7 @@
 import { eq } from 'drizzle-orm';
 import {
 	createInteractionSchema,
+	type ChecklistItem,
 	type ProcessDefinitionInput,
 	type ProcessRevisionView
 } from '$lib/contracts/interactions';
@@ -199,6 +200,77 @@ export async function advanceTo(
 	}
 
 	throw new Error(`Не удалось дойти до стадии «${key}»`);
+}
+
+/**
+ * Процесс из трёх стадий: на средней можно стоять, её же можно удалить, и
+ * первую есть чем закрыть. Минимум, на котором виден и переезд, и перепривязка.
+ *
+ * Чек-листы задаются параметром: правило переноса отметок проверяется тем, что
+ * у стадий совпадают ключи пунктов, а подписи — нет.
+ */
+export function threeStageProcess(
+	options: { checklist?: Partial<Record<'intake' | 'offer' | 'done', ChecklistItem[]>> } = {}
+): ProcessDefinitionInput {
+	return {
+		name: 'Процесс из трёх стадий',
+		note: null,
+		migrationRules: [],
+		stages: [
+			{
+				key: 'intake',
+				name: 'Приём',
+				category: 'contact',
+				slaDays: 3,
+				staleAfterDays: null,
+				requiresResult: false,
+				requiresConfirmation: false,
+				requiresLmsData: false,
+				isFinal: false,
+				checklist: options.checklist?.intake ?? []
+			},
+			{
+				key: 'offer',
+				name: 'Предложение',
+				category: 'documents',
+				slaDays: 5,
+				staleAfterDays: null,
+				requiresResult: false,
+				requiresConfirmation: false,
+				requiresLmsData: false,
+				isFinal: false,
+				checklist: options.checklist?.offer ?? []
+			},
+			{
+				key: 'done',
+				name: 'Завершение',
+				category: 'control',
+				slaDays: 7,
+				staleAfterDays: null,
+				requiresResult: false,
+				requiresConfirmation: false,
+				requiresLmsData: false,
+				isFinal: true,
+				checklist: options.checklist?.done ?? []
+			}
+		],
+		transitions: [
+			{
+				fromStageKey: 'intake',
+				toStageKey: 'offer',
+				kind: 'forward',
+				requiredPermissionKey: 'stages.transition',
+				requiresReason: false
+			},
+			{
+				fromStageKey: 'offer',
+				toStageKey: 'done',
+				kind: 'forward',
+				requiredPermissionKey: 'stages.transition',
+				requiresReason: false
+			}
+		]
+	};
 }
 
 /** Процесс из двух стадий: минимум, на котором проверяют одно правило. */

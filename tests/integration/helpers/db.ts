@@ -81,8 +81,6 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 	process.env.DATABASE_URL = uri;
 	process.env.REDIS_URL = redisContainer.getConnectionUrl();
 	process.env.GOTENBERG_URL = 'http://localhost:3001';
-	process.env.SMTP_HOST = 'localhost';
-	process.env.SMTP_PORT = '1025';
 	process.env.ORIGIN = 'http://localhost:5173';
 	process.env.DEMO_MODE = 'false';
 	process.env.TRUST_PROXY = 'false';

@@ -20,14 +20,6 @@ import {
 export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'auth.login': 'Вход в систему',
 	'auth.logout': 'Выход из системы',
-	'auth.login_failed': 'Неудачная попытка входа',
-	'auth.locked': 'Вход закрыт блокировкой',
-	'auth.password_changed': 'Смена пароля',
-	'auth.mfa_enrolled': 'Двухфакторная аутентификация подключена',
-	'auth.mfa_disabled': 'Двухфакторная аутентификация отключена',
-	'auth.mfa_verified': 'Код двухфакторной аутентификации подтверждён',
-	'auth.mfa_failed': 'Неверный код двухфакторной аутентификации',
-	'auth.mfa_reset': 'Двухфакторная аутентификация сброшена',
 	'users.created': 'Пользователь заведён',
 	'users.updated': 'Пользователь изменён',
 	'users.role_changed': 'Роль пользователя изменена',
@@ -56,8 +48,6 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'people.consent_withdrawn': 'Согласие на обработку персональных данных отозвано',
 	'people.retention_changed': 'Срок хранения персональных данных изменён',
 	'people.anonymized': 'Персональные данные обезличены',
-	'directions.created': 'ИТ-направление заведено',
-	'directions.updated': 'ИТ-направление изменено',
 	'programs.created': 'Программа заведена',
 	'programs.updated': 'Программа изменена',
 	'programs.version_created': 'Версия программы создана',
@@ -78,12 +68,8 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'interactions.confirmed': 'Взаимодействие подтверждено',
 	'interactions.checklist_changed': 'Чек-лист стадии изменён',
 	'interactions.result_recorded': 'Результат стадии записан',
-	'interactions.responsible_changed': 'Ответственный изменён',
 	'interactions.owner_changed': 'Владелец взаимодействия изменён',
 	'interactions.stage_migrated': 'Стадия перенесена при изменении процесса',
-	'contracts.created': 'Договор заведён',
-	'contracts.updated': 'Договор изменён',
-	'contracts.items_changed': 'Позиции договора изменены',
 	'interactions.commented': 'Добавлен комментарий',
 	'interactions.completed': 'Взаимодействие завершено',
 	'interactions.cancelled': 'Взаимодействие отменено',
@@ -93,11 +79,6 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'stages.draft_updated': 'Черновик процесса изменён',
 	'stages.draft_discarded': 'Черновик процесса отменён',
 	'stages.process_viewed': 'Обращение к устройству процесса',
-	'stages.route_created': 'Маршрут стадий создан',
-	'stages.route_updated': 'Маршрут стадий изменён',
-	'stages.route_published': 'Маршрут стадий опубликован',
-	'stages.route_default_changed': 'Маршрут стадий назначен основным',
-	'stages.routes_viewed': 'Обращение к маршрутам стадий',
 	'documents.uploaded': 'Документ загружен',
 	'documents.generated': 'Документ сгенерирован',
 	'documents.downloaded': 'Документ скачан',
@@ -126,6 +107,15 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'api.unauthenticated_burst': 'Обращения к API без ключа'
 };
 
+/**
+ * Название события для показа. Словарь закрыт, но журнал неизменяем: в старых
+ * строках остаются коды подсистем, которых в продукте уже нет, — такой код
+ * показывается как есть, а не пустым местом.
+ */
+export function auditEventLabel(type: string): string {
+	return AUDIT_EVENT_LABELS[type as AuditEventType] ?? type;
+}
+
 /** Первая часть кода события — раздел, к которому оно относится. */
 type EventPrefix = AuditEventType extends `${infer Prefix}.${string}` ? Prefix : never;
 
@@ -137,12 +127,10 @@ const GROUP_LABELS: Record<EventPrefix, string> = {
 	organizations: 'Организации',
 	directory: 'Справочники',
 	people: 'Люди',
-	directions: 'ИТ-направления',
 	programs: 'Программы',
 	products: 'Продукты',
 	interactions: 'Взаимодействия',
-	contracts: 'Договоры',
-	stages: 'Маршруты и стадии',
+	stages: 'Процесс и стадии',
 	documents: 'Документы',
 	stats: 'Данные об обучении',
 	integrations: 'Интеграции',
@@ -215,7 +203,7 @@ const SUBJECT_LABELS: Record<string, string> = {
 	program_version: 'Версия программы',
 	product: 'Продукт',
 	interaction: 'Взаимодействие',
-	stage_route: 'Маршрут стадий',
+	process_group: 'Группа процесса',
 	document: 'Документ',
 	stat_snapshot: 'Снимок данных',
 	user: 'Пользователь',

@@ -12,13 +12,40 @@
 	 */
 	let { data, children }: LayoutProps = $props();
 
-	const current = $derived(data.sections.find((section) => section.href === page.url.pathname));
+	// Раздел владеет своим адресом и всем, что ниже: страница одного процесса —
+	// это по-прежнему «Процесс», и подсветка в меню обязана это показывать.
+	const current = $derived(
+		data.sections.find(
+			(section) =>
+				section.href === page.url.pathname || page.url.pathname.startsWith(`${section.href}/`)
+		)
+	);
+
+	/**
+	 * Как называется то, что открыто внутри раздела: имя процесса, а не слово
+	 * «Настройки». Заголовок принадлежит этому слою, а что именно открыто,
+	 * знает только сама страница, — она и кладёт название в данные.
+	 */
+	const inner = $derived(
+		typeof page.data.settingsTitle === 'string' ? page.data.settingsTitle : null
+	);
+	const description = $derived(
+		typeof page.data.settingsDescription === 'string'
+			? page.data.settingsDescription
+			: current?.description
+	);
 </script>
 
 <PageHeader
-	title={current?.label ?? 'Настройки'}
-	description={current?.description}
-	breadcrumbs={[{ label: 'Главная', href: resolve('/') }, { label: 'Настройки' }]}
+	title={inner ?? current?.label ?? 'Настройки'}
+	{description}
+	breadcrumbs={[
+		{ label: 'Главная', href: resolve('/') },
+		{ label: 'Настройки' },
+		...(inner !== null && current !== undefined
+			? [{ label: current.label, href: resolve(current.href) }]
+			: [])
+	]}
 />
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
@@ -27,7 +54,7 @@
 		ноутбуке. -->
 	<nav class="flex flex-row flex-wrap gap-1 border-b border-border pb-2" aria-label="Настройки">
 		{#each data.sections as section (section.href)}
-			{@const active = page.url.pathname === section.href}
+			{@const active = section.href === current?.href}
 			<a
 				href={resolve(section.href)}
 				aria-current={active ? 'page' : undefined}

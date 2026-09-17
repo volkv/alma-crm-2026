@@ -6,8 +6,6 @@ const completeEnv = {
 	DATABASE_URL: 'postgres://lct:lct@localhost:55432/lct',
 	REDIS_URL: 'redis://localhost:56379',
 	GOTENBERG_URL: 'http://localhost:3001',
-	SMTP_HOST: 'localhost',
-	SMTP_PORT: '1025',
 	ORIGIN: 'http://localhost:5173',
 	DEMO_MODE: 'false',
 	TRUST_PROXY: 'false',
@@ -24,10 +22,9 @@ const completeEnv = {
 } satisfies Record<string, string>;
 
 describe('parseConfig', () => {
-	it('accepts a complete environment and coerces the SMTP port to a number', () => {
+	it('accepts a complete environment', () => {
 		const config = parseConfig(completeEnv);
 
-		expect(config.SMTP_PORT).toBe(1025);
 		expect(config.DATABASE_URL).toBe(completeEnv.DATABASE_URL);
 		expect(config.NODE_ENV).toBe('test');
 	});
@@ -120,8 +117,34 @@ describe('parseConfig', () => {
 	});
 
 	it('reports every broken variable at once, not just the first', () => {
-		expect(() => parseConfig({ ...completeEnv, SMTP_HOST: '', S3_BUCKET: '' })).toThrowError(
-			/SMTP_HOST[\s\S]*S3_BUCKET/
+		expect(() => parseConfig({ ...completeEnv, S3_ACCESS_KEY: '', S3_BUCKET: '' })).toThrowError(
+			/S3_BUCKET[\s\S]*S3_ACCESS_KEY/
+		);
+	});
+
+	it('rejects an exchange secret too short to be one', () => {
+		// Подпись стоит ровно столько, сколько стоит подбор ключа: «exchange» из
+		// восьми букв подбирается словарём, и подписанное им сообщение ничем не
+		// отличается от чужого.
+		expect(() => parseConfig({ ...completeEnv, EXCHANGE_SECRET: 'exchange' })).toThrowError(
+			/EXCHANGE_SECRET/
+		);
+
+		expect(parseConfig({ ...completeEnv, EXCHANGE_SECRET: 'x'.repeat(32) }).EXCHANGE_SECRET).toBe(
+			'x'.repeat(32)
+		);
+	});
+
+	it('leaves local outgoing targets to the deployment and defaults by mode', () => {
+		// Умолчания нет: значение читают через `allowsLocalTargets()`, где режим и
+		// решает. Здесь проверяется, что переменная разбирается и не выдумывает
+		// себе значения.
+		expect(parseConfig(completeEnv).ALLOW_LOCAL_TARGETS).toBeUndefined();
+		expect(parseConfig({ ...completeEnv, ALLOW_LOCAL_TARGETS: 'true' }).ALLOW_LOCAL_TARGETS).toBe(
+			true
+		);
+		expect(() => parseConfig({ ...completeEnv, ALLOW_LOCAL_TARGETS: 'yes' })).toThrowError(
+			/ALLOW_LOCAL_TARGETS/
 		);
 	});
 

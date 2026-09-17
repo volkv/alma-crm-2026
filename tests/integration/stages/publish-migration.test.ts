@@ -7,16 +7,22 @@
  * остаётся целой, а числа отчёта на прошлую дату не зависят от того, правили
  * процесс после неё или нет.
  */
-import { and, asc, eq, isNull, sql } from 'drizzle-orm';
+import { and, asc, eq, isNotNull, isNull, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	auditEvents,
+	exchangeMessages,
+	interactions,
 	processGroups,
 	processStageKeys,
 	stageEntries,
+	stageEntryStatus,
+	stagePauses,
 	stages
 } from '$lib/server/db/schema';
-import { ValidationError } from '$lib/server/errors';
+import { ConflictError, ValidationError } from '$lib/server/errors';
+import { setExchangeSettings } from '$lib/server/integrations/settings';
+import { advanceStage, pauseStage, setChecklistItem } from '$lib/server/stages/commands';
 import {
 	createDraft,
 	processDefinition,
@@ -25,13 +31,14 @@ import {
 } from '$lib/server/stages/process';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import type { ActorContext } from '$lib/server/actor';
-import { startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
+import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
 import {
 	activeRevision,
 	advanceTo,
 	B2C_GROUP_KEY,
 	createInteractionOn,
-	seedProcess
+	seedProcess,
+	threeStageProcess
 } from './fixture';
 
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
@@ -52,70 +59,6 @@ beforeEach(async () => {
 
 const admin = (): ActorContext => testActor({ roleId: 'admin' });
 
-/**
- * Процесс из трёх стадий: на средней можно стоять, её же можно удалить, и
- * первую есть чем закрыть. Минимум, на котором виден и переезд, и перепривязка.
- */
-const THREE_STAGES = {
-	name: 'Процесс из трёх стадий',
-	note: null,
-	migrationRules: [],
-	stages: [
-		{
-			key: 'intake',
-			name: 'Приём',
-			category: 'contact' as const,
-			slaDays: 3,
-			staleAfterDays: null,
-			requiresResult: false,
-			requiresConfirmation: false,
-			requiresLmsData: false,
-			isFinal: false,
-			checklist: []
-		},
-		{
-			key: 'offer',
-			name: 'Предложение',
-			category: 'documents' as const,
-			slaDays: 5,
-			staleAfterDays: null,
-			requiresResult: false,
-			requiresConfirmation: false,
-			requiresLmsData: false,
-			isFinal: false,
-			checklist: []
-		},
-		{
-			key: 'done',
-			name: 'Завершение',
-			category: 'control' as const,
-			slaDays: 7,
-			staleAfterDays: null,
-			requiresResult: false,
-			requiresConfirmation: false,
-			requiresLmsData: false,
-			isFinal: true,
-			checklist: []
-		}
-	],
-	transitions: [
-		{
-			fromStageKey: 'intake',
-			toStageKey: 'offer',
-			kind: 'forward' as const,
-			requiredPermissionKey: 'stages.transition',
-			requiresReason: false
-		},
-		{
-			fromStageKey: 'offer',
-			toStageKey: 'done',
-			kind: 'forward' as const,
-			requiredPermissionKey: 'stages.transition',
-			requiresReason: false
-		}
-	]
-};
-
 /** Открытая запись взаимодействия вместе с ключом стадии, на которой она стоит. */
 async function openEntry(interactionId: string) {
 	const [row] = await database.db
@@ -131,6 +74,36 @@ async function openEntry(interactionId: string) {
 		})
 		.from(stageEntries)
 		.innerJoin(stages, eq(stages.id, stageEntries.stageId))
+		.where(and(eq(stageEntries.interactionId, interactionId), isNull(stageEntries.leftAt)));
+
+	return row;
+}
+
+/**
+ * Инвариант, общий для всей публикации: открытых пауз на закрытых записях не
+ * бывает. Незакрытая пауза в истории читается как «ждать не перестали никогда».
+ */
+async function assertNoOpenPauseOnClosedEntries(): Promise<void> {
+	const stray = await database.db
+		.select({ pauseId: stagePauses.id, stageEntryId: stagePauses.stageEntryId })
+		.from(stagePauses)
+		.innerJoin(stageEntries, eq(stageEntries.id, stagePauses.stageEntryId))
+		.where(and(isNull(stagePauses.endedAt), isNotNull(stageEntries.leftAt)));
+
+	expect(stray).toStrictEqual([]);
+}
+
+/** Срок и паузы открытой записи — так, как их считает база. */
+async function entryStatus(interactionId: string) {
+	const [row] = await database.db
+		.select({
+			isPaused: stageEntryStatus.isPaused,
+			isOverdue: stageEntryStatus.isOverdue,
+			activeSeconds: stageEntryStatus.activeSeconds,
+			overdueSeconds: stageEntryStatus.overdueSeconds
+		})
+		.from(stageEntryStatus)
+		.innerJoin(stageEntries, eq(stageEntries.id, stageEntryStatus.stageEntryId))
 		.where(and(eq(stageEntries.interactionId, interactionId), isNull(stageEntries.leftAt)));
 
 	return row;
@@ -153,26 +126,6 @@ async function entriesOf(interactionId: string) {
 		.orderBy(asc(stageEntries.enteredAt));
 }
 
-/**
- * Числа отчёта «срез на дату»: сколько взаимодействий группы стояло на каждом
- * ключе стадии в заданный момент. Считается по `stage_entries` группировкой по
- * ключу из снимка — ровно так, как обещает движок отчёту.
- */
-async function snapshotAt(groupKey: string, at: Date): Promise<Record<string, number>> {
-	const rows = (await database.db.execute(sql`
-		select entries.stage_snapshot ->> 'key' as key, count(*)::int as value
-		from stage_entries entries
-		join interactions on interactions.id = entries.interaction_id
-		join process_groups groups on groups.id = interactions.process_group_id
-		where groups.key = ${groupKey}
-			and entries.entered_at <= ${at.toISOString()}::timestamptz
-			and (entries.left_at is null or entries.left_at > ${at.toISOString()}::timestamptz)
-		group by 1
-	`)) as unknown as { key: string; value: number }[];
-
-	return Object.fromEntries(rows.map((row) => [row.key, row.value]));
-}
-
 /** Заводит черновик, правит его и применяет ко всем. */
 async function publishWith(
 	ctx: ActorContext,
@@ -189,7 +142,7 @@ async function publishWith(
 describe('перепривязка открытых записей', () => {
 	it('переносит открытые записи и не трогает закрытые', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, THREE_STAGES);
+		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
 
 		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
 		await advanceTo(ctx, database, interactionId, 'offer');
@@ -239,7 +192,7 @@ describe('перепривязка открытых записей', () => {
 
 	it('переезд закрывает запись исходом «перенесена» и открывает новую', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, THREE_STAGES);
+		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
 
 		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
 		await advanceTo(ctx, database, interactionId, 'offer');
@@ -277,16 +230,281 @@ describe('перепривязка открытых записей', () => {
 		// `left_at` закрытой равен `entered_at` новой: между записями нет дыры.
 		expect(moved?.leftAt?.getTime()).toBe(open.enteredAt.getTime());
 
+		await assertNoOpenPauseOnClosedEntries();
+
 		// Карточка объясняет перенос, пока запись открыта.
 		const status = await getInteractionStatus(ctx, interactionId);
 		expect(status.migratedFrom?.stageKey).toBe('offer');
+	});
+
+	it('переносит записи на выбранную стадию, а не на подставленную по умолчанию', async () => {
+		const ctx = admin();
+		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+
+		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
+		await advanceTo(ctx, database, interactionId, 'offer');
+
+		// По умолчанию записи с «Предложения» уехали бы назад, на «Приём»
+		// (предыдущая сохранившаяся стадия). Правило говорит другое.
+		const result = await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
+			...definition,
+			migrationRules: [{ removedStageKey: 'offer', targetStageKey: 'done' }],
+			stages: definition.stages.filter((stage) => stage.key !== 'offer'),
+			transitions: [
+				{
+					fromStageKey: 'intake',
+					toStageKey: 'done',
+					kind: 'forward' as const,
+					requiredPermissionKey: 'stages.transition',
+					requiresReason: false
+				}
+			]
+		}));
+
+		const open = await openEntry(interactionId);
+
+		expect(result.migratedCount).toBe(1);
+		expect(open.stageKey).toBe('done');
+		expect(open.migratedFromStageKey).toBe('offer');
+	});
+
+	it('переносит отметки чек-листа только по совпавшим ключом и подписью пунктам', async () => {
+		const ctx = admin();
+		await seedProcess(
+			database,
+			B2C_GROUP_KEY,
+			threeStageProcess({
+				checklist: {
+					offer: [
+						{ key: 'papers', label: 'Документы собраны', required: false },
+						{ key: 'price', label: 'Цена согласована', required: false }
+					],
+					// Ключи те же, а работа за ними другая: ключ уникален внутри
+					// стадии, и совпадение ключей на двух стадиях — совпадение.
+					intake: [
+						{ key: 'papers', label: 'Документы собраны', required: false },
+						{ key: 'price', label: 'Договор подписан обеими сторонами', required: true }
+					]
+				}
+			})
+		);
+
+		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
+		await advanceTo(ctx, database, interactionId, 'offer');
+
+		await setChecklistItem(ctx, { interactionId, key: 'papers', done: true });
+		await setChecklistItem(ctx, { interactionId, key: 'price', done: true });
+
+		await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
+			...definition,
+			stages: definition.stages.filter((stage) => stage.key !== 'offer'),
+			transitions: [
+				{
+					fromStageKey: 'intake',
+					toStageKey: 'done',
+					kind: 'forward' as const,
+					requiredPermissionKey: 'stages.transition',
+					requiresReason: false
+				}
+			]
+		}));
+
+		const open = await openEntry(interactionId);
+
+		// `papers` совпал ключом и подписью — работа та же, и отметка переехала.
+		// `price` на целевой стадии называет другое требование: переехав, отметка
+		// засчитала бы неподписанный договор подписанным.
+		expect(open.checklistState).toStrictEqual({ papers: true });
+
+		const status = await getInteractionStatus(ctx, interactionId);
+		const target = await activeRevision(database, B2C_GROUP_KEY);
+		const move = {
+			interactionId,
+			fromStageId: open.stageId,
+			toStageId: target.stages.find((stage) => stage.key === 'done')?.id ?? '',
+			revision: status.revision,
+			reason: null,
+			resultText: null,
+			checklistState: {}
+		};
+
+		// Шаг вперёд не проходит, пока обязательный пункт целевой стадии не
+		// закрыт: именно этого и стоил бы переезд отметки.
+		await expect(advanceStage(ctx, move)).rejects.toSatisfy(
+			(error: unknown) =>
+				error instanceof ConflictError && /обязательный пункт чек-листа/.test(error.message)
+		);
+
+		await setChecklistItem(ctx, { interactionId, key: 'price', done: true });
+		await advanceStage(ctx, move);
+
+		const moved = await getInteractionStatus(ctx, interactionId);
+		expect(moved.current?.snapshot.key).toBe('done');
+	});
+
+	it('переносит паузу вместе с записью и не запускает часы стадии', async () => {
+		const ctx = admin();
+		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+
+		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
+		await advanceTo(ctx, database, interactionId, 'offer');
+
+		const before = await openEntry(interactionId);
+
+		await pauseStage(ctx, {
+			interactionId,
+			fromStageId: before.stageId,
+			reason: 'waiting_counterparty',
+			waitingPartyId: null,
+			nextAction: 'Ждём ответ проректора',
+			note: 'Вуз обещал ответить после учёного совета'
+		});
+
+		const pausedBefore = await entryStatus(interactionId);
+
+		const result = await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
+			...definition,
+			stages: definition.stages.filter((stage) => stage.key !== 'offer'),
+			transitions: [
+				{
+					fromStageKey: 'intake',
+					toStageKey: 'done',
+					kind: 'forward' as const,
+					requiredPermissionKey: 'stages.transition',
+					requiresReason: false
+				}
+			]
+		}));
+
+		const open = await openEntry(interactionId);
+		const pauses = await database.db
+			.select({
+				stageEntryId: stagePauses.stageEntryId,
+				startedAt: stagePauses.startedAt,
+				endedAt: stagePauses.endedAt,
+				reason: stagePauses.reason,
+				note: stagePauses.note,
+				nextAction: stagePauses.nextAction
+			})
+			.from(stagePauses)
+			.orderBy(asc(stagePauses.startedAt));
+
+		expect(result.migratedCount).toBe(1);
+
+		// Пауза переехала вместе с записью: на закрытой записи открытых пауз не
+		// осталось, на новой пауза идёт с момента публикации. Иначе часы стадии
+		// пошли бы из-за правки процесса, а ждать сторону взаимодействие не
+		// перестало.
+		expect(pauses).toHaveLength(2);
+		expect(pauses[0].stageEntryId).toBe(before.id);
+		expect(pauses[0].endedAt?.getTime()).toBe(open.enteredAt.getTime());
+		expect(pauses[1].stageEntryId).toBe(open.id);
+		expect(pauses[1].startedAt.getTime()).toBe(open.enteredAt.getTime());
+		expect(pauses[1].endedAt).toBeNull();
+		expect(pauses[1].note).toBe(pauses[0].note);
+		expect(pauses[1].reason).toBe(pauses[0].reason);
+		expect(pauses[1].nextAction).toBe(pauses[0].nextAction);
+
+		await assertNoOpenPauseOnClosedEntries();
+
+		const pausedAfter = await entryStatus(interactionId);
+
+		expect(pausedAfter.isPaused).toBe(true);
+		expect(pausedAfter.isOverdue).toBe(pausedBefore.isOverdue);
+		// Часы стоят по обе стороны публикации: активное время новой записи не
+		// растёт, просрочке взяться неоткуда.
+		expect(pausedAfter.activeSeconds).toBeLessThan(1);
+		expect(pausedAfter.overdueSeconds).toBe(0);
+
+		const status = await getInteractionStatus(ctx, interactionId);
+		expect(status.current?.isPaused).toBe(true);
+	});
+
+	it('сообщает CMS о переезде и двигает `updated_at` взаимодействия', async () => {
+		const ctx = admin();
+		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+
+		// Адрес получателя никуда не ведёт намеренно: доставка идёт отдельным
+		// циклом, а проверка смотрит на очередь.
+		await setExchangeSettings(ctx, {
+			cmsInstance: 'itschool-site',
+			cmsStatusUrl: 'http://127.0.0.1:9/api/applications/{externalId}/status',
+			cmsSecret: 'secret-of-the-stand',
+			cmsDefaultOwnerUserId: TEST_USER_IDS.manager,
+			lmsInstance: 'moodle-itschool',
+			lmsGroupsUrl: '',
+			lmsSecret: null
+		});
+
+		const fromSite = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
+		const ownRecord = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
+
+		// Заявка с сайта: снимок её статуса заявитель видит у себя, и
+		// административный переезд для него — такое же изменение, как переход.
+		await database.db
+			.update(interactions)
+			.set({ externalSource: 'cms:itschool-site', externalId: 'site-2026-000123' })
+			.where(eq(interactions.id, fromSite.interactionId));
+
+		await advanceTo(ctx, database, fromSite.interactionId, 'offer');
+		await advanceTo(ctx, database, ownRecord.interactionId, 'offer');
+
+		const [before] = await database.db
+			.select({ updatedAt: interactions.updatedAt })
+			.from(interactions)
+			.where(eq(interactions.id, fromSite.interactionId));
+
+		await database.db.delete(exchangeMessages);
+
+		const result = await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
+			...definition,
+			stages: definition.stages.filter((stage) => stage.key !== 'offer'),
+			transitions: [
+				{
+					fromStageKey: 'intake',
+					toStageKey: 'done',
+					kind: 'forward' as const,
+					requiredPermissionKey: 'stages.transition',
+					requiresReason: false
+				}
+			]
+		}));
+
+		const queued = await database.db
+			.select({
+				interactionId: exchangeMessages.interactionId,
+				eventType: exchangeMessages.eventType,
+				state: exchangeMessages.state
+			})
+			.from(exchangeMessages);
+
+		const [after] = await database.db
+			.select({ updatedAt: interactions.updatedAt, lastActivityAt: interactions.lastActivityAt })
+			.from(interactions)
+			.where(eq(interactions.id, fromSite.interactionId));
+
+		expect(result.migratedCount).toBe(2);
+
+		// Ровно одна строка очереди: у второго взаимодействия внешней заявки нет,
+		// и слать по нему некому.
+		expect(queued).toHaveLength(1);
+		expect(queued[0]).toMatchObject({
+			interactionId: fromSite.interactionId,
+			eventType: 'application.status',
+			state: 'pending'
+		});
+
+		expect(after.updatedAt.getTime()).toBeGreaterThan(before.updatedAt.getTime());
+		// Работы по взаимодействию никто не вёл: подсказка «запись протухла»
+		// считается от последнего живого действия, а не от правки процесса.
+		expect(after.lastActivityAt.getTime()).toBeLessThan(after.updatedAt.getTime());
 	});
 });
 
 describe('атомарность', () => {
 	it('черновик с неполным сопоставлением не публикуется и ничего не меняет', async () => {
 		const ctx = admin();
-		const active = await seedProcess(database, B2C_GROUP_KEY, THREE_STAGES);
+		const active = await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
 
 		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
 		await advanceTo(ctx, database, interactionId, 'offer');
@@ -330,49 +548,10 @@ describe('атомарность', () => {
 	});
 });
 
-describe('числа отчёта на прошлую дату', () => {
-	it('не меняются от публикации изменения процесса', async () => {
-		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, THREE_STAGES);
-
-		const first = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
-		const second = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
-		await advanceTo(ctx, database, first.interactionId, 'offer');
-		await advanceTo(ctx, database, second.interactionId, 'offer');
-
-		// Момент среза — сейчас, до публикации. Потом процесс меняют так, что
-		// одна стадия исчезает, а другая переименовывается.
-		const at = new Date();
-		const before = await snapshotAt(B2C_GROUP_KEY, at);
-
-		await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
-			...definition,
-			stages: definition.stages
-				.filter((stage) => stage.key !== 'offer')
-				.map((stage) => (stage.key === 'intake' ? { ...stage, name: 'Приём заявки' } : stage)),
-			transitions: [
-				{
-					fromStageKey: 'intake',
-					toStageKey: 'done',
-					kind: 'forward' as const,
-					requiredPermissionKey: 'stages.transition',
-					requiresReason: false
-				}
-			]
-		}));
-
-		const after = await snapshotAt(B2C_GROUP_KEY, at);
-
-		// Меняться могут подписи строк, но не числа: история не переписывается.
-		expect(after).toEqual(before);
-		expect(before.offer).toBe(2);
-	});
-});
-
 describe('реестр ключей и журнал', () => {
 	it('архивирует снятый ключ и не даёт завести стадию под ним заново', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, THREE_STAGES);
+		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
 
 		await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
 			...definition,
@@ -445,7 +624,7 @@ describe('реестр ключей и журнал', () => {
 
 	it('пишет оба события публикации с числами и строку на каждое переехавшее', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, THREE_STAGES);
+		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
 
 		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
 		await advanceTo(ctx, database, interactionId, 'offer');

@@ -43,9 +43,12 @@ export const load: PageServerLoad = async (event) => {
 				.filter((user) => user.isActive)
 				.map((user) => ({
 					id: user.id,
-					fullName: user.roleId === 'service' ? `${user.fullName} — только обмен` : user.fullName
+					fullName: user.roleId === 'service' ? `${user.fullName} — только обмен` : user.fullName,
+					// Ключу машинного субъекта нужна вторая половина — подключение
+					// обмена: форма спрашивает её только у такого владельца.
+					isService: user.roleId === 'service'
 				}))
-		: [{ id: ctx.user?.id ?? '', fullName: ctx.user?.fullName ?? '' }];
+		: [{ id: ctx.user?.id ?? '', fullName: ctx.user?.fullName ?? '', isService: false }];
 
 	return {
 		keys: await listApiKeys(ctx),

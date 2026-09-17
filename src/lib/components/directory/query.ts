@@ -41,6 +41,22 @@ export function filterHref(url: URL, param: string, value: string): ResolvedPath
 	return href(url, params);
 }
 
+/**
+ * Тот же адрес с другим значением параметра и якорем на место внутри страницы.
+ *
+ * Якорь — часть адреса, а не поведение ссылки: перейти к чек-листу стадии
+ * значит открыть нужную вкладку и оказаться у самого списка, и обе половины
+ * этого одна ссылка, которую можно скопировать.
+ */
+export function anchorHref(
+	url: URL,
+	param: string,
+	value: string,
+	anchor: string
+): ResolvedPathname {
+	return `${filterHref(url, param, value)}#${anchor}` as ResolvedPathname;
+}
+
 /** Тот же адрес без указанного параметра. */
 export function withoutParam(url: URL, param: string): ResolvedPathname {
 	const params = new URLSearchParams(url.searchParams);

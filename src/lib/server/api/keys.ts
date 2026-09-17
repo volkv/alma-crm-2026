@@ -8,7 +8,12 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import { and, desc, eq, isNull } from 'drizzle-orm';
-import type { ApiKeyView, CreateApiKeyInput, CreatedApiKey } from '$lib/contracts/api';
+import type {
+	ApiKeyExchangeSystem,
+	ApiKeyView,
+	CreateApiKeyInput,
+	CreatedApiKey
+} from '$lib/contracts/api';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { loadSessionUser } from '../auth/session';
@@ -16,6 +21,7 @@ import { getDb } from '../db';
 import { apiKeys, users } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { NotFoundError, ValidationError } from '../errors';
+import { getExchangeSettings } from '../integrations/settings';
 import { requirePermission } from '../rbac';
 import type { AuthenticatedApiKey } from './types';
 
@@ -61,9 +67,44 @@ function toApiKeyView(row: typeof apiKeys.$inferSelect): ApiKeyView {
 		id: row.id,
 		name: row.name,
 		ownerUserId: row.ownerUserId,
+		exchangeSystem: row.exchangeSystem as ApiKeyExchangeSystem | null,
+		exchangeInstance: row.exchangeInstance,
 		lastUsedAt: row.lastUsedAt,
 		revokedAt: row.revokedAt,
 		createdAt: row.createdAt
+	};
+}
+
+/**
+ * Экземпляр подключения берётся из настроек обмена, а не из формы: с ним
+ * сверяется `source.instance` каждого входящего сообщения, и второе место, где
+ * это имя набирают руками, однажды разошлось бы с первым.
+ */
+async function exchangeBinding(
+	system: ApiKeyExchangeSystem | null,
+	isService: boolean
+): Promise<{ exchangeSystem: string | null; exchangeInstance: string | null }> {
+	if (!isService) {
+		if (system !== null) {
+			throw new ValidationError('Подключение обмена указано не тому владельцу', [
+				'exchangeSystem: ключ на человека не представляет внешнюю систему; выберите владельца «Внешние системы»'
+			]);
+		}
+
+		return { exchangeSystem: null, exchangeInstance: null };
+	}
+
+	if (system === null) {
+		throw new ValidationError('Не указано подключение обмена', [
+			'exchangeSystem: ключ внешней системы работает на одном направлении — укажите, на каком'
+		]);
+	}
+
+	const settings = await getExchangeSettings();
+
+	return {
+		exchangeSystem: system,
+		exchangeInstance: system === 'cms' ? settings.cms.instance : settings.lms.instance
 	};
 }
 
@@ -77,7 +118,7 @@ export async function createApiKey(
 
 	return withTransaction(ctx, async (tx) => {
 		const [owner] = await tx
-			.select({ id: users.id, isActive: users.isActive })
+			.select({ id: users.id, isActive: users.isActive, roleId: users.roleId })
 			.from(users)
 			.where(eq(users.id, input.ownerUserId))
 			.limit(1);
@@ -88,9 +129,16 @@ export async function createApiKey(
 			]);
 		}
 
+		const binding = await exchangeBinding(input.exchangeSystem, owner.roleId === 'service');
+
 		const [row] = await tx
 			.insert(apiKeys)
-			.values({ name: input.name, keyHash: hashApiKey(rawKey), ownerUserId: owner.id })
+			.values({
+				name: input.name,
+				keyHash: hashApiKey(rawKey),
+				ownerUserId: owner.id,
+				...binding
+			})
 			.returning();
 
 		await recordAuditEvent(
@@ -172,6 +220,8 @@ export async function authenticateApiKey(rawKey: string): Promise<AuthenticatedA
 			id: apiKeys.id,
 			name: apiKeys.name,
 			ownerUserId: apiKeys.ownerUserId,
+			exchangeSystem: apiKeys.exchangeSystem,
+			exchangeInstance: apiKeys.exchangeInstance,
 			lastUsedAt: apiKeys.lastUsedAt,
 			revokedAt: apiKeys.revokedAt
 		})
@@ -197,7 +247,18 @@ export async function authenticateApiKey(rawKey: string): Promise<AuthenticatedA
 	}
 
 	return {
-		key: { id: row.id, name: row.name, ownerUserId: owner.id },
+		key: {
+			id: row.id,
+			name: row.name,
+			ownerUserId: owner.id,
+			exchange:
+				row.exchangeSystem === null || row.exchangeInstance === null
+					? null
+					: {
+							system: row.exchangeSystem as ApiKeyExchangeSystem,
+							instance: row.exchangeInstance
+						}
+		},
 		owner
 	};
 }

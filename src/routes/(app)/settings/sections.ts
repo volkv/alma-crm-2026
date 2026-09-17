@@ -61,8 +61,3 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 		permission: 'integrations.manage'
 	}
 ];
-
-/** Раздел по его адресу. Нужен обеим сторонам: и меню, и заголовку страницы. */
-export function settingsSection(href: string): SettingsSection | undefined {
-	return SETTINGS_SECTIONS.find((section) => section.href === href);
-}

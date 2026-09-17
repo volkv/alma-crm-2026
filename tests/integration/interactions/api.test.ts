@@ -98,7 +98,8 @@ async function body(response: Response): Promise<Record<string, unknown>> {
 async function issueKey(roleId: string): Promise<string> {
 	const created = await createApiKey(testActor(), {
 		name: `Ключ ${roleId}`,
-		ownerUserId: TEST_USER_IDS[roleId]
+		ownerUserId: TEST_USER_IDS[roleId],
+		exchangeSystem: null
 	});
 
 	return created.key;

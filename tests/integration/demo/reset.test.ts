@@ -1,5 +1,5 @@
 import type { RequestEvent } from '@sveltejs/kit';
-import { count, eq, sql } from 'drizzle-orm';
+import { count, eq, isNull, sql } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
@@ -12,13 +12,24 @@ import {
 	people,
 	processGroups,
 	processRevisions,
+	processStageKeys,
 	programs,
 	stageEntries,
+	stages,
 	statRows,
 	statSnapshots,
 	users
 } from '$lib/server/db/schema';
 import { getRedis } from '$lib/server/redis';
+import { B2B_GROUP_KEY } from '$lib/server/stages/definitions';
+import {
+	createDraft,
+	processDefinition,
+	publishProcess,
+	readGroupByKey,
+	requireActiveRevision,
+	updateDraft
+} from '$lib/server/stages/process';
 import { CONTRACT_SEED_SIZES } from '../../../scripts/seed/contracts';
 import { DIRECTORY_SEED_SIZES } from '../../../scripts/seed/directory';
 import { INTERACTION_SEED_SIZES } from '../../../scripts/seed/interactions';
@@ -171,7 +182,7 @@ describe('сброс демонстрационных данных', () => {
 		await expect(redis.get('lct:session:проверка-сброса')).resolves.toBe('открыта');
 	});
 
-	it('сохраняет группы процесса и действующие редакции, но убирает черновик', async () => {
+	it('сохраняет группы процесса, но пересобирает их редакции и убирает черновик', async () => {
 		const [group] = await database.db
 			.select({ id: processGroups.id, activeRevisionId: processGroups.activeRevisionId })
 			.from(processGroups)
@@ -191,7 +202,12 @@ describe('сброс демонстрационных данных', () => {
 			.where(eq(processGroups.key, 'b2b'))
 			.limit(1);
 
-		expect(groupAfter).toStrictEqual(group);
+		// Группу кладёт миграция, и на неё ссылаются взаимодействия: она та же.
+		// Редакция — эталонная и заведена заново, потому что эталонный набор
+		// взаимодействий сид проводит по её стадиям.
+		expect(groupAfter.id).toBe(group.id);
+		expect(groupAfter.activeRevisionId).not.toBeNull();
+		expect(groupAfter.activeRevisionId).not.toBe(group.activeRevisionId);
 
 		const leftovers = await database.db
 			.select({ value: count() })
@@ -199,7 +215,120 @@ describe('сброс демонстрационных данных', () => {
 			.where(eq(processRevisions.id, draft.id));
 
 		expect(leftovers[0].value).toBe(0);
+
+		// Опубликованная редакция ровно одна на группу: прежние не остаются.
+		const revisions = await database.db
+			.select({ value: count() })
+			.from(processRevisions)
+			.where(eq(processRevisions.groupId, group.id));
+
+		expect(revisions[0].value).toBe(1);
 	});
+
+	it('возвращает стенд к эталону после применённого изменения процесса', async () => {
+		const ctx = testActor();
+		const group = await readGroupByKey(database.db, B2B_GROUP_KEY);
+		const active = await requireActiveRevision(database.db, group);
+
+		// Стадия, на которой эталонный набор кого-нибудь оставляет: именно её
+		// ключ сид спрашивает у живой редакции, когда ведёт набор заново.
+		const standing = await database.db
+			.select({ key: stages.key })
+			.from(stageEntries)
+			.innerJoin(stages, eq(stages.id, stageEntries.stageId))
+			.where(isNull(stageEntries.leftAt))
+			.groupBy(stages.key);
+
+		const occupied = new Set(standing.map((row) => row.key));
+		const removable = active.stages.find(
+			(stage) => !stage.isFinal && stage.position > 1 && occupied.has(stage.key)
+		);
+
+		expect(removable).toBeDefined();
+
+		const removedKey = removable?.key;
+		const draft = await createDraft(ctx, B2B_GROUP_KEY);
+		const definition = processDefinition(draft);
+
+		// Переходы через удаляемую стадию сшиваются напрямую: иначе процесс
+		// распадётся и черновик не пройдёт проверку.
+		const kept = definition.transitions.filter(
+			(transition) => transition.fromStageKey !== removedKey && transition.toStageKey !== removedKey
+		);
+		const bridges = definition.transitions
+			.filter((transition) => transition.kind === 'forward' && transition.toStageKey === removedKey)
+			.flatMap((into) =>
+				definition.transitions
+					.filter((out) => out.kind === 'forward' && out.fromStageKey === removedKey)
+					.map((out) => ({
+						fromStageKey: into.fromStageKey,
+						toStageKey: out.toStageKey,
+						kind: 'forward' as const,
+						requiredPermissionKey: out.requiredPermissionKey,
+						requiresReason: out.requiresReason
+					}))
+			)
+			.filter(
+				(bridge) =>
+					!kept.some(
+						(transition) =>
+							transition.fromStageKey === bridge.fromStageKey &&
+							transition.toStageKey === bridge.toStageKey &&
+							transition.kind === bridge.kind
+					)
+			);
+
+		const survivors = definition.stages.filter((stage) => stage.key !== removedKey);
+		const target = survivors
+			.slice(
+				0,
+				definition.stages.findIndex((stage) => stage.key === removedKey)
+			)
+			.at(-1);
+
+		await updateDraft(ctx, B2B_GROUP_KEY, {
+			...definition,
+			migrationRules: [{ removedStageKey: removedKey ?? '', targetStageKey: target?.key ?? '' }],
+			stages: survivors,
+			transitions: [...kept, ...bridges]
+		});
+
+		await publishProcess(ctx, B2B_GROUP_KEY);
+
+		// До правки сброс на таком стенде падал посреди заливки: эталонный набор
+		// взаимодействий сид ведёт по живой редакции и упирался в стадию,
+		// которой больше нет.
+		await expect(resetDemoData(ctx)).resolves.toMatchObject({
+			interactionCount: REFERENCE.interactions,
+			organizationCount: REFERENCE.organizations
+		});
+
+		await expect(snapshotCounts()).resolves.toStrictEqual(REFERENCE);
+
+		const restored = await requireActiveRevision(
+			database.db,
+			await readGroupByKey(database.db, B2B_GROUP_KEY)
+		);
+
+		expect(restored.stages.map((stage) => stage.key).sort()).toStrictEqual(
+			active.stages.map((stage) => stage.key).sort()
+		);
+
+		// Реестр ключей тоже эталонный: ключ снятой стадии больше не архивный, и
+		// завести её заново можно.
+		const archived = await database.db
+			.select({ key: processStageKeys.key })
+			.from(processStageKeys)
+			.where(sql`${processStageKeys.archivedAt} is not null`);
+
+		expect(archived).toStrictEqual([]);
+
+		// Повтор кнопки на уже сброшенном стенде делает ровно то же самое.
+		await expect(resetDemoData(ctx)).resolves.toMatchObject({
+			interactionCount: REFERENCE.interactions
+		});
+		await expect(snapshotCounts()).resolves.toStrictEqual(REFERENCE);
+	}, 300_000);
 
 	it('журнал переживает сброс и получает о нём запись', async () => {
 		const before = await database.db

@@ -10,6 +10,7 @@ import { error } from '@sveltejs/kit';
 import { resolve } from '$app/paths';
 import type { Pathname, ResolvedPathname } from '$app/types';
 import { auditFilterSchema, type AuditExportFormat, type AuditFilter } from '$lib/contracts/audit';
+import { MOSCOW_OFFSET } from '$lib/contracts/calendar';
 
 export type AuditFilterParam =
 	'from' | 'to' | 'type' | 'outcome' | 'source' | 'actor' | 'subjectType' | 'subject';
@@ -37,10 +38,12 @@ export const AUDIT_FILTER_PARAMS: readonly AuditFilterParam[] = [
  * Оператор работает по Москве, и границы периода задаются календарными днями:
  * «с 1 по 3 сентября» — это с полуночи первого по конец третьего, а не сутки,
  * отсчитанные от часового пояса машины. Смещение у Москвы постоянное, поэтому
- * день начинается и кончается в заранее известный момент (см. `$lib/format`).
+ * день начинается и кончается в заранее известный момент; само смещение
+ * объявлено один раз, в `$lib/contracts/calendar`.
+ *
+ * Момент собирается строкой, а не арифметикой: неразобранный день должен
+ * дойти до схемы фильтра и получить внятный отказ, а не упасть на разборе.
  */
-const MOSCOW_OFFSET = '+03:00';
-
 function dayStart(value: string | null): string | null {
 	return value === null || value === '' ? null : `${value}T00:00:00${MOSCOW_OFFSET}`;
 }

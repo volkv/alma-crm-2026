@@ -1,3 +1,4 @@
+import type { ApiKeyExchangeSystem } from '$lib/contracts/api';
 import type { SessionUser } from '$lib/server/auth/types';
 
 /**
@@ -10,6 +11,12 @@ export type ApiKeyContext = {
 	name: string;
 	/** The user who issued the key and whose permissions it inherits. */
 	ownerUserId: string;
+	/**
+	 * Подключение обмена, от имени которого работает ключ; `null` — ключ выпущен
+	 * на человека. Права роли `service` одинаковы у всех ключей обмена, и
+	 * направление разграничивает только эта пара.
+	 */
+	exchange: { system: ApiKeyExchangeSystem; instance: string } | null;
 };
 
 /**

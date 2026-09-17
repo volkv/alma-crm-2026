@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import { page } from '$app/state';
+	import { resolve } from '$app/paths';
 	import MenuIcon from '@lucide/svelte/icons/menu';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import PanelLeftCloseIcon from '@lucide/svelte/icons/panel-left-close';
@@ -55,13 +56,18 @@
 <svelte:window onkeydown={onWindowKeydown} />
 
 <div class="flex min-h-screen bg-canvas">
+	<!-- Меню липкое и ростом в экран: на длинной странице — «Сводке», отчётах —
+		уехавшая вверх навигация пропадала ровно там, где до неё дальше всего.
+		Список разделов внутри прокручивается сам, поэтому меню длиннее экрана
+		не обрезается. -->
 	<aside
-		class="hidden shrink-0 flex-col border-r border-border bg-surface transition-[width] duration-150 md:flex {nav.collapsed
+		class="sticky top-0 hidden h-dvh shrink-0 flex-col self-start border-r border-border bg-surface transition-[width] duration-150 md:flex {nav.collapsed
 			? 'w-14'
 			: 'w-60'}"
 	>
-		<div
-			class="flex h-14 shrink-0 items-center border-b border-border px-3 {nav.collapsed
+		<a
+			href={resolve('/')}
+			class="flex h-14 shrink-0 items-center border-b border-border px-3 focus-ring {nav.collapsed
 				? 'justify-center'
 				: 'gap-2'}"
 		>
@@ -71,8 +77,10 @@
 			>
 			{#if !nav.collapsed}
 				<span class="truncate text-sm font-semibold tracking-tight">LCT CRM</span>
+			{:else}
+				<span class="sr-only">LCT CRM — сводка</span>
 			{/if}
-		</div>
+		</a>
 
 		<div class="min-h-0 flex-1 overflow-y-auto">
 			<AppNav {links} collapsed={nav.collapsed} />

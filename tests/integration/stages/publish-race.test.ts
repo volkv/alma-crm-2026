@@ -14,7 +14,16 @@ import { and, eq, isNull, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { interactions, stageEntries, stages } from '$lib/server/db/schema';
 import { ConflictError } from '$lib/server/errors';
-import { advanceStage } from '$lib/server/stages/commands';
+import {
+	advanceStage,
+	cancelInteraction,
+	completeInteraction,
+	confirmStage,
+	pauseStage,
+	resumeStage,
+	setChecklistItem,
+	setStageResult
+} from '$lib/server/stages/commands';
 import {
 	createDraft,
 	processDefinition,
@@ -24,13 +33,15 @@ import {
 } from '$lib/server/stages/process';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import type { ActorContext } from '$lib/server/actor';
-import { startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
+import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
 import {
 	activeRevision,
+	advanceTo,
 	B2C_GROUP_KEY,
 	createInteractionOn,
 	seedProcess,
 	stageId,
+	threeStageProcess,
 	twoStageProcess
 } from './fixture';
 
@@ -52,6 +63,18 @@ beforeEach(async () => {
 
 const admin = (): ActorContext => testActor({ roleId: 'admin' });
 
+/**
+ * КАМ со своей областью: условие видимости у него — подзапрос по назначениям,
+ * и на этом подзапросе команду можно задержать между началом транзакции и
+ * блокировкой строки.
+ */
+const manager = (): ActorContext =>
+	testActor({
+		roleId: 'manager',
+		userId: TEST_USER_IDS.manager,
+		scopeUserIds: [TEST_USER_IDS.manager]
+	});
+
 function sleep(ms: number): Promise<void> {
 	return new Promise((resolve) => setTimeout(resolve, ms));
 }
@@ -67,6 +90,16 @@ async function prepareRename(ctx: ActorContext): Promise<void> {
 			stage.key === 'first' ? { ...stage, name: 'Первая стадия, иначе названная' } : stage
 		)
 	});
+}
+
+/** Состояние взаимодействия строкой таблицы: в работе, завершено или отменено. */
+async function statusOf(interactionId: string): Promise<string> {
+	const [row] = await database.db
+		.select({ status: interactions.status })
+		.from(interactions)
+		.where(eq(interactions.id, interactionId));
+
+	return row.status;
 }
 
 /** Постусловие обоих порядков: ровно одна открытая запись, и она в действующей редакции. */
@@ -117,7 +150,17 @@ describe('переход и применение изменений', () => {
 
 		// Публикация упирается в блокировку и ждёт.
 		const publication = publishProcess(ctx, B2C_GROUP_KEY);
+		let settled = false;
+		void publication.then(
+			() => (settled = true),
+			() => (settled = true)
+		);
 		await sleep(300);
+
+		// Главное утверждение теста: публикация именно **ждёт**. Без него
+		// постусловия ниже верны и без блокировки — публикация просто прошла бы
+		// раньше и мигрировала ту же единственную запись.
+		expect(settled).toBe(false);
 
 		release();
 		await holder;
@@ -140,8 +183,9 @@ describe('переход и применение изменений', () => {
 		expect(status.current?.snapshot.name).toBe('Первая стадия, иначе названная');
 	});
 
-	it('состязательно: двадцать прогонов дают только два допустимых исхода', async () => {
+	it('состязательно: двадцать прогонов дают оба допустимых исхода', async () => {
 		const ctx = admin();
+		const outcomes: string[] = [];
 
 		for (let run = 0; run < 20; run += 1) {
 			await database.reset();
@@ -163,10 +207,22 @@ describe('переход и применение изменений', () => {
 				checklistState: {}
 			};
 
+			// Оба порядка обязаны встретиться, иначе половина утверждений ниже
+			// никогда не проверяется: планировщик сам по себе отдаёт победу
+			// переходу раз за разом. Поэтому фору по очереди получает то одна
+			// операция, то другая — гонка остаётся настоящей (обе идут
+			// одновременно, разбирает их блокировка), но обе ветви исхода
+			// встречаются в прогоне.
+			const lead = run % 2 === 0 ? 'move' : 'publication';
+
 			const [move, publication] = await Promise.allSettled([
-				advanceStage(ctx, command),
-				publishProcess(ctx, B2C_GROUP_KEY)
+				(lead === 'move' ? Promise.resolve() : sleep(50)).then(() => advanceStage(ctx, command)),
+				(lead === 'publication' ? Promise.resolve() : sleep(50)).then(() =>
+					publishProcess(ctx, B2C_GROUP_KEY)
+				)
 			]);
+
+			outcomes.push(move.status);
 
 			// Публикация обязана состояться: она не зависит от исхода перехода.
 			expect(publication.status).toBe('fulfilled');
@@ -186,11 +242,15 @@ describe('переход и применение изменений', () => {
 				.from(stageEntries)
 				.where(eq(stageEntries.interactionId, interactionId));
 
-			// Одна запись, если переход не состоялся; две, если состоялся. Трёх не
-			// бывает ни при каком порядке.
-			expect(entries[0].value).toBeLessThanOrEqual(2);
+			// Одна запись, если переход не состоялся; две, если состоялся. Число
+			// выводится из исхода, а не ограничивается сверху: потолок пропустил
+			// бы переход, потерявший свою запись.
+			expect(entries[0].value).toBe(move.status === 'fulfilled' ? 2 : 1);
 		}
-	}, 120_000);
+
+		// Обе ветви встретились: «переход прошёл» и «переход отказал».
+		expect([...new Set(outcomes)].sort()).toStrictEqual(['fulfilled', 'rejected']);
+	}, 180_000);
 
 	it('отказывает команде, собранной по прежней редакции', async () => {
 		const ctx = admin();
@@ -237,4 +297,295 @@ describe('переход и применение изменений', () => {
 		expect(moved.current?.snapshot.key).toBe('second');
 		expect(await readGroupByKey(database.db, B2C_GROUP_KEY)).toBeTruthy();
 	});
+});
+
+describe('переход в удаляемую стадию, пока публикация ждёт', () => {
+	it('публикация переживает вход, случившийся после её старта', async () => {
+		const ctx = admin();
+		const revision = await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+
+		const created = [];
+		for (let index = 0; index < 3; index += 1) {
+			created.push(await createInteractionOn(ctx, database, { kind: 'legal_entity' }));
+		}
+
+		// Публикация блокирует взаимодействия по возрастанию идентификатора:
+		// держим первое, чтобы она встала в очередь, не тронув остальные.
+		const sorted = [...created].sort((left, right) =>
+			left.interactionId < right.interactionId ? -1 : 1
+		);
+		const holderId = sorted[0].interactionId;
+		const moverId = sorted[1].interactionId;
+		const occupantId = sorted[2].interactionId;
+
+		// На удаляемой стадии кто-то уже стоит — иначе правило переноса черновику
+		// не понадобилось бы.
+		await advanceTo(ctx, database, occupantId, 'offer');
+
+		const draft = await createDraft(ctx, B2C_GROUP_KEY);
+
+		await updateDraft(ctx, B2C_GROUP_KEY, {
+			...processDefinition(draft),
+			migrationRules: [{ removedStageKey: 'offer', targetStageKey: 'done' }],
+			stages: processDefinition(draft).stages.filter((stage) => stage.key !== 'offer'),
+			transitions: [
+				{
+					fromStageKey: 'intake',
+					toStageKey: 'done',
+					kind: 'forward' as const,
+					requiredPermissionKey: 'stages.transition',
+					requiresReason: false
+				}
+			]
+		});
+
+		let release: () => void = () => {};
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+
+		const holder = database.db.transaction(async (tx) => {
+			await tx
+				.select({ id: interactions.id })
+				.from(interactions)
+				.where(eq(interactions.id, holderId))
+				.for('update');
+
+			await held;
+		});
+
+		await sleep(100);
+
+		const publication = publishProcess(ctx, B2C_GROUP_KEY);
+		let settled = false;
+		void publication.then(
+			() => (settled = true),
+			() => (settled = true)
+		);
+		await sleep(300);
+
+		expect(settled).toBe(false);
+
+		// Переход начинается, когда публикация уже стоит в очереди: его строку она
+		// ещё не заблокировала, и вход на удаляемую стадию проходит целиком.
+		await advanceStage(ctx, {
+			interactionId: moverId,
+			fromStageId: stageId(revision, 'intake'),
+			toStageId: stageId(revision, 'offer'),
+			revision: revision.version,
+			reason: null,
+			resultText: null,
+			checklistState: {}
+		});
+
+		release();
+		await holder;
+
+		// Момент публикации снимается после блокировок, поэтому запись, вошедшая
+		// на стадию за время ожидания, закрывается **позже** своего входа.
+		// Момент, снятый до них, дал бы отрицательное окно и отказ базы по
+		// `stage_entries_left_after_entered` — пятисотую вместо ответа.
+		const result = await publication;
+
+		expect(result.migratedCount).toBe(2);
+		await assertSettled(moverId);
+
+		const moved = await database.db
+			.select({
+				interactionId: stageEntries.interactionId,
+				enteredAt: stageEntries.enteredAt,
+				leftAt: stageEntries.leftAt,
+				outcome: stageEntries.outcome
+			})
+			.from(stageEntries)
+			.where(eq(stageEntries.interactionId, moverId))
+			.orderBy(stageEntries.enteredAt);
+
+		const migrated = moved.find((entry) => entry.outcome === 'migrated');
+
+		expect(migrated).toBeDefined();
+		expect(migrated?.leftAt?.getTime()).toBeGreaterThanOrEqual(migrated?.enteredAt.getTime() ?? 0);
+
+		const status = await getInteractionStatus(ctx, moverId);
+		expect(status.current?.snapshot.key).toBe('done');
+	}, 120_000);
+});
+
+describe('закрытие взаимодействия, пока идёт публикация', () => {
+	/**
+	 * Команда, начавшая транзакцию до публикации и получившая блокировку строки
+	 * после неё.
+	 *
+	 * Окно между `BEGIN` и блокировкой строки короткое, но оно есть: условие
+	 * видимости тянет в план `organization_responsibles`, и команда встаёт на
+	 * этой таблице ещё до того, как доберётся до своей строки. Блокировка
+	 * таблицы воспроизводит это окно управляемо — иначе оно ловится только
+	 * вероятностно.
+	 */
+	async function underPublication(command: () => Promise<void>): Promise<unknown> {
+		let release: () => void = () => {};
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+
+		const holder = database.db.transaction(async (tx) => {
+			await tx.execute(sql`lock table organization_responsibles in access exclusive mode`);
+
+			await held;
+		});
+
+		await sleep(100);
+
+		const outcome = command().then(
+			() => null,
+			(error: unknown) => error
+		);
+		let settled = false;
+		void outcome.then(() => (settled = true));
+		await sleep(200);
+
+		// Команда ждёт: публикация проходит целиком, пока она стоит.
+		expect(settled).toBe(false);
+
+		await publishProcess(admin(), B2C_GROUP_KEY);
+
+		release();
+		await holder;
+
+		return outcome;
+	}
+
+	/** Взаимодействие менеджера на удаляемой стадии и черновик, её удаляющий. */
+	async function prepareRemoval(): Promise<{
+		ctx: ActorContext;
+		interactionId: string;
+		stageId: string;
+	}> {
+		const ctx = admin();
+		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+
+		// Взаимодействие ведёт КАМ: его область видит запись по владельцу, а
+		// условие видимости всё равно тянет в план назначения — на них команда и
+		// встаёт.
+		const { interactionId } = await createInteractionOn(ctx, database, {
+			kind: 'legal_entity',
+			ownerUserId: TEST_USER_IDS.manager
+		});
+
+		await advanceTo(ctx, database, interactionId, 'offer');
+
+		const draft = await createDraft(ctx, B2C_GROUP_KEY);
+
+		await updateDraft(ctx, B2C_GROUP_KEY, {
+			...processDefinition(draft),
+			migrationRules: [{ removedStageKey: 'offer', targetStageKey: 'done' }],
+			stages: processDefinition(draft).stages.filter((stage) => stage.key !== 'offer'),
+			transitions: [
+				{
+					fromStageKey: 'intake',
+					toStageKey: 'done',
+					kind: 'forward' as const,
+					requiredPermissionKey: 'stages.transition',
+					requiresReason: false
+				}
+			]
+		});
+
+		const status = await getInteractionStatus(ctx, interactionId);
+
+		return { ctx: manager(), interactionId, stageId: status.current?.stageId ?? '' };
+	}
+
+	it('отказывает завершению предметным конфликтом, а не ошибкой базы', async () => {
+		const { ctx, interactionId } = await prepareRemoval();
+
+		const error = await underPublication(() =>
+			completeInteraction(ctx, { interactionId, summary: 'Работа закончена', force: false })
+		);
+
+		expect(error).toBeInstanceOf(ConflictError);
+		expect(String((error as ConflictError).message)).toMatch(/Процесс изменился/);
+
+		// Ничего не записано: взаимодействие стоит там, куда его перенесла
+		// публикация, и остаётся в работе.
+		const status = await getInteractionStatus(admin(), interactionId);
+
+		expect(status.current?.snapshot.key).toBe('done');
+		await expect(statusOf(interactionId)).resolves.toBe('active');
+
+		// Повтор по обновлённой карточке проходит.
+		await completeInteraction(ctx, { interactionId, summary: 'Работа закончена', force: false });
+
+		await expect(statusOf(interactionId)).resolves.toBe('completed');
+	}, 120_000);
+
+	it.each([
+		[
+			'пауза',
+			(ctx: ActorContext, interactionId: string, stageId: string) =>
+				pauseStage(ctx, {
+					interactionId,
+					fromStageId: stageId,
+					reason: 'waiting_counterparty' as const,
+					waitingPartyId: null,
+					nextAction: null,
+					note: 'Ждём ответ вуза'
+				})
+		],
+		[
+			'снятие паузы',
+			(ctx: ActorContext, interactionId: string, stageId: string) =>
+				resumeStage(ctx, { interactionId, fromStageId: stageId, note: null })
+		],
+		[
+			'подтверждение стадии',
+			(ctx: ActorContext, interactionId: string, stageId: string) =>
+				confirmStage(ctx, {
+					interactionId,
+					fromStageId: stageId,
+					confirmation: { kind: 'mark' as const }
+				})
+		],
+		[
+			'результат стадии',
+			(ctx: ActorContext, interactionId: string) =>
+				setStageResult(ctx, { interactionId, resultText: 'Условия согласованы' })
+		],
+		[
+			'отметка чек-листа',
+			(ctx: ActorContext, interactionId: string) =>
+				setChecklistItem(ctx, { interactionId, key: 'papers', done: true })
+		]
+	])(
+		'отказывает команде «%s» теми же словами',
+		async (_name, command) => {
+			const { ctx, interactionId, stageId: from } = await prepareRemoval();
+
+			const error = await underPublication(() => command(ctx, interactionId, from));
+
+			// Сверки `fromStageId` мало: она отвечает «взаимодействие уже на другой
+			// стадии», а произошло другое — процесс изменился, и карточку надо
+			// перечитать.
+			expect(error).toBeInstanceOf(ConflictError);
+			expect(String((error as ConflictError).message)).toMatch(/Процесс изменился/);
+		},
+		120_000
+	);
+
+	it('отказывает отмене тем же способом', async () => {
+		const { ctx, interactionId } = await prepareRemoval();
+
+		const error = await underPublication(() =>
+			cancelInteraction(ctx, { interactionId, reason: 'Вуз отказался от программы' })
+		);
+
+		expect(error).toBeInstanceOf(ConflictError);
+		expect(String((error as ConflictError).message)).toMatch(/Процесс изменился/);
+
+		await expect(statusOf(interactionId)).resolves.toBe('active');
+
+		await cancelInteraction(ctx, { interactionId, reason: 'Вуз отказался от программы' });
+
+		await expect(statusOf(interactionId)).resolves.toBe('cancelled');
+	}, 120_000);
 });

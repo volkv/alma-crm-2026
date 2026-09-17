@@ -1,6 +1,9 @@
 <script lang="ts">
+	import { goto } from '$app/navigation';
+	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import * as Tabs from '$lib/components/ui/tabs/index.js';
+	import { filterHref } from '$lib/components/directory/query';
 	import PageHeader from '$lib/components/page-header.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StageTimeline from '$lib/components/stage-timeline.svelte';
@@ -34,6 +37,43 @@
 	const closed = $derived(
 		data.interaction.status === 'active' ? null : (data.status.history[0] ?? null)
 	);
+
+	/**
+	 * Вкладка живёт в адресе: на неё ссылаются («смотри историю»), к ней
+	 * возвращает кнопка «назад», и после действия страница открывается там же,
+	 * где человек работал. Значение из адреса — ввод человека: непонятное
+	 * `tab=xyz` не ошибка, а просто вкладка по умолчанию.
+	 */
+	const TABS = ['work', 'documents', 'blockers', 'plan', 'history', 'comments'] as const;
+
+	type CardTab = (typeof TABS)[number];
+
+	const tab = $derived.by<CardTab>(() => {
+		const asked = page.url.searchParams.get('tab');
+
+		return TABS.includes(asked as CardTab) ? (asked as CardTab) : 'work';
+	});
+
+	let panels = $state<HTMLElement | null>(null);
+
+	function openTab(next: string) {
+		// Первая вкладка — это адрес карточки без параметра: два адреса одного и
+		// того же экрана разошлись бы в ссылках и в истории браузера.
+		void goto(filterHref(page.url, 'tab', next === 'work' ? '' : next), {
+			keepFocus: true,
+			noScroll: true
+		});
+
+		// На ноутбуке полоса вкладок стоит у нижней границы окна, и панель
+		// открывается ниже сгиба: без прокрутки нажатие выглядит как «ничего не
+		// произошло». Полоса подводится под липкую шапку (56 px), и панель
+		// оказывается на экране целиком, с какого бы места её ни переключали.
+		if (panels !== null) {
+			const top = panels.getBoundingClientRect().top + window.scrollY - 72;
+
+			window.scrollTo({ top: Math.max(top, 0), behavior: 'smooth' });
+		}
+	}
 </script>
 
 <svelte:head>
@@ -103,7 +143,7 @@
 		{/snippet}
 	</SummaryPanel>
 
-	<Tabs.Root value="work" class="min-w-0">
+	<Tabs.Root bind:value={() => tab, (next) => openTab(next)} bind:ref={panels} class="min-w-0">
 		<!-- Шесть вкладок в строку шире телефона: на узком экране список
 			прокручивается сам, а не уносит вправо весь документ. -->
 		<Tabs.List class="max-w-full overflow-x-auto">

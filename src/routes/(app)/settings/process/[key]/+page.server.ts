@@ -62,6 +62,12 @@ export const load: PageServerLoad = async (event) => {
 
 		return {
 			detail,
+			// Заголовок и крошки принадлежат макету настроек, а какой именно
+			// процесс открыт, знает только эта страница: по «Настройки ›
+			// Настройки» было не понять, чей процесс правят.
+			settingsTitle: detail.group.name,
+			settingsDescription:
+				detail.group.description ?? 'Стадии, нормативы и переходы этой группы контрагентов',
 			preview,
 			stageForm: await superValidate(zod4(stageFormSchema), { id: FORM_IDS.stage }),
 			transitionForm: await superValidate(zod4(transitionFormSchema), {

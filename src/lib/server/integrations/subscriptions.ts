@@ -26,6 +26,7 @@ import { recordAuditEvent } from '../audit';
 import { NotFoundError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
 import { getRedis } from '../redis';
+import { outboundTargetIssue } from './outbound';
 import {
 	WEBHOOK_IDS_KEY,
 	webhookCursorKey,
@@ -196,13 +197,7 @@ export async function listWebhooks(ctx: ActorContext): Promise<WebhookView[]> {
 	return Promise.all(stored.map(toView));
 }
 
-export async function getWebhook(ctx: ActorContext, webhookId: string): Promise<WebhookView> {
-	requirePermission(ctx, 'integrations.manage');
-
-	return toView(await requireSubscription(webhookId));
-}
-
-function parseInput(input: CreateWebhookInput): CreateWebhookInput {
+async function parseInput(input: CreateWebhookInput): Promise<CreateWebhookInput> {
 	const parsed = createWebhookSchema.safeParse(input);
 
 	if (!parsed.success) {
@@ -210,6 +205,15 @@ function parseInput(input: CreateWebhookInput): CreateWebhookInput {
 			'Подписка не прошла проверку',
 			parsed.error.issues.map((issue) => issue.message)
 		);
+	}
+
+	// Куда адрес ведёт, схема не знает: разрешать имя в адрес умеет только
+	// сервер, а правило схемы читает и браузер. Отказ здесь — это отказ формы, и
+	// сотрудник видит его над полями.
+	const refusal = await outboundTargetIssue(parsed.data.url);
+
+	if (refusal !== null) {
+		throw new ValidationError('Адрес приёмника не годится', [refusal]);
 	}
 
 	return { ...parsed.data, events: normalizeWebhookEvents(parsed.data.events) };
@@ -224,9 +228,13 @@ export async function createWebhook(
 	ctx: ActorContext,
 	input: CreateWebhookInput
 ): Promise<CreatedWebhook> {
-	await requirePermission(ctx, 'integrations.manage', { type: 'integrations.webhook_created' });
+	// Право то же, что у адресов обмена: заведённая подписка — это чужой адрес,
+	// на который события уходят и после того, как завёдший её ушёл.
+	await requirePermission(ctx, 'integrations.manage_endpoints', {
+		type: 'integrations.webhook_created'
+	});
 
-	const definition = parseInput(input);
+	const definition = await parseInput(input);
 	const now = new Date().toISOString();
 	const stored: StoredWebhook = {
 		id: randomUUID(),
@@ -252,21 +260,25 @@ export async function createWebhook(
 }
 
 /**
- * Правка подписки. Секрет не меняется и не показывается: он у получателя, и
- * смена секрета «заодно с названием» сломала бы проверку подписи на той
- * стороне посреди рабочего дня.
+ * Правка подписки. Адрес здесь меняется, поэтому право то же, что у заведения:
+ * подписка, переписанная на чужой приёмник, отличается от заведённой заново
+ * только тем, что её не заводили.
+ *
+ * Секрет не меняется и не показывается: он у получателя, и смена секрета
+ * «заодно с названием» сломала бы проверку подписи на той стороне посреди
+ * рабочего дня.
  */
 export async function updateWebhook(
 	ctx: ActorContext,
 	input: WebhookFormInput & { id: string }
 ): Promise<WebhookView> {
-	await requirePermission(ctx, 'integrations.manage', {
+	await requirePermission(ctx, 'integrations.manage_endpoints', {
 		type: 'integrations.webhook_updated',
 		subject: { type: 'webhook', id: input.id }
 	});
 
 	const previous = await requireSubscription(input.id);
-	const definition = parseInput(input);
+	const definition = await parseInput(input);
 
 	const changedFields = (
 		[

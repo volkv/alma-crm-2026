@@ -6,14 +6,17 @@
 	import PlayIcon from '@lucide/svelte/icons/play';
 	import type { Snippet } from 'svelte';
 	import { enhance } from '$app/forms';
+	import { page } from '$app/state';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
+	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import SlaChip from '$lib/components/sla-chip.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
+	import { anchorHref } from '$lib/components/directory/query';
 	import {
 		blockerReasonLabel,
 		PAUSE_REASONS,
@@ -90,6 +93,92 @@
 	};
 
 	const dialogKind = $derived(reasonDialog?.kind ?? 'return');
+	/**
+	 * Возврат и пропуск требуют объяснения всегда — это отступление от плана;
+	 * шаг вперёд — только там, где так настроен процесс.
+	 */
+	const reasonRequired = $derived(reasonDialog?.requiresReason ?? dialogKind !== 'forward');
+	const reasonLabel = $derived(dialogKind === 'forward' ? 'Комментарий' : 'Причина');
+
+	let reason = $state('');
+	let reasonError = $state<string | null>(null);
+
+	function openTransitionDialog(next: NonNullable<typeof reasonDialog>) {
+		reason = '';
+		reasonError = null;
+		reasonDialog = next;
+	}
+
+	function closeTransitionDialog() {
+		reasonDialog = null;
+		reasonError = null;
+	}
+
+	/**
+	 * Проверка обязательного объяснения — своя, как в формах создания: со
+	 * звёздочкой у поля, фразой по-русски под ним и сохранённым вводом. Нативный
+	 * пузырь браузера говорит на своём языке, встаёт поверх соседнего блока и
+	 * исчезает сам.
+	 */
+	function validateReason(): boolean {
+		if (reasonRequired && reason.trim() === '') {
+			reasonError =
+				dialogKind === 'forward'
+					? 'Процесс требует сказать, чем закончилась стадия'
+					: 'Без причины переход не делается: напишите, что именно пошло не так';
+
+			return false;
+		}
+
+		reasonError = null;
+
+		return true;
+	}
+
+	/** Шаги вперёд с этой стадии: по ним и виден приговор процесса. */
+	const forwardOptions = $derived(
+		summary.canDo.transitions.filter((option) => option.transition.kind === 'forward')
+	);
+	const canStepForward = $derived(forwardOptions.some((option) => option.allowed));
+
+	const hardBlockers = $derived(summary.blocking.blockers.filter((item) => item.blocksTransition));
+	const softBlockers = $derived(summary.blocking.blockers.filter((item) => !item.blocksTransition));
+
+	/**
+	 * Помеха, запрещающая переход, приезжает в причинах отказа одной общей
+	 * фразой без описания. Её мы не повторяем: сами помехи перечислены выше
+	 * словами того, кто их поднял.
+	 */
+	const BLOCKERS_REASON = 'Есть открытые помехи, запрещающие переход';
+
+	/**
+	 * Что действительно держит взаимодействие: приговор движка по шагу вперёд.
+	 * Необязательный пункт чек-листа в него не попадает — он ничего не
+	 * запрещает, и в списке помех ему не место.
+	 */
+	const blockingReasons = $derived.by(() => {
+		if (forwardOptions.length === 0 || canStepForward) return [];
+
+		return [...new Set(forwardOptions.flatMap((option) => option.reasons))].filter(
+			(text) => text !== BLOCKERS_REASON
+		);
+	});
+
+	/** Незакрытое, что переходу не мешает: его показывают отдельно и иначе. */
+	const notDoneYet = $derived([
+		...summary.blocking.openChecklist.filter((item) => !item.required).map((item) => item.label),
+		...softBlockers.map((item) => `${blockerReasonLabel(item.reasonCode)}: ${item.description}`)
+	]);
+
+	const nothingBlocks = $derived(hardBlockers.length === 0 && blockingReasons.length === 0);
+
+	/**
+	 * Дорога к чек-листу: из панели к самому списку пунктов, а не «поищите
+	 * ниже». Вкладка живёт в адресе, поэтому ссылка — обычная ссылка, а якорь
+	 * доводит до самой карточки чек-листа.
+	 */
+	const checklistHref = $derived(anchorHref(page.url, 'tab', 'work', 'stage-checklist'));
+	const hasChecklist = $derived(summary.blocking.openChecklist.length > 0);
 </script>
 
 {#snippet transitionFace(kind: StageTransitionKind, text: string)}
@@ -144,28 +233,58 @@
 		</Card.Content>
 	</Card.Root>
 
+	<!--
+		Мешает только то, что действительно запрещает переход: открытые помехи с
+		запретом и приговор движка по шагу вперёд. Незакрытый необязательный
+		пункт чек-листа переходу не мешает, и в одном списке с ними он врал —
+		кнопка «Перейти» при этом оставалась доступной.
+	-->
 	<Card.Root size="sm">
 		<Card.Header>
 			<Card.Title>Что мешает</Card.Title>
 		</Card.Header>
 		<Card.Content class="flex flex-col gap-2">
-			{#if summary.blocking.blockers.length === 0 && summary.blocking.openChecklist.length === 0}
-				<p class="text-sm text-muted-foreground">Ничего не мешает.</p>
+			{#if nothingBlocks}
+				<p class="text-sm text-muted-foreground">
+					{canStepForward ? 'Ничего не мешает: шаг вперёд доступен.' : 'Ничего не мешает.'}
+				</p>
 			{/if}
-			{#each summary.blocking.blockers as blocker (blocker.id)}
+
+			{#each hardBlockers as blocker (blocker.id)}
 				<p class="text-sm">
-					<StatusBadge tone={blocker.blocksTransition ? 'danger' : 'warning'} dot>
-						{blockerReasonLabel(blocker.reasonCode)}
-					</StatusBadge>
+					<StatusBadge tone="danger" dot>{blockerReasonLabel(blocker.reasonCode)}</StatusBadge>
 					<span class="ml-1">{blocker.description}</span>
 				</p>
 			{/each}
-			{#if summary.blocking.openChecklist.length > 0}
-				<ul class="list-inside list-disc text-xs text-muted-foreground">
-					{#each summary.blocking.openChecklist as item (item.key)}
-						<li>{item.label}{item.required ? ' — обязательный' : ''}</li>
+
+			{#if blockingReasons.length > 0}
+				<ul class="list-inside list-disc text-sm">
+					{#each blockingReasons as text (text)}
+						<li>{text}</li>
 					{/each}
 				</ul>
+			{/if}
+
+			{#if notDoneYet.length > 0}
+				<div class="flex flex-col gap-1 border-t border-border pt-2">
+					<p class="text-xs font-medium text-muted-foreground">
+						Ещё не сделано — переходу не мешает
+					</p>
+					<ul class="list-inside list-disc text-xs text-muted-foreground">
+						{#each notDoneYet as text (text)}
+							<li>{text}</li>
+						{/each}
+					</ul>
+				</div>
+			{/if}
+
+			{#if hasChecklist}
+				<a
+					class="self-start rounded-sm text-xs text-primary underline-offset-4 focus-ring hover:underline"
+					href={checklistHref}
+				>
+					Открыть чек-лист стадии
+				</a>
 			{/if}
 		</Card.Content>
 	</Card.Root>
@@ -211,7 +330,7 @@
 						class="h-auto min-h-7 w-full min-w-0 justify-start py-1 text-left whitespace-normal"
 						disabled={!option.allowed}
 						onclick={() =>
-							(reasonDialog = {
+							openTransitionDialog({
 								kind: option.transition.kind,
 								toStageId: option.toStage.id,
 								name: option.toStage.name,
@@ -260,7 +379,7 @@
 <Dialog.Root
 	open={reasonDialog !== null}
 	onOpenChange={(open) => {
-		if (!open) reasonDialog = null;
+		if (!open) closeTransitionDialog();
 	}}
 >
 	<Dialog.Content>
@@ -271,33 +390,36 @@
 			</Dialog.Description>
 		</Dialog.Header>
 
+		<!-- novalidate: проверяет форма и говорит по-русски, а не браузер на своём
+			языке (`docs/development.md`, «Формы»). -->
 		<form
 			method="POST"
 			action={REASON_ACTIONS[dialogKind]}
 			enctype="multipart/form-data"
-			use:enhance={actionEnhance({ onsuccess: () => (reasonDialog = null) })}
+			novalidate
+			use:enhance={actionEnhance({
+				validate: validateReason,
+				onsuccess: () => (reasonDialog = null)
+			})}
 			class="flex flex-col gap-4"
 		>
 			<input type="hidden" name="fromStageId" value={currentStageId} />
 			<input type="hidden" name="toStageId" value={reasonDialog?.toStageId ?? ''} />
 			<input type="hidden" name="revision" value={revision} />
 
-			<div class="flex flex-col gap-1.5">
-				<!-- На шаге вперёд объяснение — это комментарий «чем закончили стадию»,
-					а не разбор неудачи. -->
-				<Label for="transitionReason">
-					{dialogKind === 'forward' ? 'Комментарий' : 'Причина'}
-				</Label>
-				<Textarea
-					id="transitionReason"
-					name="reason"
-					rows={3}
-					required={reasonDialog?.requiresReason ?? dialogKind !== 'forward'}
-					placeholder={dialogKind === 'forward'
-						? 'Чем закончилась стадия'
-						: 'Что именно пошло не так'}
-				/>
-			</div>
+			<!-- На шаге вперёд объяснение — это комментарий «чем закончили стадию»,
+				а не разбор неудачи. -->
+			<FieldTextarea
+				name="reason"
+				label={reasonLabel}
+				required={reasonRequired}
+				rows={3}
+				placeholder={dialogKind === 'forward'
+					? 'Чем закончилась стадия'
+					: 'Что именно пошло не так'}
+				bind:value={reason}
+				errors={reasonError === null ? undefined : [reasonError]}
+			/>
 
 			{#if canAttach}
 				<div class="flex flex-col gap-1.5">
@@ -321,8 +443,7 @@
 			{/if}
 
 			<Dialog.Footer>
-				<Button type="button" variant="outline" onclick={() => (reasonDialog = null)}>Отмена</Button
-				>
+				<Button type="button" variant="outline" onclick={closeTransitionDialog}>Отмена</Button>
 				<Button type="submit">Подтвердить</Button>
 			</Dialog.Footer>
 		</form>

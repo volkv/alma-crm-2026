@@ -54,8 +54,6 @@ vi.mock('$env/dynamic/private', () => ({
 		DATABASE_URL: 'postgres://lct:lct@localhost:55432/lct',
 		REDIS_URL: 'redis://localhost:56379',
 		GOTENBERG_URL: 'http://localhost:3001',
-		SMTP_HOST: 'localhost',
-		SMTP_PORT: '1025',
 		ORIGIN: 'http://localhost:5173',
 		DEMO_MODE: 'false',
 		TRUST_PROXY: 'false',

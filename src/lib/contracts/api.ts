@@ -97,12 +97,32 @@ export function toApiOrganization(view: OrganizationView): ApiOrganization {
 }
 
 /**
+ * Системы обмена, от имени которых бывает выпущен ключ. `crm` в этот список не
+ * входит: ключ выпускают внешней системе, а не себе.
+ */
+export const API_KEY_EXCHANGE_SYSTEMS = ['cms', 'lms'] as const;
+
+export type ApiKeyExchangeSystem = (typeof API_KEY_EXCHANGE_SYSTEMS)[number];
+
+export const API_KEY_EXCHANGE_SYSTEM_LABELS: Record<ApiKeyExchangeSystem, string> = {
+	cms: 'Сайт (CMS): заявки и статусы',
+	lms: 'Система обучения (LMS): результаты групп'
+};
+
+/**
  * Ключ доступа выпускается на пользователя и действует его правами: у машины
  * не может быть прав больше, чем у человека, от имени которого она ходит.
+ *
+ * У ключа машинного субъекта есть вторая половина — подключение обмена, от
+ * имени которого он работает. Права роли `service` одинаковы у всех таких
+ * ключей, и без этого поля ключ сайта подавал бы результаты учебных групп, а
+ * ключ системы обучения — заявки. У ключа на человека поле пустое: маршруты
+ * обмена ему закрыты границей машинного субъекта.
  */
 export const createApiKeySchema = z.object({
 	name: requiredText(200, 'Укажите название ключа'),
-	ownerUserId: id('Выберите владельца ключа')
+	ownerUserId: id('Выберите владельца ключа'),
+	exchangeSystem: z.enum(API_KEY_EXCHANGE_SYSTEMS).nullable().default(null)
 });
 
 export type CreateApiKeyInput = z.output<typeof createApiKeySchema>;
@@ -112,6 +132,9 @@ export type ApiKeyView = {
 	id: string;
 	name: string;
 	ownerUserId: string;
+	/** Подключение обмена ключа; `null` — ключ выпущен на человека. */
+	exchangeSystem: ApiKeyExchangeSystem | null;
+	exchangeInstance: string | null;
 	lastUsedAt: Date | null;
 	revokedAt: Date | null;
 	createdAt: Date;

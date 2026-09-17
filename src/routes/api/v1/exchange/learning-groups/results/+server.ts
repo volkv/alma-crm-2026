@@ -13,6 +13,9 @@ const resultEndpoint = {
 	output: learningGroupResultResponseSchema,
 	permission: 'exchange.results',
 	service: true,
+	// Результат потока подаёт система обучения: ключ сайта сюда не проходит, даже
+	// имея то же право.
+	exchangeSystem: 'lms',
 	idempotent: true
 } satisfies ApiEndpointConfig;
 

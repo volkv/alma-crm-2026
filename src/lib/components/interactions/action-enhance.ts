@@ -23,9 +23,23 @@ function describe(data: unknown): { message: string; description?: string } {
  * словами — тем самым сообщением, которое вернул сервер, а не «что-то пошло не
  * так».
  */
-export function actionEnhance(options: { onsuccess?: () => void } = {}): SubmitFunction {
-	return () =>
-		async ({ result, update }) => {
+export function actionEnhance(
+	options: {
+		onsuccess?: () => void;
+		/**
+		 * Проверка формы перед отправкой. Вернула `false` — отправки не будет, а
+		 * введённое останется на экране: претензию к полю пишет сама форма
+		 * по-русски, а не браузер своим пузырём на своём языке.
+		 */
+		validate?: () => boolean;
+	} = {}
+): SubmitFunction {
+	return ({ cancel }) => {
+		if (options.validate?.() === false) {
+			cancel();
+		}
+
+		return async ({ result, update }) => {
 			if (result.type === 'failure') {
 				const { message, description } = describe(result.data);
 				toast.error(message, { description });
@@ -42,4 +56,5 @@ export function actionEnhance(options: { onsuccess?: () => void } = {}): SubmitF
 
 			await applyAction(result);
 		};
+	};
 }

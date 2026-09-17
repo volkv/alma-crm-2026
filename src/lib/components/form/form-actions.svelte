@@ -1,6 +1,7 @@
 <script lang="ts">
 	import LoaderIcon from '@lucide/svelte/icons/loader-2';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { cn } from '$lib/utils';
 
 	/**
 	 * The bar that closes a form. It keeps the submit button in one place across
@@ -11,7 +12,8 @@
 		submitting = false,
 		submitLabel = 'Сохранить',
 		cancelLabel = 'Отмена',
-		oncancel
+		oncancel,
+		class: className
 	}: {
 		/** `$submitting` from superforms. */
 		submitting?: boolean;
@@ -20,11 +22,13 @@
 		cancelLabel?: string;
 		/** Omit when there is nowhere to cancel to. */
 		oncancel?: () => void;
+		/** Для формы в прокручиваемом слое: закрепить полосу у нижнего края. */
+		class?: string;
 	} = $props();
 </script>
 
 <div
-	class="flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4"
+	class={cn('flex flex-wrap items-center justify-end gap-2 border-t border-border pt-4', className)}
 	data-slot="form-actions"
 >
 	{#if oncancel}

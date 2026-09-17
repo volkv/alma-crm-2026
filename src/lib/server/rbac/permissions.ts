@@ -27,7 +27,7 @@ export const PERMISSIONS = {
 	'interactions.reassign': 'Смена владельца взаимодействия',
 	'stages.transition': 'Перевод взаимодействия по стадиям',
 	'stages.confirm': 'Подтверждение стадии результатом или файлом',
-	'stages.configure': 'Настройка маршрутов и стадий',
+	'stages.configure': 'Настройка процесса и стадий',
 	'documents.read': 'Просмотр и скачивание документов',
 	'documents.write': 'Загрузка документов и отметки по ним',
 	'documents.generate': 'Генерация документов по шаблонам',

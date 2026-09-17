@@ -94,6 +94,16 @@ export type DocumentTemplateVariable = z.output<typeof documentTemplateVariableS
 export const GENERATED_DOCUMENT_KIND = 'generated';
 
 /**
+ * Метка вида для файла, приложенного к переходу по стадии.
+ *
+ * Такой файл не выбирают из справочника видов: его прикладывают прямо в диалоге
+ * перехода, и вид ему ставит приложение. Метка живёт здесь по той же причине,
+ * что и `generated`, — её пишет наш код, значит и название для человека у неё
+ * обязано быть, а не код из базы на экране.
+ */
+export const STAGE_ATTACHMENT_DOCUMENT_KIND = 'stage_attachment';
+
+/**
  * Вид документа в списке: загружен человеком или собран по шаблону.
  *
  * У загруженного файла в `documents.kind` лежит вид, который назвал человек
@@ -132,11 +142,16 @@ export const UPLOADED_DOCUMENT_KINDS = [
 
 export type UploadedDocumentKind = (typeof UPLOADED_DOCUMENT_KINDS)[number];
 
+/** Виды, которые ставит само приложение: их не выбирают руками. */
+export type SystemDocumentKind =
+	typeof GENERATED_DOCUMENT_KIND | typeof STAGE_ATTACHMENT_DOCUMENT_KIND;
+
 /**
- * Русские названия видов. Собранный по шаблону документ стоит в том же ряду:
- * в `documents.kind` у него метка `generated`, и человеку она видна как вид.
+ * Русские названия видов. Виды, которые ставит приложение, стоят в том же ряду:
+ * в `documents.kind` у них метка (`generated`, `stage_attachment`), и человеку
+ * она видна как вид — значит, и читаться должна словами.
  */
-export const DOCUMENT_KIND_LABELS: Record<UploadedDocumentKind | 'generated', string> = {
+export const DOCUMENT_KIND_LABELS: Record<UploadedDocumentKind | SystemDocumentKind, string> = {
 	agreement: 'Соглашение',
 	annex: 'Приложение к соглашению',
 	order: 'Приказ',
@@ -144,7 +159,8 @@ export const DOCUMENT_KIND_LABELS: Record<UploadedDocumentKind | 'generated', st
 	report: 'Отчёт',
 	letter: 'Письмо',
 	other: 'Другое',
-	generated: 'Собран по шаблону'
+	generated: 'Собран по шаблону',
+	stage_attachment: 'Вложение к переходу'
 };
 
 /**
@@ -154,7 +170,7 @@ export const DOCUMENT_KIND_LABELS: Record<UploadedDocumentKind | 'generated', st
  */
 export function documentKindLabel(kind: string): string {
 	return kind in DOCUMENT_KIND_LABELS
-		? DOCUMENT_KIND_LABELS[kind as UploadedDocumentKind | 'generated']
+		? DOCUMENT_KIND_LABELS[kind as UploadedDocumentKind | SystemDocumentKind]
 		: kind;
 }
 

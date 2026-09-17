@@ -6,6 +6,7 @@ import DatabaseIcon from '@lucide/svelte/icons/database';
 import FileTextIcon from '@lucide/svelte/icons/file-text';
 import GraduationCapIcon from '@lucide/svelte/icons/graduation-cap';
 import HandshakeIcon from '@lucide/svelte/icons/handshake';
+import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
 import PackageIcon from '@lucide/svelte/icons/package';
 import PlugZapIcon from '@lucide/svelte/icons/plug-zap';
 import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
@@ -31,6 +32,16 @@ export type NavSection = {
  * list every navigation component reads, so a new section is added once.
  */
 export const navSections: readonly NavSection[] = [
+	{
+		// Сводка отвечает на вопрос «с чего начать день», и возвращаются к ней
+		// чаще, чем к любому разделу: без пункта в меню дорога назад была только
+		// кнопкой браузера. Префикс `/` совпадает лишь с самим корнем — раздел
+		// ниже по адресу подсветится своим пунктом, а не этим.
+		href: '/',
+		label: 'Сводка',
+		icon: LayoutDashboardIcon,
+		permission: null
+	},
 	{
 		href: '/interactions',
 		label: 'Взаимодействия',

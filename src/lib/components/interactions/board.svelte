@@ -5,9 +5,8 @@
 	import { enhance } from '$app/forms';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import { Label } from '$lib/components/ui/label/index.js';
-	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import EmptyState from '$lib/components/empty-state.svelte';
+	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type {
@@ -69,6 +68,33 @@
 	/** Собранный переход — шаг вперёд: от этого зависят слова в диалоге. */
 	const forward = $derived(pending?.option.kind === 'forward');
 
+	let reason = $state('');
+	let reasonError = $state<string | null>(null);
+
+	/**
+	 * Проверка объяснения — своя, как в формах создания: со звёздочкой у поля,
+	 * фразой по-русски под ним и сохранённым вводом. Диалог открывается только
+	 * там, где процесс объяснения требует, поэтому пустым его оставить нельзя.
+	 */
+	function validateReason(): boolean {
+		if (reason.trim() === '') {
+			reasonError = forward
+				? 'Процесс требует сказать, чем закончилась стадия'
+				: 'Без причины переход не делается: напишите, что именно пошло не так';
+
+			return false;
+		}
+
+		reasonError = null;
+
+		return true;
+	}
+
+	function closeReason() {
+		reasonOpen = false;
+		reasonError = null;
+	}
+
 	async function move(card: InteractionBoardCard, option: BoardTransitionOption) {
 		pending = { card, option };
 
@@ -76,6 +102,8 @@
 		// а не показывает отказ после неё. Это и возврат с пропуском, и шаг вперёд
 		// там, где процесс требует сказать, чем закончили стадию.
 		if (option.requiresReason) {
+			reason = '';
+			reasonError = null;
 			reasonOpen = true;
 
 			return;
@@ -248,9 +276,12 @@
 	action="?/transition"
 	class="hidden"
 	bind:this={moveForm}
+	novalidate
 	use:enhance={actionEnhance({
+		validate: () => !reasonOpen || validateReason(),
 		onsuccess: () => {
 			reasonOpen = false;
+			reasonError = null;
 			pending = null;
 		}
 	})}
@@ -262,7 +293,7 @@
 	<input type="hidden" name="revision" value={board.revision ?? ''} />
 </form>
 
-<Dialog.Root bind:open={reasonOpen}>
+<Dialog.Root bind:open={() => reasonOpen, (open) => (open ? (reasonOpen = true) : closeReason())}>
 	<Dialog.Content>
 		<Dialog.Header>
 			<Dialog.Title>{pending === null ? 'Перевести' : transitionLabel(pending.option)}</Dialog.Title
@@ -272,23 +303,22 @@
 			</Dialog.Description>
 		</Dialog.Header>
 
-		<div class="flex flex-col gap-1.5">
-			<!-- На шаге вперёд объяснение — это комментарий «чем закончили стадию»,
-				а не разбор неудачи: спрашивать «что пошло не так» там, где всё
-				прошло хорошо, значит сбивать с толку. -->
-			<Label for="boardMoveReason">{forward ? 'Комментарий' : 'Причина'}</Label>
-			<Textarea
-				id="boardMoveReason"
-				name="reason"
-				form="board-move"
-				rows={3}
-				required
-				placeholder={forward ? 'Чем закончилась стадия' : 'Что именно пошло не так'}
-			/>
-		</div>
+		<!-- На шаге вперёд объяснение — это комментарий «чем закончили стадию»,
+			а не разбор неудачи: спрашивать «что пошло не так» там, где всё
+			прошло хорошо, значит сбивать с толку. -->
+		<FieldTextarea
+			name="reason"
+			label={forward ? 'Комментарий' : 'Причина'}
+			form="board-move"
+			required
+			rows={3}
+			placeholder={forward ? 'Чем закончилась стадия' : 'Что именно пошло не так'}
+			bind:value={reason}
+			errors={reasonError === null ? undefined : [reasonError]}
+		/>
 
 		<Dialog.Footer>
-			<Button type="button" variant="outline" onclick={() => (reasonOpen = false)}>Отмена</Button>
+			<Button type="button" variant="outline" onclick={closeReason}>Отмена</Button>
 			<Button type="submit" form="board-move">Подтвердить</Button>
 		</Dialog.Footer>
 	</Dialog.Content>

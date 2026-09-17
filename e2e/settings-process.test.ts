@@ -175,7 +175,7 @@ staff('черновик изменений применяется ко всем 
 	// Список — это группы контрагентов, а не версии процесса: номера редакции на
 	// экране нет вовсе.
 	await expect(page.getByRole('cell', { name: 'Версия' })).toHaveCount(0);
-	await page.getByRole('link', { name: 'Проверка изменения процесса' }).click();
+	await page.getByRole('link', { name: 'Проверка изменения процесса', exact: true }).click();
 
 	await expect(page.getByRole('button', { name: 'Черновик изменений' })).toBeEnabled();
 	await page.getByRole('button', { name: 'Черновик изменений' }).click();
@@ -229,8 +229,10 @@ staff('черновик изменений применяется ко всем 
 	// Предпросмотр: сначала числа, потом подтверждение.
 	await openLayer(page.getByRole('button', { name: 'Применить ко всем' }), dialog);
 
-	await expect(dialog.getByText(/Затронуто взаимодействий/)).toBeVisible();
-	await expect(dialog.getByRole('row').filter({ hasText: REMOVED_NAME })).toBeVisible();
+	await expect(dialog.getByText(/Переедут на другую стадию/)).toBeVisible();
+	await expect(
+		dialog.getByRole('listitem').filter({ hasText: REMOVED_NAME }).first()
+	).toBeVisible();
 
 	await dialog.getByRole('button', { name: 'Применить ко всем' }).click();
 
@@ -243,7 +245,9 @@ staff('черновик изменений применяется ко всем 
 	await expect(page.getByRole('row').filter({ hasText: RENAMED_NAME }).first()).toBeVisible();
 
 	// «Изменения процесса» — не экран, а журнал с фильтром по событиям.
-	await page.getByRole('link', { name: 'Изменения процесса' }).click();
+	// `exact`: имя группы в крошках («Проверка изменения процесса») содержит эту
+	// же подпись как подстроку.
+	await page.getByRole('link', { name: 'Изменения процесса', exact: true }).click();
 	await expect(page.getByText('Изменения процесса применены').first()).toBeVisible();
 
 	await checkManagerSeesMigration(browser);

@@ -23,9 +23,18 @@ import type { Actions, PageServerLoad } from './$types';
 /** Колонки, по которым список сортируется на сервере. */
 const SORTABLE = new Set(['title', 'dueAt', 'lastActivityAt']);
 
+/**
+ * Порядок по умолчанию — по сроку текущей стадии, от самого горящего.
+ *
+ * Список открывают, чтобы решить, за что браться сегодня, и тот же вопрос по
+ * той же логике решает «Сводка»: сначала просроченные. Пустой срок
+ * (`nulls last`) уходит в конец — завершённым и не начатым торопиться некуда.
+ */
+const DEFAULT_SORT: InteractionSort = 'dueAt';
+
 function toSort(sortBy: string | null, direction: 'asc' | 'desc'): InteractionSort {
 	if (sortBy === null || !SORTABLE.has(sortBy)) {
-		return '-lastActivityAt';
+		return DEFAULT_SORT;
 	}
 
 	return `${direction === 'desc' ? '-' : ''}${sortBy}` as InteractionSort;

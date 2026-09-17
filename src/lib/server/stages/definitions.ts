@@ -451,13 +451,3 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 		skip('lead_intake', 'contract_payment')
 	]
 };
-
-/**
- * Процессы по ключу группы. Группы кладёт миграция, их процессы — сид: без
- * групп у взаимодействия нет сценария, а без стадий процесс ещё можно завести
- * руками, и навязывать заказчику наши четырнадцать стадий миграцией незачем.
- */
-export const PROCESS_DEFINITIONS: Readonly<Record<string, ProcessDefinitionInput>> = {
-	[B2B_GROUP_KEY]: B2B_PROCESS,
-	[B2C_GROUP_KEY]: B2C_PROCESS
-};

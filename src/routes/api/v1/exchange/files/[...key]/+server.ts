@@ -1,7 +1,7 @@
 import { z } from 'zod';
 import type { ApiErrorBody, ApiErrorCode } from '$lib/contracts/api';
 import { registerRoute } from '$lib/server/api/openapi';
-import type { ApiEndpointConfig } from '$lib/server/api/handler';
+import { recordApiRequest, type ApiEndpointConfig } from '$lib/server/api/handler';
 import { authenticateApiKey, parseBearerToken } from '$lib/server/api/keys';
 import {
 	API_RATE_LIMIT_PER_IP,
@@ -41,6 +41,13 @@ const fileEndpoint = {
 	service: true
 } satisfies ApiEndpointConfig;
 
+/**
+ * Свой обработчик записывает в журнал сам — тем же правилом, что `apiHandler`:
+ * отказ «ключ негоден», «слишком часто» и «такого файла нет» — это то, о чём
+ * администратор должен узнать, и молчащий маршрут ничем не отличается от
+ * маршрута, которого перебирают ключи.
+ */
+
 registerRoute({
 	method: 'get',
 	path: '/v1/exchange/files/{key}',
@@ -49,9 +56,9 @@ registerRoute({
 		'Отдаёт файл по ключу объекта хранилища. Ответ — тело файла с `Content-Type` и ' +
 		'`Content-Length` из записи документа, а не JSON.\n\n' +
 		'Проверяется принадлежность: объект обязан относиться к взаимодействию, связанному с ' +
-		'настроенным подключением обмена — заявкой того же экземпляра CMS либо учебной группой того ' +
-		'же экземпляра LMS. Чужой ключ отвечает `404`, а не `403`: перебором ключей нельзя узнать, ' +
-		'что у нас лежит.',
+		'**подключением того ключа, которым пришли**, — заявкой этого экземпляра CMS либо учебной ' +
+		'группой этого экземпляра LMS. Чужой ключ отвечает `404`, а не `403`: перебором ключей ' +
+		'нельзя узнать, что у нас лежит.',
 	tags: ['Обмен'],
 	config: fileEndpoint,
 	// Ответ — байты файла, а не объект: схема `output` этого маршрута ничего не
@@ -84,6 +91,7 @@ function errorResponse(
 export const GET: RequestHandler = async (event) => {
 	const requestId = event.locals.requestId;
 	const ip = event.getClientAddress();
+	const route = event.route.id ?? event.url.pathname;
 
 	let ctx: ActorContext = {
 		requestId,
@@ -95,10 +103,22 @@ export const GET: RequestHandler = async (event) => {
 		scope: NO_ACCESS
 	};
 
+	/** Ответ складывается здесь — вместе с записью о нём в журнале. */
+	const refuse = async (
+		status: number,
+		code: ApiErrorCode,
+		message: string,
+		headers: Record<string, string> = {}
+	): Promise<Response> => {
+		await recordApiRequest(ctx, { route, method: 'GET', status });
+
+		return errorResponse(status, code, message, requestId, headers);
+	};
+
 	const ipVerdict = await consumeRateLimit(`ip:${ip}`, API_RATE_LIMIT_PER_IP);
 
 	if (!ipVerdict.allowed) {
-		return errorResponse(429, 'rate_limited', 'Слишком много запросов с этого адреса', requestId, {
+		return refuse(429, 'rate_limited', 'Слишком много запросов с этого адреса', {
 			'Retry-After': String(ipVerdict.resetSeconds),
 			...rateLimitHeaders(ipVerdict)
 		});
@@ -108,14 +128,14 @@ export const GET: RequestHandler = async (event) => {
 	const authenticated = token === null ? null : await authenticateApiKey(token);
 
 	if (authenticated === null) {
-		return errorResponse(401, 'unauthorized', 'Ключ доступа недействителен', requestId);
+		return refuse(401, 'unauthorized', 'Ключ доступа недействителен');
 	}
 
 	const keyVerdict = await consumeRateLimit(`key:${authenticated.key.id}`, API_RATE_LIMIT_PER_KEY);
 	const verdict = tighter(ipVerdict, keyVerdict);
 
 	if (!keyVerdict.allowed) {
-		return errorResponse(429, 'rate_limited', 'Слишком много запросов по этому ключу', requestId, {
+		return refuse(429, 'rate_limited', 'Слишком много запросов по этому ключу', {
 			'Retry-After': String(keyVerdict.resetSeconds),
 			...rateLimitHeaders(verdict)
 		});
@@ -128,8 +148,20 @@ export const GET: RequestHandler = async (event) => {
 		scope: authenticated.owner.scope
 	};
 
+	// Вложение обмена забирает внешняя система, а не человек: у ключа на
+	// сотрудника подключения нет, и принадлежность файла сверять не с чем.
+	const binding = authenticated.key.exchange;
+
+	if (binding === null) {
+		return refuse(
+			403,
+			'forbidden',
+			'Вложения обмена забирает ключ внешней системы: этот ключ не привязан к подключению'
+		);
+	}
+
 	try {
-		const file = await readExchangeFile(ctx, event.params.key);
+		const file = await readExchangeFile(ctx, event.params.key, binding);
 		const stream = await openStoredFile(file.filePath);
 
 		await recordAuditEvent(ctx, {
@@ -152,11 +184,10 @@ export const GET: RequestHandler = async (event) => {
 		});
 	} catch (failure) {
 		if (failure instanceof AppError) {
-			return errorResponse(
+			return refuse(
 				statusForError(failure),
 				failure.code,
 				failure.message,
-				requestId,
 				rateLimitHeaders(verdict)
 			);
 		}
@@ -165,6 +196,6 @@ export const GET: RequestHandler = async (event) => {
 		// даёт `requestId` в ответе.
 		console.error(`[api] не удалось отдать вложение обмена (запрос ${requestId})`, failure);
 
-		return errorResponse(500, 'internal', 'Внутренняя ошибка сервера', requestId);
+		return refuse(500, 'internal', 'Внутренняя ошибка сервера');
 	}
 };

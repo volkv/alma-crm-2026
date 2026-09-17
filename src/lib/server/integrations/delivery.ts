@@ -12,6 +12,7 @@
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 import type { WebhookPayload } from '$lib/contracts/integrations';
+import { outboundTargetIssue } from './outbound';
 
 /** Сколько ждём получателя. Дольше — и цикл доставки встанет на одном адресе. */
 export const WEBHOOK_TIMEOUT_MS = 5_000;
@@ -108,16 +109,26 @@ export type DeliveryTarget = { id: string; url: string; secret: string };
  * Одна попытка доставки. Исключений не бросает: неудача — это обычный исход
  * доставки, и решение о повторе принимает цикл, а не обработчик ошибки.
  *
- * За перенаправлением запрос не идёт. Адрес подписки проверен правилом
- * `outboundUrlIssue`, а перенаправление ведёт куда угодно — и унесло бы туда и
- * тело события, и подпись, то есть отдало бы чужой машине и данные, и право
- * выдавать себя за нас. Ответ `3xx` — такая же неудача, как и любая другая, и
- * получатель узнаёт о ней словами.
+ * Адрес проверяется здесь, а не только при заведении подписки: имя, которое в
+ * день заведения указывало наружу, к моменту доставки указывает куда угодно
+ * (перепривязка DNS), и проверка «когда-то давно» не значит ничего.
+ *
+ * За перенаправлением запрос не идёт. Адрес подписки проверен, а
+ * перенаправление ведёт куда угодно — и унесло бы туда и тело события, и
+ * подпись, то есть отдало бы чужой машине и данные, и право выдавать себя за
+ * нас. Ответ `3xx` — такая же неудача, как и любая другая, и получатель узнаёт
+ * о ней словами.
  */
 export async function postWebhook(
 	target: DeliveryTarget,
 	payload: WebhookPayload
 ): Promise<DeliveryOutcome> {
+	const refusal = await outboundTargetIssue(target.url);
+
+	if (refusal !== null) {
+		return { ok: false, status: null, error: refusal };
+	}
+
 	const body = JSON.stringify(payload);
 	const timestamp = String(Math.floor(Date.now() / 1000));
 

@@ -15,10 +15,10 @@
 	import FilterBar from './filter-bar.svelte';
 	import { exportHref } from './filters';
 	import {
-		AUDIT_EVENT_LABELS,
 		AUDIT_OUTCOME_LABELS,
 		AUDIT_OUTCOME_TONES,
 		AUDIT_SOURCE_LABELS,
+		auditEventLabel,
 		subjectHref,
 		subjectTypeLabel
 	} from './labels';
@@ -58,7 +58,7 @@
 			meta: { title: 'Событие' },
 			enableSorting: false,
 			enableHiding: false,
-			cell: ({ row }) => AUDIT_EVENT_LABELS[row.original.eventType]
+			cell: ({ row }) => auditEventLabel(row.original.eventType)
 		},
 		{
 			accessorKey: 'outcome',

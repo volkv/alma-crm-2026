@@ -103,7 +103,9 @@
 	<InlineHint>Взаимодействие не стоит ни на одной стадии.</InlineHint>
 {:else}
 	<div class="grid items-start gap-4 lg:grid-cols-2">
-		<Card.Root size="sm">
+		<!-- Якорь: из блока «Что мешает» ведёт ссылка прямо сюда, а не «поищите
+			ниже по странице». Отступ прокрутки — под липкую шапку. -->
+		<Card.Root size="sm" id="stage-checklist" class="scroll-mt-20">
 			<Card.Header>
 				<Card.Title>Чек-лист стадии</Card.Title>
 				<Card.Description>

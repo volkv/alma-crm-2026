@@ -155,17 +155,6 @@ services:
       minio:
         condition: service_healthy
 
-  mailpit:
-    image: axllent/mailpit:v1.31.1
-    ports:
-      - '1025:1025'
-      - '8025:8025'
-    healthcheck:
-      test: ['CMD', '/mailpit', 'readyz']
-      interval: 10s
-      timeout: 5s
-      retries: 10
-
   # Imitators of the customer's systems: the CMS of the public site and the
   # learning management system. They exist so the exchange can be shown and
   # tested end to end — neither real system is reachable from outside — and
@@ -194,10 +183,11 @@ services:
       # rejects an unsigned or badly signed status, so the signature is part of
       # what the stand demonstrates. The default below is good enough for a
       # local stack; a public stand passes its own.
-      EXCHANGE_SECRET: ${EXCHANGE_SECRET:-exchange-stand-secret}
+      EXCHANGE_SECRET: ${EXCHANGE_SECRET:-exchange-stand-secret-0123456789abcdef}
       # The instance name: the CRM deduplicates applications by system,
       # instance and external id, so a second site would need a second name.
-      INSTANCE_NAME: itschool-site
+      # Same variable the app reads — two names for one thing drift apart.
+      INSTANCE_NAME: ${EXCHANGE_CMS_INSTANCE:-itschool-site}
     healthcheck:
       test:
         [
@@ -222,8 +212,8 @@ services:
       PORT: '8082'
       CRM_BASE_URL: http://app:3000
       CRM_API_KEY: ${EXCHANGE_API_KEY:-}
-      EXCHANGE_SECRET: ${EXCHANGE_SECRET:-exchange-stand-secret}
-      INSTANCE_NAME: moodle-itschool
+      EXCHANGE_SECRET: ${EXCHANGE_SECRET:-exchange-stand-secret-0123456789abcdef}
+      INSTANCE_NAME: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
       # The address of a learning group as a person opens it. Published port,
       # not the compose name: the link is followed from a browser on the host.
       PUBLIC_URL: http://localhost:58082
@@ -248,8 +238,6 @@ services:
       DATABASE_URL: postgres://lct:lct@postgres:5432/lct
       REDIS_URL: redis://redis:6379
       GOTENBERG_URL: http://gotenberg:3000
-      SMTP_HOST: mailpit
-      SMTP_PORT: '1025'
       ORIGIN: http://localhost:3000
       # adapter-node answers 413 to any request body over BODY_SIZE_LIMIT before
       # the app sees it, and its default — 512K — is below the upload ceiling the
@@ -291,10 +279,16 @@ services:
       EXCHANGE_LMS_BASE_URL: ${EXCHANGE_LMS_BASE_URL:-http://mock-lms:8082}
       # The secret the CRM signs its outgoing exchange messages with — the same
       # one the imitators verify them against.
-      EXCHANGE_SECRET: ${EXCHANGE_SECRET:-exchange-stand-secret}
+      EXCHANGE_SECRET: ${EXCHANGE_SECRET:-exchange-stand-secret-0123456789abcdef}
       # Nothing sits in front of the app in the local stack, so the client
       # address is the socket address and forwarding headers must not be trusted.
       TRUST_PROXY: 'false'
+      # Outgoing requests stay on public addresses even here: the imitators are
+      # reached by their compose names, which the rule allows by name, and
+      # everything else inside this network — Keycloak, MinIO, the database — is
+      # exactly what an address typed into the integrations screen must not be
+      # able to reach.
+      ALLOW_LOCAL_TARGETS: 'false'
       # Object storage. Inside the compose network MinIO answers on its own
       # name; path style is the only addressing that works there, because
       # `bucket.minio` resolves nowhere.
@@ -310,8 +304,6 @@ services:
       redis:
         condition: service_healthy
       gotenberg:
-        condition: service_healthy
-      mailpit:
         condition: service_healthy
       # Without the directory nobody signs in: the application keeps no
       # passwords of its own.

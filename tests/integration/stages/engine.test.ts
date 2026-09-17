@@ -21,13 +21,18 @@ import {
 	resumeStage,
 	returnStage,
 	setStageResult,
-	skipStage,
-	startInteraction
+	skipStage
 } from '$lib/server/stages/commands';
 import { createDraft, discardDraft, publishProcess } from '$lib/server/stages/process';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import type { ActorContext } from '$lib/server/actor';
-import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
+import {
+	failureCode,
+	startTestDatabase,
+	testActor,
+	TEST_USER_IDS,
+	type TestDatabase
+} from '../helpers/db';
 import {
 	advanceTo as walkTo,
 	B2B_GROUP_KEY,
@@ -127,14 +132,29 @@ describe('начало пути', () => {
 		expect(status.current?.snapshot.slaDays).toBe(7);
 	});
 
-	it('не начинает путь во второй раз', async () => {
+	it('не даёт появиться второй открытой записи стадии', async () => {
 		const fixture = await createFixture();
 
-		// Взаимодействие начинается вместе с заведением; повторный старт открыл бы
-		// вторую запись стадии и сделал бы вопрос «где мы стоим» бессмысленным.
-		await expect(startInteraction(fixture.ctx, fixture.interactionId)).rejects.toBeInstanceOf(
-			ConflictError
+		const [open] = await database.db
+			.select()
+			.from(stageEntries)
+			.where(
+				and(eq(stageEntries.interactionId, fixture.interactionId), isNull(stageEntries.leftAt))
+			);
+
+		// Своей команды «начать путь» нет — путь начинается вместе с заведением
+		// записи. Поэтому вопрос «где мы стоим» защищён не проверкой в коде, а
+		// частичным уникальным индексом: вторая открытая запись не ложится даже
+		// в обход движка.
+		const code = await failureCode(
+			database.db.insert(stageEntries).values({
+				interactionId: fixture.interactionId,
+				stageId: open.stageId,
+				stageSnapshot: open.stageSnapshot
+			})
 		);
+
+		expect(code).toBe('23505');
 	});
 });
 
@@ -248,6 +268,38 @@ describe('шаг вперёд', () => {
 		expect(status.history[0].outcome).toBe('completed');
 		// Объяснение остаётся в истории стадии — иначе требовать его незачем.
 		expect(status.history[0].outcomeReason).toBe('Программа согласована деканатом');
+	});
+
+	it('закрывает прежнюю запись и открывает новую одним моментом', async () => {
+		const fixture = await createFixture();
+
+		await closeRequiredChecklist(fixture.ctx, fixture.interactionId);
+		await advanceStage(fixture.ctx, {
+			interactionId: fixture.interactionId,
+			revision: fixture.revision.version,
+			fromStageId: stageId(fixture.revision, 'contact_search'),
+			toStageId: stageId(fixture.revision, 'communication'),
+			reason: null,
+			resultText: null,
+			checklistState: {}
+		});
+
+		const entries = await database.db
+			.select({
+				enteredAt: stageEntries.enteredAt,
+				leftAt: stageEntries.leftAt
+			})
+			.from(stageEntries)
+			.where(eq(stageEntries.interactionId, fixture.interactionId))
+			.orderBy(stageEntries.enteredAt);
+
+		// Между окнами двух записей нет ни дыры, ни нахлёста: срез на прошлую
+		// дату иначе увидел бы взаимодействие сразу на двух стадиях или ни на
+		// одной. Отметку ставит база, и момент берётся после блокировки строки —
+		// умолчание столбца («начало транзакции») у команды, простоявшей в
+		// очереди, оказалось бы раньше выхода с прежней стадии.
+		expect(entries).toHaveLength(2);
+		expect(entries[0].leftAt?.getTime()).toBe(entries[1].enteredAt.getTime());
 	});
 });
 

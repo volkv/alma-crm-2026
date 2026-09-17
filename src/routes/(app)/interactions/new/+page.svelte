@@ -37,6 +37,9 @@
 			validators: zod4Client(createInteractionSchema),
 			// Стороны и программы — вложенные списки: форма едет одним JSON.
 			dataType: 'json',
+			// Шапка приложения липкая, и без её высоты superforms считает
+			// спрятанную под ней ошибку «уже на экране» и никуда не ведёт.
+			stickyNavbar: 'header',
 			taintedMessage: 'Введённые данные не сохранены. Уйти со страницы?'
 		}
 	);
@@ -149,7 +152,9 @@
 		return checked ? [...new Set([...list, id])] : list.filter((item) => item !== id);
 	}
 
-	const partyError = $derived($errors.parties?._errors?.join(' ') ?? '');
+	// Претензии к сторонам показываются по одной на строку: склеенные в одну
+	// фразу, они читаются как сломанное предложение.
+	const partyErrors = $derived($errors.parties?._errors ?? []);
 </script>
 
 <svelte:head>
@@ -183,7 +188,7 @@
 					name="institution"
 					label={PARTY_ROLE_LABELS.educational_institution}
 					required
-					errors={partyError === '' ? undefined : [partyError]}
+					errors={partyErrors.length === 0 ? undefined : partyErrors}
 				>
 					{#snippet control({ id, describedBy, invalid })}
 						<OrganizationPicker

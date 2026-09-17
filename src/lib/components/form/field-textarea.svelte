@@ -11,6 +11,7 @@
 		required = false,
 		placeholder,
 		rows = 3,
+		form,
 		value = $bindable('')
 	}: {
 		name: string;
@@ -20,6 +21,12 @@
 		required?: boolean;
 		placeholder?: string;
 		rows?: number;
+		/**
+		 * Идентификатор формы, если поле стоит вне неё. Так бывает у полей во
+		 * всплывающем слое: его разметка уезжает в конец `<body>`, а
+		 * принадлежит поле по-прежнему форме страницы.
+		 */
+		form?: string;
 		value?: string;
 	} = $props();
 </script>
@@ -31,6 +38,7 @@
 			{name}
 			{rows}
 			{placeholder}
+			{form}
 			bind:value
 			aria-invalid={invalid}
 			aria-describedby={describedBy}

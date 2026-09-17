@@ -394,9 +394,24 @@ async function lmsSyncIsDue(intervalMinutes: number): Promise<boolean> {
 	return Date.now() - Number(last) >= intervalMinutes * 60 * 1000;
 }
 
+/** Снять свой замок: чужой не трогаем — метка сверяется в той же команде. */
+const RELEASE_LOCK = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`;
+
+/** Продлить свой замок. Чужой не продлеваем по той же причине. */
+const EXTEND_LOCK = `if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('pexpire', KEYS[1], ARGV[2]) else return 0 end`;
+
 /**
  * Замок цикла. Владение подтверждается меткой: чужой замок снимать нельзя —
  * иначе затянувшийся цикл потерял бы своё место посреди работы.
+ *
+ * Пока проход идёт, замок продлевается. Срок жизни — страховка от процесса,
+ * который умер, не сняв замок, и рассчитан на обычный проход; но проход бывает
+ * и долгим: пачка из пятидесяти событий на подписку плюс очередь обмена, и
+ * каждый неотвечающий получатель держит попытку до таймаута. Без продления
+ * замок истекал бы посреди работы, соседний процесс начинал бы второй проход
+ * по той же очереди, и одно событие уходило бы получателю дважды. Продление
+ * ставит тот же срок заново, и мёртвый процесс всё так же освобождает замок —
+ * продлевать его больше некому.
  */
 async function withPumpLock<TResult>(
 	ttlMs: number,
@@ -410,15 +425,27 @@ async function withPumpLock<TResult>(
 		return null;
 	}
 
+	// Треть срока: два подряд пропущенных продления ещё не роняют замок.
+	const heartbeat = setInterval(
+		() => {
+			void redis
+				.eval(EXTEND_LOCK, 1, PUMP_LOCK_KEY, token, String(ttlMs))
+				// Сорванное продление прохода не роняет: у него нет адресата, кроме
+				// лога, а замок истечёт сам — и это ровно то, от чего срок и стоит.
+				.catch((error: unknown) => console.error('[integrations] замок цикла не продлился', error));
+		},
+		Math.floor(ttlMs / 3)
+	);
+
+	// Таймер не должен держать процесс: остановка сервера не обязана ждать
+	// следующего продления.
+	heartbeat.unref();
+
 	try {
 		return await run();
 	} finally {
-		await redis.eval(
-			`if redis.call('get', KEYS[1]) == ARGV[1] then return redis.call('del', KEYS[1]) else return 0 end`,
-			1,
-			PUMP_LOCK_KEY,
-			token
-		);
+		clearInterval(heartbeat);
+		await redis.eval(RELEASE_LOCK, 1, PUMP_LOCK_KEY, token);
 	}
 }
 

@@ -64,8 +64,6 @@ export default defineConfig({
 			DATABASE_URL: databaseUrl,
 			REDIS_URL: redisUrl,
 			GOTENBERG_URL: 'http://localhost:3001',
-			SMTP_HOST: 'localhost',
-			SMTP_PORT: '1025',
 			// Потолок тела запроса у adapter-node: тот же, что в compose. С его
 			// умолчанием (512K) загрузка обычного скана отваливается с 413 —
 			// `e2e/documents.test.ts` этим и сторожит значение.
@@ -79,8 +77,12 @@ export default defineConfig({
 			EXCHANGE_CMS_STATUS_URL: 'http://localhost:58081/api/applications/{externalId}/status',
 			EXCHANGE_LMS_GROUPS_URL: 'http://localhost:58082/api/groups',
 			EXCHANGE_LMS_BASE_URL: 'http://localhost:58082',
-			EXCHANGE_SECRET: 'exchange-stand-secret',
+			EXCHANGE_SECRET: 'exchange-stand-secret-0123456789abcdef',
 			TRUST_PROXY: 'false',
+			// Имитаторы и приёмник подписки прогона живут на петле: прогон идёт в
+			// производственном режиме, где умолчание — запрет, и без этой строки
+			// проверять было бы нечего.
+			ALLOW_LOCAL_TARGETS: 'true',
 			// Каталог учётных записей — тот же контейнер, что у стека: Keycloak
 			// стартует полторы минуты, и второй под прогон не поднимают. Записи и
 			// пароли прогона приводит к своим глобальный сетап.

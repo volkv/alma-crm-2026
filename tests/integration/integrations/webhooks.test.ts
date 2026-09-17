@@ -14,13 +14,18 @@ import { auditEvents } from '$lib/server/db/schema';
 import { MAX_DELIVERY_ATTEMPTS, verifySignature } from '$lib/server/integrations/delivery';
 import { runDeliveryCycle, sendTestEvent } from '$lib/server/integrations/pump';
 import { webhookPendingKey, webhookRetryQueueKey } from '$lib/server/integrations/redis-keys';
+import { setDeliverySettings } from '$lib/server/integrations/settings';
 import {
 	countPending,
 	createWebhook,
 	listDeliveries,
+	listWebhooks,
 	readSubscription,
 	updateWebhook
 } from '$lib/server/integrations/subscriptions';
+import { demoSessionPermissions } from '$lib/server/rbac';
+import type { PermissionKey } from '$lib/server/rbac/permissions';
+import { defaultRolePermissions } from '$lib/server/rbac/seed';
 import { getRedis } from '$lib/server/redis';
 import { startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
 
@@ -492,5 +497,74 @@ describe('след в журнале', () => {
 			.from(auditEvents);
 
 		expect(rows).toMatchObject([{ type: 'integrations.webhook_created', outcome: 'denied' }]);
+	});
+});
+
+describe('граница демонстрации', () => {
+	/**
+	 * Сессия публичной демонстрации: та же роль, минус права, действие под
+	 * которыми переживает демонстрацию (`demoSessionPermissions`).
+	 */
+	const demo = () =>
+		testActor({
+			roleId: 'admin',
+			permissions: [
+				...demoSessionPermissions(defaultRolePermissions('admin') as ReadonlySet<PermissionKey>)
+			]
+		});
+
+	it('не заводит и не правит подписку', async () => {
+		// Заведённая подписка продолжает слать события на чужой адрес и после
+		// того, как посетитель ушёл: это и есть то, что демонстрации не отдают.
+		await expect(
+			createWebhook(demo(), {
+				name: 'Чужой приёмник',
+				url: receiverUrl(),
+				events: ['organizations.*'],
+				enabled: true
+			})
+		).rejects.toMatchObject({ code: 'forbidden' });
+
+		const created = await subscribe();
+
+		await expect(
+			updateWebhook(demo(), {
+				id: created.webhook.id,
+				name: created.webhook.name,
+				url: 'https://stranger.example.org/hook',
+				events: created.webhook.events,
+				enabled: true
+			})
+		).rejects.toMatchObject({ code: 'forbidden' });
+
+		const [unchanged] = await listWebhooks(ctx());
+
+		expect(unchanged.url).toBe(receiverUrl());
+	});
+
+	it('не меняет периодичность фоновой работы', async () => {
+		await expect(setDeliverySettings(demo(), { intervalSeconds: 5 })).rejects.toMatchObject({
+			code: 'forbidden'
+		});
+	});
+
+	it('читает подписки и шлёт проверочное событие: ради этого стенд и открывают', async () => {
+		const created = await subscribe();
+		const visible = await listWebhooks(demo());
+
+		expect(visible).toHaveLength(1);
+
+		const outcome = await sendTestEvent(demo(), {
+			id: created.webhook.id,
+			name: created.webhook.name,
+			url: created.webhook.url,
+			events: created.webhook.events,
+			enabled: true,
+			secret: created.secret,
+			createdAt: created.webhook.createdAt,
+			updatedAt: created.webhook.updatedAt
+		});
+
+		expect(outcome.ok).toBe(true);
 	});
 });

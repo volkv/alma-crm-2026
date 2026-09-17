@@ -1,5 +1,5 @@
 <script lang="ts" generics="TData extends RowData">
-	import type { Snippet } from 'svelte';
+	import { untrack, type Snippet } from 'svelte';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import {
@@ -30,7 +30,7 @@
 	import { cn } from '$lib/utils';
 	import EmptyState from '../empty-state.svelte';
 	import { features, type DataTableFeatures } from './features';
-	import { PAGE_SIZES, readTableQuery, tableHref } from './query';
+	import { PAGE_SIZES, readTableQuery, tableHref, type SortDirection } from './query';
 
 	/**
 	 * The list view of the product: one page of rows the server has already
@@ -55,6 +55,7 @@
 		emptyTitle = 'Ничего не найдено',
 		emptyDescription,
 		initialHiddenColumns = [],
+		defaultSort,
 		onopen,
 		bulkActions,
 		class: className
@@ -78,6 +79,13 @@
 		 * where the list starts.
 		 */
 		initialHiddenColumns?: readonly string[];
+		/**
+		 * Порядок, в котором сервер отдаёт список, пока в адресе не сказано
+		 * иного. Заголовок обязан называть его вслух: страница, отсортированная
+		 * сервером, но подписанная «не отсортировано», врёт о том, почему строки
+		 * лежат именно так.
+		 */
+		defaultSort?: { columnId: string; direction?: SortDirection };
 		/** Opening a row: a click, `Enter`, or a double click. */
 		onopen?: (row: TData) => void;
 		/** Actions over the selected rows; selection is off when this is absent. */
@@ -95,6 +103,14 @@
 
 	const query = $derived(readTableQuery(page.url));
 	const selectable = $derived(Boolean(bulkActions));
+	/** Порядок, который сейчас на экране: из адреса, а без него — умолчание. */
+	const sort = $derived<{ columnId: string; direction: SortDirection } | null>(
+		query.sortBy === null
+			? defaultSort === undefined
+				? null
+				: { columnId: defaultSort.columnId, direction: defaultSort.direction ?? 'asc' }
+			: { columnId: query.sortBy, direction: query.sortDirection }
+	);
 
 	let rowSelection = $state<RowSelectionState>({});
 	let columnVisibility = $state<ColumnVisibilityState>({});
@@ -139,7 +155,7 @@
 		},
 		state: {
 			get sorting() {
-				return query.sortBy ? [{ id: query.sortBy, desc: query.sortDirection === 'desc' }] : [];
+				return sort === null ? [] : [{ id: sort.columnId, desc: sort.direction === 'desc' }];
 			},
 			get pagination() {
 				return { pageIndex: query.page - 1, pageSize: query.size };
@@ -178,11 +194,25 @@
 	}
 
 	function toggleSort(columnId: string) {
-		const nextDirection =
-			query.sortBy === columnId && query.sortDirection === 'asc' ? 'desc' : 'asc';
+		const nextDirection = sort?.columnId === columnId && sort.direction === 'asc' ? 'desc' : 'asc';
 
 		return go({ sortBy: columnId, sortDirection: nextDirection, page: 1 });
 	}
+
+	/**
+	 * Выделение принадлежит отобранному набору, а не списку вообще: сменился
+	 * запрос — на экране другие строки, и панель «Выбрано: 17» над пустым
+	 * результатом обещает действие над тем, чего не видно. Страницы одного и
+	 * того же запроса выделение переживает: это по-прежнему тот же набор.
+	 */
+	let selectionScope = untrack(() => query.search);
+
+	$effect(() => {
+		if (query.search === selectionScope) return;
+
+		selectionScope = query.search;
+		rowSelection = {};
+	});
 
 	let searchTimer: ReturnType<typeof setTimeout> | undefined;
 

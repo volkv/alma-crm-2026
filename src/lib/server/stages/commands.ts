@@ -14,7 +14,10 @@
  * Переход вдобавок сверяет номер редакции процесса: стадия с тем же
  * идентификатором после публикации принадлежит прежней редакции, поэтому одной
  * сверки `fromStageId` мало. Несовпадение — отказ до единой записи; введённое
- * человеком остаётся в форме, теряется только нажатие кнопки.
+ * человеком остаётся в форме, теряется только нажатие кнопки. Команды, которые
+ * номера в запросе не несут — пауза и её снятие, отметка чек-листа, результат,
+ * подтверждение, закрытие и отмена, — сверяют его вокруг блокировки: публикация,
+ * прошедшая, пока команда ждала, получает тот же отказ теми же словами.
  */
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type {
@@ -51,6 +54,8 @@ import {
 	documents,
 	interactionChanges,
 	interactions,
+	processGroups,
+	processRevisions,
 	stageEntries,
 	stageEntryDocuments,
 	stagePauses,
@@ -65,7 +70,6 @@ import { can, requirePermission } from '../rbac';
 import { interactionScopeFilter } from '../interactions/access';
 import {
 	firstStage,
-	lockGroup,
 	readGroupRow,
 	requireActiveRevision,
 	stageSnapshot,
@@ -73,8 +77,19 @@ import {
 } from './process';
 import { evaluateTransition, transitionPermission, type StageState } from './transitions';
 
-/** Момент, который ставит база: часы приложения и базы могут расходиться. */
-const now = sql`now()`;
+/**
+ * Момент, который ставит база: часы приложения и базы могут расходиться.
+ *
+ * Именно `clock_timestamp()`, а не `now()`. `now()` в PostgreSQL — это начало
+ * транзакции, а каждая команда до первой записи ждёт блокировку строки
+ * взаимодействия. Публикация изменения процесса, прошедшая за это время,
+ * открывает переехавшим записям стадий свой, более поздний момент; `left_at =
+ * now()` у такой записи оказался бы раньше её `entered_at`, база отказала бы
+ * проверкой `stage_entries_left_after_entered`, и человек увидел бы пятисотую
+ * вместо ответа по существу. Момент после блокировок не бывает раньше ничего,
+ * что зафиксировано до них.
+ */
+const now = sql`clock_timestamp()`;
 
 /**
  * Пользователь, от чьего имени идёт действие. Фоновой задаче здесь не место:
@@ -118,6 +133,53 @@ async function lockInteraction(
 	}
 
 	return row;
+}
+
+/**
+ * Номер действующей редакции процесса, по которому идёт взаимодействие.
+ * Без блокировки: значение спрашивают дважды — до ожидания и после него.
+ */
+async function readRevisionVersion(tx: Tx, interactionId: string): Promise<number | null> {
+	const [row] = await tx
+		.select({ version: processRevisions.version })
+		.from(interactions)
+		.innerJoin(processGroups, eq(processGroups.id, interactions.processGroupId))
+		.innerJoin(processRevisions, eq(processRevisions.id, processGroups.activeRevisionId))
+		.where(eq(interactions.id, interactionId))
+		.limit(1);
+
+	return row?.version ?? null;
+}
+
+/**
+ * Блокировка строки для команд стадии, которые номера редакции в запросе не
+ * несут: пауза и её снятие, отметка чек-листа, результат, подтверждение,
+ * закрытие и отмена. Все они обращены к текущей стадии или ко взаимодействию
+ * целиком, а не к переходу, и выбора стадии в них нет.
+ *
+ * Сверка всё равно нужна: пока команда ждала блокировку, публикация могла
+ * перенести взаимодействие на другую стадию — и тогда команда работает уже не с
+ * той записью, которую человек видел в карточке. Сверки `fromStageId` мало: она
+ * отвечает «взаимодействие уже на другой стадии», а произошло другое — процесс
+ * изменился, и карточку надо перечитать. Номер читается до блокировки и
+ * сверяется после неё; несовпадение — тот же отказ, что у перехода, и до единой
+ * записи.
+ */
+async function lockInteractionOnSameRevision(
+	ctx: ActorContext,
+	tx: Tx,
+	interactionId: string
+): Promise<LockedInteraction> {
+	const before = await readRevisionVersion(tx, interactionId);
+	const interaction = await lockInteraction(ctx, tx, interactionId);
+
+	if ((await readRevisionVersion(tx, interactionId)) !== before) {
+		throw new ConflictError(
+			'Процесс изменился, пока вы работали с карточкой. Обновите страницу и повторите'
+		);
+	}
+
+	return interaction;
 }
 
 /** Открытая запись стадии. Её отсутствие — это состояние, а не поломка. */
@@ -238,9 +300,12 @@ async function readStage(tx: Tx, stageId: string): Promise<typeof stages.$inferS
 }
 
 /**
- * Открывает первую стадию действующей редакции. Выделена отдельно от
- * `startInteraction`, потому что создание взаимодействия делает это внутри
- * своей транзакции: запись без стадии не должна существовать даже мгновение.
+ * Открывает первую стадию действующей редакции.
+ *
+ * Зовут её изнутри транзакции создания взаимодействия — своей команды у начала
+ * пути нет: запись без стадии не должна существовать даже мгновение, а значит и
+ * второго входа на первую стадию быть не может (его не даст и частичный
+ * уникальный индекс `stage_entries_one_open_per_interaction`).
  *
  * Редакция приезжает параметром: её читает тот, кто уже держит разделяемую
  * блокировку группы, — иначе взаимодействие, созданное в миллисекунду
@@ -282,20 +347,6 @@ export async function startInteractionIn(
 	);
 
 	return entry.id;
-}
-
-export async function startInteraction(ctx: ActorContext, interactionId: string): Promise<void> {
-	requirePermission(ctx, 'stages.transition');
-
-	await withTransaction(ctx, async (tx) => {
-		const interaction = await lockInteraction(ctx, tx, interactionId);
-		// Порядок блокировок один на все операции: сначала группа, потом
-		// взаимодействие. Здесь строка взаимодействия уже наша, а группа берётся
-		// разделяемо — открыть стадию и опубликовать процесс одновременно нельзя.
-		const group = await lockGroup(tx, interaction.processGroupId, 'share');
-
-		await startInteractionIn(ctx, tx, interaction, await requireActiveRevision(tx, group));
-	});
 }
 
 async function readTransition(
@@ -472,7 +523,7 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 				? input.resultText
 				: entry.resultText;
 
-		await tx
+		const [left] = await tx
 			.update(stageEntries)
 			.set({
 				checklistState,
@@ -482,7 +533,8 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 				outcomeReason: input.reason ?? null,
 				updatedAt: now
 			})
-			.where(eq(stageEntries.id, entry.id));
+			.where(eq(stageEntries.id, entry.id))
+			.returning({ leftAt: stageEntries.leftAt });
 
 		await closeOpenPause(tx, entry.id);
 
@@ -496,6 +548,13 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 				interactionId: input.interactionId,
 				stageId: target.id,
 				stageSnapshot: stageSnapshot(target),
+				// Вход на новую стадию ровно тем же моментом, каким закрыта прежняя
+				// запись: между окнами двух записей не должно быть ни дыры, ни
+				// нахлёста — срез на прошлую дату иначе увидел бы взаимодействие
+				// сразу на двух стадиях или ни на одной. Умолчание столбца тут не
+				// годится: это `now()`, то есть начало транзакции, а команда до
+				// первой записи ждала блокировку.
+				enteredAt: left.leftAt ?? now,
 				responsibleUserId: entry.responsibleUserId ?? interaction.ownerUserId
 			})
 			.returning({ id: stageEntries.id });
@@ -583,7 +642,7 @@ export async function pauseStage(ctx: ActorContext, input: PauseStageInput): Pro
 	requirePermission(ctx, 'stages.transition');
 
 	await withTransaction(ctx, async (tx) => {
-		await lockInteraction(ctx, tx, input.interactionId);
+		await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
 		const entry = await requireOpenEntry(tx, input.interactionId);
 
 		if (entry.stageId !== input.fromStageId) {
@@ -601,7 +660,11 @@ export async function pauseStage(ctx: ActorContext, input: PauseStageInput): Pro
 				reason: input.reason,
 				waitingPartyId: input.waitingPartyId,
 				nextAction: input.nextAction,
-				note: input.note
+				note: input.note,
+				// Тот же источник момента: пауза, начатая «в начале транзакции», у
+				// команды, простоявшей на блокировке, началась бы раньше входа на
+				// стадию, часы которой она останавливает.
+				startedAt: now
 			})
 			.returning({ id: stagePauses.id });
 
@@ -633,7 +696,7 @@ export async function resumeStage(ctx: ActorContext, input: ResumeStageInput): P
 	requirePermission(ctx, 'stages.transition');
 
 	await withTransaction(ctx, async (tx) => {
-		await lockInteraction(ctx, tx, input.interactionId);
+		await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
 		const entry = await requireOpenEntry(tx, input.interactionId);
 
 		if (entry.stageId !== input.fromStageId) {
@@ -680,7 +743,7 @@ export async function setChecklistItem(
 	requirePermission(ctx, 'stages.transition');
 
 	await withTransaction(ctx, async (tx) => {
-		await lockInteraction(ctx, tx, input.interactionId);
+		await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
 		const entry = await requireOpenEntry(tx, input.interactionId);
 
 		// Пункт берётся из слепка стадии: чек-лист, который можно дополнить из
@@ -716,7 +779,7 @@ export async function setStageResult(ctx: ActorContext, input: SetStageResultInp
 	requirePermission(ctx, 'stages.transition');
 
 	await withTransaction(ctx, async (tx) => {
-		await lockInteraction(ctx, tx, input.interactionId);
+		await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
 		const entry = await requireOpenEntry(tx, input.interactionId);
 
 		await tx
@@ -752,7 +815,7 @@ export async function confirmStage(ctx: ActorContext, input: ConfirmStageInput):
 	const userId = actingUserId(ctx);
 
 	await withTransaction(ctx, async (tx) => {
-		await lockInteraction(ctx, tx, input.interactionId);
+		await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
 		const entry = await requireOpenEntry(tx, input.interactionId);
 
 		if (entry.stageId !== input.fromStageId) {
@@ -910,6 +973,8 @@ export async function raiseBlocker(
 	const userId = actingUserId(ctx);
 
 	return withTransaction(ctx, async (tx) => {
+		// Помеха принадлежит взаимодействию, а не стадии: номер редакции здесь не
+		// сверяется — публикация, прошедшая рядом, поводом отказать не является.
 		await lockInteraction(ctx, tx, input.interactionId);
 		const entry = await readOpenEntryRow(tx, input.interactionId);
 
@@ -1279,7 +1344,7 @@ export async function completeInteraction(
 	requirePermission(ctx, 'interactions.write');
 
 	await withTransaction(ctx, async (tx) => {
-		const interaction = await lockInteraction(ctx, tx, input.interactionId);
+		const interaction = await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
 		const state = await readClosingState(ctx, tx, interaction);
 		const verdict = closingVerdict(state);
 
@@ -1326,7 +1391,7 @@ export async function cancelInteraction(
 	requirePermission(ctx, 'interactions.write');
 
 	await withTransaction(ctx, async (tx) => {
-		const interaction = await lockInteraction(ctx, tx, input.interactionId);
+		const interaction = await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
 		const verdict = closingVerdict(await readClosingState(ctx, tx, interaction));
 
 		if (!verdict.cancel.allowed) {

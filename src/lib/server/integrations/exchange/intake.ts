@@ -28,7 +28,7 @@
  * том числе от двух одновременных доставок.
  */
 import { createHash } from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, eq, inArray, ne, sql } from 'drizzle-orm';
 import {
 	APPLICATION_STATUSES,
 	EXCHANGE_SCHEMA_VERSION,
@@ -65,7 +65,7 @@ import {
 } from '../../db/schema';
 import { withTransaction, type Tx } from '../../db/transaction';
 import { createAffiliation, createOrganization, createPerson } from '../../directory/write';
-import { ConflictError, ForbiddenError, ValidationError } from '../../errors';
+import { AppError, ConflictError, ForbiddenError, ValidationError } from '../../errors';
 import { createInteractionIn } from '../../interactions/write';
 import { withPiiTrace } from '../../people/pii-trace';
 import { requirePermission } from '../../rbac';
@@ -106,6 +106,77 @@ export function hashMessage(message: unknown): string {
 	return createHash('sha256').update(JSON.stringify(message), 'utf8').digest('hex');
 }
 
+/** Отпечаток адреса почты: по нему видно «тот же контакт или другой», и только. */
+function contactFingerprint(email: string): string {
+	return createHash('sha256').update(email.trim().toLowerCase(), 'utf8').digest('hex');
+}
+
+/**
+ * Что от заявки остаётся в журнале обмена.
+ *
+ * Не сама заявка. ФИО, почта и телефон заявителя уже легли в `people`, где
+ * работают маскирование, срок хранения и обезличивание; вторая копия в
+ * `exchange_messages` этих правил не знает и пережила бы обезличивание человека
+ * целиком — журнал обмена никто не чистит. Хранить персональные данные дольше,
+ * чем нужно для цели, ради которой их собрали, нельзя, а цель журнала обмена
+ * другая: «что приезжало, когда и чем ответили».
+ *
+ * Поэтому здесь остаются идентификаторы, коды, суммы и отпечатки — всего этого
+ * хватает, чтобы разобрать обмен: ключ заявки, ревизия, вид заявителя и его
+ * реквизиты, коды справочника, ссылки на вложения. Свободный текст заявителя
+ * (интерес, комментарий) уезжает в первый комментарий взаимодействия и здесь не
+ * повторяется: в нём бывает и фамилия, и телефон.
+ */
+function journalPayload(message: ApplicationSubmittedMessage): Record<string, unknown> {
+	const data = message.data;
+	const applicant = data.applicant;
+
+	return {
+		schemaVersion: message.schemaVersion,
+		eventId: message.eventId,
+		eventType: message.eventType,
+		occurredAt: message.occurredAt,
+		source: message.source,
+		data: {
+			externalId: data.externalId,
+			revision: data.revision,
+			form: data.form,
+			applicant:
+				applicant.kind === 'individual'
+					? { kind: applicant.kind }
+					: {
+							kind: applicant.kind,
+							inn: applicant.inn,
+							ogrn: applicant.ogrn,
+							...(applicant.kind === 'educational_institution'
+								? { educationLevel: applicant.educationLevel }
+								: {})
+						},
+			contact: { emailHash: contactFingerprint(data.contact.email) },
+			programCodes: data.programCodes,
+			productCodes: data.productCodes,
+			transferStatus: data.transferStatus,
+			consent:
+				data.consent === null
+					? null
+					: {
+							given: data.consent.given,
+							at: data.consent.at,
+							policyVersion: data.consent.policyVersion
+						},
+			// Имя файла остаётся у документа, а не в журнале обмена: «Скан паспорта
+			// Иванова.pdf» — такие же персональные данные, как и сама фамилия.
+			attachments: data.attachments.map((file) => ({
+				documentId: file.documentId,
+				mime: file.mime,
+				sizeBytes: file.sizeBytes,
+				sha256: file.sha256,
+				storageKey: file.storageKey
+			}))
+		}
+	};
+}
+
 /** Название взаимодействия: по нему заявку узнают в списке. */
 function interactionTitle(name: string, interest: string | null): string {
 	const base = `Заявка с сайта: ${name}`;
@@ -142,7 +213,11 @@ function digitsOf(phone: string | null): string | null {
  * справочника рядом. Неизвестный код программы заявку не отвергает — заявка,
  * потерянная из-за опечатки в коде продукта, это потерянный вуз.
  */
-function intakeComment(data: ApplicationSubmittedData, unknownCodes: readonly string[]): string {
+function intakeComment(
+	data: ApplicationSubmittedData,
+	unknownCodes: readonly string[],
+	transferStatusApplied: boolean
+): string {
 	const lines: string[] = [];
 
 	if (data.interest !== null) {
@@ -155,6 +230,15 @@ function intakeComment(data: ApplicationSubmittedData, unknownCodes: readonly st
 
 	if (unknownCodes.length > 0) {
 		lines.push(`Коды справочника не опознаны: ${unknownCodes.join(', ')}`);
+	}
+
+	// Статус по передаче ложится на позицию договора, а у новой заявки договора
+	// ещё нет. Потерять присланное нельзя: сотрудник свяжет заявку с договором и
+	// проставит статус сам, а по комментарию будет видно, какой именно.
+	if (data.transferStatus !== null && !transferStatusApplied) {
+		lines.push(
+			`Статус по передаче из каталога заказчика: ${data.transferStatus}. Позиции договора, к которой его отнести, у заявки нет — проставьте статус, когда свяжете её с договором.`
+		);
 	}
 
 	if (data.attachments.length > 0) {
@@ -410,6 +494,59 @@ async function ensureResponsible(
 	);
 }
 
+/**
+ * Действующий ответственный за контрагента; `null` — его нет.
+ *
+ * Именно от его имени и ведётся заявка по знакомому вузу. Иначе выходит
+ * бессмыслица: заявка приходит по вузу, который ведёт один КАМ, а применяет её
+ * сотрудник из настройки — со своей областью доступа, в которую этот вуз не
+ * входит. Ни найти организацию, ни завести взаимодействие он не может, и
+ * заявка отвергается «организация не найдена», хотя организация есть.
+ *
+ * Машинный субъект ответственным не бывает (`ne(users.roleId, 'service')`), а
+ * выключенная запись заявку вести не может — оба случая равны «ответственного
+ * нет», и тогда работает сотрудник из настройки.
+ */
+async function currentResponsible(tx: Tx, organizationId: string): Promise<string | null> {
+	const [row] = await tx
+		.select({ userId: organizationResponsibles.userId })
+		.from(organizationResponsibles)
+		.innerJoin(users, eq(users.id, organizationResponsibles.userId))
+		.where(
+			and(
+				eq(organizationResponsibles.organizationId, organizationId),
+				sql`${organizationResponsibles.validTo} is null`,
+				eq(users.isActive, true),
+				ne(users.roleId, 'service')
+			)
+		)
+		.limit(1);
+
+	return row?.userId ?? null;
+}
+
+/**
+ * Контрагент заявки, если он в справочнике уже есть. Только чтение: правила
+ * сопоставления те же, что у `resolveCounterparty`, и заводить здесь ничего
+ * нельзя — до выбора действующего лица ещё не решено, чьими правами заводить.
+ */
+async function findApplicantOrganization(
+	tx: Tx,
+	data: ApplicationSubmittedData
+): Promise<string | null> {
+	const applicant = data.applicant;
+
+	if (applicant.kind === 'individual') {
+		const found = await findIndividual(tx, data.contact.email.toLowerCase(), data.contact.phone);
+
+		return found?.id ?? null;
+	}
+
+	const found = await findOrganization(tx, applicant.inn, applicant.ogrn);
+
+	return found?.id ?? null;
+}
+
 /** Контакт, который уже числится в этой организации под тем же адресом почты. */
 async function findContact(
 	tx: Tx,
@@ -492,9 +629,9 @@ async function applyTransferStatus(
 	interactionId: string,
 	productIds: readonly string[],
 	transferStatus: string | null
-): Promise<void> {
+): Promise<boolean> {
 	if (transferStatus === null || productIds.length === 0) {
-		return;
+		return false;
 	}
 
 	const rows = await tx
@@ -509,7 +646,7 @@ async function applyTransferStatus(
 		);
 
 	if (rows.length === 0) {
-		return;
+		return false;
 	}
 
 	await tx
@@ -521,6 +658,8 @@ async function applyTransferStatus(
 				rows.map((row) => row.id)
 			)
 		);
+
+	return true;
 }
 
 /** Согласие физлица: запись, а не галочка, — у неё есть версия текста и дата. */
@@ -738,14 +877,19 @@ async function updateExisting(
 			.onConflictDoNothing();
 	}
 
-	await applyTransferStatus(tx, existing.id, catalogue.productIds, data.transferStatus);
+	const transferStatusApplied = await applyTransferStatus(
+		tx,
+		existing.id,
+		catalogue.productIds,
+		data.transferStatus
+	);
 
 	await tx
 		.update(interactions)
 		.set({ externalRevision: data.revision, updatedAt: sql`now()` })
 		.where(eq(interactions.id, existing.id));
 
-	const comment = intakeComment(data, catalogue.unknown);
+	const comment = intakeComment(data, catalogue.unknown, transferStatusApplied);
 
 	if (comment !== '') {
 		// Комментарий приписывается, а не затирает прежний: повтор ничего не
@@ -864,7 +1008,17 @@ async function createFromApplication(
 		.set({ externalRevision: data.revision })
 		.where(eq(interactions.id, interactionId));
 
-	const comment = intakeComment(data, catalogue.unknown);
+	// Позиций договора у новой заявки, как правило, нет — и присланный статус
+	// уходит в комментарий. Вызов всё равно стоит здесь: заявка приходит и по
+	// взаимодействию, у которого договор уже подобран.
+	const transferStatusApplied = await applyTransferStatus(
+		tx,
+		interactionId,
+		catalogue.productIds,
+		data.transferStatus
+	);
+
+	const comment = intakeComment(data, catalogue.unknown, transferStatusApplied);
 
 	if (comment !== '') {
 		await addComment(ctx, { interactionId, body: comment }, tx);
@@ -996,6 +1150,7 @@ export async function receiveApplication(
 
 	const source = externalSourceOf('cms', message.source.instance);
 	const requestHash = hashMessage(message);
+	const journal = journalPayload(message);
 
 	const apply = async (): Promise<ApplicationIntakeResponse> =>
 		// Одна область следа просмотра на всю сборку: заявка — это один запрос, и
@@ -1013,14 +1168,62 @@ export async function receiveApplication(
 						eventId: message.eventId,
 						externalId: message.data.externalId,
 						state: 'processed',
-						payload: message,
+						payload: journal,
 						requestHash
+					})
+					// Строка о неудавшемся приёме занимает то же место в ключе
+					// дедупликации, но повтором быть не перестаёт: отправитель вправе
+					// прислать то же сообщение ещё раз, когда причину отказа поправят.
+					// Поэтому такая строка переписывается, а закрытая — нет.
+					.onConflictDoUpdate({
+						target: [
+							exchangeMessages.direction,
+							exchangeMessages.system,
+							exchangeMessages.instance,
+							exchangeMessages.eventId
+						],
+						set: {
+							eventType: message.eventType,
+							externalId: message.data.externalId,
+							state: 'processed',
+							payload: journal,
+							requestHash,
+							lastError: null,
+							responseBody: null,
+							closedAt: null
+						},
+						setWhere: eq(exchangeMessages.state, 'failed')
 					})
 					.returning({ id: exchangeMessages.id });
 
-				const ownerUserId = await resolveIntakeOwner(tx, settings.cms.defaultOwnerUserId);
-				const owner = await ownerActor(ctx, ownerUserId);
+				if (row === undefined) {
+					// Конфликт с закрытой строкой: это сообщение уже принимали, и повтор
+					// обязан получить тот же ответ, что и первый запрос.
+					const replay = await savedResponse(message.source.instance, message.eventId, requestHash);
+
+					if (replay === null) {
+						throw new ConflictError(
+							'Эту заявку прямо сейчас принимает другой запрос: повторите сообщение'
+						);
+					}
+
+					return replay;
+				}
+
 				const existing = await findExisting(tx, source, message.data.externalId);
+
+				// От чьего имени ведём заявку. У знакомого вуза уже есть действующий
+				// ответственный — заявка по нему и ведётся от его имени: он её видит,
+				// его область к ней применяется, его имя стоит в журнале. Настройка
+				// «Ответственный за входящие» работает только там, где ответственного
+				// ещё нет, — и тогда же он и назначается.
+				const organizationId =
+					existing?.organizationId ?? (await findApplicantOrganization(tx, message.data));
+				const responsible =
+					organizationId === null ? null : await currentResponsible(tx, organizationId);
+				const ownerUserId =
+					responsible ?? (await resolveIntakeOwner(tx, settings.cms.defaultOwnerUserId));
+				const owner = await ownerActor(ctx, ownerUserId);
 
 				let outcome: ApplyOutcome;
 				let state: 'processed' | 'ignored_stale' = 'processed';
@@ -1106,36 +1309,80 @@ export async function receiveApplication(
 			})
 		);
 
-	try {
-		return await apply();
-	} catch (error) {
-		if (!isUniqueViolation(error)) {
-			throw error;
-		}
+	/**
+	 * Отказ доменной операции не должен уносить след сообщения.
+	 *
+	 * Транзакция приёма откатывается целиком — вместе со строкой журнала обмена,
+	 * — и сообщение, которое приходило и было отвергнуто, исчезает бесследно:
+	 * отправитель видит отказ, а на экране «Внешние системы» нет ничего, и
+	 * разбирать нечего. Поэтому след пишется **после отката**, своей
+	 * транзакцией, и несёт причину словами.
+	 */
+	const recordRefusal = async (reason: string): Promise<void> => {
+		await getDb()
+			.insert(exchangeMessages)
+			.values({
+				direction: 'inbound',
+				system: 'cms',
+				instance: message.source.instance,
+				eventType: message.eventType,
+				eventId: message.eventId,
+				externalId: message.data.externalId,
+				state: 'failed',
+				payload: journal,
+				requestHash,
+				lastError: reason,
+				closedAt: sql`now()`
+			})
+			// Строка того же сообщения уже есть — значит, его принимали раньше, и
+			// исход той попытки важнее нашего отказа.
+			.onConflictDoNothing();
+	};
 
-		// Это сообщение уже принимали: повтор отдаёт сохранённый ответ и ничего не
-		// применяет заново. Сюда же попадает гонка двух одновременных доставок
-		// одного сообщения — проигравшая откатывается целиком.
-		const replay = await savedResponse(message.source.instance, message.eventId, requestHash);
-
-		if (replay !== null) {
-			return replay;
-		}
-
-		// Разошлось другое ограничение: пока шла наша транзакция, соседний запрос
-		// завёл ту же заявку (внешняя ссылка) или того же контрагента (ИНН). Наша
-		// откатилась целиком — повторяем её один раз: теперь заявка найдётся, и
-		// сообщение применится обновлением.
+	const run = async (): Promise<ApplicationIntakeResponse> => {
 		try {
 			return await apply();
-		} catch (retried) {
-			if (!isUniqueViolation(retried)) {
-				throw retried;
+		} catch (error) {
+			if (!isUniqueViolation(error)) {
+				throw error;
 			}
 
-			throw new ConflictError(
-				'Эту заявку прямо сейчас принимает другой запрос: повторите сообщение'
-			);
+			// Это сообщение уже принимали: повтор отдаёт сохранённый ответ и ничего
+			// не применяет заново.
+			const replay = await savedResponse(message.source.instance, message.eventId, requestHash);
+
+			if (replay !== null) {
+				return replay;
+			}
+
+			// Разошлось другое ограничение: пока шла наша транзакция, соседний запрос
+			// завёл ту же заявку (внешняя ссылка) или того же контрагента (ИНН). Наша
+			// откатилась целиком — повторяем её один раз: теперь заявка найдётся, и
+			// сообщение применится обновлением.
+			try {
+				return await apply();
+			} catch (retried) {
+				if (!isUniqueViolation(retried)) {
+					throw retried;
+				}
+
+				throw new ConflictError(
+					'Эту заявку прямо сейчас принимает другой запрос: повторите сообщение'
+				);
+			}
 		}
+	};
+
+	try {
+		return await run();
+	} catch (error) {
+		// Предметный отказ объясним словами, и эти слова читает сотрудник. Всё
+		// остальное — наша поломка: её разбирают по логу, а не по журналу обмена,
+		// и подсовывать туда текст неизвестного происхождения незачем.
+		if (error instanceof AppError) {
+			await recordRefusal(error.message);
+		}
+
+		throw error;
 	}
 }

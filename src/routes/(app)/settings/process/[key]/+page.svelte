@@ -17,6 +17,7 @@
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
+	import ConfirmDialog from '$lib/components/confirm-dialog.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
@@ -36,6 +37,7 @@
 		type StageTransitionKind,
 		type StageView
 	} from '$lib/contracts/interactions';
+	import { ORGANIZATION_KIND_LABELS } from '$lib/components/directory/labels';
 	import { STAGE_CATEGORY_LABELS } from '../../../interactions/filters';
 	import { CHECKLIST_HINT, formatChecklist, stageFormSchema, transitionFormSchema } from './schema';
 	import type { PageProps } from './$types';
@@ -84,6 +86,8 @@
 	let stageOpen = $state(false);
 	let transitionOpen = $state(false);
 	let applyOpen = $state(false);
+	let discardOpen = $state(false);
+	let discardForm = $state<HTMLFormElement | null>(null);
 	let removing = $state<StageView | null>(null);
 	let removeOpen = $state(false);
 	let removeTarget = $state('');
@@ -205,8 +209,32 @@
 			.map((stage) => ({ value: stage.key, label: `${stage.position}. ${stage.name}` }))
 	);
 
+	/**
+	 * Виды контрагентов словами: в базе они лежат кодами, а строка «Кого ведём по
+	 * этому процессу» читается человеком. Код, которого нет в справочнике,
+	 * печатается как записан — придумывать за него название нельзя.
+	 */
+	const counterpartyKinds = $derived(
+		detail.counterpartyKinds
+			.map(
+				(kind) => ORGANIZATION_KIND_LABELS[kind as keyof typeof ORGANIZATION_KIND_LABELS] ?? kind
+			)
+			.join(', ')
+	);
+
 	/** Строки предпросмотра, на которых что-то меняется; «без изменений» не показываем. */
 	const previewRows = $derived((data.preview?.rows ?? []).filter((row) => row.change !== 'kept'));
+
+	/**
+	 * Сколько незавершённых взаимодействий увидят изменение своей стадии, никуда
+	 * не переезжая: переименование и правка параметров. Переезжающие сюда не
+	 * идут — их считает `preview.affected`.
+	 */
+	const affectedInPlace = $derived(
+		previewRows
+			.filter((row) => row.change === 'renamed' || row.change === 'changed')
+			.reduce((total, row) => total + row.interactions, 0)
+	);
 </script>
 
 <svelte:head><title>{group.name} — процесс — LCT CRM</title></svelte:head>
@@ -285,9 +313,11 @@
 
 <Card.Root>
 	<Card.Header>
-		<Card.Title>{group.name}</Card.Title>
+		<!-- Имя группы стоит в заголовке страницы и в крошках, поэтому карточка
+			отвечает не «какая группа», а «что с её процессом сейчас». -->
+		<Card.Title>Процесс группы</Card.Title>
 		<Card.Description>
-			{group.description ?? 'Процесс группы: стадии, нормативы и переходы между ними.'}
+			Что действует сейчас, что готовится к применению и кого это изменение затронет.
 		</Card.Description>
 		<Card.Action>
 			<div class="flex flex-wrap items-center gap-2">
@@ -311,8 +341,12 @@
 						</Button>
 					</form>
 				{:else}
-					<form method="POST" action="?/discardDraft">
-						<Button type="submit" variant="outline" size="sm">Отменить черновик</Button>
+					<!-- Отмена черновика уничтожает всю подготовленную правку и вернуть
+						её нечем: спрашиваем так же, как перед применением ко всем. -->
+					<form method="POST" action="?/discardDraft" bind:this={discardForm}>
+						<Button type="button" variant="outline" size="sm" onclick={() => (discardOpen = true)}>
+							Отменить черновик
+						</Button>
 					</form>
 					<Button size="sm" onclick={() => (applyOpen = true)} disabled={detail.issues.length > 0}>
 						<UploadIcon aria-hidden="true" />
@@ -324,10 +358,7 @@
 	</Card.Header>
 	<Card.Content class="flex flex-col gap-4">
 		<KeyValue>
-			<KeyValueRow
-				label="Кого ведём по этому процессу"
-				value={detail.counterpartyKinds.join(', ')}
-			/>
+			<KeyValueRow label="Кого ведём по этому процессу" value={counterpartyKinds} />
 			<KeyValueRow label="Стадий в действующем процессе" value={formatNumber(group.stageCount)} />
 			<KeyValueRow
 				label="Незавершённых взаимодействий"
@@ -739,10 +770,14 @@
 				bind:value={$stageData.checklist}
 				errors={$stageErrors.checklist}
 			/>
+			<!-- Диалог стадии длинный и прокручивается внутри: на телефоне до кнопок
+				было ~460 px прокрутки. Полоса закреплена у нижнего края слоя и
+				перекрывает его отступ, чтобы содержимое не просвечивало под ней. -->
 			<FormActions
 				submitting={$stageSubmitting}
 				submitLabel={$stageData.originalKey === '' ? 'Добавить стадию' : 'Сохранить стадию'}
 				oncancel={() => (stageOpen = false)}
+				class="sticky bottom-0 -mx-6 -mb-6 rounded-b-xl bg-popover px-6 pb-6"
 			/>
 		</form>
 	</Dialog.Content>
@@ -891,9 +926,19 @@
 		</Dialog.Header>
 
 		{#if data.preview !== null}
-			<p class="text-sm">
-				Затронуто взаимодействий: <strong>{formatNumber(data.preview.affected)}</strong>
-			</p>
+			<!-- Два числа, а не одно: «затронуто» на сервере считает только тех, кто
+				переезжает на другую стадию, а переименование и правка параметров
+				видны всем, кто стоит на изменённой стадии. Одно число рядом с
+				«На ней стоит: 3» читалось как ошибка. -->
+			<div class="flex flex-col gap-0.5 text-sm">
+				<p>
+					Переедут на другую стадию: <strong>{formatNumber(data.preview.affected)}</strong>
+				</p>
+				<p class="text-muted-foreground">
+					Увидят изменение своей стадии, оставаясь на ней:
+					<strong class="text-foreground">{formatNumber(affectedInPlace)}</strong>
+				</p>
+			</div>
 
 			{#if previewRows.length === 0}
 				<EmptyState
@@ -901,49 +946,69 @@
 					description="В черновике нет отличий от действующего процесса."
 				/>
 			{:else}
-				<div class="overflow-x-auto">
-					<Table.Root>
-						<Table.Header>
-							<Table.Row class="hover:bg-transparent">
-								<Table.Head>Стадия</Table.Head>
-								<Table.Head class="w-44">Что меняется</Table.Head>
-								<Table.Head class="w-32 text-right">На ней стоит</Table.Head>
-								<Table.Head>Куда переедут</Table.Head>
-							</Table.Row>
-						</Table.Header>
-						<Table.Body>
-							{#each previewRows as row (row.stageKey)}
-								<Table.Row>
-									<Table.Cell class="font-medium">{row.stageName}</Table.Cell>
-									<Table.Cell>
-										{CHANGE_LABELS[row.change]}
-										{#if row.changes.length > 0}
-											<ul class="mt-1 list-inside list-disc text-xs text-muted-foreground">
-												{#each row.changes as change (change)}
-													<li>{change}</li>
-												{/each}
-											</ul>
-										{/if}
-									</Table.Cell>
-									<Table.Cell class="text-right">
-										{#if row.interactions === 0}
-											<span class="text-faint">никого нет</span>
-										{:else}
-											{formatNumber(row.interactions)}
-										{/if}
-									</Table.Cell>
-									<Table.Cell>{row.targetStageName ?? '—'}</Table.Cell>
-								</Table.Row>
-							{/each}
-						</Table.Body>
-					</Table.Root>
-				</div>
+				<!-- Карточки, а не таблица: строка диффа с перечнем изменённых
+					параметров растягивала таблицу до 1137 px внутри диалога шириной
+					624, и колонки «На ней стоит» и «Куда переедут» — те самые числа,
+					ради которых предпросмотр и открывают, — уезжали за край. -->
+				<ul class="flex flex-col gap-2">
+					{#each previewRows as row (row.stageKey)}
+						<li class="flex flex-col gap-1.5 rounded-md border border-border p-3">
+							<div class="flex flex-wrap items-center justify-between gap-2">
+								<span class="font-medium">{row.stageName}</span>
+								<StatusBadge tone={row.change === 'removed' ? 'warning' : 'info'}>
+									{CHANGE_LABELS[row.change]}
+								</StatusBadge>
+							</div>
+
+							{#if row.changes.length > 0}
+								<ul class="list-inside list-disc text-xs text-muted-foreground">
+									{#each row.changes as change (change)}
+										<li>{change}</li>
+									{/each}
+								</ul>
+							{/if}
+
+							<div class="flex flex-wrap gap-x-6 gap-y-1 text-xs">
+								<span class="text-muted-foreground">
+									На ней стоит:
+									{#if row.interactions === 0}
+										<span class="text-faint">никого нет</span>
+									{:else}
+										<strong class="text-foreground">{formatNumber(row.interactions)}</strong>
+									{/if}
+								</span>
+								{#if row.change === 'removed'}
+									<span class="text-muted-foreground">
+										Куда переедут:
+										<strong class="text-foreground">
+											{row.targetStageName ?? 'предыдущая сохранившаяся стадия'}
+										</strong>
+									</span>
+								{/if}
+							</div>
+						</li>
+					{/each}
+				</ul>
 			{/if}
 		{/if}
 
-		<form method="POST" action="?/publish" class="flex justify-end gap-2">
+		<form
+			method="POST"
+			action="?/publish"
+			class="sticky bottom-0 -mx-6 -mb-6 flex justify-end gap-2 rounded-b-xl border-t border-border bg-popover px-6 py-4"
+		>
 			<Button variant="outline" type="button" onclick={() => (applyOpen = false)}>Отмена</Button>
 			<Button type="submit">Применить ко всем</Button>
 		</form>
 	</Dialog.Content>
 </Dialog.Root>
+
+<ConfirmDialog
+	bind:open={discardOpen}
+	title="Отменить черновик изменений?"
+	description="Черновик со всеми правками — стадиями, переходами и правилами переноса — исчезнет. Восстановить его нечем: следующий заводится заново копией действующего процесса."
+	confirmLabel="Отменить черновик"
+	cancelLabel="Оставить черновик"
+	tone="danger"
+	onconfirm={() => discardForm?.requestSubmit()}
+/>

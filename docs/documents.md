@@ -310,5 +310,6 @@ pnpm run test:integration   # docker compose up -d --wait gotenberg && vitest ru
 - **`pdftotext`** (пакет `poppler-utils`) — им тест вытаскивает русский текст из готового PDF.
   На `ubuntu-latest` в GitHub Actions он есть из коробки.
 
-Каталог данных тестов — `./.test-data` (его задаёт `tests/integration/helpers/db.ts`); он
-чистится после прогона и занесён в `.gitignore` на случай, если прогон упадёт.
+Файлы документов в прогоне живут в MinIO из testcontainers (`tests/integration/helpers/storage.ts`):
+контейнер поднимается на файл тестов и уезжает вместе с ним, своего каталога на диске тесты не
+заводят.

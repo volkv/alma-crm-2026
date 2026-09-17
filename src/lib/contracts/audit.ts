@@ -25,17 +25,6 @@ export type AuditOutcome = (typeof AUDIT_OUTCOMES)[number];
 export const AUDIT_EVENT_TYPES = [
 	'auth.login',
 	'auth.logout',
-	'auth.login_failed',
-	'auth.locked',
-	'auth.password_changed',
-	'auth.mfa_enrolled',
-	'auth.mfa_disabled',
-	// Успешная проверка кода при входе: не факт входа как такового, а именно
-	// второй фактор — отдельно от `auth.login`, потому что вход возможен и без
-	// него, пока MFA не включена.
-	'auth.mfa_verified',
-	'auth.mfa_failed',
-	'auth.mfa_reset',
 	'users.created',
 	'users.updated',
 	'users.role_changed',
@@ -62,8 +51,9 @@ export const AUDIT_EVENT_TYPES = [
 	'organizations.site_created',
 	'organizations.site_updated',
 	// Ответственный за вуз: назначен, снят без замены, заменён другим. У замены
-	// в подробностях ещё и число переданных взаимодействий: вопрос «что стало с
-	// работой» задают сразу после вопроса «кто теперь ведёт».
+	// в подробностях ещё и прежний ответственный: вопрос «а кто вёл до этого»
+	// задают сразу после вопроса «кто теперь ведёт». Работу замена не двигает —
+	// незавершённые взаимодействия остаются за своими владельцами.
 	'directory.responsible_assigned',
 	'directory.responsible_released',
 	'directory.responsible_reassigned',
@@ -76,8 +66,6 @@ export const AUDIT_EVENT_TYPES = [
 	'people.consent_withdrawn',
 	'people.retention_changed',
 	'people.anonymized',
-	'directions.created',
-	'directions.updated',
 	'programs.created',
 	'programs.updated',
 	'programs.version_created',
@@ -98,9 +86,8 @@ export const AUDIT_EVENT_TYPES = [
 	'interactions.confirmed',
 	'interactions.checklist_changed',
 	'interactions.result_recorded',
-	'interactions.responsible_changed',
-	// Сменился владелец взаимодействия — не исполнитель стадии
-	// (`interactions.responsible_changed`), а тот, чья это работа.
+	// Сменился тот, чья это работа: у взаимодействия один владелец, и вопрос
+	// «кто теперь ведёт» задают по нему.
 	'interactions.owner_changed',
 	// Запись стадии переехала при изменении процесса: строка на каждое
 	// переехавшее взаимодействие. На вопрос «почему моя запись стоит не там, где
@@ -109,12 +96,6 @@ export const AUDIT_EVENT_TYPES = [
 	'interactions.commented',
 	'interactions.completed',
 	'interactions.cancelled',
-	// Договор контрагента и его позиции. Привязка договора к взаимодействию —
-	// это `interactions.updated` с полем в `changedFields`, отдельного кода у
-	// неё нет.
-	'contracts.created',
-	'contracts.updated',
-	'contracts.items_changed',
 	// Публикация изменённого процесса и перенос записей: две строки одной
 	// транзакции. Первая несёт диф в числах, вторая — сколько записей
 	// перепривязано и сколько взаимодействий переехало.
@@ -123,18 +104,11 @@ export const AUDIT_EVENT_TYPES = [
 	'stages.draft_created',
 	'stages.draft_updated',
 	'stages.draft_discarded',
-	// То же, что и `stages.routes_viewed`, под целевым именем раздела: попытка
-	// открыть устройство процесса без права на его настройку.
+	// То же, что и `users.viewed`: устройство процесса открывает каждый, кто
+	// зашёл в раздел настроек, и успешное чтение в журнале не нужно — а вот
+	// попытка открыть его без права на настройку и есть то, ради чего событие
+	// заведено. В журнале оно встречается с исходом `denied`.
 	'stages.process_viewed',
-	'stages.route_created',
-	'stages.route_updated',
-	'stages.route_published',
-	'stages.route_default_changed',
-	// То же, что и `users.viewed`: маршруты читает каждый, кто открыл раздел
-	// настроек, и успешное чтение в журнале не нужно — а вот попытка открыть
-	// устройство процесса без права на его настройку и есть то, ради чего
-	// событие заведено. В журнале оно встречается с исходом `denied`.
-	'stages.routes_viewed',
 	'documents.uploaded',
 	'documents.generated',
 	'documents.downloaded',

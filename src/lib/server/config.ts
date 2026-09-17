@@ -44,8 +44,6 @@ const configSchema = z
 		REDIS_URL: z.url({ protocol: /^rediss?$/ }),
 		/** Base URL of the Gotenberg service used to render documents to PDF. */
 		GOTENBERG_URL: z.url({ protocol: /^https?$/ }),
-		SMTP_HOST: z.string().min(1),
-		SMTP_PORT: z.coerce.number().int().min(1).max(65535),
 		/** Public origin of the app; adapter-node needs it to validate form posts. */
 		ORIGIN: z.url({ protocol: /^https?$/ }),
 		/**
@@ -64,6 +62,21 @@ const configSchema = z
 		 * audit log and the rate limiter.
 		 */
 		TRUST_PROXY: booleanFlag,
+		/**
+		 * Разрешить исходящие запросы на петлю и в приватные сети.
+		 *
+		 * Сервер ходит сам по адресам, которые назвал человек: приёмник подписки,
+		 * адрес системы обучения, подключения обмена. Внутренняя сеть развёртывания —
+		 * это каталог учётных записей, хранилище, база и служба метаданных облака;
+		 * запрос туда от имени сервера и есть SSRF, поэтому по умолчанию в
+		 * производственном режиме такие адреса запрещены.
+		 *
+		 * На машине разработчика и в прогоне наоборот: имитаторы и приёмник
+		 * поднимаются рядом, на `127.0.0.1`, и без них связку нечем проверить.
+		 * Отсюда и умолчание по режиму — `production` запрещает, остальные
+		 * разрешают. Сказать иначе развёртывание может, но только явно.
+		 */
+		ALLOW_LOCAL_TARGETS: booleanFlag.optional(),
 		/**
 		 * Подключения обмена (`docs/exchange-contract.md`).
 		 *
@@ -85,10 +98,20 @@ const configSchema = z
 		EXCHANGE_LMS_GROUPS_URL: exchangeUrl(false),
 		/** Адрес веб-сервиса системы обучения: подсказка в разделе интеграций. */
 		EXCHANGE_LMS_BASE_URL: exchangeUrl(false),
-		/** Секрет подписи исходящих сообщений обмена — общий для обоих подключений. */
+		/**
+		 * Секрет подписи исходящих сообщений обмена — общий для обоих подключений.
+		 *
+		 * Пустая строка равна «не задан»: направление тогда просто не настроено.
+		 * А вот заданный секрет обязан быть секретом: подпись HMAC-SHA256 стоит
+		 * ровно столько, сколько стоит подбор ключа, и «exchange» из восьми букв
+		 * подбирается словарём.
+		 */
 		EXCHANGE_SECRET: z
 			.string()
 			.default('')
+			.refine((value) => value === '' || value.length >= 32, {
+				error: 'must be at least 32 characters: it is the HMAC key of every outgoing message'
+			})
 			.transform((value) => (value === '' ? null : value)),
 		/**
 		 * S3-совместимое хранилище файлов документов (в поставке — MinIO).

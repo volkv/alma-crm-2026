@@ -21,7 +21,14 @@
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatDateTime } from '$lib/format';
-	import { createApiKeySchema, type ApiKeyView, type CreateApiKeyInput } from '$lib/contracts/api';
+	import {
+		createApiKeySchema,
+		API_KEY_EXCHANGE_SYSTEMS,
+		API_KEY_EXCHANGE_SYSTEM_LABELS,
+		type ApiKeyExchangeSystem,
+		type ApiKeyView,
+		type CreateApiKeyInput
+	} from '$lib/contracts/api';
 	import type { IssuedApiKey } from './notice';
 	import type { PageProps } from './$types';
 
@@ -65,6 +72,14 @@
 
 	const ownerNames = $derived(new Map(data.owners.map((owner) => [owner.id, owner.fullName])));
 
+	/**
+	 * Подключение спрашивается только у ключа машинного субъекта: у ключа на
+	 * человека его нет и быть не может — маршруты обмена ему закрыты.
+	 */
+	const ownerIsService = $derived(
+		data.owners.find((owner) => owner.id === $form.ownerUserId)?.isService ?? false
+	);
+
 	const columns: ColumnDef<DataTableFeatures, ApiKeyView>[] = [
 		{
 			accessorKey: 'name',
@@ -79,6 +94,16 @@
 			meta: { title: 'Владелец' },
 			enableSorting: false,
 			cell: ({ row }) => ownerNames.get(row.original.ownerUserId) ?? row.original.ownerUserId
+		},
+		{
+			id: 'exchange',
+			header: 'Подключение обмена',
+			meta: { title: 'Подключение обмена' },
+			enableSorting: false,
+			cell: ({ row }) =>
+				row.original.exchangeSystem === null
+					? '—'
+					: `${API_KEY_EXCHANGE_SYSTEM_LABELS[row.original.exchangeSystem]} · ${row.original.exchangeInstance}`
 		},
 		{
 			accessorKey: 'createdAt',
@@ -217,9 +242,38 @@
 				required
 				options={data.owners.map((owner) => ({ value: owner.id, label: owner.fullName }))}
 				placeholder="Выберите владельца"
-				bind:value={$form.ownerUserId}
+				bind:value={
+					() => $form.ownerUserId,
+					(next) => {
+						$form.ownerUserId = next;
+
+						// Смена владельца на человека уносит подключение: ключ на
+						// сотрудника никакую внешнюю систему не представляет.
+						if (data.owners.find((owner) => owner.id === next)?.isService !== true) {
+							$form.exchangeSystem = null;
+						}
+					}
+				}
 				errors={$errors.ownerUserId}
 			/>
+			{#if ownerIsService}
+				<FieldSelect
+					name="exchangeSystem"
+					label="Подключение обмена"
+					description="Направление, на котором работает ключ. Права у ключей обмена одинаковы, и только это поле не даёт ключу сайта подать результат учебной группы. Экземпляр подключения берётся из настроек интеграций."
+					required
+					options={API_KEY_EXCHANGE_SYSTEMS.map((system) => ({
+						value: system,
+						label: API_KEY_EXCHANGE_SYSTEM_LABELS[system]
+					}))}
+					placeholder="Выберите подключение"
+					bind:value={
+						() => $form.exchangeSystem ?? '',
+						(next) => ($form.exchangeSystem = next === '' ? null : (next as ApiKeyExchangeSystem))
+					}
+					errors={$errors.exchangeSystem}
+				/>
+			{/if}
 			<FormActions
 				submitting={$submitting}
 				submitLabel="Выпустить ключ"

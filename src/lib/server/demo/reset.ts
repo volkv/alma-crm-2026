@@ -15,10 +15,13 @@
  *   каталогом Keycloak (`external_subject`), и стереть её значило бы при
  *   следующем входе завести человеку двойника, а его прежние ключи, назначения
  *   и след в журнале оставить за записью, в которую уже никто не войдёт;
- * - **группы процесса и действующие редакции остаются.** Группы кладёт
- *   миграция, а не сид; на стадии опубликованной редакции ссылается журнал
- *   действий, который переживает сброс. Стирается только незаконченный
- *   черновик: он принадлежит показу, а не установке;
+ * - **группы процесса остаются, а их редакции пересобираются заново.** Группы
+ *   кладёт миграция, а не сид, и на них ссылаются взаимодействия. Редакции же
+ *   принадлежат показу: эталонный набор взаимодействий сид проводит по стадиям
+ *   живой редакции, и стенд, где стадию удалили правкой процесса, залить
+ *   эталоном уже нельзя — сид упрётся в стадию, которой нет. Поэтому редакции,
+ *   стадии, переходы, правила переноса и реестр ключей всех групп очищаются
+ *   вместе с данными, а `ensureProcess` внутри сида заводит процесс заново;
  * - **журнал действий не трогается вовсе.** Он append-only на уровне базы
  *   (UPDATE и DELETE запрещает триггер), и запись о том, что стенд сбросили,
  *   ложится в него же — рядом с тем, что было до сброса.
@@ -27,13 +30,19 @@
  * не демонстрационные, и кнопка, стирающая их «до эталона», там означала бы
  * потерю работы.
  */
-import { count, isNull, sql } from 'drizzle-orm';
-import { seedAll } from '../../../../scripts/seed/run';
+import { count, sql } from 'drizzle-orm';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getConfig } from '../config';
 import { getDb } from '../db';
-import { documents, interactions, organizations, processRevisions } from '../db/schema';
+import {
+	documents,
+	interactions,
+	organizations,
+	processGroups,
+	processRevisions,
+	processStageKeys
+} from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { removeStoredFiles } from '../documents/storage';
 import { ConflictError } from '../errors';
@@ -139,16 +148,24 @@ async function clearDemoData(ctx: ActorContext): Promise<string[]> {
 	return withTransaction(ctx, async (tx) => {
 		const files = await tx.select({ filePath: documents.filePath }).from(documents);
 
-		// Незаконченный черновик процесса принадлежит показу: его правили в
-		// демонстрации и не опубликовали. Опубликованные редакции остаются —
-		// на их стадии ссылается журнал действий.
-		await tx.delete(processRevisions).where(isNull(processRevisions.publishedAt));
-
 		await tx.execute(
 			sql.raw(
 				`truncate table ${DEMO_DATA_TABLES.map((table) => `"${table}"`).join(', ')} restart identity`
 			)
 		);
+
+		// Процесс каждой группы — тоже демонстрационные данные: показ правит его
+		// той же кнопкой, что и всё остальное. Порядок обязателен: указатель на
+		// действующую редакцию снимается первым (внешний ключ группы запрещает
+		// удалять редакцию, на которую она смотрит), записи стадий к этому
+		// моменту уже опустошены `TRUNCATE` (их ключ на `stages` — `restrict`), а
+		// стадии, переходы и правила переноса уезжают каскадом за редакциями.
+		// Реестр ключей чистится явно: иначе ключ, заведённый или снятый на
+		// показе, остался бы в группе архивным и редактор отказал бы завести
+		// стадию под ним заново.
+		await tx.update(processGroups).set({ activeRevisionId: null });
+		await tx.delete(processRevisions);
+		await tx.delete(processStageKeys);
 
 		return files.map((file) => file.filePath);
 	});
@@ -177,6 +194,10 @@ async function countDemoData(): Promise<DemoResetResult> {
  * рабочем состоянии, а не в пустом: сначала очистка и заливка, и только потом
  * уборка файлов, на которые уже никто не ссылается. Хранилище, не ответившее на
  * удаление, — это оставшийся мусор и ошибка наружу, а не стенд без данных.
+ *
+ * Данные и процесс очищаются одной транзакцией, а заводит процесс заново тот же
+ * сид, что и всё остальное: разорвать эти два шага значило бы получить стенд
+ * без процесса, на котором не открывается ни одна карточка.
  */
 export async function resetDemoData(ctx: ActorContext): Promise<DemoResetResult> {
 	// Право проверяется первым и с отметкой в журнале: попытка стереть стенд без
@@ -200,6 +221,12 @@ export async function resetDemoData(ctx: ActorContext): Promise<DemoResetResult>
 	}
 
 	try {
+		// Сид тянет за собой весь набор данных стенда и все его сервисы. Ветка
+		// демонстрационного режима — единственное место продукта, которое его
+		// зовёт, поэтому загружается он по месту: статический импорт утащил бы
+		// набор в сборку страницы настроек, откуда кнопку и нажимают.
+		const { seedAll } = await import('../../../../scripts/seed/run');
+
 		const files = await clearDemoData(ctx);
 
 		await seedAll();

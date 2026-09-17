@@ -137,15 +137,6 @@ services:
         limits:
           memory: 768M
 
-  mailpit:
-    restart: unless-stopped
-    # The web UI is not exposed: it would show every message the system sends.
-    ports: !reset []
-    deploy:
-      resources:
-        limits:
-          memory: 64M
-
   # The imitators are a demonstration prop, like the Moodle stand-in: a
   # deployment that talks to the real systems must not have a second source of
   # applications and learning data next to them. The `stand` profile keeps them
@@ -167,7 +158,10 @@ services:
       CRM_BASE_URL: http://app:3000
       CRM_API_KEY: ${EXCHANGE_API_KEY:-}
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}
-      INSTANCE_NAME: ${MOCK_CMS_INSTANCE:-itschool-site}
+      # The same variable the app reads: the CRM checks `source.instance` of an
+      # incoming application against its own setting, and two variables with one
+      # default would silently drift apart on the first stand that renames one.
+      INSTANCE_NAME: ${EXCHANGE_CMS_INSTANCE:-itschool-site}
     deploy:
       resources:
         limits:
@@ -236,6 +230,10 @@ services:
       EXCHANGE_CMS_INSTANCE: ${EXCHANGE_CMS_INSTANCE:-itschool-site}
       EXCHANGE_LMS_INSTANCE: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}
+      # Outgoing requests go to public addresses only: an address typed into the
+      # integrations screen must not be able to reach the account directory, the
+      # object storage or the cloud metadata service next door.
+      ALLOW_LOCAL_TARGETS: 'false'
     env_file:
       - .env
     deploy:

@@ -11,7 +11,15 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { auditEvents, programs, statRows, statSnapshots } from '$lib/server/db/schema';
 import { LMS_REFUSAL } from '$lib/server/integrations/lms/moodle';
 import { syncLms } from '$lib/server/integrations/lms/sync';
-import { getLmsSettings, setLmsSettings } from '$lib/server/integrations/settings';
+import {
+	clearLmsToken,
+	getLmsSettings,
+	getLmsSettingsView,
+	setLmsSettings
+} from '$lib/server/integrations/settings';
+import { demoSessionPermissions } from '$lib/server/rbac';
+import type { PermissionKey } from '$lib/server/rbac/permissions';
+import { defaultRolePermissions } from '$lib/server/rbac/seed';
 import { rejectSnapshot } from '$lib/server/stats/import';
 import { getRedis } from '$lib/server/redis';
 import { MOCK_LMS_TOKEN } from '../../../mocks/mock-lms/moodle.ts';
@@ -277,5 +285,51 @@ describe('форма настроек системы обучения', () => {
 
 		// При этом он именно сохранён, а не потерян по дороге.
 		expect((await getLmsSettings()).token).toBe(secret);
+	});
+});
+
+describe('граница демонстрации', () => {
+	/** Сессия публичной демонстрации: та же роль минус `demoSessionPermissions`. */
+	const demo = () =>
+		testActor({
+			roleId: 'admin',
+			permissions: [
+				...demoSessionPermissions(defaultRolePermissions('admin') as ReadonlySet<PermissionKey>)
+			]
+		});
+
+	it('не меняет адрес и токен системы обучения', async () => {
+		await configureLms();
+
+		// Пустое поле токена означает «оставить прежний», поэтому смена одного
+		// адреса уносит сохранённый токен на чужой узел. Это и закрыто правом.
+		await expect(
+			setLmsSettings(demo(), {
+				baseUrl: 'https://stranger.example.org',
+				token: null,
+				enabled: false,
+				syncIntervalMinutes: 60
+			})
+		).rejects.toMatchObject({ code: 'forbidden' });
+
+		await expect(clearLmsToken(demo())).rejects.toMatchObject({ code: 'forbidden' });
+
+		const settings = await getLmsSettings();
+
+		expect(settings.baseUrl).toBe(lmsUrl());
+		expect(settings.token).toBe(MOCK_LMS_TOKEN);
+	});
+
+	it('видит настройки и ходит за выгрузкой: ради этого стенд и открывают', async () => {
+		await configureLms();
+		await seedDirectory();
+
+		const view = await getLmsSettingsView(demo());
+
+		expect(view).toMatchObject({ baseUrl: lmsUrl(), hasToken: true });
+
+		const state = await syncLms(demo());
+
+		expect(state.ok).toBe(true);
 	});
 });

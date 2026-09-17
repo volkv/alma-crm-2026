@@ -7,13 +7,12 @@
  * годится и просто не фильтр» и «вопрос задан неверно, отвечать нечем».
  */
 import { describe, expect, it } from 'vitest';
+import { moscowDayStart, snapshotMoment } from '$lib/contracts/calendar';
 import {
 	columnsForMode,
-	moscowDayStart,
 	quarterStart,
 	reportSemantics,
-	resolveColumns,
-	snapshotMoment
+	resolveColumns
 } from '$lib/contracts/reports';
 import { ValidationError } from '$lib/server/errors';
 import { readReportQuery } from '$lib/server/reports/query';

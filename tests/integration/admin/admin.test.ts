@@ -236,8 +236,8 @@ describe('журнал действий', () => {
 	it('фильтрует по периоду календарными сутками по Москве', async () => {
 		await insertEvent({ type: 'auth.login', occurredAt: moscow('2026-09-01T00:00:01') });
 		await insertEvent({ type: 'auth.logout', occurredAt: moscow('2026-09-01T23:59:30') });
-		await insertEvent({ type: 'auth.login_failed', occurredAt: moscow('2026-09-02T00:30:00') });
-		await insertEvent({ type: 'auth.locked', occurredAt: moscow('2026-08-31T23:30:00') });
+		await insertEvent({ type: 'auth.login', occurredAt: moscow('2026-09-02T00:30:00') });
+		await insertEvent({ type: 'auth.logout', occurredAt: moscow('2026-08-31T23:30:00') });
 
 		const data = (await loadAudit(
 			pageEvent({ query: '?from=2026-09-01&to=2026-09-01' })

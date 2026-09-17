@@ -164,8 +164,11 @@
 {/snippet}
 
 {#snippet titleCell(row: InteractionListItem)}
-	<div class="flex max-w-64 min-w-0 flex-col gap-0.5">
-		<span class="truncate font-medium">{row.title}</span>
+	<!-- Названия различаются хвостом («…по прикладной информатике» против
+		«…прикладная информатика»), поэтому колонке отдано место, которое всё
+		равно пустовало справа; что не поместилось — читается подсказкой. -->
+	<div class="flex max-w-80 min-w-0 flex-col gap-0.5">
+		<span class="truncate font-medium" title={row.title}>{row.title}</span>
 		<span class="flex flex-wrap items-center gap-1">
 			{#if row.status !== 'active'}
 				<StatusBadge tone={row.status === 'completed' ? 'success' : 'neutral'}>
@@ -196,6 +199,22 @@
 			<StageTimeline stages={toTimelineStages(row.progress)} compact />
 		</div>
 	{/if}
+{/snippet}
+
+{#snippet assignAction({ ids, clear }: { ids: string[]; clear: () => void })}
+	<Button
+		variant="outline"
+		size="sm"
+		onclick={() => {
+			assignIds = ids;
+			assignUserId = users[0]?.id ?? '';
+			assignOpen = true;
+			clear();
+		}}
+	>
+		<UserCogIcon aria-hidden="true" />
+		Назначить ответственного
+	</Button>
 {/snippet}
 
 {#snippet slaCell(row: InteractionListItem)}
@@ -297,6 +316,9 @@
 			</EmptyState>
 		</div>
 	{:else}
+		<!-- Чекбоксы появляются только там, где выделению есть что делать:
+			назначить ответственного может не всякая роль, а выделение без
+			единого действия обещает работу, которой нет. -->
 		<DataTable
 			{columns}
 			rows={data.rows}
@@ -306,26 +328,10 @@
 			emptyTitle="Ничего не найдено"
 			emptyDescription="Измените запрос или сбросьте фильтры."
 			initialHiddenColumns={HIDDEN_ON_LAPTOP}
+			defaultSort={{ columnId: 'dueAt', direction: 'asc' }}
+			bulkActions={data.canAssign ? assignAction : undefined}
 			onopen={open}
-		>
-			{#snippet bulkActions({ ids, clear })}
-				{#if data.canAssign}
-					<Button
-						variant="outline"
-						size="sm"
-						onclick={() => {
-							assignIds = ids;
-							assignUserId = users[0]?.id ?? '';
-							assignOpen = true;
-							clear();
-						}}
-					>
-						<UserCogIcon aria-hidden="true" />
-						Назначить ответственного
-					</Button>
-				{/if}
-			{/snippet}
-		</DataTable>
+		/>
 	{/if}
 </div>
 

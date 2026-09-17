@@ -348,10 +348,6 @@ export const REPORT_COLUMNS: readonly ReportColumnDefinition[] = [
 
 const COLUMN_BY_KEY = new Map(REPORT_COLUMNS.map((column) => [column.key, column]));
 
-export const REPORT_COLUMN_KEYS: readonly ReportColumnKey[] = REPORT_COLUMNS.map(
-	(column) => column.key
-);
-
 export function isReportColumnKey(value: string): value is ReportColumnKey {
 	return COLUMN_BY_KEY.has(value as ReportColumnKey);
 }
@@ -378,40 +374,6 @@ export function resolveColumns(
 	}
 
 	return available.filter((column) => column.required || asked.has(column.key));
-}
-
-/**
- * Московские сутки — единица календаря всего продукта. Смещение постоянное с
- * 2014 года, поэтому граница суток считается арифметикой, а не таблицей зон;
- * вернётся переход на летнее время — здесь и придётся его учесть.
- */
-const MOSCOW_OFFSET_MS = 3 * 60 * 60 * 1000;
-
-const DAY_MS = 24 * 60 * 60 * 1000;
-
-/** Момент начала календарного дня `2026-10-01` по московскому календарю. */
-export function moscowDayStart(day: string): Date {
-	const parsed = Date.parse(`${day}T00:00:00.000Z`);
-
-	if (Number.isNaN(parsed)) {
-		throw new RangeError(`Не удалось разобрать день: ${day}`);
-	}
-
-	return new Date(parsed - MOSCOW_OFFSET_MS);
-}
-
-/**
- * Момент среза `T` — начало суток, следующих за днём «по». Срез показывает
- * состояние в последний момент дня «по», а событие ровно в `T` относится уже к
- * следующим суткам.
- */
-export function snapshotMoment(to: string): Date {
-	return new Date(moscowDayStart(to).getTime() + DAY_MS);
-}
-
-/** Календарный день момента по московскому календарю. */
-export function moscowDay(value: Date): string {
-	return new Date(value.getTime() + MOSCOW_OFFSET_MS).toISOString().slice(0, 10);
 }
 
 /** Начало текущего квартала — период по умолчанию. */

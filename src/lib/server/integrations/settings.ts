@@ -3,11 +3,19 @@
  * выгрузки и периодичность цикла доставки вебхуков.
  *
  * Хранятся там же, где остальные настройки приложения (`app_settings`), но
- * своим модулем и под своим правом: общий словарь `settingSchemas` описывает
+ * своим модулем и под своими правами: общий словарь `settingSchemas` описывает
  * правила входа и блокировки, которые читает каждый запрос, а здесь — адрес
- * чужой системы и её токен. Право на это — `integrations.manage`, а не
- * `settings.write`: настраивает интеграции тот, кто отвечает за обмен, и
- * давать ему заодно политику паролей незачем.
+ * чужой системы и её токен. `settings.write` тут ни при чём: настраивает
+ * интеграции тот, кто отвечает за обмен, и давать ему заодно политику паролей
+ * незачем.
+ *
+ * Прав два, и граница между ними проходит по последствиям. Читать состояние
+ * интеграций — `integrations.manage`. Менять то, что уводит данные на чужой
+ * узел или переживает сессию, — `integrations.manage_endpoints`: адрес и токен
+ * системы обучения, адреса и секреты подключений обмена, периодичность фоновой
+ * работы. Именно второго права не получает публичная демонстрация
+ * (`demoSessionPermissions`), и потому оно стоит на **записи**, а не на
+ * чтении.
  *
  * Правило чтения то же, что у общих настроек: «нет строки» — это нормальное
  * состояние свежей базы и подменяется значением по умолчанию, а непонятное
@@ -36,6 +44,7 @@ import { appSettings } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
+import { outboundTargetIssue } from './outbound';
 
 /** Значения, с которыми интеграции работают, пока их не настроили. */
 export const LMS_SETTINGS_DEFAULT: LmsSettings = lmsSettingsSchema.parse({});
@@ -134,7 +143,10 @@ export async function setLmsSettings(
 		syncIntervalMinutes: number;
 	}
 ): Promise<LmsSettingsView> {
-	await requirePermission(ctx, 'integrations.manage', { type: 'settings.updated' });
+	// Адрес и токен — это чужой узел и ключ к его данным: смена адреса при
+	// сохранённом токене уносит токен туда, куда укажут. Право то же, что у
+	// адресов обмена (`docs/access-matrix.md`, раздел 5).
+	await requirePermission(ctx, 'integrations.manage_endpoints', { type: 'settings.updated' });
 
 	const current = await getLmsSettings();
 	const parsed = lmsSettingsSchema.safeParse({
@@ -149,6 +161,17 @@ export async function setLmsSettings(
 			'Настройки системы обучения не прошли проверку',
 			parsed.error.issues.map((issue) => issue.message)
 		);
+	}
+
+	// Куда ведёт адрес площадки, схема не знает: разрешать имя в адрес умеет
+	// только сервер. По этому адресу уедет токен веб-сервиса, поэтому проверка
+	// стоит до записи, а не только перед заходом.
+	if (parsed.data.baseUrl !== null) {
+		const refusal = await outboundTargetIssue(parsed.data.baseUrl);
+
+		if (refusal !== null) {
+			throw new ValidationError('Адрес системы обучения не годится', [refusal]);
+		}
 	}
 
 	// Выгрузка по таймеру без адреса или без токена не состоится ни разу, а
@@ -168,7 +191,7 @@ export async function setLmsSettings(
 
 /** Забыть токен: единственный способ убрать его, раз показать его нельзя. */
 export async function clearLmsToken(ctx: ActorContext): Promise<LmsSettingsView> {
-	await requirePermission(ctx, 'integrations.manage', { type: 'settings.updated' });
+	await requirePermission(ctx, 'integrations.manage_endpoints', { type: 'settings.updated' });
 
 	const current = await getLmsSettings();
 	const next: LmsSettings = { ...current, token: null, enabled: false };
@@ -187,7 +210,9 @@ export async function setDeliverySettings(
 	ctx: ActorContext,
 	input: DeliverySettings
 ): Promise<DeliverySettings> {
-	await requirePermission(ctx, 'integrations.manage', { type: 'settings.updated' });
+	// Периодичность фоновой работы переживает сессию: выставленные пять секунд
+	// продолжают стучаться в чужие приёмники и после того, как посетитель ушёл.
+	await requirePermission(ctx, 'integrations.manage_endpoints', { type: 'settings.updated' });
 
 	const parsed = deliverySettingsSchema.safeParse(input);
 
@@ -311,6 +336,23 @@ export async function setExchangeSettings(
 			'Настройки обмена не прошли проверку',
 			parsed.error.issues.map((issue) => issue.message)
 		);
+	}
+
+	// Куда ведут адреса подключений, схема не знает. Ключ заявки в адресе
+	// карточки на проверку не влияет — на его место встаёт любая строка.
+	for (const [address, what] of [
+		[parsed.data.cms.statusUrl?.replace('{externalId}', 'x') ?? null, 'карточки заявки'],
+		[parsed.data.lms.groupsUrl, 'учебных групп']
+	] as const) {
+		if (address === null) {
+			continue;
+		}
+
+		const refusal = await outboundTargetIssue(address);
+
+		if (refusal !== null) {
+			throw new ValidationError(`Адрес ${what} не годится`, [refusal]);
+		}
 	}
 
 	// Адрес без секрета — это исходящее сообщение, которое получатель обязан

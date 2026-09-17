@@ -59,6 +59,12 @@ export function matchesWebhookEvent(patterns: readonly string[], type: string): 
 /**
  * Куда система вообще ходит сама — и в приёмник вебхука, и в систему обучения.
  *
+ * Здесь проверяется **вид** адреса, а не то, куда он ведёт: правило читает и
+ * браузер, а разрешать имя в адрес умеет только сервер. Кто адресат на самом
+ * деле — решает `outboundAddressIssue` (`src/lib/server/integrations/outbound.ts`):
+ * он разрешает имя, отбрасывает петлю, приватные сети, ссылочную локальную сеть
+ * и ULA и делает это дважды — при сохранении и в момент отправки.
+ *
  * Только `https`: наружу уходят коды событий, ссылки на записи и токен чужого
  * веб-сервиса, и по открытому каналу их читает любой посредник. Исключение —
  * адрес на этой же машине (`http://localhost`, `127.0.0.1`, `[::1]`),
@@ -85,6 +91,151 @@ const PLAIN_HTTP_HOSTS = new Set([
 	'mock-lms'
 ]);
 
+/**
+ * Имитаторы стенда: два имени сервисов `docker-compose.yml`, разрешённые
+ * поимённо. Они живут внутри сети развёртывания, то есть по адресу, который
+ * иначе был бы запрещён, и других таких имён у продукта нет.
+ */
+export const STAND_MOCK_HOSTS: ReadonlySet<string> = new Set(['mock-cms', 'mock-lms']);
+
+/**
+ * Разбор адреса из имени узла. `null` — это имя, а не адрес.
+ *
+ * Разбирать восьмеричную, шестнадцатеричную и десятичную записи IPv4 самим не
+ * нужно: `new URL()` приводит их к обычной четвёрке (`0177.0.0.1`,
+ * `2130706433` и `0x7f000001` становятся `127.0.0.1`), а IPv6 — к сжатой
+ * форме в квадратных скобках. Поэтому сюда приходит уже нормализованное имя
+ * узла, и разбирать остаётся ровно два написания.
+ */
+function parseAddress(host: string): { bytes: number[]; v6: number[] } | null {
+	const v4 = /^(\d{1,3})\.(\d{1,3})\.(\d{1,3})\.(\d{1,3})$/.exec(host);
+
+	if (v4 !== null) {
+		const bytes = v4.slice(1).map(Number);
+
+		return bytes.every((byte) => byte <= 255) ? { bytes, v6: [] } : null;
+	}
+
+	if (!host.startsWith('[') || !host.endsWith(']')) {
+		return null;
+	}
+
+	const inner = host.slice(1, -1);
+	const halves = inner.split('::');
+
+	if (halves.length > 2) {
+		return null;
+	}
+
+	const parseGroups = (text: string): number[] | null => {
+		if (text === '') {
+			return [];
+		}
+
+		const groups: number[] = [];
+
+		for (const part of text.split(':')) {
+			if (!/^[0-9a-f]{1,4}$/i.test(part)) {
+				return null;
+			}
+
+			groups.push(Number.parseInt(part, 16));
+		}
+
+		return groups;
+	};
+
+	const head = parseGroups(halves[0]);
+	const tail = halves.length === 2 ? parseGroups(halves[1]) : [];
+
+	if (head === null || tail === null) {
+		return null;
+	}
+
+	const missing = 8 - head.length - tail.length;
+
+	if (halves.length === 1 ? missing !== 0 : missing < 0) {
+		return null;
+	}
+
+	const v6 = [
+		...head,
+		...Array.from({ length: halves.length === 1 ? 0 : missing }, () => 0),
+		...tail
+	];
+
+	// IPv4 в обёртке IPv6 (`::ffff:7f00:1`) — это тот же самый адрес: пакет уйдёт
+	// на 127.0.0.1, и не заметить этого значит не проверить ничего.
+	if (v6.length === 8 && v6.slice(0, 5).every((group) => group === 0) && v6[5] === 0xffff) {
+		return {
+			bytes: [v6[6] >> 8, v6[6] & 0xff, v6[7] >> 8, v6[7] & 0xff],
+			v6
+		};
+	}
+
+	return v6.length === 8 ? { bytes: [], v6 } : null;
+}
+
+/**
+ * Адрес внутри установки: петля, приватная сеть, ссылочная локальная сеть (в
+ * ней же служба метаданных облака `169.254.169.254`), CGNAT, ULA IPv6 и
+ * неопределённый адрес. Возвращает название класса словами или `null`, если
+ * адрес публичный либо это вовсе имя, а не адрес.
+ */
+export function localAddressKind(host: string): string | null {
+	const parsed = parseAddress(host);
+
+	if (parsed === null) {
+		return null;
+	}
+
+	if (parsed.bytes.length === 4) {
+		const [a, b] = parsed.bytes;
+
+		if (a === 127) {
+			return 'петля';
+		}
+
+		if (a === 0) {
+			return 'неопределённый адрес';
+		}
+
+		if (a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)) {
+			return 'приватная сеть';
+		}
+
+		if (a === 169 && b === 254) {
+			return 'ссылочная локальная сеть';
+		}
+
+		if (a === 100 && b >= 64 && b <= 127) {
+			return 'сеть оператора связи (CGNAT)';
+		}
+
+		return null;
+	}
+
+	const groups = parsed.v6;
+
+	if (groups.every((group) => group === 0)) {
+		return 'неопределённый адрес';
+	}
+
+	if (groups.slice(0, 7).every((group) => group === 0) && groups[7] === 1) {
+		return 'петля';
+	}
+
+	if ((groups[0] & 0xfe00) === 0xfc00) {
+		return 'приватная сеть (ULA)';
+	}
+
+	if ((groups[0] & 0xffc0) === 0xfe80) {
+		return 'ссылочная локальная сеть';
+	}
+
+	return null;
+}
+
 export function outboundUrlIssue(raw: string): string | null {
 	let parsed: URL;
 
@@ -102,7 +253,7 @@ export function outboundUrlIssue(raw: string): string | null {
 		return 'Адрес указывают по http или https';
 	}
 
-	return PLAIN_HTTP_HOSTS.has(parsed.hostname)
+	return PLAIN_HTTP_HOSTS.has(parsed.hostname) || localAddressKind(parsed.hostname) === 'петля'
 		? null
 		: 'По http принимается только адрес на этой же машине (localhost, 127.0.0.1, host.docker.internal) и имитаторы стенда mock-cms и mock-lms; остальным нужен https';
 }

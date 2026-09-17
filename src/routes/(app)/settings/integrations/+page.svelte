@@ -177,6 +177,20 @@
 	</Alert.Root>
 {/if}
 
+{#if !data.canManageEndpoints}
+	<!-- Раздел открыт, менять адреса нельзя. Так он выглядит и на публичной
+		демонстрации: журнал обмена, состояние доставок и заход в систему обучения
+		показывают, а адрес приёмника, токен и периодичность переживают
+		демонстрацию — и остаются за правом «Внешние адреса и секреты подключений»
+		(`docs/access-matrix.md`, раздел 5). -->
+	<InlineHint tone="info">
+		Адреса, секреты и периодичность фоновой работы меняет тот, у кого есть право «Внешние адреса и
+		секреты подключений». Здесь они видны, но не редактируются: подписка на чужой приёмник и токен
+		чужой системы продолжают работать и после того, как вы закроете вкладку. Журнал обмена, повтор
+		доставки и заход в систему обучения доступны как обычно.
+	</InlineHint>
+{/if}
+
 <!-- Целое число в поле: пустое значение даёт NaN, и схема скажет об этом
 	словами; подменять его нулём нельзя — ноль здесь означал бы настройку. -->
 {#snippet numberField({
@@ -217,12 +231,14 @@
 			Внешняя система узнаёт о происходящем из журнала действий: подписка получает POST с телом
 			события и подписью. Секрет показывается один раз — при заведении.
 		</Card.Description>
-		<Card.Action>
-			<Button size="sm" onclick={startCreate}>
-				<PlusIcon aria-hidden="true" />
-				Добавить подписку
-			</Button>
-		</Card.Action>
+		{#if data.canManageEndpoints}
+			<Card.Action>
+				<Button size="sm" onclick={startCreate}>
+					<PlusIcon aria-hidden="true" />
+					Добавить подписку
+				</Button>
+			</Card.Action>
+		{/if}
 	</Card.Header>
 	<Card.Content class="flex flex-col gap-4">
 		{#if data.webhooks.length === 0}
@@ -252,9 +268,11 @@
 						</p>
 					</div>
 					<div class="flex flex-wrap items-center gap-2">
-						<Button variant="outline" size="sm" onclick={() => startEdit(subscription)}>
-							Изменить
-						</Button>
+						{#if data.canManageEndpoints}
+							<Button variant="outline" size="sm" onclick={() => startEdit(subscription)}>
+								Изменить
+							</Button>
+						{/if}
 						<form method="POST" action="?/test">
 							<input type="hidden" name="webhookId" value={subscription.id} />
 							<Button type="submit" variant="outline" size="sm">Тестовое событие</Button>
@@ -308,23 +326,30 @@
 		{#if $deliveryMessage}
 			<Alert.Root><Alert.Description>{$deliveryMessage}</Alert.Description></Alert.Root>
 		{/if}
-		<!-- novalidate: проверяет схема и говорит по-русски, а не браузер на своём языке. -->
-		<form
-			method="POST"
-			action="?/delivery"
-			use:deliveryEnhance
-			novalidate
-			class="flex max-w-sm flex-col gap-4"
-		>
-			{@render numberField({
-				name: 'intervalSeconds',
-				label: 'Интервал, секунд',
-				value: $delivery.intervalSeconds,
-				errors: $deliveryErrors.intervalSeconds,
-				onchange: (next) => ($delivery.intervalSeconds = next)
-			})}
-			<FormActions submitting={$deliverySubmitting} submitLabel="Сохранить" />
-		</form>
+		{#if data.canManageEndpoints}
+			<!-- novalidate: проверяет схема и говорит по-русски, а не браузер на своём языке. -->
+			<form
+				method="POST"
+				action="?/delivery"
+				use:deliveryEnhance
+				novalidate
+				class="flex max-w-sm flex-col gap-4"
+			>
+				{@render numberField({
+					name: 'intervalSeconds',
+					label: 'Интервал, секунд',
+					value: $delivery.intervalSeconds,
+					errors: $deliveryErrors.intervalSeconds,
+					onchange: (next) => ($delivery.intervalSeconds = next)
+				})}
+				<FormActions submitting={$deliverySubmitting} submitLabel="Сохранить" />
+			</form>
+		{:else}
+			<dl class="text-sm">
+				<dt class="text-muted-foreground">Интервал, секунд</dt>
+				<dd class="font-mono">{$delivery.intervalSeconds}</dd>
+			</dl>
+		{/if}
 	</Card.Content>
 </Card.Root>
 
@@ -369,42 +394,69 @@
 			</Alert.Root>
 		{/if}
 
-		<form method="POST" action="?/lms" use:lmsEnhance novalidate class="grid gap-4 sm:grid-cols-2">
-			<FieldInput
-				name="baseUrl"
-				label="Адрес системы обучения"
-				description="Без хвоста: клиент сам добавит webservice/rest/server.php"
-				placeholder="https://lms.example.org"
-				bind:value={$lms.baseUrl}
-				errors={$lmsErrors.baseUrl}
-			/>
-			<FieldInput
-				name="token"
-				label="Токен веб-сервиса"
-				description={data.lms.hasToken
-					? 'Токен сохранён. Пустое поле оставит прежний'
-					: 'Токен веб-сервиса Moodle; после сохранения показан не будет'}
-				placeholder={data.lms.hasToken ? '••••••••' : 'Токен'}
-				bind:value={() => $lms.token ?? '', (next) => ($lms.token = next.trim() || null)}
-				errors={$lmsErrors.token}
-			/>
-			{@render numberField({
-				name: 'syncIntervalMinutes',
-				label: 'Периодичность выгрузки, минут',
-				value: $lms.syncIntervalMinutes,
-				errors: $lmsErrors.syncIntervalMinutes,
-				onchange: (next) => ($lms.syncIntervalMinutes = next)
-			})}
-			<div class="flex items-end">
-				<Label class="flex items-center gap-2 font-normal">
-					<Checkbox name="enabled" bind:checked={$lms.enabled} />
-					Забирать выгрузку по расписанию
-				</Label>
-			</div>
-			<div class="sm:col-span-2">
-				<FormActions submitting={$lmsSubmitting} submitLabel="Сохранить настройки" />
-			</div>
-		</form>
+		{#if !data.canManageEndpoints}
+			<dl class="grid gap-2 text-sm sm:grid-cols-2">
+				<div>
+					<dt class="text-muted-foreground">Адрес системы обучения</dt>
+					<dd class="font-mono break-all">{data.lms.baseUrl ?? 'не задан'}</dd>
+				</div>
+				<div>
+					<dt class="text-muted-foreground">Токен веб-сервиса</dt>
+					<dd>{data.lms.hasToken ? 'Сохранён' : 'Не задан'}</dd>
+				</div>
+				<div>
+					<dt class="text-muted-foreground">Периодичность выгрузки, минут</dt>
+					<dd class="font-mono">{data.lms.syncIntervalMinutes}</dd>
+				</div>
+				<div>
+					<dt class="text-muted-foreground">Выгрузка по расписанию</dt>
+					<dd>{data.lms.enabled ? 'Включена' : 'Выключена'}</dd>
+				</div>
+			</dl>
+		{:else}
+			<form
+				method="POST"
+				action="?/lms"
+				use:lmsEnhance
+				novalidate
+				class="grid gap-4 sm:grid-cols-2"
+			>
+				<FieldInput
+					name="baseUrl"
+					label="Адрес системы обучения"
+					description="Без хвоста: клиент сам добавит webservice/rest/server.php"
+					placeholder="https://lms.example.org"
+					bind:value={$lms.baseUrl}
+					errors={$lmsErrors.baseUrl}
+				/>
+				<FieldInput
+					name="token"
+					label="Токен веб-сервиса"
+					description={data.lms.hasToken
+						? 'Токен сохранён. Пустое поле оставит прежний'
+						: 'Токен веб-сервиса Moodle; после сохранения показан не будет'}
+					placeholder={data.lms.hasToken ? '••••••••' : 'Токен'}
+					bind:value={() => $lms.token ?? '', (next) => ($lms.token = next.trim() || null)}
+					errors={$lmsErrors.token}
+				/>
+				{@render numberField({
+					name: 'syncIntervalMinutes',
+					label: 'Периодичность выгрузки, минут',
+					value: $lms.syncIntervalMinutes,
+					errors: $lmsErrors.syncIntervalMinutes,
+					onchange: (next) => ($lms.syncIntervalMinutes = next)
+				})}
+				<div class="flex items-end">
+					<Label class="flex items-center gap-2 font-normal">
+						<Checkbox name="enabled" bind:checked={$lms.enabled} />
+						Забирать выгрузку по расписанию
+					</Label>
+				</div>
+				<div class="sm:col-span-2">
+					<FormActions submitting={$lmsSubmitting} submitLabel="Сохранить настройки" />
+				</div>
+			</form>
+		{/if}
 
 		<div class="flex flex-wrap gap-2 border-t border-border pt-4">
 			<form method="POST" action="?/sync">
@@ -417,7 +469,7 @@
 					Синхронизировать сейчас
 				</Button>
 			</form>
-			{#if data.lms.hasToken}
+			{#if data.lms.hasToken && data.canManageEndpoints}
 				<form method="POST" action="?/forgetToken">
 					<Button type="submit" variant="outline">Забыть токен</Button>
 				</form>
@@ -548,11 +600,8 @@
 			<!-- Адреса и секреты подключений правит только тот, у кого есть право
 				«Внешние адреса и секреты подключений»: они уводят данные на чужой узел
 				(`docs/access-matrix.md`, раздел 5). Остальным раздел показывает
-				состояние подключений — этого хватает, чтобы разобрать обмен. -->
-			<InlineHint tone="info">
-				Адреса и секреты подключений меняет тот, у кого есть право «Внешние адреса и секреты
-				подключений».
-			</InlineHint>
+				состояние подключений — этого хватает, чтобы разобрать обмен;
+				объяснение дано один раз, наверху страницы. -->
 			<dl class="grid gap-2 text-sm sm:grid-cols-2">
 				<div>
 					<dt class="text-muted-foreground">Экземпляр CMS</dt>

@@ -17,6 +17,7 @@ import {
 	skipStageSchema,
 	updateInteractionSchema
 } from '$lib/contracts/interactions';
+import { STAGE_ATTACHMENT_DOCUMENT_KIND } from '$lib/contracts/documents';
 import { sendLearningGroupSchema } from '$lib/contracts/exchange';
 import { formatDate } from '$lib/format';
 import { actorFromEvent } from '$lib/server/actor';
@@ -162,7 +163,7 @@ async function attach(
 		for (const file of chosen) {
 			const uploaded = await uploadDocument(ctx, {
 				interactionId: event.params.id,
-				kind: 'stage_attachment',
+				kind: STAGE_ATTACHMENT_DOCUMENT_KIND,
 				title: file.name,
 				file: { mime: file.type, bytes: new Uint8Array(await file.arrayBuffer()) }
 			});

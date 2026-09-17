@@ -15,7 +15,7 @@
  */
 import type { InteractionStatus, PauseReason } from '$lib/contracts/interactions';
 import type { ReportQuery } from '$lib/contracts/reports';
-import { moscowDayStart, snapshotMoment } from '$lib/contracts/reports';
+import { moscowDayStart, snapshotMoment } from '$lib/contracts/calendar';
 import { sql } from 'drizzle-orm';
 import type { ActorContext } from '../actor';
 import { getDb } from '../db';

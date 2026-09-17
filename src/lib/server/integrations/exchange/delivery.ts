@@ -23,7 +23,9 @@ import type { ActorContext } from '../../actor';
 import { recordAuditEvent } from '../../audit';
 import { getDb } from '../../db';
 import { exchangeMessages, learningGroups } from '../../db/schema';
+import { withTransaction } from '../../db/transaction';
 import { retryDelaySeconds, signPayload } from '../delivery';
+import { outboundTargetIssue } from '../outbound';
 import { getExchangeSettings } from '../settings';
 import { buildApplicationStatus, buildLearningGroupRequest } from './payloads';
 
@@ -87,10 +89,19 @@ async function post(
 	url: string,
 	secret: string,
 	messageId: string,
-	envelope: unknown,
+	/** Готовое тело: собрано один раз и дальше уходит байт в байт. */
+	body: string,
 	timeoutMs: number
 ): Promise<Attempt> {
-	const body = JSON.stringify(envelope);
+	const refusal = await outboundTargetIssue(url);
+
+	if (refusal !== null) {
+		// Адрес проверен и при сохранении, но имя к моменту отправки указывает
+		// куда угодно (перепривязка DNS), а отказ правила — не сетевая неудача:
+		// повторять его бессмысленно.
+		return { ok: false, status: null, error: refusal, body: '', temporary: false };
+	}
+
 	const timestamp = String(Math.floor(Date.now() / 1000));
 
 	let response: Response;
@@ -200,11 +211,25 @@ async function targetFor(
 }
 
 /**
- * Тело собирается **в момент отправки**, а не в момент постановки: снимок,
- * собранный два часа назад, уехал бы устаревшим и противоречил бы правилу
- * «сообщение старше применённого не применяется».
+ * Конверт сообщения: собирается **один раз**, при первой отправке, и дальше
+ * берётся из строки журнала как есть.
+ *
+ * Тело собирается в момент первой отправки, а не постановки: снимок, собранный
+ * два часа назад, уехал бы устаревшим и противоречил бы правилу «сообщение
+ * старше применённого не применяется». Но и пересобирать его на каждой попытке
+ * нельзя: `eventId` при повторе тот же, а данные и `occurredAt` были бы другими
+ * — получатель, который сверяет повтор с принятым (и `intake.ts` делает ровно
+ * это), вправе отвергнуть такой повтор как подмену. Изменение состояния — это
+ * новое событие, и его ставит в очередь `outbox`, а не переписывает старое.
+ *
+ * Отсюда и второй столбец: `payload` остаётся семенем — тем, из чего тело
+ * собирают, — а `envelope` хранит то, что действительно ушло.
  */
-async function buildEnvelope(row: MessageRow): Promise<Record<string, unknown> | null> {
+async function buildEnvelope(row: MessageRow): Promise<string | null> {
+	if (row.envelope !== null) {
+		return row.envelope;
+	}
+
 	const data =
 		row.eventType === EXCHANGE_EVENT_TYPES.applicationStatus
 			? await buildApplicationStatus(row.interactionId, row.externalId)
@@ -214,82 +239,116 @@ async function buildEnvelope(row: MessageRow): Promise<Record<string, unknown> |
 		return null;
 	}
 
-	return {
+	const envelope = JSON.stringify({
 		schemaVersion: EXCHANGE_SCHEMA_VERSION,
 		eventId: row.eventId,
 		eventType: row.eventType,
 		occurredAt: new Date().toISOString().replace(/\.\d{3}Z$/, 'Z'),
 		source: { system: 'crm', instance: CRM_INSTANCE },
 		data
-	};
+	});
+
+	// Замораживается до отправки, а не вместе с её исходом: упади процесс между
+	// запросом и записью — получатель уже видел это тело, и следующая попытка
+	// обязана нести его же.
+	await getDb().update(exchangeMessages).set({ envelope }).where(eq(exchangeMessages.id, row.id));
+
+	return envelope;
 }
 
-/** Ответ системы обучения на заявку: группа получает имя у себя. */
-async function applyGroupReply(row: MessageRow, body: string): Promise<void> {
+/** Что система обучения ответила на заявку, разобранное схемой. */
+type GroupReply = { groupExternalId: string; streamNumber: number };
+
+/**
+ * Разбор ответа системы обучения.
+ *
+ * Разбирается **до** того, как сообщение объявлено отправленным: без имени
+ * группы обратное направление мертво — результат потока ищет группу строго по
+ * `group_external_id` (`results.ts`) и отвечает «группы в системе нет».
+ * Сообщение, закрытое как отправленное, при этом ждало бы человека, который
+ * никогда не узнает, что ждать его надо.
+ *
+ * Поэтому 2xx с телом не по контракту — это отказ доставки, и отказ
+ * окончательный: другим то же тело не станет.
+ */
+function parseGroupReply(row: MessageRow, body: string): GroupReply | { issue: string } {
+	const refuse = (what: string): { issue: string } => ({
+		issue: `Система обучения приняла заявку, но ${what}: связи с группой нет, и результат по ней прийти не сможет`
+	});
+
 	let parsed: unknown;
 
 	try {
 		parsed = JSON.parse(body);
 	} catch {
-		// Не JSON: заявку приняли, но имени группы не назвали. Это не отказ
-		// доставки — сообщение ушло, — но и связи с группой у нас нет, и делать
-		// вид, что есть, нельзя.
-		return;
+		return refuse('ответила не в формате JSON');
 	}
 
 	const reply = learningGroupReplySchema.safeParse(parsed);
 
-	if (!reply.success || row.interactionId === null) {
-		return;
+	if (!reply.success) {
+		return refuse('не назвала идентификатор группы');
+	}
+
+	if (row.interactionId === null) {
+		return refuse('заявка больше не связана со взаимодействием');
 	}
 
 	const streamNumber = Number((row.payload as { streamNumber?: unknown }).streamNumber);
 
 	if (!Number.isInteger(streamNumber)) {
-		return;
+		return refuse('в семени заявки нет номера потока');
 	}
 
-	await getDb()
-		.update(learningGroups)
-		.set({ groupExternalId: reply.data.data.groupExternalId })
-		.where(
-			and(
-				eq(learningGroups.interactionId, row.interactionId),
-				eq(learningGroups.streamNumber, streamNumber)
-			)
-		);
+	return { groupExternalId: reply.data.data.groupExternalId, streamNumber };
 }
 
 async function finish(
 	ctx: ActorContext,
 	row: MessageRow,
 	attempt: Attempt,
-	envelope: Record<string, unknown> | null
+	reply: GroupReply | null
 ): Promise<void> {
 	if (attempt.ok) {
-		await getDb()
-			.update(exchangeMessages)
-			.set({
-				state: 'sent',
-				responseStatus: attempt.status,
-				lastError: null,
-				nextAttemptAt: null,
-				closedAt: sql`now()`,
-				payload: envelope ?? row.payload
-			})
-			.where(eq(exchangeMessages.id, row.id));
+		// Состояние сообщения и имя группы — одной транзакцией: «сообщение ушло»
+		// и «группа у них называется так» — это один факт, и половина его хуже,
+		// чем ничего.
+		await withTransaction(ctx, async (tx) => {
+			await tx
+				.update(exchangeMessages)
+				.set({
+					state: 'sent',
+					responseStatus: attempt.status,
+					lastError: null,
+					nextAttemptAt: null,
+					closedAt: sql`now()`
+				})
+				.where(eq(exchangeMessages.id, row.id));
 
-		if (row.eventType === EXCHANGE_EVENT_TYPES.learningGroupRequested) {
-			await applyGroupReply(row, attempt.body);
-		}
+			if (reply !== null && row.interactionId !== null) {
+				await tx
+					.update(learningGroups)
+					.set({ groupExternalId: reply.groupExternalId })
+					.where(
+						and(
+							eq(learningGroups.interactionId, row.interactionId),
+							eq(learningGroups.streamNumber, reply.streamNumber)
+						)
+					);
+			}
 
-		await recordAuditEvent(ctx, {
-			type: 'exchange.message_sent',
-			outcome: 'success',
-			...(row.interactionId === null
-				? {}
-				: { subject: { type: 'interaction', id: row.interactionId } }),
-			details: { exchangeMessageId: row.id }
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'exchange.message_sent',
+					outcome: 'success',
+					...(row.interactionId === null
+						? {}
+						: { subject: { type: 'interaction', id: row.interactionId } }),
+					details: { exchangeMessageId: row.id }
+				},
+				tx
+			);
 		});
 
 		return;
@@ -305,8 +364,7 @@ async function finish(
 				responseStatus: attempt.status,
 				lastError: attempt.error,
 				nextAttemptAt: null,
-				closedAt: sql`now()`,
-				payload: envelope ?? row.payload
+				closedAt: sql`now()`
 			})
 			.where(eq(exchangeMessages.id, row.id));
 
@@ -328,8 +386,7 @@ async function finish(
 			state: 'retrying',
 			responseStatus: attempt.status,
 			lastError: attempt.error,
-			nextAttemptAt: sql`now() + make_interval(secs => ${delay})`,
-			payload: envelope ?? row.payload
+			nextAttemptAt: sql`now() + make_interval(secs => ${delay})`
 		})
 		.where(eq(exchangeMessages.id, row.id));
 }
@@ -390,7 +447,29 @@ export async function deliverMessage(
 
 	const attempt = await post(target.url, target.secret, row.id, envelope, target.timeoutMs);
 
-	await finish(ctx, row, attempt, envelope);
+	if (attempt.ok && row.eventType === EXCHANGE_EVENT_TYPES.learningGroupRequested) {
+		const reply = parseGroupReply(row, attempt.body);
+
+		if ('issue' in reply) {
+			const refused: Attempt = {
+				ok: false,
+				status: attempt.status,
+				error: reply.issue,
+				body: attempt.body,
+				temporary: false
+			};
+
+			await finish(ctx, row, refused, null);
+
+			return refused;
+		}
+
+		await finish(ctx, row, attempt, reply);
+
+		return attempt;
+	}
+
+	await finish(ctx, row, attempt, null);
 
 	return attempt;
 }

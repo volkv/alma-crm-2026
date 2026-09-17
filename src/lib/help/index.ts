@@ -175,11 +175,6 @@ export function helpPages(section: HelpSectionKey): HelpPage[] {
 	return pages.filter((page) => page.section === section);
 }
 
-/** Все статьи обоих разделов по порядку — то, что печатается одной страницей. */
-export function allHelpPages(): HelpPage[] {
-	return [...pages];
-}
-
 export function findHelpPage(section: HelpSectionKey, slug: string): HelpPage | null {
 	return pages.find((page) => page.section === section && page.slug === slug) ?? null;
 }

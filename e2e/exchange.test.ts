@@ -62,8 +62,12 @@ async function mockState(request: APIRequestContext, service: string): Promise<M
  * Ключ обмена, выпущенный на машинного субъекта прямо в интерфейсе: показывают
  * его ровно один раз, и это единственный способ получить его — как у настоящей
  * внешней системы.
+ *
+ * Подключение указывается здесь же: права роли «Внешняя система» одинаковы у
+ * всех ключей обмена, и только оно не даёт ключу сайта подать результат
+ * учебной группы. Поэтому ключей в прогоне два — по одному на направление.
  */
-async function issueExchangeKey(page: Page): Promise<string> {
+async function issueExchangeKey(page: Page, connection: RegExp): Promise<string> {
 	await page.goto('/settings/api-keys');
 
 	const dialog = page.getByRole('dialog');
@@ -86,6 +90,15 @@ async function issueExchangeKey(page: Page): Promise<string> {
 	}).toPass({ timeout: 20_000 });
 
 	await owner.click();
+
+	const system = page.getByRole('option', { name: connection });
+
+	await expect(async () => {
+		await dialog.getByLabel('Подключение обмена').click();
+		await expect(system).toBeVisible({ timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+
+	await system.click();
 	await dialog.getByRole('button', { name: 'Выпустить ключ' }).click();
 
 	const issued = page.getByRole('dialog').filter({ hasText: 'выпущен' });
@@ -112,7 +125,9 @@ function envelope(eventType: string, system: string, data: unknown): Record<stri
 }
 
 staff('заявка, статус в CMS, группа в LMS и результат обратно', async ({ page, request }) => {
-	const key = await issueExchangeKey(page);
+	// Ключей два: направление у ключа обмена одно, и оно задаётся при выпуске.
+	const key = await issueExchangeKey(page, /Сайт/);
+	const lmsKey = await issueExchangeKey(page, /Система обучения/);
 
 	// Направление 1: заявка с сайта в конверте контракта.
 	const intake = await request.post('/api/v1/applications', {
@@ -147,9 +162,11 @@ staff('заявка, статус в CMS, группа в LMS и результ�
 
 	expect(accepted.result).toBe('created');
 
-	// Взаимодействие видно на доске: заявка не третья сущность рядом с
-	// контрагентом и взаимодействием, а сразу взаимодействие.
-	await page.goto('/interactions');
+	// Взаимодействие видно в разделе: заявка не третья сущность рядом с
+	// контрагентом и взаимодействием, а сразу взаимодействие. Поиск по ключу
+	// прогона, а не первая страница списка: список отсортирован по сроку стадии,
+	// и свежая заявка со сроком в будущем стоит в нём последней.
+	await page.goto(`/interactions?q=${encodeURIComponent(externalId)}`);
 	await expect(
 		page.getByText(`Заявка с сайта: Политехнический университет прогона ${externalId}`)
 	).toBeVisible();
@@ -210,10 +227,22 @@ staff('заявка, статус в CMS, группа в LMS и результ�
 	await expect(page.getByText(`Поток 1`)).toBeVisible();
 	await expect(page.getByText(group!.groupExternalId, { exact: false }).first()).toBeVisible();
 
+	// Ключ сайта на результат группы не проходит: право `exchange.results` есть
+	// у обоих ключей обмена, и различает их только подключение.
+	const crossed = await request.post('/api/v1/exchange/learning-groups/results', {
+		headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+		data: envelope('learning_group.result', 'lms', {
+			groupExternalId: group!.groupExternalId,
+			counters: { enrolled: 1, completed: 1, expelled: 0 }
+		})
+	});
+
+	expect(crossed.status()).toBe(403);
+
 	// Направление 4: результат группы. Стадию он подтверждает, но никуда её не
 	// двигает — переход остаётся решением сотрудника.
 	const result = await request.post('/api/v1/exchange/learning-groups/results', {
-		headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+		headers: { authorization: `Bearer ${lmsKey}`, 'content-type': 'application/json' },
 		data: envelope('learning_group.result', 'lms', {
 			groupExternalId: group!.groupExternalId,
 			requestExternalId: groupRequestId,
@@ -253,7 +282,7 @@ staff('заявка, статус в CMS, группа в LMS и результ�
 });
 
 staff('заявка чужого экземпляра не принимается', async ({ page, request }) => {
-	const key = await issueExchangeKey(page);
+	const key = await issueExchangeKey(page, /Сайт/);
 
 	const response = await request.post('/api/v1/applications', {
 		headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },

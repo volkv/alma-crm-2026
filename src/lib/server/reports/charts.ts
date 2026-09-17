@@ -5,13 +5,12 @@
  * собрана таблица, а растр делает браузер. Поэтому и таблица, и диаграмма, и
  * файл считаются один раз и разойтись не могут — это и есть инвариант И5.
  */
+import { moscowDay, moscowDayStart } from '$lib/contracts/calendar';
 import {
 	REPORT_CLOSED_BUCKET_LABELS,
 	REPORT_CLOSED_BUCKETS,
 	REPORT_EVENT_KIND_LABELS,
 	REPORT_EVENT_KINDS,
-	moscowDay,
-	moscowDayStart,
 	type ReportBreakdown,
 	type ReportBucket,
 	type ReportEventKind,

@@ -6,15 +6,17 @@
  * 200 и телом `{exception, errorcode, message}`, поэтому «ответ пришёл» и
  * «ответ получен» здесь разные вещи, и разбирать тело приходится всегда.
  *
- * Запрос идёт `GET`-ом с параметрами в строке — так же, как показано в
- * документации самого Moodle. Причина не только в ней: мок живёт внутри этого
- * же приложения, а форменный `POST` без заголовка `Origin` отвергает хук
- * `csrf`, общий на весь продукт. Настоящий Moodle принимает оба способа.
+ * Запрос идёт `POST`-ом, а параметры едут формой в теле. Moodle принимает и
+ * строку запроса, и форму, но `wstoken` — это ключ ко всем данным площадки, а
+ * строка запроса попадает в журнал доступа веб-сервера, в заголовок `Referer` и
+ * в историю посредника. Тело туда не попадает.
  *
  * Типы ответов описаны ровно в тех полях, которые нужны выгрузке: Moodle
  * отдаёт их десятками, и объявлять всё подряд значило бы утверждать, что мы
  * на них полагаемся.
  */
+
+import { outboundTargetIssue } from '../outbound';
 
 /** Сколько ждём LMS: она ходит в свою базу, но не бесконечно. */
 export const MOODLE_TIMEOUT_MS = 15_000;
@@ -132,23 +134,36 @@ async function call(
 	wsfunction: MoodleFunction,
 	params: Record<string, string>
 ): Promise<unknown> {
-	const url = new URL(serviceUrl(baseUrl));
-	url.searchParams.set('wstoken', token);
-	url.searchParams.set('wsfunction', wsfunction);
-	url.searchParams.set('moodlewsrestformat', 'json');
+	// Адрес проверяется перед каждым заходом, а не только при сохранении: имя,
+	// указывавшее наружу в день настройки, к моменту выгрузки указывает куда
+	// угодно (перепривязка DNS), и вместе с запросом туда уехал бы токен.
+	const refusal = await outboundTargetIssue(baseUrl);
 
-	for (const [name, value] of Object.entries(params)) {
-		url.searchParams.set(name, value);
+	if (refusal !== null) {
+		throw new MoodleError('blocked_target');
 	}
+
+	const url = new URL(serviceUrl(baseUrl));
+	const form = new URLSearchParams({
+		wstoken: token,
+		wsfunction,
+		moodlewsrestformat: 'json',
+		...params
+	});
 
 	let response: Response;
 
 	try {
 		response = await fetch(url, {
-			headers: { accept: 'application/json' },
-			// За перенаправлением не идём: адрес площадки проверен правилом
-			// `outboundUrlIssue`, а `Location` ведёт куда угодно — и унёс бы туда
-			// токен веб-сервиса, то есть ключ к чужим данным.
+			method: 'POST',
+			headers: {
+				accept: 'application/json',
+				'content-type': 'application/x-www-form-urlencoded; charset=utf-8'
+			},
+			body: form,
+			// За перенаправлением не идём: адрес площадки проверен, а `Location`
+			// ведёт куда угодно — и унёс бы туда токен веб-сервиса, то есть ключ к
+			// чужим данным.
 			redirect: 'manual',
 			signal: AbortSignal.timeout(MOODLE_TIMEOUT_MS)
 		});

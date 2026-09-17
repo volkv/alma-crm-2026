@@ -334,8 +334,12 @@ async function seed(databaseUrl: string): Promise<{ main: string; moved: string 
  * (`DEMO_DENIED_PERMISSIONS`), и на стенде ключи выпускает именно штатный
  * администратор оператора. Поэтому на один шаг открывается четвёртая сессия —
  * и закрывается сразу же.
+ *
+ * Подключение указывается при выпуске: права роли «Внешняя система» одинаковы у
+ * всех ключей обмена, и только оно не даёт ключу сайта подать результат учебной
+ * группы. Поэтому ключей на проход два — по одному на направление.
  */
-async function issueExchangeKey(page: Page): Promise<string> {
+async function issueExchangeKey(page: Page, connection: RegExp): Promise<string> {
 	await page.goto('/settings/api-keys');
 
 	const dialog = page.getByRole('dialog');
@@ -348,6 +352,11 @@ async function issueExchangeKey(page: Page): Promise<string> {
 
 	await openLayer(dialog.getByLabel('Владелец'), owner);
 	await owner.click();
+
+	const system = page.getByRole('option', { name: connection });
+
+	await openLayer(dialog.getByLabel('Подключение обмена'), system);
+	await system.click();
 	await dialog.getByRole('button', { name: 'Выпустить ключ' }).click();
 
 	const issued = page.getByRole('dialog').filter({ hasText: 'выпущен' });
@@ -385,6 +394,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 	let mainId = '';
 	let movedId = '';
 	let exchangeKey = '';
+	let lmsExchangeKey = '';
 	let applicationInteractionId = '';
 	let learningGroupId = '';
 
@@ -506,7 +516,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 
 	test('4. Администратор правит живой процесс: записи переезжают, история цела', async () => {
 		await admin.goto('/settings/process');
-		await admin.getByRole('link', { name: GROUP_NAME }).click();
+		await admin.getByRole('link', { name: GROUP_NAME, exact: true }).click();
 
 		await expect(admin.getByRole('button', { name: 'Черновик изменений' })).toBeEnabled();
 		await admin.getByRole('button', { name: 'Черновик изменений' }).click();
@@ -553,8 +563,10 @@ test.describe.serial('сквозной сценарий: от заявки до 
 
 		// Предпросмотр: сначала числа, потом подтверждение.
 		await openLayer(admin.getByRole('button', { name: 'Применить ко всем' }), dialog);
-		await expect(dialog.getByText(/Затронуто взаимодействий/)).toBeVisible();
-		await expect(dialog.getByRole('row').filter({ hasText: STAGES[2].name })).toBeVisible();
+		await expect(dialog.getByText(/Переедут на другую стадию/)).toBeVisible();
+		await expect(
+			dialog.getByRole('listitem').filter({ hasText: STAGES[2].name }).first()
+		).toBeVisible();
 
 		await dialog.getByRole('button', { name: 'Применить ко всем' }).click();
 		await expect(admin.getByText(/Процесс изменён/)).toBeVisible();
@@ -585,7 +597,10 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		const staffContext = await browser.newContext({ storageState: STAFF_ADMIN_STATE });
 
 		try {
-			exchangeKey = await issueExchangeKey(await staffContext.newPage());
+			const staff = await staffContext.newPage();
+
+			exchangeKey = await issueExchangeKey(staff, /Сайт/);
+			lmsExchangeKey = await issueExchangeKey(staff, /Система обучения/);
 		} finally {
 			await staffContext.close();
 		}
@@ -712,7 +727,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		// Результат группы: стадию он подтверждает, но никуда её не двигает —
 		// переход остаётся решением сотрудника.
 		const result = await request.post('/api/v1/exchange/learning-groups/results', {
-			headers: { authorization: `Bearer ${exchangeKey}`, 'content-type': 'application/json' },
+			headers: { authorization: `Bearer ${lmsExchangeKey}`, 'content-type': 'application/json' },
 			data: envelope('learning_group.result', 'lms', {
 				groupExternalId: learningGroupId,
 				requestExternalId,

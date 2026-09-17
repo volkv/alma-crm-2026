@@ -64,6 +64,13 @@
       "when": 1789598206282,
       "tag": "0008_keycloak_identity",
       "breakpoints": true
+    },
+    {
+      "idx": 9,
+      "version": "7",
+      "when": 1789622467679,
+      "tag": "0009_exchange_envelope_and_key_binding",
+      "breakpoints": true
     }
   ]
 }

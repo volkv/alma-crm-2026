@@ -145,6 +145,51 @@
 
 	const passed = $derived(stages.filter((stage) => stage.state === 'done').length);
 
+	/**
+	 * Стадия, на которой стоит взаимодействие: она же и есть ответ на вопрос
+	 * «где мы». Пройденная и предстоящая на него не отвечают, поэтому за
+	 * текущую считается любое состояние работы — включая просроченную, паузу и
+	 * помеху. Если такой нет (взаимодействие закрыто), берём последнюю
+	 * пройденную: смотреть на первый кружок из четырнадцати незачем.
+	 */
+	const WORKING: readonly StageState[] = ['current', 'overdue', 'paused', 'blocked'];
+
+	const focusIndex = $derived.by(() => {
+		const working = stages.findIndex((stage) => WORKING.includes(stage.state));
+
+		if (working !== -1) return working;
+
+		let last = -1;
+
+		for (const [index, stage] of stages.entries()) {
+			if (stage.state !== 'pending') last = index;
+		}
+
+		return last;
+	});
+
+	let rail = $state<HTMLElement | null>(null);
+	/**
+	 * Прокрутка ставится один раз, при открытии: дальше лентой распоряжается
+	 * человек, и возвращать её к текущей стадии за ним — значит отнимать
+	 * возможность посмотреть, что было в начале.
+	 */
+	let scrolled = false;
+
+	$effect(() => {
+		if (rail === null || scrolled || focusIndex < 0) return;
+
+		scrolled = true;
+
+		const node = rail.querySelectorAll<HTMLElement>('[data-stage]')[focusIndex];
+
+		if (node === undefined) return;
+
+		const centre = node.offsetLeft + node.offsetWidth / 2 - rail.clientWidth / 2;
+
+		rail.scrollLeft = Math.max(0, Math.min(centre, rail.scrollWidth - rail.clientWidth));
+	});
+
 	function describe(stage: Stage): string {
 		const parts = [`${stage.label} — ${looks[stage.state].title}`];
 		if (stage.deadline) parts.push(`срок ${formatDate(stage.deadline)}`);
@@ -177,12 +222,12 @@
 		<span class="shrink-0 text-xs text-muted-foreground">{passed}/{stages.length}</span>
 	</div>
 {:else}
-	<div class={cn('overflow-x-auto pb-1', className)} data-slot="stage-timeline">
+	<div bind:this={rail} class={cn('overflow-x-auto pb-1', className)} data-slot="stage-timeline">
 		<ol class="flex min-w-max items-start">
 			{#each stages as stage, index (stage.id)}
 				{@const look = looks[stage.state]}
 				{@const Icon = look.icon}
-				<li class="flex w-36 shrink-0 flex-col items-center">
+				<li class="flex w-36 shrink-0 flex-col items-center" data-stage={index}>
 					<div class="flex w-full items-center">
 						<span
 							class={cn(

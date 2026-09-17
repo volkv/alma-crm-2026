@@ -24,6 +24,7 @@ import {
 	stageEntries
 } from '$lib/server/db/schema';
 import { runExchangeCycle } from '$lib/server/integrations/exchange/delivery';
+import { retryExchangeMessage } from '$lib/server/integrations/exchange/messages';
 import { readExchangeFile } from '$lib/server/integrations/exchange/files';
 import { listLearningGroups, requestLearningGroup } from '$lib/server/integrations/exchange/groups';
 import { enqueueApplicationStatus } from '$lib/server/integrations/exchange/outbox';
@@ -42,9 +43,11 @@ import { ensureProcess } from '$lib/server/stages/process';
 import { startMockCms } from '../../../mocks/mock-cms/service.ts';
 import { startMockLms } from '../../../mocks/mock-lms/service.ts';
 import type { MockService } from '../../../mocks/shared/http.ts';
+import { anonymizePerson } from '$lib/server/people/retention';
 import {
 	insertDocument,
 	insertOrganization,
+	insertUser,
 	startTestDatabase,
 	testActor,
 	TEST_USER_IDS,
@@ -67,6 +70,8 @@ let lms: MockService;
 let crm: { url: string; stop: () => Promise<void> };
 /** Ключ обмена этого теста: имитаторы представляются им, как всякая чужая система. */
 let apiKey: string;
+/** Ключ системы обучения: направления у ключей разные, и это проверяется. */
+let lmsApiKey: string;
 
 /** Секрет подписи исходящих: тот же у CRM и у имитаторов. */
 const SECRET = 'stand-secret';
@@ -175,7 +180,8 @@ beforeEach(async () => {
 		await ensureProcess(tx, B2C_GROUP_KEY, B2C_PROCESS);
 	});
 
-	apiKey = await serviceKey();
+	apiKey = await serviceKey('cms');
+	lmsApiKey = await serviceKey('lms');
 
 	// Имитаторы поднимаются на тест: ключ доступа выпускается после очистки базы,
 	// а знать его сервис обязан с самого старта — как и на стенде, где ключ
@@ -185,7 +191,11 @@ beforeEach(async () => {
 		exchangeSecret: SECRET,
 		crm: { baseUrl: crm.url, apiKey }
 	});
-	lms = await startMockLms({ port: 0, exchangeSecret: SECRET, crm: { baseUrl: crm.url, apiKey } });
+	lms = await startMockLms({
+		port: 0,
+		exchangeSecret: SECRET,
+		crm: { baseUrl: crm.url, apiKey: lmsApiKey }
+	});
 
 	await setExchangeSettings(testActor(), {
 		cmsInstance: 'itschool-site',
@@ -252,8 +262,15 @@ const B2C_DATA = {
 };
 
 /** Сообщение через настоящий `apiHandler` — ту же обёртку, что зовёт SvelteKit. */
-function apiEvent(options: { body: unknown; key: string; idempotencyKey?: string }): RequestEvent {
-	const url = new URL('http://localhost/api/v1/applications');
+function apiEvent(options: {
+	body: unknown;
+	key: string;
+	idempotencyKey?: string;
+	/** Маршрут: по умолчанию приём заявки. */
+	route?: string;
+}): RequestEvent {
+	const path = options.route ?? '/api/v1/applications';
+	const url = new URL(`http://localhost${path}`);
 	const headers: Record<string, string> = {
 		authorization: `Bearer ${options.key}`,
 		'content-type': 'application/json'
@@ -267,7 +284,7 @@ function apiEvent(options: { body: unknown; key: string; idempotencyKey?: string
 		request: new Request(url, { method: 'POST', headers, body: JSON.stringify(options.body) }),
 		url,
 		params: {},
-		route: { id: '/api/v1/applications' },
+		route: { id: path },
 		locals: { requestId: crypto.randomUUID(), user: null, apiKey: null },
 		getClientAddress: () => '198.51.100.42',
 		setHeaders: () => {},
@@ -276,14 +293,18 @@ function apiEvent(options: { body: unknown; key: string; idempotencyKey?: string
 	} as unknown as RequestEvent;
 }
 
-async function serviceKey(): Promise<string> {
+async function serviceKey(system: 'cms' | 'lms' = 'cms'): Promise<string> {
 	const created = await createApiKey(testActor(), {
-		name: 'Ключ CMS стенда',
-		ownerUserId: TEST_USER_IDS.service
+		name: `Ключ ${system.toUpperCase()} стенда`,
+		ownerUserId: TEST_USER_IDS.service,
+		exchangeSystem: system
 	});
 
 	return created.key;
 }
+
+/** Подключение, от имени которого работает ключ стенда. */
+const CMS_BINDING = { system: 'cms', instance: 'itschool-site' } as const;
 
 /** Состояние имитатора: всё, что он принял и отправил. */
 async function mockState(service: MockService): Promise<{
@@ -533,9 +554,18 @@ describe('приём заявки с сайта', () => {
 		expect(JSON.stringify(await response.json())).toContain('Ответственный за входящие');
 
 		expect(await database.db.select({ id: interactions.id }).from(interactions)).toHaveLength(0);
-		expect(
-			await database.db.select({ id: exchangeMessages.id }).from(exchangeMessages)
-		).toHaveLength(0);
+
+		// Транзакция приёма откатилась целиком, но след сообщения остался: иначе
+		// на экране «Внешние системы» не было бы ничего, и разбирать было бы
+		// нечего — отправитель видел бы отказ, а мы не видели бы даже попытки.
+		const [refused] = await database.db.select().from(exchangeMessages);
+
+		expect(refused).toMatchObject({
+			direction: 'inbound',
+			state: 'failed',
+			externalId: 'site-2026-000123'
+		});
+		expect(refused.lastError).toContain('Ответственный за входящие заявки не настроен');
 	});
 });
 
@@ -901,7 +931,7 @@ describe('вложение обмена', () => {
 			.from(documents)
 			.where(eq(documents.id, ownId));
 
-		const file = await readExchangeFile(serviceActor(), own.filePath);
+		const file = await readExchangeFile(serviceActor(), own.filePath, CMS_BINDING);
 
 		expect(file.documentId).toBe(ownId);
 
@@ -930,8 +960,395 @@ describe('вложение обмена', () => {
 			.from(documents)
 			.where(eq(documents.id, strangeId));
 
-		await expect(readExchangeFile(serviceActor(), strange.filePath)).rejects.toMatchObject({
+		await expect(
+			readExchangeFile(serviceActor(), strange.filePath, CMS_BINDING)
+		).rejects.toMatchObject({
 			code: 'not_found'
 		});
+	});
+});
+
+/**
+ * Приёмник на свободном порту: отвечает тем, что скажет тест, и запоминает
+ * каждое тело, которое до него дошло.
+ *
+ * Имитатор стенда для этого не годится: он проверяет контракт, а здесь
+ * проверяется другое — что уходит по сети при повторе и что делает CRM с
+ * ответом не по контракту.
+ */
+async function startReceiver(
+	reply: (body: string, attempt: number) => { status: number; body: string }
+): Promise<{ url: string; bodies: string[]; stop: () => Promise<void> }> {
+	const bodies: string[] = [];
+
+	const server = createServer((request, response) => {
+		void (async () => {
+			const chunks: Buffer[] = [];
+
+			for await (const chunk of request) {
+				chunks.push(chunk as Buffer);
+			}
+
+			const body = Buffer.concat(chunks).toString('utf8');
+			bodies.push(body);
+
+			const answer = reply(body, bodies.length);
+
+			response.writeHead(answer.status, { 'content-type': 'application/json' });
+			response.end(answer.body);
+		})();
+	});
+
+	await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
+
+	const { port } = server.address() as AddressInfo;
+
+	return {
+		url: `http://127.0.0.1:${port}/api/groups`,
+		bodies,
+		stop: () =>
+			new Promise<void>((resolve, reject) => {
+				server.close((error) => (error === undefined ? resolve() : reject(error)));
+				server.closeAllConnections();
+			})
+	};
+}
+
+/** Настройки обмена, у которых заявка на группу уходит на этот приёмник. */
+async function pointGroupsAt(url: string): Promise<void> {
+	await setExchangeSettings(testActor(), {
+		cmsInstance: 'itschool-site',
+		cmsStatusUrl: `${cms.url}/api/applications/{externalId}/status`,
+		cmsSecret: SECRET,
+		cmsDefaultOwnerUserId: TEST_USER_IDS.manager,
+		lmsInstance: 'moodle-itschool',
+		lmsGroupsUrl: url,
+		lmsSecret: SECRET
+	});
+}
+
+/** Заявка с сайта, из которой дальше заводится учебная группа. */
+async function acceptedInteraction(): Promise<string> {
+	const response = await intake(apiEvent({ body: envelope(B2B_DATA), key: apiKey }));
+	const { data } = (await response.json()) as { data: { interactionId: string } };
+
+	return data.interactionId;
+}
+
+const GROUP_REPLY = JSON.stringify({ data: { groupExternalId: 'lms-group-1' } });
+
+describe('конверт исходящего сообщения', () => {
+	it('после временного отказа повтор уносит то же тело байт в байт', async () => {
+		// Повтор — это то же самое сообщение, а не новое: `eventId` при повторе
+		// тот же, и получатель, который сверяет повтор с принятым (а CRM на
+		// входящих делает ровно это), вправе отвергнуть другое тело как подмену.
+		const receiver = await startReceiver((_body, attempt) =>
+			attempt === 1 ? { status: 503, body: '{}' } : { status: 200, body: GROUP_REPLY }
+		);
+
+		try {
+			await pointGroupsAt(receiver.url);
+
+			const interactionId = await acceptedInteraction();
+			const outcome = await requestLearningGroup(testActor(), {
+				interactionId,
+				streamNumber: 1,
+				plannedSeats: 45,
+				startsOn: '2026-10-01',
+				endsOn: '2027-05-31'
+			});
+
+			expect(outcome.delivered).toBe(false);
+
+			await makeDue();
+			const report = await runExchangeCycle(testActor());
+
+			expect(report.sent).toBe(1);
+			expect(receiver.bodies).toHaveLength(2);
+			expect(receiver.bodies[1]).toBe(receiver.bodies[0]);
+
+			const [message] = await database.db
+				.select()
+				.from(exchangeMessages)
+				.where(eq(exchangeMessages.eventType, 'learning_group.requested'));
+
+			expect(message.state).toBe('sent');
+			// Семя осталось семенем: из него собирают тело, и затирать его телом
+			// значит лишить вторую попытку того, из чего собирать.
+			expect(message.payload).toMatchObject({ interactionId, streamNumber: 1 });
+			// Конверт лежит строкой: повтор обязан уйти байт в байт, а разобранное
+			// значение порядка полей не хранит.
+			expect(message.envelope).toBe(receiver.bodies[0]);
+			expect(JSON.parse(message.envelope!)).toMatchObject({ eventId: message.eventId });
+
+			const [group] = await listLearningGroups(testActor(), interactionId);
+
+			expect(group.groupExternalId).toBe('lms-group-1');
+		} finally {
+			await receiver.stop();
+		}
+	});
+
+	it('ручной повтор после отказа 4xx уносит то же тело', async () => {
+		const receiver = await startReceiver((_body, attempt) =>
+			attempt === 1 ? { status: 400, body: '{}' } : { status: 200, body: GROUP_REPLY }
+		);
+
+		try {
+			await pointGroupsAt(receiver.url);
+
+			const interactionId = await acceptedInteraction();
+			await requestLearningGroup(testActor(), {
+				interactionId,
+				streamNumber: 1,
+				plannedSeats: 45,
+				startsOn: '2026-10-01',
+				endsOn: '2027-05-31'
+			});
+
+			const [failed] = await database.db
+				.select({ id: exchangeMessages.id, envelope: exchangeMessages.envelope })
+				.from(exchangeMessages)
+				.where(eq(exchangeMessages.eventType, 'learning_group.requested'));
+
+			const retried = await retryExchangeMessage(testActor(), failed.id);
+
+			expect(retried.ok).toBe(true);
+			expect(receiver.bodies).toHaveLength(2);
+			expect(receiver.bodies[1]).toBe(receiver.bodies[0]);
+
+			const [message] = await database.db
+				.select()
+				.from(exchangeMessages)
+				.where(eq(exchangeMessages.id, failed.id));
+
+			expect(message.state).toBe('sent');
+			expect(message.envelope).toEqual(failed.envelope);
+		} finally {
+			await receiver.stop();
+		}
+	});
+});
+
+describe('ответ системы обучения', () => {
+	it('не считает заявку отправленной, пока группа не названа', async () => {
+		// 2xx с телом не по контракту — это отказ доставки. Закрыть сообщение как
+		// отправленное значило бы убить обратное направление молча: результат
+		// потока ищет группу по её имени, а имени у нас нет.
+		const receiver = await startReceiver(() => ({
+			status: 200,
+			body: JSON.stringify({ ok: true })
+		}));
+
+		try {
+			await pointGroupsAt(receiver.url);
+
+			const interactionId = await acceptedInteraction();
+			const outcome = await requestLearningGroup(testActor(), {
+				interactionId,
+				streamNumber: 1,
+				plannedSeats: 45,
+				startsOn: '2026-10-01',
+				endsOn: '2027-05-31'
+			});
+
+			expect(outcome.delivered).toBe(false);
+			expect(outcome.error).toContain('не назвала идентификатор группы');
+
+			const [message] = await database.db
+				.select()
+				.from(exchangeMessages)
+				.where(eq(exchangeMessages.eventType, 'learning_group.requested'));
+
+			expect(message).toMatchObject({ state: 'failed', responseStatus: 200 });
+
+			const [group] = await listLearningGroups(testActor(), interactionId);
+
+			expect(group.groupExternalId).toBeNull();
+		} finally {
+			await receiver.stop();
+		}
+	});
+});
+
+describe('ключ и подключение обмена', () => {
+	const resultMessage = () => ({
+		schemaVersion: '1.0',
+		eventId: crypto.randomUUID(),
+		eventType: 'learning_group.result',
+		occurredAt: new Date().toISOString(),
+		source: { system: 'lms', instance: 'moodle-itschool' },
+		data: {
+			groupExternalId: 'lms-group-1',
+			requestExternalId: null,
+			period: null,
+			finishedOn: null,
+			counters: { enrolled: 1, completed: 1, expelled: 0 },
+			report: null
+		}
+	});
+
+	it('ключ CMS не подаёт результат учебной группы', async () => {
+		// Право `exchange.results` есть у любого ключа обмена — их различает не
+		// право, а подключение, на которое ключ выпущен.
+		const response = await results(
+			apiEvent({
+				body: resultMessage(),
+				key: apiKey,
+				route: '/api/v1/exchange/learning-groups/results'
+			})
+		);
+
+		expect(response.status).toBe(403);
+		expect(((await response.json()) as { error: { message: string } }).error.message).toContain(
+			'«cms»'
+		);
+	});
+
+	it('ключ системы обучения не подаёт заявку с сайта', async () => {
+		const response = await intake(apiEvent({ body: envelope(B2B_DATA), key: lmsApiKey }));
+
+		expect(response.status).toBe(403);
+
+		const messages = await database.db.select({ id: exchangeMessages.id }).from(exchangeMessages);
+
+		expect(messages).toHaveLength(0);
+	});
+
+	it('не выпускает ключ внешней системы без подключения', async () => {
+		await expect(
+			createApiKey(testActor(), {
+				name: 'Ключ ниоткуда',
+				ownerUserId: TEST_USER_IDS.service,
+				exchangeSystem: null
+			})
+		).rejects.toMatchObject({ code: 'validation' });
+	});
+});
+
+describe('заявка по вузу, который ведёт другой сотрудник', () => {
+	it('ведётся от имени действующего ответственного', async () => {
+		const organizationId = await insertOrganization(database.db, {
+			shortName: 'СЗПУ',
+			inn: '7802450127'
+		});
+		const kam = await insertUser(database.db, {
+			roleId: 'manager',
+			email: `kam-${crypto.randomUUID()}@example.org`
+		});
+
+		await database.db.insert(organizationResponsibles).values({ organizationId, userId: kam });
+
+		const response = await intake(apiEvent({ body: envelope(B2B_DATA), key: apiKey }));
+		const body = (await response.json()) as {
+			result: string;
+			data: { interactionId: string; organizationId: string };
+		};
+
+		// Сотрудник из настройки этот вуз не видит: его область — его назначения.
+		// Заявка по знакомому вузу ведётся от имени того, кто его ведёт.
+		expect(response.status).toBe(200);
+		expect(body.data.organizationId).toBe(organizationId);
+
+		const [interaction] = await database.db
+			.select({ ownerUserId: interactions.ownerUserId })
+			.from(interactions)
+			.where(eq(interactions.id, body.data.interactionId));
+
+		expect(interaction.ownerUserId).toBe(kam);
+
+		// Прежнее назначение не переписано и второго не появилось.
+		const responsibles = await database.db
+			.select({ userId: organizationResponsibles.userId })
+			.from(organizationResponsibles)
+			.where(eq(organizationResponsibles.organizationId, organizationId));
+
+		expect(responsibles).toEqual([{ userId: kam }]);
+	});
+});
+
+describe('статус по передаче', () => {
+	it('нераспределённый статус попадает в комментарий приёма', async () => {
+		// Статус ложится на позицию договора, а у новой заявки договора ещё нет.
+		// Потерять присланное нельзя: сотрудник свяжет заявку с договором и
+		// проставит статус сам, а по комментарию будет видно, какой именно.
+		const response = await intake(
+			apiEvent({
+				body: envelope({ ...B2B_DATA, transferStatus: 'not_started' }),
+				key: apiKey
+			})
+		);
+		const { data } = (await response.json()) as { data: { interactionId: string } };
+
+		const [comment] = await database.db
+			.select({ body: comments.body })
+			.from(comments)
+			.where(eq(comments.interactionId, data.interactionId));
+
+		expect(comment.body).toContain('Статус по передаче из каталога заказчика: not_started');
+	});
+});
+
+describe('персональные данные в журнале обмена', () => {
+	it('в теле сообщения остаются идентификаторы и отпечатки, а не контакты', async () => {
+		const response = await intake(apiEvent({ body: envelope(B2C_DATA), key: apiKey }));
+
+		expect(response.status).toBe(200);
+
+		const [message] = await database.db
+			.select()
+			.from(exchangeMessages)
+			.where(eq(exchangeMessages.direction, 'inbound'));
+
+		const stored = JSON.stringify(message.payload);
+
+		// ФИО и контакты уже легли в `people`, где работают маскирование, срок
+		// хранения и обезличивание. Вторая копия здесь этих правил не знает.
+		expect(stored).not.toContain('vetrov@example.org');
+		expect(stored).not.toContain('Ветров');
+		expect(stored).not.toContain('+7 900 000-00-22');
+		expect(message.payload).toMatchObject({
+			data: { externalId: 'site-2026-000124', form: 'b2c' }
+		});
+	});
+
+	it('обезличивание уносит ФИО из названия контрагента, заголовка и тела обмена', async () => {
+		const response = await intake(apiEvent({ body: envelope(B2C_DATA), key: apiKey }));
+		const body = (await response.json()) as {
+			data: { interactionId: string; organizationId: string };
+		};
+
+		const [organization] = await database.db
+			.select({ personId: organizations.personId })
+			.from(organizations)
+			.where(eq(organizations.id, body.data.organizationId));
+
+		await anonymizePerson(testActor(), organization.personId!);
+
+		const [counterparty] = await database.db
+			.select({ legalName: organizations.legalName, shortName: organizations.shortName })
+			.from(organizations)
+			.where(eq(organizations.id, body.data.organizationId));
+
+		expect(counterparty).toEqual({ legalName: 'Обезличено', shortName: 'Обезличено' });
+
+		const [interaction] = await database.db
+			.select({ title: interactions.title })
+			.from(interactions)
+			.where(eq(interactions.id, body.data.interactionId));
+
+		expect(interaction.title).not.toContain('Ветров');
+		expect(interaction.title).toContain('Обезличено');
+
+		const messages = await database.db
+			.select({ payload: exchangeMessages.payload })
+			.from(exchangeMessages)
+			.where(eq(exchangeMessages.interactionId, body.data.interactionId));
+
+		expect(messages.length).toBeGreaterThan(0);
+
+		for (const message of messages) {
+			expect(message.payload).toHaveProperty('anonymizedAt');
+		}
 	});
 });

@@ -11,7 +11,7 @@
  * Обезличивание необратимо. Отменяющей команды здесь нет намеренно: то, что
  * стёрли, в базе не лежит и восстановлению не подлежит.
  */
-import { and, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import {
 	ANONYMIZED_PERSON_LAST_NAME,
 	type PersonView,
@@ -20,8 +20,14 @@ import {
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
-import { people } from '../db/schema';
-import { withTransaction } from '../db/transaction';
+import {
+	exchangeMessages,
+	interactionParties,
+	interactions,
+	organizations,
+	people
+} from '../db/schema';
+import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, NotFoundError } from '../errors';
 import { assertPersonVisible } from './access';
 import { requirePermission } from '../rbac';
@@ -104,6 +110,73 @@ export async function setRetention(
 }
 
 /**
+ * Следы человека за пределами карточки: контрагент-физлицо, названный его ФИО,
+ * взаимодействия с этим ФИО в заголовке и тела сообщений обмена по ним.
+ *
+ * Заявка физического лица с сайта заводит организацию, у которой название и
+ * есть ФИО (`exchange/intake.ts`), заголовок взаимодействия собирается из того
+ * же ФИО, а сообщение, которым заявка приехала, лежит в журнале обмена. Стереть
+ * только строку `people` значит объявить данные уничтоженными, оставив три их
+ * копии в соседних таблицах.
+ *
+ * Название организации заменяется, а не стирается: это её единственное имя, и
+ * пустая строка сделала бы справочник нечитаемым. В заголовках меняется ровно
+ * прежнее название — точной подстрокой, а не по образцу: заголовок сотрудник
+ * правит руками, и угадывать в нём ФИО значит однажды испортить чужой текст.
+ */
+async function eraseCounterpartyTraces(tx: Tx, personId: string): Promise<void> {
+	const counterparties = await tx
+		.select({
+			id: organizations.id,
+			legalName: organizations.legalName,
+			shortName: organizations.shortName
+		})
+		.from(organizations)
+		.where(and(eq(organizations.personId, personId), eq(organizations.kind, 'individual')));
+
+	for (const counterparty of counterparties) {
+		await tx
+			.update(organizations)
+			.set({
+				legalName: ANONYMIZED_PERSON_LAST_NAME,
+				shortName: ANONYMIZED_PERSON_LAST_NAME,
+				updatedAt: sql`now()`
+			})
+			.where(eq(organizations.id, counterparty.id));
+
+		const titled = tx
+			.select({ id: interactionParties.interactionId })
+			.from(interactionParties)
+			.where(
+				and(
+					eq(interactionParties.organizationId, counterparty.id),
+					eq(interactionParties.isPrimary, true)
+				)
+			);
+
+		await tx
+			.update(interactions)
+			.set({
+				title: sql`replace(replace(${interactions.title}, ${counterparty.legalName}, ${ANONYMIZED_PERSON_LAST_NAME}), ${counterparty.shortName}, ${ANONYMIZED_PERSON_LAST_NAME})`,
+				updatedAt: sql`now()`
+			})
+			.where(inArray(interactions.id, titled));
+
+		// Тела сообщений обмена по этим взаимодействиям. Свежие несут только
+		// идентификаторы и отпечатки, но журнал живёт годами, и в строках,
+		// приехавших до этого правила, лежит и почта, и фамилия. Ответ и отпечаток
+		// запроса остаются: по ним повтор того же сообщения по-прежнему узнаётся.
+		//
+		// Замороженный конверт исходящего стирается совсем: он и есть отправленное
+		// тело, и «обезличенного конверта» не бывает — есть тело или его нет.
+		await tx
+			.update(exchangeMessages)
+			.set({ payload: sql`jsonb_build_object('anonymizedAt', now())`, envelope: null })
+			.where(inArray(exchangeMessages.interactionId, titled));
+	}
+}
+
+/**
  * Плановое уничтожение персональных данных: фамилия заменяется словом
  * «Обезличено», имя, отчество, контакты и заметки стираются. Роли человека и
  * его след во взаимодействиях остаются — там он больше никем не назван.
@@ -157,6 +230,8 @@ export async function anonymizePerson(ctx: ActorContext, personId: string): Prom
 		if (row === undefined) {
 			throw new ConflictError('Данные человека уже обезличены');
 		}
+
+		await eraseCounterpartyTraces(tx, personId);
 
 		await recordAuditEvent(
 			ctx,
