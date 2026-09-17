@@ -20,6 +20,7 @@ const namespaceBytes = Buffer.from(NAMESPACE.replaceAll('-', ''), 'hex');
 /** Наборы сидов; ключ уникален внутри набора, а не по всей базе. */
 export type SeedKind =
 	| 'user'
+	| 'api-key'
 	| 'organization'
 	| 'site'
 	| 'person'

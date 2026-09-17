@@ -22,12 +22,20 @@ import { closeDatabase, getDb } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import { seedRolesAndPermissions } from '$lib/server/rbac/seed';
 import { B2B_GROUP_KEY } from '$lib/server/stages/definitions';
+import { exchangeKeyReport, seedApiKeys, type ExchangeKeySeedResult } from './api-keys';
 import { seedContracts } from './contracts';
 import { seedDirectory } from './directory';
 import { seedInteractions } from './interactions';
 import { seedProcesses } from './process';
 import { seedStats } from './stats';
 import { seedUsers, type SeededUsers } from './users';
+
+/** Итог заливки: то, о чём вызывающий рассказывает дальше сам. */
+export type SeedReport = {
+	users: SeededUsers;
+	/** По строке на направление обмена; печатает их вход скрипта, не заливка. */
+	exchangeKeys: ExchangeKeySeedResult[];
+};
 
 /**
  * Порядок наборов: сначала права и роли, потом пользователи (у них внешний
@@ -36,10 +44,13 @@ import { seedUsers, type SeededUsers } from './users';
  * нужно всё перечисленное.
  * Отдельная функция, потому что этот же порядок проверяют тесты.
  */
-export async function seedAll(): Promise<SeededUsers> {
-	const users = await getDb().transaction(async (tx) => {
+export async function seedAll(): Promise<SeedReport> {
+	const { users, exchangeKeys } = await getDb().transaction(async (tx) => {
 		await seedRolesAndPermissions(tx);
 		const seededUsers = await seedUsers(tx);
+		// Ключи обмена — сразу за учётными записями: их владелец — машинный
+		// субъект, и без него ключу не на кого ссылаться.
+		const keys = await seedApiKeys(tx, { serviceUserId: seededUsers.serviceUserId });
 		await seedDirectory(tx, { authorUserId: seededUsers.employees[0] });
 		// Данные об обучении ссылаются на организации и программы, поэтому идут
 		// после справочника и в той же транзакции.
@@ -47,14 +58,14 @@ export async function seedAll(): Promise<SeededUsers> {
 
 		await seedProcesses(tx);
 
-		return seededUsers;
+		return { users: seededUsers, exchangeKeys: keys };
 	});
 
 	await seedInteractions({ groupKey: B2B_GROUP_KEY });
 	// После взаимодействий: договор ссылается на уже заведённую запись.
 	await seedContracts();
 
-	return users;
+	return { users, exchangeKeys };
 }
 
 /**
@@ -153,7 +164,11 @@ export async function main(argv: readonly string[]): Promise<void> {
 	}
 
 	try {
-		await seedAll();
+		const report = await seedAll();
+
+		for (const line of exchangeKeyReport(report.exchangeKeys)) {
+			console.log(`seed: ${line}`);
+		}
 
 		console.log(`seed: готово, в базе ${await countRows(REPORTED_TABLES)}`);
 	} finally {

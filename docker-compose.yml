@@ -176,9 +176,11 @@ services:
       # Where the imitator sends an application and what it introduces itself
       # with. The key is issued by the seed of the stand from the same variable;
       # without it the imitator answers that the exchange is not configured
-      # instead of pretending it sent anything.
+      # instead of pretending it sent anything. One key per connection: an
+      # exchange key is bound to one (`api_keys.exchange_system`), and the site's
+      # key is refused on the route of learning group results.
       CRM_BASE_URL: http://app:3000
-      CRM_API_KEY: ${EXCHANGE_API_KEY:-}
+      CRM_API_KEY: ${EXCHANGE_API_KEY_CMS:-}
       # The secret the CRM signs its outgoing messages with. The imitator
       # rejects an unsigned or badly signed status, so the signature is part of
       # what the stand demonstrates. The default below is good enough for a
@@ -211,7 +213,7 @@ services:
     environment:
       PORT: '8082'
       CRM_BASE_URL: http://app:3000
-      CRM_API_KEY: ${EXCHANGE_API_KEY:-}
+      CRM_API_KEY: ${EXCHANGE_API_KEY_LMS:-}
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-exchange-stand-secret-0123456789abcdef}
       INSTANCE_NAME: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
       # The address of a learning group as a person opens it. Published port,
@@ -277,9 +279,23 @@ services:
       # Shown as a hint in the integrations section: the web service of the LMS
       # the synchronisation of learning data goes to.
       EXCHANGE_LMS_BASE_URL: ${EXCHANGE_LMS_BASE_URL:-http://mock-lms:8082}
+      # The names of the connections, and the same variables the imitators read
+      # below: the CRM checks `source.instance` of an incoming message against
+      # these and the seed binds an exchange key to one of them. Two names for one
+      # thing would drift apart on the first stand that renames one.
+      EXCHANGE_CMS_INSTANCE: ${EXCHANGE_CMS_INSTANCE:-itschool-site}
+      EXCHANGE_LMS_INSTANCE: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
       # The secret the CRM signs its outgoing exchange messages with — the same
       # one the imitators verify them against.
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-exchange-stand-secret-0123456789abcdef}
+      # The access keys of the imitators, read by the seed and by nothing else:
+      # it issues them to the machine subject of the exchange, one per
+      # connection, and the imitators next door introduce themselves with the
+      # same values. Empty — the seed says so in its log and the stand comes up
+      # without exchange keys, which on a public stand nobody could then issue
+      # (docs/seeds.md).
+      EXCHANGE_API_KEY_CMS: ${EXCHANGE_API_KEY_CMS:-}
+      EXCHANGE_API_KEY_LMS: ${EXCHANGE_API_KEY_LMS:-}
       # Nothing sits in front of the app in the local stack, so the client
       # address is the socket address and forwarding headers must not be trusted.
       TRUST_PROXY: 'false'

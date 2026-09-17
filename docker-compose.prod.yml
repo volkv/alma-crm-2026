@@ -156,7 +156,11 @@ services:
     environment: !override
       PORT: '8081'
       CRM_BASE_URL: http://app:3000
-      CRM_API_KEY: ${EXCHANGE_API_KEY:-}
+      # One key per connection: an exchange key is bound to one
+      # (`api_keys.exchange_system`), and the site's key is refused on the route
+      # of learning group results. The seed of the stand issues both from the
+      # same variables.
+      CRM_API_KEY: ${EXCHANGE_API_KEY_CMS:-}
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}
       # The same variable the app reads: the CRM checks `source.instance` of an
       # incoming application against its own setting, and two variables with one
@@ -174,7 +178,7 @@ services:
     environment: !override
       PORT: '8082'
       CRM_BASE_URL: http://app:3000
-      CRM_API_KEY: ${EXCHANGE_API_KEY:-}
+      CRM_API_KEY: ${EXCHANGE_API_KEY_LMS:-}
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}
       INSTANCE_NAME: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
       # Not published, so a person opens a group through the same reverse proxy
@@ -230,6 +234,14 @@ services:
       EXCHANGE_CMS_INSTANCE: ${EXCHANGE_CMS_INSTANCE:-itschool-site}
       EXCHANGE_LMS_INSTANCE: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}
+      # Read by the seed and by nothing else: on a stand with DEMO_MODE=true it
+      # issues the exchange keys of the imitators from these — through the UI
+      # nobody there could, the demo session has no `api_keys.manage` and the
+      # staff administrator has no account in the directory yet. A deployment
+      # that talks to the real systems leaves them empty and issues keys the
+      # usual way.
+      EXCHANGE_API_KEY_CMS: ${EXCHANGE_API_KEY_CMS:-}
+      EXCHANGE_API_KEY_LMS: ${EXCHANGE_API_KEY_LMS:-}
       # Outgoing requests go to public addresses only: an address typed into the
       # integrations screen must not be able to reach the account directory, the
       # object storage or the cloud metadata service next door.

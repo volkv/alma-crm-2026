@@ -1,9 +1,11 @@
 import { count, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import type { RequestEvent } from '@sveltejs/kit';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isValidInn } from '$lib/validation/inn';
 import {
 	affiliations,
+	apiKeys,
 	blockers,
 	comments,
 	contractItems,
@@ -33,18 +35,36 @@ import {
 	statSnapshots,
 	users
 } from '$lib/server/db/schema';
+import { hashApiKey } from '$lib/server/api/keys';
+import { exchangeSettingsDefault } from '$lib/server/integrations/settings';
 import { DEFAULT_ROLES, PERMISSION_KEYS, type PermissionKey } from '$lib/server/rbac/permissions';
+import { getRedis } from '$lib/server/redis';
 import { B2B_PROCESS } from '$lib/server/stages/definitions';
 import { CONTRACT_SEED_SIZES } from '../../../scripts/seed/contracts';
 import { DIRECTORY_SEED_SIZES } from '../../../scripts/seed/directory';
 import { STATS_SEED_SIZES } from '../../../scripts/seed/stats';
 import { INTERACTION_SEED_SIZES } from '../../../scripts/seed/interactions';
 import { main, seedAll, seedRolesOnly } from '../../../scripts/seed/run';
+import { seedId } from '../../../scripts/seed/ids';
 import { DEMO_EMAILS, SERVICE_USER_EMAIL, STAFF_ADMIN_EMAIL } from '../../../scripts/seed/users';
 import { startTestDatabase, type TestDatabase } from '../helpers/db';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
+
+/**
+ * Маршруты обмена: ими проверяется, что заведённый сидом ключ не просто лежит в
+ * таблице, а проходит вход — и проходит ровно на своём направлении. Обработчик
+ * типизирован своим маршрутом, а поддельное событие — общим типом события,
+ * поэтому подпись сужается один раз здесь.
+ */
+type Endpoint = (event: RequestEvent) => Response | Promise<Response>;
+
+const applications = (await import('../../../src/routes/api/v1/applications/+server'))
+	.POST as Endpoint;
+const groupResults = (
+	await import('../../../src/routes/api/v1/exchange/learning-groups/results/+server')
+).POST as Endpoint;
 
 let database: TestDatabase;
 
@@ -78,6 +98,9 @@ beforeAll(async () => {
 }, 300_000);
 
 afterAll(async () => {
+	// Обращение к маршруту API поднимает клиент Redis — там живут счётчики
+	// лимита частоты; без явного закрытия прогон держал бы открытый сокет.
+	await getRedis().quit();
 	await database.stop();
 });
 
@@ -519,6 +542,209 @@ describe('сид', () => {
 		expect(filled).toHaveLength(DIRECTORY_SEED_SIZES.organizations);
 		expect(filled.filter((inn) => !isValidInn(inn))).toStrictEqual([]);
 		expect(new Set(filled).size).toBe(filled.length);
+	});
+});
+
+/**
+ * Ключи обмена стенда.
+ *
+ * Значение задаёт окружение, а не выпуск из интерфейса: на публичном стенде
+ * выпустить ключ некому — демонстрационная сессия не получает права
+ * `api_keys.manage`, а у штатного администратора нет учётной записи в каталоге
+ * (`docs/seeds.md`, «Ключи обмена»).
+ */
+describe('ключи обмена', () => {
+	/** Формат тот же, в каком ключ выпускает система: «lct_» и 32 символа. */
+	const CMS_KEY = 'lct_seedCmsKey0123456789abcdefghijkl';
+	const LMS_KEY = 'lct_seedLmsKey0123456789abcdefghijkl';
+	const ROTATED_CMS_KEY = 'lct_seedCmsKeyRotated0123456789abcde';
+
+	/**
+	 * Запрос к маршруту обмена этим ключом. Тело намеренно пустое: проверяется
+	 * не приём заявки — у него свой файл, — а граница ключа. Отказ границы даёт
+	 * 403 до всякого разбора тела, а разбор пустого тела — 400.
+	 */
+	async function exchangePost(endpoint: Endpoint, routeId: string, key: string): Promise<number> {
+		const url = new URL(`http://localhost${routeId}`);
+
+		const response = await endpoint({
+			request: new Request(url, {
+				method: 'POST',
+				headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
+				body: '{}'
+			}),
+			url,
+			params: {},
+			route: { id: routeId },
+			locals: { requestId: crypto.randomUUID(), user: null, apiKey: null },
+			getClientAddress: () => '198.51.100.90',
+			setHeaders: () => {},
+			isDataRequest: false,
+			isSubRequest: false
+		} as unknown as RequestEvent);
+
+		return response.status;
+	}
+
+	/** Ключи в порядке подключения: что заведено и на кого. */
+	async function issuedKeys(): Promise<
+		{
+			id: string;
+			keyHash: string;
+			exchangeSystem: string | null;
+			exchangeInstance: string | null;
+			ownerUserId: string;
+			revokedAt: Date | null;
+		}[]
+	> {
+		return database.db
+			.select({
+				id: apiKeys.id,
+				keyHash: apiKeys.keyHash,
+				exchangeSystem: apiKeys.exchangeSystem,
+				exchangeInstance: apiKeys.exchangeInstance,
+				ownerUserId: apiKeys.ownerUserId,
+				revokedAt: apiKeys.revokedAt
+			})
+			.from(apiKeys)
+			.orderBy(apiKeys.exchangeSystem);
+	}
+
+	afterEach(() => {
+		delete process.env.EXCHANGE_API_KEY_CMS;
+		delete process.env.EXCHANGE_API_KEY_LMS;
+	});
+
+	it('заводит по ключу на подключение, на машинном субъекте обмена', async () => {
+		process.env.EXCHANGE_API_KEY_CMS = CMS_KEY;
+		process.env.EXCHANGE_API_KEY_LMS = LMS_KEY;
+
+		await runSeed();
+
+		const [service] = await database.db
+			.select({ id: users.id })
+			.from(users)
+			.where(eq(users.email, SERVICE_USER_EMAIL));
+
+		const defaults = exchangeSettingsDefault();
+		const rows = await issuedKeys();
+
+		expect(rows).toStrictEqual([
+			{
+				id: seedId('api-key', 'exchange-cms'),
+				keyHash: hashApiKey(CMS_KEY),
+				exchangeSystem: 'cms',
+				exchangeInstance: defaults.cms.instance,
+				ownerUserId: service.id,
+				revokedAt: null
+			},
+			{
+				id: seedId('api-key', 'exchange-lms'),
+				keyHash: hashApiKey(LMS_KEY),
+				exchangeSystem: 'lms',
+				exchangeInstance: defaults.lms.instance,
+				ownerUserId: service.id,
+				revokedAt: null
+			}
+		]);
+	});
+
+	it('без переменных не заводит ни одного ключа', async () => {
+		await runSeed();
+
+		await expect(countRows(apiKeys)).resolves.toBe(0);
+	});
+
+	it('заводит ключ только того направления, чья переменная задана', async () => {
+		process.env.EXCHANGE_API_KEY_LMS = LMS_KEY;
+
+		await runSeed();
+
+		const rows = await issuedKeys();
+
+		expect(rows.map((row) => row.exchangeSystem)).toStrictEqual(['lms']);
+	});
+
+	it('повторный сид не плодит ключей и не переписывает значение', async () => {
+		process.env.EXCHANGE_API_KEY_CMS = CMS_KEY;
+		process.env.EXCHANGE_API_KEY_LMS = LMS_KEY;
+
+		await runSeed();
+		await runSeed();
+
+		await expect(countRows(apiKeys)).resolves.toBe(2);
+
+		// Смена значения переменной заведённый ключ не трогает: хеш нового
+		// значения означал бы новый ключ, а прежний перестал бы работать без
+		// единого следа. Сид сообщает об этом строкой, а не молча.
+		process.env.EXCHANGE_API_KEY_CMS = ROTATED_CMS_KEY;
+
+		await runSeed();
+
+		const rows = await issuedKeys();
+
+		expect(rows).toHaveLength(2);
+		expect(rows[0].keyHash).toBe(hashApiKey(CMS_KEY));
+	});
+
+	it('пускает ключ сайта на заявки и не пускает его на результаты учебных групп', async () => {
+		process.env.EXCHANGE_API_KEY_CMS = CMS_KEY;
+		process.env.EXCHANGE_API_KEY_LMS = LMS_KEY;
+
+		await runSeed();
+
+		// 400 — тело не разобрано, то есть границу ключ прошёл: право, роль
+		// `service` и направление подключения сошлись.
+		await expect(exchangePost(applications, '/api/v1/applications', CMS_KEY)).resolves.toBe(400);
+		await expect(
+			exchangePost(groupResults, '/api/v1/exchange/learning-groups/results', LMS_KEY)
+		).resolves.toBe(400);
+
+		// А чужим направлением — не проходит: права у обоих ключей одни и те же,
+		// и различает их только подключение, на которое ключ выпущен.
+		await expect(
+			exchangePost(groupResults, '/api/v1/exchange/learning-groups/results', CMS_KEY)
+		).resolves.toBe(403);
+		await expect(exchangePost(applications, '/api/v1/applications', LMS_KEY)).resolves.toBe(403);
+	});
+
+	it('не рвётся на значении, которое уже выпущено другим ключом', async () => {
+		// Так выглядит стенд, который жил с ключом, выпущенным из интерфейса, а
+		// потом положил его значение в `.env`: хеш уникален, и вторая строка с
+		// ним остановила бы контейнер на сиде.
+		const [owner] = await database.db.select({ id: users.id }).from(users).limit(1);
+
+		await database.db.insert(apiKeys).values({
+			name: 'Выпущен из интерфейса',
+			keyHash: hashApiKey(CMS_KEY),
+			ownerUserId: owner.id
+		});
+
+		process.env.EXCHANGE_API_KEY_CMS = CMS_KEY;
+		process.env.EXCHANGE_API_KEY_LMS = LMS_KEY;
+
+		await runSeed();
+
+		// Чужой ключ остался как был, свой заведён только у второго направления.
+		const rows = await issuedKeys();
+
+		expect(rows.map((row) => row.exchangeSystem)).toStrictEqual(['lms', null]);
+	});
+
+	it('отвергает значение, которого система не выпустила бы', async () => {
+		process.env.EXCHANGE_API_KEY_CMS = 'exchange-key';
+		process.env.EXCHANGE_API_KEY_LMS = LMS_KEY;
+
+		// Ключ не того формата не прошёл бы вход вовсе, и стенд молчал бы об этом
+		// до первой заявки.
+		await expect(runSeed()).rejects.toThrow('EXCHANGE_API_KEY_CMS');
+		await expect(countRows(apiKeys)).resolves.toBe(0);
+
+		// Одно значение на оба направления снимает границу между ними.
+		process.env.EXCHANGE_API_KEY_CMS = LMS_KEY;
+
+		await expect(runSeed()).rejects.toThrow('совпадают');
+		await expect(countRows(apiKeys)).resolves.toBe(0);
 	});
 });
 
