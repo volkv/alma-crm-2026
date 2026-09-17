@@ -72,10 +72,14 @@ export default defineConfig({
 			BODY_SIZE_LIMIT: '27M',
 			// Демонстрационный вход — часть проверяемого поведения.
 			DEMO_MODE: 'true',
-			// Заглушка системы обучения: обмен с LMS проверяется целиком — от
-			// настроек раздела до снимка в разделе «Данные», — а настоящей LMS в
-			// прогоне нет и быть не может.
-			MOCK_LMS: 'true',
+			// Обмен: приложение ходит до имитаторов из `docker-compose.yml` —
+			// `mock-cms` на 58081 и `mock-lms` на 58082. Секрет подписи тот же, что у
+			// контейнеров; адрес карточки заявки несёт `{externalId}` — на его место
+			// встаёт ключ заявки.
+			EXCHANGE_CMS_STATUS_URL: 'http://localhost:58081/api/applications/{externalId}/status',
+			EXCHANGE_LMS_GROUPS_URL: 'http://localhost:58082/api/groups',
+			EXCHANGE_LMS_BASE_URL: 'http://localhost:58082',
+			EXCHANGE_SECRET: 'exchange-stand-secret',
 			TRUST_PROXY: 'false',
 			// Каталог учётных записей — тот же контейнер, что у стека: Keycloak
 			// стартует полторы минуты, и второй под прогон не поднимают. Записи и

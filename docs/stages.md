@@ -222,7 +222,7 @@
 | `pauseStage` / `resumeStage`                 | `stages.transition`     | останавливает и запускает часы стадии        |
 | `setChecklistItem`                           | `stages.transition`     | отметка по пункту чек-листа стадии           |
 | `setStageResult`                             | `stages.transition`     | результат текущей стадии                     |
-| `confirmStage`                               | `stages.transition`     | подтверждение файлом, отметкой или LMS       |
+| `confirmStage`                               | `stages.confirm`        | подтверждение файлом, отметкой или LMS       |
 | `raiseBlocker` / `resolveBlocker`            | `interactions.write`    | помеха и её снятие                           |
 | `setResponsible`                             | `interactions.reassign` | владелец взаимодействия, в том числе списком |
 | `addComment`                                 | `interactions.write`    | комментарий в карточку                       |

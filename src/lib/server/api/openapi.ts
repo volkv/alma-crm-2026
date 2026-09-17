@@ -70,6 +70,14 @@ export type RouteDefinition = {
 	tags?: string[];
 	/** Тот же объект, что получает `apiHandler`. */
 	config: ApiEndpointConfig;
+	/**
+	 * Тип тела успешного ответа, когда это не JSON.
+	 *
+	 * Такой маршрут отдаёт файл (`GET /v1/exchange/files/{key}`), и схема ответа
+	 * у него не описывает ничего: документации важно назвать тип и сказать, что
+	 * это байты, а не объект. Схему `output` этот случай не читает вовсе.
+	 */
+	responseContentType?: string;
 };
 
 /**
@@ -87,10 +95,18 @@ export function registerRoute(definition: RouteDefinition): void {
 	registered.add(identity);
 
 	const responses: RouteConfig['responses'] = {
-		200: {
-			description: 'Успешный ответ',
-			content: { 'application/json': { schema: definition.config.output } }
-		},
+		200:
+			definition.responseContentType === undefined
+				? {
+						description: 'Успешный ответ',
+						content: { 'application/json': { schema: definition.config.output } }
+					}
+				: {
+						description: 'Тело файла',
+						content: {
+							[definition.responseContentType]: { schema: { type: 'string', format: 'binary' } }
+						}
+					},
 		400: errorResponse('Запрос не прошёл проверку; поля перечислены в `details.issues`'),
 		401: errorResponse('Ключ доступа не предъявлен, недействителен или отозван'),
 		403: errorResponse('Владельцу ключа не хватает права на это действие'),

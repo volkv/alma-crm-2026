@@ -17,6 +17,7 @@
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { ScrollArea } from '$lib/components/ui/scroll-area/index.js';
 	import FieldInput from '$lib/components/form/field-input.svelte';
+	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import FormField from '$lib/components/form/form-field.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
@@ -24,11 +25,13 @@
 	import { formatDateTime } from '$lib/format';
 	import {
 		deliverySettingsSchema,
+		exchangeSettingsFormSchema,
 		lmsSettingsFormSchema,
 		prefixPattern,
 		webhookFormSchema,
 		WEBHOOK_STATE_LABELS,
 		type DeliverySettings,
+		type ExchangeSettingsFormInput,
 		type LmsSettingsFormInput,
 		type WebhookFormInput,
 		type WebhookView
@@ -80,6 +83,17 @@
 	} = superForm<LmsSettingsFormInput, string>(
 		untrack(() => data.lmsForm),
 		{ validators: zod4Client(lmsSettingsFormSchema), id: 'lms-settings' }
+	);
+
+	const {
+		form: exchange,
+		errors: exchangeErrors,
+		enhance: exchangeEnhance,
+		submitting: exchangeSubmitting,
+		message: exchangeMessage
+	} = superForm<ExchangeSettingsFormInput, string>(
+		untrack(() => data.exchangeForm),
+		{ validators: zod4Client(exchangeSettingsFormSchema), id: 'exchange-settings' }
 	);
 
 	const {
@@ -330,11 +344,12 @@
 			</InlineHint>
 		{/if}
 
-		{#if data.mockLms}
+		{#if data.lmsHint !== null}
 			<InlineHint tone="info">
-				Включена демонстрационная заглушка LMS. Адрес — <code class="font-mono"
-					>{data.origin}/mock-lms</code
-				>, токен — <code class="font-mono">mock-lms-token</code>. Данные в ней выдуманы.
+				На стенде рядом поднят имитатор системы обучения. Адрес — <code class="font-mono"
+					>{data.lmsHint}</code
+				>, токен веб-сервиса — <code class="font-mono">mock-lms-token</code>. Данные в нём выдуманы,
+				и его ответ ничего не доказывает о настоящей LMS.
 			</InlineHint>
 		{/if}
 
@@ -418,22 +433,145 @@
 
 <Card.Root>
 	<Card.Header>
-		<Card.Title>Заявки с сайта</Card.Title>
+		<Card.Title>Обмен с CMS и системой обучения</Card.Title>
 		<Card.Description>
-			Форма на сайте отправляет заявку в API, и та сразу становится взаимодействием на маршруте по
-			умолчанию.
+			Четыре направления контракта обмена: заявка с сайта и снимок её статуса обратно, заявка на
+			учебную группу и результат потока. Журнал обмена в обе стороны — в разделе «Внешние системы».
 		</Card.Description>
 	</Card.Header>
-	<Card.Content class="flex flex-col gap-2 text-sm">
-		<p>
+	<Card.Content class="flex flex-col gap-4">
+		<p class="text-sm">
+			Входящие принимаются ключом доступа роли «Внешняя система»:
 			<code class="font-mono">POST {data.origin}/api/v1/applications</code>
+			и
+			<code class="font-mono">POST {data.origin}/api/v1/exchange/learning-groups/results</code>.
+			Исходящие CRM подписывает HMAC, как вебхуки.
 		</p>
-		<p class="text-muted-foreground">
-			Запрос подписывается ключом доступа с правом «Создание и изменение взаимодействий»;
-			ответственным за заявку становится владелец ключа. Повтор с тем же <code class="font-mono"
-				>externalId</code
-			> возвращает прежнее взаимодействие. Поля и пример — в документации API.
-		</p>
+
+		{#if $exchangeMessage}
+			<Alert.Root><Alert.Description>{$exchangeMessage}</Alert.Description></Alert.Root>
+		{/if}
+
+		{#if $exchangeErrors._errors}
+			<Alert.Root variant="destructive">
+				<Alert.Description>
+					<ul class="list-inside list-disc">
+						{#each $exchangeErrors._errors as issue (issue)}
+							<li>{issue}</li>
+						{/each}
+					</ul>
+				</Alert.Description>
+			</Alert.Root>
+		{/if}
+
+		{#if data.canManageEndpoints}
+			<form
+				method="POST"
+				action="?/exchange"
+				use:exchangeEnhance
+				novalidate
+				class="grid gap-4 sm:grid-cols-2"
+			>
+				<FieldInput
+					name="cmsInstance"
+					label="Экземпляр CMS"
+					description="Имя подключения: с ним сверяется source.instance входящего сообщения"
+					placeholder="itschool-site"
+					bind:value={$exchange.cmsInstance}
+					errors={$exchangeErrors.cmsInstance}
+				/>
+				<FieldInput
+					name="cmsStatusUrl"
+					label="Адрес карточки заявки"
+					description="Содержит фигурные скобки с externalId — на их место встаёт ключ заявки"
+					placeholder="https://site.example.org/api/applications/{'{externalId}'}/status"
+					bind:value={$exchange.cmsStatusUrl}
+					errors={$exchangeErrors.cmsStatusUrl}
+				/>
+				<FieldInput
+					name="cmsSecret"
+					label="Секрет подписи для CMS"
+					description={data.exchange.cms.hasSecret
+						? 'Секрет сохранён. Пустое поле оставит прежний'
+						: 'Им подписываются исходящие сообщения; после сохранения показан не будет'}
+					placeholder={data.exchange.cms.hasSecret ? '••••••••' : 'Секрет'}
+					bind:value={
+						() => $exchange.cmsSecret ?? '', (next) => ($exchange.cmsSecret = next.trim() || null)
+					}
+					errors={$exchangeErrors.cmsSecret}
+				/>
+				<FieldSelect
+					name="cmsDefaultOwnerUserId"
+					label="Ответственный за входящие заявки"
+					description="Сотрудник, который принимает заявки с сайта и ведёт их дальше"
+					placeholder="Не задан"
+					options={data.owners.map((owner) => ({ value: owner.id, label: owner.fullName }))}
+					bind:value={
+						() => $exchange.cmsDefaultOwnerUserId ?? '',
+						(next) => ($exchange.cmsDefaultOwnerUserId = next === '' ? null : next)
+					}
+					errors={$exchangeErrors.cmsDefaultOwnerUserId}
+				/>
+				<FieldInput
+					name="lmsInstance"
+					label="Экземпляр системы обучения"
+					description="Имя подключения: с ним сверяется source.instance результата группы"
+					placeholder="moodle-itschool"
+					bind:value={$exchange.lmsInstance}
+					errors={$exchangeErrors.lmsInstance}
+				/>
+				<FieldInput
+					name="lmsGroupsUrl"
+					label="Адрес заведения учебной группы"
+					description="Туда уходит заявка на поток по кнопке из карточки взаимодействия"
+					placeholder="https://lms.example.org/api/groups"
+					bind:value={$exchange.lmsGroupsUrl}
+					errors={$exchangeErrors.lmsGroupsUrl}
+				/>
+				<FieldInput
+					name="lmsSecret"
+					label="Секрет подписи для системы обучения"
+					description={data.exchange.lms.hasSecret
+						? 'Секрет сохранён. Пустое поле оставит прежний'
+						: 'Им подписывается заявка на учебную группу'}
+					placeholder={data.exchange.lms.hasSecret ? '••••••••' : 'Секрет'}
+					bind:value={
+						() => $exchange.lmsSecret ?? '', (next) => ($exchange.lmsSecret = next.trim() || null)
+					}
+					errors={$exchangeErrors.lmsSecret}
+				/>
+				<div class="sm:col-span-2">
+					<FormActions submitting={$exchangeSubmitting} submitLabel="Сохранить подключения" />
+				</div>
+			</form>
+		{:else}
+			<!-- Адреса и секреты подключений правит только тот, у кого есть право
+				«Внешние адреса и секреты подключений»: они уводят данные на чужой узел
+				(`docs/access-matrix.md`, раздел 5). Остальным раздел показывает
+				состояние подключений — этого хватает, чтобы разобрать обмен. -->
+			<InlineHint tone="info">
+				Адреса и секреты подключений меняет тот, у кого есть право «Внешние адреса и секреты
+				подключений».
+			</InlineHint>
+			<dl class="grid gap-2 text-sm sm:grid-cols-2">
+				<div>
+					<dt class="text-muted-foreground">Экземпляр CMS</dt>
+					<dd class="font-mono">{data.exchange.cms.instance}</dd>
+				</div>
+				<div>
+					<dt class="text-muted-foreground">Адрес карточки заявки</dt>
+					<dd class="font-mono break-all">{data.exchange.cms.statusUrl ?? 'не задан'}</dd>
+				</div>
+				<div>
+					<dt class="text-muted-foreground">Экземпляр системы обучения</dt>
+					<dd class="font-mono">{data.exchange.lms.instance}</dd>
+				</div>
+				<div>
+					<dt class="text-muted-foreground">Адрес заведения группы</dt>
+					<dd class="font-mono break-all">{data.exchange.lms.groupsUrl ?? 'не задан'}</dd>
+				</div>
+			</dl>
+		{/if}
 	</Card.Content>
 </Card.Root>
 

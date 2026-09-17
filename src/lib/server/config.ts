@@ -1,5 +1,6 @@
 import { env } from '$env/dynamic/private';
 import { z } from 'zod';
+import { outboundUrlIssue } from '$lib/contracts/integrations';
 
 /**
  * Every environment variable the server needs, in one place. There are no
@@ -13,6 +14,26 @@ import { z } from 'zod';
 const booleanFlag = z
 	.enum(['true', 'false'], { error: 'must be exactly "true" or "false"' })
 	.transform((value) => value === 'true');
+
+/**
+ * Необязательный адрес обмена: пустая строка означает «направление не
+ * настроено», а не «адрес пустой». Правило самого адреса — общее
+ * `outboundUrlIssue`: сервер идёт по нему сам, и откуда бы адрес ни пришёл —
+ * из формы или из окружения, — опасность одна и та же.
+ */
+function exchangeUrl(withExternalId: boolean) {
+	return z
+		.string()
+		.default('')
+		.refine(
+			(value) => value === '' || outboundUrlIssue(value.replace('{externalId}', 'x')) === null,
+			{ error: (issue) => outboundUrlIssue(String(issue.input)) ?? 'must be a valid URL' }
+		)
+		.refine((value) => !withExternalId || value === '' || value.includes('{externalId}'), {
+			error: 'must contain {externalId}: the application key goes there'
+		})
+		.transform((value) => (value === '' ? null : value));
+}
 
 const configSchema = z.object({
 	NODE_ENV: z.enum(['development', 'test', 'production']),
@@ -43,17 +64,31 @@ const configSchema = z.object({
 	 */
 	TRUST_PROXY: booleanFlag,
 	/**
-	 * Заглушка системы обучения на адресах `/mock-lms/**`: те же ответы, что у
-	 * веб-сервиса Moodle 4.x, на выдуманных данных. Нужна для демонстрации
-	 * обмена — настоящая LMS заказчика наружу не смотрит, — и поэтому по
-	 * умолчанию выключена: на стенде с настоящими данными вторая система данных
-	 * об обучении не нужна. Ровно `true` или `false`, как у остальных флагов;
-	 * отсутствие переменной значит «заглушки нет».
+	 * Подключения обмена (`docs/exchange-contract.md`).
+	 *
+	 * Умолчания развёртывания, а не настройки продукта: адреса чужих систем и
+	 * секрет подписи задаёт тот, кто поднимает стенд, а сотрудник правит их на
+	 * экране «Внешние системы» — сохранённое им сильнее (`integrations/settings.ts`).
+	 * Пустая строка равна «не задано»: Compose подставляет пустое значение там,
+	 * где переменной нет в `.env`, и различать эти два случая было бы различением
+	 * без разницы.
 	 */
-	MOCK_LMS: z
-		.enum(['true', 'false'], { error: 'must be exactly "true" or "false"' })
-		.default('false')
-		.transform((value) => value === 'true'),
+	EXCHANGE_CMS_INSTANCE: z.string().min(1).default('itschool-site'),
+	EXCHANGE_LMS_INSTANCE: z.string().min(1).default('moodle-itschool'),
+	/**
+	 * Адрес карточки заявки на сайте. Содержит `{externalId}` — на его место
+	 * встаёт ключ заявки: карточку адресуют её же идентификатором.
+	 */
+	EXCHANGE_CMS_STATUS_URL: exchangeUrl(true),
+	/** Адрес, по которому заводится учебная группа. */
+	EXCHANGE_LMS_GROUPS_URL: exchangeUrl(false),
+	/** Адрес веб-сервиса системы обучения: подсказка в разделе интеграций. */
+	EXCHANGE_LMS_BASE_URL: exchangeUrl(false),
+	/** Секрет подписи исходящих сообщений обмена — общий для обоих подключений. */
+	EXCHANGE_SECRET: z
+		.string()
+		.default('')
+		.transform((value) => (value === '' ? null : value)),
 	/**
 	 * S3-совместимое хранилище файлов документов (в поставке — MinIO).
 	 *

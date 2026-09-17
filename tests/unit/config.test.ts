@@ -59,16 +59,44 @@ describe('parseConfig', () => {
 		expect(() => parseConfig({ ...completeEnv, TRUST_PROXY: 'True' })).toThrowError(/TRUST_PROXY/);
 	});
 
-	it('leaves the LMS stand-in off when nothing says otherwise', () => {
-		// The flag is absent from `completeEnv` on purpose: a deployment that never
-		// heard of the stand-in must not get a second source of learning data.
-		expect(parseConfig(completeEnv).MOCK_LMS).toBe(false);
-		expect(parseConfig({ ...completeEnv, MOCK_LMS: 'true' }).MOCK_LMS).toBe(true);
+	it('treats an empty exchange address as «direction not configured»', () => {
+		// Compose substitutes an empty value where the variable is missing from
+		// `.env`, and telling those two cases apart would be a distinction without
+		// a difference: both mean the direction is off.
+		const config = parseConfig({ ...completeEnv, EXCHANGE_CMS_STATUS_URL: '' });
+
+		expect(config.EXCHANGE_CMS_STATUS_URL).toBeNull();
+		expect(config.EXCHANGE_SECRET).toBeNull();
+		expect(config.EXCHANGE_CMS_INSTANCE).toBe('itschool-site');
 	});
 
-	it('rejects anything but "true" or "false" in MOCK_LMS', () => {
-		expect(() => parseConfig({ ...completeEnv, MOCK_LMS: 'yes' })).toThrowError(/MOCK_LMS/);
-		expect(() => parseConfig({ ...completeEnv, MOCK_LMS: '' })).toThrowError(/MOCK_LMS/);
+	it('demands {externalId} in the address of an application card', () => {
+		// Without the placeholder every status would go to the same address, and
+		// the site would have no way of telling which application it is about.
+		expect(() =>
+			parseConfig({ ...completeEnv, EXCHANGE_CMS_STATUS_URL: 'http://mock-cms:8081/api/status' })
+		).toThrowError(/EXCHANGE_CMS_STATUS_URL/);
+
+		expect(
+			parseConfig({
+				...completeEnv,
+				EXCHANGE_CMS_STATUS_URL: 'http://mock-cms:8081/api/applications/{externalId}/status'
+			}).EXCHANGE_CMS_STATUS_URL
+		).toBe('http://mock-cms:8081/api/applications/{externalId}/status');
+	});
+
+	it('holds the exchange address to the same rule as every outgoing address', () => {
+		// The server walks this address itself, carrying the body and the
+		// signature: plain http is allowed only on this machine and for the two
+		// imitators of the stand.
+		expect(() =>
+			parseConfig({ ...completeEnv, EXCHANGE_LMS_GROUPS_URL: 'http://lms.example.org/api/groups' })
+		).toThrowError(/EXCHANGE_LMS_GROUPS_URL/);
+
+		expect(
+			parseConfig({ ...completeEnv, EXCHANGE_LMS_GROUPS_URL: 'http://mock-lms:8082/api/groups' })
+				.EXCHANGE_LMS_GROUPS_URL
+		).toBe('http://mock-lms:8082/api/groups');
 	});
 
 	it('rejects storage keys that are there but empty', () => {

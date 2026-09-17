@@ -154,10 +154,14 @@ staff('подписка заводится, показывает секрет о
 	}
 });
 
-staff('раздел называет адрес приёма заявок', async ({ page }) => {
+staff('раздел называет адреса приёма и подключения обмена', async ({ page }) => {
 	await page.goto('/settings/integrations');
 
 	await expect(page.getByText('/api/v1/applications')).toBeVisible();
+	await expect(page.getByText('/api/v1/exchange/learning-groups/results')).toBeVisible();
+	// Экземпляр подключения виден на экране: с ним сверяется `source.instance`
+	// входящего сообщения, и разобрать отказ «чужой экземпляр» иначе нечем.
+	await expect(page.getByLabel('Экземпляр CMS')).toHaveValue('itschool-site');
 });
 
 demo('демонстрационной сессии раздел открыт: его на стенде и показывают', async ({ page }) => {
@@ -175,14 +179,14 @@ demo('демонстрационной сессии раздел открыт: �
 	await expect(page.getByText('Подписки на события')).toBeVisible();
 });
 
-staff('выгрузка из системы обучения доходит до раздела «Данные»', async ({ page, baseURL }) => {
+staff('выгрузка из системы обучения доходит до раздела «Данные»', async ({ page }) => {
 	await page.goto('/settings/integrations');
 
-	// Адрес и токен заглушки подсказывает сама страница — ими и настраиваем: в
+	// Адрес и токен имитатора подсказывает сама страница — ими и настраиваем: в
 	// прогоне настоящей LMS нет, а путь от настроек до снимка тот же самый.
-	await expect(page.getByText('/mock-lms', { exact: false }).first()).toBeVisible();
+	await expect(page.getByText('localhost:58082', { exact: false }).first()).toBeVisible();
 
-	await page.getByLabel('Адрес системы обучения').fill(`${baseURL}/mock-lms`);
+	await page.getByLabel('Адрес системы обучения').fill('http://localhost:58082');
 	await page.getByLabel('Токен веб-сервиса').fill('mock-lms-token');
 	await page.getByRole('button', { name: 'Сохранить настройки' }).click();
 

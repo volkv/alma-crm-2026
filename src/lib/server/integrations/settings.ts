@@ -18,17 +18,22 @@ import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import {
 	deliverySettingsSchema,
+	exchangeSettingsSchema,
 	INTEGRATION_SETTING_KEYS,
 	lmsSettingsSchema,
 	type DeliverySettings,
+	type ExchangeSettings,
+	type ExchangeSettingsFormInput,
+	type ExchangeSettingsView,
 	type LmsSettings,
 	type LmsSettingsView
 } from '$lib/contracts/integrations';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
+import { getConfig } from '../config';
 import { getDb } from '../db';
 import { appSettings } from '../db/schema';
-import { withTransaction } from '../db/transaction';
+import { withTransaction, type Tx } from '../db/transaction';
 import { ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
 
@@ -39,9 +44,10 @@ export const DELIVERY_SETTINGS_DEFAULT: DeliverySettings = deliverySettingsSchem
 async function readSetting<TSchema extends z.ZodType>(
 	key: string,
 	schema: TSchema,
-	fallback: z.output<TSchema>
+	fallback: z.output<TSchema>,
+	executor: Tx | ReturnType<typeof getDb> = getDb()
 ): Promise<z.output<TSchema>> {
-	const [row] = await getDb()
+	const [row] = await executor
 		.select({ value: appSettings.value })
 		.from(appSettings)
 		.where(eq(appSettings.key, key))
@@ -195,4 +201,134 @@ export async function setDeliverySettings(
 	await writeSetting(ctx, INTEGRATION_SETTING_KEYS.delivery, parsed.data);
 
 	return parsed.data;
+}
+
+/* ------------------------------------------------------------------ */
+/* Подключения обмена                                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Значения обмена, с которыми стенд работает, пока их не правили руками.
+ *
+ * Берутся из окружения: адреса имитаторов и секрет подписи задаёт развёртывание
+ * (`docker-compose.yml`), а не сотрудник, — иначе стенд поднимался бы ненастроенным
+ * и обмен на нём приходилось бы каждый раз включать через интерфейс. Настройка,
+ * записанная в базу, окружение перекрывает целиком: сохранённое человеком
+ * сильнее умолчания развёртывания.
+ */
+export function exchangeSettingsDefault(): ExchangeSettings {
+	const config = getConfig();
+
+	return exchangeSettingsSchema.parse({
+		cms: {
+			instance: config.EXCHANGE_CMS_INSTANCE,
+			statusUrl: config.EXCHANGE_CMS_STATUS_URL,
+			secret: config.EXCHANGE_SECRET,
+			defaultOwnerUserId: null
+		},
+		lms: {
+			instance: config.EXCHANGE_LMS_INSTANCE,
+			groupsUrl: config.EXCHANGE_LMS_GROUPS_URL,
+			secret: config.EXCHANGE_SECRET
+		}
+	});
+}
+
+/**
+ * Настройки обмена вместе с секретами. Только для того кода, который
+ * действительно подписывает сообщение или сверяет экземпляр подключения: на
+ * экран секрет не выходит ни при каких условиях.
+ *
+ * `executor` передаёт тот, кто уже открыл транзакцию: строка исходящего
+ * сообщения появляется в той же транзакции, что и доменное изменение, и читать
+ * адрес другим соединением, пока она открыта, значит занимать второе место в
+ * пуле на каждый переход по стадии.
+ */
+export async function getExchangeSettings(
+	executor?: Tx | ReturnType<typeof getDb>
+): Promise<ExchangeSettings> {
+	return readSetting(
+		INTEGRATION_SETTING_KEYS.exchange,
+		exchangeSettingsSchema,
+		exchangeSettingsDefault(),
+		executor
+	);
+}
+
+function toExchangeView(settings: ExchangeSettings): ExchangeSettingsView {
+	return {
+		cms: {
+			instance: settings.cms.instance,
+			statusUrl: settings.cms.statusUrl,
+			hasSecret: settings.cms.secret !== null,
+			defaultOwnerUserId: settings.cms.defaultOwnerUserId
+		},
+		lms: {
+			instance: settings.lms.instance,
+			groupsUrl: settings.lms.groupsUrl,
+			hasSecret: settings.lms.secret !== null
+		}
+	};
+}
+
+/**
+ * Настройки обмена для экрана. Читает их тот, кто ведёт обмен
+ * (`integrations.manage`); менять адреса и секреты может только тот, у кого
+ * есть `integrations.manage_endpoints`.
+ */
+export async function getExchangeSettingsView(ctx: ActorContext): Promise<ExchangeSettingsView> {
+	requirePermission(ctx, 'integrations.manage');
+
+	return toExchangeView(await getExchangeSettings());
+}
+
+export async function setExchangeSettings(
+	ctx: ActorContext,
+	input: ExchangeSettingsFormInput
+): Promise<ExchangeSettingsView> {
+	await requirePermission(ctx, 'integrations.manage_endpoints', { type: 'settings.updated' });
+
+	const current = await getExchangeSettings();
+	const parsed = exchangeSettingsSchema.safeParse({
+		cms: {
+			instance: input.cmsInstance,
+			statusUrl: input.cmsStatusUrl === '' ? null : input.cmsStatusUrl,
+			// Пустое поле секрета означает «оставить прежний»: показать сохранённый
+			// нельзя, и требовать набирать его заново ради смены адреса значило бы
+			// заставлять хранить его в переписке.
+			secret: input.cmsSecret ?? current.cms.secret,
+			defaultOwnerUserId: input.cmsDefaultOwnerUserId
+		},
+		lms: {
+			instance: input.lmsInstance,
+			groupsUrl: input.lmsGroupsUrl === '' ? null : input.lmsGroupsUrl,
+			secret: input.lmsSecret ?? current.lms.secret
+		}
+	});
+
+	if (!parsed.success) {
+		throw new ValidationError(
+			'Настройки обмена не прошли проверку',
+			parsed.error.issues.map((issue) => issue.message)
+		);
+	}
+
+	// Адрес без секрета — это исходящее сообщение, которое получатель обязан
+	// отвергнуть: подпись у него проверить нечем. Сказать об этом здесь честнее,
+	// чем показывать сотруднику настроенный обмен и очередь отказов.
+	if (parsed.data.cms.statusUrl !== null && parsed.data.cms.secret === null) {
+		throw new ValidationError('Обмен с CMS настроен не до конца', [
+			'Укажите секрет подписи: без него получатель отвергнет сообщение как неподписанное'
+		]);
+	}
+
+	if (parsed.data.lms.groupsUrl !== null && parsed.data.lms.secret === null) {
+		throw new ValidationError('Обмен с системой обучения настроен не до конца', [
+			'Укажите секрет подписи: без него получатель отвергнет заявку как неподписанную'
+		]);
+	}
+
+	await writeSetting(ctx, INTEGRATION_SETTING_KEYS.exchange, parsed.data);
+
+	return toExchangeView(parsed.data);
 }

@@ -1,10 +1,11 @@
 /**
  * Интеграции: подписки на события журнала (вебхуки), выгрузка из системы
- * обучения и приём заявок с сайта.
+ * обучения и подключения обмена с CMS и LMS.
  *
- * Общее у всех трёх — они соединяют систему с чужой, поэтому договорённость
- * описана здесь один раз: её читает и форма настроек, и сервер, и внешний
- * интегратор через OpenAPI.
+ * Общее у всех — они соединяют систему с чужой, поэтому договорённость описана
+ * здесь один раз: её читает и форма настроек, и сервер, и внешний интегратор
+ * через OpenAPI. Сами сообщения обмена живут не здесь, а в
+ * `$lib/contracts/exchange.ts`: там контракт, здесь — подключения к нему.
  *
  * Состояние интеграций не хранится в PostgreSQL: подписки, курсоры журнала,
  * попытки доставки и отметки о выгрузке живут в Redis, а настройки — в
@@ -12,10 +13,8 @@
  * нет истории, за которую кто-то отвечает, а таблица притворялась бы, что есть.
  */
 import { z } from 'zod';
-import { isValidInn } from '$lib/validation/inn';
 import { AUDIT_EVENT_TYPES } from './audit';
 import { optionalId, optionalText, requiredText } from './common';
-import { EDUCATION_LEVELS, ORGANIZATION_KINDS } from './directory';
 
 /* ------------------------------------------------------------------ */
 /* Подписка на события журнала                                         */
@@ -62,17 +61,29 @@ export function matchesWebhookEvent(patterns: readonly string[], type: string): 
  *
  * Только `https`: наружу уходят коды событий, ссылки на записи и токен чужого
  * веб-сервиса, и по открытому каналу их читает любой посредник. Исключение —
- * адрес на этой же машине (`http://localhost`, `127.0.0.1`, `[::1]`) и
- * `host.docker.internal`: на демонстрации и приёмник, и заглушка LMS
- * поднимаются рядом, и требовать от них сертификат значило бы запретить
- * проверку самой связки.
+ * адрес на этой же машине (`http://localhost`, `127.0.0.1`, `[::1]`),
+ * `host.docker.internal` и два имени сервисов стенда, `mock-cms` и `mock-lms`:
+ * на демонстрации и приёмник, и имитаторы систем заказчика поднимаются рядом, и
+ * требовать от них сертификат значило бы запретить проверку самой связки.
+ *
+ * Имён имитаторов ровно два, и они перечислены поимённо, а не образцом вида
+ * `mock-*`: образец открыл бы по `http` любое имя внутри сети, а это и есть то,
+ * от чего правило защищает.
  *
  * Правило одно на оба случая намеренно: адрес, который задаёт человек, а идёт
  * по нему сервер, — это одна и та же опасность, откуда бы его ни ввели.
  *
  * Возвращает претензию словами или `null`, если адрес годится.
  */
-const LOOPBACK_HOSTS = new Set(['localhost', '127.0.0.1', '[::1]', '::1', 'host.docker.internal']);
+const PLAIN_HTTP_HOSTS = new Set([
+	'localhost',
+	'127.0.0.1',
+	'[::1]',
+	'::1',
+	'host.docker.internal',
+	'mock-cms',
+	'mock-lms'
+]);
 
 export function outboundUrlIssue(raw: string): string | null {
 	let parsed: URL;
@@ -91,9 +102,9 @@ export function outboundUrlIssue(raw: string): string | null {
 		return 'Адрес указывают по http или https';
 	}
 
-	return LOOPBACK_HOSTS.has(parsed.hostname)
+	return PLAIN_HTTP_HOSTS.has(parsed.hostname)
 		? null
-		: 'По http принимается только адрес на этой же машине (localhost, 127.0.0.1, host.docker.internal); остальным нужен https';
+		: 'По http принимается только адрес на этой же машине (localhost, 127.0.0.1, host.docker.internal) и имитаторы стенда mock-cms и mock-lms; остальным нужен https';
 }
 
 const webhookUrlField = z
@@ -224,7 +235,8 @@ export type WebhookPayload = z.output<typeof webhookPayloadSchema>;
  */
 export const INTEGRATION_SETTING_KEYS = {
 	lms: 'integrations.lms',
-	delivery: 'integrations.delivery'
+	delivery: 'integrations.delivery',
+	exchange: 'integrations.exchange'
 } as const;
 
 export const lmsSettingsSchema = z.object({
@@ -304,67 +316,96 @@ export type LmsSyncState = {
 };
 
 /* ------------------------------------------------------------------ */
-/* Заявка с сайта                                                      */
+/* Обмен с CMS и системой обучения                                     */
 /* ------------------------------------------------------------------ */
 
-const applicationInn = optionalText(12).refine((value) => value === null || isValidInn(value), {
-	error: 'ИНН должен состоять из 10 или 12 цифр и проходить проверку контрольной суммы'
-});
-
-const applicationOrganizationSchema = z
-	.object({
-		name: requiredText(500, 'Укажите название организации'),
-		/** Единственный ключ сверки: по названию организации не объединяются. */
-		inn: applicationInn,
-		kind: z.enum(ORGANIZATION_KINDS).default('educational_institution'),
-		educationLevel: z.enum(EDUCATION_LEVELS).nullable().default(null)
+/**
+ * Адрес, по которому CRM отправляет снимок статуса заявки. Содержит
+ * `{externalId}`: карточку заявки на сайте адресуют её же идентификатором, и
+ * второй настройки «а где у вас подставляется ключ» заводить незачем.
+ */
+const statusUrlField = z
+	.string()
+	.trim()
+	.max(2000, { error: 'Адрес не длиннее 2000 символов' })
+	.refine((value) => value === '' || value.includes('{externalId}'), {
+		error: 'Адрес карточки заявки содержит {externalId} — на его место встаёт ключ заявки'
 	})
 	.refine(
-		(value) => (value.educationLevel !== null) === (value.kind === 'educational_institution'),
+		(value) => value === '' || outboundUrlIssue(value.replace('{externalId}', 'x')) === null,
 		{
-			error: 'Уровень образования заполняют только у учебных заведений и обязательно у них',
-			path: ['educationLevel']
+			error: (issue) =>
+				outboundUrlIssue(String(issue.input).replace('{externalId}', 'x')) ?? 'Адрес не годится'
 		}
 	);
 
-const applicationContactSchema = z.object({
-	lastName: requiredText(100, 'Укажите фамилию контактного лица'),
-	firstName: requiredText(100, 'Укажите имя контактного лица'),
-	middleName: optionalText(100),
-	email: z.email({ error: 'Электронная почта указана неверно' }),
-	phone: optionalText(50).refine((value) => value === null || /^[\d\s+()-]{5,}$/.test(value), {
-		error: 'Телефон может содержать только цифры, пробелы и знаки + ( ) -'
-	}),
-	position: optionalText(300)
-});
+const outboundUrlField = z
+	.string()
+	.trim()
+	.max(2000, { error: 'Адрес не длиннее 2000 символов' })
+	.refine((value) => value === '' || outboundUrlIssue(value) === null, {
+		error: (issue) => outboundUrlIssue(String(issue.input)) ?? 'Адрес не годится'
+	});
+
+/** Имя экземпляра подключения: входит в ключ дедупликации каждого сообщения. */
+const instanceField = z
+	.string()
+	.trim()
+	.min(1, { error: 'Укажите имя экземпляра подключения' })
+	.max(100, { error: 'Имя экземпляра не длиннее 100 символов' });
 
 /**
- * Заявка с сайта. Приходит ключом API, а не анонимно: у заявки есть владелец —
- * тот, чьим ключом её принесли, — и он же становится ответственным за
- * взаимодействие. Анонимный приём означал бы, что заводить организации и людей
- * в справочнике может кто угодно.
+ * Настройки обмена: два подключения и один секрет подписи на каждое.
+ *
+ * Экземпляр подключения — это и есть та сторона, от чьего имени приходят
+ * сообщения: присланный `source.instance` сверяется с ним, и расхождение — отказ
+ * `403`. Иначе отправитель переписал бы себе чужой экземпляр одной строкой в
+ * JSON (`docs/exchange-contract.md`, раздел 2).
  */
-export const applicationIntakeSchema = z.object({
-	/** Идентификатор заявки в системе сайта: по нему повтор не создаёт дубля. */
-	externalId: requiredText(200, 'Укажите идентификатор заявки во внешней системе'),
-	organization: applicationOrganizationSchema,
-	contact: applicationContactSchema,
-	/** Чем интересуются — свободным текстом, как это написали на сайте. */
-	interest: optionalText(1000),
-	/** Программа справочника, если сайт знает её идентификатор. */
-	programId: optionalId('Некорректный идентификатор программы'),
-	/** Продукт справочника, если сайт знает его идентификатор. */
-	productId: optionalId('Некорректный идентификатор продукта'),
-	comment: optionalText(4000)
+export const exchangeSettingsSchema = z.object({
+	cms: z.object({
+		instance: instanceField.default('itschool-site'),
+		/** Куда уходит снимок статуса заявки; `null` — направление 2 выключено. */
+		statusUrl: statusUrlField.nullable().default(null),
+		/** Секрет подписи исходящих. Наружу не отдаётся — только признак «задан». */
+		secret: z.string().max(500).nullable().default(null),
+		/** Сотрудник, который принимает входящие заявки и ведёт их дальше. */
+		defaultOwnerUserId: z.uuid().nullable().default(null)
+	}),
+	lms: z.object({
+		instance: instanceField.default('moodle-itschool'),
+		/** Куда уходит заявка на учебную группу; `null` — кнопка недоступна. */
+		groupsUrl: outboundUrlField.nullable().default(null),
+		secret: z.string().max(500).nullable().default(null)
+	})
 });
 
-export type ApplicationIntakeInput = z.output<typeof applicationIntakeSchema>;
+export type ExchangeSettings = z.output<typeof exchangeSettingsSchema>;
 
-export const applicationResultSchema = z.object({
-	interactionId: z.uuid().describe('Взаимодействие, которым стала заявка'),
-	created: z
-		.boolean()
-		.describe('`false` — заявка с таким `externalId` уже принималась, вернулась прежняя запись')
+/** Те же настройки для экрана: вместо секрета — знает ли его система вообще. */
+export type ExchangeSettingsView = {
+	cms: {
+		instance: string;
+		statusUrl: string | null;
+		hasSecret: boolean;
+		defaultOwnerUserId: string | null;
+	};
+	lms: { instance: string; groupsUrl: string | null; hasSecret: boolean };
+};
+
+/**
+ * Форма настроек обмена. Пустое поле секрета означает «оставить прежний»:
+ * показать сохранённый нельзя, а требовать набирать его заново ради смены
+ * адреса значило бы заставлять хранить его в переписке.
+ */
+export const exchangeSettingsFormSchema = z.object({
+	cmsInstance: instanceField,
+	cmsStatusUrl: statusUrlField,
+	cmsSecret: optionalText(500),
+	cmsDefaultOwnerUserId: optionalId('Некорректный идентификатор сотрудника'),
+	lmsInstance: instanceField,
+	lmsGroupsUrl: outboundUrlField,
+	lmsSecret: optionalText(500)
 });
 
-export type ApplicationResult = z.output<typeof applicationResultSchema>;
+export type ExchangeSettingsFormInput = z.output<typeof exchangeSettingsFormSchema>;

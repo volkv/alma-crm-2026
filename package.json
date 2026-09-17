@@ -16,7 +16,7 @@
 		"format": "prettier --write .",
 		"test:unit": "vitest run --project unit",
 		"test:integration": "docker compose up -d --wait gotenberg && vitest run --project integration",
-		"test:e2e": "docker compose up -d --wait postgres redis gotenberg minio keycloak && docker compose run --rm minio-init && playwright test",
+		"test:e2e": "docker compose up -d --wait postgres redis gotenberg minio keycloak mock-cms mock-lms && docker compose run --rm minio-init && playwright test",
 		"mocks:cms": "node --env-file-if-exists=.env mocks/mock-cms/index.ts",
 		"mocks:lms": "node --env-file-if-exists=.env mocks/mock-lms/index.ts",
 		"db:generate": "drizzle-kit generate",

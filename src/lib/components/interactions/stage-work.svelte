@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
+	import { page } from '$app/state';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -10,6 +11,12 @@
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
+	import {
+		EXCHANGE_STATE_LABELS,
+		lmsEvidenceSchema,
+		type ExchangeMessageState,
+		type LearningGroupView
+	} from '$lib/contracts/exchange';
 	import type { InteractionDocumentView, StageEntryView } from '$lib/contracts/interactions';
 	import { formatDateTime } from '$lib/format';
 	import { actionEnhance } from './action-enhance';
@@ -61,6 +68,35 @@
 		await tick();
 		forms[key]?.requestSubmit();
 	}
+
+	/**
+	 * Обмен с системой обучения приезжает загрузчиком карточки. Панель читает его
+	 * из данных страницы, а не из свойства: «Стадия» — единственная вкладка, где
+	 * потоки и факты обучения нужны, и тащить их через всю карточку незачем.
+	 */
+	const exchange = $derived(
+		page.data.exchange as
+			| {
+					groups: LearningGroupView[];
+					nextStreamNumber: number;
+					canSend: boolean;
+					issue: string | null;
+			  }
+			| undefined
+	);
+
+	/** Факт системы обучения по этой стадии; `null` — его ещё не получали. */
+	const evidence = $derived(
+		entry === null ? null : (lmsEvidenceSchema.safeParse(entry.lmsEvidence).data ?? null)
+	);
+
+	const groupStateLabel = (state: ExchangeMessageState | null) =>
+		state === null ? 'заявка не отправлялась' : EXCHANGE_STATE_LABELS[state];
+
+	let streamNumber = $state<number | null>(null);
+	let plannedSeats = $state(30);
+	let startsOn = $state('');
+	let endsOn = $state('');
 </script>
 
 {#if entry === null}
@@ -223,6 +259,112 @@
 						</div>
 					</form>
 				</div>
+			</Card.Content>
+		</Card.Root>
+
+		<Card.Root size="sm" class="lg:col-span-2">
+			<Card.Header>
+				<Card.Title>Система обучения</Card.Title>
+				<Card.Description>
+					Поток заводится заявкой в систему обучения; результат она присылает сама и стадию
+					подтверждает, но никуда её не двигает — это решение сотрудника.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content class="flex flex-col gap-4">
+				{#if entry.snapshot.requiresLmsData}
+					{#if evidence === null}
+						<InlineHint tone="warning">
+							Стадии нужны данные системы обучения — их ещё не получали.
+						</InlineHint>
+					{:else}
+						<InlineHint tone="info">
+							Группа {evidence.groupExternalId}: зачислено {evidence.enrolled}, завершили {evidence.completed},
+							отчислены {evidence.expelled}. Результат от {formatDateTime(
+								new Date(evidence.occurredAt)
+							)}.
+						</InlineHint>
+					{/if}
+				{/if}
+
+				{#if exchange !== undefined && exchange.groups.length > 0}
+					<ul class="flex flex-col gap-2 text-sm">
+						{#each exchange.groups as group (group.id)}
+							<li class="rounded-md border border-border p-3">
+								<p class="font-medium">
+									Поток {group.streamNumber}
+									{#if group.groupExternalId !== null}
+										· группа <span class="font-mono">{group.groupExternalId}</span>
+									{/if}
+								</p>
+								<p class="text-xs text-muted-foreground">
+									{groupStateLabel(group.messageState)}
+									{#if group.plannedSeats !== null}
+										· мест {group.plannedSeats}
+									{/if}
+									{#if group.enrolled !== null}
+										· зачислено {group.enrolled}, завершили {group.completed}
+									{/if}
+								</p>
+								{#if group.lastError !== null}
+									<p class="text-xs text-danger-soft-foreground">{group.lastError}</p>
+								{/if}
+							</li>
+						{/each}
+					</ul>
+				{/if}
+
+				{#if exchange !== undefined}
+					{#if exchange.issue !== null}
+						<InlineHint tone="warning">{exchange.issue}</InlineHint>
+					{/if}
+
+					<form
+						method="POST"
+						action="?/sendGroup"
+						use:enhance={actionEnhance()}
+						class="grid items-end gap-3 sm:grid-cols-4"
+					>
+						<div class="flex flex-col gap-1.5">
+							<Label for="streamNumber">Поток</Label>
+							<Input
+								id="streamNumber"
+								name="streamNumber"
+								type="number"
+								min="1"
+								value={streamNumber ?? exchange.nextStreamNumber}
+								oninput={(event) =>
+									(streamNumber = Number((event.currentTarget as HTMLInputElement).value))}
+							/>
+						</div>
+						<div class="flex flex-col gap-1.5">
+							<Label for="plannedSeats">Мест в потоке</Label>
+							<Input
+								id="plannedSeats"
+								name="plannedSeats"
+								type="number"
+								min="1"
+								bind:value={plannedSeats}
+							/>
+						</div>
+						<div class="flex flex-col gap-1.5">
+							<Label for="startsOn">Начало занятий</Label>
+							<Input id="startsOn" name="startsOn" type="date" bind:value={startsOn} />
+						</div>
+						<div class="flex flex-col gap-1.5">
+							<Label for="endsOn">Окончание</Label>
+							<Input id="endsOn" name="endsOn" type="date" bind:value={endsOn} />
+						</div>
+						<div class="flex justify-end sm:col-span-4">
+							<Button
+								type="submit"
+								size="sm"
+								disabled={!exchange.canSend || exchange.issue !== null}
+							>
+								Отправить в LMS
+							</Button>
+						</div>
+					</form>
+				{/if}
 			</Card.Content>
 		</Card.Root>
 	</div>

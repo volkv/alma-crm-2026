@@ -35,6 +35,13 @@ const getOrganization = (await import('../../../src/routes/api/v1/organizations/
 const transitions = (
 	await import('../../../src/routes/api/v1/interactions/[id]/transitions/+server')
 ).POST as Endpoint;
+const applications = (await import('../../../src/routes/api/v1/applications/+server'))
+	.POST as Endpoint;
+const groupResults = (
+	await import('../../../src/routes/api/v1/exchange/learning-groups/results/+server')
+).POST as Endpoint;
+const exchangeFile = (await import('../../../src/routes/api/v1/exchange/files/[...key]/+server'))
+	.GET as Endpoint;
 const openApiDocument = (await import('../../../src/routes/api/openapi.json/+server'))
 	.GET as Endpoint;
 const docsPage = (await import('../../../src/routes/api/docs/+server')).GET as Endpoint;
@@ -562,6 +569,8 @@ describe('описание API', () => {
 		const paths = document.paths as unknown as Record<string, Record<string, unknown>>;
 		expect(Object.keys(paths).sort()).toEqual([
 			'/v1/applications',
+			'/v1/exchange/files/{key}',
+			'/v1/exchange/learning-groups/results',
 			'/v1/interactions',
 			'/v1/interactions/{id}',
 			'/v1/interactions/{id}/transitions',
@@ -852,5 +861,51 @@ describe('ключ машинного субъекта', () => {
 		const listing = await listOrganizations(get(issued.key, '/api/v1/organizations'));
 
 		expect(listing.status).toBe(200);
+	});
+
+	it('проходит границу на настоящих маршрутах обмена', async () => {
+		const issued = await issueKey('service');
+
+		// Тело намеренно пустое: проверяется не приём заявки — у него свой файл, —
+		// а то, что ключ роли `service` вообще пускают на эти маршруты. Отказ
+		// границы даёт 403 до всякого разбора тела, а разбор тела даёт 400.
+		const application = await applications(
+			apiEvent({
+				method: 'POST',
+				path: '/api/v1/applications',
+				routeId: '/api/v1/applications',
+				headers: bearer(issued.key, { 'content-type': 'application/json' }),
+				body: '{}'
+			})
+		);
+
+		expect(application.status).toBe(400);
+
+		const result = await groupResults(
+			apiEvent({
+				method: 'POST',
+				path: '/api/v1/exchange/learning-groups/results',
+				routeId: '/api/v1/exchange/learning-groups/results',
+				headers: bearer(issued.key, { 'content-type': 'application/json' }),
+				body: '{}'
+			})
+		);
+
+		expect(result.status).toBe(400);
+	});
+
+	it('не находит чужое вложение обмена: перебор ключей ничего не рассказывает', async () => {
+		const issued = await issueKey('service');
+
+		const response = await exchangeFile(
+			apiEvent({
+				path: '/api/v1/exchange/files/files/00000000-0000-4000-8000-000000000000',
+				routeId: '/api/v1/exchange/files/[...key]',
+				params: { key: 'files/00000000-0000-4000-8000-000000000000' },
+				headers: bearer(issued.key)
+			})
+		);
+
+		expect(response.status).toBe(404);
 	});
 });

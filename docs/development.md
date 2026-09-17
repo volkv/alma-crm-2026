@@ -38,24 +38,24 @@
 
 ## Скрипты
 
-| Скрипт                      | Что делает                                                                                                          |
-| --------------------------- | ------------------------------------------------------------------------------------------------------------------- |
-| `pnpm dev`                  | Dev-сервер Vite на http://localhost:5173 с HMR                                                                      |
-| `pnpm build`                | Production-сборка в `build/` (adapter-node)                                                                         |
-| `pnpm preview`              | Просмотр production-сборки через Vite                                                                               |
-| `pnpm run check`            | `svelte-check` — типы в `.ts` и `.svelte`                                                                           |
-| `pnpm run lint`             | ESLint + проверка форматирования Prettier                                                                           |
-| `pnpm run format`           | Форматирование всего репозитория                                                                                    |
-| `pnpm run test:unit`        | Модульные тесты (`tests/unit`), Vitest, без внешних сервисов                                                        |
-| `pnpm run test:integration` | Интеграционные тесты: PostgreSQL, Redis и MinIO — в testcontainers, `gotenberg` из compose, `pdftotext` — в системе |
-| `pnpm run test:e2e`         | Поднимает `postgres`, `redis`, `gotenberg` и `minio` в compose, заводит бакеты и гоняет Playwright по `e2e/`        |
-| `pnpm run db:generate`      | Генерирует SQL-миграцию по изменениям схемы в `drizzle/`                                                            |
-| `pnpm run db:migrate`       | Применяет миграции из `drizzle/` к базе из `DATABASE_URL`                                                           |
-| `pnpm run db:studio`        | Drizzle Studio — браузер по данным                                                                                  |
-| `pnpm run check:audit`      | `pnpm audit --prod --audit-level=high` — уязвимости в том, что едет в образ                                         |
-| `pnpm run check:docker`     | `docker build .` — образ должен собираться                                                                          |
-| `pnpm run check:fast`       | Быстрый круг: lint → check → unit; без Docker и без сборки                                                          |
-| `pnpm run check:all`        | Полный гейт: audit → lint → check → unit → integration → build → e2e → образ                                        |
+| Скрипт                      | Что делает                                                                                                                                      |
+| --------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm dev`                  | Dev-сервер Vite на http://localhost:5173 с HMR                                                                                                  |
+| `pnpm build`                | Production-сборка в `build/` (adapter-node)                                                                                                     |
+| `pnpm preview`              | Просмотр production-сборки через Vite                                                                                                           |
+| `pnpm run check`            | `svelte-check` — типы в `.ts` и `.svelte`                                                                                                       |
+| `pnpm run lint`             | ESLint + проверка форматирования Prettier                                                                                                       |
+| `pnpm run format`           | Форматирование всего репозитория                                                                                                                |
+| `pnpm run test:unit`        | Модульные тесты (`tests/unit`), Vitest, без внешних сервисов                                                                                    |
+| `pnpm run test:integration` | Интеграционные тесты: PostgreSQL, Redis и MinIO — в testcontainers, `gotenberg` из compose, `pdftotext` — в системе                             |
+| `pnpm run test:e2e`         | Поднимает `postgres`, `redis`, `gotenberg`, `minio`, `keycloak` и имитаторы `mock-cms`/`mock-lms`, заводит бакеты и гоняет Playwright по `e2e/` |
+| `pnpm run db:generate`      | Генерирует SQL-миграцию по изменениям схемы в `drizzle/`                                                                                        |
+| `pnpm run db:migrate`       | Применяет миграции из `drizzle/` к базе из `DATABASE_URL`                                                                                       |
+| `pnpm run db:studio`        | Drizzle Studio — браузер по данным                                                                                                              |
+| `pnpm run check:audit`      | `pnpm audit --prod --audit-level=high` — уязвимости в том, что едет в образ                                                                     |
+| `pnpm run check:docker`     | `docker build .` — образ должен собираться                                                                                                      |
+| `pnpm run check:fast`       | Быстрый круг: lint → check → unit; без Docker и без сборки                                                                                      |
+| `pnpm run check:all`        | Полный гейт: audit → lint → check → unit → integration → build → e2e → образ                                                                    |
 
 `check:fast` гоняем в цикле правки, `check:all` — перед тем, как считать работу законченной.
 `check:all` — это и есть CI: задача workflow не делает ничего сверх него, поэтому зелёный

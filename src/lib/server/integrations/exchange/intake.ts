@@ -1,0 +1,1141 @@
+/**
+ * Приём заявки с сайта: направление 1 контракта обмена.
+ *
+ * Заявка не заводит в системе третью сущность рядом с контрагентом и
+ * взаимодействием. Она сразу становится тем, чем является: обращением, которое
+ * кто-то должен вести. Поэтому здесь только сборка — найти или завести
+ * контрагента, контактное лицо и его роль, — а дальше работают обычные сервисы
+ * справочника, взаимодействий и стадий, с их правами, проверками и журналом.
+ *
+ * **Кто применяет заявку.** Ключом её приносит машинный субъект роли `service`:
+ * у него есть право `exchange.intake` и нет ни `organizations.write`, ни
+ * `interactions.write` — и это правильно, чужая система не ведёт справочник.
+ * Доменные операции выполняет сотрудник из настройки
+ * `exchange.cms.defaultOwnerUserId`: он принимает входящие, он же становится
+ * ответственным, его именем подписан первый комментарий и его права проверяются.
+ * Ключ при этом не теряется — он остаётся в каждой записи журнала (`api_key_id`).
+ *
+ * **Сопоставление контрагента идёт по всей базе**, без области доступа: CMS не
+ * знает, кто ведёт вуз, а вторая организация с тем же ИНН — это не решение, а
+ * поломка справочника. Назначение на сотрудника создаётся до создания
+ * взаимодействия — иначе заявка пришла бы и в ту же секунду пропала из виду у
+ * того, кому её поручили.
+ *
+ * **Атомарность.** Строка журнала обмена, доменные изменения и сохранённый
+ * ответ пишутся одной транзакцией (`docs/exchange-contract.md`, раздел 2).
+ * Строка журнала вставляется **первой**: её уникальность `(direction, system,
+ * instance, event_id)` и есть защита от второй обработки того же сообщения, в
+ * том числе от двух одновременных доставок.
+ */
+import { createHash } from 'node:crypto';
+import { and, eq, inArray, sql } from 'drizzle-orm';
+import {
+	APPLICATION_STATUSES,
+	EXCHANGE_SCHEMA_VERSION,
+	PROCESS_GROUP_BY_APPLICANT,
+	externalSourceOf,
+	isSupportedSchemaVersion,
+	type ApplicationIntakeResponse,
+	type ApplicationSubmittedData,
+	type ApplicationSubmittedMessage,
+	type ExchangeResult
+} from '$lib/contracts/exchange';
+import type { PartyRole } from '$lib/contracts/interactions';
+import { formatIsoDay } from '$lib/format';
+import type { ActorContext } from '../../actor';
+import { recordAuditEvent } from '../../audit';
+import { loadSessionUser } from '../../auth/session';
+import { getDb } from '../../db';
+import {
+	affiliations,
+	consents,
+	contractItems,
+	exchangeMessages,
+	interactionContractItems,
+	interactionProducts,
+	interactionPrograms,
+	interactions,
+	organizationResponsibles,
+	organizations,
+	people,
+	processGroups,
+	products,
+	programs,
+	users
+} from '../../db/schema';
+import { withTransaction, type Tx } from '../../db/transaction';
+import { createAffiliation, createOrganization, createPerson } from '../../directory/write';
+import { ConflictError, ForbiddenError, ValidationError } from '../../errors';
+import { createInteractionIn } from '../../interactions/write';
+import { withPiiTrace } from '../../people/pii-trace';
+import { requirePermission } from '../../rbac';
+import { addComment } from '../../stages/commands';
+import { getExchangeSettings } from '../settings';
+import { enqueueApplicationStatus } from './outbox';
+
+/** Код PostgreSQL «нарушена уникальность». */
+const UNIQUE_VIOLATION = '23505';
+
+/** Должность контактного лица, когда сайт её не спросил. */
+const DEFAULT_POSITION = 'Контактное лицо (заявка с сайта)';
+
+/** Кем контрагент участвует во взаимодействии — по его виду в справочнике. */
+const PARTY_ROLE_BY_KIND: Record<string, PartyRole> = {
+	// Контрагент группы B2C учится сам и сам платит: в ролях сторон это заказчик.
+	individual: 'customer',
+	legal_entity: 'customer',
+	educational_institution: 'educational_institution'
+};
+
+function isUniqueViolation(error: unknown): boolean {
+	let current: unknown = error;
+
+	while (current instanceof Error) {
+		if ((current as { code?: unknown }).code === UNIQUE_VIOLATION) {
+			return true;
+		}
+
+		current = current.cause;
+	}
+
+	return false;
+}
+
+/** Отпечаток запроса: по нему настоящий повтор отличается от другого тела. */
+export function hashMessage(message: unknown): string {
+	return createHash('sha256').update(JSON.stringify(message), 'utf8').digest('hex');
+}
+
+/** Название взаимодействия: по нему заявку узнают в списке. */
+function interactionTitle(name: string, interest: string | null): string {
+	const base = `Заявка с сайта: ${name}`;
+
+	return (interest === null ? base : `${base} — ${interest}`).slice(0, 300);
+}
+
+/** Имя контрагента-физлица: ФИО из заявки, отдельной копии не появляется. */
+function applicantName(data: ApplicationSubmittedData): string {
+	const applicant = data.applicant;
+
+	if (applicant.kind === 'individual') {
+		return [applicant.lastName, applicant.firstName, applicant.middleName]
+			.filter((part) => part !== null && part !== '')
+			.join(' ');
+	}
+
+	return applicant.name;
+}
+
+/** Телефон в виде «только цифры»: ключ сверки физлица, когда почты нет. */
+function digitsOf(phone: string | null): string | null {
+	if (phone === null) {
+		return null;
+	}
+
+	const digits = phone.replace(/\D/g, '');
+
+	return digits === '' ? null : digits;
+}
+
+/**
+ * Первый комментарий: то, что написал заявитель, слово в слово, и расхождения
+ * справочника рядом. Неизвестный код программы заявку не отвергает — заявка,
+ * потерянная из-за опечатки в коде продукта, это потерянный вуз.
+ */
+function intakeComment(data: ApplicationSubmittedData, unknownCodes: readonly string[]): string {
+	const lines: string[] = [];
+
+	if (data.interest !== null) {
+		lines.push(`Интересует: ${data.interest}`);
+	}
+
+	if (data.comment !== null) {
+		lines.push(data.comment);
+	}
+
+	if (unknownCodes.length > 0) {
+		lines.push(`Коды справочника не опознаны: ${unknownCodes.join(', ')}`);
+	}
+
+	if (data.attachments.length > 0) {
+		lines.push(
+			`К заявке приложены файлы (${data.attachments.map((file) => file.name).join(', ')}); ` +
+				'заберите их у отправителя и приложите к карточке.'
+		);
+	}
+
+	return lines.join('\n\n').slice(0, 4000);
+}
+
+/**
+ * Сотрудник, который принимает входящие заявки.
+ *
+ * Настройка не задана — берём демонстрационного менеджера, если он в системе
+ * есть: стенд обязан принимать заявку сразу после сида, не требуя похода в
+ * настройки. Нет и его — заявка отвергается с указанием, что настроить: тихо
+ * назначить робота хуже, чем отказать.
+ */
+async function resolveIntakeOwner(tx: Tx, configured: string | null): Promise<string> {
+	if (configured !== null) {
+		const [row] = await tx
+			.select({ id: users.id, roleId: users.roleId })
+			.from(users)
+			.where(and(eq(users.id, configured), eq(users.isActive, true)))
+			.limit(1);
+
+		if (row === undefined) {
+			throw new ValidationError('Ответственный за входящие заявки недоступен', [
+				'Настройка «Ответственный за входящие» указывает на выключенного или несуществующего сотрудника'
+			]);
+		}
+
+		if (row.roleId === 'service') {
+			throw new ValidationError('Ответственный за входящие заявки указан неверно', [
+				'Машинный субъект не ведёт заявки: выберите живого сотрудника'
+			]);
+		}
+
+		return row.id;
+	}
+
+	const [demo] = await tx
+		.select({ id: users.id })
+		.from(users)
+		.where(and(eq(users.isDemo, true), eq(users.isActive, true), eq(users.roleId, 'manager')))
+		.orderBy(users.email)
+		.limit(1);
+
+	if (demo === undefined) {
+		throw new ValidationError('Ответственный за входящие заявки не настроен', [
+			'Укажите сотрудника в разделе «Настройки → Интеграции», поле «Ответственный за входящие заявки»'
+		]);
+	}
+
+	return demo.id;
+}
+
+/**
+ * Действующее лицо доменных операций: сотрудник, принимающий входящие.
+ *
+ * Ключ, запрос и адрес остаются теми же — меняется только тот, от чьего имени
+ * заводятся записи. Так в журнале видно и живого ответственного, и ключ, которым
+ * заявку принесли, а права и область считаются по обычным правилам.
+ */
+async function ownerActor(ctx: ActorContext, ownerUserId: string): Promise<ActorContext> {
+	const owner = await loadSessionUser(ownerUserId);
+
+	if (owner === null) {
+		throw new ValidationError('Ответственный за входящие заявки недоступен', [
+			'Учётная запись ответственного выключена: заявку некому вести'
+		]);
+	}
+
+	return { ...ctx, user: owner, scope: owner.scope };
+}
+
+type Counterparty = {
+	organizationId: string;
+	personId: string | null;
+	/** Реквизитов не прислали — контрагента завели вслепую, нужна сверка. */
+	needsReview: boolean;
+	created: boolean;
+};
+
+/** Организация по ИНН, а при его отсутствии — по ОГРН. По названию — никогда. */
+async function findOrganization(
+	tx: Tx,
+	inn: string | null,
+	ogrn: string | null
+): Promise<{ id: string; inn: string | null } | null> {
+	if (inn !== null) {
+		const [row] = await tx
+			.select({ id: organizations.id, inn: organizations.inn })
+			.from(organizations)
+			.where(eq(organizations.inn, inn))
+			.limit(1);
+
+		return row ?? null;
+	}
+
+	if (ogrn !== null) {
+		const [row] = await tx
+			.select({ id: organizations.id, inn: organizations.inn })
+			.from(organizations)
+			.where(eq(organizations.ogrn, ogrn))
+			.limit(1);
+
+		return row ?? null;
+	}
+
+	return null;
+}
+
+/** Контрагент-физлицо: по нормализованной почте, затем по цифрам телефона. */
+async function findIndividual(
+	tx: Tx,
+	email: string,
+	phone: string | null
+): Promise<{ id: string; personId: string | null } | null> {
+	const [byEmail] = await tx
+		.select({ id: organizations.id, personId: organizations.personId })
+		.from(organizations)
+		.innerJoin(people, eq(people.id, organizations.personId))
+		.where(and(eq(organizations.kind, 'individual'), eq(sql`lower(${people.email})`, email)))
+		.limit(1);
+
+	if (byEmail !== undefined) {
+		return byEmail;
+	}
+
+	const digits = digitsOf(phone);
+
+	if (digits === null) {
+		return null;
+	}
+
+	const [byPhone] = await tx
+		.select({ id: organizations.id, personId: organizations.personId })
+		.from(organizations)
+		.innerJoin(people, eq(people.id, organizations.personId))
+		.where(
+			and(
+				eq(organizations.kind, 'individual'),
+				eq(sql`regexp_replace(coalesce(${people.phone}, ''), '\\D', '', 'g')`, digits)
+			)
+		)
+		.limit(1);
+
+	return byPhone ?? null;
+}
+
+/**
+ * Контрагент-физлицо заводится здесь, а не сервисом справочника: форма
+ * справочника такого контрагента не заводит вовсе (`ORGANIZATION_FORM_KINDS`), а
+ * `createOrganization` не принимает `person_id` — связь организации с человеком
+ * появляется только вместе с заявкой. ФИО, контакты и согласие ложатся в
+ * `people`, где работают маскирование, срок хранения и обезличивание; копии ФИО
+ * в полях организации не появляется — название и есть ФИО.
+ */
+async function createIndividual(
+	ctx: ActorContext,
+	tx: Tx,
+	data: ApplicationSubmittedData
+): Promise<{ organizationId: string; personId: string }> {
+	const applicant = data.applicant;
+
+	if (applicant.kind !== 'individual') {
+		throw new ValidationError('Заявитель — не физическое лицо', []);
+	}
+
+	const person = await createPerson(
+		ctx,
+		{
+			lastName: applicant.lastName,
+			firstName: applicant.firstName,
+			middleName: applicant.middleName,
+			email: data.contact.email,
+			phone: data.contact.phone,
+			notes: null
+		},
+		tx
+	);
+
+	const name = applicantName(data);
+	const [organization] = await tx
+		.insert(organizations)
+		.values({
+			kind: 'individual',
+			educationLevel: null,
+			legalName: name,
+			shortName: name.slice(0, 200),
+			personId: person.id,
+			isActive: true
+		})
+		.returning({ id: organizations.id });
+
+	await recordAuditEvent(
+		ctx,
+		{
+			type: 'organizations.created',
+			outcome: 'success',
+			subject: { type: 'organization', id: organization.id },
+			details: { personId: person.id }
+		},
+		tx
+	);
+
+	return { organizationId: organization.id, personId: person.id };
+}
+
+/**
+ * Действующее назначение сотрудника на контрагента; нет — создаётся.
+ *
+ * Не `assignResponsible`: тот открывает свою транзакцию и требует
+ * `responsibles.manage` — права, которого у принимающего сотрудника нет и не
+ * должно быть. Здесь другой случай: назначение не раздают, а достраивают до
+ * того, что уже решено настройкой, и только когда действующего назначения нет
+ * ни одного. Прежних назначений эта строка не трогает.
+ */
+async function ensureResponsible(
+	ctx: ActorContext,
+	tx: Tx,
+	organizationId: string,
+	userId: string
+): Promise<void> {
+	const existing = await tx
+		.select({ id: organizationResponsibles.id, userId: organizationResponsibles.userId })
+		.from(organizationResponsibles)
+		.where(
+			and(
+				eq(organizationResponsibles.organizationId, organizationId),
+				sql`${organizationResponsibles.validTo} is null`
+			)
+		);
+
+	if (existing.length > 0) {
+		return;
+	}
+
+	await tx.insert(organizationResponsibles).values({ organizationId, userId });
+
+	await recordAuditEvent(
+		ctx,
+		{
+			type: 'directory.responsible_assigned',
+			outcome: 'success',
+			subject: { type: 'organization', id: organizationId },
+			details: { organizationId, userId }
+		},
+		tx
+	);
+}
+
+/** Контакт, который уже числится в этой организации под тем же адресом почты. */
+async function findContact(
+	tx: Tx,
+	organizationId: string,
+	email: string
+): Promise<{ affiliationId: string; personId: string } | null> {
+	const [row] = await tx
+		.select({ affiliationId: affiliations.id, personId: people.id })
+		.from(affiliations)
+		.innerJoin(people, eq(people.id, affiliations.personId))
+		.where(
+			and(
+				eq(affiliations.organizationId, organizationId),
+				eq(sql`lower(${people.email})`, email.toLowerCase())
+			)
+		)
+		.limit(1);
+
+	return row ?? null;
+}
+
+/** Коды справочника → идентификаторы; неопознанные возвращаются отдельно. */
+async function resolveCatalogue(
+	tx: Tx,
+	data: ApplicationSubmittedData
+): Promise<{ programIds: string[]; productIds: string[]; unknown: string[] }> {
+	const unknown: string[] = [];
+	const programIds: string[] = [];
+	const productIds: string[] = [];
+
+	if (data.programCodes.length > 0) {
+		const rows = await tx
+			.select({ id: programs.id, code: programs.code })
+			.from(programs)
+			.where(inArray(programs.code, data.programCodes));
+
+		const found = new Map(rows.map((row) => [row.code, row.id]));
+
+		for (const code of data.programCodes) {
+			const id = found.get(code);
+
+			if (id === undefined) {
+				unknown.push(code);
+			} else {
+				programIds.push(id);
+			}
+		}
+	}
+
+	if (data.productCodes.length > 0) {
+		const rows = await tx
+			.select({ id: products.id, code: products.code })
+			.from(products)
+			.where(inArray(products.code, data.productCodes));
+
+		const found = new Map(rows.map((row) => [row.code, row.id]));
+
+		for (const code of data.productCodes) {
+			const id = found.get(code);
+
+			if (id === undefined) {
+				unknown.push(code);
+			} else {
+				productIds.push(id);
+			}
+		}
+	}
+
+	return { programIds, productIds, unknown };
+}
+
+/**
+ * Статус по передаче ложится на позицию договора, а не на взаимодействие и уж
+ * тем более не на стадию: стадию меняет только действие человека. Позиции
+ * берутся те, что уже выбраны взаимодействием и относятся к продуктам заявки —
+ * чужие позиции того же договора остаются как были.
+ */
+async function applyTransferStatus(
+	tx: Tx,
+	interactionId: string,
+	productIds: readonly string[],
+	transferStatus: string | null
+): Promise<void> {
+	if (transferStatus === null || productIds.length === 0) {
+		return;
+	}
+
+	const rows = await tx
+		.select({ id: contractItems.id })
+		.from(interactionContractItems)
+		.innerJoin(contractItems, eq(contractItems.id, interactionContractItems.contractItemId))
+		.where(
+			and(
+				eq(interactionContractItems.interactionId, interactionId),
+				inArray(contractItems.productId, [...productIds])
+			)
+		);
+
+	if (rows.length === 0) {
+		return;
+	}
+
+	await tx
+		.update(contractItems)
+		.set({ transferStatus, updatedAt: sql`now()` })
+		.where(
+			inArray(
+				contractItems.id,
+				rows.map((row) => row.id)
+			)
+		);
+}
+
+/** Согласие физлица: запись, а не галочка, — у неё есть версия текста и дата. */
+async function recordApplicationConsent(
+	ctx: ActorContext,
+	tx: Tx,
+	personId: string,
+	consent: { given: boolean; at: string; policyVersion: string }
+): Promise<void> {
+	const existing = await tx
+		.select({ id: consents.id })
+		.from(consents)
+		.where(and(eq(consents.personId, personId), eq(consents.textVersion, consent.policyVersion)))
+		.limit(1);
+
+	if (existing.length > 0) {
+		return;
+	}
+
+	const [row] = await tx
+		.insert(consents)
+		.values({
+			personId,
+			basis: 'consent',
+			textVersion: consent.policyVersion,
+			givenAt: consent.at.slice(0, 10),
+			recordedBy: ctx.user?.id ?? null
+		})
+		.returning({ id: consents.id });
+
+	await recordAuditEvent(
+		ctx,
+		{
+			type: 'people.consent_recorded',
+			outcome: 'success',
+			subject: { type: 'consent', id: row.id },
+			details: { personId }
+		},
+		tx
+	);
+}
+
+/** Контрагент заявки: найден или заведён. */
+async function resolveCounterparty(
+	ctx: ActorContext,
+	tx: Tx,
+	data: ApplicationSubmittedData
+): Promise<Counterparty> {
+	const applicant = data.applicant;
+
+	if (applicant.kind === 'individual') {
+		if (data.consent === null || !data.consent.given) {
+			throw new ValidationError('Заявка физического лица без согласия не принимается', [
+				'data.consent: без согласия на обработку персональных данных физическое лицо не заводится'
+			]);
+		}
+
+		const found = await findIndividual(tx, data.contact.email.toLowerCase(), data.contact.phone);
+
+		if (found !== null) {
+			return {
+				organizationId: found.id,
+				personId: found.personId,
+				needsReview: false,
+				created: false
+			};
+		}
+
+		const created = await createIndividual(ctx, tx, data);
+
+		return {
+			organizationId: created.organizationId,
+			personId: created.personId,
+			needsReview: false,
+			created: true
+		};
+	}
+
+	const found = await findOrganization(tx, applicant.inn, applicant.ogrn);
+
+	if (found !== null) {
+		return { organizationId: found.id, personId: null, needsReview: false, created: false };
+	}
+
+	const organization = await createOrganization(
+		ctx,
+		{
+			kind: applicant.kind,
+			educationLevel:
+				applicant.kind === 'educational_institution' ? applicant.educationLevel : null,
+			// С сайта приходит одно название; полным и кратким становится оно же,
+			// пока сотрудник не уточнит реквизиты.
+			legalName: applicant.name,
+			shortName: applicant.name.slice(0, 200),
+			inn: applicant.inn,
+			kpp: null,
+			ogrn: applicant.ogrn,
+			region: null,
+			website: null,
+			notes: null,
+			isActive: true,
+			externalSource: null,
+			externalId: null
+		},
+		tx
+	);
+
+	return {
+		organizationId: organization.id,
+		personId: null,
+		// Ни ИНН, ни ОГРН: контрагента завели вслепую, и это честнее отказа —
+		// заявка с сайта часто приходит без реквизитов, и терять её нельзя.
+		needsReview: applicant.inn === null && applicant.ogrn === null,
+		created: true
+	};
+}
+
+type ApplyOutcome = {
+	result: ExchangeResult;
+	interactionId: string;
+	organizationId: string;
+	contactPersonId: string | null;
+	processGroup: string;
+	needsReview: boolean;
+};
+
+/** Обновление существующего взаимодействия: CMS — хозяин данных заявителя. */
+async function updateExisting(
+	ctx: ActorContext,
+	tx: Tx,
+	existing: { id: string; externalRevision: number | null; organizationId: string },
+	data: ApplicationSubmittedData
+): Promise<ApplyOutcome | null> {
+	// Порядок определяется ревизией отправителя, а не временем: сравнение и
+	// запись идут под блокировкой строки взаимодействия, иначе два параллельных
+	// обновления оба сочли бы себя новее.
+	const [locked] = await tx
+		.select({ id: interactions.id, externalRevision: interactions.externalRevision })
+		.from(interactions)
+		.where(eq(interactions.id, existing.id))
+		.for('update');
+
+	if (locked.externalRevision !== null && locked.externalRevision >= data.revision) {
+		return null;
+	}
+
+	const contact = await findContact(tx, existing.organizationId, data.contact.email);
+	let contactPersonId = contact?.personId ?? null;
+
+	if (contact === null) {
+		const person = await createPerson(
+			ctx,
+			{
+				lastName: data.contact.lastName,
+				firstName: data.contact.firstName,
+				middleName: data.contact.middleName,
+				email: data.contact.email,
+				phone: data.contact.phone,
+				notes: null
+			},
+			tx
+		);
+
+		contactPersonId = person.id;
+
+		await createAffiliation(
+			ctx,
+			{
+				personId: person.id,
+				organizationId: existing.organizationId,
+				siteId: null,
+				position: data.contact.position ?? DEFAULT_POSITION,
+				roleKind: 'other',
+				isPrimary: false,
+				validFrom: formatIsoDay(),
+				validTo: null,
+				channel: null
+			},
+			tx
+		);
+	} else {
+		// Контакты заявителя обновляются: их хозяин — сайт. Ответственный, стадия,
+		// история и контрагент не трогаются никогда.
+		await tx
+			.update(people)
+			.set({
+				lastName: data.contact.lastName,
+				firstName: data.contact.firstName,
+				middleName: data.contact.middleName,
+				phone: data.contact.phone,
+				updatedAt: sql`now()`
+			})
+			.where(eq(people.id, contact.personId));
+	}
+
+	const catalogue = await resolveCatalogue(tx, data);
+
+	if (catalogue.programIds.length > 0) {
+		await tx
+			.insert(interactionPrograms)
+			.values(
+				catalogue.programIds.map((programId) => ({
+					interactionId: existing.id,
+					programId,
+					programVersionId: null
+				}))
+			)
+			.onConflictDoNothing();
+	}
+
+	if (catalogue.productIds.length > 0) {
+		await tx
+			.insert(interactionProducts)
+			.values(catalogue.productIds.map((productId) => ({ interactionId: existing.id, productId })))
+			.onConflictDoNothing();
+	}
+
+	await applyTransferStatus(tx, existing.id, catalogue.productIds, data.transferStatus);
+
+	await tx
+		.update(interactions)
+		.set({ externalRevision: data.revision, updatedAt: sql`now()` })
+		.where(eq(interactions.id, existing.id));
+
+	const comment = intakeComment(data, catalogue.unknown);
+
+	if (comment !== '') {
+		// Комментарий приписывается, а не затирает прежний: повтор ничего не
+		// удаляет.
+		await addComment(ctx, { interactionId: existing.id, body: comment }, tx);
+	}
+
+	const [{ personId }] = await tx
+		.select({ personId: organizations.personId })
+		.from(organizations)
+		.where(eq(organizations.id, existing.organizationId))
+		.limit(1);
+
+	if (personId !== null && data.consent !== null && data.consent.given) {
+		await recordApplicationConsent(ctx, tx, personId, data.consent);
+	}
+
+	const [group] = await tx
+		.select({ key: processGroups.key })
+		.from(interactions)
+		.innerJoin(processGroups, eq(processGroups.id, interactions.processGroupId))
+		.where(eq(interactions.id, existing.id))
+		.limit(1);
+
+	return {
+		result: 'updated',
+		interactionId: existing.id,
+		organizationId: existing.organizationId,
+		contactPersonId: contactPersonId,
+		processGroup: group.key,
+		needsReview: false
+	};
+}
+
+/** Заведение взаимодействия по заявке. */
+async function createFromApplication(
+	ctx: ActorContext,
+	tx: Tx,
+	data: ApplicationSubmittedData,
+	source: string,
+	ownerUserId: string
+): Promise<ApplyOutcome> {
+	const counterparty = await resolveCounterparty(ctx, tx, data);
+
+	// Назначение — до создания взаимодействия: область считается по действующим
+	// назначениям, и без него сотрудник не увидел бы ни контрагента, ни заявку.
+	await ensureResponsible(ctx, tx, counterparty.organizationId, ownerUserId);
+
+	const contact = await findContact(tx, counterparty.organizationId, data.contact.email);
+	let contactPersonId = contact?.personId ?? counterparty.personId;
+	let affiliationId = contact?.affiliationId ?? null;
+
+	if (contact === null) {
+		const person = await createPerson(
+			ctx,
+			{
+				lastName: data.contact.lastName,
+				firstName: data.contact.firstName,
+				middleName: data.contact.middleName,
+				email: data.contact.email,
+				phone: data.contact.phone,
+				notes: null
+			},
+			tx
+		);
+
+		const affiliation = await createAffiliation(
+			ctx,
+			{
+				personId: person.id,
+				organizationId: counterparty.organizationId,
+				siteId: null,
+				position: data.contact.position ?? DEFAULT_POSITION,
+				roleKind: 'other',
+				isPrimary: true,
+				validFrom: formatIsoDay(),
+				validTo: null,
+				channel: null
+			},
+			tx
+		);
+
+		affiliationId = affiliation.id;
+		contactPersonId = person.id;
+	}
+
+	const catalogue = await resolveCatalogue(tx, data);
+
+	// Группа процесса и её действующая редакция читаются внутри транзакции, под
+	// разделяемой блокировкой группы: это делает `createInteractionIn`. Группа
+	// выводится из вида контрагента — единственной таблицей соответствий.
+	const interactionId = await createInteractionIn(ctx, tx, {
+		title: interactionTitle(applicantName(data), data.interest),
+		agreementPeriodStart: null,
+		agreementPeriodEnd: null,
+		academicPeriodStart: null,
+		academicPeriodEnd: null,
+		ownerUserId,
+		parties: [
+			{
+				organizationId: counterparty.organizationId,
+				partyRole: PARTY_ROLE_BY_KIND[data.applicant.kind],
+				isPrimary: true,
+				contactAffiliationId: affiliationId,
+				siteIds: []
+			}
+		],
+		programs: catalogue.programIds.map((programId) => ({ programId, programVersionId: null })),
+		productIds: catalogue.productIds,
+		externalSource: source,
+		externalId: data.externalId
+	});
+
+	await tx
+		.update(interactions)
+		.set({ externalRevision: data.revision })
+		.where(eq(interactions.id, interactionId));
+
+	const comment = intakeComment(data, catalogue.unknown);
+
+	if (comment !== '') {
+		await addComment(ctx, { interactionId, body: comment }, tx);
+	}
+
+	if (counterparty.personId !== null && data.consent !== null && data.consent.given) {
+		await recordApplicationConsent(ctx, tx, counterparty.personId, data.consent);
+	}
+
+	return {
+		result: 'created',
+		interactionId,
+		organizationId: counterparty.organizationId,
+		contactPersonId,
+		processGroup: PROCESS_GROUP_BY_APPLICANT[data.applicant.kind],
+		needsReview: counterparty.needsReview
+	};
+}
+
+/** Взаимодействие, которым уже стала заявка с этим ключом. */
+async function findExisting(
+	tx: Tx,
+	source: string,
+	externalId: string
+): Promise<{ id: string; externalRevision: number | null; organizationId: string } | null> {
+	const [row] = await tx
+		.select({
+			id: interactions.id,
+			externalRevision: interactions.externalRevision
+		})
+		.from(interactions)
+		.where(and(eq(interactions.externalSource, source), eq(interactions.externalId, externalId)))
+		.limit(1);
+
+	if (row === undefined) {
+		return null;
+	}
+
+	const [primary] = await tx.execute<{ organization_id: string }>(
+		sql`select organization_id from interaction_parties where interaction_id = ${row.id} and is_primary limit 1`
+	);
+
+	return {
+		id: row.id,
+		externalRevision: row.externalRevision,
+		organizationId: primary.organization_id
+	};
+}
+
+/**
+ * Ответ на повтор: тот же, что был сохранён при первом приёме. `null` — этого
+ * сообщения в журнале нет, значит, на уникальности разошлось что-то другое.
+ */
+async function savedResponse(
+	instance: string,
+	eventId: string,
+	requestHash: string
+): Promise<ApplicationIntakeResponse | null> {
+	const [row] = await getDb()
+		.select({
+			requestHash: exchangeMessages.requestHash,
+			responseBody: exchangeMessages.responseBody
+		})
+		.from(exchangeMessages)
+		.where(
+			and(
+				eq(exchangeMessages.direction, 'inbound'),
+				eq(exchangeMessages.system, 'cms'),
+				eq(exchangeMessages.instance, instance),
+				eq(exchangeMessages.eventId, eventId)
+			)
+		)
+		.limit(1);
+
+	if (row === undefined) {
+		return null;
+	}
+
+	if (row.requestHash !== requestHash) {
+		// Тот же `eventId` с другим телом — это другой запрос под старым именем.
+		// Повторять его бессмысленно, поэтому отказ окончательный.
+		throw new ConflictError(
+			'Событие с этим eventId уже принято с другим телом: повтор обязан нести то же сообщение'
+		);
+	}
+
+	if (row.responseBody === null) {
+		// Строка есть, а ответа в ней нет: первый приём упал, не дойдя до записи
+		// ответа. Отправитель повторит по своему расписанию, и тогда сообщение
+		// либо найдёт готовый ответ, либо применится заново.
+		throw new ConflictError('Сообщение с этим eventId ещё обрабатывается: повторите запрос позже');
+	}
+
+	const body = row.responseBody as ApplicationIntakeResponse;
+
+	return { ...body, result: 'unchanged' };
+}
+
+export async function receiveApplication(
+	ctx: ActorContext,
+	message: ApplicationSubmittedMessage
+): Promise<ApplicationIntakeResponse> {
+	requirePermission(ctx, 'exchange.intake');
+
+	if (!isSupportedSchemaVersion(message.schemaVersion)) {
+		throw new ValidationError('Версия схемы сообщения не поддерживается', [
+			`schemaVersion: ${message.schemaVersion} несовместима с ${EXCHANGE_SCHEMA_VERSION}`
+		]);
+	}
+
+	const settings = await getExchangeSettings();
+
+	// Экземпляр определяется подключением, а не полем из тела: иначе отправитель
+	// переписал бы себе чужой экземпляр одной строкой в JSON и заявка со стенда
+	// склеилась бы с боевой.
+	if (message.source.instance !== settings.cms.instance) {
+		throw new ForbiddenError(
+			`Экземпляр «${message.source.instance}» не совпадает с подключением обмена`
+		);
+	}
+
+	const declared = PROCESS_GROUP_BY_APPLICANT[message.data.applicant.kind];
+
+	if (message.data.form !== declared) {
+		throw new ValidationError('Форма заявки не совпадает с видом заявителя', [
+			`data.form: прислано ${message.data.form}, по виду заявителя «${message.data.applicant.kind}» — ${declared}`
+		]);
+	}
+
+	const source = externalSourceOf('cms', message.source.instance);
+	const requestHash = hashMessage(message);
+
+	const apply = async (): Promise<ApplicationIntakeResponse> =>
+		// Одна область следа просмотра на всю сборку: заявка — это один запрос, и
+		// событие о раскрытых контактах у него одно. Область снаружи транзакции
+		// потому, что след пишется другим соединением.
+		withPiiTrace(ctx, () =>
+			withTransaction(ctx, async (tx) => {
+				const [row] = await tx
+					.insert(exchangeMessages)
+					.values({
+						direction: 'inbound',
+						system: 'cms',
+						instance: message.source.instance,
+						eventType: message.eventType,
+						eventId: message.eventId,
+						externalId: message.data.externalId,
+						state: 'processed',
+						payload: message,
+						requestHash
+					})
+					.returning({ id: exchangeMessages.id });
+
+				const ownerUserId = await resolveIntakeOwner(tx, settings.cms.defaultOwnerUserId);
+				const owner = await ownerActor(ctx, ownerUserId);
+				const existing = await findExisting(tx, source, message.data.externalId);
+
+				let outcome: ApplyOutcome;
+				let state: 'processed' | 'ignored_stale' = 'processed';
+
+				if (existing === null) {
+					outcome = await createFromApplication(owner, tx, message.data, source, ownerUserId);
+				} else {
+					const updated = await updateExisting(owner, tx, existing, message.data);
+
+					if (updated === null) {
+						state = 'ignored_stale';
+						outcome = {
+							result: 'unchanged',
+							interactionId: existing.id,
+							organizationId: existing.organizationId,
+							contactPersonId: null,
+							processGroup: message.data.form,
+							needsReview: false
+						};
+					} else {
+						outcome = updated;
+					}
+				}
+
+				const response: ApplicationIntakeResponse = {
+					schemaVersion: EXCHANGE_SCHEMA_VERSION,
+					result: outcome.result,
+					data: {
+						externalId: message.data.externalId,
+						interactionId: outcome.interactionId,
+						organizationId: outcome.organizationId,
+						contactPersonId: outcome.contactPersonId,
+						applicationStatus: APPLICATION_STATUSES[0],
+						processGroup: outcome.processGroup,
+						needsReview: outcome.needsReview
+					}
+				};
+
+				await tx
+					.update(exchangeMessages)
+					.set({
+						state,
+						interactionId: outcome.interactionId,
+						responseBody: response,
+						closedAt: sql`now()`
+					})
+					.where(eq(exchangeMessages.id, row.id));
+
+				if (state === 'processed') {
+					// Снимок статуса уходит на сайт после приёма — в этой же
+					// транзакции, а отправляется после коммита (outbox).
+					await enqueueApplicationStatus(tx, outcome.interactionId);
+				}
+
+				await recordAuditEvent(
+					ctx,
+					{
+						type: 'exchange.message_received',
+						outcome: 'success',
+						subject: { type: 'interaction', id: outcome.interactionId },
+						details: { exchangeMessageId: row.id, interactionId: outcome.interactionId }
+					},
+					tx
+				);
+
+				if (state === 'processed') {
+					await recordAuditEvent(
+						ctx,
+						{
+							type: 'integrations.application_received',
+							outcome: 'success',
+							subject: { type: 'interaction', id: outcome.interactionId },
+							details: {
+								interactionId: outcome.interactionId,
+								organizationId: outcome.organizationId
+							}
+						},
+						tx
+					);
+				}
+
+				return response;
+			})
+		);
+
+	try {
+		return await apply();
+	} catch (error) {
+		if (!isUniqueViolation(error)) {
+			throw error;
+		}
+
+		// Это сообщение уже принимали: повтор отдаёт сохранённый ответ и ничего не
+		// применяет заново. Сюда же попадает гонка двух одновременных доставок
+		// одного сообщения — проигравшая откатывается целиком.
+		const replay = await savedResponse(message.source.instance, message.eventId, requestHash);
+
+		if (replay !== null) {
+			return replay;
+		}
+
+		// Разошлось другое ограничение: пока шла наша транзакция, соседний запрос
+		// завёл ту же заявку (внешняя ссылка) или того же контрагента (ИНН). Наша
+		// откатилась целиком — повторяем её один раз: теперь заявка найдётся, и
+		// сообщение применится обновлением.
+		try {
+			return await apply();
+		} catch (retried) {
+			if (!isUniqueViolation(retried)) {
+				throw retried;
+			}
+
+			throw new ConflictError(
+				'Эту заявку прямо сейчас принимает другой запрос: повторите сообщение'
+			);
+		}
+	}
+}

@@ -1,0 +1,298 @@
+/**
+ * Приём результата учебной группы: направление 4 контракта обмена.
+ *
+ * Что делает CRM, получив результат:
+ *
+ * 1. **Сохраняет факт** строкой `learning_group_results` — историей, а не
+ *    перезаписью: промежуточный и итоговый результат по одной группе — обычное
+ *    дело, а подтверждённый снимок статистики неизменяем, и «последний
+ *    результат» обязан быть выводом из истории.
+ * 2. **Подтверждает стадию, требующую данных обучения** (`applyLmsEvidence`).
+ *    Дальше взаимодействие не двигается ни на шаг: переход — решение сотрудника,
+ *    и права `stages.transition` у машинного субъекта нет.
+ *
+ * Результат старше сохранённого не применяется: ответ `unchanged`, состояние
+ * `ignored_stale`. Сравнение идёт под блокировкой строки взаимодействия — иначе
+ * два параллельных результата оба сочли бы себя новее.
+ */
+import { and, desc, eq, sql } from 'drizzle-orm';
+import {
+	EXCHANGE_SCHEMA_VERSION,
+	isSupportedSchemaVersion,
+	lmsEvidenceSchema,
+	type LearningGroupResultMessage,
+	type LearningGroupResultResponse
+} from '$lib/contracts/exchange';
+import type { ActorContext } from '../../actor';
+import { recordAuditEvent } from '../../audit';
+import { getDb } from '../../db';
+import { exchangeMessages, learningGroupResults, learningGroups } from '../../db/schema';
+import { withTransaction } from '../../db/transaction';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../errors';
+import { requirePermission } from '../../rbac';
+import { applyLmsEvidence } from '../../stages/commands';
+import { getExchangeSettings } from '../settings';
+import { hashMessage } from './intake';
+import { groupRequestExternalId } from './payloads';
+
+/** Код PostgreSQL «нарушена уникальность». */
+const UNIQUE_VIOLATION = '23505';
+
+function isUniqueViolation(error: unknown): boolean {
+	let current: unknown = error;
+
+	while (current instanceof Error) {
+		if ((current as { code?: unknown }).code === UNIQUE_VIOLATION) {
+			return true;
+		}
+
+		current = current.cause;
+	}
+
+	return false;
+}
+
+/** Сохранённый ответ на повтор того же события; `null` — сообщения в журнале нет. */
+async function savedResponse(
+	instance: string,
+	eventId: string,
+	requestHash: string
+): Promise<LearningGroupResultResponse | null> {
+	const [row] = await getDb()
+		.select({
+			requestHash: exchangeMessages.requestHash,
+			responseBody: exchangeMessages.responseBody
+		})
+		.from(exchangeMessages)
+		.where(
+			and(
+				eq(exchangeMessages.direction, 'inbound'),
+				eq(exchangeMessages.system, 'lms'),
+				eq(exchangeMessages.instance, instance),
+				eq(exchangeMessages.eventId, eventId)
+			)
+		)
+		.limit(1);
+
+	if (row === undefined) {
+		return null;
+	}
+
+	if (row.requestHash !== requestHash) {
+		throw new ConflictError(
+			'Событие с этим eventId уже принято с другим телом: повтор обязан нести то же сообщение'
+		);
+	}
+
+	if (row.responseBody === null) {
+		throw new ConflictError('Сообщение с этим eventId ещё обрабатывается: повторите запрос позже');
+	}
+
+	return { ...(row.responseBody as LearningGroupResultResponse), result: 'unchanged' };
+}
+
+export async function receiveLearningGroupResult(
+	ctx: ActorContext,
+	message: LearningGroupResultMessage
+): Promise<LearningGroupResultResponse> {
+	requirePermission(ctx, 'exchange.results');
+
+	if (!isSupportedSchemaVersion(message.schemaVersion)) {
+		throw new ValidationError('Версия схемы сообщения не поддерживается', [
+			`schemaVersion: ${message.schemaVersion} несовместима с ${EXCHANGE_SCHEMA_VERSION}`
+		]);
+	}
+
+	const settings = await getExchangeSettings();
+
+	if (message.source.instance !== settings.lms.instance) {
+		throw new ForbiddenError(
+			`Экземпляр «${message.source.instance}» не совпадает с подключением обмена`
+		);
+	}
+
+	const requestHash = hashMessage(message);
+	const occurredAt = new Date(message.occurredAt);
+
+	try {
+		return await withTransaction(ctx, async (tx) => {
+			const [row] = await tx
+				.insert(exchangeMessages)
+				.values({
+					direction: 'inbound',
+					system: 'lms',
+					instance: message.source.instance,
+					eventType: message.eventType,
+					eventId: message.eventId,
+					externalId: message.data.groupExternalId,
+					state: 'processed',
+					payload: message,
+					requestHash
+				})
+				.returning({ id: exchangeMessages.id });
+
+			const [group] = await tx
+				.select()
+				.from(learningGroups)
+				.where(
+					and(
+						eq(learningGroups.system, 'lms'),
+						eq(learningGroups.instance, message.source.instance),
+						eq(learningGroups.groupExternalId, message.data.groupExternalId)
+					)
+				)
+				.limit(1);
+
+			if (group === undefined) {
+				throw new NotFoundError(
+					`Учебной группы ${message.data.groupExternalId} в системе нет: сначала заведите её заявкой из карточки`
+				);
+			}
+
+			// Ключ заявки выводится из взаимодействия и номера потока, а не хранится
+			// вторым полем: два имени одного и того же однажды разошлись бы.
+			const requestKey = groupRequestExternalId(group.interactionId, group.streamNumber);
+
+			if (
+				message.data.requestExternalId !== null &&
+				message.data.requestExternalId !== requestKey
+			) {
+				throw new ConflictError(
+					`Результат относится к другой заявке: у группы ${message.data.groupExternalId} ключ ${requestKey}`
+				);
+			}
+
+			// Блокировка строки группы: два параллельных результата обязаны
+			// выстроиться в историю, а не оба счесть себя новее.
+			await tx
+				.select({ id: learningGroups.id })
+				.from(learningGroups)
+				.where(eq(learningGroups.id, group.id))
+				.for('update');
+
+			const [latest] = await tx
+				.select({ occurredAt: learningGroupResults.occurredAt })
+				.from(learningGroupResults)
+				.where(eq(learningGroupResults.learningGroupId, group.id))
+				.orderBy(desc(learningGroupResults.occurredAt))
+				.limit(1);
+
+			if (latest !== undefined && latest.occurredAt.getTime() >= occurredAt.getTime()) {
+				const stale: LearningGroupResultResponse = {
+					schemaVersion: EXCHANGE_SCHEMA_VERSION,
+					result: 'unchanged',
+					data: {
+						groupExternalId: message.data.groupExternalId,
+						learningGroupId: group.id,
+						interactionId: group.interactionId,
+						stageConfirmed: false,
+						note: 'Результат старше уже сохранённого: ничего не изменилось'
+					}
+				};
+
+				await tx
+					.update(exchangeMessages)
+					.set({
+						state: 'ignored_stale',
+						interactionId: group.interactionId,
+						responseBody: stale,
+						closedAt: sql`now()`
+					})
+					.where(eq(exchangeMessages.id, row.id));
+
+				return stale;
+			}
+
+			await tx.insert(learningGroupResults).values({
+				learningGroupId: group.id,
+				occurredAt,
+				periodStart: message.data.period?.start ?? null,
+				periodEnd: message.data.period?.end ?? null,
+				finishedOn: message.data.finishedOn,
+				enrolled: message.data.counters.enrolled,
+				completed: message.data.counters.completed,
+				expelled: message.data.counters.expelled,
+				// Файл-подтверждение приезжает ссылкой; забирать его по ключу мы пока
+				// не умеем, и придумывать документ, которого нет, нельзя — описание
+				// остаётся в теле сообщения, оно целиком лежит в журнале обмена.
+				documentId: null,
+				exchangeMessageId: row.id
+			});
+
+			await tx
+				.update(learningGroups)
+				.set({ lastResultAt: occurredAt })
+				.where(eq(learningGroups.id, group.id));
+
+			const evidence = lmsEvidenceSchema.parse({
+				system: group.system,
+				instance: group.instance,
+				groupExternalId: message.data.groupExternalId,
+				learningGroupId: group.id,
+				occurredAt: occurredAt.toISOString(),
+				enrolled: message.data.counters.enrolled,
+				completed: message.data.counters.completed,
+				expelled: message.data.counters.expelled,
+				finishedOn: message.data.finishedOn,
+				periodStart: message.data.period?.start ?? null,
+				periodEnd: message.data.period?.end ?? null
+			});
+
+			const outcome = await applyLmsEvidence(ctx, tx, {
+				interactionId: group.interactionId,
+				evidence
+			});
+
+			const response: LearningGroupResultResponse = {
+				schemaVersion: EXCHANGE_SCHEMA_VERSION,
+				result: 'created',
+				data: {
+					groupExternalId: message.data.groupExternalId,
+					learningGroupId: group.id,
+					interactionId: group.interactionId,
+					stageConfirmed: outcome.confirmed,
+					note: outcome.note
+				}
+			};
+
+			await tx
+				.update(exchangeMessages)
+				.set({
+					state: 'processed',
+					interactionId: group.interactionId,
+					responseBody: response,
+					closedAt: sql`now()`
+				})
+				.where(eq(exchangeMessages.id, row.id));
+
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'exchange.message_received',
+					outcome: 'success',
+					subject: { type: 'interaction', id: group.interactionId },
+					details: { exchangeMessageId: row.id, learningGroupId: group.id }
+				},
+				tx
+			);
+
+			return response;
+		});
+	} catch (error) {
+		if (!isUniqueViolation(error)) {
+			throw error;
+		}
+
+		const replay = await savedResponse(message.source.instance, message.eventId, requestHash);
+
+		if (replay !== null) {
+			return replay;
+		}
+
+		// Разошлась уникальность результата `(группа, момент отправителя)`: то же
+		// событие под другим `eventId`. Применять его второй раз нечего.
+		throw new ConflictError(
+			'Результат этой группы с тем же моментом уже сохранён: повторное сообщение ничего не меняет'
+		);
+	}
+}

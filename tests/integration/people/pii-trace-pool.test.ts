@@ -21,14 +21,15 @@
  */
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { applicationIntakeSchema } from '$lib/contracts/integrations';
+import { applicationSubmittedSchema } from '$lib/contracts/exchange';
 import type { ActorContext } from '$lib/server/actor';
 import { auditEvents } from '$lib/server/db/schema';
 import { createPerson } from '$lib/server/directory/write';
-import { receiveApplication } from '$lib/server/integrations/intake';
+import { receiveApplication } from '$lib/server/integrations/exchange/intake';
 import { B2B_GROUP_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
 import { ensureProcess } from '$lib/server/stages/process';
-import { startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
+import { setExchangeSettings } from '$lib/server/integrations/settings';
+import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
@@ -61,6 +62,18 @@ beforeEach(async () => {
 	await database.db.transaction(async (tx) => {
 		await ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS);
 	});
+
+	// Заявку применяет сотрудник, принимающий входящие: его называет настройка
+	// обмена, и без неё приём честно отказывает (`docs/exchange-contract.md`, §3).
+	await setExchangeSettings(testActor(), {
+		cmsInstance: 'itschool-site',
+		cmsStatusUrl: '',
+		cmsSecret: null,
+		cmsDefaultOwnerUserId: TEST_USER_IDS.manager,
+		lmsInstance: 'moodle-itschool',
+		lmsGroupsUrl: '',
+		lmsSecret: null
+	});
 });
 
 /**
@@ -70,29 +83,39 @@ beforeEach(async () => {
  * проверки ровно то, что она проверяет.
  */
 function siteActor(): ActorContext {
-	return { ...testActor(), requestId: crypto.randomUUID() };
+	// Ключ обмена работает от имени машинного субъекта: заявку приносит он, а
+	// доменные операции выполняет сотрудник из настроек приёма.
+	return { ...testActor({ roleId: 'service' }), requestId: crypto.randomUUID() };
 }
 
 /** Заявка с сайта: у каждой своя организация и свой контакт, сверять нечего. */
 function application(index: number) {
-	return applicationIntakeSchema.parse({
-		externalId: `site-2026-${String(index).padStart(6, '0')}`,
-		organization: {
-			name: `Институт прикладных исследований № ${index}`,
-			inn: null,
-			kind: 'educational_institution',
-			educationLevel: 'vo'
-		},
-		contact: {
-			lastName: 'Кузьмина',
-			firstName: 'Наталья',
-			middleName: 'Петровна',
-			email: `kuzmina-${index}@example.org`,
-			phone: '+7 900 000-00-11',
-			position: 'Проректор по цифровому развитию'
-		},
-		interest: 'Программа подготовки по прикладной информатике',
-		comment: null
+	return applicationSubmittedSchema.parse({
+		schemaVersion: '1.0',
+		eventId: crypto.randomUUID(),
+		eventType: 'application.submitted',
+		occurredAt: new Date().toISOString(),
+		source: { system: 'cms', instance: 'itschool-site' },
+		data: {
+			externalId: `site-2026-${String(index).padStart(6, '0')}`,
+			revision: 1,
+			form: 'b2b',
+			applicant: {
+				kind: 'educational_institution',
+				name: `Институт прикладных исследований № ${index}`,
+				inn: null,
+				educationLevel: 'vo'
+			},
+			contact: {
+				lastName: 'Кузьмина',
+				firstName: 'Наталья',
+				middleName: 'Петровна',
+				email: `kuzmina-${index}@example.org`,
+				phone: '+7 900 000-00-11',
+				position: 'Проректор по цифровому развитию'
+			},
+			interest: 'Программа подготовки по прикладной информатике'
+		}
 	});
 }
 
@@ -132,7 +155,9 @@ describe('пул соединений', () => {
 			);
 
 			expect(results).toHaveLength(SIMULTANEOUS_APPLICATIONS);
-			expect(results.filter((result) => result.created)).toHaveLength(SIMULTANEOUS_APPLICATIONS);
+			expect(results.filter((result) => result.result === 'created')).toHaveLength(
+				SIMULTANEOUS_APPLICATIONS
+			);
 
 			// Следы просмотра на месте, и их ровно по одному на заявку: приём держит
 			// одну область сбора на весь запрос, сколько бы записей справочника он
@@ -148,7 +173,9 @@ describe('пул соединений', () => {
 	);
 
 	it('след, открытый внутри транзакции, пишется её же исполнителем', async () => {
-		const ctx = siteActor();
+		// Здесь действует сотрудник, а не ключ обмена: справочник ведёт человек, и
+		// у машинного субъекта права `people.write` нет вовсе.
+		const ctx = { ...testActor(), requestId: crypto.randomUUID() };
 
 		await database.db.transaction(async (tx) => {
 			await createPerson(

@@ -182,11 +182,11 @@ services:
       CRM_BASE_URL: http://app:3000
       CRM_API_KEY: ${EXCHANGE_API_KEY:-}
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}
-      INSTANCE_NAME: ${MOCK_LMS_INSTANCE:-moodle-itschool}
+      INSTANCE_NAME: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
       # Not published, so a person opens a group through the same reverse proxy
       # as the app; without APP_ORIGIN the link points at the compose name and
       # is honest about being unreachable from outside.
-      PUBLIC_URL: ${MOCK_LMS_PUBLIC_URL:-http://mock-lms:8082}
+      PUBLIC_URL: ${EXCHANGE_LMS_PUBLIC_URL:-http://mock-lms:8082}
     deploy:
       resources:
         limits:
@@ -219,13 +219,17 @@ services:
       S3_BUCKET: lct-documents
       S3_FORCE_PATH_STYLE: 'true'
       BODY_SIZE_LIMIT: 27M
-      # The Moodle stand-in is a demonstration prop: a deployment that talks to a
-      # real LMS must not have a second source of learning data next to it, so it
-      # is off unless the deployment asks for it. A stand that is itself the demo
-      # sets MOCK_LMS=true in its own `.env`, which Compose substitutes here —
-      # `environment` wins over `env_file`, so the variable has to be named here
-      # to be settable at all.
-      MOCK_LMS: ${MOCK_LMS:-false}
+      # Exchange with the customer's systems. Empty by default: a deployment that
+      # has no CMS and no LMS to talk to must not queue messages nobody will ever
+      # read. A stand that runs the imitators of the `stand` profile sets these to
+      # their compose names in its own `.env` — `environment` wins over
+      # `env_file`, so the variables have to be named here to be settable at all.
+      EXCHANGE_CMS_STATUS_URL: ${EXCHANGE_CMS_STATUS_URL:-}
+      EXCHANGE_LMS_GROUPS_URL: ${EXCHANGE_LMS_GROUPS_URL:-}
+      EXCHANGE_LMS_BASE_URL: ${EXCHANGE_LMS_BASE_URL:-}
+      EXCHANGE_CMS_INSTANCE: ${EXCHANGE_CMS_INSTANCE:-itschool-site}
+      EXCHANGE_LMS_INSTANCE: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
+      EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}
     env_file:
       - .env
     deploy:

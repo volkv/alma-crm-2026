@@ -41,6 +41,7 @@ import type {
 	StageTransitionView
 } from '$lib/contracts/interactions';
 import type { AuditEventType } from '$lib/contracts/audit';
+import type { LmsEvidence } from '$lib/contracts/exchange';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
@@ -58,6 +59,8 @@ import {
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
+import { readLmsEvidence } from '../integrations/exchange/evidence';
+import { enqueueApplicationStatus } from '../integrations/exchange/outbox';
 import { can, requirePermission } from '../rbac';
 import { interactionScopeFilter } from '../interactions/access';
 import {
@@ -175,9 +178,14 @@ async function readStageState(
 	tx: Tx,
 	entry: typeof stageEntries.$inferSelect
 ): Promise<StageState> {
-	const [paused, blocking] = await Promise.all([
+	const [paused, blocking, evidence] = await Promise.all([
 		hasOpenPause(tx, entry.id),
-		countBlockingBlockers(tx, entry.interactionId)
+		countBlockingBlockers(tx, entry.interactionId),
+		// Факт, пришедший до входа на стадию, засчитывается: система обучения
+		// присылает результат по своему расписанию, а не по нашему процессу
+		// (`docs/exchange-contract.md`, раздел 6). Снимок записи сильнее: он уже
+		// объяснил подтверждение именно этой стадии.
+		entry.lmsEvidence === null ? readLmsEvidence(tx, entry.interactionId) : null
 	]);
 
 	return {
@@ -186,7 +194,7 @@ async function readStageState(
 		checklistState: entry.checklistState,
 		resultText: entry.resultText,
 		confirmation: entry.confirmation,
-		lmsEvidence: entry.lmsEvidence,
+		lmsEvidence: entry.lmsEvidence ?? evidence,
 		isPaused: paused,
 		blockingBlockers: blocking
 	};
@@ -510,6 +518,11 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 			},
 			tx
 		);
+
+		// Снимок статуса заявки — в той же транзакции, что и переход (outbox):
+		// «отправить, потом записать» теряет уведомление при падении процесса
+		// между двумя шагами.
+		await enqueueApplicationStatus(tx, input.interactionId);
 	});
 }
 
@@ -611,6 +624,8 @@ export async function pauseStage(ctx: ActorContext, input: PauseStageInput): Pro
 			},
 			tx
 		);
+
+		await enqueueApplicationStatus(tx, input.interactionId);
 	});
 }
 
@@ -652,6 +667,8 @@ export async function resumeStage(ctx: ActorContext, input: ResumeStageInput): P
 			},
 			tx
 		);
+
+		await enqueueApplicationStatus(tx, input.interactionId);
 	});
 }
 
@@ -722,9 +739,15 @@ export async function setStageResult(ctx: ActorContext, input: SetStageResultInp
 	});
 }
 
-/** Подтверждение стадии: файлом, отметкой исполнителя или записью в LMS. */
+/**
+ * Подтверждение стадии: файлом, отметкой исполнителя или записью в LMS.
+ *
+ * Право отдельное от `stages.transition`: подтвердить стадию и двигать
+ * взаимодействие — разные полномочия, и машинный субъект обмена имеет только
+ * первое (`docs/access-matrix.md`, раздел 3).
+ */
 export async function confirmStage(ctx: ActorContext, input: ConfirmStageInput): Promise<void> {
-	requirePermission(ctx, 'stages.transition');
+	requirePermission(ctx, 'stages.confirm');
 
 	const userId = actingUserId(ctx);
 
@@ -793,6 +816,89 @@ export async function confirmStage(ctx: ActorContext, input: ConfirmStageInput):
 			tx
 		);
 	});
+}
+
+/** Чем кончилась попытка засчитать факт обучения открытой стадии. */
+export type LmsEvidenceOutcome = { confirmed: boolean; note: string };
+
+/**
+ * Факт системы обучения ложится на открытую запись стадии.
+ *
+ * Стадию это подтверждает, но никуда не двигает: переход — решение сотрудника,
+ * и права `stages.transition` у машинного субъекта нет вовсе. Если открыта
+ * другая стадия, сообщение всё равно принимается: факт уже сохранён историей
+ * результатов и засчитается, когда взаимодействие дойдёт до нужной стадии
+ * (`readStageState`).
+ *
+ * Зовётся из транзакции приёмника вместе с записью результата: «факт сохранён»
+ * и «стадия подтверждена» обязаны случиться вместе или не случиться вовсе.
+ */
+export async function applyLmsEvidence(
+	ctx: ActorContext,
+	tx: Tx,
+	input: { interactionId: string; evidence: LmsEvidence }
+): Promise<LmsEvidenceOutcome> {
+	requirePermission(ctx, 'stages.confirm');
+
+	await lockInteraction(ctx, tx, input.interactionId);
+
+	const entry = await readOpenEntryRow(tx, input.interactionId);
+
+	if (entry === null) {
+		return {
+			confirmed: false,
+			note: 'Взаимодействие не стоит ни на одной стадии: факт сохранён'
+		};
+	}
+
+	if (!entry.stageSnapshot.requiresLmsData) {
+		return {
+			confirmed: false,
+			note: `Стадия не подтверждена: взаимодействие на стадии «${entry.stageSnapshot.name}», данные обучения ей не требуются`
+		};
+	}
+
+	// Подтверждение записью в системе обучения — то же самое, что ставит
+	// сотрудник вручную видом `lms_record`: другого способа объяснить, чем
+	// подтверждена стадия, в записи нет.
+	const confirmation: StageConfirmation | null =
+		entry.stageSnapshot.requiresConfirmation && entry.confirmation === null
+			? {
+					kind: 'lms_record',
+					source: `${input.evidence.system}:${input.evidence.instance}`,
+					recordId: input.evidence.groupExternalId
+				}
+			: entry.confirmation;
+
+	await tx
+		.update(stageEntries)
+		.set({
+			lmsEvidence: input.evidence,
+			confirmation,
+			...(confirmation !== null && entry.confirmation === null
+				? { confirmedAt: now, confirmedBy: ctx.user?.id ?? null }
+				: {}),
+			updatedAt: now
+		})
+		.where(eq(stageEntries.id, entry.id));
+
+	await touchInteraction(tx, input.interactionId);
+
+	await recordAuditEvent(
+		ctx,
+		{
+			type: 'interactions.confirmed',
+			outcome: 'success',
+			subject: { type: 'interaction', id: input.interactionId },
+			details: { stageEntryId: entry.id }
+		},
+		tx
+	);
+
+	return {
+		confirmed: true,
+		note: `Стадия «${entry.stageSnapshot.name}» подтверждена данными системы обучения`
+	};
 }
 
 export async function raiseBlocker(
@@ -949,6 +1055,10 @@ export async function setResponsible(
 				tx
 			);
 
+			// Ответственный виден заявителю на сайте: снимок статуса уходит той же
+			// транзакцией, что и смена владельца.
+			await enqueueApplicationStatus(tx, interactionId);
+
 			changed += 1;
 		}
 
@@ -1071,6 +1181,7 @@ export function missingStageEvidence(entry: {
 	stageSnapshot: StageSnapshot;
 	resultText: string | null;
 	confirmation: StageConfirmation | null;
+	/** Снимок записи стадии либо факт по взаимодействию, если снимка ещё нет. */
 	lmsEvidence: unknown;
 }): string[] {
 	const missing: string[] = [];
@@ -1106,11 +1217,20 @@ async function readClosingState(
 	}
 
 	const entry = await readOpenEntryRow(executor, interaction.id);
+	// Тот же вопрос, что и у перехода: факт, пришедший из системы обучения до
+	// входа на стадию, засчитывается и при закрытии.
+	const evidence =
+		entry === null || entry.lmsEvidence !== null
+			? null
+			: await readLmsEvidence(executor, interaction.id);
 
 	return {
 		status: row.status,
 		openStage: entry === null ? null : entry.stageSnapshot.isFinal ? 'final' : 'earlier',
-		missingEvidence: entry === null ? [] : missingStageEvidence(entry),
+		missingEvidence:
+			entry === null
+				? []
+				: missingStageEvidence({ ...entry, lmsEvidence: entry.lmsEvidence ?? evidence }),
 		canWrite: can(ctx, 'interactions.write'),
 		canForce: can(ctx, 'stages.configure')
 	};
@@ -1194,6 +1314,8 @@ export async function completeInteraction(
 			},
 			tx
 		);
+
+		await enqueueApplicationStatus(tx, input.interactionId);
 	});
 }
 
@@ -1232,5 +1354,7 @@ export async function cancelInteraction(
 			},
 			tx
 		);
+
+		await enqueueApplicationStatus(tx, input.interactionId);
 	});
 }

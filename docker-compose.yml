@@ -265,12 +265,21 @@ services:
       OIDC_PUBLIC_URL: http://localhost:58080
       OIDC_CLIENT_ID: lct-crm
       OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-lct-crm-dev-secret}
-      # The local stack is the demo stand, so the Moodle stand-in under /mock-lms
-      # is on: the customer's real LMS is not reachable from outside, and the
-      # exchange has nothing to be shown against without it. `MOCK_LMS=false
-      # docker compose up -d --build app` turns it off, and so does MOCK_LMS in a
-      # local .env, which Compose substitutes here.
-      MOCK_LMS: ${MOCK_LMS:-true}
+      # Exchange with the customer's systems. In the local stack both of them are
+      # the imitators next door, reached by their compose names; a deployment
+      # points these at the real CMS and LMS, or leaves them empty and the
+      # directions stay off. The address of an application card carries
+      # `{externalId}`: the key of the application goes there. Whatever is saved
+      # on the «Внешние системы» screen wins over these values — they are the
+      # defaults a stand comes up with, not the product's settings.
+      EXCHANGE_CMS_STATUS_URL: ${EXCHANGE_CMS_STATUS_URL:-http://mock-cms:8081/api/applications/{externalId}/status}
+      EXCHANGE_LMS_GROUPS_URL: ${EXCHANGE_LMS_GROUPS_URL:-http://mock-lms:8082/api/groups}
+      # Shown as a hint in the integrations section: the web service of the LMS
+      # the synchronisation of learning data goes to.
+      EXCHANGE_LMS_BASE_URL: ${EXCHANGE_LMS_BASE_URL:-http://mock-lms:8082}
+      # The secret the CRM signs its outgoing exchange messages with — the same
+      # one the imitators verify them against.
+      EXCHANGE_SECRET: ${EXCHANGE_SECRET:-exchange-stand-secret}
       # Nothing sits in front of the app in the local stack, so the client
       # address is the socket address and forwarding headers must not be trusted.
       TRUST_PROXY: 'false'

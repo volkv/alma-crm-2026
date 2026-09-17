@@ -7,87 +7,16 @@ import {
 	MOCK_GRADE_MAX,
 	MOCK_GRADE_PASS,
 	mockEnrolment
-} from '$lib/server/integrations/mock-lms/data';
-import {
-	MOCK_LMS_PASSWORD,
-	MOCK_LMS_SERVICE,
-	MOCK_LMS_TOKEN,
-	MOCK_LMS_USERNAME,
-	mockRest,
-	mockToken
-} from '$lib/server/integrations/mock-lms/server';
+} from '../../../mocks/mock-lms/moodle-data.ts';
 
-function params(values: Record<string, string>): URLSearchParams {
-	return new URLSearchParams(values);
-}
-
-const NOW = new Date('2026-09-12T10:00:00.000Z');
-
-function rest(values: Record<string, string>): unknown {
-	return mockRest(params({ wstoken: MOCK_LMS_TOKEN, moodlewsrestformat: 'json', ...values }), NOW)
-		.body;
-}
-
-describe('мок системы обучения', () => {
-	it('выдаёт токен по логину и паролю и отказывает чужому', () => {
-		expect(
-			mockToken(
-				params({
-					username: MOCK_LMS_USERNAME,
-					password: MOCK_LMS_PASSWORD,
-					service: MOCK_LMS_SERVICE
-				})
-			).body
-		).toMatchObject({ token: MOCK_LMS_TOKEN });
-
-		expect(
-			mockToken(params({ username: MOCK_LMS_USERNAME, password: 'нет', service: MOCK_LMS_SERVICE }))
-				.body
-		).toMatchObject({ errorcode: 'invalidlogin' });
-	});
-
-	it('отказывает без токена так же, как Moodle: кодом 200 и телом-исключением', () => {
-		const response = mockRest(params({ wsfunction: 'core_course_get_courses' }), NOW);
-
-		expect(response.status).toBe(200);
-		expect(response.body).toMatchObject({
-			exception: 'moodle_exception',
-			errorcode: 'invalidtoken'
-		});
-	});
-
-	it('описывает площадку и отдаёт курсы кодами программ', () => {
-		expect(rest({ wsfunction: 'core_webservice_get_site_info' })).toMatchObject({
-			sitename: expect.stringContaining('оператора')
-		});
-
-		const courses = rest({ wsfunction: 'core_course_get_courses' }) as { idnumber: string }[];
-
-		expect(courses.map((course) => course.idnumber)).toEqual(
-			MOCK_COURSES.map((course) => course.idnumber)
-		);
-	});
-
-	it('отдаёт одинаковый состав слушателей при каждом запросе', () => {
-		const first = rest({
-			wsfunction: 'core_enrol_get_enrolled_users',
-			courseid: String(MOCK_COURSES[0].id)
-		});
-		const second = rest({
-			wsfunction: 'core_enrol_get_enrolled_users',
-			courseid: String(MOCK_COURSES[0].id)
-		});
-
-		expect(first).toEqual(second);
-		expect((first as unknown[]).length).toBeGreaterThan(0);
-	});
-
-	it('жалуется на неизвестную функцию', () => {
-		expect(rest({ wsfunction: 'core_user_delete_users' })).toMatchObject({
-			errorcode: 'accessexception'
-		});
-	});
-});
+/**
+ * Клиент системы обучения и сборка снимка из её ответов.
+ *
+ * Синтетические данные берутся у имитатора стенда (`mocks/mock-lms`): выгрузка
+ * обязана собираться ровно из того, что отдаёт он, а не из второй копии тех же
+ * курсов. Сами ответы имитатора проверяются там же, где он живёт, —
+ * `tests/integration/mocks/mock-lms.test.ts`.
+ */
 
 describe('завершение курса', () => {
 	const item = (graderaw: number | null, gradepass: number | null, grademax = 100) => ({
@@ -210,6 +139,15 @@ describe('сборка строк выгрузки', () => {
 describe('адрес системы обучения', () => {
 	const settings = (baseUrl: string) =>
 		lmsSettingsSchema.safeParse({ baseUrl, token: 'x', enabled: false, syncIntervalMinutes: 60 });
+
+	it('принимает имена имитаторов стенда по http: сертификата у них нет', () => {
+		// Ровно два имени и поимённо: образец вида `mock-*` открыл бы по http
+		// любое имя внутри сети, а это и есть то, от чего правило защищает.
+		expect(lmsSettingsSchema.parse({ baseUrl: 'http://mock-lms:8082' }).baseUrl).toBe(
+			'http://mock-lms:8082'
+		);
+		expect(() => lmsSettingsSchema.parse({ baseUrl: 'http://mock-other:8082' })).toThrow();
+	});
 
 	it('принимает https и адрес на этой же машине', () => {
 		expect(settings('https://lms.example.org').success).toBe(true);

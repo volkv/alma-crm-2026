@@ -1,14 +1,18 @@
 import { error, type ActionFailure } from '@sveltejs/kit';
+import { and, asc, eq, ne } from 'drizzle-orm';
 import { fail, message, setError, superValidate, type SuperValidated } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { id } from '$lib/contracts/common';
 import {
 	deliverySettingsSchema,
+	exchangeSettingsFormSchema,
 	lmsSettingsFormSchema,
 	webhookFormSchema
 } from '$lib/contracts/integrations';
 import { actorFromEvent } from '$lib/server/actor';
 import { getConfig } from '$lib/server/config';
+import { getDb } from '$lib/server/db';
+import { users } from '$lib/server/db/schema';
 import { AppError, ForbiddenError } from '$lib/server/errors';
 import { errorIssues, toActionFailure, type ActionErrorPayload } from '$lib/server/http';
 import { syncLms, readLmsState } from '$lib/server/integrations/lms/sync';
@@ -16,8 +20,10 @@ import { sendTestEvent } from '$lib/server/integrations/pump';
 import {
 	clearLmsToken,
 	getDeliverySettings,
+	getExchangeSettingsView,
 	getLmsSettingsView,
 	setDeliverySettings,
+	setExchangeSettings,
 	setLmsSettings
 } from '$lib/server/integrations/settings';
 import {
@@ -30,7 +36,7 @@ import { can } from '$lib/server/rbac';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
- * Интеграции: подписки на события, обмен с системой обучения и приём заявок.
+ * Интеграции: подписки на события, подключения обмена и выгрузка из LMS.
  *
  * Раздел закрыт правом `integrations.manage`. Публичная демонстрация его не
  * получает ни при какой роли (`demoSessionPermissions`): заведённый вебхук
@@ -41,7 +47,8 @@ import type { Actions, PageServerLoad } from './$types';
 const FORM_IDS = {
 	webhook: 'webhook',
 	lms: 'lms-settings',
-	delivery: 'delivery-settings'
+	delivery: 'delivery-settings',
+	exchange: 'exchange-settings'
 } as const;
 
 export const load: PageServerLoad = async (event) => {
@@ -51,21 +58,30 @@ export const load: PageServerLoad = async (event) => {
 		error(403, 'Раздел доступен только с правом «Настройка вебхуков и интеграций»');
 	}
 
-	const [webhooks, lms, delivery, lmsState] = await Promise.all([
+	const [webhooks, lms, delivery, lmsState, exchange, owners] = await Promise.all([
 		listWebhooks(ctx),
 		getLmsSettingsView(ctx),
 		getDeliverySettings(),
-		readLmsState()
+		readLmsState(),
+		getExchangeSettingsView(ctx),
+		listIntakeOwners()
 	]);
+
+	const config = getConfig();
 
 	return {
 		webhooks,
 		lms,
 		lmsState,
-		// Заглушка LMS видна на экране только тогда, когда она действительно
-		// включена: подсказывать адрес, которого нет, значит врать.
-		mockLms: getConfig().MOCK_LMS,
-		origin: getConfig().ORIGIN,
+		exchange,
+		owners,
+		// Адрес имитатора показывается только тогда, когда развёртывание его
+		// назвало: подсказывать адрес, которого нет, значит врать.
+		lmsHint: config.EXCHANGE_LMS_BASE_URL,
+		// Адреса и секреты подключений правит не всякий, кто ведёт обмен: они
+		// уводят данные на чужой узел (`docs/access-matrix.md`, раздел 5).
+		canManageEndpoints: can(ctx, 'integrations.manage_endpoints'),
+		origin: config.ORIGIN,
 		webhookForm: await superValidate(zod4(webhookFormSchema), { id: FORM_IDS.webhook }),
 		lmsForm: await superValidate(
 			{
@@ -79,9 +95,34 @@ export const load: PageServerLoad = async (event) => {
 		),
 		deliveryForm: await superValidate(delivery, zod4(deliverySettingsSchema), {
 			id: FORM_IDS.delivery
-		})
+		}),
+		exchangeForm: await superValidate(
+			{
+				cmsInstance: exchange.cms.instance,
+				cmsStatusUrl: exchange.cms.statusUrl ?? '',
+				cmsSecret: null,
+				cmsDefaultOwnerUserId: exchange.cms.defaultOwnerUserId,
+				lmsInstance: exchange.lms.instance,
+				lmsGroupsUrl: exchange.lms.groupsUrl ?? '',
+				lmsSecret: null
+			},
+			zod4(exchangeSettingsFormSchema),
+			{ id: FORM_IDS.exchange }
+		)
 	};
 };
+
+/**
+ * Кого можно назначить ответственным за входящие заявки: действующие сотрудники,
+ * кроме машинного субъекта — тот заявки не ведёт.
+ */
+async function listIntakeOwners(): Promise<{ id: string; fullName: string }[]> {
+	return getDb()
+		.select({ id: users.id, fullName: users.fullName })
+		.from(users)
+		.where(and(eq(users.isActive, true), ne(users.roleId, 'service')))
+		.orderBy(asc(users.fullName));
+}
 
 /**
  * Предметная ошибка показывается над формой целиком: у неё нет поля, к
@@ -236,6 +277,33 @@ export const actions: Actions = {
 			// состоянием, а не исключением.
 			return toActionFailure(failure);
 		}
+	},
+
+	exchange: async (event) => {
+		const form = await superValidate(event.request, zod4(exchangeSettingsFormSchema), {
+			id: FORM_IDS.exchange
+		});
+
+		const cmsSecret = form.data.cmsSecret;
+		const lmsSecret = form.data.lmsSecret;
+
+		// Секреты не возвращаются в браузер ни при каком исходе: ответ действия
+		// перерисовывает форму её же данными, и секрет подписи оказался бы в
+		// разметке ответа, хотя на экране его не показывают даже сохранённым.
+		form.data.cmsSecret = null;
+		form.data.lmsSecret = null;
+
+		if (!form.valid) {
+			return fail(400, { form });
+		}
+
+		try {
+			await setExchangeSettings(actorFromEvent(event), { ...form.data, cmsSecret, lmsSecret });
+		} catch (failure) {
+			return asFormError(form, failure);
+		}
+
+		return message(form, 'Подключения обмена сохранены');
 	},
 
 	delivery: async (event) => {

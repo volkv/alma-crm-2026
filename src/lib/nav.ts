@@ -1,11 +1,13 @@
 import type { LucideIcon } from '@lucide/svelte';
 import BarChart3Icon from '@lucide/svelte/icons/bar-chart-3';
+import BookOpenIcon from '@lucide/svelte/icons/book-open';
 import BuildingIcon from '@lucide/svelte/icons/building';
 import DatabaseIcon from '@lucide/svelte/icons/database';
 import FileTextIcon from '@lucide/svelte/icons/file-text';
 import GraduationCapIcon from '@lucide/svelte/icons/graduation-cap';
 import HandshakeIcon from '@lucide/svelte/icons/handshake';
 import PackageIcon from '@lucide/svelte/icons/package';
+import PlugZapIcon from '@lucide/svelte/icons/plug-zap';
 import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
 import SettingsIcon from '@lucide/svelte/icons/settings';
 import UsersIcon from '@lucide/svelte/icons/users';
@@ -57,6 +59,23 @@ export const navSections: readonly NavSection[] = [
 	{ href: '/data', label: 'Данные', icon: DatabaseIcon, permission: 'stats.read' },
 	{ href: '/documents', label: 'Документы', icon: FileTextIcon, permission: 'documents.read' },
 	{ href: '/audit', label: 'Журнал', icon: ScrollTextIcon, permission: 'audit.read' },
+	{
+		// Журнал обмена — техническая хроника, и право у неё то же, что у
+		// настройки обмена: кто ведёт обмен, тот и разбирает его отказы
+		// (`docs/access-matrix.md`, раздел 4).
+		href: '/exchange',
+		label: 'Внешние системы',
+		icon: PlugZapIcon,
+		permission: 'integrations.manage'
+	},
+	{
+		// Справка объясняет продукт целиком, поэтому права у неё своего нет: то же
+		// правило, что у «Настроек», — что показать внутри, решает сам раздел.
+		href: '/help',
+		label: 'Справка',
+		icon: BookOpenIcon,
+		permission: null
+	},
 	{ href: '/settings', label: 'Настройки', icon: SettingsIcon, permission: null }
 ];
 

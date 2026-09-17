@@ -1,0 +1,518 @@
+/**
+ * Контракт обмена v1: конверт сообщения и тела четырёх направлений.
+ *
+ * Здесь описано всё, что ездит между CRM, CMS публичного сайта и системой
+ * обучения (`docs/exchange-contract.md`). Схемы читают и приём сообщения, и
+ * сборка исходящего, и документация OpenAPI — второго описания одного и того же
+ * сообщения не существует, поэтому разойтись им негде.
+ *
+ * Конверт разбирается **строго**: неизвестное поле верхнего уровня — отказ.
+ * Внутри `data` неизвестные поля, наоборот, отбрасываются: отправитель вправе
+ * добавить необязательное поле, не спрашивая нас, а целиком сообщение всё равно
+ * остаётся в журнале обмена — по нему видно, что прислали на самом деле.
+ */
+import { z } from 'zod';
+import { isValidInn } from '$lib/validation/inn';
+import { optionalIsoDate, optionalText, pageQuerySchema, requiredText } from './common';
+import { EDUCATION_LEVELS } from './directory';
+
+/** Версия схемы, на которой говорит контракт v1. */
+export const EXCHANGE_SCHEMA_VERSION = '1.0';
+
+/** Чей это экземпляр: `crm` — наша система, остальные — чужие. */
+export const EXCHANGE_SYSTEMS = ['cms', 'lms', 'crm'] as const;
+
+export type ExchangeSystem = (typeof EXCHANGE_SYSTEMS)[number];
+
+/** Коды событий обмена: по одному на направление. */
+export const EXCHANGE_EVENT_TYPES = {
+	applicationSubmitted: 'application.submitted',
+	applicationStatus: 'application.status',
+	learningGroupRequested: 'learning_group.requested',
+	learningGroupResult: 'learning_group.result'
+} as const;
+
+/**
+ * Внешняя ссылка взаимодействия: `<система>:<экземпляр>`.
+ *
+ * Экземпляр входит в ключ дедупликации везде: `cms` — это не одна система, а
+ * столько, сколько подключений заведено, и заявка `site-2026-000123` со стенда
+ * не та же самая, что с боевого сайта.
+ */
+export function externalSourceOf(system: ExchangeSystem, instance: string): string {
+	return `${system}:${instance}`;
+}
+
+/** Разбор внешней ссылки обратно; `null` — строка не в этой форме. */
+export function parseExternalSource(
+	value: string | null
+): { system: ExchangeSystem; instance: string } | null {
+	if (value === null) {
+		return null;
+	}
+
+	const colon = value.indexOf(':');
+
+	if (colon <= 0 || colon === value.length - 1) {
+		return null;
+	}
+
+	const system = value.slice(0, colon);
+	const instance = value.slice(colon + 1);
+
+	return (EXCHANGE_SYSTEMS as readonly string[]).includes(system)
+		? { system: system as ExchangeSystem, instance }
+		: null;
+}
+
+/** Имя объекта у отправителя: устойчивое и неизменное. */
+const externalIdField = requiredText(200, 'Укажите идентификатор объекта во внешней системе');
+
+const instanceField = requiredText(100, 'Укажите имя экземпляра системы-отправителя');
+
+/**
+ * Конверт сообщения. Один и тот же у всех четырёх направлений: отличается
+ * только `data`, а версия, идентификатор события, момент и отправитель стоят
+ * на своих местах всегда.
+ *
+ * `eventType` и `source.system` заданы литералами: сообщение не того типа на
+ * этом адресе — ошибка отправителя, а не повод разбираться в теле.
+ */
+function exchangeEnvelopeSchema<
+	TType extends string,
+	TSystem extends ExchangeSystem,
+	TData extends z.ZodType
+>(eventType: TType, system: TSystem, data: TData) {
+	return z.strictObject({
+		schemaVersion: z
+			.string()
+			.regex(/^\d+\.\d+$/, { error: 'Версия схемы имеет вид <major>.<minor>' }),
+		eventId: requiredText(200, 'Укажите идентификатор события'),
+		eventType: z.literal(eventType),
+		occurredAt: z.iso.datetime({ offset: true, error: 'Момент события — ISO 8601 со смещением' }),
+		source: z.strictObject({
+			system: z.literal(system),
+			instance: instanceField
+		}),
+		data
+	});
+}
+
+/** Старший номер версии схемы: несовпадение — отказ. */
+function schemaMajor(version: string): string {
+	return version.split('.')[0];
+}
+
+/** Совместима ли присланная версия схемы с нашей. */
+export function isSupportedSchemaVersion(version: string): boolean {
+	return schemaMajor(version) === schemaMajor(EXCHANGE_SCHEMA_VERSION);
+}
+
+/* ------------------------------------------------------------------ */
+/* Направление 1: CMS → CRM, заявка                                    */
+/* ------------------------------------------------------------------ */
+
+/** Какую форму на сайте заполнили. Сверяется с видом заявителя. */
+export const APPLICATION_FORMS = ['b2b', 'b2c'] as const;
+
+export type ApplicationForm = (typeof APPLICATION_FORMS)[number];
+
+/** Виды заявителя, которые сайт вправе прислать. */
+export const APPLICANT_KINDS = ['educational_institution', 'legal_entity', 'individual'] as const;
+
+export type ApplicantKind = (typeof APPLICANT_KINDS)[number];
+
+/**
+ * Вид заявителя → группа процесса. Таблица соответствий одна на продукт
+ * (`docs/domain.md`, раздел 2); здесь она только пересказана для проверки поля
+ * `form`, которое присылает сайт.
+ */
+export const PROCESS_GROUP_BY_APPLICANT: Record<ApplicantKind, ApplicationForm> = {
+	educational_institution: 'b2b',
+	legal_entity: 'b2c',
+	individual: 'b2c'
+};
+
+const innField = optionalText(12).refine((value) => value === null || isValidInn(value), {
+	error: 'ИНН состоит из 10 или 12 цифр и проходит проверку контрольной суммы'
+});
+
+const organizationApplicantFields = {
+	name: requiredText(500, 'Укажите название организации'),
+	inn: innField,
+	ogrn: optionalText(15)
+};
+
+const applicantSchema = z.discriminatedUnion('kind', [
+	z.object({
+		kind: z.literal('educational_institution'),
+		...organizationApplicantFields,
+		educationLevel: z.enum(EDUCATION_LEVELS).nullable().default('vo')
+	}),
+	z.object({ kind: z.literal('legal_entity'), ...organizationApplicantFields }),
+	z.object({
+		kind: z.literal('individual'),
+		lastName: requiredText(100, 'Укажите фамилию заявителя'),
+		firstName: requiredText(100, 'Укажите имя заявителя'),
+		middleName: optionalText(100)
+	})
+]);
+
+const contactSchema = z.object({
+	lastName: requiredText(100, 'Укажите фамилию контактного лица'),
+	firstName: requiredText(100, 'Укажите имя контактного лица'),
+	middleName: optionalText(100),
+	email: z.email({ error: 'Электронная почта указана неверно' }),
+	phone: optionalText(50).refine((value) => value === null || /^[\d\s+()-]{5,}$/.test(value), {
+		error: 'Телефон может содержать только цифры, пробелы и знаки + ( ) -'
+	}),
+	position: optionalText(300)
+});
+
+/**
+ * Ссылка на файл. Файлы внутри сообщений не ездят никогда: получатель забирает
+ * их по ключу объекта, проверяя размер и отпечаток (раздел 2 контракта).
+ */
+export const exchangeAttachmentSchema = z.object({
+	documentId: z.uuid().nullable().default(null),
+	kind: optionalText(60),
+	name: requiredText(300, 'Укажите имя файла'),
+	mime: requiredText(200, 'Укажите тип файла'),
+	sizeBytes: z.number().int().min(0),
+	sha256: z
+		.string()
+		.regex(/^[0-9a-f]{64}$/, { error: 'Отпечаток файла — 64 шестнадцатеричные цифры' }),
+	storageKey: requiredText(500, 'Укажите ключ объекта в хранилище')
+});
+
+/** Согласие на обработку персональных данных: без него физлицо не заводится. */
+const consentSchema = z.object({
+	given: z.boolean(),
+	at: z.iso.datetime({ offset: true, error: 'Момент согласия — ISO 8601 со смещением' }),
+	policyVersion: requiredText(60, 'Укажите версию текста согласия')
+});
+
+export const applicationSubmittedDataSchema = z.object({
+	externalId: externalIdField,
+	/** Монотонная ревизия отправителя: снимок старее применённого не применяется. */
+	revision: z.number({ error: 'Ревизия заявки — целое число' }).int().min(1),
+	form: z.enum(APPLICATION_FORMS, { error: 'Форма заявки — b2b или b2c' }),
+	applicant: applicantSchema,
+	contact: contactSchema,
+	interest: optionalText(1000),
+	programCodes: z.array(requiredText(100, 'Код программы')).max(50).default([]),
+	productCodes: z.array(requiredText(100, 'Код продукта')).max(50).default([]),
+	comment: optionalText(4000),
+	/** Статус по передаче из каталога заказчика: ложится на позицию договора. */
+	transferStatus: optionalText(60),
+	consent: consentSchema.nullable().default(null),
+	attachments: z.array(exchangeAttachmentSchema).max(20).default([])
+});
+
+export type ApplicationSubmittedData = z.output<typeof applicationSubmittedDataSchema>;
+
+export const applicationSubmittedSchema = exchangeEnvelopeSchema(
+	EXCHANGE_EVENT_TYPES.applicationSubmitted,
+	'cms',
+	applicationSubmittedDataSchema
+);
+
+export type ApplicationSubmittedMessage = z.output<typeof applicationSubmittedSchema>;
+
+/** Что сделал приём: завёл, обновил или ничего (сообщение не новее применённого). */
+export const EXCHANGE_RESULTS = ['created', 'updated', 'unchanged'] as const;
+
+export type ExchangeResult = (typeof EXCHANGE_RESULTS)[number];
+
+/**
+ * Состояние заявки для карточки на сайте. Словарь короткий намеренно: заявитель
+ * видит не четырнадцать стадий процесса, а понятное ему состояние.
+ */
+export const APPLICATION_STATUSES = [
+	'received',
+	'in_progress',
+	'on_hold',
+	'completed',
+	'cancelled'
+] as const;
+
+export type ApplicationStatus = (typeof APPLICATION_STATUSES)[number];
+
+export const applicationIntakeResponseSchema = z.object({
+	schemaVersion: z.literal(EXCHANGE_SCHEMA_VERSION),
+	result: z.enum(EXCHANGE_RESULTS),
+	data: z.object({
+		externalId: z.string(),
+		interactionId: z.uuid(),
+		organizationId: z.uuid(),
+		contactPersonId: z.uuid().nullable(),
+		applicationStatus: z.enum(APPLICATION_STATUSES),
+		processGroup: z.string(),
+		/** Реквизитов не прислали — контрагента заводили вслепую, нужна сверка. */
+		needsReview: z.boolean()
+	})
+});
+
+export type ApplicationIntakeResponse = z.output<typeof applicationIntakeResponseSchema>;
+
+/* ------------------------------------------------------------------ */
+/* Направление 2: CRM → CMS, статус заявки                             */
+/* ------------------------------------------------------------------ */
+
+export const applicationStatusDataSchema = z.object({
+	externalId: z.string(),
+	interactionId: z.uuid(),
+	applicationStatus: z.enum(APPLICATION_STATUSES),
+	stage: z.object({ key: z.string(), name: z.string(), position: z.number().int() }).nullable(),
+	responsible: z.object({ userId: z.uuid(), name: z.string() }).nullable(),
+	dueAt: z.string().nullable(),
+	lastComment: z.string().nullable(),
+	updatedAt: z.string()
+});
+
+/* ------------------------------------------------------------------ */
+/* Направление 3: CRM → LMS, заявка на учебную группу                  */
+/* ------------------------------------------------------------------ */
+
+export const learningGroupRequestedDataSchema = z.object({
+	externalId: z.string(),
+	interactionId: z.uuid(),
+	organization: z.object({ id: z.uuid(), inn: z.string().nullable(), name: z.string() }),
+	program: z.object({ id: z.uuid(), code: z.string() }).nullable(),
+	product: z.object({ id: z.uuid(), code: z.string() }).nullable(),
+	contract: z.object({ id: z.uuid(), number: z.string() }).nullable(),
+	stream: z.object({
+		number: z.number().int().min(1),
+		plannedSeats: z.number().int().min(1),
+		startsOn: z.string().nullable(),
+		endsOn: z.string().nullable()
+	}),
+	responsible: z.object({ userId: z.uuid() }),
+	documents: z.array(exchangeAttachmentSchema)
+});
+
+/**
+ * Ответ системы обучения на заявку. Разбирается мягко: обязателен только
+ * идентификатор группы — всё остальное чужая система вправе не прислать, а
+ * заводить группу без её имени у себя мы не станем.
+ */
+export const learningGroupReplySchema = z.object({
+	result: z.string().optional(),
+	data: z.object({
+		externalId: z.string().optional(),
+		groupExternalId: requiredText(200, 'Система обучения не вернула идентификатор группы'),
+		courseExternalId: z.string().nullish(),
+		url: z.string().nullish()
+	})
+});
+
+/** Параметры отправки группы: их подтверждает человек, а не стадия. */
+export const sendLearningGroupSchema = z.object({
+	interactionId: z.uuid({ error: 'Некорректный идентификатор взаимодействия' }),
+	streamNumber: z.coerce
+		.number({ error: 'Номер потока — целое число' })
+		.int()
+		.min(1, { error: 'Номер потока начинается с единицы' })
+		.max(99, { error: 'Больше девяноста девяти потоков у одного взаимодействия не бывает' }),
+	plannedSeats: z.coerce
+		.number({ error: 'Число мест — целое число' })
+		.int()
+		.min(1, { error: 'В потоке хотя бы одно место' })
+		.max(10_000, { error: 'Больше десяти тысяч мест в потоке не бывает' }),
+	// Пустое поле формы и отсутствие даты — одно и то же: у потока может не быть
+	// названной даты начала, и требовать её значило бы запретить заводить группу
+	// до того, как расписание согласовано.
+	startsOn: optionalIsoDate('Дата начала занятий указана неверно'),
+	endsOn: optionalIsoDate('Дата окончания занятий указана неверно')
+});
+
+export type SendLearningGroupInput = z.output<typeof sendLearningGroupSchema>;
+
+/* ------------------------------------------------------------------ */
+/* Направление 4: LMS → CRM, результат учебной группы                  */
+/* ------------------------------------------------------------------ */
+
+const countersSchema = z
+	.object({
+		enrolled: z.number({ error: 'Зачислено — целое число' }).int().min(0),
+		completed: z.number({ error: 'Завершили — целое число' }).int().min(0),
+		expelled: z.number({ error: 'Отчислены — целое число' }).int().min(0)
+	})
+	.refine((value) => value.completed + value.expelled <= value.enrolled, {
+		error: 'Завершивших и отчисленных вместе не больше зачисленных',
+		path: ['completed']
+	});
+
+export const learningGroupResultDataSchema = z.object({
+	groupExternalId: externalIdField,
+	requestExternalId: optionalText(200),
+	period: z
+		.object({
+			start: z.iso.date({ error: 'Начало периода — дата вида ГГГГ-ММ-ДД' }).nullable(),
+			end: z.iso.date({ error: 'Конец периода — дата вида ГГГГ-ММ-ДД' }).nullable()
+		})
+		.nullable()
+		.default(null),
+	finishedOn: z.iso
+		.date({ error: 'Дата окончания — дата вида ГГГГ-ММ-ДД' })
+		.nullable()
+		.default(null),
+	counters: countersSchema,
+	report: exchangeAttachmentSchema.nullable().default(null)
+});
+
+export type LearningGroupResultData = z.output<typeof learningGroupResultDataSchema>;
+
+export const learningGroupResultSchema = exchangeEnvelopeSchema(
+	EXCHANGE_EVENT_TYPES.learningGroupResult,
+	'lms',
+	learningGroupResultDataSchema
+);
+
+export type LearningGroupResultMessage = z.output<typeof learningGroupResultSchema>;
+
+export const learningGroupResultResponseSchema = z.object({
+	schemaVersion: z.literal(EXCHANGE_SCHEMA_VERSION),
+	result: z.enum(EXCHANGE_RESULTS),
+	data: z.object({
+		groupExternalId: z.string(),
+		learningGroupId: z.uuid(),
+		interactionId: z.uuid(),
+		/** Засчитан ли факт открытой стадии; `false` — взаимодействие на другой. */
+		stageConfirmed: z.boolean(),
+		/** Что случилось со стадией — словами, для журнала отправителя. */
+		note: z.string()
+	})
+});
+
+export type LearningGroupResultResponse = z.output<typeof learningGroupResultResponseSchema>;
+
+/**
+ * Факт системы обучения в том виде, в каком он ложится в `stage_entries
+ * .lms_evidence` и показывается на карточке. Это снимок, а не ссылка: запись
+ * стадии обязана объяснять подтверждение и тогда, когда группу уже удалили.
+ */
+export const lmsEvidenceSchema = z.object({
+	system: z.string(),
+	instance: z.string(),
+	groupExternalId: z.string(),
+	learningGroupId: z.uuid(),
+	occurredAt: z.string(),
+	enrolled: z.number().int(),
+	completed: z.number().int(),
+	expelled: z.number().int(),
+	finishedOn: z.string().nullable(),
+	periodStart: z.string().nullable(),
+	periodEnd: z.string().nullable()
+});
+
+export type LmsEvidence = z.output<typeof lmsEvidenceSchema>;
+
+/* ------------------------------------------------------------------ */
+/* Журнал обмена                                                       */
+/* ------------------------------------------------------------------ */
+
+export const EXCHANGE_DIRECTIONS = ['inbound', 'outbound'] as const;
+
+export type ExchangeDirection = (typeof EXCHANGE_DIRECTIONS)[number];
+
+export const EXCHANGE_DIRECTION_LABELS: Record<ExchangeDirection, string> = {
+	inbound: 'Входящее',
+	outbound: 'Исходящее'
+};
+
+export const EXCHANGE_MESSAGE_STATES = [
+	'pending',
+	'retrying',
+	'sent',
+	'processed',
+	'ignored_stale',
+	'failed',
+	'dismissed'
+] as const;
+
+export type ExchangeMessageState = (typeof EXCHANGE_MESSAGE_STATES)[number];
+
+export const EXCHANGE_STATE_LABELS: Record<ExchangeMessageState, string> = {
+	pending: 'Ждёт отправки',
+	retrying: 'Повтор назначен',
+	sent: 'Отправлено',
+	processed: 'Принято',
+	ignored_stale: 'Старее применённого',
+	failed: 'Не доставлено',
+	dismissed: 'Разобрано вручную'
+};
+
+/** Состояния, из которых сообщение ещё может уйти повтором. */
+export const RETRIABLE_STATES: readonly ExchangeMessageState[] = ['failed', 'retrying'];
+
+export type ExchangeMessageView = {
+	id: string;
+	direction: ExchangeDirection;
+	system: string;
+	instance: string;
+	eventType: string;
+	eventId: string;
+	externalId: string | null;
+	interactionId: string | null;
+	interactionTitle: string | null;
+	state: ExchangeMessageState;
+	attempt: number;
+	nextAttemptAt: Date | null;
+	responseStatus: number | null;
+	lastError: string | null;
+	createdAt: Date;
+	closedAt: Date | null;
+};
+
+/** Учебная группа взаимодействия в том виде, в каком её показывает карточка. */
+export type LearningGroupView = {
+	id: string;
+	streamNumber: number;
+	system: string;
+	instance: string;
+	groupExternalId: string | null;
+	requestedAt: Date;
+	plannedSeats: number | null;
+	startsOn: string | null;
+	endsOn: string | null;
+	lastResultAt: Date | null;
+	/** Состояние последнего сообщения о заявке на эту группу. */
+	messageState: ExchangeMessageState | null;
+	lastError: string | null;
+	enrolled: number | null;
+	completed: number | null;
+	expelled: number | null;
+};
+
+export const exchangeFilterSchema = z.object({
+	direction: z.enum(EXCHANGE_DIRECTIONS).nullable().default(null),
+	system: z.enum(EXCHANGE_SYSTEMS).nullable().default(null),
+	state: z.enum(EXCHANGE_MESSAGE_STATES).nullable().default(null),
+	q: z
+		.string()
+		.trim()
+		.max(200, { error: 'Поисковый запрос не длиннее 200 символов' })
+		.nullable()
+		.default(null)
+		.transform((value) => (value === null || value === '' ? null : value))
+});
+
+export type ExchangeFilter = z.output<typeof exchangeFilterSchema>;
+
+/** Тот же фильтр вместе со страницей: журнал читают глазами и по одной. */
+export const exchangeQuerySchema = exchangeFilterSchema.extend(pageQuerySchema.shape);
+
+export type ExchangeQuery = z.output<typeof exchangeQuerySchema>;
+
+/** Пометить сообщение разобранным: причина обязательна, это признание. */
+export const dismissMessageSchema = z.object({
+	messageId: z.uuid({ error: 'Некорректный идентификатор сообщения' }),
+	reason: requiredText(500, 'Объясните, как сообщение разобрали')
+});
+
+export type DismissMessageInput = z.output<typeof dismissMessageSchema>;
+
+export const retryMessageSchema = z.object({
+	messageId: z.uuid({ error: 'Некорректный идентификатор сообщения' })
+});

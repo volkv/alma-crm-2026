@@ -17,6 +17,7 @@ import {
 	skipStageSchema,
 	updateInteractionSchema
 } from '$lib/contracts/interactions';
+import { sendLearningGroupSchema } from '$lib/contracts/exchange';
 import { formatDate } from '$lib/format';
 import { actorFromEvent } from '$lib/server/actor';
 import { DocumentConversionError } from '$lib/server/documents/errors';
@@ -24,6 +25,10 @@ import { generateDocument } from '$lib/server/documents/generate';
 import { listInteractionSupersessions } from '$lib/server/documents/read';
 import { uploadDocument, uploadDocumentRevision } from '$lib/server/documents/upload';
 import { toActionFailure, toPageError } from '$lib/server/http';
+import {
+	readInteractionExchange,
+	requestLearningGroup
+} from '$lib/server/integrations/exchange/groups';
 import {
 	getInteraction,
 	listComments,
@@ -57,21 +62,43 @@ export const load: PageServerLoad = async (event) => {
 	const { id } = event.params;
 
 	try {
-		const [interaction, status, summary, closing, comments, changes, users, supersessions] =
-			await Promise.all([
-				getInteraction(ctx, id),
-				getInteractionStatus(ctx, id),
-				getInteractionSummary(ctx, id),
-				getInteractionClosing(ctx, id),
-				listComments(ctx, id),
-				listInteractionChanges(ctx, id),
-				responsibleOptions(event),
-				// Панель документов по умолчанию показывает только действующие
-				// редакции, и объяснить скрытые она может, лишь зная, чем их заменили.
-				listInteractionSupersessions(ctx, id)
-			]);
+		const [
+			interaction,
+			status,
+			summary,
+			closing,
+			comments,
+			changes,
+			users,
+			supersessions,
+			exchange
+		] = await Promise.all([
+			getInteraction(ctx, id),
+			getInteractionStatus(ctx, id),
+			getInteractionSummary(ctx, id),
+			getInteractionClosing(ctx, id),
+			listComments(ctx, id),
+			listInteractionChanges(ctx, id),
+			responsibleOptions(event),
+			// Панель документов по умолчанию показывает только действующие
+			// редакции, и объяснить скрытые она может, лишь зная, чем их заменили.
+			listInteractionSupersessions(ctx, id),
+			// Обмен с системой обучения: заведённые потоки и приговор по кнопке
+			// «Отправить в LMS».
+			readInteractionExchange(ctx, id)
+		]);
 
-		return { interaction, status, summary, closing, comments, changes, users, supersessions };
+		return {
+			interaction,
+			status,
+			summary,
+			closing,
+			comments,
+			changes,
+			users,
+			supersessions,
+			exchange
+		};
 	} catch (cause) {
 		toPageError(cause);
 	}
@@ -420,6 +447,42 @@ export const actions: Actions = {
 		if (!parsed.ok) return parsed.failure;
 
 		return run(() => cancelInteraction(actorFromEvent(event), parsed.data));
+	},
+
+	/**
+	 * Заявка на учебную группу уходит действием сотрудника, а не переходом по
+	 * стадии: число мест и даты подтверждает человек, и ошибочный переход не
+	 * должен превращаться в группу в чужой системе.
+	 */
+	sendGroup: async (event) => {
+		const data = await event.request.formData();
+		// Пустое поле даты — это «дата не названа», а не «дата пустая»: поля
+		// собираются поимённо, потому что схема различает `null` и строку.
+		const parsed = parse(sendLearningGroupSchema, {
+			interactionId: event.params.id,
+			streamNumber: data.get('streamNumber'),
+			plannedSeats: data.get('plannedSeats'),
+			startsOn: text(data, 'startsOn'),
+			endsOn: text(data, 'endsOn')
+		});
+
+		if (!parsed.ok) {
+			return parsed.failure;
+		}
+
+		try {
+			const outcome = await requestLearningGroup(actorFromEvent(event), parsed.data);
+
+			return outcome.delivered
+				? { ok: true }
+				: fail(502, {
+						message:
+							outcome.error ?? 'Система обучения не ответила: заявка осталась в очереди повторов',
+						issues: [] as string[]
+					});
+		} catch (cause) {
+			return toActionFailure(cause);
+		}
 	},
 
 	generate: async (event) => generateAgreement(event),
