@@ -26,7 +26,7 @@ import {
 	type StatPeriod
 } from '$lib/contracts/stats';
 import type { ActorContext } from '../actor';
-import { requirePermission } from '../rbac';
+import { requirePermission, scopeFingerprint } from '../rbac';
 import { getRedis } from '../redis';
 import {
 	rankPrograms,
@@ -56,18 +56,21 @@ export const STATS_DASHBOARD_TTL_SECONDS = 60;
 /**
  * Область доступа в ключе кэша.
  *
- * Без неё дашборд, собранный администратором, достался бы куратору, который
- * видит три вуза из сорока. Список идентификаторов уезжает в ключ отпечатком:
- * область бывает длинной, а ключ Redis читают глазами.
+ * Без неё дашборд, собранный администратором, достался бы менеджеру, который
+ * видит три вуза из сорока. Область уезжает в ключ отпечатком: список
+ * пользователей бывает длинным, а ключ Redis читают глазами. Считает отпечаток
+ * `scopeFingerprint` — тот же, что знает устройство области; своё описание
+ * здесь разошлось бы с ним на первой же правке, и две разные области поделили
+ * бы одну запись.
  */
 function scopeKey(ctx: ActorContext): string {
-	if (ctx.scope.kind === 'all') {
+	const fingerprint = scopeFingerprint(ctx);
+
+	if (fingerprint === 'all') {
 		return 'all';
 	}
 
-	const ids = [...ctx.scope.organizationIds].sort().join(',');
-
-	return createHash('sha256').update(ids, 'utf8').digest('hex').slice(0, 16);
+	return createHash('sha256').update(fingerprint, 'utf8').digest('hex').slice(0, 16);
 }
 
 async function cacheKey(ctx: ActorContext, period: StatPeriod): Promise<string> {

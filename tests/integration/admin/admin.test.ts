@@ -6,7 +6,6 @@ import type { ActorContext } from '$lib/server/actor';
 import type { SessionUser } from '$lib/server/auth/types';
 import { listApiKeys } from '$lib/server/api/keys';
 import { recordAuditEvent } from '$lib/server/audit';
-import { createUser } from '$lib/server/auth/users';
 import {
 	createSession,
 	destroySession,
@@ -88,10 +87,9 @@ const loadUsers = usersPage.load as unknown as PageLoad;
 const loadKeys = keysPage.load as unknown as PageLoad;
 const loadGeneral = generalPage.load as unknown as PageLoad;
 const exportAudit = auditExport.GET as unknown as Endpoint;
-const createUserAction = usersPage.actions.create as unknown as FormAction;
 const deactivateUserAction = usersPage.actions.deactivate as unknown as FormAction;
+const managerAction = usersPage.actions.manager as unknown as FormAction;
 const activateUserAction = usersPage.actions.activate as unknown as FormAction;
-const changePasswordAction = profilePage.actions.password as unknown as FormAction;
 const revokeAllAction = profilePage.actions.revokeAll as unknown as FormAction;
 const loadProfile = profilePage.load as unknown as PageLoad;
 const createKeyAction = keysPage.actions.create as unknown as FormAction;
@@ -124,13 +122,17 @@ beforeEach(async () => {
  * вне демо-режима такая запись — обычная.
  */
 async function demoSessionUser(roleId: string): Promise<SessionUser> {
-	const created = await createUser(testActor(), {
-		email: `demo-${roleId}@example.org`,
-		fullName: `${roleId} Демо`,
-		roleId,
-		password: 'Проверка-Входа1',
-		isDemo: true
-	});
+	// Запись заводится прямой вставкой: заведения пользователя в продукте больше
+	// нет — она появляется сама при первом входе через каталог.
+	const [created] = await database.db
+		.insert(users)
+		.values({
+			email: `demo-${roleId}@example.org`,
+			fullName: `${roleId} Демо`,
+			roleId,
+			isDemo: true
+		})
+		.returning({ id: users.id });
 
 	const user = await loadSessionUser(created.id);
 
@@ -139,16 +141,6 @@ async function demoSessionUser(roleId: string): Promise<SessionUser> {
 	}
 
 	return user;
-}
-
-/** Хеш пароля учётной записи: по нему видно, тронули пароль или нет. */
-async function passwordHashOf(userId: string): Promise<string> {
-	const [row] = await database.db
-		.select({ passwordHash: users.passwordHash })
-		.from(users)
-		.where(eq(users.id, userId));
-
-	return row.passwordHash;
 }
 
 /** Идентификатор, которого нет ни в одной таблице, но по форме — наш. */
@@ -188,7 +180,7 @@ function moscow(iso: string): Date {
 }
 
 type UsersPageData = {
-	users: { items: { email: string }[]; total: number };
+	users: { items: { email: string; roleName: string }[]; total: number };
 };
 
 type PageData = {
@@ -285,7 +277,7 @@ describe('журнал действий', () => {
 	});
 
 	it('закрыт для роли без права на журнал', async () => {
-		await expect(loadAudit(pageEvent({ user: sessionUser('viewer') }))).rejects.toMatchObject({
+		await expect(loadAudit(pageEvent({ user: sessionUser('manager') }))).rejects.toMatchObject({
 			status: 403
 		});
 	});
@@ -534,9 +526,10 @@ describe('граница демонстрационной сессии', () => {
 		expect(data.events.items[0].ip).toBe('198.51.*.*');
 		expect(data.events.items[0].userAgent).toBe('Chrome');
 
-		// Кнопок выгрузки нет и выбора действующего лица тоже: список
-		// пользователей демонстрации не принадлежит.
-		expect(data.canExport).toBe(false);
+		// Выгрузка демонстрации остаётся: она обязана огрублять адрес и клиента
+		// ровно так же, как экран, — и огрубляет. А выбор действующего лица
+		// пуст: список пользователей демонстрации не принадлежит.
+		expect(data.canExport).toBe(true);
 		expect(data.actors).toEqual([]);
 	});
 
@@ -558,24 +551,35 @@ describe('граница демонстрационной сессии', () => {
 		expect(role.has('people.anonymize')).toBe(true);
 	});
 
-	it('не отдаёт демонстрации выгрузку журнала', async () => {
+	it('отдаёт демонстрации выгрузку журнала с тем же огрублением, что и экран', async () => {
 		const user = await demoSessionUser('admin');
 
-		await insertEvent({ type: 'auth.login', occurredAt: moscow('2026-09-10T10:00:00') });
+		await insertEvent({
+			type: 'auth.login',
+			occurredAt: moscow('2026-09-10T10:00:00'),
+			userAgent:
+				'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/150.0.0.0 Safari/537.36'
+		});
 
-		await expect(
-			exportAudit(pageEvent({ path: '/audit/export', query: '?format=csv', user }))
-		).rejects.toMatchObject({ status: 403 });
+		const response = await exportAudit(
+			pageEvent({ path: '/audit/export', query: '?format=csv&type=auth.login', user })
+		);
+		const body = await (response as Response).text();
 
-		const denied = await database.db
+		// Выгрузка — это то же, что экран, файлом: огрубление адреса и клиента
+		// обязано быть тем же, иначе она уносит со стенда то, что экран прячет.
+		expect(body).toContain('198.51.*.*');
+		expect(body).not.toContain('Mozilla/5.0');
+
+		const exported = await database.db
 			.select({ outcome: auditEvents.outcome, actorUserId: auditEvents.actorUserId })
 			.from(auditEvents)
 			.where(eq(auditEvents.eventType, 'audit.exported'));
 
-		expect(denied).toEqual([{ outcome: 'denied', actorUserId: user.id }]);
+		expect(exported).toEqual([{ outcome: 'success', actorUserId: user.id }]);
 	});
 
-	it('не пускает демонстрацию в раздел пользователей и не даёт ей завести учётную запись', async () => {
+	it('не пускает демонстрацию в раздел пользователей', async () => {
 		const user = await demoSessionUser('admin');
 
 		await expect(loadUsers(pageEvent({ path: '/settings/users', user }))).rejects.toMatchObject({
@@ -584,16 +588,11 @@ describe('граница демонстрационной сессии', () => {
 
 		// Отказ не в разметке, а в правах: форма, отправленная мимо страницы,
 		// получает то же самое — и не претензию к полям, а 403.
-		const result = await createUserAction(
+		const result = await deactivateUserAction(
 			pageEvent({
 				path: '/settings/users',
 				user,
-				form: {
-					email: 'postoyannyi@example.org',
-					fullName: 'Постоянный Администратор',
-					roleId: 'admin',
-					password: 'Проверка-Входа1'
-				}
+				form: { userId: TEST_USER_IDS.manager }
 			})
 		);
 
@@ -601,14 +600,6 @@ describe('граница демонстрационной сессии', () => {
 			status: 403,
 			data: { message: 'Недостаточно прав: требуется «users.manage»' }
 		});
-
-		// Постоянного администратора после демонстрации не остаётся.
-		const created = await database.db
-			.select({ email: users.email })
-			.from(users)
-			.where(eq(users.email, 'postoyannyi@example.org'));
-
-		expect(created).toEqual([]);
 	});
 
 	it('не даёт демонстрации выпустить ключ доступа', async () => {
@@ -635,16 +626,12 @@ describe('граница демонстрационной сессии', () => {
 		expect(await listApiKeys(testActor())).toEqual([]);
 	});
 
-	it('не даёт демонстрации переписать настройки', async () => {
+	it('оставляет демонстрации настройки стенда: их на нём и показывают', async () => {
 		const user = await demoSessionUser('admin');
 
-		await expect(loadGeneral(pageEvent({ path: '/settings/general', user }))).rejects.toMatchObject(
-			{ status: 403 }
-		);
-	});
-
-	it('отвечает демонстрации 403 и на форму настроек, отправленную мимо страницы', async () => {
-		const user = await demoSessionUser('admin');
+		await expect(
+			loadGeneral(pageEvent({ path: '/settings/general', user }))
+		).resolves.toMatchObject({ bannerForm: expect.anything() });
 
 		const result = await bannerAction(
 			pageEvent({
@@ -654,14 +641,11 @@ describe('граница демонстрационной сессии', () => {
 			})
 		);
 
-		// Отказ по правам — не претензия к заполнению: правкой полей он не
-		// поправляется, и отвечать на него 400 значило бы обещать обратное.
-		expect(result).toMatchObject({
-			status: 403,
-			data: { message: 'Недостаточно прав: требуется «settings.write»' }
+		expect(result).toMatchObject({ form: { valid: true } });
+		expect(await getSetting('login_banner')).toEqual({
+			title: 'Свой баннер',
+			text: 'Свой текст'
 		});
-
-		expect(await getSetting('login_banner')).toEqual(SETTING_DEFAULTS.login_banner);
 	});
 
 	it('не даёт демонстрации завершить сессии общей учётной записи', async () => {
@@ -678,38 +662,8 @@ describe('граница демонстрационной сессии', () => {
 		);
 
 		// Чужая сессия пережила попытку.
-		expect(await touchSession(sessionId)).toEqual({ userId: user.id, mfaPending: false });
+		expect(await touchSession(sessionId)).toBe(user.id);
 		await destroySession(sessionId);
-	});
-
-	it('не даёт демонстрации сменить пароль общей учётной записи', async () => {
-		const user = await demoSessionUser('admin');
-		const hashBefore = await passwordHashOf(user.id);
-
-		const result = await changePasswordAction(
-			pageEvent({
-				path: '/settings/profile',
-				user,
-				form: {
-					current: 'Проверка-Входа1',
-					next: 'Другой-Пароль-9',
-					repeat: 'Другой-Пароль-9'
-				}
-			})
-		);
-
-		expect((result as { status: number }).status).toBe(403);
-
-		// Пароль не тронут — иначе администратор стенда потерял бы вход в него, а
-		// живые сессии посетителей погасли бы все разом.
-		expect(await passwordHashOf(user.id)).toBe(hashBefore);
-
-		const changed = await database.db
-			.select({ id: auditEvents.id })
-			.from(auditEvents)
-			.where(eq(auditEvents.eventType, 'auth.password_changed'));
-
-		expect(changed).toEqual([]);
 	});
 
 	it('рисует раздел профиля без обоих действий', async () => {
@@ -726,57 +680,13 @@ describe('граница демонстрационной сессии', () => {
 });
 
 describe('пользователи', () => {
-	it('не заводит пользователя с паролем против политики', async () => {
-		const result = await createUserAction(
-			pageEvent({
-				path: '/settings/users',
-				form: {
-					email: 'novikov@example.org',
-					fullName: 'Новиков Пётр',
-					roleId: 'manager',
-					password: 'короткий'
-				}
-			})
-		);
-
-		expect((result as { status: number }).status).toBe(400);
-		expect(formOf(result).errors._errors).toEqual([
-			'Пароль не отвечает политике',
-			'Пароль не короче 12 символов',
-			'Используйте символы хотя бы 3 видов из четырёх: строчные буквы, прописные буквы, цифры, знаки'
-		]);
-	});
-
-	it('заводит пользователя и возвращает сообщение', async () => {
-		const result = await createUserAction(
-			pageEvent({
-				path: '/settings/users',
-				form: {
-					email: 'Novikov@Example.org',
-					fullName: 'Новиков Пётр',
-					roleId: 'manager',
-					password: 'Проверка-Входа1'
-				}
-			})
-		);
-
-		expect(formOf(result).message).toBe('Пользователь Новиков Пётр заведён');
-	});
-
 	it('ищет по почте и имени', async () => {
-		const account = (email: string, fullName: string) => ({
-			email,
-			fullName,
-			roleId: 'manager',
-			password: 'Проверка-Входа1'
-		});
-
-		await createUserAction(
-			pageEvent({ path: '/settings/users', form: account('novikov@example.org', 'Новиков Пётр') })
-		);
-		await createUserAction(
-			pageEvent({ path: '/settings/users', form: account('orlova@example.org', 'Орлова Мария') })
-		);
+		// Записи заводятся вставкой: в продукте они появляются при первом входе
+		// через каталог, и формы заведения в разделе нет.
+		await database.db.insert(users).values([
+			{ email: 'novikov@example.org', fullName: 'Новиков Пётр', roleId: 'manager' },
+			{ email: 'orlova@example.org', fullName: 'Орлова Мария', roleId: 'manager' }
+		]);
 
 		const byEmail = (await loadUsers(
 			pageEvent({ path: '/settings/users', query: '?q=novikov@example' })
@@ -801,12 +711,10 @@ describe('пользователи', () => {
 	});
 
 	it('включает выключенную запись обратно и говорит об этом', async () => {
-		const created = await createUser(testActor(), {
-			email: 'orlova@example.org',
-			fullName: 'Орлова Мария',
-			roleId: 'manager',
-			password: 'Проверка-Входа1'
-		});
+		const [created] = await database.db
+			.insert(users)
+			.values({ email: 'orlova@example.org', fullName: 'Орлова Мария', roleId: 'manager' })
+			.returning({ id: users.id });
 
 		const off = await deactivateUserAction(
 			pageEvent({ path: '/settings/users', form: { userId: created.id } })
@@ -828,13 +736,15 @@ describe('пользователи', () => {
 
 	it('переводит отказ выключить демонстрационную запись в сообщение формы', async () => {
 		demo.mode = true;
-		const created = await createUser(testActor(), {
-			email: 'demo-viewer@example.org',
-			fullName: 'Наблюдатель Демо',
-			roleId: 'viewer',
-			password: 'Проверка-Входа1',
-			isDemo: true
-		});
+		const [created] = await database.db
+			.insert(users)
+			.values({
+				email: 'demo-lead@example.org',
+				fullName: 'Руководитель Демо',
+				roleId: 'lead',
+				isDemo: true
+			})
+			.returning({ id: users.id });
 
 		const result = await deactivateUserAction(
 			pageEvent({ path: '/settings/users', form: { userId: created.id } })
@@ -864,18 +774,31 @@ describe('пользователи', () => {
 		expect((absent as { status: number }).status).toBe(404);
 	});
 
-	it('говорит словами, что почта занята', async () => {
-		const form = {
-			email: 'novikov@example.org',
-			fullName: 'Новиков Пётр',
-			roleId: 'manager',
-			password: 'Проверка-Входа1'
-		};
+	it('ведёт иерархию сотрудников и гасит сессии затронутых', async () => {
+		const [subordinate] = await database.db
+			.insert(users)
+			.values({ email: 'gromov@example.org', fullName: 'Громов Илья', roleId: 'manager' })
+			.returning({ id: users.id });
 
-		await createUserAction(pageEvent({ path: '/settings/users', form }));
-		const result = await createUserAction(pageEvent({ path: '/settings/users', form }));
+		const result = await managerAction(
+			pageEvent({
+				path: '/settings/users',
+				form: { userId: subordinate.id, managerUserId: TEST_USER_IDS.lead }
+			})
+		);
 
-		expect(formOf(result).errors.email).toEqual(['Пользователь с такой почтой уже заведён']);
+		expect(result).toMatchObject({ message: expect.stringContaining('Руководитель назначен') });
+
+		const [row] = await database.db
+			.select({ managerUserId: users.managerUserId })
+			.from(users)
+			.where(eq(users.id, subordinate.id));
+
+		expect(row.managerUserId).toBe(TEST_USER_IDS.lead);
+
+		// Роль отсюда не назначается: её приносит токен каталога на каждом входе.
+		const data = (await loadUsers(pageEvent({ path: '/settings/users' }))) as UsersPageData;
+		expect(data.users.items.every((item) => typeof item.roleName === 'string')).toBe(true);
 	});
 });
 
@@ -915,59 +838,31 @@ describe('ключи доступа', () => {
 });
 
 describe('профиль', () => {
-	const password = 'Проверка-Входа1';
-
 	async function account() {
-		const created = await createUser(testActor(), {
-			email: 'orlova@example.org',
-			fullName: 'Орлова Мария',
-			roleId: 'manager',
-			password
-		});
+		const [created] = await database.db
+			.insert(users)
+			.values({ email: 'orlova@example.org', fullName: 'Орлова Мария', roleId: 'manager' })
+			.returning({ id: users.id });
 
 		return testActor({ roleId: 'manager', userId: created.id }).user as SessionUser;
 	}
 
-	it('не меняет пароль, если текущий указан неверно', async () => {
+	it('гасит все сессии владельца и снимает cookie', async () => {
 		const user = await account();
+		const sessionId = await createSession(user.id, { ip: null, userAgent: null });
 
-		const result = await changePasswordAction(
-			pageEvent({
-				path: '/settings/profile',
-				user,
-				form: { current: 'совсем не тот', next: 'Другой-Пароль-9', repeat: 'Другой-Пароль-9' }
-			})
-		);
+		const result = await revokeAllAction(pageEvent({ path: '/settings/profile', user }));
 
-		expect((result as { status: number }).status).toBe(400);
-		expect(formOf(result).errors._errors).toEqual([
-			'Пароль не изменён',
-			'Текущий пароль указан неверно'
-		]);
-	});
+		expect(result).toMatchObject({ message: 'Все сессии завершены — войдите заново.' });
+		// Сессия погашена в Redis, а не только в браузере: иначе украденный
+		// идентификатор пережил бы нажатие.
+		expect(await touchSession(sessionId)).toBeNull();
 
-	it('меняет пароль, уводит на вход с причиной и пишет это в журнал', async () => {
-		const user = await account();
-
-		// Сессии погашены все, включая текущую, поэтому действие не возвращает
-		// страницу, а разворачивает на форму входа — и называет ей причину, чтобы
-		// та не выглядела внезапным выходом из системы.
-		await expect(
-			changePasswordAction(
-				pageEvent({
-					path: '/settings/profile',
-					user,
-					form: { current: password, next: 'Другой-Пароль-9', repeat: 'Другой-Пароль-9' }
-				})
-			)
-		).rejects.toMatchObject({ status: 303, location: '/login?reason=password-changed' });
-
-		const changed = await database.db
-			.select()
+		const loggedOut = await database.db
+			.select({ actorUserId: auditEvents.actorUserId })
 			.from(auditEvents)
-			.where(eq(auditEvents.eventType, 'auth.password_changed'));
+			.where(eq(auditEvents.eventType, 'auth.logout'));
 
-		expect(changed).toHaveLength(1);
-		expect(changed[0].actorUserId).toBe(user.id);
+		expect(loggedOut).toEqual([{ actorUserId: user.id }]);
 	});
 });

@@ -34,11 +34,21 @@
 	let {
 		summary,
 		currentStageId,
+		revision,
+		canAttach,
 		closing
 	}: {
 		summary: InteractionSummaryView;
 		/** Стадия, с которой отдаются команды; сервер сверит её со своей. */
 		currentStageId: string | null;
+		/**
+		 * Номер редакции процесса, по которой отрисована карточка. Едет с каждой
+		 * командой перехода: если процесс изменили, пока карточка была открыта,
+		 * движок откажет словами, а не сдвинет запись по правилам, которых нет.
+		 */
+		revision: number;
+		/** Есть ли право прикладывать файлы: без него поля в диалоге нет. */
+		canAttach: boolean;
 		/**
 		 * Команды, которые закрывают взаимодействие целиком. Они не про стадию,
 		 * поэтому приезжают снаружи, но стоят там же, где остальные ответы на
@@ -48,14 +58,16 @@
 	} = $props();
 
 	/**
-	 * Переход, которому маршрут назначил объяснение: его спрашивают в диалоге до
-	 * команды. Возврат и пропуск требуют его всегда, шаг вперёд — только там, где
-	 * так настроен маршрут.
+	 * Диалог перехода. Открывается на любом переходе, а не только там, где
+	 * процесс требует объяснения: комментарий и вложения доступны всегда — это
+	 * то, чем человек объясняет, чем кончилась стадия. Обязателен комментарий
+	 * только у перехода с поднятым признаком причины.
 	 */
 	let reasonDialog = $state<{
 		kind: StageTransitionKind;
 		toStageId: string;
 		name: string;
+		requiresReason: boolean;
 	} | null>(null);
 	let pauseOpen = $state(false);
 	// Список причин отправляет выбранное скрытым полем, поэтому в нём всегда
@@ -188,45 +200,26 @@
 							? `Вернуть: ${option.toStage.name}`
 							: `Пропустить до: ${option.toStage.name}`}
 				<div class="flex flex-col gap-1">
-					{#if option.transition.kind === 'forward' && !option.transition.requiresReason}
-						<form method="POST" action="?/advance" use:enhance={actionEnhance()}>
-							<input type="hidden" name="fromStageId" value={currentStageId} />
-							<input type="hidden" name="toStageId" value={option.toStage.id} />
-							<!-- Первичный цвет — только тому, что действительно можно нажать:
-								самый заметный элемент панели «что могу сейчас» не должен
-								оказаться тем, чего сейчас нельзя. -->
-							<Button
-								type="submit"
-								size="sm"
-								variant={option.allowed ? 'default' : 'outline'}
-								class="h-auto min-h-7 w-full min-w-0 justify-start py-1 text-left whitespace-normal"
-								disabled={!option.allowed}
-							>
-								{@render transitionFace(option.transition.kind, label)}
-							</Button>
-						</form>
-					{:else}
-						<!-- Переход с обязательным объяснением сперва спрашивает его:
-							отправить команду, которую движок заведомо отклонит, значит
-							показать отказ вместо поля для ответа. -->
-						<Button
-							type="button"
-							size="sm"
-							variant={option.transition.kind === 'forward' && option.allowed
-								? 'default'
-								: 'outline'}
-							class="h-auto min-h-7 w-full min-w-0 justify-start py-1 text-left whitespace-normal"
-							disabled={!option.allowed}
-							onclick={() =>
-								(reasonDialog = {
-									kind: option.transition.kind,
-									toStageId: option.toStage.id,
-									name: option.toStage.name
-								})}
-						>
-							{@render transitionFace(option.transition.kind, label)}
-						</Button>
-					{/if}
+					<!-- Любой переход открывает диалог: комментарий и вложения — то, чем
+						объясняют, чем кончилась стадия, и на шаге вперёд они нужны так
+						же, как на возврате. Первичный цвет — только тому, что
+						действительно можно нажать. -->
+					<Button
+						type="button"
+						size="sm"
+						variant={option.transition.kind === 'forward' && option.allowed ? 'default' : 'outline'}
+						class="h-auto min-h-7 w-full min-w-0 justify-start py-1 text-left whitespace-normal"
+						disabled={!option.allowed}
+						onclick={() =>
+							(reasonDialog = {
+								kind: option.transition.kind,
+								toStageId: option.toStage.id,
+								name: option.toStage.name,
+								requiresReason: option.transition.requiresReason
+							})}
+					>
+						{@render transitionFace(option.transition.kind, label)}
+					</Button>
 					{#if !option.allowed}
 						<!-- Причины целиком, а не первая из них: недоступный переход
 							объясняется рядом с кнопкой, и остальные условия человеку
@@ -281,11 +274,13 @@
 		<form
 			method="POST"
 			action={REASON_ACTIONS[dialogKind]}
+			enctype="multipart/form-data"
 			use:enhance={actionEnhance({ onsuccess: () => (reasonDialog = null) })}
 			class="flex flex-col gap-4"
 		>
 			<input type="hidden" name="fromStageId" value={currentStageId} />
 			<input type="hidden" name="toStageId" value={reasonDialog?.toStageId ?? ''} />
+			<input type="hidden" name="revision" value={revision} />
 
 			<div class="flex flex-col gap-1.5">
 				<!-- На шаге вперёд объяснение — это комментарий «чем закончили стадию»,
@@ -297,12 +292,33 @@
 					id="transitionReason"
 					name="reason"
 					rows={3}
-					required
+					required={reasonDialog?.requiresReason ?? dialogKind !== 'forward'}
 					placeholder={dialogKind === 'forward'
 						? 'Чем закончилась стадия'
 						: 'Что именно пошло не так'}
 				/>
 			</div>
+
+			{#if canAttach}
+				<div class="flex flex-col gap-1.5">
+					<!-- Файл виден на той стадии, где его приложили, а не общим списком
+						по взаимодействию: «чем подтверждена передача материалов» —
+						вопрос к стадии. Здесь нативный выбор файлов, а не наш
+						`FileInput`: тот показывает один файл, а вложений к переходу
+						бывает несколько. -->
+					<Label for="transitionFiles">Вложения</Label>
+					<input
+						id="transitionFiles"
+						name="files"
+						type="file"
+						multiple
+						class="text-sm file:mr-2 file:rounded-md file:border file:border-input file:bg-background file:px-2 file:py-1 file:text-sm"
+					/>
+					<p class="text-xs text-muted-foreground">
+						До десяти файлов на переход; они останутся на покидаемой стадии.
+					</p>
+				</div>
+			{/if}
 
 			<Dialog.Footer>
 				<Button type="button" variant="outline" onclick={() => (reasonDialog = null)}>Отмена</Button

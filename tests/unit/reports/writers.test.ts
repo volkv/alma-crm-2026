@@ -1,0 +1,227 @@
+/**
+ * Писатели отчёта на готовом объекте: без базы и без сети.
+ *
+ * Проверяется то, из-за чего файл врёт молча: число строк, обезвреживание
+ * формул, пустая ячейка вместо нуля, пометка сорта колонки в заголовке и
+ * экранирование в HTML для печати.
+ */
+import { describe, expect, it } from 'vitest';
+import { writeXlsx } from '$lib/server/spreadsheet/write';
+import { XLSX } from '$lib/server/spreadsheet/sheetjs';
+import { checkExportInvariant, checkReportInvariants } from '$lib/server/reports/invariants';
+import { reportFileName } from '$lib/server/reports/writers/filename';
+import { reportHtml } from '$lib/server/reports/writers/html';
+import { reportJson } from '$lib/server/reports/writers/json';
+import { reportSheets } from '$lib/server/reports/writers/sheets';
+import { sampleReportView } from '../../fixtures/reports/view';
+
+const VIEW = sampleReportView();
+
+describe('листы книги', () => {
+	const sheets = reportSheets(VIEW);
+
+	it('собирает три листа с короткими именами', () => {
+		expect(sheets.map((sheet) => sheet.name)).toStrictEqual(['Отчёт', 'Фильтры', 'Сводка']);
+		expect(sheets.every((sheet) => sheet.name.length <= 31)).toBe(true);
+	});
+
+	it('пишет заголовок колонки вместе с пометкой сорта', () => {
+		expect(sheets[0].rows[0]).toStrictEqual([
+			'Взаимодействие (сейчас)',
+			'Вуз или контрагент (сейчас)',
+			'Продукты (сейчас)',
+			'Дней на стадии (на 31.12.2026)',
+			'Адрес карточки'
+		]);
+	});
+
+	it('строк на листе ровно столько, сколько в таблице', () => {
+		expect(sheets[0].rows.length - 1).toBe(VIEW.rows.length);
+	});
+
+	it('число пишет числом, а пустое значение оставляет пустым', () => {
+		expect(sheets[0].rows[1][3]).toBe(12);
+		// Пустая ячейка — не ноль: ноль означает записанный ноль.
+		expect(sheets[0].rows[2][3]).toBeNull();
+	});
+
+	it('список значений кладёт в одну ячейку, а не размножает строку', () => {
+		expect(sheets[0].rows[1][2]).toBe('П-1, П-1б');
+		expect(sheets[0].rows[2][2]).toBeNull();
+	});
+
+	it('обезвреживает значение, начинающееся со знака формулы', () => {
+		const workbook = XLSX.read(writeXlsx(sheets), { type: 'buffer' });
+		const rows = XLSX.utils.sheet_to_json<string[]>(workbook.Sheets['Отчёт'], {
+			header: 1,
+			raw: false,
+			defval: ''
+		});
+
+		// `=Опасное название` открылось бы формулой у того, кто открыл файл.
+		expect(rows[2][0]).toBe("'=Опасное название");
+	});
+
+	it('адрес карточки пишет текстом в отдельной колонке', () => {
+		expect(sheets[0].rows[1][4]).toBe(
+			'http://localhost:5173/interactions/11111111-1111-4111-8111-111111111111'
+		);
+	});
+
+	it('на листе фильтров есть режим, период, область и правило', () => {
+		const text = sheets[1].rows.map((row) => row.join(' ')).join('\n');
+
+		expect(text).toContain('Режим Срез');
+		expect(text).toContain('все взаимодействия');
+		expect(text).toContain('Срез на 31.12.2026.');
+	});
+
+	it('на сводке стоят числа диаграмм и предупреждение о двойном счёте', () => {
+		const text = sheets[2].rows.map((row) => row.join(' ')).join('\n');
+
+		expect(text).toContain('Поиск контактных лиц 1');
+		expect(text).toContain('Завершено 1');
+		expect(text).toContain('Учтено дважды и более 1');
+	});
+});
+
+describe('JSON', () => {
+	const payload = JSON.parse(reportJson(VIEW).toString('utf8')) as {
+		schemaVersion: number;
+		rows: { interactionId: string; stageEntryId: string | null; values: Record<string, unknown> }[];
+	};
+
+	it('несёт версию схемы и все строки', () => {
+		expect(payload.schemaVersion).toBe(1);
+		expect(payload.rows.length).toBe(VIEW.rows.length);
+	});
+
+	it('называет ячейки ключами колонок, а не порядком', () => {
+		expect(payload.rows[0].values).toStrictEqual({
+			interaction: 'Первое взаимодействие',
+			organization: 'Вуз А',
+			products: ['П-1', 'П-1б'],
+			daysOnStage: 12
+		});
+	});
+
+	it('держит устойчивый идентификатор записи о стадии', () => {
+		expect(payload.rows[0].stageEntryId).toBe('22222222-2222-4222-8222-222222222222');
+		expect(payload.rows[1].stageEntryId).toBeNull();
+	});
+
+	it('пишется в UTF-8 без метки порядка байтов', () => {
+		const bytes = reportJson(VIEW);
+
+		expect(bytes.subarray(0, 3).toString('hex')).not.toBe('efbbbf');
+		expect(bytes.toString('utf8')).toContain('Вуз А');
+	});
+});
+
+describe('страница на печать', () => {
+	const html = reportHtml(VIEW);
+
+	it('повторяет шапку таблицы на каждой странице', () => {
+		expect(html).toContain('display: table-header-group');
+	});
+
+	it('несёт правило семантики и число строк', () => {
+		expect(html).toContain('Срез на 31.12.2026.');
+		expect(html).toContain('Строк в отчёте');
+	});
+
+	it('обезвреживает разметку в значении ячейки', () => {
+		const dangerous = reportHtml(
+			sampleReportView({
+				rows: [
+					{
+						interactionId: '44444444-4444-4444-8444-444444444444',
+						stageEntryId: null,
+						cells: [
+							{ kind: 'link', value: '<script>alert(1)</script>', url: null },
+							{ kind: 'text', value: 'Вуз "А" & Б' },
+							{ kind: 'list', values: [] },
+							{ kind: 'number', value: null }
+						]
+					}
+				]
+			})
+		);
+
+		expect(dangerous).not.toContain('<script>alert(1)</script>');
+		expect(dangerous).toContain('&lt;script&gt;');
+		expect(dangerous).toContain('Вуз &quot;А&quot; &amp; Б');
+	});
+
+	it('на пустой выборке объясняет пустоту словами', () => {
+		expect(reportHtml(sampleReportView({ rows: [] }))).toContain('не попало ни одной строки');
+	});
+});
+
+describe('имя файла', () => {
+	it('в срезе называет дату среза и день сборки', () => {
+		expect(reportFileName(VIEW, 'xlsx', '2026-09-17')).toBe(
+			'Отчёт по взаимодействиям — срез на 31.12.2026 (собран 17.09.2026).xlsx'
+		);
+	});
+
+	it('в движении называет весь период', () => {
+		const movement = sampleReportView({
+			meta: { ...VIEW.meta, mode: 'movement' }
+		});
+
+		expect(reportFileName(movement, 'json', '2026-09-17')).toBe(
+			'Отчёт по взаимодействиям — движение 01.10.2026 — 31.12.2026 (собран 17.09.2026).json'
+		);
+	});
+});
+
+describe('инварианты', () => {
+	it('на согласованном отчёте претензий нет', () => {
+		expect(checkReportInvariants(VIEW)).toStrictEqual([]);
+	});
+
+	it('И1 ловит расхождение суммы по стадиям с числом строк', () => {
+		const broken = sampleReportView({
+			charts: {
+				...VIEW.charts,
+				funnel: {
+					...VIEW.charts.funnel!,
+					stages: [{ key: 'g:contact', label: 'Контакты', value: 5, filter: null }]
+				}
+			}
+		});
+
+		expect(checkReportInvariants(broken).map((issue) => issue.invariant)).toStrictEqual(['И1']);
+	});
+
+	it('И2 ловит взаимодействие, попавшее в срез дважды', () => {
+		const duplicated = sampleReportView({ rows: [VIEW.rows[0], VIEW.rows[0]] });
+
+		expect(checkReportInvariants(duplicated).map((issue) => issue.invariant)).toStrictEqual(['И2']);
+	});
+
+	it('И3 ловит расхождение суммы по видам событий с числом строк', () => {
+		const movement = sampleReportView({
+			charts: {
+				funnel: null,
+				movement: {
+					step: 'week',
+					buckets: [{ key: '2026-10-01', label: '01.10', from: '2026-10-01', to: '2026-10-07' }],
+					series: [{ key: 'forward', label: 'Вперёд', values: [9] }],
+					migrated: 0,
+					note: ''
+				},
+				breakdowns: []
+			}
+		});
+
+		expect(checkReportInvariants(movement).map((issue) => issue.invariant)).toStrictEqual(['И3']);
+	});
+
+	it('И5 ловит файл, в котором строк меньше, чем на экране', () => {
+		expect(checkExportInvariant(VIEW, { xlsx: 2, json: 1 })).toStrictEqual([
+			{ invariant: 'И5', message: 'в файле json строк 1, в таблице 2' }
+		]);
+	});
+});

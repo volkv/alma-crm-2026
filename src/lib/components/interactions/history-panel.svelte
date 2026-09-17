@@ -91,6 +91,12 @@
 						{/if}
 					</div>
 
+					{#if entry.outcome === 'migrated'}
+						<p class="text-xs text-warning-soft-foreground">
+							Запись закрыта переносом при изменении процесса, а не работой на стадии.
+						</p>
+					{/if}
+
 					<p class="text-xs text-muted-foreground">
 						с {formatDateTime(entry.enteredAt)}
 						{entry.leftAt ? `по ${formatDateTime(entry.leftAt)}` : ''} · в работе {duration(
@@ -104,6 +110,15 @@
 
 					{#if entry.resultText}
 						<p class="text-xs">Результат: {entry.resultText}</p>
+					{/if}
+
+					{#if entry.documents.length > 0}
+						<!-- Файлы стоят у той записи, к которой их приложили: «чем
+							подтверждена передача материалов» — вопрос к стадии, а не ко
+							всему взаимодействию. -->
+						<p class="text-xs">
+							Вложения: {entry.documents.map((document) => document.title).join(', ')}
+						</p>
 					{/if}
 
 					{#each entry.pauses as pause (pause.id)}

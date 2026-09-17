@@ -1,5 +1,5 @@
 /**
- * Команды, которые двигают взаимодействие по маршруту.
+ * Команды, которые двигают взаимодействие по процессу.
  *
  * Каждая команда атомарна и начинается одинаково: строка взаимодействия
  * блокируется `SELECT … FOR UPDATE`, и только после этого читается открытая
@@ -10,8 +10,13 @@
  *
  * Можно ли переход вообще, решает `evaluateTransition` — та же функция, что
  * рисует кнопки в карточке. Команда не повторяет её правил.
+ *
+ * Переход вдобавок сверяет номер редакции процесса: стадия с тем же
+ * идентификатором после публикации принадлежит прежней редакции, поэтому одной
+ * сверки `fromStageId` мало. Несовпадение — отказ до единой записи; введённое
+ * человеком остаётся в форме, теряется только нажатие кнопки.
  */
-import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type {
 	AdvanceStageInput,
 	CancelInteractionInput,
@@ -29,6 +34,7 @@ import type {
 	SetResponsibleInput,
 	SetStageResultInput,
 	SkipStageInput,
+	ProcessRevisionView,
 	StageConfirmation,
 	StageSnapshot,
 	StageTransitionKind,
@@ -45,6 +51,7 @@ import {
 	interactionChanges,
 	interactions,
 	stageEntries,
+	stageEntryDocuments,
 	stagePauses,
 	stages,
 	stageTransitions
@@ -53,6 +60,14 @@ import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
 import { can, requirePermission } from '../rbac';
 import { interactionScopeFilter } from '../interactions/access';
+import {
+	firstStage,
+	lockGroup,
+	readGroupRow,
+	requireActiveRevision,
+	stageSnapshot,
+	type ProcessGroupRow
+} from './process';
 import { evaluateTransition, transitionPermission, type StageState } from './transitions';
 
 /** Момент, который ставит база: часы приложения и базы могут расходиться. */
@@ -71,7 +86,7 @@ function actingUserId(ctx: ActorContext): string {
 	return ctx.user.id;
 }
 
-type LockedInteraction = { id: string; routeId: string; ownerUserId: string };
+type LockedInteraction = { id: string; processGroupId: string; ownerUserId: string };
 
 /** Кто выполняет запрос: транзакция команды или общий пул для чтения. */
 type Executor = Tx | ReturnType<typeof getDb>;
@@ -88,7 +103,7 @@ async function lockInteraction(
 	const [row] = await tx
 		.select({
 			id: interactions.id,
-			routeId: interactions.routeId,
+			processGroupId: interactions.processGroupId,
 			ownerUserId: interactions.ownerUserId
 		})
 		.from(interactions)
@@ -171,27 +186,9 @@ async function readStageState(
 		checklistState: entry.checklistState,
 		resultText: entry.resultText,
 		confirmation: entry.confirmation,
+		lmsEvidence: entry.lmsEvidence,
 		isPaused: paused,
 		blockingBlockers: blocking
-	};
-}
-
-/**
- * Слепок стадии на момент входа. Маршрут могут переиздать, а норматив и
- * чек-лист уже пройденной стадии обязаны остаться такими, какими их видел
- * исполнитель.
- */
-function toSnapshot(stage: typeof stages.$inferSelect): StageSnapshot {
-	return {
-		key: stage.key,
-		name: stage.name,
-		position: stage.position,
-		category: stage.category,
-		slaDays: stage.slaDays,
-		staleAfterDays: stage.staleAfterDays,
-		requiresResult: stage.requiresResult,
-		requiresConfirmation: stage.requiresConfirmation,
-		checklist: stage.checklist
 	};
 }
 
@@ -232,44 +229,33 @@ async function readStage(tx: Tx, stageId: string): Promise<typeof stages.$inferS
 	return stage;
 }
 
-/** Первая стадия маршрута: с неё взаимодействие начинает путь. */
-async function readFirstStage(tx: Tx, routeId: string): Promise<typeof stages.$inferSelect> {
-	const [stage] = await tx
-		.select()
-		.from(stages)
-		.where(eq(stages.routeId, routeId))
-		.orderBy(asc(stages.position))
-		.limit(1);
-
-	if (stage === undefined) {
-		throw new ConflictError('В маршруте нет ни одной стадии');
-	}
-
-	return stage;
-}
-
 /**
- * Открывает первую стадию. Выделена отдельно от `startInteraction`, потому что
- * создание взаимодействия делает это внутри своей транзакции: запись без стадии
- * не должна существовать даже мгновение.
+ * Открывает первую стадию действующей редакции. Выделена отдельно от
+ * `startInteraction`, потому что создание взаимодействия делает это внутри
+ * своей транзакции: запись без стадии не должна существовать даже мгновение.
+ *
+ * Редакция приезжает параметром: её читает тот, кто уже держит разделяемую
+ * блокировку группы, — иначе взаимодействие, созданное в миллисекунду
+ * публикации, встало бы на стадию редакции, которая уже не действует.
  */
 export async function startInteractionIn(
 	ctx: ActorContext,
 	tx: Tx,
-	interaction: LockedInteraction
+	interaction: LockedInteraction,
+	revision: ProcessRevisionView
 ): Promise<string> {
 	if ((await readOpenEntryRow(tx, interaction.id)) !== null) {
-		throw new ConflictError('Взаимодействие уже идёт по маршруту');
+		throw new ConflictError('Взаимодействие уже идёт по процессу');
 	}
 
-	const stage = await readFirstStage(tx, interaction.routeId);
+	const stage = firstStage(revision);
 
 	const [entry] = await tx
 		.insert(stageEntries)
 		.values({
 			interactionId: interaction.id,
 			stageId: stage.id,
-			stageSnapshot: toSnapshot(stage),
+			stageSnapshot: stageSnapshot(stage),
 			responsibleUserId: interaction.ownerUserId
 		})
 		.returning({ id: stageEntries.id });
@@ -295,14 +281,18 @@ export async function startInteraction(ctx: ActorContext, interactionId: string)
 
 	await withTransaction(ctx, async (tx) => {
 		const interaction = await lockInteraction(ctx, tx, interactionId);
+		// Порядок блокировок один на все операции: сначала группа, потом
+		// взаимодействие. Здесь строка взаимодействия уже наша, а группа берётся
+		// разделяемо — открыть стадию и опубликовать процесс одновременно нельзя.
+		const group = await lockGroup(tx, interaction.processGroupId, 'share');
 
-		await startInteractionIn(ctx, tx, interaction);
+		await startInteractionIn(ctx, tx, interaction, await requireActiveRevision(tx, group));
 	});
 }
 
 async function readTransition(
 	tx: Tx,
-	routeId: string,
+	revisionId: string,
 	fromStageId: string,
 	toStageId: string,
 	kind: StageTransitionKind
@@ -312,7 +302,7 @@ async function readTransition(
 		.from(stageTransitions)
 		.where(
 			and(
-				eq(stageTransitions.routeId, routeId),
+				eq(stageTransitions.revisionId, revisionId),
 				eq(stageTransitions.fromStageId, fromStageId),
 				eq(stageTransitions.toStageId, toStageId),
 				eq(stageTransitions.kind, kind)
@@ -321,8 +311,8 @@ async function readTransition(
 		.limit(1);
 
 	if (row === undefined) {
-		throw new ValidationError('В маршруте нет такого перехода', [
-			'Переход между этими стадиями не описан в конфигурации маршрута'
+		throw new ValidationError('В процессе нет такого перехода', [
+			'Переход между этими стадиями не описан в действующем процессе группы'
 		]);
 	}
 
@@ -352,20 +342,95 @@ type MoveInput = {
 	interactionId: string;
 	fromStageId: string;
 	toStageId: string;
+	/** Редакция процесса, по которой собрана команда. */
+	revision: number;
 	kind: StageTransitionKind;
 	reason?: string | null;
 	resultText?: string | null;
 	checklistState?: Record<string, boolean>;
+	/** Документы, приложенные к покидаемой стадии вместе с переходом. */
+	documentIds?: string[];
 };
+
+/**
+ * Номер действующей редакции сверяется под блокировкой строки взаимодействия.
+ *
+ * Читается после `SELECT … FOR UPDATE`: если публикация успела раньше, команда
+ * ждала на блокировке и теперь видит уже новую редакцию — и честно отказывает.
+ * Несовпадение стоит пользователю нажатия кнопки, а не введённого: комментарий
+ * и вложения остаются в форме.
+ */
+async function requireCurrentRevision(
+	tx: Tx,
+	group: ProcessGroupRow,
+	expected: number
+): Promise<ProcessRevisionView> {
+	const revision = await requireActiveRevision(tx, group);
+
+	if (revision.version !== expected) {
+		throw new ConflictError(
+			'Процесс изменился, пока вы работали с карточкой. Обновите страницу и повторите переход'
+		);
+	}
+
+	return revision;
+}
+
+/**
+ * Файлы, приложенные к записи стадии.
+ *
+ * Документ обязан принадлежать тому же взаимодействию: связь с чужим файлом —
+ * это подтверждение ничем. Потолок в десять вложений на переход — граница из
+ * задания; проверять содержимое архивов мы не будем ни при каком числе, но
+ * неограниченный список превращает один переход в хранилище.
+ */
+const MAX_TRANSITION_DOCUMENTS = 10;
+
+async function attachDocuments(
+	tx: Tx,
+	interactionId: string,
+	stageEntryId: string,
+	documentIds: readonly string[]
+): Promise<void> {
+	const unique = [...new Set(documentIds)];
+
+	if (unique.length === 0) {
+		return;
+	}
+
+	if (unique.length > MAX_TRANSITION_DOCUMENTS) {
+		throw new ValidationError('Слишком много вложений на один переход', [
+			`Приложено ${unique.length} файлов, потолок — ${MAX_TRANSITION_DOCUMENTS}`
+		]);
+	}
+
+	const rows = await tx
+		.select({ id: documents.id })
+		.from(documents)
+		.where(and(inArray(documents.id, unique), eq(documents.interactionId, interactionId)));
+
+	if (rows.length !== unique.length) {
+		throw new ValidationError('Документ не относится к этому взаимодействию', [
+			'Приложите файлы, загруженные в карточку этого взаимодействия'
+		]);
+	}
+
+	await tx
+		.insert(stageEntryDocuments)
+		.values(unique.map((documentId) => ({ stageEntryId, documentId })))
+		.onConflictDoNothing();
+}
 
 /** Один переход: общая часть шага вперёд, возврата и пропуска. */
 async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 	await withTransaction(ctx, async (tx) => {
 		const interaction = await lockInteraction(ctx, tx, input.interactionId);
+		const group = await readGroupRow(tx, interaction.processGroupId);
+		const revision = await requireCurrentRevision(tx, group, input.revision);
 		const entry = await requireOpenEntry(tx, input.interactionId);
 		const transition = await readTransition(
 			tx,
-			interaction.routeId,
+			revision.id,
 			input.fromStageId,
 			input.toStageId,
 			input.kind
@@ -413,12 +478,16 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 
 		await closeOpenPause(tx, entry.id);
 
+		// Файлы привязываются к покидаемой записи: они доказывают работу на той
+		// стадии, где их приложили, а не на той, куда переходят.
+		await attachDocuments(tx, input.interactionId, entry.id, input.documentIds ?? []);
+
 		const [next] = await tx
 			.insert(stageEntries)
 			.values({
 				interactionId: input.interactionId,
 				stageId: target.id,
-				stageSnapshot: toSnapshot(target),
+				stageSnapshot: stageSnapshot(target),
 				responsibleUserId: entry.responsibleUserId ?? interaction.ownerUserId
 			})
 			.returning({ id: stageEntries.id });
@@ -434,7 +503,9 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 				details: {
 					fromStageId: input.fromStageId,
 					stageId: target.id,
-					stageEntryId: next.id
+					stageEntryId: next.id,
+					versionCount: revision.version,
+					documentCount: (input.documentIds ?? []).length
 				}
 			},
 			tx
@@ -442,37 +513,55 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 	});
 }
 
-export async function advanceStage(ctx: ActorContext, input: AdvanceStageInput): Promise<void> {
+/** Вложения приходят не из схемы команды, а от формы или API рядом с ней. */
+export type TransitionAttachments = { documentIds?: string[] };
+
+export async function advanceStage(
+	ctx: ActorContext,
+	input: AdvanceStageInput & TransitionAttachments
+): Promise<void> {
 	await moveStage(ctx, {
 		interactionId: input.interactionId,
 		fromStageId: input.fromStageId,
 		toStageId: input.toStageId,
+		revision: input.revision,
 		kind: 'forward',
-		// Объяснение едет и на шаге вперёд: маршрут вправе потребовать его у любого
+		// Объяснение едет и на шаге вперёд: процесс вправе потребовать его у любого
 		// перехода, и команда, которая его теряет, делает такое правило невыполнимым.
 		reason: input.reason,
 		resultText: input.resultText,
-		checklistState: input.checklistState
+		checklistState: input.checklistState,
+		documentIds: input.documentIds
 	});
 }
 
-export async function returnStage(ctx: ActorContext, input: ReturnStageInput): Promise<void> {
+export async function returnStage(
+	ctx: ActorContext,
+	input: ReturnStageInput & TransitionAttachments
+): Promise<void> {
 	await moveStage(ctx, {
 		interactionId: input.interactionId,
 		fromStageId: input.fromStageId,
 		toStageId: input.toStageId,
+		revision: input.revision,
 		kind: 'return',
-		reason: input.reason
+		reason: input.reason,
+		documentIds: input.documentIds
 	});
 }
 
-export async function skipStage(ctx: ActorContext, input: SkipStageInput): Promise<void> {
+export async function skipStage(
+	ctx: ActorContext,
+	input: SkipStageInput & TransitionAttachments
+): Promise<void> {
 	await moveStage(ctx, {
 		interactionId: input.interactionId,
 		fromStageId: input.fromStageId,
 		toStageId: input.toStageId,
+		revision: input.revision,
 		kind: 'skip',
-		reason: input.reason
+		reason: input.reason,
+		documentIds: input.documentIds
 	});
 }
 
@@ -799,15 +888,20 @@ export async function resolveBlocker(ctx: ActorContext, input: ResolveBlockerInp
 }
 
 /**
- * Смена ответственного, в том числе сразу по нескольким взаимодействиям из
+ * Смена владельца взаимодействия, в том числе сразу по нескольким записям из
  * списка. Идентификаторы блокируются в одном порядке: иначе две такие команды,
  * отданные навстречу друг другу, встали бы во взаимный замок.
+ *
+ * Право отдельное от `interactions.write`: передать чужую работу себе — не то
+ * же самое, что вести свою, и решает это тот, кто отвечает за распределение
+ * нагрузки. Исполнитель открытой записи стадии едет за владельцем: работа
+ * перешла целиком, а не наполовину.
  */
 export async function setResponsible(
 	ctx: ActorContext,
 	input: SetResponsibleInput
 ): Promise<number> {
-	requirePermission(ctx, 'interactions.write');
+	requirePermission(ctx, 'interactions.reassign');
 
 	const authorId = actingUserId(ctx);
 	const ids = [...new Set(input.interactionIds)].sort();
@@ -847,7 +941,7 @@ export async function setResponsible(
 			await recordAuditEvent(
 				ctx,
 				{
-					type: 'interactions.responsible_changed',
+					type: 'interactions.owner_changed',
 					outcome: 'success',
 					subject: { type: 'interaction', id: interactionId },
 					details: { userId: input.userId }
@@ -906,30 +1000,20 @@ export async function addComment(
 /**
  * Закрытие взаимодействия: завершение и отмена.
  *
- * Это не шаг по маршруту, поэтому требования стадии — результат, подтверждение,
- * чек-лист — здесь не проверяются: их проверяет переход, а закрытие фиксирует
- * исход, каким бы он ни был. Своё правило у закрытия ровно одно: завершают с
- * последней стадии маршрута, а не посреди процесса. Досрочное закрытие —
- * отступление от процесса, поэтому его разрешает только право настраивать
- * маршруты и только вместе с объяснением.
+ * Это не шаг по процессу, поэтому чек-лист здесь не проверяется: его проверяет
+ * переход, а закрытие фиксирует исход. Но «обязательства исполнены» не должно
+ * доказываться нажатием кнопки: если финальная стадия требует результата,
+ * подтверждения или данных обучения, завершение без них отклоняется теми же
+ * словами, что и переход вперёд. Досрочное закрытие — закрытие не с финальной
+ * стадии — разрешает только право настраивать процесс и только с объяснением.
  */
-
-/** Стоит ли взаимодействие на последней стадии своего маршрута. */
-async function isLastStage(executor: Executor, routeId: string, stageId: string): Promise<boolean> {
-	const [last] = await executor
-		.select({ id: stages.id })
-		.from(stages)
-		.where(eq(stages.routeId, routeId))
-		.orderBy(desc(stages.position))
-		.limit(1);
-
-	return last?.id === stageId;
-}
 
 type ClosingState = {
 	status: InteractionStatus;
-	/** Где стоим: на последней стадии маршрута, раньше неё или нигде. */
-	openStage: 'last' | 'earlier' | null;
+	/** Где стоим: на финальной стадии, раньше неё или нигде. */
+	openStage: 'final' | 'earlier' | null;
+	/** Чего не хватает финальной стадии — по фразе на требование. */
+	missingEvidence: string[];
 	canWrite: boolean;
 	canForce: boolean;
 };
@@ -961,8 +1045,15 @@ function closingVerdict(state: ClosingState): InteractionClosingView {
 
 	if (requiresForce && !state.canForce) {
 		complete.push(
-			'Взаимодействие не дошло до последней стадии маршрута: закрыть его досрочно может только тот, кто настраивает процесс'
+			'Взаимодействие не дошло до финальной стадии процесса: закрыть его досрочно может только тот, кто настраивает процесс'
 		);
+	}
+
+	// Требования финальной стадии проверяются только при штатном завершении:
+	// досрочное закрытие — это признание, что обязательства не исполнены, и
+	// требовать доказательств исполнения там значило бы запереть отказ.
+	if (state.openStage === 'final') {
+		complete.push(...state.missingEvidence);
 	}
 
 	return {
@@ -971,10 +1062,38 @@ function closingVerdict(state: ClosingState): InteractionClosingView {
 	};
 }
 
+/**
+ * Чего не хватает стадии, чтобы считать её исполненной. Те же вопросы, что
+ * задаёт `evaluateTransition` на шаге вперёд, и теми же словами: доказательство
+ * исполнения не зависит от того, уходят со стадии дальше или закрывают дело.
+ */
+export function missingStageEvidence(entry: {
+	stageSnapshot: StageSnapshot;
+	resultText: string | null;
+	confirmation: StageConfirmation | null;
+	lmsEvidence: unknown;
+}): string[] {
+	const missing: string[] = [];
+
+	if (entry.stageSnapshot.requiresResult && (entry.resultText ?? '').trim() === '') {
+		missing.push('У стадии не записан результат');
+	}
+
+	if (entry.stageSnapshot.requiresConfirmation && entry.confirmation === null) {
+		missing.push('Стадия не подтверждена');
+	}
+
+	if (entry.stageSnapshot.requiresLmsData && entry.lmsEvidence === null) {
+		missing.push('По стадии не получены данные системы обучения');
+	}
+
+	return missing;
+}
+
 async function readClosingState(
 	ctx: ActorContext,
 	executor: Executor,
-	interaction: { id: string; routeId: string }
+	interaction: { id: string }
 ): Promise<ClosingState> {
 	const [row] = await executor
 		.select({ status: interactions.status })
@@ -990,12 +1109,8 @@ async function readClosingState(
 
 	return {
 		status: row.status,
-		openStage:
-			entry === null
-				? null
-				: (await isLastStage(executor, interaction.routeId, entry.stageId))
-					? 'last'
-					: 'earlier',
+		openStage: entry === null ? null : entry.stageSnapshot.isFinal ? 'final' : 'earlier',
+		missingEvidence: entry === null ? [] : missingStageEvidence(entry),
 		canWrite: can(ctx, 'interactions.write'),
 		canForce: can(ctx, 'stages.configure')
 	};
@@ -1010,7 +1125,7 @@ export async function getInteractionClosing(
 
 	const db = getDb();
 	const [row] = await db
-		.select({ id: interactions.id, routeId: interactions.routeId })
+		.select({ id: interactions.id })
 		.from(interactions)
 		.where(and(eq(interactions.id, interactionId), interactionScopeFilter(ctx)))
 		.limit(1);
@@ -1056,7 +1171,7 @@ export async function completeInteraction(
 		// но команда всё равно требует сказать об этом явно.
 		if (verdict.complete.requiresForce && !input.force) {
 			throw new ConflictError(
-				'Взаимодействие стоит не на последней стадии маршрута: закрыть его можно только досрочно, с объяснением'
+				'Взаимодействие стоит не на финальной стадии процесса: закрыть его можно только досрочно, с объяснением'
 			);
 		}
 

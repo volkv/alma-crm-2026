@@ -15,6 +15,7 @@ import {
 	organizations,
 	people,
 	programs,
+	roles,
 	statRows,
 	statSnapshots
 } from '$lib/server/db/schema';
@@ -29,9 +30,11 @@ import {
 import { getLmsSettings, setLmsSettings } from '$lib/server/integrations/settings';
 import { rejectSnapshot } from '$lib/server/stats/import';
 import { getRedis } from '$lib/server/redis';
-import { ensureDemoRoute } from '$lib/server/stages/routes';
+import { B2B_GROUP_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
+import { ensureProcess } from '$lib/server/stages/process';
 import {
 	insertOrganization,
+	insertUser,
 	startTestDatabase,
 	testActor,
 	TEST_USER_IDS,
@@ -381,10 +384,30 @@ async function issueKey(roleId = 'manager'): Promise<string> {
 	return created.key;
 }
 
+/**
+ * Ключ владельца без единого права: он проходит вход, но не действие.
+ *
+ * Роли «только смотреть» в системе нет, а право на заведение взаимодействия
+ * есть у всех трёх ролей человека, — поэтому владелец заводится на своей роли с
+ * пустым набором прав. Отказ при этом остаётся тем же самым: его даёт
+ * `requirePermission`, а не отсутствие роли.
+ */
+async function keyWithoutPermissions(): Promise<string> {
+	await database.db
+		.insert(roles)
+		.values({ id: 'restricted', name: 'Без прав', description: 'Только для проверки отказа' })
+		.onConflictDoNothing();
+
+	const ownerUserId = await insertUser(database.db, { roleId: 'restricted' });
+	const created = await createApiKey(testActor(), { name: 'Ключ без прав', ownerUserId });
+
+	return created.key;
+}
+
 describe('приём заявки с сайта', () => {
 	beforeEach(async () => {
 		await database.db.transaction(async (tx) => {
-			await ensureDemoRoute(tx);
+			await ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS);
 		});
 	});
 
@@ -466,7 +489,7 @@ describe('приём заявки с сайта', () => {
 	});
 
 	it('не принимает заявку без права на взаимодействия', async () => {
-		const key = await issueKey('viewer');
+		const key = await keyWithoutPermissions();
 		const response = await intake(apiEvent({ body: APPLICATION, key }));
 
 		expect(response.status).toBe(403);

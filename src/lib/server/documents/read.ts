@@ -12,7 +12,6 @@ import {
 	count,
 	desc,
 	eq,
-	exists,
 	ilike,
 	inArray,
 	isNotNull,
@@ -37,9 +36,10 @@ import {
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
-import { documents, interactionParties, interactions, users } from '../db/schema';
+import { documents, interactions, users } from '../db/schema';
 import { NotFoundError } from '../errors';
-import { requirePermission, scopeFilter } from '../rbac';
+import { interactionScopeFilter, visibleInteractionFilter } from '../interactions/access';
+import { requirePermission } from '../rbac';
 import { documentFileName } from './filename';
 import { storedFileSize } from './storage';
 
@@ -67,34 +67,16 @@ export function toDocumentView(row: typeof documents.$inferSelect): DocumentView
 }
 
 /**
- * Есть ли взаимодействие и попало ли оно в область доступа. Взаимодействие
- * видно, если хотя бы одна его сторона — организация из области.
+ * Есть ли взаимодействие и попало ли оно в область доступа. Условие берётся
+ * общее (`interactionScopeFilter`) — своего здесь нет и быть не должно: два
+ * описания одной видимости однажды разойдутся, и документы чужой записи
+ * останутся видны.
  */
 async function isInteractionAccessible(ctx: ActorContext, interactionId: string): Promise<boolean> {
-	const db = getDb();
-
-	const inScope =
-		ctx.scope.kind === 'all'
-			? // Полный доступ видит и взаимодействие, у которого сторон ещё нет;
-				// подзапрос ниже такое взаимодействие отверг бы, потому что сверять
-				// не с чем.
-				sql`true`
-			: exists(
-					db
-						.select({ one: sql`1` })
-						.from(interactionParties)
-						.where(
-							and(
-								eq(interactionParties.interactionId, interactions.id),
-								scopeFilter(ctx, interactionParties.organizationId)
-							)
-						)
-				);
-
-	const [row] = await db
+	const [row] = await getDb()
 		.select({ id: interactions.id })
 		.from(interactions)
-		.where(and(eq(interactions.id, interactionId), inScope))
+		.where(and(eq(interactions.id, interactionId), interactionScopeFilter(ctx)))
 		.limit(1);
 
 	return row !== undefined;
@@ -110,9 +92,15 @@ export async function assertDocumentAccessible(
 	document: { interactionId: string | null }
 ): Promise<void> {
 	if (document.interactionId === null) {
-		// Документ вне взаимодействия — типовая форма оператора, а не имущество
-		// организации; область доступа к таким записям не применяется, как и к
-		// программам с продуктами в справочнике.
+		// Документ без взаимодействия виден только полному доступу. Такие
+		// документы есть: исходник загруженного файла статистики сохраняется без
+		// привязки, а один снимок смешивает строки нескольких вузов. Отдавать его
+		// всякому, у кого есть `documents.read`, — утечка. Типовые формы лежат
+		// отдельной таблицей `document_templates` и этим правилом не затронуты.
+		if (ctx.scope.kind !== 'all') {
+			throw new NotFoundError('Документ не найден');
+		}
+
 		return;
 	}
 
@@ -141,32 +129,17 @@ export async function assertInteractionAccessible(
  * там, где выборка идёт из этой таблицы.
  *
  * Правило то же, что у `assertDocumentAccessible`: документ без взаимодействия
- * — типовая форма оператора, а не имущество организации, и область доступа к
- * нему не применяется.
+ * виден только полному доступу — `visibleInteractionFilter` отсеивает пустую
+ * ссылку сам, потому что `exists` по `null` не находит ничего.
  */
 function documentScopeFilter(ctx: ActorContext): SQL {
 	if (ctx.scope.kind === 'all') {
 		// Полный доступ видит и документ взаимодействия, у которого сторон ещё
-		// нет; подзапрос ниже такой документ отверг бы — сверять не с чем.
+		// нет, и документ без привязки вовсе.
 		return sql`true`;
 	}
 
-	const partyInScope = exists(
-		getDb()
-			.select({ one: sql`1` })
-			.from(interactionParties)
-			.where(
-				and(
-					eq(interactionParties.interactionId, documents.interactionId),
-					scopeFilter(ctx, interactionParties.organizationId)
-				)
-			)
-	);
-
-	// `or()` в drizzle объявлен как «SQL или undefined» — он выбрасывает пустые
-	// ветки. Область доступа обязана быть условием, а не «может быть, условием»,
-	// поэтому ветки соединяются шаблоном.
-	return sql`(${isNull(documents.interactionId)} or ${partyInScope})`;
+	return visibleInteractionFilter(ctx, documents.interactionId);
 }
 
 const DOCUMENT_SORT_COLUMNS = {

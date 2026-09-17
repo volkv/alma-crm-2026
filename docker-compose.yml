@@ -37,11 +37,11 @@ services:
       timeout: 5s
       retries: 20
 
-  # The account directory: realm `lct`, three roles and three demo accounts are
-  # imported from `keycloak/realm-lct.json`. The app still signs people in on its
-  # own (docs/auth.md); Keycloak stands next to it ready, so that switching the
-  # login over is a change to the app and not an installation of infrastructure.
-  # How realm roles map onto ours: docs/access-matrix.md, section 6.
+  # The account directory and the only way into the app: realm `lct`, three roles
+  # and three demo accounts are imported from `keycloak/realm-lct.json`. The app
+  # keeps no passwords of its own (docs/auth.md), so without this container
+  # nobody signs in. How realm roles map onto ours: docs/access-matrix.md,
+  # section 6.
   keycloak:
     image: quay.io/keycloak/keycloak:26.7.4
     # `start-dev`: the built-in H2 database inside the container and a hostname
@@ -256,15 +256,15 @@ services:
       # off; so does DEMO_MODE in a local .env, which Compose substitutes here —
       # a developer's own setting is not something the stand should override.
       DEMO_MODE: ${DEMO_MODE:-true}
-      # Read by the seed script, never by the server. The value below is good
-      # enough for a local stack; a public stand passes its own.
-      SEED_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-Demo-Password-2026!}
-      # The staff administrator — the one account that is not part of the demo.
-      # Deliberately without a default: an empty value is the same as unset for
-      # the seed, so the stand simply has no such account until someone passes
-      # a password (`SEED_STAFF_ADMIN_PASSWORD='…' docker compose up --build`).
-      # A default here would ship a known password to every public stand.
-      SEED_STAFF_ADMIN_PASSWORD: ${SEED_STAFF_ADMIN_PASSWORD:-}
+      # The account directory. `OIDC_ISSUER_URL` is the address the server reads
+      # the realm metadata from and the `iss` it checks every token against —
+      # inside the network that is the container name. `OIDC_PUBLIC_URL` is where
+      # the browser is sent instead: a person reaches Keycloak by the published
+      # port, not by its name in the network.
+      OIDC_ISSUER_URL: http://keycloak:8080/realms/lct
+      OIDC_PUBLIC_URL: http://localhost:58080
+      OIDC_CLIENT_ID: lct-crm
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:-lct-crm-dev-secret}
       # The local stack is the demo stand, so the Moodle stand-in under /mock-lms
       # is on: the customer's real LMS is not reachable from outside, and the
       # exchange has nothing to be shown against without it. `MOCK_LMS=false
@@ -291,6 +291,10 @@ services:
       gotenberg:
         condition: service_healthy
       mailpit:
+        condition: service_healthy
+      # Without the directory nobody signs in: the application keeps no
+      # passwords of its own.
+      keycloak:
         condition: service_healthy
       # Not `service_healthy`: the job creates the buckets and exits, and the
       # app must not start against a storage without them.

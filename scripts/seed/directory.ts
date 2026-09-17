@@ -181,7 +181,13 @@ const RESPONSIBLES: readonly ResponsibleSeed[] = [
 	{
 		key: 'vkgtu',
 		organizationKey: 'vkgtu',
-		userKey: 'veresova',
+		userKey: 'demo-manager',
+		validFrom: '2026-02-16T09:00:00+03:00'
+	},
+	{
+		key: 'puts',
+		organizationKey: 'puts',
+		userKey: 'demo-manager',
 		validFrom: '2026-02-16T09:00:00+03:00'
 	},
 	{ key: 'vts', organizationKey: 'vts', userKey: 'zotov', validFrom: '2026-01-20T09:00:00+03:00' },

@@ -10,8 +10,6 @@
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
-	import FilterSelect from '$lib/components/directory/filter-select.svelte';
-	import type { FieldOption } from '$lib/components/form/field-select.svelte';
 	import type {
 		BoardTransitionOption,
 		InteractionBoardCard,
@@ -23,7 +21,8 @@
 	import BoardCard, { transitionLabel } from './board-card.svelte';
 
 	/**
-	 * Доска взаимодействий: колонка на стадию маршрута, карточка на дело.
+	 * Доска взаимодействий: колонка на стадию действующего процесса, карточка на
+	 * дело.
 	 *
 	 * Список отвечает, что с отдельной записью, доска — где стоит работа целиком:
 	 * на какой стадии скопились дела и сколько из них просрочено. Данные приходят
@@ -33,6 +32,11 @@
 	 * Двигают карточку перетаскиванием или меню на ней; оба пути отправляют одно
 	 * и то же действие страницы, а движок решает, состоится ли переход. Отказ
 	 * приходит словами в тост, и карточка остаётся там, где стояла.
+	 *
+	 * Выбора версии процесса здесь нет: в группе действует ровно один процесс, а
+	 * какую группу показать, решает фильтр списка. Номер действующей редакции
+	 * едет с командой скрытым полем — не для человека, а чтобы движок отказал,
+	 * если процесс изменили, пока доска была открыта.
 	 */
 	let {
 		board,
@@ -55,14 +59,7 @@
 	let reasonOpen = $state(false);
 	let moveForm = $state<HTMLFormElement | null>(null);
 
-	const routeOptions: FieldOption[] = $derived(
-		board.routes.map((route) => ({
-			value: route.id,
-			label: `${route.name} — версия ${route.version}`
-		}))
-	);
-
-	/** Стадии, на которые эту карточку разрешает переносить маршрут. */
+	/** Стадии, на которые эту карточку разрешает переносить процесс. */
 	const targets = $derived(new Set(dragged?.transitions.map((option) => option.toStageId) ?? []));
 
 	const stageNames = $derived(
@@ -75,7 +72,7 @@
 	async function move(card: InteractionBoardCard, option: BoardTransitionOption) {
 		pending = { card, option };
 
-		// Переход, которому маршрут назначил объяснение, спрашивает его до команды,
+		// Переход, которому процесс назначил объяснение, спрашивает его до команды,
 		// а не показывает отказ после неё. Это и возврат с пропуском, и шаг вперёд
 		// там, где процесс требует сказать, чем закончили стадию.
 		if (option.requiresReason) {
@@ -94,7 +91,7 @@
 		}
 
 		// Без `preventDefault` браузер считает зону чужой, и события `drop` не
-		// будет вовсе. Бросок принимают все колонки, даже те, куда маршрут
+		// будет вовсе. Бросок принимают все колонки, даже те, куда процесс
 		// перехода не описывает: отказ словами объясняет процесс, а мёртвая зона
 		// не объясняет ничего.
 		event.preventDefault();
@@ -130,8 +127,8 @@
 		const option = card.transitions.find((candidate) => candidate.toStageId === column.stageId);
 
 		if (option === undefined) {
-			toast.error('Такого перехода в маршруте нет', {
-				description: `С «${stageNames.get(card.stageId) ?? 'текущей стадии'}» на «${column.name}» маршрут переходов не описывает.`
+			toast.error('Такого перехода в процессе нет', {
+				description: `С «${stageNames.get(card.stageId) ?? 'текущей стадии'}» на «${column.name}» процесс переходов не описывает.`
 			});
 
 			return;
@@ -141,23 +138,12 @@
 	}
 </script>
 
-{#if board.routes.length > 1}
-	<div class="flex flex-wrap items-center gap-3">
-		<FilterSelect
-			param="route"
-			label="Маршрут"
-			options={routeOptions}
-			allLabel="Маршрут по умолчанию"
-		/>
-	</div>
-{/if}
-
-{#if board.routeId === null}
+{#if board.groupId === null}
 	<div class="rounded-lg border border-border bg-surface">
 		<EmptyState
 			icon={RouteIcon}
-			title="Маршрут стадий не настроен"
-			description="Доска раскладывает взаимодействия по стадиям маршрута. Пока нет ни одной опубликованной версии процесса, раскладывать не по чему."
+			title="Процесс не описан"
+			description="Доска раскладывает взаимодействия по стадиям действующего процесса. Пока в группе нет ни одной стадии, раскладывать не по чему."
 		/>
 	</div>
 {:else if board.total === 0}
@@ -165,11 +151,14 @@
 		<EmptyState
 			title={isFiltered ? 'Под фильтр ничего не попало' : 'На доске пока пусто'}
 			description={isFiltered
-				? 'Измените фильтры или вернитесь к списку — доска показывает только те записи, что стоят на стадии маршрута.'
-				: 'Доска показывает взаимодействия, которые идут по этому маршруту прямо сейчас. Завершённые на ней не стоят: у них нет текущей стадии.'}
+				? 'Измените фильтры или вернитесь к списку — доска показывает только те записи, что стоят на стадии процесса.'
+				: 'Доска показывает взаимодействия, которые идут по этому процессу прямо сейчас. Завершённые на ней не стоят: у них нет текущей стадии.'}
 		/>
 	</div>
 {:else}
+	<p class="text-sm text-muted-foreground">
+		Процесс группы «{board.groupName}»: колонки — его действующие стадии.
+	</p>
 	{#if canTransition}
 		<InlineHint>
 			Карточку можно перетащить в соседнюю колонку — или перевести её пунктом меню на самой
@@ -270,6 +259,7 @@
 	<input type="hidden" name="fromStageId" value={pending?.card.stageId ?? ''} />
 	<input type="hidden" name="toStageId" value={pending?.option.toStageId ?? ''} />
 	<input type="hidden" name="kind" value={pending?.option.kind ?? ''} />
+	<input type="hidden" name="revision" value={board.revision ?? ''} />
 </form>
 
 <Dialog.Root bind:open={reasonOpen}>

@@ -1,42 +1,30 @@
 /**
  * Доска взаимодействий: те же записи, что и в списке, разложенные по стадиям
- * маршрута.
+ * действующего процесса.
  *
  * Список отвечает на вопрос «что с этой записью», доска — на вопрос «где стоит
  * работа целиком»: сколько дел висит на обмене документами и сколько из них уже
- * просрочено. Поэтому колонки здесь — стадии одной версии маршрута, а карточка
- * стоит ровно в той колонке, где открыта её запись стадии.
+ * просрочено. Колонки — стадии действующей редакции одной группы, а карточка
+ * стоит ровно в той колонке, где открыта её запись стадии. Выбора версии на
+ * доске нет: в группе действует ровно один процесс, и его номер человеку не
+ * нужен. Группу задаёт фильтр списка — доска и список показывают один отбор.
  *
  * Выборка — один запрос: карточки, число карточек на стадии и число
  * просроченных считаются оконными функциями за один проход, а не запросом на
  * колонку. Раскладывает их по колонкам чистая функция, поэтому порядок колонок
  * задаёт маршрут, а не то, что вернула база.
  */
-import {
-	and,
-	asc,
-	count,
-	desc,
-	eq,
-	exists,
-	ilike,
-	inArray,
-	isNotNull,
-	isNull,
-	or,
-	sql
-} from 'drizzle-orm';
+import { and, asc, count, desc, eq, exists, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import type { SQL } from 'drizzle-orm';
 import type {
 	BoardCardState,
 	BoardTransitionOption,
 	InteractionBoardCard,
 	InteractionBoardColumn,
-	InteractionBoardRoute,
 	InteractionBoardView,
 	InteractionStatus,
+	ProcessRevisionView,
 	StageCategory,
-	StageRouteView,
 	StageView
 } from '$lib/contracts/interactions';
 import type { ActorContext } from '../actor';
@@ -48,16 +36,16 @@ import {
 	interactionPrograms,
 	interactions,
 	organizations,
+	processGroups,
 	products,
 	programs,
 	stageEntries,
 	stageEntryStatus,
-	stageRoutes,
 	stages,
 	users
 } from '../db/schema';
 import { requirePermission } from '../rbac';
-import { readRoute } from '../stages/routes';
+import { readActiveRevision, readGroupRow } from '../stages/process';
 import { evaluateTransition, type StageState } from '../stages/transitions';
 import { interactionScopeFilter } from './access';
 
@@ -71,10 +59,10 @@ import { interactionScopeFilter } from './access';
  */
 export const CARDS_PER_COLUMN = 25;
 
-/** Отбор доски: фильтры те же, что у списка, плюс версия маршрута. */
+/** Отбор доски: фильтры те же, что у списка, плюс группа процесса. */
 export type InteractionBoardQuery = {
-	/** Версия маршрута из адреса; неизвестную заменяет маршрут по умолчанию. */
-	routeId: string | null;
+	/** Ключ группы из фильтра списка; пусто — берётся та, где есть работа. */
+	group: string | null;
 	status: InteractionStatus | null;
 	stageCategory: StageCategory | null;
 	overdue: boolean;
@@ -82,78 +70,74 @@ export type InteractionBoardQuery = {
 	q: string | null;
 };
 
-/** Версия маршрута вместе с признаком «по умолчанию»: он решает, что открыть. */
-type RouteOption = InteractionBoardRoute & { isDefault: boolean };
+/** Группа вместе с числом взаимодействий области доступа, идущих по ней. */
+export type BoardGroupOption = {
+	id: string;
+	key: string;
+	name: string;
+	position: number;
+	interactions: number;
+};
 
 /**
- * Опубликованные версии маршрутов и число взаимодействий области доступа,
- * которые по ним идут. Черновики не в счёт: на них нельзя поставить запись, и
- * доска по ним всегда была бы пуста.
+ * Группы процесса и число взаимодействий области доступа, которые по ним идут.
+ * Группа без процесса тоже в списке: «здесь ещё ничего не описано» — это ответ,
+ * а исчезнувшая строка выглядит как исчезнувший сценарий работы.
  */
-async function readRouteOptions(ctx: ActorContext): Promise<RouteOption[]> {
-	const rows = await getDb()
+async function readGroupOptions(ctx: ActorContext): Promise<BoardGroupOption[]> {
+	return getDb()
 		.select({
-			id: stageRoutes.id,
-			name: stageRoutes.name,
-			version: stageRoutes.version,
-			isDefault: stageRoutes.isDefault,
+			id: processGroups.id,
+			key: processGroups.key,
+			name: processGroups.name,
+			position: processGroups.position,
 			interactions: count(interactions.id)
 		})
-		.from(stageRoutes)
+		.from(processGroups)
 		.leftJoin(
 			interactions,
 			and(
-				eq(interactions.routeId, stageRoutes.id),
+				eq(interactions.processGroupId, processGroups.id),
 				eq(interactions.status, 'active'),
 				interactionScopeFilter(ctx)
 			)
 		)
-		.where(isNotNull(stageRoutes.publishedAt))
-		.groupBy(stageRoutes.id)
-		.orderBy(asc(stageRoutes.key), desc(stageRoutes.version));
-
-	return rows;
+		.groupBy(processGroups.id)
+		.orderBy(asc(processGroups.position));
 }
 
 /**
- * Какую версию показать.
+ * Какую группу показать.
  *
- * Выбор человека сильнее всего: запрошенная версия открывается, даже если по
- * ней сейчас никто не идёт. Без выбора открывается та, на которой есть работа,
- * — маршрут по умолчанию в первую очередь; версия без единого взаимодействия
- * показала бы пустую доску там, где работа есть на соседней.
+ * Фильтр списка сильнее всего: запрошенная группа открывается, даже если по ней
+ * сейчас никто не идёт. Без фильтра открывается та, на которой есть работа, —
+ * группа без единого взаимодействия показала бы пустую доску там, где работа
+ * есть на соседней.
  */
-export function chooseBoardRoute(
-	routes: readonly RouteOption[],
+export function chooseBoardGroup(
+	groups: readonly BoardGroupOption[],
 	requested: string | null
-): string | null {
-	const asked = requested === null ? undefined : routes.find((route) => route.id === requested);
+): BoardGroupOption | null {
+	const asked = requested === null ? undefined : groups.find((group) => group.key === requested);
 
 	if (asked !== undefined) {
-		return asked.id;
+		return asked;
 	}
 
-	const withWork = routes
-		.filter((route) => route.interactions > 0)
+	const withWork = [...groups]
+		.filter((group) => group.interactions > 0)
 		.sort((left, right) => right.interactions - left.interactions);
 
-	const chosen =
-		withWork.find((route) => route.isDefault) ??
-		withWork[0] ??
-		routes.find((route) => route.isDefault) ??
-		routes[0];
-
-	return chosen?.id ?? null;
+	return withWork[0] ?? groups[0] ?? null;
 }
 
 /**
  * Условия отбора карточек. Повторяют фильтры списка (`interactions/read.ts`)
- * намеренно: доска отбирает по версии маршрута, которой в запросе списка нет,
- * и берёт из записи стадии то, что списку не нужно, — чек-лист, результат и
- * подтверждение для приговора по переходу.
+ * намеренно: доска берёт из записи стадии то, что списку не нужно, — чек-лист,
+ * результат, подтверждение и данные обучения для приговора по переходу.
  */
-function boardConditions(ctx: ActorContext, routeId: string, query: InteractionBoardQuery): SQL[] {
-	const conditions: SQL[] = [interactionScopeFilter(ctx), eq(stages.routeId, routeId)];
+function boardConditions(ctx: ActorContext, groupId: string, query: InteractionBoardQuery): SQL[] {
+	const conditions: SQL[] = [interactionScopeFilter(ctx), eq(interactions.processGroupId, groupId)];
 
 	if (query.status !== null) {
 		conditions.push(eq(interactions.status, query.status));
@@ -205,7 +189,7 @@ function boardConditions(ctx: ActorContext, routeId: string, query: InteractionB
  * колонки — по сроку, потому что смотрят на доску ради того, что горит;
  * идентификатор последним ключом убирает неопределённость у одинаковых сроков.
  */
-async function readBoardRows(ctx: ActorContext, routeId: string, query: InteractionBoardQuery) {
+async function readBoardRows(ctx: ActorContext, groupId: string, query: InteractionBoardQuery) {
 	const db = getDb();
 
 	const ranked = db
@@ -217,6 +201,7 @@ async function readBoardRows(ctx: ActorContext, routeId: string, query: Interact
 			checklistState: stageEntries.checklistState,
 			resultText: stageEntries.resultText,
 			confirmation: stageEntries.confirmation,
+			lmsEvidence: stageEntries.lmsEvidence,
 			snapshot: stageEntries.stageSnapshot,
 			dueAt: stageEntryStatus.dueAt,
 			isOverdue: stageEntryStatus.isOverdue,
@@ -241,7 +226,7 @@ async function readBoardRows(ctx: ActorContext, routeId: string, query: Interact
 		)
 		.innerJoin(stages, eq(stages.id, stageEntries.stageId))
 		.innerJoin(stageEntryStatus, eq(stageEntryStatus.stageEntryId, stageEntries.id))
-		.where(and(...boardConditions(ctx, routeId, query)))
+		.where(and(...boardConditions(ctx, groupId, query)))
 		.as('board');
 
 	return db
@@ -389,20 +374,20 @@ export function boardCardState(input: {
 export function boardTransitions(
 	ctx: ActorContext,
 	state: StageState,
-	route: StageRouteView
+	revision: ProcessRevisionView
 ): BoardTransitionOption[] {
-	const stagesById = new Map(route.stages.map((stage) => [stage.id, stage]));
+	const stagesById = new Map(revision.stages.map((stage) => [stage.id, stage]));
 
 	const positionOf = (stageId: string): number => stagesById.get(stageId)?.position ?? 0;
 
-	return route.transitions
+	return revision.transitions
 		.filter((transition) => transition.fromStageId === state.stageId)
 		.map((transition) => {
 			const verdict = evaluateTransition(ctx, state, transition, null);
 
 			return {
 				toStageId: transition.toStageId,
-				toStageName: stagesById.get(transition.toStageId)?.name ?? 'Стадия вне маршрута',
+				toStageName: stagesById.get(transition.toStageId)?.name ?? 'Стадия вне процесса',
 				kind: transition.kind,
 				requiresReason: transition.requiresReason,
 				allowed: verdict.allowed,
@@ -419,12 +404,12 @@ export type BoardEntry = {
 };
 
 /**
- * Карточки по колонкам. Колонки задаёт маршрут, а не данные: стадия без единой
+ * Карточки по колонкам. Колонки задаёт процесс, а не данные: стадия без единой
  * карточки остаётся на доске, потому что «здесь сейчас пусто» — это ответ, а
  * исчезнувшая колонка выглядит как исчезнувший участок процесса.
  */
 export function buildBoardColumns(
-	routeStages: readonly StageView[],
+	revisionStages: readonly StageView[],
 	entries: readonly BoardEntry[]
 ): InteractionBoardColumn[] {
 	const byStage = new Map<string, BoardEntry[]>();
@@ -435,7 +420,7 @@ export function buildBoardColumns(
 		byStage.set(entry.card.stageId, list);
 	}
 
-	return [...routeStages]
+	return [...revisionStages]
 		.sort((left, right) => left.position - right.position)
 		.map((stage) => {
 			const list = byStage.get(stage.id) ?? [];
@@ -461,36 +446,31 @@ export async function getInteractionBoard(
 	requirePermission(ctx, 'interactions.read');
 
 	const db = getDb();
-	const options = await readRouteOptions(ctx);
-	const routeId = chooseBoardRoute(options, query.routeId);
+	const group = chooseBoardGroup(await readGroupOptions(ctx), query.group);
 
-	// Выбор над доской показывает версии, на которых есть работа, и маршрут по
-	// умолчанию: остальные версии — это история процесса, а не место, куда
-	// собираются переключиться. Открытая версия остаётся в списке всегда, иначе
-	// выбор показывал бы не то, что на экране.
-	const offered: InteractionBoardRoute[] = options
-		.filter((route) => route.interactions > 0 || route.isDefault || route.id === routeId)
-		.map((route) => ({
-			id: route.id,
-			name: route.name,
-			version: route.version,
-			interactions: route.interactions
-		}));
+	const empty: InteractionBoardView = {
+		groupId: group?.id ?? null,
+		groupKey: group?.key ?? null,
+		groupName: group?.name ?? null,
+		columns: [],
+		total: 0,
+		cardsPerColumn: CARDS_PER_COLUMN,
+		revision: null
+	};
 
-	if (routeId === null) {
-		return {
-			routes: offered,
-			routeId: null,
-			columns: [],
-			total: 0,
-			cardsPerColumn: CARDS_PER_COLUMN
-		};
+	if (group === null) {
+		return empty;
 	}
 
-	const [route, rows] = await Promise.all([
-		readRoute(db, routeId),
-		readBoardRows(ctx, routeId, query)
-	]);
+	const revision = await readActiveRevision(db, await readGroupRow(db, group.id));
+
+	// Группа без действующего процесса — это не поломка доски: стадий нет, и
+	// колонок тоже. Отказ здесь скрыл бы соседнюю группу, где работа идёт.
+	if (revision === null) {
+		return empty;
+	}
+
+	const rows = await readBoardRows(ctx, group.id, query);
 
 	const ids = rows.map((row) => row.id);
 
@@ -509,6 +489,7 @@ export async function getInteractionBoard(
 			checklistState: row.checklistState,
 			resultText: row.resultText,
 			confirmation: row.confirmation,
+			lmsEvidence: row.lmsEvidence,
 			isPaused: row.isPaused,
 			blockingBlockers: counts.blocking
 		};
@@ -528,17 +509,19 @@ export async function getInteractionBoard(
 					isOverdue: row.isOverdue
 				}),
 				openBlockers: counts.open,
-				transitions: boardTransitions(ctx, state, route)
+				transitions: boardTransitions(ctx, state, revision)
 			},
 			totals: { count: row.stageCount, overdue: row.stageOverdue }
 		};
 	});
 
 	return {
-		routes: offered,
-		routeId,
-		columns: buildBoardColumns(route.stages, entries),
+		groupId: group.id,
+		groupKey: group.key,
+		groupName: group.name,
+		columns: buildBoardColumns(revision.stages, entries),
 		total: entries.length,
-		cardsPerColumn: CARDS_PER_COLUMN
+		cardsPerColumn: CARDS_PER_COLUMN,
+		revision: revision.version
 	};
 }

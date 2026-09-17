@@ -10,6 +10,7 @@
 import { and, asc, count, desc, eq, gte, ilike, inArray, lte, or, type SQL } from 'drizzle-orm';
 import type { PageQuery, PageResult } from '$lib/contracts/common';
 import {
+	maskAuditEvent,
 	validateAuditDetails,
 	type AuditDetails,
 	type AuditEventType,
@@ -23,7 +24,7 @@ import { getDb } from '../db';
 import { auditEvents } from '../db/schema';
 import type { Tx } from '../db/transaction';
 import { ValidationError } from '../errors';
-import { requirePermission } from '../rbac';
+import { actorScopeFilter, requirePermission } from '../rbac';
 import { spreadsheetText } from '../spreadsheet';
 
 export type { AuditEventType } from '$lib/contracts/audit';
@@ -113,8 +114,14 @@ export async function recordAuditEvent(
 	});
 }
 
-function auditWhere(filter: AuditFilter): SQL | undefined {
-	const conditions: SQL[] = [];
+function auditWhere(ctx: ActorContext, filter: AuditFilter): SQL | undefined {
+	// Срез области: руководитель видит, что делали его люди, — по действующему
+	// лицу события, а не по записи, которой оно касалось. Предмет события
+	// назван парой «тип — идентификатор», разрешать этот полиморфизм в SQL
+	// дорого и легко ошибиться, а «что делали мои люди» — это тот самый вопрос,
+	// ради которого руководителю журнал и нужен. События без действующего лица
+	// (системные, фоновые) видит только полный доступ.
+	const conditions: SQL[] = [actorScopeFilter(ctx, auditEvents.actorUserId)];
 
 	if (filter.from !== null) {
 		conditions.push(gte(auditEvents.occurredAt, new Date(filter.from)));
@@ -181,7 +188,7 @@ export async function listAuditEvents(
 ): Promise<PageResult<AuditEventView>> {
 	requirePermission(ctx, 'audit.read');
 
-	const where = auditWhere(filter);
+	const where = auditWhere(ctx, filter);
 	const db = getDb();
 
 	const [rows, totals] = await Promise.all([
@@ -262,7 +269,9 @@ export async function exportAuditEvents(
 ): Promise<AuditExport> {
 	requirePermission(ctx, 'audit.export');
 
-	const where = auditWhere(filter);
+	// Тот же срез, что у ленты: «файл содержит ровно те строки, что экран» —
+	// потому что условие собирается одной функцией, а не двумя похожими.
+	const where = auditWhere(ctx, filter);
 	const db = getDb();
 
 	const [totals] = await db.select({ value: count() }).from(auditEvents).where(where);
@@ -280,7 +289,12 @@ export async function exportAuditEvents(
 		.where(where)
 		.orderBy(asc(auditEvents.occurredAt), asc(auditEvents.id));
 
-	const views = rows.map(toAuditEventView);
+	// Огрубление то же, что на экране: выгрузка — это экран файлом, и если она
+	// уносит настоящий адрес и клиента посетителей стенда, то показанное на
+	// экране огрубление ничего не значит.
+	const views = rows
+		.map(toAuditEventView)
+		.map((view) => (ctx.user?.isDemo === true ? maskAuditEvent(view) : view));
 	const stamp = exportStampFormat.format(new Date());
 
 	await recordAuditEvent(ctx, { type: 'audit.exported', outcome: 'success' });

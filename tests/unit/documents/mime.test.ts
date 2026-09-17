@@ -56,6 +56,26 @@ describe('тип файла по содержимому', () => {
 
 		expect(sniffDocumentMime(zip.generate({ type: 'uint8array' }))).toBe('application/zip');
 	});
+
+	it('узнаёт gzip и rar обеих версий по одной сигнатуре', () => {
+		// Содержимое архива не разбирается: за сигнатурой идёт что угодно, и
+		// распаковывать произвольный файл на сервере мы не беремся.
+		expect(sniffDocumentMime(bytes(0x1f, 0x8b, 0x08, 0x00, 0x00, 0x00, 0x00, 0x00))).toBe(
+			'application/gzip'
+		);
+		expect(
+			sniffDocumentMime(bytes(0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00, 0xcf, 0x90, 0x73))
+		).toBe('application/vnd.rar');
+		expect(
+			sniffDocumentMime(bytes(0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x01, 0x00, 0x00, 0x00))
+		).toBe('application/vnd.rar');
+	});
+
+	it('не принимает за rar файл, который только начинается на «Rar!»', () => {
+		// Текст «Rar! это не архив» — обычный текст: сигнатура длиннее четырёх байт
+		// намеренно, иначе под неё попадала бы любая заметка с этим словом.
+		expect(sniffDocumentMime(Buffer.from('Rar! это не архив', 'utf8'))).toBe('text/plain');
+	});
 });
 
 describe('проверка загружаемого файла', () => {
@@ -104,6 +124,8 @@ describe('расширение по типу', () => {
 		expect(extensionForMime(DOCX)).toBe('docx');
 		expect(extensionForMime('application/pdf')).toBe('pdf');
 		expect(extensionForMime('image/jpeg')).toBe('jpg');
+		expect(extensionForMime('application/gzip')).toBe('gz');
+		expect(extensionForMime('application/vnd.rar')).toBe('rar');
 		expect(extensionForMime('application/x-msdownload')).toBeNull();
 	});
 });

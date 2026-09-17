@@ -48,7 +48,6 @@ import {
 	stageSnapshotSchema,
 	updateInteractionSchema
 } from '$lib/contracts/interactions';
-import { secondFactorSchema, totpCodeSchema } from '$lib/contracts/auth';
 import { settingSchemas } from '$lib/contracts/settings';
 
 const ID = '11111111-2222-4333-8444-555555555555';
@@ -74,12 +73,12 @@ const organization = {
 
 const interaction = {
 	title: 'Сотрудничество на 2026/27 учебный год',
-	routeId: ID,
 	ownerUserId: OTHER_ID,
 	parties: [{ organizationId: ID, partyRole: 'educational_institution', isPrimary: true }]
 };
 
-const stageCommand = { interactionId: ID, fromStageId: OTHER_ID };
+/** Номер редакции процесса несёт каждая команда перехода. */
+const stageCommand = { interactionId: ID, fromStageId: OTHER_ID, revision: 1 };
 
 const cases: Case[] = [
 	{
@@ -223,6 +222,8 @@ const cases: Case[] = [
 			staleAfterDays: null,
 			requiresResult: false,
 			requiresConfirmation: false,
+			requiresLmsData: false,
+			isFinal: false,
 			checklist: []
 		},
 		invalid: {
@@ -234,6 +235,8 @@ const cases: Case[] = [
 			staleAfterDays: null,
 			requiresResult: false,
 			requiresConfirmation: false,
+			requiresLmsData: false,
+			isFinal: false,
 			checklist: []
 		}
 	},
@@ -397,49 +400,6 @@ const cases: Case[] = [
 		schema: settingSchemas.session_absolute_hours,
 		valid: 12,
 		invalid: 0
-	},
-	{
-		name: 'setting: password_policy',
-		schema: settingSchemas.password_policy,
-		valid: { minLength: 12, minClasses: 3 },
-		invalid: { minLength: 4, minClasses: 3 }
-	},
-	{
-		name: 'setting: lockout_policy',
-		schema: settingSchemas.lockout_policy,
-		valid: { attempts: 5, minutes: 15 },
-		invalid: { attempts: 5, minutes: 0 }
-	},
-	{
-		name: 'setting: mfa_policy',
-		schema: settingSchemas.mfa_policy,
-		valid: { requiredForRoles: ['admin'], remoteOnly: true, trustedNetworks: ['198.51.100.0/24'] },
-		// Длина префикса больше, чем бывает даже у IPv6: такая запись не сеть.
-		invalid: {
-			requiredForRoles: ['admin'],
-			remoteOnly: true,
-			trustedNetworks: ['198.51.100.0/240']
-		}
-	},
-	{
-		name: 'setting: mfa_policy — сеть без префикса',
-		schema: settingSchemas.mfa_policy,
-		valid: { requiredForRoles: [], remoteOnly: false, trustedNetworks: [] },
-		invalid: { requiredForRoles: [], remoteOnly: false, trustedNetworks: ['198.51.100.0'] }
-	},
-	{
-		name: 'код из приложения',
-		schema: totpCodeSchema,
-		// Пробел между группами — то, как код показывает приложение.
-		valid: { code: '123 456' },
-		invalid: { code: '12345' }
-	},
-	{
-		name: 'второй шаг входа',
-		schema: secondFactorSchema,
-		// Резервный код тоже приходит этим полем: какой именно, решает сервер.
-		valid: { code: 'A1B2-C3D4-E5F6' },
-		invalid: { code: '' }
 	}
 ];
 

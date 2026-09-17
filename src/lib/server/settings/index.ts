@@ -25,14 +25,7 @@ export const SETTING_DEFAULTS: { [TKey in SettingKey]: SettingValue<TKey> } = {
 		text: 'Доступ только для сотрудников. Действия в системе записываются в журнал.'
 	},
 	session_idle_minutes: 30,
-	session_absolute_hours: 12,
-	password_policy: { minLength: 12, minClasses: 3 },
-	// Фактор обязателен администратору и только при удалённом доступе. Список
-	// доверенных сетей пуст: пока в нём ничего нет, удалённым считается любой
-	// адрес — то есть по умолчанию фактор нужен администратору всегда. Так
-	// настройка, которую не трогали, требует больше, а не меньше.
-	mfa_policy: { requiredForRoles: ['admin'], remoteOnly: true, trustedNetworks: [] },
-	lockout_policy: { attempts: 5, minutes: 15 }
+	session_absolute_hours: 12
 };
 
 export async function getSetting<TKey extends SettingKey>(key: TKey): Promise<SettingValue<TKey>> {

@@ -1,10 +1,12 @@
 /**
- * Взаимодействие с учебным заведением и маршрут стадий, по которому оно идёт.
+ * Взаимодействие с контрагентом и процесс, по которому оно идёт.
  *
- * Маршрут версионируется: опубликованную версию менять нельзя, а взаимодействие
- * ссылается на конкретную версию. Текущая стадия — это открытая запись
- * `stage_entries` (у неё пустой `left_at`), отдельного поля-кэша нет: кэш
- * пришлось бы синхронизировать, а расходящийся кэш стадии — это неверный отчёт.
+ * Процесс принадлежит группе контрагентов: в группе действует ровно одна
+ * редакция структуры, и взаимодействие ссылается на группу, а не на редакцию.
+ * Прежние редакции остаются в базе — на их стадии ссылаются закрытые записи
+ * истории. Текущая стадия — это открытая запись `stage_entries` (у неё пустой
+ * `left_at`), отдельного поля-кэша нет: кэш пришлось бы синхронизировать, а
+ * расходящийся кэш стадии — это неверный отчёт.
  */
 import { relations, sql } from 'drizzle-orm';
 import {
@@ -82,11 +84,12 @@ export const processGroups = pgTable(
 		name: text().notNull(),
 		description: text(),
 		/**
-		 * Редакция, по которой идёт работа. Ссылка на `stage_routes` — это и есть
-		 * будущие `process_revisions`: таблицу переименовывает задача живого
-		 * процесса, внешний ключ переименование переживает.
+		 * Редакция, по которой идёт работа: одна на группу. Вынесена в колонку, а
+		 * не выводится запросом «последняя опубликованная», потому что публикация
+		 * обязана переключать процесс одним значением, читаемым под блокировкой
+		 * группы, — иначе переход и публикация разойдутся на гонке.
 		 */
-		activeRevisionId: uuid().references((): AnyPgColumn => stageRoutes.id, {
+		activeRevisionId: uuid().references((): AnyPgColumn => processRevisions.id, {
 			onDelete: 'restrict'
 		}),
 		position: integer().notNull(),
@@ -140,35 +143,47 @@ export const processStageKeys = pgTable(
 );
 
 /**
- * Версия маршрута стадий. Пока `published_at` пуст, маршрут — черновик и его
- * можно править; после публикации он заморожен, а изменения оформляются новой
- * версией с тем же ключом. Правило соблюдает сервис: база хранит только факт.
+ * Редакция процесса группы: снимок структуры — стадии и переходы.
+ *
+ * Пока `published_at` пуст, редакция — черновик, и его правят; у группы он
+ * один, это держит частичная уникальность. Опубликованная редакция заморожена:
+ * на её стадии ссылаются записи истории, и правка задним числом переписала бы
+ * то, что видел исполнитель. Изменение процесса — новая редакция и миграция
+ * незавершённых взаимодействий на неё.
  */
-export const stageRoutes = pgTable(
-	'stage_routes',
+export const processRevisions = pgTable(
+	'process_revisions',
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		/** Устойчивое имя маршрута; версии одного маршрута делят ключ. */
-		key: text().notNull(),
+		groupId: uuid()
+			.notNull()
+			.references((): AnyPgColumn => processGroups.id, { onDelete: 'cascade' }),
+		/** Номер редакции внутри группы, начиная с 1. Пользователь его не выбирает. */
 		version: integer().notNull(),
 		name: text().notNull(),
-		description: text(),
-		/** Маршрут, который предлагается для новых взаимодействий. */
-		isDefault: boolean().notNull().default(false),
+		/** Чем эта редакция отличается от предыдущей — словами автора черновика. */
+		note: text(),
 		publishedAt: timestamp({ withTimezone: true }),
 		...timestamps
 	},
-	(table) => [unique('stage_routes_key_version_key').on(table.key, table.version)]
+	(table) => [
+		unique('process_revisions_group_version_key').on(table.groupId, table.version),
+		// Два незаконченных описания одного процесса нечем свести: опубликуются
+		// оба, и какое описывает работу, станет вопросом порядка нажатий.
+		uniqueIndex('process_revisions_one_draft_per_group')
+			.on(table.groupId)
+			.where(sql`${table.publishedAt} is null`)
+	]
 );
 
 export const stages = pgTable(
 	'stages',
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		routeId: uuid()
+		revisionId: uuid()
 			.notNull()
-			.references(() => stageRoutes.id, { onDelete: 'cascade' }),
-		/** Порядковый номер в маршруте, начиная с 1. */
+			.references(() => processRevisions.id, { onDelete: 'cascade' }),
+		/** Порядковый номер в редакции, начиная с 1. */
 		position: integer().notNull(),
 		key: text().notNull(),
 		name: text().notNull(),
@@ -190,8 +205,8 @@ export const stages = pgTable(
 		...timestamps
 	},
 	(table) => [
-		unique('stages_route_key_key').on(table.routeId, table.key),
-		unique('stages_route_position_key').on(table.routeId, table.position)
+		unique('stages_revision_key_key').on(table.revisionId, table.key),
+		unique('stages_revision_position_key').on(table.revisionId, table.position)
 	]
 );
 
@@ -199,9 +214,9 @@ export const stageTransitions = pgTable(
 	'stage_transitions',
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		routeId: uuid()
+		revisionId: uuid()
 			.notNull()
-			.references(() => stageRoutes.id, { onDelete: 'cascade' }),
+			.references(() => processRevisions.id, { onDelete: 'cascade' }),
 		fromStageId: uuid()
 			.notNull()
 			.references(() => stages.id, { onDelete: 'cascade' }),
@@ -231,10 +246,10 @@ export const stageMigrationRules = pgTable(
 	'stage_migration_rules',
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		/** Редакция, в которой ключ исчез (`stage_routes` → `process_revisions`). */
+		/** Редакция, в которой ключ исчез. */
 		revisionId: uuid()
 			.notNull()
-			.references(() => stageRoutes.id, { onDelete: 'cascade' }),
+			.references(() => processRevisions.id, { onDelete: 'cascade' }),
 		removedStageKey: text().notNull(),
 		targetStageKey: text().notNull(),
 		...timestamps
@@ -313,17 +328,14 @@ export const interactions = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		title: text().notNull(),
-		/** Конкретная версия маршрута, по которой идёт это взаимодействие. */
-		routeId: uuid()
-			.notNull()
-			.references(() => stageRoutes.id, { onDelete: 'restrict' }),
 		/**
-		 * Группа процесса. Выводится из вида основной стороны и меняется только
-		 * вместе с ней. Пока необязательна: заполнять её при создании начинает
-		 * задача живого процесса, она же делает колонку `not null` и убирает
-		 * `route_id`.
+		 * Группа процесса: по ней взаимодействие находит действующую редакцию.
+		 * Выводится из вида основной стороны и меняется только вместе с ней;
+		 * смена группы у идущего взаимодействия — это начало другого процесса.
 		 */
-		processGroupId: uuid().references(() => processGroups.id, { onDelete: 'restrict' }),
+		processGroupId: uuid()
+			.notNull()
+			.references(() => processGroups.id, { onDelete: 'restrict' }),
 		/** Договор, по которому идёт работа; позиции выбираются из него. */
 		contractId: uuid().references((): AnyPgColumn => contracts.id, { onDelete: 'restrict' }),
 		/**
@@ -652,9 +664,9 @@ export const stageEntryStatus = pgView('stage_entry_status', {
 }).existing();
 
 export const processGroupsRelations = relations(processGroups, ({ one, many }) => ({
-	activeRevision: one(stageRoutes, {
+	activeRevision: one(processRevisions, {
 		fields: [processGroups.activeRevisionId],
-		references: [stageRoutes.id]
+		references: [processRevisions.id]
 	}),
 	counterpartyKinds: many(processGroupCounterpartyKinds),
 	stageKeys: many(processStageKeys),
@@ -679,9 +691,9 @@ export const processStageKeysRelations = relations(processStageKeys, ({ one }) =
 }));
 
 export const stageMigrationRulesRelations = relations(stageMigrationRules, ({ one }) => ({
-	revision: one(stageRoutes, {
+	revision: one(processRevisions, {
 		fields: [stageMigrationRules.revisionId],
-		references: [stageRoutes.id]
+		references: [processRevisions.id]
 	})
 }));
 
@@ -710,19 +722,29 @@ export const interactionContractItemsRelations = relations(interactionContractIt
 	})
 }));
 
-export const stageRoutesRelations = relations(stageRoutes, ({ many }) => ({
+export const processRevisionsRelations = relations(processRevisions, ({ one, many }) => ({
+	group: one(processGroups, {
+		fields: [processRevisions.groupId],
+		references: [processGroups.id]
+	}),
 	stages: many(stages),
 	transitions: many(stageTransitions),
-	interactions: many(interactions)
+	migrationRules: many(stageMigrationRules)
 }));
 
 export const stagesRelations = relations(stages, ({ one, many }) => ({
-	route: one(stageRoutes, { fields: [stages.routeId], references: [stageRoutes.id] }),
+	revision: one(processRevisions, {
+		fields: [stages.revisionId],
+		references: [processRevisions.id]
+	}),
 	entries: many(stageEntries)
 }));
 
 export const stageTransitionsRelations = relations(stageTransitions, ({ one }) => ({
-	route: one(stageRoutes, { fields: [stageTransitions.routeId], references: [stageRoutes.id] }),
+	revision: one(processRevisions, {
+		fields: [stageTransitions.revisionId],
+		references: [processRevisions.id]
+	}),
 	fromStage: one(stages, { fields: [stageTransitions.fromStageId], references: [stages.id] }),
 	toStage: one(stages, { fields: [stageTransitions.toStageId], references: [stages.id] }),
 	requiredPermission: one(permissions, {
@@ -732,7 +754,6 @@ export const stageTransitionsRelations = relations(stageTransitions, ({ one }) =
 }));
 
 export const interactionsRelations = relations(interactions, ({ one, many }) => ({
-	route: one(stageRoutes, { fields: [interactions.routeId], references: [stageRoutes.id] }),
 	processGroup: one(processGroups, {
 		fields: [interactions.processGroupId],
 		references: [processGroups.id]

@@ -1,10 +1,15 @@
 /**
  * Заведение и правка взаимодействия.
  *
- * Взаимодействие не существует вне маршрута: оно создаётся сразу на первой
- * стадии, в той же транзакции. Запись без стадии — это запись, про которую
- * нельзя сказать, что с ней происходит, и появляться она не должна даже на
- * мгновение.
+ * Взаимодействие не существует вне процесса: оно создаётся сразу на первой
+ * стадии действующей редакции своей группы, в той же транзакции. Запись без
+ * стадии — это запись, про которую нельзя сказать, что с ней происходит, и
+ * появляться она не должна даже на мгновение.
+ *
+ * Группу человек не выбирает: она выводится из вида основной стороны по
+ * единственной таблице соответствий. Редакция читается внутри транзакции под
+ * разделяемой блокировкой группы — иначе запись, созданная в миллисекунду
+ * публикации, встала бы на стадию редакции, которая уже не действует.
  *
  * Правка плана попадает в предметную историю (`interaction_changes`): сдвиг
  * сроков и смена ответственного — это решения, и они обязаны быть объяснимы
@@ -30,13 +35,13 @@ import {
 	interactions,
 	organizations,
 	sites,
-	stageRoutes,
 	users
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { requirePermission, scopeFilter } from '../rbac';
 import { startInteractionIn } from '../stages/commands';
+import { lockGroup, requireActiveRevision, resolveProcessGroup } from '../stages/process';
 import { interactionScopeFilter } from './access';
 import { getInteraction } from './read';
 
@@ -59,42 +64,84 @@ function parseCreate(input: CreateInteractionInput): CreateInteractionInput {
 }
 
 /**
- * Маршрут, на который можно поставить взаимодействие. Черновик нельзя: его
- * стадии ещё могут измениться, а слепок уже был бы сделан.
+ * Основная сторона взаимодействия — та, с которой ведётся процесс.
+ *
+ * Схема контракта требует ровно одну такую сторону; здесь остаётся снять
+ * неопределённость типа, и делается это в одном месте: от основной стороны
+ * зависят и группа процесса, и область доступа, и разойтись в ответе на вопрос
+ * «кто здесь основной» эти две проверки не должны.
  */
-async function assertRoutePublished(tx: Tx, routeId: string): Promise<void> {
-	const [route] = await tx
-		.select({ publishedAt: stageRoutes.publishedAt })
-		.from(stageRoutes)
-		.where(eq(stageRoutes.id, routeId))
-		.limit(1);
+function requirePrimaryParty(parties: PartyInput[]): PartyInput {
+	const primary = parties.find((party) => party.isPrimary);
 
-	if (route === undefined) {
-		throw new ValidationError('Маршрут стадий не найден', ['Выберите существующий маршрут']);
+	if (primary === undefined) {
+		throw new ValidationError('У взаимодействия нет основной стороны', [
+			'Отметьте организацию, с которой ведётся процесс'
+		]);
 	}
 
-	if (route.publishedAt === null) {
-		throw new ConflictError('Маршрут ещё не опубликован: на него нельзя поставить взаимодействие');
-	}
+	return primary;
 }
 
-/** Все стороны — существующие организации из области доступа вызывающего. */
+/**
+ * Группа процесса взаимодействия — по виду основной стороны.
+ *
+ * Выбора из списка нет намеренно: ответ известен из данных, а список был бы
+ * лишней возможностью ошибиться. Организация читается в той же транзакции, что
+ * и запись, — вид основной стороны и группа обязаны совпасть.
+ */
+async function resolveGroupForParties(tx: Tx, parties: PartyInput[]): Promise<string> {
+	const primary = requirePrimaryParty(parties);
+
+	const [organization] = await tx
+		.select({ kind: organizations.kind })
+		.from(organizations)
+		.where(eq(organizations.id, primary.organizationId))
+		.limit(1);
+
+	if (organization === undefined) {
+		throw new NotFoundError('Организация-участник не найдена');
+	}
+
+	return (await resolveProcessGroup(tx, organization.kind)).id;
+}
+
+/**
+ * Все стороны существуют, и основная из них — в области доступа вызывающего.
+ *
+ * Область спрашивается только с основной стороны — ровно так же, как считается
+ * видимость записи (`docs/access-matrix.md`, раздел 1). Плательщик и
+ * организация-оператор стоят сторонами почти везде, ответственного у них не
+ * бывает вовсе, и потребовать их в области значило бы запретить менеджеру
+ * завести запись по самому обычному образцу: вуз, заказчик, оператор.
+ */
 async function assertPartiesAllowed(
 	ctx: ActorContext,
 	tx: Tx,
 	parties: PartyInput[]
 ): Promise<void> {
 	const organizationIds = parties.map((party) => party.organizationId);
+	const primary = requirePrimaryParty(parties);
 
 	const rows = await tx
 		.select({ id: organizations.id })
 		.from(organizations)
-		.where(and(inArray(organizations.id, organizationIds), scopeFilter(ctx, organizations.id)));
+		.where(inArray(organizations.id, organizationIds));
 
 	const found = new Set(rows.map((row) => row.id));
 	const missing = organizationIds.filter((id) => !found.has(id));
 
 	if (missing.length > 0) {
+		throw new NotFoundError('Организация-участник не найдена');
+	}
+
+	const [primaryInScope] = await tx
+		.select({ id: organizations.id })
+		.from(organizations)
+		.where(and(eq(organizations.id, primary.organizationId), scopeFilter(ctx, organizations.id)))
+		.limit(1);
+
+	if (primaryInScope === undefined) {
 		// Организация вне области доступа неотличима от несуществующей: иначе
 		// перебором идентификаторов можно узнать, что существует за её пределами.
 		throw new NotFoundError('Организация-участник не найдена');
@@ -206,15 +253,21 @@ export async function createInteractionIn(
 
 	const definition = parseCreate(input);
 
-	await assertRoutePublished(tx, definition.routeId);
 	await assertPartiesAllowed(ctx, tx, definition.parties);
 	await assertOwnerExists(tx, definition.ownerUserId);
+
+	const groupId = await resolveGroupForParties(tx, definition.parties);
+	// Разделяемая блокировка группы: пока публикация держит исключительную,
+	// создание ждёт, — и наоборот. Так первая стадия берётся из той редакции,
+	// которая действует после обеих операций, а не между ними.
+	const group = await lockGroup(tx, groupId, 'share');
+	const revision = await requireActiveRevision(tx, group);
 
 	const [created] = await tx
 		.insert(interactions)
 		.values({
 			title: definition.title,
-			routeId: definition.routeId,
+			processGroupId: group.id,
 			agreementPeriodStart: definition.agreementPeriodStart,
 			agreementPeriodEnd: definition.agreementPeriodEnd,
 			academicPeriodStart: definition.academicPeriodStart,
@@ -223,7 +276,7 @@ export async function createInteractionIn(
 			externalSource: definition.externalSource,
 			externalId: definition.externalId
 		})
-		.returning({ id: interactions.id, routeId: interactions.routeId });
+		.returning({ id: interactions.id, processGroupId: interactions.processGroupId });
 
 	await writeRelations(tx, created.id, definition);
 
@@ -233,18 +286,23 @@ export async function createInteractionIn(
 			type: 'interactions.created',
 			outcome: 'success',
 			subject: { type: 'interaction', id: created.id },
-			details: { routeId: definition.routeId }
+			details: { processGroupKey: group.key, revisionId: revision.id }
 		},
 		tx
 	);
 
 	// Взаимодействие начинает путь сразу: запись, которая ни на какой стадии
 	// не стоит, не отвечает на вопрос «что с ней происходит».
-	await startInteractionIn(ctx, tx, {
-		id: created.id,
-		routeId: created.routeId,
-		ownerUserId: definition.ownerUserId
-	});
+	await startInteractionIn(
+		ctx,
+		tx,
+		{
+			id: created.id,
+			processGroupId: created.processGroupId,
+			ownerUserId: definition.ownerUserId
+		},
+		revision
+	);
 
 	return created.id;
 }
@@ -329,14 +387,26 @@ export async function updateInteraction(
 			throw new NotFoundError('Взаимодействие не найдено');
 		}
 
-		// Маршрут менять нельзя: пройденные стадии ссылаются на его версию, и
-		// подмена маршрута превратила бы историю в набор чужих записей.
-		if (before.routeId !== definition.routeId) {
-			throw new ConflictError('Маршрут взаимодействия изменить нельзя');
-		}
-
 		await assertPartiesAllowed(ctx, tx, definition.parties);
 		await assertOwnerExists(tx, definition.ownerUserId);
+
+		// Группа выводится из вида основной стороны и меняется только вместе с
+		// ней; смена группы у идущего взаимодействия — это начало другого
+		// процесса, и такое взаимодействие закрывают, а не переписывают.
+		const groupId = await resolveGroupForParties(tx, definition.parties);
+
+		if (groupId !== before.processGroupId) {
+			throw new ConflictError(
+				'Смена основной стороны меняет процесс: закройте это взаимодействие и заведите новое'
+			);
+		}
+
+		// Передать чужую работу себе — не то же самое, что вести свою: смену
+		// владельца разрешает отдельное право, и проверяется оно во всех
+		// командах, которые её делают, а не только в той, что названа «передать».
+		if (before.ownerUserId !== definition.ownerUserId) {
+			requirePermission(ctx, 'interactions.reassign');
+		}
 
 		const previousParties = await tx
 			.select({
@@ -456,6 +526,21 @@ export async function updateInteraction(
 			},
 			tx
 		);
+
+		// Смена владельца отмечается своим событием, а не строкой в списке
+		// изменённых полей: «кто отвечает за эту работу» ищут по коду события.
+		if (before.ownerUserId !== definition.ownerUserId) {
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'interactions.owner_changed',
+					outcome: 'success',
+					subject: { type: 'interaction', id: definition.id },
+					details: { userId: definition.ownerUserId }
+				},
+				tx
+			);
+		}
 	});
 
 	return getInteraction(ctx, definition.id);

@@ -9,11 +9,18 @@
  */
 import type { RequestEvent } from '@sveltejs/kit';
 import type { SessionUser } from '$lib/server/auth/types';
+import type { PermissionKey } from '$lib/server/rbac/permissions';
 import { testActor } from './db';
 
-/** Пользователь запроса: тот же, что кладёт в `locals` хук сессии. */
-export function sessionUser(roleId: string): SessionUser {
-	const user = testActor({ roleId }).user;
+/**
+ * Пользователь запроса: тот же, что кладёт в `locals` хук сессии.
+ *
+ * Набор прав можно задать явно — так выражается «учётная запись без права X»:
+ * отдельной роли «только смотреть» в системе нет, и отнимать право приходится
+ * у той роли, у которой оно есть.
+ */
+export function sessionUser(roleId: string, permissions?: readonly PermissionKey[]): SessionUser {
+	const user = testActor({ roleId, permissions }).user;
 
 	if (user === null) {
 		throw new Error('testActor обязан вернуть пользователя');

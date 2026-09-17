@@ -1,12 +1,7 @@
-import { randomUUID } from 'node:crypto';
 import { count, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
-import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { isValidInn } from '$lib/validation/inn';
-import type { ActorContext } from '$lib/server/actor';
-import { login } from '$lib/server/auth/login';
-import { clearLoginFailures } from '$lib/server/auth/lockout';
-import { destroySession } from '$lib/server/auth/session';
 import {
 	affiliations,
 	blockers,
@@ -39,13 +34,13 @@ import {
 	users
 } from '$lib/server/db/schema';
 import { DEFAULT_ROLES, PERMISSION_KEYS, type PermissionKey } from '$lib/server/rbac/permissions';
-import { DEMO_ROUTE } from '$lib/server/stages/demo-route';
+import { B2B_PROCESS } from '$lib/server/stages/definitions';
 import { CONTRACT_SEED_SIZES } from '../../../scripts/seed/contracts';
 import { DIRECTORY_SEED_SIZES } from '../../../scripts/seed/directory';
 import { STATS_SEED_SIZES } from '../../../scripts/seed/stats';
 import { INTERACTION_SEED_SIZES } from '../../../scripts/seed/interactions';
 import { main, seedAll, seedRolesOnly } from '../../../scripts/seed/run';
-import { DEMO_EMAILS, STAFF_ADMIN_EMAIL } from '../../../scripts/seed/users';
+import { DEMO_EMAILS, SERVICE_USER_EMAIL, STAFF_ADMIN_EMAIL } from '../../../scripts/seed/users';
 import { startTestDatabase, type TestDatabase } from '../helpers/db';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
@@ -53,21 +48,9 @@ vi.mock('$env/dynamic/private', () => ({ env: process.env }));
 
 let database: TestDatabase;
 
-/** Пароль демонстрационных записей прогона; на стенде он приходит из окружения. */
-const DEMO_PASSWORD = 'Проверка-Сидов-2026';
-
-/** Адрес, с которого тест ходит на вход: счётчики блокировки живут по адресу. */
-const ADDRESS = '198.51.100.31';
-
-/** Сессии, открытые проверкой входа: их гасит `afterEach`. */
-let sessions: string[] = [];
-
-async function runSeed(staffAdminPassword?: string): Promise<void> {
-	await seedAll({ demoPassword: DEMO_PASSWORD, staffAdminPassword });
+async function runSeed(): Promise<void> {
+	await seedAll();
 }
-
-/** Пароль администратора стенда: задаётся только переменной окружения. */
-const STAFF_PASSWORD = 'Стенд-Админ-2026';
 
 /** Записи стадий, на которых взаимодействия стоят прямо сейчас. */
 async function openEntries(): Promise<
@@ -90,19 +73,6 @@ async function countRows(table: PgTable): Promise<number> {
 	return row.value;
 }
 
-/** Контекст анонимного посетителя: именно он приходит на форму входа. */
-function anonymous(): ActorContext {
-	return {
-		requestId: randomUUID(),
-		source: 'ui',
-		user: null,
-		apiKeyId: null,
-		ip: ADDRESS,
-		userAgent: 'vitest',
-		scope: { kind: 'organizations', organizationIds: new Set() }
-	};
-}
-
 beforeAll(async () => {
 	database = await startTestDatabase();
 }, 300_000);
@@ -113,22 +83,6 @@ afterAll(async () => {
 
 beforeEach(async () => {
 	await database.reset();
-});
-
-afterEach(async () => {
-	// Счётчики попыток и сессии живут в Redis, общем с разработчиком: прогон
-	// убирает за собой ровно свои ключи. Гасить все сессии демонстрационных
-	// записей нельзя: идентификаторы у них вычисляемые, а значит те же, что и
-	// у стенда и у прогона e2e, — этот тест выбил бы их из системы.
-	for (const email of [...Object.values(DEMO_EMAILS), STAFF_ADMIN_EMAIL]) {
-		await clearLoginFailures(email, ADDRESS);
-	}
-
-	for (const sessionId of sessions) {
-		await destroySession(sessionId);
-	}
-
-	sessions = [];
 });
 
 describe('сид', () => {
@@ -159,15 +113,9 @@ describe('сид', () => {
 		expect(demo.map((account) => account.email)).toStrictEqual([
 			DEMO_EMAILS.admin,
 			DEMO_EMAILS.lead,
-			DEMO_EMAILS.manager,
-			DEMO_EMAILS.viewer
+			DEMO_EMAILS.manager
 		]);
-		expect(demo.map((account) => account.roleId)).toStrictEqual([
-			'admin',
-			'lead',
-			'manager',
-			'viewer'
-		]);
+		expect(demo.map((account) => account.roleId)).toStrictEqual(['admin', 'lead', 'manager']);
 	});
 
 	it('ставит менеджерам руководителя: на иерархии держится область и эскалация', async () => {
@@ -212,7 +160,7 @@ describe('сид', () => {
 			.where(eq(processStageKeys.groupId, b2b.id));
 
 		expect(keys.map((row) => row.key).sort()).toStrictEqual(
-			DEMO_ROUTE.stages.map((stage) => stage.key).sort()
+			B2B_PROCESS.stages.map((stage) => stage.key).sort()
 		);
 
 		// Группа выводится из вида основной стороны, и вуз ведут по `b2b`.
@@ -291,7 +239,7 @@ describe('сид', () => {
 			.where(eq(interactions.status, 'completed'));
 
 		expect(completedEntries).toHaveLength(
-			INTERACTION_SEED_SIZES.completed * DEMO_ROUTE.stages.length
+			INTERACTION_SEED_SIZES.completed * B2B_PROCESS.stages.length
 		);
 		expect(completedEntries.filter((entry) => entry.leftAt === null)).toStrictEqual([]);
 	});
@@ -476,9 +424,10 @@ describe('сид', () => {
 		expect(peopleAfter).toStrictEqual(peopleBefore);
 		await expect(countRows(affiliations)).resolves.toBe(DIRECTORY_SEED_SIZES.affiliations);
 		await expect(countRows(programVersions)).resolves.toBe(DIRECTORY_SEED_SIZES.programVersions);
-		// По записи на роль от подготовки прогона, четыре демонстрационные и два
-		// сотрудника оператора.
-		await expect(countRows(users)).resolves.toBe(DEFAULT_ROLES.length + 6);
+		// По записи на роль от подготовки прогона плюс семь от сида: три
+		// демонстрационные, два сотрудника, администратор стенда и машинный
+		// субъект обмена.
+		await expect(countRows(users)).resolves.toBe(DEFAULT_ROLES.length + 7);
 	});
 
 	it('не затирает правку, сделанную на стенде', async () => {
@@ -506,106 +455,52 @@ describe('сид', () => {
 		expect(after.notes).toBeNull();
 	});
 
-	it('заводит демонстрационные записи, под которыми можно войти паролем из окружения', async () => {
+	it('заводит записи стенда без паролей: их спрашивает каталог учётных записей', async () => {
 		await runSeed();
 
-		const outcome = await login(anonymous(), {
-			email: DEMO_EMAILS.admin,
-			password: DEMO_PASSWORD
-		});
+		// Три демонстрационные записи, двое сотрудников, администратор стенда и
+		// машинный субъект обмена — плюс по записи на роль от подготовки прогона.
+		await expect(countRows(users)).resolves.toBe(DEFAULT_ROLES.length + 7);
 
-		expect(outcome.ok).toBe(true);
-
-		if (outcome.ok) {
-			sessions.push(outcome.sessionId);
-		}
-
-		const refused = await login(anonymous(), {
-			email: DEMO_EMAILS.viewer,
-			password: `${DEMO_PASSWORD}-нет`
-		});
-
-		expect(refused.ok).toBe(false);
-	});
-
-	it('без пароля в окружении не заводит администратора стенда', async () => {
-		await runSeed();
-
-		// Учётная запись оператора переживает демонстрацию и пускает в разделы,
-		// которых у самой демонстрации нет: без явно заданного пароля её нет.
-		const rows = await database.db
-			.select({ email: users.email })
-			.from(users)
-			.where(eq(users.email, STAFF_ADMIN_EMAIL));
-
-		expect(rows).toStrictEqual([]);
-		// По записи на роль от подготовки прогона, четыре демонстрационные и два
-		// сотрудника оператора.
-		await expect(countRows(users)).resolves.toBe(DEFAULT_ROLES.length + 6);
-	});
-
-	it('с паролем заводит администратора стенда, и он не демонстрационный', async () => {
-		await runSeed(STAFF_PASSWORD);
-
-		const [account] = await database.db
+		const [staff] = await database.db
 			.select({ roleId: users.roleId, isDemo: users.isDemo, isActive: users.isActive })
 			.from(users)
 			.where(eq(users.email, STAFF_ADMIN_EMAIL));
 
-		expect(account).toStrictEqual({ roleId: 'admin', isDemo: false, isActive: true });
+		expect(staff).toStrictEqual({ roleId: 'admin', isDemo: false, isActive: true });
 
-		const outcome = await login(anonymous(), {
-			email: STAFF_ADMIN_EMAIL,
-			password: STAFF_PASSWORD
-		});
+		// `external_subject` пуст у всех: связывание идёт при первом входе по
+		// подтверждённой почте, а не сидом.
+		const linked = await database.db
+			.select({ email: users.email })
+			.from(users)
+			.where(isNotNull(users.externalSubject));
 
-		expect(outcome.ok).toBe(true);
-
-		if (outcome.ok) {
-			sessions.push(outcome.sessionId);
-		}
+		expect(linked).toStrictEqual([]);
 	});
 
-	it('переписывает пароль администратора стенда на повторном запуске', async () => {
-		await runSeed(STAFF_PASSWORD);
+	it('заводит машинного субъекта, на которого выпускаются ключи обмена', async () => {
+		await runSeed();
 
-		const changed = `${STAFF_PASSWORD}-другой`;
-		await runSeed(changed);
+		const [service] = await database.db
+			.select({ roleId: users.roleId, isDemo: users.isDemo })
+			.from(users)
+			.where(eq(users.email, SERVICE_USER_EMAIL));
 
-		// Единственная запись, чей пароль сид трогает: поменять его из интерфейса
-		// может только она сама, и забытый пароль иначе не вернуть.
-		const outcome = await login(anonymous(), { email: STAFF_ADMIN_EMAIL, password: changed });
-
-		expect(outcome.ok).toBe(true);
-
-		if (outcome.ok) {
-			sessions.push(outcome.sessionId);
-		}
-
-		const refused = await login(anonymous(), {
-			email: STAFF_ADMIN_EMAIL,
-			password: STAFF_PASSWORD
-		});
-
-		expect(refused.ok).toBe(false);
-		// То же самое плюс администратор стенда.
-		await expect(countRows(users)).resolves.toBe(DEFAULT_ROLES.length + 7);
+		expect(service).toStrictEqual({ roleId: 'service', isDemo: false });
 	});
 
-	it('узнаёт заведённого администратора по почте, а не по идентификатору', async () => {
-		// Учётную запись с этим адресом мог завести человек руками. Второй с той
-		// же почтой база не примет, а пароль менять надо именно этой.
+	it('не переписывает роль и руководителя уже заведённой записи', async () => {
 		const id = '00000000-0000-4000-8000-0000000051a1';
 
 		await database.db.insert(users).values({
 			id,
 			email: STAFF_ADMIN_EMAIL,
 			fullName: 'Администратор, заведённый руками',
-			roleId: 'admin',
-			passwordHash: 'not-a-real-hash'
+			roleId: 'admin'
 		});
 
-		await runSeed(STAFF_PASSWORD);
+		await runSeed();
 
 		const rows = await database.db
 			.select({ id: users.id, fullName: users.fullName })
@@ -613,30 +508,6 @@ describe('сид', () => {
 			.where(eq(users.email, STAFF_ADMIN_EMAIL));
 
 		expect(rows).toStrictEqual([{ id, fullName: 'Администратор, заведённый руками' }]);
-
-		const outcome = await login(anonymous(), {
-			email: STAFF_ADMIN_EMAIL,
-			password: STAFF_PASSWORD
-		});
-
-		expect(outcome.ok).toBe(true);
-
-		if (outcome.ok) {
-			sessions.push(outcome.sessionId);
-		}
-	});
-
-	it('не принимает пароль администратора стенда против политики', async () => {
-		await expect(runSeed('короткий')).rejects.toThrow('не отвечает политике паролей');
-
-		// Упасть сид обязан до записи: учётной записи с негодным паролем в базе
-		// не появляется.
-		const rows = await database.db
-			.select({ email: users.email })
-			.from(users)
-			.where(eq(users.email, STAFF_ADMIN_EMAIL));
-
-		expect(rows).toStrictEqual([]);
 	});
 
 	it('кладёт в базу только ИНН, проходящие контрольную сумму', async () => {
@@ -695,7 +566,9 @@ describe('каталог прав', () => {
 		const seeded = await database.db
 			.select({ email: users.email })
 			.from(users)
-			.where(inArray(users.email, [...Object.values(DEMO_EMAILS), STAFF_ADMIN_EMAIL]));
+			.where(
+				inArray(users.email, [...Object.values(DEMO_EMAILS), STAFF_ADMIN_EMAIL, SERVICE_USER_EMAIL])
+			);
 
 		expect(seeded).toStrictEqual([]);
 	});

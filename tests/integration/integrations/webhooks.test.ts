@@ -476,7 +476,7 @@ describe('след в журнале', () => {
 	});
 
 	it('отказывает без права и пишет отказ', async () => {
-		const reader = testActor({ roleId: 'viewer' });
+		const reader = testActor({ roleId: 'manager' });
 
 		await expect(
 			createWebhook(reader, {

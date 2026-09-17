@@ -35,6 +35,7 @@ import {
 	insertInteractionWithStage,
 	insertOrganization,
 	startTestDatabase,
+	scopedActor,
 	testActor,
 	TEST_USER_IDS,
 	type TestDatabase
@@ -136,7 +137,7 @@ async function withTempFile<TResult>(
 
 /** Вошедший, у которого нет ни одного права: раздел документов ему не принадлежит. */
 function userWithoutPermissions(): SessionUser {
-	const user = testActor({ roleId: 'viewer', permissions: [] }).user;
+	const user = testActor({ roleId: 'manager', permissions: [] }).user;
 
 	if (user === null) {
 		throw new Error('testActor обязан вернуть пользователя');
@@ -347,7 +348,7 @@ describe('генерация документа', () => {
 		const { interactionId, organizationId } = await interactionWithParty();
 
 		await expect(
-			generateDocument(testActor({ roleId: 'viewer' }), {
+			generateDocument(testActor({ roleId: 'manager', permissions: [] }), {
 				templateKey: 'agreement',
 				title: 'Соглашение',
 				data: AGREEMENT,
@@ -358,23 +359,29 @@ describe('генерация документа', () => {
 		const other = await insertOrganization(database.db, { shortName: 'Чужой вуз' });
 
 		await expect(
-			generateDocument(testActor({ roleId: 'manager', organizationIds: [other] }), {
-				templateKey: 'agreement',
-				interactionId,
-				title: 'Соглашение',
-				data: AGREEMENT,
-				formats: ['docx']
-			})
+			generateDocument(
+				await scopedActor(database.db, { roleId: 'manager', organizationIds: [other] }),
+				{
+					templateKey: 'agreement',
+					interactionId,
+					title: 'Соглашение',
+					data: AGREEMENT,
+					formats: ['docx']
+				}
+			)
 		).rejects.toBeInstanceOf(NotFoundError);
 
 		await expect(
-			generateDocument(testActor({ roleId: 'manager', organizationIds: [organizationId] }), {
-				templateKey: 'agreement',
-				interactionId,
-				title: 'Соглашение',
-				data: AGREEMENT,
-				formats: ['docx']
-			})
+			generateDocument(
+				await scopedActor(database.db, { roleId: 'manager', organizationIds: [organizationId] }),
+				{
+					templateKey: 'agreement',
+					interactionId,
+					title: 'Соглашение',
+					data: AGREEMENT,
+					formats: ['docx']
+				}
+			)
 		).resolves.toHaveLength(1);
 	});
 });
@@ -468,7 +475,7 @@ describe('загрузка файла', () => {
 
 	it('требует право на запись', async () => {
 		await expect(
-			uploadDocument(testActor({ roleId: 'viewer' }), {
+			uploadDocument(testActor({ roleId: 'manager', permissions: [] }), {
 				kind: 'agreement',
 				title: 'Соглашение',
 				file: { mime: 'application/pdf', bytes: pdfBytes }
@@ -587,10 +594,13 @@ describe('редакции документа', () => {
 		const other = await insertOrganization(database.db);
 
 		await expect(
-			uploadDocumentRevision(testActor({ roleId: 'manager', organizationIds: [other] }), {
-				supersedesId: first.id,
-				file: { mime: 'application/pdf', bytes: nextBytes }
-			})
+			uploadDocumentRevision(
+				await scopedActor(database.db, { roleId: 'manager', organizationIds: [other] }),
+				{
+					supersedesId: first.id,
+					file: { mime: 'application/pdf', bytes: nextBytes }
+				}
+			)
 		).rejects.toBeInstanceOf(NotFoundError);
 	});
 
@@ -598,7 +608,7 @@ describe('редакции документа', () => {
 		const { first } = await withRevision();
 
 		await expect(
-			uploadDocumentRevision(testActor({ roleId: 'viewer' }), {
+			uploadDocumentRevision(testActor({ roleId: 'manager', permissions: [] }), {
 				supersedesId: first.id,
 				file: { mime: 'application/pdf', bytes: nextBytes }
 			})
@@ -621,7 +631,7 @@ describe('скачивание', () => {
 		});
 
 		const download = await readDocumentForDownload(
-			testActor({ roleId: 'manager', organizationIds: [organizationId] }),
+			await scopedActor(database.db, { roleId: 'manager', organizationIds: [organizationId] }),
 			document.id
 		);
 
@@ -639,7 +649,7 @@ describe('скачивание', () => {
 
 		await expect(
 			readDocumentForDownload(
-				testActor({ roleId: 'manager', organizationIds: [stranger] }),
+				await scopedActor(database.db, { roleId: 'manager', organizationIds: [stranger] }),
 				document.id
 			)
 		).rejects.toBeInstanceOf(NotFoundError);
@@ -760,7 +770,7 @@ describe('отметки по документу', () => {
 		});
 
 		await expect(
-			markDocument(testActor({ roleId: 'viewer' }), document.id, 'agreed')
+			markDocument(testActor({ roleId: 'manager', permissions: [] }), document.id, 'agreed')
 		).rejects.toBeInstanceOf(ForbiddenError);
 	});
 });
@@ -920,27 +930,33 @@ describe('список документов', () => {
 		expect(page.items.find((item) => item.id === form.id)?.interaction).toBeNull();
 	});
 
-	it('не показывает документы чужих взаимодействий, а документ вне взаимодействия показывает', async () => {
+	it('не показывает ни чужих взаимодействий, ни документа без взаимодействия', async () => {
 		const { organizationId, scan, built, form } = await threeDocuments();
 
 		const own = await listDocuments(
-			testActor({ roleId: 'manager', organizationIds: [organizationId] }),
+			await scopedActor(database.db, { roleId: 'manager', organizationIds: [organizationId] }),
 			listQuery()
 		);
 
-		expect(own.total).toBe(3);
-		expect(own.items.map((item) => item.id).sort()).toEqual([scan.id, built.id, form.id].sort());
+		// Документ без взаимодействия виден только полному доступу: один такой
+		// файл смешивает строки нескольких вузов, и отдавать его всякому, у кого
+		// есть `documents.read`, — утечка.
+		expect(own.total).toBe(2);
+		expect(own.items.map((item) => item.id).sort()).toEqual([scan.id, built.id].sort());
+
+		const everything = await listDocuments(testActor(), listQuery());
+		expect(everything.items.map((item) => item.id)).toContain(form.id);
 
 		const stranger = await insertOrganization(database.db, { shortName: 'Чужой вуз' });
 		const outside = await listDocuments(
-			testActor({ roleId: 'manager', organizationIds: [stranger] }),
+			await scopedActor(database.db, { roleId: 'manager', organizationIds: [stranger] }),
 			listQuery()
 		);
 
-		// Область доступа не применяется только к документу без взаимодействия:
-		// это типовая форма оператора, а не имущество организации.
-		expect(outside.total).toBe(1);
-		expect(outside.items.map((item) => item.id)).toEqual([form.id]);
+		// Ни чужого взаимодействия, ни документа без привязки: последний виден
+		// только полному доступу.
+		expect(outside.total).toBe(0);
+		expect(outside.items).toEqual([]);
 	});
 
 	it('отбирает по виду, формату и отметкам', async () => {

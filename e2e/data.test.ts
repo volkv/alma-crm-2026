@@ -1,12 +1,16 @@
 import { readFile } from 'node:fs/promises';
 import ExcelJS from 'exceljs';
 import type { Page } from '@playwright/test';
-import { expect, test } from './fixtures';
+import { expect, leadTest as test } from './fixtures';
 import { waitForHydration } from './helpers/hydration';
 
 /**
- * Раздел «Данные» глазами менеджера: мастер загрузки из трёх шагов, построчная
- * проверка и показатели с рейтингом.
+ * Раздел «Данные» глазами руководителя: мастер загрузки из трёх шагов,
+ * построчная проверка и показатели с рейтингом.
+ *
+ * Именно руководителя: подтверждённый снимок меняет числа всем сразу и
+ * сбрасывает общий кэш дашборда, поэтому право `stats.import` у КАМа отнято
+ * (`docs/access-matrix.md`, раздел 3).
  *
  * Проход заводит свой снимок и считает только его: у стенда есть сидированные
  * выгрузки за учебные годы 2025/2026 и 2026/2027, и проверка, которая смотрит
@@ -83,7 +87,7 @@ test('раздел «Данные» есть в меню и показывает
 	await expect(page.getByText('Подтверждён').first()).toBeVisible();
 });
 
-test('менеджер проходит мастер до подтверждения и видит показатели', async ({ page }) => {
+test('руководитель проходит мастер до подтверждения и видит показатели', async ({ page }) => {
 	await uploadFile(page, {
 		name: `выгрузка-${TAG}.csv`,
 		mimeType: 'text/csv',

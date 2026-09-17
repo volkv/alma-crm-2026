@@ -51,7 +51,7 @@ beforeEach(async () => {
 
 /** Вошедший, у которого не осталось ни одного права. */
 function userWithoutPermissions(): SessionUser {
-	const user = testActor({ roleId: 'viewer', permissions: [] }).user;
+	const user = testActor({ roleId: 'manager', permissions: [] }).user;
 
 	if (user === null) {
 		throw new Error('testActor обязан вернуть пользователя');
@@ -129,13 +129,15 @@ describe('отказ вместо пятисотой', () => {
 		});
 	});
 
-	it('форма заведения взаимодействия закрыта наблюдателю', async () => {
+	it('форма заведения взаимодействия закрыта тому, кому нельзя писать', async () => {
 		await expect(
 			loadNewInteraction(
 				pageEvent({
 					path: '/interactions/new',
 					routeId: '/(app)/interactions/new',
-					user: sessionUser('viewer')
+					// Роли «только смотреть» в системе нет, поэтому набор прав задаётся
+					// явно: читать взаимодействия можно, заводить — нет.
+					user: sessionUser('manager', ['interactions.read'])
 				})
 			)
 		).rejects.toMatchObject({

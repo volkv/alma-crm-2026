@@ -1,26 +1,32 @@
 import { error, type ActionFailure } from '@sveltejs/kit';
-import { fail, message, setError, superValidate } from 'sveltekit-superforms';
-import { zod4 } from 'sveltekit-superforms/adapters';
+import { fail } from 'sveltekit-superforms';
 import { readTableQuery } from '$lib/components/data-table/query';
 import { id } from '$lib/contracts/common';
 import { actorFromEvent } from '$lib/server/actor';
-import { mfaEnabledFor, resetMfa } from '$lib/server/auth/mfa';
-import { activateUser, createUser, deactivateUser, listUsers } from '$lib/server/auth/users';
-import { AppError, ConflictError, ForbiddenError, ValidationError } from '$lib/server/errors';
-import { DEFAULT_ROLES } from '$lib/server/rbac/permissions';
+import {
+	activateUser,
+	deactivateUser,
+	listManagerOptions,
+	listUsers,
+	setUserManager,
+	unlinkFromDirectory
+} from '$lib/server/auth/users';
 import { can } from '$lib/server/rbac';
 import { toActionFailure, type ActionErrorPayload } from '$lib/server/http';
-import { getSetting } from '$lib/server/settings';
-import { createUserSchema } from './schema';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
- * Управление доступом: кто заведён в системе и с какой ролью.
+ * Управление доступом: кто заведён в системе, кому подчиняется и работает ли
+ * его вход.
  *
- * Пароль нового сотрудника задаёт администратор и передаёт его лично —
- * приглашения по почте в системе нет, а хранить пароль где-то ещё, кроме хеша,
- * негде. Учётные записи не удаляются, а выключаются: на авторе действия в
- * журнале стоит внешний ключ, и удаление пользователя стёрло бы историю.
+ * Роль отсюда не назначается: её приносит токен каталога учётных записей на
+ * каждом входе, и запись, которой роль поменяли бы здесь, вернулась бы к
+ * прежней при первом же заходе владельца. Завести запись руками тоже нельзя и
+ * не нужно — она появляется сама при первом входе: до него она была бы строкой
+ * без `external_subject`, то есть ровно тем, что вход создаст и так.
+ *
+ * Учётные записи не удаляются, а выключаются: на авторе действия в журнале
+ * стоит внешний ключ, и удаление пользователя стёрло бы историю.
  */
 export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
@@ -30,22 +36,12 @@ export const load: PageServerLoad = async (event) => {
 	}
 
 	const query = readTableQuery(event.url);
-	const page = await listUsers(ctx, { page: query.page, pageSize: query.size, q: query.search });
+	const [page, managerOptions] = await Promise.all([
+		listUsers(ctx, { page: query.page, pageSize: query.size, q: query.search }),
+		listManagerOptions(ctx)
+	]);
 
-	// Состояние второго фактора приходит отдельным запросом: список штата
-	// собирает модуль пользователей, а про фактор знает модуль MFA — и знает он
-	// это по той же строке, но спрашивают их порознь.
-	const withFactor = await mfaEnabledFor(page.items.map((user) => user.id));
-
-	return {
-		users: {
-			...page,
-			items: page.items.map((user) => ({ ...user, mfaEnabled: withFactor.has(user.id) }))
-		},
-		roles: DEFAULT_ROLES.map((role) => ({ id: role.id, name: role.name })),
-		policy: await getSetting('password_policy'),
-		form: await superValidate(zod4(createUserSchema))
-	};
+	return { users: page, managerOptions };
 };
 
 /**
@@ -54,64 +50,21 @@ export const load: PageServerLoad = async (event) => {
  * вернулась ошибкой PostgreSQL, то есть пятисотой на месте обычного «не то
  * прислали».
  */
-function readUserId(form: FormData, missing: string): string | ActionFailure<ActionErrorPayload> {
-	const parsed = id('Некорректный идентификатор учётной записи').safeParse(form.get('userId'));
+function readUserId(
+	form: FormData,
+	field: string,
+	missing: string
+): string | ActionFailure<ActionErrorPayload> {
+	const parsed = id('Некорректный идентификатор учётной записи').safeParse(form.get(field));
 
 	return parsed.success ? parsed.data : fail(400, { message: missing, issues: [] });
 }
 
 export const actions: Actions = {
-	create: async (event) => {
-		const form = await superValidate(event.request, zod4(createUserSchema));
-		const password = form.data.password;
-
-		// Пароль не возвращается в браузер: форма перерисовывается без него.
-		form.data.password = '';
-
-		if (!form.valid) {
-			return fail(400, { form });
-		}
-
-		try {
-			const created = await createUser(actorFromEvent(event), {
-				email: form.data.email,
-				fullName: form.data.fullName,
-				roleId: form.data.roleId,
-				password
-			});
-
-			return message(form, `Пользователь ${created.fullName} заведён`);
-		} catch (failure) {
-			if (failure instanceof ConflictError) {
-				return setError(form, 'email', failure.message);
-			}
-
-			// Отказ по правам — не претензия к заполнению: он не поправляется
-			// правкой полей, и отвечать на него ошибкой формы значило бы обещать
-			// обратное. Загрузчик до этого места и не пустит — но форму можно
-			// отправить и мимо страницы.
-			if (failure instanceof ForbiddenError) {
-				return toActionFailure(failure);
-			}
-
-			// Претензии к паролю приходят из политики, а не из схемы формы: их
-			// знает только сервер. Предметная ошибка не говорит, какого поля
-			// касается, поэтому показываются они над формой целиком — угадывать
-			// поле по тексту сообщения значит сломаться на первой же правке текста.
-			if (failure instanceof AppError) {
-				return setError(form, '', [
-					failure.message,
-					...(failure instanceof ValidationError ? failure.issues : [])
-				]);
-			}
-
-			throw failure;
-		}
-	},
-
 	deactivate: async (event) => {
 		const userId = readUserId(
 			await event.request.formData(),
+			'userId',
 			'Не указано, какую учётную запись выключать'
 		);
 
@@ -131,6 +84,7 @@ export const actions: Actions = {
 	activate: async (event) => {
 		const userId = readUserId(
 			await event.request.formData(),
+			'userId',
 			'Не указано, какую учётную запись включать'
 		);
 
@@ -148,14 +102,14 @@ export const actions: Actions = {
 	},
 
 	/**
-	 * Сброс второго фактора: телефон потерян, приложение стёрто, резервные коды
-	 * кончились. Администратор снимает фактор, и при следующем входе человек
-	 * регистрирует его заново — если политика этого требует.
+	 * Отвязать запись от каталога. Нужно после того, как каталог перезавели:
+	 * субъект у того же человека стал другим, и вход его не узнаёт.
 	 */
-	resetMfa: async (event) => {
+	unlink: async (event) => {
 		const userId = readUserId(
 			await event.request.formData(),
-			'Не указано, у какой учётной записи сбрасывать фактор'
+			'userId',
+			'Не указано, какую учётную запись отвязывать'
 		);
 
 		if (typeof userId !== 'string') {
@@ -163,13 +117,53 @@ export const actions: Actions = {
 		}
 
 		try {
-			await resetMfa(actorFromEvent(event), userId);
+			await unlinkFromDirectory(actorFromEvent(event), userId);
 		} catch (failure) {
 			return toActionFailure(failure);
 		}
 
 		return {
-			message: 'Второй фактор сброшен, сессии этой учётной записи завершены',
+			message:
+				'Учётная запись отвязана от каталога: следующий вход свяжет её заново по подтверждённой почте',
+			issues: []
+		};
+	},
+
+	/**
+	 * Руководитель сотрудника. Пустое значение — «руководителя нет»: это
+	 * законное состояние (сам руководитель, администратор), а не незаполненное
+	 * поле.
+	 */
+	manager: async (event) => {
+		const form = await event.request.formData();
+		const userId = readUserId(form, 'userId', 'Не указано, кому назначается руководитель');
+
+		if (typeof userId !== 'string') {
+			return userId;
+		}
+
+		const raw = form.get('managerUserId');
+		const managerUserId = typeof raw === 'string' && raw !== '' ? raw : null;
+
+		if (managerUserId !== null) {
+			const parsed = id('Некорректный идентификатор руководителя').safeParse(managerUserId);
+
+			if (!parsed.success) {
+				return fail(400, { message: 'Некорректный идентификатор руководителя', issues: [] });
+			}
+		}
+
+		try {
+			await setUserManager(actorFromEvent(event), { userId, managerUserId });
+		} catch (failure) {
+			return toActionFailure(failure);
+		}
+
+		return {
+			message:
+				managerUserId === null
+					? 'Руководитель снят, сессии затронутых записей завершены'
+					: 'Руководитель назначен, сессии затронутых записей завершены',
 			issues: []
 		};
 	}

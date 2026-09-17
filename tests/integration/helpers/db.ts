@@ -24,12 +24,13 @@
  */
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
+import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import { Redis } from 'ioredis';
 import postgres from 'postgres';
 import type { StageSnapshot } from '$lib/contracts/interactions';
-import type { ActorContext } from '$lib/server/actor';
+import type { AccessScope, ActorContext } from '$lib/server/actor';
 import * as schema from '$lib/server/db/schema';
 import { DEFAULT_ROLES, type PermissionKey } from '$lib/server/rbac/permissions';
 import { defaultRolePermissions, seedRolesAndPermissions } from '$lib/server/rbac/seed';
@@ -85,6 +86,13 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 	process.env.ORIGIN = 'http://localhost:5173';
 	process.env.DEMO_MODE = 'false';
 	process.env.TRUST_PROXY = 'false';
+	// Каталог учётных записей: сервисам он не нужен вовсе — вход проверяется
+	// своим файлом, — но конфигурация читается целиком, и без этих значений
+	// `getConfig()` справедливо упадёт на первой же выборке из базы.
+	process.env.OIDC_ISSUER_URL = 'http://localhost:58080/realms/lct';
+	process.env.OIDC_PUBLIC_URL = 'http://localhost:58080';
+	process.env.OIDC_CLIENT_ID = 'lct-crm';
+	process.env.OIDC_CLIENT_SECRET = 'lct-crm-dev-secret';
 
 	// Адрес и ключи хранилища знает только `helpers/storage.ts`: контейнеру
 	// достался случайный порт, а имя бакета и ключи он придумывает сам.
@@ -150,8 +158,7 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 					id: TEST_USER_IDS[role.id] ?? crypto.randomUUID(),
 					email: `${role.id}@example.org`,
 					fullName: `Тестовый ${role.name}`,
-					roleId: role.id,
-					passwordHash: 'not-a-real-hash'
+					roleId: role.id
 				}))
 			);
 		});
@@ -178,7 +185,8 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 export const TEST_USER_IDS: Record<string, string> = {
 	admin: '00000000-0000-4000-8000-0000000000a1',
 	manager: '00000000-0000-4000-8000-0000000000a2',
-	viewer: '00000000-0000-4000-8000-0000000000a3'
+	lead: '00000000-0000-4000-8000-0000000000a3',
+	service: '00000000-0000-4000-8000-0000000000a4'
 };
 
 /** Код ошибки PostgreSQL из того, во что её завернул Drizzle. */
@@ -211,13 +219,26 @@ export function testActor(options?: {
 	roleId?: string;
 	userId?: string;
 	permissions?: readonly PermissionKey[];
-	organizationIds?: readonly string[];
+	/**
+	 * Область доступа: чьи записи видны. `undefined` — полный доступ.
+	 *
+	 * Область считается по людям, а не по организациям: какие вузы видит
+	 * человек, решают действующие назначения в базе. Поэтому актёр с сужённой
+	 * областью обычно заводится через `scopedActor`, который эти назначения и
+	 * расставляет.
+	 */
+	scopeUserIds?: readonly string[];
 }): ActorContext {
 	const roleId = options?.roleId ?? 'admin';
 	const permissions =
 		options?.permissions !== undefined
 			? new Set<string>(options.permissions)
 			: defaultRolePermissions(roleId);
+
+	const scope: AccessScope =
+		options?.scopeUserIds === undefined
+			? { kind: 'all' }
+			: { kind: 'delegated', userIds: new Set(options.scopeUserIds) };
 
 	return {
 		requestId: '00000000-0000-4000-8000-00000000fee1',
@@ -229,19 +250,67 @@ export function testActor(options?: {
 			roleId,
 			permissions,
 			isDemo: false,
-			scope:
-				options?.organizationIds === undefined
-					? { kind: 'all' }
-					: { kind: 'organizations', organizationIds: new Set(options.organizationIds) }
+			scope
 		},
 		apiKeyId: null,
 		ip: '198.51.100.7',
 		userAgent: 'vitest',
-		scope:
-			options?.organizationIds === undefined
-				? { kind: 'all' }
-				: { kind: 'organizations', organizationIds: new Set(options.organizationIds) }
+		scope
 	};
+}
+
+/**
+ * Действующее лицо, которое видит ровно перечисленные вузы.
+ *
+ * Область доступа считается подзапросом по действующим назначениям, поэтому
+ * «видит эти вузы» — это не свойство контекста, а строки в
+ * `organization_responsibles`. Помощник их и расставляет: иначе каждый тест
+ * области начинался бы с четырёх строк подготовки, а расходились бы они на
+ * первой же правке правил.
+ */
+export async function scopedActor(
+	database: PostgresJsDatabase<typeof schema>,
+	options: {
+		roleId?: string;
+		userId?: string;
+		permissions?: readonly PermissionKey[];
+		organizationIds: readonly string[];
+	}
+): Promise<ActorContext> {
+	const roleId = options.roleId ?? 'manager';
+	const userId =
+		options.userId ??
+		(await insertUser(database, { roleId, email: `scoped-${crypto.randomUUID()}@example.org` }));
+
+	if (options.organizationIds.length > 0) {
+		// Организация, заведённая сервисом, уже несёт назначение на своего автора:
+		// иначе он завёл бы карточку и тут же потерял её из виду. Действующее
+		// назначение на пару «вуз × направление» одно, поэтому прежнее сначала
+		// закрывается — ровно как это делает переназначение.
+		await database
+			.update(schema.organizationResponsibles)
+			.set({ validTo: sql`now()` })
+			.where(
+				and(
+					inArray(schema.organizationResponsibles.organizationId, [...options.organizationIds]),
+					isNull(schema.organizationResponsibles.validTo)
+				)
+			);
+
+		await database.insert(schema.organizationResponsibles).values(
+			options.organizationIds.map((organizationId) => ({
+				organizationId,
+				userId
+			}))
+		);
+	}
+
+	return testActor({
+		roleId,
+		userId,
+		permissions: options.permissions,
+		scopeUserIds: [userId]
+	});
 }
 
 /** Пользователь в базе: нужен всюду, где стоит внешний ключ на автора действия. */
@@ -255,8 +324,7 @@ export async function insertUser(
 			id: options.id,
 			email: options.email ?? `user-${crypto.randomUUID()}@example.org`,
 			fullName: 'Тестовый Пользователь',
-			roleId: options.roleId ?? 'admin',
-			passwordHash: 'not-a-real-hash'
+			roleId: options.roleId ?? 'admin'
 		})
 		.returning({ id: schema.users.id });
 
@@ -266,13 +334,22 @@ export async function insertUser(
 /** Организация-вуз: самый частый участник взаимодействия. */
 export async function insertOrganization(
 	database: PostgresJsDatabase<typeof schema>,
-	options: { shortName?: string; inn?: string | null } = {}
+	options: {
+		shortName?: string;
+		inn?: string | null;
+		/** Вид контрагента: от него зависит группа процесса взаимодействия. */
+		kind?: 'educational_institution' | 'legal_entity' | 'customer_company' | 'operator';
+	} = {}
 ): Promise<string> {
+	const kind = options.kind ?? 'educational_institution';
+
 	const [row] = await database
 		.insert(schema.organizations)
 		.values({
-			kind: 'educational_institution',
-			educationLevel: 'vo',
+			kind,
+			// Уровень образования есть только у учебного заведения: у остальных
+			// видов его запрещает проверка схемы.
+			educationLevel: kind === 'educational_institution' ? 'vo' : null,
 			legalName: options.shortName ?? 'Федеральное государственное учреждение',
 			shortName: options.shortName ?? `Вуз ${crypto.randomUUID().slice(0, 8)}`,
 			inn: options.inn ?? null
@@ -339,40 +416,64 @@ export async function insertDocument(
 	return row.id;
 }
 
-/** Маршрут с одной стадией и взаимодействие на нём. */
+/**
+ * Редакция с одной стадией и взаимодействие на ней. Группа берётся своя на
+ * каждый вызов: в группе действует ровно одна редакция, и два таких
+ * взаимодействия в одной группе переписали бы друг другу процесс.
+ */
 export async function insertInteractionWithStage(
 	database: PostgresJsDatabase<typeof schema>,
 	options: { ownerUserId: string; slaDays?: number }
 ): Promise<{ interactionId: string; stageId: string; snapshot: StageSnapshot }> {
 	const slaDays = options.slaDays ?? 5;
+	const suffix = crypto.randomUUID().slice(0, 8);
 
-	const [route] = await database
-		.insert(schema.stageRoutes)
+	const [maxPosition] = await database
+		.select({ value: sql<number>`coalesce(max(${schema.processGroups.position}), 0)::int` })
+		.from(schema.processGroups);
+
+	const [group] = await database
+		.insert(schema.processGroups)
 		.values({
-			key: `route-${crypto.randomUUID().slice(0, 8)}`,
+			key: `test-${suffix}`,
+			name: 'Тестовая группа процесса',
+			position: maxPosition.value + 1
+		})
+		.returning({ id: schema.processGroups.id });
+
+	const [revision] = await database
+		.insert(schema.processRevisions)
+		.values({
+			groupId: group.id,
 			version: 1,
-			name: 'Тестовый маршрут',
+			name: 'Тестовый процесс',
 			publishedAt: new Date()
 		})
-		.returning({ id: schema.stageRoutes.id });
+		.returning({ id: schema.processRevisions.id });
 
 	const [stage] = await database
 		.insert(schema.stages)
 		.values({
-			routeId: route.id,
+			revisionId: revision.id,
 			position: 1,
 			key: 'contact',
 			name: 'Первый контакт',
 			category: 'contact',
-			slaDays
+			slaDays,
+			isFinal: true
 		})
 		.returning({ id: schema.stages.id });
+
+	await database
+		.update(schema.processGroups)
+		.set({ activeRevisionId: revision.id })
+		.where(eq(schema.processGroups.id, group.id));
 
 	const [interaction] = await database
 		.insert(schema.interactions)
 		.values({
 			title: 'Тестовое взаимодействие',
-			routeId: route.id,
+			processGroupId: group.id,
 			ownerUserId: options.ownerUserId
 		})
 		.returning({ id: schema.interactions.id });
@@ -389,6 +490,8 @@ export async function insertInteractionWithStage(
 			staleAfterDays: null,
 			requiresResult: false,
 			requiresConfirmation: false,
+			requiresLmsData: false,
+			isFinal: true,
 			checklist: []
 		}
 	};

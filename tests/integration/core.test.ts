@@ -12,7 +12,13 @@ import { toPersonView } from '$lib/server/people/serialize';
 import { can, loadRolePermissions, requirePermission } from '$lib/server/rbac';
 import { defaultRolePermissions } from '$lib/server/rbac/seed';
 import { getSetting, setSetting } from '$lib/server/settings';
-import { insertOrganization, startTestDatabase, testActor, type TestDatabase } from './helpers/db';
+import {
+	insertOrganization,
+	startTestDatabase,
+	scopedActor,
+	testActor,
+	type TestDatabase
+} from './helpers/db';
 
 // См. комментарий в `schema.test.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
@@ -79,8 +85,10 @@ describe('запись в журнал', () => {
 		const admin = testActor();
 		await recordAuditEvent(admin, { type: 'auth.login', outcome: 'success' });
 
-		const viewer = testActor({ roleId: 'viewer' });
-		await expect(listAuditEvents(viewer, emptyFilter, firstPage)).rejects.toBeInstanceOf(
+		// Роль без права на журнал — теперь это менеджер: «только смотреть» в
+		// системе больше нет, и роль с самым узким набором прав — его.
+		const manager = testActor({ roleId: 'manager' });
+		await expect(listAuditEvents(manager, emptyFilter, firstPage)).rejects.toBeInstanceOf(
 			ForbiddenError
 		);
 
@@ -98,7 +106,7 @@ describe('запись в журнал', () => {
 
 describe('права ролей', () => {
 	it('совпадают в базе и в коде для всех системных ролей', async () => {
-		for (const roleId of ['admin', 'lead', 'manager', 'viewer', 'service']) {
+		for (const roleId of ['admin', 'lead', 'manager', 'service']) {
 			const fromDatabase = await loadRolePermissions(roleId);
 
 			expect(new Set(fromDatabase)).toEqual(new Set(defaultRolePermissions(roleId)));
@@ -109,15 +117,24 @@ describe('права ролей', () => {
 		const admin = testActor({ roleId: 'admin' });
 		const lead = testActor({ roleId: 'lead' });
 		const manager = testActor({ roleId: 'manager' });
-		const viewer = testActor({ roleId: 'viewer' });
 
 		expect(can(admin, 'settings.write')).toBe(true);
 		expect(can(manager, 'settings.write')).toBe(false);
 		expect(can(manager, 'interactions.write')).toBe(true);
 		expect(can(manager, 'people.read_pii')).toBe(true);
-		expect(can(viewer, 'organizations.read')).toBe(true);
-		expect(can(viewer, 'organizations.write')).toBe(false);
-		expect(can(viewer, 'people.read_pii')).toBe(false);
+		expect(can(manager, 'organizations.read')).toBe(true);
+		expect(can(manager, 'organizations.write')).toBe(true);
+
+		// Общие каталоги и загрузка данных об обучении у КАМа отняты:
+		// переименование продукта и подтверждённый снимок меняют картину всем
+		// сразу, а это не работа по своему вузу.
+		expect(can(manager, 'products.write')).toBe(false);
+		expect(can(manager, 'programs.write')).toBe(false);
+		expect(can(manager, 'stats.import')).toBe(false);
+		expect(can(manager, 'people.anonymize')).toBe(false);
+		expect(can(lead, 'products.write')).toBe(true);
+		expect(can(lead, 'stats.import')).toBe(true);
+		expect(can(admin, 'people.anonymize')).toBe(true);
 
 		// Руководитель отличается от менеджера ровно распределением нагрузки и
 		// журналом — настройки и процесс остаются за администратором.
@@ -128,8 +145,8 @@ describe('права ролей', () => {
 		expect(can(manager, 'responsibles.manage')).toBe(false);
 		expect(can(manager, 'audit.read')).toBe(false);
 
-		expect(() => requirePermission(viewer, 'organizations.write')).toThrow(ForbiddenError);
-		expect(() => requirePermission(admin, 'organizations.write')).not.toThrow();
+		expect(() => requirePermission(manager, 'settings.write')).toThrow(ForbiddenError);
+		expect(() => requirePermission(admin, 'settings.write')).not.toThrow();
 	});
 
 	it('оставляют машинному субъекту ровно три права обмена', () => {
@@ -150,19 +167,19 @@ describe('права ролей', () => {
 	});
 
 	it('отказ с описанием события оставляет след в журнале, а разрешение — нет', async () => {
-		const viewer = testActor({ roleId: 'viewer' });
+		const manager = testActor({ roleId: 'manager' });
 		const admin = testActor({ roleId: 'admin' });
 		const subjectId = '00000000-0000-4000-8000-0000000000bb';
 
 		await expect(
-			requirePermission(viewer, 'organizations.write', {
-				type: 'organizations.created',
-				subject: { type: 'organization', id: subjectId }
+			requirePermission(manager, 'users.manage', {
+				type: 'users.created',
+				subject: { type: 'user', id: subjectId }
 			})
 		).rejects.toBeInstanceOf(ForbiddenError);
 
 		await expect(
-			requirePermission(admin, 'organizations.write', { type: 'organizations.created' })
+			requirePermission(admin, 'users.manage', { type: 'users.created' })
 		).resolves.toBeUndefined();
 
 		// Ровно одна строка: запись об отказе, и только о нём. Проверка, которая
@@ -175,7 +192,7 @@ describe('права ролей', () => {
 			})
 			.from(auditEvents);
 
-		expect(rows).toEqual([{ outcome: 'denied', eventType: 'organizations.created', subjectId }]);
+		expect(rows).toEqual([{ outcome: 'denied', eventType: 'users.created', subjectId }]);
 	});
 });
 
@@ -185,7 +202,7 @@ describe('область доступа', () => {
 		const alsoMine = await insertOrganization(database.db, { shortName: 'Тоже свой' });
 		const foreign = await insertOrganization(database.db, { shortName: 'Чужой вуз' });
 
-		const scoped = testActor({ organizationIds: [mine, alsoMine] });
+		const scoped = await scopedActor(database.db, { organizationIds: [mine, alsoMine] });
 		const query = organizationListQuerySchema.parse({});
 
 		const page = await listOrganizations(scoped, query);
@@ -197,7 +214,10 @@ describe('область доступа', () => {
 
 		// Полный доступ видит всё; пустая область — ничего.
 		expect((await listOrganizations(testActor(), query)).total).toBe(3);
-		expect((await listOrganizations(testActor({ organizationIds: [] }), query)).total).toBe(0);
+		expect(
+			(await listOrganizations(await scopedActor(database.db, { organizationIds: [] }), query))
+				.total
+		).toBe(0);
 	});
 });
 
@@ -215,7 +235,7 @@ describe('сериализатор человека', () => {
 	};
 
 	it('маскирует контакты без права и показывает их с правом', () => {
-		const masked = toPersonView(testActor({ roleId: 'viewer' }), person);
+		const masked = toPersonView(testActor({ roleId: 'manager', permissions: [] }), person);
 
 		expect(masked.email).toBe('i***@vuz.ru');
 		expect(masked.phone).toBe('+7 *** *** 45 67');
@@ -230,7 +250,7 @@ describe('сериализатор человека', () => {
 	});
 
 	it('оставляет пустые контакты пустыми', () => {
-		const view = toPersonView(testActor({ roleId: 'viewer' }), {
+		const view = toPersonView(testActor({ roleId: 'manager', permissions: [] }), {
 			...person,
 			email: null,
 			phone: null
@@ -244,7 +264,7 @@ describe('сериализатор человека', () => {
 describe('настройки', () => {
 	it('подставляют значение по умолчанию и запоминают заданное', async () => {
 		expect(await getSetting('session_idle_minutes')).toBe(30);
-		expect(await getSetting('password_policy')).toEqual({ minLength: 12, minClasses: 3 });
+		expect(await getSetting('session_absolute_hours')).toBe(12);
 
 		const admin = testActor();
 		await setSetting(admin, 'session_idle_minutes', 45);
@@ -253,8 +273,8 @@ describe('настройки', () => {
 	});
 
 	it('не пускают чужую руку и недопустимое значение', async () => {
-		const viewer = testActor({ roleId: 'viewer' });
-		await expect(setSetting(viewer, 'session_idle_minutes', 45)).rejects.toBeInstanceOf(
+		const manager = testActor({ roleId: 'manager' });
+		await expect(setSetting(manager, 'session_idle_minutes', 45)).rejects.toBeInstanceOf(
 			ForbiddenError
 		);
 

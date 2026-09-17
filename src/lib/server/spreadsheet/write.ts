@@ -1,5 +1,5 @@
 /**
- * Сборка таблицы на выдачу: книга XLS (BIFF8) и текстовый CSV.
+ * Сборка таблицы на выдачу: книги XLS (BIFF8) и XLSX и текстовый CSV.
  *
  * BIFF8 — единственный формат `.xls`, который SheetJS пишет с кириллицей:
  * строки в нём хранятся в UTF-16. В BIFF5 и раньше текст лежит в кодовой
@@ -189,8 +189,16 @@ function buildWorksheet(sheet: SpreadsheetWriteSheet): WorkSheet {
 	return worksheet;
 }
 
-/** Книга `.xls` в формате BIFF8. */
-export function writeXls(sheets: readonly SpreadsheetWriteSheet[]): Buffer {
+/**
+ * Книга в выбранном формате. Ограничения на имена листов у BIFF8 и у OOXML
+ * одинаковы, ячейки собираются одним и тем же кодом, и различие ровно одно —
+ * какой файл попросить у библиотеки.
+ */
+function writeWorkbook(
+	sheets: readonly SpreadsheetWriteSheet[],
+	bookType: 'biff8' | 'xlsx',
+	label: string
+): Buffer {
 	checkSheetNames(sheets);
 
 	const workbook = XLSX.utils.book_new();
@@ -201,15 +209,31 @@ export function writeXls(sheets: readonly SpreadsheetWriteSheet[]): Buffer {
 
 	// `write` объявлен как `any`: проверяем то, что он на самом деле вернул, а не
 	// то, что мы у него попросили.
-	const output: unknown = XLSX.write(workbook, { type: 'buffer', bookType: 'biff8' });
+	const output: unknown = XLSX.write(workbook, { type: 'buffer', bookType });
 
 	if (!Buffer.isBuffer(output)) {
-		throw new SpreadsheetError('unsupported_value', 'Книга XLS не собралась', [
+		throw new SpreadsheetError('unsupported_value', `Книга ${label} не собралась`, [
 			`Вместо файла получили ${typeof output}`
 		]);
 	}
 
 	return output;
+}
+
+/** Книга `.xls` в формате BIFF8. */
+export function writeXls(sheets: readonly SpreadsheetWriteSheet[]): Buffer {
+	return writeWorkbook(sheets, 'biff8', 'XLS');
+}
+
+/**
+ * Книга `.xlsx`. Пишется тем же модулем, что и `.xls`, намеренно: две выгрузки
+ * одних и тех же строк обязаны совпадать до ячейки, а два писателя на разных
+ * библиотеках расходятся на первом же значении, которое одна из них округляет
+ * или экранирует по-своему. Оформления здесь нет — ни у одной выгрузки продукта
+ * оно не является требованием, а ширины колонок задаёт вызывающий.
+ */
+export function writeXlsx(sheets: readonly SpreadsheetWriteSheet[]): Buffer {
+	return writeWorkbook(sheets, 'xlsx', 'XLSX');
 }
 
 function pad(value: number, length: number): string {

@@ -22,7 +22,13 @@ import {
 } from '$lib/server/stats/import';
 import { suggestMapping } from '$lib/server/stats/mapping';
 import { getSnapshotPreview, listPeriods } from '$lib/server/stats/read';
-import { insertOrganization, startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
+import {
+	insertOrganization,
+	startTestDatabase,
+	scopedActor,
+	testActor,
+	type TestDatabase
+} from '../helpers/db';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
@@ -190,7 +196,7 @@ describe('портфель периода', () => {
 		);
 		await confirmSnapshot(ctx, snapshot.id);
 
-		const curator = testActor({ roleId: 'manager', organizationIds: [szpu] });
+		const curator = await scopedActor(database.db, { roleId: 'manager', organizationIds: [szpu] });
 		const dashboard = await getStatsDashboard(curator, { kind: 'academic', ...PERIOD_KEY });
 
 		expect(dashboard.totals.organizationCount).toBe(1);
@@ -252,7 +258,7 @@ describe('кэш дашборда', () => {
 		// Администратор собирает дашборд первым и кладёт его в кэш.
 		expect((await getStatsDashboard(ctx, period)).totals.applications).toBe(160);
 
-		const curator = testActor({ roleId: 'manager', organizationIds: [szpu] });
+		const curator = await scopedActor(database.db, { roleId: 'manager', organizationIds: [szpu] });
 
 		expect((await getStatsDashboard(curator, period)).totals.applications).toBe(120);
 	});

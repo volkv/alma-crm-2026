@@ -8,7 +8,7 @@ import { listProducts, listPrograms } from '$lib/server/directory/read';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { createInteraction } from '$lib/server/interactions/write';
 import { requirePermission } from '$lib/server/rbac';
-import { getDefaultRoute } from '$lib/server/stages/routes';
+import { listProcessGroupsForWork } from '$lib/server/stages/process';
 import { responsibleOptions } from '../responsible';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -26,22 +26,25 @@ export const load: PageServerLoad = async (event) => {
 		toPageError(cause);
 	}
 
-	const [route, programs, products, users, form] = await Promise.all([
-		getDefaultRoute(ctx),
+	const [groups, programs, products, users, form] = await Promise.all([
+		// Группы читаются не ради выбора: процесс выводится из вида основной
+		// стороны. Форма показывает ими, что произойдёт после сохранения, — и
+		// говорит заранее, если в группе процесса ещё нет. Право здесь то же,
+		// что у самого заведения, а не право настраивать процесс.
+		listProcessGroupsForWork(ctx),
 		listPrograms(ctx, catalogPage),
 		listProducts(ctx, catalogPage),
 		responsibleOptions(event),
 		superValidate(zod4(createInteractionSchema))
 	]);
 
-	// Маршрут и ответственный по умолчанию подставляются сразу: в девяти случаях
-	// из десяти это и есть правильный ответ, а менять их можно тут же.
-	form.data.routeId = route.id;
+	// Ответственный по умолчанию подставляется сразу: в девяти случаях из десяти
+	// это и есть правильный ответ, а менять его можно тут же.
 	form.data.ownerUserId = event.locals.user?.id ?? '';
 
 	return {
 		form,
-		route: { id: route.id, name: route.name, stages: route.stages.length },
+		groups,
 		programs: programs.items,
 		products: products.items,
 		users

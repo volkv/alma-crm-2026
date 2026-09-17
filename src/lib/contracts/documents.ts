@@ -29,7 +29,12 @@ export const ALLOWED_DOCUMENT_MIME_TYPES = [
 	'image/png',
 	'image/jpeg',
 	'text/plain',
-	'application/zip'
+	'application/zip',
+	// Архивы, названные в задании рядом с zip. Содержимое не разбирается:
+	// распаковка произвольного архива на сервере — работа, объём которой заранее
+	// не ограничить. Границы — сигнатура и потолок размера.
+	'application/gzip',
+	'application/vnd.rar'
 ] as const;
 
 /** Потолок размера файла: 25 МиБ. */

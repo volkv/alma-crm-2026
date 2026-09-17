@@ -2,10 +2,10 @@
  * Сессии браузера.
  *
  * Cookie хранит только идентификатор — 256 случайных бит, — а всё остальное
- * лежит в Redis. Поэтому сессию можно погасить с сервера: при выходе, при смене
- * пароля, при деактивации пользователя. Подписывать такой cookie нечем и незачем:
- * подделать идентификатор, которого нет в Redis, бесполезно, а угадать его
- * нельзя.
+ * лежит в Redis. Поэтому сессию можно погасить с сервера: при выходе, при
+ * деактивации пользователя, при смене его роли или руководителя. Подписывать
+ * такой cookie нечем и незачем: подделать идентификатор, которого нет в Redis,
+ * бесполезно, а угадать его нельзя.
  *
  * Права и имя пользователя в сессии не хранятся: они читаются из базы на каждый
  * запрос. Иначе снятое право продолжало бы действовать до конца рабочего дня.
@@ -13,11 +13,11 @@
 import { randomBytes } from 'node:crypto';
 import { eq, sql } from 'drizzle-orm';
 import type { Cookies } from '@sveltejs/kit';
+import type { AccessScope } from '../actor';
 import type { SessionUser } from './types';
 import { getConfig } from '../config';
 import { getDb } from '../db';
 import { roles, users } from '../db/schema';
-import { ConflictError } from '../errors';
 import { demoSessionPermissions, loadRolePermissions } from '../rbac';
 import { getRedis } from '../redis';
 import { getSetting } from '../settings';
@@ -26,17 +26,6 @@ export const SESSION_COOKIE = 'lct_session';
 
 /** Как часто продлевается сессия: чаще раза в минуту Redis дёргать незачем. */
 const TOUCH_INTERVAL_MS = 60_000;
-
-/**
- * Сколько живёт сессия, которой не хватает второго фактора.
- *
- * Пять минут — это время набрать код из приложения или зарегистрировать
- * фактор, а не половина рабочего дня: до подтверждения такая сессия открыта на
- * одном лишь пароле, и срок жизни у неё должен быть свой, короткий. Активность
- * его не продлевает — иначе открытая вкладка держала бы неполную сессию сколько
- * угодно.
- */
-const MFA_PENDING_SECONDS = 5 * 60;
 
 const sessionKey = (sessionId: string): string => `session:${sessionId}`;
 const userSessionsKey = (userId: string): string => `user_sessions:${userId}`;
@@ -58,17 +47,12 @@ type SessionRecord = {
 	ip: string | null;
 	userAgent: string | null;
 	/**
-	 * Пароль приняли, второго фактора ещё нет. Такая сессия существует только
-	 * ради второго шага входа: в приложение она не пускает, и держит её не
-	 * обычный срок бездействия, а `MFA_PENDING_SECONDS`.
+	 * Id-токен того входа, которым сессия открыта. Нужен ровно выходу: каталог
+	 * принимает его подсказкой о том, чью сессию гасить, и без неё показал бы
+	 * человеку лишний вопрос «точно выйти?». Наружу — ни в интерфейс, ни в
+	 * журнал — не выходит.
 	 */
-	mfaPending?: true;
-};
-
-/** Состояние сессии, которое нужно хуку: кто и пускать ли его дальше входа. */
-export type SessionState = {
-	userId: string;
-	mfaPending: boolean;
+	idToken?: string;
 };
 
 function parseRecord(raw: string): SessionRecord | null {
@@ -97,13 +81,11 @@ async function lifetimes(): Promise<{ idleSeconds: number; absoluteSeconds: numb
 
 export async function createSession(
 	userId: string,
-	origin: { ip: string | null; userAgent: string | null },
-	options: { mfaPending?: boolean } = {}
+	origin: { ip: string | null; userAgent: string | null; idToken?: string }
 ): Promise<string> {
 	const { idleSeconds, absoluteSeconds } = await lifetimes();
 	const sessionId = newSessionId();
 	const now = new Date().toISOString();
-	const mfaPending = options.mfaPending === true;
 
 	const record: SessionRecord = {
 		userId,
@@ -111,7 +93,7 @@ export async function createSession(
 		lastSeenAt: now,
 		ip: origin.ip,
 		userAgent: origin.userAgent,
-		...(mfaPending ? { mfaPending: true as const } : {})
+		...(origin.idToken === undefined ? {} : { idToken: origin.idToken })
 	};
 
 	await getRedis()
@@ -120,9 +102,7 @@ export async function createSession(
 			sessionKey(sessionId),
 			JSON.stringify(record),
 			'EX',
-			mfaPending
-				? Math.min(idleSeconds, absoluteSeconds, MFA_PENDING_SECONDS)
-				: Math.min(idleSeconds, absoluteSeconds)
+			Math.min(idleSeconds, absoluteSeconds)
 		)
 		.sadd(userSessionsKey(userId), sessionId)
 		// Список сессий пользователя переживает самую долгую из них и не больше:
@@ -134,15 +114,11 @@ export async function createSession(
 }
 
 /**
- * Читает сессию и продлевает её. Возвращает состояние сессии или `null`, если
- * сессии нет, она просрочена по бездействию (истёк ключ) или перешагнула
- * предельный срок.
- *
- * Неполная сессия — та, которой не хватает второго фактора, — не продлевается
- * вовсе: её пять минут отсчитываются от входа по паролю, и открытая вкладка не
- * должна их растягивать.
+ * Читает сессию и продлевает её. Возвращает идентификатор пользователя или
+ * `null`, если сессии нет, она просрочена по бездействию (истёк ключ) или
+ * перешагнула предельный срок.
  */
-export async function touchSession(sessionId: string): Promise<SessionState | null> {
+export async function touchSession(sessionId: string): Promise<string | null> {
 	const redis = getRedis();
 	const raw = await redis.get(sessionKey(sessionId));
 
@@ -166,10 +142,6 @@ export async function touchSession(sessionId: string): Promise<SessionState | nu
 		return null;
 	}
 
-	if (record.mfaPending === true) {
-		return { userId: record.userId, mfaPending: true };
-	}
-
 	if (now - Date.parse(record.lastSeenAt) >= TOUCH_INTERVAL_MS) {
 		const remaining = Math.ceil((expiresAt - now) / 1000);
 		const next: SessionRecord = { ...record, lastSeenAt: new Date(now).toISOString() };
@@ -182,44 +154,15 @@ export async function touchSession(sessionId: string): Promise<SessionState | nu
 		);
 	}
 
-	return { userId: record.userId, mfaPending: false };
+	return record.userId;
 }
 
-/**
- * Снимает с сессии признак неполной и возвращает ей обычный срок жизни. Иначе
- * человек, подтвердивший код, работал бы до конца тех же пяти минут.
- *
- * Сессии, которой нет, здесь не бывает: её только что прочитал хук, а пять
- * минут между запросом и этой строкой не проходит. Если всё же прошло —
- * подтверждать нечего, и это отказ, а не молчаливый успех.
- */
-export async function completeMfa(sessionId: string): Promise<void> {
-	const redis = getRedis();
-	const raw = await redis.get(sessionKey(sessionId));
+/** Id-токен входа, которым открыта сессия; `null` — сессии уже нет. */
+export async function sessionIdToken(sessionId: string): Promise<string | null> {
+	const raw = await getRedis().get(sessionKey(sessionId));
 	const record = raw === null ? null : parseRecord(raw);
 
-	if (record === null) {
-		throw new ConflictError('Сессия истекла, войдите заново');
-	}
-
-	const { idleSeconds, absoluteSeconds } = await lifetimes();
-	const now = Date.now();
-	const expiresAt = Date.parse(record.createdAt) + absoluteSeconds * 1000;
-	const remaining = Math.ceil((expiresAt - now) / 1000);
-
-	if (!Number.isFinite(expiresAt) || remaining <= 0) {
-		await destroySession(sessionId);
-		throw new ConflictError('Сессия истекла, войдите заново');
-	}
-
-	const { mfaPending: _pending, ...completed } = record;
-
-	await redis.set(
-		sessionKey(sessionId),
-		JSON.stringify({ ...completed, lastSeenAt: new Date(now).toISOString() }),
-		'EX',
-		Math.min(idleSeconds, remaining)
-	);
+	return record?.idToken ?? null;
 }
 
 export async function destroySession(sessionId: string): Promise<void> {
@@ -237,8 +180,9 @@ export async function destroySession(sessionId: string): Promise<void> {
 }
 
 /**
- * Гасит все сессии пользователя. Зовётся при смене пароля и при деактивации:
- * и то и другое должно действовать немедленно, а не со следующего входа.
+ * Гасит все сессии пользователя. Зовётся при деактивации, при смене роли и при
+ * смене руководителя: и то, и другое, и третье меняет область доступа или
+ * право входа, и действовать это должно немедленно, а не со следующего входа.
  */
 export async function revokeAllSessions(userId: string): Promise<void> {
 	const redis = getRedis();
@@ -251,6 +195,57 @@ export async function revokeAllSessions(userId: string): Promise<void> {
 	pipeline.del(userSessionsKey(userId));
 
 	await pipeline.exec();
+}
+
+/**
+ * Насколько глубоко считается замыкание подчинённых.
+ *
+ * Иерархия сотрудников оператора — это единицы уровней; шестнадцать берётся с
+ * запасом. Ограничение стоит не от глубины, а от цикла: проверка
+ * `users_manager_not_self` ловит только петлю длиной один, а пару «A руководит
+ * B, B руководит A» база допускает, и рекурсия по ней не кончилась бы.
+ */
+const MANAGER_CHAIN_DEPTH = 16;
+
+/**
+ * Область доступа по роли.
+ *
+ * `admin` видит всё. `lead` — себя и своих подчинённых на любую глубину:
+ * замыкание считается рекурсивным CTE по `users.manager_user_id`, один раз при
+ * сборке пользователя. `manager` — только себя. Незнакомая роль получает
+ * область «только свои записи»: это безопасный исход, а не догадка о том, что
+ * роль имела в виду.
+ *
+ * `service` — машинный субъект: у него область `all`, потому что заявка с сайта
+ * приходит по любому вузу, а ответственного у ключа нет. Ширина эта безопасна
+ * ровно потому, что ключ роли `service` не пускают никуда, кроме эндпоинтов
+ * обмена (`apiHandler`, признак `service`), а входа у такой записи нет вовсе.
+ */
+async function accessScopeFor(role: { id: string }, userId: string): Promise<AccessScope> {
+	if (role.id === 'admin' || role.id === 'service') {
+		return { kind: 'all' };
+	}
+
+	if (role.id !== 'lead') {
+		return { kind: 'delegated', userIds: new Set([userId]) };
+	}
+
+	// `cycle` — встроенная защита PostgreSQL от повторного прохода по той же
+	// строке: без неё взаимная ссылка двух руководителей крутила бы запрос, пока
+	// он не упрётся в память.
+	const rows = await getDb().execute<{ id: string }>(sql`
+		with recursive subordinates(id, depth) as (
+			select ${userId}::uuid as id, 0 as depth
+			union all
+			select u.id, s.depth + 1
+			from users u
+			join subordinates s on u.manager_user_id = s.id
+			where s.depth < ${MANAGER_CHAIN_DEPTH}
+		) cycle id set is_cycle using path
+		select distinct id from subordinates
+	`);
+
+	return { kind: 'delegated', userIds: new Set(rows.map((row) => row.id)) };
 }
 
 /**
@@ -285,7 +280,10 @@ export async function loadSessionUser(userId: string): Promise<SessionUser | nul
 	// Вне демо-режима запись с `is_demo` — обычная учётная запись: признак
 	// поднимает не столбец сам по себе, а столбец вместе с режимом стенда.
 	const isDemo = row.isDemo && getConfig().DEMO_MODE;
-	const rolePermissions = await loadRolePermissions(row.roleId);
+	const [rolePermissions, scope] = await Promise.all([
+		loadRolePermissions(row.roleId),
+		accessScopeFor({ id: row.roleId }, row.id)
+	]);
 
 	return {
 		id: row.id,
@@ -294,18 +292,11 @@ export async function loadSessionUser(userId: string): Promise<SessionUser | nul
 		roleId: row.roleId,
 		permissions: isDemo ? demoSessionPermissions(rolePermissions) : rolePermissions,
 		isDemo,
-		// Полнота сессии — свойство самой сессии, а не учётной записи: здесь
-		// собирается и владелец ключа доступа, у которого сессии нет вовсе.
-		// Признак проставляет хук, прочитавший запись сессии.
-		mfaPending: false,
-		// Область доступа пока полная у всех ролей: столбца, который сужал бы её до
-		// списка организаций, в схеме ещё нет. Сужение появится здесь — в одном
-		// месте, а не в выборках, которые уже зовут `scopeFilter`.
-		scope: { kind: 'all' }
+		scope
 	};
 }
 
-/** Отметка последнего входа. Отдельным запросом: она не часть проверки пароля. */
+/** Отметка последнего входа. Отдельным запросом: она не часть проверки токена. */
 export async function markSignedIn(userId: string): Promise<void> {
 	await getDb()
 		.update(users)

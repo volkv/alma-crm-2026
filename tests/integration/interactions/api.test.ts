@@ -6,11 +6,12 @@
  */
 import type { RequestEvent } from '@sveltejs/kit';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { createInteractionSchema, type StageRouteView } from '$lib/contracts/interactions';
+import { createInteractionSchema, type ProcessRevisionView } from '$lib/contracts/interactions';
 import { createApiKey } from '$lib/server/api/keys';
 import { createInteraction } from '$lib/server/interactions/write';
 import { getRedis } from '$lib/server/redis';
-import { createRoute, ensureDemoRoute, getRoute, publishRoute } from '$lib/server/stages/routes';
+import { B2B_GROUP_KEY, B2B_PROCESS, B2C_GROUP_KEY } from '$lib/server/stages/definitions';
+import { ensureProcess, readGroupByKey, requireActiveRevision } from '$lib/server/stages/process';
 import { setChecklistItem } from '$lib/server/stages/commands';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import {
@@ -103,86 +104,95 @@ async function issueKey(roleId: string): Promise<string> {
 	return created.key;
 }
 
-async function seedInteraction(): Promise<{ id: string; routeId: string }> {
+/** Действующая редакция группы: по ней тесты адресуют стадии. */
+async function revisionOf(groupKey: string): Promise<ProcessRevisionView> {
+	return requireActiveRevision(database.db, await readGroupByKey(database.db, groupKey));
+}
+
+async function seedInteraction(): Promise<{ id: string; revision: ProcessRevisionView }> {
 	const ctx = testActor();
-	const routeId = await database.db.transaction((tx) => ensureDemoRoute(tx));
+	await database.db.transaction((tx) => ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS));
 	const organizationId = await insertOrganization(database.db, { shortName: 'Вуз для API' });
 
 	const interaction = await createInteraction(
 		ctx,
 		createInteractionSchema.parse({
 			title: 'Взаимодействие для API',
-			routeId,
 			ownerUserId: TEST_USER_IDS.admin,
 			parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
 		})
 	);
 
-	return { id: interaction.id, routeId };
+	return { id: interaction.id, revision: await revisionOf(B2B_GROUP_KEY) };
 }
 
 /**
- * Взаимодействие на маршруте, где объяснения требует шаг вперёд. В
- * демонстрационном маршруте такого перехода нет, а интеграция обязана уметь
- * пройти и его: правило, которое нельзя выполнить через API, запирает процесс.
+ * Взаимодействие на процессе, где объяснения требует шаг вперёд. В процессе
+ * учебных заведений такого перехода нет, а интеграция обязана уметь пройти и
+ * его: правило, которое нельзя выполнить через API, запирает процесс. Группа
+ * другая, потому что в одной группе действует ровно один процесс.
  */
-async function seedReasonInteraction(): Promise<{ id: string; route: StageRouteView }> {
+async function seedReasonInteraction(): Promise<{ id: string; route: ProcessRevisionView }> {
 	const ctx = testActor();
 
-	const draft = await createRoute(ctx, {
-		key: 'api-forward-reason',
-		name: 'Маршрут с объяснением шага вперёд',
-		description: null,
-		isDefault: false,
-		stages: [
-			{
-				key: 'first',
-				name: 'Первая стадия',
-				category: 'contact',
-				slaDays: 5,
-				staleAfterDays: null,
-				requiresResult: false,
-				requiresConfirmation: false,
-				checklist: []
-			},
-			{
-				key: 'second',
-				name: 'Вторая стадия',
-				category: 'control',
-				slaDays: 5,
-				staleAfterDays: null,
-				requiresResult: false,
-				requiresConfirmation: false,
-				checklist: []
-			}
-		],
-		transitions: [
-			{
-				fromStageKey: 'first',
-				toStageKey: 'second',
-				kind: 'forward',
-				requiredPermissionKey: 'stages.transition',
-				requiresReason: true
-			}
-		]
-	});
+	await database.db.transaction((tx) =>
+		ensureProcess(tx, B2C_GROUP_KEY, {
+			name: 'Процесс с объяснением шага вперёд',
+			note: null,
+			migrationRules: [],
+			stages: [
+				{
+					key: 'first',
+					name: 'Первая стадия',
+					category: 'contact',
+					slaDays: 5,
+					staleAfterDays: null,
+					requiresResult: false,
+					requiresConfirmation: false,
+					requiresLmsData: false,
+					isFinal: false,
+					checklist: []
+				},
+				{
+					key: 'second',
+					name: 'Вторая стадия',
+					category: 'control',
+					slaDays: 5,
+					staleAfterDays: null,
+					requiresResult: false,
+					requiresConfirmation: false,
+					requiresLmsData: false,
+					isFinal: true,
+					checklist: []
+				}
+			],
+			transitions: [
+				{
+					fromStageKey: 'first',
+					toStageKey: 'second',
+					kind: 'forward',
+					requiredPermissionKey: 'stages.transition',
+					requiresReason: true
+				}
+			]
+		})
+	);
 
-	const route = await publishRoute(ctx, draft.id);
 	const organizationId = await insertOrganization(database.db, {
-		shortName: 'Вуз с объяснением для API'
+		shortName: 'Заказчик с объяснением для API',
+		kind: 'legal_entity'
 	});
 
 	const interaction = await createInteraction(
 		ctx,
 		createInteractionSchema.parse({
 			title: 'Переход с объяснением через API',
-			routeId: route.id,
 			ownerUserId: TEST_USER_IDS.admin,
-			parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
+			parties: [{ organizationId, partyRole: 'customer', isPrimary: true }]
 		})
 	);
 
-	return { id: interaction.id, route };
+	return { id: interaction.id, route: await revisionOf(B2C_GROUP_KEY) };
 }
 
 describe('GET /v1/interactions', () => {
@@ -238,7 +248,8 @@ describe('GET /v1/interactions/{id}', () => {
 		const card = await body(response);
 
 		expect(response.status).toBe(200);
-		expect(card.routeId).toBe(interaction.routeId);
+		expect(card.processGroupKey).toBe(B2B_GROUP_KEY);
+		expect(card.processRevision).toBe(interaction.revision.version);
 		expect((card.progress as unknown[]).length).toBe(14);
 		expect((card.parties as Record<string, unknown>[])[0].partyRole).toBe(
 			'educational_institution'
@@ -285,10 +296,10 @@ describe('POST /v1/interactions/{id}/transitions', () => {
 		);
 	}
 
-	it('двигает по маршруту и не выполняет повтор с тем же ключом дважды', async () => {
+	it('двигает по процессу и не выполняет повтор с тем же ключом дважды', async () => {
 		const ctx = testActor();
 		const interaction = await seedInteraction();
-		const route = await getRoute(ctx, interaction.routeId);
+		const route = interaction.revision;
 		const key = await issueKey('admin');
 
 		const first = route.stages[0];
@@ -300,7 +311,12 @@ describe('POST /v1/interactions/{id}/transitions', () => {
 			}
 		}
 
-		const payload = { kind: 'forward', fromStageId: first.id, toStageId: second.id };
+		const payload = {
+			kind: 'forward',
+			fromStageId: first.id,
+			toStageId: second.id,
+			revision: route.version
+		};
 		const response = await transition(key, interaction.id, payload, 'idem-transition-1');
 		const result = await body(response);
 
@@ -320,27 +336,32 @@ describe('POST /v1/interactions/{id}/transitions', () => {
 	});
 
 	it('отказывает с 409, если взаимодействие уже сдвинули', async () => {
-		const ctx = testActor();
 		const interaction = await seedInteraction();
-		const route = await getRoute(ctx, interaction.routeId);
+		const route = interaction.revision;
 		const key = await issueKey('admin');
 
 		const response = await transition(key, interaction.id, {
 			kind: 'forward',
 			fromStageId: route.stages[1].id,
-			toStageId: route.stages[2].id
+			toStageId: route.stages[2].id,
+			revision: route.version
 		});
 
 		expect(response.status).toBe(409);
 	});
 
-	it('везёт объяснение шага вперёд туда, где его требует маршрут', async () => {
+	it('везёт объяснение шага вперёд туда, где его требует процесс', async () => {
 		const ctx = testActor();
 		const seeded = await seedReasonInteraction();
 		const key = await issueKey('admin');
 
 		const [first, second] = seeded.route.stages;
-		const payload = { kind: 'forward', fromStageId: first.id, toStageId: second.id };
+		const payload = {
+			kind: 'forward',
+			fromStageId: first.id,
+			toStageId: second.id,
+			revision: seeded.route.version
+		};
 
 		const withoutReason = await transition(key, seeded.id, payload);
 
@@ -360,18 +381,22 @@ describe('POST /v1/interactions/{id}/transitions', () => {
 		expect(status.history[0].outcomeReason).toBe('Договорённости зафиксированы протоколом');
 	});
 
-	it('требует причину для возврата и права для перехода', async () => {
-		const ctx = testActor();
+	it('требует причину для возврата, а вне области не показывает запись', async () => {
 		const interaction = await seedInteraction();
-		const route = await getRoute(ctx, interaction.routeId);
+		const route = interaction.revision;
 
 		const admin = await issueKey('admin');
-		const viewer = await issueKey('viewer');
+		// Ключ менеджера: право на переход у него есть, а вот записи он не видит —
+		// ни ответственным за её вуз, ни владельцем он не числится. Вне области
+		// ответ обязан быть «не найдено», а не «нельзя»: иначе перебором
+		// идентификаторов узнают, что за её пределами существует.
+		const outsideScope = await issueKey('manager');
 
 		const withoutReason = await transition(admin, interaction.id, {
 			kind: 'return',
 			fromStageId: route.stages[0].id,
-			toStageId: route.stages[1].id
+			toStageId: route.stages[1].id,
+			revision: route.version
 		});
 
 		expect(withoutReason.status).toBe(400);
@@ -380,12 +405,13 @@ describe('POST /v1/interactions/{id}/transitions', () => {
 			'Опишите, почему взаимодействие возвращается назад'
 		);
 
-		const forbidden = await transition(viewer, interaction.id, {
+		const unseen = await transition(outsideScope, interaction.id, {
 			kind: 'forward',
 			fromStageId: route.stages[0].id,
-			toStageId: route.stages[1].id
+			toStageId: route.stages[1].id,
+			revision: route.version
 		});
 
-		expect(forbidden.status).toBe(403);
+		expect(unseen.status).toBe(404);
 	});
 });

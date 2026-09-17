@@ -5,14 +5,9 @@
  */
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-	createInteractionSchema,
-	type CreateInteractionInput,
-	type StageRouteView
-} from '$lib/contracts/interactions';
-import { auditEvents, stageEntries, stageRoutes } from '$lib/server/db/schema';
+import type { ProcessRevisionView } from '$lib/contracts/interactions';
+import { auditEvents, processRevisions, stageEntries } from '$lib/server/db/schema';
 import { ConflictError, ForbiddenError } from '$lib/server/errors';
-import { createInteraction } from '$lib/server/interactions/write';
 import { getInteractionSummary } from '$lib/server/interactions/summary';
 import {
 	advanceStage,
@@ -25,28 +20,25 @@ import {
 	resolveBlocker,
 	resumeStage,
 	returnStage,
-	setChecklistItem,
 	setStageResult,
 	skipStage,
 	startInteraction
 } from '$lib/server/stages/commands';
-import { DEMO_ROUTE } from '$lib/server/stages/demo-route';
-import {
-	createRoute,
-	ensureDemoRoute,
-	getRoute,
-	publishRoute,
-	updateRoute
-} from '$lib/server/stages/routes';
+import { createDraft, discardDraft, publishProcess } from '$lib/server/stages/process';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import type { ActorContext } from '$lib/server/actor';
+import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
 import {
-	insertOrganization,
-	startTestDatabase,
-	testActor,
-	TEST_USER_IDS,
-	type TestDatabase
-} from '../helpers/db';
+	advanceTo as walkTo,
+	B2B_GROUP_KEY,
+	B2B_PROCESS,
+	B2C_GROUP_KEY,
+	closeRequiredChecklist,
+	createInteractionOn,
+	seedProcess,
+	stageId,
+	twoStageProcess
+} from './fixture';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
@@ -69,171 +61,51 @@ const admin = (): ActorContext => testActor({ roleId: 'admin' });
 
 type Fixture = {
 	ctx: ActorContext;
-	route: StageRouteView;
+	revision: ProcessRevisionView;
 	interactionId: string;
 	organizationId: string;
 };
 
+/** Взаимодействие на процессе учебных заведений: четырнадцать стадий. */
 async function createFixture(): Promise<Fixture> {
 	const ctx = admin();
-	const routeId = await database.db.transaction((tx) => ensureDemoRoute(tx));
-	const organizationId = await insertOrganization(database.db, { shortName: 'Вуз для движка' });
-	const route = await getRoute(ctx, routeId);
-
-	// В `parse` едет вход схемы: остальные поля схема заполнит умолчаниями.
-	const input: CreateInteractionInput = createInteractionSchema.parse({
-		title: 'Подготовка специалистов',
-		routeId,
-		ownerUserId: TEST_USER_IDS.admin,
-		parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
+	const revision = await seedProcess(database, B2B_GROUP_KEY, B2B_PROCESS);
+	const { interactionId, organizationId } = await createInteractionOn(ctx, database, {
+		title: 'Подготовка специалистов'
 	});
 
-	const interaction = await createInteraction(ctx, input);
-
-	return { ctx, route, interactionId: interaction.id, organizationId };
+	return { ctx, revision, interactionId, organizationId };
 }
 
 /**
- * Маршрут из двух стадий, у которого шаг вперёд требует объяснения, и
+ * Процесс из двух стадий, у которого шаг вперёд требует объяснения, и
  * взаимодействие на нём.
  *
- * В демонстрационном маршруте такого перехода нет, а правило «причина
+ * В процессе учебных заведений такого перехода нет, а правило «причина
  * обязательна» описано у перехода, а не у его вида: настроенное на шаге вперёд,
  * оно обязано быть выполнимым, а не запирать стадию навсегда. Требований стадии
- * здесь нет намеренно — проверяется ровно причина.
+ * здесь нет намеренно — проверяется ровно причина. Группа другая (`b2c`),
+ * потому что в одной группе действует ровно один процесс.
  */
 async function createReasonFixture(): Promise<Fixture> {
 	const ctx = admin();
-
-	const draft = await createRoute(ctx, {
-		key: 'forward-reason',
-		name: 'Маршрут с объяснением шага вперёд',
-		description: null,
-		isDefault: false,
-		stages: [
-			{
-				key: 'first',
-				name: 'Первая стадия',
-				category: 'contact',
-				slaDays: 5,
-				staleAfterDays: null,
-				requiresResult: false,
-				requiresConfirmation: false,
-				checklist: []
-			},
-			{
-				key: 'second',
-				name: 'Вторая стадия',
-				category: 'control',
-				slaDays: 5,
-				staleAfterDays: null,
-				requiresResult: false,
-				requiresConfirmation: false,
-				checklist: []
-			}
-		],
-		transitions: [
-			{
-				fromStageKey: 'first',
-				toStageKey: 'second',
-				kind: 'forward',
-				requiredPermissionKey: 'stages.transition',
-				requiresReason: true
-			}
-		]
-	});
-
-	const route = await publishRoute(ctx, draft.id);
-	const organizationId = await insertOrganization(database.db, {
-		shortName: 'Вуз с объяснением перехода'
-	});
-
-	const interaction = await createInteraction(
-		ctx,
-		createInteractionSchema.parse({
-			title: 'Переход с объяснением',
-			routeId: route.id,
-			ownerUserId: TEST_USER_IDS.admin,
-			parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
-		})
+	const revision = await seedProcess(
+		database,
+		B2C_GROUP_KEY,
+		twoStageProcess({ name: 'Процесс с объяснением шага вперёд', requiresReason: true })
 	);
 
-	return { ctx, route, interactionId: interaction.id, organizationId };
-}
+	const { interactionId, organizationId } = await createInteractionOn(ctx, database, {
+		title: 'Переход с объяснением',
+		kind: 'legal_entity'
+	});
 
-/** Стадия маршрута по ключу: тесты адресуют стадии именами, а не номерами. */
-function stageId(route: StageRouteView, key: string): string {
-	const stage = route.stages.find((item) => item.key === key);
-
-	if (stage === undefined) {
-		throw new Error(`В маршруте нет стадии «${key}»`);
-	}
-
-	return stage.id;
-}
-
-/** Закрывает обязательные пункты чек-листа текущей стадии. */
-async function closeRequiredChecklist(ctx: ActorContext, interactionId: string): Promise<void> {
-	const status = await getInteractionStatus(ctx, interactionId);
-	const current = status.current;
-
-	if (current === null) {
-		throw new Error('Взаимодействие не стоит ни на одной стадии');
-	}
-
-	for (const item of current.snapshot.checklist) {
-		if (item.required) {
-			await setChecklistItem(ctx, { interactionId, key: item.key, done: true });
-		}
-	}
+	return { ctx, revision, interactionId, organizationId };
 }
 
 /** Проводит взаимодействие вперёд до стадии с нужным ключом. */
 async function advanceTo(fixture: Fixture, key: string): Promise<void> {
-	for (let step = 0; step < fixture.route.stages.length; step += 1) {
-		const status = await getInteractionStatus(fixture.ctx, fixture.interactionId);
-		const current = status.current;
-
-		if (current === null || current.snapshot.key === key) {
-			return;
-		}
-
-		await closeRequiredChecklist(fixture.ctx, fixture.interactionId);
-
-		if (current.snapshot.requiresResult) {
-			await setStageResult(fixture.ctx, {
-				interactionId: fixture.interactionId,
-				resultText: `Результат стадии «${current.snapshot.name}»`
-			});
-		}
-
-		if (current.snapshot.requiresConfirmation) {
-			await confirmStage(fixture.ctx, {
-				interactionId: fixture.interactionId,
-				fromStageId: current.stageId,
-				confirmation: { kind: 'mark' }
-			});
-		}
-
-		const next = fixture.route.transitions.find(
-			(transition) => transition.fromStageId === current.stageId && transition.kind === 'forward'
-		);
-
-		if (next === undefined) {
-			throw new Error(`С стадии «${current.snapshot.key}» нет шага вперёд`);
-		}
-
-		await advanceStage(fixture.ctx, {
-			interactionId: fixture.interactionId,
-			fromStageId: current.stageId,
-			toStageId: next.toStageId,
-			reason: null,
-			resultText: null,
-			checklistState: {}
-		});
-	}
-
-	throw new Error(`Не удалось дойти до стадии «${key}»`);
+	await walkTo(fixture.ctx, database, fixture.interactionId, key);
 }
 
 function sleep(ms: number): Promise<void> {
@@ -241,7 +113,7 @@ function sleep(ms: number): Promise<void> {
 }
 
 describe('начало пути', () => {
-	it('ставит взаимодействие на первую стадию маршрута', async () => {
+	it('ставит взаимодействие на первую стадию процесса', async () => {
 		const fixture = await createFixture();
 		const status = await getInteractionStatus(fixture.ctx, fixture.interactionId);
 
@@ -250,7 +122,7 @@ describe('начало пути', () => {
 		expect(status.history).toEqual([]);
 		expect(status.progress[0].state).toBe('current');
 		expect(status.progress[1].state).toBe('pending');
-		// Слепок стадии лежит в записи: маршрут могут переиздать, а срок пройденной
+		// Слепок стадии лежит в записи: процесс могут изменить, а срок пройденной
 		// стадии обязан остаться прежним.
 		expect(status.current?.snapshot.slaDays).toBe(7);
 	});
@@ -272,8 +144,9 @@ describe('шаг вперёд', () => {
 
 		const command = {
 			interactionId: fixture.interactionId,
-			fromStageId: stageId(fixture.route, 'contact_search'),
-			toStageId: stageId(fixture.route, 'communication'),
+			revision: fixture.revision.version,
+			fromStageId: stageId(fixture.revision, 'contact_search'),
+			toStageId: stageId(fixture.revision, 'communication'),
 			reason: null,
 			resultText: null,
 			checklistState: {}
@@ -311,8 +184,9 @@ describe('шаг вперёд', () => {
 
 		const command = {
 			interactionId: fixture.interactionId,
-			fromStageId: stageId(fixture.route, 'contact_search'),
-			toStageId: stageId(fixture.route, 'communication'),
+			revision: fixture.revision.version,
+			fromStageId: stageId(fixture.revision, 'contact_search'),
+			toStageId: stageId(fixture.revision, 'communication'),
 			reason: null,
 			resultText: null,
 			checklistState: {}
@@ -338,13 +212,14 @@ describe('шаг вперёд', () => {
 		expect(open).toHaveLength(1);
 	});
 
-	it('требует объяснение, когда его требует переход маршрута', async () => {
+	it('требует объяснение, когда его требует переход процесса', async () => {
 		const fixture = await createReasonFixture();
 
 		const command = {
 			interactionId: fixture.interactionId,
-			fromStageId: stageId(fixture.route, 'first'),
-			toStageId: stageId(fixture.route, 'second'),
+			revision: fixture.revision.version,
+			fromStageId: stageId(fixture.revision, 'first'),
+			toStageId: stageId(fixture.revision, 'second'),
 			reason: null,
 			resultText: null,
 			checklistState: {}
@@ -381,7 +256,7 @@ describe('пауза', () => {
 		const fixture = await createFixture();
 		await closeRequiredChecklist(fixture.ctx, fixture.interactionId);
 
-		const fromStageId = stageId(fixture.route, 'contact_search');
+		const fromStageId = stageId(fixture.revision, 'contact_search');
 		const before = await getInteractionStatus(fixture.ctx, fixture.interactionId);
 
 		await pauseStage(fixture.ctx, {
@@ -405,8 +280,9 @@ describe('пауза', () => {
 
 		const command = {
 			interactionId: fixture.interactionId,
+			revision: fixture.revision.version,
 			fromStageId,
-			toStageId: stageId(fixture.route, 'communication'),
+			toStageId: stageId(fixture.revision, 'communication'),
 			reason: null,
 			resultText: null,
 			checklistState: {}
@@ -457,8 +333,9 @@ describe('помехи', () => {
 
 		const command = {
 			interactionId: fixture.interactionId,
-			fromStageId: stageId(fixture.route, 'contact_search'),
-			toStageId: stageId(fixture.route, 'communication'),
+			revision: fixture.revision.version,
+			fromStageId: stageId(fixture.revision, 'contact_search'),
+			toStageId: stageId(fixture.revision, 'communication'),
 			reason: null,
 			resultText: null,
 			checklistState: {}
@@ -494,8 +371,9 @@ describe('возврат и пропуск', () => {
 
 		await advanceStage(fixture.ctx, {
 			interactionId: fixture.interactionId,
-			fromStageId: stageId(fixture.route, 'contact_search'),
-			toStageId: stageId(fixture.route, 'communication'),
+			revision: fixture.revision.version,
+			fromStageId: stageId(fixture.revision, 'contact_search'),
+			toStageId: stageId(fixture.revision, 'communication'),
 			reason: null,
 			resultText: null,
 			checklistState: {}
@@ -503,8 +381,9 @@ describe('возврат и пропуск', () => {
 
 		await returnStage(fixture.ctx, {
 			interactionId: fixture.interactionId,
-			fromStageId: stageId(fixture.route, 'communication'),
-			toStageId: stageId(fixture.route, 'contact_search'),
+			revision: fixture.revision.version,
+			fromStageId: stageId(fixture.revision, 'communication'),
+			toStageId: stageId(fixture.revision, 'contact_search'),
 			reason: 'Контакт оказался не тот'
 		});
 
@@ -526,8 +405,9 @@ describe('возврат и пропуск', () => {
 
 		await skipStage(fixture.ctx, {
 			interactionId: fixture.interactionId,
-			fromStageId: stageId(fixture.route, 'document_exchange'),
-			toStageId: stageId(fixture.route, 'signing'),
+			revision: fixture.revision.version,
+			fromStageId: stageId(fixture.revision, 'document_exchange'),
+			toStageId: stageId(fixture.revision, 'signing'),
 			reason: 'Замечаний к документам нет'
 		});
 
@@ -548,11 +428,12 @@ describe('подтверждение стадии', () => {
 		await advanceTo(fixture, 'materials_handover');
 		await closeRequiredChecklist(fixture.ctx, fixture.interactionId);
 
-		const fromStageId = stageId(fixture.route, 'materials_handover');
+		const fromStageId = stageId(fixture.revision, 'materials_handover');
 		const command = {
 			interactionId: fixture.interactionId,
+			revision: fixture.revision.version,
 			fromStageId,
-			toStageId: stageId(fixture.route, 'implementation_support'),
+			toStageId: stageId(fixture.revision, 'implementation_support'),
 			reason: null,
 			resultText: null,
 			checklistState: {}
@@ -643,7 +524,7 @@ describe('закрытие взаимодействия', () => {
 		expect(events.map((event) => event.type)).toContain('interactions.completed');
 	});
 
-	it('не завершает с середины маршрута без явного досрочного закрытия', async () => {
+	it('не завершает с середины процесса без явного досрочного закрытия', async () => {
 		const fixture = await createFixture();
 
 		const verdict = await getInteractionClosing(fixture.ctx, fixture.interactionId);
@@ -659,7 +540,7 @@ describe('закрытие взаимодействия', () => {
 			})
 		).rejects.toSatisfy(
 			(error: unknown) =>
-				error instanceof ConflictError && /не на последней стадии/.test(error.message)
+				error instanceof ConflictError && /не на финальной стадии/.test(error.message)
 		);
 
 		// Досрочное закрытие — отступление от процесса: менеджеру оно недоступно,
@@ -692,7 +573,7 @@ describe('закрытие взаимодействия', () => {
 
 	it('отмена закрывает запись с причиной и снимает паузу', async () => {
 		const fixture = await createFixture();
-		const fromStageId = stageId(fixture.route, 'contact_search');
+		const fromStageId = stageId(fixture.revision, 'contact_search');
 
 		await pauseStage(fixture.ctx, {
 			interactionId: fixture.interactionId,
@@ -717,12 +598,13 @@ describe('закрытие взаимодействия', () => {
 		expect(last.outcomeReason).toBe('Вуз отказался от сотрудничества в этом учебном году');
 		expect(last.pauses[0].endedAt).not.toBeNull();
 
-		// Взаимодействие ушло с маршрута: двигать его больше нечем.
+		// Взаимодействие ушло с процесса: двигать его больше нечем.
 		await expect(
 			advanceStage(fixture.ctx, {
 				interactionId: fixture.interactionId,
+				revision: fixture.revision.version,
 				fromStageId,
-				toStageId: stageId(fixture.route, 'communication'),
+				toStageId: stageId(fixture.revision, 'communication'),
 				reason: null,
 				resultText: null,
 				checklistState: {}
@@ -737,7 +619,7 @@ describe('закрытие взаимодействия', () => {
 describe('журнал действий', () => {
 	it('записывает каждую команду движка', async () => {
 		const fixture = await createFixture();
-		const fromStageId = stageId(fixture.route, 'contact_search');
+		const fromStageId = stageId(fixture.revision, 'contact_search');
 
 		await closeRequiredChecklist(fixture.ctx, fixture.interactionId);
 		await setStageResult(fixture.ctx, {
@@ -759,8 +641,9 @@ describe('журнал действий', () => {
 		});
 		await advanceStage(fixture.ctx, {
 			interactionId: fixture.interactionId,
+			revision: fixture.revision.version,
 			fromStageId,
-			toStageId: stageId(fixture.route, 'communication'),
+			toStageId: stageId(fixture.revision, 'communication'),
 			reason: null,
 			resultText: null,
 			checklistState: {}
@@ -784,18 +667,17 @@ describe('журнал действий', () => {
 		);
 	});
 
-	it('записывает отказ настроить маршрут стадий', async () => {
-		const manager = testActor({ roleId: 'manager' });
-		const definition = { ...DEMO_ROUTE, key: `mimo-prav-${crypto.randomUUID().slice(0, 8)}` };
+	it('записывает отказ настроить процесс', async () => {
+		await seedProcess(database, B2B_GROUP_KEY, B2B_PROCESS);
 
-		// Маршрут — это устройство процесса: он меняет правила для всех
-		// взаимодействий сразу, и попытка его тронуть без права должна остаться
-		// в журнале, а не только в ответе тому, кто её сделал.
-		await expect(createRoute(manager, definition)).rejects.toBeInstanceOf(ForbiddenError);
-		await expect(
-			updateRoute(manager, { ...definition, id: crypto.randomUUID() })
-		).rejects.toBeInstanceOf(ForbiddenError);
-		await expect(publishRoute(manager, crypto.randomUUID())).rejects.toBeInstanceOf(ForbiddenError);
+		const manager = testActor({ roleId: 'manager' });
+
+		// Процесс — это устройство работы: он меняет правила для всех взаимодействий
+		// сразу, и попытка его тронуть без права должна остаться в журнале, а не
+		// только в ответе тому, кто её сделал.
+		await expect(createDraft(manager, B2B_GROUP_KEY)).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(discardDraft(manager, B2B_GROUP_KEY)).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(publishProcess(manager, B2B_GROUP_KEY)).rejects.toBeInstanceOf(ForbiddenError);
 
 		const denied = await database.db
 			.select({ type: auditEvents.eventType, actorUserId: auditEvents.actorUserId })
@@ -803,16 +685,13 @@ describe('журнал действий', () => {
 			.where(eq(auditEvents.outcome, 'denied'));
 
 		expect(denied).toEqual([
-			{ type: 'stages.route_created', actorUserId: TEST_USER_IDS.manager },
-			{ type: 'stages.route_updated', actorUserId: TEST_USER_IDS.manager },
-			{ type: 'stages.route_published', actorUserId: TEST_USER_IDS.manager }
+			{ type: 'stages.draft_created', actorUserId: TEST_USER_IDS.manager },
+			{ type: 'stages.draft_discarded', actorUserId: TEST_USER_IDS.manager },
+			{ type: 'stages.process_published', actorUserId: TEST_USER_IDS.manager }
 		]);
 
-		// Черновика после отказа не появилось.
-		const drafts = await database.db
-			.select({ id: stageRoutes.id })
-			.from(stageRoutes)
-			.where(eq(stageRoutes.key, definition.key));
-		expect(drafts).toEqual([]);
+		// Черновика после отказа не появилось: у группы осталась одна редакция.
+		const revisions = await database.db.select({ id: processRevisions.id }).from(processRevisions);
+		expect(revisions).toHaveLength(1);
 	});
 });

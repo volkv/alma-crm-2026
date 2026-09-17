@@ -109,6 +109,46 @@ function parse<TSchema extends z.ZodType>(schema: TSchema, input: unknown) {
 	return { ok: true as const, data: parsed.data };
 }
 
+/**
+ * Файлы, приложенные к переходу, — сначала документами взаимодействия, потом
+ * связью с записью стадии. Загрузка идёт до команды: файл, который хранилище не
+ * приняло, не должен стоить человеку перехода, уже записанного в историю.
+ *
+ * Отдельная функция, а не часть команды: граница хранилища живёт в модуле
+ * документов, и движку стадий незачем знать про S3.
+ */
+async function attach(
+	event: RequestEvent,
+	data: FormData
+): Promise<{ ok: true; documentIds: string[] } | { ok: false; failure: ReturnType<typeof fail> }> {
+	const files = data.getAll('files').filter((item): item is File => item instanceof File);
+	const chosen = files.filter((file) => file.size > 0);
+
+	if (chosen.length === 0) {
+		return { ok: true, documentIds: [] };
+	}
+
+	const ctx = actorFromEvent(event);
+	const documentIds: string[] = [];
+
+	try {
+		for (const file of chosen) {
+			const uploaded = await uploadDocument(ctx, {
+				interactionId: event.params.id,
+				kind: 'stage_attachment',
+				title: file.name,
+				file: { mime: file.type, bytes: new Uint8Array(await file.arrayBuffer()) }
+			});
+
+			documentIds.push(uploaded.id);
+		}
+	} catch (cause) {
+		return { ok: false, failure: toActionFailure(cause) };
+	}
+
+	return { ok: true, documentIds };
+}
+
 /** Общая обёртка действия: предметная ошибка становится отказом формы. */
 async function run(action: () => Promise<unknown>) {
 	try {
@@ -139,30 +179,60 @@ export const actions: Actions = {
 		const parsed = parse(advanceStageSchema, {
 			...fields(data),
 			interactionId: event.params.id,
+			// Скрытое поле приезжает строкой: номер редакции — число, и приводит
+			// его транспорт, а не схема, — иначе схема начала бы принимать строки
+			// и от API тоже.
+			revision: Number(data.get('revision')),
 			checklistState: {}
 		});
 
 		if (!parsed.ok) return parsed.failure;
 
-		return run(() => advanceStage(actorFromEvent(event), parsed.data));
+		const attached = await attach(event, data);
+
+		if (!attached.ok) return attached.failure;
+
+		return run(() =>
+			advanceStage(actorFromEvent(event), { ...parsed.data, documentIds: attached.documentIds })
+		);
 	},
 
 	return: async (event) => {
 		const data = await event.request.formData();
-		const parsed = parse(returnStageSchema, { ...fields(data), interactionId: event.params.id });
+		const parsed = parse(returnStageSchema, {
+			...fields(data),
+			interactionId: event.params.id,
+			revision: Number(data.get('revision'))
+		});
 
 		if (!parsed.ok) return parsed.failure;
 
-		return run(() => returnStage(actorFromEvent(event), parsed.data));
+		const attached = await attach(event, data);
+
+		if (!attached.ok) return attached.failure;
+
+		return run(() =>
+			returnStage(actorFromEvent(event), { ...parsed.data, documentIds: attached.documentIds })
+		);
 	},
 
 	skip: async (event) => {
 		const data = await event.request.formData();
-		const parsed = parse(skipStageSchema, { ...fields(data), interactionId: event.params.id });
+		const parsed = parse(skipStageSchema, {
+			...fields(data),
+			interactionId: event.params.id,
+			revision: Number(data.get('revision'))
+		});
 
 		if (!parsed.ok) return parsed.failure;
 
-		return run(() => skipStage(actorFromEvent(event), parsed.data));
+		const attached = await attach(event, data);
+
+		if (!attached.ok) return attached.failure;
+
+		return run(() =>
+			skipStage(actorFromEvent(event), { ...parsed.data, documentIds: attached.documentIds })
+		);
 	},
 
 	pause: async (event) => {
@@ -363,7 +433,6 @@ export const actions: Actions = {
 		// плана меняет название и сроки, поэтому остальное едет как есть.
 		const parsed = parse(updateInteractionSchema, {
 			id: current.id,
-			routeId: current.routeId,
 			title: data.get('title'),
 			agreementPeriodStart: text(data, 'agreementPeriodStart'),
 			agreementPeriodEnd: text(data, 'agreementPeriodEnd'),

@@ -6,6 +6,11 @@
  * определяется по содержимому — по сигнатуре в первых байтах, а для форматов
  * Office ещё и по составу zip-архива, — и должен совпасть с заявленным.
  *
+ * Содержимое архивов при этом не разбирается: у zip состав читается только
+ * чтобы отличить пакет Office от обычного архива, а gzip и rar опознаются одной
+ * сигнатурой. Распаковка произвольного архива на сервере — работа, объём
+ * которой заранее не ограничить.
+ *
  * Список допустимых типов и потолок размера живут в контрактах: одна и та же
  * граница работает на форме, в API и здесь.
  */
@@ -30,7 +35,9 @@ const EXTENSIONS: Record<AllowedDocumentMime, string> = {
 	'image/png': 'png',
 	'image/jpeg': 'jpg',
 	'text/plain': 'txt',
-	'application/zip': 'zip'
+	'application/zip': 'zip',
+	'application/gzip': 'gz',
+	'application/vnd.rar': 'rar'
 };
 
 /**
@@ -52,7 +59,12 @@ const SIGNATURES = {
 	zipEmpty: [0x50, 0x4b, 0x05, 0x06],
 	zipSpanned: [0x50, 0x4b, 0x07, 0x08],
 	// Контейнер OLE2: в нём лежат документы Office до 2007 года.
-	ole2: [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1]
+	ole2: [0xd0, 0xcf, 0x11, 0xe0, 0xa1, 0xb1, 0x1a, 0xe1],
+	// Заголовок gzip: два байта магии и метод сжатия deflate.
+	gzip: [0x1f, 0x8b],
+	// `Rar!\x1a\x07\x00` — четвёртая версия формата, `…\x01\x00` — пятая.
+	rar4: [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x00],
+	rar5: [0x52, 0x61, 0x72, 0x21, 0x1a, 0x07, 0x01, 0x00]
 } as const;
 
 function startsWith(bytes: Uint8Array, signature: readonly number[]): boolean {
@@ -173,6 +185,16 @@ export function sniffDocumentMime(bytes: Uint8Array): AllowedDocumentMime | null
 
 	if (startsWith(bytes, SIGNATURES.ole2)) {
 		return sniffOle2(bytes);
+	}
+
+	// Архивы опознаются сигнатурой и на этом всё: что внутри — не наше дело, и
+	// разбирать это значит принять на себя распаковку произвольного файла.
+	if (startsWith(bytes, SIGNATURES.gzip)) {
+		return 'application/gzip';
+	}
+
+	if (startsWith(bytes, SIGNATURES.rar5) || startsWith(bytes, SIGNATURES.rar4)) {
+		return 'application/vnd.rar';
 	}
 
 	return looksLikeText(bytes) ? 'text/plain' : null;

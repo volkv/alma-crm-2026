@@ -12,7 +12,7 @@ const demoUser: SessionUser = {
 	id: 'b0b4b0de-0000-4000-8000-000000000001',
 	email: 'demo@example.org',
 	fullName: 'Демо Пользователь',
-	roleId: 'viewer',
+	roleId: 'manager',
 	permissions: new Set(['interactions.read']),
 	isDemo: true,
 	scope: { kind: 'all' }

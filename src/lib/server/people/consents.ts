@@ -20,6 +20,7 @@ import { getDb } from '../db';
 import { consents, people, users } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { ConflictError, NotFoundError } from '../errors';
+import { assertPersonVisible } from './access';
 import { requirePermission } from '../rbac';
 
 /**
@@ -66,6 +67,7 @@ function selectConsents() {
  */
 export async function listConsents(ctx: ActorContext, personId: string): Promise<ConsentView[]> {
 	requirePermission(ctx, 'people.manage_consents');
+	await assertPersonVisible(ctx, personId);
 
 	const rows = await selectConsents()
 		.where(eq(consents.personId, personId))
@@ -91,8 +93,20 @@ async function readConsent(consentId: string): Promise<ConsentView> {
 	return toConsentView(row);
 }
 
-/** Человек, о котором идёт речь; обезличенному согласия уже не нужны. */
-async function requirePerson(personId: string): Promise<typeof people.$inferSelect> {
+/**
+ * Человек, о котором идёт речь; обезличенному согласия уже не нужны.
+ *
+ * Область проверяется здесь же, а не только правом: операции идут по
+ * идентификатору человека, и без этой проверки менеджер записал бы согласие за
+ * чужой вуз, ни разу не открыв его карточку. Человек вне области — «не
+ * найден», как и везде: разный ответ выдал бы существование чужой записи.
+ */
+async function requirePerson(
+	ctx: ActorContext,
+	personId: string
+): Promise<typeof people.$inferSelect> {
+	await assertPersonVisible(ctx, personId);
+
 	const [row] = await getDb().select().from(people).where(eq(people.id, personId)).limit(1);
 
 	if (row === undefined) {
@@ -111,7 +125,7 @@ export async function recordConsent(
 		subject: { type: 'person', id: input.personId }
 	});
 
-	const person = await requirePerson(input.personId);
+	const person = await requirePerson(ctx, input.personId);
 
 	if (person.anonymizedAt !== null) {
 		throw new ConflictError('Данные человека обезличены: согласие фиксировать не на что');

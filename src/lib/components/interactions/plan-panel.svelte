@@ -89,7 +89,7 @@
 						? null
 						: interaction.products.map((product) => product.name).join('; ')}
 				/>
-				<KeyValueRow label="Маршрут" value={interaction.routeName} />
+				<KeyValueRow label="Процесс" value={interaction.processGroupName} />
 				<KeyValueRow
 					label="Учебный период"
 					value={interaction.academicPeriodStart === null

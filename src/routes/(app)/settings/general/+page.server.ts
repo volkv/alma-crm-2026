@@ -5,27 +5,26 @@ import { settingSchemas } from '$lib/contracts/settings';
 import { actorFromEvent } from '$lib/server/actor';
 import { AppError, ForbiddenError } from '$lib/server/errors';
 import { errorIssues, toActionFailure, type ActionErrorPayload } from '$lib/server/http';
-import { parseNetwork } from '$lib/server/auth/networks';
 import { can } from '$lib/server/rbac';
-import { DEFAULT_ROLES } from '$lib/server/rbac/permissions';
 import { getSetting, setSetting } from '$lib/server/settings';
-import { mfaPolicySchema, sessionLimitsSchema, splitNetworks } from './schema';
+import { sessionLimitsSchema } from './schema';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
  * Общие настройки: то, что администратор меняет из интерфейса, а не
  * переменными окружения. Каждая карточка — своя форма и своё действие: у них
  * разные схемы и разные последствия, и общая кнопка «Сохранить всё» означала
- * бы, что правка баннера трогает политику паролей.
+ * бы, что правка баннера трогает сроки жизни сессии.
+ *
+ * Политик пароля, блокировки и второго фактора здесь нет: пароль спрашивает
+ * каталог учётных записей, и правила к нему задаются в нём же
+ * (`keycloak/README.md`).
  */
 
 /** Формы страницы; идентификатор связывает форму на сервере с формой в браузере. */
 const FORM_IDS = {
 	banner: 'login-banner',
-	session: 'session-limits',
-	password: 'password-policy',
-	lockout: 'lockout-policy',
-	mfa: 'mfa-policy'
+	session: 'session-limits'
 } as const;
 
 export const load: PageServerLoad = async (event) => {
@@ -35,38 +34,18 @@ export const load: PageServerLoad = async (event) => {
 		error(403, 'Раздел доступен только с правом «Изменение настроек приложения»');
 	}
 
-	const [banner, idleMinutes, absoluteHours, passwordPolicy, lockoutPolicy, mfaPolicy] =
-		await Promise.all([
-			getSetting('login_banner'),
-			getSetting('session_idle_minutes'),
-			getSetting('session_absolute_hours'),
-			getSetting('password_policy'),
-			getSetting('lockout_policy'),
-			getSetting('mfa_policy')
-		]);
+	const [banner, idleMinutes, absoluteHours] = await Promise.all([
+		getSetting('login_banner'),
+		getSetting('session_idle_minutes'),
+		getSetting('session_absolute_hours')
+	]);
 
 	return {
-		roles: DEFAULT_ROLES.map((role) => ({ id: role.id, name: role.name })),
-		mfaForm: await superValidate(
-			{
-				requiredForRoles: mfaPolicy.requiredForRoles,
-				remoteOnly: mfaPolicy.remoteOnly,
-				trustedNetworks: mfaPolicy.trustedNetworks.join('\n')
-			},
-			zod4(mfaPolicySchema),
-			{ id: FORM_IDS.mfa }
-		),
 		bannerForm: await superValidate(banner, zod4(settingSchemas.login_banner), {
 			id: FORM_IDS.banner
 		}),
 		sessionForm: await superValidate({ idleMinutes, absoluteHours }, zod4(sessionLimitsSchema), {
 			id: FORM_IDS.session
-		}),
-		passwordForm: await superValidate(passwordPolicy, zod4(settingSchemas.password_policy), {
-			id: FORM_IDS.password
-		}),
-		lockoutForm: await superValidate(lockoutPolicy, zod4(settingSchemas.lockout_policy), {
-			id: FORM_IDS.lockout
 		})
 	};
 };
@@ -135,78 +114,5 @@ export const actions: Actions = {
 		}
 
 		return message(form, 'Сроки жизни сессии сохранены');
-	},
-
-	password: async (event) => {
-		const form = await superValidate(event.request, zod4(settingSchemas.password_policy), {
-			id: FORM_IDS.password
-		});
-
-		if (!form.valid) {
-			return fail(400, { form });
-		}
-
-		try {
-			await setSetting(actorFromEvent(event), 'password_policy', form.data);
-		} catch (failure) {
-			return asFormError(form, failure);
-		}
-
-		// Уже заведённые пароли остаются рабочими: политика проверяется при
-		// установке пароля, а не при входе.
-		return message(form, 'Политика паролей сохранена и действует со следующей смены пароля');
-	},
-
-	lockout: async (event) => {
-		const form = await superValidate(event.request, zod4(settingSchemas.lockout_policy), {
-			id: FORM_IDS.lockout
-		});
-
-		if (!form.valid) {
-			return fail(400, { form });
-		}
-
-		try {
-			await setSetting(actorFromEvent(event), 'lockout_policy', form.data);
-		} catch (failure) {
-			return asFormError(form, failure);
-		}
-
-		return message(form, 'Политика блокировки сохранена');
-	},
-
-	mfa: async (event) => {
-		const form = await superValidate(event.request, zod4(mfaPolicySchema), { id: FORM_IDS.mfa });
-
-		if (!form.valid) {
-			return fail(400, { form });
-		}
-
-		const trustedNetworks = splitNetworks(form.data.trustedNetworks);
-		// Схема настройки проверяет запись сети по форме — она читается и
-		// браузером, куда серверный разбор не попадает. Здесь запись проходит
-		// настоящий разбор: правило доступа, которое не разобралось, обязано
-		// остановить сохранение, а не всплыть отказом во входе.
-		const malformed = trustedNetworks.filter((network) => parseNetwork(network) === null);
-
-		if (malformed.length > 0) {
-			return setError(
-				form,
-				'trustedNetworks',
-				`Не разобраны как сеть: ${malformed.join(', ')}. Ожидается 198.51.100.0/24 или 2001:db8::/32, адрес — начало сети`
-			);
-		}
-
-		try {
-			await setSetting(actorFromEvent(event), 'mfa_policy', {
-				requiredForRoles: form.data.requiredForRoles,
-				remoteOnly: form.data.remoteOnly,
-				trustedNetworks
-			});
-		} catch (failure) {
-			return asFormError(form, failure);
-		}
-
-		return message(form, 'Политика второго фактора сохранена');
 	}
 };

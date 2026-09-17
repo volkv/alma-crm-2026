@@ -53,6 +53,16 @@ export type ApiEndpointConfig = {
 	/** Схема ответа. Ответ проверяется ею же перед отправкой. */
 	output: z.ZodType;
 	permission?: PermissionKey;
+	/**
+	 * Маршрут обмена: сюда допускается ключ машинного субъекта (роль `service`).
+	 *
+	 * Признак объявляется на маршруте, а не выводится из права: у машинного
+	 * субъекта область `all`, и стоит ему попасть на обычный маршрут — он
+	 * увидит записи всего продукта. Поэтому правило обратное обычному: ключ
+	 * роли `service` допускается только туда, где стоит `service: true`, а
+	 * остальные маршруты остаются людям.
+	 */
+	service?: boolean;
 	/** Разрешить `Idempotency-Key`; имеет смысл только для POST, PUT и PATCH. */
 	idempotent?: boolean;
 };
@@ -69,7 +79,7 @@ export type ApiRequest<TConfig extends ApiEndpointConfig> = {
 const IDEMPOTENT_METHODS = new Set(['POST', 'PUT', 'PATCH']);
 
 /** Область доступа того, кто ещё не представился: ничего. */
-const NO_ACCESS: AccessScope = { kind: 'organizations', organizationIds: new Set() };
+const NO_ACCESS: AccessScope = { kind: 'delegated', userIds: new Set() };
 
 /**
  * Отказ, случившийся в транспорте: до сервиса запрос не дошёл, и предметной
@@ -333,6 +343,18 @@ export function apiHandler<TConfig extends ApiEndpointConfig>(
 					{
 						'Retry-After': String(keyVerdict.resetSeconds)
 					}
+				);
+			}
+
+			// Граница машинного субъекта — до всякой проверки права: право могло
+			// бы совпасть (у администратора есть и `exchange.*`), а вопрос здесь
+			// другой — пускать ли на этот маршрут ключ, у которого область `all`
+			// и нет живого владельца.
+			if (authenticated.owner.roleId === 'service' && config.service !== true) {
+				throw new ApiFailure(
+					403,
+					'forbidden',
+					'Ключ внешней системы работает только на эндпоинтах обмена'
 				);
 			}
 

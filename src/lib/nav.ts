@@ -1,4 +1,5 @@
 import type { LucideIcon } from '@lucide/svelte';
+import BarChart3Icon from '@lucide/svelte/icons/bar-chart-3';
 import BuildingIcon from '@lucide/svelte/icons/building';
 import DatabaseIcon from '@lucide/svelte/icons/database';
 import FileTextIcon from '@lucide/svelte/icons/file-text';
@@ -32,6 +33,16 @@ export const navSections: readonly NavSection[] = [
 		href: '/interactions',
 		label: 'Взаимодействия',
 		icon: HandshakeIcon,
+		permission: 'interactions.read'
+	},
+	{
+		// Отчёт показывает ровно то, что человек и так видит в списке
+		// взаимодействий, поэтому право у него то же: право, расходящееся с
+		// `interactions.read`, однажды показало бы в отчёте лишнее или спрятало
+		// своё (`docs/access-matrix.md`, раздел 3).
+		href: '/reports',
+		label: 'Отчёты',
+		icon: BarChart3Icon,
 		permission: 'interactions.read'
 	},
 	{

@@ -18,9 +18,8 @@ export type SessionUser = {
 	permissions: ReadonlySet<string>;
 	/**
 	 * This session belongs to the public demo: it was opened on an account
-	 * marked `is_demo` while `DEMO_MODE` is on, whether through the password
-	 * form or the "sign in as …" button. Outside demo mode such an account is an
-	 * ordinary one and this is `false`.
+	 * marked `is_demo` while `DEMO_MODE` is on. Outside demo mode such an account
+	 * is an ordinary one and this is `false`.
 	 *
 	 * It is a boundary, not a badge: permissions are already narrowed by it, and
 	 * what is still readable is narrowed where it is read (the audit log masks
@@ -28,21 +27,8 @@ export type SessionUser = {
 	 */
 	isDemo: boolean;
 	/**
-	 * Пароль приняли, второго фактора ещё нет. Такая сессия существует только
-	 * ради второго шага входа: гвардия уводит её на `/login/mfa` и никуда
-	 * больше, а публичный API сессий не смотрит вовсе.
-	 *
-	 * Признак принадлежит сессии, а не учётной записи, поэтому ставит его хук,
-	 * прочитавший запись в Redis, а `loadSessionUser` — тот, кто собирает
-	 * пользователя и для браузера, и для ключа доступа, — проставляет `false`
-	 * явно. Поле необязательное: подделки пользователя в тестах и сидах
-	 * описывают обычную, уже открытую сессию, и перечислять в каждой из них
-	 * «второго шага не было» значит повторять то, что и так верно.
-	 */
-	mfaPending?: boolean;
-	/**
-	 * Which organisations this user may see. Decided once, when the session is
-	 * built, and copied into every `ActorContext` from there.
+	 * Чьи записи этот пользователь видит. Считается при сборке пользователя — то
+	 * есть на каждом запросе, — и оттуда копируется в `ActorContext`.
 	 */
 	scope: AccessScope;
 };

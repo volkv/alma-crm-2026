@@ -19,12 +19,14 @@ import { interactionParties, interactions, stageEntries } from '$lib/server/db/s
 import { getWorkOverview } from '$lib/server/interactions/overview';
 import { createInteraction } from '$lib/server/interactions/write';
 import { addComment, pauseStage, raiseBlocker } from '$lib/server/stages/commands';
-import { ensureDemoRoute } from '$lib/server/stages/routes';
+import { B2B_GROUP_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
+import { ensureProcess } from '$lib/server/stages/process';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import {
 	daysFrom,
 	insertOrganization,
 	startTestDatabase,
+	scopedActor,
 	testActor,
 	TEST_USER_IDS,
 	type TestDatabase
@@ -49,20 +51,20 @@ beforeEach(async () => {
 
 const admin = (): ActorContext => testActor({ roleId: 'admin' });
 
-async function demoRoute(): Promise<string> {
-	return database.db.transaction((tx) => ensureDemoRoute(tx));
+/** Процесс учебных заведений: его стадии и ведут взаимодействия набора. */
+async function demoProcess(): Promise<string> {
+	return database.db.transaction((tx) => ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS));
 }
 
-/** Взаимодействие с одним вузом; маршрут сразу ставит его на первую стадию. */
+/** Взаимодействие с одним вузом; процесс сразу ставит его на первую стадию. */
 async function makeInteraction(
 	ctx: ActorContext,
-	options: { routeId: string; title: string; organizationId: string; ownerUserId?: string }
+	options: { title: string; organizationId: string; ownerUserId?: string }
 ): Promise<string> {
 	const created = await createInteraction(
 		ctx,
 		createInteractionSchema.parse({
 			title: options.title,
-			routeId: options.routeId,
 			ownerUserId: options.ownerUserId ?? TEST_USER_IDS.admin,
 			parties: [
 				{
@@ -149,15 +151,15 @@ async function block(ctx: ActorContext, interactionId: string, description: stri
 describe('счётчики портфеля', () => {
 	it('считают просрочку, паузу, помеху, тишину и завершённые', async () => {
 		const ctx = admin();
-		const routeId = await demoRoute();
+		await demoProcess();
 		const organizationId = await insertOrganization(database.db, { shortName: 'Политех' });
 
-		const plain = await makeInteraction(ctx, { routeId, title: 'Обычное', organizationId });
-		const overdue = await makeInteraction(ctx, { routeId, title: 'Просроченное', organizationId });
-		const paused = await makeInteraction(ctx, { routeId, title: 'На паузе', organizationId });
-		const blocked = await makeInteraction(ctx, { routeId, title: 'С помехой', organizationId });
-		const silent = await makeInteraction(ctx, { routeId, title: 'Молчит', organizationId });
-		const finished = await makeInteraction(ctx, { routeId, title: 'Завершённое', organizationId });
+		const plain = await makeInteraction(ctx, { title: 'Обычное', organizationId });
+		const overdue = await makeInteraction(ctx, { title: 'Просроченное', organizationId });
+		const paused = await makeInteraction(ctx, { title: 'На паузе', organizationId });
+		const blocked = await makeInteraction(ctx, { title: 'С помехой', organizationId });
+		const silent = await makeInteraction(ctx, { title: 'Молчит', organizationId });
+		const finished = await makeInteraction(ctx, { title: 'Завершённое', organizationId });
 
 		// Первая стадия демонстрационного маршрута: норматив 7 дней, протухание 5.
 		await enteredDaysAgo(overdue, 30);
@@ -194,11 +196,10 @@ describe('счётчики портфеля', () => {
 
 	it('не считает завершённое полгода назад', async () => {
 		const ctx = admin();
-		const routeId = await demoRoute();
+		await demoProcess();
 		const organizationId = await insertOrganization(database.db);
 
 		const finished = await makeInteraction(ctx, {
-			routeId,
 			title: 'Давно закрыто',
 			organizationId
 		});
@@ -218,13 +219,13 @@ describe('счётчики портфеля', () => {
 describe('требуют действия', () => {
 	it('ставит вперёд просрочку, затем помеху, затем близкий срок', async () => {
 		const ctx = admin();
-		const routeId = await demoRoute();
+		await demoProcess();
 		const organizationId = await insertOrganization(database.db);
 
-		const rest = await makeInteraction(ctx, { routeId, title: 'Времени вдоволь', organizationId });
-		const soon = await makeInteraction(ctx, { routeId, title: 'Срок на подходе', organizationId });
-		const blocked = await makeInteraction(ctx, { routeId, title: 'С помехой', organizationId });
-		const overdue = await makeInteraction(ctx, { routeId, title: 'Просроченное', organizationId });
+		const rest = await makeInteraction(ctx, { title: 'Времени вдоволь', organizationId });
+		const soon = await makeInteraction(ctx, { title: 'Срок на подходе', organizationId });
+		const blocked = await makeInteraction(ctx, { title: 'С помехой', organizationId });
+		const overdue = await makeInteraction(ctx, { title: 'Просроченное', organizationId });
 
 		// Норматив первой стадии — 7 дней: вход шесть дней назад оставляет один.
 		await enteredDaysAgo(soon, 6);
@@ -249,11 +250,11 @@ describe('требуют действия', () => {
 
 	it('объясняет строку паузой и тишиной, когда помехи нет', async () => {
 		const ctx = admin();
-		const routeId = await demoRoute();
+		await demoProcess();
 		const organizationId = await insertOrganization(database.db, { shortName: 'Педагогический' });
 
-		const paused = await makeInteraction(ctx, { routeId, title: 'Ждём вуз', organizationId });
-		const silent = await makeInteraction(ctx, { routeId, title: 'Тишина', organizationId });
+		const paused = await makeInteraction(ctx, { title: 'Ждём вуз', organizationId });
+		const silent = await makeInteraction(ctx, { title: 'Тишина', organizationId });
 
 		await pause(ctx, paused, 'Ждём подписанный экземпляр', 'Позвонить в деканат');
 		await silentForDays(silent, 30);
@@ -273,33 +274,34 @@ describe('требуют действия', () => {
 
 	it('показывает просроченные по всем, когда своих взаимодействий нет', async () => {
 		const ctx = admin();
-		const routeId = await demoRoute();
+		await demoProcess();
 		const organizationId = await insertOrganization(database.db);
 
 		const overdue = await makeInteraction(ctx, {
-			routeId,
 			title: 'Горит у соседа',
 			organizationId
 		});
-		await makeInteraction(ctx, { routeId, title: 'Не горит', organizationId });
+		await makeInteraction(ctx, { title: 'Не горит', organizationId });
 		await enteredDaysAgo(overdue, 30);
 
-		// Наблюдатель не ведёт взаимодействий: пустой список не сказал бы ему
+		// Тот, кто не ведёт взаимодействий, пустого списка не заслужил: он не сказал бы ему
 		// ничего, а горящее по соседству — говорит.
-		const viewer = await getWorkOverview(testActor({ roleId: 'viewer' }));
+		const observer = await getWorkOverview(
+			testActor({ roleId: 'manager', permissions: ['interactions.read'] })
+		);
 
-		expect(viewer.needsAction.basis).toBe('all');
-		expect(viewer.needsAction.tasks.map((task) => task.interaction.id)).toEqual([overdue]);
+		expect(observer.needsAction.basis).toBe('all');
+		expect(observer.needsAction.tasks.map((task) => task.interaction.id)).toEqual([overdue]);
 	});
 });
 
 describe('ожидание и лента', () => {
 	it('называет сторону и то, чего от неё ждут', async () => {
 		const ctx = admin();
-		const routeId = await demoRoute();
+		await demoProcess();
 		const organizationId = await insertOrganization(database.db, { shortName: 'Политех' });
 
-		const paused = await makeInteraction(ctx, { routeId, title: 'Ждём подпись', organizationId });
+		const paused = await makeInteraction(ctx, { title: 'Ждём подпись', organizationId });
 		await pause(ctx, paused, 'Соглашение у проректора', 'Напомнить через неделю');
 
 		const overview = await getWorkOverview(ctx);
@@ -316,18 +318,18 @@ describe('ожидание и лента', () => {
 
 	it('не отдаёт всю ленту одной записи: не больше двух событий на взаимодействие', async () => {
 		const ctx = admin();
-		const routeId = await demoRoute();
+		await demoProcess();
 		const organizationId = await insertOrganization(database.db);
 
 		// Один активный день по одной записи — это десяток событий подряд, и
 		// плоская лента закрыла бы ими весь остальной портфель.
-		const loud = await makeInteraction(ctx, { routeId, title: 'Шумное', organizationId });
+		const loud = await makeInteraction(ctx, { title: 'Шумное', organizationId });
 
 		for (const body of ['Созвонились', 'Отправили программы', 'Ждём ответ', 'Напомнили']) {
 			await addComment(ctx, { interactionId: loud, body });
 		}
 
-		const quiet = await makeInteraction(ctx, { routeId, title: 'Тихое', organizationId });
+		const quiet = await makeInteraction(ctx, { title: 'Тихое', organizationId });
 
 		const overview = await getWorkOverview(ctx);
 		const fromLoud = overview.activity.filter((event) => event.interactionId === loud);
@@ -343,11 +345,10 @@ describe('ожидание и лента', () => {
 
 	it('показывает менеджеру след работы по взаимодействиям', async () => {
 		const manager = testActor({ roleId: 'manager' });
-		const routeId = await demoRoute();
+		await demoProcess();
 		const organizationId = await insertOrganization(database.db);
 
 		const created = await makeInteraction(manager, {
-			routeId,
 			title: 'Новое взаимодействие',
 			organizationId,
 			ownerUserId: TEST_USER_IDS.manager
@@ -367,18 +368,25 @@ describe('ожидание и лента', () => {
 describe('область доступа', () => {
 	it('не пускает в сводку то, что за её пределами', async () => {
 		const ctx = admin();
-		const routeId = await demoRoute();
+		await demoProcess();
 		const mine = await insertOrganization(database.db, { shortName: 'Свой вуз' });
 		const theirs = await insertOrganization(database.db, { shortName: 'Чужой вуз' });
 
+		// Действующее лицо заводится первым: его же учётная запись становится
+		// владельцем своей записи. «Требуют действия» — это список своих дел, и
+		// без владельца он был бы пуст по другой причине, чем область доступа.
+		const limited = await scopedActor(database.db, { roleId: 'manager', organizationIds: [mine] });
+		const owner = limited.user?.id ?? TEST_USER_IDS.manager;
+
 		const visible = await makeInteraction(ctx, {
-			routeId,
 			title: 'Своё',
 			organizationId: mine,
-			ownerUserId: TEST_USER_IDS.manager
+			ownerUserId: owner
 		});
+		// Чужая запись отличается и вузом, и владельцем: область доступа
+		// считается по действующим назначениям, и работа другого КАМа в неё не
+		// попадает ни одним числом.
 		const hidden = await makeInteraction(ctx, {
-			routeId,
 			title: 'Чужое',
 			organizationId: theirs,
 			ownerUserId: TEST_USER_IDS.manager
@@ -388,7 +396,6 @@ describe('область доступа', () => {
 		await pause(ctx, hidden, 'Ждём чужой вуз');
 		await block(ctx, hidden, 'Чужая помеха');
 
-		const limited = testActor({ roleId: 'manager', organizationIds: [mine] });
 		const overview = await getWorkOverview(limited);
 
 		expect(overview.counters.active).toBe(1);

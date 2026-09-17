@@ -8,7 +8,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type {
-	StageRouteView,
+	ProcessRevisionView,
 	StageSnapshot,
 	StageTransitionView,
 	StageView
@@ -18,7 +18,7 @@ import { boardTransitions } from '$lib/server/interactions/board';
 import type { PermissionKey } from '$lib/server/rbac/permissions';
 import type { StageState } from '$lib/server/stages/transitions';
 
-const ROUTE_ID = '11111111-1111-4111-8111-111111111111';
+const REVISION_ID = '11111111-1111-4111-8111-111111111111';
 
 function actor(permissions: PermissionKey[]): ActorContext {
 	return {
@@ -43,7 +43,7 @@ function actor(permissions: PermissionKey[]): ActorContext {
 function stage(position: number, key: string, name: string): StageView {
 	return {
 		id: `stage-${key}`,
-		routeId: ROUTE_ID,
+		revisionId: REVISION_ID,
 		position,
 		key,
 		name,
@@ -52,6 +52,8 @@ function stage(position: number, key: string, name: string): StageView {
 		staleAfterDays: null,
 		requiresResult: false,
 		requiresConfirmation: false,
+		requiresLmsData: false,
+		isFinal: false,
 		checklist: []
 	};
 }
@@ -66,6 +68,8 @@ function snapshot(overrides: Partial<StageSnapshot> = {}): StageSnapshot {
 		staleAfterDays: null,
 		requiresResult: false,
 		requiresConfirmation: false,
+		requiresLmsData: false,
+		isFinal: false,
 		checklist: [],
 		...overrides
 	};
@@ -91,17 +95,17 @@ const CONTACT = stage(1, 'contact', 'Поиск контактов');
 const MEETING = stage(2, 'meeting', 'Встреча с представителями');
 const DOCUMENTS = stage(3, 'documents', 'Обмен документами');
 
-function route(transitions: StageTransitionView[]): StageRouteView {
+function route(transitions: StageTransitionView[]): ProcessRevisionView {
 	return {
-		id: ROUTE_ID,
-		key: 'demo',
+		id: REVISION_ID,
+		groupId: '22222222-2222-4222-8222-222222222222',
 		version: 1,
-		name: 'Маршрут',
-		description: null,
-		isDefault: true,
+		name: 'Процесс',
+		note: null,
 		publishedAt: new Date('2026-01-01T00:00:00.000Z'),
 		stages: [CONTACT, MEETING, DOCUMENTS],
-		transitions
+		transitions,
+		migrationRules: []
 	};
 }
 
@@ -112,6 +116,7 @@ function state(overrides: Partial<StageState> = {}): StageState {
 		checklistState: {},
 		resultText: null,
 		confirmation: null,
+		lmsEvidence: null,
 		isPaused: false,
 		blockingBlockers: 0,
 		...overrides
@@ -195,13 +200,13 @@ describe('boardTransitions', () => {
 		expect(forward.reasons.join(' ')).toContain('Созвон проведён');
 	});
 
-	it('не выдумывает названия стадии, которой в маршруте нет', () => {
+	it('не выдумывает названия стадии, которой в процессе нет', () => {
 		const [outside] = boardTransitions(
 			actor(['stages.transition']),
 			state(),
 			route([transition(MEETING.id, 'stage-unknown')])
 		);
 
-		expect(outside.toStageName).toBe('Стадия вне маршрута');
+		expect(outside.toStageName).toBe('Стадия вне процесса');
 	});
 });

@@ -62,13 +62,14 @@ export const load: PageServerLoad = async (event) => {
 		filters.status !== null ||
 		filters.stageCategory !== null ||
 		filters.overdue ||
-		filters.mine;
+		filters.mine ||
+		filters.group !== null;
 
 	const common = {
 		filters,
 		isFiltered,
 		search: table.search,
-		canAssign: can(ctx, 'interactions.write'),
+		canAssign: can(ctx, 'interactions.reassign'),
 		/** Право двигать стадии: без него доска только показывает. */
 		canTransition: can(ctx, 'stages.transition')
 	};
@@ -77,7 +78,7 @@ export const load: PageServerLoad = async (event) => {
 	// таблица — за выборку доски.
 	if (view === 'board') {
 		const board = await getInteractionBoard(ctx, {
-			routeId: event.url.searchParams.get('route'),
+			group: filters.group,
 			status: filters.status,
 			stageCategory: filters.stageCategory,
 			overdue: filters.overdue,
@@ -90,6 +91,7 @@ export const load: PageServerLoad = async (event) => {
 
 	const query = interactionListQuerySchema.parse({
 		status: filters.status,
+		group: filters.group,
 		stageCategory: filters.stageCategory,
 		overdue: filters.overdue,
 		ownerUserId,
@@ -139,10 +141,14 @@ export const actions: Actions = {
 	/**
 	 * Переход по стадиям с доски: перетаскиванием карточки или пунктом её меню.
 	 *
-	 * Вид перехода приходит из описания маршрута, поэтому разбирается схемой
+	 * Вид перехода приходит из описания процесса, поэтому разбирается схемой
 	 * своей команды — у возврата и пропуска причина обязательна, и требование
 	 * это не интерфейса, а контракта. Двигают запись те же атомарные команды
 	 * движка, что и карточка: прав и готовности перехода доска не решает.
+	 *
+	 * Номер редакции едет с доски вместе с командой: если процесс изменили, пока
+	 * доска была открыта, команда отказывает словами, а не двигает запись по
+	 * правилам, которых уже нет.
 	 */
 	transition: async (event) => {
 		const data = await event.request.formData();
@@ -151,6 +157,7 @@ export const actions: Actions = {
 			interactionId: data.get('interactionId'),
 			fromStageId: data.get('fromStageId'),
 			toStageId: data.get('toStageId'),
+			revision: Number(data.get('revision')),
 			reason: data.get('reason')
 		};
 

@@ -169,6 +169,13 @@ test('демонстрационный проход: карточка, стад�
 		await expect(advance).toBeEnabled();
 		await advance.click();
 
+		// Любой переход спрашивает комментарий и вложения: это то, чем объясняют,
+		// чем кончилась стадия. Комментарий здесь необязателен — процесс его не
+		// требует, — и переход уходит без него.
+		const dialog = page.getByRole('dialog');
+		await expect(dialog.getByLabel('Комментарий')).toBeVisible();
+		await dialog.getByRole('button', { name: 'Подтвердить' }).click();
+
 		await expect(
 			page.locator('[data-slot="stage-timeline"] [aria-current="step"]')
 		).toHaveAccessibleName(/Коммуникация и сверка программ — текущая/);

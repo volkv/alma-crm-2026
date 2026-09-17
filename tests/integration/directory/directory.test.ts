@@ -45,6 +45,7 @@ import {
 	failureCode,
 	insertPerson,
 	startTestDatabase,
+	scopedActor,
 	testActor,
 	type TestDatabase
 } from '../helpers/db';
@@ -177,7 +178,7 @@ describe('организации', () => {
 
 		// Возврат меняет справочник, поэтому требует того же права, что и архив.
 		await expect(
-			restoreOrganization(testActor({ roleId: 'viewer' }), organization.id)
+			restoreOrganization(testActor({ roleId: 'manager', permissions: [] }), organization.id)
 		).rejects.toBeInstanceOf(ForbiddenError);
 	});
 
@@ -514,7 +515,10 @@ describe('персональные данные в справочнике', () =
 	it('не пишет следа, когда контакты показаны замаскированными', async () => {
 		await insertPerson(database.db, { lastName: 'Первый' });
 
-		await listPeople(testActor({ roleId: 'viewer' }), firstPeoplePage);
+		await listPeople(
+			testActor({ roleId: 'manager', permissions: ['people.read'] }),
+			firstPeoplePage
+		);
 
 		const events = await database.db
 			.select()
@@ -565,9 +569,9 @@ describe('персональные данные в справочнике', () =
 
 describe('права и область доступа', () => {
 	it('отказывает наблюдателю в записи и оставляет отказ в журнале', async () => {
-		const viewer = testActor({ roleId: 'viewer' });
+		const noRights = testActor({ roleId: 'manager', permissions: [] });
 
-		await expect(createOrganization(viewer, organizationInput())).rejects.toBeInstanceOf(
+		await expect(createOrganization(noRights, organizationInput())).rejects.toBeInstanceOf(
 			ForbiddenError
 		);
 
@@ -625,7 +629,7 @@ describe('права и область доступа', () => {
 		expect(full.items[0].person.email).toBe('sidorova@vuz.ru');
 		expect(full.items[0].person.contactsMasked).toBe(false);
 
-		const limited = testActor({ roleId: 'viewer' });
+		const limited = testActor({ roleId: 'manager', permissions: ['people.read'] });
 		const masked = await listPeople(limited, firstPeoplePage);
 
 		expect(masked.items[0].person.email).toBe('s***@vuz.ru');
@@ -638,7 +642,7 @@ describe('права и область доступа', () => {
 		const mine = await createOrganization(admin, organizationInput({ shortName: 'Своя' }));
 		await createOrganization(admin, organizationInput({ shortName: 'Чужая' }));
 
-		const scoped = testActor({ organizationIds: [mine.id] });
+		const scoped = await scopedActor(database.db, { organizationIds: [mine.id] });
 		const rows = await listOrganizationRows(scoped, firstPage);
 
 		expect(rows.total).toBe(1);
@@ -653,7 +657,7 @@ describe('права и область доступа', () => {
 		);
 		const visible = await createOrganization(admin, organizationInput({ shortName: 'Свой вуз' }));
 
-		const scoped = testActor({ organizationIds: [visible.id] });
+		const scoped = await scopedActor(database.db, { organizationIds: [visible.id] });
 
 		await expect(
 			createOrganization(scoped, organizationInput({ shortName: 'Новый', inn: INN }))
@@ -752,7 +756,7 @@ describe('права и область доступа', () => {
 			});
 		}
 
-		const scoped = testActor({ organizationIds: [mine.id] });
+		const scoped = await scopedActor(database.db, { organizationIds: [mine.id] });
 		const rows = await listPeople(scoped, firstPeoplePage);
 
 		// Человек без ролей ещё ничей — его прячет не область доступа, а её
@@ -778,7 +782,7 @@ describe('права и область доступа', () => {
 			externalId: null
 		});
 
-		const scoped = testActor({ organizationIds: [mine.id] });
+		const scoped = await scopedActor(database.db, { organizationIds: [mine.id] });
 		expect(await listSites(scoped, other.id)).toEqual([]);
 
 		const rows = await database.db.select({ id: sites.id }).from(sites);

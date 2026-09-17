@@ -17,7 +17,13 @@ import { waitForHydration } from './helpers/hydration';
 /** Метка в названиях: база прогона общая с разработческой, и чужие записи в ней бывают. */
 const MARK = 'E2E-СВОДКА';
 
-const ROUTE_KEY = 'e2e-home';
+/**
+ * Группа процесса этого прогона. Своя, а не `b2b` или `b2c`: в тех действуют
+ * процессы стенда, и подменять их ради проверки сводки незачем. Вида
+ * контрагента за ней не закреплено, поэтому команда создания в неё не приведёт
+ * — записи прогон заводит сам.
+ */
+const GROUP_KEY = 'e2e-home';
 
 const STAGES = [
 	{ key: 'contact', name: 'Первый контакт', category: 'contact', slaDays: 7, staleAfterDays: 5 },
@@ -107,19 +113,22 @@ function snapshot(stageKey: string): StageSnapshot {
 		staleAfterDays: stage.staleAfterDays,
 		requiresResult: false,
 		requiresConfirmation: false,
+		requiresLmsData: false,
+		isFinal: position + 1 === STAGES.length,
 		checklist: []
 	};
 }
 
 /**
- * Маршрут, вуз и две записи менеджера. Под блокировкой: файлы прогона
- * выполняются параллельно, и два рабочих процесса не должны заводить маршрут
- * одновременно. Записи не просто заводятся, а переписываются на каждом прогоне:
- * их сроки заданы относительно «сегодня», и оставленные от прошлого раза они
- * означали бы каждый раз другую просрочку.
+ * Процесс проверки сводки, вуз и две записи менеджера. Под блокировкой: файлы
+ * прогона выполняются параллельно, и два рабочих процесса не должны заводить
+ * редакцию одновременно. Записи не просто заводятся, а переписываются на каждом
+ * прогоне: их сроки заданы относительно «сегодня», и оставленные от прошлого
+ * раза они означали бы каждый раз другую просрочку.
  *
- * Маршрут намеренно не становится маршрутом по умолчанию — его предлагают новым
- * взаимодействиям, а это дело другого прогона.
+ * Редакция заводится в группе физических и юридических лиц: в группе учебных
+ * заведений действует процесс стенда, и подменять его этому прогону незачем.
+ * Действующей она становится только если у группы её ещё нет.
  */
 async function seed(): Promise<void> {
 	const sql = postgres(databaseUrl(), { max: 1, connect_timeout: 10 });
@@ -139,43 +148,61 @@ async function seed(): Promise<void> {
 				on conflict (id) do nothing
 			`;
 
-			const existing = await tx<{ id: string }[]>`
-				select id from stage_routes where key = ${ROUTE_KEY} limit 1
+			await tx`
+				insert into process_groups ${tx({
+					key: GROUP_KEY,
+					name: 'Проверка сводки главной',
+					position: 100
+				})}
+				on conflict (key) do nothing
 			`;
 
-			let routeId = existing[0]?.id;
+			const [group] = await tx<{ id: string; active_revision_id: string | null }[]>`
+				select id, active_revision_id from process_groups where key = ${GROUP_KEY}
+			`;
 
-			if (routeId === undefined) {
-				const [route] = await tx<{ id: string }[]>`
-					insert into stage_routes ${tx({
-						key: ROUTE_KEY,
+			let revisionId = group.active_revision_id;
+
+			if (revisionId === null) {
+				const [revision] = await tx<{ id: string }[]>`
+					insert into process_revisions ${tx({
+						group_id: group.id,
 						version: 1,
-						name: 'Маршрут проверки сводки',
-						is_default: false,
+						name: 'Процесс проверки сводки',
 						published_at: new Date()
 					})}
 					returning id
 				`;
 
-				routeId = route.id;
+				revisionId = revision.id;
 
 				for (const [index, stage] of STAGES.entries()) {
 					await tx`
 						insert into stages ${tx({
-							route_id: routeId,
+							revision_id: revisionId,
 							position: index + 1,
 							key: stage.key,
 							name: stage.name,
 							category: stage.category,
 							sla_days: stage.slaDays,
-							stale_after_days: stage.staleAfterDays
+							stale_after_days: stage.staleAfterDays,
+							is_final: index + 1 === STAGES.length
 						})}
 					`;
+
+					await tx`
+						insert into process_stage_keys ${tx({ group_id: group.id, key: stage.key })}
+						on conflict do nothing
+					`;
 				}
+
+				await tx`
+					update process_groups set active_revision_id = ${revisionId} where id = ${group.id}
+				`;
 			}
 
 			const stageRows = await tx<{ id: string; key: string }[]>`
-				select id, key from stages where route_id = ${routeId}
+				select id, key from stages where revision_id = ${revisionId}
 			`;
 			const stageIds = new Map(stageRows.map((row) => [row.key, row.id]));
 
@@ -200,7 +227,7 @@ async function seed(): Promise<void> {
 					insert into interactions ${tx({
 						id: record.id,
 						title: record.title,
-						route_id: routeId,
+						process_group_id: group.id,
 						status: 'active',
 						owner_user_id: manager.id,
 						last_activity_at: daysAgo(record.silentDaysAgo)

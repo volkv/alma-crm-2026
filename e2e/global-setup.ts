@@ -1,86 +1,96 @@
 import { execFile } from 'node:child_process';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { Redis } from 'ioredis';
-import { chromium, type FullConfig, type Page } from '@playwright/test';
+import { chromium, type FullConfig } from '@playwright/test';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
-import { hashPassword } from '$lib/server/auth/password';
-import { totpCodeAt } from '../src/lib/server/auth/totp';
-import { DEMO_EMAILS, STAFF_ADMIN_EMAIL } from '../scripts/seed/users';
+import { DEMO_EMAILS, DEMO_LOGINS, STAFF_ADMIN_EMAIL } from '../scripts/seed/users';
+import { ensureAccount, keycloakAdmin, type DirectoryAccount } from './helpers/keycloak-admin';
+import { signInThroughDirectory } from './helpers/sign-in';
 
 /**
- * Готовит прогон: заводит его базу, применяет миграции, заливает те же начальные
- * данные, что и стенд, и один раз входит в систему за каждую роль, которая нужна
- * тестам.
+ * Готовит прогон: заводит его базу, применяет миграции, заливает те же
+ * начальные данные, что и стенд, приводит каталог учётных записей к тому, чем
+ * прогон входит, и один раз входит за каждую роль, которая нужна тестам.
  *
  * Данные заливает не этот файл, а `scripts/seed` — обычным дочерним процессом.
  * Сервисы приложения здесь недоступны (Playwright запускает файл обычным Node,
  * где нет `$env/dynamic/private`), а держать рядом второй набор учётных записей
  * значило бы проверять стенд, которого не существует: на демонстрации будут
- * ровно эти вузы, взаимодействия и кнопки входа.
+ * ровно эти вузы, взаимодействия и учётные записи.
  *
- * Вход делается здесь, а не в фикстуре, потому что POST на `/login` ограничен
- * по адресу: восемь рабочих процессов, каждый со своим входом, упирались в
- * защиту, рассчитанную на живого человека. Сессии складываются в файлы, и
- * тесты стартуют уже вошедшими.
+ * Вход делается здесь, а не в фикстуре: восемь рабочих процессов, каждый со
+ * своим входом, гоняли бы через каталог восемь настоящих сессий на каждый файл.
+ * Сессии складываются в файлы, и тесты стартуют уже вошедшими.
  */
 
-/** Пароль демонстрационных учётных записей прогона. */
-const DEMO_PASSWORD = 'Проверка-Входа1';
+/** Пароль учётных записей прогона в каталоге. */
+export const E2E_PASSWORD = 'Проверка-Входа-2026!';
 
-/** Учётная запись, которой тесты входят по паролю; заводится сидом. */
+/**
+ * Демонстрационный менеджер: под ним идут почти все проверки — и фикстура с
+ * готовой сессией, и те спеки, что входят по ходу дела.
+ */
 export const E2E_USER = {
-	email: 'manager@demo.lct-crm.local',
+	login: DEMO_LOGINS.manager,
+	email: DEMO_EMAILS.manager,
 	fullName: 'Менеджер Демо',
-	password: DEMO_PASSWORD
+	password: E2E_PASSWORD
+};
+
+/** Демонстрационный руководитель: он видит работу своих людей и назначает ответственных. */
+export const DEMO_LEAD = {
+	login: DEMO_LOGINS.lead,
+	email: DEMO_EMAILS.lead,
+	password: E2E_PASSWORD
+};
+
+/**
+ * Штатный администратор стенда: обычная учётная запись оператора, не
+ * демонстрационная. Ею проверяется то, чего публичной демонстрации делать
+ * нельзя, — управление пользователями и выпуск ключей.
+ *
+ * В `keycloak/realm-lct.json` его нет: realm описывает стенд, где настоящие
+ * учётные записи заводит администратор руками. Прогон заводит его себе сам —
+ * так же, как заводит себе базу.
+ */
+export const STAFF_ADMIN = {
+	login: 'staff-admin',
+	email: STAFF_ADMIN_EMAIL,
+	password: E2E_PASSWORD
+};
+
+/**
+ * Учётная запись каталога без единой роли CRM. Нужна одному сценарию — отказу
+ * во входе: «доступ не назначен» нельзя показать, не имея того, кому не
+ * назначен доступ.
+ */
+export const NO_ROLE_ACCOUNT = {
+	login: 'outsider',
+	email: 'outsider@example.org',
+	password: E2E_PASSWORD
 };
 
 const authDirectory = new URL('../.playwright/auth/', import.meta.url).pathname;
 
-/** Сессия менеджера: под ней идут почти все проверки. */
+/** Сессия демонстрационного менеджера: под ней идут почти все проверки. */
 export const MANAGER_STATE = path.join(authDirectory, 'manager.json');
+
+/** Сессия демонстрационного руководителя. */
+export const LEAD_STATE = path.join(authDirectory, 'lead.json');
 
 /**
  * Сессия демонстрационного администратора: журнал и настройки закрыты для
  * менеджера правами. Она демонстрационная — со всеми ограничениями стенда: без
- * управления пользователями, ключами, настройками и без выгрузки журнала.
+ * управления пользователями и ключами.
  */
 export const ADMIN_STATE = path.join(authDirectory, 'admin.json');
 
-/**
- * Сессия штатного администратора: обычная учётная запись оператора, не
- * демонстрационная. Ею проверяется то, чего публичной демонстрации делать
- * нельзя, — заведение сотрудников, выпуск ключей, правка настроек.
- */
+/** Сессия штатного администратора стенда. */
 export const STAFF_ADMIN_STATE = path.join(authDirectory, 'staff-admin.json');
-
-/**
- * Штатный администратор прогона. Его заводит сид — тот же, что и на стенде:
- * учётную запись оператора там нельзя ни завести, ни восстановить изнутри
- * демонстрации, поэтому её пароль приходит переменной окружения. Прогон
- * передаёт сиду свой пароль и входит им.
- */
-export const STAFF_ADMIN = {
-	email: STAFF_ADMIN_EMAIL,
-	password: DEMO_PASSWORD
-};
-
-/**
- * Второй фактор штатного администратора: секрет и резервные коды, которые
- * выдала регистрация.
- *
- * Политика по умолчанию требует фактор от роли администратора, поэтому сетап
- * проходит регистрацию через интерфейс — как прошёл бы её человек, — а спекам
- * нужно то же, что унёс бы он: секрет, чтобы посчитать код, и коды на случай,
- * когда приложения нет. Файл, а не переменная модуля: рабочие процессы
- * Playwright друг друга не видят.
- */
-export const STAFF_ADMIN_FACTOR = path.join(authDirectory, 'staff-admin-factor.json');
-
-export type StoredFactor = { secret: string; backupCodes: string[] };
 
 const run = promisify(execFile);
 
@@ -140,88 +150,71 @@ async function ensureDatabase(url: string): Promise<void> {
 async function seedDatabase(env: ServerEnv): Promise<void> {
 	const { stdout } = await run(process.execPath, ['scripts/seed/index.ts'], {
 		cwd: new URL('..', import.meta.url).pathname,
-		env: {
-			...process.env,
-			...env,
-			SEED_DEMO_PASSWORD: DEMO_PASSWORD,
-			// Пароль администратора стенда задаёт прогон, а не окружение машины:
-			// иначе вход штатной учётной записью зависел бы от чужого `.env`.
-			SEED_STAFF_ADMIN_PASSWORD: STAFF_ADMIN.password
-		}
+		env: { ...process.env, ...env }
 	});
 
 	process.stdout.write(stdout);
 }
 
-/**
- * Вход и сохранение сессии в файл; чем входить — решает `enter`. Всё, что он
- * вернул, возвращается наружу: второй фактор рождается по дороге, а нужен он
- * спекам.
- */
-async function signIn<TResult>(
+/** Учётные записи каталога, которые нужны прогону, и их роли realm. */
+const DIRECTORY_ACCOUNTS: readonly DirectoryAccount[] = [
+	{
+		username: DEMO_LOGINS.admin,
+		email: DEMO_EMAILS.admin,
+		firstName: 'Администратор',
+		lastName: 'Демо',
+		realmRole: 'crm-admin'
+	},
+	{
+		username: DEMO_LOGINS.lead,
+		email: DEMO_EMAILS.lead,
+		firstName: 'Руководитель',
+		lastName: 'Демо',
+		realmRole: 'crm-lead'
+	},
+	{
+		username: DEMO_LOGINS.manager,
+		email: DEMO_EMAILS.manager,
+		firstName: 'Менеджер',
+		lastName: 'Демо',
+		realmRole: 'crm-user'
+	},
+	{
+		username: STAFF_ADMIN.login,
+		email: STAFF_ADMIN.email,
+		firstName: 'Администратор',
+		lastName: 'стенда',
+		realmRole: 'crm-admin'
+	},
+	{
+		username: NO_ROLE_ACCOUNT.login,
+		email: NO_ROLE_ACCOUNT.email,
+		firstName: 'Посторонний',
+		lastName: 'Человек',
+		realmRole: null
+	}
+];
+
+/** Вход и сохранение сессии в файл. */
+async function storeSession(
 	baseURL: string,
 	file: string,
-	enter: (page: Page) => Promise<TResult>
-): Promise<TResult> {
+	credentials: { login: string; password: string }
+): Promise<void> {
 	const browser = await chromium.launch();
 
 	try {
 		const context = await browser.newContext({ baseURL });
 		const page = await context.newPage();
 
-		await page.goto('/login');
-		const result = await enter(page);
+		await signInThroughDirectory(page, credentials);
 		await page.waitForURL('/');
 
 		await context.storageState({ path: file });
 		await context.close();
-
-		return result;
 	} finally {
 		await browser.close();
 	}
-}
-
-/** Вход демонстрационной кнопкой: под ней общая учётная запись стенда. */
-function byDemoButton(roleName: string): (page: Page) => Promise<void> {
-	return async (page) => {
-		await page.getByRole('button', { name: `Войти как ${roleName}` }).click();
-	};
-}
-
-/** Вход по паролю: так входит штатный сотрудник, и сессия выходит не демо. */
-function byPassword(email: string, password: string): (page: Page) => Promise<void> {
-	return async (page) => {
-		await page.getByLabel('Рабочая почта').fill(email);
-		await page.getByLabel('Пароль').fill(password);
-		await page.getByRole('button', { name: 'Войти', exact: true }).click();
-	};
-}
-
-/**
- * Регистрация второго фактора — тем же путём, каким её проходит человек:
- * страница показывает ключ, приложение считает по нему код, код подтверждает
- * перенос, резервные коды показываются один раз.
- *
- * Обойти этот шаг нельзя и не нужно: политика по умолчанию требует фактор от
- * администратора, и прогон, который бы её обошёл, проверял бы систему, которой
- * не существует.
- */
-async function enrollSecondFactor(page: Page): Promise<StoredFactor> {
-	await page.waitForURL('**/login/mfa**');
-
-	const secret = (await page.getByTestId('totp-secret').innerText()).replace(/\s/g, '');
-
-	await page.getByLabel('Код из приложения').fill(totpCodeAt(secret, Date.now()));
-	await page.getByRole('button', { name: 'Подключить', exact: true }).click();
-
-	const list = page.getByTestId('backup-codes');
-	await list.waitFor();
-	const backupCodes = await list.getByRole('listitem').allInnerTexts();
-
-	await page.getByRole('button', { name: 'Я записал коды, продолжить' }).click();
-
-	return { secret, backupCodes };
 }
 
 export default async function globalSetup(config: FullConfig): Promise<void> {
@@ -238,40 +231,33 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
 
 		await seedDatabase(env);
 
-		const demoEmails = Object.values(DEMO_EMAILS);
-
-		// Кнопка «Войти как …» берёт первую демонстрационную запись роли по
-		// адресу, поэтому чужая запись из общей с разработкой базы может перехватить
-		// вход. Прогон идёт по данным сида — остальные демонстрационные записи в
-		// нём не участвуют.
+		// Демонстрационная запись роли, оставшаяся от прошлых прогонов или от
+		// общей с разработкой базы, перехватила бы связывание по почте: почта
+		// уникальна, и вошедший достался бы не той строке. Прогон идёт по данным
+		// сида — остальные демонстрационные записи в нём не участвуют.
 		await sql`
 			update users set is_active = false, deactivated_at = now()
-			where is_demo = true and email <> all(${demoEmails})
+			where is_demo = true and email <> all(${Object.values(DEMO_EMAILS)})
 		`;
 
-		// Пароль демонстрационных записей задаёт прогон, а не сид: сид бережёт
-		// пароль уже заведённой записи — это дело администратора стенда, — и без
-		// этой строки проверка входа по паролю зависела бы от того, чем базу
-		// заливали в прошлый раз.
-		await sql`
-			update users set password_hash = ${await hashPassword(DEMO_PASSWORD)}
-			where email = any(${demoEmails})
-		`;
-
-		// Второй фактор снимается со всех: база прогона переживает прогон, а
-		// секрет — нет. Иначе второй запуск подряд встречал бы шаг «введите код»
-		// от секрета, которого уже никто не знает.
-		await sql`
-			update users
-			set totp_secret = null, totp_enabled_at = null, totp_backup_codes = null
-			where totp_secret is not null or totp_enabled_at is not null
-		`;
+		// Связь с каталогом сбрасывается перед каждым прогоном.
+		//
+		// Контейнер каталога держит realm в памяти — тома у него нет, — поэтому
+		// пересозданный контейнер импортирует realm заново, и `sub` у тех же
+		// людей становится другим. База прогона при этом переживает прогон: в
+		// ней остаётся `external_subject` прежнего экземпляра, вход по новому
+		// субъекту запись не узнаёт, а связаться по почте не может — связывание
+		// принимает только запись без субъекта. Это то же самое, что на стенде
+		// делает администратор кнопкой «Отвязать»: продуктовое правило остаётся
+		// нетронутым, а прогон приводит свою базу в соответствие со своим
+		// каталогом — обоими он и распоряжается.
+		await sql`update users set external_subject = null where external_subject is not null`;
 	} finally {
 		await sql.end();
 	}
 
-	// Счётчик попыток входа с адреса общий на весь прогон: без сброса второй
-	// прогон подряд упёрся бы в предел, рассчитанный на живого человека.
+	// Счётчик заходов с адреса общий на весь прогон: без сброса второй прогон
+	// подряд упёрся бы в предел, рассчитанный на живого человека.
 	const redis = new Redis(env.REDIS_URL);
 
 	try {
@@ -284,6 +270,15 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
 		await redis.quit();
 	}
 
+	// Пароли демонстрационных записей в realm приходят из окружения той машины,
+	// на которой подняли контейнер, — прогон не может на них рассчитывать и
+	// ставит свои. Заодно заводятся те записи, которых в realm нет вовсе.
+	const admin = await keycloakAdmin(env.OIDC_PUBLIC_URL);
+
+	for (const account of DIRECTORY_ACCOUNTS) {
+		await ensureAccount(admin, account, E2E_PASSWORD);
+	}
+
 	const baseURL = config.projects[0]?.use.baseURL;
 
 	if (baseURL === undefined) {
@@ -291,16 +286,11 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
 	}
 
 	await mkdir(authDirectory, { recursive: true });
-	await signIn(baseURL, MANAGER_STATE, byDemoButton('менеджер'));
-	await signIn(baseURL, ADMIN_STATE, byDemoButton('администратор'));
-
-	// Демонстрационные кнопки второго фактора не спрашивают: учётная запись за
-	// ними общая. А штатный администратор — роль из политики, и пароля ему мало.
-	const factor = await signIn(baseURL, STAFF_ADMIN_STATE, async (page) => {
-		await byPassword(STAFF_ADMIN.email, STAFF_ADMIN.password)(page);
-
-		return enrollSecondFactor(page);
+	await storeSession(baseURL, MANAGER_STATE, E2E_USER);
+	await storeSession(baseURL, LEAD_STATE, DEMO_LEAD);
+	await storeSession(baseURL, ADMIN_STATE, {
+		login: DEMO_LOGINS.admin,
+		password: E2E_PASSWORD
 	});
-
-	await writeFile(STAFF_ADMIN_FACTOR, JSON.stringify(factor), 'utf8');
+	await storeSession(baseURL, STAFF_ADMIN_STATE, STAFF_ADMIN);
 }

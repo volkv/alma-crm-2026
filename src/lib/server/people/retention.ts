@@ -23,6 +23,7 @@ import { getDb } from '../db';
 import { people } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { ConflictError, NotFoundError } from '../errors';
+import { assertPersonVisible } from './access';
 import { requirePermission } from '../rbac';
 import { toPersonView } from './serialize';
 import { withPiiTrace } from './pii-trace';
@@ -55,6 +56,10 @@ export async function setRetention(
 		type: 'people.retention_changed',
 		subject: { type: 'person', id: input.personId }
 	});
+
+	// Область — до всякой записи: человек вне области отвечает «не найден», как
+	// и на своей карточке, и до строки в базе дело не доходит.
+	await assertPersonVisible(ctx, input.personId);
 
 	const [before] = await getDb()
 		.select()
@@ -117,6 +122,8 @@ export async function anonymizePerson(ctx: ActorContext, personId: string): Prom
 		type: 'people.anonymized',
 		subject: { type: 'person', id: personId }
 	});
+
+	await assertPersonVisible(ctx, personId);
 
 	const [before] = await getDb().select().from(people).where(eq(people.id, personId)).limit(1);
 

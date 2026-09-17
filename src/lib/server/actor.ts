@@ -12,13 +12,17 @@ import type { AuditSource } from '$lib/contracts/audit';
 import type { SessionUser } from './auth/types';
 
 /**
- * Какие организации видит вызывающий. `all` — все; `organizations` — только
- * перечисленные. Выборки обязаны применять область всегда, даже пока все роли
- * получают `all`: иначе к моменту, когда область начнёт сужаться, окажется, что
- * половина запросов её не учитывает.
+ * Что видит вызывающий. `all` — всё; `delegated` — записи перечисленных
+ * пользователей: их вузы (действующие назначения) и их взаимодействия.
+ *
+ * Область — это множество **людей**, а не организаций. Список организаций,
+ * посчитанный при входе, устаревает в ту секунду, когда руководитель меняет
+ * ответственного, и до следующего входа человек видел бы чужое или не видел
+ * своего. Множество пользователей такой беды не имеет: назначения читаются
+ * подзапросом в момент выборки, поэтому переназначение действует немедленно и
+ * во всех каналах сразу (`docs/access-matrix.md`, раздел 1).
  */
-export type AccessScope =
-	{ kind: 'all' } | { kind: 'organizations'; organizationIds: ReadonlySet<string> };
+export type AccessScope = { kind: 'all' } | { kind: 'delegated'; userIds: ReadonlySet<string> };
 
 export type ActorContext = {
 	/** Идентификатор запроса; попадает в журнал и в логи базы. */
@@ -32,7 +36,7 @@ export type ActorContext = {
 };
 
 /** Область доступа анонимного вызывающего: ничего. */
-const NO_ACCESS: AccessScope = { kind: 'organizations', organizationIds: new Set() };
+const NO_ACCESS: AccessScope = { kind: 'delegated', userIds: new Set() };
 
 /**
  * Контекст запроса из браузера или из публичного API. Всё, что нужно сервисам,

@@ -9,13 +9,13 @@
  * у `requirePermission` есть форма с описанием события, и другой формы «проверил
  * право и отметил отказ» в приложении нет.
  */
-import { eq, inArray, sql, type SQL } from 'drizzle-orm';
+import { and, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import type { AuditEventType } from '$lib/contracts/audit';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
-import { rolePermissions } from '../db/schema';
+import { organizationResponsibles, rolePermissions } from '../db/schema';
 import { ForbiddenError } from '../errors';
 import { PERMISSION_KEYS, type PermissionKey } from './permissions';
 
@@ -132,32 +132,24 @@ export async function loadRolePermissions(roleId: string): Promise<ReadonlySet<P
 /**
  * Права, которых не получает публичная демонстрация, какой бы ролью ни вошли.
  *
- * Демонстрация — это открытый стенд с общими учётными записями: тот, кто на
- * него зашёл, не сотрудник оператора и не должен уметь оставить после себя
- * ничего постоянного. Заведение учётной записи и выпуск ключа переживают
- * демонстрацию и дают доступ дальше неё; правка настроек и маршрутов меняет
- * стенд для всех следующих посетителей; выгрузка журнала уносит адреса и
- * клиентов тех, кто заходил до тебя; заведённый вебхук продолжает слать
- * данные на чужой адрес и после того, как посетитель ушёл; обезличивание
- * стирает имена и контакты людей насовсем, и сид их не возвращает. Всё
- * остальное — чтение и работа с синтетическими данными — остаётся: иначе
- * показывать нечего.
+ * Демонстрационные записи полноценны в своей роли: под ними проходится весь
+ * процесс, правка процесса, обмен и настройка обмена — иначе показывать нечего.
+ * Запрет остаётся ровно там, где действие переживает демонстрацию или уносит
+ * чужое (`docs/access-matrix.md`, раздел 5):
+ *
+ * - `users.manage` — заведённая учётная запись даёт доступ после демонстрации;
+ * - `api_keys.manage` — выпущенный ключ живёт дольше сессии;
+ * - `integrations.manage_endpoints` — адрес и секрет уводят данные на чужой узел;
+ * - `people.anonymize` — необратимо, и сид имён не возвращает.
  *
  * Учёт согласий и сроков хранения (`people.manage_consents`) демонстрации
- * остаётся: это и есть то, что на стенде показывают про 152-ФЗ, и отменить
- * записанное согласие можно тем же экраном. Отнимается только необратимое
- * `people.anonymize` — ровно потому эти два действия и разведены по разным
- * правам.
+ * остаётся: это и есть то, что на стенде показывают про 152-ФЗ, а отменить
+ * записанное согласие можно тем же экраном. Ровно поэтому эти два действия и
+ * разведены по разным правам.
  */
-const DEMO_DENIED_PERMISSIONS: readonly PermissionKey[] = [
+export const DEMO_DENIED_PERMISSIONS: readonly PermissionKey[] = [
 	'users.manage',
 	'api_keys.manage',
-	'settings.write',
-	'audit.export',
-	'stages.configure',
-	'integrations.manage',
-	// Адрес и секрет подключения уводят данные на чужой узел, и живут они
-	// дольше сессии посетителя.
 	'integrations.manage_endpoints',
 	'people.anonymize'
 ];
@@ -188,22 +180,66 @@ export function invalidateRoleCache(): void {
 }
 
 /**
- * Условие «эта строка в области доступа». Возвращает SQL, пригодный для
- * `and(...)`: при полном доступе — `true`, при пустой области — `false`
- * (а не `in ()`, что синтаксически невозможно).
+ * Условие «эта организация в области доступа». Возвращает SQL, пригодный для
+ * `and(...)`: при полном доступе — `true`, при пустой области — `false`.
  *
  * Аргумент — столбец с идентификатором организации: у самой организации это её
- * `id`, у площадки или роли — `organization_id`.
+ * `id`, у площадки или аффилиации — `organization_id`.
+ *
+ * Организация видна, если у кого-то из людей области есть на неё **действующее**
+ * назначение. Условие — подзапрос, а не список, посчитанный при входе: смена
+ * ответственного обязана менять доступ немедленно, а не со следующего входа.
+ * Отсюда и частичные индексы по `valid_to is null` в `docs/domain.md`.
+ *
+ * Организация-оператор и организации-вендоры под это условие не попадают
+ * никогда: ответственного у них не бывает, и назначить его им нельзя.
  */
 export function scopeFilter(ctx: ActorContext, organizationId: PgColumn): SQL {
 	if (ctx.scope.kind === 'all') {
 		return sql`true`;
 	}
 
-	const ids = [...ctx.scope.organizationIds];
+	const ids = [...ctx.scope.userIds];
 	if (ids.length === 0) {
 		return sql`false`;
 	}
 
-	return inArray(organizationId, ids);
+	return sql`exists (${getDb()
+		.select({ one: sql`1` })
+		.from(organizationResponsibles)
+		.where(
+			and(
+				eq(organizationResponsibles.organizationId, organizationId),
+				sql`${organizationResponsibles.userId} = any(${sql.param(ids)}::uuid[])`,
+				isNull(organizationResponsibles.validTo)
+			)
+		)})`;
+}
+
+/**
+ * Условие «эта запись принадлежит человеку из области»: владелец, исполнитель,
+ * действующее лицо события журнала. Отдельно от `scopeFilter`, потому что
+ * отвечает на другой вопрос — не «чей это вуз», а «чья это работа».
+ *
+ * Пустая область — `false`, как и у `scopeFilter`: ни одной строки.
+ */
+export function actorScopeFilter(ctx: ActorContext, userId: PgColumn): SQL {
+	if (ctx.scope.kind === 'all') {
+		return sql`true`;
+	}
+
+	const ids = [...ctx.scope.userIds];
+	if (ids.length === 0) {
+		return sql`false`;
+	}
+
+	return sql`${userId} = any(${sql.param(ids)}::uuid[])`;
+}
+
+/**
+ * Отпечаток области для ключей кэша. Две разные области обязаны получить два
+ * разных ключа, иначе руководитель однажды прочитает сводку менеджера.
+ */
+export function scopeFingerprint(ctx: ActorContext): string {
+	return ctx.scope.kind === 'all' ? 'all' : [...ctx.scope.userIds].sort().join(',');
 }

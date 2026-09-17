@@ -26,7 +26,8 @@ import type { ActorContext } from '$lib/server/actor';
 import { auditEvents } from '$lib/server/db/schema';
 import { createPerson } from '$lib/server/directory/write';
 import { receiveApplication } from '$lib/server/integrations/intake';
-import { ensureDemoRoute } from '$lib/server/stages/routes';
+import { B2B_GROUP_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
+import { ensureProcess } from '$lib/server/stages/process';
 import { startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
@@ -58,7 +59,7 @@ afterAll(async () => {
 beforeEach(async () => {
 	await database.reset();
 	await database.db.transaction(async (tx) => {
-		await ensureDemoRoute(tx);
+		await ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS);
 	});
 });
 

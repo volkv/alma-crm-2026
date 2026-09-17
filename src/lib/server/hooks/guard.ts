@@ -12,8 +12,7 @@ import { redirect, type Handle } from '@sveltejs/kit';
  * of what exists.
  *
  * Per-route permissions are checked by the loads and services that know what
- * they are protecting; this hook only answers "is there anybody there" — and,
- * since the second factor exists, "did they finish coming in".
+ * they are protecting; this hook only answers "is there anybody there".
  *
  * Перенаправление именно бросается, а не собирается ответом: у брошенного есть
  * три разных вида — заголовок `location` для обычной навигации, конверт JSON
@@ -32,14 +31,6 @@ export const guard: Handle = async ({ event, resolve }) => {
 
 		if (user === null) {
 			redirect(303, `/login?next=${encodeURIComponent(requestedPath(event.url))}`);
-		}
-
-		// Пароль приняли, второго фактора ещё нет: такая сессия существует только
-		// ради второго шага входа и в приложение не пускает. Разворот именно сюда,
-		// а не на `/login`: там человека встретила бы форма, в которую он уже всё
-		// ввёл, — а незакрытый второй шаг это не «войдите», а «подтвердите».
-		if (user.mfaPending === true) {
-			redirect(303, `/login/mfa?next=${encodeURIComponent(requestedPath(event.url))}`);
 		}
 	}
 

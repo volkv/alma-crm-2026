@@ -10,6 +10,7 @@ import {
 	and,
 	asc,
 	count,
+	countDistinct,
 	desc,
 	eq,
 	exists,
@@ -17,7 +18,6 @@ import {
 	inArray,
 	isNull,
 	max,
-	notExists,
 	or,
 	sql,
 	type SQL
@@ -60,6 +60,8 @@ import {
 } from '../db/schema';
 import type { Tx } from '../db/transaction';
 import { NotFoundError } from '../errors';
+import { visibleInteractionFilter, visibleOrganizationFilter } from '../interactions/access';
+import { personInScope, personVisible } from '../people/access';
 import { withPiiTrace } from '../people/pii-trace';
 import { retentionExpired } from '../people/retention';
 import { toPersonView } from '../people/serialize';
@@ -150,7 +152,7 @@ export async function getOrganization(
 	const [row] = await executor
 		.select()
 		.from(organizations)
-		.where(and(eq(organizations.id, id), scopeFilter(ctx, organizations.id)))
+		.where(and(eq(organizations.id, id), visibleOrganizationFilter(ctx, organizations.id)))
 		.limit(1);
 
 	if (row === undefined) {
@@ -173,7 +175,12 @@ export async function listSites(ctx: ActorContext, organizationId: string): Prom
 			region: sites.region
 		})
 		.from(sites)
-		.where(and(eq(sites.organizationId, organizationId), scopeFilter(ctx, sites.organizationId)))
+		.where(
+			and(
+				eq(sites.organizationId, organizationId),
+				visibleOrganizationFilter(ctx, sites.organizationId)
+			)
+		)
 		.orderBy(asc(sites.name));
 
 	return rows;
@@ -197,7 +204,9 @@ export async function listAffiliations(
 			.where(
 				and(
 					eq(affiliations.organizationId, organizationId),
-					scopeFilter(ctx, affiliations.organizationId)
+					// Контактные лица карточки: видны там же, где видна сама
+					// карточка, — включая основную сторону видимого взаимодействия.
+					visibleOrganizationFilter(ctx, affiliations.organizationId)
 				)
 			)
 			.orderBy(asc(people.lastName), asc(people.firstName));
@@ -480,7 +489,7 @@ export async function getSite(
 			region: sites.region
 		})
 		.from(sites)
-		.where(and(eq(sites.id, id), scopeFilter(ctx, sites.organizationId)))
+		.where(and(eq(sites.id, id), visibleOrganizationFilter(ctx, sites.organizationId)))
 		.limit(1);
 
 	if (row === undefined) {
@@ -499,42 +508,21 @@ export async function countOrganizationInteractions(
 		return null;
 	}
 
+	// Считаются взаимодействия, а не строки сторон: организация может стоять в
+	// записи и вузом, и плательщиком сразу. Видимость — общая
+	// (`visibleInteractionFilter`), потому что своё условие здесь разошлось бы с
+	// тем, по которому собирается сам список взаимодействий.
 	const [row] = await getDb()
-		.select({ value: count() })
+		.select({ value: countDistinct(interactionParties.interactionId) })
 		.from(interactionParties)
 		.where(
 			and(
 				eq(interactionParties.organizationId, organizationId),
-				scopeFilter(ctx, interactionParties.organizationId)
+				visibleInteractionFilter(ctx, interactionParties.interactionId)
 			)
 		);
 
 	return row?.value ?? 0;
-}
-
-/**
- * Человек виден, если хотя бы одна его роль попадает в область доступа — или
- * ролей у него пока нет. Справочник людей общий на оператора, но имена
- * сотрудников чужого вуза — это уже сведения о чужой организации.
- */
-function personInScope(ctx: ActorContext): SQL {
-	if (ctx.scope.kind === 'all') {
-		return sql`true`;
-	}
-
-	const db = getDb();
-	const anyRole = db
-		.select({ one: sql`1` })
-		.from(affiliations)
-		.where(eq(affiliations.personId, people.id));
-	const roleInScope = db
-		.select({ one: sql`1` })
-		.from(affiliations)
-		.where(
-			and(eq(affiliations.personId, people.id), scopeFilter(ctx, affiliations.organizationId))
-		);
-
-	return sql`(${notExists(anyRole)} or ${exists(roleInScope)})`;
 }
 
 /** ФИО одной строкой — по нему ищут человека в списке. */
@@ -554,7 +542,7 @@ export async function getPerson(ctx: ActorContext, id: string): Promise<PersonVi
 		const [row] = await getDb()
 			.select()
 			.from(people)
-			.where(and(eq(people.id, id), personInScope(ctx)))
+			.where(and(eq(people.id, id), personVisible(ctx)))
 			.limit(1);
 
 		if (row === undefined) {
@@ -693,7 +681,10 @@ export async function listPersonAffiliations(
 			.innerJoin(organizations, eq(organizations.id, affiliations.organizationId))
 			.leftJoin(sites, eq(sites.id, affiliations.siteId))
 			.where(
-				and(eq(affiliations.personId, personId), scopeFilter(ctx, affiliations.organizationId))
+				and(
+					eq(affiliations.personId, personId),
+					visibleOrganizationFilter(ctx, affiliations.organizationId)
+				)
 			)
 			.orderBy(desc(affiliations.validFrom), asc(organizations.shortName));
 

@@ -49,26 +49,7 @@ export default defineConfig({
 	// Миграции, каталог ролей и учётные записи прогона — до первого запроса к
 	// приложению: страница входа читает настройки из базы.
 	globalSetup: './e2e/global-setup.ts',
-	projects: [
-		{
-			name: 'chromium',
-			use: devices['Desktop Chrome'],
-			testIgnore: '**/login-limit.test.ts'
-		},
-		{
-			// Проверка лимита входа выбирает счётчик попыток, общий на весь прогон:
-			// рядом с ней не должно идти ничего, что входит в систему. Поэтому она
-			// вынесена в свой проект — один рабочий процесс, файлы по одному, старт
-			// после того, как обычный проект закончил. Запустить её отдельно:
-			// `playwright test --project=login-limit --no-deps`.
-			name: 'login-limit',
-			use: devices['Desktop Chrome'],
-			testMatch: '**/login-limit.test.ts',
-			dependencies: ['chromium'],
-			fullyParallel: false,
-			workers: 1
-		}
-	],
+	projects: [{ name: 'chromium', use: devices['Desktop Chrome'] }],
 	webServer: {
 		command: 'pnpm run build && node build/index.js',
 		port,
@@ -96,6 +77,17 @@ export default defineConfig({
 			// прогоне нет и быть не может.
 			MOCK_LMS: 'true',
 			TRUST_PROXY: 'false',
+			// Каталог учётных записей — тот же контейнер, что у стека: Keycloak
+			// стартует полторы минуты, и второй под прогон не поднимают. Записи и
+			// пароли прогона приводит к своим глобальный сетап.
+			//
+			// Адреса возврата клиента realm перечислены в `keycloak/realm-lct.json`
+			// и включают `http://localhost:4173/*`. Прогон на другом `E2E_PORT`
+			// каталог развернёт: такой адрес в realm не объявлен.
+			OIDC_ISSUER_URL: 'http://localhost:58080/realms/lct',
+			OIDC_PUBLIC_URL: 'http://localhost:58080',
+			OIDC_CLIENT_ID: 'lct-crm',
+			OIDC_CLIENT_SECRET: 'lct-crm-dev-secret',
 			// Хранилище — тот же MinIO из `docker-compose.yml`, но свой бакет:
 			// объекты прогона не должны мешаться с файлами стенда, а стенд
 			// переживает `docker compose down` без `-v` вместе с ними. Бакет

@@ -1,32 +1,40 @@
 import { randomUUID } from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
-import { isRedirect, type RequestEvent } from '@sveltejs/kit';
-import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { isRedirect } from '@sveltejs/kit';
+import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ActorContext } from '$lib/server/actor';
 import { rateLimit } from '$lib/server/hooks/rate-limit';
-import { auditEvents, users } from '$lib/server/db/schema';
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '$lib/server/errors';
+import { auditEvents, organizationResponsibles, users } from '$lib/server/db/schema';
+import { ConflictError, ForbiddenError, NotFoundError } from '$lib/server/errors';
 import { pageQuerySchema } from '$lib/contracts/common';
-import { demoLogin, listDemoAccounts, login } from '$lib/server/auth/login';
-import { addressLimitState, withinAddressLimit } from '$lib/server/auth/lockout';
+import { signInWithClaims } from '$lib/server/auth/identity';
+import type { IdentityClaims } from '$lib/server/auth/oidc';
+import { mapRealmRoles } from '$lib/server/auth/roles';
 import {
 	createSession,
+	destroySession,
 	loadSessionUser,
 	revokeAllSessions,
 	touchSession
 } from '$lib/server/auth/session';
+import { withinStartLimit } from '$lib/server/auth/start-limit';
 import {
 	activateUser,
-	changePassword,
-	createUser,
 	deactivateUser,
 	listUsers,
-	lookupUsers
+	lookupUsers,
+	setUserManager,
+	unlinkFromDirectory
 } from '$lib/server/auth/users';
 import { DEFAULT_ROLES } from '$lib/server/rbac/permissions';
 import { getRedis } from '$lib/server/redis';
-import { setSetting } from '$lib/server/settings';
-import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
+import {
+	insertOrganization,
+	startTestDatabase,
+	testActor,
+	TEST_USER_IDS,
+	type TestDatabase
+} from '../helpers/db';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
@@ -54,66 +62,34 @@ let database: TestDatabase;
  * остаются нетронутыми.
  */
 const runId = randomUUID().slice(0, 8);
-const createdUserIds = new Set<string>();
+const openedSessions = new Set<string>();
 const usedAddresses = new Set<string>();
 
 function email(name: string): string {
 	return `${name}-${runId}@example.org`;
 }
 
-function address(last: number): string {
-	const ip = `198.51.100.${last}`;
+/** Адрес, который не пересекается с чужими счётчиками в общем Redis. */
+function address(octet: number): string {
+	const ip = `198.51.100.${octet}`;
 	usedAddresses.add(ip);
+
 	return ip;
 }
 
-/** Загрузчик страницы входа: он решает, показывать форму или объяснять отказ. */
-const loginPage = await import('../../../src/routes/(auth)/login/+page.server');
-
-const loadLogin = loginPage.load as unknown as (
-	event: RequestEvent
-) => Promise<{ rateLimited: string | null }>;
-
-/**
- * Запрос к странице входа в том виде, в каком его собирает SvelteKit. Хуку и
- * загрузчику нужны адрес вызывающего, метод, маршрут и `locals` — остальное в
- * подделке не участвует.
- */
-function loginEvent(ip: string, options: { method?: string; query?: string } = {}): RequestEvent {
-	const url = new URL(`http://localhost/login${options.query ?? ''}`);
-
+/** Утверждения токена в том виде, в каком их отдаёт проверенный id-токен. */
+function claims(overrides: Partial<IdentityClaims> = {}): IdentityClaims {
 	return {
-		request: new Request(url, { method: options.method ?? 'GET' }),
-		url,
-		params: {},
-		cookies: { get: () => undefined, set: () => {}, delete: () => {} },
-		route: { id: '/(auth)/login' },
-		locals: { requestId: randomUUID(), user: null, apiKey: null },
-		getClientAddress: () => ip,
-		setHeaders: () => {},
-		isDataRequest: false,
-		isSubRequest: false
-	} as unknown as RequestEvent;
+		subject: `sub-${randomUUID()}`,
+		email: email('ivanov'),
+		emailVerified: true,
+		fullName: 'Иванов Иван Иванович',
+		realmRoles: ['crm-user'],
+		...overrides
+	};
 }
 
-/**
- * Один POST на форму входа через хук лимита. Возвращает либо ответ маршрута,
- * либо то, что хук бросил: исчерпанный лимит — это брошенное перенаправление, и
- * проверять надо именно его, а не собранный ответ.
- */
-async function postLogin(ip: string, query?: string): Promise<unknown> {
-	return Promise.resolve(
-		rateLimit({
-			event: loginEvent(ip, { method: 'POST', query }),
-			resolve: async () => new Response('форма принята')
-		} as unknown as Parameters<typeof rateLimit>[0])
-	).then(
-		(response) => response,
-		(failure: unknown) => failure
-	);
-}
-
-/** Контекст анонимного посетителя: именно он приходит на форму входа. */
+/** Контекст анонимного посетителя: именно он возвращается из каталога. */
 function anonymous(ip: string): ActorContext {
 	return {
 		requestId: randomUUID(),
@@ -122,824 +98,604 @@ function anonymous(ip: string): ActorContext {
 		apiKeyId: null,
 		ip,
 		userAgent: 'vitest',
-		scope: { kind: 'organizations', organizationIds: new Set() }
+		scope: { kind: 'delegated', userIds: new Set() }
 	};
 }
 
-async function newUser(options: {
-	name: string;
-	password: string;
-	roleId?: string;
-	isDemo?: boolean;
-}): Promise<{ id: string; email: string }> {
-	const created = await createUser(testActor(), {
-		email: email(options.name),
-		fullName: 'Иванов Иван',
-		roleId: options.roleId ?? 'manager',
-		password: options.password,
-		isDemo: options.isDemo
-	});
+/** Вход по утверждениям токена; открытые сессии гасятся после теста. */
+async function signIn(
+	ip: string,
+	overrides: Partial<IdentityClaims> = {}
+): Promise<Awaited<ReturnType<typeof signInWithClaims>>> {
+	const outcome = await signInWithClaims(anonymous(ip), claims(overrides), `id-token-${runId}`);
 
-	createdUserIds.add(created.id);
-
-	return { id: created.id, email: created.email };
-}
-
-async function forgetRedisKeys(): Promise<void> {
-	const redis = getRedis();
-
-	for (const userId of createdUserIds) {
-		await revokeAllSessions(userId);
+	if (outcome.ok) {
+		openedSessions.add(outcome.sessionId);
 	}
-	createdUserIds.clear();
 
-	const failureKeys = await redis.keys(`login_fail:*${runId}*`);
-	const addressKeys = [...usedAddresses].map((ip) => `login_ip:${ip}`);
-	usedAddresses.clear();
-
-	if (failureKeys.length + addressKeys.length > 0) {
-		await redis.del(...failureKeys, ...addressKeys);
-	}
+	return outcome;
 }
-
-const PASSWORD = 'Надёжный-Пароль1';
 
 beforeAll(async () => {
 	database = await startTestDatabase();
 }, 300_000);
 
 afterAll(async () => {
-	await forgetRedisKeys();
-	getRedis().disconnect();
-	await database?.stop();
+	await database.stop();
 });
 
 beforeEach(async () => {
-	await forgetRedisKeys();
-	await database.reset();
 	demo.mode = false;
+	await database.reset();
 });
 
-/** События журнала по типу, в порядке появления. */
-async function auditOf(type: string): Promise<{ outcome: string; details: unknown }[]> {
-	return database.db
-		.select({ outcome: auditEvents.outcome, details: auditEvents.details })
-		.from(auditEvents)
-		.where(eq(auditEvents.eventType, type))
-		.orderBy(asc(auditEvents.occurredAt));
-}
+afterEach(async () => {
+	const redis = getRedis();
 
-describe('вход', () => {
-	it('впускает с верным паролем, заводит сессию и пишет в журнал', async () => {
-		const user = await newUser({ name: 'ivanov', password: PASSWORD });
+	for (const sessionId of openedSessions) {
+		await destroySession(sessionId);
+	}
+	openedSessions.clear();
 
-		const outcome = await login(anonymous(address(1)), { email: user.email, password: PASSWORD });
+	for (const ip of usedAddresses) {
+		await redis.del(`login_ip:${ip}`);
+	}
+	usedAddresses.clear();
+});
 
-		expect(outcome).toMatchObject({ ok: true });
-		if (!outcome.ok) return;
-
-		// Сессия полная: политика второго фактора роли менеджера его не требует.
-		expect(await touchSession(outcome.sessionId)).toEqual({
-			userId: user.id,
-			mfaPending: false
-		});
-
-		const session = await loadSessionUser(user.id);
-		expect(session).toMatchObject({ id: user.id, roleId: 'manager' });
-		expect(session?.permissions.has('interactions.write')).toBe(true);
-
-		expect(await auditOf('auth.login')).toEqual([
-			{ outcome: 'success', details: { userId: user.id } }
-		]);
-
-		// Почта в разных регистрах — один и тот же человек.
-		const again = await login(anonymous(address(1)), {
-			email: user.email.toUpperCase(),
-			password: PASSWORD
-		});
-		expect(again.ok).toBe(true);
+describe('отображение ролей каталога', () => {
+	it('переводит роли realm в роли системы', () => {
+		expect(mapRealmRoles(['crm-admin'])).toBe('admin');
+		expect(mapRealmRoles(['crm-lead'])).toBe('lead');
+		expect(mapRealmRoles(['crm-user'])).toBe('manager');
 	});
 
-	it('отказывает одинаково неверному паролю и незаведённой почте', async () => {
-		const user = await newUser({ name: 'petrov', password: PASSWORD });
-		const ip = address(2);
-
-		const wrongPassword = await login(anonymous(ip), {
-			email: user.email,
-			password: 'Другой-Пароль1'
-		});
-		const unknownEmail = await login(anonymous(ip), {
-			email: email('never-existed'),
-			password: PASSWORD
-		});
-
-		expect(wrongPassword).toEqual({
-			ok: false,
-			reason: 'invalid',
-			message: 'Неверная почта или пароль'
-		});
-		expect(unknownEmail).toEqual(wrongPassword);
-
-		// Неудача записывается всегда, даже когда записывать нечего, кроме факта.
-		const failures = await auditOf('auth.login_failed');
-		expect(failures).toEqual([
-			{ outcome: 'failure', details: { userId: user.id } },
-			{ outcome: 'failure', details: {} }
-		]);
+	it('берёт старшую роль, когда каталог выдал несколько', () => {
+		// Realm вправе выдать обе: руководитель, который ведёт свои вузы сам, —
+		// это законная пара ролей, а не ошибка настройки.
+		expect(mapRealmRoles(['crm-user', 'crm-lead'])).toBe('lead');
+		expect(mapRealmRoles(['crm-user', 'crm-lead', 'crm-admin'])).toBe('admin');
 	});
 
-	it('записывает удачный вход от лица вошедшего, а не анонимного посетителя', async () => {
-		const user = await newUser({ name: 'akter', password: PASSWORD });
+	it('не знает незнакомых ролей и отказывает, если наших нет', () => {
+		expect(mapRealmRoles(['offline_access', 'default-roles-lct'])).toBeNull();
+		expect(mapRealmRoles([])).toBeNull();
+		// Незнакомая роль рядом с нашей ничего не меняет: набор ролей сужается
+		// вместе с кодом, а не вместе с содержимым realm.
+		expect(mapRealmRoles(['uma_authorization', 'crm-user'])).toBe('manager');
+	});
+});
 
-		// Форму входа заполняет ещё аноним: пользователя в контексте нет ни у
-		// неудачной попытки, ни у удачной.
-		await login(anonymous(address(20)), { email: user.email, password: 'Мимо-Пароля1' });
-		expect(
-			await login(anonymous(address(20)), { email: user.email, password: PASSWORD })
-		).toMatchObject({ ok: true });
+describe('вход через каталог', () => {
+	it('заводит запись при первом входе и связывает её с субъектом каталога', async () => {
+		const outcome = await signIn(address(1), { email: email('novikov') });
 
-		const events = await database.db
+		expect(outcome.ok).toBe(true);
+
+		const [row] = await database.db
 			.select({
-				type: auditEvents.eventType,
-				actorUserId: auditEvents.actorUserId,
-				actorLabel: auditEvents.actorLabel
+				id: users.id,
+				externalSubject: users.externalSubject,
+				roleId: users.roleId,
+				fullName: users.fullName
 			})
-			.from(auditEvents)
-			.where(eq(auditEvents.actorUserId, user.id));
-
-		// Кто вошёл — это и есть ответ на вопрос «кто действовал»; неудачная
-		// попытка остаётся анонимной, её мог сделать кто угодно.
-		expect(events).toEqual([
-			{ type: 'auth.login', actorUserId: user.id, actorLabel: 'Иванов Иван' }
-		]);
-	});
-
-	it('не впускает выключенного пользователя и гасит его сессии', async () => {
-		const user = await newUser({ name: 'uvolen', password: PASSWORD });
-		const first = await createSession(user.id, { ip: null, userAgent: null });
-		const second = await createSession(user.id, { ip: null, userAgent: null });
-
-		await deactivateUser(testActor(), user.id);
-
-		expect(await touchSession(first)).toBeNull();
-		expect(await touchSession(second)).toBeNull();
-
-		const outcome = await login(anonymous(address(3)), { email: user.email, password: PASSWORD });
-		expect(outcome).toMatchObject({ ok: false, reason: 'invalid' });
-	});
-});
-
-describe('блокировка после неудачных попыток', () => {
-	beforeEach(async () => {
-		await setSetting(testActor(), 'lockout_policy', { attempts: 3, minutes: 1 });
-	});
-
-	it('закрывает вход после заданного числа неудач и открывает по истечении срока', async () => {
-		const user = await newUser({ name: 'podbor', password: PASSWORD });
-		const ip = address(4);
-
-		for (let attempt = 0; attempt < 3; attempt += 1) {
-			const refusal = await login(anonymous(ip), { email: user.email, password: 'Мимо-Пароля1' });
-			expect(refusal).toMatchObject({ reason: 'invalid' });
-		}
-
-		// Четвёртая попытка не доходит до проверки пароля — даже с верным.
-		const locked = await login(anonymous(ip), { email: user.email, password: PASSWORD });
-		expect(locked).toMatchObject({ ok: false, reason: 'locked' });
-		expect(locked.ok === false && locked.message).toMatch(/ещё 1 минуту/);
-
-		expect(await auditOf('auth.locked')).toEqual([
-			{ outcome: 'denied', details: { userId: user.id } }
-		]);
-
-		const key = `login_fail:${user.email}:${ip}`;
-		const redis = getRedis();
-		expect(await redis.ttl(key)).toBeGreaterThan(50);
-		expect(await redis.ttl(key)).toBeLessThanOrEqual(60);
-
-		// Срок жизни счётчика и есть срок блокировки: как только ключ ушёл,
-		// вход открыт снова.
-		await redis.pexpire(key, 1);
-		await new Promise((resolve) => setTimeout(resolve, 40));
-
-		expect(await login(anonymous(ip), { email: user.email, password: PASSWORD })).toMatchObject({
-			ok: true
-		});
-	});
-
-	it('снимает счётчик после удачного входа', async () => {
-		const user = await newUser({ name: 'oshibsya', password: PASSWORD });
-		const ip = address(5);
-
-		await login(anonymous(ip), { email: user.email, password: 'Мимо-Пароля1' });
-		await login(anonymous(ip), { email: user.email, password: PASSWORD });
-
-		expect(await getRedis().exists(`login_fail:${user.email}:${ip}`)).toBe(0);
-	});
-
-	it('не закрывает демонстрационную учётную запись, пока включён демо-режим', async () => {
-		demo.mode = true;
-		const user = await newUser({ name: 'demo', password: PASSWORD, isDemo: true });
-		const ip = address(6);
-
-		for (let attempt = 0; attempt < 5; attempt += 1) {
-			await login(anonymous(ip), { email: user.email, password: 'Мимо-Пароля1' });
-		}
-
-		expect(await getRedis().exists(`login_fail:${user.email}:${ip}`)).toBe(0);
-		expect(await login(anonymous(ip), { email: user.email, password: PASSWORD })).toMatchObject({
-			ok: true
-		});
-
-		// Вне демо-режима та же учётная запись — обычная.
-		demo.mode = false;
-		for (let attempt = 0; attempt < 3; attempt += 1) {
-			await login(anonymous(ip), { email: user.email, password: 'Мимо-Пароля1' });
-		}
-
-		expect(await login(anonymous(ip), { email: user.email, password: PASSWORD })).toMatchObject({
-			ok: false,
-			reason: 'locked'
-		});
-	});
-
-	it('считает попытки с одного адреса и отсекает после тридцати', async () => {
-		const ip = address(7);
-
-		for (let attempt = 1; attempt <= 30; attempt += 1) {
-			expect(await withinAddressLimit(ip)).toBe(true);
-		}
-
-		expect(await withinAddressLimit(ip)).toBe(false);
-		expect(await getRedis().ttl(`login_ip:${ip}`)).toBeGreaterThan(60);
-
-		// Страница входа спрашивает то же состояние, ничего не считая: по нему она
-		// решает, рисовать форму или объяснять, сколько ждать.
-		const state = await addressLimitState(ip);
-		expect(state.exhausted).toBe(true);
-		expect(state.remainingSeconds).toBeGreaterThan(60);
-	});
-
-	it('не тратит лимит адреса на удачные входы', async () => {
-		const user = await newUser({ name: 'za-natom', password: PASSWORD });
-		const ip = address(13);
-
-		// Жюри и класс сидят за одним NAT: для счётчика это один адрес. Тридцать
-		// первый обычный вход не должен упираться в защиту от перебора — перебора
-		// тут нет, каждый раз подходит пароль.
-		for (let attempt = 1; attempt <= 31; attempt += 1) {
-			expect(await withinAddressLimit(ip)).toBe(true);
-			expect(await login(anonymous(ip), { email: user.email, password: PASSWORD })).toMatchObject({
-				ok: true
-			});
-		}
-
-		expect(await getRedis().exists(`login_ip:${ip}`)).toBe(0);
-		expect((await addressLimitState(ip)).exhausted).toBe(false);
-	});
-
-	it('разворачивает исчерпавший лимит POST обратно на страницу входа', async () => {
-		const ip = address(17);
-
-		for (let attempt = 1; attempt <= 30; attempt += 1) {
-			expect(await postLogin(ip)).toMatchObject({ status: 200 });
-		}
-
-		// Голый 429 человеку ничего не объясняет, поэтому отказ уводит на ту же
-		// страницу входа — она видит тот же счётчик и говорит словами.
-		// Перенаправление именно бросается: форму входа отправляет `use:enhance`,
-		// и вид ответа для неё выбирает SvelteKit. Готовый 303 приехал бы к ней
-		// разметкой страницы входа вместо конверта, и форма сломалась бы на его
-		// разборе вместо того, чтобы показать отказ.
-		const refused = await postLogin(ip);
-		expect(isRedirect(refused)).toBe(true);
-		expect(refused).toMatchObject({ status: 303, location: '/login' });
-
-		// Куда человек шёл, из-за отказа теряться не должно.
-		const withNext = await postLogin(ip, '?next=%2Faudit');
-		expect(isRedirect(withNext)).toBe(true);
-		expect(withNext).toMatchObject({ status: 303, location: '/login?next=%2Faudit' });
-
-		const data = await loadLogin(loginEvent(ip));
-
-		// Форму и кнопки страница по этому сообщению и прячет: жать их незачем,
-		// POST с них всё равно развернёт сюда же.
-		expect(data.rateLimited).toBe('Слишком много входов с этого адреса. Попробуйте через 15 минут');
-	});
-
-	it('до исчерпания лимита страница входа ничего не сообщает', async () => {
-		const ip = address(18);
-
-		expect(await postLogin(ip)).toMatchObject({ status: 200 });
-		expect((await loadLogin(loginEvent(ip))).rateLimited).toBeNull();
-	});
-
-	it('поднимает лимит адреса в демо-режиме', async () => {
-		demo.mode = true;
-		const ip = address(14);
-
-		for (let attempt = 1; attempt <= 150; attempt += 1) {
-			expect(await withinAddressLimit(ip)).toBe(true);
-		}
-
-		expect(await withinAddressLimit(ip)).toBe(false);
-	});
-});
-
-describe('граница демонстрационной сессии', () => {
-	/** Права, которых демонстрация не получает ни под какой ролью. */
-	const DENIED = [
-		'users.manage',
-		'api_keys.manage',
-		'settings.write',
-		'audit.export',
-		'stages.configure'
-	] as const;
-
-	it('вычитает необратимые права у сессии демонстрационной учётной записи', async () => {
-		demo.mode = true;
-		const user = await newUser({
-			name: 'demo-admin',
-			password: PASSWORD,
-			roleId: 'admin',
-			isDemo: true
-		});
-
-		const session = await loadSessionUser(user.id);
-
-		expect(session?.isDemo).toBe(true);
-		for (const key of DENIED) {
-			expect(session?.permissions.has(key)).toBe(false);
-		}
-
-		// Остальное остаётся: демонстрация показывает работу, а не пустой экран.
-		expect(session?.permissions.has('audit.read')).toBe(true);
-		expect(session?.permissions.has('interactions.write')).toBe(true);
-		expect(session?.permissions.has('documents.generate')).toBe(true);
-	});
-
-	it('держит границу и на входе по паролю, и на ключе доступа', async () => {
-		demo.mode = true;
-		const user = await newUser({
-			name: 'demo-parol',
-			password: PASSWORD,
-			roleId: 'admin',
-			isDemo: true
-		});
-
-		// Кнопкой «Войти как …» или паролем — сессия одна и та же: общая учётная
-		// запись остаётся общей, каким бы способом в неё ни вошли.
-		expect(
-			await login(anonymous(address(15)), { email: user.email, password: PASSWORD })
-		).toMatchObject({ ok: true });
-
-		const ctx: ActorContext = {
-			...anonymous(address(15)),
-			user: await loadSessionUser(user.id),
-			scope: { kind: 'all' }
-		};
-
-		await expect(listUsers(ctx, pageQuerySchema.parse({}))).rejects.toBeInstanceOf(ForbiddenError);
-
-		// Журнал помечает сессию, а не способ её открыть: кнопки тут не было.
-		expect(await auditOf('auth.login')).toEqual([
-			{ outcome: 'success', details: { userId: user.id, demo: true } }
-		]);
-	});
-
-	it('вне демо-режима та же учётная запись получает права роли целиком', async () => {
-		demo.mode = true;
-		const user = await newUser({
-			name: 'demo-vykl',
-			password: PASSWORD,
-			roleId: 'admin',
-			isDemo: true
-		});
-
-		demo.mode = false;
-		const session = await loadSessionUser(user.id);
-
-		expect(session?.isDemo).toBe(false);
-		for (const key of DENIED) {
-			expect(session?.permissions.has(key)).toBe(true);
-		}
-	});
-
-	it('не даёт выключить демонстрационную учётную запись, пока включён демо-режим', async () => {
-		demo.mode = true;
-		const user = await newUser({
-			name: 'demo-neubit',
-			password: PASSWORD,
-			roleId: 'viewer',
-			isDemo: true
-		});
-
-		// Выключить её некому и включить обратно тоже: раздел пользователей для
-		// самой демонстрации закрыт, а кнопка «Войти как …» исчезнет вместе с
-		// записью — стенд останется без входа.
-		await expect(deactivateUser(testActor(), user.id)).rejects.toBeInstanceOf(ConflictError);
-		expect((await loadSessionUser(user.id))?.id).toBe(user.id);
-
-		// Вне демо-режима это обычная учётная запись, и запрета на неё нет.
-		demo.mode = false;
-		await deactivateUser(testActor(), user.id);
-		expect(await loadSessionUser(user.id)).toBeNull();
-	});
-});
-
-describe('срок жизни сессии', () => {
-	it('живёт ровно столько, сколько разрешает бездействие', async () => {
-		const user = await newUser({ name: 'session', password: PASSWORD });
-		const sessionId = await createSession(user.id, { ip: '198.51.100.9', userAgent: 'vitest' });
-
-		const ttl = await getRedis().ttl(`session:${sessionId}`);
-		expect(ttl).toBeGreaterThan(30 * 60 - 5);
-		expect(ttl).toBeLessThanOrEqual(30 * 60);
-	});
-
-	it('продлевается при активности, но не чаще раза в минуту', async () => {
-		const user = await newUser({ name: 'active', password: PASSWORD });
-		const sessionId = await createSession(user.id, { ip: null, userAgent: null });
-		const key = `session:${sessionId}`;
-		const redis = getRedis();
-
-		// Сессия, которой никто не касался две минуты, и вот-вот истечёт.
-		const stored = JSON.parse((await redis.get(key)) as string);
-		await redis.set(
-			key,
-			JSON.stringify({ ...stored, lastSeenAt: new Date(Date.now() - 120_000).toISOString() }),
-			'EX',
-			100
-		);
-
-		expect(await touchSession(sessionId)).toEqual({ userId: user.id, mfaPending: false });
-		expect(await redis.ttl(key)).toBeGreaterThan(100);
-
-		// Вторая активность в ту же минуту Redis не трогает.
-		await redis.expire(key, 100);
-		expect(await touchSession(sessionId)).toEqual({ userId: user.id, mfaPending: false });
-		expect(await redis.ttl(key)).toBeLessThanOrEqual(100);
-	});
-
-	it('не переживает предельный срок, сколько бы ни было активности', async () => {
-		const user = await newUser({ name: 'longlived', password: PASSWORD });
-		const sessionId = await createSession(user.id, { ip: null, userAgent: null });
-		const key = `session:${sessionId}`;
-		const redis = getRedis();
-
-		const stored = JSON.parse((await redis.get(key)) as string);
-		await redis.set(
-			key,
-			JSON.stringify({
-				...stored,
-				createdAt: new Date(Date.now() - 13 * 3600 * 1000).toISOString(),
-				lastSeenAt: new Date().toISOString()
-			}),
-			'EX',
-			1800
-		);
-
-		expect(await touchSession(sessionId)).toBeNull();
-		expect(await redis.exists(key)).toBe(0);
-	});
-});
-
-describe('демонстрационный вход', () => {
-	it('впускает без пароля под ролью и помечает это в журнале', async () => {
-		demo.mode = true;
-		const user = await newUser({
-			name: 'demo-viewer',
-			password: PASSWORD,
-			roleId: 'viewer',
-			isDemo: true
-		});
-
-		expect(await listDemoAccounts()).toEqual([{ roleId: 'viewer', roleName: 'Наблюдатель' }]);
-
-		const sessionId = await demoLogin(anonymous(address(8)), 'viewer');
-		expect(await touchSession(sessionId)).toEqual({ userId: user.id, mfaPending: false });
-
-		// Демонстрационный вход отличается от обычного одной подробностью — по ней
-		// журнал и показывает, что учётная запись общая, а не личная.
-		expect(await auditOf('auth.login')).toEqual([
-			{ outcome: 'success', details: { userId: user.id, demo: true } }
-		]);
-
-		// И подписан он тем же, кем обычный вход: демонстрационная запись — тоже
-		// учётная запись, а не аноним.
-		const [event] = await database.db
-			.select({ actorUserId: auditEvents.actorUserId, actorLabel: auditEvents.actorLabel })
+			.from(users)
+			.where(eq(users.email, email('novikov')));
+
+		expect(row.roleId).toBe('manager');
+		expect(row.fullName).toBe('Иванов Иван Иванович');
+		expect(row.externalSubject).not.toBeNull();
+
+		const logged = await database.db
+			.select({ outcome: auditEvents.outcome, actorUserId: auditEvents.actorUserId })
 			.from(auditEvents)
 			.where(eq(auditEvents.eventType, 'auth.login'));
 
-		expect(event).toEqual({ actorUserId: user.id, actorLabel: 'Иванов Иван' });
+		expect(logged).toEqual([{ outcome: 'success', actorUserId: row.id }]);
 	});
 
-	it('вне демо-режима не существует', async () => {
-		demo.mode = true;
-		await newUser({ name: 'demo-off', password: PASSWORD, roleId: 'viewer', isDemo: true });
+	it('узнаёт заведённую запись по подтверждённой почте и оставляет ей прежний портфель', async () => {
+		const [existing] = await database.db
+			.insert(users)
+			.values({ email: email('orlova'), fullName: 'Орлова Мария', roleId: 'manager' })
+			.returning({ id: users.id });
 
-		demo.mode = false;
-		expect(await listDemoAccounts()).toEqual([]);
-		await expect(demoLogin(anonymous(address(10)), 'viewer')).rejects.toBeInstanceOf(NotFoundError);
+		const outcome = await signIn(address(2), {
+			email: email('ORLOVA').toUpperCase(),
+			fullName: 'Орлова Мария Петровна'
+		});
+
+		expect(outcome.ok).toBe(true);
+		if (outcome.ok) {
+			// Та же строка, а не двойник: иначе её взаимодействия, назначения и
+			// след в журнале остались бы за записью, в которую уже никто не войдёт.
+			expect(outcome.user.id).toBe(existing.id);
+		}
+
+		const [row] = await database.db
+			.select({ externalSubject: users.externalSubject, fullName: users.fullName })
+			.from(users)
+			.where(eq(users.id, existing.id));
+
+		expect(row.externalSubject).not.toBeNull();
+		// Источник истины о человеке — каталог: имя приведено к тому, что в токене.
+		expect(row.fullName).toBe('Орлова Мария Петровна');
 	});
 
-	it('не снимает счётчик адреса: пароля он не спрашивает', async () => {
-		demo.mode = true;
-		await newUser({ name: 'demo-limit', password: PASSWORD, roleId: 'viewer', isDemo: true });
-		const ip = address(12);
+	it('не связывает по неподтверждённой почте и отказывает понятно', async () => {
+		await database.db
+			.insert(users)
+			.values({ email: email('gromov'), fullName: 'Громов Илья', roleId: 'manager' });
 
-		// Счётчик адреса защищает от перебора учётных записей с одной машины.
-		// Снимает его верный пароль — а демонстрационный вход пароля не знает:
-		// снимай он счётчик, обход лимита стоил бы одно нажатие кнопки.
-		expect(await withinAddressLimit(ip)).toBe(true);
-		expect(await getRedis().exists(`login_ip:${ip}`)).toBe(1);
+		const outcome = await signIn(address(3), {
+			email: email('gromov'),
+			emailVerified: false
+		});
 
-		await demoLogin(anonymous(ip), 'viewer');
+		// Чужой адрес в токене иначе отдавал бы чужой портфель: заведённая запись
+		// с этой почтой так и остаётся без внешнего субъекта, а вход получает
+		// отказ, а не ошибку уникальности из базы.
+		expect(outcome).toMatchObject({ ok: false, reason: 'email_taken' });
 
-		expect(await getRedis().exists(`login_ip:${ip}`)).toBe(1);
+		const rows = await database.db
+			.select({ externalSubject: users.externalSubject })
+			.from(users)
+			.where(eq(users.email, email('gromov')));
+
+		expect(rows).toEqual([{ externalSubject: null }]);
 	});
 
-	it('не впускает под ролью, для которой учётной записи нет', async () => {
-		demo.mode = true;
-		await newUser({ name: 'demo-only-viewer', password: PASSWORD, roleId: 'viewer', isDemo: true });
+	it('отказывает тому, у кого нет ни одной известной роли realm', async () => {
+		const outcome = await signIn(address(4), { realmRoles: ['offline_access'] });
 
-		await expect(demoLogin(anonymous(address(11)), 'admin')).rejects.toBeInstanceOf(NotFoundError);
-	});
-});
+		expect(outcome).toEqual({ ok: false, reason: 'no_role' });
 
-describe('отказ по правам в журнале', () => {
-	/**
-	 * Попытка сделать то, на что права нет, — это то, о чём администратор должен
-	 * узнать, а не молчаливая ошибка в ответе одному вызывающему. Проверяется
-	 * пара «отказ и запись»: без записи отказ невидим, а без отказа запись врёт.
-	 */
-	const viewer = (): ActorContext => testActor({ roleId: 'viewer' });
-
-	/** Исход и субъект события данного вида. */
-	async function denialsOf(
-		type: string
-	): Promise<{ outcome: string; subjectId: string | null; actorUserId: string | null }[]> {
-		return database.db
-			.select({
-				outcome: auditEvents.outcome,
-				subjectId: auditEvents.subjectId,
-				actorUserId: auditEvents.actorUserId
-			})
-			.from(auditEvents)
-			.where(eq(auditEvents.eventType, type))
-			.orderBy(asc(auditEvents.occurredAt));
-	}
-
-	it('пишет отказ завести учётную запись', async () => {
-		const actor = viewer();
-
-		await expect(
-			createUser(actor, {
-				email: email('mimo-prav'),
-				fullName: 'Мимо Прав',
-				roleId: 'manager',
-				password: PASSWORD
-			})
-		).rejects.toBeInstanceOf(ForbiddenError);
-
-		expect(await denialsOf('users.created')).toEqual([
-			{ outcome: 'denied', subjectId: null, actorUserId: actor.user?.id }
-		]);
-
-		// И учётной записи после отказа не осталось.
-		const created = await database.db
+		// Локальная запись при этом не заводится: пользователь без роли нам не
+		// сотрудник.
+		const rows = await database.db
 			.select({ id: users.id })
 			.from(users)
-			.where(eq(users.email, email('mimo-prav')));
-		expect(created).toEqual([]);
+			.where(eq(users.email, email('ivanov')));
+
+		expect(rows).toEqual([]);
+
+		const denied = await database.db
+			.select({ outcome: auditEvents.outcome })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'auth.login'));
+
+		expect(denied).toEqual([{ outcome: 'denied' }]);
 	});
 
-	it('пишет отказ выключить и включить учётную запись — вместе с тем, кого трогали', async () => {
-		const target = await newUser({ name: 'tselevoi', password: PASSWORD });
-		const actor = viewer();
+	it('выключает запись, у которой каталог отозвал роль, и гасит её сессии', async () => {
+		const subject = `sub-${randomUUID()}`;
+		const first = await signIn(address(5), { subject, email: email('petrov') });
 
-		await expect(deactivateUser(actor, target.id)).rejects.toBeInstanceOf(ForbiddenError);
-		await expect(activateUser(actor, target.id)).rejects.toBeInstanceOf(ForbiddenError);
+		expect(first.ok).toBe(true);
+		const sessionId = first.ok ? first.sessionId : '';
 
-		expect(await denialsOf('users.deactivated')).toEqual([
-			{ outcome: 'denied', subjectId: target.id, actorUserId: actor.user?.id }
-		]);
-		expect(await denialsOf('users.activated')).toEqual([
-			{ outcome: 'denied', subjectId: target.id, actorUserId: actor.user?.id }
-		]);
+		const refused = await signIn(address(5), {
+			subject,
+			email: email('petrov'),
+			realmRoles: []
+		});
+
+		expect(refused).toEqual({ ok: false, reason: 'no_role' });
+
+		const [row] = await database.db
+			.select({ isActive: users.isActive })
+			.from(users)
+			.where(eq(users.externalSubject, subject));
+
+		expect(row.isActive).toBe(false);
+		// Ждать, пока администратор заметит, нельзя: у уволенного входа может уже
+		// не быть, а открытая сессия работала бы до конца дня.
+		expect(await touchSession(sessionId)).toBeNull();
 	});
 
-	it('пишет отказ прочитать штат', async () => {
-		const actor = viewer();
+	it('гасит сессии, когда каталог поменял роль', async () => {
+		const subject = `sub-${randomUUID()}`;
+		const first = await signIn(address(6), { subject, email: email('smirnov') });
+		const sessionId = first.ok ? first.sessionId : '';
 
-		await expect(listUsers(actor, pageQuerySchema.parse({}))).rejects.toBeInstanceOf(
-			ForbiddenError
-		);
+		const second = await signIn(address(6), {
+			subject,
+			email: email('smirnov'),
+			realmRoles: ['crm-lead']
+		});
 
-		expect(await denialsOf('users.viewed')).toEqual([
-			{ outcome: 'denied', subjectId: null, actorUserId: actor.user?.id }
-		]);
+		expect(second.ok).toBe(true);
+		if (second.ok) {
+			expect(second.user.roleId).toBe('lead');
+		}
+
+		// Прежняя сессия несла прежнюю область: донашивать её до истечения нельзя.
+		expect(await touchSession(sessionId)).toBeNull();
+
+		const changed = await database.db
+			.select({ id: auditEvents.id })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'users.role_changed'));
+
+		expect(changed).toHaveLength(1);
 	});
 
-	it('удачное действие отказом не помечает', async () => {
-		const target = await newUser({ name: 'obychnyi', password: PASSWORD });
+	it('не впускает машинного субъекта ни при каких утверждениях токена', async () => {
+		// Запись роли `service` подготовка прогона уже завела — по одной на роль.
+		const [service] = await database.db
+			.select({ email: users.email })
+			.from(users)
+			.where(eq(users.id, TEST_USER_IDS.service));
 
-		await deactivateUser(testActor(), target.id);
+		const outcome = await signIn(address(7), { email: service.email });
 
-		expect(await denialsOf('users.deactivated')).toEqual([
-			{ outcome: 'success', subjectId: target.id, actorUserId: TEST_USER_IDS.admin }
+		expect(outcome).toEqual({
+			ok: false,
+			reason: 'service_account',
+			userId: TEST_USER_IDS.service
+		});
+	});
+
+	it('не впускает выключенную запись', async () => {
+		const [account] = await database.db
+			.insert(users)
+			.values({
+				email: email('uvolen'),
+				fullName: 'Уволен Уволенович',
+				roleId: 'manager',
+				isActive: false
+			})
+			.returning({ id: users.id });
+
+		const outcome = await signIn(address(8), { email: email('uvolen') });
+
+		expect(outcome).toEqual({ ok: false, reason: 'inactive', userId: account.id });
+	});
+});
+
+describe('сессии', () => {
+	it('живут в Redis и гаснут по требованию', async () => {
+		const sessionId = await createSession(TEST_USER_IDS.manager, {
+			ip: address(9),
+			userAgent: 'vitest'
+		});
+		openedSessions.add(sessionId);
+
+		expect(await touchSession(sessionId)).toBe(TEST_USER_IDS.manager);
+
+		await revokeAllSessions(TEST_USER_IDS.manager);
+
+		expect(await touchSession(sessionId)).toBeNull();
+	});
+
+	it('собирают пользователя из базы, а не из записи сессии', async () => {
+		const user = await loadSessionUser(TEST_USER_IDS.manager);
+
+		expect(user?.roleId).toBe('manager');
+		expect(user?.permissions.has('interactions.write')).toBe(true);
+		// Право, отнятое у КАМа: каталог прав один, и сессия читает его же.
+		expect(user?.permissions.has('stats.import')).toBe(false);
+	});
+
+	it('не собирают выключенную учётную запись', async () => {
+		await database.db
+			.update(users)
+			.set({ isActive: false })
+			.where(eq(users.id, TEST_USER_IDS.manager));
+
+		expect(await loadSessionUser(TEST_USER_IDS.manager)).toBeNull();
+	});
+});
+
+describe('область доступа сессии', () => {
+	it('у администратора полная, у менеджера — только его записи', async () => {
+		const admin = await loadSessionUser(TEST_USER_IDS.admin);
+		const manager = await loadSessionUser(TEST_USER_IDS.manager);
+
+		expect(admin?.scope).toEqual({ kind: 'all' });
+		expect(manager?.scope).toEqual({
+			kind: 'delegated',
+			userIds: new Set([TEST_USER_IDS.manager])
+		});
+	});
+
+	it('у руководителя — он сам и его подчинённые на любую глубину', async () => {
+		const [deep] = await database.db
+			.insert(users)
+			.values({
+				email: email('deep'),
+				fullName: 'Глубокий Подчинённый',
+				roleId: 'manager',
+				managerUserId: TEST_USER_IDS.manager
+			})
+			.returning({ id: users.id });
+
+		await database.db
+			.update(users)
+			.set({ managerUserId: TEST_USER_IDS.lead })
+			.where(eq(users.id, TEST_USER_IDS.manager));
+
+		const lead = await loadSessionUser(TEST_USER_IDS.lead);
+
+		expect(lead?.scope).toEqual({
+			kind: 'delegated',
+			userIds: new Set([TEST_USER_IDS.lead, TEST_USER_IDS.manager, deep.id])
+		});
+	});
+
+	it('у машинного субъекта полная: ключ обмена работает по любому вузу', async () => {
+		const service = await loadSessionUser(TEST_USER_IDS.service);
+
+		expect(service?.scope).toEqual({ kind: 'all' });
+		// Ширина безопасна ровно потому, что дальше эндпоинтов обмена такой ключ
+		// не пускают: набор прав у роли закрытый и перечислен целиком.
+		expect([...(service?.permissions ?? [])].sort()).toEqual([
+			'exchange.intake',
+			'exchange.results',
+			'stages.confirm'
 		]);
 	});
 });
 
-describe('пользователи', () => {
-	it('требует существующей роли и не допускает двух одинаковых почт', async () => {
-		await newUser({ name: 'pervyi', password: PASSWORD });
+describe('демонстрационная сессия', () => {
+	it('теряет ровно те права, что переживают демонстрацию', async () => {
+		demo.mode = true;
 
+		await database.db.update(users).set({ isDemo: true }).where(eq(users.id, TEST_USER_IDS.admin));
+
+		const user = await loadSessionUser(TEST_USER_IDS.admin);
+
+		expect(user?.isDemo).toBe(true);
+		// Заведённая учётная запись и выпущенный ключ живут дольше сессии, адрес
+		// подключения уводит данные на чужой узел, обезличивание необратимо.
+		expect(user?.permissions.has('users.manage')).toBe(false);
+		expect(user?.permissions.has('api_keys.manage')).toBe(false);
+		expect(user?.permissions.has('integrations.manage_endpoints')).toBe(false);
+		expect(user?.permissions.has('people.anonymize')).toBe(false);
+
+		// А всё, что на стенде показывают, остаётся: правка процесса, журнал
+		// обмена, настройки и выгрузка журнала.
+		expect(user?.permissions.has('stages.configure')).toBe(true);
+		expect(user?.permissions.has('integrations.manage')).toBe(true);
+		expect(user?.permissions.has('settings.write')).toBe(true);
+		expect(user?.permissions.has('audit.export')).toBe(true);
+	});
+
+	it('вне демо-режима признак ничего не значит', async () => {
+		demo.mode = false;
+
+		await database.db.update(users).set({ isDemo: true }).where(eq(users.id, TEST_USER_IDS.admin));
+
+		const user = await loadSessionUser(TEST_USER_IDS.admin);
+
+		expect(user?.isDemo).toBe(false);
+		expect(user?.permissions.has('users.manage')).toBe(true);
+	});
+});
+
+describe('лимит заходов с адреса', () => {
+	it('разворачивает POST страницы входа, когда окно выбрано', async () => {
+		const ip = address(20);
+		const redis = getRedis();
+
+		// Счётчик выставляется сразу за потолок: тридцать одиночных заходов
+		// проверяли бы скорость Redis, а не правило.
+		await redis.set(`login_ip:${ip}`, '10000', 'EX', 900);
+
+		expect(await withinStartLimit(ip)).toBe(false);
+
+		const thrown = await Promise.resolve(
+			rateLimit({
+				event: {
+					route: { id: '/(auth)/login' },
+					request: new Request('http://localhost/login', { method: 'POST' }),
+					url: new URL('http://localhost/login?next=%2Faudit'),
+					getClientAddress: () => ip
+				},
+				resolve: async () => new Response('форма принята')
+			} as unknown as Parameters<typeof rateLimit>[0])
+		).then(
+			(response) => response,
+			(failure: unknown) => failure
+		);
+
+		expect(isRedirect(thrown)).toBe(true);
+		// `next` переживает отказ: лимит не должен ещё и терять, куда человек шёл.
+		expect((thrown as { location: string }).location).toBe('/login?next=%2Faudit');
+	});
+});
+
+describe('управление учётными записями', () => {
+	it('выключает запись, гасит её сессии и включает обратно', async () => {
+		const [account] = await database.db
+			.insert(users)
+			.values({ email: email('vetrov'), fullName: 'Ветров Игорь', roleId: 'manager' })
+			.returning({ id: users.id });
+
+		const sessionId = await createSession(account.id, { ip: address(21), userAgent: 'vitest' });
+		openedSessions.add(sessionId);
+
+		await deactivateUser(testActor(), account.id);
+
+		expect(await touchSession(sessionId)).toBeNull();
+		expect(await loadSessionUser(account.id)).toBeNull();
+
+		await activateUser(testActor(), account.id);
+
+		expect((await loadSessionUser(account.id))?.id).toBe(account.id);
+		await expect(activateUser(testActor(), account.id)).rejects.toBeInstanceOf(ConflictError);
+	});
+
+	it('не даёт выключить собственную запись и демонстрационную в демо-режиме', async () => {
 		await expect(
-			createUser(testActor(), {
-				email: email('pervyi'),
-				fullName: 'Другой Человек',
-				roleId: 'manager',
-				password: PASSWORD
-			})
+			deactivateUser(testActor({ roleId: 'admin' }), TEST_USER_IDS.admin)
 		).rejects.toBeInstanceOf(ConflictError);
 
-		await expect(
-			createUser(testActor(), {
-				email: email('bez-roli'),
-				fullName: 'Человек Без Роли',
-				roleId: 'superuser',
-				password: PASSWORD
+		demo.mode = true;
+		const [account] = await database.db
+			.insert(users)
+			.values({
+				email: email('demo'),
+				fullName: 'Демо Демович',
+				roleId: 'manager',
+				isDemo: true
 			})
-		).rejects.toSatisfy(
-			(error: unknown) =>
-				error instanceof ValidationError && error.issues.some((issue) => /superuser/.test(issue))
-		);
+			.returning({ id: users.id });
+
+		await expect(deactivateUser(testActor(), account.id)).rejects.toBeInstanceOf(ConflictError);
 	});
 
-	it('не заводит пользователя со слабым паролем', async () => {
-		await expect(
-			createUser(testActor(), {
-				email: email('slaboe'),
-				fullName: 'Человек Иванов',
-				roleId: 'viewer',
-				password: 'qwerty'
-			})
-		).rejects.toSatisfy(
-			(error: unknown) => error instanceof ValidationError && error.issues.length === 2
-		);
-	});
-
-	it('пускает к списку и к заведению только с правом users.manage', async () => {
-		const page = pageQuerySchema.parse({});
-		const viewer = testActor({ roleId: 'viewer' });
-
-		await expect(listUsers(viewer, page)).rejects.toBeInstanceOf(ForbiddenError);
-		await expect(
-			createUser(viewer, {
-				email: email('chuzhoi'),
-				fullName: 'Человек Иванов',
-				roleId: 'viewer',
-				password: PASSWORD
-			})
-		).rejects.toBeInstanceOf(ForbiddenError);
-
-		await newUser({ name: 'v-spiske', password: PASSWORD });
-		const listed = await listUsers(testActor(), page);
-
-		// По пользователю на каждую системную роль завела фикстура, ещё одного —
-		// сама проверка.
-		expect(listed.total).toBe(DEFAULT_ROLES.length + 1);
-		expect(listed.items.some((item) => item.email === email('v-spiske'))).toBe(true);
-	});
-
-	it('отдаёт штат для выбора ответственного тому, кто ведёт взаимодействия', async () => {
+	it('требует права на список и на переключение', async () => {
 		const manager = testActor({ roleId: 'manager' });
-		const created = await newUser({ name: 'v-vybore', password: PASSWORD });
 
-		// Раздел пользователей закрыт правом администратора, а выбор
-		// ответственного — нет: иначе менеджер не смог бы назначить работу коллеге.
 		await expect(listUsers(manager, pageQuerySchema.parse({}))).rejects.toBeInstanceOf(
 			ForbiddenError
 		);
-
-		const staff = await lookupUsers(manager);
-		expect(staff.map((item) => item.id)).toContain(created.id);
-		expect(staff.find((item) => item.id === created.id)).toMatchObject({
-			fullName: 'Иванов Иван',
-			roleId: 'manager',
-			roleName: 'Менеджер'
-		});
-
-		// Наблюдателю назначать нечего — и штата он не видит.
-		await expect(lookupUsers(testActor({ roleId: 'viewer' }))).rejects.toBeInstanceOf(
+		await expect(deactivateUser(manager, TEST_USER_IDS.lead)).rejects.toBeInstanceOf(
 			ForbiddenError
 		);
 	});
 
-	it('не предлагает выключенных и сужает список поиском и ролью', async () => {
-		const manager = testActor({ roleId: 'manager' });
-		const uvolen = await newUser({ name: 'uvolen-iz-vybora', password: PASSWORD });
-		await deactivateUser(testActor(), uvolen.id);
-		await newUser({ name: 'ostalsya-v-shtate', password: PASSWORD });
+	it('ведёт иерархию и гасит сессии затронутых', async () => {
+		const [account] = await database.db
+			.insert(users)
+			.values({ email: email('sidorov'), fullName: 'Сидоров Пётр', roleId: 'manager' })
+			.returning({ id: users.id });
 
-		// Назначить работу на уволенного нельзя, поэтому его нет и в выборе.
-		expect((await lookupUsers(manager)).map((item) => item.id)).not.toContain(uvolen.id);
+		const sessionId = await createSession(account.id, { ip: address(22), userAgent: 'vitest' });
+		openedSessions.add(sessionId);
 
-		const found = await lookupUsers(manager, { q: 'иванов' });
-		expect(found.length).toBeGreaterThan(0);
-		expect(found.every((item) => item.fullName.includes('Иванов'))).toBe(true);
+		await setUserManager(testActor(), { userId: account.id, managerUserId: TEST_USER_IDS.lead });
 
-		const admins = await lookupUsers(manager, { roleIds: ['admin'] });
-		expect(admins.length).toBeGreaterThan(0);
-		expect(admins.every((item) => item.roleId === 'admin')).toBe(true);
+		expect(await touchSession(sessionId)).toBeNull();
 
-		// Пустой список ролей — это «ни одна не подходит», а не «любая».
-		expect(await lookupUsers(manager, { roleIds: [] })).toEqual([]);
+		const [row] = await database.db
+			.select({ managerUserId: users.managerUserId })
+			.from(users)
+			.where(eq(users.id, account.id));
+
+		expect(row.managerUserId).toBe(TEST_USER_IDS.lead);
+
+		// Область руководителя расширилась немедленно.
+		const lead = await loadSessionUser(TEST_USER_IDS.lead);
+		expect(lead?.scope).toEqual({
+			kind: 'delegated',
+			userIds: new Set([TEST_USER_IDS.lead, account.id])
+		});
 	});
 
-	it('не даёт выключить собственную учётную запись', async () => {
-		const actor = testActor();
+	it('отвязывает от каталога, и следующий вход связывает запись заново', async () => {
+		const first = await signIn(address(23), { email: email('perezavod') });
+		expect(first.ok).toBe(true);
 
-		await expect(deactivateUser(actor, actor.user?.id as string)).rejects.toBeInstanceOf(
+		const [account] = await database.db
+			.select({ id: users.id })
+			.from(users)
+			.where(eq(users.email, email('perezavod')));
+
+		// Каталог перезавели: у того же человека другой субъект. Вход его не
+		// узнаёт и по почте не связывается — иначе чужой адрес в токене отдавал
+		// бы чужой портфель.
+		const stranger = await signIn(address(23), { email: email('perezavod') });
+		expect(stranger).toMatchObject({ ok: false, reason: 'email_taken', userId: account.id });
+
+		await unlinkFromDirectory(testActor(), account.id);
+
+		const [unlinked] = await database.db
+			.select({ externalSubject: users.externalSubject })
+			.from(users)
+			.where(eq(users.id, account.id));
+
+		expect(unlinked.externalSubject).toBeNull();
+
+		// Та же строка, а не двойник: портфель, назначения и след в журнале
+		// остаются за ней.
+		const again = await signIn(address(23), { email: email('perezavod') });
+		expect(again.ok).toBe(true);
+		if (again.ok) {
+			expect(again.user.id).toBe(account.id);
+		}
+
+		await expect(unlinkFromDirectory(testActor(), account.id)).resolves.toBeUndefined();
+	});
+
+	it('не отвязывает запись, которая и так не связана', async () => {
+		await expect(unlinkFromDirectory(testActor(), TEST_USER_IDS.manager)).rejects.toBeInstanceOf(
 			ConflictError
 		);
 	});
 
-	it('включает выключенную запись обратно и открывает ей вход', async () => {
-		const user = await newUser({ name: 'vernulsya', password: PASSWORD });
+	it('не заводит круг в иерархии', async () => {
+		await setUserManager(testActor(), {
+			userId: TEST_USER_IDS.manager,
+			managerUserId: TEST_USER_IDS.lead
+		});
 
-		await deactivateUser(testActor(), user.id);
-		expect(
-			await login(anonymous(address(16)), { email: user.email, password: PASSWORD })
-		).toMatchObject({ ok: false, reason: 'invalid' });
-
-		await activateUser(testActor(), user.id);
-
-		// Пароль выключение не отменяло: человек возвращается к работе с тем же.
-		expect(
-			await login(anonymous(address(16)), { email: user.email, password: PASSWORD })
-		).toMatchObject({ ok: true });
-
-		expect(await auditOf('users.activated')).toEqual([{ outcome: 'success', details: {} }]);
-
-		const [row] = await database.db
-			.select({ deactivatedAt: users.deactivatedAt })
-			.from(users)
-			.where(eq(users.id, user.id));
-		expect(row.deactivatedAt).toBeNull();
+		await expect(
+			setUserManager(testActor(), {
+				userId: TEST_USER_IDS.lead,
+				managerUserId: TEST_USER_IDS.manager
+			})
+		).rejects.toThrow('Иерархия не изменена');
 	});
 
-	it('не записывает включение того, что и так работает, и не знает чужих записей', async () => {
-		const user = await newUser({ name: 'uzhe-rabotaet', password: PASSWORD });
+	it('показывает в списке руководителя и признак связанности с каталогом', async () => {
+		const page = await listUsers(testActor(), pageQuerySchema.parse({}));
+		const manager = page.items.find((item) => item.id === TEST_USER_IDS.manager);
 
-		await expect(activateUser(testActor(), user.id)).rejects.toBeInstanceOf(ConflictError);
+		expect(manager?.isLinked).toBe(false);
+		expect(manager?.managerUserId).toBeNull();
+	});
+
+	it('не предлагает машинного субъекта в выборе исполнителя', async () => {
+		const found = await lookupUsers(testActor());
+
+		expect(found.map((item) => item.id)).not.toContain(TEST_USER_IDS.service);
+	});
+});
+
+describe('назначения и область', () => {
+	it('сужают список организаций по действующим назначениям', async () => {
+		const mine = await insertOrganization(database.db, { shortName: 'Мой вуз' });
+		const foreign = await insertOrganization(database.db, { shortName: 'Чужой вуз' });
+
+		await database.db
+			.insert(organizationResponsibles)
+			.values({ organizationId: mine, userId: TEST_USER_IDS.manager });
+
+		const manager = await loadSessionUser(TEST_USER_IDS.manager);
+
+		expect(manager?.scope).toEqual({
+			kind: 'delegated',
+			userIds: new Set([TEST_USER_IDS.manager])
+		});
+
+		const rows = await database.db
+			.select({ organizationId: organizationResponsibles.organizationId })
+			.from(organizationResponsibles)
+			.orderBy(asc(organizationResponsibles.organizationId));
+
+		expect(rows.map((row) => row.organizationId)).toEqual([mine]);
+		expect(foreign).not.toBe(mine);
+	});
+});
+
+describe('каталог ролей', () => {
+	it('перечисляет ровно три роли человека и одного машинного субъекта', () => {
+		expect(DEFAULT_ROLES.map((role) => role.id)).toEqual(['admin', 'lead', 'manager', 'service']);
+	});
+
+	it('не заводит запись под несуществующую роль', async () => {
 		await expect(
-			activateUser(testActor(), '00000000-0000-4000-8000-00000000dead')
+			database.db
+				.insert(users)
+				.values({ email: email('nobody'), fullName: 'Никто', roleId: 'viewer' })
+		).rejects.toBeInstanceOf(Error);
+	});
+
+	it('не находит выключенного пользователя', async () => {
+		await expect(
+			deactivateUser(testActor(), '00000000-0000-4000-8000-0000000000ff')
 		).rejects.toBeInstanceOf(NotFoundError);
-
-		// Журнал — доказательство того, что произошло: отказ ничего в него не кладёт.
-		expect(await auditOf('users.activated')).toEqual([]);
-	});
-
-	it('включать и выключать может только тот, кто управляет пользователями', async () => {
-		const user = await newUser({ name: 'ne-tvoyo', password: PASSWORD });
-		const viewer = testActor({ roleId: 'viewer' });
-
-		await expect(deactivateUser(viewer, user.id)).rejects.toBeInstanceOf(ForbiddenError);
-		await expect(activateUser(viewer, user.id)).rejects.toBeInstanceOf(ForbiddenError);
-	});
-
-	it('меняет пароль, проверяя текущий, и гасит все сессии', async () => {
-		const created = await newUser({ name: 'smena', password: PASSWORD });
-		const user = await loadSessionUser(created.id);
-		expect(user).not.toBeNull();
-
-		const ctx: ActorContext = { ...anonymous(address(12)), user, scope: { kind: 'all' } };
-		const sessionId = await createSession(created.id, { ip: null, userAgent: null });
-
-		await expect(
-			changePassword(ctx, { current: 'Совсем-Другой1', next: 'Новый-Пароль1' })
-		).rejects.toBeInstanceOf(ValidationError);
-
-		await changePassword(ctx, { current: PASSWORD, next: 'Новый-Пароль1' });
-
-		expect(await touchSession(sessionId)).toBeNull();
-		expect(
-			await login(anonymous(address(12)), { email: created.email, password: PASSWORD })
-		).toMatchObject({ ok: false });
-		expect(
-			await login(anonymous(address(12)), { email: created.email, password: 'Новый-Пароль1' })
-		).toMatchObject({ ok: true });
-
-		expect(await auditOf('auth.password_changed')).toEqual([{ outcome: 'success', details: {} }]);
-
-		const [row] = await database.db
-			.select({ hash: users.passwordHash })
-			.from(users)
-			.where(eq(users.id, created.id));
-		expect(row.hash).toMatch(/^\$argon2id\$/);
 	});
 });

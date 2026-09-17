@@ -60,7 +60,7 @@ describe('миграции', () => {
 			from unnest(array[
 				'users', 'roles', 'permissions', 'role_permissions', 'app_settings',
 				'audit_events', 'organizations', 'sites', 'people', 'affiliations',
-				'programs', 'program_versions', 'products', 'stage_routes', 'stages',
+				'programs', 'program_versions', 'products', 'process_revisions', 'stages',
 				'stage_transitions', 'interactions', 'interaction_parties',
 				'interaction_party_sites', 'interaction_programs', 'interaction_products',
 				'interaction_changes', 'stage_entries', 'stage_pauses', 'blockers',
@@ -76,6 +76,53 @@ describe('миграции', () => {
 
 		expect(rows).toHaveLength(45);
 		expect(rows.filter((row) => row.name === null)).toEqual([]);
+	});
+
+	it('снимают маршруты вместе с их колонками', async () => {
+		// Маршрут превратился в редакцию процесса группы; старой таблицы и ссылки
+		// на неё быть не должно, иначе рядом с процессом останется второй способ
+		// сказать, по каким стадиям идёт взаимодействие.
+		const gone = await database.raw<{ name: string | null }[]>`
+			select to_regclass('public.stage_routes')::text as name
+		`;
+
+		const columns = await database.raw<{ table: string; column: string }[]>`
+			select table_name as "table", column_name as "column"
+			from information_schema.columns
+			where table_schema = 'public'
+				and (
+					(table_name = 'interactions' and column_name = 'route_id')
+					or (table_name in ('stages', 'stage_transitions') and column_name = 'route_id')
+					or (table_name = 'process_revisions' and column_name in ('key', 'is_default'))
+				)
+		`;
+
+		expect(gone[0].name).toBeNull();
+		expect(columns).toEqual([]);
+	});
+
+	it('делают группу процесса обязательной у взаимодействия', async () => {
+		const [row] = await database.raw<{ nullable: string }[]>`
+			select is_nullable as nullable
+			from information_schema.columns
+			where table_schema = 'public'
+				and table_name = 'interactions'
+				and column_name = 'process_group_id'
+		`;
+
+		expect(row.nullable).toBe('NO');
+	});
+
+	it('держат один черновик на группу частичным уникальным индексом', async () => {
+		const [row] = await database.raw<{ name: string }[]>`
+			select indexname as name
+			from pg_indexes
+			where schemaname = 'public'
+				and tablename = 'process_revisions'
+				and indexname = 'process_revisions_one_draft_per_group'
+		`;
+
+		expect(row?.name).toBe('process_revisions_one_draft_per_group');
 	});
 });
 

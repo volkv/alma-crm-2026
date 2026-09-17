@@ -213,6 +213,7 @@
 			<FieldSelect
 				name="ownerUserId"
 				label="Владелец"
+				description="Ключ работает правами и областью владельца. Ключи обмена с сайтом и системой обучения выпускаются на «Внешние системы (обмен)»: такой ключ не пускают никуда, кроме эндпоинтов обмена."
 				required
 				options={data.owners.map((owner) => ({ value: owner.id, label: owner.fullName }))}
 				placeholder="Выберите владельца"

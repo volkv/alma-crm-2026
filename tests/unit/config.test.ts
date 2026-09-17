@@ -16,7 +16,11 @@ const completeEnv = {
 	S3_BUCKET: 'lct-documents',
 	S3_ACCESS_KEY: 'lct',
 	S3_SECRET_KEY: 'lct-secret-key',
-	S3_FORCE_PATH_STYLE: 'true'
+	S3_FORCE_PATH_STYLE: 'true',
+	OIDC_ISSUER_URL: 'http://localhost:58080/realms/lct',
+	OIDC_PUBLIC_URL: 'http://localhost:58080',
+	OIDC_CLIENT_ID: 'lct-crm',
+	OIDC_CLIENT_SECRET: 'lct-crm-dev-secret'
 } satisfies Record<string, string>;
 
 describe('parseConfig', () => {
@@ -91,5 +95,13 @@ describe('parseConfig', () => {
 		expect(() => parseConfig({ ...completeEnv, SMTP_HOST: '', S3_BUCKET: '' })).toThrowError(
 			/SMTP_HOST[\s\S]*S3_BUCKET/
 		);
+	});
+
+	it('rejects an issuer URL with a trailing slash', () => {
+		// `iss` токена realm пишет без слэша, и сверка идёт строка в строку:
+		// лишний символ отвергал бы каждый вход уже после обмена кода.
+		expect(() =>
+			parseConfig({ ...completeEnv, OIDC_ISSUER_URL: 'http://localhost:58080/realms/lct/' })
+		).toThrowError(/OIDC_ISSUER_URL/);
 	});
 });

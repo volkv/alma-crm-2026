@@ -37,7 +37,6 @@ import { createInteractionIn } from '../interactions/write';
 import { withPiiTrace } from '../people/pii-trace';
 import { requirePermission } from '../rbac';
 import { addComment } from '../stages/commands';
-import { getDefaultRoute } from '../stages/routes';
 
 /** Внешняя система, из которой приходят заявки. */
 const EXTERNAL_SOURCE = 'site';
@@ -194,10 +193,6 @@ export async function receiveApplication(
 		return { interactionId: existing, created: false };
 	}
 
-	// Маршрут по умолчанию читается до транзакции: он опубликован задолго до
-	// заявки, и держать его чтение внутри операции незачем.
-	const route = await getDefaultRoute(ctx);
-
 	try {
 		// Одна область следа просмотра на всю сборку: заявка — это один запрос, и
 		// событие о раскрытых контактах у него одно, а не по событию на каждую
@@ -283,9 +278,13 @@ export async function receiveApplication(
 					affiliationId = affiliation.id;
 				}
 
+				// Группа процесса и её действующая редакция читаются внутри
+				// транзакции, под разделяемой блокировкой группы: это делает
+				// `createInteractionIn`. Прежде маршрут читался до транзакции — и
+				// заявка, пришедшая в миллисекунду изменения процесса, встала бы на
+				// стадию редакции, которая уже не действует.
 				const interactionId = await createInteractionIn(ctx, tx, {
 					title: interactionTitle(input.organization.name, input.interest),
-					routeId: route.id,
 					agreementPeriodStart: null,
 					agreementPeriodEnd: null,
 					academicPeriodStart: null,

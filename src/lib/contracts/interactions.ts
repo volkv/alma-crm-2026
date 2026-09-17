@@ -1,10 +1,12 @@
 /**
  * Взаимодействие с учебным заведением — центральная сущность процесса — и
- * команды, которыми его двигают по маршруту стадий.
+ * команды, которыми его двигают по стадиям.
  *
- * Маршрут описывает, какие стадии бывают и в каком порядке; взаимодействие
- * ссылается на конкретную опубликованную версию маршрута. Текущая стадия — это
- * открытая запись `stage_entries`, отдельного поля-кэша нет.
+ * Процесс принадлежит группе контрагентов, и в группе действует ровно одна
+ * редакция структуры: стадии с параметрами и переходы между ними. Номер
+ * редакции — внутреннее понятие; взаимодействие ссылается на группу, а не на
+ * редакцию, и изменение процесса применяется ко всем сразу. Текущая стадия —
+ * это открытая запись `stage_entries`, отдельного поля-кэша нет.
  */
 import { z } from 'zod';
 import {
@@ -136,8 +138,12 @@ export type ChecklistState = z.output<typeof checklistStateSchema>;
 
 /**
  * Слепок стадии на момент входа в неё. Хранится в записи о стадии, потому что
- * маршрут может быть переиздан новой версией, а сроки и чек-лист уже пройденной
- * стадии обязаны остаться такими, какими их видел исполнитель.
+ * процесс группы могут изменить, а сроки и чек-лист уже пройденной стадии
+ * обязаны остаться такими, какими их видел исполнитель.
+ *
+ * Правила перехода движок берёт именно отсюда, а не из текущей структуры:
+ * поэтому в слепке лежит всё, о чём спрашивает `evaluateTransition`, и
+ * добавление поля в стадию означает добавление поля сюда.
  */
 export const stageSnapshotSchema = z.object({
 	key: z.string().min(1),
@@ -150,6 +156,10 @@ export const stageSnapshotSchema = z.object({
 	staleAfterDays: z.number().int().min(0).nullable(),
 	requiresResult: z.boolean(),
 	requiresConfirmation: z.boolean(),
+	/** Стадию подтверждают фактом из системы обучения. */
+	requiresLmsData: z.boolean(),
+	/** С этой стадии процесс заканчивается: дальше не идут, а завершают. */
+	isFinal: z.boolean(),
 	checklist: z.array(checklistItemSchema)
 });
 
@@ -189,8 +199,6 @@ const interactionProgramSchema = z.object({
 
 const interactionFields = {
 	title: requiredText(300, 'Укажите название взаимодействия'),
-	/** Версия маршрута, по которой идёт это взаимодействие. */
-	routeId: id('Выберите маршрут стадий'),
 	/** Срок действия договора или соглашения. */
 	agreementPeriodStart: optionalIsoDate('Дата начала соглашения указана неверно'),
 	agreementPeriodEnd: optionalIsoDate('Дата окончания соглашения указана неверно'),
@@ -290,6 +298,11 @@ export const interactionListQuerySchema = z.object({
 	status: z.enum(INTERACTION_STATUSES).nullable().default(null),
 	ownerUserId: optionalId('Некорректный идентификатор ответственного'),
 	organizationId: optionalId('Некорректный идентификатор организации'),
+	/**
+	 * Группа процесса ключом (`b2b`, `b2c`). По ней же доска выбирает, чьи
+	 * стадии станут колонками: список и доска — один отбор, показанный дважды.
+	 */
+	group: optionalText(100),
 	/** Смысловая группа текущей стадии: «на каком участке процесса стоим». */
 	stageCategory: z.enum(STAGE_CATEGORIES).nullable().default(null),
 	/** Только просроченные: срок текущей стадии уже прошёл. */
@@ -312,13 +325,32 @@ const stageCommandFields = {
 	fromStageId: id('Некорректный идентификатор стадии')
 };
 
-export const advanceStageSchema = z.object({
+/**
+ * Номер редакции процесса, с которой была отрисована карточка.
+ *
+ * Стадия с тем же идентификатором после публикации принадлежит прежней
+ * редакции, поэтому одной сверки `fromStageId` мало: команда несёт номер, и под
+ * блокировкой строки взаимодействия он сверяется с действующей редакцией
+ * группы. Несовпадение — отказ до единой записи.
+ */
+const revisionField = z
+	.number({ error: 'Некорректный номер редакции процесса' })
+	.int({ error: 'Некорректный номер редакции процесса' })
+	.min(1, { error: 'Некорректный номер редакции процесса' });
+
+/** Переходы двигают процесс: у всех трёх видов общий набор полей. */
+const stageMoveFields = {
 	...stageCommandFields,
+	revision: revisionField
+};
+
+export const advanceStageSchema = z.object({
+	...stageMoveFields,
 	toStageId: id('Выберите стадию, на которую переходим'),
 	/**
 	 * Комментарий к шагу вперёд: чем закончили стадию. По умолчанию
-	 * необязателен, но переход маршрута может потребовать его (`requiresReason`),
-	 * и тогда отказывает движок — схема про настройку маршрута не знает.
+	 * необязателен, но переход процесса может потребовать его (`requiresReason`),
+	 * и тогда отказывает движок — схема про настройку процесса не знает.
 	 */
 	reason: optionalText(1000),
 	/** Результат стадии; обязателен, если стадия его требует. */
@@ -327,13 +359,13 @@ export const advanceStageSchema = z.object({
 });
 
 export const returnStageSchema = z.object({
-	...stageCommandFields,
+	...stageMoveFields,
 	toStageId: id('Выберите стадию, на которую возвращаем'),
 	reason: requiredText(1000, 'Опишите, почему взаимодействие возвращается назад')
 });
 
 export const skipStageSchema = z.object({
-	...stageCommandFields,
+	...stageMoveFields,
 	toStageId: id('Выберите стадию, на которую переходим'),
 	reason: requiredText(1000, 'Опишите, почему стадия пропускается')
 });
@@ -442,11 +474,12 @@ export const cancelInteractionSchema = z.object({
 });
 
 /**
- * Конфигурация маршрута: стадии и переходы между ними.
+ * Структура процесса: стадии и переходы между ними.
  *
- * Стадии и переходы адресуются ключами, а не идентификаторами: конфигурацию
- * пишут руками (демонстрационный маршрут — константа в коде), а идентификаторы
- * появляются только в базе.
+ * Стадии и переходы адресуются ключами, а не идентификаторами: структуру
+ * описывают данными (процессы, с которыми приезжает система, — константы в
+ * коде), а идентификаторы появляются только в базе. Ключ стадии устойчив: по
+ * нему записи сопоставляются с новой структурой при изменении процесса.
  */
 export const stageDefinitionSchema = z.object({
 	key: requiredText(100, 'У стадии должен быть ключ'),
@@ -468,6 +501,10 @@ export const stageDefinitionSchema = z.object({
 		.default(null),
 	requiresResult: z.boolean().default(false),
 	requiresConfirmation: z.boolean().default(false),
+	/** Стадию подтверждают фактом из системы обучения. */
+	requiresLmsData: z.boolean().default(false),
+	/** С этой стадии процесс заканчивается: переходов вперёд с неё не требуют. */
+	isFinal: z.boolean().default(false),
 	checklist: z.array(checklistItemSchema).default([])
 });
 
@@ -480,16 +517,32 @@ export const stageTransitionDefinitionSchema = z.object({
 	requiresReason: z.boolean().default(false)
 });
 
-type RouteDefinition = {
+/**
+ * Правило переноса: куда переедут взаимодействия со стадии, которой в новой
+ * структуре больше нет. Ключи, а не идентификаторы: стадия новой редакции —
+ * другая строка, а ключ тот же.
+ */
+export const stageMigrationRuleSchema = z
+	.object({
+		removedStageKey: requiredText(100, 'Укажите ключ удаляемой стадии'),
+		targetStageKey: requiredText(100, 'Укажите стадию, на которую переедут записи')
+	})
+	.refine((value) => value.removedStageKey !== value.targetStageKey, {
+		error: 'Переносить записи на ту же стадию бессмысленно',
+		path: ['targetStageKey']
+	});
+
+type ProcessDefinition = {
 	stages: { key: string }[];
 	transitions: { fromStageKey: string; toStageKey: string }[];
+	migrationRules: { removedStageKey: string; targetStageKey: string }[];
 };
 
-function stageKeysAreDistinct(value: RouteDefinition): boolean {
+function stageKeysAreDistinct(value: ProcessDefinition): boolean {
 	return new Set(value.stages.map((stage) => stage.key)).size === value.stages.length;
 }
 
-function transitionsReferenceStages(value: RouteDefinition): boolean {
+function transitionsReferenceStages(value: ProcessDefinition): boolean {
 	const keys = new Set(value.stages.map((stage) => stage.key));
 
 	return value.transitions.every(
@@ -497,7 +550,7 @@ function transitionsReferenceStages(value: RouteDefinition): boolean {
 	);
 }
 
-function transitionsAreDistinct(value: RouteDefinition): boolean {
+function transitionsAreDistinct(value: ProcessDefinition): boolean {
 	const pairs = value.transitions.map(
 		(transition) => `${transition.fromStageKey}→${transition.toStageKey}`
 	);
@@ -505,25 +558,46 @@ function transitionsAreDistinct(value: RouteDefinition): boolean {
 	return new Set(pairs).size === pairs.length;
 }
 
-function transitionsGoSomewhereElse(value: RouteDefinition): boolean {
+function transitionsGoSomewhereElse(value: ProcessDefinition): boolean {
 	return value.transitions.every((transition) => transition.fromStageKey !== transition.toStageKey);
 }
 
-export const createRouteSchema = z
+/** Правило переноса ведёт на стадию, которая в новой структуре есть. */
+function migrationRulesReferenceStages(value: ProcessDefinition): boolean {
+	const keys = new Set(value.stages.map((stage) => stage.key));
+
+	return value.migrationRules.every(
+		(rule) => !keys.has(rule.removedStageKey) && keys.has(rule.targetStageKey)
+	);
+}
+
+function migrationRulesAreDistinct(value: ProcessDefinition): boolean {
+	const keys = value.migrationRules.map((rule) => rule.removedStageKey);
+
+	return new Set(keys).size === keys.length;
+}
+
+/**
+ * Структура процесса целиком — то, что записывает редакцию.
+ *
+ * Пишется всегда целиком, а не полями: правится описание процесса, а не
+ * отдельная стадия, и половина описания ничего не описывает. Ключа у структуры
+ * нет — она принадлежит группе, а групп столько, сколько сценариев работы.
+ */
+export const processDefinitionSchema = z
 	.object({
-		key: requiredText(100, 'Укажите ключ маршрута'),
-		name: requiredText(300, 'Укажите название маршрута'),
-		description: optionalText(1000),
-		/** Маршрут, который предлагается для новых взаимодействий. */
-		isDefault: z.boolean().default(false),
+		name: requiredText(300, 'Укажите название процесса'),
+		note: optionalText(1000),
 		stages: z
 			.array(stageDefinitionSchema)
-			.min(1, { error: 'В маршруте должна быть хотя бы одна стадия' }),
-		transitions: z.array(stageTransitionDefinitionSchema).default([])
+			.min(1, { error: 'В процессе должна быть хотя бы одна стадия' }),
+		transitions: z.array(stageTransitionDefinitionSchema).default([]),
+		/** По строке на каждую стадию, которой в этой редакции не стало. */
+		migrationRules: z.array(stageMigrationRuleSchema).default([])
 	})
 	.refine(stageKeysAreDistinct, { error: 'Ключи стадий не повторяются', path: ['stages'] })
 	.refine(transitionsReferenceStages, {
-		error: 'Переход ссылается на стадию, которой нет в маршруте',
+		error: 'Переход ссылается на стадию, которой нет в процессе',
 		path: ['transitions']
 	})
 	.refine(transitionsAreDistinct, {
@@ -533,11 +607,15 @@ export const createRouteSchema = z
 	.refine(transitionsGoSomewhereElse, {
 		error: 'Переход не может вести на ту же стадию',
 		path: ['transitions']
+	})
+	.refine(migrationRulesReferenceStages, {
+		error: 'Правило переноса ведёт мимо стадий процесса',
+		path: ['migrationRules']
+	})
+	.refine(migrationRulesAreDistinct, {
+		error: 'У удалённой стадии не бывает двух правил переноса',
+		path: ['migrationRules']
 	});
-
-export const updateRouteSchema = createRouteSchema.extend({
-	id: id('Некорректный идентификатор маршрута')
-});
 
 export type CreateInteractionInput = z.output<typeof createInteractionSchema>;
 export type UpdateInteractionInput = z.output<typeof updateInteractionSchema>;
@@ -558,8 +636,8 @@ export type CompleteInteractionInput = z.output<typeof completeInteractionSchema
 export type CancelInteractionInput = z.output<typeof cancelInteractionSchema>;
 export type StageDefinitionInput = z.output<typeof stageDefinitionSchema>;
 export type StageTransitionDefinitionInput = z.output<typeof stageTransitionDefinitionSchema>;
-export type CreateRouteInput = z.output<typeof createRouteSchema>;
-export type UpdateRouteInput = z.output<typeof updateRouteSchema>;
+export type StageMigrationRuleInput = z.output<typeof stageMigrationRuleSchema>;
+export type ProcessDefinitionInput = z.output<typeof processDefinitionSchema>;
 
 /**
  * Представления, которые сервер отдаёт наружу. Строки таблиц Drizzle за
@@ -568,7 +646,7 @@ export type UpdateRouteInput = z.output<typeof updateRouteSchema>;
  */
 export type StageView = {
 	id: string;
-	routeId: string;
+	revisionId: string;
 	position: number;
 	key: string;
 	name: string;
@@ -577,6 +655,8 @@ export type StageView = {
 	staleAfterDays: number | null;
 	requiresResult: boolean;
 	requiresConfirmation: boolean;
+	requiresLmsData: boolean;
+	isFinal: boolean;
 	checklist: ChecklistItem[];
 };
 
@@ -589,16 +669,84 @@ export type StageTransitionView = {
 	requiresReason: boolean;
 };
 
-export type StageRouteView = {
+export type StageMigrationRuleView = {
+	removedStageKey: string;
+	targetStageKey: string;
+};
+
+/**
+ * Редакция процесса: снимок структуры группы. Номер редакции живёт в базе и в
+ * журнале, но пользовательских решений не принимает — версию никто не выбирает.
+ */
+export type ProcessRevisionView = {
 	id: string;
-	key: string;
+	groupId: string;
 	version: number;
 	name: string;
-	description: string | null;
-	isDefault: boolean;
+	note: string | null;
 	publishedAt: Date | null;
 	stages: StageView[];
 	transitions: StageTransitionView[];
+	migrationRules: StageMigrationRuleView[];
+};
+
+/** Группа процесса в списке раздела «Процесс». */
+export type ProcessGroupSummary = {
+	id: string;
+	key: string;
+	name: string;
+	description: string | null;
+	position: number;
+	/** Сколько стадий в действующей редакции; ноль — процесс ещё не заведён. */
+	stageCount: number;
+	/** Сколько незавершённых взаимодействий идут по этому процессу сейчас. */
+	activeInteractions: number;
+	hasDraft: boolean;
+};
+
+/** Процесс группы целиком: что действует, что в черновике и что ему мешает. */
+export type ProcessGroupDetail = {
+	group: ProcessGroupSummary;
+	/** Действующая редакция; `null` — процесс группы ещё не заведён. */
+	active: ProcessRevisionView | null;
+	draft: ProcessRevisionView | null;
+	/** Что мешает применить черновик ко всем; у группы без черновика — пусто. */
+	issues: string[];
+	/** Виды контрагентов, работа с которыми идёт по этому процессу. */
+	counterpartyKinds: string[];
+};
+
+/** Что стало со стадией действующей структуры в черновике. */
+export const STAGE_CHANGE_KINDS = ['kept', 'renamed', 'changed', 'added', 'removed'] as const;
+
+export type StageChangeKind = (typeof STAGE_CHANGE_KINDS)[number];
+
+/** Строка предпросмотра: одна затронутая стадия и куда переедут её записи. */
+export type ProcessPreviewRow = {
+	stageKey: string;
+	stageName: string;
+	change: StageChangeKind;
+	/** Что именно поменялось в параметрах — по фразе на параметр. */
+	changes: string[];
+	/** Сколько незавершённых взаимодействий стоит на стадии прямо сейчас. */
+	interactions: number;
+	/** Куда переедут записи; заполнено только у удалённой стадии. */
+	targetStageKey: string | null;
+	targetStageName: string | null;
+};
+
+/**
+ * Предпросмотр применения черновика. Считается без блокировок и справочен:
+ * пока администратор читает таблицу, КАМы работают. Фактические числа считает
+ * транзакция публикации, и в журнал попадают они.
+ */
+export type ProcessPreview = {
+	groupId: string;
+	/** Сколько незавершённых взаимодействий затронет изменение. */
+	affected: number;
+	rows: ProcessPreviewRow[];
+	/** Что мешает применить черновик; непусто — кнопка недоступна. */
+	issues: string[];
 };
 
 /** Как стадия выглядит на ленте взаимодействия. */
@@ -654,7 +802,11 @@ export type StageEntryView = {
 	resultText: string | null;
 	confirmation: StageConfirmation | null;
 	confirmedAt: Date | null;
+	/** Факты системы обучения, которыми подтверждена стадия; `null` — их нет. */
+	lmsEvidence: unknown;
 	checklistState: ChecklistState;
+	/** Файлы, приложенные к этой записи стадии вместе с переходом. */
+	documents: { id: string; title: string; mime: string; sizeBytes: number }[];
 	dueAt: Date;
 	pausedSeconds: number;
 	activeSeconds: number;
@@ -731,8 +883,10 @@ export type InteractionView = {
 	id: string;
 	title: string;
 	status: InteractionStatus;
-	routeId: string;
-	routeName: string;
+	/** Группа процесса: выводится из вида основной стороны и не выбирается. */
+	processGroupId: string;
+	processGroupKey: string;
+	processGroupName: string;
 	agreementPeriodStart: string | null;
 	agreementPeriodEnd: string | null;
 	academicPeriodStart: string | null;
@@ -794,13 +948,24 @@ export type InteractionListItem = {
 /** Состояние взаимодействия: где стоим, сколько осталось, что мешает. */
 export type InteractionStatusView = {
 	interactionId: string;
-	routeId: string;
+	processGroupId: string;
+	/**
+	 * Номер действующей редакции процесса на момент отрисовки. Команда перехода
+	 * возвращает его серверу, и тот сверяет номер под блокировкой: стадия с тем
+	 * же идентификатором после публикации принадлежит прежней редакции.
+	 */
+	revision: number;
 	current: StageEntryView | null;
 	history: StageEntryView[];
 	progress: StageProgressItem[];
 	blockers: BlockerView[];
 	isStale: boolean;
 	lastActivityAt: Date;
+	/**
+	 * Открытую запись перенесла публикация изменённого процесса: откуда и когда.
+	 * Показывается, пока запись открыта, и отдельного состояния не заводит.
+	 */
+	migratedFrom: { stageKey: string; stageName: string; at: Date } | null;
 };
 
 /** Что можно сделать помимо перехода по стадиям. */
@@ -934,7 +1099,7 @@ export type InteractionBoardCard = {
 	transitions: BoardTransitionOption[];
 };
 
-/** Колонка доски — стадия маршрута вместе с тем, что на ней стоит. */
+/** Колонка доски — стадия процесса вместе с тем, что на ней стоит. */
 export type InteractionBoardColumn = {
 	stageId: string;
 	key: string;
@@ -947,25 +1112,24 @@ export type InteractionBoardColumn = {
 	cards: InteractionBoardCard[];
 };
 
-/** Версия маршрута в выборе над доской. */
-export type InteractionBoardRoute = {
-	id: string;
-	name: string;
-	version: number;
-	/** Сколько взаимодействий области доступа идут по этой версии. */
-	interactions: number;
-};
-
-/** Доска: стадии одной версии маршрута и карточки, разложенные по ним. */
+/**
+ * Доска: стадии действующего процесса одной группы и карточки по ним.
+ *
+ * Выбора версии на доске нет: в группе действует ровно один процесс. Группу
+ * задаёт фильтр списка, а без фильтра берётся та, где у смотрящего есть работа.
+ */
 export type InteractionBoardView = {
-	routes: InteractionBoardRoute[];
-	/** Версия, чьи стадии стали колонками; пусто, когда маршрутов нет вовсе. */
-	routeId: string | null;
+	/** Группа, чьи стадии стали колонками; пусто, когда процесс не заведён. */
+	groupId: string | null;
+	groupKey: string | null;
+	groupName: string | null;
 	columns: InteractionBoardColumn[];
 	/** Сколько карточек показано на доске. */
 	total: number;
 	/** Потолок карточек в колонке: столько их влезает на экран. */
 	cardsPerColumn: number;
+	/** Номер действующей редакции: с ним карточка доски отдаёт переход. */
+	revision: number | null;
 };
 
 /**
@@ -1022,8 +1186,12 @@ export function toApiInteraction(view: InteractionListItem): ApiInteraction {
  * отдаёт только интерфейс, где маскирование делает `toPersonView`.
  */
 export const apiInteractionDetailSchema = apiInteractionSchema.extend({
-	routeId: z.uuid(),
-	routeName: z.string(),
+	processGroupKey: z.string().describe('Группа процесса: `b2b` — учебные заведения, `b2c` — лица'),
+	processGroupName: z.string(),
+	processRevision: z
+		.number()
+		.int()
+		.describe('Номер действующей редакции процесса: его требует команда перехода'),
 	agreementPeriodStart: z.iso.date().nullable(),
 	agreementPeriodEnd: z.iso.date().nullable(),
 	academicPeriodStart: z.iso.date().nullable(),
@@ -1084,8 +1252,9 @@ export function toApiInteractionDetail(
 		isStale: extra.isStale,
 		openBlockers: extra.openBlockers,
 		lastActivityAt: view.lastActivityAt.toISOString(),
-		routeId: view.routeId,
-		routeName: view.routeName,
+		processGroupKey: view.processGroupKey,
+		processGroupName: view.processGroupName,
+		processRevision: status.revision,
 		agreementPeriodStart: view.agreementPeriodStart,
 		agreementPeriodEnd: view.agreementPeriodEnd,
 		academicPeriodStart: view.academicPeriodStart,
@@ -1130,8 +1299,14 @@ export const apiTransitionRequestSchema = z.object({
 	fromStageId: id('Некорректный идентификатор стадии'),
 	toStageId: id('Выберите стадию, на которую переходим'),
 	/**
+	 * Номер редакции процесса, по которой собрана команда (`processRevision` в
+	 * карточке). Процесс группы могли изменить, пока интегратор готовил запрос:
+	 * без номера команда выполнилась бы по правилам, которых уже нет.
+	 */
+	revision: revisionField,
+	/**
 	 * Обязательна для возврата и пропуска, а на шаге вперёд — если этого требует
-	 * переход маршрута.
+	 * переход процесса.
 	 */
 	reason: optionalText(1000),
 	resultText: optionalText(4000)

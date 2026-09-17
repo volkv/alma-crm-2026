@@ -1,11 +1,15 @@
 /**
- * Пользователи системы: заведение, деактивация, список, смена пароля.
+ * Пользователи системы: список, иерархия, включение и выключение.
  *
- * Интерфейс управления доступом живёт в настройках и зовёт эти функции; здесь
- * нет ничего про HTTP и формы. Пароль наружу не выходит никогда — ни в списке,
- * ни в журнале: в базе лежит только хеш.
+ * Заведения записи здесь нет. Кто такой человек и какая у него роль, знает
+ * каталог учётных записей: запись появляется сама при первом входе, а роль
+ * приводится к утверждению токена на каждом следующем (`./identity`). За CRM
+ * остаются операционные данные, которых в каталоге нет и быть не должно:
+ * руководитель сотрудника, признак демонстрационной записи и право работать
+ * дальше.
  */
-import { and, count, eq, ilike, inArray, or, sql } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
+import { and, count, eq, ilike, inArray, ne, or, sql } from 'drizzle-orm';
 import type { UserView } from '$lib/contracts/auth';
 import type { PageQuery, PageResult } from '$lib/contracts/common';
 import type { ActorContext } from '../actor';
@@ -14,25 +18,17 @@ import { getConfig } from '../config';
 import { getDb } from '../db';
 import { roles, users } from '../db/schema';
 import { withTransaction } from '../db/transaction';
-import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
+import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
-import { getSetting } from '../settings';
-import { hashPassword, validatePassword, verifyPassword } from './password';
 import { revokeAllSessions } from './session';
 
-/** Почта — ключ входа, поэтому хранится и сравнивается в одном виде. */
+/** Почта — ключ связывания с каталогом, поэтому хранится и сравнивается в одном виде. */
 export function normalizeEmail(email: string): string {
 	return email.trim().toLocaleLowerCase('en');
 }
 
-export type CreateUserInput = {
-	email: string;
-	fullName: string;
-	roleId: string;
-	password: string;
-	/** Учётная запись публичной демонстрации: входит без пароля при `DEMO_MODE`. */
-	isDemo?: boolean;
-};
+/** Руководитель сотрудника в выборках списка. */
+const managers = alias(users, 'managers');
 
 const userColumns = {
 	id: users.id,
@@ -40,85 +36,14 @@ const userColumns = {
 	fullName: users.fullName,
 	roleId: users.roleId,
 	roleName: roles.name,
+	managerUserId: users.managerUserId,
+	managerFullName: managers.fullName,
+	isLinked: sql<boolean>`${users.externalSubject} is not null`,
 	isActive: users.isActive,
 	isDemo: users.isDemo,
 	lastLoginAt: users.lastLoginAt,
 	createdAt: users.createdAt
 };
-
-export async function createUser(ctx: ActorContext, input: CreateUserInput): Promise<UserView> {
-	await requirePermission(ctx, 'users.manage', { type: 'users.created' });
-
-	const email = normalizeEmail(input.email);
-	const fullName = input.fullName.trim();
-
-	if (fullName === '') {
-		throw new ValidationError('Данные пользователя не прошли проверку', ['Укажите имя и фамилию']);
-	}
-
-	const policy = await getSetting('password_policy');
-	const issues = validatePassword(policy, input.password);
-
-	if (issues.length > 0) {
-		throw new ValidationError('Пароль не отвечает политике', issues);
-	}
-
-	const db = getDb();
-
-	// Роль обязана существовать: пользователь без роли не получает прав вообще, а
-	// внешний ключ сказал бы об этом кодом PostgreSQL вместо понятной фразы.
-	const [role] = await db.select({ id: roles.id }).from(roles).where(eq(roles.id, input.roleId));
-
-	if (role === undefined) {
-		throw new ValidationError('Данные пользователя не прошли проверку', [
-			`Роль «${input.roleId}» не заведена`
-		]);
-	}
-
-	const [existing] = await db
-		.select({ id: users.id })
-		.from(users)
-		.where(sql`lower(${users.email}) = ${email}`)
-		.limit(1);
-
-	if (existing !== undefined) {
-		throw new ConflictError('Пользователь с такой почтой уже заведён');
-	}
-
-	const passwordHash = await hashPassword(input.password);
-
-	return withTransaction(ctx, async (tx) => {
-		const [created] = await tx
-			.insert(users)
-			.values({
-				email,
-				fullName,
-				roleId: input.roleId,
-				passwordHash,
-				isDemo: input.isDemo ?? false
-			})
-			.returning({ id: users.id, createdAt: users.createdAt });
-
-		await recordAuditEvent(
-			ctx,
-			{
-				type: 'users.created',
-				outcome: 'success',
-				subject: { type: 'user', id: created.id },
-				details: { roleId: input.roleId }
-			},
-			tx
-		);
-
-		const [view] = await tx
-			.select(userColumns)
-			.from(users)
-			.innerJoin(roles, eq(roles.id, users.roleId))
-			.where(eq(users.id, created.id));
-
-		return view;
-	});
-}
 
 /** Состояние учётной записи, от которого зависит, можно ли её переключать. */
 async function readAccountState(userId: string): Promise<{ isActive: boolean; isDemo: boolean }> {
@@ -140,10 +65,9 @@ async function readAccountState(userId: string): Promise<{ isActive: boolean; is
  * сотрудник доработал бы в системе до конца своего рабочего дня.
  *
  * Демонстрационные записи при включённом демо-режиме выключить нельзя. Ими
- * входят все, кто открыл стенд, и восстановить выключенную некому: кнопка
- * «Войти как …» пропадает со страницы входа вместе с ней, а раздел, где её
- * можно было бы включить обратно, закрыт для самой демонстрации. Одно нажатие
- * — и показывать нечего до следующего вмешательства в базу.
+ * входят все, кто открыл стенд, и восстановить выключенную некому: раздел, где
+ * её можно было бы включить обратно, закрыт для самой демонстрации. Одно
+ * нажатие — и показывать нечего до следующего вмешательства в базу.
  */
 export async function deactivateUser(ctx: ActorContext, userId: string): Promise<void> {
 	await requirePermission(ctx, 'users.manage', {
@@ -187,10 +111,9 @@ export async function deactivateUser(ctx: ActorContext, userId: string): Promise
 /**
  * Включает выключенную учётную запись обратно.
  *
- * Пароль при этом не трогается: он в базе и остался, а выключение его не
- * отменяло — человек возвращается к работе с тем же паролем, что и до ухода.
+ * Вход при этом всё равно решает каталог: включение снимает только наш запрет.
  * Сессий у выключенной записи нет (их погасило выключение), поэтому включение
- * ничего не восстанавливает — оно только открывает вход.
+ * ничего не восстанавливает — оно открывает вход.
  */
 export async function activateUser(ctx: ActorContext, userId: string): Promise<void> {
 	await requirePermission(ctx, 'users.manage', {
@@ -220,6 +143,176 @@ export async function activateUser(ctx: ActorContext, userId: string): Promise<v
 	});
 }
 
+/**
+ * Отвязывает учётную запись от каталога: стирает `external_subject`.
+ *
+ * Нужно ровно тогда, когда каталог перезавели — переимпортировали realm,
+ * перенесли установку, подняли его заново, — и субъекты у тех же людей стали
+ * другими. Вход по новому субъекту такую запись не узнаёт, а связаться по почте
+ * не может: связывание принимает только запись **без** субъекта, и ослаблять
+ * это правило нельзя — иначе чужой адрес в токене отдавал бы чужой портфель.
+ * Поэтому решение остаётся за человеком: администратор отвязывает запись, и
+ * следующий вход связывает её заново по подтверждённой почте — вместе со всем
+ * портфелем, назначениями и следом в журнале.
+ *
+ * Сессии владельца гасятся: связь, по которой они открыты, больше не та.
+ */
+export async function unlinkFromDirectory(ctx: ActorContext, userId: string): Promise<void> {
+	await requirePermission(ctx, 'users.manage', {
+		type: 'users.updated',
+		subject: { type: 'user', id: userId }
+	});
+
+	const [account] = await getDb()
+		.select({ id: users.id, externalSubject: users.externalSubject })
+		.from(users)
+		.where(eq(users.id, userId))
+		.limit(1);
+
+	if (account === undefined) {
+		throw new NotFoundError('Пользователь не найден');
+	}
+
+	// Журнал — доказательство того, что произошло: записать отвязку того, что и
+	// так не связано, значит положить в него событие, которого не было.
+	if (account.externalSubject === null) {
+		throw new ConflictError('Учётная запись и так не связана с каталогом');
+	}
+
+	await withTransaction(ctx, async (tx) => {
+		await tx
+			.update(users)
+			.set({ externalSubject: null, updatedAt: sql`now()` })
+			.where(eq(users.id, userId));
+
+		await recordAuditEvent(
+			ctx,
+			{
+				type: 'users.updated',
+				outcome: 'success',
+				subject: { type: 'user', id: userId },
+				details: { userId, changedFields: ['externalSubject'] }
+			},
+			tx
+		);
+	});
+
+	await revokeAllSessions(userId);
+}
+
+/**
+ * Назначает или снимает руководителя сотрудника.
+ *
+ * Иерархия — операционные данные CRM, а не каталога: на ней держится и область
+ * доступа руководителя, и адрес эскалации зависшего взаимодействия. Смена
+ * гасит сессии обоих затронутых: у подчинённого меняется, кому он виден, у
+ * руководителя — что он видит, и донашивать прежнюю область до истечения
+ * сессии нельзя.
+ */
+export async function setUserManager(
+	ctx: ActorContext,
+	input: { userId: string; managerUserId: string | null }
+): Promise<void> {
+	await requirePermission(ctx, 'users.manage', {
+		type: 'users.updated',
+		subject: { type: 'user', id: input.userId }
+	});
+
+	if (input.managerUserId === input.userId) {
+		throw new ValidationError('Иерархия не изменена', [
+			'Сотрудник не может быть руководителем самому себе'
+		]);
+	}
+
+	const db = getDb();
+
+	const [account] = await db
+		.select({ id: users.id, managerUserId: users.managerUserId })
+		.from(users)
+		.where(eq(users.id, input.userId))
+		.limit(1);
+
+	if (account === undefined) {
+		throw new NotFoundError('Пользователь не найден');
+	}
+
+	if (input.managerUserId !== null) {
+		const [manager] = await db
+			.select({ id: users.id, isActive: users.isActive, roleId: users.roleId })
+			.from(users)
+			.where(eq(users.id, input.managerUserId))
+			.limit(1);
+
+		if (manager === undefined || !manager.isActive) {
+			throw new ValidationError('Иерархия не изменена', [
+				'Руководитель не найден или его запись выключена'
+			]);
+		}
+
+		if (manager.roleId === 'service') {
+			throw new ValidationError('Иерархия не изменена', [
+				'Машинный субъект не может быть руководителем: он не работает в системе'
+			]);
+		}
+
+		// Цикл в иерархии остановил бы замыкание подчинённых только защитой
+		// запроса; лучше не заводить его вовсе. Проверка — тем же обходом вверх,
+		// каким считается эскалация.
+		if (await reportsTo(input.managerUserId, input.userId)) {
+			throw new ValidationError('Иерархия не изменена', [
+				'Такой руководитель сам подчиняется этому сотруднику — получился бы круг'
+			]);
+		}
+	}
+
+	if (account.managerUserId === input.managerUserId) {
+		return;
+	}
+
+	await withTransaction(ctx, async (tx) => {
+		await tx
+			.update(users)
+			.set({ managerUserId: input.managerUserId, updatedAt: sql`now()` })
+			.where(eq(users.id, input.userId));
+
+		await recordAuditEvent(
+			ctx,
+			{
+				type: 'users.updated',
+				outcome: 'success',
+				subject: { type: 'user', id: input.userId },
+				details: { userId: input.userId, changedFields: ['managerUserId'] }
+			},
+			tx
+		);
+	});
+
+	for (const affected of new Set(
+		[input.userId, input.managerUserId, account.managerUserId].filter(
+			(value): value is string => value !== null
+		)
+	)) {
+		await revokeAllSessions(affected);
+	}
+}
+
+/** Подчиняется ли `userId` (пусть и через несколько уровней) руководителю `managerId`. */
+async function reportsTo(userId: string, managerId: string): Promise<boolean> {
+	const rows = await getDb().execute<{ id: string }>(sql`
+		with recursive chain(id, manager_user_id, depth) as (
+			select u.id, u.manager_user_id, 0 from users u where u.id = ${userId}::uuid
+			union all
+			select u.id, u.manager_user_id, c.depth + 1
+			from users u
+			join chain c on u.id = c.manager_user_id
+			where c.depth < 16
+		) cycle id set is_cycle using path
+		select id from chain where id = ${managerId}::uuid
+	`);
+
+	return rows.length > 0;
+}
+
 /** Страница списка пользователей и отбор в нём. */
 export type UserListQuery = PageQuery & {
 	/** Почта или имя целиком либо куском; пусто — весь штат. */
@@ -228,12 +321,12 @@ export type UserListQuery = PageQuery & {
 
 /**
  * Список учётных записей: и действующих, и выключенных — раздел управления
- * доступом показывает штат целиком.
+ * доступом показывает штат целиком, включая машинных субъектов: ключи обмена
+ * выпускаются на них, и не видеть их в списке значило бы не знать, кто владеет
+ * ключом.
  *
  * Отбор идёт по почте и имени: это два способа назвать человека, и
- * администратор приходит сюда с одним из них. Поиск по подстроке без учёта
- * регистра — как в справочниках, иначе на четвёртой сотне записей найти
- * заведённого вчера сотрудника можно только перелистыванием.
+ * администратор приходит сюда с одним из них.
  */
 export async function listUsers(
 	ctx: ActorContext,
@@ -251,6 +344,7 @@ export async function listUsers(
 			.select(userColumns)
 			.from(users)
 			.innerJoin(roles, eq(roles.id, users.roleId))
+			.leftJoin(managers, eq(managers.id, users.managerUserId))
 			.where(where)
 			.orderBy(users.email)
 			.limit(query.pageSize)
@@ -261,6 +355,32 @@ export async function listUsers(
 	return { items, total: totals[0]?.value ?? 0, page: query.page, pageSize: query.pageSize };
 }
 
+/** Сколько сотрудников попадает в выпадающий список за раз. */
+const LOOKUP_LIMIT = 100;
+
+/** Сотрудник в выпадающем списке «кому подчиняется». */
+export type ManagerOption = { id: string; fullName: string };
+
+/**
+ * Кого можно поставить руководителем: весь действующий штат, кроме машинного
+ * субъекта.
+ *
+ * Собирается отдельным запросом, а не из строк текущей страницы: раздел
+ * пользователей листается и ищется, и список вариантов, собранный из найденного,
+ * под отбором по одной почте схлопывался бы до пустого — выбранный руководитель
+ * пропадал бы с экрана вместе с возможностью его поменять.
+ */
+export async function listManagerOptions(ctx: ActorContext): Promise<ManagerOption[]> {
+	requirePermission(ctx, 'users.manage');
+
+	return getDb()
+		.select({ id: users.id, fullName: users.fullName })
+		.from(users)
+		.where(and(eq(users.isActive, true), ne(users.roleId, 'service')))
+		.orderBy(users.fullName)
+		.limit(LOOKUP_LIMIT);
+}
+
 /** Сотрудник в выпадающем списке: кого можно назначить ответственным. */
 export type UserLookupItem = {
 	id: string;
@@ -269,19 +389,19 @@ export type UserLookupItem = {
 	roleName: string;
 };
 
-/** Сколько сотрудников попадает в выпадающий список за раз. */
-const LOOKUP_LIMIT = 100;
-
 /**
  * Сотрудники для выбора ответственного.
  *
  * Право здесь `interactions.write`, а не `users.manage`: назначать
- * ответственного — работа менеджера, и штат ему для этого нужен весь, а вот
- * заводить и выключать учётные записи он не может. Поэтому наружу идут только
+ * ответственного за стадию — работа менеджера, и штат ему для этого нужен
+ * весь, а вот выключать учётные записи он не может. Поэтому наружу идут только
  * имя и роль: почты, состояния и отметок о последнем входе для выпадающего
  * списка не нужно, а видит его куда более широкий круг, чем раздел
- * пользователей. Выключенные записи не показываются — назначить работу на
- * уволенного нельзя.
+ * пользователей.
+ *
+ * Выключенные записи не показываются — назначить работу на уволенного нельзя.
+ * Машинный субъект не показывается тоже: он не работает, от его имени ходят
+ * ключи обмена, и поручить ему стадию значило бы поручить её никому.
  */
 export async function lookupUsers(
 	ctx: ActorContext,
@@ -289,7 +409,7 @@ export async function lookupUsers(
 ): Promise<UserLookupItem[]> {
 	requirePermission(ctx, 'interactions.write');
 
-	const conditions = [eq(users.isActive, true)];
+	const conditions = [eq(users.isActive, true), ne(users.roleId, 'service')];
 	const q = input.q?.trim() ?? '';
 
 	if (q !== '') {
@@ -318,66 +438,4 @@ export async function lookupUsers(
 		.where(and(...conditions))
 		.orderBy(users.fullName)
 		.limit(LOOKUP_LIMIT);
-}
-
-/**
- * Смена собственного пароля. Гасит все сессии владельца, включая текущую: если
- * пароль меняют потому, что старый мог утечь, чужая открытая вкладка не должна
- * пережить смену.
- */
-export async function changePassword(
-	ctx: ActorContext,
-	input: { current: string; next: string }
-): Promise<void> {
-	const actor = ctx.user;
-
-	if (actor === null) {
-		throw new ForbiddenError('Сменить пароль может только вошедший пользователь');
-	}
-
-	const [account] = await getDb()
-		.select({ passwordHash: users.passwordHash })
-		.from(users)
-		.where(eq(users.id, actor.id))
-		.limit(1);
-
-	if (account === undefined) {
-		throw new NotFoundError('Пользователь не найден');
-	}
-
-	if (!(await verifyPassword(account.passwordHash, input.current))) {
-		throw new ValidationError('Пароль не изменён', ['Текущий пароль указан неверно']);
-	}
-
-	if (input.next === input.current) {
-		throw new ValidationError('Пароль не изменён', ['Новый пароль совпадает с текущим']);
-	}
-
-	const policy = await getSetting('password_policy');
-	const issues = validatePassword(policy, input.next);
-
-	if (issues.length > 0) {
-		throw new ValidationError('Пароль не отвечает политике', issues);
-	}
-
-	const passwordHash = await hashPassword(input.next);
-
-	await withTransaction(ctx, async (tx) => {
-		await tx
-			.update(users)
-			.set({ passwordHash, passwordChangedAt: sql`now()`, updatedAt: sql`now()` })
-			.where(eq(users.id, actor.id));
-
-		await recordAuditEvent(
-			ctx,
-			{
-				type: 'auth.password_changed',
-				outcome: 'success',
-				subject: { type: 'user', id: actor.id }
-			},
-			tx
-		);
-	});
-
-	await revokeAllSessions(actor.id);
 }

@@ -97,6 +97,12 @@ test('переключатель приводит к доске и сохран�
 	await expect(first.locator('[data-slot="status-badge"]').first()).toHaveText('1');
 	await expect(column(page, SECOND_STAGE).getByText('Здесь пусто')).toBeVisible();
 
+	// Выбора версии процесса на доске нет: в группе действует ровно один
+	// процесс, и его номер не участвует ни в одном решении.
+	await expect(page.getByRole('button', { name: /^Маршрут/ })).toHaveCount(0);
+	await expect(page.getByText(/версия \d/i)).toHaveCount(0);
+	await expect(page.getByText(/Процесс группы «/)).toBeVisible();
+
 	await page.screenshot({ path: 'test-results/interactions-board-desktop.png', fullPage: true });
 });
 

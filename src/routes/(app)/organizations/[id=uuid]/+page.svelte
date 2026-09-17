@@ -22,8 +22,9 @@
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
 	import PageHeader from '$lib/components/page-header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
-	import { formatDate, formatNumber } from '$lib/format';
+	import { formatDate, formatDateTime, formatNumber } from '$lib/format';
 	import type { AffiliationView } from '$lib/contracts/directory';
+	import type { ResponsibleView } from '$lib/server/directory/responsibles';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -46,6 +47,27 @@
 		closeOpen = true;
 	}
 
+	let releaseForm = $state<HTMLFormElement | null>(null);
+	let releasing = $state<ResponsibleView | null>(null);
+	let releaseOpen = $state(false);
+
+	/** Действующие назначения и закрытые: первые — рабочая картина, вторые — история. */
+	const currentResponsibles = $derived(data.responsibles.filter((row) => row.validTo === null));
+	const pastResponsibles = $derived(data.responsibles.filter((row) => row.validTo !== null));
+
+	/**
+	 * Есть ли уже ответственный за вуз целиком. Пока он есть, назначать по
+	 * направлениям нельзя — сервис откажет, и предлагать это в форме значит
+	 * обещать то, чего не будет.
+	 */
+	const hasGeneral = $derived(currentResponsibles.some((row) => row.directionId === null));
+	const hasByDirection = $derived(currentResponsibles.some((row) => row.directionId !== null));
+
+	function askRelease(row: ResponsibleView) {
+		releasing = row;
+		releaseOpen = true;
+	}
+
 	function fullName(row: AffiliationView) {
 		return [row.person.lastName, row.person.firstName, row.person.middleName]
 			.filter((part) => part !== null && part !== '')
@@ -63,6 +85,8 @@
 		site_updated: 'Площадка сохранена',
 		affiliation_created: 'Контакт добавлен',
 		affiliation_ended: 'Полномочия закрыты',
+		responsible_assigned: 'Ответственный назначен, доступ изменён',
+		responsible_released: 'Назначение снято, доступ изменён',
 		restored: 'Организация возвращена из архива'
 	}}
 />
@@ -153,6 +177,143 @@
 
 		{#if data.organization.notes}
 			<p class="mt-4 text-sm whitespace-pre-line">{data.organization.notes}</p>
+		{/if}
+	</section>
+
+	<section class="rounded-lg border border-border bg-surface">
+		<header class="border-b border-border px-4 py-3">
+			<h2 class="text-sm font-semibold">Ответственные</h2>
+			<p class="mt-1 text-xs text-muted-foreground">
+				Кто ведёт вуз. От этого зависит, кто видит его карточку и взаимодействия по нему: назначение
+				действует немедленно, а снятое закрывается точной меткой времени и остаётся в истории.
+			</p>
+		</header>
+
+		{#if currentResponsibles.length === 0}
+			<EmptyState
+				title="Ответственного нет"
+				description="Вуз не закреплён ни за кем: в списках менеджеров он не появится."
+			/>
+		{:else}
+			<Table.Root>
+				<Table.Header>
+					<Table.Row>
+						<Table.Head>Сотрудник</Table.Head>
+						<Table.Head>Направление</Table.Head>
+						<Table.Head>С</Table.Head>
+						<Table.Head>Назначил</Table.Head>
+						{#if data.canAssign}
+							<Table.Head class="text-right">Действия</Table.Head>
+						{/if}
+					</Table.Row>
+				</Table.Header>
+				<Table.Body>
+					{#each currentResponsibles as row (row.id)}
+						<Table.Row>
+							<Table.Cell>{row.userFullName}</Table.Cell>
+							<Table.Cell>
+								{#if row.directionName}
+									{row.directionName}
+								{:else}
+									<StatusBadge tone="neutral">весь вуз</StatusBadge>
+								{/if}
+							</Table.Cell>
+							<Table.Cell>{formatDateTime(row.validFrom)}</Table.Cell>
+							<Table.Cell>
+								{#if row.assignedByFullName}
+									{row.assignedByFullName}
+								{:else}
+									<span class="text-faint">—</span>
+								{/if}
+							</Table.Cell>
+							{#if data.canAssign}
+								<Table.Cell class="text-right">
+									<Button variant="outline" size="sm" onclick={() => askRelease(row)}>Снять</Button>
+								</Table.Cell>
+							{/if}
+						</Table.Row>
+					{/each}
+				</Table.Body>
+			</Table.Root>
+		{/if}
+
+		{#if data.canAssign}
+			<div class="border-t border-border px-4 py-3">
+				<form
+					method="POST"
+					action="?/assignResponsible"
+					class="flex flex-wrap items-end gap-3"
+					data-testid="assign-responsible"
+				>
+					<label class="flex flex-col gap-1 text-xs">
+						<span class="font-medium">Сотрудник</span>
+						<select
+							name="userId"
+							required
+							class="min-w-56 rounded-md border border-input bg-background px-2 py-1 text-sm"
+						>
+							<option value="">— выберите —</option>
+							{#each data.assignableUsers as user (user.id)}
+								<option value={user.id}>{user.fullName}</option>
+							{/each}
+						</select>
+					</label>
+
+					<label class="flex flex-col gap-1 text-xs">
+						<span class="font-medium">Направление</span>
+						<select
+							name="directionId"
+							class="min-w-56 rounded-md border border-input bg-background px-2 py-1 text-sm"
+						>
+							<!-- Общее назначение и назначения по направлениям на одном вузе
+							     не сосуществуют, поэтому лишний вариант из списка убран. -->
+							{#if !hasByDirection}
+								<option value="">весь вуз</option>
+							{/if}
+							{#each data.directionOptions as direction (direction.id)}
+								<option value={direction.id} disabled={hasGeneral}>{direction.name}</option>
+							{/each}
+						</select>
+					</label>
+
+					<Button type="submit" size="sm">Назначить</Button>
+				</form>
+
+				{#if hasGeneral}
+					<InlineHint class="mt-3">
+						За вуз целиком уже кто-то отвечает: чтобы разделить его по направлениям, сначала снимите
+						общее назначение.
+					</InlineHint>
+				{/if}
+			</div>
+		{/if}
+
+		{#if pastResponsibles.length > 0}
+			<details class="border-t border-border px-4 py-3">
+				<summary class="cursor-pointer text-xs font-medium">
+					История назначений ({pastResponsibles.length})
+				</summary>
+				<Table.Root class="mt-3">
+					<Table.Header>
+						<Table.Row>
+							<Table.Head>Сотрудник</Table.Head>
+							<Table.Head>Направление</Table.Head>
+							<Table.Head>С</Table.Head>
+							<Table.Head>По</Table.Head>
+						</Table.Row>
+					</Table.Header>
+					<Table.Body>
+						{#each pastResponsibles as row (row.id)}
+							<Table.Row>
+								<Table.Cell>{row.userFullName}</Table.Cell>
+								<Table.Cell>{row.directionName ?? 'весь вуз'}</Table.Cell>
+								<Table.Cell>{formatDateTime(row.validFrom)}</Table.Cell>
+								<Table.Cell>{row.validTo === null ? '—' : formatDateTime(row.validTo)}</Table.Cell>
+							</Table.Row>
+						{/each}
+					</Table.Body>
+				</Table.Root>
+			</details>
 		{/if}
 	</section>
 
@@ -333,3 +494,18 @@
 	confirmLabel="Закрыть полномочия"
 	onconfirm={() => endForm?.requestSubmit()}
 />
+
+<ConfirmDialog
+	bind:open={releaseOpen}
+	title="Снять ответственного?"
+	description={releasing === null
+		? undefined
+		: `${releasing.userFullName} перестанет видеть этот вуз и взаимодействия по нему сразу после снятия. Незавершённые записи, которые он ведёт сам, останутся у него.`}
+	confirmLabel="Снять"
+	tone="danger"
+	onconfirm={() => releaseForm?.requestSubmit()}
+/>
+
+<form method="POST" action="?/releaseResponsible" bind:this={releaseForm} class="hidden">
+	<input type="hidden" name="responsibleId" value={releasing?.id ?? ''} />
+</form>

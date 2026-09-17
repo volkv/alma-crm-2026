@@ -50,6 +50,20 @@
       "when": 1789593946537,
       "tag": "0006_process_groups_backfill",
       "breakpoints": true
+    },
+    {
+      "idx": 7,
+      "version": "7",
+      "when": 1789597581441,
+      "tag": "0007_process_revisions",
+      "breakpoints": true
+    },
+    {
+      "idx": 8,
+      "version": "7",
+      "when": 1789598206282,
+      "tag": "0008_keycloak_identity",
+      "breakpoints": true
     }
   ]
 }

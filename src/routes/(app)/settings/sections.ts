@@ -12,7 +12,7 @@ export type SettingsHref =
 	| '/settings/users'
 	| '/settings/api-keys'
 	| '/settings/general'
-	| '/settings/routes'
+	| '/settings/process'
 	| '/settings/integrations';
 
 export type SettingsSection = {
@@ -27,13 +27,13 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	{
 		href: '/settings/profile',
 		label: 'Профиль',
-		description: 'Пароль и сессии учётной записи, под которой вы вошли',
+		description: 'Учётная запись, под которой вы вошли, и её сессии',
 		permission: null
 	},
 	{
 		href: '/settings/users',
 		label: 'Пользователи',
-		description: 'Кто работает в системе и с какой ролью',
+		description: 'Кто работает в системе, с какой ролью и кому подчиняется',
 		permission: 'users.manage'
 	},
 	{
@@ -45,13 +45,13 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	{
 		href: '/settings/general',
 		label: 'Общие настройки',
-		description: 'Страница входа, сроки сессий, политики пароля и блокировки',
+		description: 'Страница входа и сроки жизни сессий',
 		permission: 'settings.write'
 	},
 	{
-		href: '/settings/routes',
-		label: 'Маршруты стадий',
-		description: 'Версии процесса: стадии, переходы и маршрут по умолчанию',
+		href: '/settings/process',
+		label: 'Процесс',
+		description: 'Стадии и переходы по группам контрагентов, черновик изменений',
 		permission: 'stages.configure'
 	},
 	{

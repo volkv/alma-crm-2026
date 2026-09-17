@@ -32,6 +32,9 @@ const listOrganizations = (await import('../../../src/routes/api/v1/organization
 	.GET as Endpoint;
 const getOrganization = (await import('../../../src/routes/api/v1/organizations/[id]/+server'))
 	.GET as Endpoint;
+const transitions = (
+	await import('../../../src/routes/api/v1/interactions/[id]/transitions/+server')
+).POST as Endpoint;
 const openApiDocument = (await import('../../../src/routes/api/openapi.json/+server'))
 	.GET as Endpoint;
 const docsPage = (await import('../../../src/routes/api/docs/+server')).GET as Endpoint;
@@ -578,10 +581,10 @@ describe('описание API', () => {
 
 describe('страница документации', () => {
 	const reader: SessionUser = {
-		id: TEST_USER_IDS.viewer,
-		email: 'viewer@example.org',
-		fullName: 'Тестовый Наблюдатель',
-		roleId: 'viewer',
+		id: TEST_USER_IDS.manager,
+		email: 'manager@example.org',
+		fullName: 'Тестовый Менеджер',
+		roleId: 'manager',
 		permissions: new Set(),
 		isDemo: false,
 		scope: { kind: 'all' }
@@ -766,5 +769,88 @@ describe('область доступа владельца ключа', () => {
 			.from(organizations)
 			.where(eq(organizations.id, visible));
 		expect(row.id).toBe(visible);
+	});
+});
+
+describe('ключ машинного субъекта', () => {
+	/** Эндпоинт обмена: сюда ключу роли `service` дорога открыта. */
+	const exchangeConfig = {
+		auth: 'key',
+		service: true,
+		permission: 'exchange.intake',
+		output: z.object({ accepted: z.boolean() })
+	} satisfies ApiEndpointConfig;
+
+	const exchange = apiHandler(exchangeConfig, () => Promise.resolve({ accepted: true }));
+
+	/**
+	 * Тот же эндпоинт без признака обмена. Право у него то же самое, поэтому
+	 * отказ здесь может дать только граница машинного субъекта — и ничто другое.
+	 */
+	const notExchange = apiHandler({ ...exchangeConfig, service: false }, () =>
+		Promise.resolve({ accepted: true })
+	);
+
+	function get(key: string, path: string): RequestEvent {
+		return apiEvent({ path, routeId: path, headers: bearer(key) });
+	}
+
+	it('пускает ключ обмена на маршрут обмена', async () => {
+		const issued = await issueKey('service');
+
+		const response = await exchange(get(issued.key, '/api/v1/exchange/probe'));
+
+		expect(response.status).toBe(200);
+	});
+
+	it('не пускает ключ обмена на маршрут без признака обмена, даже когда право совпало', async () => {
+		const issued = await issueKey('service');
+
+		// Область у машинного субъекта `all`: попади он на обычный маршрут — и
+		// увидел бы записи всего продукта. Поэтому правило обратное обычному:
+		// без признака `service` на маршруте ключ получает 403 — и получает его
+		// раньше проверки права, которое здесь у него как раз есть.
+		const response = await notExchange(get(issued.key, '/api/v1/probe'));
+
+		expect(response.status).toBe(403);
+		expect(await response.json()).toMatchObject({
+			error: { message: 'Ключ внешней системы работает только на эндпоинтах обмена' }
+		});
+	});
+
+	it('не отдаёт ключу обмена список вузов', async () => {
+		const issued = await issueKey('service');
+
+		const listing = await listOrganizations(get(issued.key, '/api/v1/organizations'));
+
+		expect(listing.status).toBe(403);
+	});
+
+	it('не двигает стадии: подтвердить стадию и вести процесс — разные полномочия', async () => {
+		const issued = await issueKey('service');
+		const organizationId = await insertOrganization(database.db, { shortName: 'Вуз обмена' });
+
+		const response = await transitions(
+			apiEvent({
+				method: 'POST',
+				path: `/api/v1/interactions/${organizationId}/transitions`,
+				routeId: '/api/v1/interactions/[id]/transitions',
+				params: { id: organizationId },
+				headers: bearer(issued.key, { 'content-type': 'application/json' }),
+				body: JSON.stringify({ kind: 'forward' })
+			})
+		);
+
+		// Именно 403 и именно до всякой предметной проверки: у ключа обмена нет
+		// ни права `stages.transition`, ни доступа к этому маршруту вовсе.
+		expect(response.status).toBe(403);
+	});
+
+	it('оставляет обычные маршруты людям', async () => {
+		const issued = await issueKey('admin');
+
+		const listing = await listOrganizations(get(issued.key, '/api/v1/organizations'));
+
+		expect(listing.status).toBe(200);
 	});
 });

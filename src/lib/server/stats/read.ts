@@ -272,7 +272,18 @@ export async function listSnapshotRows(
 	requirePermission(ctx, 'stats.read');
 
 	const snapshot = await selectSnapshotRow(snapshotId);
-	const conditions: SQL[] = [eq(statRows.snapshotId, snapshot.id)];
+	// Один снимок смешивает строки нескольких вузов: сам по себе он не
+	// принадлежит никому, а каждая его строка — принадлежит. Поэтому область
+	// применяется к строкам, а не к снимку, и человек видит в чужой загрузке
+	// только свои вузы.
+	//
+	// Строка, у которой вуз не опознан, остаётся видна всем: она не принадлежит
+	// никому, а ради неё проверку и открывают — спрятать её значило бы показать
+	// экран, на котором не видно, что именно не разобралось.
+	const conditions: SQL[] = [
+		eq(statRows.snapshotId, snapshot.id),
+		sql`(${isNull(statRows.organizationId)} or ${scopeFilter(ctx, statRows.organizationId)})`
+	];
 
 	if (query.onlyIssues) {
 		conditions.push(eq(statRows.isValid, false));
@@ -329,7 +340,10 @@ export async function getSnapshotPreview(
 	ctx: ActorContext,
 	snapshotId: string
 ): Promise<SnapshotPreview> {
-	requirePermission(ctx, 'stats.read');
+	// Право загрузки, а не чтения: превью показывает строки файла как есть — до
+	// того, как они разложились по вузам, — и области на них ещё нет. Экран
+	// сопоставления открывает тот, кто снимок и загружает.
+	requirePermission(ctx, 'stats.import');
 
 	const snapshot = await selectSnapshotRow(snapshotId);
 	const table = await readSnapshotTable(snapshot, STAT_PREVIEW_PARSE_LIMIT);

@@ -14,7 +14,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import {
 	createInteractionSchema,
 	type InteractionBoardView,
-	type StageRouteView
+	type ProcessRevisionView
 } from '$lib/contracts/interactions';
 import type { ActorContext } from '$lib/server/actor';
 import { programs, stageEntries } from '$lib/server/db/schema';
@@ -25,17 +25,20 @@ import {
 } from '$lib/server/interactions/board';
 import { createInteraction } from '$lib/server/interactions/write';
 import { pauseStage, setChecklistItem } from '$lib/server/stages/commands';
-import { createRoute, ensureDemoRoute, publishRoute, readRoute } from '$lib/server/stages/routes';
+import { B2B_GROUP_KEY, B2B_PROCESS, B2C_GROUP_KEY } from '$lib/server/stages/definitions';
+import { ensureProcess, readGroupByKey, requireActiveRevision } from '$lib/server/stages/process';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import { getDb } from '$lib/server/db';
 import {
 	daysFrom,
 	insertOrganization,
 	startTestDatabase,
+	scopedActor,
 	testActor,
 	TEST_USER_IDS,
 	type TestDatabase
 } from '../helpers/db';
+import type { PermissionKey } from '$lib/server/rbac/permissions';
 import { pageEvent, sessionUser } from '../helpers/event';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
@@ -68,7 +71,7 @@ const admin = (): ActorContext => testActor({ roleId: 'admin' });
 const manager = (): ActorContext => testActor({ roleId: 'manager' });
 
 const EMPTY_QUERY: InteractionBoardQuery = {
-	routeId: null,
+	group: null,
 	status: null,
 	stageCategory: null,
 	overdue: false,
@@ -80,66 +83,71 @@ function query(overrides: Partial<InteractionBoardQuery> = {}): InteractionBoard
 	return { ...EMPTY_QUERY, ...overrides };
 }
 
-async function demoRoute(): Promise<StageRouteView> {
-	const routeId = await database.db.transaction((tx) => ensureDemoRoute(tx));
+/** Процесс учебных заведений: четырнадцать стадий и его действующая редакция. */
+async function demoRoute(): Promise<ProcessRevisionView> {
+	await database.db.transaction((tx) => ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS));
 
-	return readRoute(getDb(), routeId);
+	return requireActiveRevision(getDb(), await readGroupByKey(getDb(), B2B_GROUP_KEY));
 }
 
 /**
- * Маршрут из двух стадий, у которого объяснения требует именно шаг вперёд. В
- * демонстрационном маршруте такого перехода нет, а доска обязана спрашивать
+ * Процесс из двух стадий, у которого объяснения требует именно шаг вперёд. В
+ * процессе учебных заведений такого перехода нет, а доска обязана спрашивать
  * объяснение у любого перехода, который его требует, а не только у возврата.
+ * Группа другая, потому что в одной группе действует ровно один процесс.
  */
-async function reasonRoute(): Promise<StageRouteView> {
-	const ctx = admin();
+async function reasonRoute(): Promise<ProcessRevisionView> {
+	await database.db.transaction((tx) =>
+		ensureProcess(tx, B2C_GROUP_KEY, {
+			name: 'Процесс с объяснением шага вперёд',
+			note: null,
+			migrationRules: [],
+			stages: [
+				{
+					key: 'first',
+					name: 'Первая стадия',
+					category: 'contact',
+					slaDays: 5,
+					staleAfterDays: null,
+					requiresResult: false,
+					requiresConfirmation: false,
+					requiresLmsData: false,
+					isFinal: false,
+					checklist: []
+				},
+				{
+					key: 'second',
+					name: 'Вторая стадия',
+					category: 'control',
+					slaDays: 5,
+					staleAfterDays: null,
+					requiresResult: false,
+					requiresConfirmation: false,
+					requiresLmsData: false,
+					isFinal: true,
+					checklist: []
+				}
+			],
+			transitions: [
+				{
+					fromStageKey: 'first',
+					toStageKey: 'second',
+					kind: 'forward',
+					requiredPermissionKey: 'stages.transition',
+					requiresReason: true
+				}
+			]
+		})
+	);
 
-	const draft = await createRoute(ctx, {
-		key: 'board-forward-reason',
-		name: 'Маршрут с объяснением шага вперёд',
-		description: null,
-		isDefault: false,
-		stages: [
-			{
-				key: 'first',
-				name: 'Первая стадия',
-				category: 'contact',
-				slaDays: 5,
-				staleAfterDays: null,
-				requiresResult: false,
-				requiresConfirmation: false,
-				checklist: []
-			},
-			{
-				key: 'second',
-				name: 'Вторая стадия',
-				category: 'control',
-				slaDays: 5,
-				staleAfterDays: null,
-				requiresResult: false,
-				requiresConfirmation: false,
-				checklist: []
-			}
-		],
-		transitions: [
-			{
-				fromStageKey: 'first',
-				toStageKey: 'second',
-				kind: 'forward',
-				requiredPermissionKey: 'stages.transition',
-				requiresReason: true
-			}
-		]
-	});
-
-	return publishRoute(ctx, draft.id);
+	return requireActiveRevision(getDb(), await readGroupByKey(getDb(), B2C_GROUP_KEY));
 }
 
-function stageIdOf(route: StageRouteView, key: string): string {
+function stageIdOf(route: ProcessRevisionView, key: string): string {
 	const stage = route.stages.find((candidate) => candidate.key === key);
 
 	if (stage === undefined) {
-		throw new Error(`В маршруте нет стадии «${key}»`);
+		throw new Error(`В процессе нет стадии «${key}»`);
 	}
 
 	return stage.id;
@@ -155,27 +163,29 @@ function columnOf(board: InteractionBoardView, name: string) {
 	return column;
 }
 
-/** Взаимодействие с одним вузом; маршрут сразу ставит его на первую стадию. */
+/**
+ * Взаимодействие с одним контрагентом; процесс сразу ставит его на первую
+ * стадию. Группа выводится из вида организации, а не задаётся параметром.
+ */
 async function makeInteraction(
 	ctx: ActorContext,
 	options: {
-		routeId: string;
 		title: string;
 		organizationId: string;
 		ownerUserId?: string;
 		programIds?: string[];
+		partyRole?: 'educational_institution' | 'customer';
 	}
 ): Promise<string> {
 	const created = await createInteraction(
 		ctx,
 		createInteractionSchema.parse({
 			title: options.title,
-			routeId: options.routeId,
 			ownerUserId: options.ownerUserId ?? TEST_USER_IDS.admin,
 			parties: [
 				{
 					organizationId: options.organizationId,
-					partyRole: 'educational_institution',
+					partyRole: options.partyRole ?? 'educational_institution',
 					isPrimary: true
 				}
 			],
@@ -220,23 +230,25 @@ async function closeChecklist(ctx: ActorContext, interactionId: string): Promise
 	}
 }
 
-function transitionEvent(form: Record<string, string>, roleId = 'manager'): RequestEvent {
-	return pageEvent({ path: '/interactions', form, user: sessionUser(roleId) });
+function transitionEvent(
+	form: Record<string, string>,
+	roleId = 'manager',
+	permissions?: readonly PermissionKey[]
+): RequestEvent {
+	return pageEvent({ path: '/interactions', form, user: sessionUser(roleId, permissions) });
 }
 
 describe('выборка доски', () => {
-	it('раскладывает взаимодействия по стадиям маршрута', async () => {
+	it('раскладывает взаимодействия по стадиям действующего процесса', async () => {
 		const ctx = admin();
 		const route = await demoRoute();
 		const organizationId = await insertOrganization(database.db, { shortName: 'Первый вуз' });
 
 		const first = await makeInteraction(ctx, {
-			routeId: route.id,
 			title: 'Первое взаимодействие',
 			organizationId
 		});
 		await makeInteraction(ctx, {
-			routeId: route.id,
 			title: 'Второе взаимодействие',
 			organizationId
 		});
@@ -245,9 +257,9 @@ describe('выборка доски', () => {
 
 		const board = await getInteractionBoard(ctx, query());
 
-		expect(board.routeId).toBe(route.id);
+		expect(board.groupKey).toBe(B2B_GROUP_KEY);
 		expect(board.columns).toHaveLength(route.stages.length);
-		// Порядок колонок задаёт маршрут: первая стадия слева, последняя справа.
+		// Порядок колонок задаёт процесс: первая стадия слева, последняя справа.
 		expect(board.columns.at(0)?.name).toBe('Поиск контактных лиц');
 		expect(board.columns.at(-1)?.name).toBe('Контроль исполнения');
 
@@ -265,20 +277,18 @@ describe('выборка доски', () => {
 
 	it('считает просроченные и называет состояние карточки', async () => {
 		const ctx = admin();
-		const route = await demoRoute();
+		await demoRoute();
 		const organizationId = await insertOrganization(database.db, { shortName: 'Вуз со сроком' });
 
 		const late = await makeInteraction(ctx, {
-			routeId: route.id,
 			title: 'Просроченное',
 			organizationId
 		});
 		const paused = await makeInteraction(ctx, {
-			routeId: route.id,
 			title: 'На паузе',
 			organizationId
 		});
-		await makeInteraction(ctx, { routeId: route.id, title: 'В срок', organizationId });
+		await makeInteraction(ctx, { title: 'В срок', organizationId });
 
 		// Норматив первой стадии — семь дней.
 		await enteredDaysAgo(late, 30);
@@ -304,12 +314,11 @@ describe('выборка доски', () => {
 
 	it('говорит, сколько дел на стадии, даже когда показывает не все', async () => {
 		const ctx = admin();
-		const route = await demoRoute();
+		await demoRoute();
 		const organizationId = await insertOrganization(database.db, { shortName: 'Многолюдный вуз' });
 
 		for (let index = 0; index < CARDS_PER_COLUMN + 3; index += 1) {
 			await makeInteraction(ctx, {
-				routeId: route.id,
 				title: `Взаимодействие ${index}`,
 				organizationId
 			});
@@ -323,7 +332,7 @@ describe('выборка доски', () => {
 
 	it('показывает на карточке организацию, программу и ответственного', async () => {
 		const ctx = admin();
-		const route = await demoRoute();
+		await demoRoute();
 		const organizationId = await insertOrganization(database.db, { shortName: 'Вуз с программой' });
 
 		const [program] = await database.db
@@ -332,7 +341,6 @@ describe('выборка доски', () => {
 			.returning({ id: programs.id });
 
 		const interactionId = await makeInteraction(ctx, {
-			routeId: route.id,
 			title: 'С программой',
 			organizationId,
 			ownerUserId: TEST_USER_IDS.manager,
@@ -353,14 +361,14 @@ describe('выборка доски', () => {
 
 	it('держится области доступа: чужие записи не попадают ни в карточки, ни в счётчики', async () => {
 		const ctx = admin();
-		const route = await demoRoute();
+		await demoRoute();
 		const mine = await insertOrganization(database.db, { shortName: 'Мой вуз' });
 		const foreign = await insertOrganization(database.db, { shortName: 'Чужой вуз' });
 
-		await makeInteraction(ctx, { routeId: route.id, title: 'Моё', organizationId: mine });
-		await makeInteraction(ctx, { routeId: route.id, title: 'Чужое', organizationId: foreign });
+		await makeInteraction(ctx, { title: 'Моё', organizationId: mine });
+		await makeInteraction(ctx, { title: 'Чужое', organizationId: foreign });
 
-		const scoped = testActor({ roleId: 'manager', organizationIds: [mine] });
+		const scoped = await scopedActor(database.db, { roleId: 'manager', organizationIds: [mine] });
 		const contacts = columnOf(await getInteractionBoard(scoped, query()), 'Поиск контактных лиц');
 
 		expect(contacts.count).toBe(1);
@@ -369,17 +377,15 @@ describe('выборка доски', () => {
 
 	it('применяет те же фильтры, что и список', async () => {
 		const ctx = admin();
-		const route = await demoRoute();
+		await demoRoute();
 		const first = await insertOrganization(database.db, { shortName: 'Северный институт' });
 		const second = await insertOrganization(database.db, { shortName: 'Южный колледж' });
 
 		const late = await makeInteraction(ctx, {
-			routeId: route.id,
 			title: 'Северное дело',
 			organizationId: first
 		});
 		await makeInteraction(ctx, {
-			routeId: route.id,
 			title: 'Южное дело',
 			organizationId: second,
 			ownerUserId: TEST_USER_IDS.manager
@@ -406,11 +412,10 @@ describe('выборка доски', () => {
 
 	it('несёт переходы с приговором движка', async () => {
 		const ctx = manager();
-		const route = await demoRoute();
+		await demoRoute();
 		const organizationId = await insertOrganization(database.db, { shortName: 'Вуз с чек-листом' });
 
 		const interactionId = await makeInteraction(ctx, {
-			routeId: route.id,
 			title: 'С незакрытым чек-листом',
 			organizationId,
 			ownerUserId: TEST_USER_IDS.manager
@@ -436,10 +441,10 @@ describe('выборка доски', () => {
 
 	it('загрузчик раздела отдаёт доску по параметру адреса', async () => {
 		const ctx = admin();
-		const route = await demoRoute();
+		await demoRoute();
 		const organizationId = await insertOrganization(database.db, { shortName: 'Вуз раздела' });
 
-		await makeInteraction(ctx, { routeId: route.id, title: 'Дело раздела', organizationId });
+		await makeInteraction(ctx, { title: 'Дело раздела', organizationId });
 
 		const data = (await loadList(pageEvent({ path: '/interactions', query: '?view=board' }))) as {
 			view: string;
@@ -460,7 +465,6 @@ describe('перевод карточки', () => {
 		const organizationId = await insertOrganization(database.db, { shortName: 'Вуз перевода' });
 
 		const interactionId = await makeInteraction(ctx, {
-			routeId: route.id,
 			title: 'Готовое к переходу',
 			organizationId,
 			ownerUserId: TEST_USER_IDS.manager
@@ -473,7 +477,8 @@ describe('перевод карточки', () => {
 				interactionId,
 				fromStageId: stageIdOf(route, 'contact_search'),
 				toStageId: stageIdOf(route, 'communication'),
-				kind: 'forward'
+				kind: 'forward',
+				revision: String(route.version)
 			})
 		);
 
@@ -493,7 +498,6 @@ describe('перевод карточки', () => {
 		const organizationId = await insertOrganization(database.db, { shortName: 'Вуз наблюдателя' });
 
 		const interactionId = await makeInteraction(ctx, {
-			routeId: route.id,
 			title: 'Чужая работа',
 			organizationId
 		});
@@ -506,9 +510,11 @@ describe('перевод карточки', () => {
 					interactionId,
 					fromStageId: stageIdOf(route, 'contact_search'),
 					toStageId: stageIdOf(route, 'communication'),
-					kind: 'forward'
+					kind: 'forward',
+					revision: String(route.version)
 				},
-				'viewer'
+				'manager',
+				['interactions.read']
 			)
 		);
 
@@ -517,9 +523,9 @@ describe('перевод карточки', () => {
 		expect((result as { data: { message: string } }).data.message).toContain('stages.transition');
 		expect(await currentStageId(ctx, interactionId)).toBe(stageIdOf(route, 'contact_search'));
 
-		// И доска наблюдателю про этот переход честно говорит то же самое.
-		const viewer = testActor({ roleId: 'viewer' });
-		const card = columnOf(await getInteractionBoard(viewer, query()), 'Поиск контактных лиц')
+		// И доска тому, у кого права нет, про этот переход честно говорит то же самое.
+		const observer = testActor({ roleId: 'manager', permissions: ['interactions.read'] });
+		const card = columnOf(await getInteractionBoard(observer, query()), 'Поиск контактных лиц')
 			.cards[0];
 
 		expect(card.transitions.every((option) => !option.allowed)).toBe(true);
@@ -532,7 +538,6 @@ describe('перевод карточки', () => {
 		const organizationId = await insertOrganization(database.db, { shortName: 'Вуз с чек-листом' });
 
 		const interactionId = await makeInteraction(ctx, {
-			routeId: route.id,
 			title: 'Не готовое',
 			organizationId,
 			ownerUserId: TEST_USER_IDS.manager
@@ -543,7 +548,8 @@ describe('перевод карточки', () => {
 				interactionId,
 				fromStageId: stageIdOf(route, 'contact_search'),
 				toStageId: stageIdOf(route, 'communication'),
-				kind: 'forward'
+				kind: 'forward',
+				revision: String(route.version)
 			})
 		);
 
@@ -558,7 +564,6 @@ describe('перевод карточки', () => {
 		const organizationId = await insertOrganization(database.db, { shortName: 'Вуз возврата' });
 
 		const interactionId = await makeInteraction(ctx, {
-			routeId: route.id,
 			title: 'Вернём назад',
 			organizationId,
 			ownerUserId: TEST_USER_IDS.manager
@@ -570,7 +575,8 @@ describe('перевод карточки', () => {
 				interactionId,
 				fromStageId: stageIdOf(route, 'contact_search'),
 				toStageId: stageIdOf(route, 'communication'),
-				kind: 'forward'
+				kind: 'forward',
+				revision: String(route.version)
 			})
 		);
 
@@ -579,7 +585,8 @@ describe('перевод карточки', () => {
 				interactionId,
 				fromStageId: stageIdOf(route, 'communication'),
 				toStageId: stageIdOf(route, 'contact_search'),
-				kind: 'return'
+				kind: 'return',
+				revision: String(route.version)
 			})
 		);
 
@@ -594,6 +601,7 @@ describe('перевод карточки', () => {
 				fromStageId: stageIdOf(route, 'communication'),
 				toStageId: stageIdOf(route, 'contact_search'),
 				kind: 'return',
+				revision: String(route.version),
 				reason: 'Контакт оказался не тем подразделением'
 			})
 		);
@@ -602,23 +610,24 @@ describe('перевод карточки', () => {
 		expect(await currentStageId(ctx, interactionId)).toBe(stageIdOf(route, 'contact_search'));
 	});
 
-	it('требует объяснение у шага вперёд, если так настроен маршрут', async () => {
+	it('требует объяснение у шага вперёд, если так настроен процесс', async () => {
 		const ctx = manager();
 		const route = await reasonRoute();
 		const organizationId = await insertOrganization(database.db, {
-			shortName: 'Вуз с объяснением шага'
+			shortName: 'Заказчик с объяснением шага',
+			kind: 'legal_entity'
 		});
 
 		const interactionId = await makeInteraction(ctx, {
-			routeId: route.id,
 			title: 'Шаг вперёд с объяснением',
 			organizationId,
+			partyRole: 'customer',
 			ownerUserId: TEST_USER_IDS.manager
 		});
 
 		// Карточка знает о требовании заранее: доска спрашивает объяснение до
 		// команды, а не показывает отказ после неё.
-		const board = await getInteractionBoard(ctx, query({ routeId: route.id }));
+		const board = await getInteractionBoard(ctx, query({ group: B2C_GROUP_KEY }));
 		const card = columnOf(board, 'Первая стадия').cards[0];
 
 		expect(card.transitions[0]).toMatchObject({
@@ -631,7 +640,8 @@ describe('перевод карточки', () => {
 			interactionId,
 			fromStageId: stageIdOf(route, 'first'),
 			toStageId: stageIdOf(route, 'second'),
-			kind: 'forward'
+			kind: 'forward',
+			revision: String(route.version)
 		};
 
 		const withoutReason = await transitionAction(transitionEvent(move));
@@ -655,7 +665,6 @@ describe('перевод карточки', () => {
 		const organizationId = await insertOrganization(database.db, { shortName: 'Вуз без перехода' });
 
 		const interactionId = await makeInteraction(manager(), {
-			routeId: route.id,
 			title: 'Никуда',
 			organizationId,
 			ownerUserId: TEST_USER_IDS.manager
@@ -666,7 +675,8 @@ describe('перевод карточки', () => {
 				interactionId,
 				fromStageId: stageIdOf(route, 'contact_search'),
 				toStageId: stageIdOf(route, 'communication'),
-				kind: 'sideways'
+				kind: 'sideways',
+				revision: String(route.version)
 			})
 		);
 

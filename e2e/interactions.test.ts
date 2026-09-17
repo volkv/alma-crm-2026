@@ -1,6 +1,6 @@
 import postgres from 'postgres';
-import { createRouteSchema } from '$lib/contracts/interactions';
-import { DEMO_ROUTE } from '$lib/server/stages/demo-route';
+import { processDefinitionSchema } from '$lib/contracts/interactions';
+import { B2B_PROCESS } from '$lib/server/stages/definitions';
 import { expect, test } from './fixtures';
 import { E2E_USER } from './global-setup';
 import { waitForHydration } from './helpers/hydration';
@@ -9,7 +9,7 @@ import { waitForHydration } from './helpers/hydration';
  * Взаимодействие глазами менеджера: список, заведение через форму и работа на
  * стадии. Данные готовятся прямо в базе — сервисы приложения здесь недоступны
  * (Playwright запускает файл обычным Node, где нет `$env/dynamic/private`), а
- * конфигурация маршрута берётся из той же константы, что и в продукте.
+ * структура процесса берётся из той же константы, что и в продукте.
  */
 
 /** Метка в названиях: база прогона общая с разработческой, и чужие записи в ней бывают. */
@@ -26,13 +26,19 @@ const CUSTOMER = {
 };
 
 /**
- * Маршрут, у которого объяснения требует именно шаг вперёд. В демонстрационном
- * маршруте такого перехода нет, а правило маршрута обязано быть выполнимым: без
- * поля для объяснения переход вперёд стал бы невозможен вовсе.
+ * Процесс, у которого объяснения требует именно шаг вперёд. В процессе учебных
+ * заведений такого перехода нет, а правило процесса обязано быть выполнимым:
+ * без поля для объяснения переход вперёд стал бы невозможен вовсе. Он живёт в
+ * группе `b2c`: в одной группе действует ровно один процесс.
  */
 const REASON_ROUTE = {
-	key: 'e2e-forward-reason',
-	name: `${MARK} Маршрут с объяснением`,
+	/**
+	 * Своя группа, а не `b2c`: там действует процесс стенда из пяти стадий, и
+	 * подменять его ради одной проверки незачем. Вида контрагента за этой группой
+	 * не закреплено — записи по ней прогон заводит сам.
+	 */
+	group: 'e2e-forward-reason',
+	name: `${MARK} Процесс с объяснением`,
 	stages: [
 		{ key: 'terms_agreed', name: 'Согласование условий', category: 'contact' },
 		{ key: 'terms_closed', name: 'Закрытие соглашения', category: 'documents' }
@@ -51,12 +57,12 @@ function databaseUrl(): string {
 }
 
 /**
- * Маршрут стадий и две организации. Идемпотентно и под блокировкой: файлы
+ * Процессы групп и две организации. Идемпотентно и под блокировкой: файлы
  * прогона выполняются параллельно, и два рабочих процесса не должны заводить
- * маршрут одновременно.
+ * редакцию одновременно.
  */
 async function seed(): Promise<void> {
-	const route = createRouteSchema.parse(DEMO_ROUTE);
+	const process = processDefinitionSchema.parse(B2B_PROCESS);
 	const sql = postgres(databaseUrl(), { max: 1, connect_timeout: 10 });
 
 	try {
@@ -67,7 +73,7 @@ async function seed(): Promise<void> {
 				await tx`
 					insert into organizations ${tx({
 						id: organization.id,
-						kind: organization.id === CUSTOMER.id ? 'customer_company' : 'educational_institution',
+						kind: organization.id === CUSTOMER.id ? 'legal_entity' : 'educational_institution',
 						education_level: organization.id === CUSTOMER.id ? null : 'vo',
 						legal_name: organization.shortName,
 						short_name: organization.shortName
@@ -76,117 +82,183 @@ async function seed(): Promise<void> {
 				`;
 			}
 
-			const existing = await tx<{ id: string }[]>`
-				select id from stage_routes where key = ${route.key} order by version desc limit 1
+			// Область доступа КАМа считается по действующим назначениям: без строки
+			// в `organization_responsibles` он не увидит ни своей организации в
+			// подсказках, ни заведённого по ней взаимодействия.
+			const [owner] = await tx<{ id: string }[]>`
+				select id from users where email = ${E2E_USER.email} limit 1
 			`;
 
-			if (existing.length === 0) {
-				const [created] = await tx<{ id: string }[]>`
-					insert into stage_routes ${tx({
-						key: route.key,
-						version: 1,
-						name: route.name,
-						description: route.description,
-						is_default: true,
-						published_at: new Date()
-					})}
-					returning id
-				`;
-
-				const stageIds = new Map<string, string>();
-
-				for (const [index, stage] of route.stages.entries()) {
-					const [row] = await tx<{ id: string }[]>`
-						insert into stages ${tx({
-							route_id: created.id,
-							position: index + 1,
-							key: stage.key,
-							name: stage.name,
-							category: stage.category,
-							sla_days: stage.slaDays,
-							stale_after_days: stage.staleAfterDays,
-							requires_result: stage.requiresResult,
-							requires_confirmation: stage.requiresConfirmation,
-							checklist: JSON.stringify(stage.checklist)
-						})}
-						returning id
-					`;
-
-					stageIds.set(stage.key, row.id);
-				}
-
-				for (const transition of route.transitions) {
-					await tx`
-						insert into stage_transitions ${tx({
-							route_id: created.id,
-							from_stage_id: stageIds.get(transition.fromStageKey) ?? null,
-							to_stage_id: stageIds.get(transition.toStageKey) ?? null,
-							kind: transition.kind,
-							required_permission_key: transition.requiredPermissionKey,
-							requires_reason: transition.requiresReason
-						})}
-					`;
-				}
-
-				await tx`update stage_routes set is_default = false where id <> ${created.id}`;
-			}
-
-			const withReason = await tx<{ id: string }[]>`
-				select id from stage_routes where key = ${REASON_ROUTE.key} limit 1
-			`;
-
-			if (withReason.length === 0) {
-				const [created] = await tx<{ id: string }[]>`
-					insert into stage_routes ${tx({
-						key: REASON_ROUTE.key,
-						version: 1,
-						name: REASON_ROUTE.name,
-						description: null,
-						is_default: false,
-						published_at: new Date()
-					})}
-					returning id
-				`;
-
-				const ids: string[] = [];
-
-				for (const [index, stage] of REASON_ROUTE.stages.entries()) {
-					const [row] = await tx<{ id: string }[]>`
-						insert into stages ${tx({
-							route_id: created.id,
-							position: index + 1,
-							key: stage.key,
-							name: stage.name,
-							category: stage.category,
-							sla_days: 7,
-							stale_after_days: null,
-							requires_result: false,
-							requires_confirmation: false,
-							checklist: JSON.stringify([])
-						})}
-						returning id
-					`;
-
-					ids.push(row.id);
-				}
-
-				// Требований стадии здесь нет намеренно: переход упирается ровно в
-				// объяснение, и проверка говорит только о нём.
+			for (const organization of [INSTITUTION, CUSTOMER]) {
 				await tx`
-					insert into stage_transitions ${tx({
-						route_id: created.id,
-						from_stage_id: ids[0],
-						to_stage_id: ids[1],
-						kind: 'forward',
-						required_permission_key: 'stages.transition',
-						requires_reason: true
+					insert into organization_responsibles ${tx({
+						organization_id: organization.id,
+						user_id: owner.id,
+						valid_from: new Date()
 					})}
+					on conflict do nothing
 				`;
 			}
+
+			// Процесс учебных заведений: его кладёт набор данных стенда, но прогон
+			// не обязан на это полагаться — без стадий взаимодействие не завести.
+			await ensureProcess(
+				tx,
+				'b2b',
+				process.name,
+				process.note,
+				process.stages,
+				process.transitions
+			);
+
+			await tx`
+				insert into process_groups ${tx({
+					key: REASON_ROUTE.group,
+					name: 'Проверка обязательного объяснения',
+					position: 101
+				})}
+				on conflict (key) do nothing
+			`;
+
+			// Процесс с обязательным объяснением — в своей группе: там своя
+			// редакция и свои записи.
+			await ensureProcess(
+				tx,
+				REASON_ROUTE.group,
+				REASON_ROUTE.name,
+				null,
+				REASON_ROUTE.stages.map((stage) => ({
+					key: stage.key,
+					name: stage.name,
+					category: stage.category,
+					slaDays: 7,
+					staleAfterDays: null,
+					requiresResult: false,
+					requiresConfirmation: false,
+					requiresLmsData: false,
+					isFinal: stage.key === 'terms_closed',
+					checklist: []
+				})),
+				[
+					{
+						fromStageKey: 'terms_agreed',
+						toStageKey: 'terms_closed',
+						kind: 'forward',
+						requiredPermissionKey: 'stages.transition',
+						// Требований стадии здесь нет намеренно: переход упирается ровно
+						// в объяснение, и проверка говорит только о нём.
+						requiresReason: true
+					}
+				]
+			);
 		});
 	} finally {
 		await sql.end();
 	}
+}
+
+type SeedStage = {
+	key: string;
+	name: string;
+	category: string;
+	slaDays: number;
+	staleAfterDays: number | null;
+	requiresResult: boolean;
+	requiresConfirmation: boolean;
+	requiresLmsData: boolean;
+	isFinal: boolean;
+	checklist: { key: string; label: string; required: boolean }[];
+};
+
+type SeedTransition = {
+	fromStageKey: string;
+	toStageKey: string;
+	kind: string;
+	requiredPermissionKey: string;
+	requiresReason: boolean;
+};
+
+/**
+ * Действующая редакция группы, если её ещё нет. Ставит и реестр ключей: он
+ * заводится вместе с первой редакцией, и без него применение изменений
+ * посчитало бы все ключи новыми.
+ */
+async function ensureProcess(
+	tx: postgres.TransactionSql,
+	groupKey: string,
+	name: string,
+	note: string | null,
+	stages: readonly SeedStage[],
+	transitions: readonly SeedTransition[]
+): Promise<void> {
+	const [group] = await tx<{ id: string; active_revision_id: string | null }[]>`
+		select id, active_revision_id from process_groups where key = ${groupKey}
+	`;
+
+	if (group === undefined) {
+		throw new Error(`Группа процесса «${groupKey}» не заведена миграцией`);
+	}
+
+	if (group.active_revision_id !== null) {
+		return;
+	}
+
+	const [created] = await tx<{ id: string }[]>`
+		insert into process_revisions ${tx({
+			group_id: group.id,
+			version: 1,
+			name,
+			note,
+			published_at: new Date()
+		})}
+		returning id
+	`;
+
+	const stageIds = new Map<string, string>();
+
+	for (const [index, stage] of stages.entries()) {
+		const [row] = await tx<{ id: string }[]>`
+			insert into stages ${tx({
+				revision_id: created.id,
+				position: index + 1,
+				key: stage.key,
+				name: stage.name,
+				category: stage.category,
+				sla_days: stage.slaDays,
+				stale_after_days: stage.staleAfterDays,
+				requires_result: stage.requiresResult,
+				requires_confirmation: stage.requiresConfirmation,
+				requires_lms_data: stage.requiresLmsData,
+				is_final: stage.isFinal,
+				checklist: JSON.stringify(stage.checklist)
+			})}
+			returning id
+		`;
+
+		stageIds.set(stage.key, row.id);
+	}
+
+	for (const transition of transitions) {
+		await tx`
+			insert into stage_transitions ${tx({
+				revision_id: created.id,
+				from_stage_id: stageIds.get(transition.fromStageKey) ?? null,
+				to_stage_id: stageIds.get(transition.toStageKey) ?? null,
+				kind: transition.kind,
+				required_permission_key: transition.requiredPermissionKey,
+				requires_reason: transition.requiresReason
+			})}
+		`;
+	}
+
+	for (const stage of stages) {
+		await tx`
+			insert into process_stage_keys ${tx({ group_id: group.id, key: stage.key })}
+			on conflict do nothing
+		`;
+	}
+
+	await tx`update process_groups set active_revision_id = ${created.id} where id = ${group.id}`;
 }
 
 test.beforeAll(async () => {
@@ -222,8 +294,9 @@ async function createInteraction(page: import('@playwright/test').Page): Promise
 }
 
 /**
- * Взаимодействие на маршруте с обязательным объяснением. Заводится прямо в базе:
- * форма заведения работает с маршрутом по умолчанию, а нужен здесь другой.
+ * Взаимодействие на процессе с обязательным объяснением. Заводится прямо в
+ * базе: форма выводит группу из вида основной стороны, а здесь нужна другая
+ * группа и её контрагент.
  */
 async function createReasonInteraction(): Promise<string> {
 	const sql = postgres(databaseUrl(), { max: 1, connect_timeout: 10 });
@@ -234,17 +307,18 @@ async function createReasonInteraction(): Promise<string> {
 				select id from users where email = ${E2E_USER.email} limit 1
 			`;
 
-			const [stage] = await tx<{ id: string; route_id: string }[]>`
-				select s.id, s.route_id
+			const [stage] = await tx<{ id: string; group_id: string }[]>`
+				select s.id, r.group_id
 				from stages s
-				join stage_routes r on r.id = s.route_id
-				where r.key = ${REASON_ROUTE.key} and s.position = 1
+				join process_revisions r on r.id = s.revision_id
+				join process_groups g on g.id = r.group_id
+				where g.key = ${REASON_ROUTE.group} and s.position = 1
 			`;
 
 			const [interaction] = await tx<{ id: string }[]>`
 				insert into interactions ${tx({
 					title: `${MARK} Объяснение ${crypto.randomUUID().slice(0, 8)}`,
-					route_id: stage.route_id,
+					process_group_id: stage.group_id,
 					owner_user_id: owner.id
 				})}
 				returning id
@@ -253,8 +327,8 @@ async function createReasonInteraction(): Promise<string> {
 			await tx`
 				insert into interaction_parties ${tx({
 					interaction_id: interaction.id,
-					organization_id: INSTITUTION.id,
-					party_role: 'educational_institution',
+					organization_id: CUSTOMER.id,
+					party_role: 'customer',
 					is_primary: true
 				})}
 			`;
@@ -273,6 +347,8 @@ async function createReasonInteraction(): Promise<string> {
 						staleAfterDays: null,
 						requiresResult: false,
 						requiresConfirmation: false,
+						requiresLmsData: false,
+						isFinal: false,
 						checklist: []
 					})
 				})}
@@ -301,7 +377,7 @@ test('список открывается, ищет и фильтрует по �
 	await expect(page.getByText('Ничего не найдено')).toBeVisible();
 });
 
-test('карточка ведёт по стадии: чек-лист, переход, лента', async ({ page }) => {
+test('карточка ведёт по стадии: чек-лист, переход с файлом, лента', async ({ page }) => {
 	await createInteraction(page);
 
 	const advance = page.getByRole('button', { name: 'Перейти: Коммуникация и сверка программ' });
@@ -316,12 +392,28 @@ test('карточка ведёт по стадии: чек-лист, перех
 	await expect(advance).toBeEnabled();
 	await advance.click();
 
+	// Комментарий и вложения доступны при любом переходе, а не только там, где
+	// процесс требует объяснения.
+	const dialog = page.getByRole('dialog');
+	await expect(dialog.getByLabel('Комментарий')).toBeVisible();
+	await dialog.getByLabel('Комментарий').fill('Контакт подтверждён письмом деканата');
+	await dialog.getByLabel('Вложения').setInputFiles({
+		name: 'kontakt.txt',
+		mimeType: 'text/plain',
+		buffer: Buffer.from('Письмо деканата о контактном лице', 'utf8')
+	});
+	await dialog.getByRole('button', { name: 'Подтвердить' }).click();
+
 	await expect(
 		page.getByRole('button', { name: 'Перейти: Встреча с представителями' })
 	).toBeVisible();
 	await expect(
 		page.locator('[data-slot="stage-timeline"] [aria-current="step"]')
 	).toHaveAccessibleName(/Коммуникация и сверка программ — текущая/);
+
+	// Файл виден на той стадии, где его приложили, а не общим списком карточки.
+	await page.getByRole('tab', { name: 'История' }).click();
+	await expect(page.getByText('Вложения: kontakt.txt')).toBeVisible();
 });
 
 test('шаг вперёд с обязательным объяснением спрашивает комментарий', async ({ page }) => {

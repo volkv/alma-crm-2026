@@ -19,11 +19,19 @@ import type {
 } from '$lib/contracts/interactions';
 import type { ActorContext } from '../actor';
 import { getDb } from '../db';
-import { blockers, stageEntries, stageEntryStatus, stagePauses, users } from '../db/schema';
+import {
+	blockers,
+	documents,
+	stageEntries,
+	stageEntryDocuments,
+	stageEntryStatus,
+	stagePauses,
+	users
+} from '../db/schema';
 import type { Tx } from '../db/transaction';
 import { requirePermission } from '../rbac';
 import { assertInteractionVisible } from '../interactions/access';
-import { readRoute } from './routes';
+import { readGroupRow, requireActiveRevision } from './process';
 
 type Executor = Tx | ReturnType<typeof getDb>;
 
@@ -70,7 +78,11 @@ function toPauseView(row: typeof stagePauses.$inferSelect): StagePauseView {
 	};
 }
 
-function toEntryView(row: EntryRow, pauses: StagePauseView[]): StageEntryView {
+function toEntryView(
+	row: EntryRow,
+	pauses: StagePauseView[],
+	documents: StageEntryView['documents']
+): StageEntryView {
 	return {
 		id: row.entry.id,
 		stageId: row.entry.stageId,
@@ -85,7 +97,9 @@ function toEntryView(row: EntryRow, pauses: StagePauseView[]): StageEntryView {
 		resultText: row.entry.resultText,
 		confirmation: row.entry.confirmation,
 		confirmedAt: row.entry.confirmedAt,
+		lmsEvidence: row.entry.lmsEvidence,
 		checklistState: row.entry.checklistState,
+		documents,
 		dueAt: row.status.dueAt,
 		pausedSeconds: row.status.pausedSeconds,
 		activeSeconds: row.status.activeSeconds,
@@ -117,11 +131,20 @@ function toBlockerView(
 	};
 }
 
-/** Записи стадий взаимодействия вместе со сроками и паузами, новые сверху. */
+/**
+ * Записи стадий взаимодействия вместе со сроками, паузами и вложениями, новые
+ * сверху. Файл виден на той стадии, где его приложили, а не общим списком по
+ * взаимодействию: иначе «чем подтверждена передача материалов» превращается в
+ * перебор всех файлов карточки.
+ */
 async function readEntries(
 	executor: Executor,
 	condition: SQL
-): Promise<{ rows: EntryRow[]; pauses: Map<string, StagePauseView[]> }> {
+): Promise<{
+	rows: EntryRow[];
+	pauses: Map<string, StagePauseView[]>;
+	attachments: Map<string, StageEntryView['documents']>;
+}> {
 	const rows = (await executor
 		.select(entryColumns)
 		.from(stageEntries)
@@ -131,45 +154,74 @@ async function readEntries(
 		.orderBy(desc(stageEntries.enteredAt))) as EntryRow[];
 
 	const pauses = new Map<string, StagePauseView[]>();
+	const attachments = new Map<string, StageEntryView['documents']>();
 
 	if (rows.length > 0) {
-		const pauseRows = await executor
-			.select()
-			.from(stagePauses)
-			.where(
-				inArray(
-					stagePauses.stageEntryId,
-					rows.map((row) => row.entry.id)
-				)
-			)
-			.orderBy(desc(stagePauses.startedAt));
+		const entryIds = rows.map((row) => row.entry.id);
+
+		const [pauseRows, attachmentRows] = await Promise.all([
+			executor
+				.select()
+				.from(stagePauses)
+				.where(inArray(stagePauses.stageEntryId, entryIds))
+				.orderBy(desc(stagePauses.startedAt)),
+			executor
+				.select({
+					stageEntryId: stageEntryDocuments.stageEntryId,
+					id: documents.id,
+					title: documents.title,
+					mime: documents.mime,
+					sizeBytes: documents.sizeBytes
+				})
+				.from(stageEntryDocuments)
+				.innerJoin(documents, eq(documents.id, stageEntryDocuments.documentId))
+				.where(inArray(stageEntryDocuments.stageEntryId, entryIds))
+				.orderBy(desc(stageEntryDocuments.createdAt))
+		]);
 
 		for (const pause of pauseRows) {
 			const list = pauses.get(pause.stageEntryId) ?? [];
 			list.push(toPauseView(pause));
 			pauses.set(pause.stageEntryId, list);
 		}
+
+		for (const attachment of attachmentRows) {
+			const list = attachments.get(attachment.stageEntryId) ?? [];
+			list.push({
+				id: attachment.id,
+				title: attachment.title,
+				mime: attachment.mime,
+				sizeBytes: attachment.sizeBytes
+			});
+			attachments.set(attachment.stageEntryId, list);
+		}
 	}
 
-	return { rows, pauses };
+	return { rows, pauses, attachments };
 }
 
 /**
- * Лента маршрута: каким состоянием показать каждую стадию. Стадия, которую
- * перешагнули (записи нет, а процесс уже дальше), показывается пропущенной —
- * иначе пропуск был бы виден только в истории.
+ * Лента процесса: каким состоянием показать каждую стадию.
+ *
+ * Стадии и записи сопоставляются **по ключу**, а не по `stage_id`: строка
+ * `stages` живёт внутри редакции и меняется с каждой публикацией, а закрытые
+ * записи остаются на стадиях своих редакций. По идентификатору лента карточки
+ * после первого же изменения процесса показала бы пустую историю.
+ *
+ * Стадия, которую перешагнули (записи нет, а процесс уже дальше), показывается
+ * пропущенной — иначе пропуск был бы виден только в истории.
  */
 export function buildProgress(
-	routeStages: StageView[],
-	entries: { stageId: string; leftAt: Date | null }[],
-	current: { stageId: string; dueAt: Date; isOverdue: boolean; isPaused: boolean } | null,
+	revisionStages: StageView[],
+	entries: { stageKey: string; leftAt: Date | null }[],
+	current: { stageKey: string; dueAt: Date; isOverdue: boolean; isPaused: boolean } | null,
 	hasBlockingBlockers: boolean
 ): StageProgressItem[] {
-	const visited = new Set(entries.map((entry) => entry.stageId));
-	const currentStage = routeStages.find((stage) => stage.id === current?.stageId);
+	const visited = new Set(entries.map((entry) => entry.stageKey));
+	const currentStage = revisionStages.find((stage) => stage.key === current?.stageKey);
 	const currentPosition = currentStage?.position ?? 0;
 
-	return routeStages.map((stage) => {
+	return revisionStages.map((stage) => {
 		const base = {
 			stageId: stage.id,
 			key: stage.key,
@@ -178,7 +230,7 @@ export function buildProgress(
 			category: stage.category
 		};
 
-		if (current !== null && stage.id === current.stageId) {
+		if (current !== null && stage.key === current.stageKey) {
 			const state = hasBlockingBlockers
 				? 'blocked'
 				: current.isPaused
@@ -195,7 +247,7 @@ export function buildProgress(
 			};
 		}
 
-		if (visited.has(stage.id)) {
+		if (visited.has(stage.key)) {
 			return { ...base, state: 'done' as const, dueAt: null, note: null };
 		}
 
@@ -248,31 +300,36 @@ export async function getInteractionStatus(
 
 	const interaction = await assertInteractionVisible(ctx, interactionId);
 	const db = getDb();
+	const group = await readGroupRow(db, interaction.processGroupId);
 
-	const [{ rows, pauses }, route, blockerList] = await Promise.all([
+	const [{ rows, pauses, attachments }, revision, blockerList] = await Promise.all([
 		readEntries(db, eq(stageEntries.interactionId, interactionId)),
-		readRoute(db, interaction.routeId),
+		requireActiveRevision(db, group),
 		readBlockers(db, interactionId)
 	]);
 
-	const views = rows.map((row) => toEntryView(row, pauses.get(row.entry.id) ?? []));
+	const views = rows.map((row) =>
+		toEntryView(row, pauses.get(row.entry.id) ?? [], attachments.get(row.entry.id) ?? [])
+	);
 	const current = views.find((view) => view.leftAt === null) ?? null;
+	const currentRow = rows.find((row) => row.entry.leftAt === null) ?? null;
 	const openBlocking = blockerList.filter(
 		(blocker) => blocker.resolvedAt === null && blocker.blocksTransition
 	);
 
 	return {
 		interactionId,
-		routeId: interaction.routeId,
+		processGroupId: group.id,
+		revision: revision.version,
 		current,
 		history: views.filter((view) => view.leftAt !== null),
 		progress: buildProgress(
-			route.stages,
-			rows.map((row) => ({ stageId: row.entry.stageId, leftAt: row.entry.leftAt })),
+			revision.stages,
+			rows.map((row) => ({ stageKey: row.entry.stageSnapshot.key, leftAt: row.entry.leftAt })),
 			current === null
 				? null
 				: {
-						stageId: current.stageId,
+						stageKey: current.snapshot.key,
 						dueAt: current.dueAt,
 						isOverdue: current.isOverdue,
 						isPaused: current.isPaused
@@ -281,6 +338,30 @@ export async function getInteractionStatus(
 		),
 		blockers: blockerList,
 		isStale: isStale(current?.snapshot ?? null, interaction.lastActivityAt),
-		lastActivityAt: interaction.lastActivityAt
+		lastActivityAt: interaction.lastActivityAt,
+		migratedFrom: migrationNotice(currentRow, revision.stages)
 	};
+}
+
+/**
+ * Уведомление «стадия перенесена при изменении процесса». Рисуется из отметок
+ * переезда открытой записи и отдельного состояния не заводит: закрылась запись
+ * — уведомления больше нет, потому что дальше человек шёл сам.
+ */
+function migrationNotice(
+	row: EntryRow | null,
+	revisionStages: StageView[]
+): { stageKey: string; stageName: string; at: Date } | null {
+	const key = row?.entry.migratedFromStageKey ?? null;
+	const at = row?.entry.migratedAt ?? null;
+
+	if (key === null || at === null) {
+		return null;
+	}
+
+	// Прежняя стадия исчезла из процесса — на то её и переносили; название
+	// берём из текущей структуры, только если ключ там ещё есть.
+	const stage = revisionStages.find((candidate) => candidate.key === key);
+
+	return { stageKey: key, stageName: stage?.name ?? key, at };
 }

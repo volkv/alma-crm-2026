@@ -39,6 +39,7 @@ import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
 import {
 	affiliations,
+	organizationResponsibles,
 	organizations,
 	people,
 	products,
@@ -169,6 +170,33 @@ export async function createOrganization(
 
 	const write = async (executor: Tx): Promise<OrganizationView> => {
 		const [row] = await executor.insert(organizations).values(input).returning();
+
+		// Автор сразу становится ответственным: иначе менеджер завёл бы карточку
+		// и тут же потерял её из виду — область считается по действующим
+		// назначениям, и у новой организации их нет ни одного.
+		//
+		// Организация-оператор из этого правила выведена: она стоит стороной
+		// почти в каждом взаимодействии, и назначение на неё отдало бы автору все
+		// записи продукта разом. Фоновые задачи и сиды тоже: у них нет человека,
+		// которому эта организация принадлежала бы.
+		if (ctx.user !== null && row.kind !== 'operator') {
+			await executor.insert(organizationResponsibles).values({
+				organizationId: row.id,
+				userId: ctx.user.id,
+				assignedByUserId: ctx.user.id
+			});
+
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'directory.responsible_assigned',
+					outcome: 'success',
+					subject: { type: 'organization', id: row.id },
+					details: { organizationId: row.id, userId: ctx.user.id }
+				},
+				executor
+			);
+		}
 
 		await recordAuditEvent(
 			ctx,

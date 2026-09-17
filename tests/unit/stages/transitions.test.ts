@@ -46,6 +46,8 @@ function snapshot(overrides: Partial<StageSnapshot> = {}): StageSnapshot {
 		staleAfterDays: 7,
 		requiresResult: false,
 		requiresConfirmation: false,
+		requiresLmsData: false,
+		isFinal: false,
 		checklist: [],
 		...overrides
 	};
@@ -58,6 +60,7 @@ function state(overrides: Partial<StageState> = {}): StageState {
 		checklistState: {},
 		resultText: null,
 		confirmation: null,
+		lmsEvidence: null,
 		isPaused: false,
 		blockingBlockers: 0,
 		...overrides
@@ -194,6 +197,31 @@ describe('evaluateTransition', () => {
 		).toEqual({ allowed: true, reasons: [] });
 	});
 
+	it('требует данные обучения там, где стадия их требует', () => {
+		const requiring = state({ snapshot: snapshot({ requiresLmsData: true }) });
+
+		expect(evaluateTransition(worker, requiring, transition()).reasons).toContain(
+			'По стадии не получены данные системы обучения'
+		);
+
+		// Факты приходят по взаимодействию, а не по стадии: важно, что они есть,
+		// а не когда именно пришли.
+		expect(
+			evaluateTransition(
+				worker,
+				{ ...requiring, lmsEvidence: { system: 'moodle', groupId: 'g-1' } },
+				transition()
+			)
+		).toEqual({ allowed: true, reasons: [] });
+
+		// На возврате пятый вопрос не задаётся: возврат — выход из тупика.
+		expect(
+			evaluateTransition(worker, requiring, transition({ kind: 'return' }), {
+				reason: 'Поток отменён вузом'
+			})
+		).toEqual({ allowed: true, reasons: [] });
+	});
+
 	it('требует причину, когда команда уже собрана, и молчит про неё в сводке', () => {
 		const returning = transition({ kind: 'return', requiresReason: true });
 
@@ -226,7 +254,8 @@ describe('evaluateTransition', () => {
 			snapshot: snapshot({
 				checklist: [REQUIRED_ITEM],
 				requiresResult: true,
-				requiresConfirmation: true
+				requiresConfirmation: true,
+				requiresLmsData: true
 			}),
 			isPaused: true
 		});
@@ -237,7 +266,7 @@ describe('evaluateTransition', () => {
 		});
 
 		expect(forward.allowed).toBe(false);
-		expect(forward.reasons).toHaveLength(4);
+		expect(forward.reasons).toHaveLength(5);
 		// Возврат — это выход из тупика: требовать для него то, из-за чего застряли,
 		// значит запереть процесс.
 		expect(back).toEqual({ allowed: true, reasons: [] });

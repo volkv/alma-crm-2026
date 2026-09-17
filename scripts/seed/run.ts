@@ -1,6 +1,6 @@
 /**
  * Заливка начальных данных: каталог прав и ролей, учётные записи стенда,
- * справочники, маршрут стадий, демонстрационные взаимодействия и договоры.
+ * справочники, процессы групп, демонстрационные взаимодействия и договоры.
  *
  * Заливка идёт в два приёма. Конфигурация и справочники — одной транзакцией:
  * половина справочника без ролей и пользователей — это не «частично
@@ -18,57 +18,40 @@
  */
 import { count } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
-import { validatePassword } from '$lib/server/auth/password';
 import { closeDatabase, getDb } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import { seedRolesAndPermissions } from '$lib/server/rbac/seed';
-import { SETTING_DEFAULTS } from '$lib/server/settings';
-import { ensureDemoRoute } from '$lib/server/stages/routes';
+import { B2B_GROUP_KEY } from '$lib/server/stages/definitions';
 import { seedContracts } from './contracts';
 import { seedDirectory } from './directory';
 import { seedInteractions } from './interactions';
-import { assignProcessGroups, seedProcessGroup } from './process';
+import { seedProcesses } from './process';
 import { seedStats } from './stats';
-import { seedUsers, STAFF_ADMIN_EMAIL, type SeededUsers } from './users';
+import { seedUsers, type SeededUsers } from './users';
 
 /**
  * Порядок наборов: сначала права и роли, потом пользователи (у них внешний
  * ключ на роль), потом справочники (версия программы ссылается на автора),
- * данные об обучении и маршрут, и только затем взаимодействия, которым нужно
- * всё перечисленное.
+ * данные об обучении и процессы групп, и только затем взаимодействия, которым
+ * нужно всё перечисленное.
  * Отдельная функция, потому что этот же порядок проверяют тесты.
  */
-export async function seedAll(options: {
-	demoPassword: string;
-	/** Пароль администратора стенда; без него запись не заводится вовсе. */
-	staffAdminPassword?: string;
-}): Promise<SeededUsers> {
-	// Проверка здесь, а не в `main`: пароль, положенный сидом, обязан отвечать
-	// той же политике, что и заведённый руками, кто бы сид ни звал.
-	checkPassword('SEED_DEMO_PASSWORD', options.demoPassword);
-
-	if (options.staffAdminPassword !== undefined) {
-		checkPassword('SEED_STAFF_ADMIN_PASSWORD', options.staffAdminPassword);
-	}
-
-	const { users, routeId } = await getDb().transaction(async (tx) => {
+export async function seedAll(): Promise<SeededUsers> {
+	const users = await getDb().transaction(async (tx) => {
 		await seedRolesAndPermissions(tx);
-		const seededUsers = await seedUsers(tx, options);
+		const seededUsers = await seedUsers(tx);
 		await seedDirectory(tx, { authorUserId: seededUsers.employees[0] });
 		// Данные об обучении ссылаются на организации и программы, поэтому идут
 		// после справочника и в той же транзакции.
 		await seedStats(tx, { authorUserId: seededUsers.employees[0] });
 
-		const routeId = await ensureDemoRoute(tx);
-		await seedProcessGroup(tx, { routeId });
+		await seedProcesses(tx);
 
-		return { users: seededUsers, routeId };
+		return seededUsers;
 	});
 
-	await seedInteractions({ routeId });
-	// После взаимодействий: группа выводится из их основной стороны, а договор
-	// ссылается на уже заведённую запись.
-	await assignProcessGroups();
+	await seedInteractions({ groupKey: B2B_GROUP_KEY });
+	// После взаимодействий: договор ссылается на уже заведённую запись.
 	await seedContracts();
 
 	return users;
@@ -93,31 +76,6 @@ const IF_DEMO_FLAG = '--if-demo';
 
 /** Флаг ручного прогона: «приведи каталог прав к коду и на этом всё». */
 const ROLES_ONLY_FLAG = '--roles-only';
-
-function requireEnv(name: string, explanation: string): string {
-	const value = process.env[name];
-
-	if (value === undefined || value === '') {
-		throw new Error(`Переменная ${name} не задана: ${explanation}`);
-	}
-
-	return value;
-}
-
-/** Необязательная переменная: пустая строка — то же самое, что незаданная. */
-function optionalEnv(name: string): string | undefined {
-	const value = process.env[name];
-
-	return value === undefined || value === '' ? undefined : value;
-}
-
-function checkPassword(name: string, password: string): void {
-	const issues = validatePassword(SETTING_DEFAULTS.password_policy, password);
-
-	if (issues.length > 0) {
-		throw new Error(`${name} не отвечает политике паролей: ${issues.join('; ')}`);
-	}
-}
 
 /** Таблицы каталога прав: по ним видно, что сделал прогон с `--roles-only`. */
 const ROLE_TABLES: Record<string, PgTable> = {
@@ -194,21 +152,8 @@ export async function main(argv: readonly string[]): Promise<void> {
 		return;
 	}
 
-	const demoPassword = requireEnv(
-		'SEED_DEMO_PASSWORD',
-		'это общий пароль демонстрационных учётных записей стенда'
-	);
-
-	const staffAdminPassword = optionalEnv('SEED_STAFF_ADMIN_PASSWORD');
-
-	if (staffAdminPassword === undefined) {
-		console.log(
-			`seed: SEED_STAFF_ADMIN_PASSWORD не задана — учётная запись ${STAFF_ADMIN_EMAIL} не заводится`
-		);
-	}
-
 	try {
-		await seedAll({ demoPassword, staffAdminPassword });
+		await seedAll();
 
 		console.log(`seed: готово, в базе ${await countRows(REPORTED_TABLES)}`);
 	} finally {

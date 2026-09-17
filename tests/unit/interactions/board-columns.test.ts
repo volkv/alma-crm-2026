@@ -1,5 +1,6 @@
 /**
- * Раскладка доски: колонки задаёт маршрут, состояние карточки — движок.
+ * Раскладка доски: колонки задаёт действующий процесс, состояние карточки —
+ * движок.
  *
  * Обе функции чистые, и проверяются они здесь, без базы: порядок колонок,
  * пустая стадия, счётчики обрезанной колонки и старшинство состояний — это
@@ -11,16 +12,16 @@ import type { InteractionBoardCard, StageView } from '$lib/contracts/interaction
 import {
 	boardCardState,
 	buildBoardColumns,
-	chooseBoardRoute,
+	chooseBoardGroup,
 	type BoardEntry
 } from '$lib/server/interactions/board';
 
-const ROUTE_ID = '11111111-1111-4111-8111-111111111111';
+const REVISION_ID = '11111111-1111-4111-8111-111111111111';
 
 function stage(position: number, key: string, name: string): StageView {
 	return {
 		id: `stage-${key}`,
-		routeId: ROUTE_ID,
+		revisionId: REVISION_ID,
 		position,
 		key,
 		name,
@@ -29,6 +30,8 @@ function stage(position: number, key: string, name: string): StageView {
 		staleAfterDays: null,
 		requiresResult: false,
 		requiresConfirmation: false,
+		requiresLmsData: false,
+		isFinal: false,
 		checklist: []
 	};
 }
@@ -118,45 +121,41 @@ describe('boardCardState', () => {
 	});
 });
 
-describe('chooseBoardRoute', () => {
+describe('chooseBoardGroup', () => {
 	const withWork = {
-		id: 'route-a',
-		name: 'Версия 1',
-		version: 1,
-		interactions: 5,
-		isDefault: false
+		id: 'group-a',
+		key: 'b2b',
+		name: 'Учебные заведения',
+		position: 1,
+		interactions: 5
 	};
-	const byDefault = {
-		id: 'route-b',
-		name: 'Версия 2',
-		version: 2,
-		interactions: 0,
-		isDefault: true
+	const empty = {
+		id: 'group-b',
+		key: 'b2c',
+		name: 'Физические и юридические лица',
+		position: 2,
+		interactions: 0
 	};
 
-	it('открывает запрошенную версию, даже если по ней никто не идёт', () => {
-		expect(chooseBoardRoute([withWork, byDefault], 'route-b')).toBe('route-b');
+	it('открывает группу из фильтра, даже если по ней никто не идёт', () => {
+		expect(chooseBoardGroup([withWork, empty], 'b2c')?.id).toBe('group-b');
 	});
 
-	it('не верит непонятной версии из адреса', () => {
-		expect(chooseBoardRoute([withWork, byDefault], 'не-идентификатор')).toBe('route-a');
+	it('не верит непонятному ключу из адреса', () => {
+		expect(chooseBoardGroup([withWork, empty], 'не-группа')?.id).toBe('group-a');
 	});
 
-	it('предпочитает маршрут по умолчанию, когда работа есть и на нём', () => {
-		const working = { ...byDefault, interactions: 2 };
+	it('без фильтра берёт ту, где работы больше', () => {
+		const busier = { ...empty, interactions: 9 };
 
-		expect(chooseBoardRoute([withWork, working], null)).toBe(working.id);
+		expect(chooseBoardGroup([withWork, busier], null)?.id).toBe('group-b');
 	});
 
-	it('берёт версию с работой, когда на маршруте по умолчанию пусто', () => {
-		expect(chooseBoardRoute([withWork, byDefault], null)).toBe('route-a');
+	it('возвращается к первой по порядку, когда работы нет нигде', () => {
+		expect(chooseBoardGroup([{ ...withWork, interactions: 0 }, empty], null)?.id).toBe('group-a');
 	});
 
-	it('возвращается к маршруту по умолчанию, когда работы нет нигде', () => {
-		expect(chooseBoardRoute([{ ...withWork, interactions: 0 }, byDefault], null)).toBe('route-b');
-	});
-
-	it('без опубликованных маршрутов не выбирает ничего', () => {
-		expect(chooseBoardRoute([], null)).toBeNull();
+	it('без групп не выбирает ничего', () => {
+		expect(chooseBoardGroup([], null)).toBeNull();
 	});
 });

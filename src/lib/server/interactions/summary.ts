@@ -16,7 +16,7 @@ import type { ActorContext } from '../actor';
 import { getDb } from '../db';
 import { interactionParties, organizations } from '../db/schema';
 import { can, requirePermission } from '../rbac';
-import { readRoute } from '../stages/routes';
+import { readGroupRow, requireActiveRevision } from '../stages/process';
 import { getInteractionStatus } from '../stages/status';
 import { evaluateTransition, type StageState } from '../stages/transitions';
 import { assertInteractionVisible } from './access';
@@ -43,9 +43,10 @@ export async function getInteractionSummary(
 	requirePermission(ctx, 'interactions.read');
 
 	const interaction = await assertInteractionVisible(ctx, interactionId);
-	const [status, route] = await Promise.all([
+	const group = await readGroupRow(getDb(), interaction.processGroupId);
+	const [status, revision] = await Promise.all([
 		getInteractionStatus(ctx, interactionId),
-		readRoute(getDb(), interaction.routeId)
+		requireActiveRevision(getDb(), group)
 	]);
 
 	const current = status.current;
@@ -63,7 +64,7 @@ export async function getInteractionSummary(
 					organizationName: partyNames.get(waitingPartyId) ?? 'Участник взаимодействия'
 				};
 
-	const stagesById = new Map(route.stages.map((stage) => [stage.id, stage]));
+	const stagesById = new Map(revision.stages.map((stage) => [stage.id, stage]));
 
 	let transitions: TransitionOptionView[] = [];
 
@@ -74,11 +75,12 @@ export async function getInteractionSummary(
 			checklistState: current.checklistState,
 			resultText: current.resultText,
 			confirmation: current.confirmation,
+			lmsEvidence: current.lmsEvidence,
 			isPaused: current.isPaused,
 			blockingBlockers: blockingBlockers.length
 		};
 
-		transitions = route.transitions
+		transitions = revision.transitions
 			.filter((transition) => transition.fromStageId === current.stageId)
 			.map((transition) => {
 				const toStage = stagesById.get(transition.toStageId);
@@ -95,7 +97,7 @@ export async function getInteractionSummary(
 							? {
 									id: transition.toStageId,
 									key: 'unknown',
-									name: 'Стадия вне маршрута',
+									name: 'Стадия вне процесса',
 									position: 0,
 									category: current.snapshot.category
 								}
@@ -134,7 +136,13 @@ export async function getInteractionSummary(
 			actions.push('resolve_blocker');
 		}
 
-		actions.push('set_responsible', 'comment', 'edit');
+		actions.push('comment', 'edit');
+	}
+
+	// Смена владельца — не «вести свою работу», а передать чужую: право на неё
+	// отдельное, и кнопки у того, кто её не имеет, быть не должно.
+	if (can(ctx, 'interactions.reassign')) {
+		actions.push('set_responsible');
 	}
 
 	if (can(ctx, 'documents.write')) {

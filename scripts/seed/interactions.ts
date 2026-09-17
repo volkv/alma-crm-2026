@@ -57,8 +57,9 @@ import {
 	setResponsible,
 	startInteractionIn
 } from '$lib/server/stages/commands';
-import { DEMO_ROUTE } from '$lib/server/stages/demo-route';
-import { readRoute } from '$lib/server/stages/routes';
+import type { ProcessRevisionView } from '$lib/contracts/interactions';
+import { B2B_PROCESS } from '$lib/server/stages/definitions';
+import { readGroupByKey, readGroupRow, requireActiveRevision } from '$lib/server/stages/process';
 import { seedId } from './ids';
 
 /** Ключи учётных записей, на которых ведутся демонстрационные взаимодействия. */
@@ -657,7 +658,7 @@ function stageByKey(stages: readonly StageView[], key: string): StageView {
 	const stage = stages.find((candidate) => candidate.key === key);
 
 	if (stage === undefined) {
-		throw new Error(`В маршруте нет стадии «${key}»`);
+		throw new Error(`В процессе нет стадии «${key}»`);
 	}
 
 	return stage;
@@ -669,10 +670,10 @@ function isOverdueSeed(seed: InteractionSeed): boolean {
 		return false;
 	}
 
-	const stage = DEMO_ROUTE.stages.find((candidate) => candidate.key === seed.stage);
+	const stage = B2B_PROCESS.stages.find((candidate) => candidate.key === seed.stage);
 
 	if (stage === undefined) {
-		throw new Error(`В демонстрационном маршруте нет стадии «${seed.stage}»`);
+		throw new Error(`В процессе учебных заведений нет стадии «${seed.stage}»`);
 	}
 
 	return seed.sinceDaysAgo > stage.slaDays;
@@ -786,12 +787,10 @@ async function readLatestProgramVersions(db: Database): Promise<Map<string, stri
 
 function toCreateInput(
 	seed: InteractionSeed,
-	routeId: string,
 	versions: Map<string, string>
 ): CreateInteractionInput {
 	const raw = {
 		title: seed.title,
-		routeId,
 		agreementPeriodStart: seed.agreement[0],
 		agreementPeriodEnd: seed.agreement[1],
 		academicPeriodStart: seed.academic?.[0] ?? null,
@@ -857,7 +856,8 @@ async function createSeededInteraction(
 	ctx: ActorContext,
 	db: Database,
 	id: string,
-	input: CreateInteractionInput
+	input: CreateInteractionInput,
+	group: { id: string; key: string; revision: ProcessRevisionView }
 ): Promise<boolean> {
 	return db.transaction(async (tx: Tx) => {
 		const created = await tx
@@ -865,7 +865,7 @@ async function createSeededInteraction(
 			.values({
 				id,
 				title: input.title,
-				routeId: input.routeId,
+				processGroupId: group.id,
 				agreementPeriodStart: input.agreementPeriodStart,
 				agreementPeriodEnd: input.agreementPeriodEnd,
 				academicPeriodStart: input.academicPeriodStart,
@@ -920,16 +920,17 @@ async function createSeededInteraction(
 				type: 'interactions.created',
 				outcome: 'success',
 				subject: { type: 'interaction', id },
-				details: { routeId: input.routeId }
+				details: { processGroupKey: group.key, revisionId: group.revision.id }
 			},
 			tx
 		);
 
-		await startInteractionIn(ctx, tx, {
-			id,
-			routeId: input.routeId,
-			ownerUserId: input.ownerUserId
-		});
+		await startInteractionIn(
+			ctx,
+			tx,
+			{ id, processGroupId: group.id, ownerUserId: input.ownerUserId },
+			group.revision
+		);
 
 		return true;
 	});
@@ -940,7 +941,8 @@ async function stepForward(
 	ctx: ActorContext,
 	interactionId: string,
 	from: StageView,
-	toStageId: string
+	toStageId: string,
+	revision: number
 ): Promise<void> {
 	if (from.requiresConfirmation) {
 		await confirmStage(ctx, {
@@ -954,7 +956,8 @@ async function stepForward(
 		interactionId,
 		fromStageId: from.id,
 		toStageId,
-		// Комментарий к шагу вперёд просит только маршрут, который так настроен;
+		revision,
+		// Комментарий к шагу вперёд просит только процесс, который так настроен;
 		// у демонстрационного такого перехода нет.
 		reason: null,
 		resultText: from.requiresResult ? (STAGE_RESULTS[from.key] ?? null) : null,
@@ -966,33 +969,35 @@ async function stepForward(
 	});
 }
 
-type Route = {
+type Process = {
 	stages: StageView[];
 	/** Куда ведёт шаг вперёд с этой стадии. */
 	forward: Map<string, string>;
+	/** Номер действующей редакции: его несёт каждая команда перехода. */
+	revision: number;
 };
 
-/** Проводит взаимодействие по маршруту до нужной стадии. */
+/** Проводит взаимодействие по процессу до нужной стадии. */
 async function walkTo(
 	ctx: ActorContext,
 	interactionId: string,
-	route: Route,
+	process: Process,
 	targetKey: string
 ): Promise<void> {
-	const target = stageByKey(route.stages, targetKey);
+	const target = stageByKey(process.stages, targetKey);
 
-	for (const stage of route.stages) {
+	for (const stage of process.stages) {
 		if (stage.position >= target.position) {
 			break;
 		}
 
-		const next = route.forward.get(stage.id);
+		const next = process.forward.get(stage.id);
 
 		if (next === undefined) {
 			throw new Error(`Со стадии «${stage.key}» нет шага вперёд`);
 		}
 
-		await stepForward(ctx, interactionId, stage, next);
+		await stepForward(ctx, interactionId, stage, next, process.revision);
 	}
 }
 
@@ -1127,13 +1132,13 @@ async function applyState(
 	db: Database,
 	seed: InteractionSeed,
 	interactionId: string,
-	route: Route
+	process: Process
 ): Promise<boolean> {
 	const entry = await readOpenEntry(db, interactionId);
-	const stage = route.stages.find((candidate) => candidate.id === entry.stageId);
+	const stage = process.stages.find((candidate) => candidate.id === entry.stageId);
 
 	if (stage === undefined) {
-		throw new Error(`Стадия ${entry.stageId} не принадлежит маршруту`);
+		throw new Error(`Стадия ${entry.stageId} не принадлежит действующему процессу`);
 	}
 
 	if (seed.closeChecklist === true) {
@@ -1324,18 +1329,20 @@ async function readExisting(db: Database, ids: string[]): Promise<Set<string>> {
  * историю нельзя «досоздать», а переписать её заново значило бы стереть работу,
  * проделанную на стенде руками.
  */
-export async function seedInteractions(options: { routeId: string }): Promise<void> {
+export async function seedInteractions(options: { groupKey: string }): Promise<void> {
 	const db = getDb();
-	const route = await readRoute(db, options.routeId);
-	const stages = [...route.stages].sort((left, right) => left.position - right.position);
+	const group = await readGroupRow(db, (await readGroupByKey(db, options.groupKey)).id);
+	const revision = await requireActiveRevision(db, group);
+	const stages = [...revision.stages].sort((left, right) => left.position - right.position);
 
-	const plan: Route = {
+	const plan: Process = {
 		stages,
 		forward: new Map(
-			route.transitions
+			revision.transitions
 				.filter((transition) => transition.kind === 'forward')
 				.map((transition) => [transition.fromStageId, transition.toStageId])
-		)
+		),
+		revision: revision.version
 	};
 
 	const [owners, versions, existing] = await Promise.all([
@@ -1366,9 +1373,9 @@ export async function seedInteractions(options: { routeId: string }): Promise<vo
 			throw new Error(`Учётная запись «${seed.owner}» не заведена`);
 		}
 
-		const input = toCreateInput(seed, options.routeId, versions);
+		const input = toCreateInput(seed, versions);
 
-		if (!(await createSeededInteraction(ctx, db, id, input))) {
+		if (!(await createSeededInteraction(ctx, db, id, input, { ...group, revision }))) {
 			continue;
 		}
 
@@ -1378,11 +1385,12 @@ export async function seedInteractions(options: { routeId: string }): Promise<vo
 			const from = stageByKey(stages, seed.stage);
 			const to = stageByKey(stages, seed.returnedFrom);
 
-			await stepForward(ctx, id, from, to.id);
+			await stepForward(ctx, id, from, to.id, plan.revision);
 			await returnStage(ctx, {
 				interactionId: id,
 				fromStageId: to.id,
 				toStageId: from.id,
+				revision: plan.revision,
 				reason: 'В пакете документов не хватало приложения со списком дисциплин'
 			});
 		}

@@ -160,16 +160,19 @@ staff('раздел называет адрес приёма заявок', asyn
 	await expect(page.getByText('/api/v1/applications')).toBeVisible();
 });
 
-demo('демонстрационной сессии раздел закрыт', async ({ page }) => {
+demo('демонстрационной сессии раздел открыт: его на стенде и показывают', async ({ page }) => {
 	await page.goto('/settings');
 
-	// В меню настроек его нет вовсе: ссылка, отвечающая 403, — это не навигация.
-	await expect(page.getByRole('link', { name: 'Интеграции' })).toHaveCount(0);
+	// Журнал обмена и повтор доставки — это то, ради чего стенд открывают, и
+	// отнимать их у демонстрации значило бы не показать обмен вовсе. За её
+	// границей остаются только адреса и секреты подключений
+	// (`integrations.manage_endpoints`, `docs/access-matrix.md`, раздел 5).
+	await expect(page.getByRole('link', { name: 'Интеграции' })).toHaveCount(1);
 
 	const response = await page.goto('/settings/integrations');
 
-	expect(response?.status()).toBe(403);
-	await expect(page.getByText(/Настройка вебхуков и интеграций/)).toBeVisible();
+	expect(response?.status()).toBe(200);
+	await expect(page.getByText('Подписки на события')).toBeVisible();
 });
 
 staff('выгрузка из системы обучения доходит до раздела «Данные»', async ({ page, baseURL }) => {

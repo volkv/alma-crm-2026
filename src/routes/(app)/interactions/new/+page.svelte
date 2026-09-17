@@ -41,6 +41,22 @@
 		}
 	);
 
+	/**
+	 * Что скажет подсказка о процессе. Группу выбирает не человек, а вид
+	 * организации, отмеченной основной стороной, — поэтому здесь перечислены
+	 * группы и то, описан ли в них процесс: узнать об этом после сохранения
+	 * означало бы отказ там, где заполнена вся форма.
+	 */
+	const emptyProcess = $derived(data.groups.some((group) => group.stageCount === 0));
+	const processHint = $derived(
+		data.groups
+			.map(
+				(group) =>
+					`${group.name} — ${group.stageCount === 0 ? 'процесс ещё не описан' : `${group.stageCount} стадий`}`
+			)
+			.join('; ')
+	);
+
 	let institution = $state<LookupOption | null>(null);
 	let customer = $state<LookupOption | null>(null);
 	let institutionSites = $state<LookupOption[]>([]);
@@ -242,9 +258,12 @@
 					errors={$errors.title}
 				/>
 
-				<InlineHint>
-					Маршрут стадий: {data.route.name} — {data.route.stages} стадий. Взаимодействие начнётся с первой
-					из них.
+				<!-- Процесс не выбирают: он выводится из вида организации, отмеченной
+					основной стороной. Подсказка объясняет это заранее — иначе выбор
+					стороны выглядел бы как выбор одного лишь участника. -->
+				<InlineHint tone={emptyProcess ? 'warning' : 'info'}>
+					Процесс определится по основной стороне: {processHint}. Взаимодействие начнётся с первой
+					стадии действующего процесса своей группы.
 				</InlineHint>
 
 				<FieldSelect

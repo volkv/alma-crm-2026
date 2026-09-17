@@ -2,7 +2,7 @@ import type { Stage } from '$lib/components/stage-timeline.svelte';
 import type { StageProgressItem } from '$lib/contracts/interactions';
 
 /**
- * Лента маршрута в том виде, в каком её принимает `StageTimeline`.
+ * Лента процесса в том виде, в каком её принимает `StageTimeline`.
  *
  * Состояние стадии считает сервер (`buildProgress`): интерфейс не решает, что
  * считать просроченным и что пропущенным, — он это показывает. Здесь только

@@ -1,6 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import type { Page } from '@playwright/test';
-import { expect, test } from './fixtures';
+import { expect, leadTest as test } from './fixtures';
 import { waitForHydration } from './helpers/hydration';
 
 /**

@@ -112,7 +112,7 @@ beforeEach(async () => {
 describe('загрузка файла', () => {
 	it('принимает csv, показывает превью и предлагает сопоставление', async () => {
 		await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		const snapshot = await createSnapshot(ctx, {
 			source: 'file',
@@ -151,7 +151,7 @@ describe('загрузка файла', () => {
 	});
 
 	it('не принимает файл, который не похож на таблицу', async () => {
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		await expect(
 			createSnapshot(ctx, {
@@ -166,7 +166,7 @@ describe('загрузка файла', () => {
 
 	it('отказывает, когда обязательные поля не сопоставлены', async () => {
 		await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		const snapshot = await createSnapshot(ctx, {
 			source: 'file',
@@ -185,7 +185,7 @@ describe('загрузка файла', () => {
 describe('разбор строк', () => {
 	it('объясняет неизвестную организацию, нечисловое значение и дубль', async () => {
 		await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		const snapshot = await importCsv(
 			ctx,
@@ -227,7 +227,7 @@ describe('разбор строк', () => {
 
 	it('переписывает строки, когда сопоставление применили заново', async () => {
 		await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		const created = await createSnapshot(ctx, {
 			source: 'file',
@@ -269,7 +269,7 @@ describe('разбор строк', () => {
 describe('подтверждение', () => {
 	it('делает снимок текущим и показывает его в показателях', async () => {
 		const { szpu } = await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		const snapshot = await importCsv(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
 		const { snapshot: confirmed } = await confirmSnapshot(ctx, snapshot.id);
@@ -306,7 +306,7 @@ describe('подтверждение', () => {
 
 	it('не подтверждает снимок, в котором нет ни одной верной строки', async () => {
 		await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		const snapshot = await importCsv(ctx, csv('Неизвестный вуз;VO-BAK-01;1;1;1;1'));
 
@@ -315,7 +315,7 @@ describe('подтверждение', () => {
 
 	it('не подтверждает снимок, который ещё не проверен', async () => {
 		await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		const created = await createSnapshot(ctx, {
 			source: 'file',
@@ -330,7 +330,7 @@ describe('подтверждение', () => {
 
 	it('оставляет отклонённый снимок в системе вместе с причиной', async () => {
 		await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		const snapshot = await importCsv(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
 		const rejected = await rejectSnapshot(ctx, snapshot.id, 'Вуз прислал не тот период');
@@ -363,7 +363,7 @@ describe('подтверждение', () => {
 describe('режимы', () => {
 	it('полная выгрузка замещает прежнюю того же источника, периода и области', async () => {
 		await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		const first = await importCsv(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
 		await confirmSnapshot(ctx, first.id);
@@ -395,7 +395,7 @@ describe('режимы', () => {
 
 	it('дополнение ничего не вытесняет и складывается с текущим', async () => {
 		await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		const base = await importCsv(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
 		await confirmSnapshot(ctx, base.id);
@@ -428,7 +428,7 @@ describe('режимы', () => {
 
 	it('исправление заводит новую версию строки, а прежняя перестаёт считаться', async () => {
 		await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		const base = await importCsv(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
 		await confirmSnapshot(ctx, base.id);
@@ -471,7 +471,7 @@ describe('режимы', () => {
 describe('показатели', () => {
 	it('различают ноль и отсутствие данных', async () => {
 		await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		// У первой строки «завершили обучение» пусто — год ещё идёт; у второй
 		// везде записан ноль.
@@ -497,7 +497,7 @@ describe('показатели', () => {
 
 	it('не считают строки неподтверждённого снимка', async () => {
 		await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		await importCsv(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
 
@@ -514,7 +514,7 @@ describe('показатели', () => {
 
 	it('отбираются по программе и организации', async () => {
 		const { szpu } = await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		const snapshot = await importCsv(
 			ctx,
@@ -549,7 +549,7 @@ describe('показатели', () => {
 describe('рейтинг', () => {
 	it('объясняет балл, и сумма вкладов равна баллу', async () => {
 		await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		const snapshot = await importCsv(
 			ctx,
@@ -580,7 +580,7 @@ describe('рейтинг', () => {
 
 	it('складывает организации одной программы', async () => {
 		await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		const snapshot = await importCsv(
 			ctx,
@@ -599,14 +599,18 @@ describe('рейтинг', () => {
 });
 
 describe('права', () => {
-	it('наблюдатель читает снимки, но не загружает их', async () => {
+	it('менеджер читает снимки, но не загружает их', async () => {
 		await directory();
 		const manager = testActor({ roleId: 'manager' });
-		const viewer = testActor({ roleId: 'viewer' });
 
-		const snapshot = await importCsv(manager, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
+		// Загрузку делает тот, у кого на неё право: подтверждённый снимок меняет
+		// числа всем сразу и сбрасывает общий кэш дашборда.
+		const snapshot = await importCsv(
+			testActor({ roleId: 'lead' }),
+			csv('СЗПУ;VO-BAK-01;120;90;3;80')
+		);
 
-		const list = await listSnapshots(viewer, {
+		const list = await listSnapshots(manager, {
 			status: null,
 			source: null,
 			q: null,
@@ -619,7 +623,7 @@ describe('права', () => {
 		expect(list.total).toBe(1);
 
 		await expect(
-			createSnapshot(viewer, {
+			createSnapshot(manager, {
 				source: 'file',
 				mode: 'full',
 				periodKind: 'academic',
@@ -628,7 +632,7 @@ describe('права', () => {
 			})
 		).rejects.toBeInstanceOf(ForbiddenError);
 
-		await expect(confirmSnapshot(viewer, snapshot.id)).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(confirmSnapshot(manager, snapshot.id)).rejects.toBeInstanceOf(ForbiddenError);
 
 		const denied = await database.db
 			.select({ eventType: auditEvents.eventType, outcome: auditEvents.outcome })
@@ -643,7 +647,7 @@ describe('права', () => {
 
 	it('пишет в журнал загрузку, сопоставление и подтверждение', async () => {
 		await directory();
-		const ctx = testActor({ roleId: 'manager' });
+		const ctx = testActor({ roleId: 'lead' });
 
 		const snapshot = await importCsv(ctx, csv('СЗПУ;VO-BAK-01;120;90;3;80'));
 		await confirmSnapshot(ctx, snapshot.id);

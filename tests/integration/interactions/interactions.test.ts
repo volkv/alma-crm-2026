@@ -6,19 +6,28 @@
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInteractionSchema, updateInteractionSchema } from '$lib/contracts/interactions';
-import { interactionChanges, interactions, products, programs } from '$lib/server/db/schema';
+import {
+	auditEvents,
+	interactionChanges,
+	interactions,
+	products,
+	programs
+} from '$lib/server/db/schema';
 import { ConflictError, ForbiddenError, NotFoundError } from '$lib/server/errors';
 import { getInteraction, listInteractions } from '$lib/server/interactions/read';
 import { getInteractionSummary } from '$lib/server/interactions/summary';
 import { createInteraction, updateInteraction } from '$lib/server/interactions/write';
-import { createRoute, ensureDemoRoute, publishRoute, updateRoute } from '$lib/server/stages/routes';
+import { B2B_GROUP_KEY, B2B_PROCESS, B2C_GROUP_KEY } from '$lib/server/stages/definitions';
+import { ensureProcess, resolveProcessGroup } from '$lib/server/stages/process';
 import { setResponsible } from '$lib/server/stages/commands';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import { interactionListQuerySchema } from '$lib/contracts/interactions';
 import type { ActorContext } from '$lib/server/actor';
 import {
 	insertOrganization,
+	insertUser,
 	startTestDatabase,
+	scopedActor,
 	testActor,
 	TEST_USER_IDS,
 	type TestDatabase
@@ -44,8 +53,9 @@ beforeEach(async () => {
 const admin = (): ActorContext => testActor({ roleId: 'admin' });
 const emptyQuery = interactionListQuerySchema.parse({});
 
-async function demoRoute(): Promise<string> {
-	return database.db.transaction((tx) => ensureDemoRoute(tx));
+/** Процесс учебных заведений: без него взаимодействие завести нельзя. */
+async function demoProcess(): Promise<string> {
+	return database.db.transaction((tx) => ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS));
 }
 
 async function insertProgram(code: string): Promise<string> {
@@ -69,7 +79,7 @@ async function insertProduct(code: string): Promise<string> {
 describe('заведение взаимодействия', () => {
 	it('сохраняет стороны, состав и сразу ставит на первую стадию', async () => {
 		const ctx = admin();
-		const routeId = await demoRoute();
+		await demoProcess();
 		const institutionId = await insertOrganization(database.db, { shortName: 'СЗПУ' });
 		const customerId = await insertOrganization(database.db, {
 			shortName: 'Северный центр цифровых компетенций'
@@ -81,7 +91,6 @@ describe('заведение взаимодействия', () => {
 			ctx,
 			createInteractionSchema.parse({
 				title: 'Подготовка по информационной безопасности',
-				routeId,
 				ownerUserId: TEST_USER_IDS.admin,
 				agreementPeriodStart: '2026-09-01',
 				agreementPeriodEnd: '2027-06-30',
@@ -107,139 +116,197 @@ describe('заведение взаимодействия', () => {
 		expect(status.current?.snapshot.position).toBe(1);
 	});
 
-	it('не ставит взаимодействие на неопубликованный маршрут', async () => {
+	it('отказывает словами, когда процесс группы ещё не описан', async () => {
 		const ctx = admin();
-		const organizationId = await insertOrganization(database.db);
+		// Заводим процесс только учебным заведениям; у физических и юридических
+		// лиц его нет, и отказ обязан сказать об этом, а не упасть на пустой ленте.
+		await demoProcess();
 
-		const draft = await createRoute(ctx, {
-			key: 'draft-route',
-			name: 'Черновик маршрута',
-			description: null,
-			isDefault: false,
-			stages: [
-				{
-					key: 'only',
-					name: 'Единственная стадия',
-					category: 'contact',
-					slaDays: 5,
-					staleAfterDays: null,
-					requiresResult: false,
-					requiresConfirmation: false,
-					checklist: []
-				}
-			],
-			transitions: []
+		const organizationId = await insertOrganization(database.db, {
+			shortName: 'Заказчик без процесса',
+			kind: 'legal_entity'
 		});
 
 		await expect(
 			createInteraction(
 				ctx,
 				createInteractionSchema.parse({
-					title: 'На черновике',
-					routeId: draft.id,
+					title: 'Обучение без процесса',
 					ownerUserId: TEST_USER_IDS.admin,
-					parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
+					parties: [{ organizationId, partyRole: 'customer', isPrimary: true }]
 				})
 			)
-		).rejects.toBeInstanceOf(ConflictError);
+		).rejects.toSatisfy(
+			(error: unknown) =>
+				error instanceof ConflictError && /процесс ещё не описан/.test(error.message)
+		);
+	});
+
+	it('выводит группу процесса из вида основной стороны', async () => {
+		const ctx = admin();
+		await demoProcess();
+
+		const institutionId = await insertOrganization(database.db, { shortName: 'Вуз' });
+		const created = await createInteraction(
+			ctx,
+			createInteractionSchema.parse({
+				title: 'Работа с вузом',
+				ownerUserId: TEST_USER_IDS.admin,
+				parties: [
+					{ organizationId: institutionId, partyRole: 'educational_institution', isPrimary: true }
+				]
+			})
+		);
+
+		const card = await getInteraction(ctx, created.id);
+
+		expect(card.processGroupKey).toBe(B2B_GROUP_KEY);
+		// Та же таблица соответствий, что и у приёма заявки: второго правила
+		// выбора группы в продукте нет.
+		expect((await resolveProcessGroup(database.db, 'legal_entity')).key).toBe(B2C_GROUP_KEY);
+		await expect(resolveProcessGroup(database.db, 'operator')).rejects.toThrow(
+			/не может быть основной стороной/
+		);
 	});
 });
 
-describe('маршрут стадий', () => {
-	it('правится черновиком и замораживается публикацией', async () => {
-		const ctx = admin();
+describe('область доступа при заведении', () => {
+	/** Менеджер, который ведёт ровно перечисленные вузы, и его идентификатор. */
+	async function managerFor(
+		organizationIds: readonly string[]
+	): Promise<{ ctx: ActorContext; userId: string }> {
+		const userId = await insertUser(database.db, { roleId: 'manager' });
+		const ctx = await scopedActor(database.db, { roleId: 'manager', userId, organizationIds });
 
-		const draft = await createRoute(ctx, {
-			key: 'custom-route',
-			name: 'Свой маршрут',
-			description: 'Проверка неизменяемости',
-			isDefault: false,
-			stages: [
-				{
-					key: 'first',
-					name: 'Первая стадия',
-					category: 'contact',
-					slaDays: 5,
-					staleAfterDays: null,
-					requiresResult: false,
-					requiresConfirmation: false,
-					checklist: []
-				}
-			],
-			transitions: []
+		return { ctx, userId };
+	}
+
+	it('спрашивает область только с основной стороны', async () => {
+		await demoProcess();
+		const institutionId = await insertOrganization(database.db, { shortName: 'Свой вуз' });
+		const customerId = await insertOrganization(database.db, {
+			shortName: 'Заказчик',
+			kind: 'customer_company'
+		});
+		const operatorId = await insertOrganization(database.db, {
+			shortName: 'Оператор',
+			kind: 'operator'
 		});
 
-		const definition = {
-			id: draft.id,
-			key: draft.key,
-			name: 'Свой маршрут, второе имя',
-			description: null,
-			isDefault: false,
-			stages: [
-				{
-					key: 'first',
-					name: 'Первая стадия',
-					category: 'contact' as const,
-					slaDays: 8,
-					staleAfterDays: null,
-					requiresResult: false,
-					requiresConfirmation: false,
-					checklist: []
-				}
-			],
-			transitions: []
-		};
+		const { ctx: manager, userId: managerId } = await managerFor([institutionId]);
 
-		const updated = await updateRoute(ctx, definition);
-		expect(updated.stages[0].slaDays).toBe(8);
+		// Обычный образец из сидов: вуз, заказчик и организация-оператор.
+		// Ответственного у оператора и плательщика не бывает вовсе, поэтому
+		// требование области от каждой стороны запрещало бы менеджеру завести
+		// самую обычную запись.
+		const created = await createInteraction(
+			manager,
+			createInteractionSchema.parse({
+				title: 'Подготовка с заказчиком и оператором',
+				ownerUserId: managerId,
+				parties: [
+					{ organizationId: institutionId, partyRole: 'educational_institution', isPrimary: true },
+					{ organizationId: customerId, partyRole: 'customer' },
+					{ organizationId: operatorId, partyRole: 'operator' }
+				]
+			})
+		);
 
-		const published = await publishRoute(ctx, draft.id);
-		expect(published.publishedAt).not.toBeNull();
+		const card = await getInteraction(manager, created.id);
 
-		// После публикации маршрут — свидетельство: по нему уже сделаны слепки
-		// стадий, и правка задним числом переписала бы историю.
-		await expect(updateRoute(ctx, definition)).rejects.toBeInstanceOf(ConflictError);
-		await expect(publishRoute(ctx, draft.id)).rejects.toBeInstanceOf(ConflictError);
+		expect(card.parties.map((party) => party.organizationName).sort()).toEqual([
+			'Заказчик',
+			'Оператор',
+			'Свой вуз'
+		]);
 	});
 
-	it('настраивается только с правом на настройку', async () => {
-		const manager = testActor({ roleId: 'manager' });
+	it('отказывает, когда вне области основная сторона', async () => {
+		await demoProcess();
+		const mine = await insertOrganization(database.db, { shortName: 'Свой вуз' });
+		const theirs = await insertOrganization(database.db, { shortName: 'Чужой вуз' });
 
+		const { ctx: manager, userId: managerId } = await managerFor([mine]);
+
+		// Свой вуз участником не выручает: процесс ведётся с основной стороной,
+		// и область спрашивается именно с неё.
 		await expect(
-			createRoute(manager, {
-				key: 'forbidden',
-				name: 'Чужой маршрут',
-				description: null,
-				isDefault: false,
-				stages: [
-					{
-						key: 'only',
-						name: 'Стадия',
-						category: 'contact',
-						slaDays: 5,
-						staleAfterDays: null,
-						requiresResult: false,
-						requiresConfirmation: false,
-						checklist: []
-					}
-				],
-				transitions: []
+			createInteraction(
+				manager,
+				createInteractionSchema.parse({
+					title: 'Чужая работа',
+					ownerUserId: managerId,
+					parties: [
+						{ organizationId: theirs, partyRole: 'educational_institution', isPrimary: true },
+						{ organizationId: mine, partyRole: 'customer' }
+					]
+				})
+			)
+		).rejects.toBeInstanceOf(NotFoundError);
+	});
+
+	it('даёт дописать сторону, не переспрашивая про неизменённую основную', async () => {
+		await demoProcess();
+		const institutionId = await insertOrganization(database.db, { shortName: 'Свой вуз' });
+		const customerId = await insertOrganization(database.db, {
+			shortName: 'Заказчик',
+			kind: 'customer_company'
+		});
+		const operatorId = await insertOrganization(database.db, {
+			shortName: 'Оператор',
+			kind: 'operator'
+		});
+
+		const { ctx: manager, userId: managerId } = await managerFor([institutionId]);
+
+		const created = await createInteraction(
+			manager,
+			createInteractionSchema.parse({
+				title: 'Состав дополняется по ходу',
+				ownerUserId: managerId,
+				parties: [
+					{ organizationId: institutionId, partyRole: 'educational_institution', isPrimary: true },
+					{ organizationId: customerId, partyRole: 'customer' }
+				]
 			})
-		).rejects.toBeInstanceOf(ForbiddenError);
+		);
+
+		// Правка состава присылает список целиком, и основная сторона в нём та
+		// же: проверять её заново незачем, а оператор в область не входит ни у
+		// кого, кроме полного доступа.
+		const updated = await updateInteraction(
+			manager,
+			updateInteractionSchema.parse({
+				id: created.id,
+				title: 'Состав дополняется по ходу',
+				ownerUserId: managerId,
+				reason: 'Добавили организацию-оператора',
+				parties: [
+					{ organizationId: institutionId, partyRole: 'educational_institution', isPrimary: true },
+					{ organizationId: customerId, partyRole: 'customer' },
+					{ organizationId: operatorId, partyRole: 'operator' }
+				]
+			})
+		);
+
+		expect(updated.parties.map((party) => party.organizationName).sort()).toEqual([
+			'Заказчик',
+			'Оператор',
+			'Свой вуз'
+		]);
 	});
 });
 
 describe('правка плана', () => {
 	it('пишет изменения полей в предметную историю', async () => {
 		const ctx = admin();
-		const routeId = await demoRoute();
+		await demoProcess();
 		const organizationId = await insertOrganization(database.db, { shortName: 'Вуз' });
 
 		const created = await createInteraction(
 			ctx,
 			createInteractionSchema.parse({
 				title: 'Первое название',
-				routeId,
 				ownerUserId: TEST_USER_IDS.admin,
 				parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
 			})
@@ -250,7 +317,6 @@ describe('правка плана', () => {
 			updateInteractionSchema.parse({
 				id: created.id,
 				title: 'Второе название',
-				routeId,
 				ownerUserId: TEST_USER_IDS.admin,
 				agreementPeriodStart: '2026-10-01',
 				agreementPeriodEnd: '2027-05-31',
@@ -273,14 +339,13 @@ describe('правка плана', () => {
 
 	it('записывает смену ответственного и переносит её на текущую стадию', async () => {
 		const ctx = admin();
-		const routeId = await demoRoute();
+		await demoProcess();
 		const organizationId = await insertOrganization(database.db);
 
 		const created = await createInteraction(
 			ctx,
 			createInteractionSchema.parse({
 				title: 'Смена ответственного',
-				routeId,
 				ownerUserId: TEST_USER_IDS.admin,
 				parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
 			})
@@ -309,12 +374,87 @@ describe('правка плана', () => {
 			await setResponsible(ctx, { interactionIds: [created.id], userId: TEST_USER_IDS.manager })
 		).toBe(0);
 	});
+
+	it('пускает к смене владельца только с правом на передачу работы', async () => {
+		const ctx = admin();
+		await demoProcess();
+		const organizationId = await insertOrganization(database.db);
+
+		const created = await createInteraction(
+			ctx,
+			createInteractionSchema.parse({
+				title: 'Передача работы',
+				ownerUserId: TEST_USER_IDS.admin,
+				parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
+			})
+		);
+
+		// Передать чужую работу себе — не то же самое, что вести свою: у
+		// менеджера есть `interactions.write`, но не `interactions.reassign`.
+		const manager = testActor({ roleId: 'manager' });
+
+		expect(manager.user?.permissions.has('interactions.write')).toBe(true);
+		expect(manager.user?.permissions.has('interactions.reassign')).toBe(false);
+
+		await expect(
+			setResponsible(manager, { interactionIds: [created.id], userId: TEST_USER_IDS.manager })
+		).rejects.toBeInstanceOf(ForbiddenError);
+
+		// Та же дорога через правку плана закрыта тем же правом: новое право,
+		// поставленное только на одну команду, оставило бы второй обход.
+		const current = await getInteraction(ctx, created.id);
+
+		await expect(
+			updateInteraction(manager, {
+				id: created.id,
+				title: current.title,
+				ownerUserId: TEST_USER_IDS.manager,
+				agreementPeriodStart: null,
+				agreementPeriodEnd: null,
+				academicPeriodStart: null,
+				academicPeriodEnd: null,
+				externalSource: null,
+				externalId: null,
+				reason: null,
+				parties: [
+					{
+						organizationId,
+						partyRole: 'educational_institution',
+						isPrimary: true,
+						contactAffiliationId: null,
+						siteIds: []
+					}
+				],
+				programs: [],
+				productIds: []
+			})
+		).rejects.toBeInstanceOf(ForbiddenError);
+
+		expect((await getInteraction(ctx, created.id)).ownerUserId).toBe(TEST_USER_IDS.admin);
+
+		// У руководителя право есть, и передача проходит вместе со своим событием.
+		const lead = testActor({ roleId: 'lead' });
+
+		expect(
+			await setResponsible(lead, { interactionIds: [created.id], userId: TEST_USER_IDS.lead })
+		).toBe(1);
+		expect((await getInteraction(ctx, created.id)).ownerUserId).toBe(TEST_USER_IDS.lead);
+
+		const events = await database.db
+			.select({ type: auditEvents.eventType, outcome: auditEvents.outcome })
+			.from(auditEvents)
+			.where(eq(auditEvents.subjectId, created.id));
+
+		expect(events.filter((event) => event.type === 'interactions.owner_changed')).toEqual([
+			{ type: 'interactions.owner_changed', outcome: 'success' }
+		]);
+	});
 });
 
 describe('список и область доступа', () => {
 	it('фильтрует, ищет и считает страницу', async () => {
 		const ctx = admin();
-		const routeId = await demoRoute();
+		await demoProcess();
 		const first = await insertOrganization(database.db, { shortName: 'Политех' });
 		const second = await insertOrganization(database.db, { shortName: 'Педагогический' });
 
@@ -326,7 +466,6 @@ describe('список и область доступа', () => {
 				ctx,
 				createInteractionSchema.parse({
 					title,
-					routeId,
 					ownerUserId: TEST_USER_IDS.admin,
 					parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
 				})
@@ -359,7 +498,7 @@ describe('список и область доступа', () => {
 
 	it('держит порядок страниц, когда ключ сортировки у строк одинаковый', async () => {
 		const ctx = admin();
-		const routeId = await demoRoute();
+		await demoProcess();
 		const organizationId = await insertOrganization(database.db, { shortName: 'Политех' });
 
 		for (const title of ['Первое', 'Второе', 'Третье', 'Четвёртое', 'Пятое', 'Шестое']) {
@@ -367,7 +506,6 @@ describe('список и область доступа', () => {
 				ctx,
 				createInteractionSchema.parse({
 					title,
-					routeId,
 					ownerUserId: TEST_USER_IDS.admin,
 					parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
 				})
@@ -405,7 +543,7 @@ describe('список и область доступа', () => {
 
 	it('прячет чужие взаимодействия от пользователя с ограниченной областью', async () => {
 		const ctx = admin();
-		const routeId = await demoRoute();
+		await demoProcess();
 		const mine = await insertOrganization(database.db, { shortName: 'Свой вуз' });
 		const theirs = await insertOrganization(database.db, { shortName: 'Чужой вуз' });
 
@@ -413,7 +551,6 @@ describe('список и область доступа', () => {
 			ctx,
 			createInteractionSchema.parse({
 				title: 'Своё',
-				routeId,
 				ownerUserId: TEST_USER_IDS.admin,
 				parties: [{ organizationId: mine, partyRole: 'educational_institution', isPrimary: true }]
 			})
@@ -423,13 +560,12 @@ describe('список и область доступа', () => {
 			ctx,
 			createInteractionSchema.parse({
 				title: 'Чужое',
-				routeId,
 				ownerUserId: TEST_USER_IDS.admin,
 				parties: [{ organizationId: theirs, partyRole: 'educational_institution', isPrimary: true }]
 			})
 		);
 
-		const limited = testActor({ roleId: 'manager', organizationIds: [mine] });
+		const limited = await scopedActor(database.db, { roleId: 'manager', organizationIds: [mine] });
 		const page = await listInteractions(limited, emptyQuery);
 
 		expect(page.total).toBe(1);
@@ -443,14 +579,13 @@ describe('список и область доступа', () => {
 
 	it('предлагает наблюдателю только то, что ему доступно', async () => {
 		const ctx = admin();
-		const routeId = await demoRoute();
+		await demoProcess();
 		const organizationId = await insertOrganization(database.db);
 
 		const created = await createInteraction(
 			ctx,
 			createInteractionSchema.parse({
 				title: 'Что могу сейчас',
-				routeId,
 				ownerUserId: TEST_USER_IDS.admin,
 				parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
 			})
@@ -460,12 +595,15 @@ describe('список и область доступа', () => {
 			testActor({ roleId: 'manager' }),
 			created.id
 		);
-		const viewerSummary = await getInteractionSummary(testActor({ roleId: 'viewer' }), created.id);
+		const readOnlySummary = await getInteractionSummary(
+			testActor({ roleId: 'manager', permissions: ['interactions.read'] }),
+			created.id
+		);
 
 		expect(managerSummary.canDo.actions).toContain('pause');
 		expect(managerSummary.canDo.transitions.some((option) => !option.allowed)).toBe(true);
 		// Наблюдателю не предлагается ничего, что он не имеет права сделать.
-		expect(viewerSummary.canDo.actions).toEqual([]);
-		expect(viewerSummary.canDo.transitions.every((option) => !option.allowed)).toBe(true);
+		expect(readOnlySummary.canDo.actions).toEqual([]);
+		expect(readOnlySummary.canDo.transitions.every((option) => !option.allowed)).toBe(true);
 	});
 });

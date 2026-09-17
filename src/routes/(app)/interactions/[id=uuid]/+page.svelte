@@ -2,6 +2,7 @@
 	import { resolve } from '$app/paths';
 	import * as Tabs from '$lib/components/ui/tabs/index.js';
 	import PageHeader from '$lib/components/page-header.svelte';
+	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StageTimeline from '$lib/components/stage-timeline.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import BlockersPanel from '$lib/components/interactions/blockers-panel.svelte';
@@ -65,6 +66,15 @@
 		/>
 	</div>
 
+	{#if data.status.migratedFrom !== null}
+		<!-- Уведомление живёт, пока запись открыта: закрылась — дальше человек
+			шёл сам, и объяснять больше нечего. -->
+		<InlineHint tone="warning">
+			Стадия перенесена при изменении процесса: раньше запись стояла на стадии «{data.status
+				.migratedFrom.stageName}», перенос выполнен {formatDateTime(data.status.migratedFrom.at)}.
+		</InlineHint>
+	{/if}
+
 	{#if closed !== null}
 		<div class="rounded-lg border border-border bg-surface p-4">
 			<p class="text-sm font-medium">
@@ -80,7 +90,12 @@
 		</div>
 	{/if}
 
-	<SummaryPanel summary={data.summary} currentStageId={data.status.current?.stageId ?? null}>
+	<SummaryPanel
+		summary={data.summary}
+		currentStageId={data.status.current?.stageId ?? null}
+		revision={data.status.revision}
+		canAttach={can('upload_document')}
+	>
 		{#snippet closing()}
 			{#if data.interaction.status === 'active'}
 				<ClosingActions closing={data.closing} />
