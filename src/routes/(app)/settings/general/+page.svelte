@@ -1,11 +1,15 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { enhance } from '$app/forms';
 	import { superForm } from 'sveltekit-superforms';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { toast } from 'svelte-sonner';
+	import RotateCcwIcon from '@lucide/svelte/icons/rotate-ccw';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
+	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
+	import ConfirmDialog from '$lib/components/confirm-dialog.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
@@ -54,6 +58,24 @@
 		untrack(() => data.sessionForm),
 		{ validators: zod4Client(sessionLimitsSchema), onUpdated: ({ form }) => notifySaved(form) }
 	);
+
+	let resetConfirmOpen = $state(false);
+	let resetForm = $state<HTMLFormElement | null>(null);
+
+	/**
+	 * Диалог подтверждения ждёт, пока сброс действительно закончится: он длится
+	 * секунды, и закрыть его сразу значило бы вернуть страницу, на которой ничего
+	 * не происходит. `ConfirmDialog` держит себя открытым, пока не разрешится
+	 * обещание `onconfirm`, — разрешает его ответ формы.
+	 */
+	let finishReset: (() => void) | null = null;
+
+	function submitReset(): Promise<void> {
+		return new Promise((resolve) => {
+			finishReset = resolve;
+			resetForm?.requestSubmit();
+		});
+	}
 </script>
 
 <svelte:head>
@@ -184,3 +206,72 @@
 		</form>
 	</Card.Content>
 </Card.Root>
+
+<Card.Root>
+	<Card.Header>
+		<Card.Title>Демо-данные</Card.Title>
+		<Card.Description>
+			Сброс возвращает стенд к тому набору, с которым он поставляется: взаимодействия, документы,
+			справочник и данные об обучении заливаются заново. Учётные записи, роли, описание процесса и
+			журнал действий остаются.
+		</Card.Description>
+	</Card.Header>
+	<Card.Content class="flex flex-col gap-2">
+		<!-- Недоступную команду не прячем: пропавшая кнопка не объясняет, куда она
+			делась. Первичный вид — только у той, что действительно нажимается. -->
+		<div>
+			<Button
+				variant={data.demoMode ? 'destructive' : 'outline'}
+				disabled={!data.demoMode}
+				onclick={() => (resetConfirmOpen = true)}
+			>
+				<RotateCcwIcon aria-hidden="true" />
+				Сбросить демо-данные
+			</Button>
+		</div>
+		{#if !data.demoMode}
+			<p class="text-xs text-muted-foreground">
+				Установка работает не в демонстрационном режиме: данные в ней принадлежат организации, а
+				эталона, к которому их возвращать, нет. Сброс включается переменной окружения
+				<code>DEMO_MODE</code>.
+			</p>
+		{:else}
+			<p class="text-xs text-muted-foreground">
+				Всё, что наработали на стенде за время показа, пропадёт: пройденные стадии, комментарии,
+				загруженные файлы и правки справочника.
+			</p>
+		{/if}
+	</Card.Content>
+</Card.Root>
+
+<ConfirmDialog
+	bind:open={resetConfirmOpen}
+	title="Сбросить демонстрационные данные?"
+	description="Взаимодействия, документы, справочник и данные об обучении будут стёрты и залиты заново из поставки. Вернуть наработанное на стенде нельзя. Учётные записи, роли, описание процесса и журнал действий останутся."
+	confirmLabel="Сбросить демо-данные"
+	tone="danger"
+	onconfirm={submitReset}
+/>
+
+<!-- Диалог только подтверждает; отправляет обычная форма — действие одно на все
+	пути. `enhance` здесь нужен ради ответа: по нему закрывается диалог и
+	поднимается тост. -->
+<form
+	method="POST"
+	action="?/demoReset"
+	bind:this={resetForm}
+	class="hidden"
+	use:enhance={() =>
+		async ({ result, update }) => {
+			await update({ reset: false });
+
+			if (result.type === 'success' && typeof result.data?.demoReset === 'string') {
+				toast.success(result.data.demoReset);
+			}
+
+			// Отказ показывает общий блок над карточками: у него нет поля, к
+			// которому его можно отнести.
+			finishReset?.();
+			finishReset = null;
+		}}
+></form>

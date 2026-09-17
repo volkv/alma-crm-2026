@@ -35,6 +35,7 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'users.deactivated': 'Пользователь выключен',
 	'users.viewed': 'Обращение к списку пользователей',
 	'settings.updated': 'Настройка изменена',
+	'settings.demo_reset': 'Демонстрационные данные сброшены',
 	'api_keys.created': 'Ключ доступа выпущен',
 	'api_keys.revoked': 'Ключ доступа отозван',
 	'api_keys.viewed': 'Обращение к списку ключей доступа',

@@ -3,6 +3,8 @@ import { fail, message, setError, superValidate, type SuperValidated } from 'sve
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { settingSchemas } from '$lib/contracts/settings';
 import { actorFromEvent } from '$lib/server/actor';
+import { getConfig } from '$lib/server/config';
+import { resetDemoData } from '$lib/server/demo/reset';
 import { AppError, ForbiddenError } from '$lib/server/errors';
 import { errorIssues, toActionFailure, type ActionErrorPayload } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
@@ -19,6 +21,10 @@ import type { Actions, PageServerLoad } from './$types';
  * Политик пароля, блокировки и второго фактора здесь нет: пароль спрашивает
  * каталог учётных записей, и правила к нему задаются в нём же
  * (`keycloak/README.md`).
+ *
+ * Здесь же стоит кнопка сброса демонстрационных данных: она не настройка, но
+ * распоряжается стендом целиком — как и всё остальное на этой странице, — а
+ * своего раздела ради одной кнопки заводить незачем.
  */
 
 /** Формы страницы; идентификатор связывает форму на сервере с формой в браузере. */
@@ -46,7 +52,11 @@ export const load: PageServerLoad = async (event) => {
 		}),
 		sessionForm: await superValidate({ idleMinutes, absoluteHours }, zod4(sessionLimitsSchema), {
 			id: FORM_IDS.session
-		})
+		}),
+		// Вне демонстрационного стенда действия сброса не существует вовсе, и
+		// карточка объясняет это вместо того, чтобы исчезнуть: пропавшая кнопка
+		// не отвечает на вопрос, куда она делась.
+		demoMode: getConfig().DEMO_MODE
 	};
 };
 
@@ -114,5 +124,23 @@ export const actions: Actions = {
 		}
 
 		return message(form, 'Сроки жизни сессии сохранены');
+	},
+
+	/**
+	 * Сброс демонстрационных данных. Формы у действия нет — подтверждение
+	 * спрашивает диалог, а на сервер приходит пустой POST, — поэтому и ответ
+	 * идёт не через superforms: успех несёт свой ключ, отказ — обычный `fail`
+	 * с текстом, который страница показывает над карточками.
+	 */
+	demoReset: async (event) => {
+		try {
+			const result = await resetDemoData(actorFromEvent(event));
+
+			return {
+				demoReset: `Демонстрационные данные сброшены: взаимодействий — ${result.interactionCount}, организаций — ${result.organizationCount}, документов — ${result.documentCount}`
+			};
+		} catch (failure) {
+			return toActionFailure(failure);
+		}
 	}
 };

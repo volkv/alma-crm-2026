@@ -1,0 +1,159 @@
+<script lang="ts">
+	/**
+	 * Текст статьи справки.
+	 *
+	 * Принимает готовый HTML: разметку разбирает сервер (`$lib/help/markdown`),
+	 * и делает он это один раз на страницу, а не в браузере на каждый переход.
+	 * Источник — файлы репозитория, поэтому `{@html}` здесь не дыра: чужого
+	 * ввода в этих строках не бывает.
+	 *
+	 * Оформление живёт здесь и нигде больше: экран и печатная страница берут
+	 * один и тот же компонент, поэтому PDF не может оказаться свёрстанным иначе,
+	 * чем то, что человек читал на экране.
+	 */
+	let { html }: { html: string } = $props();
+</script>
+
+<div class="help-prose">
+	<!-- eslint-disable-next-line svelte/no-at-html-tags -->
+	{@html html}
+</div>
+
+<style>
+	.help-prose {
+		max-width: 68ch;
+		line-height: 1.6;
+	}
+
+	.help-prose :global(h2),
+	.help-prose :global(h3),
+	.help-prose :global(h4),
+	.help-prose :global(h5),
+	.help-prose :global(h6) {
+		font-weight: 600;
+		letter-spacing: -0.01em;
+		scroll-margin-top: 4rem;
+	}
+
+	.help-prose :global(h2) {
+		margin-top: 2rem;
+		font-size: 1.125rem;
+	}
+
+	.help-prose :global(h3) {
+		margin-top: 1.5rem;
+		font-size: 1rem;
+	}
+
+	.help-prose :global(h4),
+	.help-prose :global(h5),
+	.help-prose :global(h6) {
+		margin-top: 1.25rem;
+		font-size: 0.875rem;
+	}
+
+	.help-prose :global(:is(h2, h3, h4, h5, h6):first-child) {
+		margin-top: 0;
+	}
+
+	.help-prose :global(p),
+	.help-prose :global(ul),
+	.help-prose :global(ol),
+	.help-prose :global(blockquote),
+	.help-prose :global(pre),
+	.help-prose :global(table) {
+		margin-top: 0.75rem;
+	}
+
+	.help-prose :global(ul),
+	.help-prose :global(ol) {
+		padding-left: 1.5rem;
+	}
+
+	.help-prose :global(ul) {
+		list-style: disc;
+	}
+
+	.help-prose :global(ol) {
+		list-style: decimal;
+	}
+
+	.help-prose :global(li) {
+		margin-top: 0.25rem;
+	}
+
+	.help-prose :global(a) {
+		color: var(--color-primary);
+		text-decoration: underline;
+		text-underline-offset: 2px;
+	}
+
+	.help-prose :global(strong) {
+		font-weight: 600;
+	}
+
+	.help-prose :global(code) {
+		border-radius: var(--radius-sm);
+		background-color: var(--color-surface-muted);
+		padding: 0.0625rem 0.25rem;
+		font-size: 0.8125rem;
+	}
+
+	.help-prose :global(pre) {
+		overflow-x: auto;
+		border-radius: var(--radius-md);
+		border: 1px solid var(--color-border);
+		background-color: var(--color-surface-muted);
+		padding: 0.75rem;
+	}
+
+	.help-prose :global(pre code) {
+		background-color: transparent;
+		padding: 0;
+	}
+
+	.help-prose :global(blockquote) {
+		border-left: 2px solid var(--color-primary-soft-border);
+		padding-left: 0.75rem;
+		color: var(--color-muted-foreground);
+	}
+
+	.help-prose :global(table) {
+		display: block;
+		width: 100%;
+		overflow-x: auto;
+		border-collapse: collapse;
+		font-size: 0.8125rem;
+	}
+
+	.help-prose :global(th),
+	.help-prose :global(td) {
+		border-bottom: 1px solid var(--color-border);
+		padding: 0.375rem 0.75rem 0.375rem 0;
+		text-align: left;
+		vertical-align: top;
+	}
+
+	.help-prose :global(th) {
+		font-weight: 600;
+		color: var(--color-muted-foreground);
+	}
+
+	@media print {
+		.help-prose {
+			max-width: none;
+		}
+
+		/* Заголовок не должен оставаться последней строкой страницы, а таблица —
+		   разрываться посередине: в PDF это читается как потерянный кусок. */
+		.help-prose :global(:is(h2, h3, h4, h5, h6)) {
+			break-after: avoid;
+		}
+
+		.help-prose :global(table),
+		.help-prose :global(pre),
+		.help-prose :global(blockquote) {
+			break-inside: avoid;
+		}
+	}
+</style>
