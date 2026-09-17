@@ -1,3 +1,4 @@
+import * as oauth from 'oauth4webapi';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { DEMO_EMAILS } from '../../../scripts/seed/users';
 import { decodeJwtPayload, startTestKeycloak, type TestKeycloak } from '../helpers/keycloak';
@@ -81,6 +82,50 @@ describe('каталог учётных записей Keycloak', () => {
 		expect(decodeJwtPayload(lead.idToken).email).toBe(DEMO_EMAILS.lead);
 		expect(decodeJwtPayload(admin.idToken).realm_access).toEqual({ roles: ['crm-admin'] });
 		expect(decodeJwtPayload(admin.idToken).email).toBe(DEMO_EMAILS.admin);
+	});
+
+	it('проверяет подпись своего же id-токена опубликованными ключами realm', async () => {
+		// Вход проверяет подпись отдельным вызовом библиотеки по `jwks_uri`
+		// (`src/lib/server/auth/oidc.ts`). Здесь тот же вызов встречается с
+		// настоящими ключами realm: подделка в модульном тесте доказывает, что
+		// чужой ключ не проходит, а это — что свой проходит.
+		const tokens = await keycloak.passwordGrantToken('manager', keycloak.demoPassword);
+		const clientId = decodeJwtPayload(tokens.idToken).aud;
+
+		expect(typeof clientId).toBe('string');
+
+		const server = await oauth.processDiscoveryResponse(
+			new URL(keycloak.issuerUrl()),
+			await fetch(`${keycloak.issuerUrl()}/.well-known/openid-configuration`)
+		);
+
+		// Библиотека помнит разобранный токен по самому ответу, поэтому проверке
+		// подписи отдаётся тот же `Response`, что и разбору утверждений.
+		const response = (): Response =>
+			new Response(
+				JSON.stringify({
+					access_token: tokens.accessToken,
+					token_type: 'Bearer',
+					id_token: tokens.idToken
+				}),
+				{ headers: { 'content-type': 'application/json' } }
+			);
+
+		const transport = { [oauth.allowInsecureRequests]: true } as const;
+		const accepted = response();
+
+		await oauth.processAuthorizationCodeResponse(
+			server,
+			{ client_id: clientId as string },
+			accepted,
+			// Прямой грант заходом в браузере не сопровождается, и `nonce` в
+			// токене нет; всё остальное проверяется как при входе.
+			{ expectedNonce: oauth.expectNoNonce, requireIdToken: true, ...transport }
+		);
+
+		await expect(
+			oauth.validateApplicationLevelSignature(server, accepted, transport)
+		).resolves.toBeUndefined();
 	});
 
 	it('отказывает по неверному паролю', async () => {

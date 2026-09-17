@@ -17,8 +17,15 @@
  * «все ключи, которые устарели» можно было бы только сканированием, а `INCR`
  * обесценивает их все одной командой. Пережившие своё поколение ключи уходят
  * сами по сроку жизни.
+ *
+ * Счётчик отвечает за числа — за то, что меняет подтверждение снимка. За состав
+ * области отвечает второе слагаемое ключа: назначения вузов меняют не картину
+ * периода, а то, чью её часть человеку видно, и меняет их не эта подсистема.
+ * Поэтому в ключ входит отпечаток действующих назначений области — см.
+ * `assignmentsKey`.
  */
 import { createHash } from 'node:crypto';
+import { and, isNull, sql } from 'drizzle-orm';
 import {
 	statPeriodKey,
 	type StatDashboardTotals,
@@ -26,6 +33,8 @@ import {
 	type StatPeriod
 } from '$lib/contracts/stats';
 import type { ActorContext } from '../actor';
+import { getDb } from '../db';
+import { organizationResponsibles } from '../db/schema';
 import { requirePermission, scopeFingerprint } from '../rbac';
 import { getRedis } from '../redis';
 import {
@@ -73,10 +82,60 @@ function scopeKey(ctx: ActorContext): string {
 	return createHash('sha256').update(fingerprint, 'utf8').digest('hex').slice(0, 16);
 }
 
-async function cacheKey(ctx: ActorContext, period: StatPeriod): Promise<string> {
-	const epoch = (await getRedis().get(EPOCH_KEY)) ?? '0';
+/**
+ * Назначения области в ключе кэша.
+ *
+ * Область — это множество **людей**, и `scopeKey` описывает именно его. Какие
+ * вузы за этими людьми числятся, в нём не отражено никак: у КАМа отпечаток
+ * области один и тот же и до передачи вуза, и после. А дашборд считается ровно
+ * по вузам — значит, снятое назначение обязано менять ключ, иначе прежний
+ * ответственный целую минуту (пока жив кэш) читает числа вуза, которого у него
+ * уже нет, — и те же числа уезжают в выгрузку.
+ *
+ * Отпечаток снимается с самих действующих назначений, а не со счётчика,
+ * который двигали бы `assignResponsible` и `releaseResponsible`: строки
+ * `organization_responsibles` появляются ещё в трёх местах — у заведения
+ * организации, у приёма заявки извне и у сида демонстрационного стенда, — и
+ * счётчик, о котором знают не все, врал бы молча. Здесь же ключ считается по
+ * тому же состоянию, по которому потом соберётся дашборд.
+ *
+ * Цена — один лёгкий запрос по частичному индексу `organization_responsibles_user_idx`
+ * на чтение сводки; собранный дашборд стоит пяти тяжёлых. Полный доступ не
+ * платит и этого: у него область не сужается назначениями вовсе.
+ */
+async function assignmentsKey(ctx: ActorContext): Promise<string> {
+	if (ctx.scope.kind === 'all') {
+		return 'all';
+	}
 
-	return `${DASHBOARD_PREFIX}${epoch}:${scopeKey(ctx)}:${statPeriodKey(period)}`;
+	const ids = [...ctx.scope.userIds];
+
+	if (ids.length === 0) {
+		return 'none';
+	}
+
+	// Порядок в `string_agg` задан явно: без `order by` PostgreSQL волен
+	// склеить те же строки иначе, и один и тот же набор вузов дал бы два
+	// разных ключа — кэш перестал бы попадать, оставаясь при этом верным.
+	const [row] = await getDb()
+		.select({
+			fingerprint: sql<string>`coalesce(left(md5(string_agg(distinct ${organizationResponsibles.organizationId}::text, ',' order by ${organizationResponsibles.organizationId}::text)), 16), 'none')`
+		})
+		.from(organizationResponsibles)
+		.where(
+			and(
+				sql`${organizationResponsibles.userId} = any(${sql.param(ids)}::uuid[])`,
+				isNull(organizationResponsibles.validTo)
+			)
+		);
+
+	return row.fingerprint;
+}
+
+async function cacheKey(ctx: ActorContext, period: StatPeriod): Promise<string> {
+	const [epoch, assignments] = await Promise.all([getRedis().get(EPOCH_KEY), assignmentsKey(ctx)]);
+
+	return `${DASHBOARD_PREFIX}${epoch ?? '0'}:${scopeKey(ctx)}:${assignments}:${statPeriodKey(period)}`;
 }
 
 /**

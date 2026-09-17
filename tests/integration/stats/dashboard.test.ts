@@ -7,13 +7,16 @@
  * снимки, а кэш в Redis обесценивается подтверждением — иначе на дашборде
  * минуту висели бы числа, которых уже нет.
  */
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
+import ExcelJS from 'exceljs';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { StatSnapshotView } from '$lib/contracts/stats';
-import { programs, statSnapshots } from '$lib/server/db/schema';
+import { organizationResponsibles, programs, statSnapshots } from '$lib/server/db/schema';
+import { releaseResponsible } from '$lib/server/directory/responsibles';
 import { ForbiddenError } from '$lib/server/errors';
 import { getRedis } from '$lib/server/redis';
 import { getStatsDashboard } from '$lib/server/stats/dashboard';
+import { buildStatsReport } from '$lib/server/stats/export';
 import {
 	applyMapping,
 	confirmSnapshot,
@@ -242,6 +245,62 @@ describe('кэш дашборда', () => {
 
 		expect(fresh.totals.applications).toBe(40);
 		expect(fresh.sources.map((source) => source.snapshotId)).toStrictEqual([second.id]);
+	});
+
+	it('перестаёт показывать вуз прежнему ответственному сразу после снятия', async () => {
+		const ctx = testActor();
+		const { szpu } = await directory();
+		const period = { kind: 'academic', ...PERIOD_KEY } as const;
+
+		const snapshot = await importCsv(
+			ctx,
+			csv('СЗПУ;VO-BAK-01;120;90;3;80', 'ПУПИ;SCHOOL-01;40;30;1;25')
+		);
+		await confirmSnapshot(ctx, snapshot.id);
+
+		// КАМ открыл сводку своего вуза — она легла в кэш на минуту.
+		const curator = await scopedActor(database.db, { roleId: 'manager', organizationIds: [szpu] });
+
+		expect((await getStatsDashboard(curator, period)).totals.applications).toBe(120);
+
+		const [assignment] = await database.db
+			.select({ id: organizationResponsibles.id })
+			.from(organizationResponsibles)
+			.where(
+				and(
+					eq(organizationResponsibles.organizationId, szpu),
+					isNull(organizationResponsibles.validTo)
+				)
+			);
+
+		// Вуз сняли — сервисом, тем же, которым это делает карточка вуза.
+		await releaseResponsible(ctx, assignment.id);
+
+		const afterRelease = await getStatsDashboard(curator, period);
+
+		// Числа снятого вуза пропадают в ту же секунду, а не по сроку жизни
+		// записи в Redis: в ключе кэша стоят действующие назначения области.
+		expect(afterRelease.organizations).toStrictEqual([]);
+		expect(afterRelease.totals.organizationCount).toBe(0);
+		expect(afterRelease.totals.applications).toBeNull();
+
+		// Выгрузка собирается из того же кэша, и «тот же экран в файле» обязано
+		// значить и «те же пустые строки».
+		const workbook = new ExcelJS.Workbook();
+		const report = await buildStatsReport(afterRelease, '2026-09-12');
+
+		await workbook.xlsx.load(report.body.slice().buffer as ArrayBuffer);
+
+		const sheet = workbook.getWorksheet('Вузы и площадки');
+		const names: unknown[] = [];
+
+		sheet?.eachRow((row, index) => {
+			if (index > 1) {
+				names.push(row.getCell(1).value);
+			}
+		});
+
+		expect(names).toStrictEqual([]);
 	});
 
 	it('не отдаёт картину одной области доступа другой', async () => {

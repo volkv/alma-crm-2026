@@ -21,7 +21,8 @@ import {
 	listPeople,
 	listPersonAffiliations,
 	listProgramRows,
-	listSites
+	listSites,
+	lookupOrganizations
 } from '$lib/server/directory/read';
 import {
 	addProgramVersion,
@@ -647,6 +648,30 @@ describe('права и область доступа', () => {
 
 		expect(rows.total).toBe(1);
 		expect(rows.items[0].organization.shortName).toBe('Своя');
+	});
+
+	it('не предлагает чужие вузы в подсказке выбора организации', async () => {
+		const admin = testActor();
+		const mine = await createOrganization(admin, organizationInput({ shortName: 'Свой вуз' }));
+		const foreign = await createOrganization(admin, organizationInput({ shortName: 'Чужой вуз' }));
+
+		const scoped = await scopedActor(database.db, { organizationIds: [mine.id] });
+
+		// Подсказка — такой же канал доступа, как список: она ходит в тот же
+		// справочник, и без области выдала бы названия чужих вузов ещё до того,
+		// как человек откроет карточку.
+		expect(await lookupOrganizations(scoped, null)).toStrictEqual([
+			{ id: mine.id, label: 'Свой вуз' }
+		]);
+
+		// Негатив: чужой вуз не находится и по точному названию — искать его
+		// человек будет именно так.
+		expect(await lookupOrganizations(scoped, 'Чужой')).toStrictEqual([]);
+
+		// А полный доступ видит оба: дело в области, а не в условии поиска.
+		expect(
+			(await lookupOrganizations(admin, 'вуз')).map((option) => option.id).sort()
+		).toStrictEqual([mine.id, foreign.id].sort());
 	});
 
 	it('не показывает занятый ИНН чужой организации по имени', async () => {
