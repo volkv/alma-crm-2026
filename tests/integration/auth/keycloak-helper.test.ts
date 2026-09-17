@@ -49,10 +49,14 @@ describe('каталог учётных записей Keycloak', () => {
 		const tokens = await keycloak.passwordGrantToken('manager', keycloak.demoPassword);
 
 		// Access-токен: роль приезжает областью `roles`, которая у клиента по
-		// умолчанию. Срок — из настроек realm, пять минут.
+		// умолчанию. Срок — из настроек realm, пять минут; точное значение не
+		// проверяем строгим равенством, потому что каталог считает `expires_in`
+		// от момента выпуска токена, а между выпуском и получением ответа в тесте
+		// проходит время — допускаем разброс в несколько секунд.
 		const access = decodeJwtPayload(tokens.accessToken);
 		expect(access.realm_access).toEqual({ roles: ['crm-user'] });
-		expect(tokens.expiresIn).toBe(300);
+		expect(tokens.expiresIn).toBeGreaterThan(290);
+		expect(tokens.expiresIn).toBeLessThanOrEqual(300);
 
 		// Id-токен: ту же роль кладёт отображение, объявленное на клиенте
 		// приложения. Без него приложению пришлось бы ходить за ролью отдельным
