@@ -19,6 +19,7 @@ import {
 	interactions,
 	notificationDeliveries,
 	organizations,
+	people,
 	stageEntries
 } from '$lib/server/db/schema';
 import { receiveApplication } from '$lib/server/integrations/exchange/intake';
@@ -236,15 +237,14 @@ describe('следы человека после обезличивания', ()
 	 * переписал — и прежнее ФИО осталось только в предметной истории, откуда
 	 * замена заголовка его уже не достанет.
 	 *
-	 * Записей справочника у одного человека тоже две: заявка физического лица
-	 * заводит контрагента с его ФИО и отдельно контактное лицо организации.
-	 * Уничтожают обе — это две записи об одном человеке, и проверка смотрит,
-	 * что после этого не осталось ничего.
+	 * Запись справочника у человека при этом одна: контактным лицом своей же
+	 * заявки становится он сам, и уничтожают её один раз — второй записи с тем
+	 * же ФИО, той же почтой и тем же телефоном в базе нет.
 	 */
 	async function b2cScene(): Promise<{
 		interactionIds: string[];
 		organizationId: string;
-		personIds: string[];
+		personId: string;
 	}> {
 		const first = await receiveApplication(
 			serviceActor(),
@@ -296,22 +296,20 @@ describe('следы человека после обезличивания', ()
 		);
 
 		const counterpartyId = await counterpartyPersonId(organizationId);
-		const contactId = second.data.contactPersonId as string;
 
-		expect(contactId).not.toBe(counterpartyId);
+		// Контрагент и контактное лицо — один человек и одна строка справочника:
+		// уничтожение одной записи не может оставить копию в другой, потому что
+		// другой нет.
+		expect(second.data.contactPersonId).toBe(counterpartyId);
+		expect(await database.db.select({ id: people.id }).from(people)).toEqual([
+			{ id: counterpartyId }
+		]);
 
 		return {
 			interactionIds: [first.data.interactionId, second.data.interactionId],
 			organizationId,
-			personIds: [counterpartyId, contactId]
+			personId: counterpartyId
 		};
-	}
-
-	/** Уничтожение обеих записей справочника, которыми представлен человек. */
-	async function anonymizeAll(personIds: readonly string[]): Promise<void> {
-		for (const personId of personIds) {
-			await anonymizePerson(testActor(), personId);
-		}
 	}
 
 	it('сцена заявки до уничтожения держит ФИО и текст заявителя в шести таблицах', async () => {
@@ -334,7 +332,7 @@ describe('следы человека после обезличивания', ()
 	it('после уничтожения ни одна колонка базы не содержит ни ФИО, ни почты, ни телефона', async () => {
 		const scene = await b2cScene();
 
-		await anonymizeAll(scene.personIds);
+		await anonymizePerson(testActor(), scene.personId);
 
 		expect(await tracesOf([APPLICANT.lastName, APPLICANT.email, APPLICANT_TEXT_PHONE])).toEqual([]);
 	});
@@ -342,7 +340,7 @@ describe('следы человека после обезличивания', ()
 	it('на месте уничтоженного текста стоит пометка, а не пустота', async () => {
 		const scene = await b2cScene();
 
-		await anonymizeAll(scene.personIds);
+		await anonymizePerson(testActor(), scene.personId);
 
 		const deliveries = await database.db
 			.select({ subject: notificationDeliveries.subject, body: notificationDeliveries.body })
@@ -373,7 +371,7 @@ describe('следы человека после обезличивания', ()
 	it('комментарий сотрудника остаётся: уничтожается текст заявителя, а не работа', async () => {
 		const scene = await b2cScene();
 
-		await anonymizeAll(scene.personIds);
+		await anonymizePerson(testActor(), scene.personId);
 
 		const rows = await database.db
 			.select({ body: comments.body, source: comments.source })

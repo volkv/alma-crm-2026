@@ -9,7 +9,9 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApiKey } from '$lib/server/api/keys';
+import { MAX_REVISION_STEP } from '$lib/contracts/exchange';
 import {
+	affiliations,
 	auditEvents,
 	comments,
 	consents,
@@ -21,7 +23,8 @@ import {
 	organizationResponsibles,
 	organizations,
 	people,
-	stageEntries
+	stageEntries,
+	users
 } from '$lib/server/db/schema';
 import { runExchangeCycle } from '$lib/server/integrations/exchange/delivery';
 import { retryExchangeMessage } from '$lib/server/integrations/exchange/messages';
@@ -412,6 +415,63 @@ describe('приём заявки с сайта', () => {
 		expect(recorded).toEqual([{ textVersion: '2026-01' }]);
 	});
 
+	it('контактным лицом физлица становится он сам, а не вторая запись справочника', async () => {
+		const key = apiKey;
+
+		const first = await intake(apiEvent({ body: envelope(B2C_DATA), key }));
+		const created = (await first.json()) as {
+			data: { organizationId: string; contactPersonId: string };
+		};
+
+		const [organization] = await database.db
+			.select({ personId: organizations.personId })
+			.from(organizations)
+			.where(eq(organizations.id, created.data.organizationId));
+
+		// Контрагент и контактное лицо — одна строка `people`: у второй записи с
+		// тем же ФИО, той же почтой и тем же телефоном свой срок хранения и своё
+		// обезличивание, и уничтожение по одной оставляло бы копию в другой.
+		expect(created.data.contactPersonId).toBe(organization.personId);
+
+		// Вторая заявка того же человека: ключ заявки другой, адрес почты тот же.
+		const second = await intake(
+			apiEvent({ body: envelope({ ...B2C_DATA, externalId: 'site-2026-000199' }), key })
+		);
+
+		expect(((await second.json()) as { result: string }).result).toBe('created');
+
+		expect(await database.db.select({ id: people.id }).from(people)).toHaveLength(1);
+
+		// И роль в своей организации у него одна: повтор не плодит ни людей, ни
+		// ролей.
+		const roles = await database.db
+			.select({ personId: affiliations.personId })
+			.from(affiliations)
+			.where(eq(affiliations.organizationId, created.data.organizationId));
+
+		expect(roles).toEqual([{ personId: organization.personId }]);
+	});
+
+	it('у заявки организации контактное лицо остаётся отдельным человеком', async () => {
+		const response = await intake(apiEvent({ body: envelope(B2B_DATA), key: apiKey }));
+		const body = (await response.json()) as {
+			data: { organizationId: string; contactPersonId: string };
+		};
+
+		const [organization] = await database.db
+			.select({ personId: organizations.personId })
+			.from(organizations)
+			.where(eq(organizations.id, body.data.organizationId));
+
+		// У вуза человека-контрагента нет вовсе, и контактное лицо — его
+		// сотрудник: правило физлица на заявку организации не распространяется.
+		expect(organization.personId).toBeNull();
+
+		const rows = await database.db.select({ id: people.id }).from(people);
+
+		expect(rows).toEqual([{ id: body.data.contactPersonId }]);
+	});
+
 	it('обновляет заявку полным снимком и приписывает комментарий, а не затирает', async () => {
 		const key = apiKey;
 
@@ -463,6 +523,56 @@ describe('приём заявки с сайта', () => {
 			.where(eq(exchangeMessages.direction, 'inbound'));
 
 		expect(messages.map((row) => row.state).sort()).toEqual(['ignored_stale', 'processed']);
+	});
+
+	it('отвергает ревизию, ушедшую вперёд дальше допустимого шага', async () => {
+		const key = apiKey;
+
+		await intake(apiEvent({ body: envelope({ ...B2B_DATA, revision: 5 }), key }));
+
+		const jumped = await intake(
+			apiEvent({ body: envelope({ ...B2B_DATA, revision: 5 + MAX_REVISION_STEP + 1 }), key })
+		);
+
+		expect(jumped.status).toBe(400);
+		expect(JSON.stringify(await jumped.json())).toContain('Ревизия заявки');
+
+		const [interaction] = await database.db
+			.select({ externalRevision: interactions.externalRevision })
+			.from(interactions);
+
+		// Заявка осталась на применённой ревизии: сообщение со скачком её не
+		// заморозило, и законные обновления по ней по-прежнему проходят.
+		expect(interaction.externalRevision).toBe(5);
+
+		// Отказ виден не только отправителю: на экране «Внешние системы» стоит
+		// строка с причиной словами.
+		const refused = await database.db
+			.select({ lastError: exchangeMessages.lastError })
+			.from(exchangeMessages)
+			.where(eq(exchangeMessages.state, 'failed'));
+
+		expect(refused).toHaveLength(1);
+		expect(refused[0].lastError).toContain('Ревизия заявки');
+
+		// Шаг ровно в порог — рабочий случай: столько сообщений отправитель мог
+		// потерять, пока связь не работала.
+		const applied = await intake(
+			apiEvent({ body: envelope({ ...B2B_DATA, revision: 5 + MAX_REVISION_STEP }), key })
+		);
+
+		expect(((await applied.json()) as { result: string }).result).toBe('updated');
+	});
+
+	it('отвергает скачок и в первом сообщении по заявке', async () => {
+		const response = await intake(
+			apiEvent({ body: envelope({ ...B2B_DATA, revision: MAX_REVISION_STEP + 1 }), key: apiKey })
+		);
+
+		// Применённой ревизии у незнакомой заявки нет, и считается она нулём:
+		// иначе заявку выключало бы первое же сообщение по ней.
+		expect(response.status).toBe(400);
+		expect(await database.db.select({ id: interactions.id }).from(interactions)).toHaveLength(0);
 	});
 
 	it('повтор того же события отдаёт сохранённый ответ и ничего не применяет заново', async () => {
@@ -571,6 +681,36 @@ describe('приём заявки с сайта', () => {
 			externalId: 'site-2026-000123'
 		});
 		expect(refused.lastError).toContain('Ответственный за входящие заявки не настроен');
+	});
+
+	it('вне демонстрационного режима демонстрационная запись входящие не принимает', async () => {
+		await database.db.insert(users).values({
+			email: 'demo-manager@example.org',
+			fullName: 'Демонстрационный Менеджер',
+			roleId: 'manager',
+			isDemo: true
+		});
+
+		await setExchangeSettings(testActor(), {
+			cmsInstance: 'itschool-site',
+			cmsStatusUrl: '',
+			cmsSecret: null,
+			cmsDefaultOwnerUserId: null,
+			lmsInstance: 'moodle-itschool',
+			lmsGroupsUrl: '',
+			lmsSecret: null
+		});
+
+		const response = await intake(apiEvent({ body: envelope(B2B_DATA), key: apiKey }));
+
+		// Запасной ответственный — свойство демонстрационного стенда, а не базы, в
+		// которой когда-то запускали сид: при выключенном `DEMO_MODE` отметка
+		// `is_demo` не значит ничего (`db/schema/auth.ts`), и заявка отвергается с
+		// указанием, что настроить.
+		expect(response.status).toBe(400);
+		expect(JSON.stringify(await response.json())).toContain('Ответственный за входящие');
+
+		expect(await database.db.select({ id: interactions.id }).from(interactions)).toHaveLength(0);
 	});
 });
 

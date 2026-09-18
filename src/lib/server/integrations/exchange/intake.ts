@@ -28,10 +28,11 @@
  * том числе от двух одновременных доставок.
  */
 import { createHash } from 'node:crypto';
-import { and, eq, inArray, ne, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import {
 	APPLICATION_STATUSES,
 	EXCHANGE_SCHEMA_VERSION,
+	MAX_REVISION_STEP,
 	PROCESS_GROUP_BY_APPLICANT,
 	externalSourceOf,
 	isSupportedSchemaVersion,
@@ -45,6 +46,7 @@ import { formatIsoDay } from '$lib/format';
 import type { ActorContext } from '../../actor';
 import { recordAuditEvent } from '../../audit';
 import { loadSessionUser } from '../../auth/session';
+import { getConfig } from '../../config';
 import { getDb } from '../../db';
 import {
 	affiliations,
@@ -250,10 +252,10 @@ function intakeComment(
 /**
  * Сотрудник, который принимает входящие заявки.
  *
- * Настройка не задана — берём демонстрационного менеджера, если он в системе
- * есть: стенд обязан принимать заявку сразу после сида, не требуя похода в
- * настройки. Нет и его — заявка отвергается с указанием, что настроить: тихо
- * назначить робота хуже, чем отказать.
+ * Настройка не задана — на демонстрационном стенде берём демонстрационного
+ * менеджера, если он в системе есть: стенд обязан принимать заявку сразу после
+ * сида, не требуя похода в настройки. Нет и его — заявка отвергается с
+ * указанием, что настроить: тихо назначить робота хуже, чем отказать.
  */
 async function resolveIntakeOwner(tx: Tx, configured: string | null): Promise<string> {
 	if (configured !== null) {
@@ -278,12 +280,18 @@ async function resolveIntakeOwner(tx: Tx, configured: string | null): Promise<st
 		return row.id;
 	}
 
-	const [demo] = await tx
-		.select({ id: users.id })
-		.from(users)
-		.where(and(eq(users.isDemo, true), eq(users.isActive, true), eq(users.roleId, 'manager')))
-		.orderBy(users.email)
-		.limit(1);
+	// Право взять демонстрационную запись даёт режим установки, а не наличие
+	// такой записи в базе: у заказчика сид не запускают, и сегодня отказ выходит
+	// внятным только поэтому. Правило должно читаться из кода, а не из порядка
+	// развёртывания.
+	const [demo] = getConfig().DEMO_MODE
+		? await tx
+				.select({ id: users.id })
+				.from(users)
+				.where(and(eq(users.isDemo, true), eq(users.isActive, true), eq(users.roleId, 'manager')))
+				.orderBy(users.email)
+				.limit(1)
+		: [];
 
 	if (demo === undefined) {
 		throw new ValidationError('Ответственный за входящие заявки не настроен', [
@@ -400,6 +408,10 @@ async function findIndividual(
  * появляется только вместе с заявкой. ФИО, контакты и согласие ложатся в
  * `people`, где работают маскирование, срок хранения и обезличивание; копии ФИО
  * в полях организации не появляется — название и есть ФИО.
+ *
+ * Роль этого человека в его собственной организации заводится вместе с
+ * контактным лицом заявки ({@link addContact}): контактное лицо здесь — он сам,
+ * и второй записи `people` о том же человеке не появляется.
  */
 async function createIndividual(
 	ctx: ActorContext,
@@ -568,6 +580,84 @@ async function findContact(
 		.limit(1);
 
 	return row ?? null;
+}
+
+/**
+ * Контактное лицо, которого в организации ещё нет: человек и его роль.
+ *
+ * **У заявки физического лица контактное лицо — сам заявитель.** Его строка
+ * `people` уже заведена вместе с контрагентом (`createIndividual`) под то же
+ * ФИО, ту же почту и тот же телефон — роли в собственной организации у него
+ * только нет, и {@link findContact} потому его и не находит. Заводить здесь
+ * второго человека значит держать в справочнике две записи об одном: подбор
+ * контактов показывал бы его дважды, а уничтожение персональных данных по одной
+ * записи оставляло бы ФИО и контакты во второй.
+ *
+ * Новая строка `people` появляется только там, где контактное лицо и правда
+ * другой человек, — у заявки организации.
+ */
+async function addContact(
+	ctx: ActorContext,
+	tx: Tx,
+	organizationId: string,
+	counterpartyPersonId: string | null,
+	data: ApplicationSubmittedData,
+	isPrimary: boolean
+): Promise<{ personId: string; affiliationId: string }> {
+	if (counterpartyPersonId !== null) {
+		// Заявитель нашёлся по телефону, а адрес почты в заявке новый: роль в
+		// своей организации у него уже есть, и второй такой же не нужно.
+		const [role] = await tx
+			.select({ id: affiliations.id })
+			.from(affiliations)
+			.where(
+				and(
+					eq(affiliations.personId, counterpartyPersonId),
+					eq(affiliations.organizationId, organizationId),
+					isNull(affiliations.validTo)
+				)
+			)
+			.limit(1);
+
+		if (role !== undefined) {
+			return { personId: counterpartyPersonId, affiliationId: role.id };
+		}
+	}
+
+	const personId =
+		counterpartyPersonId ??
+		(
+			await createPerson(
+				ctx,
+				{
+					lastName: data.contact.lastName,
+					firstName: data.contact.firstName,
+					middleName: data.contact.middleName,
+					email: data.contact.email,
+					phone: data.contact.phone,
+					notes: null
+				},
+				tx
+			)
+		).id;
+
+	const affiliation = await createAffiliation(
+		ctx,
+		{
+			personId,
+			organizationId,
+			siteId: null,
+			position: data.contact.position ?? DEFAULT_POSITION,
+			roleKind: 'other',
+			isPrimary,
+			validFrom: formatIsoDay(),
+			validTo: null,
+			channel: null
+		},
+		tx
+	);
+
+	return { personId, affiliationId: affiliation.id };
 }
 
 /** Коды справочника → идентификаторы; неопознанные возвращаются отдельно. */
@@ -788,6 +878,35 @@ type ApplyOutcome = {
 	needsReview: boolean;
 };
 
+/**
+ * Отказ на ревизии, ушедшей от применённой дальше, чем отправитель мог её
+ * продвинуть.
+ *
+ * Порядок применения снимков задаёт одно сравнение ревизий, поэтому ревизия,
+ * улетевшая вперёд, заявку выключает: все последующие законные сообщения по ней
+ * отвечают `unchanged`, и вернуть её нечем, кроме правки в базе. Потолок самой
+ * ревизии (`MAX_APPLICATION_REVISION`, `$lib/contracts/exchange`) закрывает
+ * только край диапазона — заморозить заявку хватает и ревизии, до которой
+ * счётчик отправителя не дойдёт никогда.
+ *
+ * Отказ здесь лучше тихого применения: он уходит отправителю кодом 4xx с
+ * причиной и остаётся в журнале обмена строкой `failed`, которую видно на
+ * экране «Внешние системы», — а применённый скачок не виден вообще ничем, кроме
+ * заявки, переставшей обновляться.
+ *
+ * `applied === null` — заявки в CRM ещё нет, и применённой ревизией считается
+ * ноль: выключить заявку можно и первым сообщением.
+ */
+function assertRevisionStep(applied: number | null, revision: number): void {
+	const step = revision - (applied ?? 0);
+
+	if (step > MAX_REVISION_STEP) {
+		throw new ValidationError('Ревизия заявки ушла слишком далеко вперёд', [
+			`data.revision: ${revision} обгоняет применённую (${applied ?? 0}) на ${step} — ревизия растёт с каждым изменением заявки, и шаг вперёд больше ${MAX_REVISION_STEP} означает чужой счётчик, а не ${step} правок`
+		]);
+	}
+}
+
 /** Обновление существующего взаимодействия: CMS — хозяин данных заявителя. */
 async function updateExisting(
 	ctx: ActorContext,
@@ -808,45 +927,31 @@ async function updateExisting(
 		return null;
 	}
 
+	assertRevisionStep(locked.externalRevision, data.revision);
+
+	// Человек, которым представлен контрагент-физлицо: у заявки организации его
+	// нет. Читается до контактного лица — им у физлица становится он сам.
+	const [{ personId }] = await tx
+		.select({ personId: organizations.personId })
+		.from(organizations)
+		.where(eq(organizations.id, existing.organizationId))
+		.limit(1);
+
 	const contact = await findContact(tx, existing.organizationId, data.contact.email);
 	let contactPersonId = contact?.personId ?? null;
 
 	if (contact === null) {
-		const person = await createPerson(
-			ctx,
-			{
-				lastName: data.contact.lastName,
-				firstName: data.contact.firstName,
-				middleName: data.contact.middleName,
-				email: data.contact.email,
-				phone: data.contact.phone,
-				notes: null
-			},
-			tx
-		);
+		const added = await addContact(ctx, tx, existing.organizationId, personId, data, false);
 
-		contactPersonId = person.id;
-
-		await createAffiliation(
-			ctx,
-			{
-				personId: person.id,
-				organizationId: existing.organizationId,
-				siteId: null,
-				position: data.contact.position ?? DEFAULT_POSITION,
-				roleKind: 'other',
-				isPrimary: false,
-				validFrom: formatIsoDay(),
-				validTo: null,
-				channel: null
-			},
-			tx
-		);
+		contactPersonId = added.personId;
 	} else {
 		// Контакты заявителя обновляются: их хозяин — сайт. Ответственный, стадия,
 		// история и контрагент не трогаются никогда. Почта не переписывается: по
 		// ней контакт и нашёлся, а телефон едет через `people/pii.ts` — шифртекст
-		// и ключ сравнения одним оператором.
+		// и ключ сравнения одним оператором. У заявки физического лица это тот же
+		// человек, что и контрагент; название его карточки в справочнике при этом
+		// остаётся тем, каким его принесла заведшая её заявка: контрагента повтор
+		// не трогает.
 		await tx
 			.update(people)
 			.set({
@@ -905,12 +1010,6 @@ async function updateExisting(
 		);
 	}
 
-	const [{ personId }] = await tx
-		.select({ personId: organizations.personId })
-		.from(organizations)
-		.where(eq(organizations.id, existing.organizationId))
-		.limit(1);
-
 	if (personId !== null && data.consent !== null && data.consent.given) {
 		await recordApplicationConsent(ctx, tx, personId, data.consent);
 	}
@@ -940,6 +1039,9 @@ async function createFromApplication(
 	source: string,
 	ownerUserId: string
 ): Promise<ApplyOutcome> {
+	// Применённой ревизии у новой заявки нет: скачок считается от нуля.
+	assertRevisionStep(null, data.revision);
+
 	const counterparty = await resolveCounterparty(ctx, tx, data);
 
 	// Назначение — до создания взаимодействия: область считается по действующим
@@ -947,41 +1049,21 @@ async function createFromApplication(
 	await ensureResponsible(ctx, tx, counterparty.organizationId, ownerUserId);
 
 	const contact = await findContact(tx, counterparty.organizationId, data.contact.email);
-	let contactPersonId = contact?.personId ?? counterparty.personId;
+	let contactPersonId = contact?.personId ?? null;
 	let affiliationId = contact?.affiliationId ?? null;
 
 	if (contact === null) {
-		const person = await createPerson(
+		const added = await addContact(
 			ctx,
-			{
-				lastName: data.contact.lastName,
-				firstName: data.contact.firstName,
-				middleName: data.contact.middleName,
-				email: data.contact.email,
-				phone: data.contact.phone,
-				notes: null
-			},
-			tx
+			tx,
+			counterparty.organizationId,
+			counterparty.personId,
+			data,
+			true
 		);
 
-		const affiliation = await createAffiliation(
-			ctx,
-			{
-				personId: person.id,
-				organizationId: counterparty.organizationId,
-				siteId: null,
-				position: data.contact.position ?? DEFAULT_POSITION,
-				roleKind: 'other',
-				isPrimary: true,
-				validFrom: formatIsoDay(),
-				validTo: null,
-				channel: null
-			},
-			tx
-		);
-
-		affiliationId = affiliation.id;
-		contactPersonId = person.id;
+		contactPersonId = added.personId;
+		affiliationId = added.affiliationId;
 	}
 
 	const catalogue = await resolveCatalogue(tx, data);
