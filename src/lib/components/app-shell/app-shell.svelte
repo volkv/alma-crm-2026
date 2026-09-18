@@ -10,9 +10,11 @@
 	import { Toaster } from '$lib/components/ui/sonner/index.js';
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
 	import { visibleSections } from '$lib/nav';
+	import { theme } from '$lib/theme.svelte';
 	import type { SessionUser } from '$lib/server/auth/types';
 	import AppNav from './app-nav.svelte';
 	import CommandPalette from './command-palette.svelte';
+	import ThemeToggle from './theme-toggle.svelte';
 	import UserMenu from './user-menu.svelte';
 	import { createNavCollapse } from './nav-collapse.svelte';
 	import { navLinks, sectionFor } from './nav-links';
@@ -179,6 +181,9 @@
 							>Ctrl+K</kbd
 						>
 					</Button>
+					<!-- Тема живёт в шапке, а не в настройках: выбор принадлежит
+						устройству, и до него должно быть одно нажатие с любой страницы. -->
+					<ThemeToggle />
 					{#if user}
 						<UserMenu {user} />
 					{/if}
@@ -195,4 +200,6 @@
 </div>
 
 <CommandPalette bind:open={searchOpen} {links} />
-<Toaster position="bottom-right" closeButton />
+<!-- Тост рисует свой слой со своими переменными: тему ему говорят отдельно,
+	иначе он остаётся светлым посреди тёмной страницы. -->
+<Toaster position="bottom-right" closeButton theme={theme.resolved} />

@@ -26,11 +26,16 @@ const PAGE_HEIGHT_POINTS = 595;
 const JPEG_QUALITY = 0.92;
 
 /**
- * Холст диаграммы поверх белого листа. Сама диаграмма прозрачна, и без подложки
- * PNG на тёмном фоне читался бы наоборот, а JPEG, не знающий прозрачности,
- * залил бы её чёрным.
+ * Холст диаграммы поверх листа. Сама диаграмма прозрачна, и без подложки PNG на
+ * чужом фоне читался бы наоборот, а JPEG, не знающий прозрачности, залил бы её
+ * чёрным.
+ *
+ * Цвет листа приходит снаружи — это цвет панели той темы, в которой диаграмму
+ * нарисовали. Подписи и сетка на холсте тоже из темы, поэтому белый лист под
+ * тёмной диаграммой дал бы светлый текст на белом: файл, который нельзя
+ * прочитать ни на экране, ни на бумаге.
  */
-function onWhite(canvas: HTMLCanvasElement): HTMLCanvasElement {
+function onSheet(canvas: HTMLCanvasElement, background: string): HTMLCanvasElement {
 	const sheet = document.createElement('canvas');
 
 	sheet.width = canvas.width;
@@ -42,7 +47,7 @@ function onWhite(canvas: HTMLCanvasElement): HTMLCanvasElement {
 		throw new Error('Браузер не дал холст для сборки картинки');
 	}
 
-	context.fillStyle = '#ffffff';
+	context.fillStyle = background;
 	context.fillRect(0, 0, sheet.width, sheet.height);
 	context.drawImage(canvas, 0, 0);
 
@@ -152,14 +157,22 @@ function pdfWithImage(jpeg: Uint8Array, width: number, height: number): Blob {
 	return new Blob(parts as BlobPart[], { type: 'application/pdf' });
 }
 
-export function downloadChartPng(canvas: HTMLCanvasElement, fileName: string): void {
-	const sheet = onWhite(canvas);
+export function downloadChartPng(
+	canvas: HTMLCanvasElement,
+	fileName: string,
+	background: string
+): void {
+	const sheet = onSheet(canvas, background);
 
 	download(dataUrlToBlob(sheet.toDataURL('image/png'), 'image/png'), fileName);
 }
 
-export function downloadChartPdf(canvas: HTMLCanvasElement, fileName: string): void {
-	const sheet = onWhite(canvas);
+export function downloadChartPdf(
+	canvas: HTMLCanvasElement,
+	fileName: string,
+	background: string
+): void {
+	const sheet = onSheet(canvas, background);
 	const jpeg = dataUrlToBytes(sheet.toDataURL('image/jpeg', JPEG_QUALITY));
 
 	download(pdfWithImage(jpeg, sheet.width, sheet.height), fileName);

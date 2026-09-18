@@ -12,6 +12,48 @@ import { waitForHydration } from './helpers/hydration';
 const firstRowName = (page: Page) =>
 	page.locator('[data-slot="data-table"] tbody tr').first().locator('td').nth(1);
 
+/**
+ * Кнопка темы. Переключателей на странице два — в шапке оболочки и на самой
+ * витрине, — и это часть проверяемого: выбор один на документ, поэтому нажатие
+ * по любому из них обязано отозваться в обоих.
+ */
+const themeOption = (page: Page, option: 'light' | 'dark' | 'system') =>
+	page.locator(`[data-slot="theme-toggle"] [data-theme-option="${option}"]`).first();
+
+/**
+ * Выбрать тему и дождаться, пока она встанет.
+ *
+ * Переключатель — код страницы: нажатие до оживления не доходит ни до кого.
+ * Повтор идёт только пока тема не та, которую просили: лишнее нажатие по другой
+ * кнопке её бы сменило.
+ */
+async function chooseTheme(page: Page, option: 'light' | 'dark' | 'system'): Promise<void> {
+	await expect(async () => {
+		if ((await themeOption(page, option).getAttribute('aria-pressed')) !== 'true') {
+			await themeOption(page, option).click({ timeout: 5_000 });
+		}
+
+		await expect(themeOption(page, option)).toHaveAttribute('aria-pressed', 'true', {
+			timeout: 2000
+		});
+	}).toPass({ timeout: 20_000 });
+}
+
+/** Цвет, которым покрашена страница на самом деле, а не по замыслу темы. */
+const pageBackground = (page: Page) =>
+	page.evaluate(() => getComputedStyle(document.body).backgroundColor);
+
+/** Сумма каналов `rgb(r, g, b)`: светлее или темнее — без разбора оттенка. */
+function brightness(color: string): number {
+	const channels = color.match(/\d+(\.\d+)?/g);
+
+	if (channels === null || channels.length < 3) {
+		throw new Error(`цвет фона ожидался как rgb(...), получено «${color}»`);
+	}
+
+	return channels.slice(0, 3).reduce((sum, value) => sum + Number(value), 0);
+}
+
 test('the kit page opens with the table and the form on it', async ({ page }) => {
 	await page.goto('/ui-kit');
 
@@ -254,6 +296,171 @@ test('collapsing the navigation outlives a reload', async ({ page }) => {
 	await expect(page.getByRole('button', { name: 'Развернуть навигацию' })).toBeVisible();
 });
 
+/**
+ * Пары «текст на фоне», которые тема обязана держать читаемыми. Слева токен
+ * текста, справа — токен того, на чём этот текст лежит; порог AA для текста
+ * 14px, которым набран весь продукт, — 4.5:1.
+ *
+ * Пары взяты не наугад: это ровно то, из чего собраны экраны, — текст трёх
+ * степеней громкости на трёх поверхностях, подпись на акцентной заливке, ссылка,
+ * бейдж каждого статуса и подпись на сплошном узле маршрута.
+ */
+const CONTRAST_PAIRS = [
+	['--color-foreground', '--color-surface'],
+	['--color-foreground', '--color-canvas'],
+	['--color-foreground', '--color-surface-muted'],
+	['--color-foreground', '--color-popover'],
+	['--color-muted-foreground', '--color-surface'],
+	['--color-muted-foreground', '--color-surface-muted'],
+	['--color-faint', '--color-surface'],
+	['--color-faint', '--color-canvas'],
+	['--color-primary-foreground', '--color-primary'],
+	['--color-primary-foreground', '--color-primary-hover'],
+	['--color-primary', '--color-surface'],
+	['--color-primary', '--color-primary-soft'],
+	['--color-success-soft-foreground', '--color-success-soft'],
+	['--color-background', '--color-success'],
+	['--color-warning-soft-foreground', '--color-warning-soft'],
+	['--color-warning-soft-foreground', '--color-surface'],
+	['--color-danger-soft-foreground', '--color-danger-soft'],
+	['--color-background', '--color-danger'],
+	['--color-info-soft-foreground', '--color-info-soft']
+] as const;
+
+/**
+ * Контраст пар по WCAG 2.1, посчитанный по значениям токенов так, как их видит
+ * браузер: `getComputedStyle` возвращает custom property уже с подставленными
+ * `var(...)`, то есть итоговый цвет темы, а не ссылку на ссылку.
+ */
+async function contrastRatios(page: Page): Promise<{ pair: string; ratio: number }[]> {
+	return page.evaluate(
+		(pairs) => {
+			const styles = getComputedStyle(document.documentElement);
+
+			const luminance = (token: string): number => {
+				const value = styles.getPropertyValue(token).trim();
+				const hex = /^#([0-9a-f]{3}|[0-9a-f]{6})$/i.exec(value);
+
+				if (hex === null) {
+					throw new Error(`токен ${token} ожидался цветом в hex, получено «${value}»`);
+				}
+
+				const digits =
+					hex[1].length === 3
+						? [...hex[1]].map((digit) => digit + digit)
+						: [hex[1].slice(0, 2), hex[1].slice(2, 4), hex[1].slice(4, 6)];
+				const [red, green, blue] = digits.map((pair) => {
+					const channel = Number.parseInt(pair, 16) / 255;
+
+					return channel <= 0.03928 ? channel / 12.92 : ((channel + 0.055) / 1.055) ** 2.4;
+				});
+
+				return 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+			};
+
+			return pairs.map(([text, background]) => {
+				const [lighter, darker] = [luminance(text), luminance(background)].sort((a, b) => b - a);
+
+				return { pair: `${text} на ${background}`, ratio: (lighter + 0.05) / (darker + 0.05) };
+			});
+		},
+		CONTRAST_PAIRS as unknown as [string, string][]
+	);
+}
+
+test('тема по умолчанию светлая, а выбранная тёмная переживает перезагрузку', async ({ page }) => {
+	await page.goto('/ui-kit');
+
+	const root = page.locator('html');
+
+	// Умолчание — светлая, и это решение, а не случайность: показ продукта идёт
+	// на светлом, а тёмную человек выбирает себе сам.
+	await expect(root).toHaveAttribute('data-theme', 'light');
+	await expect(themeOption(page, 'light')).toHaveAttribute('aria-pressed', 'true');
+
+	const light = await pageBackground(page);
+
+	await chooseTheme(page, 'dark');
+
+	await expect(root).toHaveAttribute('data-theme', 'dark');
+
+	const dark = await pageBackground(page);
+
+	expect(dark).not.toBe(light);
+	expect(brightness(dark)).toBeLessThan(brightness(light));
+
+	// Выбор один на документ: нажали в шапке — отозвалось и на витрине.
+	await expect(page.locator('[data-theme-option="dark"][aria-pressed="true"]')).toHaveCount(2);
+
+	await page.reload();
+
+	// Тема стоит уже в первом кадре: её ставит скрипт в <head>, а не оживший
+	// компонент, — иначе каждая загрузка начиналась бы вспышкой белого.
+	await expect(root).toHaveAttribute('data-theme', 'dark');
+	expect(await pageBackground(page)).toBe(dark);
+	await expect(themeOption(page, 'dark')).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('тёмная тема встаёт до того, как страница оживёт', async ({ page }) => {
+	await page.goto('/ui-kit');
+	await chooseTheme(page, 'dark');
+
+	// Код приложения на следующей загрузке не приедет вовсе: остаются только
+	// разметка с сервера и скрипт темы в <head>. Если атрибут после этого на
+	// месте, значит тему ставит он, а не ожившие компоненты, — то есть первый
+	// кадр уже тёмный и вспышки белого не будет. Заодно это проверка того, что
+	// скрипт проходит CSP: заблокированный браузером, он не поставил бы ничего.
+	await page.route('**/_app/immutable/**', (route) => route.abort());
+	await page.goto('/ui-kit');
+
+	await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
+	// Компоненты и правда не ожили: кнопка темы осталась там, где её отрисовал
+	// сервер, — с умолчанием, а не с выбором.
+	await expect(themeOption(page, 'light')).toHaveAttribute('aria-pressed', 'true');
+});
+
+test('«как в системе» идёт за настройкой браузера', async ({ page }) => {
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await page.goto('/ui-kit');
+
+	const root = page.locator('html');
+
+	// Пока выбрана светлая, тёмная система ничего не решает: выбор человека
+	// главнее настройки машины.
+	await expect(root).toHaveAttribute('data-theme', 'light');
+
+	await chooseTheme(page, 'system');
+	await expect(root).toHaveAttribute('data-theme', 'dark');
+
+	// Систему переключают при открытой вкладке — по расписанию дня, например.
+	await page.emulateMedia({ colorScheme: 'light' });
+	await expect(root).toHaveAttribute('data-theme', 'light');
+
+	// И то же самое на следующей загрузке: выбор «как в системе» тоже запомнен.
+	await page.reload();
+	await expect(root).toHaveAttribute('data-theme', 'light');
+	await expect(themeOption(page, 'system')).toHaveAttribute('aria-pressed', 'true');
+
+	await page.emulateMedia({ colorScheme: 'dark' });
+	await expect(root).toHaveAttribute('data-theme', 'dark');
+});
+
+test('текст читается в обеих темах: контраст не ниже AA', async ({ page }) => {
+	await page.goto('/ui-kit');
+
+	for (const option of ['light', 'dark'] as const) {
+		await chooseTheme(page, option);
+
+		const measured = await contrastRatios(page);
+
+		expect(measured).toHaveLength(CONTRAST_PAIRS.length);
+
+		for (const { pair, ratio } of measured) {
+			expect.soft(ratio, `${option}: ${pair} — ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
+		}
+	}
+});
+
 test('the kit page is captured for review', async ({ page }) => {
 	await page.goto('/ui-kit');
 	await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
@@ -263,4 +470,10 @@ test('the kit page is captured for review', async ({ page }) => {
 	await page.goto('/ui-kit');
 	await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
 	await page.screenshot({ path: 'test-results/ui-kit-mobile.png', fullPage: true });
+
+	// Тёмная тема — это те же экраны другими значениями токенов, и смотреть на
+	// них надо так же глазами, а не только мерить контраст числом.
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await chooseTheme(page, 'dark');
+	await page.screenshot({ path: 'test-results/ui-kit-dark.png', fullPage: true });
 });

@@ -68,15 +68,19 @@
 }
 
 /*
- * The interface is light-only for now. This variant is still required: without
- * it Tailwind's `dark:` utilities — and the vendored primitives use plenty of
- * them — follow `prefers-color-scheme`, so a visitor whose system is dark would
- * get dark fragments on top of a light palette. Bound to a class nobody sets,
- * those fragments stay inert. A dark theme is added later by redefining the
- * tokens below under `.dark` and putting that class on <html>; the components
- * themselves do not change, because none of them names a colour directly.
+ * Какая тема на экране, говорит атрибут `data-theme` на <html>: его ставит
+ * `static/theme.js` до первой отрисовки и дальше меняет переключатель темы.
+ * Значение всегда `light` или `dark` — выбор «как в системе» разрешается в
+ * JavaScript, чтобы значения тёмной темы лежали в одном блоке, а не в двух
+ * одинаковых (второй пришлось бы держать под `@media (prefers-color-scheme)`,
+ * и однажды они разошлись бы).
+ *
+ * Тот же атрибут включает и `dark:`-утилиты Tailwind, которыми написаны
+ * вендоренные примитивы. Привязку удалять нельзя: без неё эти утилиты
+ * срабатывают по системной теме браузера — тёмные куски поверх светлой
+ * палитры у человека с тёмной системой и светлой темой продукта.
  */
-@custom-variant dark (&:is(.dark *));
+@custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
 /*
  * Design tokens. Tailwind 4 is configured in CSS — there is no
@@ -86,45 +90,71 @@
  * (`--color-surface` -> `bg-surface`, `text-surface`, `border-surface`, ...).
  */
 :root {
+	color-scheme: light;
+
 	/*
-	 * ─── Дизайн-система Ростелекома, светлая тема ───────────────────────────
+	 * ─── Дизайн-система Ростелекома ─────────────────────────────────────────
 	 *
-	 * Значения второго поколения ДС («Атомаро»), тема Rostelecom Light. Имена
-	 * оставлены такими же, как в источнике (`--atmr-*`), чтобы про любой цвет
-	 * ниже можно было проверить, откуда он взялся. Здесь только те токены,
-	 * которые продукт действительно использует, — вся шкала ДС шире.
+	 * Значения второго поколения ДС («Атомаро»). Имена оставлены такими же, как
+	 * в источнике (`--atmr-*`), чтобы про любой цвет ниже можно было проверить,
+	 * откуда он взялся. Здесь только те токены, которые продукт действительно
+	 * использует, — вся шкала ДС шире.
+	 *
+	 * Сами шкалы у ДС общие для светлой и тёмной тем: различаются не ступени, а
+	 * то, какая ступень отвечает за какую роль. Поэтому шкалы объявлены один
+	 * раз, а тёмная тема ниже только переставляет ссылки. Исключение — тени: у
+	 * них на каждую тему свои значения, и тёмные стоят в блоке темы.
 	 *
 	 * Нейтральная шкала (холодная, синеватая) и слои интерфейса.
 	 */
-	--atmr-neutral-0: #fff; /* bg-page, bg-surface1, bg-elevated-* */
-	--atmr-neutral-10: #f9f9fa; /* bg-surface2 */
-	--atmr-neutral-25: #f4f4f5; /* bg-surface3, bg-page-filled */
-	--atmr-neutral-50: #e8e8ee; /* bg-surface4 */
-	--atmr-neutral-200: #b5b7c0; /* граница контролов, вес border-default */
+	--atmr-neutral-0: #fff; /* светлая: bg-page, bg-surface1, bg-elevated-* */
+	--atmr-neutral-10: #f9f9fa; /* светлая: bg-surface2 */
+	--atmr-neutral-25: #f4f4f5; /* светлая: bg-surface3, bg-page-filled */
+	--atmr-neutral-50: #e8e8ee; /* светлая: bg-surface4 | тёмная: fg-default */
+	--atmr-neutral-200: #b5b7c0; /* светлая: граница контролов | тёмная: fg-soft */
+	--atmr-neutral-300: #9da1ac; /* тёмная: fg-muted */
+	--atmr-neutral-400: #797e8b; /* тёмная: вес border-default */
 	--atmr-neutral-500: #585d69; /* base-neutral: тени и слабый текст */
 	--atmr-neutral-600: #434b5a; /* сплошной эквивалент fg-soft */
-	--atmr-neutral-990: #101828; /* fg-default */
+	--atmr-neutral-700: #323a49; /* тёмная: bg-surface4 */
+	--atmr-neutral-800: #262e3d; /* тёмная: bg-surface3 */
+	--atmr-neutral-900: #212938; /* тёмная: bg-elevated-m */
+	--atmr-neutral-925: #1b2332; /* тёмная: bg-surface1, bg-elevated-s */
+	--atmr-neutral-950: #151d2c; /* тёмная: bg-page */
+	--atmr-neutral-990: #101828; /* светлая: fg-default; тёмная: цвет теней */
 
 	/*
 	 * Акцент: оранжевая шкала ДС (base-accent #ff4f12). Продукт берёт не
 	 * вершину шкалы, а две ступени ниже, — почему, сказано у `--accent-base`.
 	 */
+	--atmr-accent-0: #fff;
 	--atmr-accent-50: #ffede7;
 	--atmr-accent-100: #ffd3c4;
+	--atmr-accent-200: #ffa789;
 	--atmr-accent-700: #b3370d;
 	--atmr-accent-800: #992f0b;
+	--atmr-accent-900: #802809;
+	--atmr-accent-950: #591c06;
 
 	/* Статусы: сплошной тон и мягкая подложка с читаемым текстом на ней. */
 	--atmr-success-50: #e6f7ec;
+	--atmr-success-200: #80d6a1;
 	--atmr-success-700: #00782f;
+	--atmr-success-950: #003c17;
 	--atmr-warning-50: #fff6e7;
+	--atmr-warning-200: #fed388;
 	--atmr-warning-500: #fda610; /* base-warning */
 	--atmr-warning-800: #98640a;
+	--atmr-warning-950: #593a06;
 	--atmr-error-50: #ffe9e9;
+	--atmr-error-200: #ff9393;
 	--atmr-error-700: #b31b1b;
+	--atmr-error-950: #590d0d;
 	--atmr-info-50: #e9f0ff;
+	--atmr-info-200: #8fb4ff;
 	--atmr-info-500: #1f69ff; /* base-info */
 	--atmr-info-700: #164ab3;
+	--atmr-info-950: #0b2559;
 
 	/* Радиусы ДС; `m` — базовый, им скруглены кнопки и поля. */
 	--atmr-border-radius-xs: 4px;
@@ -153,6 +183,14 @@
 	--grey-900: var(--atmr-neutral-990);
 
 	/*
+	 * Поверхность того, что висит над страницей: меню, диалоги, тосты. В
+	 * светлой теме она совпадает с карточкой — у ДС все уровни белые. В тёмной
+	 * не совпадает: там уровень задаётся светлотой, и слой поверх карточки
+	 * обязан быть светлее её, иначе от неё его отделяет одна тень.
+	 */
+	--surface-overlay: var(--atmr-neutral-0);
+
+	/*
 	 * Один акцент на весь продукт. ДС ставит на кнопку `accent-500` (#ff4f12) с
 	 * белой подписью — это 3.3:1, ниже порога AA для текста в 14px, а `primary`
 	 * здесь ещё и текст ссылки на белом. Поэтому взяты две ступени той же
@@ -162,6 +200,8 @@
 	 */
 	--accent-base: var(--atmr-accent-700);
 	--accent-strong: var(--atmr-accent-800);
+	/* Подпись на акцентной заливке: у ДС это `accent-on-accent`. */
+	--accent-on: var(--atmr-accent-0);
 	--accent-soft: var(--atmr-accent-50);
 	--accent-soft-border: var(--atmr-accent-100);
 
@@ -202,6 +242,80 @@
 	--secondary: var(--grey-100);
 }
 
+/*
+ * ─── Тёмная тема ────────────────────────────────────────────────────────────
+ *
+ * Второй набор значений для той же палитры продукта. Имена не меняются —
+ * меняется то, на какую ступень шкалы ДС они смотрят, ровно как это устроено у
+ * самой ДС: у неё темы отличаются не палитрой, а раскладкой ролей по ступеням
+ * (`bg-page` — `neutral-0` в светлой и `neutral-950` в тёмной).
+ *
+ * Нейтральная шкала продукта при этом переворачивается: `--grey-0` — самая
+ * глубокая поверхность, `--grey-900` — основной текст. Компонентов это не
+ * касается: они называют цвет смыслом (`surface`, `foreground`), а не номером
+ * ступени, поэтому ни один из них здесь не участвует.
+ *
+ * Правило для нового цвета то же, что и в светлой: сначала токен, потом
+ * утилита. Токен, у которого нет значения в этом блоке, в тёмной теме останется
+ * светлым — и это будет видно сразу, на витрине `/ui-kit`.
+ */
+html[data-theme='dark'] {
+	color-scheme: dark;
+
+	/* Тени ДС для тёмной темы: почти чёрные и плотнее светлых. */
+	--atmr-shadow-bottom-s: 0 2px 4px 0 rgba(16, 24, 40, 0.4), 0 0 8px 0 rgba(16, 24, 40, 0.2);
+	--atmr-shadow-bottom-l: 0 12px 20px 0 rgba(16, 24, 40, 0.4), 0 0 20px 0 rgba(16, 24, 40, 0.2);
+
+	/*
+	 * Поверхности и текст. Ступени — те же роли ДС, что и в светлой теме:
+	 * холст — `bg-page`, панель — `bg-surface1`, углубление — `bg-surface3`,
+	 * линия — `bg-surface4`, край контрола — вес `border-default`.
+	 */
+	--grey-0: var(--atmr-neutral-925);
+	--grey-50: var(--atmr-neutral-950);
+	--grey-100: var(--atmr-neutral-800);
+	--grey-200: var(--atmr-neutral-700);
+	--grey-300: var(--atmr-neutral-400);
+	--grey-500: var(--atmr-neutral-300);
+	--grey-600: var(--atmr-neutral-200);
+	--grey-900: var(--atmr-neutral-50);
+
+	--surface-overlay: var(--atmr-neutral-900);
+
+	/*
+	 * Акцент. В светлой теме продукт отошёл от ДС и взял `accent-700` вместо
+	 * `accent-500`: фирменный оранжевый не давал 4.5:1 ни с белой подписью, ни
+	 * как текст ссылки. В тёмной отходить не пришлось — `accent-default` ДС
+	 * (`accent-200`) даёт 7.0:1 с подписью `accent-950` и 8.4:1 как текст на
+	 * панели. Наведение, как и у ДС, светлее обычного состояния, а не темнее.
+	 */
+	--accent-base: var(--atmr-accent-200);
+	--accent-strong: var(--atmr-accent-100);
+	--accent-on: var(--atmr-accent-950);
+	--accent-soft: var(--atmr-accent-950);
+	--accent-soft-border: var(--atmr-accent-900);
+
+	/*
+	 * Статусы зеркалят светлую тему по шкале: мягкая подложка — ступень 950
+	 * вместо 50, её обводка — 900 вместо 100, сплошной тон — 200 (это
+	 * `*-default` тёмной темы ДС) вместо 500/700. Сплошные `success` и `danger`
+	 * по-прежнему носят на себе текст (узел пройденной и просроченной стадии),
+	 * только теперь тёмный: `text-background` на светлой заливке.
+	 */
+	--danger-base: var(--atmr-error-200);
+	--danger-soft: var(--atmr-error-950);
+	--danger-soft-foreground: var(--atmr-error-200);
+	--warning-base: var(--atmr-warning-200);
+	--warning-soft: var(--atmr-warning-950);
+	--warning-soft-foreground: var(--atmr-warning-200);
+	--success-base: var(--atmr-success-200);
+	--success-soft: var(--atmr-success-950);
+	--success-soft-foreground: var(--atmr-success-200);
+	--info-base: var(--atmr-info-200);
+	--info-soft: var(--atmr-info-950);
+	--info-soft-foreground: var(--atmr-info-200);
+}
+
 @theme {
 	/*
 	 * Гарнитура ДС, за ней — запасная. Файлов Rostelecom Basis в репозитории
@@ -235,7 +349,7 @@
 	--color-surface: var(--grey-0);
 	--color-surface-muted: var(--grey-100);
 
-	/* Text: primary, muted, faint. All three clear 4.5:1 on a white surface. */
+	/* Text: primary, muted, faint. All three clear 4.5:1 on `surface`, both themes. */
 	--color-foreground: var(--grey-900);
 	--color-muted-foreground: var(--grey-600);
 	--color-faint: var(--grey-500);
@@ -250,7 +364,7 @@
 	 */
 	--color-primary: var(--accent-base);
 	--color-primary-hover: var(--accent-strong);
-	--color-primary-foreground: var(--grey-0);
+	--color-primary-foreground: var(--accent-on);
 	--color-primary-soft: var(--accent-soft);
 	--color-primary-soft-border: var(--accent-soft-border);
 
@@ -277,7 +391,7 @@
 	--color-background: var(--grey-0);
 	--color-card: var(--grey-0);
 	--color-card-foreground: var(--grey-900);
-	--color-popover: var(--grey-0);
+	--color-popover: var(--surface-overlay);
 	--color-popover-foreground: var(--grey-900);
 	--color-secondary: var(--grey-100);
 	--color-secondary-foreground: var(--grey-900);

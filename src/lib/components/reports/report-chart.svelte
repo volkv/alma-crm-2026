@@ -2,6 +2,7 @@
 	import type { Chart as ChartInstance, ChartConfiguration } from 'chart.js';
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { theme, type Theme } from '$lib/theme.svelte';
 	import { downloadChartPdf, downloadChartPng } from './chart-file';
 	import { valueLabelsPlugin } from './value-labels';
 
@@ -71,14 +72,39 @@
 	let canvas = $state<ChartCanvas | null>(null);
 	let chart = $state<ChartInstance | null>(null);
 
-	/** Цвет серии — из токена темы: `#hex` в компоненте недопустим. */
-	function themeColor(token: string): string {
-		const value = getComputedStyle(document.documentElement).getPropertyValue(token).trim();
+	/**
+	 * Цвета диаграммы — из токенов темы: `#hex` в компоненте недопустим.
+	 *
+	 * Значения читаются из документа, а тема приходит аргументом и в самой работе
+	 * не участвует: смена темы меняет значения всех токенов разом, и без этой
+	 * зависимости тёмная диаграмма осталась бы со светлой сеткой и подписями.
+	 */
+	function readPalette(_theme: Theme, series: readonly { token: string }[]) {
+		const styles = getComputedStyle(document.documentElement);
+		const read = (token: string): string => {
+			const value = styles.getPropertyValue(token).trim();
 
-		// Токена может не оказаться только если его переименовали в теме: пустой
-		// цвет Chart.js молча превратит в прозрачный, поэтому лучше видимый серый.
-		return value === '' ? '#94a3b8' : value;
+			// Токена может не оказаться только если его переименовали в теме: пустой
+			// цвет Chart.js молча превратит в прозрачный, поэтому лучше видимый серый.
+			return value === '' ? '#94a3b8' : value;
+		};
+
+		return {
+			/** Подпись значения над столбцом. */
+			label: read('--color-foreground'),
+			/** Деления и легенда: текст второго плана. */
+			axis: read('--color-muted-foreground'),
+			/** Сетка — та же линия, что разделяет строки таблицы. */
+			grid: read('--color-border'),
+			/** Ось: край контрола, чуть заметнее сетки. */
+			edge: read('--color-border-strong'),
+			/** Подложка выгруженной картинки — панель, на которой лежит диаграмма. */
+			sheet: read('--color-surface'),
+			series: series.map((item) => read(item.token))
+		};
 	}
+
+	const palette = $derived(readPalette(theme.resolved, datasets));
 
 	$effect(() => {
 		const element = canvas;
@@ -95,16 +121,16 @@
 				valueLabelsPlugin({
 					stacked,
 					horizontal,
-					color: themeColor('--color-foreground'),
+					color: palette.label,
 					fontFamily: getComputedStyle(element).fontFamily
 				})
 			],
 			data: {
 				labels: [...labels],
-				datasets: datasets.map((series) => ({
+				datasets: datasets.map((series, index) => ({
 					label: series.label,
 					data: [...series.values],
-					backgroundColor: themeColor(series.token),
+					backgroundColor: palette.series[index],
 					borderWidth: 0,
 					borderRadius: 2,
 					maxBarThickness: 28
@@ -114,6 +140,10 @@
 				indexAxis: horizontal ? 'y' : 'x',
 				responsive: true,
 				maintainAspectRatio: false,
+				// Умолчание Chart.js — серый `#666` на прозрачном: на тёмной панели
+				// его не видно. Цвет текста диаграммы задаётся темой, как и всё
+				// остальное на экране.
+				color: palette.axis,
 				// Двойная плотность: PNG диаграммы годится и для вставки в документ.
 				devicePixelRatio: 2,
 				animation: false,
@@ -121,12 +151,26 @@
 				// столбца обрезается краем холста.
 				layout: { padding: horizontal ? { right: 32 } : { top: 18 } },
 				plugins: {
-					legend: { display: datasets.length > 1, position: 'bottom' },
+					legend: {
+						display: datasets.length > 1,
+						position: 'bottom',
+						labels: { color: palette.axis }
+					},
 					tooltip: { enabled: true }
 				},
 				scales: {
-					x: { stacked, ticks: { precision: 0 }, grid: { display: !horizontal } },
-					y: { stacked, ticks: { precision: 0 }, grid: { display: horizontal } }
+					x: {
+						stacked,
+						ticks: { precision: 0, color: palette.axis },
+						grid: { display: !horizontal, color: palette.grid },
+						border: { color: palette.edge }
+					},
+					y: {
+						stacked,
+						ticks: { precision: 0, color: palette.axis },
+						grid: { display: horizontal, color: palette.grid },
+						border: { color: palette.edge }
+					}
 				},
 				onClick: (_event, elements) => {
 					if (elements.length > 0) {
@@ -168,9 +212,9 @@
 		}
 
 		if (kind === 'png') {
-			downloadChartPng(element, `${fileName}.png`);
+			downloadChartPng(element, `${fileName}.png`, palette.sheet);
 		} else {
-			downloadChartPdf(element, `${fileName}.pdf`);
+			downloadChartPdf(element, `${fileName}.pdf`, palette.sheet);
 		}
 	}
 </script>

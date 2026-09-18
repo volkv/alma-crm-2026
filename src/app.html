@@ -28,6 +28,14 @@
 			crossorigin="anonymous"
 		/>
 		%sveltekit.head%
+		<!--
+			Тема оформления. Скрипт ставит `data-theme` на <html> до первого кадра,
+			иначе выбранная тёмная тема появлялась бы вспышкой белого на каждой
+			загрузке. Стоит последним в <head>: разметку он блокирует, и таблица
+			стилей выше обязана начать грузиться раньше. Почему отдельным файлом, а
+			не строкой прямо здесь, сказано в самом `static/theme.js`.
+		-->
+		<script src="%sveltekit.assets%/theme.js"></script>
 	</head>
 	<body data-sveltekit-preload-data="hover">
 		<div style="display: contents">%sveltekit.body%</div>

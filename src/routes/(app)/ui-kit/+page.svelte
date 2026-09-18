@@ -37,6 +37,7 @@
 		type StageState
 	} from '$lib/components/stage-timeline.svelte';
 	import StatusBadge, { type StatusTone } from '$lib/components/status-badge.svelte';
+	import ThemeToggle from '$lib/components/app-shell/theme-toggle.svelte';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
 	import DateField from '$lib/components/form/date-field.svelte';
@@ -154,19 +155,36 @@
 
 	/**
 	 * Цвет продукта — это цвет «Дизайн-системы Ростелекома»: у каждого нашего
-	 * токена рядом стоит токен ДС, из которого он взят. Расшифровка целиком —
+	 * токена рядом стоит токен ДС, из которого он взят, — свой на светлую тему и
+	 * свой на тёмную. Образец перекрашивается вместе с темой: он и есть проверка
+	 * того, что у токена есть значение в обеих. Расшифровка целиком —
 	 * docs/design.md.
 	 */
 	const swatches = [
-		{ token: 'bg-canvas', label: 'canvas — фон приложения', source: 'bg-surface2' },
-		{ token: 'bg-surface', label: 'surface — панели и карточки', source: 'bg-page' },
-		{ token: 'bg-surface-muted', label: 'surface-muted — шапка таблицы', source: 'bg-surface3' },
-		{ token: 'bg-primary', label: 'primary — акцент', source: 'accent-700' },
-		{ token: 'bg-primary-soft', label: 'primary-soft — мягкий акцент', source: 'accent-50' },
-		{ token: 'bg-success', label: 'success', source: 'success-700' },
-		{ token: 'bg-warning', label: 'warning', source: 'warning-500' },
-		{ token: 'bg-danger', label: 'danger', source: 'error-700' },
-		{ token: 'bg-info', label: 'info', source: 'info-500' }
+		{ token: 'bg-canvas', label: 'canvas — фон приложения', light: 'bg-surface2', dark: 'bg-page' },
+		{
+			token: 'bg-surface',
+			label: 'surface — панели и карточки',
+			light: 'bg-page',
+			dark: 'bg-surface1'
+		},
+		{
+			token: 'bg-surface-muted',
+			label: 'surface-muted — шапка таблицы',
+			light: 'bg-surface3',
+			dark: 'bg-surface3'
+		},
+		{ token: 'bg-primary', label: 'primary — акцент', light: 'accent-700', dark: 'accent-200' },
+		{
+			token: 'bg-primary-soft',
+			label: 'primary-soft — мягкий акцент',
+			light: 'accent-50',
+			dark: 'accent-950'
+		},
+		{ token: 'bg-success', label: 'success', light: 'success-700', dark: 'success-200' },
+		{ token: 'bg-warning', label: 'warning', light: 'warning-500', dark: 'warning-200' },
+		{ token: 'bg-danger', label: 'danger', light: 'error-700', dark: 'error-200' },
+		{ token: 'bg-info', label: 'info', light: 'info-500', dark: 'info-200' }
 	];
 
 	/** Шкала кеглей: имя утилиты, вариант ДС и то, где он в продукте встречается. */
@@ -232,16 +250,23 @@
 	<section class="flex flex-col gap-3">
 		<h2 class="text-sm font-semibold tracking-tight">Токены</h2>
 		<InlineHint>
-			Тема продукта собрана на токенах «Дизайн-системы Ростелекома» (светлая тема): имена наших
-			токенов свои, значения — её. Полная таблица соответствия — в <code class="font-mono"
-				>docs/design.md</code
+			Тема продукта собрана на токенах «Дизайн-системы Ростелекома»: имена наших токенов свои,
+			значения — её. Тем две, светлая и тёмная; значения в них разные, имена одни и те же —
+			переключите тему и посмотрите на эту же страницу. Полная таблица соответствия — в <code
+				class="font-mono">docs/design.md</code
 			>.
 		</InlineHint>
+		<div class="flex flex-wrap items-center gap-2">
+			<span class="text-xs text-muted-foreground">Тема страницы:</span>
+			<ThemeToggle />
+		</div>
 		<div class="grid gap-4 md:grid-cols-2">
 			<Card.Root size="sm">
 				<Card.Header>
 					<Card.Title>Цвет</Card.Title>
-					<Card.Description>Слева наш токен, справа — токен ДС под ним.</Card.Description>
+					<Card.Description>
+						Слева наш токен, справа — токен ДС под ним: светлая тема / тёмная.
+					</Card.Description>
 				</Card.Header>
 				<Card.Content>
 					<ul class="flex flex-col gap-2">
@@ -251,7 +276,9 @@
 								<span class="min-w-0 flex-1 truncate text-xs text-muted-foreground"
 									>{swatch.label}</span
 								>
-								<code class="shrink-0 font-mono text-xs text-faint">{swatch.source}</code>
+								<code class="shrink-0 font-mono text-xs text-faint"
+									>{swatch.light} / {swatch.dark}</code
+								>
 							</li>
 						{/each}
 					</ul>
