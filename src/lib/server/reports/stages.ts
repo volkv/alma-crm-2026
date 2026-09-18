@@ -74,13 +74,33 @@ export async function readActiveProcessGroups(): Promise<Map<string, ReportProce
 }
 
 /** Название и место стадии в порядке процесса. */
-export type StageLabel = { label: string; order: number; retired: boolean };
+export type StageLabel = {
+	/**
+	 * Название для таблицы и сверки: с группой в скобках, когда групп с
+	 * процессом больше одной. В строке таблицы иначе не понять, чья это стадия.
+	 */
+	label: string;
+	/** Название без группы: воронка группы уже названа своим заголовком. */
+	name: string;
+	order: number;
+	retired: boolean;
+};
+
+/** Стадии одной группы процесса — заготовка её воронки, в порядке процесса. */
+export type StageSkeletonGroup = {
+	groupId: string;
+	groupKey: string;
+	groupName: string;
+	stages: { bucketId: string; stageKey: string; label: StageLabel }[];
+};
 
 export type StageIndex = {
 	label: (groupId: string, key: string, snapshotName: string | null) => StageLabel;
 	stageName: (key: string) => string;
-	/** Заготовка воронки: все стадии действующих редакций, в порядке процесса. */
-	skeleton: () => { bucketId: string; stageKey: string; label: StageLabel }[];
+	/** Группа процесса по идентификатору: её ключ уходит в фильтр воронки. */
+	group: (groupId: string) => ReportProcessGroup | null;
+	/** Заготовка воронок: по группе на процесс, стадии — в порядке процесса. */
+	skeleton: () => StageSkeletonGroup[];
 };
 
 /**
@@ -92,7 +112,7 @@ export type StageIndex = {
  */
 export function createStageIndex(groups: Map<string, ReportProcessGroup>): StageIndex {
 	const known = new Map<string, StageLabel>();
-	const skeleton: { bucketId: string; stageKey: string; label: StageLabel }[] = [];
+	const skeleton: StageSkeletonGroup[] = [];
 	const nameByKey = new Map<string, string>();
 	const retired = new Map<string, StageLabel>();
 	let order = 0;
@@ -102,21 +122,31 @@ export function createStageIndex(groups: Map<string, ReportProcessGroup>): Stage
 	const prefixed = [...groups.values()].filter((group) => group.stages.length > 0).length > 1;
 
 	for (const group of groups.values()) {
+		const bucket: StageSkeletonGroup = {
+			groupId: group.id,
+			groupKey: group.key,
+			groupName: group.name,
+			stages: []
+		};
+
 		for (const stage of group.stages) {
 			const bucketId = `${group.id}:${stage.key}`;
 			const label: StageLabel = {
 				label: prefixed ? `${stage.name} (${group.name})` : stage.name,
+				name: stage.name,
 				order: order++,
 				retired: false
 			};
 
 			known.set(bucketId, label);
-			skeleton.push({ bucketId, stageKey: stage.key, label });
+			bucket.stages.push({ bucketId, stageKey: stage.key, label });
 
 			if (!nameByKey.has(stage.key)) {
 				nameByKey.set(stage.key, stage.name);
 			}
 		}
+
+		skeleton.push(bucket);
 	}
 
 	return {
@@ -135,11 +165,9 @@ export function createStageIndex(groups: Map<string, ReportProcessGroup>): Stage
 			let missing = retired.get(bucketId);
 
 			if (missing === undefined) {
-				missing = {
-					label: `${snapshotName ?? key} (стадия удалена из процесса)`,
-					order: order + retired.size,
-					retired: true
-				};
+				const name = `${snapshotName ?? key} (стадия удалена из процесса)`;
+
+				missing = { label: name, name, order: order + retired.size, retired: true };
 				retired.set(bucketId, missing);
 			}
 
@@ -147,6 +175,9 @@ export function createStageIndex(groups: Map<string, ReportProcessGroup>): Stage
 		},
 		stageName(key) {
 			return nameByKey.get(key) ?? key;
+		},
+		group(groupId) {
+			return groups.get(groupId) ?? null;
 		},
 		skeleton() {
 			return skeleton;

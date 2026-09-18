@@ -41,7 +41,9 @@
 		ownerUserId: 'Ответственный',
 		parties: 'Участники',
 		programs: 'Программы',
-		products: 'Продукты'
+		products: 'Продукты',
+		contract: 'Договор',
+		contractItems: 'Позиции договора'
 	};
 
 	const HOUR = 60 * 60;

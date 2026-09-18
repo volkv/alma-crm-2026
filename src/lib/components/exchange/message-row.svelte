@@ -21,6 +21,13 @@
 	 * Кнопки не прячутся у чужих состояний, а просто отсутствуют там, где
 	 * действие бессмысленно: повторить принятое входящее нельзя — его повторяет
 	 * отправитель, а не мы.
+	 *
+	 * Журнал широкий, а экран рабочего ноутбука — 1280 точек, из которых на
+	 * список остаётся около тысячи. Поэтому ответ получателя и ссылка на
+	 * взаимодействие до `2xl` стоят не своими колонками, а строкой под
+	 * состоянием и под событием: ключевые «когда — направление — событие —
+	 * состояние» обязаны помещаться без горизонтальной прокрутки, а данные при
+	 * этом не должны пропадать с экрана (`docs/design.md`, «Приоритет колонок»).
 	 */
 	let { message }: { message: ExchangeMessageView } = $props();
 
@@ -36,6 +43,14 @@
 					: 'warning'
 	);
 
+	/**
+	 * Тип события по частям: `learning_group.requested` — одно слово в двадцать
+	 * четыре знака, и в колонке оно не переносится нигде, распирая таблицу на
+	 * рабочем экране. Перенос разрешён после точки (`<wbr>`) — там, где имя
+	 * события и так читается как две части.
+	 */
+	const eventParts = $derived(message.eventType.split('.'));
+
 	const canRetry = $derived(
 		message.direction === 'outbound' &&
 			(RETRIABLE_STATES as readonly string[]).includes(message.state)
@@ -43,18 +58,39 @@
 </script>
 
 <Table.Row>
-	<Table.Cell class="whitespace-nowrap">{formatDateTime(message.createdAt)}</Table.Cell>
+	<Table.Cell class="whitespace-normal">{formatDateTime(message.createdAt)}</Table.Cell>
 	<Table.Cell>{EXCHANGE_DIRECTION_LABELS[message.direction]}</Table.Cell>
 	<Table.Cell class="font-mono text-xs">{message.system}:{message.instance}</Table.Cell>
-	<Table.Cell class="font-mono text-xs">{message.eventType}</Table.Cell>
-	<Table.Cell class="font-mono text-xs break-all">
+	<Table.Cell class="font-mono text-xs whitespace-normal">
+		{#each eventParts as part, index (index)}{#if index > 0}.<wbr />{/if}{part}{/each}
+		{#if message.interactionId !== null}
+			<a
+				class="mt-0.5 block max-w-40 font-sans whitespace-normal underline underline-offset-4 2xl:hidden"
+				href={resolve('/(app)/interactions/[id=uuid]', { id: message.interactionId })}
+			>
+				{message.interactionTitle ?? 'Взаимодействие'}
+			</a>
+		{/if}
+	</Table.Cell>
+	<Table.Cell class="max-w-32 font-mono text-xs break-all whitespace-normal">
 		{message.externalId ?? '—'}
 		<span class="block text-muted-foreground">{message.eventId}</span>
 	</Table.Cell>
 	<Table.Cell>
 		<StatusBadge {tone} dot>{EXCHANGE_STATE_LABELS[message.state]}</StatusBadge>
+		{#if message.lastError !== null}
+			<span
+				class="mt-0.5 block max-w-40 text-xs whitespace-normal text-danger-soft-foreground 2xl:hidden"
+			>
+				{message.lastError}
+			</span>
+		{:else if message.responseStatus !== null}
+			<span class="mt-0.5 block text-xs text-muted-foreground 2xl:hidden">
+				ответ {message.responseStatus}
+			</span>
+		{/if}
 	</Table.Cell>
-	<Table.Cell class="whitespace-nowrap">
+	<Table.Cell class="whitespace-normal">
 		{message.attempt}
 		{#if message.nextAttemptAt !== null}
 			<span class="block text-xs text-muted-foreground">
@@ -62,7 +98,7 @@
 			</span>
 		{/if}
 	</Table.Cell>
-	<Table.Cell class="max-w-64 text-xs">
+	<Table.Cell class="hidden max-w-64 text-xs whitespace-normal 2xl:table-cell">
 		{#if message.lastError !== null}
 			<span class="text-danger-soft-foreground">{message.lastError}</span>
 		{:else if message.responseStatus !== null}
@@ -71,7 +107,7 @@
 			—
 		{/if}
 	</Table.Cell>
-	<Table.Cell>
+	<Table.Cell class="hidden max-w-48 whitespace-normal 2xl:table-cell">
 		{#if message.interactionId !== null}
 			<a
 				class="underline underline-offset-4"
@@ -83,8 +119,8 @@
 			—
 		{/if}
 	</Table.Cell>
-	<Table.Cell class="whitespace-nowrap">
-		<div class="flex gap-2">
+	<Table.Cell class="whitespace-normal">
+		<div class="flex flex-wrap gap-2">
 			{#if canRetry}
 				<form method="POST" action="?/retry" use:enhance>
 					<input type="hidden" name="messageId" value={message.id} />

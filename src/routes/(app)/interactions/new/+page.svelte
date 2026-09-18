@@ -16,9 +16,14 @@
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import PageHeader from '$lib/components/page-header.svelte';
 	import OrganizationPicker from '$lib/components/interactions/organization-picker.svelte';
-	import { NO_OPTION, toLookupOptions } from '$lib/components/directory/labels';
-	import type { LookupOption } from '$lib/contracts/directory';
-	import { createInteractionSchema, PARTY_ROLE_LABELS } from '$lib/contracts/interactions';
+	import { NO_OPTION, toLookupOptions, withEmptyOption } from '$lib/components/directory/labels';
+	import type { ContractView, LookupOption } from '$lib/contracts/directory';
+	import {
+		CONTRACT_STATUS_LABELS,
+		createInteractionSchema,
+		PARTY_ROLE_LABELS
+	} from '$lib/contracts/interactions';
+	import { formatDate } from '$lib/format';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -67,6 +72,11 @@
 	let selectedSiteIds = $state<string[]>([]);
 	let contactAffiliationId = $state<string | null>(null);
 	let selectedProgramIds = $state<string[]>([]);
+	// Договоры выбранного вуза и выбор по ним: договор один, позиций из него —
+	// сколько угодно.
+	let contracts = $state<ContractView[]>([]);
+	let contractId = $state<string | null>(null);
+	let selectedItemIds = $state<string[]>([]);
 	// Даты в форме — строки: пустое поле это «не указано», и в контракт оно едет
 	// как `null`, а не как пустая строка.
 	let periods = $state({
@@ -76,7 +86,10 @@
 		academicPeriodEnd: ''
 	});
 
-	async function loadLookup(kind: 'sites' | 'contacts', organizationId: string) {
+	async function loadLookup<TItem>(
+		kind: 'sites' | 'contacts' | 'contracts',
+		organizationId: string
+	): Promise<TItem[]> {
 		const response = await fetch(
 			`/interactions/lookup?kind=${kind}&organizationId=${encodeURIComponent(organizationId)}`
 		);
@@ -85,7 +98,7 @@
 			return [];
 		}
 
-		const body: { items?: LookupOption[] } = await response.json();
+		const body: { items?: TItem[] } = await response.json();
 
 		return body.items ?? [];
 	}
@@ -93,18 +106,47 @@
 	async function onInstitution(option: LookupOption | null) {
 		selectedSiteIds = [];
 		contactAffiliationId = null;
+		// Договор принадлежит контрагенту: сменили вуз — прежний выбор говорит о
+		// чужом обязательстве, и сервер его всё равно отвергнет.
+		contractId = null;
+		selectedItemIds = [];
 
 		if (option === null) {
 			institutionSites = [];
 			institutionContacts = [];
+			contracts = [];
 			return;
 		}
 
-		[institutionSites, institutionContacts] = await Promise.all([
-			loadLookup('sites', option.id),
-			loadLookup('contacts', option.id)
+		[institutionSites, institutionContacts, contracts] = await Promise.all([
+			loadLookup<LookupOption>('sites', option.id),
+			loadLookup<LookupOption>('contacts', option.id),
+			loadLookup<ContractView>('contracts', option.id)
 		]);
 	}
+
+	const contractOptions = $derived(
+		withEmptyOption(
+			contracts.map((contract) => ({
+				value: contract.id,
+				label: `№ ${contract.number} — ${CONTRACT_STATUS_LABELS[contract.status]}`
+			})),
+			'Без договора'
+		)
+	);
+
+	const chosenContract = $derived(contracts.find((contract) => contract.id === contractId) ?? null);
+
+	/**
+	 * Позиции, выбранные по продуктам, которых нет в составе. Позиция добавляет
+	 * к продукту коммерческие условия, а состав задают продукты: сервер такую
+	 * пару отвергнет, и сказать об этом надо до отправки.
+	 */
+	const itemsOutsideProducts = $derived(
+		(chosenContract?.items ?? []).filter(
+			(item) => selectedItemIds.includes(item.id) && !$form.productIds.includes(item.productId)
+		)
+	);
 
 	// Стороны взаимодействия собираются из выбранных организаций: контракт ждёт
 	// список участников с ролями, а форма показывает две понятные строки.
@@ -139,6 +181,11 @@
 			programId,
 			programVersionId: null
 		}));
+	});
+
+	$effect(() => {
+		$form.contractId = contractId;
+		$form.contractItemIds = contractId === null ? [] : selectedItemIds;
 	});
 
 	$effect(() => {
@@ -355,6 +402,77 @@
 						</Label>
 					{/each}
 				</fieldset>
+			</Card.Content>
+		</Card.Root>
+
+		<Card.Root size="sm">
+			<Card.Header>
+				<Card.Title>Договор</Card.Title>
+				<Card.Description>
+					По какому обязательству идёт работа и какие его позиции в ней участвуют. Договоры ведут в
+					карточке контрагента: здесь их только выбирают.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content class="flex flex-col gap-4">
+				{#if institution === null}
+					<p class="text-xs text-muted-foreground">
+						Сначала выберите учебное заведение: договор принадлежит ему.
+					</p>
+				{:else if contracts.length === 0}
+					<p class="text-xs text-muted-foreground">
+						У выбранного контрагента договоров пока нет: их заводят на его карточке.
+					</p>
+				{:else}
+					<FieldSelect
+						name="contractId"
+						label="Договор контрагента"
+						options={contractOptions}
+						errors={$errors.contractId}
+						bind:value={
+							() => contractId ?? NO_OPTION,
+							(next) => {
+								contractId = next === NO_OPTION ? null : next;
+								selectedItemIds = [];
+							}
+						}
+					/>
+
+					{#if chosenContract !== null}
+						<fieldset class="flex flex-col gap-2">
+							<legend class="text-sm font-medium">Позиции договора</legend>
+							{#if chosenContract.items.length === 0}
+								<p class="text-xs text-muted-foreground">
+									В договоре нет позиций: коммерческие условия по продуктам не записаны.
+								</p>
+							{/if}
+							{#each chosenContract.items as item (item.id)}
+								<Label class="flex items-start gap-2 font-normal">
+									<Checkbox
+										checked={selectedItemIds.includes(item.id)}
+										onCheckedChange={(checked) =>
+											(selectedItemIds = toggle(selectedItemIds, item.id, checked === true))}
+									/>
+									<span class="flex flex-col gap-0.5">
+										<span>{item.productCode} — {item.productName}</span>
+										<span class="text-xs text-muted-foreground">
+											Статус по передаче: {item.transferStatus}{item.licenseUntil === null
+												? ''
+												: ` · лицензия до ${formatDate(item.licenseUntil)}`}
+										</span>
+									</span>
+								</Label>
+							{/each}
+						</fieldset>
+
+						{#if itemsOutsideProducts.length > 0}
+							<InlineHint tone="warning">
+								Позиция описывает продукт, которого нет в составе: отметьте {itemsOutsideProducts
+									.map((item) => `«${item.productName}»`)
+									.join(', ')} среди продуктов или снимите позицию.
+							</InlineHint>
+						{/if}
+					{/if}
+				{/if}
 			</Card.Content>
 		</Card.Root>
 

@@ -2,6 +2,7 @@
 	import { Select as SelectPrimitive } from 'bits-ui';
 	import { cn, type WithoutChild } from '$lib/utils.js';
 	import type { WithoutChildrenOrChild } from '$lib/utils.js';
+	import { getSelectPopup } from './select.svelte';
 	import SelectPortal from './select-portal.svelte';
 	import SelectScrollDownButton from './select-scroll-down-button.svelte';
 	import SelectScrollUpButton from './select-scroll-up-button.svelte';
@@ -18,11 +19,15 @@
 	}: WithoutChild<SelectPrimitive.ContentProps> & {
 		portalProps?: WithoutChildrenOrChild<ComponentProps<typeof SelectPortal>>;
 	} = $props();
+
+	/** Тот же идентификатор, на который смотрит `aria-controls` триггера. */
+	const popup = getSelectPopup();
 </script>
 
 <SelectPortal {...portalProps}>
 	<SelectPrimitive.Content
 		bind:ref
+		id={popup.id}
 		{sideOffset}
 		{preventScroll}
 		data-slot="select-content"

@@ -120,6 +120,41 @@ test('a date is typed in the Russian order and picked from the same popover laye
 	await expect(field).toHaveValue('');
 });
 
+/**
+ * Выбор из закрытого списка — это пара «кнопка и список», и ARIA называет её
+ * `combobox`. Роль здесь не украшение: по ней выбор находят и вспомогательные
+ * технологии, и проверки, а `aria-controls` у открытого списка говорит, какой
+ * именно список открыт этой кнопкой.
+ */
+test('a select is found by its combobox role and names the list it opens', async ({ page }) => {
+	await page.goto('/ui-kit');
+
+	const region = page.getByRole('combobox', { name: 'Регион' });
+
+	await expect(region).toBeVisible();
+	await expect(region).toHaveAttribute('aria-expanded', 'false');
+
+	const list = page.getByRole('listbox');
+
+	// The list is opened by the page's own code, and the trigger toggles it: a
+	// press before hydration is lost for good, and a press too many closes what
+	// the first one opened. Retry, but only while the list is closed.
+	await expect(async () => {
+		if (!(await list.isVisible())) {
+			await region.click({ timeout: 5_000 });
+		}
+
+		await expect(list).toBeVisible({ timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+
+	await expect(region).toHaveAttribute('aria-expanded', 'true');
+
+	const controls = await region.getAttribute('aria-controls');
+
+	expect(controls).not.toBeNull();
+	await expect(list).toHaveAttribute('id', controls ?? '');
+});
+
 test('navigation moves into a sheet on a phone', async ({ page }) => {
 	await page.setViewportSize({ width: 390, height: 844 });
 	await page.goto('/ui-kit');

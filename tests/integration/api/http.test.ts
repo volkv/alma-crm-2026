@@ -603,6 +603,7 @@ describe('описание API', () => {
 		const paths = document.paths as unknown as Record<string, Record<string, unknown>>;
 		expect(Object.keys(paths).sort()).toEqual([
 			'/v1/applications',
+			'/v1/contracts',
 			'/v1/directions',
 			'/v1/documents/{id}/marks',
 			'/v1/exchange/files/{key}',

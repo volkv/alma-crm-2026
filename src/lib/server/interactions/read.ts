@@ -25,6 +25,7 @@ import { PARTY_ROLE_LABELS } from '$lib/contracts/interactions';
 import type {
 	CommentView,
 	InteractionChangeView,
+	InteractionContractView,
 	InteractionDocumentView,
 	InteractionListItem,
 	InteractionListQuery,
@@ -43,8 +44,11 @@ import {
 	affiliations,
 	blockers,
 	comments,
+	contractItems,
+	contracts,
 	documents,
 	interactionChanges,
+	interactionContractItems,
 	interactionParties,
 	interactionPartySites,
 	interactionProducts,
@@ -520,6 +524,56 @@ async function readProducts(interactionId: string): Promise<InteractionProductVi
 }
 
 /**
+ * Договор взаимодействия и выбранные из него позиции.
+ *
+ * Читается по `interactions.contract_id`, а позиции — по связи: позиций у
+ * договора бывает больше, чем выбрало взаимодействие, и показывать все значило
+ * бы приписать записи условия, по которым она не идёт.
+ */
+async function readContract(
+	interactionId: string,
+	contractId: string | null
+): Promise<InteractionContractView | null> {
+	if (contractId === null) {
+		return null;
+	}
+
+	const [contract] = await getDb()
+		.select({
+			id: contracts.id,
+			number: contracts.number,
+			status: contracts.status,
+			signedOn: contracts.signedOn,
+			validUntil: contracts.validUntil
+		})
+		.from(contracts)
+		.where(eq(contracts.id, contractId))
+		.limit(1);
+
+	if (contract === undefined) {
+		return null;
+	}
+
+	const items = await getDb()
+		.select({
+			id: contractItems.id,
+			productId: contractItems.productId,
+			code: products.code,
+			name: products.name,
+			licenseSignedAt: contractItems.licenseSignedAt,
+			licenseUntil: contractItems.licenseUntil,
+			transferStatus: contractItems.transferStatus
+		})
+		.from(interactionContractItems)
+		.innerJoin(contractItems, eq(contractItems.id, interactionContractItems.contractItemId))
+		.innerJoin(products, eq(products.id, contractItems.productId))
+		.where(eq(interactionContractItems.interactionId, interactionId))
+		.orderBy(asc(products.code));
+
+	return { ...contract, items };
+}
+
+/**
  * Документы взаимодействия — только перечень. Содержимое отдаёт маршрут
  * скачивания, и он же записывает выдачу в журнал.
  */
@@ -564,9 +618,10 @@ async function buildInteractionBase(interactionId: string): Promise<InteractionB
 		throw new NotFoundError('Взаимодействие не найдено');
 	}
 
-	const [programList, productList, documentList] = await Promise.all([
+	const [programList, productList, contract, documentList] = await Promise.all([
 		readPrograms(interactionId),
 		readProducts(interactionId),
+		readContract(interactionId, row.interaction.contractId),
 		readDocuments(interactionId)
 	]);
 
@@ -590,6 +645,7 @@ async function buildInteractionBase(interactionId: string): Promise<InteractionB
 		updatedAt: row.interaction.updatedAt,
 		programs: programList,
 		products: productList,
+		contract,
 		documents: documentList
 	};
 }
@@ -699,7 +755,9 @@ const REFERENCE_FIELDS = {
 	ownerUserId: 'user',
 	parties: 'organization',
 	programs: 'program',
-	products: 'product'
+	products: 'product',
+	contract: 'contract',
+	contractItems: 'contract_item'
 } as const;
 
 type ReferenceKind = (typeof REFERENCE_FIELDS)[keyof typeof REFERENCE_FIELDS];
@@ -724,7 +782,9 @@ function referencedIds(field: string, value: unknown): string[] | null {
 		return null;
 	}
 
-	if (field === 'ownerUserId') {
+	// Одиночная ссылка: ответственный и договор лежат в значении строкой, а не
+	// списком, — и пустой договор это «договора нет», а не «список пуст».
+	if (field === 'ownerUserId' || field === 'contract') {
 		return typeof value === 'string' ? [value] : [''];
 	}
 
@@ -799,6 +859,21 @@ async function readReferenceNames(
 				.select({ id: products.id, name: products.name })
 				.from(products)
 				.where(inArray(products.id, ids))
+		),
+		read('contract', (ids) =>
+			db
+				.select({ id: contracts.id, name: contracts.number })
+				.from(contracts)
+				.where(inArray(contracts.id, ids))
+		),
+		// Позиция договора называется своим продуктом: «позиция 3f2a…» не
+		// объясняет, что именно в работе поменялось.
+		read('contract_item', (ids) =>
+			db
+				.select({ id: contractItems.id, name: products.name })
+				.from(contractItems)
+				.innerJoin(products, eq(products.id, contractItems.productId))
+				.where(inArray(contractItems.id, ids))
 		)
 	]);
 

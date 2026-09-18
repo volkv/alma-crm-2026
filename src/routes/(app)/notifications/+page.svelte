@@ -113,8 +113,11 @@
 						<Table.Head>Получатель</Table.Head>
 						<Table.Head>Канал</Table.Head>
 						<Table.Head>Состояние</Table.Head>
-						<Table.Head>Попытки</Table.Head>
-						<Table.Head>Подробности</Table.Head>
+						<!-- Попытки и подробности уезжают в строку под состоянием, пока окно
+							уже 1536: «повод — получатель — канал — состояние» обязаны
+							помещаться на экране в 1280 точек целиком. -->
+						<Table.Head class="hidden 2xl:table-cell">Попытки</Table.Head>
+						<Table.Head class="hidden 2xl:table-cell">Подробности</Table.Head>
 						<Table.Head>Действия</Table.Head>
 					</Table.Row>
 				</Table.Header>

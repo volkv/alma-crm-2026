@@ -14,6 +14,7 @@
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
+	import FileInput from '$lib/components/form/file-input.svelte';
 	import SlaChip from '$lib/components/sla-chip.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { anchorHref } from '$lib/components/directory/query';
@@ -422,24 +423,16 @@
 			/>
 
 			{#if canAttach}
-				<div class="flex flex-col gap-1.5">
-					<!-- Файл виден на той стадии, где его приложили, а не общим списком
-						по взаимодействию: «чем подтверждена передача материалов» —
-						вопрос к стадии. Здесь нативный выбор файлов, а не наш
-						`FileInput`: тот показывает один файл, а вложений к переходу
-						бывает несколько. -->
-					<Label for="transitionFiles">Вложения</Label>
-					<input
-						id="transitionFiles"
-						name="files"
-						type="file"
-						multiple
-						class="text-sm file:mr-2 file:rounded-md file:border file:border-input file:bg-background file:px-2 file:py-1 file:text-sm"
-					/>
-					<p class="text-xs text-muted-foreground">
-						До десяти файлов на переход; они останутся на покидаемой стадии.
-					</p>
-				</div>
+				<!-- Файл виден на той стадии, где его приложили, а не общим списком
+					по взаимодействию: «чем подтверждена передача материалов» —
+					вопрос к стадии. -->
+				<FileInput
+					id="transitionFiles"
+					name="files"
+					label="Вложения"
+					multiple
+					description="До десяти файлов на переход; они останутся на покидаемой стадии."
+				/>
 			{/if}
 
 			<Dialog.Footer>

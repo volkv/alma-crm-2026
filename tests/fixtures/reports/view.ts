@@ -58,6 +58,21 @@ export function sampleReportView(overrides: Partial<ReportView> = {}): ReportVie
 					{ kind: 'text', value: 'Вуз А' },
 					{ kind: 'list', values: ['П-1', 'П-1б'] },
 					{ kind: 'number', value: 12 }
+				],
+				documents: [
+					{
+						id: '55555555-5555-4555-8555-555555555555',
+						kind: 'agreement',
+						storageKey: 'files/55555555-5555-4555-8555-555555555555',
+						sha256: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90'
+					}
+				],
+				learningGroups: [
+					{
+						id: '66666666-6666-4666-8666-666666666666',
+						externalId: 'LMS-2026-1',
+						resultId: '77777777-7777-4777-8777-777777777777'
+					}
 				]
 			},
 			{
@@ -73,24 +88,35 @@ export function sampleReportView(overrides: Partial<ReportView> = {}): ReportVie
 					{ kind: 'text', value: 'Вуз Б' },
 					{ kind: 'list', values: [] },
 					{ kind: 'number', value: null }
-				]
+				],
+				// Ни документа, ни учебной группы: путь «от числа к подтверждению»
+				// обязан выдерживать и строку, подтвердить которую пока нечем.
+				documents: [],
+				learningGroups: []
 			}
 		],
 		totals: { rowCount: 2, interactionCount: 2, paused: 0, overdue: 1 },
 		charts: {
 			funnel: {
-				stages: [
+				groups: [
 					{
-						key: 'group:contact_search',
-						label: 'Поиск контактных лиц',
-						value: 1,
-						filter: { param: 'stage', value: 'contact_search' }
-					},
-					{
-						key: 'group:meeting',
-						label: 'Встреча',
-						value: 0,
-						filter: { param: 'stage', value: 'meeting' }
+						groupId: '88888888-8888-4888-8888-888888888888',
+						groupKey: 'b2b',
+						groupName: 'Работа с вузами',
+						stages: [
+							{
+								key: 'group:contact_search',
+								label: 'Поиск контактных лиц',
+								value: 1,
+								filter: { param: 'stage', value: 'contact_search' }
+							},
+							{
+								key: 'group:meeting',
+								label: 'Встреча',
+								value: 0,
+								filter: { param: 'stage', value: 'meeting' }
+							}
+						]
 					}
 				],
 				closed: [

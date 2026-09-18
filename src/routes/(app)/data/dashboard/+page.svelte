@@ -96,7 +96,7 @@
 <PageHeader
 	title="Дашборд данных"
 	description="Портфель обучения за один отчётный период: сколько программ и вузов, сколько заявок и обучающихся и из каких загрузок это сложилось."
-	breadcrumbs={[{ label: 'Данные', href: resolve('/(app)/data') }]}
+	breadcrumbs={[{ label: 'Данные об обучении', href: resolve('/(app)/data') }]}
 >
 	{#snippet actions()}
 		{#if dashboard !== null}

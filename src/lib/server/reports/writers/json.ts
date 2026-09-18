@@ -6,6 +6,11 @@
  * взаимодействия и абсолютная ссылка на карточку. Кодировка — строго UTF-8 без
  * метки порядка байтов: метка нужна текстовому CSV, а этот отчёт CSV не
  * производит.
+ *
+ * Сверх ячеек строка несёт ключи связи — документы и учебные группы. Путь «от
+ * числа к подтверждению» в интерфейсе доходит до карточки и дальше идёт глазами;
+ * читающему файл глаз не полагается, и без этих ключей проверить число из файла
+ * нечем.
  */
 import type { ReportCell, ReportView } from '$lib/contracts/reports';
 
@@ -48,7 +53,12 @@ export function reportJson(view: ReportView): Buffer {
 			url: row.cells.find((cell) => cell.kind === 'link')?.url ?? null,
 			values: Object.fromEntries(
 				row.cells.map((cell, position) => [keys[position], toJsonValue(cell)])
-			)
+			),
+			// Ключи связи, а не содержимое: по ним читающий найдёт файл в
+			// хранилище и результат в системе обучения, а персональных данных в
+			// них нет — ни названия документа, ни того, кто его загрузил.
+			documents: row.documents,
+			learningGroups: row.learningGroups
 		}))
 	};
 

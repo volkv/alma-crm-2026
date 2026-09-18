@@ -19,21 +19,27 @@ import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
 	createInteractionSchema,
 	updateInteractionSchema,
+	type CreateInteractionDraft,
 	type CreateInteractionInput,
 	type InteractionView,
+	type UpdateInteractionDraft,
 	type UpdateInteractionInput
 } from '$lib/contracts/interactions';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import {
 	affiliations,
+	contractItems,
+	contracts,
 	interactionChanges,
+	interactionContractItems,
 	interactionParties,
 	interactionPartySites,
 	interactionProducts,
 	interactionPrograms,
 	interactions,
 	organizations,
+	products,
 	sites,
 	users
 } from '../db/schema';
@@ -50,7 +56,7 @@ const now = sql`now()`;
 
 type PartyInput = CreateInteractionInput['parties'][number];
 
-function parseCreate(input: CreateInteractionInput): CreateInteractionInput {
+function parseCreate(input: CreateInteractionDraft): CreateInteractionInput {
 	const parsed = createInteractionSchema.safeParse(input);
 
 	if (!parsed.success) {
@@ -179,6 +185,85 @@ async function assertPartiesAllowed(
 	}
 }
 
+/**
+ * Договор и его позиции принадлежат этому взаимодействию по праву.
+ *
+ * Три условия, и каждое — про чужую запись, которую нельзя утащить к себе:
+ *
+ * 1. **договор принадлежит основной стороне.** Договор живёт у контрагента, а
+ *    взаимодействие его только выбирает (`docs/domain.md`, раздел 3.2); договор
+ *    другого вуза здесь означал бы работу по чужому обязательству;
+ * 2. **позиция принадлежит выбранному договору.** Это же держит составной
+ *    внешний ключ `(contract_item_id, contract_id)`, но отказ базы человеку
+ *    ничего не объясняет, а проверка объясняет словами;
+ * 3. **у позиции есть продукт взаимодействия.** Источник истины о составе
+ *    продуктов — `interaction_products`; позиция добавляет к продукту
+ *    коммерческие условия и состав не задаёт. Позиция по продукту, которого во
+ *    взаимодействии нет, добавляла бы условия в пустоту, поэтому это отказ, а
+ *    не тихое добавление продукта: состав решает человек.
+ */
+async function assertContractAllowed(
+	tx: Tx,
+	input: Pick<CreateInteractionInput, 'contractId' | 'contractItemIds' | 'productIds' | 'parties'>
+): Promise<void> {
+	if (input.contractId === null) {
+		return;
+	}
+
+	const primary = requirePrimaryParty(input.parties);
+
+	const [contract] = await tx
+		.select({ organizationId: contracts.organizationId })
+		.from(contracts)
+		.where(eq(contracts.id, input.contractId))
+		.limit(1);
+
+	if (contract === undefined) {
+		throw new ValidationError('Договор не найден', ['Выберите договор основной стороны']);
+	}
+
+	if (contract.organizationId !== primary.organizationId) {
+		throw new ValidationError('Договор заключён с другим контрагентом', [
+			'Выберите договор той организации, с которой ведётся процесс'
+		]);
+	}
+
+	if (input.contractItemIds.length === 0) {
+		return;
+	}
+
+	const rows = await tx
+		.select({ id: contractItems.id, productId: contractItems.productId })
+		.from(contractItems)
+		.where(
+			and(
+				inArray(contractItems.id, input.contractItemIds),
+				eq(contractItems.contractId, input.contractId)
+			)
+		);
+
+	if (rows.length !== input.contractItemIds.length) {
+		throw new ValidationError('Позиция не принадлежит выбранному договору', [
+			'Выберите позиции того договора, который указан во взаимодействии'
+		]);
+	}
+
+	const chosenProducts = new Set(input.productIds);
+	const orphan = rows.find((row) => !chosenProducts.has(row.productId));
+
+	if (orphan !== undefined) {
+		const [product] = await tx
+			.select({ name: products.name })
+			.from(products)
+			.where(eq(products.id, orphan.productId))
+			.limit(1);
+
+		throw new ValidationError('Позиция договора описывает продукт вне состава взаимодействия', [
+			`Отметьте продукт «${product?.name ?? orphan.productId}» в составе или снимите эту позицию`
+		]);
+	}
+}
+
 async function assertOwnerExists(tx: Tx, ownerUserId: string): Promise<void> {
 	const [owner] = await tx
 		.select({ id: users.id })
@@ -233,6 +318,21 @@ async function writeRelations(
 			.insert(interactionProducts)
 			.values(input.productIds.map((productId) => ({ interactionId, productId })));
 	}
+
+	// Договор стоит в самой записи, а его позиции — списком: `contract_id`
+	// дублируется в строке связи не ради удобства, а ради составного внешнего
+	// ключа, которым база держит принадлежность позиции договору.
+	const contractId = input.contractId;
+
+	if (contractId !== null && input.contractItemIds.length > 0) {
+		await tx.insert(interactionContractItems).values(
+			input.contractItemIds.map((contractItemId) => ({
+				interactionId,
+				contractItemId,
+				contractId
+			}))
+		);
+	}
 }
 
 /**
@@ -247,13 +347,14 @@ async function writeRelations(
 export async function createInteractionIn(
 	ctx: ActorContext,
 	tx: Tx,
-	input: CreateInteractionInput
+	input: CreateInteractionDraft
 ): Promise<string> {
 	requirePermission(ctx, 'interactions.write');
 
 	const definition = parseCreate(input);
 
 	await assertPartiesAllowed(ctx, tx, definition.parties);
+	await assertContractAllowed(tx, definition);
 	await assertOwnerExists(tx, definition.ownerUserId);
 
 	const groupId = await resolveGroupForParties(tx, definition.parties);
@@ -268,6 +369,7 @@ export async function createInteractionIn(
 		.values({
 			title: definition.title,
 			processGroupId: group.id,
+			contractId: definition.contractId,
 			agreementPeriodStart: definition.agreementPeriodStart,
 			agreementPeriodEnd: definition.agreementPeriodEnd,
 			academicPeriodStart: definition.academicPeriodStart,
@@ -309,7 +411,7 @@ export async function createInteractionIn(
 
 export async function createInteraction(
 	ctx: ActorContext,
-	input: CreateInteractionInput
+	input: CreateInteractionDraft
 ): Promise<InteractionView> {
 	const interactionId = await withTransaction(ctx, (tx) => createInteractionIn(ctx, tx, input));
 
@@ -360,7 +462,7 @@ function sameSet(left: readonly string[], right: readonly string[]): boolean {
 
 export async function updateInteraction(
 	ctx: ActorContext,
-	input: UpdateInteractionInput
+	input: UpdateInteractionDraft
 ): Promise<InteractionView> {
 	requirePermission(ctx, 'interactions.write');
 
@@ -388,6 +490,7 @@ export async function updateInteraction(
 		}
 
 		await assertPartiesAllowed(ctx, tx, definition.parties);
+		await assertContractAllowed(tx, definition);
 		await assertOwnerExists(tx, definition.ownerUserId);
 
 		// Группа выводится из вида основной стороны и меняется только вместе с
@@ -425,6 +528,11 @@ export async function updateInteraction(
 			.select({ productId: interactionProducts.productId })
 			.from(interactionProducts)
 			.where(eq(interactionProducts.interactionId, definition.id));
+
+		const previousItems = await tx
+			.select({ contractItemId: interactionContractItems.contractItemId })
+			.from(interactionContractItems)
+			.where(eq(interactionContractItems.interactionId, definition.id));
 
 		const changes = scalarChanges(before, definition);
 
@@ -470,10 +578,35 @@ export async function updateInteraction(
 			});
 		}
 
+		// Договор и его позиции — тоже решение, и в истории они стоят рядом со
+		// сроками: «почему у этой работы другой договор» спрашивают у карточки, а
+		// не у журнала службы безопасности.
+		if (before.contractId !== definition.contractId) {
+			changes.push({
+				field: 'contract',
+				oldValue: before.contractId,
+				newValue: definition.contractId
+			});
+		}
+
+		if (
+			!sameSet(
+				previousItems.map((item) => item.contractItemId),
+				definition.contractItemIds
+			)
+		) {
+			changes.push({
+				field: 'contractItems',
+				oldValue: previousItems.map((item) => item.contractItemId),
+				newValue: definition.contractItemIds
+			});
+		}
+
 		await tx
 			.update(interactions)
 			.set({
 				title: definition.title,
+				contractId: definition.contractId,
 				agreementPeriodStart: definition.agreementPeriodStart,
 				agreementPeriodEnd: definition.agreementPeriodEnd,
 				academicPeriodStart: definition.academicPeriodStart,
@@ -496,6 +629,9 @@ export async function updateInteraction(
 		await tx
 			.delete(interactionProducts)
 			.where(eq(interactionProducts.interactionId, definition.id));
+		await tx
+			.delete(interactionContractItems)
+			.where(eq(interactionContractItems.interactionId, definition.id));
 
 		await writeRelations(tx, definition.id, definition);
 

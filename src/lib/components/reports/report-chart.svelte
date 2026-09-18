@@ -3,6 +3,7 @@
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { downloadChartPdf, downloadChartPng } from './chart-file';
+	import { valueLabelsPlugin } from './value-labels';
 
 	/**
 	 * Диаграмма отчёта.
@@ -67,8 +68,23 @@
 
 	$effect(() => {
 		const element = canvas;
+
+		if (element === null) {
+			return;
+		}
+
 		const configuration: ChartConfiguration<'bar', number[], string> = {
 			type: 'bar',
+			// Подписи значений рисует свой плагин — прямо на холсте, поэтому число
+			// над столбцом уезжает и в PNG, и в PDF диаграммы вместе с картинкой.
+			plugins: [
+				valueLabelsPlugin({
+					stacked,
+					horizontal,
+					color: themeColor('--color-foreground'),
+					fontFamily: getComputedStyle(element).fontFamily
+				})
+			],
 			data: {
 				labels: [...labels],
 				datasets: datasets.map((series) => ({
@@ -87,6 +103,9 @@
 				// Двойная плотность: PNG диаграммы годится и для вставки в документ.
 				devicePixelRatio: 2,
 				animation: false,
+				// Место под подпись значения: без запаса число у самого длинного
+				// столбца обрезается краем холста.
+				layout: { padding: horizontal ? { right: 32 } : { top: 18 } },
 				plugins: {
 					legend: { display: datasets.length > 1, position: 'bottom' },
 					tooltip: { enabled: true }
@@ -102,10 +121,6 @@
 				}
 			}
 		};
-
-		if (element === null) {
-			return;
-		}
 
 		let disposed = false;
 		let instance: ChartInstance | null = null;

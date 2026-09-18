@@ -94,6 +94,8 @@ describe('JSON', () => {
 			interactionId: string;
 			stageEntryId: string | null;
 			values: Record<string, unknown>;
+			documents: unknown[];
+			learningGroups: unknown[];
 		}[];
 	};
 
@@ -115,6 +117,32 @@ describe('JSON', () => {
 		expect(payload.rows.map((row) => row.rowKey)).toStrictEqual(VIEW.rows.map((row) => row.rowKey));
 		expect(payload.rows[0].stageEntryId).toBe('22222222-2222-4222-8222-222222222222');
 		expect(payload.rows[1].stageEntryId).toBeNull();
+	});
+
+	it('несёт ключи документов и учебных групп, и ни одного персонального поля', () => {
+		// Путь «от числа к подтверждению» в файле держится только на них: ни
+		// названия документа, ни того, кто его загрузил, в строке нет и не должно
+		// быть.
+		expect(payload.rows[0].documents).toStrictEqual([
+			{
+				id: '55555555-5555-4555-8555-555555555555',
+				kind: 'agreement',
+				storageKey: 'files/55555555-5555-4555-8555-555555555555',
+				sha256: 'a1b2c3d4e5f60718293a4b5c6d7e8f90a1b2c3d4e5f60718293a4b5c6d7e8f90'
+			}
+		]);
+		expect(payload.rows[0].learningGroups).toStrictEqual([
+			{
+				id: '66666666-6666-4666-8666-666666666666',
+				externalId: 'LMS-2026-1',
+				resultId: '77777777-7777-4777-8777-777777777777'
+			}
+		]);
+
+		// Подтвердить нечем — пустой список, а не отсутствие поля: читающий не
+		// должен гадать, не потерялся ли ключ по дороге.
+		expect(payload.rows[1].documents).toStrictEqual([]);
+		expect(payload.rows[1].learningGroups).toStrictEqual([]);
 	});
 
 	it('пишется в UTF-8 без метки порядка байтов', () => {
@@ -150,7 +178,9 @@ describe('страница на печать', () => {
 							{ kind: 'text', value: 'Вуз "А" & Б' },
 							{ kind: 'list', values: [] },
 							{ kind: 'number', value: null }
-						]
+						],
+						documents: [],
+						learningGroups: []
 					}
 				]
 			})
@@ -247,7 +277,14 @@ describe('инварианты', () => {
 				...VIEW.charts,
 				funnel: {
 					...VIEW.charts.funnel!,
-					stages: [{ key: 'g:contact', label: 'Контакты', value: 5, filter: null }]
+					groups: [
+						{
+							groupId: '88888888-8888-4888-8888-888888888888',
+							groupKey: 'b2b',
+							groupName: 'Работа с вузами',
+							stages: [{ key: 'g:contact', label: 'Контакты', value: 5, filter: null }]
+						}
+					]
 				}
 			}
 		});

@@ -18,6 +18,7 @@ import {
 	LIFECYCLE_STATUSES,
 	ORGANIZATION_KINDS,
 	PROGRAM_LEVELS,
+	type ContractView,
 	type OrganizationView
 } from './directory';
 import { DOCUMENT_KINDS, type DocumentListItem, type DocumentView } from './documents';
@@ -29,6 +30,7 @@ import {
 } from './exchange';
 import {
 	checklistItemSchema,
+	CONTRACT_STATUSES,
 	STAGE_CATEGORIES,
 	STAGE_OUTCOMES,
 	STAGE_TRANSITION_KINDS,
@@ -165,6 +167,48 @@ export const apiDirectionSchema = z.object({
 });
 
 export type ApiDirection = z.output<typeof apiDirectionSchema>;
+
+/**
+ * Договор контрагента вместе со всеми своими позициями.
+ *
+ * Областью доступа список сужается, в отличие от каталогов: договор — это
+ * обязательство с конкретным вузом, и видит его тот, кто видит сам вуз.
+ * Взаимодействие выбирает из этих позиций своё подмножество и отдаёт его в
+ * карточке (`GET /v1/interactions/{id}`).
+ */
+export const apiContractSchema = z.object({
+	id: z.uuid(),
+	organizationId: z.uuid().describe('Контрагент, с которым заключён договор'),
+	number: z.string(),
+	signedOn: z.iso.date().nullable(),
+	validUntil: z.iso.date().nullable(),
+	status: z.enum(CONTRACT_STATUSES).describe('`draft` — черновик, `active` — действует, `closed`'),
+	items: z.array(
+		z.object({
+			id: z.uuid(),
+			productId: z.uuid(),
+			productCode: z.string(),
+			productName: z.string(),
+			licenseSignedAt: z.iso.date().nullable(),
+			licenseUntil: z.iso.date().nullable(),
+			transferStatus: z
+				.string()
+				.describe('Статус по передаче продукта вузу; словарь свободный, значения из данных')
+		})
+	),
+	createdAt: z.iso.datetime(),
+	updatedAt: z.iso.datetime()
+});
+
+export type ApiContract = z.output<typeof apiContractSchema>;
+
+export function toApiContract(view: ContractView): ApiContract {
+	return {
+		...view,
+		createdAt: view.createdAt.toISOString(),
+		updatedAt: view.updatedAt.toISOString()
+	};
+}
 
 /**
  * Запись о пребывании взаимодействия на стадии. Стадия названа ключом и
@@ -614,6 +658,21 @@ const apiReportBucketSchema = z.object({
 	retired: z.boolean().optional().describe('Стадии нет в действующем процессе: имя взято из снимка')
 });
 
+/** Документ-подтверждение строки: ключи связи, без персональных данных. */
+const apiReportDocumentSchema = z.object({
+	id: z.uuid(),
+	kind: z.string().describe('Вид документа: соглашение, приказ, акт, отчёт'),
+	storageKey: z.string().describe('Ключ объекта в хранилище документов'),
+	sha256: z.string().describe('Хеш содержимого: по нему видно, что файл не подменили')
+});
+
+/** Учебная группа взаимодействия и её последний подтверждённый результат. */
+const apiReportLearningGroupSchema = z.object({
+	id: z.uuid(),
+	externalId: z.string().nullable().describe('Идентификатор группы в системе обучения'),
+	resultId: z.uuid().nullable().describe('Последний результат группы; null — результата ещё нет')
+});
+
 /**
  * Отчёт в том же виде, в каком его показывает экран и отдают выгрузки: одна
  * сборка на все четыре формата, поэтому числа интегратора и числа сотрудника
@@ -647,7 +706,16 @@ export const apiReportSchema = z.object({
 			rowKey: z.string().describe('Устойчивое имя строки внутри выборки'),
 			interactionId: z.uuid(),
 			stageEntryId: z.uuid().nullable(),
-			cells: z.array(apiReportCellSchema).describe('Ячейки в порядке `meta.columns`')
+			cells: z.array(apiReportCellSchema).describe('Ячейки в порядке `meta.columns`'),
+			documents: z
+				.array(apiReportDocumentSchema)
+				.describe(
+					'Ключи связи с документами взаимодействия: по ним число из отчёта проверяется ' +
+						'самим файлом. Персональных данных в них нет — ни названия, ни того, кто загрузил'
+				),
+			learningGroups: z
+				.array(apiReportLearningGroupSchema)
+				.describe('Ключи связи с учебными группами и их последними подтверждёнными результатами')
 		})
 	),
 	totals: z.object({
@@ -659,7 +727,19 @@ export const apiReportSchema = z.object({
 	charts: z.object({
 		funnel: z
 			.object({
-				stages: z.array(apiReportBucketSchema),
+				groups: z
+					.array(
+						z.object({
+							groupId: z.uuid(),
+							groupKey: z.string(),
+							groupName: z.string(),
+							stages: z.array(apiReportBucketSchema)
+						})
+					)
+					.describe(
+						'По воронке на группу процесса: у B2B и B2C свои стадии, и одинаковые ключи в ' +
+							'них законны — в одном списке две разные стадии слились бы в одну строку'
+					),
 				closed: z.array(apiReportBucketSchema),
 				note: z.string()
 			})
@@ -734,7 +814,9 @@ export function toApiReport(view: ReportView): ApiReport {
 			stageEntryId: row.stageEntryId,
 			cells: row.cells.map((cell) =>
 				cell.kind === 'list' ? { ...cell, values: [...cell.values] } : cell
-			)
+			),
+			documents: row.documents.map((document) => ({ ...document })),
+			learningGroups: row.learningGroups.map((group) => ({ ...group }))
 		})),
 		totals: {
 			rowCount: view.totals.rowCount,
@@ -747,7 +829,12 @@ export function toApiReport(view: ReportView): ApiReport {
 				view.charts.funnel === null
 					? null
 					: {
-							stages: view.charts.funnel.stages.map(bucket),
+							groups: view.charts.funnel.groups.map((group) => ({
+								groupId: group.groupId,
+								groupKey: group.groupKey,
+								groupName: group.groupName,
+								stages: group.stages.map(bucket)
+							})),
 							closed: view.charts.funnel.closed.map(bucket),
 							note: view.charts.funnel.note
 						},

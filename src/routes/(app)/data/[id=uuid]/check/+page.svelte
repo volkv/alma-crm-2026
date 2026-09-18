@@ -42,7 +42,7 @@
 <PageHeader
 	title="Проверка загрузки"
 	description="Шаг 3 из 3: что разобралось, что нет. Подтверждённый снимок попадает в показатели, отклонённый остаётся в системе с объяснением."
-	breadcrumbs={[{ label: 'Данные', href: resolve('/(app)/data') }]}
+	breadcrumbs={[{ label: 'Данные об обучении', href: resolve('/(app)/data') }]}
 />
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">

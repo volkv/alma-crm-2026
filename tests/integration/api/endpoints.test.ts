@@ -12,6 +12,7 @@ import type { RequestEvent } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { moscowDay } from '$lib/contracts/calendar';
+import { saveContractSchema } from '$lib/contracts/directory';
 import { createInteractionSchema } from '$lib/contracts/interactions';
 import { createApiKey } from '$lib/server/api/keys';
 import {
@@ -24,6 +25,7 @@ import {
 	programs,
 	roles
 } from '$lib/server/db/schema';
+import { saveContract, saveContractItem } from '$lib/server/directory/contracts';
 import { createInteraction } from '$lib/server/interactions/write';
 import { getRedis } from '$lib/server/redis';
 import { B2B_GROUP_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
@@ -47,6 +49,8 @@ type Endpoint = (event: RequestEvent) => Response | Promise<Response>;
 const listPrograms = (await import('../../../src/routes/api/v1/programs/+server')).GET as Endpoint;
 const listProducts = (await import('../../../src/routes/api/v1/products/+server')).GET as Endpoint;
 const listDirections = (await import('../../../src/routes/api/v1/directions/+server'))
+	.GET as Endpoint;
+const listContracts = (await import('../../../src/routes/api/v1/contracts/+server'))
 	.GET as Endpoint;
 const organizationInteractions = (
 	await import('../../../src/routes/api/v1/organizations/[id]/interactions/+server')
@@ -243,6 +247,15 @@ function calls(
 				Promise.resolve(
 					listDirections(
 						apiEvent({ path: '/api/v1/directions', routeId: '/api/v1/directions', headers })
+					)
+				)
+		},
+		{
+			name: 'GET /v1/contracts',
+			call: (headers) =>
+				Promise.resolve(
+					listContracts(
+						apiEvent({ path: '/api/v1/contracts', routeId: '/api/v1/contracts', headers })
 					)
 				)
 		},
@@ -452,6 +465,74 @@ describe('справочники', () => {
 		expect(await body(response)).toMatchObject({
 			items: [{ code: 'PRD-1', name: 'Продукт', vendorOrganizationId: null }],
 			total: 1
+		});
+	});
+
+	it('отдаёт договоры с позициями и сужает их областью доступа владельца ключа', async () => {
+		const mine = await seed('Моя работа');
+		const foreign = await seed('Чужая работа');
+		const [product] = await database.db
+			.insert(products)
+			.values({ code: 'PRD-CTR', name: 'Продукт договора', status: 'active' })
+			.returning({ id: products.id });
+
+		const own = await saveContract(
+			testActor(),
+			saveContractSchema.parse({
+				organizationId: mine.organizationId,
+				number: 'ДОГ-1',
+				signedOn: '2026-03-01',
+				status: 'active'
+			})
+		);
+		await saveContractItem(testActor(), {
+			id: null,
+			contractId: own.id,
+			productId: product.id,
+			licenseSignedAt: null,
+			licenseUntil: '2027-03-01',
+			transferStatus: 'передан вузу'
+		});
+		await saveContract(
+			testActor(),
+			saveContractSchema.parse({
+				organizationId: foreign.organizationId,
+				number: 'ДОГ-2',
+				status: 'draft'
+			})
+		);
+
+		// Ключ администратора видит оба договора: его область — всё.
+		const wide = await listContracts(
+			apiEvent({
+				path: '/api/v1/contracts',
+				routeId: '/api/v1/contracts',
+				headers: bearer(await issueKey(TEST_USER_IDS.admin))
+			})
+		);
+
+		expect(wide.status).toBe(200);
+		expect(await body(wide)).toMatchObject({ total: 2 });
+
+		// Ключ менеджера, за которым закреплён один вуз, — только его договор, и
+		// позиции едут вместе с ним: по ним интегратор и сверяет условия.
+		const narrow = await listContracts(
+			apiEvent({
+				path: '/api/v1/contracts',
+				routeId: '/api/v1/contracts',
+				headers: bearer(await issueKey(await responsibleUserId(mine.organizationId)))
+			})
+		);
+
+		expect(await body(narrow)).toMatchObject({
+			total: 1,
+			items: [
+				{
+					number: 'ДОГ-1',
+					status: 'active',
+					items: [{ productCode: 'PRD-CTR', transferStatus: 'передан вузу' }]
+				}
+			]
 		});
 	});
 

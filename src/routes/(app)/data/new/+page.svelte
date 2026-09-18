@@ -60,7 +60,7 @@
 <PageHeader
 	title="Загрузка данных"
 	description="Шаг 1 из 3: файл выгрузки, её источник, режим и отчётный период."
-	breadcrumbs={[{ label: 'Данные', href: resolve('/(app)/data') }]}
+	breadcrumbs={[{ label: 'Данные об обучении', href: resolve('/(app)/data') }]}
 />
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">

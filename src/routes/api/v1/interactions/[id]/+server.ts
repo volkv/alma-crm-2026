@@ -71,6 +71,24 @@ registerRoute({
 				name: 'Облачная платформа'
 			}
 		],
+		contract: {
+			id: '6c8f1d2e-4a5b-4c6d-8e9f-0a1b2c3d4e5f',
+			number: 'РТК-2026/14',
+			status: 'active',
+			signedOn: '2026-02-01',
+			validUntil: '2027-01-31',
+			items: [
+				{
+					id: '9d0e1f2a-3b4c-4d5e-8f60-1a2b3c4d5e6f',
+					productId: '7b2c9a41-3d4e-4f50-9a1b-2c3d4e5f6a7b',
+					code: 'PRD-CLOUD',
+					name: 'Облачная платформа',
+					licenseSignedAt: '2026-02-10',
+					licenseUntil: '2027-02-09',
+					transferStatus: 'передан вузу'
+				}
+			]
+		},
 		progress: [
 			{
 				key: 'contact_search',

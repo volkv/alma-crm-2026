@@ -68,7 +68,7 @@ export const navSections: readonly NavSection[] = [
 	{ href: '/people', label: 'Контакты', icon: UsersIcon, permission: 'people.read' },
 	{ href: '/programs', label: 'Программы', icon: GraduationCapIcon, permission: 'programs.read' },
 	{ href: '/products', label: 'Продукты', icon: PackageIcon, permission: 'products.read' },
-	{ href: '/data', label: 'Данные', icon: DatabaseIcon, permission: 'stats.read' },
+	{ href: '/data', label: 'Данные об обучении', icon: DatabaseIcon, permission: 'stats.read' },
 	{ href: '/documents', label: 'Документы', icon: FileTextIcon, permission: 'documents.read' },
 	{ href: '/audit', label: 'Журнал', icon: ScrollTextIcon, permission: 'audit.read' },
 	{

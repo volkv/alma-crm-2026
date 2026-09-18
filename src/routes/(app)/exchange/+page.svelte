@@ -101,11 +101,14 @@
 						<Table.Head>Направление</Table.Head>
 						<Table.Head>Система</Table.Head>
 						<Table.Head>Тип</Table.Head>
-						<Table.Head>Ключ и событие</Table.Head>
+						<Table.Head>Ключи</Table.Head>
 						<Table.Head>Состояние</Table.Head>
 						<Table.Head>Попытки</Table.Head>
-						<Table.Head>Ответ</Table.Head>
-						<Table.Head>Взаимодействие</Table.Head>
+						<!-- Ответ и взаимодействие уезжают в строку под состоянием и под
+							событием, пока окно уже 1536: ключевые колонки журнала обязаны
+							помещаться на экране в 1280 точек целиком. -->
+						<Table.Head class="hidden 2xl:table-cell">Ответ</Table.Head>
+						<Table.Head class="hidden 2xl:table-cell">Взаимодействие</Table.Head>
 						<Table.Head>Действия</Table.Head>
 					</Table.Row>
 				</Table.Header>

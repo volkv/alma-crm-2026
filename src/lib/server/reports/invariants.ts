@@ -54,7 +54,12 @@ export function checkReportInvariants(view: ReportView): InvariantViolation[] {
 	const rowCount = view.totals.rowCount;
 
 	if (view.charts.funnel !== null) {
-		const stages = sum(view.charts.funnel.stages.map((bucket) => bucket.value));
+		// Воронок столько, сколько групп процесса в выборке, и сходится с числом
+		// строк их общая сумма: разделение по процессам — это способ показать, а
+		// не два разных отчёта.
+		const stages = sum(
+			view.charts.funnel.groups.flatMap((group) => group.stages.map((bucket) => bucket.value))
+		);
 		const closed = sum(view.charts.funnel.closed.map((bucket) => bucket.value));
 
 		if (stages + closed !== rowCount) {

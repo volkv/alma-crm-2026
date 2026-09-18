@@ -88,9 +88,14 @@ function query(input: z.input<typeof reportQuerySchema>): ReportQuery {
 	return reportQuerySchema.parse(input);
 }
 
+/** Полосы всех воронок подряд: воронка своя у каждой группы процесса. */
+function funnelStages(view: ReportView) {
+	return view.charts.funnel?.groups.flatMap((group) => group.stages) ?? [];
+}
+
 /** Число в стадии воронки по ключу: корзина — это пара «группа + ключ». */
 function stageValue(view: ReportView, key: string): number {
-	return view.charts.funnel?.stages.find((bucket) => bucket.key.endsWith(`:${key}`))?.value ?? 0;
+	return funnelStages(view).find((bucket) => bucket.key.endsWith(`:${key}`))?.value ?? 0;
 }
 
 function closedValue(view: ReportView, key: string): number {
@@ -291,7 +296,7 @@ describe('история процесса', () => {
 
 		// Поменяться может только название стадии в заголовке колонки.
 		const label = (view: ReportView) =>
-			view.charts.funnel?.stages.find((bucket) => bucket.key.endsWith(':meeting'))?.label;
+			funnelStages(view).find((bucket) => bucket.key.endsWith(':meeting'))?.label;
 
 		expect(label(before)).toBe('Встреча с представителями');
 		expect(label(after)).toBe('Встреча с руководством');
@@ -645,5 +650,74 @@ describe('закрытие взаимодействия', () => {
 		const view = await buildReport(admin(), query({ mode: 'snapshot', ...SEPTEMBER_PERIOD }));
 
 		expect(view.rows.some((row) => row.interactionId === ids.interactions['В-6'])).toBe(false);
+	});
+});
+
+describe('от числа к подтверждению', () => {
+	/** Ячейка строки по ключу колонки: порядок ячеек задаёт `meta.columns`. */
+	function cell(view: ReportView, interactionId: string, key: string) {
+		const row = view.rows.find((item) => item.interactionId === interactionId);
+		const position = view.meta.columns.findIndex((column) => column.key === key);
+
+		return row === undefined || position < 0 ? undefined : row.cells[position];
+	}
+
+	it('колонка «Программы» показывает программы взаимодействия, а не размножает строки', async () => {
+		const asked = query({ mode: 'snapshot', ...QUARTER_PERIOD });
+		const view = await buildReport(admin(), asked);
+
+		// Колонка входит в набор по умолчанию: спрашивать её отдельно не нужно.
+		expect(view.meta.columns.some((column) => column.key === 'programs')).toBe(true);
+
+		expect(cell(view, ids.interactions['В-1'], 'programs')).toStrictEqual({
+			kind: 'list',
+			values: ['ПР-1 DevOps для вузов']
+		});
+		// Связь многие ко многим строку не удваивает: зерно среза — взаимодействие.
+		expect(view.rows.filter((row) => row.interactionId === ids.interactions['В-1']).length).toBe(1);
+		expect(cell(view, ids.interactions['В-2'], 'programs')).toStrictEqual({
+			kind: 'list',
+			values: []
+		});
+	});
+
+	it('строка несёт ключи документа и учебной группы', async () => {
+		const asked = query({ mode: 'snapshot', ...QUARTER_PERIOD });
+		const view = await buildReport(admin(), asked);
+		const row = view.rows.find((item) => item.interactionId === ids.interactions['В-1']);
+
+		expect(row?.documents).toStrictEqual([
+			{
+				id: ids.documentId,
+				kind: 'agreement',
+				storageKey: 'files/reference-agreement',
+				sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+			}
+		]);
+		expect(row?.learningGroups).toStrictEqual([
+			{
+				id: ids.learningGroupId,
+				externalId: 'LMS-REF-1',
+				resultId: ids.learningGroupResultId
+			}
+		]);
+
+		// Подтверждать нечем — пустой список, а не пропуск поля.
+		const other = view.rows.find((item) => item.interactionId === ids.interactions['В-2']);
+
+		expect(other?.documents).toStrictEqual([]);
+		expect(other?.learningGroups).toStrictEqual([]);
+	});
+
+	it('в движении те же ключи едут на каждом событии записи', async () => {
+		const view = await buildReport(admin(), query({ mode: 'movement', ...QUARTER_PERIOD }));
+		const rows = view.rows.filter((row) => row.interactionId === ids.interactions['В-1']);
+
+		expect(rows.length).toBeGreaterThan(0);
+
+		for (const row of rows) {
+			expect(row.documents.map((document) => document.id)).toStrictEqual([ids.documentId]);
+			expect(row.learningGroups.map((group) => group.id)).toStrictEqual([ids.learningGroupId]);
+		}
 	});
 });

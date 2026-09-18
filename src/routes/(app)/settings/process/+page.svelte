@@ -62,7 +62,10 @@
 					<Table.Body>
 						{#each data.groups as group (group.id)}
 							<Table.Row class="h-row cursor-pointer" onclick={() => void open(group.key)}>
-								<Table.Cell class="font-medium" onclick={(event) => event.stopPropagation()}>
+								<Table.Cell
+									class="font-medium whitespace-normal"
+									onclick={(event) => event.stopPropagation()}
+								>
 									<a
 										class="rounded-sm text-primary underline-offset-4 focus-ring hover:underline"
 										href={resolve('/(app)/settings/process/[key]', { key: group.key })}

@@ -12,6 +12,7 @@
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatDateTime } from '$lib/format';
 	import type { UserView } from '$lib/contracts/auth';
+	import ManagerSelect from './manager-select.svelte';
 	import type { PageProps } from './$types';
 
 	let { data, form: actionResult }: PageProps = $props();
@@ -127,28 +128,13 @@
 {/snippet}
 
 {#snippet managerCell({ user }: { user: UserView })}
-	<!-- Форма без кнопки: выбор руководителя — одно действие, и отдельное
-	     «Сохранить» рядом с каждой строкой только добавило бы шаг. -->
-	<form method="POST" action="?/manager">
-		<input type="hidden" name="userId" value={user.id} />
-		<!-- `selected` на самом варианте, а не `value` на списке: значение,
-		     выставленное до того, как варианты отрисованы, браузер сбрасывает в
-		     пустое, и выбранный руководитель пропадал бы с экрана. -->
-		<select
-			name="managerUserId"
-			class="w-full rounded-md border border-input bg-background px-2 py-1 text-sm"
-			aria-label={`Руководитель: ${user.fullName}`}
-			disabled={user.roleId === 'service'}
-			onchange={(event) => event.currentTarget.form?.requestSubmit()}
-		>
-			<option value="" selected={user.managerUserId === null}>— не задан —</option>
-			{#each data.managerOptions.filter((option) => option.id !== user.id) as option (option.id)}
-				<option value={option.id} selected={option.id === user.managerUserId}>
-					{option.fullName}
-				</option>
-			{/each}
-		</select>
-	</form>
+	<ManagerSelect
+		userId={user.id}
+		fullName={user.fullName}
+		managerUserId={user.managerUserId}
+		options={data.managerOptions.filter((option) => option.id !== user.id)}
+		disabled={user.roleId === 'service'}
+	/>
 {/snippet}
 
 {#snippet actionsCell({ user }: { user: UserView })}

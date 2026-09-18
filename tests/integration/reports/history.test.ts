@@ -83,7 +83,10 @@ function shape(view: ReportView) {
 		rowKeys: view.rows.map((row) => row.rowKey).sort(),
 		interactions: view.rows.map((row) => row.interactionId).sort(),
 		totals: { rowCount: view.totals.rowCount, interactionCount: view.totals.interactionCount },
-		funnel: view.charts.funnel?.stages.map((bucket) => `${bucket.key}=${bucket.value}`).sort(),
+		funnel: view.charts.funnel?.groups
+			.flatMap((group) => group.stages)
+			.map((bucket) => `${bucket.key}=${bucket.value}`)
+			.sort(),
 		closed: view.charts.funnel?.closed.map((bucket) => `${bucket.key}=${bucket.value}`).sort()
 	};
 }

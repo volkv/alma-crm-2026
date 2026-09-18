@@ -14,9 +14,9 @@
 		exportHref,
 		interactionsHref,
 		modeHref,
+		movementDrilldownHref,
 		pageHref,
-		reportHref,
-		toggledHref,
+		stageDrilldownHref,
 		unsupportedListFilters
 	} from '$lib/components/reports/query';
 	import {
@@ -24,6 +24,7 @@
 		REPORT_FORMAT_LABELS,
 		REPORT_MODES,
 		REPORT_MODE_LABELS,
+		type ReportFunnelGroup,
 		type ReportParam
 	} from '$lib/contracts/reports';
 	import { formatNumber, pluralize } from '$lib/format';
@@ -43,14 +44,15 @@
 
 	const droppedByList = $derived(unsupportedListFilters(page.url));
 
-	const funnelSummary = $derived(
-		data.charts.funnel === null
-			? ''
-			: data.charts.funnel.stages
-					.filter((bucket) => bucket.value > 0)
-					.map((bucket) => `${bucket.label}: ${bucket.value}`)
-					.join('; ') || 'на стадиях никого'
-	);
+	/** Пересказ воронки словами: `canvas` для чтения с экрана недоступен. */
+	function funnelSummary(group: ReportFunnelGroup): string {
+		return (
+			group.stages
+				.filter((bucket) => bucket.value > 0)
+				.map((bucket) => `${bucket.label}: ${bucket.value}`)
+				.join('; ') || 'на стадиях никого'
+		);
+	}
 
 	const movementSummary = $derived(
 		data.charts.movement === null
@@ -79,11 +81,25 @@
 		owners: 'owner'
 	};
 
-	function selectStage(index: number) {
-		const bucket = data.charts.funnel?.stages[index];
+	/** Режим и период выписываются в ссылку явно: «сегодня» завтра другое. */
+	const period = $derived({
+		mode: data.meta.mode,
+		from: data.meta.period.start,
+		to: data.meta.period.end
+	});
 
-		if (bucket?.filter !== null && bucket?.filter !== undefined) {
-			void goto(toggledHref(page.url, bucket.filter.param as ReportParam, bucket.filter.value), {
+	/**
+	 * Клик по полосе воронки ведёт к списку взаимодействий, которые за ней
+	 * стоят, — к таблице этого же отчёта под диаграммой: только она считает
+	 * стадию на дату среза так же, как воронка, и число её строк равно числу на
+	 * полосе. В адрес уезжают группа процесса и ключ стадии, остальные фильтры
+	 * остаются — полоса нарисована под ними же.
+	 */
+	function selectStage(group: ReportFunnelGroup, index: number) {
+		const bucket = group.stages[index];
+
+		if (bucket?.filter != null) {
+			void goto(stageDrilldownHref(page.url, period, group.groupKey, bucket.filter.value), {
 				keepFocus: true,
 				noScroll: true
 			});
@@ -94,10 +110,9 @@
 		const bucket = data.charts.movement?.buckets[index];
 
 		if (bucket !== undefined) {
-			// Клик по столбцу сужает период до его интервала: это фильтр того же
-			// отчёта, а не переход в список — список показывает текущую стадию, и
-			// числа не сошлись бы.
-			void goto(reportHref(page.url, { from: bucket.from, to: bucket.to }), {
+			// Клик по столбцу сужает период до его интервала, не трогая остальные
+			// фильтры: это те же события, показанные крупнее.
+			void goto(movementDrilldownHref(page.url, data.meta.mode, bucket), {
 				keepFocus: true,
 				noScroll: true
 			});
@@ -146,6 +161,17 @@
 	</nav>
 
 	<InlineHint tone="info">{data.meta.semantics}</InlineHint>
+
+	{#if data.meta.mode === 'snapshot'}
+		<!-- Оговорка к правилу среза, а не к экрану: распределение по стадиям и
+		     движение на прошлую дату эталонны, просрочка — нет. -->
+		<p class="text-xs text-muted-foreground">
+			Просрочка на прошлую дату считается по действующему нормативу стадии: у записи, которая не
+			закрыта до сих пор, публикация изменённого процесса пересобирает снимок, и вместе с нормативом
+			меняется число просроченных на прежнюю дату. Распределение по стадиям и движение так не
+			меняются.
+		</p>
+	{/if}
 
 	<FilterBar
 		query={data.query}
@@ -202,22 +228,28 @@
 
 	{#if data.charts.funnel !== null}
 		{@const funnel = data.charts.funnel}
-		<ReportChart
-			title="Распределение по стадиям на дату среза"
-			note={funnel.note}
-			fileName="Отчёт по взаимодействиям — воронка"
-			summary={funnelSummary}
-			labels={funnel.stages.map((bucket) => bucket.label)}
-			datasets={[
-				{
-					label: 'Взаимодействий',
-					values: funnel.stages.map((bucket) => bucket.value),
-					token: '--color-primary'
-				}
-			]}
-			horizontal
-			onselect={selectStage}
-		/>
+		<!-- Воронка своя у каждой группы процесса: у B2B и B2C разные стадии, и
+		     полосы двух процессов в одной картинке читались бы как один путь. -->
+		{#each funnel.groups as group (group.groupId)}
+			<ReportChart
+				title={funnel.groups.length > 1
+					? `Распределение по стадиям на дату среза — ${group.groupName}`
+					: 'Распределение по стадиям на дату среза'}
+				note={funnel.note}
+				fileName="Отчёт по взаимодействиям — воронка {group.groupName}"
+				summary={funnelSummary(group)}
+				labels={group.stages.map((bucket) => bucket.label)}
+				datasets={[
+					{
+						label: 'Взаимодействий',
+						values: group.stages.map((bucket) => bucket.value),
+						token: '--color-primary'
+					}
+				]}
+				horizontal
+				onselect={(index) => selectStage(group, index)}
+			/>
+		{/each}
 		<p class="text-xs text-muted-foreground">
 			Вне воронки:
 			{#each funnel.closed as bucket, index (bucket.key)}

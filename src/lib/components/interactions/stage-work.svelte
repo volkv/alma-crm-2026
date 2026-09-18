@@ -9,6 +9,7 @@
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
+	import DateField from '$lib/components/form/date-field.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import {
@@ -350,11 +351,11 @@
 						</div>
 						<div class="flex flex-col gap-1.5">
 							<Label for="startsOn">Начало занятий</Label>
-							<Input id="startsOn" name="startsOn" type="date" bind:value={startsOn} />
+							<DateField id="startsOn" name="startsOn" max={endsOn} bind:value={startsOn} />
 						</div>
 						<div class="flex flex-col gap-1.5">
 							<Label for="endsOn">Окончание</Label>
-							<Input id="endsOn" name="endsOn" type="date" bind:value={endsOn} />
+							<DateField id="endsOn" name="endsOn" min={startsOn} bind:value={endsOn} />
 						</div>
 						<div class="flex justify-end sm:col-span-4">
 							<Button

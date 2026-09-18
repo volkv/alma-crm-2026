@@ -15,6 +15,7 @@ import {
 	type ReportBucket,
 	type ReportEventKind,
 	type ReportFunnelChart,
+	type ReportFunnelGroup,
 	type ReportMovementChart
 } from '$lib/contracts/reports';
 import type { ReportBreakdownCounts, StageCount } from './aggregate';
@@ -117,13 +118,17 @@ export function breakdownFromCounts(
  * Воронка: распределение по стадиям на дату среза. Долю дошедших отчёт намеренно
  * не считает — при возвратах и пропусках «дошедших» не определено однозначно, а
  * красивое неверное число хуже отсутствующего.
+ *
+ * Группы процесса идут отдельными воронками: у B2B и B2C свои стадии, и полосы
+ * двух процессов в одной картинке читаются как один путь, которым они не
+ * являются. «Завершено» и «Отменено» общие — они не стадия ничьего процесса.
  */
 export function buildFunnel(
-	stages: readonly ReportBucket[],
+	groups: readonly ReportFunnelGroup[],
 	closedCounts: Readonly<Record<string, number>>
 ): ReportFunnelChart {
 	return {
-		stages,
+		groups,
 		closed: REPORT_CLOSED_BUCKETS.map((bucket) => ({
 			key: bucket,
 			label: REPORT_CLOSED_BUCKET_LABELS[bucket],
@@ -147,13 +152,27 @@ export function buildBreakdowns(counts: ReportBreakdownCounts): ReportBreakdown[
 	);
 }
 
+/** Полоса воронки вместе с местом в порядке процесса: порядок в выдачу не едет. */
+type FunnelBucketDraft = ReportBucket & { order: number };
+
+type FunnelGroupDraft = {
+	groupId: string;
+	groupKey: string;
+	groupName: string;
+	buckets: FunnelBucketDraft[];
+};
+
 /**
- * Воронка из чисел, посчитанных базой.
+ * Воронки из чисел, посчитанных базой, — по одной на группу процесса.
  *
  * Заготовка — все стадии действующих редакций: ноль в стадии значит «никого», а
  * отсутствие строки читается как «такой стадии нет». Стадия, которой в
- * действующем процессе уже нет, приписывается в конец с пометкой из снимка:
- * перенести её строку в соседнюю стадию значило бы изменить прошлое.
+ * действующем процессе уже нет, приписывается в конец своей группы с пометкой из
+ * снимка: перенести её строку в соседнюю стадию значило бы изменить прошлое.
+ *
+ * Группа попадает в выдачу, если в выборке есть хоть одна её строка: вторая
+ * пустая воронка рядом с непустой — это не ответ, а шум. Когда на стадиях нет
+ * никого вовсе, показываются все процессы: тогда нули и есть ответ.
  */
 export function buildFunnelFromCounts(
 	index: StageIndex,
@@ -161,28 +180,56 @@ export function buildFunnelFromCounts(
 	closedCounts: Readonly<Record<string, number>>
 ): ReportFunnelChart {
 	const counted = new Map(stages.map((stage) => [stage.bucketId, stage]));
+	const drafts = new Map<string, FunnelGroupDraft>();
+	const placed = new Set<string>();
 
-	const buckets = index.skeleton().map((stage) => ({
-		key: stage.bucketId,
-		label: stage.label.label,
-		value: counted.get(stage.bucketId)?.value ?? 0,
-		filter: { param: 'stage', value: stage.stageKey },
-		order: stage.label.order,
-		retired: false
-	}));
+	for (const group of index.skeleton()) {
+		drafts.set(group.groupId, {
+			groupId: group.groupId,
+			groupKey: group.groupKey,
+			groupName: group.groupName,
+			buckets: group.stages.map((stage) => {
+				placed.add(stage.bucketId);
+
+				return {
+					key: stage.bucketId,
+					// Название без группы: воронка уже подписана именем процесса.
+					label: stage.label.name,
+					value: counted.get(stage.bucketId)?.value ?? 0,
+					filter: { param: 'stage', value: stage.stageKey },
+					order: stage.label.order,
+					retired: false
+				};
+			})
+		});
+	}
 
 	for (const stage of stages) {
-		if (buckets.some((bucket) => bucket.key === stage.bucketId)) {
+		if (placed.has(stage.bucketId)) {
 			continue;
 		}
 
 		const separator = stage.bucketId.indexOf(':');
+		const groupId = stage.bucketId.slice(0, separator);
 		const stageKey = stage.bucketId.slice(separator + 1);
-		const label = index.label(stage.bucketId.slice(0, separator), stageKey, stage.stageName);
+		const label = index.label(groupId, stageKey, stage.stageName);
+		let draft = drafts.get(groupId);
 
-		buckets.push({
+		if (draft === undefined) {
+			const group = index.group(groupId);
+
+			draft = {
+				groupId,
+				groupKey: group?.key ?? groupId,
+				groupName: group?.name ?? groupId,
+				buckets: []
+			};
+			drafts.set(groupId, draft);
+		}
+
+		draft.buckets.push({
 			key: stage.bucketId,
-			label: label.label,
+			label: label.name,
 			value: stage.value,
 			filter: { param: 'stage', value: stageKey },
 			order: label.order,
@@ -190,15 +237,23 @@ export function buildFunnelFromCounts(
 		});
 	}
 
-	buckets.sort((left, right) => left.order - right.order);
+	const groups = [...drafts.values()].filter((draft) => draft.buckets.length > 0);
+	const counting = groups.filter((draft) => draft.buckets.some((bucket) => bucket.value > 0));
 
 	return buildFunnel(
-		buckets.map(({ key, label, value, filter, retired }) => ({
-			key,
-			label,
-			value,
-			filter,
-			retired
+		(counting.length > 0 ? counting : groups).map((draft) => ({
+			groupId: draft.groupId,
+			groupKey: draft.groupKey,
+			groupName: draft.groupName,
+			stages: [...draft.buckets]
+				.sort((left, right) => left.order - right.order)
+				.map(({ key, label, value, filter, retired }) => ({
+					key,
+					label,
+					value,
+					filter,
+					retired
+				}))
 		})),
 		closedCounts
 	);

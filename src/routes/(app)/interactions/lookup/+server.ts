@@ -2,13 +2,14 @@ import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import { id } from '$lib/contracts/common';
 import { actorFromEvent } from '$lib/server/actor';
+import { listOrganizationContracts } from '$lib/server/directory/contracts';
 import { listAffiliations, listSites, lookupOrganizations } from '$lib/server/directory/read';
 import { AppError, statusForError } from '$lib/server/errors';
 import type { RequestHandler } from './$types';
 
 /**
- * Подсказки для формы взаимодействия: организации по поиску, их площадки и
- * контактные лица.
+ * Подсказки для формы взаимодействия: организации по поиску, их площадки,
+ * контактные лица и договоры.
  *
  * Маршрут лежит внутри оболочки приложения, а не в `/api`: это подсказка для
  * страницы, она ходит с сессией и правами того, кто заполняет форму. Публичный
@@ -26,7 +27,7 @@ const lookupQuerySchema = z.discriminatedUnion(
 	[
 		z.object({ kind: z.literal('organizations') }),
 		z.object({
-			kind: z.enum(['sites', 'contacts']),
+			kind: z.enum(['sites', 'contacts', 'contracts']),
 			organizationId: id('Не указана организация или её идентификатор некорректен')
 		})
 	],
@@ -51,6 +52,13 @@ export const GET: RequestHandler = async (event) => {
 	try {
 		if (query.data.kind === 'organizations') {
 			return json({ items: await lookupOrganizations(ctx, event.url.searchParams.get('q')) });
+		}
+
+		// Договоры приезжают целиком, с позициями: форма выбирает договор и
+		// подмножество его позиций, и подпись «продукт, лицензия до, статус»
+		// собирается из тех же полей, что показывает карточка контрагента.
+		if (query.data.kind === 'contracts') {
+			return json({ items: await listOrganizationContracts(ctx, query.data.organizationId) });
 		}
 
 		if (query.data.kind === 'sites') {

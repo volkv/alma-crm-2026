@@ -34,7 +34,13 @@ registerRoute({
 		'становится. Слишком широкая выборка (больше 50 000 строк) отвечает 400 с подсказкой, ' +
 		'чем её сузить.\n\n' +
 		'`meta.scope` говорит словами, чья это область доступа: отчёты по двум разным ключам ' +
-		'законно дают разные числа, и файл обязан об этом сообщать.',
+		'законно дают разные числа, и файл обязан об этом сообщать.\n\n' +
+		'У каждой строки едут ключи связи: `documents` — вид, ключ в хранилище и `sha256` ' +
+		'документов взаимодействия, `learningGroups` — группы в системе обучения и их последние ' +
+		'результаты. По ним число из отчёта проверяется самим подтверждением, а персональных ' +
+		'данных в них нет. Воронка среза разложена по группам процесса (`charts.funnel.groups`): ' +
+		'одинаковые ключи стадий в B2B и B2C законны, и в общем списке две разные стадии слились ' +
+		'бы в одну строку.',
 	tags: ['Отчёты'],
 	config: reportEndpoint,
 	example: {
@@ -68,18 +74,40 @@ registerRoute({
 						value: 'Переговоры с СПбПУ',
 						url: 'https://crm.example.org/interactions/a3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d'
 					}
+				],
+				documents: [
+					{
+						id: 'c4d5e6f7-a8b9-4c0d-8e1f-2a3b4c5d6e7f',
+						kind: 'agreement',
+						storageKey: 'files/c4d5e6f7-a8b9-4c0d-8e1f-2a3b4c5d6e7f',
+						sha256: '9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08'
+					}
+				],
+				learningGroups: [
+					{
+						id: 'd5e6f7a8-b9c0-4d1e-8f2a-3b4c5d6e7f80',
+						externalId: 'LMS-2026-114',
+						resultId: null
+					}
 				]
 			}
 		],
 		totals: { rowCount: 1, interactionCount: 1, paused: 0, overdue: 0 },
 		charts: {
 			funnel: {
-				stages: [
+				groups: [
 					{
-						key: 'document_exchange',
-						label: 'Обмен пакетом документов',
-						value: 1,
-						filter: { param: 'stage', value: 'document_exchange' }
+						groupId: '7c1e2f3a-4b5c-4d6e-8f70-1a2b3c4d5e6f',
+						groupKey: 'b2b',
+						groupName: 'Работа с вузами',
+						stages: [
+							{
+								key: '7c1e2f3a-4b5c-4d6e-8f70-1a2b3c4d5e6f:document_exchange',
+								label: 'Обмен пакетом документов',
+								value: 1,
+								filter: { param: 'stage', value: 'document_exchange' }
+							}
+						]
 					}
 				],
 				closed: [],

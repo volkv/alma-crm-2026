@@ -24,13 +24,16 @@ import {
 } from '$lib/contracts/documents';
 import { sendLearningGroupSchema } from '$lib/contracts/exchange';
 import { formatDate } from '$lib/format';
+import { NO_OPTION } from '$lib/components/directory/labels';
 import { actorFromEvent } from '$lib/server/actor';
+import { listOrganizationContracts } from '$lib/server/directory/contracts';
 import { DocumentConversionError } from '$lib/server/documents/errors';
 import { generateDocument } from '$lib/server/documents/generate';
 import { listInteractionSupersessions } from '$lib/server/documents/read';
 import { markDocument } from '$lib/server/documents/status';
 import { uploadDocument, uploadDocumentRevision } from '$lib/server/documents/upload';
 import { toActionFailure, toPageError } from '$lib/server/http';
+import { can } from '$lib/server/rbac';
 import {
 	readInteractionExchange,
 	requestLearningGroup
@@ -94,6 +97,15 @@ export const load: PageServerLoad = async (event) => {
 			readInteractionExchange(ctx, id)
 		]);
 
+		// Договоры основной стороны: из них выбирают договор записи. Читаются
+		// только тому, кто может править, — остальным список не нужен, а
+		// карточка и без него называет договор, по которому идёт работа.
+		const primary = interaction.parties.find((party) => party.isPrimary);
+		const contracts =
+			primary === undefined || !can(ctx, 'interactions.write')
+				? []
+				: await listOrganizationContracts(ctx, primary.organizationId);
+
 		return {
 			interaction,
 			status,
@@ -103,7 +115,8 @@ export const load: PageServerLoad = async (event) => {
 			changes,
 			users,
 			supersessions,
-			exchange
+			exchange,
+			contracts
 		};
 	} catch (cause) {
 		toPageError(cause);
@@ -549,7 +562,58 @@ export const actions: Actions = {
 				programId: program.programId,
 				programVersionId: program.programVersionId
 			})),
-			productIds: current.products.map((product) => product.productId)
+			productIds: current.products.map((product) => product.productId),
+			contractId: current.contract?.id ?? null,
+			contractItemIds: current.contract?.items.map((item) => item.id) ?? []
+		});
+
+		if (!parsed.ok) return parsed.failure;
+
+		return run(() => updateInteraction(ctx, parsed.data));
+	},
+
+	/**
+	 * Договор записи и выбранные из него позиции.
+	 *
+	 * Своё действие, а не поле формы плана: договор принадлежит контрагенту, и
+	 * сменить его — это сказать, что работа идёт по другому обязательству.
+	 * Остальной план едет как есть, ровно как стороны и продукты в правке плана.
+	 */
+	contract: async (event) => {
+		const ctx = actorFromEvent(event);
+		const data = await event.request.formData();
+		const current = await getInteraction(ctx, event.params.id);
+		const chosen = text(data, 'contractId');
+		// «Без договора» список выбирает своим значением: пустое значение
+		// всплывающий список не хранит, и отличить «не выбрано» от «не прислано»
+		// по пустой строке было бы нельзя.
+		const contractId = chosen === null || chosen === NO_OPTION ? null : chosen;
+
+		const parsed = parse(updateInteractionSchema, {
+			id: current.id,
+			title: current.title,
+			agreementPeriodStart: current.agreementPeriodStart,
+			agreementPeriodEnd: current.agreementPeriodEnd,
+			academicPeriodStart: current.academicPeriodStart,
+			academicPeriodEnd: current.academicPeriodEnd,
+			ownerUserId: current.ownerUserId,
+			reason: text(data, 'reason'),
+			externalSource: current.externalSource,
+			externalId: current.externalId,
+			parties: current.parties.map((party) => ({
+				organizationId: party.organizationId,
+				partyRole: party.partyRole,
+				isPrimary: party.isPrimary,
+				contactAffiliationId: party.contactAffiliationId,
+				siteIds: party.sites.map((site) => site.id)
+			})),
+			programs: current.programs.map((program) => ({
+				programId: program.programId,
+				programVersionId: program.programVersionId
+			})),
+			productIds: current.products.map((product) => product.productId),
+			contractId,
+			contractItemIds: contractId === null ? [] : data.getAll('contractItemIds')
 		});
 
 		if (!parsed.ok) return parsed.failure;

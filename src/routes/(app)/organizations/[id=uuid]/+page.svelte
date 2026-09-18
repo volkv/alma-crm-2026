@@ -5,8 +5,10 @@
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import ActionAlert from '$lib/components/directory/action-alert.svelte';
+	import ContractsPanel from '$lib/components/directory/contracts-panel.svelte';
 	import Flash from '$lib/components/directory/flash.svelte';
 	import {
 		AFFILIATION_ROLE_LABELS,
@@ -65,6 +67,32 @@
 	const hasGeneral = $derived(currentResponsibles.some((row) => row.directionId === null));
 	const hasByDirection = $derived(currentResponsibles.some((row) => row.directionId !== null));
 
+	/**
+	 * Значение пункта «за вуз целиком». Пустая строка тут не годится: для списка
+	 * она означает «ничего не выбрано», и пункт стал бы неотличим от пустоты, — а
+	 * в форму всё равно уходит пустая строка, которую сервер и читает как «весь
+	 * вуз» (`assignResponsible` в `+page.server.ts`).
+	 */
+	const WHOLE_ORGANIZATION = '__whole';
+	const WHOLE_ORGANIZATION_LABEL = 'весь вуз';
+
+	let assignUserId = $state('');
+	let assignDirectionId = $state(WHOLE_ORGANIZATION);
+
+	/**
+	 * Выбранные строки списков ищутся в самих списках: карточка соседнего вуза
+	 * отдаёт другой набор сотрудников и направлений, а выбор пережил бы переход
+	 * между ними. Не нашлось — значит, не выбрано, и форма уходит с пустым полем.
+	 */
+	const assignUser = $derived(
+		data.assignableUsers.find((user) => user.id === assignUserId) ?? null
+	);
+	const assignDirection = $derived(
+		hasByDirection && assignDirectionId === WHOLE_ORGANIZATION
+			? (data.directionOptions[0] ?? null)
+			: (data.directionOptions.find((direction) => direction.id === assignDirectionId) ?? null)
+	);
+
 	function askRelease(row: ResponsibleView) {
 		releasing = row;
 		releaseOpen = true;
@@ -89,6 +117,8 @@
 		affiliation_ended: 'Полномочия закрыты',
 		responsible_assigned: 'Ответственный назначен, доступ изменён',
 		responsible_released: 'Назначение снято, доступ изменён',
+		contract_saved: 'Договор сохранён',
+		contract_item_saved: 'Позиция договора сохранена',
 		restored: 'Организация возвращена из архива'
 	}}
 />
@@ -247,36 +277,44 @@
 					class="flex flex-wrap items-end gap-3"
 					data-testid="assign-responsible"
 				>
-					<label class="flex flex-col gap-1 text-xs">
-						<span class="font-medium">Сотрудник</span>
-						<select
-							name="userId"
-							required
-							class="min-w-56 rounded-md border border-input bg-background px-2 py-1 text-sm"
-						>
-							<option value="">— выберите —</option>
-							{#each data.assignableUsers as user (user.id)}
-								<option value={user.id}>{user.fullName}</option>
-							{/each}
-						</select>
-					</label>
+					<!-- Списки — наши, а форме нужны обычные поля: значение каждого
+					     уходит скрытым `input`. Сотрудника не сторожит `required`:
+					     нативную проверку браузер пишет по-английски, а отказ «Не
+					     выбран сотрудник» приходит с сервера и на русском. -->
+					<div class="flex flex-col gap-1 text-xs">
+						<Label for="assignUserId" class="text-xs font-medium">Сотрудник</Label>
+						<input type="hidden" name="userId" value={assignUser?.id ?? ''} />
+						<Select.Root type="single" bind:value={assignUserId}>
+							<Select.Trigger id="assignUserId" class="min-w-56 text-sm">
+								{assignUser?.fullName ?? '— выберите —'}
+							</Select.Trigger>
+							<Select.Content>
+								{#each data.assignableUsers as user (user.id)}
+									<Select.Item value={user.id} label={user.fullName} />
+								{/each}
+							</Select.Content>
+						</Select.Root>
+					</div>
 
-					<label class="flex flex-col gap-1 text-xs">
-						<span class="font-medium">Направление</span>
-						<select
-							name="directionId"
-							class="min-w-56 rounded-md border border-input bg-background px-2 py-1 text-sm"
-						>
-							<!-- Общее назначение и назначения по направлениям на одном вузе
-							     не сосуществуют, поэтому лишний вариант из списка убран. -->
-							{#if !hasByDirection}
-								<option value="">весь вуз</option>
-							{/if}
-							{#each data.directionOptions as direction (direction.id)}
-								<option value={direction.id} disabled={hasGeneral}>{direction.name}</option>
-							{/each}
-						</select>
-					</label>
+					<div class="flex flex-col gap-1 text-xs">
+						<Label for="assignDirectionId" class="text-xs font-medium">Направление</Label>
+						<input type="hidden" name="directionId" value={assignDirection?.id ?? ''} />
+						<Select.Root type="single" bind:value={assignDirectionId}>
+							<Select.Trigger id="assignDirectionId" class="min-w-56 text-sm">
+								{assignDirection?.name ?? WHOLE_ORGANIZATION_LABEL}
+							</Select.Trigger>
+							<Select.Content>
+								<!-- Общее назначение и назначения по направлениям на одном вузе
+								     не сосуществуют, поэтому лишний вариант из списка убран. -->
+								{#if !hasByDirection}
+									<Select.Item value={WHOLE_ORGANIZATION} label={WHOLE_ORGANIZATION_LABEL} />
+								{/if}
+								{#each data.directionOptions as direction (direction.id)}
+									<Select.Item value={direction.id} label={direction.name} disabled={hasGeneral} />
+								{/each}
+							</Select.Content>
+						</Select.Root>
+					</div>
 
 					{#if data.canTransfer}
 						<!-- Флажок ниже полей и выше кнопки: это условие отправки, а не
@@ -392,6 +430,12 @@
 			</Table.Root>
 		{/if}
 	</section>
+
+	<ContractsPanel
+		contracts={data.contracts}
+		products={data.productOptions}
+		canWrite={data.canWrite}
+	/>
 
 	<section class="rounded-lg border border-border bg-surface">
 		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">

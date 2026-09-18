@@ -19,6 +19,7 @@ import {
 	requiredText,
 	searchQuery
 } from './common';
+import { CONTRACT_STATUSES, type ContractStatus } from './interactions';
 
 /**
  * Кем организация приходится процессу: вуз, юридическое или физическое лицо,
@@ -351,6 +352,84 @@ export const updateProductSchema = createProductSchema.extend({
 	id: id('Некорректный идентификатор продукта')
 });
 
+/**
+ * Договор с контрагентом.
+ *
+ * Договор принадлежит контрагенту, а не взаимодействию: один договор
+ * обслуживает несколько записей процесса (`docs/domain.md`, раздел 3.2).
+ * Поэтому его команды живут среди справочников, а состояние берётся из
+ * перечисления `CONTRACT_STATUSES` — оно объявлено рядом с таблицей, в
+ * контракте взаимодействий, и второй копии у него быть не должно.
+ */
+const contractFields = {
+	/**
+	 * Заводим новый договор или правим существующий. Форма справочника
+	 * присылает запись целиком, поэтому команда одна: «завести» отличается от
+	 * «исправить» только тем, есть ли уже идентификатор. Слияние по правилу
+	 * «пустое ничего не стирает» к форме отношения не имеет — оно принадлежит
+	 * импорту, где пустая ячейка означает «данных нет».
+	 */
+	id: optionalId('Некорректный идентификатор договора'),
+	organizationId: id('Выберите организацию'),
+	number: requiredText(200, 'Укажите номер договора'),
+	signedOn: optionalIsoDate('Дата подписания указана неверно'),
+	validUntil: optionalIsoDate('Дата окончания действия указана неверно'),
+	status: z.enum(CONTRACT_STATUSES, { error: 'Выберите состояние договора' }).default('draft')
+};
+
+function contractPeriodIsOrdered(value: {
+	signedOn: string | null;
+	validUntil: string | null;
+}): boolean {
+	return value.signedOn === null || value.validUntil === null || value.validUntil >= value.signedOn;
+}
+
+export const saveContractSchema = z.object(contractFields).refine(contractPeriodIsOrdered, {
+	error: 'Договор не может истечь раньше, чем подписан',
+	path: ['validUntil']
+});
+
+/**
+ * Позиция договора: коммерческие условия по одному продукту.
+ *
+ * Состав продуктов взаимодействия позиция не задаёт — его держит
+ * `interaction_products`; позиция добавляет к продукту сроки лицензии и статус
+ * по передаче. Словарь статусов передачи свободный: каталога заказчика ещё нет,
+ * и значения приезжают из его же файла (`docs/directory.md`).
+ */
+const contractItemFields = {
+	/** Как и у договора: пусто — заводим позицию, заполнено — правим её. */
+	id: optionalId('Некорректный идентификатор позиции договора'),
+	contractId: id('Выберите договор'),
+	productId: id('Выберите продукт'),
+	licenseSignedAt: optionalIsoDate('Дата подписания лицензии указана неверно'),
+	licenseUntil: optionalIsoDate('Срок действия лицензии указан неверно'),
+	transferStatus: requiredText(100, 'Укажите статус по передаче')
+};
+
+function licensePeriodIsOrdered(value: {
+	licenseSignedAt: string | null;
+	licenseUntil: string | null;
+}): boolean {
+	return (
+		value.licenseSignedAt === null ||
+		value.licenseUntil === null ||
+		value.licenseUntil >= value.licenseSignedAt
+	);
+}
+
+export const saveContractItemSchema = z.object(contractItemFields).refine(licensePeriodIsOrdered, {
+	error: 'Лицензия не может истечь раньше, чем подписана',
+	path: ['licenseUntil']
+});
+
+/** Страница списка договоров: фильтр по контрагенту и состоянию. */
+export const contractListQuerySchema = z.object({
+	organizationId: optionalId('Некорректный идентификатор организации'),
+	status: z.enum(CONTRACT_STATUSES).nullable().default(null),
+	...pageQuerySchema.shape
+});
+
 export const catalogListQuerySchema = z.object({
 	status: z.enum(LIFECYCLE_STATUSES).nullable().default(null),
 	q: searchQuery,
@@ -442,6 +521,9 @@ export type UpdateProgramInput = z.output<typeof updateProgramSchema>;
 export type CreateProgramVersionInput = z.output<typeof createProgramVersionSchema>;
 export type CreateProductInput = z.output<typeof createProductSchema>;
 export type UpdateProductInput = z.output<typeof updateProductSchema>;
+export type SaveContractInput = z.output<typeof saveContractSchema>;
+export type SaveContractItemInput = z.output<typeof saveContractItemSchema>;
+export type ContractListQuery = z.output<typeof contractListQuerySchema>;
 export type CatalogListQuery = z.output<typeof catalogListQuerySchema>;
 export type OrganizationDirectoryQuery = z.output<typeof organizationDirectoryQuerySchema>;
 export type PeopleListQuery = z.output<typeof peopleListQuerySchema>;
@@ -598,6 +680,34 @@ export type PersonListItem = {
 	organizations: LookupOption[];
 	/** Срок хранения назначен и прошёл: данные пора уничтожать. */
 	retentionExpired: boolean;
+};
+
+/**
+ * Позиция договора в том виде, в каком её показывают карточка вуза и карточка
+ * взаимодействия: продукт назван, а не назван идентификатором.
+ */
+export type ContractItemView = {
+	id: string;
+	contractId: string;
+	productId: string;
+	productCode: string;
+	productName: string;
+	licenseSignedAt: string | null;
+	licenseUntil: string | null;
+	transferStatus: string;
+};
+
+/** Договор контрагента вместе со своими позициями. */
+export type ContractView = {
+	id: string;
+	organizationId: string;
+	number: string;
+	signedOn: string | null;
+	validUntil: string | null;
+	status: ContractStatus;
+	items: ContractItemView[];
+	createdAt: Date;
+	updatedAt: Date;
 };
 
 /** Роль человека вместе с названиями организации и площадки. */

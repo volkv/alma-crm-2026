@@ -1,6 +1,13 @@
-import { expect, test as base, type APIRequestContext, type Page } from '@playwright/test';
+import {
+	expect,
+	test as base,
+	type APIRequestContext,
+	type Locator,
+	type Page
+} from '@playwright/test';
 import { E2E_EXCHANGE_KEYS } from './exchange-keys';
 import { STAFF_ADMIN_STATE } from './global-setup';
+import { waitForHydration } from './helpers/hydration';
 
 /**
  * Обмен в четыре стороны против имитаторов стенда.
@@ -92,6 +99,23 @@ async function applyScenario(
 /** Строка журнала обмена на экране «Внешние системы» по типу события. */
 function journalRow(page: Page, eventType: string) {
 	return page.getByRole('row').filter({ hasText: eventType }).first();
+}
+
+/**
+ * Ячейка строки журнала по названию колонки.
+ *
+ * Номер ячейки в строке — не свойство данных: колонки журнала переставляются, а
+ * второстепенные и вовсе уходят с экрана по его ширине, и записанный числом
+ * номер однажды указал бы на соседнюю. Индекс берётся у шапки той же таблицы:
+ * скрытая колонка одинаково выпадает и из шапки, и из строки.
+ */
+async function journalCell(page: Page, row: Locator, column: string): Promise<Locator> {
+	const headers = await page.getByRole('columnheader').allInnerTexts();
+	const index = headers.findIndex((title) => title.trim() === column);
+
+	expect(index, `колонка «${column}» на экране журнала`).toBeGreaterThanOrEqual(0);
+
+	return row.getByRole('cell').nth(index);
 }
 
 staff(
@@ -193,15 +217,20 @@ staff(
 		const statusRow = journalRow(page, 'application.status');
 
 		await expect(statusRow).toContainText('Отправлено');
-		// Седьмая колонка — «Попытки»: первая ушла в отказ, доставила вторая.
-		await expect(statusRow.getByRole('cell').nth(6)).toContainText('2');
+		// Колонка «Попытки»: первая ушла в отказ, доставила вторая.
+		await expect(await journalCell(page, statusRow, 'Попытки')).toContainText('2');
 
 		// Направление 3: заявку на учебную группу отправляет сотрудник с карточки.
 		await page.goto(`/interactions/${interactionId}`);
 		await expect(page.getByRole('heading', { level: 1 })).toContainText('Заявка с сайта');
 
 		await page.getByLabel('Мест в потоке').fill('45');
-		await page.getByLabel('Начало занятий').fill('2026-10-01');
+		// Дату держит компонент: человек пишет `01.10.2026`, а форме уходит
+		// `2026-10-01` скрытым полем, — и набранное до того, как страница ожила, в
+		// эту форму не попадает совсем.
+		await waitForHydration(page);
+		await page.getByLabel('Начало занятий').fill('01.10.2026');
+		await expect(page.locator('input[name="startsOn"]')).toHaveValue('2026-10-01');
 		await page.getByRole('button', { name: 'Отправить в LMS' }).click();
 
 		const groupRequestId = `crm-group-${interactionId}-1`;

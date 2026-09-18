@@ -2,6 +2,7 @@
 	import PaperclipIcon from '@lucide/svelte/icons/paperclip';
 	import { buttonVariants } from '$lib/components/ui/button/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
+	import { pluralize } from '$lib/format';
 
 	/**
 	 * Выбор файла.
@@ -18,6 +19,7 @@
 		label,
 		description,
 		accept,
+		multiple = false,
 		required = false
 	}: {
 		/** Идентификатор контрола; он же имя поля формы, если имя не задано. */
@@ -28,13 +30,28 @@
 		description?: string;
 		/** Отбор в диалоге выбора: `.pdf,.docx` или `application/pdf`. */
 		accept?: string;
+		/** Несколько файлов за раз: вложения к переходу, а не один документ. */
+		multiple?: boolean;
 		required?: boolean;
 	} = $props();
 
-	let chosen = $state<string | null>(null);
+	let chosen = $state<string[]>([]);
+
+	/**
+	 * Один файл виден по имени, несколько — числом: десять имён в строку не
+	 * помещаются, а «сколько выбрано» это ровно то, что проверяют глазами перед
+	 * отправкой.
+	 */
+	const summary = $derived(
+		chosen.length === 0
+			? 'Файл не выбран'
+			: chosen.length === 1
+				? chosen[0]
+				: pluralize(chosen.length, ['файл', 'файла', 'файлов'])
+	);
 
 	function pick(event: Event & { currentTarget: HTMLInputElement }) {
-		chosen = event.currentTarget.files?.[0]?.name ?? null;
+		chosen = Array.from(event.currentTarget.files ?? [], (file) => file.name);
 	}
 </script>
 
@@ -55,12 +72,13 @@
 			инпуту даёт подпись поля, а не она, — отсюда `aria-labelledby`. -->
 		<label for={id} class={buttonVariants({ variant: 'outline', size: 'sm' })}>
 			<PaperclipIcon aria-hidden="true" />
-			Выбрать файл
+			{multiple ? 'Выбрать файлы' : 'Выбрать файл'}
 		</label>
 		<input
 			{id}
 			{name}
 			{accept}
+			{multiple}
 			{required}
 			type="file"
 			class="sr-only"
@@ -69,10 +87,10 @@
 			onchange={pick}
 		/>
 		<span
-			class="min-w-0 flex-1 truncate text-sm {chosen === null ? 'text-muted-foreground' : ''}"
-			title={chosen ?? undefined}
+			class="min-w-0 flex-1 truncate text-sm {chosen.length === 0 ? 'text-muted-foreground' : ''}"
+			title={chosen.length === 0 ? undefined : chosen.join(', ')}
 		>
-			{chosen ?? 'Файл не выбран'}
+			{summary}
 		</span>
 	</div>
 

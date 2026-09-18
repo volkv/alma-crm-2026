@@ -4,7 +4,7 @@
 	import * as Table from '$lib/components/ui/table/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import StatusBadge from '$lib/components/status-badge.svelte';
-	import { formatDateTime } from '$lib/format';
+	import { formatDateTime, pluralize } from '$lib/format';
 	import {
 		isStubChannel,
 		NOTIFICATION_CHANNEL_LABELS,
@@ -25,6 +25,11 @@
 	 * абзацев, и в колонке журнала оно превратило бы таблицу в простыню. Развёрнут
 	 * он раскрывающимся блоком, потому что вопрос «что там было» задают об одной
 	 * строке, а не обо всех сразу.
+	 *
+	 * Попытки и подробности до `2xl` стоят не своими колонками, а строкой под
+	 * состоянием: на экране в 1280 точек списку остаётся около тысячи, и
+	 * ключевые «повод — получатель — канал — состояние» обязаны помещаться без
+	 * горизонтальной прокрутки (`docs/design.md`, «Приоритет колонок»).
 	 */
 	let { delivery, canManage }: { delivery: NotificationDeliveryView; canManage: boolean } =
 		$props();
@@ -52,9 +57,9 @@
 </script>
 
 <Table.Row>
-	<Table.Cell class="whitespace-nowrap">{formatDateTime(delivery.updatedAt)}</Table.Cell>
-	<Table.Cell>{NOTIFICATION_KIND_LABELS[delivery.kind]}</Table.Cell>
-	<Table.Cell>
+	<Table.Cell class="whitespace-normal">{formatDateTime(delivery.updatedAt)}</Table.Cell>
+	<Table.Cell class="whitespace-normal">{NOTIFICATION_KIND_LABELS[delivery.kind]}</Table.Cell>
+	<Table.Cell class="max-w-56 whitespace-normal">
 		{#if delivery.interactionTitle !== null}
 			<a
 				class="underline underline-offset-4"
@@ -69,12 +74,24 @@
 			<span class="block text-xs text-muted-foreground">стадия «{delivery.stageName}»</span>
 		{/if}
 	</Table.Cell>
-	<Table.Cell>{delivery.recipientName ?? '—'}</Table.Cell>
+	<Table.Cell class="whitespace-normal">{delivery.recipientName ?? '—'}</Table.Cell>
 	<Table.Cell>{NOTIFICATION_CHANNEL_LABELS[delivery.channel]}</Table.Cell>
 	<Table.Cell>
 		<StatusBadge {tone} dot>{NOTIFICATION_STATUS_LABELS[delivery.status]}</StatusBadge>
+		{#if delivery.attempts > 0 || delivery.lastError !== null}
+			<span
+				class="mt-0.5 block max-w-40 text-xs whitespace-normal text-muted-foreground 2xl:hidden"
+			>
+				{pluralize(delivery.attempts, ['попытка', 'попытки', 'попыток'])}
+				{#if delivery.lastError !== null}
+					<span class={delivery.status === 'failed' ? 'text-danger-soft-foreground' : ''}>
+						· {delivery.lastError}
+					</span>
+				{/if}
+			</span>
+		{/if}
 	</Table.Cell>
-	<Table.Cell class="whitespace-nowrap">
+	<Table.Cell class="hidden whitespace-normal 2xl:table-cell">
 		{delivery.attempts}
 		{#if delivery.nextNotifyAt !== null}
 			<span class="block text-xs text-muted-foreground">
@@ -82,7 +99,7 @@
 			</span>
 		{/if}
 	</Table.Cell>
-	<Table.Cell class="max-w-64 text-xs">
+	<Table.Cell class="hidden max-w-64 text-xs whitespace-normal 2xl:table-cell">
 		{#if delivery.lastError !== null}
 			<span
 				class={delivery.status === 'failed'
@@ -97,8 +114,8 @@
 			—
 		{/if}
 	</Table.Cell>
-	<Table.Cell class="whitespace-nowrap">
-		<div class="flex items-center gap-2">
+	<Table.Cell class="whitespace-normal">
+		<div class="flex flex-wrap items-center gap-2">
 			{#if hasLetter}
 				<Button
 					size="sm"

@@ -89,9 +89,11 @@ async function uploadFile(
 
 test('раздел «Данные» есть в меню и показывает сидированные снимки', async ({ page }) => {
 	await page.goto('/');
-	await page.getByRole('link', { name: 'Данные', exact: true }).first().click();
+	await page.getByRole('link', { name: 'Данные об обучении', exact: true }).first().click();
 
-	await expect(page.getByRole('heading', { name: 'Данные об обучении' })).toBeVisible();
+	// Именно заголовок страницы: то же название теперь стоит и в верхней панели
+	// оболочки, и без уровня проверка находила бы оба.
+	await expect(page.getByRole('heading', { level: 1, name: 'Данные об обучении' })).toBeVisible();
 	// На стенде уже есть подтверждённые выгрузки: раздел не открывается пустым.
 	await expect(page.locator('[data-slot="data-table"] tbody tr[data-row]').first()).toBeVisible();
 	await expect(page.getByText('Подтверждён').first()).toBeVisible();

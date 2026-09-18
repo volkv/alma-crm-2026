@@ -92,6 +92,17 @@ export const PARTY_ROLE_LABELS: Record<PartyRole, string> = {
 	operator: 'Оператор'
 };
 
+/**
+ * Состояние договора — словами. Названия одни и те же на карточке вуза, в
+ * карточке взаимодействия и в списке договоров API: состояние едет в базу
+ * кодом, а на экран выходит названием.
+ */
+export const CONTRACT_STATUS_LABELS: Record<ContractStatus, string> = {
+	draft: 'Черновик',
+	active: 'Действует',
+	closed: 'Закрыт'
+};
+
 /** Почему часы стадии остановлены — словами. */
 export const PAUSE_REASON_LABELS: Record<PauseReason, string> = {
 	waiting_counterparty: 'Ждём ответа контрагента',
@@ -211,6 +222,21 @@ const interactionFields = {
 		.min(1, { error: 'Во взаимодействии должен быть хотя бы один участник' }),
 	programs: z.array(interactionProgramSchema).default([]),
 	productIds: z.array(z.uuid({ error: 'Некорректный идентификатор продукта' })).default([]),
+	/**
+	 * Договор контрагента, по которому идёт работа. Принадлежит основной
+	 * стороне: договор живёт у контрагента, а взаимодействие его только выбирает
+	 * (`docs/domain.md`, раздел 3.2). Проверку принадлежности делает сервис — по
+	 * идентификатору её не сделать.
+	 */
+	contractId: optionalId('Некорректный идентификатор договора'),
+	/**
+	 * Позиции выбранного договора: по каким именно продуктам этого договора идёт
+	 * работа. Состав продуктов они не задают — он в `productIds`; позиция
+	 * добавляет к продукту коммерческие условия.
+	 */
+	contractItemIds: z
+		.array(z.uuid({ error: 'Некорректный идентификатор позиции договора' }))
+		.default([]),
 	externalSource: optionalText(100),
 	externalId: optionalText(200)
 };
@@ -250,6 +276,21 @@ function programsAreDistinct(value: { programs: { programId: string }[] }): bool
 	return new Set(value.programs.map((program) => program.programId)).size === value.programs.length;
 }
 
+/**
+ * Позиции бывают только у выбранного договора: позиция без договора — это
+ * ссылка в никуда, и проверить её принадлежность нечему.
+ */
+function contractItemsHaveContract(value: {
+	contractId: string | null;
+	contractItemIds: string[];
+}): boolean {
+	return value.contractId !== null || value.contractItemIds.length === 0;
+}
+
+function contractItemsAreDistinct(value: { contractItemIds: string[] }): boolean {
+	return new Set(value.contractItemIds).size === value.contractItemIds.length;
+}
+
 export const createInteractionSchema = z
 	.object(interactionFields)
 	.refine(agreementPeriodIsOrdered, {
@@ -271,6 +312,14 @@ export const createInteractionSchema = z
 	.refine(programsAreDistinct, {
 		error: 'Программа может быть выбрана только один раз',
 		path: ['programs']
+	})
+	.refine(contractItemsHaveContract, {
+		error: 'Позиции выбираются из договора: сначала выберите договор',
+		path: ['contractItemIds']
+	})
+	.refine(contractItemsAreDistinct, {
+		error: 'Позиция договора может быть выбрана только один раз',
+		path: ['contractItemIds']
 	});
 
 export const updateInteractionSchema = createInteractionSchema.extend({
@@ -630,6 +679,16 @@ export const processDefinitionSchema = z
 
 export type CreateInteractionInput = z.output<typeof createInteractionSchema>;
 export type UpdateInteractionInput = z.output<typeof updateInteractionSchema>;
+/**
+ * То, что присылают команде до разбора схемой.
+ *
+ * Команда заведения и команда правки разбирают вход сами, поэтому и принимают
+ * они именно вход: поле со значением по умолчанию (состав продуктов, позиции
+ * договора) вызывающий вправе не называть — за него ответит схема, а не
+ * россыпь пустых списков по всем вызовам.
+ */
+export type CreateInteractionDraft = z.input<typeof createInteractionSchema>;
+export type UpdateInteractionDraft = z.input<typeof updateInteractionSchema>;
 export type InteractionListQuery = z.output<typeof interactionListQuerySchema>;
 export type AdvanceStageInput = z.output<typeof advanceStageSchema>;
 export type ReturnStageInput = z.output<typeof returnStageSchema>;
@@ -898,6 +957,31 @@ export type InteractionProductView = {
 	name: string;
 };
 
+/**
+ * Договор взаимодействия и выбранные из него позиции.
+ *
+ * Здесь только то подмножество позиций, которое выбрало взаимодействие: сам
+ * договор со всеми позициями живёт на карточке контрагента, и дублировать его
+ * целиком значило бы отвечать на другой вопрос. Позиция названа продуктом и
+ * несёт его коммерческие условия — сроки лицензии и статус по передаче.
+ */
+export type InteractionContractView = {
+	id: string;
+	number: string;
+	status: ContractStatus;
+	signedOn: string | null;
+	validUntil: string | null;
+	items: {
+		id: string;
+		productId: string;
+		code: string;
+		name: string;
+		licenseSignedAt: string | null;
+		licenseUntil: string | null;
+		transferStatus: string;
+	}[];
+};
+
 /** Взаимодействие целиком — то, из чего собирается карточка. */
 export type InteractionView = {
 	id: string;
@@ -921,6 +1005,8 @@ export type InteractionView = {
 	parties: InteractionPartyView[];
 	programs: InteractionProgramView[];
 	products: InteractionProductView[];
+	/** Договор контрагента и выбранные позиции; `null` — договор не выбран. */
+	contract: InteractionContractView | null;
 	documents: InteractionDocumentView[];
 };
 
@@ -1226,6 +1312,30 @@ export const apiInteractionDetailSchema = apiInteractionSchema.extend({
 	),
 	programs: z.array(z.object({ programId: z.uuid(), code: z.string(), name: z.string() })),
 	products: z.array(z.object({ productId: z.uuid(), code: z.string(), name: z.string() })),
+	/**
+	 * Договор контрагента и выбранные из него позиции; `null` — договор не
+	 * выбран. Полный договор со всеми позициями отдаёт `GET /v1/contracts`.
+	 */
+	contract: z
+		.object({
+			id: z.uuid(),
+			number: z.string(),
+			status: z.enum(CONTRACT_STATUSES),
+			signedOn: z.iso.date().nullable(),
+			validUntil: z.iso.date().nullable(),
+			items: z.array(
+				z.object({
+					id: z.uuid(),
+					productId: z.uuid(),
+					code: z.string(),
+					name: z.string(),
+					licenseSignedAt: z.iso.date().nullable(),
+					licenseUntil: z.iso.date().nullable(),
+					transferStatus: z.string().describe('Статус по передаче продукта вузу')
+				})
+			)
+		})
+		.nullable(),
 	/** Стадии маршрута с состоянием каждой: пройдена, текущая, пропущена. */
 	progress: z.array(
 		z.object({
@@ -1295,6 +1405,7 @@ export function toApiInteractionDetail(
 			code: product.code,
 			name: product.name
 		})),
+		contract: view.contract,
 		progress: status.progress.map((item) => ({
 			key: item.key,
 			name: item.name,

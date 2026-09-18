@@ -482,22 +482,24 @@
 								<Table.Row>
 									<Table.Cell class="text-right">{stage.position}</Table.Cell>
 									<Table.Cell class="text-muted-foreground">{stage.key}</Table.Cell>
-									<Table.Cell class="font-medium">
+									<Table.Cell class="font-medium whitespace-normal">
 										{stage.name}
 										{#if stage.isFinal}
 											<StatusBadge tone="accent">Финальная</StatusBadge>
 										{/if}
 									</Table.Cell>
-									<Table.Cell>{STAGE_CATEGORY_LABELS[stage.category]}</Table.Cell>
-									<Table.Cell class="text-right">
+									<Table.Cell class="whitespace-normal">
+										{STAGE_CATEGORY_LABELS[stage.category]}
+									</Table.Cell>
+									<Table.Cell class="text-right whitespace-normal">
 										{pluralize(stage.slaDays, ['день', 'дня', 'дней'])}
 									</Table.Cell>
-									<Table.Cell class="text-right">
+									<Table.Cell class="text-right whitespace-normal">
 										{stage.staleAfterDays === null
 											? '—'
 											: pluralize(stage.staleAfterDays, ['день', 'дня', 'дней'])}
 									</Table.Cell>
-									<Table.Cell>
+									<Table.Cell class="whitespace-normal">
 										<span class="flex flex-wrap gap-1">
 											{#if stage.requiresResult}
 												<StatusBadge tone="info">Результат</StatusBadge>
@@ -513,7 +515,7 @@
 											{/if}
 										</span>
 									</Table.Cell>
-									<Table.Cell>
+									<Table.Cell class="whitespace-normal">
 										{#if stage.checklist.length === 0}
 											<span class="text-faint">—</span>
 										{:else}
@@ -530,8 +532,8 @@
 										{/if}
 									</Table.Cell>
 									{#if editable}
-										<Table.Cell>
-											<span class="flex gap-1">
+										<Table.Cell class="whitespace-normal">
+											<span class="flex flex-wrap gap-1">
 												<Button variant="outline" size="sm" onclick={() => openStage(stage)}>
 													Изменить
 												</Button>
@@ -591,13 +593,19 @@
 						<Table.Body>
 							{#each shown.transitions as transition (transition.id)}
 								<Table.Row>
-									<Table.Cell>{stageNames.get(transition.fromStageId) ?? '—'}</Table.Cell>
-									<Table.Cell>{stageNames.get(transition.toStageId) ?? '—'}</Table.Cell>
-									<Table.Cell>{TRANSITION_KIND_LABELS[transition.kind]}</Table.Cell>
-									<Table.Cell class="text-muted-foreground">
+									<Table.Cell class="whitespace-normal">
+										{stageNames.get(transition.fromStageId) ?? '—'}
+									</Table.Cell>
+									<Table.Cell class="whitespace-normal">
+										{stageNames.get(transition.toStageId) ?? '—'}
+									</Table.Cell>
+									<Table.Cell class="whitespace-normal">
+										{TRANSITION_KIND_LABELS[transition.kind]}
+									</Table.Cell>
+									<Table.Cell class="max-w-40 break-all whitespace-normal text-muted-foreground">
 										{transition.requiredPermissionKey}
 									</Table.Cell>
-									<Table.Cell>
+									<Table.Cell class="whitespace-normal">
 										{#if transition.requiresReason}
 											<StatusBadge tone="warning">Обязательна</StatusBadge>
 										{:else}
@@ -605,8 +613,8 @@
 										{/if}
 									</Table.Cell>
 									{#if editable}
-										<Table.Cell>
-											<span class="flex gap-1">
+										<Table.Cell class="whitespace-normal">
+											<span class="flex flex-wrap gap-1">
 												<Button
 													variant="outline"
 													size="sm"

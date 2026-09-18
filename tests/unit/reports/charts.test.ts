@@ -6,7 +6,14 @@
  * другую картинку.
  */
 import { describe, expect, it } from 'vitest';
-import { buildBreakdown, buildFunnel, buildMovementChart } from '$lib/server/reports/charts';
+import {
+	buildBreakdown,
+	buildFunnel,
+	buildFunnelFromCounts,
+	buildMovementChart
+} from '$lib/server/reports/charts';
+import { createStageIndex, type ReportProcessGroup } from '$lib/server/reports/stages';
+import { valueLabelPoints } from '$lib/components/reports/value-labels';
 
 describe('ось времени динамики переходов', () => {
 	it('до трёх месяцев считает по неделям с понедельника', () => {
@@ -112,12 +119,167 @@ describe('разрез по многозначному признаку', () => 
 
 describe('воронка', () => {
 	it('держит закрытые отдельным блоком и говорит, что это не конверсия', () => {
-		const funnel = buildFunnel([{ key: 'g:contact', label: 'Контакты', value: 3, filter: null }], {
-			completed: 2,
-			cancelled: 1
-		});
+		const funnel = buildFunnel(
+			[
+				{
+					groupId: 'g',
+					groupKey: 'b2b',
+					groupName: 'Работа с вузами',
+					stages: [{ key: 'g:contact', label: 'Контакты', value: 3, filter: null }]
+				}
+			],
+			{ completed: 2, cancelled: 1 }
+		);
 
 		expect(funnel.closed.map((bucket) => bucket.value)).toStrictEqual([2, 1]);
 		expect(funnel.note).toContain('не конверсия');
+	});
+});
+
+describe('воронка по группам процесса', () => {
+	/** Две группы с одинаковым ключом стадии: законная ситуация, см. `domain.md`. */
+	function index() {
+		const groups = new Map<string, ReportProcessGroup>([
+			[
+				'g-b2b',
+				{
+					id: 'g-b2b',
+					key: 'b2b',
+					name: 'Работа с вузами',
+					stages: [
+						{ key: 'contact', name: 'Контакты', position: 1 },
+						{ key: 'meeting', name: 'Встреча', position: 2 }
+					]
+				}
+			],
+			[
+				'g-b2c',
+				{
+					id: 'g-b2c',
+					key: 'b2c',
+					name: 'Работа со слушателями',
+					stages: [
+						{ key: 'meeting', name: 'Консультация', position: 1 },
+						{ key: 'payment', name: 'Оплата', position: 2 }
+					]
+				}
+			]
+		]);
+
+		return createStageIndex(groups);
+	}
+
+	it('не складывает одинаковые ключи стадий разных процессов в одну полосу', () => {
+		const funnel = buildFunnelFromCounts(
+			index(),
+			[
+				{ bucketId: 'g-b2b:meeting', stageName: 'Встреча', value: 3 },
+				{ bucketId: 'g-b2c:meeting', stageName: 'Консультация', value: 2 }
+			],
+			{}
+		);
+
+		expect(funnel.groups.map((group) => group.groupKey)).toStrictEqual(['b2b', 'b2c']);
+		expect(funnel.groups[0].stages.map((bucket) => [bucket.label, bucket.value])).toStrictEqual([
+			['Контакты', 0],
+			['Встреча', 3]
+		]);
+		expect(funnel.groups[1].stages.map((bucket) => [bucket.label, bucket.value])).toStrictEqual([
+			['Консультация', 2],
+			['Оплата', 0]
+		]);
+	});
+
+	it('не рисует пустую воронку рядом с непустой', () => {
+		const funnel = buildFunnelFromCounts(
+			index(),
+			[{ bucketId: 'g-b2b:contact', stageName: 'Контакты', value: 1 }],
+			{}
+		);
+
+		expect(funnel.groups.map((group) => group.groupKey)).toStrictEqual(['b2b']);
+	});
+
+	it('на пустой выборке показывает все процессы: нули и есть ответ', () => {
+		const funnel = buildFunnelFromCounts(index(), [], {});
+
+		expect(funnel.groups.map((group) => group.groupKey)).toStrictEqual(['b2b', 'b2c']);
+		expect(
+			funnel.groups.flatMap((group) => group.stages).every((bucket) => bucket.value === 0)
+		).toBe(true);
+	});
+
+	it('удалённую из процесса стадию ставит в конец своей группы с пометкой', () => {
+		const funnel = buildFunnelFromCounts(
+			index(),
+			[
+				{ bucketId: 'g-b2b:contact', stageName: 'Контакты', value: 1 },
+				{ bucketId: 'g-b2b:old', stageName: 'Прежняя стадия', value: 4 }
+			],
+			{}
+		);
+
+		const stages = funnel.groups[0].stages;
+
+		expect(stages.at(-1)).toStrictEqual({
+			key: 'g-b2b:old',
+			label: 'Прежняя стадия (стадия удалена из процесса)',
+			value: 4,
+			filter: { param: 'stage', value: 'old' },
+			retired: true
+		});
+	});
+});
+
+describe('подписи значений на диаграмме', () => {
+	it('подписывает каждый столбец обычной диаграммы и пропускает нулевой', () => {
+		const points = valueLabelPoints({
+			stacked: false,
+			horizontal: true,
+			gap: 6,
+			series: [
+				{
+					visible: true,
+					values: [3, 0],
+					bars: [
+						{ x: 100, y: 10 },
+						{ x: 0, y: 30 }
+					]
+				}
+			]
+		});
+
+		// Ноль столбца не имеет: подпись висела бы в пустоте на оси.
+		expect(points).toStrictEqual([{ text: '3', x: 106, y: 10, align: 'left', baseline: 'middle' }]);
+	});
+
+	it('у столбцов с накоплением подписывает сумму стопки над её вершиной', () => {
+		const points = valueLabelPoints({
+			stacked: true,
+			horizontal: false,
+			gap: 6,
+			series: [
+				{ visible: true, values: [2], bars: [{ x: 50, y: 80 }] },
+				{ visible: true, values: [3], bars: [{ x: 50, y: 40 }] }
+			]
+		});
+
+		expect(points).toStrictEqual([
+			{ text: '5', x: 50, y: 34, align: 'center', baseline: 'bottom' }
+		]);
+	});
+
+	it('выключенную в легенде серию в сумму не берёт', () => {
+		const points = valueLabelPoints({
+			stacked: true,
+			horizontal: false,
+			gap: 6,
+			series: [
+				{ visible: true, values: [2], bars: [{ x: 50, y: 80 }] },
+				{ visible: false, values: [3], bars: [{ x: 50, y: 40 }] }
+			]
+		});
+
+		expect(points.map((point) => point.text)).toStrictEqual(['2']);
 	});
 });

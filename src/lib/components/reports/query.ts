@@ -77,6 +77,44 @@ export function modeHref(url: URL, mode: ReportMode): ResolvedPathname {
 	return reportHref(url, { mode });
 }
 
+/** Режим и период отчёта — то, без чего его числа не читаются. */
+export type ReportPeriod = { mode: ReportMode; from: string; to: string };
+
+/**
+ * Переход от столбца диаграммы к списку взаимодействий, которые за ним стоят.
+ *
+ * Список — это таблица того же отчёта под диаграммой: только она считает стадию
+ * на дату среза так же, как воронка, и только на ней число строк совпадает с
+ * числом на столбце. Общий список `/interactions` показывает **текущую** стадию
+ * и ни периода, ни режима не знает — переход туда молча показал бы другой набор.
+ *
+ * Переход добавляет к выборке группу процесса и ключ стадии и **не снимает**
+ * остальные фильтры: вуз, направление, программа, продукт, ответственный и
+ * состояние остаются в адресе, потому что столбец нарисован под ними же.
+ * Режим и период выписываются явно: ссылку отправляют коллеге, а «сегодня» у
+ * него наступит завтра.
+ */
+export function stageDrilldownHref(
+	url: URL,
+	period: ReportPeriod,
+	groupKey: string,
+	stageKey: string
+): ResolvedPathname {
+	return reportHref(url, { ...period, group: groupKey, stage: stageKey });
+}
+
+/**
+ * Переход от столбца динамики: период сужается до интервала столбца, режим и
+ * все фильтры остаются. Стадии у столбца нет — он про время, а не про место.
+ */
+export function movementDrilldownHref(
+	url: URL,
+	mode: ReportMode,
+	bucket: { from: string; to: string }
+): ResolvedPathname {
+	return reportHref(url, { mode, from: bucket.from, to: bucket.to });
+}
+
 /** Ссылка с пустым фильтром: остаются только режим и период. */
 export function clearedHref(url: URL): ResolvedPathname {
 	const changes: ReportChanges = {};
@@ -144,9 +182,17 @@ const INTERACTIONS_PATH = resolve('/interactions');
 export function interactionsHref(url: URL): ResolvedPathname {
 	const params = new URLSearchParams();
 	const states = selectedValues(url, 'state');
+	const groups = selectedValues(url, 'group');
 
 	if (states.length === 1) {
 		params.set('status', states[0]);
+	}
+
+	// Группу процесса список понимает и называет тем же ключом. Стадию — нет:
+	// у него в `stage` лежит смысловая группа стадий, а не ключ, и ключ отчёта
+	// он бы молча не понял, показав выборку шире обещанной.
+	if (groups.length === 1) {
+		params.set('group', groups[0]);
 	}
 
 	if (url.searchParams.get('overdue') === 'true') {
@@ -171,7 +217,6 @@ export function unsupportedListFilters(url: URL): string[] {
 		['stage', 'стадия'],
 		['transfer', 'статус передачи'],
 		['party', 'тип контрагента'],
-		['group', 'группа процесса'],
 		['paused', 'на паузе']
 	];
 
@@ -183,6 +228,12 @@ export function unsupportedListFilters(url: URL): string[] {
 
 	if (selectedValues(url, 'state').length > 1) {
 		dropped.push('несколько состояний сразу');
+	}
+
+	// Одну группу процесса список понимает; несколько сразу — нет: у него это
+	// один выбор «чей процесс показать».
+	if (selectedValues(url, 'group').length > 1) {
+		dropped.push('несколько групп процесса сразу');
 	}
 
 	return dropped;

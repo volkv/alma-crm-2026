@@ -101,8 +101,13 @@ export type ReferenceIds = {
 	organizations: { a: string; b: string };
 	directions: { devops: string; qa: string };
 	products: Record<'П-1' | 'П-1б' | 'П-2', string>;
+	programId: string;
 	contractId: string;
 	interactions: Record<ReferenceCode, string>;
+	/** Подтверждения В-1: по ним проверяется путь «от числа к подтверждению». */
+	documentId: string;
+	learningGroupId: string;
+	learningGroupResultId: string;
 };
 
 /**
@@ -223,6 +228,19 @@ export async function seedReferenceSet(db: Database, ownerUserId: string): Promi
 		{ productId: products['П-2'], directionId: qa.id }
 	]);
 
+	// Программа В-1. Направление у неё то же, что у продуктов записи, — union
+	// направлений его не удваивает, и числа документа остаются прежними.
+	const [program] = await db
+		.insert(schema.programs)
+		.values({
+			code: 'pr-1',
+			name: 'ПР-1 DevOps для вузов',
+			level: 'dpo',
+			directionId: devops.id,
+			status: 'active'
+		})
+		.returning({ id: schema.programs.id });
+
 	const [contract] = await db
 		.insert(schema.contracts)
 		.values({ organizationId: organizationA.id, number: 'Д-2026/1', status: 'active' })
@@ -268,6 +286,11 @@ export async function seedReferenceSet(db: Database, ownerUserId: string): Promi
 		);
 
 		if (definition.code === 'В-1') {
+			await db.insert(schema.interactionPrograms).values({
+				interactionId: interaction.id,
+				programId: program.id
+			});
+
 			await db.insert(schema.interactionContractItems).values(
 				items.map((item) => ({
 					interactionId: interaction.id,
@@ -347,6 +370,43 @@ export async function seedReferenceSet(db: Database, ownerUserId: string): Promi
 		});
 	}
 
+	// Подтверждения В-1: файл соглашения и поток обучения с одним результатом.
+	// На числа отчёта они не влияют ничем — зерно строки от них не зависит, — но
+	// без них в строке выгрузки нечего проверить, кроме самих чисел.
+	const [document] = await db
+		.insert(schema.documents)
+		.values({
+			interactionId: interactions['В-1'],
+			kind: 'agreement',
+			title: 'Соглашение о сотрудничестве',
+			filePath: 'files/reference-agreement',
+			mime: 'application/pdf',
+			sizeBytes: 2048,
+			sha256: 'e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855'
+		})
+		.returning({ id: schema.documents.id });
+
+	const [learningGroup] = await db
+		.insert(schema.learningGroups)
+		.values({
+			interactionId: interactions['В-1'],
+			streamNumber: 1,
+			system: 'lms',
+			instance: 'reference',
+			groupExternalId: 'LMS-REF-1'
+		})
+		.returning({ id: schema.learningGroups.id });
+
+	const [learningGroupResult] = await db
+		.insert(schema.learningGroupResults)
+		.values({
+			learningGroupId: learningGroup.id,
+			occurredAt: moment('2026-12-20'),
+			enrolled: 12,
+			completed: 10
+		})
+		.returning({ id: schema.learningGroupResults.id });
+
 	return {
 		groupId: group.id,
 		revisionId,
@@ -354,8 +414,12 @@ export async function seedReferenceSet(db: Database, ownerUserId: string): Promi
 		organizations: { a: organizationA.id, b: organizationB.id },
 		directions: { devops: devops.id, qa: qa.id },
 		products,
+		programId: program.id,
 		contractId: contract.id,
-		interactions
+		interactions,
+		documentId: document.id,
+		learningGroupId: learningGroup.id,
+		learningGroupResultId: learningGroupResult.id
 	};
 }
 

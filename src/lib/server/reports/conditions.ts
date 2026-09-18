@@ -22,7 +22,11 @@
  */
 import { and, sql, type SQL } from 'drizzle-orm';
 import type { InteractionStatus } from '$lib/contracts/interactions';
-import type { ReportQuery } from '$lib/contracts/reports';
+import type {
+	ReportDocumentRef,
+	ReportLearningGroupRef,
+	ReportQuery
+} from '$lib/contracts/reports';
 import type { ActorContext } from '../actor';
 import { interactionScopeFilter } from '../interactions/access';
 
@@ -181,12 +185,16 @@ export const SELECTION_COLUMNS = sql`
 export const ATTRIBUTE_COLUMNS = sql`
 	owner_user.full_name as "ownerName",
 	contract.number as "contractNumber",
+	coalesce(interaction_programs_agg.ids, '{}'::uuid[]) as "programIds",
+	coalesce(interaction_programs_agg.names, '{}'::text[]) as "programs",
 	coalesce(interaction_products_agg.ids, '{}'::uuid[]) as "productIds",
 	coalesce(interaction_products_agg.names, '{}'::text[]) as "products",
 	coalesce(interaction_directions_agg.ids, '{}'::uuid[]) as "directionIds",
 	coalesce(interaction_directions_agg.names, '{}'::text[]) as "directions",
 	coalesce(interaction_transfer_agg.names, '{}'::text[]) as "transferStatuses",
-	coalesce(interaction_assignees_agg.names, '{}'::text[]) as "assignees"
+	coalesce(interaction_assignees_agg.names, '{}'::text[]) as "assignees",
+	coalesce(interaction_documents_agg.items, '[]'::json) as "documents",
+	coalesce(interaction_learning_groups_agg.items, '[]'::json) as "learningGroups"
 `;
 
 /**
@@ -203,6 +211,14 @@ export function attributeJoins(asOf: string, source: SQL): SQL {
 	return sql`
 		left join users owner_user on owner_user.id = ${source}."ownerUserId"
 		left join contracts contract on contract.id = ${source}."contractId"
+		left join lateral (
+			select
+				array_agg(program.id order by program.code) as ids,
+				array_agg(program.name order by program.code) as names
+			from interaction_programs chosen
+			join programs program on program.id = chosen.program_id
+			where chosen.interaction_id = ${source}."interactionId"
+		) interaction_programs_agg on true
 		left join lateral (
 			select
 				array_agg(product.id order by product.code) as ids,
@@ -243,6 +259,32 @@ export function attributeJoins(asOf: string, source: SQL): SQL {
 				and responsible.valid_from <= ${asOf}::timestamptz
 				and (responsible.valid_to is null or responsible.valid_to > ${asOf}::timestamptz)
 		) interaction_assignees_agg on true
+		left join lateral (
+			select json_agg(json_build_object(
+				'id', document.id,
+				'kind', document.kind,
+				'storageKey', document.file_path,
+				'sha256', document.sha256
+			) order by document.created_at) as items
+			from documents document
+			where document.interaction_id = ${source}."interactionId"
+		) interaction_documents_agg on true
+		left join lateral (
+			select json_agg(json_build_object(
+				'id', learning_group.id,
+				'externalId', learning_group.group_external_id,
+				'resultId', latest_result.id
+			) order by learning_group.stream_number) as items
+			from learning_groups learning_group
+			left join lateral (
+				select result.id
+				from learning_group_results result
+				where result.learning_group_id = learning_group.id
+				order by result.occurred_at desc
+				limit 1
+			) latest_result on true
+			where learning_group.interaction_id = ${source}."interactionId"
+		) interaction_learning_groups_agg on true
 	`;
 }
 
@@ -268,12 +310,21 @@ export type ReportSelection = {
 export type ReportAttributes = {
 	ownerName: string | null;
 	contractNumber: string | null;
+	programIds: string[];
+	programs: string[];
 	productIds: string[];
 	products: string[];
 	directionIds: string[];
 	directions: string[];
 	transferStatuses: string[];
 	assignees: string[];
+	/**
+	 * Ключи связи для проверки числа. Едут объектами JSON, а не параллельными
+	 * массивами: у документа четыре поля, и четыре массива разъехались бы на
+	 * первой же строке без документа.
+	 */
+	documents: ReportDocumentRef[];
+	learningGroups: ReportLearningGroupRef[];
 };
 
 /**

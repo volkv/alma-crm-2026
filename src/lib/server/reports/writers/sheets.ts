@@ -116,9 +116,23 @@ function summarySheet(view: ReportView): SpreadsheetWriteSheet {
 	const rows: SpreadsheetWriteCell[][] = [];
 
 	if (view.charts.funnel !== null) {
-		rows.push(...bucketRows('Стадия на дату среза', view.charts.funnel.stages));
-		rows.push([]);
-		rows.push(...bucketRows('Закрыто за период', view.charts.funnel.closed));
+		const funnel = view.charts.funnel;
+
+		// Воронка своя у каждой группы процесса: одинаковые ключи стадий в B2B и
+		// B2C законны, и в одном списке две разные стадии слились бы в одну строку.
+		for (const group of funnel.groups) {
+			rows.push(
+				...bucketRows(
+					funnel.groups.length > 1
+						? `Стадия на дату среза — ${group.groupName}`
+						: 'Стадия на дату среза',
+					group.stages
+				)
+			);
+			rows.push([]);
+		}
+
+		rows.push(...bucketRows('Закрыто за период', funnel.closed));
 		rows.push([]);
 		rows.push(['В том числе на паузе', view.totals.paused]);
 		rows.push(['В том числе просрочено', view.totals.overdue]);

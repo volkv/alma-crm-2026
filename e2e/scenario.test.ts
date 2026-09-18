@@ -528,8 +528,10 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		await expect(lead.getByRole('heading', { level: 1 })).toContainText(COLLEGE.name);
 
 		const form = lead.getByTestId('assign-responsible');
+		const managerOption = lead.getByRole('option', { name: 'Менеджер Демо' });
 
-		await form.getByLabel('Сотрудник').selectOption({ label: 'Менеджер Демо' });
+		await openLayer(form.getByRole('combobox', { name: 'Сотрудник' }), managerOption);
+		await managerOption.click();
 		await form.getByRole('button', { name: 'Назначить' }).click();
 
 		// Проверяем доступ, а не тост: тост исчезает сам, и ожидание его
@@ -583,12 +585,12 @@ test.describe.serial('сквозной сценарий: от заявки до 
 
 		const from = admin.getByRole('option', { name: new RegExp(RENAMED_NAME) });
 
-		await openLayer(dialog.getByRole('button', { name: /^Откуда/ }), from);
+		await openLayer(dialog.getByRole('combobox', { name: /^Откуда/ }), from);
 		await from.click();
 
 		const to = admin.getByRole('option', { name: new RegExp(STAGES[3].name) });
 
-		await openLayer(dialog.getByRole('button', { name: /^Куда/ }), to);
+		await openLayer(dialog.getByRole('combobox', { name: /^Куда/ }), to);
 		await to.click();
 
 		await dialog.getByRole('button', { name: 'Добавить переход' }).click();
@@ -738,7 +740,11 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		).toBeVisible();
 
 		await manager.getByLabel('Мест в потоке').fill('45');
-		await manager.getByLabel('Начало занятий').fill('2026-10-01');
+		// Дату держит компонент: человек пишет `01.10.2026`, а форме уходит
+		// `2026-10-01` скрытым полем. Страница уже ожила (`waitForHydration`
+		// выше), иначе набранное осталось бы в разметке и в форму не попало.
+		await manager.getByLabel('Начало занятий').fill('01.10.2026');
+		await expect(manager.locator('input[name="startsOn"]')).toHaveValue('2026-10-01');
 		await manager.getByRole('button', { name: 'Отправить в LMS' }).click();
 
 		const requestExternalId = `crm-group-${mainId}-1`;

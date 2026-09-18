@@ -65,6 +65,15 @@ export const AUDIT_EVENT_TYPES = [
 	'directory.import_created',
 	'directory.import_confirmed',
 	'directory.import_rejected',
+	// Договор контрагента и его позиции: заведены и изменены. Своим кодом, а не
+	// правкой организации: договор — обязательство с датами и коммерческими
+	// условиями, и на вопрос «кто и когда поменял срок лицензии» журнал обязан
+	// отвечать по самой записи. Импорт каталога заводит их десятками и своей
+	// строкой в журнале уже отмечен (`directory.import_confirmed`).
+	'directory.contract_created',
+	'directory.contract_updated',
+	'directory.contract_item_created',
+	'directory.contract_item_updated',
 	'people.created',
 	'people.updated',
 	'people.affiliation_created',

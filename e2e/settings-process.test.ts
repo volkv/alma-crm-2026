@@ -216,11 +216,11 @@ staff('черновик изменений применяется ко всем 
 	await openLayer(page.getByRole('button', { name: 'Добавить переход' }).first(), dialog);
 
 	const from = page.getByRole('option', { name: new RegExp(RENAMED_NAME) });
-	await openLayer(dialog.getByRole('button', { name: /^Откуда/ }), from);
+	await openLayer(dialog.getByRole('combobox', { name: /^Откуда/ }), from);
 	await from.click();
 
 	const to = page.getByRole('option', { name: /Завершение/ });
-	await openLayer(dialog.getByRole('button', { name: /^Куда/ }), to);
+	await openLayer(dialog.getByRole('combobox', { name: /^Куда/ }), to);
 	await to.click();
 
 	await dialog.getByRole('button', { name: 'Добавить переход' }).click();

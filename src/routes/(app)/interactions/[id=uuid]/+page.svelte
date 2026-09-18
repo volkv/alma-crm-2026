@@ -178,7 +178,12 @@
 		</Tabs.Content>
 
 		<Tabs.Content value="plan" class="pt-4">
-			<PlanPanel interaction={data.interaction} users={data.users} canWrite={can('edit')} />
+			<PlanPanel
+				interaction={data.interaction}
+				users={data.users}
+				contracts={data.contracts}
+				canWrite={can('edit')}
+			/>
 		</Tabs.Content>
 
 		<Tabs.Content value="history" class="pt-4">

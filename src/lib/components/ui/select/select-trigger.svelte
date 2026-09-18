@@ -2,6 +2,7 @@
 	import { Select as SelectPrimitive } from 'bits-ui';
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import { cn, type WithoutChild } from '$lib/utils.js';
+	import { getSelectPopup } from './select.svelte';
 
 	let {
 		ref = $bindable(null),
@@ -12,12 +13,27 @@
 	}: WithoutChild<SelectPrimitive.TriggerProps> & {
 		size?: 'sm' | 'default';
 	} = $props();
+
+	/**
+	 * Триггер — кнопка, открывающая список, и роль у неё `combobox`: так эту
+	 * пару описывает ARIA, так её называют вспомогательные технологии и так её
+	 * ищут проверки (`getByRole('combobox')`). Сам bits-ui роли не ставит —
+	 * оставляет `aria-haspopup="listbox"` на кнопке, — поэтому семантику
+	 * дописываем здесь, один раз на весь продукт.
+	 *
+	 * `aria-controls` появляется только у открытого списка: разметки списка в
+	 * закрытом состоянии в документе нет, и ссылка на несуществующий
+	 * идентификатор была бы хуже её отсутствия.
+	 */
+	const popup = getSelectPopup();
 </script>
 
 <SelectPrimitive.Trigger
 	bind:ref
 	data-slot="select-trigger"
 	data-size={size}
+	role="combobox"
+	aria-controls={popup.open ? popup.id : undefined}
 	class={cn(
 		"flex w-fit items-center justify-between gap-1.5 rounded-md border border-input bg-transparent py-2 pr-2 pl-2.5 text-sm whitespace-nowrap shadow-xs transition-[color,box-shadow] outline-none focus-visible:border-ring focus-visible:ring-3 focus-visible:ring-ring/50 disabled:cursor-not-allowed disabled:opacity-50 aria-invalid:border-destructive aria-invalid:ring-3 aria-invalid:ring-destructive/20 data-placeholder:text-muted-foreground data-[size=default]:h-control data-[size=sm]:h-7 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-1.5 dark:bg-input/30 dark:hover:bg-input/50 dark:aria-invalid:border-destructive/50 dark:aria-invalid:ring-destructive/40 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
 		className

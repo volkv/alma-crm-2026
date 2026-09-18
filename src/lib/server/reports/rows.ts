@@ -95,6 +95,8 @@ function attributeCell(
 			return text(row.organizationName);
 		case 'directions':
 			return list(row.directions);
+		case 'programs':
+			return list(row.programs);
 		case 'products':
 			return list(row.products);
 		case 'contract':
@@ -326,7 +328,9 @@ async function assembleReport(
 					rowKey: `${movementEventKind(row)}:${row.entryId}`,
 					interactionId: row.interactionId,
 					stageEntryId: row.entryId,
-					cells: columns.map((column) => movementCell(column, row, index, origin))
+					cells: columns.map((column) => movementCell(column, row, index, origin)),
+					documents: row.documents,
+					learningGroups: row.learningGroups
 				})),
 				totals: aggregates.totals,
 				charts: {
@@ -362,7 +366,9 @@ async function assembleReport(
 				rowKey: row.interactionId,
 				interactionId: row.interactionId,
 				stageEntryId: row.entryId,
-				cells: columns.map((column) => snapshotCell(column, row, index, origin))
+				cells: columns.map((column) => snapshotCell(column, row, index, origin)),
+				documents: row.documents,
+				learningGroups: row.learningGroups
 			})),
 			totals: aggregates.totals,
 			charts: {

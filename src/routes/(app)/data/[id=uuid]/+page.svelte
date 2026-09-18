@@ -36,7 +36,7 @@
 <PageHeader
 	title="Снимок данных: {STAT_SOURCE_LABELS[snapshot.source]}"
 	description={snapshot.fileName ?? 'Загрузка без файла'}
-	breadcrumbs={[{ label: 'Данные', href: resolve('/(app)/data') }]}
+	breadcrumbs={[{ label: 'Данные об обучении', href: resolve('/(app)/data') }]}
 >
 	{#snippet actions()}
 		<StatusBadge tone={STAT_SNAPSHOT_STATUS_TONES[snapshot.status]}>

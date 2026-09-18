@@ -354,12 +354,13 @@ test('помеха запрещает переход и объясняет от�
 
 	await page.getByRole('tab', { name: 'Помехи' }).click();
 
-	// Причина выбирается из справочника. Список bits-ui открывает клиентский
-	// код, и нажатие до гидратации теряется совсем — отсюда повтор.
+	// Причина выбирается из справочника. Роль выбора — `combobox`: так эту пару
+	// «кнопка и список» описывает ARIA. Список bits-ui открывает клиентский код,
+	// и нажатие до гидратации теряется совсем — отсюда повтор.
 	const reason = page.getByRole('option', { name: 'Не отвечают на запрос' });
 
 	await expect(async () => {
-		await page.getByRole('button', { name: 'Причина', exact: true }).click();
+		await page.getByRole('combobox', { name: 'Причина', exact: true }).click();
 		await expect(reason).toBeVisible({ timeout: 3000 });
 	}).toPass({ timeout: 20_000 });
 

@@ -24,18 +24,32 @@
  *    кодом — расхождение между «что подтвердили» и «что записалось» невозможно
  *    по устройству, а не по договорённости.
  *
- * Своего права у договора пока нет: экрана, с которого его заводят руками, в
- * продукте тоже нет. Гейтом служит `organizations.write` — договор принадлежит
- * контрагенту, и право править его карточку и есть право записать его договор.
- * Появится отдельный раздел договоров — появится и своё право.
+ * Своего права у договора нет: гейтом служит `organizations.write` — договор
+ * принадлежит контрагенту, и право править его карточку и есть право записать
+ * его договор. Читается он под `organizations.read` и в той же области доступа,
+ * что сам контрагент: отдельного раздела договоров в продукте нет, они живут
+ * блоком карточки вуза (`docs/access-matrix.md`).
  */
-import { eq, sql } from 'drizzle-orm';
+import { and, asc, count, eq, inArray, sql, type SQL } from 'drizzle-orm';
+import type { PageResult } from '$lib/contracts/common';
+import type {
+	ContractItemView,
+	ContractListQuery,
+	ContractView,
+	SaveContractInput,
+	SaveContractItemInput
+} from '$lib/contracts/directory';
 import type { ContractStatus } from '$lib/contracts/interactions';
 import type { ActorContext } from '../actor';
-import { contractItems, contracts } from '../db/schema';
-import type { Tx } from '../db/transaction';
-import { ValidationError } from '../errors';
-import { requirePermission } from '../rbac';
+import { recordAuditEvent } from '../audit';
+import { getDb } from '../db';
+import { contractItems, contracts, products } from '../db/schema';
+import { withTransaction, type Tx } from '../db/transaction';
+import { NotFoundError, ValidationError } from '../errors';
+import { visibleOrganizationFilter } from '../interactions/access';
+import { requirePermission, scopeFilter } from '../rbac';
+import { withUniqueConflicts } from './conflicts';
+import { getOrganization } from './read';
 
 /**
  * Статус позиции, с которым она заводится, когда файл о нём молчит. Словарь
@@ -76,6 +90,12 @@ export type ContractDraft = {
 	number: string;
 	signedOn: string | null;
 	validUntil: string | null;
+	/**
+	 * Состояние договора — от того, кто его знает. Форма знает: человек выбирает
+	 * состояние списком. Импорт не знает: файл о состоянии молчит, и тогда оно
+	 * выводится из даты подписания.
+	 */
+	status?: ContractStatus;
 };
 
 /** Новые значения позиции договора. */
@@ -241,7 +261,7 @@ export async function insertContract(
 	}
 
 	const { next } = mergeContract(null, draft);
-	const status: ContractStatus = next.signedOn === null ? 'draft' : 'active';
+	const status: ContractStatus = draft.status ?? (next.signedOn === null ? 'draft' : 'active');
 
 	const [row] = await tx
 		.insert(contracts)
@@ -262,12 +282,24 @@ export async function insertContract(
 	return row;
 }
 
+/**
+ * Значения договора для записи.
+ *
+ * Номер и состояние присылает тот, кто ими распоряжается, — форма справочника.
+ * Импорт их не касается: переименовать договор или перевести действующий в
+ * черновик загрузкой значило бы поменять смысл записи молча.
+ */
+export type ContractWrite = ContractMerge['next'] & {
+	number?: string;
+	status?: ContractStatus;
+};
+
 /** Записывает новые значения договора. Пустые значения сюда не доходят. */
 export async function updateContract(
 	ctx: ActorContext,
 	tx: Tx,
 	id: string,
-	next: ContractMerge['next']
+	next: ContractWrite
 ): Promise<void> {
 	requirePermission(ctx, 'organizations.write');
 
@@ -311,4 +343,327 @@ export async function updateContractItem(
 		.update(contractItems)
 		.set({ ...next, updatedAt: sql`now()` })
 		.where(eq(contractItems.id, id));
+}
+
+/** Позиции перечисленных договоров, уже с названием продукта. */
+async function readItems(contractIds: string[]): Promise<Map<string, ContractItemView[]>> {
+	const byContract = new Map<string, ContractItemView[]>();
+
+	if (contractIds.length === 0) {
+		return byContract;
+	}
+
+	const rows = await getDb()
+		.select({
+			id: contractItems.id,
+			contractId: contractItems.contractId,
+			productId: contractItems.productId,
+			productCode: products.code,
+			productName: products.name,
+			licenseSignedAt: contractItems.licenseSignedAt,
+			licenseUntil: contractItems.licenseUntil,
+			transferStatus: contractItems.transferStatus
+		})
+		.from(contractItems)
+		.innerJoin(products, eq(products.id, contractItems.productId))
+		.where(inArray(contractItems.contractId, contractIds))
+		.orderBy(asc(products.code), asc(contractItems.id));
+
+	for (const row of rows) {
+		const list = byContract.get(row.contractId);
+
+		if (list === undefined) {
+			byContract.set(row.contractId, [row]);
+		} else {
+			list.push(row);
+		}
+	}
+
+	return byContract;
+}
+
+/**
+ * Договоры по условию — вместе с позициями.
+ *
+ * Позиции читаются вторым запросом по списку договоров, а не соединением:
+ * иначе договор с пятью позициями приехал бы пятью строками, и страница списка
+ * считала бы не то, что показывает.
+ */
+async function readContracts(where: SQL, limit?: number, offset?: number): Promise<ContractView[]> {
+	const query = getDb()
+		.select({
+			id: contracts.id,
+			organizationId: contracts.organizationId,
+			number: contracts.number,
+			signedOn: contracts.signedOn,
+			validUntil: contracts.validUntil,
+			status: contracts.status,
+			createdAt: contracts.createdAt,
+			updatedAt: contracts.updatedAt
+		})
+		.from(contracts)
+		.where(where)
+		// Последний ключ — идентификатор: у двух договоров с одним номером
+		// (номера уникальны только внутри контрагента) порядок иначе не
+		// определён, и запись с границы страниц показалась бы дважды.
+		.orderBy(asc(contracts.number), asc(contracts.id))
+		.$dynamic();
+
+	const rows = await (limit === undefined ? query : query.limit(limit).offset(offset ?? 0));
+	const items = await readItems(rows.map((row) => row.id));
+
+	return rows.map((row) => ({ ...row, items: items.get(row.id) ?? [] }));
+}
+
+/**
+ * Договоры контрагента для его карточки.
+ *
+ * Условие видимости — то же, что у самой карточки (`visibleOrganizationFilter`):
+ * у кого вуз забрали, а незавершённое взаимодействие осталось, тот продолжает
+ * видеть и договор, по которому оно идёт. Страницами список не режется: у вуза
+ * договоров единицы, а разрезанный на страницы блок карточки скрыл бы часть
+ * условий, ничего не сказав.
+ */
+export async function listOrganizationContracts(
+	ctx: ActorContext,
+	organizationId: string
+): Promise<ContractView[]> {
+	requirePermission(ctx, 'organizations.read');
+
+	return readContracts(
+		and(
+			eq(contracts.organizationId, organizationId),
+			visibleOrganizationFilter(ctx, contracts.organizationId)
+		) as SQL
+	);
+}
+
+/**
+ * Один договор с позициями или «не найден».
+ *
+ * Договор вне области доступа неотличим от несуществующего: иначе перебором
+ * идентификаторов можно узнать, с кем у оператора есть договоры.
+ */
+export async function getContract(ctx: ActorContext, id: string): Promise<ContractView> {
+	requirePermission(ctx, 'organizations.read');
+
+	const [contract] = await readContracts(
+		and(eq(contracts.id, id), visibleOrganizationFilter(ctx, contracts.organizationId)) as SQL
+	);
+
+	if (contract === undefined) {
+		throw new NotFoundError('Договор не найден');
+	}
+
+	return contract;
+}
+
+/**
+ * Страница списка договоров: то, что отдаёт `GET /v1/contracts`.
+ *
+ * Область здесь — назначения (`scopeFilter`), как и у списка организаций:
+ * список — это перечень имущества оператора, и расширять его записями, видными
+ * через чужое взаимодействие, значило бы отдать по ключу больше, чем показывает
+ * раздел вузов.
+ */
+export async function listContracts(
+	ctx: ActorContext,
+	query: ContractListQuery
+): Promise<PageResult<ContractView>> {
+	requirePermission(ctx, 'organizations.read');
+
+	const conditions: SQL[] = [scopeFilter(ctx, contracts.organizationId)];
+
+	if (query.organizationId !== null) {
+		conditions.push(eq(contracts.organizationId, query.organizationId));
+	}
+
+	if (query.status !== null) {
+		conditions.push(eq(contracts.status, query.status));
+	}
+
+	const where = and(...conditions) as SQL;
+
+	const [items, [total]] = await Promise.all([
+		readContracts(where, query.pageSize, (query.page - 1) * query.pageSize),
+		getDb().select({ value: count() }).from(contracts).where(where)
+	]);
+
+	return { items, total: total.value, page: query.page, pageSize: query.pageSize };
+}
+
+/**
+ * Договор контрагента: заводится или правится целиком.
+ *
+ * Команда одна на оба случая, потому что форма присылает запись целиком:
+ * «завести» отличается от «исправить» ровно тем, есть ли уже идентификатор.
+ * Правило импорта «пустое ничего не стирает» здесь не действует — человек,
+ * очистивший поле, именно его и очищает.
+ */
+export async function saveContract(
+	ctx: ActorContext,
+	input: SaveContractInput
+): Promise<ContractView> {
+	const creating = input.id === null;
+
+	await requirePermission(ctx, 'organizations.write', {
+		type: creating ? 'directory.contract_created' : 'directory.contract_updated',
+		subject: { type: 'organization', id: input.organizationId }
+	});
+
+	// Право на запись само по себе не даёт доступа к чужому вузу: карточка
+	// читается с областью, и договор чужого контрагента отсюда не завести.
+	await getOrganization(ctx, input.organizationId);
+
+	if (input.id !== null) {
+		const before = await getContract(ctx, input.id);
+
+		// Договор не переносят между контрагентами: на него ссылаются
+		// взаимодействия, и перенос сделал бы эти ссылки ложью.
+		if (before.organizationId !== input.organizationId) {
+			throw new ValidationError('Договор нельзя перенести к другому контрагенту', [
+				'Заведите договор в карточке нужного контрагента'
+			]);
+		}
+	}
+
+	const id = await withUniqueConflicts(() =>
+		withTransaction(ctx, async (tx) => {
+			if (input.id === null) {
+				const created = await insertContract(ctx, tx, {
+					organizationId: input.organizationId,
+					number: input.number,
+					signedOn: input.signedOn,
+					validUntil: input.validUntil,
+					status: input.status
+				});
+
+				await recordAuditEvent(
+					ctx,
+					{
+						type: 'directory.contract_created',
+						outcome: 'success',
+						subject: { type: 'contract', id: created.id },
+						details: { organizationId: input.organizationId }
+					},
+					tx
+				);
+
+				return created.id;
+			}
+
+			await updateContract(ctx, tx, input.id, {
+				number: input.number,
+				signedOn: input.signedOn,
+				validUntil: input.validUntil,
+				status: input.status
+			});
+
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'directory.contract_updated',
+					outcome: 'success',
+					subject: { type: 'contract', id: input.id },
+					details: { organizationId: input.organizationId }
+				},
+				tx
+			);
+
+			return input.id;
+		})
+	);
+
+	return getContract(ctx, id);
+}
+
+/**
+ * Позиция договора: заводится или правится целиком, как и сам договор.
+ *
+ * Продукт позиции меняться не может: на пару «договор + продукт» ссылаются
+ * взаимодействия, и подмена продукта под уже выбранной позицией переписала бы
+ * условия чужой работы. Нужен другой продукт — это другая позиция.
+ */
+export async function saveContractItem(
+	ctx: ActorContext,
+	input: SaveContractItemInput
+): Promise<ContractView> {
+	const creating = input.id === null;
+
+	await requirePermission(ctx, 'organizations.write', {
+		type: creating ? 'directory.contract_item_created' : 'directory.contract_item_updated',
+		subject: { type: 'contract', id: input.contractId }
+	});
+
+	const contract = await getContract(ctx, input.contractId);
+	const existing =
+		input.id === null ? null : (contract.items.find((item) => item.id === input.id) ?? null);
+
+	if (input.id !== null && existing === null) {
+		throw new NotFoundError('Позиция договора не найдена');
+	}
+
+	if (existing !== null && existing.productId !== input.productId) {
+		throw new ValidationError('Продукт позиции договора изменить нельзя', [
+			'Заведите позицию по нужному продукту: условия по прежнему продукту останутся на месте'
+		]);
+	}
+
+	if (existing === null) {
+		const [product] = await getDb()
+			.select({ id: products.id })
+			.from(products)
+			.where(eq(products.id, input.productId))
+			.limit(1);
+
+		if (product === undefined) {
+			throw new ValidationError('Продукт не найден', ['Выберите продукт из каталога']);
+		}
+	}
+
+	await withUniqueConflicts(() =>
+		withTransaction(ctx, async (tx) => {
+			if (existing === null) {
+				const created = await insertContractItem(ctx, tx, {
+					contractId: input.contractId,
+					productId: input.productId,
+					licenseSignedAt: input.licenseSignedAt,
+					licenseUntil: input.licenseUntil,
+					transferStatus: input.transferStatus
+				});
+
+				await recordAuditEvent(
+					ctx,
+					{
+						type: 'directory.contract_item_created',
+						outcome: 'success',
+						subject: { type: 'contract_item', id: created.id },
+						details: { contractId: input.contractId, productId: input.productId }
+					},
+					tx
+				);
+
+				return;
+			}
+
+			await updateContractItem(ctx, tx, existing.id, {
+				licenseSignedAt: input.licenseSignedAt,
+				licenseUntil: input.licenseUntil,
+				transferStatus: input.transferStatus
+			});
+
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'directory.contract_item_updated',
+					outcome: 'success',
+					subject: { type: 'contract_item', id: existing.id },
+					details: { contractId: input.contractId, productId: input.productId }
+				},
+				tx
+			);
+		})
+	);
+
+	return getContract(ctx, input.contractId);
 }

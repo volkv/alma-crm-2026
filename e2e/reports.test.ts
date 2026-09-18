@@ -266,11 +266,17 @@ test('отчёт выгружается книгой, и файл непусто
 	expect(file.size).toBeGreaterThan(0);
 });
 
-test('клик по столбцу воронки добавляет фильтр стадии в адрес', async ({ page }) => {
-	await page.goto('/reports');
+test('клик по столбцу воронки ведёт к списку тех же взаимодействий', async ({ page }) => {
+	// Отчёт открывается уже под фильтром: переход от столбца обязан его сохранить,
+	// иначе список под диаграммой покажет не те строки, что посчитал столбец.
+	// «В работе» выбрано намеренно: на стадии стоят только незакрытые записи, и
+	// этот фильтр не меняет воронку — значит, проверяется именно перенос условий.
+	await page.goto('/reports?state=active');
 	await waitForHydration(page);
 
-	const canvas = page.getByTestId('report-chart-canvas');
+	// Воронка своя у каждой группы процесса, поэтому холстов на экране может быть
+	// несколько: проверяется первый.
+	const canvas = page.getByTestId('report-chart-canvas').first();
 
 	await expect(canvas).toBeVisible();
 
@@ -335,6 +341,9 @@ test('клик по столбцу воронки добавляет фильт�
 	let bar: Awaited<ReturnType<typeof readBar>> = { ready: false, values: [], target: null };
 
 	await expect(async () => {
+		// Координаты полосы считаются от окна, а не от страницы: холст обязан
+		// быть в поле зрения, иначе клик уходит мимо всего.
+		await canvas.scrollIntoViewIfNeeded();
 		bar = await readBar();
 
 		expect(bar, `диаграмма не отдала полосу: ${JSON.stringify(bar)}`).toMatchObject({
@@ -343,9 +352,26 @@ test('клик по столбцу воронки добавляет фильт�
 		});
 	}).toPass({ timeout: 15_000 });
 
+	const expected = bar.target!.value;
+
 	await page.mouse.click(bar.target!.x, bar.target!.y);
 
 	await expect(page).toHaveURL(/stage=[a-z_]+/);
+
+	// Переход несёт группу процесса, стадию, режим и период — и не снимает того,
+	// что уже было выбрано: столбец нарисован под теми же условиями.
+	const applied = new URL(page.url()).searchParams;
+
+	expect(applied.get('group')).not.toBeNull();
+	expect(applied.get('stage')).not.toBeNull();
+	expect(applied.get('mode')).toBe('snapshot');
+	expect(applied.get('from')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+	expect(applied.get('to')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
+	expect(applied.get('state')).toBe('active');
+
+	// Список под диаграммой — это те же взаимодействия: строк в нём ровно
+	// столько, сколько было на столбце.
+	await expect(page.getByTestId('report-row-count')).toHaveText(String(expected));
 });
 
 test('переключение режима пересчитывает итоги на той же выборке', async ({ page }) => {

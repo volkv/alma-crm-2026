@@ -101,7 +101,20 @@ leadTest('назначение и снятие меняют доступ нем�
 	// Назначение заменяет прежнее тем же моментом: общее и по направлениям на
 	// одном вузе не сосуществуют, поэтому замена, а не вторая строка.
 	const form = page.getByTestId('assign-responsible');
-	await form.getByLabel('Сотрудник').selectOption({ label: 'Менеджер Демо' });
+	// Список сотрудников — наш контрол (роль `combobox`), и открывает его код
+	// страницы: нажатие до гидратации теряется совсем, отсюда повтор, и только
+	// пока список закрыт — второе нажатие закрыло бы открытое.
+	const managerOption = page.getByRole('option', { name: 'Менеджер Демо' });
+
+	await expect(async () => {
+		if (!(await managerOption.isVisible())) {
+			await form.getByRole('combobox', { name: 'Сотрудник' }).click({ timeout: 5_000 });
+		}
+
+		await expect(managerOption).toBeVisible({ timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+
+	await managerOption.click();
 	await form.getByRole('button', { name: 'Назначить' }).click();
 	// Проверяем доступ, а не тост: тост исчезает сам, и ожидание его видимости
 	// проверяло бы скорость машины. `poll` — потому что между нажатием и ответом

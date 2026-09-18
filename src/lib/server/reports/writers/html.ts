@@ -18,6 +18,7 @@ import {
 	REPORT_PDF_ROWS,
 	type ReportBucket,
 	type ReportCell,
+	type ReportFunnelChart,
 	type ReportMovementChart,
 	type ReportView
 } from '$lib/contracts/reports';
@@ -62,6 +63,30 @@ function bucketList(title: string, buckets: readonly ReportBucket[]): string {
 		.join('');
 
 	return `<section class="summary"><h2>${escapeHtml(title)}</h2><ul>${items}</ul></section>`;
+}
+
+/**
+ * Воронка таблицей — по одной на группу процесса. Заголовок называет процесс,
+ * когда групп в выборке больше одной: одинаковые ключи стадий в B2B и B2C —
+ * законная ситуация, и без имени процесса две строки читались бы как одна.
+ */
+function funnelHtml(funnel: ReportFunnelChart | null): string {
+	if (funnel === null) {
+		return '';
+	}
+
+	const stages = funnel.groups
+		.map((group) =>
+			bucketList(
+				funnel.groups.length > 1
+					? `Стадия на дату среза — ${group.groupName}`
+					: 'Стадия на дату среза',
+				group.stages
+			)
+		)
+		.join('');
+
+	return stages + bucketList('Закрыто за период', funnel.closed);
 }
 
 /**
@@ -179,10 +204,7 @@ export function reportHtml(view: ReportView): string {
 		.join('');
 
 	const summary = [
-		view.charts.funnel === null
-			? ''
-			: bucketList('Стадия на дату среза', view.charts.funnel.stages) +
-				bucketList('Закрыто за период', view.charts.funnel.closed),
+		funnelHtml(view.charts.funnel),
 		view.charts.movement === null ? '' : movementTable(view.charts.movement),
 		...view.charts.breakdowns.map((breakdown) => bucketList(breakdown.label, breakdown.points))
 	].join('');
