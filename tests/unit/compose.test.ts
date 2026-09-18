@@ -52,4 +52,50 @@ describe('ключи обмена в docker-compose.yml', () => {
 			expect(prod).toContain(`\${${variable}?`);
 		}
 	});
+
+	it('токен управления имитаторами обязан быть непустым', () => {
+		// `:?` с двоеточием, в отличие от ключей обмена: пустой токен — это не
+		// решение «управлять нечем», а снятая граница. Имитатор без токена пускает
+		// к `__state`, `__scenario` и к собственному телу заявки всякого, кто до
+		// него дотянулся, а на стенде страница и триггер выходят наружу.
+		expect(defaults(prod, 'MOCK_CONTROL_TOKEN')).toHaveLength(0);
+		expect(prod).not.toContain('${MOCK_CONTROL_TOKEN?');
+		expect(prod.match(/\$\{MOCK_CONTROL_TOKEN:\?/g)).toHaveLength(2);
+	});
+});
+
+describe('пароли СУБД в docker-compose.prod.yml', () => {
+	/** Строки файла без комментариев: в них живут значения, а не объяснения. */
+	const lines = prod.split('\n').filter((line) => !line.trim().startsWith('#'));
+
+	it('не набраны строкой: каждый пароль — подстановка из .env', () => {
+		// Базовый файл поднимает базу с паролем `lct` — умолчание локального
+		// стека. Доехав до развёртывания, оно означало бы угадываемый пароль в
+		// сети compose, где рядом стоят имитаторы профиля `stand`, а в той же СУБД
+		// лежит realm каталога.
+		const typed = lines.filter((line) =>
+			/^\s*[A-Z_]*(?:PASSWORD|SECRET_KEY):\s*(?!\$\{)\S/.test(line)
+		);
+
+		expect(typed).toStrictEqual([]);
+	});
+
+	it('требуют непустого значения — и база, и Redis, и realm каталога', () => {
+		for (const variable of ['POSTGRES_PASSWORD', 'REDIS_PASSWORD']) {
+			expect(defaults(prod, variable)).toHaveLength(0);
+			expect(prod).toContain(`\${${variable}:?`);
+		}
+
+		// Realm каталога лежит в той же СУБД и ходит в неё тем же пользователем:
+		// второй пароль здесь означал бы стенд, который поднимается с одним
+		// значением, а подключается с другим.
+		expect(prod).toMatch(/KC_DB_PASSWORD: \$\{POSTGRES_PASSWORD:\?/);
+	});
+
+	it('строки подключения приложения собираются из тех же переменных', () => {
+		// Набранные отдельной строкой в `.env`, они разъехались бы с паролем
+		// контейнера на первой же его смене.
+		expect(prod).toContain('DATABASE_URL: postgres://lct:${POSTGRES_PASSWORD:?');
+		expect(prod).toContain('REDIS_URL: redis://:${REDIS_PASSWORD:?');
+	});
 });

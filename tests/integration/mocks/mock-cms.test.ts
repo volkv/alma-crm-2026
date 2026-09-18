@@ -14,6 +14,8 @@ import { crmEnvelope, signedHeaders, startCrmStandIn, type CrmStandIn } from './
 const SECRET = 'stand-secret';
 const API_KEY = 'lct_stand_key';
 const B2B_EXTERNAL_ID = 'site-2026-000123';
+/** Токен управления имитатором: на стенде он обязателен, здесь — свой. */
+const CONTROL_TOKEN = 'stand-control-token';
 
 let crm: CrmStandIn;
 let cms: MockService;
@@ -171,6 +173,134 @@ describe('заявка из CMS в CRM', () => {
 
 		expect(response.status).toBe(400);
 		expect(pick(await readJson(response), 'message')).toContain('formm');
+	});
+});
+
+describe('открытый триггер стенда', () => {
+	/**
+	 * Имитатор стенда: управление закрыто токеном, как в `docker-compose.prod.yml`.
+	 *
+	 * Триггер заявки выходит наружу через прокси стенда, а подписывает сообщение
+	 * имитатор своим ключом обмена — значит, снаружи он обязан принимать выбор
+	 * сцены, а не готовое сообщение. Проверяется здесь именно это: что уходит в
+	 * CRM и что не уходит вовсе.
+	 */
+	let guarded: MockService;
+
+	beforeAll(async () => {
+		guarded = await startMockCms({
+			port: 0,
+			crm: { baseUrl: crm.url, apiKey: API_KEY },
+			exchangeSecret: SECRET,
+			controlToken: CONTROL_TOKEN
+		});
+	});
+
+	afterAll(async () => {
+		await guarded.stop();
+	});
+
+	async function trigger(
+		body: Record<string, unknown>,
+		options: { token?: string } = {}
+	): Promise<Response> {
+		return fetch(`${guarded.url}/__send-application`, {
+			method: 'POST',
+			headers: {
+				'content-type': 'application/json',
+				...(options.token === undefined ? {} : { 'x-mock-control': options.token })
+			},
+			body: JSON.stringify(body)
+		});
+	}
+
+	it('без токена подаёт заявку набора и берёт тело из своих фикстур', async () => {
+		const response = await trigger({ form: 'b2c' });
+
+		expect(response.status).toBe(200);
+		expect(crm.requests).toHaveLength(1);
+
+		const envelope = JSON.parse(crm.requests[0].body) as Record<string, unknown>;
+
+		expect(pick(envelope, 'data.externalId')).toBe('site-2026-000124');
+		expect(pick(envelope, 'data.contact.email')).toBe('vetrov@example.org');
+	});
+
+	it('без токена не принимает чужого тела заявки — и в CRM не уходит ничего', async () => {
+		const response = await trigger({
+			form: 'b2b',
+			data: {
+				form: 'b2b',
+				applicant: { kind: 'individual', lastName: 'Чужой', firstName: 'Проситель' },
+				contact: { lastName: 'Чужой', firstName: 'Проситель', email: 'stranger@example.org' }
+			}
+		});
+
+		expect(response.status).toBe(403);
+		expect(pick(await readJson(response), 'code')).toBe('control_forbidden');
+		// Главное здесь — не код ответа, а то, что имитатор не подписал чужое
+		// сообщение своим ключом обмена и никуда его не отнёс.
+		expect(crm.requests).toHaveLength(0);
+	});
+
+	it('без токена не принимает ни ревизии, ни ключа события', async () => {
+		const revision = await trigger({ form: 'b2b', revision: 9_007_199_254_740_991 });
+		const eventId = await trigger({ form: 'b2b', eventId: 'own-event-id' });
+
+		expect(revision.status).toBe(403);
+		expect(eventId.status).toBe(403);
+		expect(pick(await readJson(revision), 'message')).toContain('revision');
+		expect(pick(await readJson(eventId), 'message')).toContain('eventId');
+		expect(crm.requests).toHaveLength(0);
+	});
+
+	it('без токена принимает только ключ заявки стенда', async () => {
+		const stranger = await trigger({ form: 'b2b', externalId: 'site-2026-стороннее' });
+
+		expect(stranger.status).toBe(400);
+		expect(pick(await readJson(stranger), 'message')).toContain('site-2026-000123');
+		expect(crm.requests).toHaveLength(0);
+
+		// Тот же ключ заявки набора — это изменение той же заявки, и повторить
+		// его со страницы стенда надо уметь.
+		const own = await trigger({ form: 'b2b', externalId: 'site-2026-000321' });
+
+		expect(own.status).toBe(200);
+		expect(pick(JSON.parse(crm.requests[0].body), 'data.externalId')).toBe('site-2026-000321');
+	});
+
+	it('с токеном собирает сообщение целиком — так ходят проверки и нагрузка', async () => {
+		const response = await trigger(
+			{
+				form: 'b2b',
+				externalId: 'check-2026-1',
+				revision: 7,
+				data: {
+					form: 'b2b',
+					applicant: { kind: 'educational_institution', name: 'Проверочный вуз' },
+					contact: { lastName: 'Иванов', firstName: 'Иван', email: 'ivanov@example.org' }
+				}
+			},
+			{ token: CONTROL_TOKEN }
+		);
+
+		expect(response.status).toBe(200);
+
+		const envelope = JSON.parse(crm.requests[0].body) as Record<string, unknown>;
+
+		expect(pick(envelope, 'data.externalId')).toBe('check-2026-1');
+		expect(pick(envelope, 'data.revision')).toBe(7);
+		expect(pick(envelope, 'data.applicant.name')).toBe('Проверочный вуз');
+	});
+
+	it('чужой токен управления не открывает ни тела, ни ключа', async () => {
+		const response = await trigger(
+			{ form: 'b2b', data: { form: 'b2b' } },
+			{ token: 'not-the-token' }
+		);
+
+		expect(response.status).toBe(403);
+		expect(crm.requests).toHaveLength(0);
 	});
 });
 
@@ -370,6 +500,31 @@ describe('страница состояния и управление', () => {
 		expect(html).toContain('action="__send-application"');
 	});
 
+	it('не печатает зрителю тела снимков, которые CRM отправила наружу', async () => {
+		// Страница открыта наружу, `__state` — за токеном. В теле снимка статуса
+		// приезжают имя ответственного и последний комментарий по взаимодействию:
+		// зрителю сцены они не принадлежат, а оператору стенда — да.
+		await sendApplication({ form: 'b2b' });
+		await postStatus(B2B_EXTERNAL_ID, {
+			applicationStatus: 'in_progress',
+			responsible: { name: 'Кузнецова Мария' },
+			lastComment: 'Договорились созвониться в четверг'
+		});
+
+		const html = await (await fetch(`${cms.url}/`)).text();
+
+		expect(html).toContain(B2B_EXTERNAL_ID);
+		expect(html).toContain('in_progress');
+		expect(html).not.toContain('Кузнецова Мария');
+		expect(html).not.toContain('Договорились созвониться в четверг');
+
+		const state = await readJson(await fetch(`${cms.url}/__state`));
+
+		expect(pick(state, 'objects.applications.0.statuses.0.data.responsible.name')).toBe(
+			'Кузнецова Мария'
+		);
+	});
+
 	it('кнопка страницы подаёт заявку и возвращает на страницу', async () => {
 		const response = await fetch(`${cms.url}/__send-application`, {
 			method: 'POST',
@@ -393,7 +548,7 @@ describe('страница состояния и управление', () => {
 			port: 0,
 			crm: { baseUrl: crm.url, apiKey: API_KEY },
 			exchangeSecret: SECRET,
-			controlToken: 'stand-control-token'
+			controlToken: CONTROL_TOKEN
 		});
 
 		try {
@@ -411,7 +566,7 @@ describe('страница состояния и управление', () => {
 			await scenario.body?.cancel();
 
 			const withToken = await fetch(`${guarded.url}/__state`, {
-				headers: { 'x-mock-control': 'stand-control-token' }
+				headers: { 'x-mock-control': CONTROL_TOKEN }
 			});
 
 			expect(withToken.status).toBe(200);

@@ -12,6 +12,7 @@ import {
 } from '@playwright/test';
 import { seedId } from '../scripts/seed/ids';
 import { DEMO_EMAILS } from '../scripts/seed/users';
+import { E2E_MOCK_CONTROL_TOKEN } from './exchange-keys';
 import { ADMIN_STATE, LEAD_STATE, MANAGER_STATE, STAFF_ADMIN_STATE } from './global-setup';
 import { waitForHydration } from './helpers/hydration';
 import { seedProcessGroup } from './helpers/process-group';
@@ -174,7 +175,11 @@ type MockState = {
 };
 
 async function mockState(request: APIRequestContext, service: string): Promise<MockState> {
-	const response = await request.get(`${service}/__state`);
+	// Имитаторы прогона подняты с токеном управления, как на стенде: состояние
+	// стенда целиком принадлежит оператору, а не зрителю (`e2e/exchange-keys.ts`).
+	const response = await request.get(`${service}/__state`, {
+		headers: { 'x-mock-control': E2E_MOCK_CONTROL_TOKEN }
+	});
 
 	expect(response.ok()).toBeTruthy();
 

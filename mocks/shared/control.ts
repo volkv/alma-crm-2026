@@ -11,10 +11,12 @@
  * открыты только страница состояния и триггеры — то, что показывают зрителю;
  * `__state` и `__scenario` меняют или раскрывают состояние стенда целиком,
  * поэтому прокси их не пускает, а имитатор вдобавок требует к ним токен
- * (`CONTROL_TOKEN`, заголовок `X-Mock-Control`). Токена нет — управление
- * открыто: так имитатор живёт на машине разработчика и в прогонах, где он
- * доступен только с петли. Кто и чем это закрывает на стенде —
- * `docs/security.md`.
+ * (`CONTROL_TOKEN`, заголовок `X-Mock-Control`). Тем же токеном закрыто всё,
+ * чем распоряжается управление на открытых адресах: триггер сцены снаружи
+ * выбирает только набор заявки, а собственное тело сообщения задаёт лишь тот,
+ * кто токен предъявил (`controlAllowed`). Токена нет — управление открыто: так
+ * имитатор живёт на машине разработчика и в прогонах, где он доступен только с
+ * петли. Кто и чем это закрывает на стенде — `docs/security.md`.
  */
 import { timingSafeEqual } from 'node:crypto';
 import type { Journal } from './journal.ts';
@@ -34,6 +36,16 @@ export type ControlOptions = {
 	scenario: Scenario;
 	/** Снимок объектов сервиса: заявки у CMS, группы у LMS. */
 	objects: () => unknown;
+	/**
+	 * То же для открытой страницы состояния; не задано — она показывает
+	 * `objects` целиком.
+	 *
+	 * Страница видна снаружи, а `__state` закрыт токеном, и это разные права на
+	 * одни и те же объекты: в присланном из CRM снимке статуса есть имя
+	 * ответственного и последний комментарий, и печатать их зрителю стенда
+	 * незачем (`docs/security.md`).
+	 */
+	pageObjects?: () => unknown;
 	/** Забыть всё, что сервис накопил: объекты и журнал. */
 	forget: () => void;
 	/** Настройки, по которым видно, настроен ли обмен со стендом. */
@@ -52,25 +64,40 @@ function tokenMatches(expected: string, actual: string): boolean {
 	return left.byteLength === right.byteLength && timingSafeEqual(left, right);
 }
 
+/**
+ * Управляет ли имитатором тот, кто прислал запрос.
+ *
+ * Токен не задан — управление открыто: так имитатор живёт на машине
+ * разработчика и в прогонах, где он доступен только с петли. На стенде токен
+ * обязателен (`docker-compose.prod.yml` требует непустое значение), поэтому
+ * снаружи это всегда `false`.
+ */
+export function controlAllowed(controlToken: string | null, request: MockRequest): boolean {
+	return controlToken === null || tokenMatches(controlToken, request.headers[CONTROL_HEADER] ?? '');
+}
+
+/** Отказ в управлении имитатором; `null` — токен предъявлен либо не нужен. */
+export function controlRefusal(
+	controlToken: string | null,
+	request: MockRequest
+): MockReply | null {
+	return controlAllowed(controlToken, request)
+		? null
+		: problem(
+				403,
+				'control_forbidden',
+				`Управление имитатором закрыто токеном: назовите его в заголовке ${CONTROL_HEADER}`
+			);
+}
+
 export function controlRoutes(options: ControlOptions): MockRoute[] {
 	const { name, title, journal, scenario, objects, forget, settings, forms } = options;
 	const controlToken = options.controlToken ?? null;
+	const pageObjects = options.pageObjects ?? objects;
 
 	/** Отказ управляющему адресу; `null` — токен предъявлен либо не нужен. */
 	function refuseControl(request: MockRequest): MockReply | null {
-		if (controlToken === null) {
-			return null;
-		}
-
-		const presented = request.headers[CONTROL_HEADER] ?? '';
-
-		return tokenMatches(controlToken, presented)
-			? null
-			: problem(
-					403,
-					'control_forbidden',
-					`Управляющие адреса имитатора закрыты токеном: назовите его в заголовке ${CONTROL_HEADER}`
-				);
+		return controlRefusal(controlToken, request);
 	}
 
 	function snapshot(): Record<string, unknown> {
@@ -100,7 +127,7 @@ export function controlRoutes(options: ControlOptions): MockRoute[] {
 					name,
 					title,
 					scenario: scenario.read(),
-					objects: objects(),
+					objects: pageObjects(),
 					journal: journal.list(),
 					forms,
 					controlProtected: controlToken !== null

@@ -5,7 +5,7 @@ import {
 	type Locator,
 	type Page
 } from '@playwright/test';
-import { E2E_EXCHANGE_KEYS } from './exchange-keys';
+import { E2E_EXCHANGE_KEYS, E2E_MOCK_CONTROL_TOKEN } from './exchange-keys';
 import { STAFF_ADMIN_STATE } from './global-setup';
 import { waitForHydration } from './helpers/hydration';
 
@@ -73,8 +73,15 @@ type MockState = {
 	}[];
 };
 
+/**
+ * Заголовок управления имитатором: `__state`, `__scenario` и собственное тело
+ * заявки у триггера сцены. Имитаторы прогона подняты с токеном — ровно так же,
+ * как на стенде (`e2e/exchange-keys.ts`).
+ */
+const CONTROL_HEADERS = { 'x-mock-control': E2E_MOCK_CONTROL_TOKEN };
+
 async function mockState(request: APIRequestContext, service: string): Promise<MockState> {
-	const response = await request.get(`${service}/__state`);
+	const response = await request.get(`${service}/__state`, { headers: CONTROL_HEADERS });
 
 	expect(response.ok()).toBeTruthy();
 
@@ -91,7 +98,10 @@ async function applyScenario(
 	service: string,
 	scenario: Record<string, unknown>
 ): Promise<void> {
-	const response = await request.post(`${service}/__scenario`, { data: scenario });
+	const response = await request.post(`${service}/__scenario`, {
+		headers: CONTROL_HEADERS,
+		data: scenario
+	});
 
 	expect(response.status()).toBe(200);
 }
@@ -127,8 +137,11 @@ staff(
 
 		// Направление 1: заявку подаёт сам имитатор — так, как её подал бы
 		// посетитель сайта. Тело заявки своё: по имени вуза взаимодействие потом
-		// ищется в списке.
+		// ищется в списке. Собственное тело — это управление имитатором, поэтому
+		// запрос несёт токен: снаружи триггер принимает только выбор набора и ключ
+		// заявки стенда, и это проверяется ниже отдельно.
 		const submitted = await request.post(`${CMS_URL}/__send-application`, {
+			headers: CONTROL_HEADERS,
 			data: {
 				form: 'b2b',
 				externalId,
@@ -334,6 +347,38 @@ staff('кнопка стенда подаёт заявку тем же триг�
 	// ревизия: кнопку нажали именно сейчас.
 	expect(card?.origin).toBe('form');
 	expect(card?.revision ?? 0).toBeGreaterThan(revisionBefore);
+});
+
+staff('открытый триггер имитатора не принимает чужой заявки', async ({ request }) => {
+	// Триггер выходит наружу через прокси стенда, а имитатор подписывает
+	// сообщение своим ключом обмена: прими он готовое тело от кого угодно — и
+	// заявку в CRM заводил бы посетитель сайта, минуя и форму, и контракт.
+	// Снаружи ему называют только набор и ключ заявки стенда.
+	const before = await mockState(request, CMS_URL);
+
+	const forged = await request.post(`${CMS_URL}/__send-application`, {
+		data: {
+			form: 'b2b',
+			data: {
+				form: 'b2b',
+				applicant: { kind: 'individual', lastName: 'Чужой', firstName: 'Проситель' },
+				contact: { lastName: 'Чужой', firstName: 'Проситель', email: 'stranger@example.org' }
+			}
+		}
+	});
+
+	expect(forged.status()).toBe(403);
+
+	const strangeKey = await request.post(`${CMS_URL}/__send-application`, {
+		data: { form: 'b2b', externalId: `${externalId}-forged` }
+	});
+
+	expect(strangeKey.status()).toBe(400);
+
+	// Ни одной новой карточки у имитатора: до отправки в CRM дело не дошло.
+	const after = await mockState(request, CMS_URL);
+
+	expect(after.objects.applications?.length ?? 0).toBe(before.objects.applications?.length ?? 0);
 });
 
 staff('заявка чужого экземпляра не принимается', async ({ request }) => {

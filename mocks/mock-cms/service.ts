@@ -17,7 +17,7 @@ import {
 	APPLICATION_FORMS,
 	type ApplicationForm
 } from './applications.ts';
-import { controlRoutes } from '../shared/control.ts';
+import { CONTROL_HEADER, controlAllowed, controlRoutes } from '../shared/control.ts';
 import { crmIssue, postToCrm, type CrmTarget } from '../shared/crm.ts';
 import { buildEnvelope, parseEnvelope, type Envelope } from '../shared/envelope.ts';
 import {
@@ -35,6 +35,31 @@ import { checkSignature } from '../shared/signature.ts';
 
 /** Куда имитатор отправляет заявку (`docs/exchange-contract.md`, раздел 3). */
 export const CRM_APPLICATIONS_PATH = '/api/v1/applications';
+
+/** Поля триггера заявки: всё остальное — опечатка или чужая договорённость. */
+const TRIGGER_FIELDS = ['form', 'externalId', 'revision', 'eventId', 'data'] as const;
+
+/**
+ * Поля триггера, которыми распоряжается только управление имитатором.
+ *
+ * Триггер открыт наружу (`deploy/nginx/crm.conf.example`): им начинают сцену со
+ * страницы стенда. Открытым он остаётся ровно настолько, насколько это нужно
+ * зрителю, — выбрать набор формы и, при желании, ключ заявки. Тело сообщения,
+ * его ревизию и ключ события задаёт тот, кто предъявил токен управления: иначе
+ * имитатор подписывал бы своим ключом обмена произвольную заявку, присланную с
+ * улицы, и относил её в CRM от имени сайта.
+ */
+const CONTROL_ONLY_FIELDS = ['revision', 'eventId', 'data'] as const;
+
+/**
+ * Ключ заявки, который принимает открытый триггер: нумерация заявок стенда.
+ *
+ * Тот же ключ означает изменение той же заявки, и повторить это со страницы
+ * надо уметь. Свободной строки здесь при этом быть не должно: ключ заявки —
+ * половина ключа дедупликации на стороне CRM, и произвольный означал бы, что
+ * заявки стенда заводит кто угодно снаружи и сколько угодно.
+ */
+const OPEN_EXTERNAL_ID = /^site-2026-\d{6}$/;
 
 export type MockCmsOptions = {
 	/** `0` — любой свободный порт: так сервис поднимается в тестах. */
@@ -99,6 +124,7 @@ function statusReply(
 
 export async function startMockCms(options: MockCmsOptions = {}): Promise<MockService> {
 	const instance = options.instance ?? 'itschool-site';
+	const controlToken = options.controlToken ?? null;
 	const crm: CrmTarget = options.crm ?? { baseUrl: null, apiKey: null };
 	const exchangeSecret = options.exchangeSecret ?? null;
 	const journal = createJournal(options.journalSize ?? DEFAULT_JOURNAL_SIZE);
@@ -230,6 +256,10 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 			// эндпоинт контракта: у настоящей CMS его роль играет посетитель. Жмут
 			// его кнопкой со страницы состояния, запросом из проверки и действием
 			// «Демо: заявка с сайта» на экране «Внешние системы».
+			//
+			// Открыт он наружу, поэтому и принимает снаружи только выбор сцены:
+			// набор формы и ключ заявки стенда. Собственное тело сообщения —
+			// `CONTROL_ONLY_FIELDS` — за токеном управления.
 			method: 'POST',
 			path: '/__send-application',
 			contract: false,
@@ -241,11 +271,42 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 				}
 
 				const body = parsedBody.body;
-				const allowed = ['form', 'externalId', 'revision', 'eventId', 'data'];
-				const unknown = Object.keys(body).filter((name) => !allowed.includes(name));
+				const unknown = Object.keys(body).filter(
+					(name) => !(TRIGGER_FIELDS as readonly string[]).includes(name)
+				);
 
 				if (unknown.length > 0) {
 					return problem(400, 'validation', `Неизвестные поля: ${unknown.join(', ')}`);
+				}
+
+				// Снаружи триггер выбирает сцену, а не сочиняет сообщение: тело заявки
+				// имитатор берёт из своих фикстур. Всё, чем распоряжается управление,
+				// требует токена — и до похода в CRM дело не доходит вовсе.
+				const controlled = controlAllowed(controlToken, request);
+				const controlOnly = CONTROL_ONLY_FIELDS.filter((name) => body[name] !== undefined);
+
+				if (!controlled && controlOnly.length > 0) {
+					return problem(
+						403,
+						'control_forbidden',
+						`Поля ${controlOnly.join(', ')} задаёт только управление имитатором: назовите токен в заголовке ${CONTROL_HEADER}`
+					);
+				}
+
+				if (body.externalId !== undefined && typeof body.externalId !== 'string') {
+					return problem(400, 'validation', 'externalId: ожидается строка');
+				}
+
+				if (
+					!controlled &&
+					typeof body.externalId === 'string' &&
+					!OPEN_EXTERNAL_ID.test(body.externalId)
+				) {
+					return problem(
+						400,
+						'validation',
+						'externalId: ключ заявки стенда имеет вид site-2026-000123; произвольный задаёт только управление имитатором'
+					);
 				}
 
 				const requestedForm = body.form ?? 'b2b';
@@ -378,7 +439,7 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 				title: 'Имитатор CMS сайта — не настоящая система',
 				journal,
 				scenario,
-				controlToken: options.controlToken ?? null,
+				controlToken,
 				forms: [
 					{
 						action: '__send-application',
@@ -390,13 +451,28 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 							{
 								name: 'externalId',
 								label: 'Ключ заявки',
-								hint: 'пусто — ключ заявки набора; тот же ключ означает изменение той же заявки'
+								hint: 'пусто — ключ заявки набора; тот же ключ означает изменение той же заявки. Вид ключа — site-2026-000123'
 							}
 						],
 						submit: 'Отправить заявку в CRM'
 					}
 				],
 				objects: () => ({ applications: [...applications.values()] }),
+				// Страница открыта наружу, `__state` — за токеном, и снимки статуса
+				// из CRM видны только во втором: в их телах есть имя ответственного и
+				// последний комментарий по взаимодействию (`docs/security.md`).
+				// Зрителю сцены нужно другое — дошло ли, чем ответили и в каком
+				// состоянии заявка.
+				pageObjects: () => ({
+					applications: [...applications.values()].map((application) => ({
+						...application,
+						statuses: application.statuses.map((status) => ({
+							at: status.at,
+							eventId: status.eventId,
+							applicationStatus: status.data.applicationStatus ?? null
+						}))
+					}))
+				}),
 				forget,
 				// Ни ключа, ни секрета в состоянии нет: страница стенда открыта, и
 				// показывать в ней значения нельзя. Видно только, настроен ли обмен.

@@ -3,6 +3,10 @@ name: lct-crm
 services:
   postgres:
     image: postgres:17-alpine
+    # Пароль набран строкой и одинаков у всех: это локальный стек, его база
+    # стоит на петле и заполнена синтетикой. Только локально — развёртывание
+    # берёт свой пароль из `.env` (`POSTGRES_PASSWORD`, docker-compose.prod.yml),
+    # и умолчание отсюда туда не доезжает.
     environment:
       POSTGRES_USER: lct
       POSTGRES_PASSWORD: lct
@@ -26,6 +30,8 @@ services:
 
   redis:
     image: redis:8-alpine
+    # Без пароля — только локально: развёртывание поднимает Redis с
+    # `--requirepass` из `.env` (`REDIS_PASSWORD`, docker-compose.prod.yml).
     command: ['redis-server', '--appendonly', 'yes']
     ports:
       - '56379:6379'
@@ -226,6 +232,12 @@ services:
       # instance and external id, so a second site would need a second name.
       # Same variable the app reads — two names for one thing drift apart.
       INSTANCE_NAME: ${EXCHANGE_CMS_INSTANCE:-itschool-site}
+      # Токен управления имитатором (`__state`, `__scenario`, собственное тело
+      # заявки у триггера). Пусто по умолчанию — управление открыто: локально
+      # имитатор доступен только с петли. Прогон e2e задаёт свой
+      # (`e2e/exchange-keys.ts`) и ходит к управлению с заголовком — так же, как
+      # на стенде, где токен обязателен.
+      CONTROL_TOKEN: ${MOCK_CONTROL_TOKEN:-}
     healthcheck:
       test:
         [
@@ -254,6 +266,7 @@ services:
       CRM_API_KEY: ${EXCHANGE_API_KEY_LMS:-lct_local-dev-only-lms-key-000000000}
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-exchange-stand-secret-0123456789abcdef}
       INSTANCE_NAME: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
+      CONTROL_TOKEN: ${MOCK_CONTROL_TOKEN:-}
       # The address of a learning group as a person opens it. Published port,
       # not the compose name: the link is followed from a browser on the host.
       PUBLIC_URL: http://localhost:58082

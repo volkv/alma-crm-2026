@@ -124,7 +124,10 @@ if [ "${SECURITY_SKIP_BUILD:-}" = '1' ]; then
 	heading "Образ $IMAGE взят готовым"
 else
 	heading "Сборка образа $IMAGE"
-	docker build --tag "$IMAGE" "$REPO_ROOT"
+	# `--pull`: базовый образ берётся свежий. Иначе сканируется тот `node:24-alpine`,
+	# который однажды скачался на эту машину, и исправленная в нём уязвимость
+	# осталась бы «найденной» — или, хуже, найденная не нашлась бы.
+	docker build --pull --tag "$IMAGE" "$REPO_ROOT"
 fi
 
 heading 'semgrep: код'

@@ -13,6 +13,7 @@ import {
 	externalSourceOf,
 	isSupportedSchemaVersion,
 	learningGroupResultSchema,
+	MAX_APPLICATION_REVISION,
 	parseExternalSource,
 	PROCESS_GROUP_BY_APPLICANT
 } from '$lib/contracts/exchange';
@@ -147,6 +148,31 @@ describe('заявка', () => {
 				data: { ...APPLICATION.data, revision: 0 }
 			})
 		).toThrow();
+	});
+
+	it('не принимает ревизию выше потолка: ею заявку выключают', () => {
+		// Порядок применения снимков задаёт только сравнение ревизий, поэтому
+		// ревизия, улетевшая вперёд, замораживает заявку навсегда: все законные
+		// сообщения по ней отвечали бы `unchanged`.
+		expect(() =>
+			applicationSubmittedSchema.parse({
+				...APPLICATION,
+				data: { ...APPLICATION.data, revision: Number.MAX_SAFE_INTEGER }
+			})
+		).toThrow();
+		expect(() =>
+			applicationSubmittedSchema.parse({
+				...APPLICATION,
+				data: { ...APPLICATION.data, revision: MAX_APPLICATION_REVISION + 1 }
+			})
+		).toThrow();
+
+		expect(
+			applicationSubmittedSchema.parse({
+				...APPLICATION,
+				data: { ...APPLICATION.data, revision: MAX_APPLICATION_REVISION }
+			}).data.revision
+		).toBe(MAX_APPLICATION_REVISION);
 	});
 
 	it('проверяет ИНН контрольной суммой', () => {

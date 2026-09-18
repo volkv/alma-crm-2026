@@ -19,6 +19,21 @@ services:
     # The database is reachable over the compose network only. Dumps are taken
     # with `docker compose exec postgres pg_dump`, see docs/deployment.md.
     ports: !reset []
+    # `!override`, а не слияние: в базовом файле пароль набран строкой (`lct`) —
+    # это умолчание локального стека, и развёртывание не должно съезжать на него
+    # молча. Наружу база не выходит, но внутри сети compose стоят и имитаторы
+    # профиля `stand`, и Keycloak со своим realm в той же СУБД, поэтому пароль
+    # обязан быть свой. Имя пользователя и базы остаётся `lct`: это не секрет, а
+    # форма развёртывания — на него ссылаются healthcheck, скрипт создания базы
+    # каталога и команды из docs/deployment.md.
+    #
+    # Смена пароля на уже развёрнутом стенде — не только строка в `.env`: том
+    # базы помнит прежний, и порядок описан в docs/deployment.md, раздел
+    # «Пароли СУБД».
+    environment: !override
+      POSTGRES_USER: lct
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: lct
     deploy:
       resources:
         limits:
@@ -27,6 +42,24 @@ services:
   redis:
     restart: unless-stopped
     ports: !reset []
+    # Redis держит сессии, замки фоновых проходов и счётчики лимитов, то есть
+    # вход в систему: сосед по сети compose, дотянувшийся до него без пароля,
+    # читает и переписывает чужие сессии. `$$` — доллар для оболочки внутри
+    # контейнера, а не для подстановки Compose: пароль остаётся в переменной и
+    # не попадает в командную строку процесса.
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    command: !override
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+    # Проба базового файла ходит без пароля и получала бы `NOAUTH`: контейнер
+    # считался бы больным при исправном Redis.
+    healthcheck: !override
+      test: ['CMD-SHELL', 'redis-cli --no-auth-warning -a "$$REDIS_PASSWORD" ping | grep -q PONG']
+      interval: 5s
+      timeout: 5s
+      retries: 20
     deploy:
       resources:
         limits:
@@ -126,8 +159,11 @@ services:
       # it is the command from docs/deployment.md.
       KC_DB: postgres
       KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      # Тот же пользователь и тот же пароль, что у базы рядом: realm каталога
+      # лежит в той же СУБД, и второе значение здесь означало бы стенд, который
+      # поднимается с одним паролем, а ходит с другим.
       KC_DB_USERNAME: lct
-      KC_DB_PASSWORD: lct
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
       # The public address of Keycloak in full, path included: it builds the links
       # in its login pages and OIDC metadata from it, and it is the `iss` of every
       # token it issues. The path has to match KC_HTTP_RELATIVE_PATH, otherwise
@@ -202,7 +238,12 @@ services:
       # наружу не пускает; токен — вторая граница, на случай своей конфигурации
       # прокси и на случай туннеля к опубликованному порту. Пусто — управление
       # открыто всем, кто дотянулся до петли хоста (`docs/security.md`).
-      CONTROL_TOKEN: ${MOCK_CONTROL_TOKEN?declare MOCK_CONTROL_TOKEN in .env}
+      # `:?` с двоеточием: пустое значение здесь снимало бы вторую границу
+      # целиком — имитатор без токена пускает к управлению всякого, кто до него
+      # дотянулся, а на стенде страница и триггер выходят наружу через прокси.
+      # Значение нужно и установке без имитаторов: подстановка Compose идёт по
+      # всему файлу сразу, профили её не отменяют.
+      CONTROL_TOKEN: ${MOCK_CONTROL_TOKEN:?set MOCK_CONTROL_TOKEN in .env}
       # The same variable the app reads: the CRM checks `source.instance` of an
       # incoming application against its own setting, and two variables with one
       # default would silently drift apart on the first stand that renames one.
@@ -222,7 +263,7 @@ services:
       CRM_BASE_URL: http://app:3000
       CRM_API_KEY: ${EXCHANGE_API_KEY_LMS?declare EXCHANGE_API_KEY_LMS in .env}
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}
-      CONTROL_TOKEN: ${MOCK_CONTROL_TOKEN?declare MOCK_CONTROL_TOKEN in .env}
+      CONTROL_TOKEN: ${MOCK_CONTROL_TOKEN:?set MOCK_CONTROL_TOKEN in .env}
       INSTANCE_NAME: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
       # Адрес группы для человека: через тот же прокси, что и приложение, —
       # `https://<домен>/mock-lms/`. Без него ссылка ведёт на имя контейнера и
@@ -259,6 +300,14 @@ services:
     # src/lib/server/http.ts): header present — the address our proxy appended
     # to it, header absent — the socket address.
     environment: !override
+      # Строки подключения собираются здесь, из тех же переменных, которыми
+      # подняты сама база и Redis: набранные отдельной строкой в `.env`, они
+      # разъехались бы с паролем СУБД на первой же его смене — и приложение
+      # молча перестало бы подниматься. `environment` сильнее `env_file`,
+      # поэтому `DATABASE_URL` и `REDIS_URL` из `.env` на развёртывании не
+      # читаются вовсе (docs/deployment.md).
+      DATABASE_URL: postgres://lct:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/lct
+      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379
       # The directory answers the browser at its public address through nginx;
       # the app asks it from inside the network. The path has to match
       # KC_HTTP_RELATIVE_PATH of Keycloak below, or the request lands in the

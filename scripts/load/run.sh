@@ -22,14 +22,37 @@ set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROJECT=lct-load
-COMPOSE=(docker compose -p "$PROJECT" --env-file scripts/load/load.env
+ENV_FILE=scripts/load/load.env
+COMPOSE=(docker compose -p "$PROJECT" --env-file "$ENV_FILE"
 	-f docker-compose.yml -f docker-compose.prod.yml -f scripts/load/compose.load.yml)
 
+cd "$ROOT"
+
+# Файла окружения в репозитории нет: в нём ключ шифрования контактов и пароли
+# стенда, и напечатанные в репозитории они не защищают ничего. Без него
+# останавливаемся здесь, а не на середине `docker compose up` с сообщением о
+# ненайденной переменной.
+if [[ ! -f "$ENV_FILE" ]]; then
+	echo "нет $ENV_FILE: скопируйте $ENV_FILE.example и заполните значения (scripts/load/README.md)" >&2
+	exit 2
+fi
+
+# Значение переменной из файла окружения: последнее объявление, как читает его
+# и сам Compose.
+env_value() {
+	sed -n "s/^$1=//p" "$ENV_FILE" | tail -1
+}
+
 BASE_URL="${BASE_URL:-http://localhost:3100}"
-PASSWORD="${PASSWORD:-Load-Password-2026!}"
+# Тем же паролем сид завёл учётные записи стенда, и им же входит сценарий: две
+# набранные порознь строки однажды разъехались бы, и прогон мерил бы отказ входа.
+PASSWORD="${PASSWORD:-$(env_value SEED_DEMO_PASSWORD)}"
 OUT="${OUT:-$(mktemp -d -t lct-load-XXXXXX)}"
 
-cd "$ROOT"
+if [[ -z "$PASSWORD" ]]; then
+	echo "в $ENV_FILE не задан SEED_DEMO_PASSWORD: сценарию нечем войти" >&2
+	exit 2
+fi
 
 fixture() {
 	mkdir -p "$OUT"
@@ -40,7 +63,12 @@ fixture() {
 # Счётчик заходов с адреса живёт пятнадцать минут и общий на все VU: без сброса
 # второй прогон подряд упёрся бы в лимит начала входа, а не в производительность.
 reset_login_limit() {
-	"${COMPOSE[@]}" exec -T redis sh -c 'redis-cli --scan --pattern "login_ip:*" | xargs -r redis-cli del' >/dev/null
+	# Redis стенда закрыт паролем (`docker-compose.prod.yml`), и свой пароль
+	# контейнер знает сам — набирать его здесь второй раз значило бы однажды
+	# разойтись с ним.
+	"${COMPOSE[@]}" exec -T redis sh -c \
+		'redis-cli --no-auth-warning -a "$REDIS_PASSWORD" --scan --pattern "login_ip:*" |
+			xargs -r redis-cli --no-auth-warning -a "$REDIS_PASSWORD" del' >/dev/null
 }
 
 k6() {

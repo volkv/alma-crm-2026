@@ -51,6 +51,18 @@ export const E2E_EXCHANGE_INSTANCES = {
 export const E2E_EXCHANGE_SECRET = 'exchange-stand-secret-0123456789abcdef';
 
 /**
+ * Токен управления имитаторами: `__state`, `__scenario` и собственное тело
+ * заявки у триггера сцены (заголовок `X-Mock-Control`).
+ *
+ * Прогон задаёт его нарочно, хотя без него имитаторы пускали бы всех: на стенде
+ * токен обязателен (`docker-compose.prod.yml`), и проверять надо ту
+ * конфигурацию, которая уезжает, а не ту, что удобнее прогону. Заодно это и есть
+ * проверка границы: страница и триггер сцены остаются открытыми, а управление —
+ * нет.
+ */
+export const E2E_MOCK_CONTROL_TOKEN = 'e2e-mock-control-0123456789abcdef';
+
+/**
  * Обмен прогона одним куском окружения: обе стороны читают одни и те же
  * переменные, и подмешивается он и серверу прогона, и Compose.
  */
@@ -59,5 +71,6 @@ export const E2E_EXCHANGE_ENV = {
 	EXCHANGE_API_KEY_LMS: E2E_EXCHANGE_KEYS.lms,
 	EXCHANGE_CMS_INSTANCE: E2E_EXCHANGE_INSTANCES.cms,
 	EXCHANGE_LMS_INSTANCE: E2E_EXCHANGE_INSTANCES.lms,
-	EXCHANGE_SECRET: E2E_EXCHANGE_SECRET
+	EXCHANGE_SECRET: E2E_EXCHANGE_SECRET,
+	MOCK_CONTROL_TOKEN: E2E_MOCK_CONTROL_TOKEN
 } as const;

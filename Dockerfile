@@ -38,7 +38,14 @@ COPY --chown=node:node package.json ./
 COPY --from=prod-deps --chown=node:node /app/node_modules ./node_modules
 COPY --from=build --chown=node:node /app/build ./build
 COPY --chown=node:node drizzle ./drizzle
-COPY --chown=node:node scripts ./scripts
+# Из `scripts/` в образ едет только то, что запускают в контейнере: миграции,
+# сид и снимок карточек для нагрузочного прогона (`docker compose exec app node
+# scripts/load/fixture.ts`). Каталог целиком сюда не копируется — в нём лежат
+# сценарии k6, съёмка README и файл окружения нагрузочного стенда, которым в
+# рантайме делать нечего, а последнему — тем более (`.dockerignore`).
+COPY --chown=node:node scripts/migrate.ts ./scripts/
+COPY --chown=node:node scripts/seed ./scripts/seed
+COPY --chown=node:node scripts/load/fixture.ts ./scripts/load/
 # Миграции и начальные данные заливает обычный процесс Node, а не приложение:
 # `scripts/migrate.ts` берёт отсюда схему базы и каталог прав, сид — ещё и
 # контракты, процесс и генерацию документов. Исходниками, потому что в `build/`
