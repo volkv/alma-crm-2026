@@ -1,30 +1,37 @@
 /**
- * Черновой скринкаст защиты: три сцены README одним проходом по стенду.
+ * Скринкаст показа: связный проход по стенду от заявки с сайта до отчёта,
+ * с титульной и финальной карточками, таймкодами и субтитрами.
  *
- * Ролики README показывают по разделу каждый; защита требует другого — связного
- * прохода, где заявка с сайта становится взаимодействием, взаимодействие идёт по
- * процессу, процесс меняют на ходу, а в конце всё это объясняет отчёт. Собрать
- * такой проход руками нельзя: он идёт тремя ролями, трогает внешние системы и
- * длится три минуты, за которые человек успевает промахнуться мимо кнопки.
- * Скрипт же переснимает его целиком одной командой — и вместе с ним переснимает
- * таймкоды, по которым пишут закадровый текст.
+ * Ролики README показывают по разделу каждый; показу нужно другое — один
+ * проход, где заявка с сайта становится взаимодействием, взаимодействие идёт по
+ * процессу, процесс меняют на ходу, работу передают другому человеку, чужая
+ * система подтверждает стадию, а в конце всё это объясняет отчёт. Собрать такой
+ * проход руками нельзя: он идёт тремя ролями, трогает внешние системы и длится
+ * без малого три минуты, за которые человек успевает промахнуться мимо кнопки.
+ * Скрипт переснимает его целиком одной командой — и вместе с ним переснимает
+ * таймкоды и субтитры, по которым ролик озвучивают.
  *
- * Запись идёт **против публичного стенда** и честно: заявка подаётся ключом
- * сайта в `POST /api/v1/applications`, группа уезжает в систему обучения кнопкой
- * с карточки, результат потока приходит ключом системы обучения. Ничего не
- * подделывается — иначе ролик показывал бы систему, которой нет.
+ * Запись идёт **против стенда** и честно: заявку подаёт имитатор сайта своим
+ * триггером (кнопка «Демо: заявка с сайта» жмёт его же), группу в систему
+ * обучения заводит человек кнопкой с карточки, результат потока присылает
+ * имитатор системы обучения со своей страницы. Ничего не подделывается — иначе
+ * ролик показывал бы систему, которой нет. Управляющие адреса имитаторов
+ * (`__state`, `__scenario`) при этом не нужны вовсе: с них снимают состояние
+ * стенда целиком, и на стенде они закрыты токеном.
  *
- * Что скрипт оставляет на стенде и что убирает за собой — `docs/readme-media.md`,
- * раздел «Скринкаст». Голоса в ролике нет: текст закадра пишется по таймкодам,
- * которые скрипт печатает и кладёт рядом с видео.
+ * Что проход оставляет на стенде и что возвращает обратно —
+ * `docs/readme-media.md`, раздел «Скринкаст». Голоса в ролике нет: текст
+ * закадра лежит здесь же, рядом со сценами, потому что он задаёт их длину —
+ * сцена не может кончиться раньше, чем дочитана её реплика.
  *
  * ```
- * export SCREENCAST_DIR=…            # каталог вне репозитория
+ * export MEDIA_BASE_URL=https://crm.volkv.com
+ * export SEED_DEMO_PASSWORD=…          # пароль демонстрационных записей каталога
+ * export SCREENCAST_DIR=…              # каталог вне репозитория, куда лечь ролику
  * node scripts/readme-media/screencast.ts
  * node scripts/readme-media/screencast.ts --list
  * ```
  */
-import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
@@ -54,16 +61,20 @@ const run = promisify(execFile);
  */
 const FRAME = { width: 1280, height: 800 } as const;
 
-/**
- * Язык страницы записи.
- *
- * Тем же языком браузер представляется каталогу учётных записей и тем же
- * считает форматы в `Intl`. Собственные подписи Chromium — кнопка выбора файла
- * и порядок частей в поле даты — остаются английскими: в сборке Playwright
- * лежит только английская локаль, и ключ `--lang` её не добавляет
- * (`docs/readme-media.md`, «Скринкаст»).
- */
+/** Язык страницы записи; тем же языком браузер представляется каталогу. */
 const LOCALE = 'ru-RU';
+
+/**
+ * Язык самого браузера.
+ *
+ * Подписи, которые рисует не приложение, а Chromium, — кнопка выбора файла и
+ * порядок частей в поле даты — берутся из языка сборки, а не из языка страницы.
+ * Их русский требует трёх вещей сразу: полной сборки Chromium вместо
+ * «headless shell» (в ней нет файлов локалей вовсе), ключа `--lang` и
+ * переменных окружения запуска. Без любой из трёх в кадре остаётся
+ * «Choose File» и дата вида 10/01/2026.
+ */
+const BROWSER_LANGUAGE = { LANGUAGE: 'ru', LC_ALL: 'ru_RU.UTF-8', LANG: 'ru_RU.UTF-8' } as const;
 
 /** Частота кадров готового файла: движение курсора на восьми кадрах рвётся. */
 const FPS = 25;
@@ -76,10 +87,27 @@ const FPS = 25;
  * не запись. Ускорений нет вовсе — ускоренный интерфейс выглядит быстрее, чем
  * он есть, и это враньё.
  */
-const BEAT = 1500;
+const BEAT = 1200;
 
 /** Сколько ждать появления экрана или результата действия. */
 const WAIT = 30_000;
+
+/**
+ * Темп чтения закадра: слов в минуту.
+ *
+ * По нему считается, сколько сцена обязана длиться, чтобы её реплику успели
+ * прочитать вслух. Сто сорок — спокойная речь без спешки; диктор, читающий
+ * быстрее, получит паузу в конце сцены, а не обрезанную фразу.
+ */
+const WORDS_PER_MINUTE = 140;
+
+/**
+ * Хвост сцены: столько тишины после последнего слова реплики.
+ *
+ * Секунда с небольшим, а не мгновение: первые кадры контекста уходят на запуск
+ * записи, и без запаса сцена в файле оказывается короче прочитанной реплики.
+ */
+const TAIL_SECONDS = 1.2;
 
 function requiredEnv(name: string, fallback?: string): string {
 	const value = process.env[name] ?? fallback;
@@ -93,8 +121,6 @@ function requiredEnv(name: string, fallback?: string): string {
 
 const BASE_URL = requiredEnv('MEDIA_BASE_URL', 'http://localhost:3000').replace(/\/+$/, '');
 const PASSWORD = requiredEnv('SEED_DEMO_PASSWORD');
-const CMS_KEY = requiredEnv('EXCHANGE_API_KEY_CMS');
-const LMS_KEY = requiredEnv('EXCHANGE_API_KEY_LMS');
 
 /**
  * Куда складывается готовый ролик.
@@ -105,19 +131,13 @@ const LMS_KEY = requiredEnv('EXCHANGE_API_KEY_LMS');
  */
 const OUTPUT = process.env.SCREENCAST_DIR ?? path.join(tmpdir(), 'lct-screencast');
 
-/** Экземпляры внешних систем стенда: ими подписаны сообщения обмена. */
-const CMS_INSTANCE = 'itschool-site';
-const LMS_INSTANCE = 'moodle-itschool';
-
 /**
- * Вуз заявки — тот, что уже есть в справочнике стенда: заявка сверяется по ИНН и
- * попадает к действующему ответственному, а не заводит двойника.
+ * Черновой каталог прохода: части записи, вложение перехода, скачанные файлы.
+ *
+ * Всё это нужно только во время съёмки и стирается в конце: в каталоге ролика
+ * остаются ролик, кадры, таймкоды и субтитры — то, ради чего проход затевался.
  */
-const APPLICANT = {
-	name: 'Московский технический университет связи и информатики',
-	inn: '0000000096',
-	ogrn: '1260000000094'
-} as const;
+const WORK = await mkdtemp(path.join(tmpdir(), 'lct-screencast-'));
 
 /** Стадия, которую переименовывает администратор, и как она называется в черновике. */
 const RENAMED_STAGE = {
@@ -125,6 +145,51 @@ const RENAMED_STAGE = {
 	from: 'Коммуникация и сверка программ',
 	to: 'Коммуникация и сверка образовательных программ'
 } as const;
+
+/** Первая стадия процесса учебных заведений: на ней стоит заявка с сайта. */
+const FIRST_STAGE = 'Поиск контактных лиц';
+
+/** Обязательные пункты первой стадии: их закрывает менеджер в кадре. */
+const FIRST_STAGE_CHECKLIST = [
+	'Найдено профильное подразделение',
+	'Подтверждён контакт ответственного лица'
+] as const;
+
+/**
+ * Записи стенда, на которых держатся сцены.
+ *
+ * Названы поиском, а не идентификатором: идентификаторы у сида свои на каждой
+ * установке, а названия — часть демонстрационных данных и видны в кадре.
+ */
+const STAND = {
+	/** Подписанное соглашение: его стадию подтверждает отметка по документу. */
+	signed: {
+		query: 'соглашение о сотрудничестве',
+		title: 'МТУСИ: соглашение о сотрудничестве',
+		stage: 'Подписание соглашения',
+		/** Место стадии в воронке: клик по столбцу начинается с него. */
+		funnelIndex: 5
+	},
+	/** Занятия идут: стадия требует данных обучения, и их присылает система обучения. */
+	classes: {
+		query: 'ведение занятий',
+		stage: 'Ведение занятий'
+	},
+	/** Стадия отчёта, по столбцу которой идёт клик в сцене отчёта. */
+	narrowed: { stage: 'Корректировка документов', funnelIndex: 4 },
+	/** Вуз, которого руководитель передаёт другому менеджеру. */
+	institution: { query: 'МТУСИ', name: 'МТУСИ' }
+} as const;
+
+/**
+ * Кто ведёт вуз до записи и кому его отдают в кадре.
+ *
+ * Назначение на вуз — это и область доступа: вместе с вузом уезжают незакрытые
+ * взаимодействия по нему и право их видеть. Поэтому сцена передачи снимается
+ * именно на вузе, а не на владельце одной записи: смена владельца работу
+ * передаёт, но из области прежнего ответственного запись не убирает.
+ */
+const RESPONSIBLE = { from: 'Менеджер Демо', to: 'Вересова Анна Сергеевна' } as const;
 
 /** Кем открыт экран; вход идёт демонстрационной записью каталога. */
 type Role = 'manager' | 'lead' | 'admin';
@@ -134,15 +199,14 @@ type Session = Awaited<ReturnType<BrowserContext['storageState']>>;
 
 /** Что проход завёл на стенде: сцены передают это друг другу. */
 type Stand = {
-	/** Ключ заявки в CMS: уникален на запуск, по нему её видно в журнале обмена. */
+	/** Ключ заявки в CMS: его называет сам имитатор, нажатый кнопкой стенда. */
 	externalId: string;
 	interactionId: string;
 	/** Как система назвала взаимодействие: по названию его находят в списке. */
 	title: string;
-	/** Имя группы в системе обучения; его возвращает она сама. */
-	groupExternalId: string | null;
 	/** Что из изменённого на стенде предстоит вернуть обратно. */
-	reassigned: boolean;
+	moved: boolean;
+	institutionMoved: boolean;
 	renamed: boolean;
 };
 
@@ -150,6 +214,16 @@ type Scene = {
 	name: string;
 	role: Role;
 	caption: string;
+	/**
+	 * Реплика закадра, по фразе на строку.
+	 *
+	 * Она же задаёт минимальную длину сцены и она же уезжает в субтитры: текст
+	 * и запись обязаны переписываться вместе, иначе субтитры расходятся с
+	 * картинкой молча.
+	 */
+	narration: readonly string[];
+	/** Сцена начинается со входа в кадре: сессия ей не передаётся. */
+	signsIn?: boolean;
 	play: (page: Page, stand: Stand) => Promise<void>;
 };
 
@@ -204,6 +278,18 @@ const CURSOR = `
 })();
 `;
 
+/** Слов в реплике: по ним считается и длина сцены, и доля каждой фразы в ней. */
+function words(line: string): number {
+	return line.split(/\s+/u).filter((word) => /\p{L}|\p{N}/u.test(word)).length;
+}
+
+/** Сколько секунд читается реплика сцены вслух. */
+function readingSeconds(narration: readonly string[]): number {
+	const total = narration.reduce((sum, line) => sum + words(line), 0);
+
+	return (total / WORDS_PER_MINUTE) * 60 + TAIL_SECONDS;
+}
+
 /** Пауза в долях такта: 1 — «дать прочитать», 0.5 — «не частить». */
 async function beat(page: Page, times = 1): Promise<void> {
 	await page.waitForTimeout(Math.round(BEAT * times));
@@ -211,6 +297,10 @@ async function beat(page: Page, times = 1): Promise<void> {
 
 /** Подвести курсор к элементу — видимым движением, а не прыжком. */
 async function pointAt(page: Page, target: Locator): Promise<void> {
+	// Ожидание видимости — не перестраховка: сразу после гидратации SvelteKit
+	// заменяет разметку целиком, и элемент, найденный мгновением раньше, к
+	// моменту измерения уже не тот.
+	await target.waitFor({ state: 'visible', timeout: WAIT });
 	await target.scrollIntoViewIfNeeded();
 
 	const box = await target.boundingBox();
@@ -220,7 +310,7 @@ async function pointAt(page: Page, target: Locator): Promise<void> {
 	}
 
 	await page.mouse.move(box.x + box.width / 2, box.y + box.height / 2, { steps: 24 });
-	await page.waitForTimeout(300);
+	await page.waitForTimeout(260);
 }
 
 /** Нажать так, как нажимает человек: сначала довести курсор, потом кликнуть. */
@@ -244,17 +334,17 @@ async function visit(
 	}
 
 	await page.getByText(expected).first().waitFor({ state: 'visible', timeout: WAIT });
-	await beat(page);
+	await beat(page, 0.8);
 }
 
 /** Прокрутка «как рукой»: несколько коротких движений вместо одного прыжка. */
-async function scroll(page: Page, distance: number, steps = 6): Promise<void> {
+async function scroll(page: Page, distance: number, steps = 5): Promise<void> {
 	for (let step = 0; step < steps; step += 1) {
 		await page.mouse.wheel(0, distance / steps);
-		await page.waitForTimeout(90);
+		await page.waitForTimeout(80);
 	}
 
-	await beat(page, 0.5);
+	await beat(page, 0.4);
 }
 
 /**
@@ -262,21 +352,19 @@ async function scroll(page: Page, distance: number, steps = 6): Promise<void> {
  * возврат в приложение. Другого входа в системе нет, и подделанная сессия
  * снимала бы систему, которой не существует.
  */
-async function signIn(page: Page, login: string, typed: boolean): Promise<void> {
+async function signIn(page: Page, login: Role, typed: boolean): Promise<void> {
 	await page.goto(`${BASE_URL}/login`);
 
-	// В кадре страница входа сначала показывается целиком: с неё начинается
-	// ролик, и на ней написано, какими ролями стенд смотрят.
 	if (typed) {
 		await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
-		await beat(page, 1.6);
+		await beat(page, 1.2);
 	}
 
 	await press(page, page.getByRole('button', { name: 'Войти', exact: true }));
 	await page.waitForURL(/\/realms\/lct\/protocol\/openid-connect\/auth/, { timeout: WAIT });
 
 	if (typed) {
-		await beat(page, 0.7);
+		await beat(page, 0.5);
 		await page.locator('#username').click();
 		await page.locator('#username').pressSequentially(login, { delay: 110 });
 	} else {
@@ -293,9 +381,9 @@ async function signIn(page: Page, login: string, typed: boolean): Promise<void> 
 /**
  * Сессия роли, снятая заранее.
  *
- * Вход в кадре нужен ровно один раз — во вступлении. Остальные сцены начинаются
- * с уже открытой сессии: пять записей чужой формы ввода пароля подряд не
- * рассказывают о продукте ничего.
+ * Вход в кадре нужен ровно один раз — там, где в ролике меняется роль.
+ * Остальные сцены начинаются с уже открытой сессии: пять записей чужой формы
+ * ввода пароля подряд не рассказывают о продукте ничего.
  */
 async function storageFor(browser: Browser, login: Role): Promise<Session> {
 	const context = await browser.newContext({ viewport: FRAME, locale: LOCALE });
@@ -323,111 +411,96 @@ function session(storage: Map<Role, Session>, role: Role): Session {
 	return state;
 }
 
-/** Конверт сообщения обмена: версия схемы, событие и кто его послал. */
-function envelope(eventType: string, system: 'cms' | 'lms', data: Record<string, unknown>) {
-	return {
-		schemaVersion: '1.0',
-		eventId: randomUUID(),
-		eventType,
-		occurredAt: new Date().toISOString(),
-		source: { system, instance: system === 'cms' ? CMS_INSTANCE : LMS_INSTANCE },
-		data
-	};
-}
-
-async function exchangeCall(
-	address: string,
-	key: string,
-	body: Record<string, unknown>
-): Promise<Record<string, unknown>> {
-	const response = await fetch(`${BASE_URL}${address}`, {
-		method: 'POST',
-		headers: { authorization: `Bearer ${key}`, 'content-type': 'application/json' },
-		body: JSON.stringify(body)
-	});
-
-	const text = await response.text();
-
-	if (!response.ok) {
-		throw new Error(`${address} ответил ${response.status}: ${text}`);
-	}
-
-	return JSON.parse(text) as Record<string, unknown>;
-}
-
-/** Заявка с сайта — тем же телом, что описано в контракте обмена. */
-async function submitApplication(externalId: string): Promise<{ interactionId: string }> {
-	const answer = await exchangeCall(
-		'/api/v1/applications',
-		CMS_KEY,
-		envelope('application.submitted', 'cms', {
-			externalId,
-			revision: 1,
-			form: 'b2b',
-			applicant: {
-				kind: 'educational_institution',
-				name: APPLICANT.name,
-				inn: APPLICANT.inn,
-				ogrn: APPLICANT.ogrn,
-				educationLevel: 'vo'
-			},
-			contact: {
-				lastName: 'Кузьмина',
-				firstName: 'Наталья',
-				email: 'kuzmina@mtuci.example.org',
-				phone: '+7 900 000-00-11',
-				position: 'Проректор по цифровому развитию'
-			},
-			interest: 'Программа подготовки DevOps-инженеров',
-			programCodes: ['VO-BAK-01'],
-			productCodes: ['RT-DEVOPS'],
-			comment: 'Просим связаться до конца недели.',
-			transferStatus: 'not_started',
-			attachments: []
-		})
-	);
-
-	const data = answer.data as { interactionId?: string };
-
-	if (typeof data.interactionId !== 'string') {
-		throw new Error('Приём заявки не вернул идентификатор взаимодействия');
-	}
-
-	console.log(`заявка ${externalId}: ${String(answer.result)} → ${data.interactionId}`);
-
-	return { interactionId: data.interactionId };
-}
-
 /**
- * Результат потока из системы обучения.
+ * Карточка ролика — обычная страница стенда, а не картинка.
  *
- * На карточку он приносит числа, а стадию подтверждает только там, где она
- * требует данных обучения, — это «Ведение занятий». Заявка сцены стоит в начале
- * процесса, поэтому ответ честно говорит «стадия не подтверждена», и запись в
- * журнале прогона это показывает: подписи «результат закрыл стадию» в сцене нет.
+ * Стили берутся у самого приложения: карточка обязана быть в тех же цветах,
+ * шрифте и ритме, что экран, который появится следующим кадром, — иначе ролик
+ * начинается с чужой заставки. Адрес карточки принадлежит стенду, но до стенда
+ * не доходит: запрос перехватывается здесь же, поэтому на сервере такой
+ * страницы заводить не нужно, а относительные адреса шрифтов и стилей всё
+ * равно разрешаются.
  */
-async function submitGroupResult(stand: Stand): Promise<void> {
-	if (stand.groupExternalId === null) {
-		throw new Error('Группа в системе обучения не заведена: результат посылать некуда');
+const CARD_PATH = '/__screencast-card';
+
+async function appStyles(context: BrowserContext): Promise<string[]> {
+	const response = await context.request.get(`${BASE_URL}/login`);
+	const html = await response.text();
+	const links = [...html.matchAll(/<link\b[^>]*>/gu)]
+		.filter((tag) => tag[0].includes('stylesheet'))
+		.map((tag) => /href="([^"]+)"/u.exec(tag[0])?.[1])
+		.filter((href): href is string => href !== undefined);
+
+	if (links.length === 0) {
+		throw new Error('На странице входа нет ни одной таблицы стилей: карточку не в чем рисовать');
 	}
 
-	const answer = await exchangeCall(
-		'/api/v1/exchange/learning-groups/results',
-		LMS_KEY,
-		envelope('learning_group.result', 'lms', {
-			groupExternalId: stand.groupExternalId,
-			requestExternalId: `crm-group-${stand.interactionId}-1`,
-			period: { start: '2026-10-01', end: '2027-05-31' },
-			finishedOn: '2027-05-20',
-			counters: { enrolled: 45, completed: 38, expelled: 4 }
-		})
-	);
+	return links.map((href) => new URL(href, `${BASE_URL}/login`).href);
+}
 
-	const data = answer.data as { stageConfirmed?: boolean; note?: string };
+function card(styles: readonly string[], body: string): string {
+	return `<!doctype html>
+<html lang="ru">
+<head>
+<meta charset="utf-8">
+${styles.map((href) => `<link rel="stylesheet" href="${href}">`).join('\n')}
+<style>
+	body {
+		margin: 0;
+		height: 100vh;
+		display: flex;
+		align-items: center;
+		background: var(--color-canvas);
+		color: var(--color-foreground);
+		font-family: var(--font-sans);
+	}
+	.card { padding: 0 96px; max-width: 1040px; }
+	.rule { width: 96px; height: 6px; border-radius: 999px; background: var(--color-primary); }
+	.kicker {
+		margin: 28px 0 0;
+		font-size: 18px;
+		letter-spacing: 0.02em;
+		color: var(--color-muted-foreground);
+	}
+	h1 { margin: 16px 0 0; font-size: 46px; line-height: 1.15; font-weight: 700; }
+	.lead { margin: 24px 0 0; font-size: 24px; line-height: 1.4; color: var(--color-muted-foreground); }
+	ul { margin: 28px 0 0; padding: 0; list-style: none; font-size: 21px; line-height: 1.75; }
+	li b { font-weight: 500; }
+	.accent { color: var(--color-primary); }
+	.foot { margin: 36px 0 0; font-size: 18px; color: var(--color-faint); }
+</style>
+</head>
+<body><div class="card">${body}</div></body>
+</html>`;
+}
 
-	console.log(
-		`результат группы ${stand.groupExternalId}: стадия подтверждена — ${String(data.stageConfirmed)}; ${String(data.note)}`
+const TITLE_CARD = `
+	<div class="rule"></div>
+	<p class="kicker">ИТ Школа Ростелекома · «Лидеры цифровой трансформации 2026»</p>
+	<h1>Система контроля взаимодействия с учебными заведениями</h1>
+	<p class="lead">От заявки с сайта до подтверждённого результата — весь процесс под контролем</p>
+	<p class="foot">Wine Coding Team</p>
+`;
+
+const FINAL_CARD = `
+	<div class="rule"></div>
+	<h1>Стенд открыт</h1>
+	<ul>
+		<li><b class="accent">crm.volkv.com</b> — три роли: менеджер, руководитель, администратор</li>
+		<li><b class="accent">/help</b> — руководства внутри системы, <b class="accent">/api/docs</b> — описание программного интерфейса</li>
+		<li><b class="accent">github.com/volkv/lct-2026</b> — исходный код</li>
+	</ul>
+	<p class="foot">Wine Coding Team</p>
+`;
+
+async function showCard(page: Page, styles: readonly string[], body: string): Promise<void> {
+	await page.route(`${BASE_URL}${CARD_PATH}`, (route) =>
+		route.fulfill({ contentType: 'text/html; charset=utf-8', body: card(styles, body) })
 	);
+	await page.goto(`${BASE_URL}${CARD_PATH}`, { waitUntil: 'load' });
+	// Шрифт приложения приезжает с того же стенда: без ожидания первый кадр
+	// карточки успевает показать запасную гарнитуру.
+	await page.evaluate(() => document.fonts.ready);
 }
 
 /**
@@ -438,7 +511,7 @@ async function submitGroupResult(stand: Stand): Promise<void> {
  * показывать работу, которой не было.
  */
 async function drawAttachment(): Promise<string> {
-	const file = path.join(OUTPUT, 'protokol-vstrechi.png');
+	const file = path.join(WORK, 'protokol-vstrechi.png');
 	const font = '/usr/share/fonts/truetype/dejavu/DejaVuSans.ttf';
 	const line = (text: string, y: number, size: number) =>
 		`drawtext=fontfile=${font}:text='${text}':fontcolor=0x2a2a2a:fontsize=${size}:x=90:y=${y}`;
@@ -465,357 +538,113 @@ async function drawAttachment(): Promise<string> {
 	return file;
 }
 
-/** Прочитать имя группы с карточки: его вернула система обучения, а не мы. */
-async function readGroupExternalId(page: Page): Promise<string> {
-	const text = await page
-		.getByText(/Поток 1 · группа/)
-		.first()
-		.innerText();
-	const found = /группа\s+(\S+)/u.exec(text);
+/**
+ * Привести пункт чек-листа к нужному состоянию.
+ *
+ * Именно привести, а не «нажать»: чек-лист принадлежит стадии и переживает
+ * возврат на неё, поэтому слепое нажатие в возврате стенда закрывало бы пункт,
+ * который на стенде открыт. По той же причине сцена не требует, чтобы пункты
+ * были открыты с самого начала: следы проверки на общем стенде — обычное дело,
+ * а проверяется результат — «ничего не мешает».
+ */
+async function setChecklistItem(
+	page: Page,
+	item: string,
+	done: boolean,
+	options: { shown?: boolean } = {}
+): Promise<void> {
+	const toggle = page.getByRole('switch', { name: item });
 
-	if (found === null) {
-		throw new Error(`На карточке нет имени группы: «${text}»`);
+	await toggle.waitFor({ state: 'visible', timeout: WAIT });
+
+	if ((await toggle.isChecked()) === done) {
+		return;
 	}
 
-	return found[1];
+	if (options.shown === true) {
+		await press(page, toggle);
+	} else {
+		await toggle.click();
+		await page.waitForTimeout(400);
+	}
 }
 
 /**
- * Строка нашего взаимодействия в списке.
+ * Ключ потока, заведённого только что.
  *
- * Заявок с сайта на стенде несколько, и называются они одинаково — вузом и
- * интересом заявителя. Поэтому список открывается отсортированным по
- * активности: запись, которую только что вели, стоит первой. Название сверяется
- * до того, как со строкой что-то делают: ошибиться здесь значит переназначить
- * чужую работу.
+ * Потоков у взаимодействия бывает несколько, и какой из них завела кнопка,
+ * видно только сравнением с тем, что было на карточке до нажатия: имя группе
+ * даёт система обучения, а не мы.
  */
-async function ourRow(page: Page, stand: Stand): Promise<Locator> {
-	await visit(page, '/interactions?q=Заявка+с+сайта&sort=-lastActivityAt', 'Взаимодействия');
+async function newGroup(page: Page, before: ReadonlySet<string>): Promise<string> {
+	for (let attempt = 0; attempt < 12; attempt += 1) {
+		const added = [...(await groupKeys(page))].filter((key) => !before.has(key));
 
-	const row = page.getByRole('row').nth(1);
-	const text = (await row.innerText()).replace(/\s+/gu, ' ');
-	const expected = stand.title.replace(/\s+/gu, ' ').slice(0, 60);
+		if (added.length > 0) {
+			return added[0];
+		}
 
-	if (expected === '' || !text.includes(expected)) {
-		throw new Error(`Первой строкой списка стоит не наша заявка: «${text}»`);
+		await page.waitForTimeout(700);
 	}
 
-	return row;
+	throw new Error('Система обучения не завела группу: показывать в сцене нечего');
 }
 
-const SCENES: readonly Scene[] = [
-	{
-		name: 'intro',
-		role: 'manager',
-		caption: 'Вступление: вход через каталог учётных записей и сводка дня',
-		play: async (page) => {
-			await signIn(page, 'manager', true);
-			await page.getByText('Требуют действия').first().waitFor({ state: 'visible', timeout: WAIT });
-			await beat(page, 1.4);
-			await scroll(page, 420);
-		}
-	},
-	{
-		name: 'exchange',
-		role: 'admin',
-		caption: 'Сцена 1: заявка с сайта, статус обратно, группа в LMS и её результат',
-		play: async (page, stand) => {
-			await visit(page, `/exchange?q=${stand.externalId}`, 'Внешние системы');
-			await beat(page, 1.2);
+/** Открыть карточку вуза поиском по названию и убедиться, что открылась она. */
+async function openOrganization(page: Page, query: string, expected: string): Promise<void> {
+	await visit(page, `/organizations?q=${encodeURIComponent(query)}`, 'Организации');
 
-			// Снимок статуса уходит фоновым проходом очереди, а не в той же
-			// транзакции: журнал перечитывается, пока он не уедет.
-			for (let attempt = 0; attempt < 4; attempt += 1) {
-				// Состояние ищется в таблице: тем же словом назван пункт списка
-				// фильтров, и он есть на странице всегда.
-				if ((await page.locator('table').getByText('Отправлено').count()) > 0) {
-					break;
-				}
+	await press(page, page.getByRole('row').nth(1));
+	await page.waitForURL(/\/organizations\/[0-9a-f-]{36}/u, { timeout: WAIT });
+	await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
 
-				await beat(page, 1.5);
-				await page.reload({ waitUntil: 'load' });
-				await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
-			}
+	const heading = (await page.getByRole('heading', { level: 1 }).first().innerText()).trim();
 
-			await beat(page, 1.4);
-
-			// Таблица журнала шире окна: правые колонки — попытки, ответ получателя
-			// и ссылка на взаимодействие — показываются прокруткой вбок.
-			await page.mouse.move(FRAME.width / 2, 330);
-			await page.mouse.wheel(500, 0);
-			await beat(page, 1.6);
-
-			const link = page
-				.getByRole('link', { name: new RegExp(APPLICANT.name.slice(0, 20)) })
-				.first();
-
-			await press(page, link);
-			await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
-			await page.getByText('Что происходит').first().waitFor({ state: 'visible', timeout: WAIT });
-
-			stand.title = (await page.getByRole('heading', { level: 1 }).first().innerText()).trim();
-
-			await beat(page, 1.6);
-			await scroll(page, 900);
-
-			await page.locator('#plannedSeats').fill('45');
-			await page.locator('#startsOn').fill('2026-10-01');
-			await page.locator('#endsOn').fill('2027-05-31');
-			await beat(page, 0.8);
-
-			await press(page, page.getByRole('button', { name: 'Отправить в LMS' }));
-			await page
-				.getByText(/Поток 1 · группа/)
-				.first()
-				.waitFor({ state: 'visible', timeout: WAIT });
-			await beat(page, 1.6);
-
-			stand.groupExternalId = await readGroupExternalId(page);
-
-			await submitGroupResult(stand);
-
-			await page.reload({ waitUntil: 'load' });
-			await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
-			await scroll(page, 900);
-			await page
-				.getByText(/зачислено 45/)
-				.first()
-				.waitFor({ state: 'visible', timeout: WAIT });
-			await beat(page, 1.8);
-
-			// Журнал целиком, а не по ключу заявки: у сообщений системы обучения
-			// свой ключ, и все четыре направления видны только общим списком.
-			await visit(page, '/exchange', 'Внешние системы');
-			await beat(page, 1.6);
-		}
-	},
-	{
-		name: 'work',
-		role: 'manager',
-		caption: 'Сцена 2, работа: что мешает, чек-лист и переход с комментарием и файлом',
-		play: async (page, stand) => {
-			await visit(page, `/interactions/${stand.interactionId}`, 'Что мешает');
-			await beat(page, 1.8);
-
-			await press(page, page.getByRole('link', { name: 'Открыть чек-лист стадии' }));
-			await beat(page, 1.2);
-
-			for (const item of [
-				'Найдено профильное подразделение',
-				'Подтверждён контакт ответственного лица'
-			]) {
-				await press(page, page.getByRole('switch', { name: item }));
-				await beat(page, 0.8);
-			}
-
-			await beat(page, 0.8);
-			await scroll(page, -900);
-			await page
-				.getByText('Ничего не мешает: шаг вперёд доступен.')
-				.first()
-				.waitFor({ state: 'visible', timeout: WAIT });
-			await beat(page, 1.6);
-
-			await press(page, page.getByRole('button', { name: `Перейти: ${RENAMED_STAGE.from}` }));
-
-			const dialog = page.getByRole('dialog');
-
-			await dialog.waitFor({ state: 'visible', timeout: WAIT });
-			await beat(page, 0.8);
-
-			await dialog.locator('[name="reason"]').click();
-			await dialog
-				.locator('[name="reason"]')
-				.pressSequentially(
-					'Профильное подразделение найдено, контакт подтверждён — идём к сверке программ.',
-					{
-						delay: 22
-					}
-				);
-			await beat(page, 0.6);
-
-			await dialog.locator('#transitionFiles').setInputFiles(await drawAttachment());
-			await beat(page, 0.8);
-
-			await press(page, dialog.getByRole('button', { name: 'Подтвердить' }));
-
-			// Признак того, что переход состоялся, — чек-лист новой стадии: её
-			// название есть на карточке и до перехода, в цепочке стадий.
-			await page
-				.getByText('Отправлено описание программ')
-				.first()
-				.waitFor({ state: 'visible', timeout: WAIT });
-			await scroll(page, -900);
-			await beat(page, 1.8);
-		}
-	},
-	{
-		name: 'roles',
-		role: 'lead',
-		caption: 'Сцена 2, роли: руководитель переназначает ответственного с передачей работы',
-		play: async (page, stand) => {
-			const row = await ourRow(page, stand);
-
-			await beat(page, 1.4);
-
-			await press(page, row.getByRole('checkbox', { name: 'Выбрать строку' }));
-			await beat(page, 0.8);
-
-			await press(page, page.getByRole('button', { name: 'Назначить ответственного' }));
-
-			const dialog = page.getByRole('dialog');
-
-			await dialog.waitFor({ state: 'visible', timeout: WAIT });
-			await beat(page, 0.8);
-
-			// Список выбирается подписью поля: у нашей обёртки `Select` роль
-			// «combobox» несёт скрытое поле формы, а не кнопка, которую видно.
-			await press(page, dialog.getByLabel('Ответственный'));
-			await press(page, page.getByRole('option', { name: /Вересова/ }));
-			await beat(page, 0.6);
-
-			await press(page, dialog.getByRole('button', { name: 'Назначить', exact: true }));
-			await dialog.waitFor({ state: 'hidden', timeout: WAIT });
-
-			stand.reassigned = true;
-			await beat(page, 1.2);
-
-			await visit(page, `/interactions/${stand.interactionId}`, 'Кто должен действовать');
-			await page.getByText('Вересова').first().waitFor({ state: 'visible', timeout: WAIT });
-			await beat(page, 1.8);
-		}
-	},
-	{
-		name: 'process',
-		role: 'admin',
-		caption: 'Сцена 2, правила: черновик процесса, предпросмотр затронутых и применение ко всем',
-		play: async (page, stand) => {
-			await visit(page, '/settings/process/b2b', 'Процесс группы');
-			await beat(page, 1.2);
-
-			await press(page, page.getByRole('button', { name: 'Черновик изменений' }));
-			await page
-				.getByText('Черновик изменений — копия действующего процесса.')
-				.first()
-				.waitFor({ state: 'visible', timeout: WAIT });
-			await beat(page, 1.4);
-
-			await renameStage(page, RENAMED_STAGE.key, RENAMED_STAGE.to);
-
-			// Таблица стадий шире окна и после правки стоит прокрученной вбок;
-			// новое название целиком видно в цепочке стадий наверху страницы.
-			await scroll(page, -1200);
-			await page.getByText(RENAMED_STAGE.to).first().waitFor({ state: 'visible', timeout: WAIT });
-			await beat(page, 1.6);
-
-			await press(page, page.getByRole('button', { name: 'Применить ко всем' }).first());
-
-			const dialog = page.getByRole('dialog');
-
-			await dialog.waitFor({ state: 'visible', timeout: WAIT });
-			await dialog
-				.getByText('Переедут на другую стадию')
-				.waitFor({ state: 'visible', timeout: WAIT });
-			await beat(page, 2.2);
-
-			await press(page, dialog.getByRole('button', { name: 'Применить ко всем' }));
-			await page
-				.getByText('Действующий процесс открыт только на чтение')
-				.first()
-				.waitFor({ state: 'visible', timeout: WAIT });
-
-			stand.renamed = true;
-			await beat(page, 1.2);
-
-			await visit(page, `/interactions/${stand.interactionId}`, 'Что происходит');
-			await page.getByText(RENAMED_STAGE.to).first().waitFor({ state: 'visible', timeout: WAIT });
-			await beat(page, 2);
-		}
-	},
-	{
-		name: 'reports',
-		role: 'manager',
-		caption: 'Сцена 3: отчёт за период, воронка, путь от числа к карточке, выгрузки и справка',
-		play: async (page) => {
-			await visit(page, '/reports', 'Отчёты по взаимодействиям');
-			await beat(page, 1.6);
-			await scroll(page, 500);
-
-			await selectFunnelBar(page);
-			await beat(page, 1.6);
-			await scroll(page, 600);
-			await beat(page, 1.2);
-
-			await press(page, page.getByRole('link', { name: 'Открыть эти взаимодействия в списке' }));
-			await page.getByText('Взаимодействия').first().waitFor({ state: 'visible', timeout: WAIT });
-			await beat(page, 1.4);
-
-			await press(page, page.getByRole('row').nth(1));
-			await page.getByText('Что происходит').first().waitFor({ state: 'visible', timeout: WAIT });
-			await beat(page, 1.6);
-
-			await visit(page, '/reports?mode=movement', 'Каждая строка — один переход');
-			await beat(page, 1.4);
-			await scroll(page, 420);
-			await beat(page, 1.2);
-			await scroll(page, -420);
-
-			for (const format of ['XLSX', 'PDF']) {
-				const download = page.waitForEvent('download', { timeout: WAIT });
-
-				await press(page, page.getByRole('link', { name: format, exact: true }).first());
-
-				const file = await download;
-
-				console.log(`выгрузка ${format}: ${file.suggestedFilename()}`);
-				await file.delete();
-				await beat(page, 0.8);
-			}
-
-			await beat(page, 0.8);
-			await visit(page, '/help', 'Руководство пользователя');
-			await beat(page, 1.4);
-			await visit(page, '/api/docs', 'LCT CRM API', { standalone: true });
-			await beat(page, 1.8);
-		}
+	if (!heading.includes(expected)) {
+		throw new Error(`По запросу «${query}» открылась не та организация: «${heading}»`);
 	}
-];
+}
 
-/** Переименовать стадию черновика: диалог стадии, поле названия, сохранение. */
-async function renameStage(page: Page, key: string, name: string): Promise<void> {
-	const row = page.getByRole('row').filter({ hasText: key });
+/** Назначить ответственного за вуз целиком, передав ему незакрытые записи. */
+async function assignInstitution(page: Page, fullName: string): Promise<void> {
+	await openOrganization(page, STAND.institution.query, STAND.institution.name);
 
-	await press(page, row.getByRole('button', { name: 'Изменить' }));
-
-	const dialog = page.getByRole('dialog');
-
-	await dialog.waitFor({ state: 'visible', timeout: WAIT });
-	await beat(page, 0.8);
-
-	const field = dialog.locator('input[name="name"]');
-
-	await pointAt(page, field);
-	await field.fill('');
-	await field.pressSequentially(name, { delay: 26 });
-	await beat(page, 0.8);
-
-	await press(page, dialog.getByRole('button', { name: 'Сохранить стадию' }));
-	await dialog.waitFor({ state: 'hidden', timeout: WAIT });
+	await page.getByLabel('Сотрудник').click();
+	await page.getByRole('option', { name: new RegExp(fullName, 'u') }).click();
+	await page.getByRole('button', { name: 'Назначить', exact: true }).click();
 	await page
-		.getByRole('cell', { name, exact: true })
+		.getByText('Ответственный назначен, доступ изменён')
 		.first()
 		.waitFor({ state: 'visible', timeout: WAIT });
+}
+
+/** Открыть запись стенда поиском по названию и убедиться, что открылась она. */
+async function openInteraction(page: Page, query: string, expected: string): Promise<void> {
+	await visit(page, `/interactions?q=${encodeURIComponent(query)}`, 'Взаимодействия');
+
+	const row = page.getByRole('row').nth(1);
+
+	await press(page, row);
+	await page.waitForURL(/\/interactions\/[0-9a-f-]{36}/u, { timeout: WAIT });
+	await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
+
+	const heading = (await page.getByRole('heading', { level: 1 }).first().innerText()).trim();
+
+	if (!heading.includes(expected)) {
+		throw new Error(`По запросу «${query}» открылась не та запись: «${heading}»`);
+	}
 }
 
 /**
  * Клик по столбцу воронки.
  *
- * Диаграмма — холст, и попасть в столбец можно только по точке. Столбцы
- * горизонтальные и разной длины, поэтому проба идёт у самого начала оси, где
- * есть даже самый короткий из них, и сверху вниз — пока адрес не получит
- * фильтр стадии.
+ * Диаграмма — холст, и попасть в столбец можно только по точке: столбца в
+ * разметке нет. Проба идёт с ожидаемого места стадии в воронке, а дальше — по
+ * остальным строкам, потому что порядок и число стадий задаёт действующий
+ * процесс, а он настраивается. Успех проверяется не адресом, а тем, что в
+ * таблице отчёта осталась ровно названная стадия.
  */
-async function selectFunnelBar(page: Page): Promise<void> {
+async function narrowByFunnel(page: Page, stage: string, likely: number): Promise<void> {
 	const canvas = page.getByTestId('report-chart-canvas').first();
 
 	await canvas.scrollIntoViewIfNeeded();
@@ -827,23 +656,506 @@ async function selectFunnelBar(page: Page): Promise<void> {
 	}
 
 	const rows = 14;
+	const order = [likely, ...Array.from({ length: rows }, (_, index) => index)];
 
-	for (let index = 0; index < rows; index += 1) {
-		const x = box.x + box.width * 0.42;
+	for (const index of order) {
+		const x = box.x + box.width * 0.35;
 		const y = box.y + (box.height / rows) * (index + 0.5);
 
 		await page.mouse.move(x, y, { steps: 18 });
-		await page.waitForTimeout(160);
+		await page.waitForTimeout(140);
 		await page.mouse.click(x, y);
-		await page.waitForTimeout(700);
+		await page.waitForTimeout(900);
 
-		if (page.url().includes('stage=')) {
+		if (!page.url().includes('stage=')) {
+			continue;
+		}
+
+		if ((await page.locator('table').getByText(stage).count()) > 0) {
 			return;
 		}
+
+		// Попали в соседний столбец: сужение снимается тем же путём, которым
+		// поставлено, — иначе следующая проба считала бы уже отфильтрованное.
+		await page.goBack({ waitUntil: 'load' });
+		await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
+		await canvas.scrollIntoViewIfNeeded();
 	}
 
-	throw new Error('Клик по воронке не сузил отчёт: ни в один столбец не попали');
+	throw new Error(`Клик по воронке не сузил отчёт до стадии «${stage}»`);
 }
+
+/** Переименовать стадию черновика: диалог стадии, поле названия, сохранение. */
+async function renameStage(page: Page, key: string, name: string): Promise<void> {
+	const row = page.getByRole('row').filter({ hasText: key });
+
+	await press(page, row.getByRole('button', { name: 'Изменить' }));
+
+	const dialog = page.getByRole('dialog');
+
+	await dialog.waitFor({ state: 'visible', timeout: WAIT });
+	await beat(page, 0.6);
+
+	const field = dialog.locator('input[name="name"]');
+
+	await pointAt(page, field);
+	await field.fill('');
+	await field.pressSequentially(name, { delay: 24 });
+	await beat(page, 0.6);
+
+	await press(page, dialog.getByRole('button', { name: 'Сохранить стадию' }));
+	await dialog.waitFor({ state: 'hidden', timeout: WAIT });
+	await page
+		.getByRole('cell', { name, exact: true })
+		.first()
+		.waitFor({ state: 'visible', timeout: WAIT });
+}
+
+/** Ключи учебных групп, названные на карточке: по ним видно, какая заведена сейчас. */
+async function groupKeys(page: Page): Promise<Set<string>> {
+	const text = await page.locator('main').innerText();
+
+	return new Set([...text.matchAll(/Поток\s+\d+\s+·\s+группа\s+(\S+)/gu)].map((found) => found[1]));
+}
+
+/** Перевести взаимодействие на соседнюю стадию: диалог перехода требует причины. */
+async function transition(page: Page, button: string, reason: string): Promise<void> {
+	await page.getByRole('button', { name: button }).click();
+
+	const dialog = page.getByRole('dialog');
+
+	await dialog.waitFor({ state: 'visible', timeout: WAIT });
+	await dialog.locator('[name="reason"]').fill(reason);
+	await dialog.getByRole('button', { name: 'Подтвердить' }).click();
+	await dialog.waitFor({ state: 'hidden', timeout: WAIT });
+}
+
+const SCENES: readonly Scene[] = [
+	{
+		name: 'title',
+		role: 'manager',
+		caption: 'Титульная карточка',
+		narration: [
+			'Система контроля взаимодействия с учебными заведениями.',
+			'Решение команды Wine Coding Team.'
+		],
+		play: async (page) => {
+			await showCard(page, await appStyles(page.context()), TITLE_CARD);
+			await beat(page, 3);
+		}
+	},
+	{
+		name: 'hook',
+		role: 'manager',
+		caption: 'Крючок: число в отчёте раскрывается до подтверждения',
+		narration: [
+			'Любое число в отчёте раскрывается до факта.',
+			'Клик по столбцу — список, из которого оно собрано, карточка — и подтверждение: отметка по подписанному документу.',
+			'Это обещание проверяется на каждом экране.'
+		],
+		play: async (page) => {
+			await visit(page, '/reports', 'Отчёты по взаимодействиям');
+			await scroll(page, 560);
+			await narrowByFunnel(page, STAND.signed.stage, STAND.signed.funnelIndex);
+			await beat(page, 0.8);
+
+			// Дальше идём строкой самого отчёта, а не ссылкой «открыть в списке»:
+			// список стадию отчёта не понимает и показал бы выборку шире той, из
+			// которой собрано число (`src/lib/components/reports/query.ts`).
+			await press(page, page.getByRole('link', { name: STAND.signed.title }).first());
+			await page.waitForURL(/\/interactions\/[0-9a-f-]{36}/u, { timeout: WAIT });
+			await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
+
+			await pointAt(page, page.getByText('Подтверждено отметкой документа').first());
+			await beat(page, 1.4);
+		}
+	},
+	{
+		name: 'intake',
+		role: 'admin',
+		caption: 'Заявка с сайта: триггер имитатора, взаимодействие, статус обратно на сайт',
+		narration: [
+			'Заявка приходит с сайта по объявленному контракту обмена.',
+			'Кнопка стенда жмёт тот же триггер имитатора, что и посетитель, заполнивший форму.',
+			'Журнал показывает обе стороны: что пришло, что ушло и чем ответил получатель.',
+			'Заявка стала взаимодействием — с учебным заведением, контактным лицом и ответственным.',
+			'Обратно на сайт уходит снимок статуса: заявитель видит, что с обращением происходит.'
+		],
+		play: async (page, stand) => {
+			await visit(page, '/exchange', 'Внешние системы');
+
+			await press(page, page.getByRole('button', { name: 'Демо: заявка с сайта' }));
+
+			const sent = page.getByText(/Имитатор CMS подал заявку/u).first();
+
+			await sent.waitFor({ state: 'visible', timeout: WAIT });
+
+			const key = /заявку\s+(\S+?):/u.exec(await sent.innerText());
+
+			if (key === null) {
+				throw new Error('Имитатор не назвал ключ поданной заявки');
+			}
+
+			stand.externalId = key[1];
+			await beat(page, 1.2);
+
+			await visit(page, `/exchange?q=${stand.externalId}`, 'Внешние системы');
+
+			// Снимок статуса уходит фоновым проходом очереди, а не в той же
+			// транзакции: журнал перечитывается, пока он не уедет.
+			for (let attempt = 0; attempt < 4; attempt += 1) {
+				if ((await page.locator('table').getByText('Отправлено').count()) > 0) {
+					break;
+				}
+
+				await beat(page, 1.2);
+				await page.reload({ waitUntil: 'load' });
+				await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
+			}
+
+			await beat(page, 1);
+
+			// Таблица журнала шире окна: правые колонки — попытки и ответ
+			// получателя — показываются прокруткой вбок.
+			await page.mouse.move(FRAME.width / 2, 330);
+			await page.mouse.wheel(500, 0);
+			await beat(page, 1.2);
+
+			await press(page, page.getByRole('link', { name: /Заявка с сайта/u }).first());
+			await page.waitForURL(/\/interactions\/[0-9a-f-]{36}/u, { timeout: WAIT });
+			await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
+			await page.getByText('Что происходит').first().waitFor({ state: 'visible', timeout: WAIT });
+
+			stand.interactionId = /\/interactions\/([0-9a-f-]{36})/u.exec(page.url())?.[1] ?? '';
+			stand.title = (await page.getByRole('heading', { level: 1 }).first().innerText()).trim();
+			await beat(page, 1.6);
+
+			// Вторая сторона обмена: карточка заявки на сайте со снимком статуса,
+			// который прислала CRM.
+			await visit(page, '/mock-cms/', 'Имитатор CMS сайта', { standalone: true });
+			await scroll(page, 420);
+			await beat(page, 1.2);
+		}
+	},
+	{
+		name: 'work',
+		role: 'manager',
+		caption: 'Работа КАМа: четыре вопроса, закрытый шаг с объяснением, переход с файлом',
+		narration: [
+			'Карточка отвечает на четыре вопроса: что происходит, что мешает, кто должен действовать и что можно сделать сейчас.',
+			'Шаг вперёд закрыт, и причина названа словами: два обязательных пункта стадии не закрыты.',
+			'Менеджер закрывает их — и переход становится доступен.',
+			'Переход просит объяснить, чем закончилась стадия: комментарий и файл остаются в истории, на той стадии, где их приложили.'
+		],
+		play: async (page, stand) => {
+			await visit(page, `/interactions/${stand.interactionId}`, 'Что мешает');
+
+			const stage = await page.getByText(FIRST_STAGE).first().isVisible();
+
+			if (!stage) {
+				throw new Error(`Заявка стоит не на стадии «${FIRST_STAGE}»: сцена работы не про неё`);
+			}
+
+			await beat(page, 1.4);
+
+			// Недоступный шаг показывается до чек-листа: сначала видно, что кнопка
+			// закрыта и почему, и только потом — как это снимают.
+			await pointAt(page, page.getByRole('button', { name: `Перейти: ${RENAMED_STAGE.from}` }));
+			await beat(page, 1.2);
+
+			await press(page, page.getByRole('link', { name: 'Открыть чек-лист стадии' }));
+			await beat(page, 0.8);
+
+			for (const item of FIRST_STAGE_CHECKLIST) {
+				await setChecklistItem(page, item, true, { shown: true });
+				await beat(page, 0.6);
+			}
+
+			await scroll(page, -900);
+			await page
+				.getByText('Ничего не мешает: шаг вперёд доступен.')
+				.first()
+				.waitFor({ state: 'visible', timeout: WAIT });
+			await beat(page, 1.2);
+
+			await press(page, page.getByRole('button', { name: `Перейти: ${RENAMED_STAGE.from}` }));
+
+			const dialog = page.getByRole('dialog');
+
+			await dialog.waitFor({ state: 'visible', timeout: WAIT });
+			await beat(page, 0.6);
+
+			await dialog.locator('[name="reason"]').click();
+			await dialog
+				.locator('[name="reason"]')
+				.pressSequentially(
+					'Профильное подразделение найдено, контакт подтверждён — идём к сверке программ.',
+					{ delay: 20 }
+				);
+			await beat(page, 0.5);
+
+			await dialog.locator('#transitionFiles').setInputFiles(await drawAttachment());
+			await beat(page, 0.6);
+
+			await press(page, dialog.getByRole('button', { name: 'Подтвердить' }));
+
+			// Признак того, что переход состоялся, — чек-лист новой стадии: её
+			// название есть на карточке и до перехода, в цепочке стадий.
+			await page
+				.getByText('Отправлено описание программ')
+				.first()
+				.waitFor({ state: 'visible', timeout: WAIT });
+
+			stand.moved = true;
+
+			await scroll(page, -900);
+			await beat(page, 1.4);
+		}
+	},
+	{
+		name: 'process',
+		role: 'admin',
+		caption: 'Правка живого процесса: черновик, предпросмотр затронутых, применение ко всем',
+		narration: [
+			'Устройство процесса — настройка, а не код.',
+			'Администратор берёт черновик действующего процесса и переименовывает стадию.',
+			'До применения видно, кого изменение затронет: сколько записей переедет на другую стадию и сколько увидит правку, оставшись на своей.',
+			'Применили ко всем — и работа продолжается там же, где стояла, уже под новым названием.'
+		],
+		play: async (page, stand) => {
+			await visit(page, '/settings/process/b2b', 'Процесс группы');
+
+			await press(page, page.getByRole('button', { name: 'Черновик изменений' }));
+			await page
+				.getByText('Черновик изменений — копия действующего процесса.')
+				.first()
+				.waitFor({ state: 'visible', timeout: WAIT });
+			await beat(page, 1);
+
+			await renameStage(page, RENAMED_STAGE.key, RENAMED_STAGE.to);
+
+			// Таблица стадий шире окна и после правки стоит прокрученной вбок;
+			// новое название целиком видно в цепочке стадий наверху страницы.
+			await scroll(page, -1200);
+			await page.getByText(RENAMED_STAGE.to).first().waitFor({ state: 'visible', timeout: WAIT });
+			await beat(page, 1.2);
+
+			await press(page, page.getByRole('button', { name: 'Применить ко всем' }).first());
+
+			const dialog = page.getByRole('dialog');
+
+			await dialog.waitFor({ state: 'visible', timeout: WAIT });
+			await dialog
+				.getByText('Переедут на другую стадию')
+				.waitFor({ state: 'visible', timeout: WAIT });
+			await beat(page, 1.8);
+
+			await press(page, dialog.getByRole('button', { name: 'Применить ко всем' }));
+			await page
+				.getByText('Действующий процесс открыт только на чтение')
+				.first()
+				.waitFor({ state: 'visible', timeout: WAIT });
+
+			stand.renamed = true;
+			await beat(page, 1);
+
+			await visit(page, `/interactions/${stand.interactionId}`, 'Что происходит');
+			await pointAt(page, page.getByText(RENAMED_STAGE.to).first());
+			await beat(page, 1.4);
+		}
+	},
+	{
+		name: 'handover',
+		role: 'lead',
+		caption: 'Роли и передача: руководитель отдаёт вуз другому менеджеру',
+		signsIn: true,
+		narration: [
+			'Роль — не набор галочек в интерфейсе: вход идёт через общий каталог учётных записей, права приезжают вместе с ним.',
+			'Руководитель ведёт свою область и видит работу подчинённых.',
+			'Он отдаёт вуз другому менеджеру — вместе с вузом переезжают незакрытые взаимодействия и право их видеть.'
+		],
+		play: async (page, stand) => {
+			await signIn(page, 'lead', true);
+			await beat(page, 0.8);
+
+			await openOrganization(page, STAND.institution.query, STAND.institution.name);
+
+			// Кто ведёт вуз сейчас — видно до правки: назначение меняет область
+			// доступа, и подменить в кадре чужую строку на свою нельзя.
+			await pointAt(page, page.getByRole('cell', { name: RESPONSIBLE.from, exact: true }));
+			await beat(page, 1);
+
+			await press(page, page.getByLabel('Сотрудник'));
+			await press(page, page.getByRole('option', { name: new RegExp(RESPONSIBLE.to, 'u') }));
+			await beat(page, 0.5);
+
+			await pointAt(
+				page,
+				page.getByText('Передать незавершённые взаимодействия новому ответственному')
+			);
+			await beat(page, 0.8);
+
+			await press(page, page.getByRole('button', { name: 'Назначить', exact: true }));
+			await page
+				.getByText('Ответственный назначен, доступ изменён')
+				.first()
+				.waitFor({ state: 'visible', timeout: WAIT });
+
+			stand.institutionMoved = true;
+
+			await pointAt(page, page.getByRole('cell', { name: RESPONSIBLE.to, exact: true }));
+			await beat(page, 1.4);
+		}
+	},
+	{
+		name: 'handover-gone',
+		role: 'manager',
+		caption: 'Роли и передача: у прежнего ответственного записей по вузу больше нет',
+		narration: [
+			'У прежнего ответственного записей по этому вузу больше нет: область доступа — это данные, а не спрятанная кнопка.'
+		],
+		play: async (page) => {
+			await visit(page, `/interactions?q=${STAND.institution.query}`, 'Взаимодействия');
+			await page
+				.getByText('Ничего не найдено')
+				.first()
+				.waitFor({ state: 'visible', timeout: WAIT });
+			await beat(page, 1.6);
+		}
+	},
+	{
+		name: 'lms',
+		role: 'lead',
+		caption: 'Система обучения подтверждает стадию «Ведение занятий»',
+		narration: [
+			'Стадия «Ведение занятий» — единственная, чьё исполнение доказывает чужая система.',
+			'Учебную группу заводит человек кнопкой с карточки, а не автоматика: ошибочный шаг не должен превращаться в группу в чужой системе.',
+			'Система обучения возвращает числа сама — зачислено, завершили, отчислены — и этой записью стадия подтверждена.',
+			'Двигать работу дальше по-прежнему решает сотрудник.'
+		],
+		play: async (page) => {
+			await openInteraction(page, STAND.classes.query, 'ведение занятий');
+
+			// Адрес карточки запоминается: со страницы имитатора возвращаются сюда,
+			// а не «назад» — назад стоит отправленная форма имитатора.
+			const card = page.url();
+
+			await page
+				.getByText(STAND.classes.stage)
+				.first()
+				.waitFor({ state: 'visible', timeout: WAIT });
+			await beat(page, 1);
+
+			await scroll(page, 1100);
+
+			const before = await groupKeys(page);
+
+			await page.locator('#plannedSeats').fill('30');
+			await page.locator('#startsOn').fill('2026-10-01');
+			await page.locator('#endsOn').fill('2027-05-31');
+			await beat(page, 0.6);
+
+			await press(page, page.getByRole('button', { name: 'Отправить в LMS' }));
+
+			const group = await newGroup(page, before);
+
+			await beat(page, 1.2);
+
+			// Вторая сторона: числа потока присылает сама система обучения — со
+			// своей страницы, тем же триггером, что и по расписанию.
+			await visit(page, '/mock-lms/', 'Имитатор системы обучения', { standalone: true });
+			await page.locator('input[name="groupExternalId"]').fill(group);
+			await beat(page, 0.5);
+			await press(page, page.getByRole('button', { name: 'Отправить результат в CRM' }));
+			await beat(page, 1);
+
+			await page.goto(card, { waitUntil: 'load' });
+			await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
+			await scroll(page, 1100);
+			await page
+				.getByText(/зачислено \d+, завершили \d+/u)
+				.first()
+				.waitFor({ state: 'visible', timeout: WAIT });
+			await beat(page, 1);
+
+			await pointAt(page, page.getByText('записью в системе обучения').first());
+			await beat(page, 1.4);
+		}
+	},
+	{
+		name: 'reports',
+		role: 'manager',
+		caption: 'Отчёт: срез и движение, клик по столбцу, выгрузки',
+		narration: [
+			'Отчёт отвечает на два разных вопроса и не смешивает их: срез — где работа стоит на дату, движение — что случилось за период.',
+			'Клик по столбцу сужает тот же отчёт.',
+			'Выгрузка — та же ссылка с другим расширением: таблица и сводка собираются из одного готового отчёта, поэтому числа на экране и в файле совпадают.'
+		],
+		play: async (page) => {
+			await visit(page, '/reports', 'Отчёты по взаимодействиям');
+			await pointAt(page, page.getByTestId('report-row-count').first());
+			await beat(page, 1);
+
+			await scroll(page, 560);
+			await narrowByFunnel(page, STAND.narrowed.stage, STAND.narrowed.funnelIndex);
+			await scroll(page, -560);
+			await pointAt(page, page.getByTestId('report-row-count').first());
+			await beat(page, 1.2);
+
+			await press(page, page.getByRole('link', { name: 'Движение', exact: true }));
+			await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
+			await page
+				.getByText('Каждая строка — один переход')
+				.first()
+				.waitFor({ state: 'visible', timeout: WAIT });
+			await scroll(page, 420);
+			await beat(page, 1.2);
+			await scroll(page, -420);
+
+			const saved = new Map<string, string>();
+
+			for (const format of ['XLSX', 'PDF']) {
+				const download = page.waitForEvent('download', { timeout: WAIT });
+
+				await press(page, page.getByRole('link', { name: format, exact: true }).first());
+
+				const file = await download;
+				// Имя даём своё: у выгрузки его назначает заголовок ответа, и
+				// показывать в ролике надо не имя файла, а сам файл.
+				const target = path.join(WORK, `report.${format.toLowerCase()}`);
+
+				await file.saveAs(target);
+				saved.set(format, target);
+				console.log(`выгрузка ${format}: ${target}`);
+				await beat(page, 0.6);
+			}
+
+			const pdf = saved.get('PDF');
+
+			if (pdf === undefined) {
+				throw new Error('Отчёт не отдал PDF: показывать нечего');
+			}
+
+			// Скачанный файл открывается тут же: иначе выгрузка в кадре выглядит
+			// нажатием, после которого ничего не происходит.
+			await page.goto(`file://${pdf}`, { waitUntil: 'load' });
+			await beat(page, 2.4);
+		}
+	},
+	{
+		name: 'final',
+		role: 'manager',
+		caption: 'Финальная карточка',
+		narration: [
+			'Стенд открыт: три роли, руководства внутри и описание программного интерфейса.',
+			'Код — в репозитории команды.'
+		],
+		play: async (page) => {
+			await showCard(page, await appStyles(page.context()), FINAL_CARD);
+			await beat(page, 3);
+		}
+	}
+];
 
 /** Webm Playwright — в mp4 с H.264: его открывает и презентация, и браузер. */
 async function toMp4(source: string, target: string): Promise<void> {
@@ -887,10 +1199,74 @@ async function durationOf(file: string): Promise<number> {
 	return Number.parseFloat(stdout.trim());
 }
 
+/**
+ * Ключевой кадр сцены: её конец, а не середина.
+ *
+ * Сцена кончается тем состоянием, ради которого снята, — подтверждением,
+ * применённым процессом, готовым файлом. Полутора секунд от конца хватает,
+ * чтобы не попасть на переход к следующей сцене.
+ */
+async function grabFrame(file: string, at: number, target: string): Promise<void> {
+	await run('ffmpeg', [
+		'-y',
+		'-loglevel',
+		'error',
+		'-ss',
+		at.toFixed(2),
+		'-i',
+		file,
+		'-frames:v',
+		'1',
+		target
+	]);
+}
+
 function timecode(seconds: number): string {
 	const whole = Math.floor(seconds);
 
 	return `${String(Math.floor(whole / 60)).padStart(2, '0')}:${String(whole % 60).padStart(2, '0')}`;
+}
+
+/** Метка субтитра: часы, минуты, секунды и миллисекунды через запятую. */
+function srtStamp(seconds: number): string {
+	const whole = Math.floor(seconds);
+	const ms = Math.round((seconds - whole) * 1000);
+	const pad = (value: number, size = 2) => String(value).padStart(size, '0');
+
+	return `${pad(Math.floor(whole / 3600))}:${pad(Math.floor(whole / 60) % 60)}:${pad(whole % 60)},${pad(ms, 3)}`;
+}
+
+/**
+ * Субтитры из того же текста, которым мерили сцену.
+ *
+ * Внутри сцены фразы делят её время по числу слов: у записи нет ни голоса, ни
+ * его разметки, и другого основания дать длинной фразе больше времени, чем
+ * короткой, тоже нет. Файл — подсказка диктору и запасной вариант показа без
+ * звука, а не расшифровка озвучки: после записи голоса метки уточняют по нему.
+ */
+function subtitles(parts: readonly { scene: Scene; start: number; seconds: number }[]): string {
+	const cues: string[] = [];
+	let index = 0;
+
+	for (const part of parts) {
+		const total = part.scene.narration.reduce((sum, line) => sum + words(line), 0);
+
+		if (total === 0) {
+			continue;
+		}
+
+		let at = part.start;
+
+		for (const line of part.scene.narration) {
+			const length = (words(line) / total) * part.seconds;
+
+			index += 1;
+			cues.push(`${index}\n${srtStamp(at)} --> ${srtStamp(at + length)}\n${line}\n`);
+			at += length;
+		}
+	}
+
+	return `${cues.join('\n')}`;
 }
 
 /**
@@ -898,7 +1274,9 @@ function timecode(seconds: number): string {
  *
  * Своя сессия и свой контекст на сцену: роль в ролике меняется целиком — вместе
  * с меню, правами и набором экранов, — и половинчатая смена показывала бы
- * систему, в которую так не входят.
+ * систему, в которую так не входят. Сцена не кончается раньше, чем дочитана её
+ * реплика: закадровый текст задаёт нижнюю границу, а не подгоняется под
+ * картинку.
  */
 async function record(
 	browser: Browser,
@@ -912,8 +1290,8 @@ async function record(
 		deviceScaleFactor: 1,
 		locale: LOCALE,
 		recordVideo: { dir: directory, size: FRAME },
-		// Вступление входит в кадре: сессия ему не передаётся.
-		storageState: scene.name === 'intro' ? undefined : session(storage, scene.role)
+		storageState: scene.signsIn === true ? undefined : session(storage, scene.role),
+		acceptDownloads: true
 	});
 
 	await context.addInitScript({ content: CURSOR });
@@ -927,9 +1305,17 @@ async function record(
 		throw new Error('Запись видео не включилась');
 	}
 
+	const startedAt = Date.now();
+
 	try {
 		await page.mouse.move(FRAME.width / 2, FRAME.height / 2);
 		await scene.play(page, stand);
+
+		const left = readingSeconds(scene.narration) * 1000 - (Date.now() - startedAt);
+
+		if (left > 0) {
+			await page.waitForTimeout(left);
+		}
 	} catch (failure) {
 		await context.close();
 
@@ -949,51 +1335,64 @@ async function record(
 /**
  * Убрать за собой.
  *
- * Стенд общий и его смотрят: ответственный и название стадии возвращаются тем же
- * путём, которым менялись, — интерфейсом и от имени той же роли. Возвращается
- * только то, что этот проход действительно изменил: лишняя публикация процесса
- * оставила бы в журнале запись об изменении, которого не было.
+ * Стенд общий и его смотрят: стадия заявки, ответственный и название стадии
+ * возвращаются тем же путём, которым менялись, — интерфейсом и от имени роли,
+ * которой это по силам. Возвращается только то, что этот проход действительно
+ * изменил: лишняя публикация процесса оставила бы в журнале запись об
+ * изменении, которого не было. Порядок обязателен: пока запись числится за
+ * другим менеджером, прежний ответственный её не видит и вернуть стадию не
+ * может.
  */
 async function restore(browser: Browser, stand: Stand, storage: Map<Role, Session>): Promise<void> {
-	if (stand.reassigned) {
-		const lead = await browser.newContext({
+	const withRole = async (role: Role, work: (page: Page) => Promise<void>): Promise<void> => {
+		const context = await browser.newContext({
 			viewport: FRAME,
 			locale: LOCALE,
-			storageState: session(storage, 'lead')
+			storageState: session(storage, role)
 		});
 
 		try {
-			const page = await lead.newPage();
-			const row = await ourRow(page, stand);
-
-			await row.getByRole('checkbox', { name: 'Выбрать строку' }).click();
-			await page.getByRole('button', { name: 'Назначить ответственного' }).click();
-
-			const dialog = page.getByRole('dialog');
-
-			await dialog.waitFor({ state: 'visible', timeout: WAIT });
-			await dialog.getByLabel('Ответственный').click();
-			await page.getByRole('option', { name: /Менеджер Демо/ }).click();
-			await dialog.getByRole('button', { name: 'Назначить', exact: true }).click();
-			await dialog.waitFor({ state: 'hidden', timeout: WAIT });
-
-			console.log('ответственный возвращён: Менеджер Демо');
+			await work(await context.newPage());
 		} finally {
-			await lead.close();
+			await context.close();
 		}
+	};
+
+	if (stand.institutionMoved) {
+		await withRole('lead', async (page) => {
+			await assignInstitution(page, RESPONSIBLE.from);
+
+			console.log(`вуз возвращён: ${RESPONSIBLE.from}`);
+		});
+	}
+
+	if (stand.moved) {
+		await withRole('manager', async (page) => {
+			await page.goto(`${BASE_URL}/interactions/${stand.interactionId}`, { waitUntil: 'load' });
+			await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
+
+			await transition(
+				page,
+				`Вернуть: ${FIRST_STAGE}`,
+				'Возврат стенда к исходному состоянию после записи показа.'
+			);
+
+			await page.getByRole('link', { name: 'Открыть чек-лист стадии' }).click();
+
+			// Чек-лист возвращается следом: стадия, на которую вернулись, иначе
+			// осталась бы закрытой, и следующий проход начался бы не с того, с чего
+			// начинается стенд.
+			for (const item of FIRST_STAGE_CHECKLIST) {
+				await setChecklistItem(page, item, false);
+			}
+
+			console.log(`стадия возвращена: ${FIRST_STAGE}`);
+		});
 	}
 
 	if (stand.renamed) {
-		const admin = await browser.newContext({
-			viewport: FRAME,
-			locale: LOCALE,
-			storageState: session(storage, 'admin')
-		});
-
-		try {
-			const page = await admin.newPage();
-
-			await page.goto(`${BASE_URL}/settings/process/b2b`);
+		await withRole('admin', async (page) => {
+			await page.goto(`${BASE_URL}/settings/process/b2b`, { waitUntil: 'load' });
 			await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
 			await page.getByRole('button', { name: 'Черновик изменений' }).click();
 			await page
@@ -1015,9 +1414,7 @@ async function restore(browser: Browser, stand: Stand, storage: Map<Role, Sessio
 				.waitFor({ state: 'visible', timeout: WAIT });
 
 			console.log(`процесс возвращён: стадия «${RENAMED_STAGE.from}»`);
-		} finally {
-			await admin.close();
-		}
+		});
 	}
 }
 
@@ -1026,29 +1423,44 @@ async function main(): Promise<void> {
 
 	if (args.includes('--list')) {
 		for (const scene of SCENES) {
-			console.log(`${scene.name.padEnd(10)} ${scene.role.padEnd(8)} — ${scene.caption}`);
+			const seconds = readingSeconds(scene.narration).toFixed(1);
+
+			console.log(
+				`${scene.name.padEnd(14)} ${scene.role.padEnd(8)} ${seconds.padStart(5)} с — ${scene.caption}`
+			);
 		}
+
+		const total = SCENES.reduce((sum, scene) => sum + readingSeconds(scene.narration), 0);
+		const spoken = SCENES.reduce(
+			(sum, scene) => sum + scene.narration.reduce((count, line) => count + words(line), 0),
+			0
+		);
+
+		console.log(`\nзакадр: ${spoken} слов, не меньше ${timecode(total)} записи`);
+
+		await rm(WORK, { recursive: true, force: true });
 
 		return;
 	}
 
-	await mkdir(OUTPUT, { recursive: true });
+	await mkdir(path.join(OUTPUT, 'frames'), { recursive: true });
 
 	const stand: Stand = {
-		externalId: `site-demo-${new Date().toISOString().slice(0, 10)}-${Date.now().toString(36)}`,
+		externalId: '',
 		interactionId: '',
 		title: '',
-		groupExternalId: null,
-		reassigned: false,
+		moved: false,
+		institutionMoved: false,
 		renamed: false
 	};
 
-	// Заявка подаётся до записи: снимок её статуса уезжает в CMS фоновым
-	// проходом очереди, и к сцене обмена он уже должен быть доставлен.
-	stand.interactionId = (await submitApplication(stand.externalId)).interactionId;
-
-	const directory = await mkdtemp(path.join(tmpdir(), 'lct-screencast-'));
-	const browser = await chromium.launch();
+	const browser = await chromium.launch({
+		// Полная сборка вместо «headless shell»: только в ней есть файлы локалей,
+		// без которых подписи браузера в кадре остаются английскими.
+		channel: 'chromium',
+		args: [`--lang=${LOCALE}`],
+		env: { ...process.env, ...BROWSER_LANGUAGE } as Record<string, string>
+	});
 	const storage = new Map<Role, Session>();
 
 	try {
@@ -1056,24 +1468,21 @@ async function main(): Promise<void> {
 			storage.set(role, await storageFor(browser, role));
 		}
 
-		const parts: { name: string; caption: string; file: string; seconds: number }[] = [];
+		const parts: { scene: Scene; file: string; seconds: number }[] = [];
 
 		for (const scene of SCENES) {
-			const file = await record(browser, scene, stand, storage, directory);
+			const file = await record(browser, scene, stand, storage, WORK);
 			const seconds = await durationOf(file);
 
-			parts.push({ name: scene.name, caption: scene.caption, file, seconds });
+			parts.push({ scene, file, seconds });
 			console.log(`${scene.name}: ${seconds.toFixed(1)} с`);
 		}
 
-		const list = path.join(directory, 'parts.txt');
+		const list = path.join(WORK, 'parts.txt');
 
 		await writeFile(list, parts.map((part) => `file '${part.file}'`).join('\n'), 'utf8');
 
-		const target = path.join(
-			OUTPUT,
-			`screencast-draft-${new Date().toISOString().slice(0, 10)}.mp4`
-		);
+		const target = path.join(OUTPUT, 'screencast-draft.mp4');
 
 		await run('ffmpeg', [
 			'-y',
@@ -1092,18 +1501,20 @@ async function main(): Promise<void> {
 
 		let offset = 0;
 		const marks = parts.map((part) => {
-			const at = offset;
+			const start = offset;
 
 			offset += part.seconds;
 
-			return {
-				scene: part.name,
-				caption: part.caption,
-				start: timecode(at),
-				end: timecode(offset),
-				seconds: Number(part.seconds.toFixed(2))
-			};
+			return { ...part, start };
 		});
+
+		for (const mark of marks) {
+			await grabFrame(
+				target,
+				Math.max(mark.start, mark.start + mark.seconds - 1.5),
+				path.join(OUTPUT, 'frames', `${mark.scene.name}.png`)
+			);
+		}
 
 		const timecodes = {
 			file: target,
@@ -1114,8 +1525,16 @@ async function main(): Promise<void> {
 			total: timecode(offset),
 			interactionId: stand.interactionId,
 			externalId: stand.externalId,
-			groupExternalId: stand.groupExternalId,
-			scenes: marks
+			interactionTitle: stand.title,
+			scenes: marks.map((mark) => ({
+				scene: mark.scene.name,
+				role: mark.scene.role,
+				caption: mark.scene.caption,
+				start: timecode(mark.start),
+				end: timecode(mark.start + mark.seconds),
+				seconds: Number(mark.seconds.toFixed(2)),
+				narration: mark.scene.narration
+			}))
 		};
 
 		await writeFile(
@@ -1123,12 +1542,15 @@ async function main(): Promise<void> {
 			`${JSON.stringify(timecodes, null, '\t')}\n`,
 			'utf8'
 		);
+		await writeFile(path.join(OUTPUT, 'subtitles.srt'), subtitles(marks), 'utf8');
 
 		console.log(`\n${target}`);
 		console.log(`длительность: ${timecode(offset)}\n`);
 
 		for (const mark of marks) {
-			console.log(`${mark.start}–${mark.end}  ${mark.scene.padEnd(10)} ${mark.caption}`);
+			console.log(
+				`${timecode(mark.start)}–${timecode(mark.start + mark.seconds)}  ${mark.scene.name.padEnd(14)} ${mark.scene.caption}`
+			);
 		}
 	} catch (failure) {
 		// Отказ печатается здесь, а не только пробрасывается: следом идёт возврат
@@ -1141,7 +1563,7 @@ async function main(): Promise<void> {
 	} finally {
 		await restore(browser, stand, storage);
 		await browser.close();
-		await rm(directory, { recursive: true, force: true });
+		await rm(WORK, { recursive: true, force: true });
 	}
 }
 
