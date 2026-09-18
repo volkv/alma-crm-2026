@@ -429,6 +429,7 @@ export const actions: Actions = {
 		const data = await event.request.formData();
 		const parsed = parse(completeInteractionSchema, {
 			interactionId: event.params.id,
+			revision: Number(data.get('revision')),
 			summary: text(data, 'summary'),
 			force: data.get('force') === 'true'
 		});
@@ -442,6 +443,7 @@ export const actions: Actions = {
 		const data = await event.request.formData();
 		const parsed = parse(cancelInteractionSchema, {
 			interactionId: event.params.id,
+			revision: Number(data.get('revision')),
 			reason: data.get('reason')
 		});
 

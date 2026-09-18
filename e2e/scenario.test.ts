@@ -107,13 +107,13 @@ const APPLICATION_ID = `e2e-scenario-${RUN}`;
  * начали бы падать не от своей ошибки, а от чужого мусора.
  */
 const APPLICANT_NAME = `${MARK} Академия связи`;
-const APPLICANT_INN = '7802450127';
+const APPLICANT_INN = '0000000018';
 
 /** Вуз набора, который ведёт демонстрационный КАМ. */
-const SEEDED_OWN = { id: seedId('organization', 'bit'), name: 'БИТ' };
+const SEEDED_OWN = { id: seedId('organization', 'bit'), name: 'МТУСИ' };
 
 /** Вуз другого КАМа того же руководителя: его КАМ видеть не должен. */
-const SEEDED_FOREIGN = { name: 'ПУПИ' };
+const SEEDED_FOREIGN = { name: 'МФТИ' };
 
 /** Имитаторы стенда из `docker-compose.yml`. */
 const CMS_URL = 'http://localhost:58081';
@@ -639,7 +639,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 					phone: '+7 900 000-00-11',
 					position: 'Проректор по цифровому развитию'
 				},
-				interest: 'Программа подготовки по прикладной информатике'
+				interest: 'Программа подготовки DevOps-инженеров'
 			})
 		});
 

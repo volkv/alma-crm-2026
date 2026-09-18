@@ -543,6 +543,41 @@ describe('сид', () => {
 		expect(filled.filter((inn) => !isValidInn(inn))).toStrictEqual([]);
 		expect(new Set(filled).size).toBe(filled.length);
 	});
+
+	/**
+	 * Названия вузов и продуктов в наборе публичные, поэтому ИНН рядом с ними
+	 * обязан быть заведомо чужим: `0000` — код налогового органа, которого не
+	 * существует, и настоящий ИНН так начаться не может (`docs/seeds.md`).
+	 * Контрольную сумму такой номер всё равно проходит — её сторожит проверка
+	 * выше.
+	 */
+	it('берёт ИНН только из синтетического диапазона «0000…»', async () => {
+		await runSeed();
+
+		const rows = await database.db
+			.select({ shortName: organizations.shortName, inn: organizations.inn })
+			.from(organizations);
+
+		expect(rows.filter((row) => row.inn === null || !row.inn.startsWith('0000'))).toStrictEqual([]);
+	});
+
+	/**
+	 * Пометка о демонстрационных данных: набор называет настоящие вузы и
+	 * продукты, и человек на стенде обязан видеть, что люди, договоры и числа
+	 * рядом с ними выдуманы. Место пометки — примечание организации-оператора,
+	 * от чьего имени ведётся весь процесс.
+	 */
+	it('несёт пометку о демонстрационных данных в примечании оператора', async () => {
+		await runSeed();
+
+		const [operator] = await database.db
+			.select({ notes: organizations.notes })
+			.from(organizations)
+			.where(eq(organizations.kind, 'operator'));
+
+		expect(operator?.notes).toMatch(/Демонстрационные данные/);
+		expect(operator?.notes).toMatch(/вымышлен/);
+	});
 });
 
 /**

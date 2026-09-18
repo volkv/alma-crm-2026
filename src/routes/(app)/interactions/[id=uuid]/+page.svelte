@@ -138,7 +138,7 @@
 	>
 		{#snippet closing()}
 			{#if data.interaction.status === 'active'}
-				<ClosingActions closing={data.closing} />
+				<ClosingActions closing={data.closing} revision={data.status.revision} />
 			{/if}
 		{/snippet}
 	</SummaryPanel>

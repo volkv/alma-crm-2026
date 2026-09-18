@@ -14,10 +14,12 @@
  * Переход вдобавок сверяет номер редакции процесса: стадия с тем же
  * идентификатором после публикации принадлежит прежней редакции, поэтому одной
  * сверки `fromStageId` мало. Несовпадение — отказ до единой записи; введённое
- * человеком остаётся в форме, теряется только нажатие кнопки. Команды, которые
- * номера в запросе не несут — пауза и её снятие, отметка чек-листа, результат,
- * подтверждение, закрытие и отмена, — сверяют его вокруг блокировки: публикация,
- * прошедшая, пока команда ждала, получает тот же отказ теми же словами.
+ * человеком остаётся в форме, теряется только нажатие кнопки. Тот же номер
+ * несут завершение и отмена: обе команды принимают решение по финальной стадии
+ * и её требованиям, а публикация меняет и то и другое. Команды, которые номера
+ * в запросе не несут — пауза и её снятие, отметка чек-листа, результат и
+ * подтверждение, — сверяют его вокруг блокировки: публикация, прошедшая, пока
+ * команда ждала, получает тот же отказ теми же словами.
  */
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type {
@@ -153,9 +155,8 @@ async function readRevisionVersion(tx: Tx, interactionId: string): Promise<numbe
 
 /**
  * Блокировка строки для команд стадии, которые номера редакции в запросе не
- * несут: пауза и её снятие, отметка чек-листа, результат, подтверждение,
- * закрытие и отмена. Все они обращены к текущей стадии или ко взаимодействию
- * целиком, а не к переходу, и выбора стадии в них нет.
+ * несут: пауза и её снятие, отметка чек-листа, результат и подтверждение. Все
+ * они обращены к текущей стадии, а не к переходу, и выбора стадии в них нет.
  *
  * Сверка всё равно нужна: пока команда ждала блокировку, публикация могла
  * перенести взаимодействие на другую стадию — и тогда команда работает уже не с
@@ -418,17 +419,22 @@ type MoveInput = {
  * ждала на блокировке и теперь видит уже новую редакцию — и честно отказывает.
  * Несовпадение стоит пользователю нажатия кнопки, а не введённого: комментарий
  * и вложения остаются в форме.
+ *
+ * `repeat` — чем кончается фраза отказа: одно и то же правило отказывает и
+ * переходу, и завершению, и отмене, а человеку надо сказать, что именно
+ * повторить.
  */
 async function requireCurrentRevision(
 	tx: Tx,
 	group: ProcessGroupRow,
-	expected: number
+	expected: number,
+	repeat: string
 ): Promise<ProcessRevisionView> {
 	const revision = await requireActiveRevision(tx, group);
 
 	if (revision.version !== expected) {
 		throw new ConflictError(
-			'Процесс изменился, пока вы работали с карточкой. Обновите страницу и повторите переход'
+			`Процесс изменился, пока вы работали с карточкой. Обновите страницу и повторите ${repeat}`
 		);
 	}
 
@@ -485,7 +491,7 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 	await withTransaction(ctx, async (tx) => {
 		const interaction = await lockInteraction(ctx, tx, input.interactionId);
 		const group = await readGroupRow(tx, interaction.processGroupId);
-		const revision = await requireCurrentRevision(tx, group, input.revision);
+		const revision = await requireCurrentRevision(tx, group, input.revision, 'переход');
 		const entry = await requireOpenEntry(tx, input.interactionId);
 		const transition = await readTransition(
 			tx,
@@ -1067,41 +1073,46 @@ export async function resolveBlocker(ctx: ActorContext, input: ResolveBlockerInp
  * же самое, что вести свою, и решает это тот, кто отвечает за распределение
  * нагрузки. Исполнитель открытой записи стадии едет за владельцем: работа
  * перешла целиком, а не наполовину.
+ *
+ * `tx` передаёт тот, кто уже открыл транзакцию: передача незавершённых записей
+ * при смене ответственного за вуз обязана происходить вместе с самой сменой, а
+ * не рядом с ней.
  */
 export async function setResponsible(
 	ctx: ActorContext,
-	input: SetResponsibleInput
+	input: SetResponsibleInput,
+	tx?: Tx
 ): Promise<number> {
 	requirePermission(ctx, 'interactions.reassign');
 
 	const authorId = actingUserId(ctx);
 	const ids = [...new Set(input.interactionIds)].sort();
 
-	return withTransaction(ctx, async (tx) => {
+	const write = async (executor: Tx): Promise<number> => {
 		let changed = 0;
 
 		for (const interactionId of ids) {
-			const interaction = await lockInteraction(ctx, tx, interactionId);
+			const interaction = await lockInteraction(ctx, executor, interactionId);
 
 			if (interaction.ownerUserId === input.userId) {
 				continue;
 			}
 
-			await tx
+			await executor
 				.update(interactions)
 				.set({ ownerUserId: input.userId, lastActivityAt: now, updatedAt: now })
 				.where(eq(interactions.id, interactionId));
 
-			const entry = await readOpenEntryRow(tx, interactionId);
+			const entry = await readOpenEntryRow(executor, interactionId);
 
 			if (entry !== null) {
-				await tx
+				await executor
 					.update(stageEntries)
 					.set({ responsibleUserId: input.userId, updatedAt: now })
 					.where(eq(stageEntries.id, entry.id));
 			}
 
-			await tx.insert(interactionChanges).values({
+			await executor.insert(interactionChanges).values({
 				interactionId,
 				authorId,
 				field: 'ownerUserId',
@@ -1117,18 +1128,20 @@ export async function setResponsible(
 					subject: { type: 'interaction', id: interactionId },
 					details: { userId: input.userId }
 				},
-				tx
+				executor
 			);
 
 			// Ответственный виден заявителю на сайте: снимок статуса уходит той же
 			// транзакцией, что и смена владельца.
-			await enqueueApplicationStatus(tx, interactionId);
+			await enqueueApplicationStatus(executor, interactionId);
 
 			changed += 1;
 		}
 
 		return changed;
-	});
+	};
+
+	return tx === undefined ? withTransaction(ctx, write) : write(tx);
 }
 
 /**
@@ -1344,7 +1357,14 @@ export async function completeInteraction(
 	requirePermission(ctx, 'interactions.write');
 
 	await withTransaction(ctx, async (tx) => {
-		const interaction = await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
+		const interaction = await lockInteraction(ctx, tx, input.interactionId);
+		const group = await readGroupRow(tx, interaction.processGroupId);
+
+		// Тот же механизм, что у перехода: «завершить» нажимают, посмотрев на
+		// финальную стадию и её требования, и публикация, прошедшая до нажатия,
+		// меняет и то и другое.
+		await requireCurrentRevision(tx, group, input.revision, 'завершение');
+
 		const state = await readClosingState(ctx, tx, interaction);
 		const verdict = closingVerdict(state);
 
@@ -1391,7 +1411,11 @@ export async function cancelInteraction(
 	requirePermission(ctx, 'interactions.write');
 
 	await withTransaction(ctx, async (tx) => {
-		const interaction = await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
+		const interaction = await lockInteraction(ctx, tx, input.interactionId);
+		const group = await readGroupRow(tx, interaction.processGroupId);
+
+		await requireCurrentRevision(tx, group, input.revision, 'отмену');
+
 		const verdict = closingVerdict(await readClosingState(ctx, tx, interaction));
 
 		if (!verdict.cancel.allowed) {

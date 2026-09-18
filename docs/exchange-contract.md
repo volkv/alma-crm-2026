@@ -166,7 +166,7 @@ idempotency_mismatch`; тот же `eventId` с другим телом, узн�
 {
 	"documentId": "2f1c9a0e-6b3d-4a77-8f21-0c5e9d4b7a10",
 	"kind": "agreement",
-	"name": "Соглашение СЗПУ 2026.pdf",
+	"name": "Соглашение МТУСИ 2026.pdf",
 	"mime": "application/pdf",
 	"sizeBytes": 148213,
 	"sha256": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
@@ -294,19 +294,19 @@ idempotency_mismatch`. Без сохранённого ответа обещан
 		"form": "b2b",
 		"applicant": {
 			"kind": "educational_institution",
-			"name": "Северо-Западный политехнический университет",
-			"inn": "7802450127",
-			"ogrn": "1027800000123",
+			"name": "Московский технический университет связи и информатики",
+			"inn": "0000000096",
+			"ogrn": "1260000000094",
 			"educationLevel": "vo"
 		},
 		"contact": {
 			"lastName": "Кузьмина",
 			"firstName": "Наталья",
-			"email": "kuzmina@szpu.example.org",
+			"email": "kuzmina@mtuci.example.org",
 			"phone": "+7 900 000-00-11",
 			"position": "Проректор по цифровому развитию"
 		},
-		"interest": "Программа подготовки по прикладной информатике",
+		"interest": "Программа подготовки DevOps-инженеров",
 		"programCodes": ["VO-BAK-01"],
 		"productCodes": ["RT-DEVOPS"],
 		"comment": "Просим связаться до конца недели.",
@@ -356,7 +356,7 @@ B2C-заявка отличается только заявителем: `"form"
 ### Сопоставление с контрагентом
 
 1. **Юрлицо и вуз** — по ИНН; нет ИНН, но есть ОГРН — по ОГРН. По названию организации не
-   объединяются никогда: «Сибирский институт» и «СИВТ» — одно лицо или два, знает человек, а не
+   объединяются никогда: «Московский технический университет связи и информатики» и «МТУСИ» — одно лицо или два, знает человек, а не
    строка из формы. Сверка идёт **по всей базе**, без области доступа: CMS не знает, кто ведёт вуз,
    а вторая организация с тем же ИНН — это не решение, а поломка справочника.
 2. **Ни ИНН, ни ОГРН** — заводится новая организация, сообщение получает в журнале признак «требует
@@ -545,7 +545,7 @@ CRM идёт на адрес из настройки `exchange.cms.statusUrl`. �
 	"data": {
 		"externalId": "crm-group-2f1c9a0e-1",
 		"interactionId": "2f1c9a0e-6b3d-4a77-8f21-0c5e9d4b7a10",
-		"organization": { "id": "7b7e0d6a-1c0f-4a55-9f3f-2a1f4c8e9d02", "inn": "7802450127" },
+		"organization": { "id": "7b7e0d6a-1c0f-4a55-9f3f-2a1f4c8e9d02", "inn": "0000000096" },
 		"program": { "id": "1d2c3b4a-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "code": "VO-BAK-01" },
 		"product": { "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b", "code": "RT-DEVOPS" },
 		"contract": { "id": "8b9c0d1e-2f3a-4b5c-8d9e-0f1a2b3c4d5e", "number": "РТК-2026-0142" },
@@ -821,7 +821,7 @@ curl -sS -X POST http://localhost:58082/__scenario \
 			{
 				"id": "2f1c9a0e-6b3d-4a77-8f21-0c5e9d4b7a10",
 				"externalId": "site-2026-000123",
-				"title": "Заявка с сайта: СЗПУ",
+				"title": "Заявка с сайта: МТУСИ",
 				"status": "active",
 				"processGroup": "b2b",
 				"stage": {
@@ -829,7 +829,7 @@ curl -sS -X POST http://localhost:58082/__scenario \
 					"name": "Ведение занятий",
 					"enteredAt": "2027-01-10T09:00:00Z"
 				},
-				"organization": { "id": "7b7e0d6a-1c0f-4a55-9f3f-2a1f4c8e9d02", "inn": "7802450127" },
+				"organization": { "id": "7b7e0d6a-1c0f-4a55-9f3f-2a1f4c8e9d02", "inn": "0000000096" },
 				"responsible": { "userId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f", "name": "А. Смирнова" },
 				"programs": [{ "id": "1d2c3b4a-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "code": "VO-BAK-01" }],
 				"products": [{ "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b", "code": "RT-DEVOPS" }],

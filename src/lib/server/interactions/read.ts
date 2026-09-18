@@ -21,6 +21,7 @@ import {
 	type SQL
 } from 'drizzle-orm';
 import type { PageResult } from '$lib/contracts/common';
+import { PARTY_ROLE_LABELS } from '$lib/contracts/interactions';
 import type {
 	CommentView,
 	InteractionChangeView,
@@ -31,6 +32,7 @@ import type {
 	InteractionProductView,
 	InteractionProgramView,
 	InteractionView,
+	PartyRole,
 	StageProgressItem,
 	StageSnapshot
 } from '$lib/contracts/interactions';
@@ -620,6 +622,121 @@ export async function listComments(
 	}));
 }
 
+/**
+ * Ссылочные поля истории правок: в значении лежит идентификатор, а на экран
+ * выходит имя. Сюда попадает всё, у чего значение — ссылка на другую запись;
+ * название, сроки и учебный период ссылками не являются и подписи не получают.
+ */
+const REFERENCE_FIELDS = {
+	ownerUserId: 'user',
+	parties: 'organization',
+	programs: 'program',
+	products: 'product'
+} as const;
+
+type ReferenceKind = (typeof REFERENCE_FIELDS)[keyof typeof REFERENCE_FIELDS];
+
+/** Подпись записи, которой уже нет: сырой идентификатор на экран не выходит. */
+const UNKNOWN_REFERENCE = 'недоступно';
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+	return typeof value === 'object' && value !== null && !Array.isArray(value);
+}
+
+/**
+ * Идентификаторы, на которые ссылается одно значение истории.
+ *
+ * `null` — ссылаться не на что (поле очистили или заполнили впервые): такое
+ * значение показывается прочерком, а не подписью несуществующей записи. Пустая
+ * строка внутри списка — элемент незнакомой формы; он станет «недоступно», как
+ * и удалённая запись, потому что назвать его всё равно нечем.
+ */
+function referencedIds(field: string, value: unknown): string[] | null {
+	if (value === null || value === undefined) {
+		return null;
+	}
+
+	if (field === 'ownerUserId') {
+		return typeof value === 'string' ? [value] : [''];
+	}
+
+	if (!Array.isArray(value)) {
+		return [''];
+	}
+
+	if (field === 'parties') {
+		return value.map((item) =>
+			isRecord(item) && typeof item.organizationId === 'string' ? item.organizationId : ''
+		);
+	}
+
+	return value.map((item) => (typeof item === 'string' ? item : ''));
+}
+
+/**
+ * Роль стороны рядом с её именем: «СЗПУ (учебное заведение)» и «СЗПУ
+ * (компания-заказчик)» — разные строки истории, и без роли правка сторон
+ * читалась бы как «ничего не изменилось».
+ */
+function partyRoleSuffix(item: unknown): string {
+	if (!isRecord(item) || typeof item.partyRole !== 'string') {
+		return '';
+	}
+
+	const label = PARTY_ROLE_LABELS[item.partyRole as PartyRole];
+
+	return label === undefined ? '' : ` (${label.toLocaleLowerCase('ru')})`;
+}
+
+/** Имена записей по идентификаторам — по одному запросу на вид ссылки. */
+async function readReferenceNames(
+	wanted: Map<ReferenceKind, Set<string>>
+): Promise<Map<ReferenceKind, Map<string, string>>> {
+	const db = getDb();
+	const resolved = new Map<ReferenceKind, Map<string, string>>();
+
+	const read = async (
+		kind: ReferenceKind,
+		query: (ids: string[]) => Promise<{ id: string; name: string }[]>
+	): Promise<void> => {
+		const ids = wanted.get(kind);
+
+		if (ids === undefined || ids.size === 0) {
+			return;
+		}
+
+		const rows = await query([...ids]);
+
+		resolved.set(kind, new Map(rows.map((row) => [row.id, row.name])));
+	};
+
+	await Promise.all([
+		read('user', (ids) =>
+			db.select({ id: users.id, name: users.fullName }).from(users).where(inArray(users.id, ids))
+		),
+		read('organization', (ids) =>
+			db
+				.select({ id: organizations.id, name: organizations.shortName })
+				.from(organizations)
+				.where(inArray(organizations.id, ids))
+		),
+		read('program', (ids) =>
+			db
+				.select({ id: programs.id, name: programs.name })
+				.from(programs)
+				.where(inArray(programs.id, ids))
+		),
+		read('product', (ids) =>
+			db
+				.select({ id: products.id, name: products.name })
+				.from(products)
+				.where(inArray(products.id, ids))
+		)
+	]);
+
+	return resolved;
+}
+
 /** Предметная история плана: сроки, стороны, программы, ответственный. */
 export async function listInteractionChanges(
 	ctx: ActorContext,
@@ -635,6 +752,59 @@ export async function listInteractionChanges(
 		.where(eq(interactionChanges.interactionId, interactionId))
 		.orderBy(desc(interactionChanges.changedAt));
 
+	// Имена собираются на весь список сразу: строк истории у долгого
+	// взаимодействия десятки, и запрос на каждую ссылку превратил бы вкладку
+	// «История» в сотню запросов.
+	const wanted = new Map<ReferenceKind, Set<string>>();
+
+	for (const row of rows) {
+		const kind = REFERENCE_FIELDS[row.change.field as keyof typeof REFERENCE_FIELDS];
+
+		if (kind === undefined) {
+			continue;
+		}
+
+		const ids = wanted.get(kind) ?? new Set<string>();
+
+		for (const value of [row.change.oldValue, row.change.newValue]) {
+			for (const referenced of referencedIds(row.change.field, value) ?? []) {
+				if (referenced !== '') {
+					ids.add(referenced);
+				}
+			}
+		}
+
+		wanted.set(kind, ids);
+	}
+
+	const names = await readReferenceNames(wanted);
+
+	/** Подпись одного значения: `null` — поле не ссылочное. */
+	function label(field: string, value: unknown): string | null {
+		const kind = REFERENCE_FIELDS[field as keyof typeof REFERENCE_FIELDS];
+
+		if (kind === undefined) {
+			return null;
+		}
+
+		const ids = referencedIds(field, value);
+
+		if (ids === null || ids.length === 0) {
+			return '—';
+		}
+
+		const known = names.get(kind) ?? new Map<string, string>();
+		const items = Array.isArray(value) ? value : [value];
+
+		return ids
+			.map((referenced, index) => {
+				const name = known.get(referenced) ?? UNKNOWN_REFERENCE;
+
+				return field === 'parties' ? `${name}${partyRoleSuffix(items[index])}` : name;
+			})
+			.join(', ');
+	}
+
 	return rows.map((row) => ({
 		id: row.change.id,
 		changedAt: row.change.changedAt,
@@ -643,6 +813,8 @@ export async function listInteractionChanges(
 		field: row.change.field,
 		oldValue: row.change.oldValue,
 		newValue: row.change.newValue,
+		oldLabel: label(row.change.field, row.change.oldValue),
+		newLabel: label(row.change.field, row.change.newValue),
 		reason: row.change.reason
 	}));
 }

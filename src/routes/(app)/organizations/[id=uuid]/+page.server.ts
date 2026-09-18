@@ -55,6 +55,10 @@ export const load: PageServerLoad = async (event) => {
 			assignableUsers,
 			directionOptions,
 			canAssign,
+			// Передача незавершённых записей — та же смена владельца, что и с
+			// карточки взаимодействия: без этого права флажок не показывается, а
+			// сервер отказывает, даже если поле дослали руками.
+			canTransfer: can(ctx, 'interactions.reassign'),
 			// Полномочия закрывают сегодняшним днём по Москве — по нему живёт процесс.
 			today: formatIsoDay(),
 			canReadPeople: can(ctx, 'people.read'),
@@ -110,7 +114,10 @@ export const actions: Actions = {
 				organizationId: event.params.id,
 				userId,
 				// Пустое значение — «за вуз целиком», а не незаполненное поле.
-				directionId: typeof rawDirection === 'string' && rawDirection !== '' ? rawDirection : null
+				directionId: typeof rawDirection === 'string' && rawDirection !== '' ? rawDirection : null,
+				// Снятый флажок браузер не присылает вовсе, поэтому «передавать» —
+				// это присутствие поля, а не его значение.
+				transferInteractions: form.get('transferInteractions') === 'true'
 			});
 		} catch (error) {
 			return toActionFailure(error);

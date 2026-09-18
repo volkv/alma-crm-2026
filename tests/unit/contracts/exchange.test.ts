@@ -29,19 +29,19 @@ const APPLICATION = {
 		form: 'b2b',
 		applicant: {
 			kind: 'educational_institution',
-			name: 'Северо-Западный политехнический университет',
-			inn: '7802450127',
+			name: 'Московский технический университет связи и информатики',
+			inn: '0000000096',
 			ogrn: '1027800000123',
 			educationLevel: 'vo'
 		},
 		contact: {
 			lastName: 'Кузьмина',
 			firstName: 'Наталья',
-			email: 'kuzmina@szpu.example.org',
+			email: 'kuzmina@mtuci.example.org',
 			phone: '+7 900 000-00-11',
 			position: 'Проректор по цифровому развитию'
 		},
-		interest: 'Программа подготовки по прикладной информатике',
+		interest: 'Программа подготовки DevOps-инженеров',
 		programCodes: ['VO-BAK-01'],
 		productCodes: ['RT-DEVOPS'],
 		comment: 'Просим связаться до конца недели.',

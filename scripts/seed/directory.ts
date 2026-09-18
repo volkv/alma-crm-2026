@@ -2,12 +2,20 @@
  * Справочники демонстрационного стенда: организации и площадки, люди и их роли,
  * образовательные программы с версиями, продукты.
  *
- * Данные полностью выдуманы. Ни одна организация, площадка, фамилия, почта или
- * телефон не принадлежит настоящему лицу: наименования собраны из
- * географических и отраслевых слов, почта — на `example.org`, телефоны — из
- * диапазона `+7 900 000-00-NN`. Реквизиты (ИНН, КПП, ОГРН) фиктивные, но
- * проходят контрольные суммы: иначе форма организации отвергла бы собственные
- * демонстрационные данные.
+ * Демонстрационные данные. Публичные здесь только названия вузов и продуктов
+ * оператора: вуз на стенде должен быть узнаваемым, иначе демонстрация читается
+ * как выдумка. Всё остальное вымышлено — люди, должности, почта, телефоны,
+ * площадки, адреса, реквизиты, договоры, сроки и числа, а также колледжи,
+ * школы и компании-заказчики. Почта — на `example.org` и `example.com`,
+ * телефоны — из диапазона `+7 900 000-00-NN`.
+ *
+ * ИНН заведомо синтетические: первые четыре цифры `0000`, то есть код налогового
+ * органа, которого не существует. Контрольную сумму они при этом проходят —
+ * иначе форма организации отвергла бы собственные демонстрационные данные. КПП
+ * и ОГРН собраны по той же схеме, вокруг несуществующего кода региона `00`.
+ *
+ * Состояния каталога — `draft`, `archived`, неактивный партнёр — показывают
+ * фильтры интерфейса, а не положение дел у названной организации или продукта.
  *
  * Каждая строка перед вставкой проходит тот же контракт, что и форма, — сид не
  * имеет права положить в базу то, чего не примет интерфейс.
@@ -67,34 +75,37 @@ function checked<TSchema extends z.ZodType>(
  * привязаны продукты и программы.
  */
 const DIRECTIONS: readonly { key: string; code: string; name: string }[] = [
-	{ key: 'development', code: 'DEV', name: 'Разработка' },
-	{ key: 'devops', code: 'OPS', name: 'Инфраструктура и DevOps' },
-	{ key: 'qa', code: 'QA', name: 'Тестирование' },
-	{ key: 'analytics', code: 'ANL', name: 'Данные и аналитика' },
-	{ key: 'security', code: 'SEC', name: 'Информационная безопасность' }
+	{ key: 'devops', code: 'OPS', name: 'DevOps' },
+	{ key: 'analytics', code: 'ANL', name: 'Аналитика данных и ИИ' },
+	{ key: 'development', code: 'WEB', name: 'Web-разработка' },
+	{ key: 'mobile', code: 'MOB', name: 'Мобильная разработка' },
+	{ key: 'ledger', code: 'DLT', name: 'Распределённый реестр' },
+	{ key: 'prompt', code: 'PRM', name: 'Промпт-инжиниринг' },
+	{ key: 'project', code: 'PRJ', name: 'Управление проектами' }
 ];
 
 /** Направление программы: у каждой ровно одно, у направления — сколько угодно. */
 const PROGRAM_DIRECTIONS: Record<string, string> = {
-	'vo-bak-01': 'development',
-	'vo-bak-02': 'devops',
-	'vo-bak-03': 'development',
+	'vo-bak-01': 'devops',
+	'vo-bak-02': 'development',
+	'vo-bak-03': 'mobile',
 	'vo-mag-01': 'analytics',
-	'vo-mag-02': 'security',
-	'spo-01': 'development',
-	'spo-02': 'devops',
-	'school-01': 'development',
-	'dpo-01': 'development',
-	'dpo-02': 'devops'
+	'vo-mag-02': 'ledger',
+	'spo-01': 'analytics',
+	'spo-02': 'analytics',
+	'school-01': 'prompt',
+	'dpo-01': 'project'
 };
 
 /** Направления продукта: их бывает несколько, и это не ошибка набора. */
 const PRODUCT_DIRECTIONS: readonly { productKey: string; directionKeys: readonly string[] }[] = [
-	{ productKey: 'lms', directionKeys: ['development'] },
+	{ productKey: 'lms', directionKeys: ['devops', 'development'] },
 	{ productKey: 'analytics', directionKeys: ['analytics'] },
-	{ productKey: 'lab', directionKeys: ['devops'] },
-	{ productKey: 'cloud', directionKeys: ['development', 'devops'] },
-	{ productKey: 'security', directionKeys: ['security'] },
+	{ productKey: 'lab', directionKeys: ['development'] },
+	{ productKey: 'docs', directionKeys: ['project'] },
+	{ productKey: 'cloud', directionKeys: ['mobile'] },
+	{ productKey: 'security', directionKeys: ['ledger'] },
+	{ productKey: 'assistant', directionKeys: ['analytics'] },
 	{ productKey: 'archive', directionKeys: ['analytics'] }
 ];
 
@@ -110,7 +121,7 @@ type ResponsibleSeed = {
 };
 
 /**
- * Кто за какой вуз отвечает. У СЗПУ ответственность разделена по направлениям,
+ * Кто за какой вуз отвечает. У СПбПУ ответственность разделена по направлениям,
  * а прежнее общее назначение закрыто: общее и назначения по направлениям на
  * одном вузе не сосуществуют, и на стенде это видно историей, а не словами.
  */
@@ -214,155 +225,159 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		kind: 'educational_institution',
 		educationLevel: 'vo',
 		legalName:
-			'Федеральное государственное бюджетное образовательное учреждение высшего образования «Северо-Западный политехнический университет»',
-		shortName: 'СЗПУ',
-		inn: '7802450127',
-		kpp: '780201450',
-		ogrn: '1057802450122',
+			'Федеральное государственное автономное образовательное учреждение высшего образования «Санкт-Петербургский политехнический университет Петра Великого»',
+		shortName: 'СПбПУ',
+		inn: '0000000018',
+		kpp: '000001001',
+		ogrn: '1260000000017',
 		region: 'г. Санкт-Петербург',
-		website: 'https://szpu.example.org',
-		notes: 'Опорный партнёр по направлению прикладной информатики.'
+		website: 'https://spbpu.example.org',
+		notes: 'Опорный партнёр: ответственность разделена по направлениям.'
 	},
 	{
 		key: 'pupi',
 		kind: 'educational_institution',
 		educationLevel: 'vo',
 		legalName:
-			'Федеральное государственное автономное образовательное учреждение высшего образования «Приволжский университет прикладной информатики»',
-		shortName: 'ПУПИ',
-		inn: '5203660080',
-		kpp: '520301660',
-		ogrn: '1065203660081',
-		region: 'Нижегородская область',
-		website: 'https://pupi.example.org'
+			'Федеральное государственное автономное образовательное учреждение высшего образования «Московский физико-технический институт (национальный исследовательский университет)»',
+		shortName: 'МФТИ',
+		inn: '0000000025',
+		kpp: '000001002',
+		ogrn: '1260000000028',
+		region: 'Московская область',
+		website: 'https://mipt.example.org'
 	},
 	{
 		key: 'uguis',
 		kind: 'educational_institution',
 		educationLevel: 'vo',
 		legalName:
-			'Федеральное государственное бюджетное образовательное учреждение высшего образования «Уральский государственный университет инженерных систем»',
-		shortName: 'УГУИС',
-		inn: '6604170038',
-		kpp: '660401170',
-		ogrn: '1046604170030',
-		region: 'Свердловская область',
-		website: 'https://uguis.example.org'
+			'Федеральное государственное автономное образовательное учреждение высшего образования «Национальный исследовательский Томский политехнический университет»',
+		shortName: 'ТПУ',
+		inn: '0000000032',
+		kpp: '000001003',
+		ogrn: '1260000000039',
+		region: 'Томская область',
+		website: 'https://tpu.example.org'
 	},
 	{
 		key: 'sivt',
 		kind: 'educational_institution',
 		educationLevel: 'vo',
-		legalName: 'Автономная некоммерческая организация «Сибирский институт вычислительной техники»',
-		shortName: 'СИВТ',
-		inn: '5405900217',
-		kpp: '540501900',
-		ogrn: '1075405900217',
+		legalName:
+			'Федеральное государственное бюджетное образовательное учреждение высшего образования «Новосибирский государственный университет экономики и управления „НИНХ“»',
+		shortName: 'НГУЭУ',
+		inn: '0000000040',
+		kpp: '000001004',
+		ogrn: '1260000000040',
 		region: 'Новосибирская область',
-		website: 'https://sivt.example.org'
+		website: 'https://nsuem.example.org'
 	},
 	{
 		key: 'yutus',
 		kind: 'educational_institution',
 		educationLevel: 'vo',
 		legalName:
-			'Федеральное государственное бюджетное образовательное учреждение высшего образования «Южный технологический университет связи»',
-		shortName: 'ЮТУС',
-		inn: '6106330049',
-		kpp: '610601330',
-		ogrn: '1036106330040',
-		region: 'Ростовская область',
-		website: 'https://yutus.example.org'
+			'Федеральное государственное бюджетное образовательное учреждение высшего образования «Волгоградский государственный технический университет»',
+		shortName: 'ВолгГТУ',
+		inn: '0000000057',
+		kpp: '000001005',
+		ogrn: '1260000000050',
+		region: 'Волгоградская область',
+		website: 'https://vstu.example.org'
 	},
 	{
 		key: 'batse',
 		kind: 'educational_institution',
 		educationLevel: 'vo',
-		legalName: 'Частное образовательное учреждение «Балтийская академия цифровой экономики»',
-		shortName: 'БАЦЭ',
-		inn: '3901070023',
-		kpp: '390101070',
-		ogrn: '1113901070029',
-		region: 'Калининградская область',
-		website: 'https://batse.example.org'
+		legalName: 'Автономная некоммерческая организация высшего образования «Университет Иннополис»',
+		shortName: 'Университет Иннополис',
+		inn: '0000000064',
+		kpp: '000001006',
+		ogrn: '1260000000061',
+		region: 'Республика Татарстан',
+		website: 'https://innopolis.example.org'
 	},
 	{
 		key: 'vkgtu',
 		kind: 'educational_institution',
 		educationLevel: 'vo',
 		legalName:
-			'Федеральное государственное бюджетное образовательное учреждение высшего образования «Волго-Камский государственный технический университет»',
-		shortName: 'ВКГТУ',
-		inn: '1607540030',
-		kpp: '160701540',
-		ogrn: '1021607540030',
-		region: 'Республика Татарстан',
-		website: 'https://vkgtu.example.org'
+			'Федеральное государственное бюджетное образовательное учреждение высшего образования «Чувашский государственный университет имени И. Н. Ульянова»',
+		shortName: 'ЧГУ им. И. Н. Ульянова',
+		inn: '0000000071',
+		kpp: '000001007',
+		ogrn: '1260000000072',
+		region: 'Чувашская Республика',
+		website: 'https://chuvsu.example.org'
 	},
 	{
 		key: 'sruit',
 		kind: 'educational_institution',
 		educationLevel: 'vo',
 		legalName:
-			'Федеральное государственное автономное образовательное учреждение высшего образования «Среднерусский университет информационных технологий»',
-		shortName: 'СУИТ',
-		inn: '5008280045',
-		kpp: '500801280',
-		ogrn: '1095008280047',
-		region: 'Московская область',
-		website: 'https://sruit.example.org'
+			'Федеральное государственное автономное образовательное учреждение высшего образования «Московский политехнический университет»',
+		shortName: 'Московский Политех',
+		inn: '0000000089',
+		kpp: '000001008',
+		ogrn: '1260000000083',
+		region: 'г. Москва',
+		website: 'https://mospolytech.example.org'
 	},
 	{
 		key: 'bit',
 		kind: 'educational_institution',
 		educationLevel: 'vo',
-		legalName: 'Автономная некоммерческая организация «Беломорский институт телекоммуникаций»',
-		shortName: 'БИТ',
-		inn: '2901010054',
-		kpp: '290101010',
-		ogrn: '1102901010057',
-		region: 'Архангельская область',
-		website: 'https://bit-edu.example.org'
+		legalName:
+			'Федеральное государственное бюджетное образовательное учреждение высшего образования «Московский технический университет связи и информатики»',
+		shortName: 'МТУСИ',
+		inn: '0000000096',
+		kpp: '000001009',
+		ogrn: '1260000000094',
+		region: 'г. Москва',
+		website: 'https://mtuci.example.org'
 	},
 	{
 		key: 'puts',
 		kind: 'educational_institution',
 		educationLevel: 'vo',
 		legalName:
-			'Федеральное государственное бюджетное образовательное учреждение высшего образования «Прибайкальский университет транспорта и связи»',
-		shortName: 'ПУТС',
-		inn: '3802440065',
-		kpp: '380201440',
-		ogrn: '1083802440061',
-		region: 'Иркутская область',
-		website: 'https://puts.example.org'
+			'Федеральное государственное бюджетное образовательное учреждение высшего образования «Саратовский государственный технический университет имени Гагарина Ю. А.»',
+		shortName: 'СГТУ им. Гагарина Ю. А.',
+		inn: '0000000106',
+		kpp: '000001010',
+		ogrn: '1260000000105',
+		region: 'Саратовская область',
+		website: 'https://sstu.example.org'
 	},
 	{
 		key: 'zipm',
 		kind: 'educational_institution',
 		educationLevel: 'vo',
-		legalName: 'Частное образовательное учреждение «Заволжский институт прикладной математики»',
-		shortName: 'ЗИПМ',
-		inn: '6403550079',
-		kpp: '640301550',
-		ogrn: '1126403550074',
-		region: 'Саратовская область',
-		website: 'https://zipm.example.org',
+		legalName:
+			'Федеральное государственное автономное образовательное учреждение высшего образования «Национальный исследовательский университет „МИЭТ“»',
+		shortName: 'МИЭТ',
+		inn: '0000000113',
+		kpp: '000001011',
+		ogrn: '1260000000116',
+		region: 'г. Москва',
+		website: 'https://miet.example.org',
 		isActive: false,
-		notes: 'Сотрудничество приостановлено до пересмотра программы подготовки.'
+		notes:
+			'Демонстрационная запись: партнёрство помечено неактивным, чтобы на стенде был виден фильтр по активности.'
 	},
 	{
 		key: 'paid',
 		kind: 'educational_institution',
 		educationLevel: 'vo',
 		legalName:
-			'Федеральное государственное автономное образовательное учреждение высшего образования «Приморская академия инженерии данных»',
-		shortName: 'ПАИД',
-		inn: '2504330080',
-		kpp: '250401330',
-		ogrn: '1132504330089',
-		region: 'Приморский край',
-		website: 'https://paid-edu.example.org'
+			'Федеральное государственное бюджетное образовательное учреждение высшего образования «Национальный исследовательский университет „МЭИ“»',
+		shortName: 'НИУ «МЭИ»',
+		inn: '0000000120',
+		kpp: '000001012',
+		ogrn: '1260000000127',
+		region: 'г. Москва',
+		website: 'https://mpei.example.org'
 	},
 	{
 		key: 'ukct',
@@ -371,11 +386,12 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		legalName:
 			'Государственное автономное профессиональное образовательное учреждение «Уральский колледж цифровых технологий»',
 		shortName: 'УКЦТ',
-		inn: '6605170094',
-		kpp: '660501170',
-		ogrn: '1146605170095',
+		inn: '0000000138',
+		kpp: '000001013',
+		ogrn: '1260000000138',
 		region: 'Свердловская область',
-		website: 'https://ukct.example.org'
+		website: 'https://ukct.example.org',
+		notes: 'Название колледжа вымышленное: публичного списка партнёров по СПО у набора нет.'
 	},
 	{
 		key: 'nkis',
@@ -384,11 +400,12 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		legalName:
 			'Государственное бюджетное профессиональное образовательное учреждение «Невский колледж информационных систем»',
 		shortName: 'НКИС',
-		inn: '7806450209',
-		kpp: '780601450',
-		ogrn: '1157806450207',
+		inn: '0000000145',
+		kpp: '000001014',
+		ogrn: '1260000000149',
 		region: 'г. Санкт-Петербург',
-		website: 'https://nkis.example.org'
+		website: 'https://nkis.example.org',
+		notes: 'Название колледжа вымышленное: публичного списка партнёров по СПО у набора нет.'
 	},
 	{
 		key: 'vts',
@@ -397,11 +414,12 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		legalName:
 			'Государственное профессиональное образовательное учреждение «Верхневолжский техникум связи»',
 		shortName: 'ВТС',
-		inn: '7607040110',
-		kpp: '760701040',
-		ogrn: '1107607040111',
+		inn: '0000000152',
+		kpp: '000001015',
+		ogrn: '1260000000150',
 		region: 'Ярославская область',
-		website: 'https://vts.example.org'
+		website: 'https://vts.example.org',
+		notes: 'Название техникума вымышленное: публичного списка партнёров по СПО у набора нет.'
 	},
 	{
 		key: 'skpa',
@@ -410,11 +428,12 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		legalName:
 			'Государственное автономное профессиональное образовательное учреждение «Степной колледж промышленной автоматики»',
 		shortName: 'СКПА',
-		inn: '5608020120',
-		kpp: '560801020',
-		ogrn: '1165608020126',
+		inn: '0000000160',
+		kpp: '000001016',
+		ogrn: '1260000000160',
 		region: 'Оренбургская область',
-		website: 'https://skpa.example.org'
+		website: 'https://skpa.example.org',
+		notes: 'Название колледжа вымышленное: публичного списка партнёров по СПО у набора нет.'
 	},
 	{
 		key: 'lyceum306',
@@ -422,11 +441,12 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		educationLevel: 'school',
 		legalName: 'Государственное бюджетное общеобразовательное учреждение «Лицей № 306 „Гравитон“»',
 		shortName: 'Лицей № 306 «Гравитон»',
-		inn: '5009360335',
-		kpp: '500901360',
-		ogrn: '1015009360332',
+		inn: '0000000177',
+		kpp: '000001017',
+		ogrn: '1260000000171',
 		region: 'Московская область',
-		website: 'https://lyceum306.example.org'
+		website: 'https://lyceum306.example.org',
+		notes: 'Название школы вымышленное.'
 	},
 	{
 		key: 'school47',
@@ -435,91 +455,97 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		legalName:
 			'Муниципальное бюджетное общеобразовательное учреждение «Инженерная школа № 47 „Вектор“»',
 		shortName: 'Школа № 47 «Вектор»',
-		inn: '5410900340',
-		kpp: '541001900',
-		ogrn: '1125410900340',
+		inn: '0000000184',
+		kpp: '000001018',
+		ogrn: '1260000000182',
 		region: 'Новосибирская область',
-		website: 'https://school47.example.org'
+		website: 'https://school47.example.org',
+		notes: 'Название школы вымышленное.'
 	},
 	{
 		key: 'digital',
 		kind: 'customer_company',
 		legalName: 'Общество с ограниченной ответственностью «Цифровые решения»',
 		shortName: 'Цифровые решения',
-		inn: '7711360451',
-		kpp: '771101360',
-		ogrn: '1177711360452',
+		inn: '0000000191',
+		kpp: '000001019',
+		ogrn: '1260000000193',
 		region: 'г. Москва',
 		website: 'https://digital-solutions.example.com',
-		notes: 'Берёт стажёров на направление прикладной информатики.'
+		notes: 'Компания-заказчик вымышлена: берёт стажёров на направление DevOps.'
 	},
 	{
 		key: 'technosphere',
 		kind: 'customer_company',
 		legalName: 'Общество с ограниченной ответственностью «ТехноСфера Софт»',
 		shortName: 'ТехноСфера Софт',
-		inn: '6312100562',
-		kpp: '631201100',
-		ogrn: '1186312100567',
+		inn: '0000000201',
+		kpp: '000001020',
+		ogrn: '1260000000204',
 		region: 'Самарская область',
-		website: 'https://technosphere-soft.example.com'
+		website: 'https://technosphere-soft.example.com',
+		notes: 'Компания-заказчик вымышлена.'
 	},
 	{
 		key: 'irbis',
 		kind: 'customer_company',
 		legalName: 'Общество с ограниченной ответственностью «Ирбис Аналитика»',
 		shortName: 'Ирбис Аналитика',
-		inn: '5913020670',
-		kpp: '591301020',
-		ogrn: '1195913020676',
+		inn: '0000000219',
+		kpp: '000001021',
+		ogrn: '1260000000215',
 		region: 'Пермский край',
-		website: 'https://irbis-analytics.example.com'
+		website: 'https://irbis-analytics.example.com',
+		notes: 'Компания-заказчик вымышлена.'
 	},
 	{
 		key: 'meridian',
 		kind: 'customer_company',
 		legalName: 'Общество с ограниченной ответственностью «Меридиан Инжиниринг»',
 		shortName: 'Меридиан Инжиниринг',
-		inn: '3614040787',
-		kpp: '361401040',
-		ogrn: '1163614040787',
+		inn: '0000000226',
+		kpp: '000001022',
+		ogrn: '1260000000226',
 		region: 'Воронежская область',
-		website: 'https://meridian-eng.example.com'
+		website: 'https://meridian-eng.example.com',
+		notes: 'Компания-заказчик вымышлена.'
 	},
 	{
 		key: 'ladoga',
 		kind: 'customer_company',
 		legalName: 'Акционерное общество «Ладога Датасистемс»',
 		shortName: 'Ладога Датасистемс',
-		inn: '7815450893',
-		kpp: '781501450',
-		ogrn: '1147815450892',
+		inn: '0000000233',
+		kpp: '000001023',
+		ogrn: '1260000000237',
 		region: 'г. Санкт-Петербург',
-		website: 'https://ladoga-data.example.com'
+		website: 'https://ladoga-data.example.com',
+		notes: 'Компания-заказчик вымышлена.'
 	},
 	{
 		key: 'polarcode',
 		kind: 'customer_company',
 		legalName: 'Общество с ограниченной ответственностью «Полярный код»',
 		shortName: 'Полярный код',
-		inn: '2916010900',
-		kpp: '291601010',
-		ogrn: '1202916010901',
+		inn: '0000000240',
+		kpp: '000001024',
+		ogrn: '1260000000248',
 		region: 'Архангельская область',
-		website: 'https://polarcode.example.com'
+		website: 'https://polarcode.example.com',
+		notes: 'Компания-заказчик вымышлена.'
 	},
 	{
 		key: 'operator',
 		kind: 'operator',
-		legalName:
-			'Автономная некоммерческая организация дополнительного профессионального образования «Учебный центр цифровых компетенций»',
-		shortName: 'УЦЦК',
-		inn: '7717361010',
-		kpp: '771701361',
-		ogrn: '1137717361011',
+		legalName: 'Общество с ограниченной ответственностью «РТК ИТ»',
+		shortName: 'ИТ Школа Ростелекома',
+		inn: '0000000258',
+		kpp: '000001025',
+		ogrn: '1260000000259',
 		region: 'г. Москва',
-		website: 'https://ucck.example.org',
-		notes: 'Оператор образовательных программ; от его имени ведётся весь процесс.'
+		website: 'https://itschool.example.org',
+		notes:
+			'Демонстрационные данные. Названия вузов и продуктов — публичные, реально существующие; люди, контакты, реквизиты, договоры, сроки и числа вымышлены целиком, колледжи, школы и компании-заказчики тоже. Оператор ведёт от своего имени весь процесс.'
 	}
 ];
 
@@ -557,33 +583,33 @@ const SITES: readonly SiteSeed[] = [
 		key: 'pupi-main',
 		organizationKey: 'pupi',
 		kind: 'campus',
-		name: 'Кампус на Волжской набережной',
-		address: 'Нижегородская область, г. Нижний Новгород, Волжская набережная, 21',
-		region: 'Нижегородская область'
+		name: 'Главный кампус',
+		address: 'Московская область, г. Долгопрудный, Институтский переулок, 12',
+		region: 'Московская область'
 	},
 	{
 		key: 'pupi-dept-ai',
 		organizationKey: 'pupi',
 		kind: 'department',
-		name: 'Факультет прикладной информатики',
-		address: 'Нижегородская область, г. Нижний Новгород, Волжская набережная, 21, корпус 3',
-		region: 'Нижегородская область'
+		name: 'Факультет прикладной математики и информатики',
+		address: 'Московская область, г. Долгопрудный, Институтский переулок, 12, корпус 3',
+		region: 'Московская область'
 	},
 	{
 		key: 'uguis-main',
 		organizationKey: 'uguis',
 		kind: 'campus',
 		name: 'Учебный городок',
-		address: 'Свердловская область, г. Екатеринбург, ул. Машинная, 38',
-		region: 'Свердловская область'
+		address: 'Томская область, г. Томск, ул. Учебная, 38',
+		region: 'Томская область'
 	},
 	{
 		key: 'uguis-dept-auto',
 		organizationKey: 'uguis',
 		kind: 'department',
 		name: 'Кафедра автоматизации производств',
-		address: 'Свердловская область, г. Екатеринбург, ул. Машинная, 38, корпус В',
-		region: 'Свердловская область'
+		address: 'Томская область, г. Томск, ул. Учебная, 38, корпус В',
+		region: 'Томская область'
 	},
 	{
 		key: 'sivt-main',
@@ -598,24 +624,24 @@ const SITES: readonly SiteSeed[] = [
 		organizationKey: 'vkgtu',
 		kind: 'campus',
 		name: 'Главный корпус',
-		address: 'Республика Татарстан, г. Казань, ул. Волжская, 19',
-		region: 'Республика Татарстан'
+		address: 'Чувашская Республика, г. Чебоксары, ул. Университетская, 19',
+		region: 'Чувашская Республика'
 	},
 	{
 		key: 'vkgtu-branch-chelny',
 		organizationKey: 'vkgtu',
 		kind: 'branch',
-		name: 'Филиал в Набережных Челнах',
-		address: 'Республика Татарстан, г. Набережные Челны, проспект Мира, 88',
-		region: 'Республика Татарстан'
+		name: 'Филиал в Новочебоксарске',
+		address: 'Чувашская Республика, г. Новочебоксарск, ул. Речная, 88',
+		region: 'Чувашская Республика'
 	},
 	{
 		key: 'vkgtu-dept-comm',
 		organizationKey: 'vkgtu',
 		kind: 'department',
 		name: 'Кафедра систем связи',
-		address: 'Республика Татарстан, г. Казань, ул. Волжская, 19, корпус 2',
-		region: 'Республика Татарстан'
+		address: 'Чувашская Республика, г. Чебоксары, ул. Университетская, 19, корпус 2',
+		region: 'Чувашская Республика'
 	},
 	{
 		key: 'ukct-main',
@@ -645,9 +671,9 @@ const SITES: readonly SiteSeed[] = [
 		key: 'paid-main',
 		organizationKey: 'paid',
 		kind: 'campus',
-		name: 'Кампус на Океанском проспекте',
-		address: 'Приморский край, г. Владивосток, Океанский проспект, 62',
-		region: 'Приморский край'
+		name: 'Учебный корпус на Энергетической',
+		address: 'г. Москва, Энергетическая улица, 62',
+		region: 'г. Москва'
 	}
 ];
 
@@ -726,7 +752,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Астахов',
 		firstName: 'Игорь',
 		middleName: 'Леонидович',
-		email: 'i.astakhov@szpu.example.org',
+		email: 'i.astakhov@spbpu.example.org',
 		phone: '+7 900 000-00-01',
 		affiliation: {
 			organizationKey: 'szpu',
@@ -743,7 +769,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Бельская',
 		firstName: 'Марина',
 		middleName: 'Юрьевна',
-		email: 'm.belskaya@szpu.example.org',
+		email: 'm.belskaya@spbpu.example.org',
 		phone: '+7 900 000-00-02',
 		affiliation: {
 			organizationKey: 'szpu',
@@ -763,7 +789,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Гурьев',
 		firstName: 'Никита',
 		middleName: 'Павлович',
-		email: 'n.guryev@szpu.example.org',
+		email: 'n.guryev@spbpu.example.org',
 		phone: '+7 900 000-00-03',
 		affiliation: {
 			organizationKey: 'szpu',
@@ -779,7 +805,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Дроздова',
 		firstName: 'Елена',
 		middleName: 'Аркадьевна',
-		email: 'e.drozdova@szpu.example.org',
+		email: 'e.drozdova@spbpu.example.org',
 		phone: '+7 900 000-00-04',
 		affiliation: {
 			organizationKey: 'szpu',
@@ -794,7 +820,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Ефимов',
 		firstName: 'Роман',
 		middleName: 'Сергеевич',
-		email: 'r.efimov@szpu.example.org',
+		email: 'r.efimov@spbpu.example.org',
 		phone: '+7 900 000-00-05',
 		affiliation: {
 			organizationKey: 'szpu',
@@ -809,7 +835,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Жарова',
 		firstName: 'Ксения',
 		middleName: 'Дмитриевна',
-		email: 'k.zharova@pupi.example.org',
+		email: 'k.zharova@mipt.example.org',
 		phone: '+7 900 000-00-06',
 		affiliation: {
 			organizationKey: 'pupi',
@@ -824,7 +850,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Зимин',
 		firstName: 'Артём',
 		middleName: 'Валерьевич',
-		email: 'a.zimin@pupi.example.org',
+		email: 'a.zimin@mipt.example.org',
 		phone: '+7 900 000-00-07',
 		affiliation: {
 			organizationKey: 'pupi',
@@ -840,7 +866,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Игнатьева',
 		firstName: 'Ольга',
 		middleName: 'Николаевна',
-		email: 'o.ignatyeva@pupi.example.org',
+		email: 'o.ignatyeva@mipt.example.org',
 		phone: '+7 900 000-00-08',
 		affiliation: {
 			organizationKey: 'pupi',
@@ -857,7 +883,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Кольцов',
 		firstName: 'Денис',
 		middleName: 'Анатольевич',
-		email: 'd.koltsov@uguis.example.org',
+		email: 'd.koltsov@tpu.example.org',
 		phone: '+7 900 000-00-09',
 		affiliation: {
 			organizationKey: 'uguis',
@@ -873,7 +899,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Лапина',
 		firstName: 'Светлана',
 		middleName: 'Егоровна',
-		email: 's.lapina@uguis.example.org',
+		email: 's.lapina@tpu.example.org',
 		phone: '+7 900 000-00-10',
 		affiliation: {
 			organizationKey: 'uguis',
@@ -888,7 +914,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Мухин',
 		firstName: 'Тимур',
 		middleName: 'Рустамович',
-		email: 't.mukhin@uguis.example.org',
+		email: 't.mukhin@tpu.example.org',
 		phone: '+7 900 000-00-11',
 		affiliation: {
 			organizationKey: 'uguis',
@@ -903,12 +929,12 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Нестеров',
 		firstName: 'Виктор',
 		middleName: 'Ильич',
-		email: 'v.nesterov@sivt.example.org',
+		email: 'v.nesterov@nsuem.example.org',
 		phone: '+7 900 000-00-12',
 		affiliation: {
 			organizationKey: 'sivt',
 			siteKey: 'sivt-main',
-			position: 'Директор института',
+			position: 'Директор департамента образовательных программ',
 			roleKind: 'other',
 			isPrimary: true,
 			validFrom: '2015-04-01'
@@ -919,12 +945,12 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Орехова',
 		firstName: 'Алина',
 		middleName: 'Максимовна',
-		email: 'a.orekhova@sivt.example.org',
+		email: 'a.orekhova@nsuem.example.org',
 		phone: '+7 900 000-00-13',
 		affiliation: {
 			organizationKey: 'sivt',
 			siteKey: 'sivt-main',
-			position: 'Заместитель директора по развитию',
+			position: 'Проректор по развитию',
 			roleKind: 'vice_rector',
 			validFrom: '2018-08-15'
 		}
@@ -934,7 +960,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Панкратов',
 		firstName: 'Сергей',
 		middleName: 'Львович',
-		email: 's.pankratov@sivt.example.org',
+		email: 's.pankratov@nsuem.example.org',
 		phone: '+7 900 000-00-14',
 		affiliation: {
 			organizationKey: 'sivt',
@@ -949,7 +975,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Родионова',
 		firstName: 'Вера',
 		middleName: 'Степановна',
-		email: 'v.rodionova@yutus.example.org',
+		email: 'v.rodionova@vstu.example.org',
 		phone: '+7 900 000-00-15',
 		affiliation: {
 			organizationKey: 'yutus',
@@ -964,7 +990,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Савельев',
 		firstName: 'Артур',
 		middleName: 'Геннадьевич',
-		email: 'a.savelyev@yutus.example.org',
+		email: 'a.savelyev@vstu.example.org',
 		phone: '+7 900 000-00-16',
 		affiliation: {
 			organizationKey: 'yutus',
@@ -979,7 +1005,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Тарасюк',
 		firstName: 'Илья',
 		middleName: 'Борисович',
-		email: 'i.tarasyuk@batse.example.org',
+		email: 'i.tarasyuk@innopolis.example.org',
 		phone: '+7 900 000-00-17',
 		affiliation: {
 			organizationKey: 'batse',
@@ -994,11 +1020,11 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Ульянова',
 		firstName: 'Дарья',
 		middleName: 'Кирилловна',
-		email: 'd.ulyanova@batse.example.org',
+		email: 'd.ulyanova@innopolis.example.org',
 		phone: '+7 900 000-00-18',
 		affiliation: {
 			organizationKey: 'batse',
-			position: 'Заведующая кафедрой цифровой экономики',
+			position: 'Заведующая лабораторией цифровой экономики',
 			roleKind: 'head_of_department',
 			validFrom: '2021-09-01'
 		}
@@ -1008,7 +1034,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Федотов',
 		firstName: 'Марат',
 		middleName: 'Наилевич',
-		email: 'm.fedotov@vkgtu.example.org',
+		email: 'm.fedotov@chuvsu.example.org',
 		phone: '+7 900 000-00-19',
 		affiliation: {
 			organizationKey: 'vkgtu',
@@ -1023,7 +1049,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Хабибуллина',
 		firstName: 'Лилия',
 		middleName: 'Ринатовна',
-		email: 'l.khabibullina@vkgtu.example.org',
+		email: 'l.khabibullina@chuvsu.example.org',
 		phone: '+7 900 000-00-20',
 		affiliation: {
 			organizationKey: 'vkgtu',
@@ -1040,7 +1066,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Цветков',
 		firstName: 'Егор',
 		middleName: 'Михайлович',
-		email: 'e.tsvetkov@vkgtu.example.org',
+		email: 'e.tsvetkov@chuvsu.example.org',
 		phone: '+7 900 000-00-21',
 		affiliation: {
 			organizationKey: 'vkgtu',
@@ -1055,7 +1081,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Чернышёва',
 		firstName: 'Полина',
 		middleName: 'Олеговна',
-		email: 'p.chernysheva@sruit.example.org',
+		email: 'p.chernysheva@mospolytech.example.org',
 		phone: '+7 900 000-00-22',
 		affiliation: {
 			organizationKey: 'sruit',
@@ -1070,7 +1096,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Шилов',
 		firstName: 'Кирилл',
 		middleName: 'Андреевич',
-		email: 'k.shilov@sruit.example.org',
+		email: 'k.shilov@mospolytech.example.org',
 		phone: '+7 900 000-00-23',
 		affiliation: {
 			organizationKey: 'sruit',
@@ -1084,11 +1110,11 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Щербак',
 		firstName: 'Антон',
 		middleName: 'Валентинович',
-		email: 'a.shcherbak@bit-edu.example.org',
+		email: 'a.shcherbak@mtuci.example.org',
 		phone: '+7 900 000-00-24',
 		affiliation: {
 			organizationKey: 'bit',
-			position: 'Директор института',
+			position: 'Директор центра дополнительного образования',
 			roleKind: 'other',
 			isPrimary: true,
 			validFrom: '2016-02-01'
@@ -1099,7 +1125,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Эльдарова',
 		firstName: 'Замира',
 		middleName: 'Руслановна',
-		email: 'z.eldarova@bit-edu.example.org',
+		email: 'z.eldarova@mtuci.example.org',
 		phone: '+7 900 000-00-25',
 		affiliation: {
 			organizationKey: 'bit',
@@ -1113,7 +1139,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Юрченко',
 		firstName: 'Глеб',
 		middleName: 'Максимович',
-		email: 'g.yurchenko@puts.example.org',
+		email: 'g.yurchenko@sstu.example.org',
 		phone: '+7 900 000-00-26',
 		affiliation: {
 			organizationKey: 'puts',
@@ -1128,7 +1154,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Яковлева',
 		firstName: 'Нина',
 		middleName: 'Петровна',
-		email: 'n.yakovleva@puts.example.org',
+		email: 'n.yakovleva@sstu.example.org',
 		phone: '+7 900 000-00-27',
 		affiliation: {
 			organizationKey: 'puts',
@@ -1142,11 +1168,11 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Абрамов',
 		firstName: 'Леонид',
 		middleName: 'Тимофеевич',
-		email: 'l.abramov@zipm.example.org',
+		email: 'l.abramov@miet.example.org',
 		phone: '+7 900 000-00-28',
 		affiliation: {
 			organizationKey: 'zipm',
-			position: 'Директор',
+			position: 'Директор института системной и программной инженерии',
 			roleKind: 'other',
 			isPrimary: true,
 			validFrom: '2018-03-01',
@@ -1158,11 +1184,11 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Белов',
 		firstName: 'Станислав',
 		middleName: 'Юрьевич',
-		email: 's.belov@zipm.example.org',
+		email: 's.belov@miet.example.org',
 		phone: '+7 900 000-00-29',
 		affiliation: {
 			organizationKey: 'zipm',
-			position: 'Преподаватель прикладной математики',
+			position: 'Преподаватель кафедры системной инженерии',
 			roleKind: 'teacher',
 			validFrom: '2019-09-01',
 			validTo: '2025-02-28'
@@ -1173,7 +1199,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Вихрова',
 		firstName: 'Юлия',
 		middleName: 'Андреевна',
-		email: 'y.vikhrova@paid-edu.example.org',
+		email: 'y.vikhrova@mpei.example.org',
 		phone: '+7 900 000-00-30',
 		affiliation: {
 			organizationKey: 'paid',
@@ -1189,7 +1215,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Горбунова',
 		firstName: 'Ирина',
 		middleName: 'Валентиновна',
-		email: 'i.gorbunova@paid-edu.example.org',
+		email: 'i.gorbunova@mpei.example.org',
 		phone: '+7 900 000-00-31',
 		affiliation: {
 			organizationKey: 'paid',
@@ -1328,7 +1354,7 @@ const PEOPLE: readonly PersonSeed[] = [
 		lastName: 'Орлов',
 		firstName: 'Кирилл',
 		middleName: 'Вадимович',
-		email: 'k.orlov@ucck.example.org',
+		email: 'k.orlov@itschool.example.org',
 		phone: '+7 900 000-00-40',
 		affiliation: {
 			organizationKey: 'operator',
@@ -1395,14 +1421,14 @@ const PROGRAMS: readonly ProgramSeed[] = [
 	{
 		key: 'vo-bak-01',
 		code: 'VO-BAK-01',
-		name: 'Прикладная информатика в цифровых сервисах',
+		name: 'DevOps-инженер',
 		level: 'bachelor',
-		directionCode: '09.03.03',
+		directionCode: '09.03.01',
 		status: 'active',
 		versions: [
 			{ summary: 'Первая редакция программы.', effectiveFrom: '2023-09-01' },
 			{
-				summary: 'Добавлен модуль по промышленной разработке и практика на площадке партнёра.',
+				summary: 'Добавлен модуль по промышленной эксплуатации и практика на площадке партнёра.',
 				effectiveFrom: '2025-09-01'
 			}
 		]
@@ -1410,14 +1436,14 @@ const PROGRAMS: readonly ProgramSeed[] = [
 	{
 		key: 'vo-bak-02',
 		code: 'VO-BAK-02',
-		name: 'Информационные системы и технологии связи',
+		name: 'Web-разработка на «Аколе»',
 		level: 'bachelor',
-		directionCode: '09.03.02',
+		directionCode: '09.03.04',
 		status: 'active',
 		versions: [
 			{ summary: 'Первая редакция программы.', effectiveFrom: '2022-09-01' },
 			{
-				summary: 'Переработан раздел сетевых технологий, добавлены лабораторные работы.',
+				summary: 'Переработан раздел интеграций, добавлены лабораторные работы.',
 				effectiveFrom: '2024-09-01'
 			}
 		]
@@ -1425,7 +1451,7 @@ const PROGRAMS: readonly ProgramSeed[] = [
 	{
 		key: 'vo-bak-03',
 		code: 'VO-BAK-03',
-		name: 'Программная инженерия учебных платформ',
+		name: 'Мобильная разработка на «Авроре»',
 		level: 'bachelor',
 		directionCode: '09.03.04',
 		status: 'active',
@@ -1434,7 +1460,7 @@ const PROGRAMS: readonly ProgramSeed[] = [
 	{
 		key: 'vo-mag-01',
 		code: 'VO-MAG-01',
-		name: 'Инженерия данных и машинное обучение',
+		name: 'Low-code аналитика данных',
 		level: 'master',
 		directionCode: '09.04.01',
 		status: 'active',
@@ -1449,7 +1475,7 @@ const PROGRAMS: readonly ProgramSeed[] = [
 	{
 		key: 'vo-mag-02',
 		code: 'VO-MAG-02',
-		name: 'Безопасность информационных систем организации',
+		name: 'Распределённые реестры',
 		level: 'master',
 		directionCode: '09.04.02',
 		status: 'draft',
@@ -1463,7 +1489,7 @@ const PROGRAMS: readonly ProgramSeed[] = [
 	{
 		key: 'spo-01',
 		code: 'SPO-01',
-		name: 'Информационные системы и программирование',
+		name: 'SQL-разработчик',
 		level: 'spo',
 		directionCode: '09.02.07',
 		status: 'active',
@@ -1472,14 +1498,14 @@ const PROGRAMS: readonly ProgramSeed[] = [
 	{
 		key: 'spo-02',
 		code: 'SPO-02',
-		name: 'Сетевое и системное администрирование',
+		name: 'Аналитика на Python',
 		level: 'spo',
 		directionCode: '09.02.06',
 		status: 'active',
 		versions: [
 			{ summary: 'Первая редакция программы.', effectiveFrom: '2021-09-01' },
 			{
-				summary: 'Добавлен модуль по эксплуатации отечественных операционных систем.',
+				summary: 'Добавлен модуль по работе с отечественными хранилищами данных.',
 				effectiveFrom: '2024-09-01'
 			}
 		]
@@ -1487,7 +1513,7 @@ const PROGRAMS: readonly ProgramSeed[] = [
 	{
 		key: 'school-01',
 		code: 'SCH-01',
-		name: 'Основы программирования для школьников',
+		name: 'Промпт-инжиниринг',
 		level: 'school',
 		status: 'active',
 		versions: [{ summary: 'Первая редакция программы.', effectiveFrom: '2023-09-01' }]
@@ -1495,18 +1521,10 @@ const PROGRAMS: readonly ProgramSeed[] = [
 	{
 		key: 'dpo-01',
 		code: 'DPO-01',
-		name: 'Повышение квалификации преподавателей по промышленной разработке',
+		name: 'Управление проектами',
 		level: 'dpo',
 		status: 'active',
 		versions: [{ summary: 'Первая редакция программы.', effectiveFrom: '2024-02-01' }]
-	},
-	{
-		key: 'dpo-02',
-		code: 'DPO-02',
-		name: 'Переподготовка: администрирование облачных платформ',
-		level: 'dpo',
-		status: 'archived',
-		versions: [{ summary: 'Первая редакция программы.', effectiveFrom: '2021-03-01' }]
 	}
 ];
 
@@ -1518,66 +1536,70 @@ type ProductSeed = { key: string; vendorKey: string } & Omit<
 const PRODUCTS: readonly ProductSeed[] = [
 	{
 		key: 'lms',
-		vendorKey: 'digital',
-		code: 'PRD-LMS-01',
-		name: 'Платформа учебных курсов «Ориентир»',
-		description: 'Среда, в которой партнёры ведут занятия по программам оператора.',
+		vendorKey: 'operator',
+		code: 'RT-DEVOPS',
+		name: 'Базис',
+		description:
+			'Платформа виртуализации и DevOps: на ней идёт программа подготовки DevOps-инженеров.',
 		status: 'active'
 	},
 	{
 		key: 'analytics',
-		vendorKey: 'irbis',
-		code: 'PRD-ANL-02',
-		name: 'Аналитический модуль «Радар»',
-		description: 'Сводки по набору и успеваемости для отчётности перед заказчиком.',
+		vendorKey: 'operator',
+		code: 'RT-DATAVISION',
+		name: 'RT.DataVision',
+		description:
+			'Low-code среда визуализации и анализа данных для учебных и исследовательских задач.',
 		status: 'active'
 	},
 	{
 		key: 'lab',
-		vendorKey: 'technosphere',
-		code: 'PRD-SIM-03',
-		name: 'Тренажёр сетевых лабораторий «Полигон»',
-		description: 'Виртуальные стенды для практических занятий по сетям.',
+		vendorKey: 'operator',
+		code: 'RT-AKOLA',
+		name: 'Акола',
+		description: 'No-code платформа для сборки веб-приложений и порталов.',
 		status: 'active'
 	},
 	{
 		key: 'docs',
-		vendorKey: 'digital',
-		code: 'PRD-DOC-04',
-		name: 'Конструктор учебных документов «Бланк»',
-		description: 'Шаблоны договоров и актов под образовательные проекты.',
-		status: 'draft'
+		vendorKey: 'operator',
+		code: 'RT-YAGA',
+		name: 'Яга',
+		description: 'Система управления проектами и задачами команд.',
+		status: 'active'
 	},
 	{
 		key: 'cloud',
-		vendorKey: 'ladoga',
-		code: 'PRD-CLD-05',
-		name: 'Облачная среда разработки «Верстак»',
-		description: 'Рабочие места для студентов без установки на личные компьютеры.',
+		vendorKey: 'operator',
+		code: 'RT-AURORA-SDK',
+		name: 'Аврора SDK',
+		description:
+			'Комплект разработчика мобильных приложений для отечественной операционной системы.',
 		status: 'active'
 	},
 	{
 		key: 'security',
-		vendorKey: 'meridian',
-		code: 'PRD-SEC-06',
-		name: 'Учебный стенд по защите информации «Барьер»',
-		description: 'Стенд для курсов по информационной безопасности.',
+		vendorKey: 'operator',
+		code: 'RT-WEB3GATE',
+		name: 'WEB3Gate',
+		description:
+			'Платформа распределённого реестра: смарт-контракты и работа с цифровыми активами.',
 		status: 'active'
 	},
 	{
 		key: 'assistant',
-		vendorKey: 'polarcode',
-		code: 'PRD-BOT-07',
-		name: 'Помощник куратора «Маяк»',
-		description: 'Напоминания и рассылки по учебным группам.',
+		vendorKey: 'operator',
+		code: 'RT-NEUROGATE',
+		name: 'Нейрошлюз',
+		description: 'Единая точка доступа к языковым моделям для прикладных сервисов.',
 		status: 'draft'
 	},
 	{
 		key: 'archive',
-		vendorKey: 'technosphere',
-		code: 'PRD-ARC-08',
-		name: 'Архив выпускных работ «Свод»',
-		description: 'Хранилище выпускных работ с поиском по темам.',
+		vendorKey: 'operator',
+		code: 'RT-DATALAKE',
+		name: 'RT.Data Lake',
+		description: 'Озеро данных: хранение и подготовка больших наборов под аналитику.',
 		status: 'archived'
 	}
 ];

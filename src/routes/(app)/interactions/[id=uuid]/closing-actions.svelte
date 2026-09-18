@@ -17,7 +17,18 @@
 	 * через месяц не объяснят ничего. Приговор считает сервер — кнопка остаётся
 	 * на экране и с объяснением, почему она недоступна.
 	 */
-	let { closing }: { closing: InteractionClosingView } = $props();
+	let {
+		closing,
+		revision
+	}: {
+		closing: InteractionClosingView;
+		/**
+		 * Редакция процесса, с которой отрисована карточка. Едет с обеими формами:
+		 * приговор о закрытии считан по финальной стадии этой редакции, и по
+		 * изменившемуся процессу сервер откажет, а не закроет запись вслепую.
+		 */
+		revision: number;
+	} = $props();
 
 	let completeOpen = $state(false);
 	let cancelOpen = $state(false);
@@ -79,6 +90,8 @@
 			use:enhance={actionEnhance({ onsuccess: () => (completeOpen = false) })}
 			class="flex flex-col gap-4"
 		>
+			<input type="hidden" name="revision" value={revision} />
+
 			{#if closing.complete.requiresForce}
 				<input type="hidden" name="force" value="true" />
 			{/if}
@@ -121,6 +134,8 @@
 			use:enhance={actionEnhance({ onsuccess: () => (cancelOpen = false) })}
 			class="flex flex-col gap-4"
 		>
+			<input type="hidden" name="revision" value={revision} />
+
 			<div class="flex flex-col gap-1.5">
 				<Label for="cancelReason">Причина</Label>
 				<Textarea

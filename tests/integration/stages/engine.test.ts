@@ -538,6 +538,7 @@ describe('закрытие взаимодействия', () => {
 
 		await completeInteraction(fixture.ctx, {
 			interactionId: fixture.interactionId,
+			revision: fixture.revision.version,
 			summary: 'Отчёт принят заказчиком',
 			force: false
 		});
@@ -563,6 +564,7 @@ describe('закрытие взаимодействия', () => {
 		await expect(
 			completeInteraction(fixture.ctx, {
 				interactionId: fixture.interactionId,
+				revision: fixture.revision.version,
 				summary: null,
 				force: false
 			})
@@ -587,6 +589,7 @@ describe('закрытие взаимодействия', () => {
 		await expect(
 			completeInteraction(fixture.ctx, {
 				interactionId: fixture.interactionId,
+				revision: fixture.revision.version,
 				summary: 'Вуз передумал',
 				force: false
 			})
@@ -606,6 +609,7 @@ describe('закрытие взаимодействия', () => {
 		await expect(
 			completeInteraction(manager, {
 				interactionId: fixture.interactionId,
+				revision: fixture.revision.version,
 				summary: 'Вуз передумал',
 				force: true
 			})
@@ -613,6 +617,7 @@ describe('закрытие взаимодействия', () => {
 
 		await completeInteraction(fixture.ctx, {
 			interactionId: fixture.interactionId,
+			revision: fixture.revision.version,
 			summary: 'Вуз передумал: программа закрыта на его стороне',
 			force: true
 		});
@@ -638,6 +643,7 @@ describe('закрытие взаимодействия', () => {
 
 		await cancelInteraction(fixture.ctx, {
 			interactionId: fixture.interactionId,
+			revision: fixture.revision.version,
 			reason: 'Вуз отказался от сотрудничества в этом учебном году'
 		});
 

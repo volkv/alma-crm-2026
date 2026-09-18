@@ -16,14 +16,26 @@
  * Полностью — `docs/access-matrix.md`, раздел 2.
  */
 import { alias } from 'drizzle-orm/pg-core';
-import { and, asc, desc, eq, isNull, ne, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, exists, isNull, ne, sql } from 'drizzle-orm';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
-import { directions, organizationResponsibles, organizations, users } from '../db/schema';
-import { withTransaction } from '../db/transaction';
+import {
+	directions,
+	interactionParties,
+	interactionProducts,
+	interactionPrograms,
+	interactions,
+	organizationResponsibles,
+	organizations,
+	productDirections,
+	programs,
+	users
+} from '../db/schema';
+import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
 import { requirePermission, scopeFilter } from '../rbac';
+import { setResponsible } from '../stages/commands';
 
 /** Назначение в том виде, в каком его показывает карточка вуза. */
 export type ResponsibleView = {
@@ -83,7 +95,93 @@ export type AssignResponsibleInput = {
 	userId: string;
 	/** `null` — ответственный за вуз целиком. */
 	directionId: string | null;
+	/**
+	 * Передать новому ответственному незавершённые взаимодействия прежнего.
+	 *
+	 * Работает только при замене: при первом назначении передавать нечего, а
+	 * снятие без замены (`releaseResponsible`) не двигает работу вовсе — некому.
+	 * Требует права `interactions.reassign`, потому что это та же передача
+	 * работы, что и с карточки взаимодействия, только списком.
+	 */
+	transferInteractions: boolean;
 };
+
+/**
+ * Незавершённые взаимодействия, которые уходят вместе с вузом.
+ *
+ * Отбор узкий намеренно. **Основная сторона**, а не любая: оператор стоит
+ * стороной почти везде, и по любой стороне передача унесла бы половину
+ * продукта. **Прежний ответственный владельцем**: запись, которую вуз давно
+ * передал кому-то третьему, ведёт он, и смена куратора вуза его работу не
+ * трогает. **Только `active`**: завершённые и отменённые — история, у неё
+ * владелец остаётся тот, кто её вёл.
+ *
+ * Назначение по направлению уносит только работу этого направления, а
+ * принадлежность к направлению у взаимодействия та же, что в отчётах: по
+ * продуктам (`product_directions`) или по программам (`programs.direction_id`).
+ */
+async function openInteractionsOf(
+	tx: Tx,
+	params: { organizationId: string; ownerUserId: string; directionId: string | null }
+): Promise<string[]> {
+	const conditions = [
+		eq(interactions.status, 'active'),
+		eq(interactions.ownerUserId, params.ownerUserId),
+		exists(
+			tx
+				.select({ one: sql`1` })
+				.from(interactionParties)
+				.where(
+					and(
+						eq(interactionParties.interactionId, interactions.id),
+						eq(interactionParties.isPrimary, true),
+						eq(interactionParties.organizationId, params.organizationId)
+					)
+				)
+		)
+	];
+
+	if (params.directionId !== null) {
+		const byProduct = exists(
+			tx
+				.select({ one: sql`1` })
+				.from(interactionProducts)
+				.innerJoin(
+					productDirections,
+					eq(productDirections.productId, interactionProducts.productId)
+				)
+				.where(
+					and(
+						eq(interactionProducts.interactionId, interactions.id),
+						eq(productDirections.directionId, params.directionId)
+					)
+				)
+		);
+
+		const byProgram = exists(
+			tx
+				.select({ one: sql`1` })
+				.from(interactionPrograms)
+				.innerJoin(programs, eq(programs.id, interactionPrograms.programId))
+				.where(
+					and(
+						eq(interactionPrograms.interactionId, interactions.id),
+						eq(programs.directionId, params.directionId)
+					)
+				)
+		);
+
+		conditions.push(sql`(${byProduct} or ${byProgram})`);
+	}
+
+	const rows = await tx
+		.select({ id: interactions.id })
+		.from(interactions)
+		.where(and(...conditions))
+		.orderBy(asc(interactions.id));
+
+	return rows.map((row) => row.id);
+}
 
 /**
  * Назначает ответственного: закрывает прежнее назначение на ту же пару «вуз ×
@@ -91,6 +189,11 @@ export type AssignResponsibleInput = {
  *
  * Момент один на обе строки: иначе между ними осталась бы щель, в которую
  * попадает отчёт за период, и строка вуза оказалась бы ничьей.
+ *
+ * При замене незавершённые взаимодействия прежнего ответственного передаются
+ * новому — в той же транзакции, той же командой, что и передача с карточки
+ * (`setResponsible`): иначе половина работы осталась бы у человека, который вуз
+ * уже не ведёт, и передавать её пришлось бы поштучно.
  */
 export async function assignResponsible(
 	ctx: ActorContext,
@@ -100,6 +203,13 @@ export async function assignResponsible(
 		type: 'directory.responsible_assigned',
 		subject: { type: 'organization', id: input.organizationId }
 	});
+
+	// Передача — та же смена владельца, что и с карточки взаимодействия, поэтому
+	// и право то же. Проверяется до первой записи и независимо от того, нашлась
+	// ли работа: отказ не должен зависеть от содержимого чужого портфеля.
+	if (input.transferInteractions) {
+		requirePermission(ctx, 'interactions.reassign');
+	}
 
 	await assertOrganizationAssignable(ctx, input.organizationId);
 	await assertAssignable(ctx, input.userId);
@@ -179,6 +289,23 @@ export async function assignResponsible(
 			assignedByUserId: ctx.user?.id ?? null
 		});
 
+		// Передача идёт после того, как назначение записано: область доступа
+		// считается подзапросом по действующим назначениям, и до этой строки вуз
+		// новому ответственному ещё не принадлежит.
+		const candidates =
+			replaced === undefined || !input.transferInteractions
+				? []
+				: await openInteractionsOf(tx, {
+						organizationId: input.organizationId,
+						ownerUserId: replaced.userId,
+						directionId: input.directionId
+					});
+
+		const transferred =
+			candidates.length === 0
+				? 0
+				: await setResponsible(ctx, { interactionIds: candidates, userId: input.userId }, tx);
+
 		await recordAuditEvent(
 			ctx,
 			{
@@ -192,7 +319,9 @@ export async function assignResponsible(
 					organizationId: input.organizationId,
 					userId: input.userId,
 					...(input.directionId === null ? {} : { directionId: input.directionId }),
-					...(replaced === undefined ? {} : { previousUserId: replaced.userId })
+					...(replaced === undefined
+						? {}
+						: { previousUserId: replaced.userId, transferredCount: transferred })
 				}
 			},
 			tx

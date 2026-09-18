@@ -54,8 +54,8 @@ async function workbookBytes(): Promise<Buffer> {
 	const sheet = workbook.addWorksheet('Выгрузка');
 
 	sheet.addRow(['Вуз', 'Код программы', 'Подано заявок', 'Зачислено']);
-	sheet.addRow(['СЗПУ', 'VO-BAK-01', 64, 48]);
-	sheet.addRow(['ПУПИ', 'VO-MAG-01', 21, 15]);
+	sheet.addRow(['СПбПУ', 'VO-BAK-01', 64, 48]);
+	sheet.addRow(['МФТИ', 'VO-MAG-01', 21, 15]);
 
 	return Buffer.from(await workbook.xlsx.writeBuffer());
 }
@@ -170,7 +170,7 @@ test('мастер читает и книгу XLSX', async ({ page }) => {
 
 	// Разбор книги виден по превью значений рядом с колонкой.
 	await expect(page.getByText('Предложено').first()).toBeVisible();
-	await expect(page.getByText('СЗПУ · ПУПИ')).toBeVisible();
+	await expect(page.getByText('СПбПУ · МФТИ')).toBeVisible();
 	await expect(page.getByText('В файле: 2 строки')).toBeVisible();
 });
 

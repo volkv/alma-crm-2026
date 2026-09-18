@@ -10,7 +10,7 @@ import { expect, test } from './fixtures';
  */
 
 /** Вуз из набора стенда: организации заводит сид, а не эта проверка. */
-const INSTITUTION = 'СЗПУ';
+const INSTITUTION = 'СПбПУ';
 
 const FIRST_STAGE = 'Поиск контактных лиц';
 const SECOND_STAGE = 'Коммуникация и сверка программ';

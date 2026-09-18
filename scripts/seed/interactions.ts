@@ -10,8 +10,9 @@
  * `stage_entries` ничего, кроме времени: движок ставит `now()`, а
  * демонстрации нужна запись, которая идёт третий месяц.
  *
- * Данные полностью выдуманы — см. `directory.ts`: организации, люди, программы
- * и продукты берутся оттуда по тем же ключам.
+ * Названия вузов и продуктов публичные, всё остальное вымышлено — см.
+ * `directory.ts`: организации, люди, программы и продукты берутся оттуда по тем
+ * же ключам, а заголовки, сроки, комментарии и итоги набор придумывает сам.
  */
 import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
@@ -126,7 +127,7 @@ type InteractionSeed = {
 const INTERACTIONS: readonly InteractionSeed[] = [
 	{
 		key: 'szpu-vo',
-		title: 'СЗПУ: подготовка по прикладной информатике, 2026/2027',
+		title: 'СПбПУ: подготовка DevOps-инженеров, 2026/2027',
 		institution: 'szpu',
 		contact: 'drozdova',
 		sites: ['szpu-dept-is'],
@@ -143,7 +144,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'lyceum306-school',
-		title: 'Лицей № 306 «Гравитон»: основы программирования для старших классов',
+		title: 'Лицей № 306 «Гравитон»: промпт-инжиниринг для старших классов',
 		institution: 'lyceum306',
 		contact: 'morozov',
 		customer: 'polarcode',
@@ -157,7 +158,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'vts-spo',
-		title: 'ВТС: сетевое администрирование для отделения связи',
+		title: 'ВТС: аналитика на Python для отделения связи',
 		institution: 'vts',
 		contact: 'karpov',
 		customer: 'technosphere',
@@ -171,7 +172,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'paid-praktiki',
-		title: 'ПАИД: практики и стажировки на программах бакалавриата',
+		title: 'НИУ «МЭИ»: практики и стажировки на программах бакалавриата',
 		institution: 'paid',
 		contact: 'gorbunova',
 		sites: ['paid-main'],
@@ -187,7 +188,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'pupi-ai',
-		title: 'ПУПИ: магистратура по инженерии данных',
+		title: 'МФТИ: магистратура по low-code аналитике данных',
 		institution: 'pupi',
 		contact: 'ignatyeva',
 		sites: ['pupi-dept-ai'],
@@ -207,7 +208,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'nkis-set',
-		title: 'НКИС: сетевое и системное администрирование, набор 2026',
+		title: 'НКИС: аналитика на Python, набор 2026',
 		institution: 'nkis',
 		contact: 'zueva',
 		sites: ['nkis-main'],
@@ -226,7 +227,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'school47-start',
-		title: 'Школа № 47 «Вектор»: кружок программирования',
+		title: 'Школа № 47 «Вектор»: кружок промпт-инжиниринга',
 		institution: 'school47',
 		contact: 'novikova',
 		customer: 'polarcode',
@@ -241,7 +242,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'uguis-avtomat',
-		title: 'УГУИС: автоматизация производств, совместная лаборатория',
+		title: 'ТПУ: web-разработка на «Аколе», совместная лаборатория',
 		institution: 'uguis',
 		contact: 'mukhin',
 		sites: ['uguis-dept-auto'],
@@ -264,7 +265,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'skpa-tech',
-		title: 'СКПА: информационные системы и программирование',
+		title: 'СКПА: подготовка SQL-разработчиков',
 		institution: 'skpa',
 		contact: 'lebedeva',
 		customer: 'technosphere',
@@ -279,7 +280,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'sruit-dpo',
-		title: 'СУИТ: повышение квалификации преподавателей',
+		title: 'Московский Политех: повышение квалификации преподавателей',
 		institution: 'sruit',
 		contact: 'shilov',
 		customer: 'digital',
@@ -294,13 +295,13 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'vkgtu-svyaz',
-		title: 'ВКГТУ: системы связи, пакет документов на 2026/2027',
+		title: 'ЧГУ им. И. Н. Ульянова: пакет документов на 2026/2027',
 		institution: 'vkgtu',
 		contact: 'khabibullina',
 		sites: ['vkgtu-dept-comm'],
 		customer: 'meridian',
 		programs: ['vo-bak-02', 'vo-mag-02'],
-		products: ['lab', 'cloud'],
+		products: ['lab', 'security'],
 		owner: 'veresova',
 		stage: 'document_exchange',
 		startedDaysAgo: 70,
@@ -311,7 +312,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'ukct-koll',
-		title: 'УКЦТ: программирование для колледжа, договор на год',
+		title: 'УКЦТ: SQL-разработчик для колледжа, договор на год',
 		institution: 'ukct',
 		contact: 'dementyev',
 		sites: ['ukct-main'],
@@ -326,7 +327,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'yutus-svyaz',
-		title: 'ЮТУС: информационные системы и технологии связи',
+		title: 'ВолгГТУ: web-разработка на «Аколе»',
 		institution: 'yutus',
 		contact: 'savelyev',
 		customer: 'technosphere',
@@ -346,7 +347,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'batse-econom',
-		title: 'БАЦЭ: цифровая экономика, корректировка пакета документов',
+		title: 'Университет Иннополис: корректировка пакета документов',
 		institution: 'batse',
 		contact: 'ulyanova',
 		customer: 'irbis',
@@ -361,13 +362,13 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'sivt-mag',
-		title: 'СИВТ: магистратура по инженерии данных, подписание',
+		title: 'НГУЭУ: магистратура по аналитике данных, подписание',
 		institution: 'sivt',
 		contact: 'orekhova',
 		sites: ['sivt-main'],
 		customer: 'digital',
 		programs: ['vo-mag-01'],
-		products: ['cloud'],
+		products: ['analytics'],
 		owner: 'zotov',
 		stage: 'signing',
 		startedDaysAgo: 55,
@@ -383,7 +384,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'bit-telecom',
-		title: 'БИТ: телекоммуникации, соглашение о сотрудничестве',
+		title: 'МТУСИ: соглашение о сотрудничестве',
 		institution: 'bit',
 		contact: 'eldarova',
 		customer: 'polarcode',
@@ -400,7 +401,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'puts-telecom',
-		title: 'ПУТС: передача материалов и лицензий на учебный год',
+		title: 'СГТУ им. Гагарина Ю. А.: передача материалов и лицензий на учебный год',
 		institution: 'puts',
 		contact: 'yakovleva',
 		customer: 'ladoga',
@@ -418,7 +419,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'pupi-bak',
-		title: 'ПУПИ: бакалавриат по прикладной информатике, комплект материалов',
+		title: 'МФТИ: подготовка DevOps-инженеров, комплект материалов',
 		institution: 'pupi',
 		contact: 'zharova',
 		sites: ['pupi-main'],
@@ -435,7 +436,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'szpu-vnedrenie',
-		title: 'СЗПУ: сопровождение внедрения учебной платформы',
+		title: 'СПбПУ: сопровождение внедрения «Базиса»',
 		institution: 'szpu',
 		contact: 'belskaya',
 		sites: ['szpu-main'],
@@ -456,7 +457,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'uguis-vnedr',
-		title: 'УГУИС: внедрение тренажёра сетевых лабораторий',
+		title: 'ТПУ: внедрение «Аколы» в учебный процесс',
 		institution: 'uguis',
 		contact: 'lapina',
 		customer: 'meridian',
@@ -472,12 +473,12 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'vkgtu-prepod',
-		title: 'ВКГТУ: обучение преподавателей промышленной разработке',
+		title: 'ЧГУ им. И. Н. Ульянова: обучение преподавателей управлению проектами',
 		institution: 'vkgtu',
 		contact: 'tsvetkov',
 		customer: 'ladoga',
 		programs: ['dpo-01'],
-		products: ['lms'],
+		products: ['docs'],
 		owner: 'zotov',
 		stage: 'teacher_training',
 		startedDaysAgo: 140,
@@ -489,7 +490,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'sivt-prepod',
-		title: 'СИВТ: повышение квалификации преподавательского состава',
+		title: 'НГУЭУ: повышение квалификации преподавательского состава',
 		institution: 'sivt',
 		contact: 'nesterov',
 		customer: 'digital',
@@ -504,7 +505,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'yutus-aktual',
-		title: 'ЮТУС: актуализация программы под требования заказчика',
+		title: 'ВолгГТУ: актуализация программы под требования заказчика',
 		institution: 'yutus',
 		contact: 'rodionova',
 		customer: 'technosphere',
@@ -535,7 +536,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'batse-kontrol',
-		title: 'БАЦЭ: контроль исполнения обязательств за учебный год',
+		title: 'Университет Иннополис: контроль исполнения обязательств за учебный год',
 		institution: 'batse',
 		contact: 'tarasyuk',
 		customer: 'irbis',
@@ -549,7 +550,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'szpu-2025',
-		title: 'СЗПУ: прикладная информатика, 2025/2026',
+		title: 'СПбПУ: DevOps-инженеры, 2025/2026',
 		institution: 'szpu',
 		contact: 'astakhov',
 		sites: ['szpu-main'],
@@ -568,7 +569,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'pupi-2025',
-		title: 'ПУПИ: инженерия данных, 2025/2026',
+		title: 'МФТИ: low-code аналитика данных, 2025/2026',
 		institution: 'pupi',
 		contact: 'zharova',
 		customer: 'irbis',
@@ -584,24 +585,24 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'nkis-2025',
-		title: 'НКИС: системное администрирование, 2025/2026',
+		title: 'НКИС: аналитика на Python, 2025/2026',
 		institution: 'nkis',
 		contact: 'ilyin',
 		sites: ['nkis-lab'],
 		customer: 'ladoga',
 		programs: ['spo-02'],
-		products: ['cloud'],
+		products: ['analytics'],
 		owner: 'demo-manager',
 		stage: 'execution_control',
 		startedDaysAgo: 280,
 		sinceDaysAgo: 28,
 		lastActivityDaysAgo: 28,
 		agreement: ['2025-09-01', '2026-06-30'],
-		completedWith: 'Две группы завершили обучение, лаборатория передана колледжу на баланс.'
+		completedWith: 'Две группы завершили обучение, лицензии продлены на следующий год.'
 	},
 	{
 		key: 'puts-2025',
-		title: 'ПУТС: телекоммуникации, 2025/2026',
+		title: 'СГТУ им. Гагарина Ю. А.: web-разработка, 2025/2026',
 		institution: 'puts',
 		contact: 'yurchenko',
 		customer: 'technosphere',
@@ -616,12 +617,12 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'sruit-2025',
-		title: 'СУИТ: переподготовка преподавателей, 2025/2026',
+		title: 'Московский Политех: переподготовка преподавателей, 2025/2026',
 		institution: 'sruit',
 		contact: 'chernysheva',
 		customer: 'polarcode',
 		programs: ['dpo-01'],
-		products: ['assistant'],
+		products: ['docs'],
 		owner: 'zotov',
 		stage: 'execution_control',
 		startedDaysAgo: 250,
@@ -1402,6 +1403,7 @@ export async function seedInteractions(options: { groupKey: string }): Promise<v
 		if (seed.completedWith !== undefined) {
 			await completeInteraction(ctx, {
 				interactionId: id,
+				revision: plan.revision,
 				summary: seed.completedWith,
 				force: false
 			});

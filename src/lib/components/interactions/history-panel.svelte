@@ -61,7 +61,17 @@
 		return pluralize(Math.round(rounded / (24 * HOUR)), ['день', 'дня', 'дней']);
 	}
 
-	function describe(value: unknown): string {
+	/**
+	 * Значение правки на экран. У ссылочных полей — ответственного, сторон,
+	 * программ и продуктов — это подпись с именами, которую собрал сервер:
+	 * идентификатор в истории ничего не объясняет и никуда не ведёт, поэтому
+	 * рядом с подписью он не показывается вовсе.
+	 */
+	function describe(label: string | null, value: unknown): string {
+		if (label !== null) {
+			return label;
+		}
+
 		if (value === null || value === undefined) {
 			return '—';
 		}
@@ -150,9 +160,10 @@
 			{#each changes as change (change.id)}
 				<div class="flex flex-col gap-0.5 border-b border-border pb-2 last:border-0 last:pb-0">
 					<p class="text-sm">
-						{FIELD_LABELS[change.field] ?? change.field}: {describe(change.oldValue)} → {describe(
-							change.newValue
-						)}
+						{FIELD_LABELS[change.field] ?? change.field}: {describe(
+							change.oldLabel,
+							change.oldValue
+						)} → {describe(change.newLabel, change.newValue)}
 					</p>
 					<p class="text-xs text-muted-foreground">
 						{change.authorName} · {formatDateTime(change.changedAt)}

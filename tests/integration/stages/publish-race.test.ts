@@ -460,6 +460,8 @@ describe('закрытие взаимодействия, пока идёт пу�
 		ctx: ActorContext;
 		interactionId: string;
 		stageId: string;
+		/** Редакция, с которой отрисована карточка: публикация её сменит. */
+		revision: number;
 	}> {
 		const ctx = admin();
 		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
@@ -493,14 +495,24 @@ describe('закрытие взаимодействия, пока идёт пу�
 
 		const status = await getInteractionStatus(ctx, interactionId);
 
-		return { ctx: manager(), interactionId, stageId: status.current?.stageId ?? '' };
+		return {
+			ctx: manager(),
+			interactionId,
+			stageId: status.current?.stageId ?? '',
+			revision: status.revision
+		};
 	}
 
 	it('отказывает завершению предметным конфликтом, а не ошибкой базы', async () => {
-		const { ctx, interactionId } = await prepareRemoval();
+		const { ctx, interactionId, revision } = await prepareRemoval();
 
 		const error = await underPublication(() =>
-			completeInteraction(ctx, { interactionId, summary: 'Работа закончена', force: false })
+			completeInteraction(ctx, {
+				interactionId,
+				revision,
+				summary: 'Работа закончена',
+				force: false
+			})
 		);
 
 		expect(error).toBeInstanceOf(ConflictError);
@@ -513,8 +525,13 @@ describe('закрытие взаимодействия, пока идёт пу�
 		expect(status.current?.snapshot.key).toBe('done');
 		await expect(statusOf(interactionId)).resolves.toBe('active');
 
-		// Повтор по обновлённой карточке проходит.
-		await completeInteraction(ctx, { interactionId, summary: 'Работа закончена', force: false });
+		// Повтор по обновлённой карточке проходит: номер редакции читается заново.
+		await completeInteraction(ctx, {
+			interactionId,
+			revision: status.revision,
+			summary: 'Работа закончена',
+			force: false
+		});
 
 		await expect(statusOf(interactionId)).resolves.toBe('completed');
 	}, 120_000);
@@ -573,10 +590,10 @@ describe('закрытие взаимодействия, пока идёт пу�
 	);
 
 	it('отказывает отмене тем же способом', async () => {
-		const { ctx, interactionId } = await prepareRemoval();
+		const { ctx, interactionId, revision } = await prepareRemoval();
 
 		const error = await underPublication(() =>
-			cancelInteraction(ctx, { interactionId, reason: 'Вуз отказался от программы' })
+			cancelInteraction(ctx, { interactionId, revision, reason: 'Вуз отказался от программы' })
 		);
 
 		expect(error).toBeInstanceOf(ConflictError);
@@ -584,7 +601,13 @@ describe('закрытие взаимодействия, пока идёт пу�
 
 		await expect(statusOf(interactionId)).resolves.toBe('active');
 
-		await cancelInteraction(ctx, { interactionId, reason: 'Вуз отказался от программы' });
+		const status = await getInteractionStatus(admin(), interactionId);
+
+		await cancelInteraction(ctx, {
+			interactionId,
+			revision: status.revision,
+			reason: 'Вуз отказался от программы'
+		});
 
 		await expect(statusOf(interactionId)).resolves.toBe('cancelled');
 	}, 120_000);

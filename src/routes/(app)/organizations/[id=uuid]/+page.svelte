@@ -15,6 +15,8 @@
 		ORGANIZATION_KIND_TONES,
 		SITE_KIND_LABELS
 	} from '$lib/components/directory/labels';
+	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+	import { Label } from '$lib/components/ui/label/index.js';
 	import ConfirmDialog from '$lib/components/confirm-dialog.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
@@ -275,6 +277,23 @@
 							{/each}
 						</select>
 					</label>
+
+					{#if data.canTransfer}
+						<!-- Флажок ниже полей и выше кнопки: это условие отправки, а не
+						     ещё одно поле формы. Снятый браузер не присылает вовсе,
+						     поэтому сервер читает присутствие значения. -->
+						<Label class="flex w-full items-start gap-2 font-normal">
+							<Checkbox name="transferInteractions" value="true" checked class="mt-0.5" />
+							<span class="flex flex-col gap-0.5">
+								<span>Передать незавершённые взаимодействия новому ответственному</span>
+								<span class="text-xs text-muted-foreground">
+									Уйдут записи в работе, где этот вуз — основная сторона, а владелец — прежний
+									ответственный; при назначении по направлению — только записи этого направления.
+									Завершённые и отменённые остаются у тех, кто их вёл.
+								</span>
+							</span>
+						</Label>
+					{/if}
 
 					<Button type="submit" size="sm">Назначить</Button>
 				</form>

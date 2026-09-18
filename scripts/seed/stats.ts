@@ -37,12 +37,12 @@ const SNAPSHOT_IDS = {
  * вуз, и подставлять туда идентификатор бессмысленно.
  */
 const ORGANIZATIONS: readonly { key: string; name: string }[] = [
-	{ key: 'szpu', name: 'СЗПУ' },
-	{ key: 'pupi', name: 'ПУПИ' },
-	{ key: 'uguis', name: 'УГУИС' },
-	{ key: 'sivt', name: 'СИВТ' },
-	{ key: 'yutus', name: 'ЮТУС' },
-	{ key: 'batse', name: 'БАЦЭ' }
+	{ key: 'szpu', name: 'СПбПУ' },
+	{ key: 'pupi', name: 'МФТИ' },
+	{ key: 'uguis', name: 'ТПУ' },
+	{ key: 'sivt', name: 'НГУЭУ' },
+	{ key: 'yutus', name: 'ВолгГТУ' },
+	{ key: 'batse', name: 'Университет Иннополис' }
 ];
 
 /**
@@ -60,8 +60,7 @@ const PROGRAMS: readonly { key: string; code: string }[] = [
 	{ key: 'spo-01', code: 'SPO-01' },
 	{ key: 'spo-02', code: 'SPO-02' },
 	{ key: 'school-01', code: 'SCH-01' },
-	{ key: 'dpo-01', code: 'DPO-01' },
-	{ key: 'dpo-02', code: 'DPO-02' }
+	{ key: 'dpo-01', code: 'DPO-01' }
 ];
 
 /** Колонки файла и поля, в которые они сопоставлены. */

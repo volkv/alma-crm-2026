@@ -15,10 +15,10 @@ const managerTest = base.extend<object>({ storageState: MANAGER_STATE });
 const leadTest = base.extend<object>({ storageState: LEAD_STATE });
 
 /** Вуз, который ведёт демонстрационный менеджер. */
-const OWN_ORGANIZATION = { id: seedId('organization', 'bit'), name: 'БИТ' };
+const OWN_ORGANIZATION = { id: seedId('organization', 'bit'), name: 'МТУСИ' };
 
 /** Вуз Вересовой: тот же руководитель, другой менеджер. */
-const OTHER_ORGANIZATION = { id: seedId('organization', 'pupi'), name: 'ПУПИ' };
+const OTHER_ORGANIZATION = { id: seedId('organization', 'pupi'), name: 'МФТИ' };
 
 managerTest('менеджер видит свои вузы и не видит чужих', async ({ page }) => {
 	// Отбор по названию, а не первая страница списка: база прогона живёт дольше

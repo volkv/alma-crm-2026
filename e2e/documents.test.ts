@@ -168,7 +168,7 @@ test('раздел показывает загруженные документ�
 
 		// Строка ведёт в карточку, из которой файл пришёл.
 		await expect(
-			ownRows(page).first().getByRole('link', { name: 'БИТ: телекоммуникации' })
+			ownRows(page).first().getByRole('link', { name: 'МТУСИ: соглашение о сотрудничестве' })
 		).toBeVisible();
 
 		await page.screenshot({ path: 'test-results/documents-list.png', fullPage: true });

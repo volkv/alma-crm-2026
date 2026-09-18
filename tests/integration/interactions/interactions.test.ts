@@ -14,12 +14,27 @@ import {
 	programs
 } from '$lib/server/db/schema';
 import { ConflictError, ForbiddenError, NotFoundError } from '$lib/server/errors';
-import { getInteraction, listInteractions } from '$lib/server/interactions/read';
+import {
+	getInteraction,
+	listInteractionChanges,
+	listInteractions
+} from '$lib/server/interactions/read';
 import { getInteractionSummary } from '$lib/server/interactions/summary';
 import { createInteraction, updateInteraction } from '$lib/server/interactions/write';
 import { B2B_GROUP_KEY, B2B_PROCESS, B2C_GROUP_KEY } from '$lib/server/stages/definitions';
-import { ensureProcess, resolveProcessGroup } from '$lib/server/stages/process';
-import { setResponsible } from '$lib/server/stages/commands';
+import {
+	createDraft,
+	ensureProcess,
+	processDefinition,
+	publishProcess,
+	resolveProcessGroup,
+	updateDraft
+} from '$lib/server/stages/process';
+import {
+	cancelInteraction,
+	completeInteraction,
+	setResponsible
+} from '$lib/server/stages/commands';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import { interactionListQuerySchema } from '$lib/contracts/interactions';
 import type { ActorContext } from '$lib/server/actor';
@@ -605,5 +620,201 @@ describe('список и область доступа', () => {
 		// Наблюдателю не предлагается ничего, что он не имеет права сделать.
 		expect(readOnlySummary.canDo.actions).toEqual([]);
 		expect(readOnlySummary.canDo.transitions.every((option) => !option.allowed)).toBe(true);
+	});
+});
+
+/**
+ * Закрытие взаимодействия по устаревшей карточке.
+ *
+ * Завершение и отмена принимают решение по финальной стадии и её требованиям,
+ * а применение изменённого процесса меняет и то и другое. Поэтому обе команды
+ * несут номер редакции, с которой была отрисована карточка, и сверяют его так
+ * же, как переход.
+ */
+describe('закрытие по номеру редакции', () => {
+	/** Взаимодействие на первой стадии и номер редакции, с которой оно отрисовано. */
+	async function stale(
+		ctx: ActorContext,
+		title: string
+	): Promise<{ interactionId: string; before: number; after: number }> {
+		const organizationId = await insertOrganization(database.db);
+
+		const created = await createInteraction(
+			ctx,
+			createInteractionSchema.parse({
+				title,
+				ownerUserId: TEST_USER_IDS.admin,
+				parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
+			})
+		);
+
+		const before = (await getInteractionStatus(ctx, created.id)).revision;
+
+		// Администратор применил изменение процесса: структура та же, редакция
+		// другая — ровно тот случай, который одной сверкой стадии не поймать.
+		const draft = await createDraft(ctx, B2B_GROUP_KEY);
+		await updateDraft(ctx, B2B_GROUP_KEY, processDefinition(draft));
+		await publishProcess(ctx, B2B_GROUP_KEY);
+
+		const after = (await getInteractionStatus(ctx, created.id)).revision;
+
+		expect(after).toBe(before + 1);
+
+		return { interactionId: created.id, before, after };
+	}
+
+	it('отказывает завершению по прежней редакции и пропускает по текущей', async () => {
+		const ctx = admin();
+		await demoProcess();
+		const { interactionId, before, after } = await stale(ctx, 'Завершение по старой карточке');
+
+		await expect(
+			completeInteraction(ctx, {
+				interactionId,
+				revision: before,
+				summary: 'Вуз передумал',
+				force: true
+			})
+		).rejects.toBeInstanceOf(ConflictError);
+
+		// Отказ до единой записи: взаимодействие осталось в работе.
+		expect((await getInteraction(ctx, interactionId)).status).toBe('active');
+
+		await completeInteraction(ctx, {
+			interactionId,
+			revision: after,
+			summary: 'Вуз передумал',
+			force: true
+		});
+
+		expect((await getInteraction(ctx, interactionId)).status).toBe('completed');
+	});
+
+	it('отказывает отмене по прежней редакции и пропускает по текущей', async () => {
+		const ctx = admin();
+		await demoProcess();
+		const { interactionId, before, after } = await stale(ctx, 'Отмена по старой карточке');
+
+		await expect(
+			cancelInteraction(ctx, {
+				interactionId,
+				revision: before,
+				reason: 'Вуз отказался от программы'
+			})
+		).rejects.toBeInstanceOf(ConflictError);
+
+		expect((await getInteraction(ctx, interactionId)).status).toBe('active');
+
+		await cancelInteraction(ctx, {
+			interactionId,
+			revision: after,
+			reason: 'Вуз отказался от программы'
+		});
+
+		expect((await getInteraction(ctx, interactionId)).status).toBe('cancelled');
+	});
+});
+
+/**
+ * Подписи ссылочных значений в истории правок.
+ *
+ * В `interaction_changes` лежат идентификаторы: по ним считается, что
+ * поменялось. На экране идентификатор не объясняет ничего, поэтому имена
+ * разрешаются на весь список сразу, а запись, которой не стало, честно
+ * называется недоступной.
+ */
+describe('история правок: имена вместо идентификаторов', () => {
+	it('подписывает ответственного, стороны, программы и продукты', async () => {
+		const ctx = admin();
+		await demoProcess();
+		const institutionId = await insertOrganization(database.db, { shortName: 'СЗПУ' });
+		const customerId = await insertOrganization(database.db, { shortName: 'Заказчик' });
+		const programId = await insertProgram('09.03.01');
+		const productId = await insertProduct('LMS-1');
+		const successor = await insertUser(database.db, { roleId: 'manager' });
+
+		const created = await createInteraction(
+			ctx,
+			createInteractionSchema.parse({
+				title: 'История с именами',
+				ownerUserId: TEST_USER_IDS.admin,
+				parties: [
+					{ organizationId: institutionId, partyRole: 'educational_institution', isPrimary: true }
+				]
+			})
+		);
+
+		await updateInteraction(
+			ctx,
+			updateInteractionSchema.parse({
+				id: created.id,
+				title: 'История с именами',
+				ownerUserId: successor,
+				reason: 'Передали работу и дополнили состав',
+				parties: [
+					{ organizationId: institutionId, partyRole: 'educational_institution', isPrimary: true },
+					{ organizationId: customerId, partyRole: 'customer' }
+				],
+				programs: [{ programId }],
+				productIds: [productId]
+			})
+		);
+
+		const byField = new Map(
+			(await listInteractionChanges(ctx, created.id)).map((change) => [change.field, change])
+		);
+
+		expect(byField.get('ownerUserId')?.newLabel).toBe('Тестовый Пользователь');
+		expect(byField.get('parties')?.oldLabel).toBe('СЗПУ (учебное заведение)');
+		expect(byField.get('parties')?.newLabel).toBe(
+			'СЗПУ (учебное заведение), Заказчик (компания-заказчик)'
+		);
+		expect(byField.get('programs')?.oldLabel).toBe('—');
+		expect(byField.get('programs')?.newLabel).toBe('Программа 09.03.01');
+		expect(byField.get('products')?.newLabel).toBe('Продукт LMS-1');
+
+		// Название ссылкой не является: подписывать нечего, и показывается само
+		// значение.
+		expect(byField.get('title')).toBeUndefined();
+	});
+
+	it('называет недоступной запись, которой не стало', async () => {
+		const ctx = admin();
+		await demoProcess();
+		const organizationId = await insertOrganization(database.db, { shortName: 'СЗПУ' });
+		const productId = await insertProduct('LMS-OLD');
+
+		const created = await createInteraction(
+			ctx,
+			createInteractionSchema.parse({
+				title: 'История с удалённым продуктом',
+				ownerUserId: TEST_USER_IDS.admin,
+				parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }],
+				productIds: [productId]
+			})
+		);
+
+		await updateInteraction(
+			ctx,
+			updateInteractionSchema.parse({
+				id: created.id,
+				title: 'История с удалённым продуктом',
+				ownerUserId: TEST_USER_IDS.admin,
+				reason: 'Продукт убрали из состава',
+				parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }],
+				productIds: []
+			})
+		);
+
+		await database.db.delete(products).where(eq(products.id, productId));
+
+		const [change] = (await listInteractionChanges(ctx, created.id)).filter(
+			(row) => row.field === 'products'
+		);
+
+		// Сырой идентификатор на экран не выходит: он ничего не объясняет и
+		// никуда не ведёт.
+		expect(change.oldLabel).toBe('недоступно');
+		expect(change.newLabel).toBe('—');
 	});
 });

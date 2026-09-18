@@ -233,18 +233,18 @@ const B2B_DATA = {
 	form: 'b2b',
 	applicant: {
 		kind: 'educational_institution',
-		name: 'Северо-Западный политехнический университет',
-		inn: '7802450127',
+		name: 'Московский технический университет связи и информатики',
+		inn: '0000000096',
 		educationLevel: 'vo'
 	},
 	contact: {
 		lastName: 'Кузьмина',
 		firstName: 'Наталья',
-		email: 'kuzmina@szpu.example.org',
+		email: 'kuzmina@mtuci.example.org',
 		phone: '+7 900 000-00-11',
 		position: 'Проректор по цифровому развитию'
 	},
-	interest: 'Программа подготовки по прикладной информатике'
+	interest: 'Программа подготовки DevOps-инженеров'
 };
 
 const B2C_DATA = {
@@ -1229,8 +1229,8 @@ describe('ключ и подключение обмена', () => {
 describe('заявка по вузу, который ведёт другой сотрудник', () => {
 	it('ведётся от имени действующего ответственного', async () => {
 		const organizationId = await insertOrganization(database.db, {
-			shortName: 'СЗПУ',
-			inn: '7802450127'
+			shortName: 'МТУСИ',
+			inn: '0000000096'
 		});
 		const kam = await insertUser(database.db, {
 			roleId: 'manager',

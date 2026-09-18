@@ -15,7 +15,19 @@
  */
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { directions, interactionParties, organizationResponsibles } from '$lib/server/db/schema';
+import {
+	auditEvents,
+	directions,
+	interactionChanges,
+	interactionParties,
+	interactionProducts,
+	interactionPrograms,
+	interactions,
+	organizationResponsibles,
+	productDirections,
+	products,
+	programs
+} from '$lib/server/db/schema';
 import { getOrganization } from '$lib/server/directory/read';
 import {
 	assignResponsible,
@@ -24,6 +36,8 @@ import {
 } from '$lib/server/directory/responsibles';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '$lib/server/errors';
 import { getInteraction } from '$lib/server/interactions/read';
+import type { PermissionKey } from '$lib/server/rbac/permissions';
+import { defaultRolePermissions } from '$lib/server/rbac/seed';
 import {
 	insertInteractionWithStage,
 	insertOrganization,
@@ -62,6 +76,28 @@ async function insertDirection(code: string, position: number): Promise<string> 
 	return row.id;
 }
 
+/** Программа направления: по ней взаимодействие попадает в разрез ответственности. */
+async function insertProgram(code: string, directionId: string): Promise<string> {
+	const [row] = await database.db
+		.insert(programs)
+		.values({ code, name: `Программа ${code}`, level: 'bachelor', status: 'active', directionId })
+		.returning({ id: programs.id });
+
+	return row.id;
+}
+
+/** Продукт направления: второй путь взаимодействия в тот же разрез. */
+async function insertProduct(code: string, directionId: string): Promise<string> {
+	const [row] = await database.db
+		.insert(products)
+		.values({ code, name: `Продукт ${code}`, status: 'active' })
+		.returning({ id: products.id });
+
+	await database.db.insert(productDirections).values({ productId: row.id, directionId });
+
+	return row.id;
+}
+
 /** Идентификатор действующего назначения вуза; их по правилу не больше одного на направление. */
 async function activeAssignment(organizationId: string): Promise<string> {
 	const [row] = await database.db
@@ -85,12 +121,22 @@ describe('правила назначения', () => {
 		const general = await insertUser(database.db, { roleId: 'manager' });
 		const byDirection = await insertUser(database.db, { roleId: 'manager' });
 
-		await assignResponsible(admin, { organizationId, userId: general, directionId: null });
+		await assignResponsible(admin, {
+			organizationId,
+			userId: general,
+			directionId: null,
+			transferInteractions: false
+		});
 
 		// Иначе по DevOps ответственных стало бы двое — общий и направленческий, —
 		// и правило «один действующий на направление» перестало бы что-либо значить.
 		await expect(
-			assignResponsible(admin, { organizationId, userId: byDirection, directionId })
+			assignResponsible(admin, {
+				organizationId,
+				userId: byDirection,
+				directionId,
+				transferInteractions: false
+			})
 		).rejects.toBeInstanceOf(ConflictError);
 	});
 
@@ -101,10 +147,20 @@ describe('правила назначения', () => {
 		const byDirection = await insertUser(database.db, { roleId: 'manager' });
 		const general = await insertUser(database.db, { roleId: 'manager' });
 
-		await assignResponsible(admin, { organizationId, userId: byDirection, directionId });
+		await assignResponsible(admin, {
+			organizationId,
+			userId: byDirection,
+			directionId,
+			transferInteractions: false
+		});
 
 		await expect(
-			assignResponsible(admin, { organizationId, userId: general, directionId: null })
+			assignResponsible(admin, {
+				organizationId,
+				userId: general,
+				directionId: null,
+				transferInteractions: false
+			})
 		).rejects.toBeInstanceOf(ConflictError);
 	});
 
@@ -114,8 +170,18 @@ describe('правила назначения', () => {
 		const previous = await insertUser(database.db, { roleId: 'manager' });
 		const successor = await insertUser(database.db, { roleId: 'manager' });
 
-		await assignResponsible(admin, { organizationId, userId: previous, directionId: null });
-		await assignResponsible(admin, { organizationId, userId: successor, directionId: null });
+		await assignResponsible(admin, {
+			organizationId,
+			userId: previous,
+			directionId: null,
+			transferInteractions: false
+		});
+		await assignResponsible(admin, {
+			organizationId,
+			userId: successor,
+			directionId: null,
+			transferInteractions: false
+		});
 
 		const rows = await listResponsibles(admin, organizationId);
 		const active = rows.filter((row) => row.validTo === null);
@@ -133,10 +199,20 @@ describe('правила назначения', () => {
 		const organizationId = await insertOrganization(database.db, { shortName: 'СЗПУ' });
 		const kam = await insertUser(database.db, { roleId: 'manager' });
 
-		await assignResponsible(admin, { organizationId, userId: kam, directionId: null });
+		await assignResponsible(admin, {
+			organizationId,
+			userId: kam,
+			directionId: null,
+			transferInteractions: false
+		});
 
 		await expect(
-			assignResponsible(admin, { organizationId, userId: kam, directionId: null })
+			assignResponsible(admin, {
+				organizationId,
+				userId: kam,
+				directionId: null,
+				transferInteractions: false
+			})
 		).rejects.toBeInstanceOf(ConflictError);
 	});
 
@@ -151,7 +227,12 @@ describe('правила назначения', () => {
 		// Оператор стоит стороной почти в каждом взаимодействии: назначить на него
 		// ответственного значило бы отдать ему все записи продукта разом.
 		await expect(
-			assignResponsible(admin, { organizationId, userId: kam, directionId: null })
+			assignResponsible(admin, {
+				organizationId,
+				userId: kam,
+				directionId: null,
+				transferInteractions: false
+			})
 		).rejects.toBeInstanceOf(ValidationError);
 
 		expect(await listResponsibles(admin, organizationId)).toStrictEqual([]);
@@ -167,7 +248,8 @@ describe('правила назначения', () => {
 			assignResponsible(admin, {
 				organizationId,
 				userId: TEST_USER_IDS.service,
-				directionId: null
+				directionId: null,
+				transferInteractions: false
 			})
 		).rejects.toBeInstanceOf(ValidationError);
 	});
@@ -192,7 +274,12 @@ describe('правила назначения', () => {
 			scopeUserIds: [leadId, subordinate]
 		});
 
-		await assignResponsible(lead, { organizationId, userId: subordinate, directionId: null });
+		await assignResponsible(lead, {
+			organizationId,
+			userId: subordinate,
+			directionId: null,
+			transferInteractions: false
+		});
 
 		expect(
 			(await listResponsibles(lead, organizationId))
@@ -203,7 +290,12 @@ describe('правила назначения', () => {
 		// Человек вне подчинения: раздавать ему вузы значило бы раздавать работу,
 		// которой руководитель потом не увидит.
 		await expect(
-			assignResponsible(lead, { organizationId, userId: stranger, directionId: null })
+			assignResponsible(lead, {
+				organizationId,
+				userId: stranger,
+				directionId: null,
+				transferInteractions: false
+			})
 		).rejects.toBeInstanceOf(ForbiddenError);
 	});
 
@@ -216,7 +308,12 @@ describe('правила назначения', () => {
 		// «Нет в области» и «нет вовсе» отвечаются одинаково: разный ответ выдал
 		// бы существование чужого вуза.
 		await expect(
-			assignResponsible(lead, { organizationId: foreign, userId: leadId, directionId: null })
+			assignResponsible(lead, {
+				organizationId: foreign,
+				userId: leadId,
+				directionId: null,
+				transferInteractions: false
+			})
 		).rejects.toBeInstanceOf(NotFoundError);
 	});
 });
@@ -267,7 +364,12 @@ describe('снятие назначения', () => {
 		const organizationId = await insertOrganization(database.db, { shortName: 'СЗПУ' });
 		const kam = await insertUser(database.db, { roleId: 'manager' });
 
-		await assignResponsible(admin, { organizationId, userId: kam, directionId: null });
+		await assignResponsible(admin, {
+			organizationId,
+			userId: kam,
+			directionId: null,
+			transferInteractions: false
+		});
 
 		const assignmentId = await activeAssignment(organizationId);
 		await releaseResponsible(admin, assignmentId);
@@ -275,5 +377,275 @@ describe('снятие назначения', () => {
 		// Закрытое назначение не закрывается заново: иначе вторая кнопка сдвинула
 		// бы `valid_to` и переписала историю вуза.
 		await expect(releaseResponsible(admin, assignmentId)).rejects.toBeInstanceOf(ConflictError);
+	});
+});
+
+/**
+ * Передача незавершённых взаимодействий при замене ответственного.
+ *
+ * Смена куратора вуза без передачи работы оставляла бы половину картины у
+ * человека, который вуз уже не ведёт: карточку он не видит, а записи по ней
+ * остаются его. Отбор узкий намеренно — основная сторона, прежний ответственный
+ * владельцем, только записи в работе, — и здесь проверяется каждая граница.
+ */
+describe('передача взаимодействий при замене', () => {
+	/** Взаимодействие вуза: организация стоит основной стороной. */
+	async function interactionFor(
+		organizationId: string,
+		options: { ownerUserId: string; isPrimary?: boolean; status?: 'active' | 'completed' }
+	): Promise<string> {
+		const { interactionId } = await insertInteractionWithStage(database.db, {
+			ownerUserId: options.ownerUserId
+		});
+
+		await database.db.insert(interactionParties).values({
+			interactionId,
+			organizationId,
+			partyRole: 'educational_institution',
+			isPrimary: options.isPrimary ?? true
+		});
+
+		if (options.status === 'completed') {
+			await database.db
+				.update(interactions)
+				.set({ status: 'completed' })
+				.where(eq(interactions.id, interactionId));
+		}
+
+		return interactionId;
+	}
+
+	/** Владелец записи прямо из базы: сервисы её могут уже не показывать. */
+	async function ownerOf(interactionId: string): Promise<string> {
+		const [row] = await database.db
+			.select({ ownerUserId: interactions.ownerUserId })
+			.from(interactions)
+			.where(eq(interactions.id, interactionId));
+
+		return row.ownerUserId;
+	}
+
+	it('передаёт новому ответственному только работу прежнего по этому вузу', async () => {
+		const admin = testActor();
+		const organizationId = await insertOrganization(database.db, { shortName: 'СЗПУ' });
+		const other = await insertOrganization(database.db, { shortName: 'Другой вуз' });
+		const previous = await insertUser(database.db, { roleId: 'manager' });
+		const successor = await insertUser(database.db, { roleId: 'manager' });
+		const stranger = await insertUser(database.db, { roleId: 'manager' });
+
+		await assignResponsible(admin, {
+			organizationId,
+			userId: previous,
+			directionId: null,
+			transferInteractions: false
+		});
+
+		const inWork = await interactionFor(organizationId, { ownerUserId: previous });
+		const finished = await interactionFor(organizationId, {
+			ownerUserId: previous,
+			status: 'completed'
+		});
+		// Сторона не основная: оператор стоит стороной почти везде, и передача по
+		// любой стороне унесла бы половину продукта.
+		const asideParty = await interactionFor(organizationId, {
+			ownerUserId: previous,
+			isPrimary: false
+		});
+		// Работа третьего человека: вуз ему когда-то передали поштучно, и смена
+		// куратора вуза его записи не трогает.
+		const foreignOwner = await interactionFor(organizationId, { ownerUserId: stranger });
+		const elsewhere = await interactionFor(other, { ownerUserId: previous });
+
+		await assignResponsible(admin, {
+			organizationId,
+			userId: successor,
+			directionId: null,
+			transferInteractions: true
+		});
+
+		expect(await ownerOf(inWork)).toBe(successor);
+		expect(await ownerOf(finished)).toBe(previous);
+		expect(await ownerOf(asideParty)).toBe(previous);
+		expect(await ownerOf(foreignOwner)).toBe(stranger);
+		expect(await ownerOf(elsewhere)).toBe(previous);
+
+		// Передача идёт той же командой, что и с карточки: строка предметной
+		// истории и событие журнала на каждую запись.
+		const changes = await database.db
+			.select({ field: interactionChanges.field, newValue: interactionChanges.newValue })
+			.from(interactionChanges)
+			.where(eq(interactionChanges.interactionId, inWork));
+
+		expect(changes).toStrictEqual([{ field: 'ownerUserId', newValue: successor }]);
+
+		const owned = await database.db
+			.select({ type: auditEvents.eventType })
+			.from(auditEvents)
+			.where(eq(auditEvents.subjectId, inWork));
+
+		expect(owned.map((event) => event.type)).toContain('interactions.owner_changed');
+
+		// Сколько записей уехало, видно в событии переназначения: иначе «передали»
+		// и «передавать было нечего» в журнале неразличимы.
+		const [reassigned] = await database.db
+			.select({ details: auditEvents.details })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'directory.responsible_reassigned'));
+
+		expect(reassigned.details).toMatchObject({ previousUserId: previous, transferredCount: 1 });
+	});
+
+	it('оставляет работу прежнему владельцу, когда передача не запрошена', async () => {
+		const admin = testActor();
+		const organizationId = await insertOrganization(database.db, { shortName: 'СЗПУ' });
+		const previous = await insertUser(database.db, { roleId: 'manager' });
+		const successor = await insertUser(database.db, { roleId: 'manager' });
+
+		await assignResponsible(admin, {
+			organizationId,
+			userId: previous,
+			directionId: null,
+			transferInteractions: false
+		});
+
+		const inWork = await interactionFor(organizationId, { ownerUserId: previous });
+
+		await assignResponsible(admin, {
+			organizationId,
+			userId: successor,
+			directionId: null,
+			transferInteractions: false
+		});
+
+		expect(await ownerOf(inWork)).toBe(previous);
+
+		const [reassigned] = await database.db
+			.select({ details: auditEvents.details })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'directory.responsible_reassigned'));
+
+		expect(reassigned.details).toMatchObject({ transferredCount: 0 });
+	});
+
+	it('при назначении по направлению передаёт только работу этого направления', async () => {
+		const admin = testActor();
+		const organizationId = await insertOrganization(database.db, { shortName: 'СЗПУ' });
+		const devops = await insertDirection('devops', 1);
+		const security = await insertDirection('security', 2);
+		const previous = await insertUser(database.db, { roleId: 'manager' });
+		const successor = await insertUser(database.db, { roleId: 'manager' });
+
+		await assignResponsible(admin, {
+			organizationId,
+			userId: previous,
+			directionId: devops,
+			transferInteractions: false
+		});
+
+		// Направление взаимодействия считается так же, как в отчётах: по
+		// программам и по продуктам, а не отдельным полем.
+		const byProgram = await interactionFor(organizationId, { ownerUserId: previous });
+		await database.db
+			.insert(interactionPrograms)
+			.values({ interactionId: byProgram, programId: await insertProgram('devops-1', devops) });
+
+		const byProduct = await interactionFor(organizationId, { ownerUserId: previous });
+		await database.db
+			.insert(interactionProducts)
+			.values({ interactionId: byProduct, productId: await insertProduct('devops-2', devops) });
+
+		const otherDirection = await interactionFor(organizationId, { ownerUserId: previous });
+		await database.db.insert(interactionPrograms).values({
+			interactionId: otherDirection,
+			programId: await insertProgram('security-1', security)
+		});
+
+		// Ни программ, ни продуктов: направления у записи нет, и назначение по
+		// направлению её не касается.
+		const withoutDirection = await interactionFor(organizationId, { ownerUserId: previous });
+
+		await assignResponsible(admin, {
+			organizationId,
+			userId: successor,
+			directionId: devops,
+			transferInteractions: true
+		});
+
+		expect(await ownerOf(byProgram)).toBe(successor);
+		expect(await ownerOf(byProduct)).toBe(successor);
+		expect(await ownerOf(otherDirection)).toBe(previous);
+		expect(await ownerOf(withoutDirection)).toBe(previous);
+	});
+
+	it('не передаёт без права на смену владельца взаимодействия', async () => {
+		const organizationId = await insertOrganization(database.db, { shortName: 'СЗПУ' });
+		const previous = await insertUser(database.db, { roleId: 'manager' });
+		const successor = await insertUser(database.db, { roleId: 'manager' });
+
+		await assignResponsible(testActor(), {
+			organizationId,
+			userId: previous,
+			directionId: null,
+			transferInteractions: false
+		});
+
+		const inWork = await interactionFor(organizationId, { ownerUserId: previous });
+
+		// Раздавать вузы и передавать чужую работу — разные права: у того, кто
+		// распределяет кураторов, второго может не быть.
+		const withoutReassign = testActor({
+			permissions: [...defaultRolePermissions('admin')].filter(
+				(key) => key !== 'interactions.reassign'
+			) as PermissionKey[]
+		});
+
+		await expect(
+			assignResponsible(withoutReassign, {
+				organizationId,
+				userId: successor,
+				directionId: null,
+				transferInteractions: true
+			})
+		).rejects.toBeInstanceOf(ForbiddenError);
+
+		// Отказ до единой записи: назначение тоже не состоялось.
+		expect(await ownerOf(inWork)).toBe(previous);
+		expect(
+			(await listResponsibles(testActor(), organizationId))
+				.filter((row) => row.validTo === null)
+				.map((row) => row.userId)
+		).toStrictEqual([previous]);
+
+		// Без передачи то же назначение проходит: право требуется на передачу, а
+		// не на смену куратора.
+		await assignResponsible(withoutReassign, {
+			organizationId,
+			userId: successor,
+			directionId: null,
+			transferInteractions: false
+		});
+
+		expect(await ownerOf(inWork)).toBe(previous);
+	});
+
+	it('при снятии без замены оставляет работу прежнему ответственному', async () => {
+		const admin = testActor();
+		const organizationId = await insertOrganization(database.db, { shortName: 'СЗПУ' });
+		const kam = await insertUser(database.db, { roleId: 'manager' });
+
+		await assignResponsible(admin, {
+			organizationId,
+			userId: kam,
+			directionId: null,
+			transferInteractions: false
+		});
+
+		const inWork = await interactionFor(organizationId, { ownerUserId: kam });
+
+		// Снятие без замены передавать некому: работа остаётся у своего
+		// владельца, и он продолжает видеть её слагаемым «мои взаимодействия».
+		await releaseResponsible(admin, await activeAssignment(organizationId));
+
+		expect(await ownerOf(inWork)).toBe(kam);
 	});
 });
