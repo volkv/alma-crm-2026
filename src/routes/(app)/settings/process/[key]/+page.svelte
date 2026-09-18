@@ -471,11 +471,17 @@
 								<Table.Head class="w-12 text-right">№</Table.Head>
 								<Table.Head>Ключ</Table.Head>
 								<Table.Head>Название</Table.Head>
-								<Table.Head>Группа</Table.Head>
+								<!-- Группа, протухание и чек-лист уезжают под название и под
+									«Требует», пока окно уже 1536: на экране в 1280 точек таблице
+									остаётся меньше тысячи, и стадия, её норматив и требования к
+									переходу обязаны помещаться без горизонтальной прокрутки
+									(`docs/design.md`, «Приоритет колонок»). Значения не
+									пропадают — они возвращаются строкой под ключевой колонкой. -->
+								<Table.Head class="hidden 2xl:table-cell">Группа</Table.Head>
 								<Table.Head class="w-20 text-right">Норматив</Table.Head>
-								<Table.Head class="w-24 text-right">Протухание</Table.Head>
+								<Table.Head class="hidden w-24 text-right 2xl:table-cell">Протухание</Table.Head>
 								<Table.Head>Требует</Table.Head>
-								<Table.Head>Чек-лист</Table.Head>
+								<Table.Head class="hidden 2xl:table-cell">Чек-лист</Table.Head>
 								{#if editable}
 									<Table.Head class="w-40"></Table.Head>
 								{/if}
@@ -491,14 +497,19 @@
 										{#if stage.isFinal}
 											<StatusBadge tone="accent">Финальная</StatusBadge>
 										{/if}
+										<span class="block text-xs font-normal text-muted-foreground 2xl:hidden">
+											{STAGE_CATEGORY_LABELS[stage.category]}{stage.staleAfterDays === null
+												? ''
+												: ` · протухание ${pluralize(stage.staleAfterDays, ['день', 'дня', 'дней'])}`}
+										</span>
 									</Table.Cell>
-									<Table.Cell class="whitespace-normal">
+									<Table.Cell class="hidden whitespace-normal 2xl:table-cell">
 										{STAGE_CATEGORY_LABELS[stage.category]}
 									</Table.Cell>
 									<Table.Cell class="text-right whitespace-normal">
 										{pluralize(stage.slaDays, ['день', 'дня', 'дней'])}
 									</Table.Cell>
-									<Table.Cell class="text-right whitespace-normal">
+									<Table.Cell class="hidden text-right whitespace-normal 2xl:table-cell">
 										{stage.staleAfterDays === null
 											? '—'
 											: pluralize(stage.staleAfterDays, ['день', 'дня', 'дней'])}
@@ -523,8 +534,17 @@
 												<span class="text-faint">—</span>
 											{/if}
 										</span>
+										{#if stage.checklist.length > 0}
+											<span class="mt-0.5 block text-xs text-muted-foreground 2xl:hidden">
+												чек-лист: {pluralize(stage.checklist.length, [
+													'пункт',
+													'пункта',
+													'пунктов'
+												])}
+											</span>
+										{/if}
 									</Table.Cell>
-									<Table.Cell class="whitespace-normal">
+									<Table.Cell class="hidden whitespace-normal 2xl:table-cell">
 										{#if stage.checklist.length === 0}
 											<span class="text-faint">—</span>
 										{:else}

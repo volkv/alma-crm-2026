@@ -23,11 +23,12 @@
 	 * отправитель, а не мы.
 	 *
 	 * Журнал широкий, а экран рабочего ноутбука — 1280 точек, из которых на
-	 * список остаётся около тысячи. Поэтому ответ получателя и ссылка на
-	 * взаимодействие до `2xl` стоят не своими колонками, а строкой под
-	 * состоянием и под событием: ключевые «когда — направление — событие —
-	 * состояние» обязаны помещаться без горизонтальной прокрутки, а данные при
-	 * этом не должны пропадать с экрана (`docs/design.md`, «Приоритет колонок»).
+	 * список остаётся около тысячи. Поэтому система обмена, ответ получателя и
+	 * ссылка на взаимодействие до `2xl` стоят не своими колонками, а строкой под
+	 * направлением, состоянием и событием: ключевые «когда — направление —
+	 * событие — состояние» обязаны помещаться без горизонтальной прокрутки, а
+	 * данные при этом не должны пропадать с экрана (`docs/design.md`, «Приоритет
+	 * колонок»).
 	 */
 	let { message }: { message: ExchangeMessageView } = $props();
 
@@ -59,8 +60,15 @@
 
 <Table.Row>
 	<Table.Cell class="whitespace-normal">{formatDateTime(message.createdAt)}</Table.Cell>
-	<Table.Cell>{EXCHANGE_DIRECTION_LABELS[message.direction]}</Table.Cell>
-	<Table.Cell class="font-mono text-xs">{message.system}:{message.instance}</Table.Cell>
+	<Table.Cell class="whitespace-normal">
+		{EXCHANGE_DIRECTION_LABELS[message.direction]}
+		<span class="mt-0.5 block font-mono text-xs break-all text-muted-foreground 2xl:hidden">
+			{message.system}:{message.instance}
+		</span>
+	</Table.Cell>
+	<Table.Cell class="hidden font-mono text-xs 2xl:table-cell">
+		{message.system}:{message.instance}
+	</Table.Cell>
 	<Table.Cell class="font-mono text-xs whitespace-normal">
 		{#each eventParts as part, index (index)}{#if index > 0}.<wbr />{/if}{part}{/each}
 		{#if message.interactionId !== null}

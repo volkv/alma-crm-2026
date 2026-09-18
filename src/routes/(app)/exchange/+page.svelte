@@ -99,14 +99,15 @@
 					<Table.Row>
 						<Table.Head>Когда</Table.Head>
 						<Table.Head>Направление</Table.Head>
-						<Table.Head>Система</Table.Head>
+						<Table.Head class="hidden 2xl:table-cell">Система</Table.Head>
 						<Table.Head>Тип</Table.Head>
 						<Table.Head>Ключи</Table.Head>
 						<Table.Head>Состояние</Table.Head>
 						<Table.Head>Попытки</Table.Head>
-						<!-- Ответ и взаимодействие уезжают в строку под состоянием и под
-							событием, пока окно уже 1536: ключевые колонки журнала обязаны
-							помещаться на экране в 1280 точек целиком. -->
+						<!-- Система, ответ и взаимодействие уезжают в строку под
+							направлением, состоянием и событием, пока окно уже 1536: ключевые
+							колонки журнала обязаны помещаться на экране в 1280 точек целиком,
+							и с запасом — на машине без фирменной гарнитуры подстановка шире. -->
 						<Table.Head class="hidden 2xl:table-cell">Ответ</Table.Head>
 						<Table.Head class="hidden 2xl:table-cell">Взаимодействие</Table.Head>
 						<Table.Head>Действия</Table.Head>
