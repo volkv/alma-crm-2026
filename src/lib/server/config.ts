@@ -65,6 +65,22 @@ const configSchema = z
 		 */
 		DEMO_MODE: booleanFlag,
 		/**
+		 * Общий пароль демонстрационных записей для карточки входа.
+		 *
+		 * Приложение паролей не проверяет: строка только повторяет то, что задано
+		 * в каталоге (`SEED_DEMO_PASSWORD`, импорт realm), чтобы зритель
+		 * публичного стенда мог войти, никого не спрашивая. Пустая — не задано:
+		 * карточка тогда пароля не называет. Показывается только при `DEMO_MODE`.
+		 *
+		 * Потолок длины — от опечатки вида `DEMO_PASSWORD_HINT=$(cat .env)`: на
+		 * экран уходит строка, а не файл.
+		 */
+		DEMO_PASSWORD_HINT: z
+			.string()
+			.max(128, { error: 'must be at most 128 characters' })
+			.default('')
+			.transform((value) => (value.trim() === '' ? null : value.trim())),
+		/**
 		 * The app sits behind a reverse proxy, so the client address comes from
 		 * `X-Forwarded-For` instead of the socket. The header is read by the app
 		 * itself — `clientAddress()` in `http.ts` takes the last entry, the one
@@ -110,6 +126,17 @@ const configSchema = z
 		EXCHANGE_LMS_GROUPS_URL: exchangeUrl(false),
 		/** Адрес веб-сервиса системы обучения: подсказка в разделе интеграций. */
 		EXCHANGE_LMS_BASE_URL: exchangeUrl(false),
+		/**
+		 * Триггер имитатора CMS: по нему кнопка «Демо: заявка с сайта» на экране
+		 * «Внешние системы» просит имитатор подать заявку — так сцена начинается
+		 * там же, где начинается у посетителя сайта.
+		 *
+		 * Направлением контракта это не является: у настоящей CMS такого адреса
+		 * нет, форму на ней заполняет человек. Поэтому кнопка живёт только на
+		 * демонстрационном стенде (`DEMO_MODE=true`), а пустая строка — обычное
+		 * состояние установки: кнопки нет.
+		 */
+		DEMO_CMS_TRIGGER_URL: exchangeUrl(false),
 		/**
 		 * Секрет подписи исходящих сообщений обмена — общий для обоих подключений.
 		 *

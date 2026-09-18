@@ -5,6 +5,8 @@
  * дублей (`failNext` с временным кодом), поведение на таймауте (`delayMs`) и
  * восстановление после недоступности (`mode: "offline"`). Без них пришлось бы
  * либо править код приложения ради проверки, либо ждать настоящего сбоя.
+ * Четвёртая, `match`, сужает их до обращений по одному объекту: имитатор на
+ * стенде один, и сломанная доставка одной заявки не должна ломать соседнюю.
  *
  * Сценарий действует **только на эндпоинты контракта** — те, которыми
  * пользуется CRM. Управление имитатором обязано отвечать и тогда, когда
@@ -22,6 +24,12 @@ export type ScenarioState = {
 	delayMs: number;
 	/** `offline` — обрывать соединение, не отвечая вовсе. */
 	mode: ScenarioMode;
+	/**
+	 * Чьи обращения портить: подстрока пути, например ключ одной заявки.
+	 * `null` — любые. Нужно там, где имитатор один, а показывают на нём разное:
+	 * «сломай доставку этой заявки» не должно ломать соседнюю.
+	 */
+	match: string | null;
 };
 
 export type Scenario = {
@@ -39,13 +47,19 @@ export type Scenario = {
 	reset: () => void;
 };
 
-const DEFAULT_STATE: ScenarioState = { failNext: 0, status: 503, delayMs: 0, mode: 'normal' };
+const DEFAULT_STATE: ScenarioState = {
+	failNext: 0,
+	status: 503,
+	delayMs: 0,
+	mode: 'normal',
+	match: null
+};
 
 /** Больше часа ждать нечего: имитатор поднят ради проверки, а не ради зависания. */
 const MAX_DELAY_MS = 60_000;
 const MAX_FAIL_NEXT = 1000;
 
-const FIELDS = ['failNext', 'status', 'delayMs', 'mode', 'reset'] as const;
+const FIELDS = ['failNext', 'status', 'delayMs', 'mode', 'match', 'reset'] as const;
 
 function readInteger(
 	value: unknown,
@@ -123,6 +137,16 @@ export function createScenario(): Scenario {
 					issues.push('mode: ожидается normal или offline');
 				} else {
 					next.mode = body.mode;
+				}
+			}
+
+			if ('match' in body) {
+				if (body.match === null) {
+					next.match = null;
+				} else if (typeof body.match !== 'string' || body.match === '') {
+					issues.push('match: ожидается непустая строка или null');
+				} else {
+					next.match = body.match;
 				}
 			}
 

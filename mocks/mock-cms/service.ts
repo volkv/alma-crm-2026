@@ -21,6 +21,8 @@ import { controlRoutes } from '../shared/control.ts';
 import { crmIssue, postToCrm, type CrmTarget } from '../shared/crm.ts';
 import { buildEnvelope, parseEnvelope, type Envelope } from '../shared/envelope.ts';
 import {
+	backToStatePage,
+	parseTriggerBody,
 	problem,
 	startMockService,
 	type MockReply,
@@ -44,16 +46,30 @@ export type MockCmsOptions = {
 	/** Секрет, которым CRM подписывает исходящие сообщения. */
 	exchangeSecret?: string | null;
 	journalSize?: number;
+	/** Токен управляющих адресов; `null` — управление открыто. */
+	controlToken?: string | null;
 };
+
+/**
+ * Откуда на сайте взялась карточка заявки.
+ *
+ * `form` — её заполнили на сайте и отправили в CRM. `crm-status` — её завёл
+ * снимок статуса, пришедший из CRM: заявку подали мимо формы (оператор завёл
+ * обращение руками, его принёс другой канал), а сайт всё равно обязан показать
+ * заявителю, что с ней происходит.
+ */
+type ApplicationOrigin = 'form' | 'crm-status';
 
 /** Заявка, какой её помнит сайт. */
 type StoredApplication = {
 	externalId: string;
-	form: string;
+	origin: ApplicationOrigin;
+	/** Набор формы; `null` — карточку завёл статус, формы у неё не было. */
+	form: string | null;
 	/** Монотонная ревизия отправителя: растёт с каждым изменением заявки. */
-	revision: number;
-	lastEventId: string;
-	sentAt: string;
+	revision: number | null;
+	lastEventId: string | null;
+	sentAt: string | null;
 	/** Чем CRM ответила на последнюю отправку. */
 	crmStatus: number | null;
 	/** Снимки статуса, присланные CRM: свежий — последний. */
@@ -144,20 +160,29 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 					);
 				}
 
-				const application = applications.get(request.params.externalId);
+				const known = applications.get(request.params.externalId);
+				// Заявки с таким ключом сайт не отправлял — и это не повод отказывать.
+				// Обращение могло прийти не с формы: его завели в CRM руками, принёс
+				// другой канал, оно пережило переустановку сайта. Сайту от снимка
+				// нужно одно — показать заявителю, что с обращением происходит, а для
+				// этого карточку достаточно завести. Отказ `404` вместо этого означал
+				// бы, что первый же статус по такой заявке навсегда получает в журнале
+				// CRM «не доставлено»: повторять окончательный отказ 4xx бессмысленно
+				// (`docs/exchange-contract.md`, раздел 4). Что карточка пришла не с
+				// формы, видно и в состоянии, и на странице: `origin: "crm-status"`.
+				const application: StoredApplication = known ?? {
+					externalId: request.params.externalId,
+					origin: 'crm-status',
+					form: null,
+					revision: null,
+					lastEventId: null,
+					sentAt: null,
+					crmStatus: null,
+					statuses: []
+				};
 
-				if (application === undefined) {
-					// Заявки с таким ключом сайт не отправлял. Это не придирка: так
-					// видно, что CRM спутала экземпляр CMS — на другом стенде ключ
-					// тот же, а заявка другая.
-					return statusReply(
-						journal,
-						path,
-						404,
-						'not_found',
-						`Заявки ${request.params.externalId} на этом сайте нет`,
-						envelope
-					);
+				if (known === undefined) {
+					applications.set(application.externalId, application);
 				}
 
 				if (received.has(envelope.eventId)) {
@@ -187,35 +212,35 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 					status: 200,
 					eventId: envelope.eventId,
 					eventType: envelope.eventType,
-					note: `карточка заявки переведена в ${String(envelope.data.applicationStatus)}`,
+					note:
+						known === undefined
+							? `карточка заведена по статусу из CRM и переведена в ${String(envelope.data.applicationStatus)}`
+							: `карточка заявки переведена в ${String(envelope.data.applicationStatus)}`,
 					payload: envelope
 				});
 
-				return { status: 200, json: { result: 'accepted' } };
+				return { status: 200, json: { result: known === undefined ? 'created' : 'accepted' } };
 			}
 		}
 	];
 
 	const triggers: MockRoute[] = [
 		{
-			// Направление 1: «на сайте заполнили форму». Триггер проверки, а не
-			// эндпоинт контракта: у настоящей CMS его роль играет посетитель.
+			// Направление 1: «на сайте заполнили форму». Триггер стенда, а не
+			// эндпоинт контракта: у настоящей CMS его роль играет посетитель. Жмут
+			// его кнопкой со страницы состояния, запросом из проверки и действием
+			// «Демо: заявка с сайта» на экране «Внешние системы».
 			method: 'POST',
 			path: '/__send-application',
 			contract: false,
 			handle: async (request) => {
-				let body: Record<string, unknown>;
+				const parsedBody = parseTriggerBody(request);
 
-				try {
-					body = request.rawBody === '' ? {} : JSON.parse(request.rawBody);
-				} catch {
-					return problem(400, 'validation', 'Тело запроса не разбирается как JSON');
+				if (!parsedBody.ok) {
+					return problem(400, 'validation', parsedBody.message);
 				}
 
-				if (typeof body !== 'object' || body === null || Array.isArray(body)) {
-					return problem(400, 'validation', 'Тело запроса — объект');
-				}
-
+				const body = parsedBody.body;
 				const allowed = ['form', 'externalId', 'revision', 'eventId', 'data'];
 				const unknown = Object.keys(body).filter((name) => !allowed.includes(name));
 
@@ -270,12 +295,10 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 							? body.externalId
 							: templateExternalId(form);
 					const previous = applications.get(externalId);
+					// Ревизии у карточки может не быть вовсе: её завёл статус из CRM, а
+					// формы, которая нумерует изменения, у такой заявки не было.
 					const revision =
-						typeof body.revision === 'number'
-							? body.revision
-							: previous === undefined
-								? 1
-								: previous.revision + 1;
+						typeof body.revision === 'number' ? body.revision : (previous?.revision ?? 0) + 1;
 					const data =
 						body.data === undefined
 							? applicationTemplate(form, externalId, revision)
@@ -299,6 +322,9 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 
 				applications.set(externalId, {
 					externalId,
+					// Заявку отправила форма — даже если карточку до этого завёл статус
+					// из CRM: снимки статуса у неё остаются, а происхождение меняется.
+					origin: 'form',
 					form: String(envelope.data.form ?? form),
 					revision: Number(envelope.data.revision ?? 1),
 					lastEventId: envelope.eventId,
@@ -319,16 +345,21 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 					payload: envelope
 				});
 
-				return {
-					status: 200,
-					json: {
-						eventId: envelope.eventId,
-						externalId,
-						repeat: repeatOf !== null,
-						request: envelope,
-						crm: call
-					}
-				};
+				// Кнопка со страницы состояния возвращает на неё же: нажавший смотрит
+				// в журнал стенда, а не в тело ответа. Запросу из проверки уходит
+				// разбор целиком.
+				return parsedBody.fromForm
+					? backToStatePage()
+					: {
+							status: 200,
+							json: {
+								eventId: envelope.eventId,
+								externalId,
+								repeat: repeatOf !== null,
+								request: envelope,
+								crm: call
+							}
+						};
 			}
 		}
 	];
@@ -344,9 +375,27 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 			...triggers,
 			...controlRoutes({
 				name: 'mock-cms',
-				title: 'Имитатор CMS сайта',
+				title: 'Имитатор CMS сайта — не настоящая система',
 				journal,
 				scenario,
+				controlToken: options.controlToken ?? null,
+				forms: [
+					{
+						action: '__send-application',
+						title: 'Заявка с сайта',
+						description:
+							'То же, что делает посетитель, отправивший форму на сайте: имитатор собирает заявку и отправляет её в CRM.',
+						fields: [
+							{ name: 'form', label: 'Набор', options: APPLICATION_FORMS },
+							{
+								name: 'externalId',
+								label: 'Ключ заявки',
+								hint: 'пусто — ключ заявки набора; тот же ключ означает изменение той же заявки'
+							}
+						],
+						submit: 'Отправить заявку в CRM'
+					}
+				],
 				objects: () => ({ applications: [...applications.values()] }),
 				forget,
 				// Ни ключа, ни секрета в состоянии нет: страница стенда открыта, и

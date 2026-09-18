@@ -63,6 +63,58 @@ export function problem(status: number, code: string, message: string): MockRepl
 	return { status, json: { code, message } };
 }
 
+/**
+ * Куда вернуть браузер после нажатия кнопки на странице состояния: на неё же.
+ *
+ * Адрес относительный намеренно: на стенде имитатор живёт под префиксом пути
+ * (`/mock-cms/`), и `/` увёл бы посетителя на главную страницу стенда.
+ */
+export function backToStatePage(): MockReply {
+	return { status: 303, headers: { location: './' } };
+}
+
+/** Разобранное тело триггера: поля и то, пришли ли они из формы страницы. */
+export type TriggerBody =
+	{ ok: true; body: Record<string, unknown>; fromForm: boolean } | { ok: false; message: string };
+
+/**
+ * Тело триггера: JSON запроса или поля HTML-формы со страницы состояния.
+ *
+ * Форма отправляет `application/x-www-form-urlencoded` — это единственный
+ * способ нажать триггер со страницы, не добавляя к имитатору ни строки
+ * скрипта. Пустое поле формы отбрасывается: незаполненное поле значит «как
+ * обычно», а не «пустая строка», иначе кнопка присылала бы ключ заявки `''`.
+ */
+export function parseTriggerBody(request: MockRequest): TriggerBody {
+	const type = (request.headers['content-type'] ?? '').split(';')[0].trim().toLowerCase();
+
+	if (type === 'application/x-www-form-urlencoded') {
+		const body: Record<string, unknown> = {};
+
+		for (const [name, value] of new URLSearchParams(request.rawBody)) {
+			if (value !== '') {
+				body[name] = value;
+			}
+		}
+
+		return { ok: true, body, fromForm: true };
+	}
+
+	let parsed: unknown;
+
+	try {
+		parsed = request.rawBody === '' ? {} : JSON.parse(request.rawBody);
+	} catch {
+		return { ok: false, message: 'Тело запроса не разбирается как JSON' };
+	}
+
+	if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+		return { ok: false, message: 'Тело запроса — объект' };
+	}
+
+	return { ok: true, body: parsed as Record<string, unknown>, fromForm: false };
+}
+
 function matchPath(pattern: string, path: string): Record<string, string> | null {
 	const expected = pattern.split('/');
 	const actual = path.split('/');
@@ -211,8 +263,12 @@ export async function startMockService(options: {
 
 		if (route.contract) {
 			const state = scenario.read();
+			// Сценарий может быть сужен до одного объекта (`match`): на стенде
+			// имитатор один, и сломанная доставка одной заявки не должна задевать
+			// соседнюю — в том числе чужую проверку, идущую рядом.
+			const targeted = state.match === null || path.includes(state.match);
 
-			if (state.mode === 'offline') {
+			if (targeted && state.mode === 'offline') {
 				journal.add({
 					direction: 'inbound',
 					summary: `${method} ${path}`,
@@ -226,11 +282,11 @@ export async function startMockService(options: {
 				return;
 			}
 
-			if (state.delayMs > 0) {
+			if (targeted && state.delayMs > 0) {
 				await delay(state.delayMs);
 			}
 
-			const failure = scenario.takeFailure();
+			const failure = targeted ? scenario.takeFailure() : null;
 
 			if (failure !== null) {
 				journal.add({

@@ -221,10 +221,36 @@ describe('статус заявки из CRM', () => {
 		expect(pick(state, 'objects.applications.0.statuses')).toHaveLength(1);
 	});
 
-	it('по неизвестной заявке — 404', async () => {
+	it('по неизвестной заявке заводит карточку и помечает, откуда она', async () => {
+		// Заявку могли завести в CRM руками или принести другим каналом: сайту от
+		// снимка нужно одно — показать заявителю, что с обращением происходит.
+		// Отказ вместо этого означал бы окончательный 4xx и «не доставлено» в
+		// журнале CRM на первом же статусе такой заявки.
 		const response = await postStatus('site-2026-000999', { applicationStatus: 'received' });
 
-		expect(response.status).toBe(404);
+		expect(response.status).toBe(200);
+		expect(pick(await readJson(response), 'result')).toBe('created');
+
+		const state = await readJson(await fetch(`${cms.url}/__state`));
+
+		expect(pick(state, 'objects.applications.0.externalId')).toBe('site-2026-000999');
+		expect(pick(state, 'objects.applications.0.origin')).toBe('crm-status');
+		expect(pick(state, 'objects.applications.0.revision')).toBeNull();
+		expect(pick(state, 'objects.applications.0.statuses.0.data.applicationStatus')).toBe(
+			'received'
+		);
+		expect(pick(state, 'journal.0.note')).toContain('заведена по статусу из CRM');
+	});
+
+	it('форма сайта по той же заявке забирает карточку себе, не теряя статусов', async () => {
+		await postStatus(B2B_EXTERNAL_ID, { applicationStatus: 'received' });
+		await sendApplication({ form: 'b2b' });
+
+		const state = await readJson(await fetch(`${cms.url}/__state`));
+
+		expect(pick(state, 'objects.applications.0.origin')).toBe('form');
+		expect(pick(state, 'objects.applications.0.revision')).toBe(1);
+		expect(pick(state, 'objects.applications.0.statuses')).toHaveLength(1);
 	});
 
 	it('конверт чужой версии схемы отвергается отдельным кодом', async () => {
@@ -298,5 +324,115 @@ describe('сценарий отказов', () => {
 		expect(pick(state, 'objects.applications')).toHaveLength(0);
 		expect(pick(state, 'journal')).toHaveLength(0);
 		expect(pick(state, 'scenario.failNext')).toBe(0);
+	});
+
+	it('«match» сужает отказ до одной заявки, соседние идут как обычно', async () => {
+		// Имитатор на стенде один, и сломанная доставка одной заявки не должна
+		// задевать соседнюю — ни на показе, ни в проверках, идущих рядом.
+		await fetch(`${cms.url}/__scenario`, {
+			method: 'POST',
+			body: JSON.stringify({ failNext: 5, status: 503, match: 'site-2026-000777' })
+		});
+
+		const stranger = await postStatus('site-2026-000778', { applicationStatus: 'received' });
+		const targeted = await postStatus('site-2026-000777', { applicationStatus: 'received' });
+
+		expect(stranger.status).toBe(200);
+		expect(targeted.status).toBe(503);
+
+		const state = await readJson(await fetch(`${cms.url}/__state`));
+
+		// Испорчено ровно одно обращение из двух: счётчик тронут один раз.
+		expect(pick(state, 'scenario.failNext')).toBe(4);
+	});
+
+	it('пустой «match» — отказ разбора, а не сценарий на всё подряд', async () => {
+		const response = await fetch(`${cms.url}/__scenario`, {
+			method: 'POST',
+			body: JSON.stringify({ failNext: 1, match: '' })
+		});
+
+		expect(response.status).toBe(400);
+		expect(pick(await readJson(response), 'message')).toContain('match');
+	});
+});
+
+describe('страница состояния и управление', () => {
+	it('страница показывает заголовок, кнопку сцены и живёт без управляющих адресов', async () => {
+		const response = await fetch(`${cms.url}/`);
+		const html = await response.text();
+
+		expect(response.status).toBe(200);
+		expect(response.headers.get('content-type')).toContain('text/html');
+		expect(html).toContain('Имитатор CMS сайта — не настоящая система');
+		// Адрес формы относительный: на стенде имитатор живёт под префиксом пути
+		// (`/mock-cms/`), и абсолютный увёл бы кнопку в корень домена.
+		expect(html).toContain('action="__send-application"');
+	});
+
+	it('кнопка страницы подаёт заявку и возвращает на страницу', async () => {
+		const response = await fetch(`${cms.url}/__send-application`, {
+			method: 'POST',
+			headers: { 'content-type': 'application/x-www-form-urlencoded' },
+			body: new URLSearchParams({ form: 'b2b', externalId: '' }).toString(),
+			redirect: 'manual'
+		});
+
+		expect(response.status).toBe(303);
+		expect(response.headers.get('location')).toBe('./');
+		expect(crm.requests).toHaveLength(1);
+
+		const envelope = JSON.parse(crm.requests[0].body) as Record<string, unknown>;
+
+		// Пустое поле формы — это «как обычно», а не пустой ключ заявки.
+		expect(pick(envelope, 'data.externalId')).toBe(B2B_EXTERNAL_ID);
+	});
+
+	it('с токеном управляющие адреса закрыты, а страница и триггер — нет', async () => {
+		const guarded = await startMockCms({
+			port: 0,
+			crm: { baseUrl: crm.url, apiKey: API_KEY },
+			exchangeSecret: SECRET,
+			controlToken: 'stand-control-token'
+		});
+
+		try {
+			const state = await fetch(`${guarded.url}/__state`);
+
+			expect(state.status).toBe(403);
+			expect(pick(await readJson(state), 'code')).toBe('control_forbidden');
+
+			const scenario = await fetch(`${guarded.url}/__scenario`, {
+				method: 'POST',
+				body: JSON.stringify({ failNext: 1 })
+			});
+
+			expect(scenario.status).toBe(403);
+			await scenario.body?.cancel();
+
+			const withToken = await fetch(`${guarded.url}/__state`, {
+				headers: { 'x-mock-control': 'stand-control-token' }
+			});
+
+			expect(withToken.status).toBe(200);
+			await withToken.body?.cancel();
+
+			// Показать стенд токен не мешает: страница состояния и триггер сцены
+			// открыты — ровно они и выходят наружу через прокси.
+			const page = await fetch(`${guarded.url}/`);
+
+			expect(page.status).toBe(200);
+			await page.body?.cancel();
+
+			const trigger = await fetch(`${guarded.url}/__send-application`, {
+				method: 'POST',
+				body: JSON.stringify({ form: 'b2b' })
+			});
+
+			expect(trigger.status).toBe(200);
+			await trigger.body?.cancel();
+		} finally {
+			await guarded.stop();
+		}
 	});
 });

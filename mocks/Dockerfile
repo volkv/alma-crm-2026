@@ -28,8 +28,11 @@ COPY --chown=node:node mock-lms ./mock-lms
 USER node
 EXPOSE ${PORT}
 
+# The state page, not `/__state`: the control addresses can be closed with a
+# token (CONTROL_TOKEN) on a public stand, and a health check that then answers
+# 403 would report a healthy service as broken.
 HEALTHCHECK --interval=10s --timeout=5s --start-period=5s --retries=6 \
-	CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/__state').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+	CMD node -e "fetch('http://127.0.0.1:'+process.env.PORT+'/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
 
 # `exec` hands PID 1 to Node, so the container stops on a signal instead of
 # waiting for the kill timeout.

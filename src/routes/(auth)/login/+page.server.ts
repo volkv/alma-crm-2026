@@ -1,6 +1,5 @@
 import { redirect } from '@sveltejs/kit';
 import { fail } from '@sveltejs/kit';
-import { env } from '$env/dynamic/private';
 import { DEMO_ACCOUNTS } from '$lib/contracts/auth';
 import { demoPasswordHint } from '$lib/server/auth/demo-password';
 import { callbackUrl, rememberFlow } from '$lib/server/auth/flow';
@@ -39,7 +38,8 @@ export const load: PageServerLoad = async (event) => {
 	]);
 
 	const reason = event.url.searchParams.get('reason');
-	const demoMode = getConfig().DEMO_MODE;
+	const config = getConfig();
+	const demoMode = config.DEMO_MODE;
 
 	return {
 		banner,
@@ -48,9 +48,9 @@ export const load: PageServerLoad = async (event) => {
 		demoAccounts: demoMode ? DEMO_ACCOUNTS : [],
 		// Пароль стенда — тоже подсказка к чужой форме, и берётся он из
 		// окружения: приложение своих паролей не знает, а этот заводит импорт
-		// realm. Нет переменной — карточка просто не называет пароль
+		// realm. Не задан — карточка просто не называет пароль
 		// (`$lib/server/auth/demo-password`).
-		demoPassword: demoPasswordHint(env.DEMO_PASSWORD_HINT, demoMode),
+		demoPassword: demoPasswordHint(config.DEMO_PASSWORD_HINT, demoMode),
 		notice: reason === null ? null : (REASON_NOTICES[reason] ?? null),
 		rateLimited
 	};

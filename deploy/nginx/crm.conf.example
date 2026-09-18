@@ -2,8 +2,14 @@
 # /etc/nginx/sites-available/<domain>, replace the placeholders, symlink it into
 # sites-enabled, then `nginx -t && systemctl reload nginx`.
 #
-#   CRM_DOMAIN   public host name, e.g. crm.example.com
-#   CRM_PORT     loopback port the app publishes — APP_PORT from .env (8099 by default)
+#   CRM_DOMAIN     public host name, e.g. crm.example.com
+#   CRM_PORT       loopback port the app publishes — APP_PORT from .env (8099 by default)
+#   MOCK_CMS_PORT  loopback port of the CMS imitator — MOCK_CMS_PORT from .env (8091)
+#   MOCK_LMS_PORT  loopback port of the LMS imitator — MOCK_LMS_PORT from .env (8092)
+#
+# The two imitator blocks belong to a demonstration stand (the `stand` profile of
+# docker-compose.prod.yml). A deployment that talks to the real CMS and LMS runs
+# no imitators and drops both blocks.
 #
 # Assumes a certificate already covers the domain; point ssl_certificate at
 # wherever certbot put it.
@@ -48,9 +54,58 @@ server {
     access_log /var/log/nginx/crm_access.log;
     error_log  /var/log/nginx/crm_error.log;
 
-    # One location only: nginx drops inherited add_header directives inside a
-    # location that declares its own, so the security headers above would be
-    # silently lost for anything served from a second block.
+    # The imitators of the stand. Exactly two things are open to the outside per
+    # imitator: the state page, which is what the audience looks at, and the
+    # trigger that starts a scene. Everything else — `__state`, `__scenario` and
+    # any address added later — is the control surface of the stand and answers
+    # 403 here. The allow-list is matched against the normalised $uri, so an
+    # encoded or doubled-up path (`/mock-cms/%5f%5fstate`, `/mock-cms//__state`)
+    # fails it too. The imitator itself is the second line: with CONTROL_TOKEN
+    # set it refuses those addresses without the X-Mock-Control header
+    # (docs/security.md).
+    #
+    # `if` with nothing but `return` inside is the one form of it that is safe;
+    # proxy_pass stays outside it. No add_header lives in these blocks on
+    # purpose: nginx drops the inherited ones only where a location declares its
+    # own, so the security headers of this server block still apply here.
+    location = /mock-cms {
+        return 301 /mock-cms/;
+    }
+
+    location /mock-cms/ {
+        if ($uri !~ "^/mock-cms/(__send-application)?$") {
+            return 403;
+        }
+
+        proxy_pass http://127.0.0.1:MOCK_CMS_PORT/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location = /mock-lms {
+        return 301 /mock-lms/;
+    }
+
+    location /mock-lms/ {
+        if ($uri !~ "^/mock-lms/(__send-result)?$") {
+            return 403;
+        }
+
+        proxy_pass http://127.0.0.1:MOCK_LMS_PORT/;
+        proxy_http_version 1.1;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    # The app: everything that is not one of the blocks above. nginx drops
+    # inherited add_header directives inside a location that declares its own,
+    # so the security headers above would be silently lost for anything served
+    # from a block that sets headers of its own.
     location / {
         proxy_pass http://127.0.0.1:CRM_PORT;
         proxy_http_version 1.1;

@@ -6,11 +6,24 @@
  * `__scenario`, и в обмене они не участвуют. Сценарий отказов на них не
  * действует (`MockRoute.contract: false`), иначе включённый сценарий нельзя
  * было бы ни посмотреть, ни снять.
+ *
+ * Граница демонстрации проходит здесь же. На стенде наружу через прокси
+ * открыты только страница состояния и триггеры — то, что показывают зрителю;
+ * `__state` и `__scenario` меняют или раскрывают состояние стенда целиком,
+ * поэтому прокси их не пускает, а имитатор вдобавок требует к ним токен
+ * (`CONTROL_TOKEN`, заголовок `X-Mock-Control`). Токена нет — управление
+ * открыто: так имитатор живёт на машине разработчика и в прогонах, где он
+ * доступен только с петли. Кто и чем это закрывает на стенде —
+ * `docs/security.md`.
  */
+import { timingSafeEqual } from 'node:crypto';
 import type { Journal } from './journal.ts';
-import { problem, type MockRoute } from './http.ts';
+import { problem, type MockReply, type MockRequest, type MockRoute } from './http.ts';
 import type { Scenario } from './scenario.ts';
-import { renderStatePage } from './state-page.ts';
+import { renderStatePage, type TriggerForm } from './state-page.ts';
+
+/** Заголовок, которым к управляющим адресам предъявляют токен. */
+export const CONTROL_HEADER = 'x-mock-control';
 
 export type ControlOptions = {
 	/** Имя сервиса: `mock-cms`, `mock-lms`. */
@@ -25,10 +38,40 @@ export type ControlOptions = {
 	forget: () => void;
 	/** Настройки, по которым видно, настроен ли обмен со стендом. */
 	settings: () => Record<string, unknown>;
+	/** Формы-триггеры на странице состояния: по одной на сцену обмена. */
+	forms: readonly TriggerForm[];
+	/** Токен управляющих адресов; `null` — управление открыто. */
+	controlToken?: string | null;
 };
 
+/** Сверка постоянная по времени: по обычному сравнению токен подбирается побайтно. */
+function tokenMatches(expected: string, actual: string): boolean {
+	const left = Buffer.from(expected, 'utf8');
+	const right = Buffer.from(actual, 'utf8');
+
+	return left.byteLength === right.byteLength && timingSafeEqual(left, right);
+}
+
 export function controlRoutes(options: ControlOptions): MockRoute[] {
-	const { name, title, journal, scenario, objects, forget, settings } = options;
+	const { name, title, journal, scenario, objects, forget, settings, forms } = options;
+	const controlToken = options.controlToken ?? null;
+
+	/** Отказ управляющему адресу; `null` — токен предъявлен либо не нужен. */
+	function refuseControl(request: MockRequest): MockReply | null {
+		if (controlToken === null) {
+			return null;
+		}
+
+		const presented = request.headers[CONTROL_HEADER] ?? '';
+
+		return tokenMatches(controlToken, presented)
+			? null
+			: problem(
+					403,
+					'control_forbidden',
+					`Управляющие адреса имитатора закрыты токеном: назовите его в заголовке ${CONTROL_HEADER}`
+				);
+	}
 
 	function snapshot(): Record<string, unknown> {
 		return {
@@ -45,7 +88,7 @@ export function controlRoutes(options: ControlOptions): MockRoute[] {
 			method: 'GET',
 			path: '/__state',
 			contract: false,
-			handle: () => ({ status: 200, json: snapshot() })
+			handle: (request) => refuseControl(request) ?? { status: 200, json: snapshot() }
 		},
 		{
 			method: 'GET',
@@ -58,7 +101,9 @@ export function controlRoutes(options: ControlOptions): MockRoute[] {
 					title,
 					scenario: scenario.read(),
 					objects: objects(),
-					journal: journal.list()
+					journal: journal.list(),
+					forms,
+					controlProtected: controlToken !== null
 				})
 			})
 		},
@@ -67,6 +112,12 @@ export function controlRoutes(options: ControlOptions): MockRoute[] {
 			path: '/__scenario',
 			contract: false,
 			handle: (request) => {
+				const refusal = refuseControl(request);
+
+				if (refusal !== null) {
+					return refusal;
+				}
+
 				let body: unknown;
 
 				try {

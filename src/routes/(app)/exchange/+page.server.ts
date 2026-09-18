@@ -5,7 +5,9 @@ import {
 	retryMessageSchema
 } from '$lib/contracts/exchange';
 import { actorFromEvent } from '$lib/server/actor';
+import { getConfig } from '$lib/server/config';
 import { toActionFailure } from '$lib/server/http';
+import { sendDemoApplication } from '$lib/server/integrations/exchange/demo';
 import {
 	dismissExchangeMessage,
 	listExchangeMessages,
@@ -47,13 +49,37 @@ export const load: PageServerLoad = async (event) => {
 		);
 	}
 
+	const config = getConfig();
+
 	return {
 		messages: await listExchangeMessages(ctx, parsed.data),
-		filter: parsed.data
+		filter: parsed.data,
+		// Кнопка «Демо: заявка с сайта» — принадлежность стенда: она жмёт триггер
+		// имитатора CMS, которого у установки с настоящей CMS нет.
+		demoApplication: config.DEMO_MODE && config.DEMO_CMS_TRIGGER_URL !== null
 	};
 };
 
 export const actions: Actions = {
+	/**
+	 * Сцена «заявка с сайта» с этого же экрана: приложение просит имитатор CMS
+	 * подать заявку, и дальше всё идёт обычным путём — приём по контракту,
+	 * взаимодействие, снимок статуса обратно. Право то же, что на раздел.
+	 */
+	demoApplication: async (event) => {
+		try {
+			const sent = await sendDemoApplication(actorFromEvent(event));
+
+			return {
+				message: `Имитатор CMS подал заявку ${sent.externalId}: CRM приняла её (код ${sent.crmStatus}). Строка журнала появится в списке ниже`,
+				issues: [] as string[],
+				ok: true
+			};
+		} catch (failure) {
+			return toActionFailure(failure);
+		}
+	},
+
 	retry: async (event) => {
 		const parsed = retryMessageSchema.safeParse(Object.fromEntries(await event.request.formData()));
 

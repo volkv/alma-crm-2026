@@ -82,7 +82,7 @@ services:
       # The shared password of the three demo accounts — the same one the seed
       # gives them in the app's own database: the accounts are the same people,
       # and their password is one.
-      KEYCLOAK_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-Demo-Password-2026!}
+      KEYCLOAK_DEMO_PASSWORD: ${SEED_DEMO_PASSWORD:-lct-demo-2026}
     # The host port is shifted the same way as PostgreSQL and Redis; inside the
     # network Keycloak answers on 8080.
     ports:
@@ -188,6 +188,13 @@ services:
         PORT: '8081'
     ports:
       - '58081:8081'
+    # The e2e run keeps the imitators in containers and the app on the host, so
+    # the gateway of this network has to be reachable by name from inside them.
+    # `host.docker.internal` is what Docker Desktop resolves on its own and what
+    # this line adds on Linux; nothing in the local stack uses it, and the
+    # imitators still reach the app by its compose name.
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
     environment:
       PORT: '8081'
       # Where the imitator sends an application and what it introduces itself
@@ -196,8 +203,20 @@ services:
       # instead of pretending it sent anything. One key per connection: an
       # exchange key is bound to one (`api_keys.exchange_system`), and the site's
       # key is refused on the route of learning group results.
-      CRM_BASE_URL: http://app:3000
-      CRM_API_KEY: ${EXCHANGE_API_KEY_CMS:-}
+      #
+      # The address is a variable because the app is not always in this network:
+      # the e2e run builds it from the working copy and starts it on the host
+      # (`e2e/stack.ts`), and an imitator that cannot reach it back would leave
+      # the whole incoming direction unproven.
+      CRM_BASE_URL: ${MOCK_CRM_BASE_URL:-http://app:3000}
+      # Two demonstration defaults, deliberately unmistakable: this is a local
+      # development stack, and a key one has to invent before the first `docker
+      # compose up` is a key everyone leaves empty. They are different on
+      # purpose — one key for both directions would mean the site may post the
+      # results of learning groups (`scripts/seed/api-keys.ts`). A stand and a
+      # deployment pass their own: docker-compose.prod.yml has no defaults at
+      # all, and these two are known to anyone who has the repository.
+      CRM_API_KEY: ${EXCHANGE_API_KEY_CMS:-lct_local-dev-only-cms-key-000000000}
       # The secret the CRM signs its outgoing messages with. The imitator
       # rejects an unsigned or badly signed status, so the signature is part of
       # what the stand demonstrates. The default below is good enough for a
@@ -213,7 +232,7 @@ services:
           'CMD',
           'node',
           '-e',
-          "fetch('http://127.0.0.1:8081/__state').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+          "fetch('http://127.0.0.1:8081/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
         ]
       interval: 10s
       timeout: 5s
@@ -227,10 +246,12 @@ services:
         PORT: '8082'
     ports:
       - '58082:8082'
+    extra_hosts:
+      - 'host.docker.internal:host-gateway'
     environment:
       PORT: '8082'
-      CRM_BASE_URL: http://app:3000
-      CRM_API_KEY: ${EXCHANGE_API_KEY_LMS:-}
+      CRM_BASE_URL: ${MOCK_CRM_BASE_URL:-http://app:3000}
+      CRM_API_KEY: ${EXCHANGE_API_KEY_LMS:-lct_local-dev-only-lms-key-000000000}
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-exchange-stand-secret-0123456789abcdef}
       INSTANCE_NAME: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
       # The address of a learning group as a person opens it. Published port,
@@ -242,7 +263,7 @@ services:
           'CMD',
           'node',
           '-e',
-          "fetch('http://127.0.0.1:8082/__state').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
+          "fetch('http://127.0.0.1:8082/').then(r => process.exit(r.ok ? 0 : 1)).catch(() => process.exit(1))"
         ]
       interval: 10s
       timeout: 5s
@@ -276,6 +297,11 @@ services:
       # off; so does DEMO_MODE in a local .env, which Compose substitutes here —
       # a developer's own setting is not something the stand should override.
       DEMO_MODE: ${DEMO_MODE:-true}
+      # Пароль демонстрационных записей на карточке входа: приложение его не
+      # проверяет, а повторяет то, что задано в каталоге. Умолчание — то же, что
+      # у KEYCLOAK_DEMO_PASSWORD выше; разойдутся они — карточка покажет пароль,
+      # которым не войти.
+      DEMO_PASSWORD_HINT: ${DEMO_PASSWORD_HINT:-lct-demo-2026}
       # The account directory. `OIDC_ISSUER_URL` is the address the server reads
       # the realm metadata from and the `iss` it checks every token against —
       # inside the network that is the container name. `OIDC_PUBLIC_URL` is where
@@ -301,6 +327,12 @@ services:
       # Shown as a hint in the integrations section: the web service of the LMS
       # the synchronisation of learning data goes to.
       EXCHANGE_LMS_BASE_URL: ${EXCHANGE_LMS_BASE_URL:-http://mock-lms:8082}
+      # The trigger of the CMS imitator behind the «Демо: заявка с сайта» button
+      # on the «Внешние системы» screen: the app presses it so the scene starts
+      # where a visitor of the site would start it. Demo scaffolding, not a
+      # direction of the contract — the button appears only with DEMO_MODE=true,
+      # and a deployment with a real CMS leaves this empty.
+      DEMO_CMS_TRIGGER_URL: ${DEMO_CMS_TRIGGER_URL:-http://mock-cms:8081/__send-application}
       # The names of the connections, and the same variables the imitators read
       # below: the CRM checks `source.instance` of an incoming message against
       # these and the seed binds an exchange key to one of them. Two names for one
@@ -313,11 +345,13 @@ services:
       # The access keys of the imitators, read by the seed and by nothing else:
       # it issues them to the machine subject of the exchange, one per
       # connection, and the imitators next door introduce themselves with the
-      # same values. Empty — the seed says so in its log and the stand comes up
-      # without exchange keys, which on a public stand nobody could then issue
-      # (docs/seeds.md).
-      EXCHANGE_API_KEY_CMS: ${EXCHANGE_API_KEY_CMS:-}
-      EXCHANGE_API_KEY_LMS: ${EXCHANGE_API_KEY_LMS:-}
+      # same values. The defaults are the two demonstration keys of this file —
+      # the same values the imitators below take, because a local stack whose
+      # exchange is off until somebody invents two keys shows nothing at all.
+      # They are public by definition; a stand and a deployment set their own
+      # (docs/seeds.md, .env.example).
+      EXCHANGE_API_KEY_CMS: ${EXCHANGE_API_KEY_CMS:-lct_local-dev-only-cms-key-000000000}
+      EXCHANGE_API_KEY_LMS: ${EXCHANGE_API_KEY_LMS:-lct_local-dev-only-lms-key-000000000}
       # Nothing sits in front of the app in the local stack, so the client
       # address is the socket address and forwarding headers must not be trusted.
       TRUST_PROXY: 'false'

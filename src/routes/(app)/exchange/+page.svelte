@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { enhance } from '$app/forms';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -62,6 +63,26 @@
 				{/if}
 			</Alert.Description>
 		</Alert.Root>
+	{/if}
+
+	{#if data.demoApplication}
+		<!--
+			Стенд: сцена обмена начинается на сайте, а не в CRM. Кнопка просит
+			имитатор CMS подать заявку — дальше всё идёт обычным путём, и то же
+			самое делает кнопка на странице самого имитатора.
+		-->
+		<form
+			method="POST"
+			action="?/demoApplication"
+			use:enhance
+			class="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-4"
+		>
+			<Button type="submit" variant="outline">Демо: заявка с сайта</Button>
+			<span class="text-sm text-muted-foreground">
+				Имитатор CMS подаст заявку так же, как её подал бы посетитель сайта: она приедет по
+				контракту обмена и станет взаимодействием.
+			</span>
+		</form>
 	{/if}
 
 	<FilterBar filter={data.filter} />

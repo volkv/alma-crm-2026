@@ -17,6 +17,8 @@ import { controlRoutes } from '../shared/control.ts';
 import { crmIssue, postToCrm, type CrmTarget } from '../shared/crm.ts';
 import { buildEnvelope, parseEnvelope, SCHEMA_VERSION, type Envelope } from '../shared/envelope.ts';
 import {
+	backToStatePage,
+	parseTriggerBody,
 	problem,
 	startMockService,
 	type MockReply,
@@ -42,6 +44,8 @@ export type MockLmsOptions = {
 	/** Секрет, которым CRM подписывает исходящие сообщения. */
 	exchangeSecret?: string | null;
 	journalSize?: number;
+	/** Токен управляющих адресов; `null` — управление открыто. */
+	controlToken?: string | null;
 };
 
 export type GroupCounters = { enrolled: number; completed: number; expelled: number };
@@ -321,24 +325,20 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 
 	const triggers: MockRoute[] = [
 		{
-			// Направление 4: «поток закончился, вот числа». Триггер проверки, а не
-			// эндпоинт контракта: у настоящей LMS его роль играет расписание.
+			// Направление 4: «поток закончился, вот числа». Триггер стенда, а не
+			// эндпоинт контракта: у настоящей LMS его роль играет расписание. Жмут
+			// его кнопкой со страницы состояния и запросом из проверки.
 			method: 'POST',
 			path: '/__send-result',
 			contract: false,
 			handle: async (request) => {
-				let body: unknown;
+				const parsedBody = parseTriggerBody(request);
 
-				try {
-					body = request.rawBody === '' ? {} : JSON.parse(request.rawBody);
-				} catch {
-					return problem(400, 'validation', 'Тело запроса не разбирается как JSON');
+				if (!parsedBody.ok) {
+					return problem(400, 'validation', parsedBody.message);
 				}
 
-				if (!isRecord(body)) {
-					return problem(400, 'validation', 'Тело запроса — объект');
-				}
-
+				const body = parsedBody.body;
 				const allowed = [
 					'groupExternalId',
 					'requestExternalId',
@@ -439,16 +439,20 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 					payload: envelope
 				});
 
-				return {
-					status: 200,
-					json: {
-						eventId: envelope.eventId,
-						groupExternalId: group.groupExternalId,
-						repeat: repeatOf !== null,
-						request: envelope,
-						crm: call
-					}
-				};
+				// Кнопка со страницы состояния возвращает на неё же: нажавший смотрит
+				// в журнал стенда, а не в тело ответа.
+				return parsedBody.fromForm
+					? backToStatePage()
+					: {
+							status: 200,
+							json: {
+								eventId: envelope.eventId,
+								groupExternalId: group.groupExternalId,
+								repeat: repeatOf !== null,
+								request: envelope,
+								crm: call
+							}
+						};
 			}
 		}
 	];
@@ -465,9 +469,31 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 			...triggers,
 			...controlRoutes({
 				name: 'mock-lms',
-				title: 'Имитатор системы обучения',
+				title: 'Имитатор системы обучения — не настоящая система',
 				journal,
 				scenario,
+				controlToken: options.controlToken ?? null,
+				forms: [
+					{
+						action: '__send-result',
+						title: 'Результат потока',
+						description:
+							'То же, что делает система обучения по окончании потока: имитатор собирает числа группы и отправляет их в CRM.',
+						fields: [
+							{
+								name: 'requestExternalId',
+								label: 'Ключ заявки CRM',
+								hint: 'crm-group-<взаимодействие>-<поток>; список заведённых групп — ниже'
+							},
+							{
+								name: 'groupExternalId',
+								label: 'Ключ группы',
+								hint: 'вместо ключа заявки: любой из двух, чтобы назвать группу'
+							}
+						],
+						submit: 'Отправить результат в CRM'
+					}
+				],
 				objects: () => ({ groups: [...groups.values()] }),
 				forget,
 				// Ни ключа, ни секрета, ни токена веб-сервиса: страница стенда

@@ -6,7 +6,8 @@
  * (имя экземпляра LMS в сообщениях), `PUBLIC_URL` (адрес группы для человека),
  * `CRM_BASE_URL` и `CRM_API_KEY` (куда и чем представляться, отправляя
  * результат), `EXCHANGE_SECRET` (секрет, которым CRM подписывает исходящие),
- * `JOURNAL_SIZE`.
+ * `JOURNAL_SIZE`, `CONTROL_TOKEN` (токен управляющих адресов `__state` и
+ * `__scenario`; не задан — управление открыто).
  *
  * Без `CRM_BASE_URL` и `CRM_API_KEY` сервис поднимается и честно отвечает, что
  * обмен на стенде не настроен.
@@ -22,9 +23,10 @@ const service = await startMockLms({
 	publicUrl: textEnv('PUBLIC_URL') ?? undefined,
 	crm: { baseUrl: textEnv('CRM_BASE_URL'), apiKey: textEnv('CRM_API_KEY') },
 	exchangeSecret: textEnv('EXCHANGE_SECRET'),
-	journalSize: integerEnv('JOURNAL_SIZE', DEFAULT_JOURNAL_SIZE)
+	journalSize: integerEnv('JOURNAL_SIZE', DEFAULT_JOURNAL_SIZE),
+	controlToken: textEnv('CONTROL_TOKEN')
 });
 
-console.log(`mock-lms слушает порт ${service.port}; состояние — GET /__state`);
+console.log(`mock-lms слушает порт ${service.port}; состояние — GET /`);
 
 stopOnSignals(service.stop);

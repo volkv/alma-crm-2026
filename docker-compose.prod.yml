@@ -166,12 +166,19 @@ services:
   # out of `docker compose up -d` unless the deployment is itself the demo
   # stand, which starts them with `--profile stand`; naming a service on the
   # command line enables its profile too, so `docker compose up -d mock-cms`
-  # still works. Neither is published: the exchange happens inside the compose
-  # network, and the state page shows every application the stand has seen.
+  # still works. Сам обмен идёт внутри сети compose; наружу через прокси стенда
+  # открыты только страница состояния и триггеры — то, чем сцену запускают и по
+  # чему видно, что она доехала.
   mock-cms:
     profiles: ['stand']
     restart: unless-stopped
-    ports: !reset []
+    # На петлю хоста, как приложение и каталог: показать сцену «заявка с сайта»
+    # зрителю нужно, а значит, страница состояния и триггер обязаны быть
+    # достижимы снаружи — но только через прокси, где открыты ровно они
+    # (`deploy/nginx/crm.conf.example`, `docs/deployment.md`). Базовый файл
+    # публикует порт на всех интерфейсах, поэтому `!override`.
+    ports: !override
+      - '127.0.0.1:${MOCK_CMS_PORT:-8091}:8081'
     # `!override` instead of merging: the secret in the base file is a local
     # development default, and a deployment must not silently fall back to it.
     # Empty is honest — the imitator answers that the exchange is not
@@ -183,8 +190,19 @@ services:
       # (`api_keys.exchange_system`), and the site's key is refused on the route
       # of learning group results. The seed of the stand issues both from the
       # same variables.
-      CRM_API_KEY: ${EXCHANGE_API_KEY_CMS:-}
+      #
+      # `?` без двоеточия: переменная обязана быть названа в `.env`
+      # развёртывания, а умолчания у неё нет вовсе — демонстрационные ключи
+      # базового файла напечатаны в репозитории, и стенд, молча взявший их,
+      # принимал бы заявки от кого угодно. Пустое значение остаётся решением:
+      # установка без имитаторов ключей обмена не заводит.
+      CRM_API_KEY: ${EXCHANGE_API_KEY_CMS?declare EXCHANGE_API_KEY_CMS in .env}
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}
+      # Токен управляющих адресов имитатора (`__state`, `__scenario`). Прокси их
+      # наружу не пускает; токен — вторая граница, на случай своей конфигурации
+      # прокси и на случай туннеля к опубликованному порту. Пусто — управление
+      # открыто всем, кто дотянулся до петли хоста (`docs/security.md`).
+      CONTROL_TOKEN: ${MOCK_CONTROL_TOKEN?declare MOCK_CONTROL_TOKEN in .env}
       # The same variable the app reads: the CRM checks `source.instance` of an
       # incoming application against its own setting, and two variables with one
       # default would silently drift apart on the first stand that renames one.
@@ -197,16 +215,18 @@ services:
   mock-lms:
     profiles: ['stand']
     restart: unless-stopped
-    ports: !reset []
+    ports: !override
+      - '127.0.0.1:${MOCK_LMS_PORT:-8092}:8082'
     environment: !override
       PORT: '8082'
       CRM_BASE_URL: http://app:3000
-      CRM_API_KEY: ${EXCHANGE_API_KEY_LMS:-}
+      CRM_API_KEY: ${EXCHANGE_API_KEY_LMS?declare EXCHANGE_API_KEY_LMS in .env}
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}
+      CONTROL_TOKEN: ${MOCK_CONTROL_TOKEN?declare MOCK_CONTROL_TOKEN in .env}
       INSTANCE_NAME: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
-      # Not published, so a person opens a group through the same reverse proxy
-      # as the app; without APP_ORIGIN the link points at the compose name and
-      # is honest about being unreachable from outside.
+      # Адрес группы для человека: через тот же прокси, что и приложение, —
+      # `https://<домен>/mock-lms/`. Без него ссылка ведёт на имя контейнера и
+      # честно недостижима снаружи.
       PUBLIC_URL: ${EXCHANGE_LMS_PUBLIC_URL:-http://mock-lms:8082}
     deploy:
       resources:
@@ -266,6 +286,10 @@ services:
       EXCHANGE_CMS_STATUS_URL: ${EXCHANGE_CMS_STATUS_URL:-}
       EXCHANGE_LMS_GROUPS_URL: ${EXCHANGE_LMS_GROUPS_URL:-}
       EXCHANGE_LMS_BASE_URL: ${EXCHANGE_LMS_BASE_URL:-}
+      # Триггер имитатора CMS за кнопкой «Демо: заявка с сайта». Пусто —
+      # кнопки нет: установка с настоящей CMS не нажимает её заявки за неё.
+      # Стенд профиля `stand` ставит здесь `http://mock-cms:8081/__send-application`.
+      DEMO_CMS_TRIGGER_URL: ${DEMO_CMS_TRIGGER_URL:-}
       EXCHANGE_CMS_INSTANCE: ${EXCHANGE_CMS_INSTANCE:-itschool-site}
       EXCHANGE_LMS_INSTANCE: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}
@@ -275,8 +299,12 @@ services:
       # staff administrator has no account in the directory yet. A deployment
       # that talks to the real systems leaves them empty and issues keys the
       # usual way.
-      EXCHANGE_API_KEY_CMS: ${EXCHANGE_API_KEY_CMS:-}
-      EXCHANGE_API_KEY_LMS: ${EXCHANGE_API_KEY_LMS:-}
+      #
+      # `?` без двоеточия: названа в `.env` обязана быть, умолчания нет —
+      # демонстрационные ключи базового файла напечатаны в репозитории. Пустое
+      # значение остаётся решением развёртывания: ключей обмена тогда нет.
+      EXCHANGE_API_KEY_CMS: ${EXCHANGE_API_KEY_CMS?declare EXCHANGE_API_KEY_CMS in .env}
+      EXCHANGE_API_KEY_LMS: ${EXCHANGE_API_KEY_LMS?declare EXCHANGE_API_KEY_LMS in .env}
       # Outgoing requests go to public addresses only: an address typed into the
       # integrations screen must not be able to reach the account directory, the
       # object storage or the cloud metadata service next door.

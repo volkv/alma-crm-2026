@@ -1054,6 +1054,16 @@ describe('конверт исходящего сообщения', () => {
 			await pointGroupsAt(receiver.url);
 
 			const interactionId = await acceptedInteraction();
+
+			// Приём заявки поставил в очередь и снимок её статуса, а круг доставки
+			// один на всех. Сцена здесь про конверт заявки на группу, поэтому статус
+			// в этом кругу отвергается — управляемым сценарием имитатора и только по
+			// ключу этой заявки, чтобы отказ не задел ничего другого.
+			await fetch(`${cms.url}/__scenario`, {
+				method: 'POST',
+				body: JSON.stringify({ failNext: 5, status: 503, match: B2B_DATA.externalId })
+			});
+
 			const outcome = await requestLearningGroup(testActor(), {
 				interactionId,
 				streamNumber: 1,
@@ -1067,6 +1077,8 @@ describe('конверт исходящего сообщения', () => {
 			await makeDue();
 			const report = await runExchangeCycle(testActor());
 
+			// Ушло ровно одно сообщение — заявка на группу: статус остался в очереди
+			// повторов по сценарию.
 			expect(report.sent).toBe(1);
 			expect(receiver.bodies).toHaveLength(2);
 			expect(receiver.bodies[1]).toBe(receiver.bodies[0]);

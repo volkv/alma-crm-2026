@@ -4,7 +4,9 @@
  * Переменные окружения: `PORT` (по умолчанию 8081), `HOST`, `INSTANCE_NAME`
  * (имя экземпляра CMS в сообщениях), `CRM_BASE_URL` и `CRM_API_KEY` (куда и
  * чем представляться, отправляя заявку), `EXCHANGE_SECRET` (секрет, которым
- * CRM подписывает исходящие), `JOURNAL_SIZE`.
+ * CRM подписывает исходящие), `JOURNAL_SIZE`, `CONTROL_TOKEN` (токен
+ * управляющих адресов `__state` и `__scenario`; не задан — управление
+ * открыто).
  *
  * Без `CRM_BASE_URL` и `CRM_API_KEY` сервис поднимается и честно отвечает, что
  * обмен на стенде не настроен: заглушка, притворяющаяся настроенной, отняла бы
@@ -20,9 +22,10 @@ const service = await startMockCms({
 	instance: textEnv('INSTANCE_NAME') ?? 'itschool-site',
 	crm: { baseUrl: textEnv('CRM_BASE_URL'), apiKey: textEnv('CRM_API_KEY') },
 	exchangeSecret: textEnv('EXCHANGE_SECRET'),
-	journalSize: integerEnv('JOURNAL_SIZE', DEFAULT_JOURNAL_SIZE)
+	journalSize: integerEnv('JOURNAL_SIZE', DEFAULT_JOURNAL_SIZE),
+	controlToken: textEnv('CONTROL_TOKEN')
 });
 
-console.log(`mock-cms слушает порт ${service.port}; состояние — GET /__state`);
+console.log(`mock-cms слушает порт ${service.port}; состояние — GET /`);
 
 stopOnSignals(service.stop);
