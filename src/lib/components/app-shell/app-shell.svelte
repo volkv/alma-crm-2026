@@ -166,5 +166,5 @@
 	</div>
 </div>
 
-<CommandPalette bind:open={searchOpen} />
+<CommandPalette bind:open={searchOpen} {links} />
 <Toaster position="bottom-right" closeButton />

@@ -161,7 +161,7 @@ test('rows answer the keyboard and selection opens the bulk bar', async ({ page 
 	await expect(page.getByRole('button', { name: 'Снять с публикации' })).toBeVisible();
 });
 
-test('the search palette opens on its shortcut', async ({ page }) => {
+test('the search palette opens on its shortcut and offers the sections', async ({ page }) => {
 	await page.goto('/ui-kit');
 	// Give the document focus first, the way a real visitor's click would.
 	await page.getByRole('heading', { level: 1 }).click();
@@ -179,7 +179,11 @@ test('the search palette opens on its shortcut', async ({ page }) => {
 		await expect(palette).toBeVisible({ timeout: 2000 });
 	}).toPass({ timeout: 20_000 });
 
-	await expect(palette.getByText('Поиск заработает вместе с разделами.')).toBeVisible();
+	// An empty query is the table of contents: the palette offers the sections
+	// this account may open — the same list the sidebar shows — so the shortcut
+	// leads somewhere before a single letter is typed.
+	await expect(palette.getByPlaceholder('Что ищем?')).toBeVisible();
+	await expect(palette.getByRole('option', { name: 'Взаимодействия' })).toBeVisible();
 });
 
 test('collapsing the navigation outlives a reload', async ({ page }) => {
