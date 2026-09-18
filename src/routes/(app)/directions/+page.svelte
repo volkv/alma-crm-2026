@@ -79,9 +79,10 @@
 {/snippet}
 
 {#snippet stateCell(row: DirectionListItem)}
-	{@const state = row.direction.isActive ? 'active' : 'archived'}
-	<StatusBadge tone={DIRECTION_STATE_TONES[state]} dot>
-		{DIRECTION_STATE_LABELS[state]}
+	<!-- Не `state`: это имя закрывает руну `$state` для всего файла. -->
+	{@const directionState = row.direction.isActive ? 'active' : 'archived'}
+	<StatusBadge tone={DIRECTION_STATE_TONES[directionState]} dot>
+		{DIRECTION_STATE_LABELS[directionState]}
 	</StatusBadge>
 {/snippet}
 

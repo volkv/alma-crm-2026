@@ -16,11 +16,15 @@
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
 	import PageHeader from '$lib/components/page-header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
+	import type { DirectionState } from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 
-	const state = $derived(data.direction.isActive ? 'active' : 'archived');
+	// Переменную нельзя звать `state`: после неё `$state(...)` разбирается как
+	// обращение к стору с таким именем, и компонент целиком выпадает из
+	// runes-режима.
+	const directionState: DirectionState = $derived(data.direction.isActive ? 'active' : 'archived');
 
 	let archiveForm = $state<HTMLFormElement | null>(null);
 	let archiveOpen = $state(false);
@@ -93,8 +97,8 @@
 			<KeyValueRow label="Код" value={data.direction.code} />
 			<KeyValueRow label="Порядок в списке" value={String(data.direction.position)} />
 			<KeyValueRow label="Состояние">
-				<StatusBadge tone={DIRECTION_STATE_TONES[state]} dot>
-					{DIRECTION_STATE_LABELS[state]}
+				<StatusBadge tone={DIRECTION_STATE_TONES[directionState]} dot>
+					{DIRECTION_STATE_LABELS[directionState]}
 				</StatusBadge>
 			</KeyValueRow>
 		</KeyValue>
