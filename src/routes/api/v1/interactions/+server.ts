@@ -25,7 +25,33 @@ registerRoute({
 		'текущей стадии и просрочке, плюс поиск по названию и наименованию организаций. ' +
 		'Видны только те взаимодействия, чьи стороны входят в область доступа владельца ключа.',
 	tags: ['Взаимодействия'],
-	config: listInteractionsEndpoint
+	config: listInteractionsEndpoint,
+	example: {
+		items: [
+			{
+				id: 'a3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+				title: 'Переговоры с СЗПУ',
+				status: 'active',
+				ownerUserId: '9c8b7a65-4321-4098-b7a6-5c4d3e2f1a09',
+				ownerName: 'Иванова Мария',
+				institutionName: 'СЗПУ',
+				customerName: null,
+				stageKey: 'document_exchange',
+				stageName: 'Обмен пакетом документов',
+				stagePosition: 4,
+				stageCategory: 'documents',
+				dueAt: '2026-10-01T09:00:00.000Z',
+				isOverdue: false,
+				isPaused: false,
+				isStale: false,
+				openBlockers: 0,
+				lastActivityAt: '2026-09-18T12:30:00.000Z'
+			}
+		],
+		total: 1,
+		page: 1,
+		pageSize: 20
+	}
 });
 
 export const GET: RequestHandler = apiHandler(listInteractionsEndpoint, async (ctx, { query }) => {

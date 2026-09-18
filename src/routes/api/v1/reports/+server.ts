@@ -1,0 +1,118 @@
+import type { RequestHandler } from './$types';
+import { apiReportSchema, toApiReport } from '$lib/contracts/api';
+import { periodIssues, reportQuerySchema } from '$lib/contracts/reports';
+import { apiHandler, type ApiEndpointConfig } from '$lib/server/api/handler';
+import { registerRoute } from '$lib/server/api/openapi';
+import { ValidationError } from '$lib/server/errors';
+import { buildReport } from '$lib/server/reports/rows';
+
+const reportEndpoint = {
+	auth: 'key',
+	query: reportQuerySchema,
+	output: apiReportSchema,
+	// Своего права у отчёта нет: он показывает ровно то, что владелец ключа и так
+	// видит в списке взаимодействий, и сужается той же областью доступа.
+	permission: 'interactions.read'
+} satisfies ApiEndpointConfig;
+
+registerRoute({
+	method: 'get',
+	path: '/v1/reports',
+	summary: 'Отчёт: срез или движение',
+	description:
+		'Тот же объект, который показывает экран отчётов и из которого собираются выгрузки XLSX, ' +
+		'XLS, PDF и JSON: таблица со строками и ячейками в порядке `meta.columns`, итоги и ' +
+		'диаграммы. Одна сборка на все форматы — числа интегратора и числа сотрудника сойтись ' +
+		'обязаны.\n\n' +
+		'`mode=snapshot` — срез на дату `to`: строка на взаимодействие, «где всё стоит». ' +
+		'`mode=movement` — движение за период: строка на переход, «что произошло». Период ' +
+		'обязателен: у машинного отчёта не бывает периода по умолчанию, иначе две одинаково ' +
+		'названные выгрузки в разные дни считали бы разное.\n\n' +
+		'Фильтры многозначны и складываются: `org`, `dir`, `prog`, `prod`, `owner`, `assignee`, ' +
+		'`stage`, `state`, `transfer`, `party`, `group`, плюс флаги `overdue` и `paused`. ' +
+		'`prod=a,b` и `prod=a&prod=b` — одно и то же; непонятное значение фильтром просто не ' +
+		'становится. Слишком широкая выборка (больше 50 000 строк) отвечает 400 с подсказкой, ' +
+		'чем её сузить.\n\n' +
+		'`meta.scope` говорит словами, чья это область доступа: отчёты по двум разным ключам ' +
+		'законно дают разные числа, и файл обязан об этом сообщать.',
+	tags: ['Отчёты'],
+	config: reportEndpoint,
+	example: {
+		meta: {
+			schemaVersion: 1,
+			generatedAt: '2026-09-18T09:00:00.000Z',
+			asOf: '2026-09-18T20:59:59.999Z',
+			mode: 'snapshot',
+			period: { start: '2026-07-01', end: '2026-09-18' },
+			filters: [{ label: 'Период', value: '01.07.2026 — 18.09.2026' }],
+			scope: 'все взаимодействия',
+			semantics: 'Срез на 18.09.2026.',
+			columns: [
+				{
+					key: 'title',
+					label: 'Взаимодействие',
+					kind: 'link',
+					sort: 'current',
+					note: 'сейчас'
+				}
+			]
+		},
+		rows: [
+			{
+				rowKey: 'a3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+				interactionId: 'a3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+				stageEntryId: 'b1c2d3e4-f5a6-4b7c-8d9e-0f1a2b3c4d5e',
+				cells: [
+					{
+						kind: 'link',
+						value: 'Переговоры с СЗПУ',
+						url: 'https://crm.example.org/interactions/a3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d'
+					}
+				]
+			}
+		],
+		totals: { rowCount: 1, interactionCount: 1, paused: 0, overdue: 0 },
+		charts: {
+			funnel: {
+				stages: [
+					{
+						key: 'document_exchange',
+						label: 'Обмен пакетом документов',
+						value: 1,
+						filter: { param: 'stage', value: 'document_exchange' }
+					}
+				],
+				closed: [],
+				note: 'Распределение на дату, а не конверсия.'
+			},
+			movement: null,
+			breakdowns: [
+				{
+					key: 'organizations',
+					label: 'По вузам и контрагентам',
+					points: [
+						{
+							key: '2f1c9a0e-6b3d-4a77-8f21-0c5e9d4b7a10',
+							label: 'СЗПУ',
+							value: 1,
+							filter: { param: 'org', value: '2f1c9a0e-6b3d-4a77-8f21-0c5e9d4b7a10' }
+						}
+					],
+					doubleCounted: 0
+				}
+			]
+		}
+	}
+});
+
+export const GET: RequestHandler = apiHandler(reportEndpoint, async (ctx, { query }) => {
+	// Тот же разбор, что у экрана: период задом наперёд отчётом не является, и
+	// молча подставленный вместо него квартал означал бы отчёт не за тот период.
+	const issues = periodIssues(query);
+
+	if (issues.length > 0) {
+		throw new ValidationError('Отчёт по такому периоду не собрать', issues);
+	}
+
+	return toApiReport(await buildReport(ctx, query));
+});

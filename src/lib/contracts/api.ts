@@ -13,7 +13,32 @@
  */
 import { z } from 'zod';
 import { id, requiredText } from './common';
-import { EDUCATION_LEVELS, ORGANIZATION_KINDS, type OrganizationView } from './directory';
+import {
+	EDUCATION_LEVELS,
+	LIFECYCLE_STATUSES,
+	ORGANIZATION_KINDS,
+	PROGRAM_LEVELS,
+	type OrganizationView
+} from './directory';
+import { DOCUMENT_KINDS, type DocumentListItem } from './documents';
+import {
+	EXCHANGE_DIRECTIONS,
+	EXCHANGE_MESSAGE_STATES,
+	type ExchangeMessageView,
+	type LearningGroupView
+} from './exchange';
+import {
+	checklistItemSchema,
+	STAGE_CATEGORIES,
+	STAGE_OUTCOMES,
+	STAGE_TRANSITION_KINDS,
+	type CommentView,
+	type InteractionChangeView,
+	type InteractionStatusView,
+	type ProcessGroupDetail,
+	type StageEntryView
+} from './interactions';
+import { REPORT_MODES, type ReportBucket, type ReportView } from './reports';
 
 /**
  * Коды ошибок API. Первые четыре повторяют коды предметных ошибок
@@ -56,11 +81,21 @@ export type ApiErrorBody = z.output<typeof apiErrorSchema>;
  * второй словарь для одного и того же понятия — это способ однажды разойтись.
  */
 export function apiPageSchema<TItem extends z.ZodType>(item: TItem) {
-	return z.object({
-		items: z.array(item),
-		total: z.number().int().nonnegative().describe('Сколько записей под фильтром всего'),
+	return apiCollectionSchema(item).extend({
 		page: z.number().int().min(1).describe('Номер выданной страницы, с единицы'),
 		pageSize: z.number().int().min(1).describe('Размер страницы')
+	});
+}
+
+/**
+ * Набор целиком — то, что страницами не режется: короткий справочник или всё,
+ * что относится к одной записи. Поля те же, что у страницы, минус номер и
+ * размер: их отсутствие и есть обещание «это весь ответ».
+ */
+export function apiCollectionSchema<TItem extends z.ZodType>(item: TItem) {
+	return z.object({
+		items: z.array(item),
+		total: z.number().int().nonnegative().describe('Сколько записей под фильтром всего')
 	});
 }
 
@@ -93,6 +128,628 @@ export function toApiOrganization(view: OrganizationView): ApiOrganization {
 		...view,
 		createdAt: view.createdAt.toISOString(),
 		updatedAt: view.updatedAt.toISOString()
+	};
+}
+
+/**
+ * Справочник образовательных программ. Область доступа к нему не применяется:
+ * программа — общий каталог оператора, а не имущество отдельного вуза.
+ */
+export const apiProgramSchema = z.object({
+	id: z.uuid(),
+	code: z.string().describe('Код программы в каталоге оператора'),
+	name: z.string(),
+	level: z.enum(PROGRAM_LEVELS),
+	directionCode: z.string().nullable().describe('Код направления подготовки, например `09.03.01`'),
+	status: z.enum(LIFECYCLE_STATUSES)
+});
+
+export type ApiProgram = z.output<typeof apiProgramSchema>;
+
+/** Продукт оператора: то, что предлагают вузу. */
+export const apiProductSchema = z.object({
+	id: z.uuid(),
+	code: z.string(),
+	name: z.string(),
+	vendorOrganizationId: z.uuid().nullable().describe('Вендор продукта — организация справочника'),
+	description: z.string().nullable(),
+	status: z.enum(LIFECYCLE_STATUSES)
+});
+
+export type ApiProduct = z.output<typeof apiProductSchema>;
+
+/** ИТ-направление: разрез работы, по которому назначают ответственных. */
+export const apiDirectionSchema = z.object({
+	id: z.uuid(),
+	name: z.string()
+});
+
+export type ApiDirection = z.output<typeof apiDirectionSchema>;
+
+/**
+ * Запись о пребывании взаимодействия на стадии. Стадия названа ключом и
+ * именем из снимка, а не ссылкой на строку процесса: процесс могли изменить, а
+ * пройденная стадия обязана остаться такой, какой её видел исполнитель.
+ */
+export const apiStageEntrySchema = z.object({
+	id: z.uuid(),
+	stageKey: z.string().describe('Ключ стадии из снимка на момент входа'),
+	stageName: z.string(),
+	stagePosition: z.number().int(),
+	stageCategory: z.enum(STAGE_CATEGORIES),
+	enteredAt: z.iso.datetime(),
+	leftAt: z.iso.datetime().nullable().describe('Когда стадию покинули; `null` — стадия текущая'),
+	outcome: z.enum(STAGE_OUTCOMES).nullable().describe('Чем кончилось пребывание на стадии'),
+	outcomeReason: z.string().nullable(),
+	responsibleUserId: z.uuid().nullable(),
+	responsibleName: z.string().nullable(),
+	resultText: z.string().nullable(),
+	confirmedAt: z.iso.datetime().nullable(),
+	dueAt: z.iso.datetime().describe('Срок стадии с учётом пауз'),
+	activeSeconds: z.number().describe('Сколько секунд стадия шла без пауз'),
+	pausedSeconds: z.number(),
+	overdueSeconds: z.number(),
+	isOverdue: z.boolean(),
+	isPaused: z.boolean(),
+	documentIds: z.array(z.uuid()).describe('Файлы, приложенные вместе с переходом')
+});
+
+export type ApiStageEntry = z.output<typeof apiStageEntrySchema>;
+
+export function toApiStageEntry(view: StageEntryView): ApiStageEntry {
+	return {
+		id: view.id,
+		stageKey: view.snapshot.key,
+		stageName: view.snapshot.name,
+		stagePosition: view.snapshot.position,
+		stageCategory: view.snapshot.category,
+		enteredAt: view.enteredAt.toISOString(),
+		leftAt: view.leftAt === null ? null : view.leftAt.toISOString(),
+		outcome: view.outcome,
+		outcomeReason: view.outcomeReason,
+		responsibleUserId: view.responsibleUserId,
+		responsibleName: view.responsibleName,
+		resultText: view.resultText,
+		confirmedAt: view.confirmedAt === null ? null : view.confirmedAt.toISOString(),
+		dueAt: view.dueAt.toISOString(),
+		activeSeconds: view.activeSeconds,
+		pausedSeconds: view.pausedSeconds,
+		overdueSeconds: view.overdueSeconds,
+		isOverdue: view.isOverdue,
+		isPaused: view.isPaused,
+		documentIds: view.documents.map((document) => document.id)
+	};
+}
+
+/**
+ * Изменение плана взаимодействия: сроки, стороны, программы, ответственный.
+ * Значения приходят такими, какими их записали, — это снимок поля, а не текст
+ * для показа.
+ */
+export const apiInteractionChangeSchema = z.object({
+	id: z.uuid(),
+	changedAt: z.iso.datetime(),
+	authorId: z.uuid(),
+	authorName: z.string(),
+	field: z.string().describe('Что изменилось: `title`, `ownerUserId`, `parties` и прочее'),
+	oldValue: z.unknown(),
+	newValue: z.unknown(),
+	reason: z.string().nullable()
+});
+
+export type ApiInteractionChange = z.output<typeof apiInteractionChangeSchema>;
+
+export function toApiInteractionChange(view: InteractionChangeView): ApiInteractionChange {
+	return {
+		id: view.id,
+		changedAt: view.changedAt.toISOString(),
+		authorId: view.authorId,
+		authorName: view.authorName,
+		field: view.field,
+		oldValue: view.oldValue,
+		newValue: view.newValue,
+		reason: view.reason
+	};
+}
+
+/**
+ * История взаимодействия целиком: где оно стояло и что в нём правили. Обе
+ * ленты отдаются одним ответом, потому что вопрос «что здесь происходило»
+ * один, а собирать его из двух запросов интегратору незачем.
+ */
+export const apiInteractionHistorySchema = z.object({
+	interactionId: z.uuid(),
+	processRevision: z.number().int().describe('Номер действующей редакции процесса'),
+	current: apiStageEntrySchema
+		.nullable()
+		.describe('Открытая запись стадии; `null` — запись закрыта'),
+	stages: z.array(apiStageEntrySchema).describe('Пройденные стадии, новые сверху'),
+	changes: z.array(apiInteractionChangeSchema).describe('Изменения плана, новые сверху')
+});
+
+export type ApiInteractionHistory = z.output<typeof apiInteractionHistorySchema>;
+
+export function toApiInteractionHistory(
+	status: InteractionStatusView,
+	changes: readonly InteractionChangeView[]
+): ApiInteractionHistory {
+	return {
+		interactionId: status.interactionId,
+		processRevision: status.revision,
+		current: status.current === null ? null : toApiStageEntry(status.current),
+		stages: status.history.map(toApiStageEntry),
+		changes: changes.map(toApiInteractionChange)
+	};
+}
+
+/** Комментарий сотрудника к взаимодействию. */
+export const apiCommentSchema = z.object({
+	id: z.uuid(),
+	authorId: z.uuid(),
+	authorName: z.string(),
+	body: z.string(),
+	createdAt: z.iso.datetime()
+});
+
+export type ApiComment = z.output<typeof apiCommentSchema>;
+
+export function toApiComment(view: CommentView): ApiComment {
+	return {
+		id: view.id,
+		authorId: view.authorId,
+		authorName: view.authorName,
+		body: view.body,
+		createdAt: view.createdAt.toISOString()
+	};
+}
+
+/**
+ * Комментарий через API. Взаимодействие берётся из адреса, автор — владелец
+ * ключа: указывать автора телом значило бы позволить машине писать от чужого
+ * имени.
+ */
+export const apiCommentRequestSchema = z.object({
+	body: requiredText(4000, 'Комментарий не может быть пустым')
+});
+
+export type ApiCommentRequest = z.output<typeof apiCommentRequestSchema>;
+
+/**
+ * Ответ на созданный комментарий. Кроме идентификатора отдавать нечего: тело и
+ * автор известны вызывающему, а момент создания он и так увидит в ленте.
+ */
+export const apiCommentCreatedSchema = z.object({
+	id: z.uuid().describe('Идентификатор созданного комментария')
+});
+
+export type ApiCommentCreated = z.output<typeof apiCommentCreatedSchema>;
+
+/**
+ * Метаданные документа. Содержимого файла здесь нет и не будет: API описывает
+ * работу с вузами, а файлы соглашений скачивают люди из интерфейса, где каждое
+ * скачивание попадает в журнал отдельной строкой.
+ */
+export const apiDocumentSchema = z.object({
+	id: z.uuid(),
+	title: z.string(),
+	kind: z
+		.enum(DOCUMENT_KINDS)
+		.describe('`generated` — собран системой, `uploaded` — загружен человеком'),
+	uploadedKind: z.string().nullable().describe('Вид, который назвал человек при загрузке'),
+	mime: z.string(),
+	sizeBytes: z.number().int().nonnegative(),
+	createdAt: z.iso.datetime(),
+	agreedAt: z.iso.datetime().nullable(),
+	approvedAt: z.iso.datetime().nullable(),
+	inEffectAt: z.iso.datetime().nullable(),
+	interactionId: z.uuid().nullable(),
+	authorName: z.string().nullable(),
+	supersededById: z.uuid().nullable().describe('Редакция, заменившая этот файл'),
+	supersededAt: z.iso.datetime().nullable()
+});
+
+export type ApiDocument = z.output<typeof apiDocumentSchema>;
+
+export function toApiDocument(view: DocumentListItem): ApiDocument {
+	return {
+		id: view.id,
+		title: view.title,
+		kind: view.kind,
+		uploadedKind: view.uploadedKind,
+		mime: view.mime,
+		sizeBytes: view.sizeBytes,
+		createdAt: view.createdAt.toISOString(),
+		agreedAt: view.agreedAt === null ? null : view.agreedAt.toISOString(),
+		approvedAt: view.approvedAt === null ? null : view.approvedAt.toISOString(),
+		inEffectAt: view.inEffectAt === null ? null : view.inEffectAt.toISOString(),
+		interactionId: view.interaction === null ? null : view.interaction.id,
+		authorName: view.authorName,
+		supersededById: view.supersededBy === null ? null : view.supersededBy.id,
+		supersededAt: view.supersededBy === null ? null : view.supersededBy.createdAt.toISOString()
+	};
+}
+
+/** Учебная группа взаимодействия вместе с последним результатом из LMS. */
+export const apiLearningGroupSchema = z.object({
+	id: z.uuid(),
+	streamNumber: z.number().int().describe('Номер потока внутри взаимодействия'),
+	system: z.string(),
+	instance: z.string().describe('Экземпляр подключения, в который ушла заявка'),
+	groupExternalId: z
+		.string()
+		.nullable()
+		.describe('Идентификатор группы на стороне системы обучения'),
+	requestedAt: z.iso.datetime(),
+	plannedSeats: z.number().int().nullable(),
+	startsOn: z.iso.date().nullable(),
+	endsOn: z.iso.date().nullable(),
+	lastResultAt: z.iso.datetime().nullable(),
+	messageState: z
+		.enum(EXCHANGE_MESSAGE_STATES)
+		.nullable()
+		.describe('Состояние заявки на группу в журнале обмена'),
+	lastError: z.string().nullable(),
+	enrolled: z.number().int().nullable(),
+	completed: z.number().int().nullable(),
+	expelled: z.number().int().nullable()
+});
+
+export type ApiLearningGroup = z.output<typeof apiLearningGroupSchema>;
+
+export function toApiLearningGroup(view: LearningGroupView): ApiLearningGroup {
+	return {
+		id: view.id,
+		streamNumber: view.streamNumber,
+		system: view.system,
+		instance: view.instance,
+		groupExternalId: view.groupExternalId,
+		requestedAt: view.requestedAt.toISOString(),
+		plannedSeats: view.plannedSeats,
+		startsOn: view.startsOn,
+		endsOn: view.endsOn,
+		lastResultAt: view.lastResultAt === null ? null : view.lastResultAt.toISOString(),
+		messageState: view.messageState,
+		lastError: view.lastError,
+		enrolled: view.enrolled,
+		completed: view.completed,
+		expelled: view.expelled
+	};
+}
+
+/** Группа процесса: по какому маршруту идут взаимодействия этого вида. */
+export const apiProcessGroupSchema = z.object({
+	id: z.uuid(),
+	key: z.string().describe('Ключ группы: `b2b` — учебные заведения, `b2c` — лица'),
+	name: z.string(),
+	description: z.string().nullable(),
+	position: z.number().int(),
+	stageCount: z.number().int().describe('Сколько стадий в действующей редакции'),
+	activeInteractions: z.number().int(),
+	hasDraft: z.boolean().describe('У группы есть неопубликованный черновик процесса')
+});
+
+export type ApiProcessGroup = z.output<typeof apiProcessGroupSchema>;
+
+/** Стадия действующего процесса вместе с правилами, которые она требует. */
+export const apiProcessStageSchema = z.object({
+	id: z.uuid().describe('Идентификатор стадии; им же адресуется переход'),
+	key: z.string().describe('Ключ стадии: он переживает изменение процесса, идентификатор — нет'),
+	name: z.string(),
+	position: z.number().int(),
+	category: z.enum(STAGE_CATEGORIES),
+	slaDays: z.number().int(),
+	staleAfterDays: z.number().int().nullable(),
+	requiresResult: z.boolean(),
+	requiresConfirmation: z.boolean(),
+	requiresLmsData: z.boolean().describe('Стадия подтверждается фактом из системы обучения'),
+	isFinal: z.boolean(),
+	checklist: z.array(checklistItemSchema)
+});
+
+export type ApiProcessStage = z.output<typeof apiProcessStageSchema>;
+
+/** Разрешённый переход действующего процесса. */
+export const apiProcessTransitionSchema = z.object({
+	fromStageId: z.uuid(),
+	toStageId: z.uuid(),
+	kind: z.enum(STAGE_TRANSITION_KINDS),
+	requiredPermissionKey: z.string().describe('Право, без которого переход недоступен'),
+	requiresReason: z.boolean()
+});
+
+export type ApiProcessTransition = z.output<typeof apiProcessTransitionSchema>;
+
+/**
+ * Действующий процесс группы. Черновик и его замечания сюда не входят:
+ * интеграция работает по опубликованному маршруту, а незавершённая настройка —
+ * дело сотрудника, а не внешней системы.
+ */
+export const apiProcessSchema = z.object({
+	group: apiProcessGroupSchema,
+	counterpartyKinds: z
+		.array(z.string())
+		.describe('Виды контрагентов, которые идут по этому процессу'),
+	revision: z
+		.object({
+			version: z.number().int(),
+			name: z.string(),
+			note: z.string().nullable(),
+			publishedAt: z.iso.datetime().nullable(),
+			stages: z.array(apiProcessStageSchema),
+			transitions: z.array(apiProcessTransitionSchema)
+		})
+		.nullable()
+		.describe('Действующая редакция; `null` — процесс группы ещё не заведён')
+});
+
+export type ApiProcess = z.output<typeof apiProcessSchema>;
+
+export function toApiProcess(detail: ProcessGroupDetail): ApiProcess {
+	const active = detail.active;
+
+	return {
+		group: detail.group,
+		counterpartyKinds: detail.counterpartyKinds,
+		revision:
+			active === null
+				? null
+				: {
+						version: active.version,
+						name: active.name,
+						note: active.note,
+						publishedAt: active.publishedAt === null ? null : active.publishedAt.toISOString(),
+						stages: active.stages.map((stage) => ({
+							id: stage.id,
+							key: stage.key,
+							name: stage.name,
+							position: stage.position,
+							category: stage.category,
+							slaDays: stage.slaDays,
+							staleAfterDays: stage.staleAfterDays,
+							requiresResult: stage.requiresResult,
+							requiresConfirmation: stage.requiresConfirmation,
+							requiresLmsData: stage.requiresLmsData,
+							isFinal: stage.isFinal,
+							checklist: stage.checklist
+						})),
+						transitions: active.transitions.map((transition) => ({
+							fromStageId: transition.fromStageId,
+							toStageId: transition.toStageId,
+							kind: transition.kind,
+							requiredPermissionKey: transition.requiredPermissionKey,
+							requiresReason: transition.requiresReason
+						}))
+					}
+	};
+}
+
+/** Сообщение журнала обмена: что ушло и пришло, в каком оно состоянии. */
+export const apiExchangeMessageSchema = z.object({
+	id: z.uuid(),
+	direction: z.enum(EXCHANGE_DIRECTIONS).describe('`inbound` — нам, `outbound` — от нас'),
+	system: z.string().describe('Система подключения: `cms` или `lms`'),
+	instance: z.string(),
+	eventType: z.string(),
+	eventId: z.string().describe('Идентификатор события отправителя: по нему узнают повтор'),
+	externalId: z.string().nullable().describe('Ключ объекта на стороне внешней системы'),
+	interactionId: z.uuid().nullable(),
+	interactionTitle: z.string().nullable(),
+	state: z.enum(EXCHANGE_MESSAGE_STATES),
+	attempt: z.number().int(),
+	nextAttemptAt: z.iso.datetime().nullable(),
+	responseStatus: z.number().int().nullable(),
+	lastError: z.string().nullable(),
+	createdAt: z.iso.datetime(),
+	closedAt: z.iso.datetime().nullable()
+});
+
+export type ApiExchangeMessage = z.output<typeof apiExchangeMessageSchema>;
+
+export function toApiExchangeMessage(view: ExchangeMessageView): ApiExchangeMessage {
+	return {
+		id: view.id,
+		direction: view.direction,
+		system: view.system,
+		instance: view.instance,
+		eventType: view.eventType,
+		eventId: view.eventId,
+		externalId: view.externalId,
+		interactionId: view.interactionId,
+		interactionTitle: view.interactionTitle,
+		state: view.state,
+		attempt: view.attempt,
+		nextAttemptAt: view.nextAttemptAt === null ? null : view.nextAttemptAt.toISOString(),
+		responseStatus: view.responseStatus,
+		lastError: view.lastError,
+		createdAt: view.createdAt.toISOString(),
+		closedAt: view.closedAt === null ? null : view.closedAt.toISOString()
+	};
+}
+
+/** Значение ячейки отчёта. Пустая ячейка — не ноль: ноль означает записанный ноль. */
+export const apiReportCellSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('text'), value: z.string().nullable() }),
+	z.object({ kind: z.literal('number'), value: z.number().nullable() }),
+	z.object({ kind: z.literal('date'), value: z.iso.date().nullable() }),
+	z.object({ kind: z.literal('datetime'), value: z.iso.datetime().nullable() }),
+	z.object({ kind: z.literal('list'), values: z.array(z.string()) }),
+	z.object({ kind: z.literal('link'), value: z.string().nullable(), url: z.url().nullable() })
+]);
+
+const apiReportBucketSchema = z.object({
+	key: z.string(),
+	label: z.string(),
+	value: z.number(),
+	filter: z
+		.object({ param: z.string(), value: z.string() })
+		.nullable()
+		.describe('Чем сузить тот же отчёт до этого столбика'),
+	retired: z.boolean().optional().describe('Стадии нет в действующем процессе: имя взято из снимка')
+});
+
+/**
+ * Отчёт в том же виде, в каком его показывает экран и отдают выгрузки: одна
+ * сборка на все четыре формата, поэтому числа интегратора и числа сотрудника
+ * сойтись обязаны.
+ */
+export const apiReportSchema = z.object({
+	meta: z.object({
+		schemaVersion: z
+			.number()
+			.int()
+			.describe('Версия схемы отчёта; растёт при изменении состава полей'),
+		generatedAt: z.iso.datetime(),
+		asOf: z.iso.datetime().describe('Момент среза `T`, на который посчитан отчёт'),
+		mode: z.enum(REPORT_MODES),
+		period: z.object({ start: z.iso.date(), end: z.iso.date() }),
+		filters: z.array(z.object({ label: z.string(), value: z.string() })),
+		scope: z.string().describe('Область доступа владельца ключа словами'),
+		semantics: z.string().describe('Что именно посчитано — теми же словами, что в шапке выгрузки'),
+		columns: z.array(
+			z.object({
+				key: z.string(),
+				label: z.string(),
+				kind: z.enum(['text', 'number', 'date', 'datetime', 'list', 'link']),
+				sort: z.enum(['historical', 'current']),
+				note: z.string()
+			})
+		)
+	}),
+	rows: z.array(
+		z.object({
+			rowKey: z.string().describe('Устойчивое имя строки внутри выборки'),
+			interactionId: z.uuid(),
+			stageEntryId: z.uuid().nullable(),
+			cells: z.array(apiReportCellSchema).describe('Ячейки в порядке `meta.columns`')
+		})
+	),
+	totals: z.object({
+		rowCount: z.number().int(),
+		interactionCount: z.number().int(),
+		paused: z.number().int(),
+		overdue: z.number().int()
+	}),
+	charts: z.object({
+		funnel: z
+			.object({
+				stages: z.array(apiReportBucketSchema),
+				closed: z.array(apiReportBucketSchema),
+				note: z.string()
+			})
+			.nullable(),
+		movement: z
+			.object({
+				step: z.enum(['week', 'month']),
+				buckets: z.array(
+					z.object({
+						key: z.string(),
+						label: z.string(),
+						from: z.iso.date(),
+						to: z.iso.date()
+					})
+				),
+				series: z.array(
+					z.object({ key: z.string(), label: z.string(), values: z.array(z.number()) })
+				),
+				migrated: z
+					.number()
+					.int()
+					.describe('Переносы при изменении процесса: переходом не считаются'),
+				note: z.string()
+			})
+			.nullable(),
+		breakdowns: z.array(
+			z.object({
+				key: z.string(),
+				label: z.string(),
+				points: z.array(apiReportBucketSchema),
+				doubleCounted: z
+					.number()
+					.int()
+					.describe('Сколько записей учтено больше чем в одной строке разреза')
+			})
+		)
+	})
+});
+
+export type ApiReport = z.output<typeof apiReportSchema>;
+
+export function toApiReport(view: ReportView): ApiReport {
+	const bucket = (point: ReportBucket) => ({
+		key: point.key,
+		label: point.label,
+		value: point.value,
+		filter: point.filter === null ? null : { param: point.filter.param, value: point.filter.value },
+		...(point.retired === undefined ? {} : { retired: point.retired })
+	});
+
+	return {
+		meta: {
+			schemaVersion: view.meta.schemaVersion,
+			generatedAt: view.meta.generatedAt,
+			asOf: view.meta.asOf,
+			mode: view.meta.mode,
+			period: { start: view.meta.period.start, end: view.meta.period.end },
+			filters: view.meta.filters.map((filter) => ({ label: filter.label, value: filter.value })),
+			scope: view.meta.scope,
+			semantics: view.meta.semantics,
+			columns: view.meta.columns.map((column) => ({
+				key: column.key,
+				label: column.label,
+				kind: column.kind,
+				sort: column.sort,
+				note: column.note
+			}))
+		},
+		rows: view.rows.map((row) => ({
+			rowKey: row.rowKey,
+			interactionId: row.interactionId,
+			stageEntryId: row.stageEntryId,
+			cells: row.cells.map((cell) =>
+				cell.kind === 'list' ? { ...cell, values: [...cell.values] } : cell
+			)
+		})),
+		totals: {
+			rowCount: view.totals.rowCount,
+			interactionCount: view.totals.interactionCount,
+			paused: view.totals.paused,
+			overdue: view.totals.overdue
+		},
+		charts: {
+			funnel:
+				view.charts.funnel === null
+					? null
+					: {
+							stages: view.charts.funnel.stages.map(bucket),
+							closed: view.charts.funnel.closed.map(bucket),
+							note: view.charts.funnel.note
+						},
+			movement:
+				view.charts.movement === null
+					? null
+					: {
+							step: view.charts.movement.step,
+							buckets: view.charts.movement.buckets.map((item) => ({
+								key: item.key,
+								label: item.label,
+								from: item.from,
+								to: item.to
+							})),
+							series: view.charts.movement.series.map((line) => ({
+								key: line.key,
+								label: line.label,
+								values: [...line.values]
+							})),
+							migrated: view.charts.movement.migrated,
+							note: view.charts.movement.note
+						},
+			breakdowns: view.charts.breakdowns.map((breakdown) => ({
+				key: breakdown.key,
+				label: breakdown.label,
+				points: breakdown.points.map(bucket),
+				doubleCounted: breakdown.doubleCounted
+			}))
+		}
 	};
 }
 

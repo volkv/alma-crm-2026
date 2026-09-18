@@ -603,13 +603,25 @@ describe('описание API', () => {
 		const paths = document.paths as unknown as Record<string, Record<string, unknown>>;
 		expect(Object.keys(paths).sort()).toEqual([
 			'/v1/applications',
+			'/v1/directions',
 			'/v1/exchange/files/{key}',
 			'/v1/exchange/learning-groups/results',
+			'/v1/exchange/messages',
 			'/v1/interactions',
 			'/v1/interactions/{id}',
+			'/v1/interactions/{id}/comments',
+			'/v1/interactions/{id}/documents',
+			'/v1/interactions/{id}/history',
+			'/v1/interactions/{id}/learning-groups',
 			'/v1/interactions/{id}/transitions',
 			'/v1/organizations',
-			'/v1/organizations/{id}'
+			'/v1/organizations/{id}',
+			'/v1/organizations/{id}/interactions',
+			'/v1/process-groups',
+			'/v1/process-groups/{key}',
+			'/v1/products',
+			'/v1/programs',
+			'/v1/reports'
 		]);
 		expect(paths['/v1/organizations'].get).toMatchObject({ security: [{ bearerAuth: [] }] });
 

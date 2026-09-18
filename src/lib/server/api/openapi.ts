@@ -78,7 +78,71 @@ export type RouteDefinition = {
 	 * это байты, а не объект. Схему `output` этот случай не читает вовсе.
 	 */
 	responseContentType?: string;
+	/**
+	 * Пример успешного ответа. Не украшение: по примеру интегратор понимает
+	 * форму ответа быстрее, чем по дереву схемы, и он же проверяется схемой
+	 * `output` в тестах — разойтись примеру с ответом негде.
+	 */
+	example?: unknown;
+	/** Пример тела запроса; имеет смысл там, где тело есть. */
+	bodyExample?: unknown;
 };
+
+/**
+ * Схема запроса в том виде, в каком её понимает генератор документации.
+ *
+ * `catch` у поля фильтра — обычное дело: непонятное значение в адресе не ошибка
+ * запроса, а просто не фильтр, и список обязан открыться, а не ответить отказом.
+ * Генератор OpenAPI такого узла не знает и падает на нём, поэтому здесь он
+ * снимается: в документ едет внутренняя схема, объявленная необязательной, —
+ * именно так поле и ведёт себя на входе. Разбирает запрос при этом прежняя
+ * схема: снятие идёт только ради описания и только для параметров пути и
+ * строки запроса, где `catch` и встречается.
+ *
+ * Появись `catch` в схеме тела — документ перестанет собираться, и об этом
+ * скажет проверка `tests/unit/api/routes.test.ts`, которая собирает его целиком.
+ */
+/**
+ * Узел `catch` вместе с его внутренней схемой. Признак объявлен предикатом,
+ * потому что `ZodCatch` из типов библиотеки отдаёт внутреннюю схему общим типом
+ * ядра Zod: здесь же известно, что поля контрактов собраны обычным `z.*`.
+ */
+function isCatch(schema: z.ZodType): schema is z.ZodCatch<z.ZodType> {
+	return schema instanceof z.ZodCatch;
+}
+
+function withoutCatch(schema: z.ZodType): z.ZodType {
+	return isCatch(schema) ? withoutCatch(schema.unwrap()).optional() : schema;
+}
+
+function documented(schema: z.ZodObject | undefined): z.ZodObject | undefined {
+	if (schema === undefined) {
+		return undefined;
+	}
+
+	const shape: Record<string, z.ZodType> = {};
+	let changed = false;
+
+	for (const [name, field] of Object.entries(schema.shape)) {
+		const unwrapped = withoutCatch(field);
+
+		changed ||= unwrapped !== field;
+		shape[name] = unwrapped;
+	}
+
+	return changed ? z.object(shape) : schema;
+}
+
+/**
+ * Все зарегистрированные маршруты в порядке регистрации. Нужны проверке
+ * контракта: у каждого маршрута обязаны быть описание, тег, право и пример,
+ * сходящийся со схемой ответа, — и спросить об этом можно только весь список.
+ */
+const definitions: RouteDefinition[] = [];
+
+export function registeredRoutes(): readonly RouteDefinition[] {
+	return definitions;
+}
 
 /**
  * Уже зарегистрированные маршруты. Модуль маршрута может быть загружен дважды
@@ -93,13 +157,19 @@ export function registerRoute(definition: RouteDefinition): void {
 		return;
 	}
 	registered.add(identity);
+	definitions.push(definition);
 
 	const responses: RouteConfig['responses'] = {
 		200:
 			definition.responseContentType === undefined
 				? {
 						description: 'Успешный ответ',
-						content: { 'application/json': { schema: definition.config.output } }
+						content: {
+							'application/json': {
+								schema: definition.config.output,
+								...(definition.example === undefined ? {} : { example: definition.example })
+							}
+						}
 					}
 				: {
 						description: 'Тело файла',
@@ -127,34 +197,133 @@ export function registerRoute(definition: RouteDefinition): void {
 		description: definition.description,
 		tags: definition.tags,
 		security: [{ [BEARER_SCHEME]: [] }],
+		// Право читается из того же объекта, которым эндпоинт его требует:
+		// расширение документа не может пообещать не то, что проверит обёртка.
+		...(definition.config.permission === undefined
+			? {}
+			: { 'x-permission': definition.config.permission }),
+		// Маршрут обмена: сюда допускается только ключ машинного субъекта, и
+		// только выпущенный на названное подключение.
+		...(definition.config.service === true
+			? {
+					'x-service-key': true,
+					...(definition.config.exchangeSystem === undefined
+						? {}
+						: { 'x-exchange-system': definition.config.exchangeSystem })
+				}
+			: {}),
 		request: {
-			params: definition.config.params,
-			query: definition.config.query,
+			params: documented(definition.config.params),
+			query: documented(definition.config.query),
 			body:
 				definition.config.body === undefined
 					? undefined
 					: {
 							required: true,
-							content: { 'application/json': { schema: definition.config.body } }
+							content: {
+								'application/json': {
+									schema: definition.config.body,
+									...(definition.bodyExample === undefined
+										? {}
+										: { example: definition.bodyExample })
+								}
+							}
 						}
 		},
 		responses
 	});
 }
 
+/**
+ * Граница API словами. Она стоит первой в документации не ради вежливости:
+ * интегратор должен узнать, чего здесь нет, раньше, чем начнёт искать это в
+ * списке маршрутов.
+ */
 const DESCRIPTION = `
-Машинный интерфейс CRM взаимодействия с учебными заведениями.
+Интеграционный API CRM взаимодействия с учебными заведениями.
 
-Запрос подписывается ключом доступа: \`Authorization: Bearer lct_…\`. Ключ действует правами
-выпустившего его пользователя; сессия браузера здесь не работает, а ключ в браузере не нужен.
+**Что это.** Машинный интерфейс для двух задач: обмен с сайтом (CMS) и системой обучения (LMS) —
+и чтение данных внешними системами: выгрузками, отчётными роботами, витринами заказчика. За ним
+стоят те же сервисы, что и за экранами приложения: отчёт по ключу и отчёт на экране считает один и
+тот же код.
 
-Лимит частоты — 120 запросов в минуту на ключ и 600 на адрес; остаток сообщают заголовки
-\`RateLimit-*\`. Изменяющие запросы принимают \`Idempotency-Key\`: повтор с тем же телом вернёт
-тот же ответ, повтор с другим телом — 422.
+**Чем подписан запрос.** Ключом доступа, выпущенным на учётную запись системы:
+\`Authorization: Bearer lct_…\`.
+Ключ действует правами и областью доступа того, на кого он выпущен: у машины не может быть прав
+больше, чем у человека, от имени которого она ходит, а записи вне его области для неё не
+существуют — такие отдаются как \`404\`, а не \`403\`. Сессия браузера здесь не работает вовсе.
+Ключи обмена CMS и LMS выпускаются на машинного субъекта и допускаются только к маршрутам с тегом
+«Обмен» — и каждый только к своему направлению.
 
-Ошибка всегда приходит одним и тем же телом \`{ "error": { "code", "message", "requestId" } }\`;
-\`requestId\` совпадает с заголовком \`x-request-id\` — с ним обращение находится в журнале.
+**Что в API не входит.** Управление пользователями, ролями и ключами доступа; персональные данные
+людей — контакты, согласия, сроки хранения; настройки приложения и подключений обмена; содержимое
+документов (отдаются только метаданные). Это работа сотрудника в интерфейсе, и следы в журнале у
+неё другие.
+
+**Идемпотентность.** Изменяющие запросы принимают \`Idempotency-Key\`: повтор с тем же телом
+вернёт сохранённый ответ и заголовок \`Idempotency-Replay: true\`, повтор с другим телом —
+\`422\`. Ответ помнится сутки.
+
+**Лимиты частоты.** 120 запросов в минуту на ключ и 600 в минуту на адрес; остаток сообщают
+заголовки \`RateLimit-*\`, отказ — \`429\` и \`Retry-After\` в секундах.
+
+**Версия схемы.** Первая: путь каждого маршрута начинается с \`/v1\`. Внутри версии поля
+добавляются, но не переименовываются и не меняют смысл; несовместимое изменение — это \`/v2\`.
+У отчёта есть собственный номер схемы — \`meta.schemaVersion\`.
+
+**Ошибки.** Любой неуспех приходит одним телом
+\`{ "error": { "code", "message", "requestId" } }\`, где \`requestId\` совпадает с заголовком
+\`x-request-id\`: по нему обращение находится в журнале действий одной строкой.
 `.trim();
+
+/**
+ * Разделы документации. Обмен с внешними системами отделён от чтения намеренно:
+ * это разные ключи и разные права, и видеть это интегратор должен в оглавлении,
+ * а не выяснять по отказам.
+ */
+const TAGS = [
+	{
+		name: 'Организации',
+		description: 'Вузы и другие контрагенты: карточки справочника и работа по ним.'
+	},
+	{
+		name: 'Взаимодействия',
+		description: 'Работа по вузу: карточка, история стадий и изменений, комментарии, переходы.'
+	},
+	{
+		name: 'Справочники',
+		description:
+			'Общие каталоги оператора: программы, продукты, направления. Областью доступа не сужаются — ' +
+			'это каталог, а не имущество отдельного вуза.'
+	},
+	{
+		name: 'Документы',
+		description: 'Метаданные файлов взаимодействия. Содержимое через API не отдаётся.'
+	},
+	{
+		name: 'Обучение',
+		description:
+			'Учебные группы взаимодействия и последние результаты, пришедшие из системы обучения.'
+	},
+	{
+		name: 'Процесс',
+		description: 'Действующий маршрут стадий: ключи, сроки, разрешённые переходы.'
+	},
+	{
+		name: 'Отчёты',
+		description: 'Срез и движение — тот же объект, что на экране отчётов и в выгрузках.'
+	},
+	{
+		name: 'Журнал обмена',
+		description: 'Хроника сообщений CMS и LMS: что ушло, что пришло, что не дошло и почему.'
+	},
+	{
+		name: 'Обмен',
+		description:
+			'Приём данных от внешних систем. Только ключ машинного субъекта и только выпущенный на это ' +
+			'подключение: ключ сайта не подаёт результаты учебных групп, ключ системы обучения — заявки.'
+	}
+];
 
 export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31['generateDocument']> {
 	return new OpenApiGeneratorV31(registry.definitions).generateDocument({
@@ -165,6 +334,7 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31['generate
 			description: DESCRIPTION
 		},
 		servers: [{ url: `${getConfig().ORIGIN}/api` }],
+		tags: TAGS,
 		security: [{ [BEARER_SCHEME]: [] }]
 	});
 }

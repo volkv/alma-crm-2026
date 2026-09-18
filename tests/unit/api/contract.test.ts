@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { z } from 'zod';
 import {
 	API_ERROR_CODES,
+	apiCollectionSchema,
 	apiErrorSchema,
 	apiOrganizationSchema,
 	apiPageSchema,
@@ -72,6 +73,16 @@ describe('конверт страницы', () => {
 		});
 		expect(schema.safeParse({ items: ['a'], total: 1, page: 0, pageSize: 20 }).success).toBe(false);
 	});
+
+	it('набор целиком — тот же конверт без номера и размера страницы', () => {
+		const schema = apiCollectionSchema(z.string());
+
+		expect(schema.parse({ items: ['a'], total: 1 })).toEqual({ items: ['a'], total: 1 });
+		// Обещание «это весь ответ» держится отсутствием страницы: номер страницы
+		// в таком конверте — это уже другой конверт.
+		expect(schema.parse({ items: ['a'], total: 1, page: 1 })).not.toHaveProperty('page');
+		expect(schema.safeParse({ items: ['a'] }).success).toBe(false);
+	});
 });
 
 describe('организация в ответе API', () => {
@@ -112,6 +123,7 @@ describe('сборка документа OpenAPI', () => {
 		method: 'get',
 		path: '/v1/probe',
 		summary: 'Проверочный маршрут',
+		description: 'Маршрут, которого нет: он проверяет сборку документа.',
 		tags: ['Проверка'],
 		config: {
 			auth: 'key',
@@ -123,7 +135,9 @@ describe('сборка документа OpenAPI', () => {
 			output: apiPageSchema(apiOrganizationSchema),
 			permission: 'organizations.read',
 			idempotent: true
-		}
+		},
+		bodyExample: { note: 'Пример тела' },
+		example: { items: [], total: 0, page: 1, pageSize: 20 }
 	});
 
 	const document = buildOpenApiDocument();
@@ -175,6 +189,76 @@ describe('сборка документа OpenAPI', () => {
 			'query:q'
 		]);
 		expect(operation?.requestBody).toBeDefined();
+	});
+
+	it('называет право маршрута в самом документе', () => {
+		const operation = document.paths?.['/v1/probe']?.get;
+
+		// Право читается из того же объекта, которым эндпоинт его требует:
+		// расширение документа не может пообещать не то, что проверит обёртка.
+		expect(operation?.['x-permission']).toBe('organizations.read');
+		expect(operation?.description).toBe('Маршрут, которого нет: он проверяет сборку документа.');
+	});
+
+	it('переносит примеры запроса и ответа в документ', () => {
+		const operation = document.paths?.['/v1/probe']?.get;
+
+		expect(operation?.responses?.['200'].content?.['application/json'].example).toEqual({
+			items: [],
+			total: 0,
+			page: 1,
+			pageSize: 20
+		});
+		// Тело описано объектом, а не ссылкой на компонент: у ссылки примера нет,
+		// и различает их только тип.
+		const requestBody = operation?.requestBody as
+			{ content?: Record<string, { example?: unknown }> } | undefined;
+		expect(requestBody?.content?.['application/json'].example).toEqual({ note: 'Пример тела' });
+	});
+
+	it('описывает разделы словами и отделяет обмен от чтения', () => {
+		const tags = document.tags ?? [];
+
+		expect(tags.map((tag) => tag.name)).toContain('Обмен');
+		expect(tags.every((tag) => (tag.description ?? '') !== '')).toBe(true);
+	});
+
+	it('объявляет границу API в описании документа', () => {
+		const description = document.info.description ?? '';
+
+		expect(description).toContain('Что в API не входит');
+		expect(description).toContain('Идемпотентность');
+		expect(description).toContain('Версия схемы');
+	});
+
+	it('описывает фильтр с `catch` необязательным параметром, а не падает на нём', () => {
+		// Непонятное значение такого фильтра — не ошибка запроса, а просто не
+		// фильтр: список обязан открыться. Генератор OpenAPI этого узла не знает, и
+		// без снятия `catch` документ не собрался бы вовсе.
+		registerRoute({
+			method: 'get',
+			path: '/v1/probe-catch',
+			summary: 'Маршрут с фильтром, который прощает мусор',
+			description: 'Проверяет, что документ собирается по схеме с `catch`.',
+			tags: ['Проверка'],
+			config: {
+				auth: 'key',
+				query: z.object({ revisions: z.enum(['current', 'all']).catch('current') }),
+				output: z.object({}),
+				permission: 'documents.read'
+			}
+		});
+
+		const operation = buildOpenApiDocument().paths?.['/v1/probe-catch']?.get;
+		const parameters = (operation?.parameters ?? []) as {
+			name: string;
+			required?: boolean;
+			schema?: { enum?: string[] };
+		}[];
+
+		expect(parameters).toHaveLength(1);
+		expect(parameters[0]).toMatchObject({ name: 'revisions', required: false });
+		expect(parameters[0].schema?.enum).toEqual(['current', 'all']);
 	});
 
 	it('не раздваивает маршрут при повторной регистрации', () => {

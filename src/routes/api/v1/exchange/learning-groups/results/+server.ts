@@ -32,7 +32,18 @@ registerRoute({
 		'`unchanged`. Если открыта другая стадия, сообщение всё равно принимается: факт засчитается, ' +
 		'когда взаимодействие дойдёт до нужной стадии, и об этом говорит поле `data.note`.',
 	tags: ['Обмен'],
-	config: resultEndpoint
+	config: resultEndpoint,
+	example: {
+		schemaVersion: '1.0',
+		result: 'created',
+		data: {
+			groupExternalId: 'LMS-2026-000412',
+			learningGroupId: 'f5a6b7c8-d9e0-4f1a-9b2c-3d4e5f6a7b8c',
+			interactionId: 'a3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+			stageConfirmed: true,
+			note: 'Стадия «Обучение» подтверждена результатом потока'
+		}
+	}
 });
 
 export const POST: RequestHandler = apiHandler(resultEndpoint, async (ctx, { body }) =>

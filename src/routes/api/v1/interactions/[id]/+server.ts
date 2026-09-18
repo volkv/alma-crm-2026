@@ -23,7 +23,75 @@ registerRoute({
 		'их отдаёт только интерфейс, где маскирование делает сериализатор персональных данных. ' +
 		'Запись вне области доступа владельца ключа отдаётся как 404, а не как 403.',
 	tags: ['Взаимодействия'],
-	config: getInteractionEndpoint
+	config: getInteractionEndpoint,
+	example: {
+		id: 'a3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
+		title: 'Переговоры с СЗПУ',
+		status: 'active',
+		ownerUserId: '9c8b7a65-4321-4098-b7a6-5c4d3e2f1a09',
+		ownerName: 'Иванова Мария',
+		institutionName: 'СЗПУ',
+		customerName: null,
+		stageKey: 'document_exchange',
+		stageName: 'Обмен пакетом документов',
+		stagePosition: 4,
+		stageCategory: 'documents',
+		dueAt: '2026-10-01T09:00:00.000Z',
+		isOverdue: false,
+		isPaused: false,
+		isStale: false,
+		openBlockers: 0,
+		lastActivityAt: '2026-09-18T12:30:00.000Z',
+		processGroupKey: 'b2b',
+		processGroupName: 'Учебные заведения',
+		processRevision: 2,
+		agreementPeriodStart: '2026-09-01',
+		agreementPeriodEnd: '2027-06-30',
+		academicPeriodStart: null,
+		academicPeriodEnd: null,
+		parties: [
+			{
+				organizationId: '2f1c9a0e-6b3d-4a77-8f21-0c5e9d4b7a10',
+				organizationName: 'СЗПУ',
+				partyRole: 'educational_institution',
+				isPrimary: true
+			}
+		],
+		programs: [
+			{
+				programId: '5c1a8f3e-1b2c-4d5e-8f90-1a2b3c4d5e6f',
+				code: 'PRG-09.03.01',
+				name: 'Информатика и вычислительная техника'
+			}
+		],
+		products: [
+			{
+				productId: '7b2c9a41-3d4e-4f50-9a1b-2c3d4e5f6a7b',
+				code: 'PRD-CLOUD',
+				name: 'Облачная платформа'
+			}
+		],
+		progress: [
+			{
+				key: 'contact_search',
+				name: 'Поиск контактных лиц',
+				position: 1,
+				category: 'contact',
+				state: 'done'
+			},
+			{
+				key: 'document_exchange',
+				name: 'Обмен пакетом документов',
+				position: 4,
+				category: 'documents',
+				state: 'current'
+			}
+		],
+		externalSource: 'cms',
+		externalId: 'site-2026-000123',
+		createdAt: '2026-09-01T08:00:00.000Z',
+		updatedAt: '2026-09-18T12:30:00.000Z'
+	}
 });
 
 export const GET: RequestHandler = apiHandler(getInteractionEndpoint, async (ctx, { params }) => {
