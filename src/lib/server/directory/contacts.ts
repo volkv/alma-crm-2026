@@ -72,12 +72,11 @@ const PEOPLE_SEPARATOR = /[;\n\r]+/;
 /** Части одного человека разделены запятой. */
 const PART_SEPARATOR = /\s*,\s*/;
 
-/** Почта в сравнимом виде: регистр адреса значения не имеет. */
-export function normalizeContactEmail(email: string): string {
-	return email.trim().toLocaleLowerCase('ru');
-}
-
-/** Телефон в сравнимом виде: одни цифры, потому что скобки пишут кто как. */
+/**
+ * Телефон одними цифрами: столько ли их, чтобы это был номер, а не год.
+ * Ключом сравнения это не является — контакты в базе зашифрованы, и ключ
+ * считает `people/pii.ts` по своей нормализации.
+ */
 export function normalizeContactPhone(phone: string): string {
 	return phone.replaceAll(/\D/g, '');
 }

@@ -56,69 +56,16 @@ import { withTransaction, type Tx } from '../db/transaction';
 /** Кто выполняет запрос: транзакция вызывающего или общий пул. */
 type Executor = Tx | ReturnType<typeof getDb>;
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
+import { contactColumns, decryptContacts } from '../people/pii';
 import { withPiiTrace } from '../people/pii-trace';
 import { toPersonView } from '../people/serialize';
 import { requirePermission, scopeFilter } from '../rbac';
+import { withUniqueConflicts } from './conflicts';
 import { findOrganizationByInn, getOrganization, getSite, toOrganizationView } from './read';
 
 /** Поля, значение которых изменилось: их список идёт в журнал вместо значений. */
 function changedFields<TRow extends object>(before: TRow, after: Partial<TRow>): string[] {
 	return Object.keys(after).filter((key) => before[key as keyof TRow] !== after[key as keyof TRow]);
-}
-
-const UNIQUE_VIOLATION = '23505';
-
-/**
- * Что человек должен прочитать вместо кода ограничения. Словарь закрыт: новое
- * ограничение уникальности заводится вместе со строкой отсюда, иначе гонка
- * покажет пятисотую вместо объяснения.
- */
-const CONFLICT_BY_CONSTRAINT: Record<string, string> = {
-	directions_code_key: 'Направление с таким кодом уже заведено',
-	directions_position_key: 'Позиция направления уже занята: повторите попытку',
-	organizations_inn_key: 'Организация с таким ИНН уже заведена',
-	organizations_external_ref_key: 'Эта запись внешней системы уже связана с другой организацией',
-	sites_organization_name_key: 'У организации уже есть площадка с таким названием',
-	sites_external_ref_key: 'Эта запись внешней системы уже связана с другой площадкой',
-	programs_code_unique: 'Программа с таким кодом уже заведена',
-	programs_external_ref_key: 'Эта запись внешней системы уже связана с другой программой',
-	program_versions_program_version_key: 'Такая версия программы уже создана',
-	products_code_unique: 'Продукт с таким кодом уже заведён',
-	products_external_ref_key: 'Эта запись внешней системы уже связана с другим продуктом'
-};
-
-/** Имя нарушенного ограничения уникальности, если запрос упал именно на нём. */
-function uniqueViolation(error: unknown): string | undefined {
-	let current: unknown = error;
-
-	while (current instanceof Error) {
-		const candidate = current as { code?: unknown; constraint_name?: unknown };
-		if (candidate.code === UNIQUE_VIOLATION && typeof candidate.constraint_name === 'string') {
-			return candidate.constraint_name;
-		}
-		current = current.cause;
-	}
-
-	return undefined;
-}
-
-/**
- * Нарушение уникальности — это конфликт состояний, а не сбой: запись успела
- * появиться в соседней вкладке. Всё остальное летит дальше нетронутым.
- */
-async function withUniqueConflicts<TResult>(run: () => Promise<TResult>): Promise<TResult> {
-	try {
-		return await run();
-	} catch (error) {
-		const constraint = uniqueViolation(error);
-		const message = constraint === undefined ? undefined : CONFLICT_BY_CONSTRAINT[constraint];
-
-		if (message === undefined) {
-			throw error;
-		}
-
-		throw new ConflictError(message);
-	}
 }
 
 /**
@@ -475,7 +422,12 @@ export async function createPerson(
 	await requirePermission(ctx, 'people.write', { type: 'people.created' });
 
 	const write = async (executor: Tx): Promise<PersonView> => {
-		const [row] = await executor.insert(people).values(input).returning();
+		// Контакты — через `contactColumns`: в базу они едут шифртекстом, и
+		// ключи сравнения обязаны лечь тем же оператором, что и он сам.
+		const [row] = await executor
+			.insert(people)
+			.values({ ...input, ...contactColumns(input) })
+			.returning();
 
 		await recordAuditEvent(
 			ctx,
@@ -534,7 +486,7 @@ export async function updatePerson(
 			withTransaction(ctx, async (tx) => {
 				const [row] = await tx
 					.update(people)
-					.set({ ...fields, updatedAt: sql`now()` })
+					.set({ ...fields, ...contactColumns(fields), updatedAt: sql`now()` })
 					.where(eq(people.id, id))
 					.returning();
 
@@ -545,8 +497,10 @@ export async function updatePerson(
 						outcome: 'success',
 						subject: { type: 'person', id },
 						// В журнал попадают только имена изменённых полей: значения здесь —
-						// персональные данные, а журнал неизменяем.
-						details: { changedFields: changedFields(before, fields) }
+						// персональные данные, а журнал неизменяем. Сравнивается открытый
+						// вид: у одного и того же адреса шифртекст каждый раз новый, и по
+						// нему «изменилось» стояло бы в каждой правке.
+						details: { changedFields: changedFields(decryptContacts(before), fields) }
 					},
 					tx
 				);

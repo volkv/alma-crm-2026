@@ -144,28 +144,49 @@ export const sites = pgTable(
 	]
 );
 
-export const people = pgTable('people', {
-	id: uuid().primaryKey().defaultRandom(),
-	lastName: text().notNull(),
-	firstName: text().notNull(),
-	middleName: text(),
-	/** Контакты — персональные данные: наружу их отдаёт только сериализатор. */
-	email: text(),
-	phone: text(),
-	notes: text(),
-	/**
-	 * До какого дня хранятся персональные данные этого человека. `null` —
-	 * срок не назначен: назначает его человек, а не умолчание.
-	 */
-	retentionUntil: date(),
-	/**
-	 * Когда данные уничтожили обезличиванием. Строка остаётся — на неё
-	 * ссылаются роли и взаимодействия, — но персональных данных в ней больше
-	 * нет, и обратного хода у этого нет тоже.
-	 */
-	anonymizedAt: timestamp({ withTimezone: true }),
-	...timestamps
-});
+export const people = pgTable(
+	'people',
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		lastName: text().notNull(),
+		firstName: text().notNull(),
+		middleName: text(),
+		/**
+		 * Контакты — персональные данные. В базе они лежат шифртекстом
+		 * (`enc:v1:…`, AES-256-GCM), наружу их отдаёт только сериализатор, а
+		 * кладёт и расшифровывает только `src/lib/server/people/pii.ts`.
+		 */
+		email: text(),
+		phone: text(),
+		/**
+		 * Ключи сравнения контактов: HMAC-SHA256 по нормализованному значению.
+		 * Шифртекст у одного и того же адреса каждый раз разный — сравнивать по
+		 * нему нельзя, — поэтому дедупликация заявок и импорта и поиск по точному
+		 * контакту идут по этим колонкам. Считает их тот же `people/pii.ts`.
+		 */
+		emailHash: text(),
+		phoneHash: text(),
+		notes: text(),
+		/**
+		 * До какого дня хранятся персональные данные этого человека. `null` —
+		 * срок не назначен: назначает его человек, а не умолчание.
+		 */
+		retentionUntil: date(),
+		/**
+		 * Когда данные уничтожили обезличиванием. Строка остаётся — на неё
+		 * ссылаются роли и взаимодействия, — но персональных данных в ней больше
+		 * нет, и обратного хода у этого нет тоже.
+		 */
+		anonymizedAt: timestamp({ withTimezone: true }),
+		...timestamps
+	},
+	(table) => [
+		// Не уникальные: один и тот же адрес бывает у двух записей — контакт вуза
+		// и он же заявитель с сайта, — и разводит их организация, а не почта.
+		index('people_email_hash_idx').on(table.emailHash),
+		index('people_phone_hash_idx').on(table.phoneHash)
+	]
+);
 
 /**
  * Согласия на обработку персональных данных.

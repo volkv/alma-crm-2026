@@ -90,6 +90,7 @@ import { getDb } from '../db';
 import { withTransaction, type Tx } from '../db/transaction';
 import { discardStaged, promoteBlob, readStoredFile, stageBlob } from '../documents/storage';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
+import { hashEmail, hashPhone } from '../people/pii';
 import { withPiiTrace } from '../people/pii-trace';
 import { actorScopeFilter, can, requirePermission, scopeFilter } from '../rbac';
 import { suggestFieldMapping, type FieldSynonyms } from '../spreadsheet/mapping';
@@ -117,10 +118,9 @@ import {
 } from './contracts';
 import {
 	contactFullName,
-	normalizeContactEmail,
-	normalizeContactPhone,
 	parseContacts,
 	type ContactIdentity,
+	type ContactName,
 	type ParsedContact
 } from './contacts';
 import { assignResponsible } from './responsibles';
@@ -683,22 +683,36 @@ export function registerResponsible(
 }
 
 /**
- * Ключи, по которым контакт считается уже заведённым у этой организации:
- * почта, цифры телефона и ФИО. Любого совпавшего достаточно — один и тот же
- * человек в двух строках файла записан то с почтой, то с телефоном.
+ * Ключи, по которым контакт считается уже заведённым у этой организации: ФИО и
+ * ключи сравнения почты и телефона. Любого совпавшего достаточно — один и тот
+ * же человек в двух строках файла записан то с почтой, то с телефоном.
+ *
+ * Контакты в базе лежат шифртекстом, сравнивать их напрямую нельзя, и ключ
+ * считает `people/pii.ts` — он же нормализует регистр почты и вид записи
+ * номера. Поэтому ключ снимка и ключ из файла собирает одна функция:
+ * разойтись двум спискам ключей достаточно одной правки нормализации.
  */
-export function contactKeys(contact: ContactIdentity): string[] {
-	const keys = [`фио ${normalizeName(contactFullName(contact))}`];
+function keysOf(name: ContactName, emailHash: string | null, phoneHash: string | null): string[] {
+	const keys = [`фио ${normalizeName(contactFullName(name))}`];
 
-	if (contact.email !== null) {
-		keys.push(`почта ${normalizeContactEmail(contact.email)}`);
+	if (emailHash !== null) {
+		keys.push(`почта ${emailHash}`);
 	}
 
-	if (contact.phone !== null) {
-		keys.push(`телефон ${normalizeContactPhone(contact.phone)}`);
+	if (phoneHash !== null) {
+		keys.push(`телефон ${phoneHash}`);
 	}
 
 	return keys;
+}
+
+/** Ключи контакта, названного в файле: он приходит открытым текстом. */
+export function contactKeys(contact: ContactIdentity): string[] {
+	return keysOf(
+		contact,
+		contact.email === null ? null : hashEmail(contact.email),
+		contact.phone === null ? null : hashPhone(contact.phone)
+	);
 }
 
 /** Кладёт контакт организации в снимок: по почте, телефону и ФИО сразу. */
@@ -708,6 +722,17 @@ export function registerContact(
 	contact: ContactIdentity
 ): void {
 	for (const key of contactKeys(contact)) {
+		state.organizationContacts.add(contactKey(organizationId, key));
+	}
+}
+
+/** То же для контакта, уже заведённого в базе: ключи сравнения лежат в строке. */
+function registerStoredContact(
+	state: CatalogState,
+	organizationId: string,
+	row: ContactName & { emailHash: string | null; phoneHash: string | null }
+): void {
+	for (const key of keysOf(row, row.emailHash, row.phoneHash)) {
 		state.organizationContacts.add(contactKey(organizationId, key));
 	}
 }
@@ -808,14 +833,17 @@ export async function loadCatalogState(
 			})
 			.from(organizationResponsibles)
 			.where(isNull(organizationResponsibles.validTo)),
+		// Контакты читаются ключами сравнения, а не значениями: расшифровывать
+		// весь справочник ради дедупликации незачем, и ключ отвечает ровно на
+		// вопрос «этот человек здесь уже есть».
 		executor
 			.select({
 				organizationId: affiliations.organizationId,
 				lastName: people.lastName,
 				firstName: people.firstName,
 				middleName: people.middleName,
-				email: people.email,
-				phone: people.phone
+				emailHash: people.emailHash,
+				phoneHash: people.phoneHash
 			})
 			.from(affiliations)
 			.innerJoin(people, eq(people.id, affiliations.personId))
@@ -861,7 +889,7 @@ export async function loadCatalogState(
 	}
 
 	for (const row of contactRows) {
-		registerContact(state, row.organizationId, row);
+		registerStoredContact(state, row.organizationId, row);
 	}
 
 	for (const row of productRows) {

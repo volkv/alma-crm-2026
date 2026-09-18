@@ -35,6 +35,49 @@ function exchangeUrl(withExternalId: boolean) {
 		.transform((value) => (value === '' ? null : value));
 }
 
+/**
+ * Ключ шифрования персональных данных: ровно 32 байта — либо 64 знака hex,
+ * либо 44 знака base64 (вывод `openssl rand -base64 32`).
+ *
+ * Длину проверяет вид строки, а не разбор: `Buffer.from` молча проглатывает и
+ * мусор, и обрезок, и ключ не той длины доехал бы до первой записи контактов, а
+ * узнали бы о нём на первом чтении — уже с непрочитываемым шифртекстом в базе.
+ */
+const piiEncryptionKeySchema = z
+	.string()
+	.regex(/^(?:[0-9a-fA-F]{64}|[A-Za-z0-9+/]{43}=)$/, {
+		error: 'must be a 32-byte key: 64 hex characters or 44 base64 (openssl rand -base64 32)'
+	})
+	.transform((value) => Buffer.from(value, value.length === 64 ? 'hex' : 'base64'));
+
+/**
+ * Ключ шифрования персональных данных из произвольного набора переменных.
+ *
+ * Отдельной функцией, а не через {@link getConfig}: тот читает конфигурацию
+ * целиком, а применение миграций обязано обходиться без адреса Redis и
+ * хранилища файлов (`scripts/migrate.ts`). Схема при этом одна — иначе
+ * приложение и миграция разошлись бы в том, какой ключ считают годным.
+ */
+export function readPiiEncryptionKey(source: Record<string, string | undefined>): Buffer {
+	const raw = source.PII_ENCRYPTION_KEY;
+
+	if (raw === undefined || raw === '') {
+		throw new Error(
+			'PII_ENCRYPTION_KEY is not set: contacts of people are stored encrypted and cannot be read without it (see .env.example)'
+		);
+	}
+
+	const result = piiEncryptionKeySchema.safeParse(raw);
+
+	if (!result.success) {
+		throw new Error(
+			`PII_ENCRYPTION_KEY: ${result.error.issues.map((issue) => issue.message).join('; ')}`
+		);
+	}
+
+	return result.data;
+}
+
 /** Разбирается ли строка как адрес почтового сервера `smtp://` или `smtps://`. */
 function isSmtpUrl(value: string): boolean {
 	try {
@@ -105,6 +148,18 @@ const configSchema = z
 		 * разрешают. Сказать иначе развёртывание может, но только явно.
 		 */
 		ALLOW_LOCAL_TARGETS: booleanFlag.optional(),
+		/**
+		 * Ключ, которым зашифрованы почта и телефон людей справочника
+		 * (`src/lib/server/people/pii.ts`).
+		 *
+		 * Обязателен везде, включая машину разработчика: контакты лежат в базе
+		 * шифртекстом, и установка без ключа не прочитает ни одного из них.
+		 * Умолчания у него нет и быть не может — ключ, напечатанный в
+		 * репозитории, не защищает ни от чего. Потеря ключа необратима: вместе с
+		 * ним теряются контакты всех людей справочника, и «подобрать заново» тут
+		 * нечего.
+		 */
+		PII_ENCRYPTION_KEY: piiEncryptionKeySchema,
 		/**
 		 * Подключения обмена (`docs/exchange-contract.md`).
 		 *

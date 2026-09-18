@@ -37,6 +37,7 @@ import {
 	suggestCatalogMapping
 } from '$lib/server/directory/import';
 import { ConflictError, ForbiddenError, NotFoundError } from '$lib/server/errors';
+import { decryptContacts } from '$lib/server/people/pii';
 import {
 	insertOrganization,
 	insertUser,
@@ -788,8 +789,7 @@ describe('менеджер, контакты и комментарий стро�
 		const [contact] = await database.db
 			.select({
 				personId: people.id,
-				email: people.email,
-				phone: people.phone,
+				person: people,
 				position: affiliations.position,
 				roleKind: affiliations.roleKind,
 				validTo: affiliations.validTo
@@ -798,8 +798,12 @@ describe('менеджер, контакты и комментарий стро�
 			.innerJoin(people, eq(people.id, affiliations.personId))
 			.where(and(eq(affiliations.organizationId, catalog.szpu), eq(people.lastName, 'Иванова')));
 
-		expect(contact.email).toBe('m.ivanova@szpu.ru');
-		expect(contact.phone).toBe('+7 (999) 123-45-67');
+		// Контакты лежат шифртекстом: из файла они приезжают открытыми, а в базу
+		// ложатся через `people/pii.ts`, и прочитать их можно только ключом.
+		const contacts = decryptContacts(contact.person);
+
+		expect(contacts.email).toBe('m.ivanova@szpu.ru');
+		expect(contacts.phone).toBe('+7 (999) 123-45-67');
 		expect(contact.roleKind).toBe('other');
 		expect(contact.validTo).toBeNull();
 

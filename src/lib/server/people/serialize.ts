@@ -7,19 +7,27 @@
  * запросе, а здесь: любой ответ, экспорт и сгенерированный документ обязаны
  * проходить через эту функцию, иначе контакты рано или поздно утекут из места,
  * про которое забыли.
+ *
+ * Здесь же контакты расшифровываются: в базе они лежат шифртекстом
+ * (`people/pii.ts`), и единственное место, которое отдаёт их наружу, обязано
+ * быть единственным местом, которое их читает. Второй расшифровке взяться
+ * неоткуда — значит, и утечь мимо маскирования нечему.
  */
 import type { PersonView } from '$lib/contracts/directory';
 import type { ActorContext } from '../actor';
 import { can } from '../rbac';
+import { decryptContact } from './pii';
 import { notePiiView } from './pii-trace';
 
-/** Поля человека, которые нужны сериализатору. */
+/** Поля человека, которые нужны сериализатору, — как они лежат в базе. */
 export type PersonRecord = {
 	id: string;
 	lastName: string;
 	firstName: string;
 	middleName: string | null;
+	/** Шифртекст `enc:v1:…`: расшифровывает его {@link toPersonView}. */
 	email: string | null;
+	/** Он же для телефона. */
 	phone: string | null;
 	notes: string | null;
 	retentionUntil: string | null;
@@ -49,11 +57,13 @@ function maskPhone(phone: string): string {
 
 export function toPersonView(ctx: ActorContext, person: PersonRecord): PersonView {
 	const full = can(ctx, 'people.read_pii');
+	const email = person.email === null ? null : decryptContact(person.email);
+	const phone = person.phone === null ? null : decryptContact(person.phone);
 
 	// Раскрытие контактов — событие журнала, и отмечается оно здесь, в
 	// единственном месте, которое знает, показали их или замаскировали. Пустые
 	// контакты не в счёт: показывать было нечего.
-	if (full && (person.email !== null || person.phone !== null)) {
+	if (full && (email !== null || phone !== null)) {
 		notePiiView(ctx, person.id);
 	}
 
@@ -62,8 +72,8 @@ export function toPersonView(ctx: ActorContext, person: PersonRecord): PersonVie
 		lastName: person.lastName,
 		firstName: person.firstName,
 		middleName: person.middleName,
-		email: person.email === null ? null : full ? person.email : maskEmail(person.email),
-		phone: person.phone === null ? null : full ? person.phone : maskPhone(person.phone),
+		email: email === null ? null : full ? email : maskEmail(email),
+		phone: phone === null ? null : full ? phone : maskPhone(phone),
 		notes: person.notes,
 		contactsMasked: !full,
 		retentionUntil: person.retentionUntil,

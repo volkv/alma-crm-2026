@@ -50,6 +50,7 @@ import {
 	users
 } from '$lib/server/db/schema';
 import type { Tx } from '$lib/server/db/transaction';
+import { contactColumns } from '$lib/server/people/pii';
 import { B2B_GROUP_KEY } from '$lib/server/stages/definitions';
 import { readActiveRevision, readGroupByKey, stageSnapshot } from '$lib/server/stages/process';
 import { seedId } from './ids';
@@ -249,8 +250,12 @@ export async function seedLoad(tx: Tx): Promise<LoadSeedReport | null> {
 			lastName: `Нагрузов${index % 2 === 0 ? 'а' : ''}`,
 			firstName: index % 2 === 0 ? 'Нагрузка' : 'Нагруз',
 			middleName: null,
-			email: `contact-${index}@example.org`,
-			phone: `+7 900 000-01-${String(index % 100).padStart(2, '0')}`
+			// Контакты шифруются и здесь: нагрузочный набор обязан лежать в базе
+			// так же, как боевые данные, иначе он не нагружает то, что нужно.
+			...contactColumns({
+				email: `contact-${index}@example.org`,
+				phone: `+7 900 000-01-${String(index % 100).padStart(2, '0')}`
+			})
 		});
 
 		affiliationRows.push({

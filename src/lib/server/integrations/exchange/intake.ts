@@ -67,6 +67,7 @@ import { withTransaction, type Tx } from '../../db/transaction';
 import { createAffiliation, createOrganization, createPerson } from '../../directory/write';
 import { AppError, ConflictError, ForbiddenError, ValidationError } from '../../errors';
 import { createInteractionIn } from '../../interactions/write';
+import { hashEmail, hashPhone, phoneColumns } from '../../people/pii';
 import { withPiiTrace } from '../../people/pii-trace';
 import { requirePermission } from '../../rbac';
 import { addComment } from '../../stages/commands';
@@ -195,17 +196,6 @@ function applicantName(data: ApplicationSubmittedData): string {
 	}
 
 	return applicant.name;
-}
-
-/** Телефон в виде «только цифры»: ключ сверки физлица, когда почты нет. */
-function digitsOf(phone: string | null): string | null {
-	if (phone === null) {
-		return null;
-	}
-
-	const digits = phone.replace(/\D/g, '');
-
-	return digits === '' ? null : digits;
 }
 
 /**
@@ -354,26 +344,36 @@ async function findOrganization(
 	return null;
 }
 
-/** Контрагент-физлицо: по нормализованной почте, затем по цифрам телефона. */
+/**
+ * Контрагент-физлицо: по ключу сравнения почты, затем по ключу телефона.
+ *
+ * Не по самим контактам: в базе они лежат шифртекстом, и у одного и того же
+ * адреса он каждый раз новый. Нормализацию (регистр почты, вид записи номера)
+ * знает `people/pii.ts`, и она здесь одна на обе стороны сравнения.
+ */
 async function findIndividual(
 	tx: Tx,
 	email: string,
 	phone: string | null
 ): Promise<{ id: string; personId: string | null } | null> {
-	const [byEmail] = await tx
-		.select({ id: organizations.id, personId: organizations.personId })
-		.from(organizations)
-		.innerJoin(people, eq(people.id, organizations.personId))
-		.where(and(eq(organizations.kind, 'individual'), eq(sql`lower(${people.email})`, email)))
-		.limit(1);
+	const emailKey = hashEmail(email);
 
-	if (byEmail !== undefined) {
-		return byEmail;
+	if (emailKey !== null) {
+		const [byEmail] = await tx
+			.select({ id: organizations.id, personId: organizations.personId })
+			.from(organizations)
+			.innerJoin(people, eq(people.id, organizations.personId))
+			.where(and(eq(organizations.kind, 'individual'), eq(people.emailHash, emailKey)))
+			.limit(1);
+
+		if (byEmail !== undefined) {
+			return byEmail;
+		}
 	}
 
-	const digits = digitsOf(phone);
+	const phoneKey = phone === null ? null : hashPhone(phone);
 
-	if (digits === null) {
+	if (phoneKey === null) {
 		return null;
 	}
 
@@ -381,12 +381,7 @@ async function findIndividual(
 		.select({ id: organizations.id, personId: organizations.personId })
 		.from(organizations)
 		.innerJoin(people, eq(people.id, organizations.personId))
-		.where(
-			and(
-				eq(organizations.kind, 'individual'),
-				eq(sql`regexp_replace(coalesce(${people.phone}, ''), '\\D', '', 'g')`, digits)
-			)
-		)
+		.where(and(eq(organizations.kind, 'individual'), eq(people.phoneHash, phoneKey)))
 		.limit(1);
 
 	return byPhone ?? null;
@@ -553,16 +548,17 @@ async function findContact(
 	organizationId: string,
 	email: string
 ): Promise<{ affiliationId: string; personId: string } | null> {
+	const emailKey = hashEmail(email);
+
+	if (emailKey === null) {
+		return null;
+	}
+
 	const [row] = await tx
 		.select({ affiliationId: affiliations.id, personId: people.id })
 		.from(affiliations)
 		.innerJoin(people, eq(people.id, affiliations.personId))
-		.where(
-			and(
-				eq(affiliations.organizationId, organizationId),
-				eq(sql`lower(${people.email})`, email.toLowerCase())
-			)
-		)
+		.where(and(eq(affiliations.organizationId, organizationId), eq(people.emailHash, emailKey)))
 		.limit(1);
 
 	return row ?? null;
@@ -842,14 +838,16 @@ async function updateExisting(
 		);
 	} else {
 		// Контакты заявителя обновляются: их хозяин — сайт. Ответственный, стадия,
-		// история и контрагент не трогаются никогда.
+		// история и контрагент не трогаются никогда. Почта не переписывается: по
+		// ней контакт и нашёлся, а телефон едет через `people/pii.ts` — шифртекст
+		// и ключ сравнения одним оператором.
 		await tx
 			.update(people)
 			.set({
 				lastName: data.contact.lastName,
 				firstName: data.contact.firstName,
 				middleName: data.contact.middleName,
-				phone: data.contact.phone,
+				...phoneColumns(data.contact.phone),
 				updatedAt: sql`now()`
 			})
 			.where(eq(people.id, contact.personId));

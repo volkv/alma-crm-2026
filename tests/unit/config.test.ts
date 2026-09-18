@@ -18,7 +18,8 @@ const completeEnv = {
 	OIDC_ISSUER_URL: 'http://localhost:58080/realms/lct',
 	OIDC_PUBLIC_URL: 'http://localhost:58080',
 	OIDC_CLIENT_ID: 'lct-crm',
-	OIDC_CLIENT_SECRET: 'lct-crm-dev-secret'
+	OIDC_CLIENT_SECRET: 'lct-crm-dev-secret',
+	PII_ENCRYPTION_KEY: 'KfAA/EWod3wd+ai6b1LHC62LWho5pPp1ajJnQNdbqUs='
 } satisfies Record<string, string>;
 
 describe('parseConfig', () => {
@@ -27,6 +28,19 @@ describe('parseConfig', () => {
 
 		expect(config.DATABASE_URL).toBe(completeEnv.DATABASE_URL);
 		expect(config.NODE_ENV).toBe('test');
+	});
+
+	it('turns the key of personal data into 32 bytes and rejects anything shorter', () => {
+		// Контакты людей лежат в базе зашифрованными, и ключ не той длины доехал
+		// бы до первой записи: `Buffer.from` проглатывает и обрезок, и мусор.
+		expect(parseConfig(completeEnv).PII_ENCRYPTION_KEY).toHaveLength(32);
+
+		const { PII_ENCRYPTION_KEY: _omitted, ...withoutKey } = completeEnv;
+
+		expect(() => parseConfig(withoutKey)).toThrowError(/PII_ENCRYPTION_KEY/);
+		expect(() => parseConfig({ ...completeEnv, PII_ENCRYPTION_KEY: 'c2hvcnQ=' })).toThrowError(
+			/PII_ENCRYPTION_KEY/
+		);
 	});
 
 	it('rejects a missing DATABASE_URL and names it in the error', () => {

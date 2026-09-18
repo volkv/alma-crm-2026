@@ -30,6 +30,7 @@ import { listLearningGroups, requestLearningGroup } from '$lib/server/integratio
 import { enqueueApplicationStatus } from '$lib/server/integrations/exchange/outbox';
 import { receiveLearningGroupResult } from '$lib/server/integrations/exchange/results';
 import { setExchangeSettings } from '$lib/server/integrations/settings';
+import { decryptContacts } from '$lib/server/people/pii';
 import { withTransaction } from '$lib/server/db/transaction';
 import { getRedis } from '$lib/server/redis';
 import { advanceStage } from '$lib/server/stages/commands';
@@ -398,7 +399,10 @@ describe('приём заявки с сайта', () => {
 			.from(people)
 			.where(eq(people.id, organization.personId!));
 
-		expect(person).toMatchObject({ lastName: 'Ветров', email: 'vetrov@example.org' });
+		// Контакты лежат шифртекстом: их читает только ключ установки.
+		expect(person.lastName).toBe('Ветров');
+		expect(person.email).not.toContain('vetrov');
+		expect(decryptContacts(person).email).toBe('vetrov@example.org');
 
 		const recorded = await database.db
 			.select({ textVersion: consents.textVersion })

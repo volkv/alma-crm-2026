@@ -4,8 +4,6 @@ import path from 'node:path';
 import { promisify } from 'node:util';
 import { Redis } from 'ioredis';
 import { chromium, type FullConfig } from '@playwright/test';
-import { drizzle } from 'drizzle-orm/postgres-js';
-import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { DEMO_EMAILS, DEMO_LOGINS, STAFF_ADMIN_EMAIL } from '../scripts/seed/users';
 import { ensureAccount, keycloakAdmin, type DirectoryAccount } from './helpers/keycloak-admin';
@@ -153,6 +151,22 @@ async function ensureDatabase(url: string): Promise<void> {
 }
 
 /**
+ * Миграции тем же входом, что и на стенде: не мигратором в этом процессе, а
+ * `scripts/migrate.ts` — он, кроме самих миграций, приводит каталог прав к коду
+ * и переводит уже лежащие контакты людей в зашифрованный вид. База прогона
+ * переживает прогон, поэтому строки, записанные до этой правки, обязаны
+ * прочитаться — а сделать это может только приложение с ключом.
+ */
+async function migrateDatabase(env: ServerEnv): Promise<void> {
+	const { stdout } = await run(process.execPath, ['scripts/migrate.ts'], {
+		cwd: new URL('..', import.meta.url).pathname,
+		env: { ...process.env, ...env }
+	});
+
+	process.stdout.write(stdout);
+}
+
+/**
  * Заливка данных тем же входом, что и на стенде. Вывод сида показывается
  * целиком: по нему видно, сколько строк в базе и собрались ли документы.
  */
@@ -234,10 +248,7 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
 	const sql = postgres(env.DATABASE_URL, { max: 1, connect_timeout: 10 });
 
 	try {
-		await migrate(drizzle(sql), {
-			migrationsFolder: new URL('../drizzle', import.meta.url).pathname
-		});
-
+		await migrateDatabase(env);
 		await seedDatabase(env);
 
 		// Демонстрационная запись роли, оставшаяся от прошлых прогонов или от

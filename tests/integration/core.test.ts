@@ -8,6 +8,7 @@ import { auditEvents } from '$lib/server/db/schema';
 import { withTransaction } from '$lib/server/db/transaction';
 import { getOrganization, listOrganizations } from '$lib/server/directory/read';
 import { ForbiddenError, NotFoundError, ValidationError } from '$lib/server/errors';
+import { encryptContact } from '$lib/server/people/pii';
 import { toPersonView } from '$lib/server/people/serialize';
 import { can, loadRolePermissions, requirePermission } from '$lib/server/rbac';
 import { defaultRolePermissions } from '$lib/server/rbac/seed';
@@ -222,27 +223,33 @@ describe('область доступа', () => {
 });
 
 describe('сериализатор человека', () => {
-	const person = {
+	/**
+	 * Контакты лежат в базе шифртекстом, и расшифровывает их сам сериализатор:
+	 * строка здесь собрана тем же слоем, каким её кладёт справочник. Функцией, а
+	 * не значением: ключ шифрования приходит из окружения, которое выставляет
+	 * подъём базы, — до него шифровать нечем.
+	 */
+	const person = () => ({
 		id: '00000000-0000-4000-8000-0000000000aa',
 		lastName: 'Иванов',
 		firstName: 'Иван',
 		middleName: 'Иванович',
-		email: 'ivanov@vuz.ru',
-		phone: '+7 (999) 123-45-67',
+		email: encryptContact('ivanov@vuz.ru'),
+		phone: encryptContact('+7 (999) 123-45-67'),
 		notes: null,
 		retentionUntil: null,
 		anonymizedAt: null
-	};
+	});
 
 	it('маскирует контакты без права и показывает их с правом', () => {
-		const masked = toPersonView(testActor({ roleId: 'manager', permissions: [] }), person);
+		const masked = toPersonView(testActor({ roleId: 'manager', permissions: [] }), person());
 
 		expect(masked.email).toBe('i***@vuz.ru');
 		expect(masked.phone).toBe('+7 *** *** 45 67');
 		expect(masked.contactsMasked).toBe(true);
 		expect(masked.lastName).toBe('Иванов');
 
-		const full = toPersonView(testActor({ roleId: 'manager' }), person);
+		const full = toPersonView(testActor({ roleId: 'manager' }), person());
 
 		expect(full.email).toBe('ivanov@vuz.ru');
 		expect(full.phone).toBe('+7 (999) 123-45-67');
@@ -251,7 +258,7 @@ describe('сериализатор человека', () => {
 
 	it('оставляет пустые контакты пустыми', () => {
 		const view = toPersonView(testActor({ roleId: 'manager', permissions: [] }), {
-			...person,
+			...person(),
 			email: null,
 			phone: null
 		});

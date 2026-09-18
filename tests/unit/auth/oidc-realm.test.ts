@@ -67,7 +67,8 @@ vi.mock('$env/dynamic/private', () => ({
 		OIDC_PUBLIC_URL: 'http://localhost:58080',
 		OIDC_INTERNAL_URL: 'http://keycloak:8080',
 		OIDC_CLIENT_ID: 'lct-crm',
-		OIDC_CLIENT_SECRET: 'lct-crm-dev-secret'
+		OIDC_CLIENT_SECRET: 'lct-crm-dev-secret',
+		PII_ENCRYPTION_KEY: 'KfAA/EWod3wd+ai6b1LHC62LWho5pPp1ajJnQNdbqUs='
 	}
 }));
 

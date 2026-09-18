@@ -23,11 +23,19 @@ installKitAliases();
 
 const schema = await import('$lib/server/db/schema');
 const { seedRolesAndPermissions } = await import('$lib/server/rbac/seed');
+const { encryptStoredContacts } = await import('$lib/server/people/pii-backfill');
 
 const databaseUrl = process.env.DATABASE_URL;
 
 if (!databaseUrl) {
 	throw new Error('DATABASE_URL is not set; cannot run migrations.');
+}
+
+// Checked up front rather than where it is first used: contacts of people are
+// stored encrypted, and a migration that brings the columns in but leaves the
+// values in the clear would look like it succeeded.
+if (!process.env.PII_ENCRYPTION_KEY) {
+	throw new Error('PII_ENCRYPTION_KEY is not set; cannot encrypt the contacts of people.');
 }
 
 const migrationsFolder = new URL('../drizzle', import.meta.url).pathname;
@@ -49,6 +57,12 @@ try {
 		await seedRolesAndPermissions(tx);
 	});
 	console.log('Permission catalogue matches the code');
+
+	// Values SQL cannot produce: the ciphertext and the comparison key of a
+	// contact are made by the app with the key from the environment. Idempotent —
+	// a row whose contacts are already encrypted is left alone.
+	const encrypted = await encryptStoredContacts(client);
+	console.log(`Contacts of people encrypted: ${encrypted} row(s) rewritten`);
 } finally {
 	await client.end();
 }

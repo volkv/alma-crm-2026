@@ -46,6 +46,7 @@ import {
 	sites
 } from '$lib/server/db/schema';
 import type { Tx } from '$lib/server/db/transaction';
+import { contactColumns } from '$lib/server/people/pii';
 import { seedId } from './ids';
 
 /**
@@ -1665,13 +1666,20 @@ export async function seedDirectory(tx: Tx, options: { authorUserId: string }): 
 	await tx
 		.insert(people)
 		.values(
-			PEOPLE.map(({ key, affiliation: _affiliation, retentionUntil, ...raw }) => ({
-				id: seedId('person', key),
-				// Срок хранения контракт создания человека не описывает: его
-				// назначают отдельным действием, и в наборе он лежит рядом.
-				retentionUntil: retentionUntil ?? null,
-				...checked(createPersonSchema, 'person', key, raw)
-			}))
+			PEOPLE.map(({ key, affiliation: _affiliation, retentionUntil, ...raw }) => {
+				const person = checked(createPersonSchema, 'person', key, raw);
+
+				return {
+					id: seedId('person', key),
+					// Срок хранения контракт создания человека не описывает: его
+					// назначают отдельным действием, и в наборе он лежит рядом.
+					retentionUntil: retentionUntil ?? null,
+					...person,
+					// Контакты — тем же слоем, что и у формы: в базе они лежат
+					// шифртекстом, и набор не исключение.
+					...contactColumns(person)
+				};
+			})
 		)
 		.onConflictDoNothing({ target: people.id });
 

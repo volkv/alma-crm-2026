@@ -242,8 +242,14 @@ export async function anonymizePerson(ctx: ActorContext, personId: string): Prom
 					// который выглядит как данные, незачем.
 					firstName: '',
 					middleName: null,
+					// Вместе с шифртекстом стираются и ключи сравнения: HMAC адреса —
+					// это по-прежнему сведения о человеке («он ли писал нам с этой
+					// почты» проверяется одним сравнением), и пережить уничтожение
+					// данных они не должны.
 					email: null,
+					emailHash: null,
 					phone: null,
+					phoneHash: null,
 					notes: null,
 					anonymizedAt: sql`now()`,
 					updatedAt: sql`now()`

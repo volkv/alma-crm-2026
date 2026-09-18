@@ -293,6 +293,12 @@ services:
       EXCHANGE_CMS_INSTANCE: ${EXCHANGE_CMS_INSTANCE:-itschool-site}
       EXCHANGE_LMS_INSTANCE: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}
+      # Ключ шифрования контактов людей. `?` без двоеточия: переменная обязана
+      # быть названа в `.env`, умолчания нет — ключ из репозитория не защищает
+      # ни от чего, а пустой означал бы, что установка не читает ни одного
+      # контакта. Генерируется один раз: `openssl rand -base64 32`, и вместе с
+      # ним теряются все контакты справочника (docs/deployment.md).
+      PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY?declare PII_ENCRYPTION_KEY in .env}
       # Read by the seed and by nothing else: on a stand with DEMO_MODE=true it
       # issues the exchange keys of the imitators from these — through the UI
       # nobody there could, the demo session has no `api_keys.manage` and the

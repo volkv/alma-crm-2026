@@ -44,7 +44,8 @@ describe('DEMO_PASSWORD_HINT в конфигурации', () => {
 		OIDC_ISSUER_URL: 'http://localhost:58080/realms/lct',
 		OIDC_PUBLIC_URL: 'http://localhost:58080',
 		OIDC_CLIENT_ID: 'lct-crm',
-		OIDC_CLIENT_SECRET: 'lct-crm-dev-secret'
+		OIDC_CLIENT_SECRET: 'lct-crm-dev-secret',
+		PII_ENCRYPTION_KEY: 'KfAA/EWod3wd+ai6b1LHC62LWho5pPp1ajJnQNdbqUs='
 	} satisfies Record<string, string>;
 
 	it('пустая строка и пробелы равны «не задано»', () => {

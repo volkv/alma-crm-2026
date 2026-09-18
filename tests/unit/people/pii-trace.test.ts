@@ -17,6 +17,16 @@ vi.mock('$lib/server/audit', () => ({
 	recordAuditEvent: (...args: unknown[]) => recordAuditEvent(...args)
 }));
 
+/**
+ * Контакты в строке справочника лежат шифртекстом, и сериализатор их
+ * расшифровывает — значит, ключ нужен и здесь. Берётся он из подменённого
+ * окружения: в прогоне CI никакого `.env` нет.
+ */
+vi.mock('$env/dynamic/private', () => ({
+	env: { PII_ENCRYPTION_KEY: 'KfAA/EWod3wd+ai6b1LHC62LWho5pPp1ajJnQNdbqUs=' }
+}));
+
+const { encryptContact } = await import('$lib/server/people/pii');
 const { notePiiView, withPiiTrace } = await import('$lib/server/people/pii-trace');
 const { toPersonView } = await import('$lib/server/people/serialize');
 
@@ -49,8 +59,8 @@ function person(id: string): PersonRecord {
 		lastName: 'Иванов',
 		firstName: 'Иван',
 		middleName: null,
-		email: 'ivanov@vuz.ru',
-		phone: '+7 900 000-00-01',
+		email: encryptContact('ivanov@vuz.ru'),
+		phone: encryptContact('+7 900 000-00-01'),
 		notes: null,
 		retentionUntil: null,
 		anonymizedAt: null

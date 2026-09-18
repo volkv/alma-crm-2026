@@ -7,7 +7,16 @@
  * проверяется, — это решения, а не запись: «создать», «обновить и что именно»,
  * «без изменений», «отказать и почему».
  */
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
+
+/**
+ * Контакты в снимке каталога сравниваются по ключу, который считает
+ * `people/pii.ts` ключом установки: в базе они лежат шифртекстом. Окружение
+ * подменено, потому что в прогоне CI никакого `.env` нет.
+ */
+vi.mock('$env/dynamic/private', () => ({
+	env: { PII_ENCRYPTION_KEY: 'KfAA/EWod3wd+ai6b1LHC62LWho5pPp1ajJnQNdbqUs=' }
+}));
 import type { CatalogMapping } from '$lib/contracts/directory-import';
 import {
 	applyCatalogRows,

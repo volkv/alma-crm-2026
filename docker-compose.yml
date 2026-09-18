@@ -339,6 +339,14 @@ services:
       # thing would drift apart on the first stand that renames one.
       EXCHANGE_CMS_INSTANCE: ${EXCHANGE_CMS_INSTANCE:-itschool-site}
       EXCHANGE_LMS_INSTANCE: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
+      # The key the contacts of people are encrypted with before they reach the
+      # database (AES-256-GCM plus a derived key for the comparison hashes). The
+      # default below is for a local run only: it is printed in the repository,
+      # so anyone who has the sources can read the contacts of this stack. A
+      # stand and a deployment pass their own — docker-compose.prod.yml has no
+      # default at all. Losing the key is irreversible: the contacts of the
+      # directory go with it.
+      PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY:-pd7xxuL6XwYqagjA3OMN0dZUR+qa4eRzqNQmQnxaPIM=}
       # The secret the CRM signs its outgoing exchange messages with — the same
       # one the imitators verify them against.
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-exchange-stand-secret-0123456789abcdef}

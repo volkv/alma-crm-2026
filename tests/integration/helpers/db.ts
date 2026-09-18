@@ -32,6 +32,7 @@ import postgres from 'postgres';
 import type { StageSnapshot } from '$lib/contracts/interactions';
 import type { AccessScope, ActorContext } from '$lib/server/actor';
 import * as schema from '$lib/server/db/schema';
+import { contactColumns } from '$lib/server/people/pii';
 import { DEFAULT_ROLES, type PermissionKey } from '$lib/server/rbac/permissions';
 import { defaultRolePermissions, seedRolesAndPermissions } from '$lib/server/rbac/seed';
 import { startTestStorage, type TestStorage } from './storage';
@@ -84,6 +85,9 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 	process.env.ORIGIN = 'http://localhost:5173';
 	process.env.DEMO_MODE = 'false';
 	process.env.TRUST_PROXY = 'false';
+	// Ключ шифрования контактов людей: свой на прогон, потому что и база своя.
+	// Без него сервисы справочника не прочитали бы ни одного контакта.
+	process.env.PII_ENCRYPTION_KEY = 'KfAA/EWod3wd+ai6b1LHC62LWho5pPp1ajJnQNdbqUs=';
 	// Каталог учётных записей: сервисам он не нужен вовсе — вход проверяется
 	// своим файлом, — но конфигурация читается целиком, и без этих значений
 	// `getConfig()` справедливо упадёт на первой же выборке из базы.
@@ -359,7 +363,13 @@ export async function insertOrganization(
 	return row.id;
 }
 
-/** Человек справочника: контакты заполнены, потому что их и проверяют. */
+/**
+ * Человек справочника: контакты заполнены, потому что их и проверяют.
+ *
+ * Контакты кладутся тем же слоем, что и у формы (`people/pii.ts`): в базе они
+ * лежат шифртекстом, и помощник, который пишет их открытыми, готовил бы к
+ * проверке строку, какой в продукте не бывает.
+ */
 export async function insertPerson(
 	database: PostgresJsDatabase<typeof schema>,
 	options: {
@@ -374,8 +384,10 @@ export async function insertPerson(
 		.values({
 			lastName: options.lastName ?? 'Тестов',
 			firstName: 'Тест',
-			email: options.email === undefined ? 'test@example.org' : options.email,
-			phone: options.phone === undefined ? '+7 900 000-00-00' : options.phone,
+			...contactColumns({
+				email: options.email === undefined ? 'test@example.org' : options.email,
+				phone: options.phone === undefined ? '+7 900 000-00-00' : options.phone
+			}),
 			retentionUntil: options.retentionUntil ?? null
 		})
 		.returning({ id: schema.people.id });
