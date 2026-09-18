@@ -40,6 +40,7 @@ import {
 	B2C_GROUP_KEY,
 	closeRequiredChecklist,
 	createInteractionOn,
+	provideLmsEvidence,
 	seedProcess,
 	stageId,
 	twoStageProcess
@@ -522,6 +523,52 @@ describe('подтверждение стадии', () => {
 
 		const status = await getInteractionStatus(fixture.ctx, fixture.interactionId);
 		expect(status.current?.snapshot.key).toBe('implementation_support');
+	});
+
+	it('стадию занятий закрывает результат системы обучения, и он же её подтверждает', async () => {
+		const fixture = await createFixture();
+		await advanceTo(fixture, 'classes');
+		await closeRequiredChecklist(fixture.ctx, fixture.interactionId);
+		await setStageResult(fixture.ctx, {
+			interactionId: fixture.interactionId,
+			resultText: 'Занятия проведены по расписанию'
+		});
+
+		const command = {
+			interactionId: fixture.interactionId,
+			revision: fixture.revision.version,
+			fromStageId: stageId(fixture.revision, 'classes'),
+			toStageId: stageId(fixture.revision, 'documentation_update'),
+			reason: null,
+			resultText: null,
+			checklistState: {}
+		};
+
+		// Отметка ответственного стадию не закрывает: занятия идут в чужой
+		// системе, и подтверждает их её результат, а не подпись исполнителя.
+		await confirmStage(fixture.ctx, {
+			interactionId: fixture.interactionId,
+			fromStageId: command.fromStageId,
+			confirmation: { kind: 'mark' }
+		});
+
+		await expect(advanceStage(fixture.ctx, command)).rejects.toSatisfy(
+			(error: unknown) =>
+				error instanceof ConflictError && /не получены данные системы обучения/.test(error.message)
+		);
+
+		const evidence = await provideLmsEvidence(fixture.ctx, database, fixture.interactionId);
+
+		await advanceStage(fixture.ctx, command);
+
+		const status = await getInteractionStatus(fixture.ctx, fixture.interactionId);
+		const classes = status.history.find((entry) => entry.snapshot.key === 'classes');
+
+		expect(status.current?.snapshot.key).toBe('documentation_update');
+		expect(classes?.lmsEvidence).toMatchObject({
+			groupExternalId: evidence.groupExternalId,
+			completed: evidence.completed
+		});
 	});
 });
 

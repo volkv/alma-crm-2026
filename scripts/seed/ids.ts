@@ -33,7 +33,8 @@ export type SeedKind =
 	| 'product'
 	| 'contract'
 	| 'contract-item'
-	| 'interaction';
+	| 'interaction'
+	| 'learning-group';
 
 /**
  * Идентификатор записи набора. Реализация UUID v5 по RFC 9562: биты версии и

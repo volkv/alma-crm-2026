@@ -120,10 +120,13 @@ describe('процесс учебных заведений', () => {
 		expect(finals.map((stage) => stage.key)).toEqual(['execution_control']);
 	});
 
-	it('не требует данных обучения, пока обмен односторонний', () => {
-		// Требование, которое нечем выполнить, останавливает работу: признак
-		// включают вместе с двусторонним обменом, черновиком и без правки кода.
-		expect(route.stages.every((stage) => !stage.requiresLmsData)).toBe(true);
+	it('требует данных обучения ровно на стадии занятий', () => {
+		// Факт из системы обучения — единственное доказательство исполнения,
+		// которое пишет не сам исполнитель. Требовать его от стадий, работа
+		// которых в системе обучения не отражается, значит запереть процесс.
+		expect(route.stages.filter((stage) => stage.requiresLmsData).map((stage) => stage.key)).toEqual(
+			['classes']
+		);
 	});
 });
 
@@ -174,6 +177,14 @@ describe('процесс физических и юридических лиц',
 		]);
 		expect(byKey.get('contract_payment')?.requiresConfirmation).toBe(true);
 		expect(byKey.get('completion')?.requiresResult).toBe(true);
+	});
+
+	it('требует данных обучения ровно на стадии обучения', () => {
+		// Обучение идёт в чужой системе — и здесь, и у учебных заведений: стадия
+		// отпускает вперёд, когда результат потока пришёл оттуда.
+		expect(b2c.stages.filter((stage) => stage.requiresLmsData).map((stage) => stage.key)).toEqual([
+			'learning'
+		]);
 	});
 
 	it('не делит ключи стадий с процессом учебных заведений', () => {

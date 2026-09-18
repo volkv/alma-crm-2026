@@ -3,7 +3,7 @@ import { vi } from 'vitest';
 
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
 
-import { and, eq, sql } from 'drizzle-orm';
+import { and, eq, isNull, sql } from 'drizzle-orm';
 import type { RequestEvent } from '@sveltejs/kit';
 import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
@@ -40,6 +40,7 @@ import {
 	B2C_PROCESS
 } from '$lib/server/stages/definitions';
 import { ensureProcess } from '$lib/server/stages/process';
+import { advanceTo } from '../stages/fixture';
 import { startMockCms } from '../../../mocks/mock-cms/service.ts';
 import { startMockLms } from '../../../mocks/mock-lms/service.ts';
 import type { MockService } from '../../../mocks/shared/http.ts';
@@ -803,20 +804,17 @@ describe('учебная группа', () => {
 	it('результат подтверждает стадию фактами и никуда её не двигает', async () => {
 		const { interactionId, groupExternalId } = await interactionWithGroup();
 
-		// Стадии, которой нужны данные обучения, в демонстрационном процессе нет:
-		// признак включают черновиком. Здесь он поднимается прямо в слепке
-		// открытой записи — движок читает именно его.
+		// Данных обучения в процессе учебных заведений требует «Ведение
+		// занятий», и взаимодействие доводится до неё движком: поднять признак
+		// в слепке открытой записи значило бы проверять выдуманную стадию.
+		await advanceTo(testActor(), database, interactionId, 'classes');
+
 		const [entry] = await database.db
 			.select()
 			.from(stageEntries)
-			.where(eq(stageEntries.interactionId, interactionId));
+			.where(and(eq(stageEntries.interactionId, interactionId), isNull(stageEntries.leftAt)));
 
-		await database.db
-			.update(stageEntries)
-			.set({
-				stageSnapshot: { ...entry.stageSnapshot, requiresLmsData: true, requiresConfirmation: true }
-			})
-			.where(eq(stageEntries.id, entry.id));
+		expect(entry.stageSnapshot.requiresLmsData).toBe(true);
 
 		const result = await receiveLearningGroupResult(serviceActor(), {
 			schemaVersion: '1.0',
@@ -852,7 +850,13 @@ describe('учебная группа', () => {
 		// Дальше взаимодействие не двигается ни на шаг: переход — решение
 		// сотрудника, и права `stages.transition` у машинного субъекта нет.
 		expect(updated.leftAt).toBeNull();
-		expect(await database.db.select({ id: stageEntries.id }).from(stageEntries)).toHaveLength(1);
+
+		const open = await database.db
+			.select({ id: stageEntries.id })
+			.from(stageEntries)
+			.where(and(eq(stageEntries.interactionId, interactionId), isNull(stageEntries.leftAt)));
+
+		expect(open).toHaveLength(1);
 	});
 
 	it('второй результат добавляет строку истории, а не перезаписывает', async () => {

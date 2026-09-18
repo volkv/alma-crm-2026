@@ -8,6 +8,7 @@
  * значит однажды получить четыре разных «демонстрационных процесса».
  */
 import { eq } from 'drizzle-orm';
+import { lmsEvidenceSchema, type LmsEvidence } from '$lib/contracts/exchange';
 import {
 	createInteractionSchema,
 	type ChecklistItem,
@@ -15,11 +16,13 @@ import {
 	type ProcessRevisionView
 } from '$lib/contracts/interactions';
 import type { ActorContext } from '$lib/server/actor';
-import { interactions } from '$lib/server/db/schema';
+import { interactions, learningGroupResults, learningGroups } from '$lib/server/db/schema';
+import { withTransaction } from '$lib/server/db/transaction';
 import { createInteraction } from '$lib/server/interactions/write';
 import { B2B_GROUP_KEY, B2B_PROCESS, B2C_GROUP_KEY } from '$lib/server/stages/definitions';
 import {
 	advanceStage,
+	applyLmsEvidence,
 	confirmStage,
 	setChecklistItem,
 	setStageResult
@@ -135,6 +138,70 @@ export async function closeRequiredChecklist(
 }
 
 /**
+ * Факт системы обучения по взаимодействию: поток и его результат.
+ *
+ * Стадия с `requiresLmsData` ждёт именно его, и подделать его снимком стадии
+ * нельзя — проверка перестала бы проверять правило. Строки те же, что кладёт
+ * приём результата (`docs/exchange-contract.md`, направление 4), а
+ * подтверждение ставит тот же движок, что зовёт приём: тест отличается от
+ * настоящего обмена только тем, что сообщение не едет по сети.
+ */
+export async function provideLmsEvidence(
+	ctx: ActorContext,
+	database: TestDatabase,
+	interactionId: string,
+	counters: { enrolled: number; completed: number; expelled: number } = {
+		enrolled: 20,
+		completed: 18,
+		expelled: 1
+	}
+): Promise<LmsEvidence> {
+	const groupExternalId = crypto.randomUUID().slice(0, 8);
+	const occurredAt = new Date();
+	// Номер потока свой у каждого вызова: второй поток по взаимодействию —
+	// обычное дело, и уникальность пары «взаимодействие + номер» этого ждёт.
+	const streams = await database.db
+		.select({ id: learningGroups.id })
+		.from(learningGroups)
+		.where(eq(learningGroups.interactionId, interactionId));
+
+	const [group] = await database.db
+		.insert(learningGroups)
+		.values({
+			interactionId,
+			streamNumber: streams.length + 1,
+			system: 'lms',
+			instance: 'moodle-test',
+			groupExternalId,
+			plannedSeats: counters.enrolled,
+			lastResultAt: occurredAt
+		})
+		.returning({ id: learningGroups.id });
+
+	await database.db.insert(learningGroupResults).values({
+		learningGroupId: group.id,
+		occurredAt,
+		...counters
+	});
+
+	const evidence = lmsEvidenceSchema.parse({
+		system: 'lms',
+		instance: 'moodle-test',
+		groupExternalId,
+		learningGroupId: group.id,
+		occurredAt: occurredAt.toISOString(),
+		...counters,
+		finishedOn: null,
+		periodStart: null,
+		periodEnd: null
+	});
+
+	await withTransaction(ctx, (tx) => applyLmsEvidence(ctx, tx, { interactionId, evidence }));
+
+	return evidence;
+}
+
+/**
  * Проводит взаимодействие вперёд до стадии с нужным ключом, закрывая по дороге
  * всё, чего стадия требует. Шаги идут по действующей редакции — той же, что
  * видит карточка.
@@ -172,7 +239,12 @@ export async function advanceTo(
 			});
 		}
 
-		if (current.snapshot.requiresConfirmation) {
+		if (current.snapshot.requiresLmsData) {
+			// Факт обучения подтверждает стадию сам — видом `lms_record`, и
+			// отметка ответственного поверх него стёрла бы то, чем стадия
+			// подтверждена на самом деле.
+			await provideLmsEvidence(ctx, database, interactionId);
+		} else if (current.snapshot.requiresConfirmation) {
 			await confirmStage(ctx, {
 				interactionId,
 				fromStageId: current.stageId,

@@ -22,6 +22,7 @@ import {
 	type CreateInteractionInput,
 	type StageView
 } from '$lib/contracts/interactions';
+import { lmsEvidenceSchema } from '$lib/contracts/exchange';
 import { formatDate } from '$lib/format';
 import type { ActorContext } from '$lib/server/actor';
 import { recordAuditEvent } from '$lib/server/audit';
@@ -35,20 +36,24 @@ import {
 	interactionProducts,
 	interactionPrograms,
 	interactions,
+	learningGroupResults,
+	learningGroups,
 	programVersions,
 	stageEntries,
 	stagePauses,
 	users
 } from '$lib/server/db/schema';
-import type { Tx } from '$lib/server/db/transaction';
+import { withTransaction, type Tx } from '$lib/server/db/transaction';
 import { DocumentConversionError } from '$lib/server/documents/errors';
 import { generateDocument } from '$lib/server/documents/generate';
 import { uploadDocument, uploadDocumentRevision } from '$lib/server/documents/upload';
+import { getExchangeSettings } from '$lib/server/integrations/settings';
 import { getInteraction } from '$lib/server/interactions/read';
 import { defaultRolePermissions } from '$lib/server/rbac/seed';
 import {
 	addComment,
 	advanceStage,
+	applyLmsEvidence,
 	completeInteraction,
 	confirmStage,
 	pauseStage,
@@ -62,6 +67,7 @@ import type { ProcessRevisionView } from '$lib/contracts/interactions';
 import { B2B_PROCESS } from '$lib/server/stages/definitions';
 import { readGroupByKey, readGroupRow, requireActiveRevision } from '$lib/server/stages/process';
 import { seedId } from './ids';
+import { SERVICE_USER_EMAIL } from './users';
 
 /** Ключи учётных записей, на которых ведутся демонстрационные взаимодействия. */
 const OWNER_KEYS = ['demo-manager', 'veresova', 'zotov'] as const;
@@ -72,6 +78,23 @@ type PauseSeed = { note: string; nextAction: string };
 
 /** Причина берётся из справочника: в наборе не должно быть кода, которого нет в системе. */
 type BlockerSeed = { reasonCode: BlockerReason; description: string; blocksTransition: boolean };
+
+/**
+ * Поток обучения и то, чем он кончился. Нужен каждой записи, дошедшей до
+ * стадии «Ведение занятий»: без факта из системы обучения стадия не
+ * подтверждается и вперёд не отпускает.
+ *
+ * `completed: 0` — это идущее обучение, а не ноль выпускников: у такого потока
+ * нет и даты окончания.
+ */
+type LearningSeed = {
+	/** Имя группы на стороне системы обучения: его выдаёт она, а не CRM. */
+	groupExternalId: string;
+	plannedSeats: number;
+	enrolled: number;
+	completed: number;
+	expelled: number;
+};
 
 type InteractionSeed = {
 	key: string;
@@ -99,6 +122,8 @@ type InteractionSeed = {
 	 */
 	agreement: readonly [string, string];
 	academic?: readonly [string, string];
+	/** Поток в системе обучения: обязателен у всех, кто дошёл до занятий. */
+	learning?: LearningSeed;
 	/** Закрыть обязательные пункты чек-листа текущей стадии. */
 	closeChecklist?: boolean;
 	pause?: PauseSeed;
@@ -532,7 +557,16 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		sinceDaysAgo: 25,
 		lastActivityDaysAgo: 6,
 		agreement: ['2025-09-01', '2026-08-31'],
-		academic: ['2026-02-01', '2026-06-30']
+		academic: ['2026-02-01', '2026-06-30'],
+		// Занятия идут: система обучения прислала промежуточный результат, и
+		// выпускников у потока ещё нет.
+		learning: {
+			groupExternalId: '70411',
+			plannedSeats: 30,
+			enrolled: 28,
+			completed: 0,
+			expelled: 1
+		}
 	},
 	{
 		key: 'batse-kontrol',
@@ -546,7 +580,14 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		startedDaysAgo: 200,
 		sinceDaysAgo: 12,
 		lastActivityDaysAgo: 7,
-		agreement: ['2025-09-01', '2026-08-31']
+		agreement: ['2025-09-01', '2026-08-31'],
+		learning: {
+			groupExternalId: '70412',
+			plannedSeats: 25,
+			enrolled: 24,
+			completed: 22,
+			expelled: 1
+		}
 	},
 	{
 		key: 'szpu-2025',
@@ -564,6 +605,14 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		lastActivityDaysAgo: 20,
 		agreement: ['2025-09-01', '2026-08-31'],
 		academic: ['2025-09-01', '2026-06-30'],
+		// Числа потока сходятся с итогом: документы получили сорок восемь.
+		learning: {
+			groupExternalId: '70413',
+			plannedSeats: 50,
+			enrolled: 50,
+			completed: 48,
+			expelled: 2
+		},
 		completedWith:
 			'Программа прочитана полностью, 48 студентов получили документы об обучении, отчёт принят заказчиком.'
 	},
@@ -580,6 +629,13 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		sinceDaysAgo: 15,
 		lastActivityDaysAgo: 15,
 		agreement: ['2025-09-01', '2026-08-31'],
+		learning: {
+			groupExternalId: '70414',
+			plannedSeats: 12,
+			enrolled: 10,
+			completed: 7,
+			expelled: 2
+		},
 		completedWith:
 			'Магистерская программа закрыта, семь выпускников вышли на стажировку к заказчику.'
 	},
@@ -598,6 +654,13 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		sinceDaysAgo: 28,
 		lastActivityDaysAgo: 28,
 		agreement: ['2025-09-01', '2026-06-30'],
+		learning: {
+			groupExternalId: '70415',
+			plannedSeats: 40,
+			enrolled: 38,
+			completed: 35,
+			expelled: 2
+		},
 		completedWith: 'Две группы завершили обучение, лицензии продлены на следующий год.'
 	},
 	{
@@ -613,6 +676,14 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		sinceDaysAgo: 9,
 		lastActivityDaysAgo: 9,
 		agreement: ['2025-09-01', '2026-08-31'],
+		// Набор перевыполнен: сорок мест в потоке, зачислено сорок пять.
+		learning: {
+			groupExternalId: '70416',
+			plannedSeats: 40,
+			enrolled: 45,
+			completed: 41,
+			expelled: 3
+		},
 		completedWith: 'Занятия проведены, плановые показатели по набору выполнены на 112 %.'
 	},
 	{
@@ -629,6 +700,13 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		sinceDaysAgo: 5,
 		lastActivityDaysAgo: 5,
 		agreement: ['2025-09-01', '2026-08-31'],
+		learning: {
+			groupExternalId: '70417',
+			plannedSeats: 25,
+			enrolled: 26,
+			completed: 24,
+			expelled: 1
+		},
 		completedWith: 'Повышение квалификации прошли 24 преподавателя, документы выданы.'
 	}
 ];
@@ -762,6 +840,31 @@ async function readOwners(db: Database): Promise<Map<OwnerKey, ActorContext>> {
 	}
 
 	return owners;
+}
+
+/**
+ * Машинный субъект обмена: от его имени в систему приходит то, что прислала
+ * чужая система. По почте, а не по вычисляемому идентификатору: учётная запись
+ * с такой почтой могла появиться на стенде раньше набора, и тогда
+ * идентификатор у неё другой (`users.ts`).
+ */
+async function readService(db: Database): Promise<ActorContext> {
+	const [row] = await db
+		.select({
+			id: users.id,
+			email: users.email,
+			fullName: users.fullName,
+			roleId: users.roleId
+		})
+		.from(users)
+		.where(eq(users.email, SERVICE_USER_EMAIL))
+		.limit(1);
+
+	if (row === undefined) {
+		throw new Error('Машинный субъект обмена не заведён: сначала заливаются пользователи');
+	}
+
+	return seedActor(row);
 }
 
 /** Последняя версия каждой программы: взаимодействие ссылается именно на неё. */
@@ -937,15 +1040,113 @@ async function createSeededInteraction(
 	});
 }
 
+/**
+ * Поток обучения и его результат: факт, которым подтверждается стадия
+ * «Ведение занятий».
+ *
+ * На стенде такой факт приезжает обменом — заявкой в систему обучения и
+ * ответным сообщением (`docs/exchange-contract.md`, направления 3 и 4). Набор
+ * кладёт его строками: имитатор системы обучения поднят не на каждой
+ * установке, а стадия без данных обучения не подтверждается и не отпускает
+ * вперёд. Подтверждение при этом ставит движок — `applyLmsEvidence`, тот же
+ * код, что зовёт приём результата; набор пишет только сам факт.
+ *
+ * Действует машинный субъект, а не менеджер: результат прислала чужая система,
+ * и подпись сотрудника под ним была бы неправдой.
+ *
+ * Повторный вызов ничего не портит: строки узнают себя по ключам, а факт на
+ * открытой записи стадии перезаписывается тем же значением.
+ */
+async function recordLearningResult(
+	service: ActorContext,
+	seed: InteractionSeed,
+	interactionId: string,
+	instance: string,
+	runStart: Date
+): Promise<void> {
+	const learning = seed.learning;
+
+	if (learning === undefined) {
+		throw new Error(
+			`Взаимодействию «${seed.key}» нужен поток обучения: стадия «${seed.stage}» требует факта из системы обучения`
+		);
+	}
+
+	const [periodStart, periodEnd] = seed.academic ?? seed.agreement;
+	const learningGroupId = seedId('learning-group', seed.key);
+	// Точных дат у набора нет, а порядок важен: поток заводят задолго до
+	// результата, а результат — последнее, что по взаимодействию случилось.
+	const requestedAt = daysBefore(runStart, seed.lastActivityDaysAgo + 30);
+	const occurredAt = daysBefore(runStart, seed.lastActivityDaysAgo);
+	const evidence = lmsEvidenceSchema.parse({
+		system: 'lms',
+		instance,
+		groupExternalId: learning.groupExternalId,
+		learningGroupId,
+		occurredAt: occurredAt.toISOString(),
+		enrolled: learning.enrolled,
+		completed: learning.completed,
+		expelled: learning.expelled,
+		// Обучение ещё идёт — даты окончания у потока нет.
+		finishedOn: learning.completed === 0 ? null : periodEnd,
+		periodStart,
+		periodEnd
+	});
+
+	await withTransaction(service, async (tx: Tx) => {
+		await tx
+			.insert(learningGroups)
+			.values({
+				id: learningGroupId,
+				interactionId,
+				streamNumber: 1,
+				system: evidence.system,
+				instance: evidence.instance,
+				groupExternalId: evidence.groupExternalId,
+				requestedAt,
+				plannedSeats: learning.plannedSeats,
+				startsOn: periodStart,
+				endsOn: periodEnd,
+				lastResultAt: occurredAt
+			})
+			.onConflictDoNothing({ target: learningGroups.id });
+
+		await tx
+			.insert(learningGroupResults)
+			.values({
+				learningGroupId,
+				occurredAt,
+				periodStart,
+				periodEnd,
+				finishedOn: evidence.finishedOn,
+				enrolled: evidence.enrolled,
+				completed: evidence.completed,
+				expelled: evidence.expelled
+			})
+			.onConflictDoNothing({
+				target: [learningGroupResults.learningGroupId, learningGroupResults.occurredAt]
+			});
+
+		await applyLmsEvidence(service, tx, { interactionId, evidence });
+	});
+}
+
 /** Один шаг вперёд со всем, чего стадия требует перед выходом. */
 async function stepForward(
 	ctx: ActorContext,
 	interactionId: string,
 	from: StageView,
 	toStageId: string,
-	revision: number
+	revision: number,
+	/** Факт обучения — для стадии, которая без него никуда не отпускает. */
+	provideLmsEvidence: () => Promise<void>
 ): Promise<void> {
-	if (from.requiresConfirmation) {
+	if (from.requiresLmsData) {
+		// Стадию с данными обучения подтверждает сам факт: движок ставит на неё
+		// подтверждение видом `lms_record`. Отметка ответственного поверх него
+		// стёрла бы то, чем стадия подтверждена на самом деле.
+		await provideLmsEvidence();
+	} else if (from.requiresConfirmation) {
 		await confirmStage(ctx, {
 			interactionId,
 			fromStageId: from.id,
@@ -983,7 +1184,8 @@ async function walkTo(
 	ctx: ActorContext,
 	interactionId: string,
 	process: Process,
-	targetKey: string
+	targetKey: string,
+	provideLmsEvidence: () => Promise<void>
 ): Promise<void> {
 	const target = stageByKey(process.stages, targetKey);
 
@@ -998,7 +1200,7 @@ async function walkTo(
 			throw new Error(`Со стадии «${stage.key}» нет шага вперёд`);
 		}
 
-		await stepForward(ctx, interactionId, stage, next, process.revision);
+		await stepForward(ctx, interactionId, stage, next, process.revision, provideLmsEvidence);
 	}
 }
 
@@ -1346,14 +1548,19 @@ export async function seedInteractions(options: { groupKey: string }): Promise<v
 		revision: revision.version
 	};
 
-	const [owners, versions, existing] = await Promise.all([
+	const [owners, service, versions, existing] = await Promise.all([
 		readOwners(db),
+		readService(db),
 		readLatestProgramVersions(db),
 		readExisting(
 			db,
 			INTERACTIONS.map((seed) => seedId('interaction', seed.key))
 		)
 	]);
+
+	// Экземпляр подключения к системе обучения: поток набора заведён в том же,
+	// куда ходит обмен, — иначе результат оттуда встал бы рядом со своим.
+	const lmsInstance = (await getExchangeSettings()).lms.instance;
 
 	// Одна точка отсчёта на всю заливку: два вызова `new Date()` расходятся на
 	// миллисекунды, а смещения записей считаются друг относительно друга.
@@ -1380,13 +1587,22 @@ export async function seedInteractions(options: { groupKey: string }): Promise<v
 			continue;
 		}
 
-		await walkTo(ctx, id, plan, seed.stage);
+		const provideLmsEvidence = () => recordLearningResult(service, seed, id, lmsInstance, runStart);
+
+		await walkTo(ctx, id, plan, seed.stage, provideLmsEvidence);
+
+		// Стадия, на которой взаимодействие остановилось, тоже бывает с данными
+		// обучения: её никто не закрывает, но подтверждённой она обязана быть —
+		// факт из системы обучения приходит по её расписанию, а не по нашему.
+		if (stageByKey(stages, seed.stage).requiresLmsData) {
+			await provideLmsEvidence();
+		}
 
 		if (seed.returnedFrom !== undefined) {
 			const from = stageByKey(stages, seed.stage);
 			const to = stageByKey(stages, seed.returnedFrom);
 
-			await stepForward(ctx, id, from, to.id, plan.revision);
+			await stepForward(ctx, id, from, to.id, plan.revision, provideLmsEvidence);
 			await returnStage(ctx, {
 				interactionId: id,
 				fromStageId: to.id,

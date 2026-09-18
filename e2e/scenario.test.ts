@@ -85,12 +85,45 @@ const STEP_FILE = 'protokol-vstrechi.txt';
 /**
  * Процесс группы. Четыре стадии: по первой идёт шаг КАМа, вторую администратор
  * переименовывает, третью удаляет, четвёртая — завершающая.
+ *
+ * На второй КАМ и остаётся до конца прохода, поэтому она и требует данных
+ * обучения: ровно так устроена «Ведение занятий» в процессе стенда — занятия
+ * идут в чужой системе, и подтверждает стадию её результат, а не отметка
+ * ответственного.
  */
 const STAGES = [
-	{ key: 'contact', name: 'Первый контакт', category: 'contact', isFinal: false },
-	{ key: 'programs', name: 'Сверка программ', category: 'documents', isFinal: false },
-	{ key: 'pilot', name: 'Пробный поток', category: 'documents', isFinal: false },
-	{ key: 'result', name: 'Итог года', category: 'control', isFinal: true }
+	{
+		key: 'contact',
+		name: 'Первый контакт',
+		category: 'contact',
+		isFinal: false,
+		requiresConfirmation: false,
+		requiresLmsData: false
+	},
+	{
+		key: 'programs',
+		name: 'Сверка программ',
+		category: 'documents',
+		isFinal: false,
+		requiresConfirmation: true,
+		requiresLmsData: true
+	},
+	{
+		key: 'pilot',
+		name: 'Пробный поток',
+		category: 'documents',
+		isFinal: false,
+		requiresConfirmation: false,
+		requiresLmsData: false
+	},
+	{
+		key: 'result',
+		name: 'Итог года',
+		category: 'control',
+		isFinal: true,
+		requiresConfirmation: false,
+		requiresLmsData: false
+	}
 ] as const;
 
 const RENAMED_NAME = `${MARK} Сверка программ и площадок`;
@@ -187,8 +220,8 @@ function stageSnapshot(index: number): string {
 		slaDays: 7,
 		staleAfterDays: null,
 		requiresResult: false,
-		requiresConfirmation: false,
-		requiresLmsData: false,
+		requiresConfirmation: stage.requiresConfirmation,
+		requiresLmsData: stage.requiresLmsData,
 		isFinal: stage.isFinal,
 		checklist: []
 	});
@@ -698,6 +731,12 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		await manager.goto(`/interactions/${mainId}`);
 		await waitForHydration(manager);
 
+		// Стадия требует данных обучения, и их ещё не получали: карточка говорит
+		// об этом словами, а не гасит кнопку молча.
+		await expect(
+			manager.getByText('Стадии нужны данные системы обучения — их ещё не получали.')
+		).toBeVisible();
+
 		await manager.getByLabel('Мест в потоке').fill('45');
 		await manager.getByLabel('Начало занятий').fill('2026-10-01');
 		await manager.getByRole('button', { name: 'Отправить в LMS' }).click();
@@ -742,6 +781,19 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		// Числа приехали из чужой системы и стали частью работы по взаимодействию.
 		await manager.reload();
 		await expect(manager.getByText('завершили 38', { exact: false }).first()).toBeVisible();
+
+		// И стадия подтверждена именно ими: не отметкой ответственного, а
+		// записью в системе обучения — тем подключением, откуда пришёл результат.
+		const confirmation = manager.locator('p').filter({ hasText: 'записью в системе обучения' });
+
+		await expect(confirmation).toContainText('Подтверждено');
+		await expect(confirmation).toContainText('lms:moodle-itschool');
+
+		// Двигать взаимодействие результат не стал: стадия та же, и шаг вперёд
+		// по-прежнему предлагается человеку.
+		await expect(
+			manager.locator('[data-slot="stage-timeline"] [aria-current="step"]')
+		).toHaveAccessibleName(new RegExp(`${RENAMED_NAME} — текущая`));
 
 		// Обе стороны обмена по этому потоку видны в журнале. Ключей два, и это
 		// не небрежность: заявку журнал помнит по нашему ключу потока, а результат
