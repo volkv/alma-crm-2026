@@ -228,13 +228,21 @@ export async function assignResponsible(
 
 	if (input.directionId !== null) {
 		const [direction] = await executor
-			.select({ id: directions.id })
+			.select({ id: directions.id, isActive: directions.isActive })
 			.from(directions)
 			.where(eq(directions.id, input.directionId))
 			.limit(1);
 
 		if (direction === undefined) {
 			throw new ValidationError('Ответственный не назначен', ['Направление не найдено']);
+		}
+
+		// Спрятать архивное направление из подсказки мало: адрес и тело запроса
+		// набирают руками, а назначение — это ещё и право видеть вуз.
+		if (!direction.isActive) {
+			throw new ValidationError('Ответственный не назначен', [
+				'Направление в архиве: по нему больше не назначают'
+			]);
 		}
 	}
 
@@ -496,6 +504,11 @@ export type DirectionOption = { id: string; name: string };
 /**
  * Направления для формы назначения. Каталог общий и областью не сужается:
  * направление — это разрез работы, а не чьё-то имущество.
+ *
+ * Архивных здесь нет: назначать ответственного по направлению, по которому
+ * больше не работают, незачем, а уже заведённые назначения на нём остаются —
+ * то же правило, что у архивной организации в подборе форм
+ * (`docs/directory.md`).
  */
 export async function listDirectionOptions(ctx: ActorContext): Promise<DirectionOption[]> {
 	requirePermission(ctx, 'directions.read');
@@ -503,6 +516,7 @@ export async function listDirectionOptions(ctx: ActorContext): Promise<Direction
 	return getDb()
 		.select({ id: directions.id, name: directions.name })
 		.from(directions)
+		.where(eq(directions.isActive, true))
 		.orderBy(asc(directions.position));
 }
 

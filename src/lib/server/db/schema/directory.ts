@@ -59,6 +59,12 @@ export const directions = pgTable(
 		code: text().notNull(),
 		name: text().notNull(),
 		position: integer().notNull(),
+		/**
+		 * Направление, по которому больше не работают, уходит в архив, а не
+		 * удаляется: на него ссылаются назначения ответственных, продукты и
+		 * программы, и «такого направления у нас никогда не было» — неправда.
+		 */
+		isActive: boolean().notNull().default(true),
 		...timestamps
 	},
 	(table) => [
@@ -328,6 +334,12 @@ export const programs = pgTable(
 		directionCode: text(),
 		/** ИТ-направление продукта — разрез ответственности, а не код ФГОС. */
 		directionId: uuid().references(() => directions.id, { onDelete: 'restrict' }),
+		/**
+		 * Ручной приоритет показа: 1 — самая важная программа. `null` означает
+		 * «приоритет не назначен», а не нулевую важность, поэтому такие программы
+		 * идут в списке после всех, кому его проставили.
+		 */
+		priority: integer(),
 		status: lifecycleStatusEnum().notNull().default('draft'),
 		...externalRef,
 		...timestamps

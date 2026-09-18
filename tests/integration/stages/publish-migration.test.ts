@@ -37,6 +37,7 @@ import {
 	advanceTo,
 	B2C_GROUP_KEY,
 	createInteractionOn,
+	provideDocumentMark,
 	seedProcess,
 	threeStageProcess
 } from './fixture';
@@ -342,6 +343,45 @@ describe('перепривязка открытых записей', () => {
 		expect(moved.current?.snapshot.key).toBe('done');
 	});
 
+	it('включённое требование отметки видит отметку, поставленную раньше', async () => {
+		const ctx = admin();
+		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+
+		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
+		await advanceTo(ctx, database, interactionId, 'offer');
+
+		// Документ дела утверждён, пока стадия отметки ещё не требовала.
+		const documentId = await provideDocumentMark(ctx, database, interactionId, 'approved');
+
+		await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
+			...definition,
+			stages: definition.stages.map((stage) =>
+				stage.key === 'offer' ? { ...stage, requiresDocumentMark: 'approved' as const } : stage
+			)
+		}));
+
+		// Снимок отметки подтягивается публикацией: иначе карточка объявила бы
+		// стадию неисполненной, хотя движок отпустил бы её вперёд.
+		const status = await getInteractionStatus(ctx, interactionId);
+
+		expect(status.current?.snapshot.requiresDocumentMark).toBe('approved');
+		expect(status.current?.documentMarkEvidence).toMatchObject({ documentId, mark: 'approved' });
+
+		const target = await activeRevision(database, B2C_GROUP_KEY);
+
+		await advanceStage(ctx, {
+			interactionId,
+			fromStageId: status.current?.stageId ?? '',
+			toStageId: target.stages.find((stage) => stage.key === 'done')?.id ?? '',
+			revision: status.revision,
+			reason: null,
+			resultText: null,
+			checklistState: {}
+		});
+
+		expect((await getInteractionStatus(ctx, interactionId)).current?.snapshot.key).toBe('done');
+	});
+
 	it('переносит паузу вместе с записью и не запускает часы стадии', async () => {
 		const ctx = admin();
 		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
@@ -592,6 +632,7 @@ describe('реестр ключей и журнал', () => {
 					requiresResult: false,
 					requiresConfirmation: false,
 					requiresLmsData: false,
+					requiresDocumentMark: null,
 					isFinal: false,
 					checklist: []
 				},

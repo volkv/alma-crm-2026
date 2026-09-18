@@ -87,9 +87,24 @@ describe('отказ вместо догадки', () => {
 		).toThrowError(PiiCryptoError);
 	});
 
+	it('не принимает укороченный тег', () => {
+		// GCM допускает восемь длин тега, и укороченный он проверил бы молча:
+		// подобрать его тем дешевле, чем он короче (12 байт — в 2^32 раз дешевле
+		// шестнадцати). Длина закреплена на обоих концах и проверяется до шифра,
+		// поэтому такой отказ приходит нашей ошибкой, а не ошибкой библиотеки.
+		const parts = encryptContact(EMAIL).split(':');
+		const short = Buffer.from(parts[4], 'base64').subarray(0, 12);
+		const damaged = [...parts.slice(0, 4), short.toString('base64')].join(':');
+
+		expect(() => decryptContact(damaged)).toThrowError(PiiCryptoError);
+		expect(() => decryptContact(damaged)).toThrowError(/тег длиной 12 байт вместо 16/);
+	});
+
 	it('не читает обрезанное значение', () => {
 		expect(() => decryptContact('enc:v1:короткое')).toThrowError(PiiCryptoError);
-		expect(() => decryptContact('enc:v1:AAAA:BBBB:CCCC')).toThrowError(/испорчен/i);
+		expect(() => decryptContact('enc:v1:AAAA:BBBB:CCCC')).toThrowError(
+			/вектор длиной 3 байт вместо 12/
+		);
 	});
 });
 

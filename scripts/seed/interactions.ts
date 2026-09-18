@@ -22,6 +22,7 @@ import {
 	type CreateInteractionInput,
 	type StageView
 } from '$lib/contracts/interactions';
+import type { DocumentStatusFact } from '$lib/contracts/documents';
 import { lmsEvidenceSchema } from '$lib/contracts/exchange';
 import { formatDate } from '$lib/format';
 import type { ActorContext } from '$lib/server/actor';
@@ -45,7 +46,9 @@ import {
 } from '$lib/server/db/schema';
 import { withTransaction, type Tx } from '$lib/server/db/transaction';
 import { DocumentConversionError } from '$lib/server/documents/errors';
+import { readDocumentMark } from '$lib/server/documents/evidence';
 import { generateDocument } from '$lib/server/documents/generate';
+import { markDocument } from '$lib/server/documents/status';
 import { uploadDocument, uploadDocumentRevision } from '$lib/server/documents/upload';
 import { getExchangeSettings } from '$lib/server/integrations/settings';
 import { getInteraction } from '$lib/server/interactions/read';
@@ -61,10 +64,16 @@ import {
 	returnStage,
 	setChecklistItem,
 	setResponsible,
+	setStageResult,
 	startInteractionIn
 } from '$lib/server/stages/commands';
-import type { ProcessRevisionView } from '$lib/contracts/interactions';
-import { B2B_PROCESS } from '$lib/server/stages/definitions';
+import type { ProcessDefinitionInput, ProcessRevisionView } from '$lib/contracts/interactions';
+import {
+	B2B_GROUP_KEY,
+	B2B_PROCESS,
+	B2C_GROUP_KEY,
+	B2C_PROCESS
+} from '$lib/server/stages/definitions';
 import { readGroupByKey, readGroupRow, requireActiveRevision } from '$lib/server/stages/process';
 import { seedId } from './ids';
 import { SERVICE_USER_EMAIL } from './users';
@@ -96,15 +105,34 @@ type LearningSeed = {
 	expelled: number;
 };
 
-type InteractionSeed = {
+/**
+ * Стороны взаимодействия. Их состав и есть разница между группами процесса: у
+ * работы с вузом сторон три (вуз, компания-заказчик, оператор), у обучения лица
+ * — две (сам контрагент и оператор), и группу система выводит из вида основной
+ * стороны, а не из поля набора.
+ */
+type CounterpartySeed =
+	| {
+			/** Ключи из `directory.ts`: учебное заведение, его контакт и площадки. */
+			institution: string;
+			contact: string;
+			sites?: readonly string[];
+			/** Компания-заказчик подготовки. */
+			customer: string;
+	  }
+	| {
+			/**
+			 * Физическое или юридическое лицо: учится само и само платит, поэтому
+			 * в ролях сторон это заказчик — то же правило, по которому раскладывает
+			 * стороны приём заявки с сайта.
+			 */
+			counterparty: string;
+			contact: string;
+	  };
+
+type InteractionSeed = CounterpartySeed & {
 	key: string;
 	title: string;
-	/** Ключи из `directory.ts`: учебное заведение, его контакт и площадки. */
-	institution: string;
-	contact: string;
-	sites?: readonly string[];
-	/** Компания-заказчик подготовки. */
-	customer: string;
 	programs: readonly string[];
 	products?: readonly string[];
 	owner: OwnerKey;
@@ -136,6 +164,15 @@ type InteractionSeed = {
 	 * файл собирается здесь же, а показать цепочку редакций на стенде нужно.
 	 */
 	scanWithRevision?: boolean;
+	/**
+	 * Приложить подписанный экземпляр соглашения с отметкой «Утверждён».
+	 *
+	 * Нужен только тем, кто **остановился** на стадии подписания: у прошедших её
+	 * такой документ появляется сам — без отметки стадия не отпускает вперёд.
+	 * Стенду нужны оба состояния: дело с приложенным экземпляром (стадия
+	 * подтверждена) и дело, которое его ещё ждёт.
+	 */
+	signedDocument?: boolean;
 	/** Стадия, на которую сходили и вернулись назад: след в истории. */
 	returnedFrom?: string;
 	/** Кому передали взаимодействие: смена ответственного попадает в историю плана. */
@@ -422,7 +459,8 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		agreement: ['2026-09-01', '2027-08-31'],
 		document: true,
 		scanWithRevision: true,
-		comments: ['Подписанты подтверждены с обеих сторон, скан ждём до пятницы.']
+		signedDocument: true,
+		comments: ['Подписанты подтверждены с обеих сторон, подписанный экземпляр приложен.']
 	},
 	{
 		key: 'puts-telecom',
@@ -712,6 +750,99 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 ];
 
 /**
+ * Обучение физических и юридических лиц — короткий процесс из пяти стадий.
+ *
+ * Четыре записи, и каждая отвечает на свой вопрос демонстрации: заявка только
+ * что принята, договор на оплате, обучение идёт (и подтверждено фактом из
+ * системы обучения), обучение закончено с выданным документом. Контрагентов
+ * двое — физическое лицо и юридическое, — потому что группа `b2c` собирает
+ * именно их, а процесс у них один.
+ */
+const B2C_INTERACTIONS: readonly InteractionSeed[] = [
+	{
+		key: 'sorokin-zayavka',
+		title: 'Сорокин А. П.: управление проектами, заявка',
+		counterparty: 'individual-sorokin',
+		contact: 'sorokin',
+		programs: ['dpo-01'],
+		owner: 'demo-manager',
+		stage: 'lead_intake',
+		startedDaysAgo: 2,
+		sinceDaysAgo: 2,
+		lastActivityDaysAgo: 1,
+		agreement: ['2026-09-01', '2026-12-31'],
+		comments: ['Просит вечернюю группу и счёт на физическое лицо.']
+	},
+	{
+		key: 'sorokin-obuchenie',
+		title: 'Сорокин А. П.: управление проектами, поток 2026/1',
+		counterparty: 'individual-sorokin',
+		contact: 'sorokin',
+		programs: ['dpo-01'],
+		products: ['docs'],
+		owner: 'demo-manager',
+		stage: 'learning',
+		startedDaysAgo: 64,
+		sinceDaysAgo: 20,
+		lastActivityDaysAgo: 4,
+		agreement: ['2026-06-01', '2026-12-31'],
+		academic: ['2026-07-01', '2026-11-30'],
+		// Обучение идёт: выпускников ещё нет, даты окончания у потока тоже.
+		learning: {
+			groupExternalId: '70501',
+			plannedSeats: 1,
+			enrolled: 1,
+			completed: 0,
+			expelled: 0
+		},
+		closeChecklist: true
+	},
+	{
+		key: 'mayak-dogovor',
+		title: 'Маяк-Телеком: аналитика на Python для аналитиков',
+		counterparty: 'mayak',
+		contact: 'kudryashova',
+		programs: ['spo-02'],
+		products: ['analytics'],
+		owner: 'demo-manager',
+		stage: 'contract_payment',
+		startedDaysAgo: 25,
+		sinceDaysAgo: 6,
+		lastActivityDaysAgo: 3,
+		agreement: ['2026-10-01', '2027-03-31'],
+		comments: ['Счёт выставлен на двенадцать сотрудников, ждём оплату от бухгалтерии.']
+	},
+	{
+		key: 'mayak-vypusk',
+		title: 'Маяк-Телеком: промпт-инжиниринг, выпуск весны 2026',
+		counterparty: 'mayak',
+		contact: 'kudryashova',
+		programs: ['school-01'],
+		owner: 'demo-manager',
+		stage: 'completion',
+		startedDaysAgo: 200,
+		sinceDaysAgo: 30,
+		lastActivityDaysAgo: 30,
+		agreement: ['2026-01-15', '2026-06-30'],
+		academic: ['2026-02-01', '2026-05-31'],
+		learning: {
+			groupExternalId: '70502',
+			plannedSeats: 10,
+			enrolled: 11,
+			completed: 10,
+			expelled: 1
+		},
+		completedWith: 'Десять сотрудников прошли курс, удостоверения выданы и переданы работодателю.'
+	}
+];
+
+/**
+ * Весь набор взаимодействий: обе группы процесса одним списком. Порядок
+ * значения не имеет — каждая запись сама говорит, по какому процессу идёт.
+ */
+const ALL_INTERACTIONS: readonly InteractionSeed[] = [...INTERACTIONS, ...B2C_INTERACTIONS];
+
+/**
  * Результат стадии там, где маршрут его требует. Пустая строка движок не
  * устроит, а «результат стадии» вместо текста не расскажет ничего тому, кто
  * откроет историю на демонстрации.
@@ -723,7 +854,9 @@ const STAGE_RESULTS: Record<string, string> = {
 	program_update: 'Изменения внесены в программу и согласованы с учебным заведением.',
 	classes: 'Занятия проведены по расписанию, промежуточный разбор выполнен.',
 	documentation_update: 'Учебные материалы обновлены и выложены в хранилище.',
-	qualification_upgrade: 'Участники прошли повышение квалификации, документы выданы.'
+	qualification_upgrade: 'Участники прошли повышение квалификации, документы выданы.',
+	learning: 'Слушатели зачислены в поток, занятия идут по расписанию.',
+	completion: 'Итоговая аттестация проведена, документы об обучении выданы.'
 };
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -743,16 +876,27 @@ function stageByKey(stages: readonly StageView[], key: string): StageView {
 	return stage;
 }
 
+/** Описание процесса, по которому идёт эта запись: его задаёт вид контрагента. */
+function processOf(seed: InteractionSeed): ProcessDefinitionInput {
+	return 'institution' in seed ? B2B_PROCESS : B2C_PROCESS;
+}
+
+/** Ключ группы процесса записи — тем же правилом, что и само описание. */
+function groupKeyOf(seed: InteractionSeed): string {
+	return 'institution' in seed ? B2B_GROUP_KEY : B2C_GROUP_KEY;
+}
+
 /** Просрочка — следствие данных набора, а не отдельный флаг: часы считает база. */
 function isOverdueSeed(seed: InteractionSeed): boolean {
 	if (seed.completedWith !== undefined || seed.pause !== undefined) {
 		return false;
 	}
 
-	const stage = B2B_PROCESS.stages.find((candidate) => candidate.key === seed.stage);
+	const process = processOf(seed);
+	const stage = process.stages.find((candidate) => candidate.key === seed.stage);
 
 	if (stage === undefined) {
-		throw new Error(`В процессе учебных заведений нет стадии «${seed.stage}»`);
+		throw new Error(`В процессе «${process.name}» нет стадии «${seed.stage}»`);
 	}
 
 	return seed.sinceDaysAgo > stage.slaDays;
@@ -764,17 +908,61 @@ function isOverdueSeed(seed: InteractionSeed): boolean {
  * так, как задумано в демонстрации.
  */
 export const INTERACTION_SEED_SIZES = {
-	interactions: INTERACTIONS.length,
-	completed: INTERACTIONS.filter((seed) => seed.completedWith !== undefined).length,
-	overdue: INTERACTIONS.filter(isOverdueSeed).length,
-	paused: INTERACTIONS.filter((seed) => seed.pause !== undefined).length,
-	blockers: INTERACTIONS.filter((seed) => seed.blocker !== undefined).length,
-	comments: INTERACTIONS.reduce((total, seed) => total + (seed.comments?.length ?? 0), 0),
-	documents: INTERACTIONS.filter((seed) => seed.document === true).length,
+	interactions: ALL_INTERACTIONS.length,
+	/** Записи группы B2C: обучение физических и юридических лиц. */
+	b2c: B2C_INTERACTIONS.length,
+	completed: ALL_INTERACTIONS.filter((seed) => seed.completedWith !== undefined).length,
+	/** Завершённые по группам: маршруты у групп разной длины. */
+	completedB2b: INTERACTIONS.filter((seed) => seed.completedWith !== undefined).length,
+	completedB2c: B2C_INTERACTIONS.filter((seed) => seed.completedWith !== undefined).length,
+	overdue: ALL_INTERACTIONS.filter(isOverdueSeed).length,
+	paused: ALL_INTERACTIONS.filter((seed) => seed.pause !== undefined).length,
+	blockers: ALL_INTERACTIONS.filter((seed) => seed.blocker !== undefined).length,
+	comments: ALL_INTERACTIONS.reduce((total, seed) => total + (seed.comments?.length ?? 0), 0),
+	documents: ALL_INTERACTIONS.filter((seed) => seed.document === true).length,
 	// Скан и его вторая редакция — две записи на каждое такое взаимодействие.
-	scans: INTERACTIONS.filter((seed) => seed.scanWithRevision === true).length * 2,
-	handovers: INTERACTIONS.filter((seed) => seed.handedTo !== undefined).length
+	scans: ALL_INTERACTIONS.filter((seed) => seed.scanWithRevision === true).length * 2,
+	/**
+	 * Подписанные экземпляры соглашения: по одному на дело, прошедшее стадию
+	 * подписания, и на то, которое стоит на ней с приложенным экземпляром. Без
+	 * такого документа стадия не отпускает вперёд — это не украшение набора, а
+	 * условие движения.
+	 */
+	signedAgreements: ALL_INTERACTIONS.filter(needsSignedAgreement).length,
+	handovers: ALL_INTERACTIONS.filter((seed) => seed.handedTo !== undefined).length,
+	/**
+	 * Потоки обучения и их результаты: по одному на запись, дошедшую до стадии с
+	 * данными из системы обучения. Строка результата одна, сколько бы раз набор
+	 * ни звал подтверждение: её ключ — пара «поток и момент», а момент считается
+	 * от одной точки отсчёта на всю заливку.
+	 */
+	learningGroups: ALL_INTERACTIONS.filter((seed) => seed.learning !== undefined).length,
+	learningResults: ALL_INTERACTIONS.filter((seed) => seed.learning !== undefined).length
 } as const;
+
+/**
+ * Появится ли у дела подписанный экземпляр соглашения.
+ *
+ * Правило то же, по которому его кладёт заливка: шаг вперёд со стадии с
+ * `requiresDocumentMark` без отметки не проходит, а дело, оставшееся на ней,
+ * получает экземпляр только по явному признаку набора.
+ */
+function needsSignedAgreement(seed: InteractionSeed): boolean {
+	const signing = B2B_PROCESS.stages.findIndex((stage) => stage.requiresDocumentMark !== null);
+	const position = B2B_PROCESS.stages.findIndex((stage) => stage.key === seed.stage);
+
+	if (signing === -1 || position === -1) {
+		return false;
+	}
+
+	if (position > signing) {
+		return true;
+	}
+
+	// Дело, сходившее вперёд и вернувшееся, стадию подписания проходило — значит,
+	// экземпляр у него есть.
+	return position === signing && (seed.signedDocument === true || seed.returnedFrom !== undefined);
+}
 
 /**
  * Действующее лицо набора — сотрудник, а не «система».
@@ -889,18 +1077,19 @@ async function readLatestProgramVersions(db: Database): Promise<Map<string, stri
 	return latest;
 }
 
-function toCreateInput(
-	seed: InteractionSeed,
-	versions: Map<string, string>
-): CreateInteractionInput {
-	const raw = {
-		title: seed.title,
-		agreementPeriodStart: seed.agreement[0],
-		agreementPeriodEnd: seed.agreement[1],
-		academicPeriodStart: seed.academic?.[0] ?? null,
-		academicPeriodEnd: seed.academic?.[1] ?? null,
-		ownerUserId: seedId('user', seed.owner),
-		parties: [
+/** Оператор стоит стороной в каждой записи: процесс ведёт он. */
+const OPERATOR_PARTY = {
+	organizationId: seedId('organization', 'operator'),
+	partyRole: 'operator',
+	isPrimary: false,
+	contactAffiliationId: seedId('affiliation', 'orlov-primary'),
+	siteIds: []
+};
+
+/** Стороны записи в том виде, в каком их принимает контракт создания. */
+function partiesOf(seed: InteractionSeed) {
+	if ('institution' in seed) {
+		return [
 			{
 				organizationId: seedId('organization', seed.institution),
 				partyRole: 'educational_institution',
@@ -915,14 +1104,34 @@ function toCreateInput(
 				contactAffiliationId: null,
 				siteIds: []
 			},
-			{
-				organizationId: seedId('organization', 'operator'),
-				partyRole: 'operator',
-				isPrimary: false,
-				contactAffiliationId: seedId('affiliation', 'orlov-primary'),
-				siteIds: []
-			}
-		],
+			OPERATOR_PARTY
+		];
+	}
+
+	return [
+		{
+			organizationId: seedId('organization', seed.counterparty),
+			partyRole: 'customer',
+			isPrimary: true,
+			contactAffiliationId: seedId('affiliation', `${seed.contact}-primary`),
+			siteIds: []
+		},
+		OPERATOR_PARTY
+	];
+}
+
+function toCreateInput(
+	seed: InteractionSeed,
+	versions: Map<string, string>
+): CreateInteractionInput {
+	const raw = {
+		title: seed.title,
+		agreementPeriodStart: seed.agreement[0],
+		agreementPeriodEnd: seed.agreement[1],
+		academicPeriodStart: seed.academic?.[0] ?? null,
+		academicPeriodEnd: seed.academic?.[1] ?? null,
+		ownerUserId: seedId('user', seed.owner),
+		parties: partiesOf(seed),
 		programs: seed.programs.map((program) => {
 			const programId = seedId('program', program);
 
@@ -1131,6 +1340,74 @@ async function recordLearningResult(
 	});
 }
 
+/**
+ * Подписанный экземпляр соглашения и отметка на нём: факт, которым
+ * подтверждается стадия подписания.
+ *
+ * Подтверждение ставит движок — он зовётся из самой отметки (`markDocument`);
+ * набор кладёт только документ и отметку, ровно как это сделал бы менеджер,
+ * получивший подписанный экземпляр.
+ *
+ * Повторный вызов ничего не портит: отметка неизменяема, и там, где нужная уже
+ * стоит, набор не заводит второй документ.
+ */
+async function recordSignedAgreement(
+	ctx: ActorContext,
+	interactionId: string,
+	mark: DocumentStatusFact
+): Promise<void> {
+	if ((await readDocumentMark(getDb(), interactionId, mark)) !== null) {
+		return;
+	}
+
+	const document = await uploadDocument(ctx, {
+		interactionId,
+		kind: 'agreement',
+		title: 'Соглашение о сотрудничестве, подписанный экземпляр',
+		file: {
+			mime: 'text/plain',
+			bytes: new TextEncoder().encode(
+				'Соглашение о сотрудничестве.\nПодписанный сторонами экземпляр, приложенный к делу.\n'
+			)
+		}
+	});
+
+	await markDocument(ctx, document.id, mark, undefined, 'Подписан обеими сторонами');
+}
+
+/**
+ * Доказательство исполнения финальной стадии — перед завершением дела.
+ *
+ * Завершение требует того же, что и шаг вперёд: результат, подтверждение, факт
+ * из системы обучения. У длинного процесса работы с вузом финальная стадия
+ * ничего этого не просит, а у короткого процесса обучения лиц — просит
+ * результат, и без него `completeInteraction` справедливо отвечает отказом.
+ * Факт обучения к этому моменту уже записан — его кладёт сам проход.
+ */
+async function closeFinalStage(
+	ctx: ActorContext,
+	interactionId: string,
+	stage: StageView
+): Promise<void> {
+	if (!stage.requiresLmsData && stage.requiresConfirmation) {
+		await confirmStage(ctx, {
+			interactionId,
+			fromStageId: stage.id,
+			confirmation: { kind: 'mark' }
+		});
+	}
+
+	if (stage.requiresResult) {
+		const resultText = STAGE_RESULTS[stage.key];
+
+		if (resultText === undefined) {
+			throw new Error(`Для финальной стадии «${stage.key}» не описан результат`);
+		}
+
+		await setStageResult(ctx, { interactionId, resultText });
+	}
+}
+
 /** Один шаг вперёд со всем, чего стадия требует перед выходом. */
 async function stepForward(
 	ctx: ActorContext,
@@ -1141,6 +1418,12 @@ async function stepForward(
 	/** Факт обучения — для стадии, которая без него никуда не отпускает. */
 	provideLmsEvidence: () => Promise<void>
 ): Promise<void> {
+	if (from.requiresDocumentMark !== null) {
+		// Стадию с отметкой по документу закрывает сам документ: движок ставит на
+		// неё подтверждение видом `document_mark`.
+		await recordSignedAgreement(ctx, interactionId, from.requiresDocumentMark);
+	}
+
 	if (from.requiresLmsData) {
 		// Стадию с данными обучения подтверждает сам факт: движок ставит на неё
 		// подтверждение видом `lms_record`. Отметка ответственного поверх него
@@ -1177,6 +1460,8 @@ type Process = {
 	forward: Map<string, string>;
 	/** Номер действующей редакции: его несёт каждая команда перехода. */
 	revision: number;
+	/** Сама редакция: её снимок кладёт первая стадия заведённой записи. */
+	revisionView: ProcessRevisionView;
 };
 
 /** Проводит взаимодействие по процессу до нужной стадии. */
@@ -1222,21 +1507,25 @@ async function readOpenEntry(
 	return row;
 }
 
-/** Участник-учебное заведение: его и ждут, когда стадия на паузе. */
-async function readInstitutionPartyId(db: Database, interactionId: string): Promise<string> {
+/**
+ * Основная сторона записи: её и ждут, когда стадия на паузе. По признаку
+ * `is_primary`, а не по роли участника, — у обучения лица роль другая, а ждут
+ * всё равно контрагента.
+ */
+async function readPrimaryPartyId(db: Database, interactionId: string): Promise<string> {
 	const [row] = await db
 		.select({ id: interactionParties.id })
 		.from(interactionParties)
 		.where(
 			and(
 				eq(interactionParties.interactionId, interactionId),
-				eq(interactionParties.partyRole, 'educational_institution')
+				eq(interactionParties.isPrimary, true)
 			)
 		)
 		.limit(1);
 
 	if (row === undefined) {
-		throw new Error(`У взаимодействия ${interactionId} нет участника — учебного заведения`);
+		throw new Error(`У взаимодействия ${interactionId} нет основной стороны`);
 	}
 
 	return row.id;
@@ -1392,7 +1681,7 @@ async function applyState(
 			interactionId,
 			fromStageId: entry.stageId,
 			reason: 'waiting_counterparty',
-			waitingPartyId: await readInstitutionPartyId(db, interactionId),
+			waitingPartyId: await readPrimaryPartyId(db, interactionId),
 			nextAction: seed.pause.nextAction,
 			note: seed.pause.note
 		});
@@ -1532,21 +1821,35 @@ async function readExisting(db: Database, ids: string[]): Promise<Set<string>> {
  * историю нельзя «досоздать», а переписать её заново значило бы стереть работу,
  * проделанную на стенде руками.
  */
-export async function seedInteractions(options: { groupKey: string }): Promise<void> {
+export async function seedInteractions(): Promise<void> {
 	const db = getDb();
-	const group = await readGroupRow(db, (await readGroupByKey(db, options.groupKey)).id);
-	const revision = await requireActiveRevision(db, group);
-	const stages = [...revision.stages].sort((left, right) => left.position - right.position);
 
-	const plan: Process = {
-		stages,
-		forward: new Map(
-			revision.transitions
-				.filter((transition) => transition.kind === 'forward')
-				.map((transition) => [transition.fromStageId, transition.toStageId])
-		),
-		revision: revision.version
-	};
+	// Обе группы процесса разом: набор ведёт и работу с вузами, и обучение
+	// физических и юридических лиц, а по какому процессу идёт запись, говорит
+	// вид её контрагента — тем же правилом, что и у команды создания.
+	const plans = new Map<
+		string,
+		{ group: Awaited<ReturnType<typeof readGroupRow>>; plan: Process }
+	>();
+
+	for (const groupKey of [B2B_GROUP_KEY, B2C_GROUP_KEY]) {
+		const group = await readGroupRow(db, (await readGroupByKey(db, groupKey)).id);
+		const revision = await requireActiveRevision(db, group);
+
+		plans.set(groupKey, {
+			group,
+			plan: {
+				stages: [...revision.stages].sort((left, right) => left.position - right.position),
+				forward: new Map(
+					revision.transitions
+						.filter((transition) => transition.kind === 'forward')
+						.map((transition) => [transition.fromStageId, transition.toStageId])
+				),
+				revision: revision.version,
+				revisionView: revision
+			}
+		});
+	}
 
 	const [owners, service, versions, existing] = await Promise.all([
 		readOwners(db),
@@ -1554,7 +1857,7 @@ export async function seedInteractions(options: { groupKey: string }): Promise<v
 		readLatestProgramVersions(db),
 		readExisting(
 			db,
-			INTERACTIONS.map((seed) => seedId('interaction', seed.key))
+			ALL_INTERACTIONS.map((seed) => seedId('interaction', seed.key))
 		)
 	]);
 
@@ -1568,7 +1871,7 @@ export async function seedInteractions(options: { groupKey: string }): Promise<v
 	let created = 0;
 	let documents = 0;
 
-	for (const seed of INTERACTIONS) {
+	for (const seed of ALL_INTERACTIONS) {
 		const id = seedId('interaction', seed.key);
 
 		if (existing.has(id)) {
@@ -1581,9 +1884,23 @@ export async function seedInteractions(options: { groupKey: string }): Promise<v
 			throw new Error(`Учётная запись «${seed.owner}» не заведена`);
 		}
 
+		const groupKey = groupKeyOf(seed);
+		const process = plans.get(groupKey);
+
+		if (process === undefined) {
+			throw new Error(`Группа процесса «${groupKey}» не заведена`);
+		}
+
+		const { group, plan } = process;
+		const stages = plan.stages;
 		const input = toCreateInput(seed, versions);
 
-		if (!(await createSeededInteraction(ctx, db, id, input, { ...group, revision }))) {
+		if (
+			!(await createSeededInteraction(ctx, db, id, input, {
+				...group,
+				revision: plan.revisionView
+			}))
+		) {
 			continue;
 		}
 
@@ -1596,6 +1913,15 @@ export async function seedInteractions(options: { groupKey: string }): Promise<v
 		// факт из системы обучения приходит по её расписанию, а не по нашему.
 		if (stageByKey(stages, seed.stage).requiresLmsData) {
 			await provideLmsEvidence();
+		}
+
+		// С отметкой по документу иначе: дело, стоящее на подписании, показывает
+		// либо подтверждённую стадию, либо требование, которое ещё не выполнено, —
+		// и стенду нужны оба состояния.
+		const markOnStage = stageByKey(stages, seed.stage).requiresDocumentMark;
+
+		if (markOnStage !== null && seed.signedDocument === true) {
+			await recordSignedAgreement(ctx, id, markOnStage);
 		}
 
 		if (seed.returnedFrom !== undefined) {
@@ -1617,6 +1943,8 @@ export async function seedInteractions(options: { groupKey: string }): Promise<v
 		}
 
 		if (seed.completedWith !== undefined) {
+			await closeFinalStage(ctx, id, stageByKey(stages, seed.stage));
+
 			await completeInteraction(ctx, {
 				interactionId: id,
 				revision: plan.revision,

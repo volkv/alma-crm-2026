@@ -27,6 +27,9 @@ const LARGE_TAG = crypto.randomUUID().slice(0, 8);
 const REVISION_TAG = crypto.randomUUID().slice(0, 8);
 const MARK_TAG = crypto.randomUUID().slice(0, 8);
 
+/** Комментарий к отметке: объясняет её словами и в журнал действий не уезжает. */
+const MARK_NOTE = 'Протокол учёного совета № 14';
+
 const PDF_TITLE = `Скан соглашения ${TAG}`;
 const TEXT_TITLE = `Служебная записка ${TAG}`;
 const LARGE_TITLE = `Скан крупного соглашения ${LARGE_TAG}`;
@@ -304,13 +307,17 @@ test('отметка ставится с карточки документа и 
 	/** Бейдж отметки: подпись и дата одной строкой. */
 	const badge = page.getByText(/Утверждён \d{2}\.\d{2}\.\d{4}/);
 
-	await test.step('форма ставит отметку «Утверждён» сегодняшним днём', async () => {
+	await test.step('форма ставит отметку «Утверждён» сегодняшним днём и с комментарием', async () => {
 		const form = page.locator('form[action="?/mark"]');
 
 		await choose(form.getByLabel('Отметка'), option(page, 'Утверждён'));
+		await form.getByLabel('Комментарий').fill(MARK_NOTE);
 		await form.getByRole('button', { name: 'Поставить отметку' }).click();
 
 		await expect(badge).toBeVisible();
+		// Комментарий объясняет отметку и стоит рядом с ней: дата без него
+		// отвечает «когда», но не «чем».
+		await expect(page.getByText(MARK_NOTE)).toBeVisible();
 		await expect(page.getByText('Отметок нет:')).toHaveCount(0);
 
 		await page.screenshot({ path: 'test-results/documents-mark.png', fullPage: true });

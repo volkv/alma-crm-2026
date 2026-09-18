@@ -53,3 +53,17 @@
 		bind:value={() => $form.status, (next) => ($form.status = next as LifecycleStatus)}
 	/>
 </div>
+
+<!-- Пустое поле — это «приоритет не назначен», а не ноль: такие программы
+     идут в списке после всех, кому его проставили. -->
+<FieldInput
+	name="priority"
+	label="Приоритет"
+	type="number"
+	description="Ручной порядок показа: 1 — то, что предлагают вузу первым. Пусто — приоритет не назначен."
+	errors={$errors.priority}
+	bind:value={
+		() => ($form.priority === null ? '' : String($form.priority)),
+		(next) => ($form.priority = next.trim() === '' ? null : Number(next))
+	}
+/>

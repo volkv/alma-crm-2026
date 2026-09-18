@@ -65,10 +65,19 @@ export const documents = pgTable(
 		uploadedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
 		agreedAt: timestamp({ withTimezone: true }),
 		agreedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+		/**
+		 * Чем отметка объясняется: номер протокола, кто подписал экземпляр. Текст
+		 * принадлежит отметке, а не документу, поэтому колонка на каждый факт —
+		 * общий комментарий пришлось бы переписывать второй отметкой, а отметка
+		 * неизменяема.
+		 */
+		agreedNote: text(),
 		approvedAt: timestamp({ withTimezone: true }),
 		approvedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+		approvedNote: text(),
 		inEffectAt: timestamp({ withTimezone: true }),
 		inEffectBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+		inEffectNote: text(),
 		...timestamps
 	},
 	(table) => [

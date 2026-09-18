@@ -46,6 +46,24 @@ const REASON_ROUTE = {
 	]
 } as const;
 
+/**
+ * Процесс, стадию которого закрывает отметка по документу дела.
+ *
+ * Своя группа, а не `b2b`: в процессе стенда требование стоит на подписании
+ * соглашения, но редакция той группы заводится один раз и переживает прогон —
+ * на базе, залитой прежней версией, проверка говорила бы о вчерашнем процессе.
+ * Ключ группы новый, поэтому её редакция описывает ровно эти стадии.
+ */
+const MARK_ROUTE = {
+	group: 'e2e-document-mark',
+	name: `${MARK} Процесс с отметкой документа`,
+	interactionTitle: `${MARK} Отметка документа`,
+	stages: [
+		{ key: 'agreement_signing', name: 'Подписание соглашения', category: 'documents' },
+		{ key: 'agreement_done', name: 'Соглашение действует', category: 'control' }
+	]
+} as const;
+
 function databaseUrl(): string {
 	const server = test.info().config.webServer;
 	const url = (Array.isArray(server) ? server[0] : server)?.env?.DATABASE_URL;
@@ -101,6 +119,30 @@ async function seed(): Promise<void> {
 						// Требований стадии здесь нет намеренно: переход упирается ровно
 						// в объяснение, и проверка говорит только о нём.
 						requiresReason: true
+					}
+				]
+			});
+
+			// Процесс с отметкой по документу — в своей группе: в `b2b` требование
+			// стоит на подписании соглашения, но редакция той группы заводится
+			// один раз и переживает прогон, и на базе, залитой прежней версией,
+			// проверка говорила бы о вчерашнем процессе.
+			await seedProcessGroup(tx, {
+				key: MARK_ROUTE.group,
+				name: 'Проверка отметки по документу',
+				revisionName: MARK_ROUTE.name,
+				stages: MARK_ROUTE.stages.map((stage) => ({
+					...stage,
+					slaDays: 7,
+					requiresDocumentMark: stage.key === 'agreement_signing' ? ('approved' as const) : null,
+					isFinal: stage.key === 'agreement_done'
+				})),
+				transitions: [
+					{
+						fromStageKey: 'agreement_signing',
+						toStageKey: 'agreement_done',
+						kind: 'forward',
+						requiredPermissionKey: 'stages.transition'
 					}
 				]
 			});
@@ -228,6 +270,7 @@ async function createReasonInteraction(): Promise<string> {
 						requiresResult: false,
 						requiresConfirmation: false,
 						requiresLmsData: false,
+						requiresDocumentMark: null,
 						isFinal: false,
 						checklist: []
 					})
@@ -240,6 +283,137 @@ async function createReasonInteraction(): Promise<string> {
 		await sql.end();
 	}
 }
+
+/** Взаимодействие на стадии, которую закрывает отметка по документу дела. */
+async function createMarkInteraction(): Promise<string> {
+	const sql = postgres(databaseUrl(), { max: 1, connect_timeout: 10 });
+
+	try {
+		return await sql.begin(async (tx) => {
+			const [owner] = await tx<{ id: string }[]>`
+				select id from users where email = ${E2E_USER.email} limit 1
+			`;
+
+			const [stage] = await tx<{ id: string; group_id: string }[]>`
+				select s.id, r.group_id
+				from stages s
+				join process_revisions r on r.id = s.revision_id
+				join process_groups g on g.id = r.group_id
+				where g.key = ${MARK_ROUTE.group} and s.position = 1
+			`;
+
+			const [interaction] = await tx<{ id: string }[]>`
+				insert into interactions ${tx({
+					title: `${MARK_ROUTE.interactionTitle} ${crypto.randomUUID().slice(0, 8)}`,
+					process_group_id: stage.group_id,
+					owner_user_id: owner.id
+				})}
+				returning id
+			`;
+
+			await tx`
+				insert into interaction_parties ${tx({
+					interaction_id: interaction.id,
+					organization_id: INSTITUTION.id,
+					party_role: 'educational_institution',
+					is_primary: true
+				})}
+			`;
+
+			await tx`
+				insert into stage_entries ${tx({
+					interaction_id: interaction.id,
+					stage_id: stage.id,
+					responsible_user_id: owner.id,
+					stage_snapshot: JSON.stringify({
+						key: MARK_ROUTE.stages[0].key,
+						name: MARK_ROUTE.stages[0].name,
+						position: 1,
+						category: MARK_ROUTE.stages[0].category,
+						slaDays: 7,
+						staleAfterDays: null,
+						requiresResult: false,
+						requiresConfirmation: false,
+						requiresLmsData: false,
+						requiresDocumentMark: 'approved',
+						isFinal: false,
+						checklist: []
+					})
+				})}
+			`;
+
+			return interaction.id;
+		});
+	} finally {
+		await sql.end();
+	}
+}
+
+test('отметка по документу закрывает стадию, а отметка ответственного — нет', async ({ page }) => {
+	const interactionId = await createMarkInteraction();
+	const title = `Соглашение ${crypto.randomUUID().slice(0, 8)}`;
+	const note = 'Протокол учёного совета № 14';
+
+	await page.goto(`/interactions/${interactionId}`);
+	await waitForHydration(page);
+
+	const advance = page.getByRole('button', { name: `Перейти: ${MARK_ROUTE.stages[1].name}` });
+
+	// Пока отметки нет, стадия говорит об этом словами, а не пустым местом, и
+	// шаг вперёд отказывает по той же причине.
+	await expect(page.getByText(/Стадии нужна отметка «Утверждён»/)).toBeVisible();
+	await expect(advance).toBeDisabled();
+	await expect(advance.locator('xpath=following-sibling::p')).toContainText(
+		'нет документа с отметкой «Утверждён»'
+	);
+
+	// Отметка ответственного подтверждает стадию, но требование не закрывает:
+	// подписан документ или нет — это факт о самой бумаге.
+	await page.getByRole('button', { name: 'Подтвердить стадию' }).click();
+	await expect(page.getByText('Подтверждено', { exact: false }).first()).toBeVisible();
+	await expect(advance).toBeDisabled();
+
+	await page.getByRole('tab', { name: 'Документы' }).click();
+
+	const upload = page.locator('[data-slot="card"]').filter({ hasText: 'Загрузить документ' });
+
+	await upload.getByLabel('Название').fill(title);
+	await upload.getByLabel('Файл').setInputFiles({
+		name: 'agreement.txt',
+		mimeType: 'text/plain',
+		buffer: Buffer.from('Подписанный экземпляр соглашения', 'utf8')
+	});
+	await upload.getByRole('button', { name: 'Загрузить' }).click();
+
+	const row = page.locator('li').filter({ hasText: title });
+
+	await expect(row).toBeVisible();
+	await row.getByRole('button', { name: 'Отметить' }).click();
+
+	const dialog = page.getByRole('dialog');
+	const approved = page.getByRole('option', { name: 'Утверждён', exact: true });
+
+	await expect(async () => {
+		await dialog.getByRole('combobox', { name: 'Отметка' }).click();
+		await expect(approved).toBeVisible({ timeout: 3000 });
+	}).toPass({ timeout: 20_000 });
+
+	await approved.click();
+	await dialog.getByLabel('Комментарий').fill(note);
+	await dialog.getByRole('button', { name: 'Поставить отметку' }).click();
+
+	// Комментарий стоит рядом с отметкой: дата отвечает «когда», но не «чем».
+	await expect(page.getByText(`Утверждён: ${note}`)).toBeVisible();
+
+	await page.getByRole('tab', { name: 'Стадия' }).click();
+
+	// Стадию закрыла сама отметка: отдельной команды «подтвердить» человек не
+	// отдавал, а движок засчитал факт в той же транзакции.
+	await expect(page.getByText('Подтверждено отметкой документа')).toBeVisible();
+	await expect(page.getByText(new RegExp(`«${title}» от \\d{2}\\.\\d{2}\\.\\d{4}`))).toBeVisible();
+	await expect(page.getByRole('link', { name: 'Открыть документ' })).toBeVisible();
+	await expect(advance).toBeEnabled();
+});
 
 test('список открывается, ищет и фильтрует по адресу', async ({ page }) => {
 	const title = await createInteraction(page);

@@ -18,6 +18,11 @@ import {
 	requiredText,
 	searchQuery
 } from './common';
+import {
+	DOCUMENT_STATUS_FACTS,
+	type DocumentMarkEvidence,
+	type DocumentStatusFact
+} from './documents';
 import type { PersonView } from './directory';
 
 /** Смысловая группа стадии; по ней раскрашивают ленту и считают сводки. */
@@ -169,6 +174,13 @@ export const stageSnapshotSchema = z.object({
 	requiresConfirmation: z.boolean(),
 	/** Стадию подтверждают фактом из системы обучения. */
 	requiresLmsData: z.boolean(),
+	/**
+	 * Отметка, которой по документу взаимодействия подтверждается стадия;
+	 * `null` — отметки не требуется. Одна, а не список: стадия спрашивает
+	 * «подписан ли документ», и два ответа на один вопрос означали бы две разных
+	 * стадии.
+	 */
+	requiresDocumentMark: z.enum(DOCUMENT_STATUS_FACTS).nullable(),
 	/** С этой стадии процесс заканчивается: дальше не идут, а завершают. */
 	isFinal: z.boolean(),
 	checklist: z.array(checklistItemSchema)
@@ -178,7 +190,12 @@ export type StageSnapshot = z.output<typeof stageSnapshotSchema>;
 
 /**
  * Чем подтверждён факт прохождения стадии: приложенным документом, отметкой
- * ответственного или записью во внешней системе обучения.
+ * ответственного, записью во внешней системе обучения или отметкой по
+ * документу дела.
+ *
+ * `document_mark` от `file` отличается тем, кто его ставит: файл прикладывает
+ * сотрудник, а отметку по документу засчитывает движок — сам факт «документ
+ * утверждён» и есть подтверждение, и переписать его вручную нельзя.
  */
 export const stageConfirmationSchema = z.discriminatedUnion('kind', [
 	z.object({ kind: z.literal('file'), documentId: z.uuid() }),
@@ -187,6 +204,12 @@ export const stageConfirmationSchema = z.discriminatedUnion('kind', [
 		kind: z.literal('lms_record'),
 		source: z.string().min(1),
 		recordId: z.string().min(1)
+	}),
+	z.object({
+		kind: z.literal('document_mark'),
+		documentId: z.uuid(),
+		mark: z.enum(DOCUMENT_STATUS_FACTS),
+		markedAt: z.iso.datetime({ offset: true })
 	})
 ]);
 
@@ -437,7 +460,10 @@ export const confirmStageSchema = z.object({
 	...stageCommandFields,
 	/**
 	 * Отметку исполнителя (`mark`) сервер дополняет автором и временем сам:
-	 * клиент не может назначить, кто и когда подтвердил.
+	 * клиент не может назначить, кто и когда подтвердил. Вида `document_mark`
+	 * здесь нет намеренно: его ставит движок из самой отметки по документу, и
+	 * принятый от клиента он означал бы подтверждение документом, которого никто
+	 * не отмечал.
 	 */
 	confirmation: z.discriminatedUnion('kind', [
 		z.object({ kind: z.literal('file'), documentId: id('Выберите документ-подтверждение') }),
@@ -563,6 +589,8 @@ export const stageDefinitionSchema = z.object({
 	requiresConfirmation: z.boolean().default(false),
 	/** Стадию подтверждают фактом из системы обучения. */
 	requiresLmsData: z.boolean().default(false),
+	/** Отметка по документу дела, без которой со стадии не уходят. */
+	requiresDocumentMark: z.enum(DOCUMENT_STATUS_FACTS).nullable().default(null),
 	/** С этой стадии процесс заканчивается: переходов вперёд с неё не требуют. */
 	isFinal: z.boolean().default(false),
 	checklist: z.array(checklistItemSchema).default([])
@@ -726,6 +754,8 @@ export type StageView = {
 	requiresResult: boolean;
 	requiresConfirmation: boolean;
 	requiresLmsData: boolean;
+	/** Отметка по документу дела, которой подтверждается стадия; `null` — не нужна. */
+	requiresDocumentMark: DocumentStatusFact | null;
 	isFinal: boolean;
 	checklist: ChecklistItem[];
 };
@@ -874,6 +904,8 @@ export type StageEntryView = {
 	confirmedAt: Date | null;
 	/** Факты системы обучения, которыми подтверждена стадия; `null` — их нет. */
 	lmsEvidence: unknown;
+	/** Отметка по документу, которой подтверждена стадия; `null` — её нет. */
+	documentMarkEvidence: DocumentMarkEvidence | null;
 	checklistState: ChecklistState;
 	/** Файлы, приложенные к этой записи стадии вместе с переходом. */
 	documents: { id: string; title: string; mime: string; sizeBytes: number }[];
@@ -1021,6 +1053,10 @@ export type InteractionDocumentView = {
 	agreedAt: Date | null;
 	approvedAt: Date | null;
 	inEffectAt: Date | null;
+	/** Комментарии к отметкам: чем каждая из них объясняется. */
+	agreedNote: string | null;
+	approvedNote: string | null;
+	inEffectNote: string | null;
 };
 
 /** Строка списка взаимодействий. */

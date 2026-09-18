@@ -23,6 +23,13 @@
 
 	const columns: ColumnDef<DataTableFeatures, ProgramListItem>[] = [
 		{
+			id: 'priority',
+			accessorFn: (row) => row.program.priority,
+			header: 'Приоритет',
+			meta: { title: 'Приоритет', align: 'end' },
+			cell: ({ row }) => renderSnippet(priorityCell, row.original)
+		},
+		{
 			id: 'code',
 			accessorFn: (row) => row.program.code,
 			header: 'Код',
@@ -75,6 +82,14 @@
 	}
 </script>
 
+{#snippet priorityCell(row: ProgramListItem)}
+	{#if row.program.priority === null}
+		<span class="text-faint">—</span>
+	{:else}
+		<StatusBadge tone="accent">{row.program.priority}</StatusBadge>
+	{/if}
+{/snippet}
+
 {#snippet nameCell(row: ProgramListItem)}
 	<span class="font-medium">{row.program.name}</span>
 {/snippet}
@@ -89,7 +104,7 @@
 
 <PageHeader
 	title="Программы"
-	description="Образовательные программы оператора: по ним сверяют планы и отчёты."
+	description="Образовательные программы оператора: по ним сверяют планы и отчёты. Порядок — ручной приоритет, затем название."
 >
 	{#snippet actions()}
 		{#if data.canWrite}
@@ -112,6 +127,7 @@
 		rows={data.rows}
 		total={data.total}
 		getRowId={(row) => row.program.id}
+		defaultSort={{ columnId: 'priority', direction: 'asc' }}
 		searchPlaceholder="Поиск по коду, названию, направлению"
 		emptyTitle={data.filtered ? 'Под фильтр ничего не подошло' : 'Программ пока нет'}
 		emptyDescription={data.filtered

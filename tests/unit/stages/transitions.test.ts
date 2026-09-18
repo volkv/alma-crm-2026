@@ -47,6 +47,7 @@ function snapshot(overrides: Partial<StageSnapshot> = {}): StageSnapshot {
 		requiresResult: false,
 		requiresConfirmation: false,
 		requiresLmsData: false,
+		requiresDocumentMark: null,
 		isFinal: false,
 		checklist: [],
 		...overrides
@@ -61,6 +62,7 @@ function state(overrides: Partial<StageState> = {}): StageState {
 		resultText: null,
 		confirmation: null,
 		lmsEvidence: null,
+		documentMarkEvidence: null,
 		isPaused: false,
 		blockingBlockers: 0,
 		...overrides
@@ -222,6 +224,58 @@ describe('evaluateTransition', () => {
 		).toEqual({ allowed: true, reasons: [] });
 	});
 
+	it('требует отметку по документу там, где стадия её требует', () => {
+		const requiring = state({ snapshot: snapshot({ requiresDocumentMark: 'approved' }) });
+		const evidence = {
+			documentId: '44444444-4444-4444-8444-444444444444',
+			title: 'Соглашение о сотрудничестве',
+			mark: 'approved',
+			markedAt: '2026-09-12T10:00:00+03:00'
+		} as const;
+
+		expect(evaluateTransition(worker, requiring, transition()).reasons).toContain(
+			'По стадии нет документа с отметкой «Утверждён»'
+		);
+
+		// Отметка ответственного подтверждает стадию, но требование закрывает
+		// только факт по самому документу: иначе доказательством снова стало бы
+		// слово исполнителя.
+		expect(
+			evaluateTransition(
+				worker,
+				{
+					...requiring,
+					confirmation: {
+						kind: 'mark',
+						byUserId: '33333333-3333-4333-8333-333333333333',
+						at: '2026-09-12T10:00:00+03:00'
+					}
+				},
+				transition()
+			).reasons
+		).toContain('По стадии нет документа с отметкой «Утверждён»');
+
+		// Отметка другого вида — это другая отметка, а не выполненное требование.
+		expect(
+			evaluateTransition(
+				worker,
+				{ ...requiring, documentMarkEvidence: { ...evidence, mark: 'agreed' } },
+				transition()
+			).reasons
+		).toContain('По стадии нет документа с отметкой «Утверждён»');
+
+		expect(
+			evaluateTransition(worker, { ...requiring, documentMarkEvidence: evidence }, transition())
+		).toEqual({ allowed: true, reasons: [] });
+
+		// На возврате шестой вопрос не задаётся: возврат — выход из тупика.
+		expect(
+			evaluateTransition(worker, requiring, transition({ kind: 'return' }), {
+				reason: 'Вуз отозвал подписанный экземпляр'
+			})
+		).toEqual({ allowed: true, reasons: [] });
+	});
+
 	it('требует причину, когда команда уже собрана, и молчит про неё в сводке', () => {
 		const returning = transition({ kind: 'return', requiresReason: true });
 
@@ -255,7 +309,8 @@ describe('evaluateTransition', () => {
 				checklist: [REQUIRED_ITEM],
 				requiresResult: true,
 				requiresConfirmation: true,
-				requiresLmsData: true
+				requiresLmsData: true,
+				requiresDocumentMark: 'approved'
 			}),
 			isPaused: true
 		});
@@ -266,7 +321,7 @@ describe('evaluateTransition', () => {
 		});
 
 		expect(forward.allowed).toBe(false);
-		expect(forward.reasons).toHaveLength(5);
+		expect(forward.reasons).toHaveLength(6);
 		// Возврат — это выход из тупика: требовать для него то, из-за чего застряли,
 		// значит запереть процесс.
 		expect(back).toEqual({ allowed: true, reasons: [] });

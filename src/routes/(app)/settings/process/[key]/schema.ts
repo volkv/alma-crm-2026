@@ -9,6 +9,7 @@
  */
 import { z } from 'zod';
 import { requiredText } from '$lib/contracts/common';
+import { DOCUMENT_STATUS_FACTS } from '$lib/contracts/documents';
 import {
 	STAGE_CATEGORIES,
 	STAGE_TRANSITION_KINDS,
@@ -122,6 +123,8 @@ export const stageFormSchema = z
 		requiresResult: z.boolean().default(false),
 		requiresConfirmation: z.boolean().default(false),
 		requiresLmsData: z.boolean().default(false),
+		/** Пусто — отметки не требуется; в базе это `null`. */
+		requiresDocumentMark: z.enum(['', ...DOCUMENT_STATUS_FACTS]).default(''),
 		isFinal: z.boolean().default(false),
 		checklist: z.string().max(4000, { error: 'Чек-лист не длиннее 4000 символов' }).default('')
 	})

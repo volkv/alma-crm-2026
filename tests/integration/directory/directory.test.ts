@@ -17,6 +17,7 @@ import {
 import { affiliations, auditEvents, programVersions, sites } from '$lib/server/db/schema';
 import {
 	getPerson,
+	getProgram,
 	listOrganizationRows,
 	listPeople,
 	listPersonAffiliations,
@@ -338,6 +339,7 @@ describe('программы и продукты', () => {
 		name: 'Цифровые кафедры',
 		level: 'dpo' as const,
 		directionCode: null,
+		priority: null,
 		status: 'active' as const,
 		externalSource: null,
 		externalId: null
@@ -398,6 +400,63 @@ describe('программы и продукты', () => {
 		expect(rows.total).toBe(2);
 		expect(byId.get(withVersions.id)).toBe(2);
 		expect(byId.get(without.id)).toBeNull();
+	});
+
+	it('сортирует список ручным приоритетом, а без него — названием', async () => {
+		const ctx = testActor();
+
+		// Порядок заведения и порядок кодов нарочно не совпадают с ожидаемым:
+		// сортировать список должен приоритет, а не то и другое.
+		await createProgram(ctx, { ...programInput, code: 'DPO-01', name: 'Яблоко', priority: null });
+		await createProgram(ctx, { ...programInput, code: 'DPO-02', name: 'Апельсин', priority: null });
+		await createProgram(ctx, { ...programInput, code: 'DPO-03', name: 'Слива', priority: 2 });
+		await createProgram(ctx, { ...programInput, code: 'DPO-04', name: 'Груша', priority: 1 });
+
+		const rows = await listProgramRows(ctx, programDirectoryQuerySchema.parse({}));
+
+		// Сначала приоритетные по возрастанию номера, следом — без приоритета по
+		// названию: пусто означает «приоритет не назначен», и такие идут после.
+		expect(rows.items.map((item) => item.program.name)).toEqual([
+			'Груша',
+			'Слива',
+			'Апельсин',
+			'Яблоко'
+		]);
+
+		// По убыванию `null` остаются в конце: иначе список открывался бы теми
+		// программами, которым приоритет как раз не назначали.
+		const descending = await listProgramRows(
+			ctx,
+			programDirectoryQuerySchema.parse({ sortBy: 'priority', sortDirection: 'desc' })
+		);
+
+		expect(descending.items.map((item) => item.program.name)).toEqual([
+			'Слива',
+			'Груша',
+			'Апельсин',
+			'Яблоко'
+		]);
+	});
+
+	it('хранит приоритет программы и пишет его правку в журнал', async () => {
+		const ctx = testActor();
+		const program = await createProgram(ctx, { ...programInput, priority: 3 });
+
+		expect(program.priority).toBe(3);
+		expect((await getProgram(ctx, program.id)).program.priority).toBe(3);
+
+		await updateProgram(ctx, { ...programInput, priority: 1, id: program.id });
+
+		expect((await getProgram(ctx, program.id)).program.priority).toBe(1);
+
+		const events = await database.db
+			.select({ details: auditEvents.details })
+			.from(auditEvents)
+			.where(
+				and(eq(auditEvents.eventType, 'programs.updated'), eq(auditEvents.outcome, 'success'))
+			);
+
+		expect(events).toEqual([{ details: { changedFields: ['priority'] } }]);
 	});
 
 	it('переводит уход программы и продукта в архив в отдельное событие журнала', async () => {

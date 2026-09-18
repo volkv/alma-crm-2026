@@ -487,17 +487,20 @@ describe('ключи кэша', () => {
 		expect(keys).toStrictEqual(['lct:cache:directory-options:0:all:all:organizations']);
 	});
 
-	it('у карточки несут поколение области, запись и момент её последнего события', async () => {
+	it('у карточки несут версию состава, поколение области, запись и момент события', async () => {
 		const ctx = testActor();
 		const interactionId = await settledInteraction();
 
 		await getInteraction(ctx, interactionId);
 
 		const [key] = await getRedis().keys('lct:cache:interaction-card:*');
-		const [, , , epoch, id] = key.split(':');
+		const [, , , shape, epoch, id] = key.split(':');
 
-		// Поколение области стоит первым: без него обезличивание, которое не
-		// двигает момент последнего события, не смогло бы обесценить собранное.
+		// Версия состава стоит первой: собранное прежним кодом обязано перестать
+		// находиться сразу после выката, а не через минуту.
+		expect(shape).toMatch(/^\d+$/);
+		// Поколение области — следом: без него обезличивание, которое не двигает
+		// момент последнего события, не смогло бы обесценить собранное.
 		expect(epoch).toBe('0');
 		expect(id).toBe(interactionId);
 		expect(key.endsWith(':base')).toBe(true);

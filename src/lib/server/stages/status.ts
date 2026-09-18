@@ -98,6 +98,7 @@ function toEntryView(
 		confirmation: row.entry.confirmation,
 		confirmedAt: row.entry.confirmedAt,
 		lmsEvidence: row.entry.lmsEvidence,
+		documentMarkEvidence: row.entry.documentMarkEvidence,
 		checklistState: row.entry.checklistState,
 		documents,
 		dueAt: row.status.dueAt,

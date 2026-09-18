@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import ActionAlert from '$lib/components/directory/action-alert.svelte';
@@ -55,6 +56,13 @@
 	 * здесь, а не двумя выражениями в разметке: разорванный на два узла текст
 	 * читается вслух как два разных значения.
 	 */
+	/** Комментарий к каждой отметке: чем она объясняется. */
+	const notes = $derived<Record<DocumentStatusFact, string | null>>({
+		agreed: data.document.agreedNote,
+		approved: data.document.approvedNote,
+		in_effect: data.document.inEffectNote
+	});
+
 	const facts = $derived(
 		DOCUMENT_STATUS_FACTS.flatMap((fact) => {
 			const at = moments[fact];
@@ -65,7 +73,8 @@
 						{
 							key: fact,
 							label: `${DOCUMENT_STATUS_FACT_LABELS[fact]} ${formatDate(at)}`,
-							tone: TONES[fact]
+							tone: TONES[fact],
+							note: notes[fact]
 						}
 					];
 		})
@@ -164,10 +173,13 @@
 				Отметок нет: документ не согласован, не утверждён и не введён в действие.
 			</p>
 		{:else}
-			<ul class="flex flex-wrap items-center gap-2">
+			<ul class="flex flex-col gap-2">
 				{#each facts as item (item.key)}
-					<li>
+					<li class="flex flex-wrap items-center gap-2">
 						<StatusBadge tone={item.tone} dot>{item.label}</StatusBadge>
+						{#if item.note !== null}
+							<span class="text-xs text-muted-foreground">{item.note}</span>
+						{/if}
 					</li>
 				{/each}
 			</ul>
@@ -212,6 +224,15 @@
 							min={data.markBounds.min}
 							max={data.markBounds.max}
 							describedBy="markAtHint"
+						/>
+					</div>
+					<div class="flex min-w-64 flex-1 flex-col gap-1.5">
+						<Label for="markNote">Комментарий</Label>
+						<Input
+							id="markNote"
+							name="note"
+							maxlength={500}
+							placeholder="Например: протокол учёного совета № 14"
 						/>
 					</div>
 					<Button type="submit" size="sm">Поставить отметку</Button>

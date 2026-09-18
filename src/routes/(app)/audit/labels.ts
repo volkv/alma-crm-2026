@@ -60,6 +60,8 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'programs.version_created': 'Версия программы создана',
 	'programs.archived': 'Программа отправлена в архив',
 	'directions.created': 'ИТ-направление заведено',
+	'directions.updated': 'ИТ-направление изменено',
+	'directions.archived': 'ИТ-направление отправлено в архив',
 	'products.created': 'Продукт заведён',
 	'products.updated': 'Продукт изменён',
 	'products.archived': 'Продукт отправлен в архив',

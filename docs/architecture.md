@@ -20,6 +20,12 @@ input)`, не смотрит в `locals`, не читает заголовки �
 `src/lib/server/errors.ts`, а превращает их в ответ транспорт — `toPageError`/`toActionFailure`
 (`src/lib/server/http.ts`) для браузера и `apiHandler` для API.
 
+То же самое одной картинкой на слой — модель ArchiMate в [`archi/`](archi/): бизнес-роли и процесс
+работы с контрагентом ([`archi/business.png`](archi/business.png)), модули и владельцы данных
+([`archi/application.png`](archi/application.png)), стенд и развёртывание
+([`archi/technology.png`](archi/technology.png)). Сама модель — `docs/archi/lct-crm.archimate`,
+открывается в Archi; как переснять картинки одной командой — [`archi/README.md`](archi/README.md).
+
 ## Путь запроса
 
 ### Хуки: что происходит с любым запросом
@@ -110,30 +116,30 @@ input)`, не смотрит в `locals`, не читает заголовки �
 
 ## Карта модулей `src/lib/server`
 
-| Модуль           | Зачем                                                                        | Точки входа                                                                                  | От кого зависит                                        |
-| ---------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
-| `actor.ts`       | контекст действующего лица                                                   | `actorFromEvent`, `systemActor`, `AccessScope`                                               | —                                                      |
-| `config.ts`      | схема переменных окружения, без умолчаний                                    | `getConfig`, `parseConfig`                                                                   | —                                                      |
-| `errors.ts`      | предметные ошибки и статусы для них                                          | `AppError` и потомки, `statusForError`                                                       | —                                                      |
-| `http.ts`        | ошибка → отказ формы или страницы, адрес вызывающего                         | `toActionFailure`, `toPageError`, `clientAddress`                                            | `config`, `errors`                                     |
-| `db/`            | пул postgres.js, Drizzle, граница транзакции                                 | `getDb`, `withTransaction`, `schema/*`                                                       | `config`                                               |
-| `redis.ts`       | общий клиент ioredis                                                         | `getRedis`, `pingRedis`                                                                      | `config`                                               |
-| `rbac/`          | каталог прав, роли, проверка права и области                                 | `can`, `requirePermission`, `scopeFilter`, `PERMISSIONS`, `seedRolesAndPermissions`          | `db`, `audit`                                          |
-| `audit/`         | журнал действий: запись, выборка, выгрузка                                   | `recordAuditEvent`, `listAuditEvents`, `exportAuditEvents`                                   | `db`, `rbac`, `spreadsheet`                            |
-| `auth/`          | вход через Keycloak, сессии, роли из realm, пользователи                     | `authorizationUrl`, `exchangeCode`, `signInWithClaims`, `loadSessionUser`, `listUsers`       | `db`, `redis`, `rbac`, `settings`, `audit`, `config`   |
-| `api/`           | обёртка эндпоинта, ключи, лимиты, идемпотентность, OpenAPI                   | `apiHandler`, `registerRoute`, `authenticateApiKey`                                          | `rbac`, `audit`, `redis`, `auth/session`               |
-| `settings/`      | настройки приложения со значениями по умолчанию                              | `getSetting`, `setSetting`, `SETTING_DEFAULTS`                                               | `db`, `rbac`, `audit`                                  |
-| `directory/`     | организации, площадки, люди, роли, программы, продукты                       | `read.ts` (выборки), `write.ts` (команды)                                                    | `db`, `rbac`, `audit`, `people`                        |
-| `people/`        | персональные данные: маскирование, согласия, срок хранения, след просмотра   | `toPersonView`, `withPiiTrace`, `recordConsent`, `anonymizePerson`                           | `db`, `rbac`, `audit`                                  |
-| `stages/`        | группы процесса и их редакции, правила перехода, команды движка, состояние   | `evaluateTransition`, `advanceStage`…, `getInteractionStatus`, `publishProcess`              | `db`, `rbac`, `audit`, `interactions/access`           |
-| `interactions/`  | взаимодействие: создание, список, карточка, сводка, доска, сводная картина   | `createInteraction`, `listInteractions`, `getInteractionSummary`, `getWorkOverview`          | `db`, `rbac`, `audit`, `stages`, `people`              |
-| `documents/`     | хранилище файлов, проверка содержимого, шаблоны, генерация, отметки          | `stageBlob`/`promoteBlob`, `uploadDocument`, `generateDocument`, `readDocumentForDownload`   | `db`, `rbac`, `audit`, `config`, `stages/commands`     |
-| `stats/`         | данные об обучении: разбор файла, сопоставление, снимки, показатели, дашборд | `createSnapshot`, `applyMapping`, `confirmSnapshot`, `getStatsDashboard`, `buildStatsReport` | `db`, `rbac`, `audit`, `documents`, `spreadsheet`      |
-| `integrations/`  | вебхуки, цикл доставки, обмен с CMS и LMS, приём заявок и результатов        | `runIntegrationsCycle`, `createWebhook`, `syncLms`, `receiveApplication`                     | `audit`, `redis`, `directory`, `interactions`, `stats` |
-| `reports/`       | отчёт по взаимодействиям: разбор адреса, строки, диаграммы, четыре формата   | `readReportQuery`, `buildReport`, `writers/*`                                                | `db`, `rbac`, `interactions/access`, `spreadsheet`     |
-| `demo/`          | сброс демонстрационного стенда к начальным данным                            | `resetDemoData`                                                                              | `db`, `rbac`, `redis`, `audit`, `config`               |
-| `spreadsheet.ts` | обезвреживание формул в ячейках выгрузок                                     | `spreadsheetText`                                                                            | —                                                      |
-| `spreadsheet/`   | чтение и запись книг: разбор загруженного файла, сборка `.xlsx`/`.xls`       | `readSpreadsheet`, `writeXlsx`, `writeXls`                                                   | —                                                      |
+| Модуль           | Зачем                                                                        | Точки входа                                                                                                    | От кого зависит                                        |
+| ---------------- | ---------------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------ |
+| `actor.ts`       | контекст действующего лица                                                   | `actorFromEvent`, `systemActor`, `AccessScope`                                                                 | —                                                      |
+| `config.ts`      | схема переменных окружения, без умолчаний                                    | `getConfig`, `parseConfig`                                                                                     | —                                                      |
+| `errors.ts`      | предметные ошибки и статусы для них                                          | `AppError` и потомки, `statusForError`                                                                         | —                                                      |
+| `http.ts`        | ошибка → отказ формы или страницы, адрес вызывающего                         | `toActionFailure`, `toPageError`, `clientAddress`                                                              | `config`, `errors`                                     |
+| `db/`            | пул postgres.js, Drizzle, граница транзакции                                 | `getDb`, `withTransaction`, `schema/*`                                                                         | `config`                                               |
+| `redis.ts`       | общий клиент ioredis                                                         | `getRedis`, `pingRedis`                                                                                        | `config`                                               |
+| `rbac/`          | каталог прав, роли, проверка права и области                                 | `can`, `requirePermission`, `scopeFilter`, `PERMISSIONS`, `seedRolesAndPermissions`                            | `db`, `audit`                                          |
+| `audit/`         | журнал действий: запись, выборка, выгрузка                                   | `recordAuditEvent`, `listAuditEvents`, `exportAuditEvents`                                                     | `db`, `rbac`, `spreadsheet`                            |
+| `auth/`          | вход через Keycloak, сессии, роли из realm, пользователи                     | `authorizationUrl`, `exchangeCode`, `signInWithClaims`, `loadSessionUser`, `listUsers`                         | `db`, `redis`, `rbac`, `settings`, `audit`, `config`   |
+| `api/`           | обёртка эндпоинта, ключи, лимиты, идемпотентность, OpenAPI                   | `apiHandler`, `registerRoute`, `authenticateApiKey`                                                            | `rbac`, `audit`, `redis`, `auth/session`               |
+| `settings/`      | настройки приложения со значениями по умолчанию                              | `getSetting`, `setSetting`, `SETTING_DEFAULTS`                                                                 | `db`, `rbac`, `audit`                                  |
+| `directory/`     | организации, площадки, люди, роли, программы, продукты                       | `read.ts` (выборки), `write.ts` (команды)                                                                      | `db`, `rbac`, `audit`, `people`                        |
+| `people/`        | персональные данные: маскирование, согласия, срок хранения, след просмотра   | `toPersonView`, `withPiiTrace`, `recordConsent`, `anonymizePerson`                                             | `db`, `rbac`, `audit`                                  |
+| `stages/`        | группы процесса и их редакции, правила перехода, команды движка, состояние   | `evaluateTransition`, `advanceStage`…, `getInteractionStatus`, `publishProcess`                                | `db`, `rbac`, `audit`, `interactions/access`           |
+| `interactions/`  | взаимодействие: создание, список, карточка, сводка, доска, сводная картина   | `createInteraction`, `listInteractions`, `getInteractionSummary`, `getWorkOverview`                            | `db`, `rbac`, `audit`, `stages`, `people`              |
+| `documents/`     | хранилище файлов, проверка содержимого, шаблоны, генерация, отметки          | `stageBlob`/`promoteBlob`, `uploadDocument`, `generateDocument`, `readDocumentForDownload`, `readDocumentMark` | `db`, `rbac`, `audit`, `config`, `stages/commands`     |
+| `stats/`         | данные об обучении: разбор файла, сопоставление, снимки, показатели, дашборд | `createSnapshot`, `applyMapping`, `confirmSnapshot`, `getStatsDashboard`, `buildStatsReport`                   | `db`, `rbac`, `audit`, `documents`, `spreadsheet`      |
+| `integrations/`  | вебхуки, цикл доставки, обмен с CMS и LMS, приём заявок и результатов        | `runIntegrationsCycle`, `createWebhook`, `syncLms`, `receiveApplication`                                       | `audit`, `redis`, `directory`, `interactions`, `stats` |
+| `reports/`       | отчёт по взаимодействиям: разбор адреса, строки, диаграммы, четыре формата   | `readReportQuery`, `buildReport`, `writers/*`                                                                  | `db`, `rbac`, `interactions/access`, `spreadsheet`     |
+| `demo/`          | сброс демонстрационного стенда к начальным данным                            | `resetDemoData`                                                                                                | `db`, `rbac`, `redis`, `audit`, `config`               |
+| `spreadsheet.ts` | обезвреживание формул в ячейках выгрузок                                     | `spreadsheetText`                                                                                              | —                                                      |
+| `spreadsheet/`   | чтение и запись книг: разбор загруженного файла, сборка `.xlsx`/`.xls`       | `readSpreadsheet`, `writeXlsx`, `writeXls`                                                                     | —                                                      |
 
 Зависимости идут в одну сторону: `integrations` знает про `directory`, `interactions` и `stats`, а
 они про `integrations` — нет. Единственная пара, замкнутая друг на друга по смыслу, —
@@ -164,6 +170,9 @@ input)`, не смотрит в `locals`, не читает заголовки �
   взаимодействия и есть то, что двигают команды;
 - `stages/commands.ts` и `interactions/write.ts` оба пишут `interaction_changes` — это предметная
   история изменений плана, которую показывают в карточке, а не журнал действий;
+- `documents/status.ts` зовёт `stages/commands.ts::applyDocumentMark`: отметка по документу дела
+  подтверждает стадию, которая её ждёт, в той же транзакции. Обратная ссылка — `stages/commands.ts`
+  читает `documents/evidence.ts`; круга нет, потому что `evidence.ts` листовой и знает только базу.
 - `stages/commands.ts` пишет `stage_entry_documents`: отметка «этот файл закрывает эту стадию» —
   решение команды, а не свойство документа;
 - `stats/import.ts` создаёт запись в `documents`: исходный файл снимка обязан лежать в том же

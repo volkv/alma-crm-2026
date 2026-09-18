@@ -30,6 +30,7 @@
 	import StageTimeline from '$lib/components/stage-timeline.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatNumber, pluralize } from '$lib/format';
+	import { DOCUMENT_STATUS_FACTS, DOCUMENT_STATUS_FACT_LABELS } from '$lib/contracts/documents';
 	import {
 		STAGE_CATEGORIES,
 		STAGE_TRANSITION_KINDS,
@@ -143,6 +144,9 @@
 			requiresResult: stage?.requiresResult ?? false,
 			requiresConfirmation: stage?.requiresConfirmation ?? false,
 			requiresLmsData: stage?.requiresLmsData ?? false,
+			// Пустая строка — «отметки не требуется»: пустой выбор в списке не
+			// отличить от невыбранного.
+			requiresDocumentMark: stage?.requiresDocumentMark ?? '',
 			isFinal: stage?.isFinal ?? false,
 			checklist: stage === null ? '' : formatChecklist(stage.checklist)
 		};
@@ -510,7 +514,12 @@
 											{#if stage.requiresLmsData}
 												<StatusBadge tone="info">Данные обучения</StatusBadge>
 											{/if}
-											{#if !stage.requiresResult && !stage.requiresConfirmation && !stage.requiresLmsData}
+											{#if stage.requiresDocumentMark !== null}
+												<StatusBadge tone="info">
+													Отметка «{DOCUMENT_STATUS_FACT_LABELS[stage.requiresDocumentMark]}»
+												</StatusBadge>
+											{/if}
+											{#if !stage.requiresResult && !stage.requiresConfirmation && !stage.requiresLmsData && stage.requiresDocumentMark === null}
 												<span class="text-faint">—</span>
 											{/if}
 										</span>
@@ -759,6 +768,20 @@
 					checked: $stageData.requiresLmsData,
 					onchange: (next) => ($stageData.requiresLmsData = next)
 				})}
+				<FieldSelect
+					name="requiresDocumentMark"
+					label="Отметка по документу дела"
+					description="Стадию закрывает сам документ: отметка ответственного её не заменяет."
+					options={[
+						{ value: '', label: 'Не требуется' },
+						...DOCUMENT_STATUS_FACTS.map((fact) => ({
+							value: fact,
+							label: DOCUMENT_STATUS_FACT_LABELS[fact]
+						}))
+					]}
+					bind:value={$stageData.requiresDocumentMark}
+					errors={$stageErrors.requiresDocumentMark}
+				/>
 			</fieldset>
 			<fieldset class="flex flex-col gap-2">
 				<legend class="text-sm font-medium">Место в процессе</legend>

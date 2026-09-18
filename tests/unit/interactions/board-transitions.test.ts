@@ -53,6 +53,7 @@ function stage(position: number, key: string, name: string): StageView {
 		requiresResult: false,
 		requiresConfirmation: false,
 		requiresLmsData: false,
+		requiresDocumentMark: null,
 		isFinal: false,
 		checklist: []
 	};
@@ -69,6 +70,7 @@ function snapshot(overrides: Partial<StageSnapshot> = {}): StageSnapshot {
 		requiresResult: false,
 		requiresConfirmation: false,
 		requiresLmsData: false,
+		requiresDocumentMark: null,
 		isFinal: false,
 		checklist: [],
 		...overrides
@@ -117,6 +119,7 @@ function state(overrides: Partial<StageState> = {}): StageState {
 		resultText: null,
 		confirmation: null,
 		lmsEvidence: null,
+		documentMarkEvidence: null,
 		isPaused: false,
 		blockingBlockers: 0,
 		...overrides

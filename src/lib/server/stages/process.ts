@@ -17,6 +17,7 @@
  *    возрастанию идентификатора, — поэтому взаимного замка не возникает.
  */
 import { and, asc, count, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
+import { DOCUMENT_STATUS_FACT_LABELS, type DocumentMarkEvidence } from '$lib/contracts/documents';
 import {
 	processDefinitionSchema,
 	type ProcessDefinitionInput,
@@ -48,6 +49,7 @@ import {
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { cachedActiveRevision, invalidateProcessRevisions } from '../cache/process';
+import { readDocumentMark } from '../documents/evidence';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { enqueueApplicationStatus } from '../integrations/exchange/outbox';
 import { requirePermission } from '../rbac';
@@ -76,6 +78,7 @@ export function toStageView(row: typeof stages.$inferSelect): StageView {
 		requiresResult: row.requiresResult,
 		requiresConfirmation: row.requiresConfirmation,
 		requiresLmsData: row.requiresLmsData,
+		requiresDocumentMark: row.requiresDocumentMark,
 		isFinal: row.isFinal,
 		checklist: row.checklist
 	};
@@ -108,6 +111,7 @@ export function stageSnapshot(stage: {
 	requiresResult: boolean;
 	requiresConfirmation: boolean;
 	requiresLmsData: boolean;
+	requiresDocumentMark: StageSnapshot['requiresDocumentMark'];
 	isFinal: boolean;
 	checklist: StageSnapshot['checklist'];
 }): StageSnapshot {
@@ -121,6 +125,7 @@ export function stageSnapshot(stage: {
 		requiresResult: stage.requiresResult,
 		requiresConfirmation: stage.requiresConfirmation,
 		requiresLmsData: stage.requiresLmsData,
+		requiresDocumentMark: stage.requiresDocumentMark,
 		isFinal: stage.isFinal,
 		checklist: stage.checklist
 	};
@@ -329,6 +334,7 @@ export function processDefinition(revision: ProcessRevisionView): ProcessDefinit
 				requiresResult: stage.requiresResult,
 				requiresConfirmation: stage.requiresConfirmation,
 				requiresLmsData: stage.requiresLmsData,
+				requiresDocumentMark: stage.requiresDocumentMark,
 				isFinal: stage.isFinal,
 				checklist: stage.checklist.map((item) => ({ ...item }))
 			})),
@@ -356,6 +362,25 @@ export function processDefinition(revision: ProcessRevisionView): ProcessDefinit
 	};
 }
 
+/**
+ * Снимок отметки для записи, переезжающей на новую структуру.
+ *
+ * Пустой набор полей, когда стадия отметки не требует: прежнее значение — это
+ * история записи, и стирать его правкой процесса незачем. Показывает его
+ * карточка только там, где требование есть.
+ */
+async function documentMarkPatch(
+	tx: Tx,
+	interactionId: string,
+	requiredMark: StageSnapshot['requiresDocumentMark']
+): Promise<{ documentMarkEvidence?: DocumentMarkEvidence | null }> {
+	if (requiredMark === null) {
+		return {};
+	}
+
+	return { documentMarkEvidence: await readDocumentMark(tx, interactionId, requiredMark) };
+}
+
 /** Стадии и переходы одной редакции. Пишутся целиком: правится описание. */
 async function writeRevisionContent(
 	tx: Tx,
@@ -376,6 +401,7 @@ async function writeRevisionContent(
 				requiresResult: stage.requiresResult,
 				requiresConfirmation: stage.requiresConfirmation,
 				requiresLmsData: stage.requiresLmsData,
+				requiresDocumentMark: stage.requiresDocumentMark,
 				isFinal: stage.isFinal,
 				checklist: stage.checklist
 			}))
@@ -447,6 +473,7 @@ type ComparableStage = {
 	requiresResult: boolean;
 	requiresConfirmation: boolean;
 	requiresLmsData: boolean;
+	requiresDocumentMark: StageSnapshot['requiresDocumentMark'];
 	isFinal: boolean;
 	checklist: { key: string; label: string; required: boolean }[];
 };
@@ -508,6 +535,14 @@ function stageDifferences(before: ComparableStage, after: ComparableStage): stri
 			after.requiresLmsData
 				? 'начинает требовать данные обучения'
 				: 'больше не требует данных обучения'
+		);
+	}
+
+	if (before.requiresDocumentMark !== after.requiresDocumentMark) {
+		changes.push(
+			after.requiresDocumentMark === null
+				? 'больше не требует отметки документа'
+				: `начинает требовать отметку документа «${DOCUMENT_STATUS_FACT_LABELS[after.requiresDocumentMark]}»`
 		);
 	}
 
@@ -1608,7 +1643,16 @@ export async function migrateEntries(
 			// обязано применяться ко всем, а не только к тем, кто начнёт завтра.
 			await tx
 				.update(stageEntries)
-				.set({ stageId: target.id, stageSnapshot: stageSnapshot(target), updatedAt: input.at })
+				.set({
+					stageId: target.id,
+					stageSnapshot: stageSnapshot(target),
+					// Требование отметки по документу могли включить этой же
+					// публикацией, а документ дела давно отмечен: снимок отметки
+					// подтягивается сразу, иначе карточка объявила бы стадию
+					// неисполненной, хотя движок отпустил бы её вперёд.
+					...(await documentMarkPatch(tx, entry.interactionId, target.requiresDocumentMark)),
+					updatedAt: input.at
+				})
 				.where(eq(stageEntries.id, entry.entryId));
 
 			reboundCount += 1;
@@ -1645,6 +1689,7 @@ export async function migrateEntries(
 				interactionId: entry.interactionId,
 				stageId: destination.id,
 				stageSnapshot: stageSnapshot(destination),
+				...(await documentMarkPatch(tx, entry.interactionId, destination.requiresDocumentMark)),
 				enteredAt: input.at,
 				responsibleUserId: entry.responsibleUserId,
 				waitingPartyId: entry.waitingPartyId,

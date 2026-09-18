@@ -24,12 +24,14 @@ import type {
 	CreateProgramVersionInput,
 	CreateSiteInput,
 	EndAffiliationInput,
+	LinkProductDirectionInput,
 	OrganizationView,
 	PersonView,
 	ProductView,
 	ProgramVersionView,
 	ProgramView,
 	SiteView,
+	UpdateDirectionInput,
 	UpdateOrganizationInput,
 	UpdatePersonInput,
 	UpdateProductInput,
@@ -46,6 +48,7 @@ import {
 	organizationResponsibles,
 	organizations,
 	people,
+	productDirections,
 	products,
 	programVersions,
 	programs,
@@ -61,7 +64,14 @@ import { withPiiTrace } from '../people/pii-trace';
 import { toPersonView } from '../people/serialize';
 import { requirePermission, scopeFilter } from '../rbac';
 import { withUniqueConflicts } from './conflicts';
-import { findOrganizationByInn, getOrganization, getSite, toOrganizationView } from './read';
+import {
+	findOrganizationByInn,
+	getDirectionRow,
+	getOrganization,
+	getSite,
+	toDirectionView,
+	toOrganizationView
+} from './read';
 
 /** Поля, значение которых изменилось: их список идёт в журнал вместо значений. */
 function changedFields<TRow extends object>(before: TRow, after: Partial<TRow>): string[] {
@@ -663,6 +673,7 @@ function toProgramView(row: typeof programs.$inferSelect): ProgramView {
 		name: row.name,
 		level: row.level,
 		directionCode: row.directionCode,
+		priority: row.priority,
 		status: row.status
 	};
 }
@@ -843,11 +854,219 @@ export async function createDirection(
 			executor
 		);
 
-		return { id: row.id, code: row.code, name: row.name, position: row.position };
+		return toDirectionView(row);
 	};
 
 	return written(
 		withUniqueConflicts(() => (tx === undefined ? withTransaction(ctx, write) : write(tx)))
+	);
+}
+
+/**
+ * Правка направления: код и название. Позицию форма не присылает — её назначает
+ * заведение, а перестановка задевала бы соседние строки (позиция уникальна) и
+ * сама по себе никому не нужна: направлений десятки, и порядок у них один.
+ */
+export async function updateDirection(
+	ctx: ActorContext,
+	input: UpdateDirectionInput
+): Promise<DirectionView> {
+	await requirePermission(ctx, 'directions.write', {
+		type: 'directions.updated',
+		subject: { type: 'direction', id: input.id }
+	});
+
+	const { id, ...fields } = input;
+	const before = await getDirectionRow(ctx, id);
+
+	return written(
+		withUniqueConflicts(() =>
+			withTransaction(ctx, async (tx) => {
+				const [row] = await tx
+					.update(directions)
+					.set({ ...fields, updatedAt: sql`now()` })
+					.where(eq(directions.id, id))
+					.returning();
+
+				await recordAuditEvent(
+					ctx,
+					{
+						type: 'directions.updated',
+						outcome: 'success',
+						subject: { type: 'direction', id },
+						details: { changedFields: changedFields(before, fields) }
+					},
+					tx
+				);
+
+				return toDirectionView(row);
+			})
+		)
+	);
+}
+
+/**
+ * Направление уходит в архив, а не удаляется: на него ссылаются назначения
+ * ответственных, продукты и программы, и «такого направления у нас никогда не
+ * было» — неправда. Архивное не предлагают в подсказках назначения, но в
+ * списке, в отчётах и в истории оно остаётся.
+ */
+export async function archiveDirection(ctx: ActorContext, id: string): Promise<DirectionView> {
+	await requirePermission(ctx, 'directions.write', {
+		type: 'directions.archived',
+		subject: { type: 'direction', id }
+	});
+
+	const before = await getDirectionRow(ctx, id);
+
+	if (!before.isActive) {
+		throw new ConflictError('Направление уже в архиве');
+	}
+
+	return written(
+		withTransaction(ctx, async (tx) => {
+			const [row] = await tx
+				.update(directions)
+				.set({ isActive: false, updatedAt: sql`now()` })
+				.where(eq(directions.id, id))
+				.returning();
+
+			await recordAuditEvent(
+				ctx,
+				{ type: 'directions.archived', outcome: 'success', subject: { type: 'direction', id } },
+				tx
+			);
+
+			return toDirectionView(row);
+		})
+	);
+}
+
+/**
+ * Возврат из архива — той же записью, а не вторым направлением: иначе разрез
+ * отчёта разъехался бы надвое. Событие журнала то же, что у правки, с одним
+ * изменённым полем — по нему и отвечают на вопрос «когда вернули».
+ */
+export async function restoreDirection(ctx: ActorContext, id: string): Promise<DirectionView> {
+	await requirePermission(ctx, 'directions.write', {
+		type: 'directions.updated',
+		subject: { type: 'direction', id }
+	});
+
+	const before = await getDirectionRow(ctx, id);
+
+	if (before.isActive) {
+		throw new ConflictError('Направление и так не в архиве');
+	}
+
+	return written(
+		withTransaction(ctx, async (tx) => {
+			const [row] = await tx
+				.update(directions)
+				.set({ isActive: true, updatedAt: sql`now()` })
+				.where(eq(directions.id, id))
+				.returning();
+
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'directions.updated',
+					outcome: 'success',
+					subject: { type: 'direction', id },
+					details: { changedFields: ['isActive'] }
+				},
+				tx
+			);
+
+			return toDirectionView(row);
+		})
+	);
+}
+
+/**
+ * Продукт отнесён к направлению.
+ *
+ * Право своё — `directions.write`: состав направления это его собственная
+ * картина, и ведёт её тот же, кто ведёт сам справочник направлений. Повторная
+ * связь — конфликт, а не молчаливый успех; гонку двух вкладок ловит первичный
+ * ключ пары, а не проверка перед вставкой.
+ */
+export async function linkProductDirection(
+	ctx: ActorContext,
+	input: LinkProductDirectionInput
+): Promise<void> {
+	await requirePermission(ctx, 'directions.write', {
+		type: 'directions.updated',
+		subject: { type: 'direction', id: input.directionId }
+	});
+
+	const direction = await getDirectionRow(ctx, input.directionId);
+
+	if (!direction.isActive) {
+		throw new ConflictError('Направление в архиве: продукты к нему больше не относят');
+	}
+
+	await assertProductExists(getDb(), input.productId);
+
+	await written(
+		withUniqueConflicts(() =>
+			withTransaction(ctx, async (tx) => {
+				await tx.insert(productDirections).values(input);
+
+				await recordAuditEvent(
+					ctx,
+					{
+						type: 'directions.updated',
+						outcome: 'success',
+						subject: { type: 'direction', id: input.directionId },
+						details: { productId: input.productId, changedFields: ['products'] }
+					},
+					tx
+				);
+			})
+		)
+	);
+}
+
+/** Связь снята: продукт к направлению больше не относится. */
+export async function unlinkProductDirection(
+	ctx: ActorContext,
+	input: LinkProductDirectionInput
+): Promise<void> {
+	await requirePermission(ctx, 'directions.write', {
+		type: 'directions.updated',
+		subject: { type: 'direction', id: input.directionId }
+	});
+
+	await getDirectionRow(ctx, input.directionId);
+
+	await written(
+		withTransaction(ctx, async (tx) => {
+			const removed = await tx
+				.delete(productDirections)
+				.where(
+					and(
+						eq(productDirections.directionId, input.directionId),
+						eq(productDirections.productId, input.productId)
+					)
+				)
+				.returning({ productId: productDirections.productId });
+
+			if (removed.length === 0) {
+				throw new NotFoundError('Продукт не отнесён к этому направлению');
+			}
+
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'directions.updated',
+					outcome: 'success',
+					subject: { type: 'direction', id: input.directionId },
+					details: { productId: input.productId, changedFields: ['products'] }
+				},
+				tx
+			);
+		})
 	);
 }
 
@@ -873,6 +1092,22 @@ async function assertVendorExists(executor: Executor, id: string): Promise<void>
 		throw new ValidationError('Правообладатель не найден', [
 			'Организация-правообладатель не заведена в справочнике'
 		]);
+	}
+}
+
+/**
+ * Продукт, к которому привязывают направление, обязан существовать. Как и у
+ * правообладателя, без области доступа: каталог продуктов общий.
+ */
+async function assertProductExists(executor: Executor, id: string): Promise<void> {
+	const [row] = await executor
+		.select({ id: products.id })
+		.from(products)
+		.where(eq(products.id, id))
+		.limit(1);
+
+	if (row === undefined) {
+		throw new ValidationError('Продукт не найден', ['Продукт не заведён в справочнике']);
 	}
 }
 

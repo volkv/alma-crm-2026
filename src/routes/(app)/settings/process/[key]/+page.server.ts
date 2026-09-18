@@ -205,6 +205,9 @@ export const actions: Actions = {
 				requiresResult: input.requiresResult,
 				requiresConfirmation: input.requiresConfirmation,
 				requiresLmsData: input.requiresLmsData,
+				// Пустая строка в форме означает «отметки не требуется»: пустой
+				// выбор в списке не отличить от невыбранного.
+				requiresDocumentMark: input.requiresDocumentMark === '' ? null : input.requiresDocumentMark,
 				isFinal: input.isFinal,
 				checklist: parseChecklist(input.checklist).items
 			});

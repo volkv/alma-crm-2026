@@ -27,6 +27,10 @@ import type { PageResult } from '$lib/contracts/common';
 import type {
 	AffiliationView,
 	CatalogListQuery,
+	DirectionDetail,
+	DirectionDirectoryQuery,
+	DirectionListItem,
+	DirectionView,
 	LookupOption,
 	OrganizationDirectoryQuery,
 	OrganizationListQuery,
@@ -51,9 +55,11 @@ import { cachedDirectoryOptions } from '../cache/directory';
 import { getDb } from '../db';
 import {
 	affiliations,
+	directions,
 	interactionParties,
 	organizations,
 	people,
+	productDirections,
 	products,
 	programs,
 	programVersions,
@@ -262,6 +268,7 @@ export async function listPrograms(
 				name: programs.name,
 				level: programs.level,
 				directionCode: programs.directionCode,
+				priority: programs.priority,
 				status: programs.status
 			})
 			.from(programs)
@@ -708,6 +715,17 @@ export async function listPersonAffiliations(
 	});
 }
 
+/**
+ * Приоритет — ручной порядок показа: 1 первым, без приоритета — в конце. Явное
+ * `nulls last` стоит потому, что по убыванию Postgres поставил бы `null`
+ * первыми, и список открывался бы теми программами, которым приоритет как раз
+ * не назначали.
+ */
+const programPriorityOrder = {
+	asc: sql`${programs.priority} asc nulls last`,
+	desc: sql`${programs.priority} desc nulls last`
+} as const;
+
 const PROGRAM_SORT_COLUMNS = {
 	code: programs.code,
 	name: programs.name,
@@ -761,6 +779,7 @@ export async function listProgramRows(
 				name: programs.name,
 				level: programs.level,
 				directionCode: programs.directionCode,
+				priority: programs.priority,
 				status: programs.status,
 				latestVersion: latestVersionExpression
 			})
@@ -768,7 +787,17 @@ export async function listProgramRows(
 			.leftJoin(programVersions, eq(programVersions.programId, programs.id))
 			.where(where)
 			.groupBy(programs.id)
-			.orderBy(ordered(PROGRAM_SORT_COLUMNS[query.sortBy], query.sortDirection), asc(programs.id))
+			// Второй ключ — название: у ручного приоритета совпадения — обычное
+			// дело, а «в каком угодно порядке» для списка, который читают глазами,
+			// не порядок. Третий — идентификатор, чтобы строка с границы страниц
+			// не показалась дважды.
+			.orderBy(
+				query.sortBy === 'priority'
+					? programPriorityOrder[query.sortDirection]
+					: ordered(PROGRAM_SORT_COLUMNS[query.sortBy], query.sortDirection),
+				asc(programs.name),
+				asc(programs.id)
+			)
 			.limit(query.pageSize)
 			.offset((query.page - 1) * query.pageSize),
 		db.select({ value: count() }).from(programs).where(where)
@@ -805,6 +834,7 @@ export async function getProgram(ctx: ActorContext, id: string): Promise<Program
 			name: programs.name,
 			level: programs.level,
 			directionCode: programs.directionCode,
+			priority: programs.priority,
 			status: programs.status
 		})
 		.from(programs)
@@ -917,6 +947,136 @@ export async function getProduct(ctx: ActorContext, id: string): Promise<Product
 			product.vendorOrganizationId === null || vendorName === null
 				? null
 				: { id: product.vendorOrganizationId, label: vendorName }
+	};
+}
+
+export function toDirectionView(row: typeof directions.$inferSelect): DirectionView {
+	return {
+		id: row.id,
+		code: row.code,
+		name: row.name,
+		position: row.position,
+		isActive: row.isActive
+	};
+}
+
+/**
+ * Строка направления или «не найдено».
+ *
+ * Области доступа здесь нет и быть не может: направления — общий разрез работы
+ * оператора, такой же общий каталог, как программы и продукты
+ * (`docs/directory.md`). Ограничивает доступ право `directions.read`, а оно
+ * есть у всех трёх ролей.
+ */
+export async function getDirectionRow(ctx: ActorContext, id: string): Promise<DirectionView> {
+	requirePermission(ctx, 'directions.read');
+
+	const [row] = await getDb().select().from(directions).where(eq(directions.id, id)).limit(1);
+
+	if (row === undefined) {
+		throw new NotFoundError('Направление не найдено');
+	}
+
+	return toDirectionView(row);
+}
+
+const DIRECTION_SORT_COLUMNS = {
+	position: directions.position,
+	code: directions.code,
+	name: directions.name
+} as const;
+
+/**
+ * Список направлений вместе с тем, что на них ссылается.
+ *
+ * Оба счётчика — `countDistinct`: соединений два, и обычный `count` перемножил
+ * бы продукты на программы, показав направлению с двумя продуктами и тремя
+ * программами по шесть тех и других.
+ */
+export async function listDirectionRows(
+	ctx: ActorContext,
+	query: DirectionDirectoryQuery
+): Promise<PageResult<DirectionListItem>> {
+	requirePermission(ctx, 'directions.read');
+
+	const conditions: SQL[] = [];
+
+	if (query.state !== null) {
+		conditions.push(eq(directions.isActive, query.state === 'active'));
+	}
+
+	if (query.q !== null) {
+		const pattern = `%${query.q}%`;
+		const search = or(ilike(directions.name, pattern), ilike(directions.code, pattern));
+
+		if (search !== undefined) {
+			conditions.push(search);
+		}
+	}
+
+	const where = conditions.length === 0 ? undefined : and(...conditions);
+	const db = getDb();
+
+	const [rows, totals] = await Promise.all([
+		db
+			.select({
+				direction: directions,
+				productCount: countDistinct(productDirections.productId),
+				programCount: countDistinct(programs.id)
+			})
+			.from(directions)
+			.leftJoin(productDirections, eq(productDirections.directionId, directions.id))
+			.leftJoin(programs, eq(programs.directionId, directions.id))
+			.where(where)
+			.groupBy(directions.id)
+			.orderBy(
+				ordered(DIRECTION_SORT_COLUMNS[query.sortBy], query.sortDirection),
+				asc(directions.id)
+			)
+			.limit(query.pageSize)
+			.offset((query.page - 1) * query.pageSize),
+		db.select({ value: count() }).from(directions).where(where)
+	]);
+
+	return {
+		items: rows.map((row) => ({
+			direction: toDirectionView(row.direction),
+			productCount: row.productCount,
+			programCount: row.programCount
+		})),
+		total: totals[0]?.value ?? 0,
+		page: query.page,
+		pageSize: query.pageSize
+	};
+}
+
+/**
+ * Карточка направления: оно само, его продукты и его программы. Названия, а не
+ * идентификаторы: по направлению отвечают на вопрос «что мы по нему предлагаем»,
+ * и ответ должен читаться глазами.
+ */
+export async function getDirection(ctx: ActorContext, id: string): Promise<DirectionDetail> {
+	const direction = await getDirectionRow(ctx, id);
+	const db = getDb();
+
+	const [productRows, programRows] = await Promise.all([
+		db
+			.select({ id: products.id, code: products.code, name: products.name })
+			.from(productDirections)
+			.innerJoin(products, eq(products.id, productDirections.productId))
+			.where(eq(productDirections.directionId, id))
+			.orderBy(asc(products.code)),
+		db
+			.select({ id: programs.id, code: programs.code, name: programs.name })
+			.from(programs)
+			.where(eq(programs.directionId, id))
+			.orderBy(asc(programs.code))
+	]);
+
+	return {
+		direction,
+		products: productRows.map((row) => ({ id: row.id, label: `${row.code} — ${row.name}` })),
+		programs: programRows.map((row) => ({ id: row.id, label: `${row.code} — ${row.name}` }))
 	};
 }
 

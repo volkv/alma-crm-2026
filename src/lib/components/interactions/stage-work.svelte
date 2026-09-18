@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
@@ -18,8 +19,9 @@
 		type ExchangeMessageState,
 		type LearningGroupView
 	} from '$lib/contracts/exchange';
+	import { DOCUMENT_STATUS_FACT_LABELS } from '$lib/contracts/documents';
 	import type { InteractionDocumentView, StageEntryView } from '$lib/contracts/interactions';
-	import { formatDateTime } from '$lib/format';
+	import { formatDate, formatDateTime } from '$lib/format';
 	import { actionEnhance } from './action-enhance';
 
 	/**
@@ -89,6 +91,19 @@
 	/** Факт системы обучения по этой стадии; `null` — его ещё не получали. */
 	const evidence = $derived(
 		entry === null ? null : (lmsEvidenceSchema.safeParse(entry.lmsEvidence).data ?? null)
+	);
+
+	/** Отметка по документу, которую стадия ждёт; `null` — не ждёт никакой. */
+	const requiredMark = $derived(entry?.snapshot.requiresDocumentMark ?? null);
+	/**
+	 * Отметка, которой стадия уже подтверждена. Считается только отметка того
+	 * вида, который стадия ждёт: «Согласован» вместо «Утверждён» — это не
+	 * выполненное требование, а другая отметка.
+	 */
+	const documentMark = $derived(
+		requiredMark === null || entry?.documentMarkEvidence?.mark !== requiredMark
+			? null
+			: entry.documentMarkEvidence
 	);
 
 	const groupStateLabel = (state: ExchangeMessageState | null) =>
@@ -179,6 +194,31 @@
 					</div>
 				</form>
 
+				{#if requiredMark !== null}
+					<div class="flex flex-col gap-2 border-t border-border pt-4">
+						{#if documentMark === null}
+							<InlineHint tone="warning">
+								Стадии нужна отметка «{DOCUMENT_STATUS_FACT_LABELS[requiredMark]}» по документу дела
+								— её ещё не поставили. Поставить её можно во вкладке «Документы»: стадию закрывает
+								сам документ, а не отметка ответственного.
+							</InlineHint>
+						{:else}
+							<p class="flex flex-wrap items-center gap-2 text-sm">
+								<StatusBadge tone="success" dot>Подтверждено отметкой документа</StatusBadge>
+								<span class="text-muted-foreground">
+									«{documentMark.title}» от {formatDate(new Date(documentMark.markedAt))}
+								</span>
+								<a
+									class="rounded text-sm underline-offset-4 focus-ring hover:underline"
+									href={resolve('/(app)/documents/[id=uuid]', { id: documentMark.documentId })}
+								>
+									Открыть документ
+								</a>
+							</p>
+						{/if}
+					</div>
+				{/if}
+
 				<div class="flex flex-col gap-2 border-t border-border pt-4">
 					{#if entry.confirmation !== null}
 						<p class="flex flex-wrap items-center gap-2 text-sm">
@@ -188,7 +228,9 @@
 									? 'файлом'
 									: entry.confirmation.kind === 'mark'
 										? 'отметкой ответственного'
-										: `записью в системе обучения (${entry.confirmation.source})`}
+										: entry.confirmation.kind === 'document_mark'
+											? `отметкой «${DOCUMENT_STATUS_FACT_LABELS[entry.confirmation.mark]}» по документу`
+											: `записью в системе обучения (${entry.confirmation.source})`}
 								{entry.confirmedAt ? `, ${formatDateTime(entry.confirmedAt)}` : ''}
 							</span>
 						</p>

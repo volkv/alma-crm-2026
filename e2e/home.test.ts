@@ -115,6 +115,7 @@ function snapshot(stageKey: string): StageSnapshot {
 		requiresResult: false,
 		requiresConfirmation: false,
 		requiresLmsData: false,
+		requiresDocumentMark: null,
 		isFinal: position + 1 === STAGES.length,
 		checklist: []
 	};

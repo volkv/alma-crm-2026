@@ -94,6 +94,37 @@
 		revisionOpen = true;
 	}
 
+	const MARK_TONES = {
+		agreed: 'success',
+		approved: 'accent',
+		in_effect: 'info'
+	} as const satisfies Record<DocumentStatusFact, 'success' | 'accent' | 'info'>;
+
+	/**
+	 * Поставленные отметки строки списка вместе с комментарием к каждой.
+	 * Комментарий стоит внутри бейджа, а не рядом: «Утверждён» и «протокол № 14»
+	 * двумя отдельными узлами читаются вслух как два разных значения.
+	 */
+	function marks(document: InteractionDocumentView) {
+		const moments: Record<DocumentStatusFact, Date | null> = {
+			agreed: document.agreedAt,
+			approved: document.approvedAt,
+			in_effect: document.inEffectAt
+		};
+		const notes: Record<DocumentStatusFact, string | null> = {
+			agreed: document.agreedNote,
+			approved: document.approvedNote,
+			in_effect: document.inEffectNote
+		};
+
+		return DOCUMENT_STATUS_FACTS.filter((fact) => moments[fact] !== null).map((fact) => ({
+			key: fact,
+			label: DOCUMENT_STATUS_FACT_LABELS[fact],
+			note: notes[fact],
+			tone: MARK_TONES[fact]
+		}));
+	}
+
 	/** Отметки, которых у документа ещё нет: поставленную снять нельзя. */
 	function unmarked(document: InteractionDocumentView): DocumentStatusFact[] {
 		const moments: Record<DocumentStatusFact, Date | null> = {
@@ -182,21 +213,11 @@
 									Заменён редакцией от {formatDate(supersededBy.get(document.id) ?? new Date())}
 								</StatusBadge>
 							{/if}
-							{#if document.agreedAt}
-								<StatusBadge tone="success" dot>
-									{DOCUMENT_STATUS_FACT_LABELS.agreed}
+							{#each marks(document) as mark (mark.key)}
+								<StatusBadge tone={mark.tone} dot>
+									{mark.label}{mark.note === null ? '' : `: ${mark.note}`}
 								</StatusBadge>
-							{/if}
-							{#if document.approvedAt}
-								<StatusBadge tone="accent" dot>
-									{DOCUMENT_STATUS_FACT_LABELS.approved}
-								</StatusBadge>
-							{/if}
-							{#if document.inEffectAt}
-								<StatusBadge tone="info" dot>
-									{DOCUMENT_STATUS_FACT_LABELS.in_effect}
-								</StatusBadge>
-							{/if}
+							{/each}
 							{#if canUpload && !supersededBy.has(document.id) && unmarked(document).length > 0}
 								<Button variant="ghost" size="sm" onclick={() => askMark(document)}>
 									Отметить
@@ -419,6 +440,16 @@
 				<p id="markAtHint" class="text-xs text-muted-foreground">
 					Задним числом — можно, от дня загрузки документа до сегодняшнего.
 				</p>
+			</div>
+
+			<div class="flex flex-col gap-1.5">
+				<Label for="markNote">Комментарий</Label>
+				<Input
+					id="markNote"
+					name="note"
+					maxlength={500}
+					placeholder="Например: протокол учёного совета № 14"
+				/>
 			</div>
 
 			<Dialog.Footer>

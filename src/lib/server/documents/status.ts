@@ -22,7 +22,8 @@ import { documents } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { ConflictError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
-import { touchInteraction } from '../stages/commands';
+import { applyDocumentMark, touchInteraction } from '../stages/commands';
+import { MARK_MOMENT_COLUMNS } from './evidence';
 import { assertDocumentAccessible, selectDocumentRow, toDocumentView } from './read';
 
 type FactDefinition = {
@@ -31,24 +32,28 @@ type FactDefinition = {
 	/** Как факт называется в сообщении об отказе. */
 	label: string;
 	/** Значения, которые проставляются при отметке. */
-	values: (at: Date, userId: string | null) => Partial<typeof documents.$inferInsert>;
+	values: (
+		at: Date,
+		userId: string | null,
+		note: string | null
+	) => Partial<typeof documents.$inferInsert>;
 };
 
 const FACTS: Record<DocumentStatusFact, FactDefinition> = {
 	agreed: {
-		at: documents.agreedAt,
+		at: MARK_MOMENT_COLUMNS.agreed,
 		label: 'согласован',
-		values: (at, userId) => ({ agreedAt: at, agreedBy: userId })
+		values: (at, userId, note) => ({ agreedAt: at, agreedBy: userId, agreedNote: note })
 	},
 	approved: {
-		at: documents.approvedAt,
+		at: MARK_MOMENT_COLUMNS.approved,
 		label: 'утверждён',
-		values: (at, userId) => ({ approvedAt: at, approvedBy: userId })
+		values: (at, userId, note) => ({ approvedAt: at, approvedBy: userId, approvedNote: note })
 	},
 	in_effect: {
-		at: documents.inEffectAt,
+		at: MARK_MOMENT_COLUMNS.in_effect,
 		label: 'введён в действие',
-		values: (at, userId) => ({ inEffectAt: at, inEffectBy: userId })
+		values: (at, userId, note) => ({ inEffectAt: at, inEffectBy: userId, inEffectNote: note })
 	}
 };
 
@@ -65,7 +70,8 @@ export async function markDocument(
 	ctx: ActorContext,
 	documentId: string,
 	fact: DocumentStatusFact,
-	at?: Date
+	at?: Date,
+	note: string | null = null
 ): Promise<DocumentView> {
 	requirePermission(ctx, 'documents.write');
 
@@ -81,7 +87,7 @@ export async function markDocument(
 	}
 
 	const definition = FACTS[fact];
-	const values = definition.values(moment, ctx.user?.id ?? null);
+	const values = definition.values(moment, ctx.user?.id ?? null, note);
 
 	return withTransaction(ctx, async (tx) => {
 		// Условие `is null` в самом UPDATE, а не проверка перед ним: между
@@ -98,6 +104,20 @@ export async function markDocument(
 		}
 
 		if (row.interactionId !== null) {
+			// Отметка — это ещё и доказательство исполнения стадии: стадия, которая
+			// её ждёт, подтверждается здесь же, в одной транзакции с самой
+			// отметкой. «Отметили, а подтверждение потеряли» — не то состояние, в
+			// котором система имеет право оказаться.
+			await applyDocumentMark(ctx, tx, {
+				interactionId: row.interactionId,
+				evidence: {
+					documentId: row.id,
+					title: row.title,
+					mark: fact,
+					markedAt: moment.toISOString()
+				}
+			});
+
 			await touchInteraction(tx, row.interactionId);
 		}
 
@@ -109,6 +129,9 @@ export async function markDocument(
 				subject: { type: 'document', id: row.id },
 				// Взаимодействие — в подробностях: по отметке спрашивают «в каком
 				// деле это было», и ответ не должен требовать второго запроса.
+				// Комментарий к отметке сюда не попадает и попасть не может: это
+				// текст, который писал человек, а подробности события принимают
+				// только имена полей и ссылки на записи (`validateAuditDetails`).
 				details: {
 					changedFields: Object.keys(values),
 					...(row.interactionId === null ? {} : { interactionId: row.interactionId })

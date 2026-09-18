@@ -14,9 +14,11 @@ import {
 	createOrganizationSchema,
 	createPersonSchema,
 	createProductSchema,
+	createDirectionSchema,
 	createProgramSchema,
 	createProgramVersionSchema,
 	createSiteSchema,
+	linkProductDirectionSchema,
 	organizationListQuerySchema,
 	peopleListQuerySchema,
 	recordConsentSchema,
@@ -189,6 +191,18 @@ const cases: Case[] = [
 		invalid: { code: 'IB-01', name: 'Информационная безопасность', level: 'phd' }
 	},
 	{
+		name: 'createDirection',
+		schema: createDirectionSchema,
+		valid: { code: 'OPS', name: 'DevOps' },
+		invalid: { code: '', name: 'DevOps' }
+	},
+	{
+		name: 'linkProductDirection',
+		schema: linkProductDirectionSchema,
+		valid: { directionId: ID, productId: ID },
+		invalid: { directionId: ID, productId: 'нет' }
+	},
+	{
 		name: 'createProgramVersion',
 		schema: createProgramVersionSchema,
 		valid: {
@@ -223,6 +237,7 @@ const cases: Case[] = [
 			requiresResult: false,
 			requiresConfirmation: false,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: []
 		},
@@ -236,6 +251,7 @@ const cases: Case[] = [
 			requiresResult: false,
 			requiresConfirmation: false,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: []
 		}
@@ -431,5 +447,35 @@ describe('нормализация пустых значений', () => {
 
 		expect(result.notes).toBeNull();
 		expect(result.region).toBeNull();
+	});
+});
+
+describe('приоритет программы', () => {
+	const program = { code: 'IB-01', name: 'Информационная безопасность', level: 'bachelor' };
+
+	it('без значения означает «приоритет не назначен», а не ноль', () => {
+		expect(createProgramSchema.parse(program).priority).toBeNull();
+		expect(createProgramSchema.parse({ ...program, priority: null }).priority).toBeNull();
+	});
+
+	it('принимает целое от единицы до 999', () => {
+		expect(createProgramSchema.parse({ ...program, priority: 1 }).priority).toBe(1);
+		expect(createProgramSchema.parse({ ...program, priority: 999 }).priority).toBe(999);
+	});
+
+	it('отвергает ноль, дробь и отрицательное: приоритета «нулевой важности» не бывает', () => {
+		for (const priority of [0, -1, 2.5, 1000]) {
+			expect(createProgramSchema.safeParse({ ...program, priority }).success).toBe(false);
+		}
+	});
+
+	it('объясняет отказ по-русски и называет поле', () => {
+		const result = createProgramSchema.safeParse({ ...program, priority: 0 });
+
+		expect(result.success).toBe(false);
+		if (!result.success) {
+			expect(result.error.issues[0]?.message).toBe('Самый высокий приоритет — 1');
+			expect(result.error.issues[0]?.path).toEqual(['priority']);
+		}
 	});
 });

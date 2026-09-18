@@ -222,6 +222,7 @@ function stageSnapshot(index: number): string {
 		requiresResult: false,
 		requiresConfirmation: stage.requiresConfirmation,
 		requiresLmsData: stage.requiresLmsData,
+		requiresDocumentMark: null,
 		isFinal: stage.isFinal,
 		checklist: []
 	});

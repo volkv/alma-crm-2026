@@ -360,7 +360,10 @@ describe('сброс демонстрационных данных', () => {
 		expect(recorded[0].details).toStrictEqual({
 			interactionCount: REFERENCE.interactions,
 			organizationCount: REFERENCE.organizations,
-			documentCount: 8,
+			documentCount:
+				INTERACTION_SEED_SIZES.documents * 2 +
+				INTERACTION_SEED_SIZES.scans +
+				INTERACTION_SEED_SIZES.signedAgreements,
 			// Чем сброс вызван: кнопкой. У сброса по расписанию здесь `schedule`,
 			// и журнал отвечает на «куда делась запись» прямо.
 			mode: 'manual'

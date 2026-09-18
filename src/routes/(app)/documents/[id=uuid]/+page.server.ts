@@ -72,10 +72,12 @@ export const actions: Actions = {
 	mark: async (event) => {
 		const data = await event.request.formData();
 		const at = data.get('at');
+		const note = data.get('note');
 		const parsed = markDocumentStatusSchema.safeParse({
 			documentId: event.params.id,
 			fact: data.get('fact'),
-			at: typeof at === 'string' && at.trim() !== '' ? at.trim() : null
+			at: typeof at === 'string' && at.trim() !== '' ? at.trim() : null,
+			note: typeof note === 'string' ? note : null
 		});
 
 		if (!parsed.success) {
@@ -90,7 +92,8 @@ export const actions: Actions = {
 				actorFromEvent(event),
 				parsed.data.documentId,
 				parsed.data.fact,
-				parsed.data.at === null ? undefined : markMomentFromDay(parsed.data.at)
+				parsed.data.at === null ? undefined : markMomentFromDay(parsed.data.at),
+				parsed.data.note
 			);
 		} catch (error) {
 			return toActionFailure(error);

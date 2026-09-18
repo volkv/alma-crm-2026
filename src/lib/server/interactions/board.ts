@@ -202,6 +202,7 @@ async function readBoardRows(ctx: ActorContext, groupId: string, query: Interact
 			resultText: stageEntries.resultText,
 			confirmation: stageEntries.confirmation,
 			lmsEvidence: stageEntries.lmsEvidence,
+			documentMarkEvidence: stageEntries.documentMarkEvidence,
 			snapshot: stageEntries.stageSnapshot,
 			dueAt: stageEntryStatus.dueAt,
 			isOverdue: stageEntryStatus.isOverdue,
@@ -490,6 +491,7 @@ export async function getInteractionBoard(
 			resultText: row.resultText,
 			confirmation: row.confirmation,
 			lmsEvidence: row.lmsEvidence,
+			documentMarkEvidence: row.documentMarkEvidence,
 			isPaused: row.isPaused,
 			blockingBlockers: counts.blocking
 		};

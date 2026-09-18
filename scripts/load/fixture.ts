@@ -35,6 +35,7 @@ type StageSnapshotShape = {
 	requiresResult: boolean;
 	requiresConfirmation: boolean;
 	requiresLmsData: boolean;
+	requiresDocumentMark: string | null;
 	isFinal: boolean;
 	checklist: { key: string; required: boolean }[];
 };
@@ -91,6 +92,7 @@ try {
 			snapshot.requiresResult ||
 			snapshot.requiresConfirmation ||
 			snapshot.requiresLmsData ||
+			snapshot.requiresDocumentMark !== null ||
 			snapshot.isFinal ||
 			snapshot.checklist.some((item) => item.required && row.checklistState[item.key] !== true);
 

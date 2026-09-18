@@ -3,6 +3,7 @@ import BarChart3Icon from '@lucide/svelte/icons/bar-chart-3';
 import BellIcon from '@lucide/svelte/icons/bell';
 import BookOpenIcon from '@lucide/svelte/icons/book-open';
 import BuildingIcon from '@lucide/svelte/icons/building';
+import CompassIcon from '@lucide/svelte/icons/compass';
 import DatabaseIcon from '@lucide/svelte/icons/database';
 import FileTextIcon from '@lucide/svelte/icons/file-text';
 import GraduationCapIcon from '@lucide/svelte/icons/graduation-cap';
@@ -68,6 +69,15 @@ export const navSections: readonly NavSection[] = [
 	{ href: '/people', label: 'Контакты', icon: UsersIcon, permission: 'people.read' },
 	{ href: '/programs', label: 'Программы', icon: GraduationCapIcon, permission: 'programs.read' },
 	{ href: '/products', label: 'Продукты', icon: PackageIcon, permission: 'products.read' },
+	{
+		// Направления стоят в ряду справочников, рядом с программами и продуктами:
+		// это тот же общий каталог оператора. Право у пункта — на чтение:
+		// направления видят все, правит их руководитель.
+		href: '/directions',
+		label: 'Направления',
+		icon: CompassIcon,
+		permission: 'directions.read'
+	},
 	{ href: '/data', label: 'Данные об обучении', icon: DatabaseIcon, permission: 'stats.read' },
 	{ href: '/documents', label: 'Документы', icon: FileTextIcon, permission: 'documents.read' },
 	{ href: '/audit', label: 'Журнал', icon: ScrollTextIcon, permission: 'audit.read' },

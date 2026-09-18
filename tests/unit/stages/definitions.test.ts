@@ -120,6 +120,16 @@ describe('процесс учебных заведений', () => {
 		expect(finals.map((stage) => stage.key)).toEqual(['execution_control']);
 	});
 
+	it('требует отметку «Утверждён» по документу ровно на стадии подписания', () => {
+		// Стадия, исполнение которой доказывает сам документ. Требовать отметку от
+		// стадий, на которых документ ещё не подписан, значит запереть процесс, а
+		// не проверить его.
+		const requiring = route.stages.filter((stage) => stage.requiresDocumentMark !== null);
+
+		expect(requiring.map((stage) => stage.key)).toEqual(['signing']);
+		expect(requiring[0].requiresDocumentMark).toBe('approved');
+	});
+
 	it('требует данных обучения ровно на стадии занятий', () => {
 		// Факт из системы обучения — единственное доказательство исполнения,
 		// которое пишет не сам исполнитель. Требовать его от стадий, работа
@@ -177,6 +187,12 @@ describe('процесс физических и юридических лиц',
 		]);
 		expect(byKey.get('contract_payment')?.requiresConfirmation).toBe(true);
 		expect(byKey.get('completion')?.requiresResult).toBe(true);
+	});
+
+	it('не требует отметок по документам ни на одной стадии', () => {
+		// Короткий процесс физических лиц идёт без соглашения сторон: требование
+		// отметки заперло бы его на первой же стадии.
+		expect(b2c.stages.filter((stage) => stage.requiresDocumentMark !== null)).toEqual([]);
 	});
 
 	it('требует данных обучения ровно на стадии обучения', () => {

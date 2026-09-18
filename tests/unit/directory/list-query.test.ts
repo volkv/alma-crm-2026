@@ -8,6 +8,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import {
+	DIRECTION_SORT_KEYS,
+	directionDirectoryQuerySchema,
 	ORGANIZATION_SORT_KEYS,
 	organizationDirectoryQuerySchema,
 	peopleListQuerySchema,
@@ -81,12 +83,21 @@ describe('остальные списки', () => {
 			sortBy: 'lastName',
 			sortDirection: 'asc'
 		});
+		// Программы по умолчанию идут ручным приоритетом: справочник для того и
+		// существует, чтобы оператор сам решал, что предлагать вузу первым.
 		expect(programDirectoryQuerySchema.parse({})).toMatchObject({
 			level: null,
 			status: null,
-			sortBy: 'code'
+			sortBy: 'priority',
+			sortDirection: 'asc'
 		});
 		expect(productDirectoryQuerySchema.parse({})).toMatchObject({ status: null, sortBy: 'code' });
+		expect(directionDirectoryQuerySchema.parse({})).toMatchObject({
+			state: null,
+			q: null,
+			sortBy: 'position',
+			sortDirection: 'asc'
+		});
 	});
 
 	it('отвергают идентификатор организации, который не идентификатор', () => {
@@ -94,7 +105,19 @@ describe('остальные списки', () => {
 	});
 
 	it('не пропускают в сортировку программ и продуктов чужую колонку', () => {
-		expect(programDirectoryQuerySchema.parse({ sortBy: 'secret' }).sortBy).toBe('code');
+		expect(programDirectoryQuerySchema.parse({ sortBy: 'secret' }).sortBy).toBe('priority');
 		expect(productDirectoryQuerySchema.parse({ sortBy: 'secret' }).sortBy).toBe('code');
+	});
+
+	it('не пропускают в сортировку направлений чужую колонку и чужое состояние', () => {
+		const parsed = directionDirectoryQuerySchema.parse({
+			sortBy: 'position; drop table',
+			state: 'чушь'
+		});
+
+		expect(parsed.sortBy).toBe('position');
+		expect(DIRECTION_SORT_KEYS).toContain(parsed.sortBy);
+		// Непонятное состояние — это «без фильтра», а не отказ страницы.
+		expect(parsed.state).toBeNull();
 	});
 });

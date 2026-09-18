@@ -46,6 +46,11 @@ import type {
 	StageTransitionView
 } from '$lib/contracts/interactions';
 import type { AuditEventType } from '$lib/contracts/audit';
+import {
+	DOCUMENT_STATUS_FACT_LABELS,
+	type DocumentMarkEvidence,
+	type DocumentStatusFact
+} from '$lib/contracts/documents';
 import type { LmsEvidence } from '$lib/contracts/exchange';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
@@ -66,6 +71,7 @@ import {
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
+import { readDocumentMark } from '../documents/evidence';
 import { readLmsEvidence } from '../integrations/exchange/evidence';
 import { enqueueApplicationStatus } from '../integrations/exchange/outbox';
 import { can, requirePermission } from '../rbac';
@@ -241,14 +247,21 @@ async function readStageState(
 	tx: Tx,
 	entry: typeof stageEntries.$inferSelect
 ): Promise<StageState> {
-	const [paused, blocking, evidence] = await Promise.all([
+	const requiredMark = entry.stageSnapshot.requiresDocumentMark;
+
+	const [paused, blocking, evidence, mark] = await Promise.all([
 		hasOpenPause(tx, entry.id),
 		countBlockingBlockers(tx, entry.interactionId),
 		// Факт, пришедший до входа на стадию, засчитывается: система обучения
 		// присылает результат по своему расписанию, а не по нашему процессу
 		// (`docs/exchange-contract.md`, раздел 6). Снимок записи сильнее: он уже
 		// объяснил подтверждение именно этой стадии.
-		entry.lmsEvidence === null ? readLmsEvidence(tx, entry.interactionId) : null
+		entry.lmsEvidence === null ? readLmsEvidence(tx, entry.interactionId) : null,
+		// То же и с отметкой по документу. Снимок на записи есть почти всегда —
+		// его кладут и вход на стадию, и сама отметка, — а прочитать заново
+		// приходится там, где требование включили публикацией уже под открытой
+		// записью: документ отмечен, а снимка на ней нет.
+		readCurrentDocumentMark(tx, entry, requiredMark)
 	]);
 
 	return {
@@ -258,9 +271,31 @@ async function readStageState(
 		resultText: entry.resultText,
 		confirmation: entry.confirmation,
 		lmsEvidence: entry.lmsEvidence ?? evidence,
+		documentMarkEvidence: mark,
 		isPaused: paused,
 		blockingBlockers: blocking
 	};
+}
+
+/**
+ * Отметка, которой подтверждена открытая запись: снимок на ней либо отметка по
+ * делу, если снимка ещё нет. Отметка не того вида, что требует стадия, не
+ * считается вовсе — требование обязано остаться невыполненным.
+ */
+async function readCurrentDocumentMark(
+	executor: Executor,
+	entry: { interactionId: string; documentMarkEvidence: DocumentMarkEvidence | null },
+	requiredMark: DocumentStatusFact | null
+): Promise<DocumentMarkEvidence | null> {
+	if (requiredMark === null) {
+		return entry.documentMarkEvidence;
+	}
+
+	if (entry.documentMarkEvidence?.mark === requiredMark) {
+		return entry.documentMarkEvidence;
+	}
+
+	return readDocumentMark(executor, entry.interactionId, requiredMark);
 }
 
 /**
@@ -523,6 +558,14 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 		}
 
 		const target = await readStage(tx, input.toStageId);
+		// Отметка, поставленная до входа на стадию, засчитывается при входе:
+		// документ утверждают тогда, когда его подписали, а не тогда, когда дело
+		// дошло до стадии подписания. Без этого карточка объявляла бы требование
+		// невыполненным, а переход при этом проходил бы.
+		const targetMark =
+			target.requiresDocumentMark === null
+				? null
+				: await readDocumentMark(tx, input.interactionId, target.requiresDocumentMark);
 		const checklistState = { ...entry.checklistState, ...(input.checklistState ?? {}) };
 		const resultText =
 			input.resultText !== null && input.resultText !== undefined && input.resultText !== ''
@@ -561,7 +604,8 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 				// годится: это `now()`, то есть начало транзакции, а команда до
 				// первой записи ждала блокировку.
 				enteredAt: left.leftAt ?? now,
-				responsibleUserId: entry.responsibleUserId ?? interaction.ownerUserId
+				responsibleUserId: entry.responsibleUserId ?? interaction.ownerUserId,
+				documentMarkEvidence: targetMark
 			})
 			.returning({ id: stageEntries.id });
 
@@ -970,6 +1014,74 @@ export async function applyLmsEvidence(
 	};
 }
 
+/**
+ * Отметка по документу ложится на открытую запись стадии.
+ *
+ * Стадию это подтверждает, но никуда не двигает: переход — отдельное решение
+ * сотрудника. Если открыта другая стадия или отметка не та, которую стадия
+ * ждёт, сообщение всё равно принимается: факт уже сохранён самим документом и
+ * засчитается, когда взаимодействие дойдёт до нужной стадии
+ * (`readCurrentDocumentMark`).
+ *
+ * Своей проверки прав здесь нет намеренно. Право произвести этот факт — это
+ * право поставить отметку (`documents.write`), и оно уже проверено тем, кто
+ * зовёт: иначе отметка по документу отказывала бы или нет в зависимости от
+ * того, на какой стадии стоит дело, а ключ обмена с правом на документы не мог
+ * бы отметить ни одного из них.
+ *
+ * Зовётся из транзакции отметки: «отметка поставлена» и «стадия подтверждена»
+ * обязаны случиться вместе или не случиться вовсе.
+ */
+export async function applyDocumentMark(
+	ctx: ActorContext,
+	tx: Tx,
+	input: { interactionId: string; evidence: DocumentMarkEvidence }
+): Promise<void> {
+	await lockInteraction(ctx, tx, input.interactionId);
+
+	const entry = await readOpenEntryRow(tx, input.interactionId);
+
+	if (entry === null || entry.stageSnapshot.requiresDocumentMark !== input.evidence.mark) {
+		return;
+	}
+
+	// Подтверждение отметкой ставит движок, а не сотрудник: сам факт «документ
+	// утверждён» и есть подтверждение стадии. Уже поставленное подтверждение не
+	// переписывается — оно объясняет, чем стадию закрыли на самом деле.
+	const confirmation: StageConfirmation | null =
+		entry.stageSnapshot.requiresConfirmation && entry.confirmation === null
+			? {
+					kind: 'document_mark',
+					documentId: input.evidence.documentId,
+					mark: input.evidence.mark,
+					markedAt: input.evidence.markedAt
+				}
+			: entry.confirmation;
+
+	await tx
+		.update(stageEntries)
+		.set({
+			documentMarkEvidence: input.evidence,
+			confirmation,
+			...(confirmation !== null && entry.confirmation === null
+				? { confirmedAt: now, confirmedBy: ctx.user?.id ?? null }
+				: {}),
+			updatedAt: now
+		})
+		.where(eq(stageEntries.id, entry.id));
+
+	await recordAuditEvent(
+		ctx,
+		{
+			type: 'interactions.confirmed',
+			outcome: 'success',
+			subject: { type: 'interaction', id: input.interactionId },
+			details: { stageEntryId: entry.id, documentId: input.evidence.documentId }
+		},
+		tx
+	);
+}
+
 export async function raiseBlocker(
 	ctx: ActorContext,
 	input: RaiseBlockerInput
@@ -1261,6 +1373,8 @@ export function missingStageEvidence(entry: {
 	confirmation: StageConfirmation | null;
 	/** Снимок записи стадии либо факт по взаимодействию, если снимка ещё нет. */
 	lmsEvidence: unknown;
+	/** Отметка по документу дела — так же: снимок записи либо отметка по делу. */
+	documentMarkEvidence: DocumentMarkEvidence | null;
 }): string[] {
 	const missing: string[] = [];
 
@@ -1274,6 +1388,14 @@ export function missingStageEvidence(entry: {
 
 	if (entry.stageSnapshot.requiresLmsData && entry.lmsEvidence === null) {
 		missing.push('По стадии не получены данные системы обучения');
+	}
+
+	const requiredMark = entry.stageSnapshot.requiresDocumentMark;
+
+	if (requiredMark !== null && entry.documentMarkEvidence?.mark !== requiredMark) {
+		missing.push(
+			`По стадии нет документа с отметкой «${DOCUMENT_STATUS_FACT_LABELS[requiredMark]}»`
+		);
 	}
 
 	return missing;
@@ -1296,11 +1418,16 @@ async function readClosingState(
 
 	const entry = await readOpenEntryRow(executor, interaction.id);
 	// Тот же вопрос, что и у перехода: факт, пришедший из системы обучения до
-	// входа на стадию, засчитывается и при закрытии.
+	// входа на стадию, засчитывается и при закрытии. Отметка по документу — так
+	// же.
 	const evidence =
 		entry === null || entry.lmsEvidence !== null
 			? null
 			: await readLmsEvidence(executor, interaction.id);
+	const mark =
+		entry === null
+			? null
+			: await readCurrentDocumentMark(executor, entry, entry.stageSnapshot.requiresDocumentMark);
 
 	return {
 		status: row.status,
@@ -1308,7 +1435,11 @@ async function readClosingState(
 		missingEvidence:
 			entry === null
 				? []
-				: missingStageEvidence({ ...entry, lmsEvidence: entry.lmsEvidence ?? evidence }),
+				: missingStageEvidence({
+						...entry,
+						lmsEvidence: entry.lmsEvidence ?? evidence,
+						documentMarkEvidence: mark
+					}),
 		canWrite: can(ctx, 'interactions.write'),
 		canForce: can(ctx, 'stages.configure')
 	};

@@ -303,6 +303,19 @@ const programFields = {
 	level: z.enum(PROGRAM_LEVELS, { error: 'Выберите уровень программы' }),
 	/** Код направления подготовки, например 09.03.01. */
 	directionCode: optionalText(20),
+	/**
+	 * Ручной приоритет показа: 1 — самая важная программа, пусто — приоритет не
+	 * назначен. Ноль сюда не годится: он читался бы как настоящее значение, а
+	 * «не назначен» и «наименее важная» — разные вещи, и в списке они стоят в
+	 * разных местах.
+	 */
+	priority: z
+		.number({ error: 'Приоритет — целое число от 1 до 999' })
+		.int({ error: 'Приоритет — целое число от 1 до 999' })
+		.min(1, { error: 'Самый высокий приоритет — 1' })
+		.max(999, { error: 'Приоритет не больше 999' })
+		.nullable()
+		.default(null),
 	status: z.enum(LIFECYCLE_STATUSES).default('draft'),
 	...externalRefFields
 };
@@ -332,7 +345,23 @@ export const createDirectionSchema = z.object({
 	name: requiredText(200, 'Укажите название направления')
 });
 
+export const updateDirectionSchema = createDirectionSchema.extend({
+	id: id('Некорректный идентификатор направления')
+});
+
+/**
+ * Связь продукта с направлением. Она многие ко многим: один продукт закрывает и
+ * DevOps, и администрирование, и делить его надвое ради разреза отчёта значило
+ * бы заводить два продукта там, где заказчик видит один.
+ */
+export const linkProductDirectionSchema = z.object({
+	directionId: id('Некорректный идентификатор направления'),
+	productId: id('Выберите продукт')
+});
+
 export type CreateDirectionInput = z.output<typeof createDirectionSchema>;
+export type UpdateDirectionInput = z.output<typeof updateDirectionSchema>;
+export type LinkProductDirectionInput = z.output<typeof linkProductDirectionSchema>;
 
 const productFields = {
 	code: requiredText(50, 'Укажите код продукта'),
@@ -486,11 +515,16 @@ export const peopleListQuerySchema = z.object({
 	...pageQuerySchema.shape
 });
 
-export const PROGRAM_SORT_KEYS = ['code', 'name', 'level', 'status'] as const;
+export const PROGRAM_SORT_KEYS = ['priority', 'code', 'name', 'level', 'status'] as const;
 
+/**
+ * По умолчанию программы идут по ручному приоритету: справочник существует
+ * ради того, чтобы оператор сам решал, что предлагать вузу первым, и алфавит
+ * этого решения не выражает. Программы без приоритета идут следом, по названию.
+ */
 export const programDirectoryQuerySchema = z.object({
 	level: z.enum(PROGRAM_LEVELS).nullable().catch(null),
-	sortBy: z.enum(PROGRAM_SORT_KEYS).catch('code'),
+	sortBy: z.enum(PROGRAM_SORT_KEYS).catch('priority'),
 	sortDirection,
 	...catalogListQuerySchema.shape
 });
@@ -501,6 +535,26 @@ export const productDirectoryQuerySchema = z.object({
 	sortBy: z.enum(PRODUCT_SORT_KEYS).catch('code'),
 	sortDirection,
 	...catalogListQuerySchema.shape
+});
+
+/** Состояние направления в фильтре списка: действующие или архивные. */
+export const DIRECTION_STATES = ['active', 'archived'] as const;
+
+export type DirectionState = (typeof DIRECTION_STATES)[number];
+
+export const DIRECTION_SORT_KEYS = ['position', 'code', 'name'] as const;
+
+/**
+ * Список направлений. По умолчанию — в своём порядке значимости: позиция для
+ * того и заведена, а алфавит по коду поставил бы «Аналитику» перед «DevOps»
+ * только потому, что так устроена азбука.
+ */
+export const directionDirectoryQuerySchema = z.object({
+	state: z.enum(DIRECTION_STATES).nullable().catch(null),
+	q: searchQuery,
+	sortBy: z.enum(DIRECTION_SORT_KEYS).catch('position'),
+	sortDirection,
+	...pageQuerySchema.shape
 });
 
 export type CreateOrganizationInput = z.output<typeof createOrganizationSchema>;
@@ -529,6 +583,7 @@ export type OrganizationDirectoryQuery = z.output<typeof organizationDirectoryQu
 export type PeopleListQuery = z.output<typeof peopleListQuerySchema>;
 export type ProgramDirectoryQuery = z.output<typeof programDirectoryQuerySchema>;
 export type ProductDirectoryQuery = z.output<typeof productDirectoryQuerySchema>;
+export type DirectionDirectoryQuery = z.output<typeof directionDirectoryQuerySchema>;
 
 /**
  * Представления, которые сервер отдаёт наружу. Строки таблиц Drizzle за
@@ -615,6 +670,8 @@ export type ProgramView = {
 	name: string;
 	level: ProgramLevel;
 	directionCode: string | null;
+	/** Ручной приоритет показа; `null` — не назначен. */
+	priority: number | null;
 	status: LifecycleStatus;
 };
 
@@ -623,6 +680,25 @@ export type DirectionView = {
 	code: string;
 	name: string;
 	position: number;
+	/** Архивное направление остаётся в списке и в истории, но не предлагается. */
+	isActive: boolean;
+};
+
+/** Строка списка направлений: само направление и что на него ссылается. */
+export type DirectionListItem = {
+	direction: DirectionView;
+	productCount: number;
+	programCount: number;
+};
+
+/**
+ * Направление вместе со всем, что на него ссылается, — то, что показывает его
+ * карточка. Продукты связаны многие ко многим, у программы направление одно.
+ */
+export type DirectionDetail = {
+	direction: DirectionView;
+	products: LookupOption[];
+	programs: LookupOption[];
 };
 
 export type ProductView = {

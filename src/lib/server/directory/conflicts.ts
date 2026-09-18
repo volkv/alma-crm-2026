@@ -19,6 +19,7 @@ const UNIQUE_VIOLATION = '23505';
 const CONFLICT_BY_CONSTRAINT: Record<string, string> = {
 	directions_code_key: 'Направление с таким кодом уже заведено',
 	directions_position_key: 'Позиция направления уже занята: повторите попытку',
+	product_directions_product_id_direction_id_pk: 'Этот продукт уже отнесён к направлению',
 	organizations_inn_key: 'Организация с таким ИНН уже заведена',
 	organizations_external_ref_key: 'Эта запись внешней системы уже связана с другой организацией',
 	sites_organization_name_key: 'У организации уже есть площадка с таким названием',

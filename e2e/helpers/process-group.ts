@@ -1,4 +1,5 @@
 import type postgres from 'postgres';
+import type { DocumentStatusFact } from '$lib/contracts/documents';
 import type {
 	ChecklistItem,
 	StageCategory,
@@ -34,6 +35,7 @@ export type SeedStage = {
 	requiresResult?: boolean;
 	requiresConfirmation?: boolean;
 	requiresLmsData?: boolean;
+	requiresDocumentMark?: DocumentStatusFact | null;
 	isFinal?: boolean;
 	checklist?: readonly ChecklistItem[];
 };
@@ -203,6 +205,7 @@ async function publishRevision(
 				requires_result: stage.requiresResult ?? false,
 				requires_confirmation: stage.requiresConfirmation ?? false,
 				requires_lms_data: stage.requiresLmsData ?? false,
+				requires_document_mark: stage.requiresDocumentMark ?? null,
 				is_final: stage.isFinal ?? false,
 				// Готовой строкой: массив драйвер положил бы массивом Postgres, а
 				// колонка — `jsonb`.

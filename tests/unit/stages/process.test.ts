@@ -28,6 +28,7 @@ function stage(key: string, overrides: Partial<Stage> = {}): Stage {
 		requiresResult: false,
 		requiresConfirmation: false,
 		requiresLmsData: false,
+		requiresDocumentMark: null,
 		isFinal: false,
 		checklist: [],
 		...overrides
@@ -76,6 +77,22 @@ describe('сопоставление стадий по ключу', () => {
 		expect(matches[0].changes.join('; ')).toMatch(/название/);
 		expect(matches[0].changes.join('; ')).toMatch(/норматив/);
 		expect(matches[0].changes.join('; ')).toMatch(/требовать результат/);
+	});
+
+	it('видит включённую и снятую отметку по документу и называет её словами', () => {
+		// Признак стоит в снимке стадии, и публикация пересобирает снимки открытых
+		// записей: не увиденное здесь изменение означало бы стадию, которая ждёт
+		// отметку, но никому об этом не сказала.
+		const enabled = matchStages([stage('a')], [stage('a', { requiresDocumentMark: 'approved' })]);
+
+		expect(enabled[0].change).toBe('changed');
+		expect(enabled[0].changes.join('; ')).toMatch(
+			/начинает требовать отметку документа «Утверждён»/
+		);
+
+		const disabled = matchStages([stage('a', { requiresDocumentMark: 'approved' })], [stage('a')]);
+
+		expect(disabled[0].changes).toEqual(['больше не требует отметки документа']);
 	});
 
 	it('одинаковые ключи разных групп не смешиваются: сопоставляют по одной группе', () => {

@@ -76,6 +76,7 @@ export async function getInteractionSummary(
 			resultText: current.resultText,
 			confirmation: current.confirmation,
 			lmsEvidence: current.lmsEvidence,
+			documentMarkEvidence: current.documentMarkEvidence,
 			isPaused: current.isPaused,
 			blockingBlockers: blockingBlockers.length
 		};

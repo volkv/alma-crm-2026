@@ -503,6 +503,7 @@ export async function insertInteractionWithStage(
 			requiresResult: false,
 			requiresConfirmation: false,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: true,
 			checklist: []
 		}

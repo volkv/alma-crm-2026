@@ -1,0 +1,1173 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<archimate:model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:archimate="http://www.archimatetool.com/archimate" name="LCT CRM — система контроля взаимодействия с учебными заведениями" id="id-lct-crm-model" version="5.0.0">
+  <folder name="Strategy" id="id-folder-strategy" type="strategy"/>
+  <folder name="Business" id="id-folder-business" type="business">
+    <element xsi:type="archimate:BusinessRole" name="КАМ (manager)" id="id-role-kam">
+      <documentation>Роль каталога прав (`src/lib/server/rbac/permissions.ts`, `DEFAULT_ROLES`). Ведёт свои вузы: взаимодействия, переходы по процессу, документы, контакты, отчёты по своей области. Область доступа — вузы, за которые он назначен ответственным (`interactions/access.ts`). Нет прав: правка общих каталогов, импорт справочника, загрузка данных об обучении, журнал действий, настройки, пользователи.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessRole" name="Руководитель (lead)" id="id-role-lead">
+      <documentation>Роль каталога прав (`src/lib/server/rbac/permissions.ts`, `DEFAULT_ROLES`). Видит свою область и работу подчинённых, назначает ответственных за вузы (`responsibles.manage`), переназначает взаимодействия, читает журнал доставок уведомлений (эскалация зависших стадий приходит ему). Иерархия — `users.manager_user_id`.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessRole" name="Администратор (admin)" id="id-role-admin">
+      <documentation>Роль каталога прав (`src/lib/server/rbac/permissions.ts`, `DEFAULT_ROLES`). Все права каталога: структура процесса и её публикация, доступ и пользователи, ключи API, интеграции и обмен, настройки, журнал действий, обезличивание персональных данных.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessRole" name="Внешняя система (service)" id="id-role-service">
+      <documentation>Роль каталога прав (`src/lib/server/rbac/permissions.ts`, `DEFAULT_ROLES`). Служебный субъект обмена: от его имени работают ключи CMS и системы обучения. Роль невходящая — учётная запись с ней не проходит вход ни при каких утверждениях токена. Права закрытым списком: `exchange.intake`, `exchange.results`, `stages.confirm`. Двигать взаимодействие по процессу внешняя система не может.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessActor" name="Учебное заведение (вуз)" id="id-actor-univ">
+      <documentation>Контрагент вида `university`: основная сторона взаимодействия группы процесса `b2b` (`organizations.kind`, `docs/domain.md`, раздел 2).</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessActor" name="Физическое или юридическое лицо" id="id-actor-person">
+      <documentation>Контрагент видов `individual` и `company`: основная сторона взаимодействия группы `b2c`.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessEvent" name="Заявка с сайта (CMS)" id="id-event-application">
+      <documentation>Направление 1 контракта обмена: `POST /api/v1/applications` ключом роли `service`. Заявка не заводит третьей сущности — она сразу становится контрагентом, контактным лицом и взаимодействием на первой стадии процесса своей группы (`integrations/exchange/intake.ts`, `docs/exchange-contract.md`, раздел 3).</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="Взаимодействие с учебным заведением · группа b2b · 14 стадий" id="id-proc-b2b">
+      <documentation>Процесс — данные, а не код: стадии, нормативы, чек-листы и переходы лежат в редакции процесса (`process_revisions`, стартовый набор — `src/lib/server/stages/definitions.ts`). Администратор меняет его черновиком и применяет ко всем, записи с удалённой стадии переезжают по правилам переноса. Каждый переход считает одна чистая функция `evaluateTransition` (`stages/transitions.ts`): право, текущая стадия, открытые помехи, пауза, обязательные пункты чек-листа, результат и подтверждение.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="Взаимодействие с физическим или юридическим лицом · группа b2c · 5 стадий" id="id-proc-b2c">
+      <documentation>Короткий процесс обучения. Группа процесса выбирается по виду контрагента основной стороны (`PROCESS_GROUP_BY_APPLICANT`, `docs/domain.md`, раздел 2).</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="1. Поиск контактных лиц" id="id-stage-b2b-contact_search">
+      <documentation>Ключ стадии `contact_search`, норматив 7 дн. Чек-лист: профильное подразделение, подтверждённый контакт, канал связи.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="2. Коммуникация и сверка программ" id="id-stage-b2b-communication">
+      <documentation>Ключ стадии `communication`, норматив 10 дн. Чек-лист: отправлено описание программ, сверена их актуальность.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="3. Встреча с представителями" id="id-stage-b2b-meeting">
+      <documentation>Ключ стадии `meeting`, норматив 14 дн. Чек-лист встречи и её итогов.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="4. Обмен пакетом документов" id="id-stage-b2b-document_exchange">
+      <documentation>Ключ стадии `document_exchange`, норматив 10 дн. Пакет уходит контрагенту и возвращается с замечаниями.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="5. Корректировка документов" id="id-stage-b2b-document_revision">
+      <documentation>Ключ стадии `document_revision`, норматив 7 дн. Возврат с этой стадии — с причиной.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="6. Подписание соглашения" id="id-stage-b2b-signing">
+      <documentation>Ключ стадии `signing`, норматив 14 дн. Стадию закрывает отметка «Утверждён» на документе дела (`requiresDocumentMark: approved`), а не слово исполнителя.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="7. Передача материалов и лицензий" id="id-stage-b2b-materials_handover">
+      <documentation>Ключ стадии `materials_handover`, норматив 10 дн. Требует результата и подтверждения (`stages.confirm`).</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="8. Сопровождение внедрения" id="id-stage-b2b-implementation_support">
+      <documentation>Ключ стадии `implementation_support`, норматив 21 дн. Требует результата и подтверждения.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="9. Обучение преподавателей" id="id-stage-b2b-teacher_training">
+      <documentation>Ключ стадии `teacher_training`, норматив 30 дн. Требует результата и подтверждения.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="10. Актуализация образовательной программы" id="id-stage-b2b-program_update">
+      <documentation>Ключ стадии `program_update`, норматив 21 дн. Требует результата и подтверждения.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="11. Ведение занятий" id="id-stage-b2b-classes">
+      <documentation>Ключ стадии `classes`, норматив 30 дн. Требует данных системы обучения (`requiresLmsData`): уйти со стадии без результата потока из LMS нельзя.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="12. Актуализация документации" id="id-stage-b2b-documentation_update">
+      <documentation>Ключ стадии `documentation_update`, норматив 14 дн. Требует результата.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="13. Повышение квалификации" id="id-stage-b2b-qualification_upgrade">
+      <documentation>Ключ стадии `qualification_upgrade`, норматив 30 дн. Требует результата и подтверждения.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="14. Контроль исполнения" id="id-stage-b2b-execution_control">
+      <documentation>Ключ стадии `execution_control`, норматив 20 дн. Завершающая стадия (`isFinal`).</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="1. Заявка принята" id="id-stage-b2c-lead_intake">
+      <documentation>Ключ стадии `lead_intake`, норматив 3 дн. Первая стадия группы `b2c`: сюда попадает заявка с сайта от физического или юридического лица.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="2. Предложение и условия" id="id-stage-b2c-offer">
+      <documentation>Ключ стадии `offer`, норматив 5 дн.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="3. Договор и оплата" id="id-stage-b2c-contract_payment">
+      <documentation>Ключ стадии `contract_payment`, норматив 10 дн. Требует подтверждения.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="4. Зачисление и обучение" id="id-stage-b2c-learning">
+      <documentation>Ключ стадии `learning`, норматив 45 дн. Требует данных системы обучения и результата.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="5. Завершение и документ об обучении" id="id-stage-b2c-completion">
+      <documentation>Ключ стадии `completion`, норматив 14 дн. Завершающая стадия, требует результата.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="Назначение ответственных и контроль загрузки" id="id-proc-assign">
+      <documentation>Руководитель назначает ответственного за вуз и направление (`organization_responsibles`, право `responsibles.manage`) и переназначает взаимодействия (`interactions.reassign`). Смена ответственного меняет область доступа в ту же секунду и во всех каналах сразу.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="Настройка процесса, доступа и интеграций" id="id-proc-configure">
+      <documentation>Черновик редакции процесса и его публикация (`stages.configure`), пользователи и роли (`users.manage`), ключи API, подписки вебхуков и подключения обмена (`integrations.manage`, `integrations.manage_endpoints`), общие настройки.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="Обмен с CMS и системой обучения" id="id-proc-exchange">
+      <documentation>Четыре направления одного контракта: приём заявки с сайта, снимок статуса заявки обратно, заявка на учебную группу в LMS, результат потока из LMS. Исходящие подписаны HMAC-SHA256, повтор не создаёт дубля (`docs/exchange-contract.md`).</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessProcess" name="Отчёт за период и данные об обучении" id="id-proc-report">
+      <documentation>Два разных вопроса, которые не смешиваются: срез (где работа стоит на дату) и движение (что за период произошло). Фильтры и колонки живут в адресной строке; выгрузка — та же ссылка с другим расширением: XLSX, XLS, PDF, JSON. Показатели считаются только по подтверждённым снимкам данных об обучении.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessService" name="Сопровождение партнёрства с учебным заведением" id="id-bsvc-partnership">
+      <documentation>То, что процесс `b2b` даёт вузу: согласованные программы, соглашение, материалы и лицензии, обучение преподавателей, контроль исполнения обязательств.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessService" name="Обучение по программе ИТ школы" id="id-bsvc-learning">
+      <documentation>То, что процесс `b2c` даёт слушателю: предложение, договор, зачисление, документ об обучении.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessObject" name="Взаимодействие, стадии и помехи" id="id-bo-interaction">
+      <documentation>Основная запись процесса: стороны, программы, продукты, записи стадий, паузы, помехи, комментарии, история изменений плана (`db/schema/interactions.ts`).</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessObject" name="Договор и его позиции" id="id-bo-contract">
+      <documentation>Справочник договоров и позиций (`directory/contracts.ts`); взаимодействие выбирает позиции.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessObject" name="Документ дела: соглашение, акт" id="id-bo-document">
+      <documentation>Файл неизменяем: новая редакция — новая запись со ссылкой `supersedes_id`. Отметка «Утверждён» закрывает стадию подписания.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessObject" name="Учебная группа и результат потока" id="id-bo-group">
+      <documentation>Заявку на группу отправляет сотрудник кнопкой с карточки; результат приходит из LMS и подтверждает стадию «Ведение занятий», не двигая взаимодействие.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessObject" name="Снимок данных об обучении" id="id-bo-snapshot">
+      <documentation>Загруженный файл или выгрузка Moodle: происхождение, период, охват, режим. Показатели считаются только по подтверждённым текущим снимкам (представление `stat_program_indicators`).</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessObject" name="Отчёт за период" id="id-bo-report">
+      <documentation>Срез и движение, диаграммы с числами, четыре формата выгрузки из одного готового отчёта.</documentation>
+    </element>
+    <element xsi:type="archimate:BusinessObject" name="Согласие на обработку персональных данных" id="id-bo-consent">
+      <documentation>Согласие, отзыв и срок хранения живут рядом с обезличиванием (`people/consents.ts`, `people/retention.ts`); контакты человека шифруются, а без права `people.read_pii` уходят наружу замаскированными.</documentation>
+    </element>
+  </folder>
+  <folder name="Application" id="id-folder-application" type="application">
+    <element xsi:type="archimate:ApplicationComponent" name="LCT CRM — модульный монолит (SvelteKit 2, Node 24)" id="id-app-crm">
+      <documentation>Страницы, формы и публичный API — одно приложение и одни сервисы: правило живёт в одном месте и не расходится между интерфейсом и API (`docs/architecture.md`).</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="Хуки запроса (src/hooks.server.ts)" id="id-app-hooks">
+      <documentation>Цепочка `requestId → securityHeaders → csrf → session → guard → rateLimit`. Порядок значим: CSRF стоит перед сессией, поэтому запрос с чужой страницы отвергается раньше, чем будет прочитана сессия. Прав здесь не проверяют — это делают загрузчик и сервис.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="Страницы и формы (src/routes/(app))" id="id-app-pages">
+      <documentation>Загрузчики `+page.server.ts` и form actions: разобрать схемой контракта → позвать команду сервиса → перевести отказ через `toPageError`/`toActionFailure`. Состояние списков живёт в адресной строке.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="Публичный API /api/v1 (apiHandler)" id="id-app-api">
+      <documentation>Обёртка делает по порядку: лимит по адресу, разбор ключа `Bearer lct_…` по `sha256`, лимит по ключу, проверка права, разбор схемами Zod, `Idempotency-Key`, вызов сервиса и проверка ответа его собственной схемой, конверт JSON и запись в журнал. Сессия браузера в API не смотрится вовсе.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="Цикл интеграций (integrations/pump.ts)" id="id-app-pump">
+      <documentation>Отдельного фонового процесса нет: таймер внутри приложения берёт замок `lct:integrations:pump:lock` в Redis и делает четыре дела — дочитывает журнал в подписки вебхуков, разбирает очередь исходящих сообщений обмена, проверяет зависшие взаимодействия и, если пришёл срок, ходит за выгрузкой в систему обучения.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="Контракты Zod (src/lib/contracts)" id="id-app-contracts">
+      <documentation>Схемы команд и ответов. Ничего из `$lib/server` не импортируют, поэтому одна и та же схема проверяет форму в браузере, тело запроса к API и строку импорта из файла; из них же собирается OpenAPI.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="stages — движок процесса" id="id-mod-stages">
+      <documentation>Редакции процесса и их публикация, правила перехода (`evaluateTransition` — чистая функция), команды движка под блокировкой строки `SELECT … FOR UPDATE`, состояние стадии.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="interactions — взаимодействия" id="id-mod-interactions">
+      <documentation>Создание, список, карточка (четыре вопроса), доска по стадиям, сводная картина. `access.ts` считает область доступа подзапросом по сторонам взаимодействия.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="directory — справочник" id="id-mod-directory">
+      <documentation>Организации, площадки, контакты, направления, программы, продукты, договоры, ответственные, импорт каталога.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="people — персональные данные" id="id-mod-people">
+      <documentation>Маскирование в одном сериализаторе `toPersonView`, шифрование контактов, согласия, срок хранения и обезличивание, след просмотра `withPiiTrace` одним событием на область сбора.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="documents — документы и файлы" id="id-mod-documents">
+      <documentation>Хранилище (три шага: `stageBlob` → `promoteBlob` → запись в транзакции), проверка содержимого по сигнатуре, шаблоны, генерация DOCX и PDF, отметки документов.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="stats — данные об обучении" id="id-mod-stats">
+      <documentation>Разбор файла, сопоставление колонок, снимки и их подтверждение, показатели, дашборд, объяснимый рейтинг.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="reports — отчёты" id="id-mod-reports">
+      <documentation>Разбор адреса, срез и движение, диаграммы, четыре формата выгрузки из одного отчёта.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="integrations — вебхуки и цикл" id="id-mod-integrations">
+      <documentation>Подписки в Redis, доставка с подписью HMAC-SHA256 и повторами, настройки интеграций.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="integrations/exchange — обмен" id="id-mod-exchange">
+      <documentation>Четыре направления контракта, журнал обмена `exchange_messages`, очередь исходящих, идемпотентность по `(direction, system, instance, event_id)`.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="integrations/lms — клиент Moodle" id="id-mod-lms">
+      <documentation>Клиент веб-сервиса Moodle (`wsfunction`) и сборка строк снимка; останавливается на состоянии «проверен» — подтверждение снимка остаётся решением человека.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="notifications — уведомления" id="id-mod-notifications">
+      <documentation>Наблюдатель зависших стадий, письмо руководителю ответственного, журнал доставок и повтор отправки.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="search — быстрый поиск" id="id-mod-search">
+      <documentation>Своих выборок нет ни одной: каждая группа читается читателем своего раздела — вместе с его правом и его областью доступа.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="settings — настройки" id="id-mod-settings">
+      <documentation>Настройки приложения со значениями по умолчанию.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="demo — сброс стенда" id="id-mod-demo">
+      <documentation>Возврат демонстрационных данных к эталону: свой таймер, свой ключ в Redis, системный актор.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="spreadsheet — книги XLS/XLSX" id="id-mod-spreadsheet">
+      <documentation>Чтение загруженного файла и сборка выгрузок; `spreadsheetText` обезвреживает формулы в ячейках.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="rbac — права и область доступа" id="id-mod-rbac">
+      <documentation>Каталог из 38 прав и четыре роли, `can`/`requirePermission`, `scopeFilter`. Отказ по правам пишется в журнал отдельным соединением и только потом становится ошибкой.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="audit — журнал действий" id="id-mod-audit">
+      <documentation>Запись, выборка и выгрузка. Таблица append-only: триггер запрещает `UPDATE` и `DELETE` на любой установке.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="auth — вход и сессии" id="id-mod-auth">
+      <documentation>OIDC + PKCE к Keycloak, приведение ролей realm к нашим, учётная запись по `sub`, серверная сессия в Redis. Пользователь собирается заново на каждый запрос: снятое право действует сразу.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="api — ключи, лимиты, OpenAPI" id="id-mod-api">
+      <documentation>Ключи `lct_…` по `sha256`, лимиты по адресу и по ключу, идемпотентность, реестр маршрутов и сборка OpenAPI 3.1.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="cache — кэш чтений в Redis" id="id-mod-cache">
+      <documentation>Право и область проверяются до кэша; область входит в ключ; инвалидация — сменой поколения, а не перебором ключей.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="db — PostgreSQL и транзакции" id="id-mod-db">
+      <documentation>Пул postgres.js, Drizzle, `withTransaction` — единственная граница транзакции; она же кладёт `app.request_id` в настройки сессии базы.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="config — переменные окружения" id="id-mod-config">
+      <documentation>Схема Zod без умолчаний: недостающая или неверная переменная останавливает процесс при старте.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationInterface" name="REST API v1 (Bearer lct_…)" id="id-if-rest">
+      <documentation>Публичный интерфейс: ключ вместо сессии, лимиты 600 запросов в минуту по адресу и 120 по ключу, `Idempotency-Key` у команд.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationInterface" name="OpenAPI 3.1 и Swagger UI" id="id-if-openapi">
+      <documentation>Описание собирается из тех же схем Zod, что проверяют запросы: `registerRoute` в файлах маршрутов, документ — `/api/openapi.json`, страница — `/api/docs`.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationInterface" name="Вебхуки (HMAC-SHA256)" id="id-if-webhook">
+      <documentation>Подписка выбирает события журнала кодами или разделами; доставка идёт `POST`-ом с заголовками `X-Webhook-Id`, `X-Webhook-Timestamp`, `X-Webhook-Signature`; неудача уходит в очередь повторов.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationInterface" name="Приём обмена: заявки и результаты потоков" id="id-if-intake">
+      <documentation>`POST /api/v1/applications` и `POST /api/v1/exchange/learning-groups/results` ключом роли `service`; общий конверт с версией схемы и идентификатором события.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationInterface" name="Исходящий обмен: статус заявки, заявка на группу" id="id-if-outbound">
+      <documentation>Очередь `exchange_messages` и доставка проходом цикла: тело собирается в момент отправки, повторяются только временные отказы.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationInterface" name="Почта уведомлений (SMTP)" id="id-if-smtp">
+      <documentation>Одно соединение до `SMTP_URL` и один разговор по протоколу; очереди и репутация отправителя — забота того сервера, чей адрес назвало развёртывание.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="CMS сайта заказчика" id="id-ext-cms">
+      <documentation>Внешняя система. Доступа к ней нет и контракт с заказчиком не согласован: проверено на имитаторе `mocks/mock-cms`, который говорит на объявленном контракте.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="Система обучения (Moodle)" id="id-ext-lms">
+      <documentation>Внешняя система. Проверено на имитаторе `mocks/mock-lms` и клиенте веб-сервиса Moodle.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="Keycloak — каталог учётных записей (realm lct)" id="id-ext-keycloak">
+      <documentation>Своих паролей у продукта нет: кто перед системой, решает каталог. Роли realm приводятся к нашим при каждом входе.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="Подписчик вебхуков (внешняя система)" id="id-ext-webhook">
+      <documentation>Любой получатель, чей адрес завёл администратор: событие журнала доходит до подписки ровно один раз.</documentation>
+    </element>
+    <element xsi:type="archimate:ApplicationComponent" name="Почтовый сервер (релей заказчика, на стенде Mailpit)" id="id-ext-smtp">
+      <documentation>Адрес приходит из `SMTP_URL`; своего почтового сервера у приложения нет.</documentation>
+    </element>
+    <element xsi:type="archimate:DataObject" name="Взаимодействия, стадии, договоры" id="id-data-interactions">
+      <documentation>Группы процесса и редакции, стадии и переходы, взаимодействия и их стороны, записи стадий, паузы, помехи, комментарии, договоры и позиции.</documentation>
+    </element>
+    <element xsi:type="archimate:DataObject" name="Справочник: организации, люди, программы, продукты" id="id-data-directory">
+      <documentation>Направления, организации и площадки, люди и их роли, согласия, ответственные, программы и их редакции, продукты.</documentation>
+    </element>
+    <element xsi:type="archimate:DataObject" name="Документы, шаблоны и отметки стадий" id="id-data-documents">
+      <documentation>Записи документов с редакциями (`supersedes_id`), шаблоны, отметки «этот файл закрывает эту стадию».</documentation>
+    </element>
+    <element xsi:type="archimate:DataObject" name="Данные об обучении: снимки и строки" id="id-data-stats">
+      <documentation>Снимки с происхождением и их строки; показатели считает представление `stat_program_indicators` только по подтверждённым текущим снимкам.</documentation>
+    </element>
+    <element xsi:type="archimate:DataObject" name="Сообщения обмена и учебные группы" id="id-data-exchange">
+      <documentation>Журнал обмена, очередь исходящих, учебные группы и результаты потоков.</documentation>
+    </element>
+    <element xsi:type="archimate:DataObject" name="Журнал действий (append-only)" id="id-data-audit">
+      <documentation>Единственный писатель — модуль `audit`; триггер `audit_events_append_only` запрещает `UPDATE` и `DELETE`.</documentation>
+    </element>
+    <element xsi:type="archimate:DataObject" name="Права, роли и пользователи" id="id-data-auth">
+      <documentation>Каталог прав и ролей приводится к коду миграцией; учётная запись заводится по `sub` из Keycloak.</documentation>
+    </element>
+    <element xsi:type="archimate:DataObject" name="Ключи API" id="id-data-apikeys">
+      <documentation>Хранится только `sha256` ключа; у ключа своя область и своё право.</documentation>
+    </element>
+    <element xsi:type="archimate:DataObject" name="Настройки приложения" id="id-data-settings">
+      <documentation>Значения по умолчанию в коде, изменения — в базе.</documentation>
+    </element>
+    <element xsi:type="archimate:DataObject" name="Доставки уведомлений" id="id-data-notifications">
+      <documentation>Кому, о чём, чем закончилось; срез руководителя сужается его областью.</documentation>
+    </element>
+    <element xsi:type="archimate:DataObject" name="Сессии, лимиты, подписки и замки (Redis)" id="id-data-redis">
+      <documentation>Запись сессии, счётчики частоты, брони идемпотентности, подписки вебхуков, замок фонового цикла, кэш чтений. Данных истины здесь нет.</documentation>
+    </element>
+    <element xsi:type="archimate:DataObject" name="Файлы документов (S3, ключ files/&lt;uuid>)" id="id-data-files">
+      <documentation>Имя, под которым файл прислали, в ключ не попадает; файл неизменяем, наружу хранилище не смотрит — единственный путь к файлу это маршрут скачивания с проверкой права.</documentation>
+    </element>
+  </folder>
+  <folder name="Technology &amp; Physical" id="id-folder-technology" type="technology">
+    <element xsi:type="archimate:Node" name="Браузер сотрудника" id="id-node-browser">
+      <documentation>Единственный клиент интерфейса.</documentation>
+    </element>
+    <element xsi:type="archimate:CommunicationNetwork" name="Интернет (TLS 443)" id="id-net-internet">
+      <documentation>Наружу стенд смотрит одним адресом: `https://crm.volkv.com`.</documentation>
+    </element>
+    <element xsi:type="archimate:CommunicationNetwork" name="Сеть Docker Compose (внутренняя)" id="id-net-compose">
+      <documentation>Имена сервисов вместо адресов; наружу из этой сети не публикуется ничего, кроме приложения и Keycloak, и только на петлевом интерфейсе.</documentation>
+    </element>
+    <element xsi:type="archimate:Node" name="Сервер стенда: Linux + Docker Compose" id="id-node-host">
+      <documentation>`docker-compose.yml` — локальный стек и он же демонстрационный стенд; `docker-compose.prod.yml` — наложение: наружу смотрит только приложение и только на петлевом интерфейсе, у каждой службы перезапуск и потолок памяти (суммарно 3264 МБ).</documentation>
+    </element>
+    <element xsi:type="archimate:Node" name="nginx: TLS, обратный прокси, /auth, /mock-cms, /mock-lms" id="id-node-nginx">
+      <documentation>Терминирует TLS и проксирует на приложение; Keycloak стоит под путём `/auth` того же домена. Адрес клиента приложение разбирает само по флагу `TRUST_PROXY`.</documentation>
+    </element>
+    <element xsi:type="archimate:Node" name="app — контейнер приложения (127.0.0.1:3000)" id="id-node-app">
+      <documentation>Старт — одна команда из трёх шагов: миграции и синхронизация каталога прав → сид демонстрационных данных при `DEMO_MODE=true` → `node build/index.js`. Сбой на любом шаге останавливает контейнер. `HEALTHCHECK` стучится в `/api/health` — он отвечает 200, только когда откликнулись база, Redis и хранилище.</documentation>
+    </element>
+    <element xsi:type="archimate:SystemSoftware" name="Node.js 24 · adapter-node" id="id-sw-node">
+      <documentation>Один процесс Node: в нём же живёт таймер цикла интеграций и таймер сброса стенда.</documentation>
+    </element>
+    <element xsi:type="archimate:Node" name="postgres:17-alpine" id="id-node-postgres">
+      <documentation>Источник истины; том `postgres-data`. Здесь же вторая база — та, в которой Keycloak держит realm на развёртывании.</documentation>
+    </element>
+    <element xsi:type="archimate:Node" name="redis:8-alpine" id="id-node-redis">
+      <documentation>Сессии, счётчики, подписки и замки; том `redis-data`.</documentation>
+    </element>
+    <element xsi:type="archimate:Node" name="minio (S3-совместимое хранилище)" id="id-node-minio">
+      <documentation>Файлы документов; том `minio-data`. Консоль наружу не публикуется — при необходимости туннель.</documentation>
+    </element>
+    <element xsi:type="archimate:Node" name="keycloak:26.7.4" id="id-node-keycloak">
+      <documentation>Realm `lct` импортируется из файла: пересозданный контейнер поднимается ровно тем, что записано в `keycloak/realm-lct.json`.</documentation>
+    </element>
+    <element xsi:type="archimate:Node" name="gotenberg:8" id="id-node-gotenberg">
+      <documentation>Конвертация DOCX и HTML в PDF; потолок ожидания 30 с.</documentation>
+    </element>
+    <element xsi:type="archimate:Node" name="mailpit (профиль stand)" id="id-node-mailpit">
+      <documentation>Почтовый сервер-ловушка для писем уведомлений: SMTP-порт наружу не публикуется вовсе, веб-интерфейс стоит на петле хоста. Профиль `stand` задан в `docker-compose.prod.yml`; в локальном стеке служба поднимается всегда.</documentation>
+    </element>
+    <element xsi:type="archimate:Node" name="mock-cms (профиль stand)" id="id-node-mockcms">
+      <documentation>Имитатор сайта: говорит на объявленном контракте, умеет ломаться по команде (отказ, задержка, обрыв). Живёт отдельным сервисом, а не внутри продукта: заглушка в промышленной сборке — это лишний маршрут и постоянный вопрос «а не включена ли она».</documentation>
+    </element>
+    <element xsi:type="archimate:Node" name="mock-lms (профиль stand)" id="id-node-mocklms">
+      <documentation>Имитатор системы обучения, то же самое. У заказчика на месте обоих имитаторов — настоящие системы, адрес берётся из настроек интеграций.</documentation>
+    </element>
+    <element xsi:type="archimate:TechnologyService" name="Хранение данных (PostgreSQL 17)" id="id-tsvc-db"/>
+    <element xsi:type="archimate:TechnologyService" name="Сессии, лимиты, замки (Redis 8)" id="id-tsvc-cache"/>
+    <element xsi:type="archimate:TechnologyService" name="Объектное хранилище файлов (S3)" id="id-tsvc-files"/>
+    <element xsi:type="archimate:TechnologyService" name="Каталог учётных записей (OIDC + PKCE)" id="id-tsvc-oidc"/>
+    <element xsi:type="archimate:TechnologyService" name="Преобразование DOCX и HTML в PDF" id="id-tsvc-pdf"/>
+    <element xsi:type="archimate:TechnologyService" name="Приём почты уведомлений (SMTP)" id="id-tsvc-mail"/>
+    <element xsi:type="archimate:Artifact" name="Образ lct-crm-app (Dockerfile, 5 стадий)" id="id-art-image">
+      <documentation>В образ кроме `build/` кладутся `drizzle/`, `scripts/`, `src/lib` и `templates/`: миграции, сид и чтение шаблонов выполняет обычный процесс Node, которому нужны исходники, а не бандл.</documentation>
+    </element>
+    <element xsi:type="archimate:Artifact" name="SQL-миграции drizzle/" id="id-art-migrations">
+      <documentation>Применяются `scripts/migrate.ts` перед стартом приложения; тот же скрипт одной транзакцией приводит каталог прав и ролей к тому, что записано в коде.</documentation>
+    </element>
+    <element xsi:type="archimate:Artifact" name="Шаблоны документов templates/" id="id-art-templates">
+      <documentation>DOCX собирается docxtemplater’ом по шаблону; сам шаблон при первом обращении переносится в хранилище файлов, чтобы уже сгенерированный документ можно было объяснить.</documentation>
+    </element>
+    <element xsi:type="archimate:Artifact" name="keycloak/realm-lct.json" id="id-art-realm">
+      <documentation>Клиент, роли и демонстрационные записи realm; пароль читается из `SEED_DEMO_PASSWORD`.</documentation>
+    </element>
+    <element xsi:type="archimate:Artifact" name="Тома: postgres-data, redis-data, minio-data" id="id-art-volumes">
+      <documentation>Живут вне образа: документы и данные обязаны переживать пересборку.</documentation>
+    </element>
+    <element xsi:type="archimate:Node" name="app · реплика (возможность, не проверено)" id="id-node-replica">
+      <documentation>Приложение без состояния: сессия, лимиты и замок фонового цикла лежат в Redis, файлы — в S3, данные — в PostgreSQL. Поэтому реплики можно поставить за тем же прокси. На стенде работает один экземпляр; на нескольких это не проверялось.</documentation>
+    </element>
+    <element xsi:type="archimate:Node" name="CMS сайта заказчика" id="id-node-cms-real">
+      <documentation>Доступа нет, контракт не согласован.</documentation>
+    </element>
+    <element xsi:type="archimate:Node" name="LMS заказчика (Moodle)" id="id-node-lms-real">
+      <documentation>Доступа нет, контракт не согласован.</documentation>
+    </element>
+    <element xsi:type="archimate:Node" name="Почтовый релей заказчика" id="id-node-smtp-real">
+      <documentation>Адрес приходит из `SMTP_URL`.</documentation>
+    </element>
+  </folder>
+  <folder name="Motivation" id="id-folder-motivation" type="motivation"/>
+  <folder name="Implementation &amp; Migration" id="id-folder-implementation_migration" type="implementation_migration"/>
+  <folder name="Other" id="id-folder-other" type="other">
+    <element xsi:type="archimate:Grouping" name="Сцена 1. Сквозная автоматизация: CMS → CRM → LMS" id="id-scene-1">
+      <documentation>Заявка с сайта приходит в `POST /api/v1/applications` и становится взаимодействием; снимок статуса уходит обратно в CMS после каждого изменения; учебная группа заводится в системе обучения кнопкой с карточки; результат потока приходит сам, подтверждает стадию «Ведение занятий» и приносит числа. Показывается на имитаторах `mocks/mock-cms` и `mocks/mock-lms`: они говорят на объявленном контракте и умеют ломаться по команде.</documentation>
+    </element>
+    <element xsi:type="archimate:Grouping" name="Сцена 2. Управляемость: кто что решает и как меняют правила" id="id-scene-2">
+      <documentation>Карточка взаимодействия отвечает на четыре вопроса — что происходит, что мешает, кто должен действовать, что могу сейчас — и объясняет словами каждую недоступную кнопку. Руководитель назначает ответственного, и доступ меняется в ту же секунду. Администратор правит процесс черновиком, смотрит предпросмотр и применяет ко всем; записи переезжают, история цела.</documentation>
+    </element>
+    <element xsi:type="archimate:Grouping" name="Сцена 3. Доверие к результату: отчёт объясняет себя сам" id="id-scene-3">
+      <documentation>Срез и движение за период, фильтры и колонки в адресной строке, четыре формата выгрузки из одного отчёта, диаграммы подписаны числами, клик по столбцу воронки сужает тот же отчёт. Рядом — данные об обучении: показатели только по подтверждённым снимкам, записанный ноль и отсутствие данных различаются словами.</documentation>
+    </element>
+  </folder>
+  <folder name="Relations" id="id-folder-relations" type="relations">
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-001" source="id-proc-b2b" target="id-stage-b2b-contact_search"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-002" source="id-proc-b2b" target="id-stage-b2b-communication"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-003" source="id-proc-b2b" target="id-stage-b2b-meeting"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-004" source="id-proc-b2b" target="id-stage-b2b-document_exchange"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-005" source="id-proc-b2b" target="id-stage-b2b-document_revision"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-006" source="id-proc-b2b" target="id-stage-b2b-signing"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-007" source="id-proc-b2b" target="id-stage-b2b-materials_handover"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-008" source="id-proc-b2b" target="id-stage-b2b-implementation_support"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-009" source="id-proc-b2b" target="id-stage-b2b-teacher_training"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-010" source="id-proc-b2b" target="id-stage-b2b-program_update"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-011" source="id-proc-b2b" target="id-stage-b2b-classes"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-012" source="id-proc-b2b" target="id-stage-b2b-documentation_update"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-013" source="id-proc-b2b" target="id-stage-b2b-qualification_upgrade"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-014" source="id-proc-b2b" target="id-stage-b2b-execution_control"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-015" source="id-proc-b2c" target="id-stage-b2c-lead_intake"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-016" source="id-proc-b2c" target="id-stage-b2c-offer"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-017" source="id-proc-b2c" target="id-stage-b2c-contract_payment"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-018" source="id-proc-b2c" target="id-stage-b2c-learning"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-019" source="id-proc-b2c" target="id-stage-b2c-completion"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-020" source="id-stage-b2b-contact_search" target="id-stage-b2b-communication"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-021" source="id-stage-b2b-communication" target="id-stage-b2b-meeting"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-022" source="id-stage-b2b-meeting" target="id-stage-b2b-document_exchange"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-023" source="id-stage-b2b-document_exchange" target="id-stage-b2b-document_revision"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-024" source="id-stage-b2b-document_revision" target="id-stage-b2b-signing"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-025" source="id-stage-b2b-signing" target="id-stage-b2b-materials_handover"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-026" source="id-stage-b2b-materials_handover" target="id-stage-b2b-implementation_support"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-027" source="id-stage-b2b-implementation_support" target="id-stage-b2b-teacher_training"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-028" source="id-stage-b2b-teacher_training" target="id-stage-b2b-program_update"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-029" source="id-stage-b2b-program_update" target="id-stage-b2b-classes"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-030" source="id-stage-b2b-classes" target="id-stage-b2b-documentation_update"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-031" source="id-stage-b2b-documentation_update" target="id-stage-b2b-qualification_upgrade"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-032" source="id-stage-b2b-qualification_upgrade" target="id-stage-b2b-execution_control"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-033" source="id-stage-b2c-lead_intake" target="id-stage-b2c-offer"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-034" source="id-stage-b2c-offer" target="id-stage-b2c-contract_payment"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-035" source="id-stage-b2c-contract_payment" target="id-stage-b2c-learning"/>
+    <element xsi:type="archimate:TriggeringRelationship" name="шаг вперёд" id="id-rel-036" source="id-stage-b2c-learning" target="id-stage-b2c-completion"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="id-rel-037" source="id-role-kam" target="id-proc-b2b"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="id-rel-038" source="id-role-kam" target="id-proc-b2c"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="id-rel-039" source="id-role-lead" target="id-proc-assign"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="id-rel-040" source="id-role-admin" target="id-proc-configure"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="id-rel-041" source="id-role-service" target="id-proc-exchange"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="id-rel-042" source="id-role-lead" target="id-proc-report"/>
+    <element xsi:type="archimate:TriggeringRelationship" id="id-rel-043" source="id-event-application" target="id-stage-b2b-contact_search"/>
+    <element xsi:type="archimate:TriggeringRelationship" id="id-rel-044" source="id-event-application" target="id-stage-b2c-lead_intake"/>
+    <element xsi:type="archimate:RealizationRelationship" id="id-rel-045" source="id-proc-b2b" target="id-bsvc-partnership"/>
+    <element xsi:type="archimate:RealizationRelationship" id="id-rel-046" source="id-proc-b2c" target="id-bsvc-learning"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-047" source="id-bsvc-partnership" target="id-actor-univ"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-048" source="id-bsvc-learning" target="id-actor-person"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-049" source="id-proc-b2b" target="id-bo-interaction" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-050" source="id-proc-b2b" target="id-bo-document" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-051" source="id-proc-b2b" target="id-bo-contract" accessType="1"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-052" source="id-proc-b2b" target="id-bo-consent" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-053" source="id-proc-b2c" target="id-bo-interaction" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-054" source="id-proc-exchange" target="id-bo-group" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-055" source="id-proc-report" target="id-bo-snapshot" accessType="1"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-056" source="id-proc-report" target="id-bo-report"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-057" source="id-app-crm" target="id-proc-b2b"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-058" source="id-app-crm" target="id-proc-b2c"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-059" source="id-app-crm" target="id-proc-assign"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-060" source="id-app-crm" target="id-proc-configure"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-061" source="id-app-crm" target="id-proc-exchange"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-062" source="id-app-crm" target="id-proc-report"/>
+    <element xsi:type="archimate:AggregationRelationship" id="id-rel-063" source="id-scene-1" target="id-proc-exchange"/>
+    <element xsi:type="archimate:AggregationRelationship" id="id-rel-064" source="id-scene-1" target="id-event-application"/>
+    <element xsi:type="archimate:AggregationRelationship" id="id-rel-065" source="id-scene-2" target="id-proc-b2b"/>
+    <element xsi:type="archimate:AggregationRelationship" id="id-rel-066" source="id-scene-2" target="id-proc-assign"/>
+    <element xsi:type="archimate:AggregationRelationship" id="id-rel-067" source="id-scene-2" target="id-proc-configure"/>
+    <element xsi:type="archimate:AggregationRelationship" id="id-rel-068" source="id-scene-3" target="id-proc-report"/>
+    <element xsi:type="archimate:AggregationRelationship" id="id-rel-069" source="id-scene-3" target="id-bo-snapshot"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-070" source="id-app-crm" target="id-mod-stages"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-071" source="id-app-crm" target="id-mod-interactions"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-072" source="id-app-crm" target="id-mod-directory"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-073" source="id-app-crm" target="id-mod-people"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-074" source="id-app-crm" target="id-mod-documents"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-075" source="id-app-crm" target="id-mod-stats"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-076" source="id-app-crm" target="id-mod-reports"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-077" source="id-app-crm" target="id-mod-integrations"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-078" source="id-app-crm" target="id-mod-exchange"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-079" source="id-app-crm" target="id-mod-lms"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-080" source="id-app-crm" target="id-mod-notifications"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-081" source="id-app-crm" target="id-mod-search"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-082" source="id-app-crm" target="id-mod-settings"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-083" source="id-app-crm" target="id-mod-demo"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-084" source="id-app-crm" target="id-mod-spreadsheet"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-085" source="id-app-crm" target="id-mod-rbac"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-086" source="id-app-crm" target="id-mod-audit"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-087" source="id-app-crm" target="id-mod-auth"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-088" source="id-app-crm" target="id-mod-api"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-089" source="id-app-crm" target="id-mod-cache"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-090" source="id-app-crm" target="id-mod-db"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-091" source="id-app-crm" target="id-mod-config"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-092" source="id-app-crm" target="id-app-hooks"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-093" source="id-app-crm" target="id-app-pages"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-094" source="id-app-crm" target="id-app-api"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-095" source="id-app-crm" target="id-app-pump"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-096" source="id-app-crm" target="id-app-contracts"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-097" source="id-app-crm" target="id-if-rest"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-098" source="id-app-crm" target="id-if-openapi"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-099" source="id-app-crm" target="id-if-webhook"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-100" source="id-app-crm" target="id-if-intake"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-101" source="id-app-crm" target="id-if-outbound"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-102" source="id-app-crm" target="id-if-smtp"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-103" source="id-mod-integrations" target="id-mod-exchange"/>
+    <element xsi:type="archimate:CompositionRelationship" id="id-rel-104" source="id-mod-integrations" target="id-mod-lms"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-105" source="id-app-pages" target="id-role-kam"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-106" source="id-app-pages" target="id-role-admin"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-107" source="id-if-rest" target="id-ext-cms"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-108" source="id-if-openapi" target="id-role-admin"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-109" source="id-if-webhook" target="id-ext-webhook"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-110" source="id-ext-keycloak" target="id-mod-auth"/>
+    <element xsi:type="archimate:FlowRelationship" name="заявка с сайта" id="id-rel-111" source="id-ext-cms" target="id-if-intake"/>
+    <element xsi:type="archimate:FlowRelationship" name="результат потока" id="id-rel-112" source="id-ext-lms" target="id-if-intake"/>
+    <element xsi:type="archimate:FlowRelationship" name="снимок статуса заявки" id="id-rel-113" source="id-if-outbound" target="id-ext-cms"/>
+    <element xsi:type="archimate:FlowRelationship" name="заявка на учебную группу" id="id-rel-114" source="id-if-outbound" target="id-ext-lms"/>
+    <element xsi:type="archimate:FlowRelationship" name="письмо об эскалации" id="id-rel-115" source="id-if-smtp" target="id-ext-smtp"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-116" source="id-app-hooks" target="id-app-pages"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-117" source="id-app-hooks" target="id-app-api"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-118" source="id-app-contracts" target="id-app-pages"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-119" source="id-app-contracts" target="id-app-api"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-120" source="id-mod-api" target="id-if-rest"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-121" source="id-mod-api" target="id-if-openapi"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-122" source="id-mod-exchange" target="id-if-intake"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-123" source="id-mod-exchange" target="id-if-outbound"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-124" source="id-mod-integrations" target="id-if-webhook"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-125" source="id-mod-notifications" target="id-if-smtp"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-126" source="id-app-pump" target="id-mod-integrations"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-127" source="id-app-pump" target="id-mod-notifications"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-128" source="id-mod-interactions" target="id-mod-stages"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-129" source="id-mod-stages" target="id-mod-interactions"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-130" source="id-mod-stages" target="id-mod-documents"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-131" source="id-mod-documents" target="id-mod-stages"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-132" source="id-mod-directory" target="id-mod-interactions"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-133" source="id-mod-people" target="id-mod-directory"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-134" source="id-mod-interactions" target="id-mod-reports"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-135" source="id-mod-interactions" target="id-mod-exchange"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-136" source="id-mod-directory" target="id-mod-exchange"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-137" source="id-mod-stats" target="id-mod-exchange"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-138" source="id-mod-documents" target="id-mod-stats"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-139" source="id-mod-lms" target="id-mod-stats"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-140" source="id-mod-spreadsheet" target="id-mod-reports"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-141" source="id-mod-spreadsheet" target="id-mod-stats"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-142" source="id-mod-cache" target="id-mod-interactions"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-143" source="id-mod-cache" target="id-mod-directory"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-144" source="id-mod-rbac" target="id-mod-api"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-145" source="id-mod-audit" target="id-mod-api"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-146" source="id-mod-config" target="id-mod-db"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-147" source="id-mod-stages" target="id-data-interactions" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-148" source="id-mod-interactions" target="id-data-interactions" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-149" source="id-mod-reports" target="id-data-interactions" accessType="1"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-150" source="id-mod-directory" target="id-data-directory" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-151" source="id-mod-people" target="id-data-directory" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-152" source="id-mod-documents" target="id-data-documents" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-153" source="id-mod-documents" target="id-data-files" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-154" source="id-mod-stats" target="id-data-stats" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-155" source="id-mod-stats" target="id-data-documents"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-156" source="id-mod-exchange" target="id-data-exchange" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-157" source="id-mod-audit" target="id-data-audit"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-158" source="id-mod-rbac" target="id-data-auth" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-159" source="id-mod-auth" target="id-data-auth" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-160" source="id-mod-api" target="id-data-apikeys" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-161" source="id-mod-settings" target="id-data-settings" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-162" source="id-mod-notifications" target="id-data-notifications" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-163" source="id-mod-auth" target="id-data-redis" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-164" source="id-mod-cache" target="id-data-redis" accessType="3"/>
+    <element xsi:type="archimate:AccessRelationship" id="id-rel-165" source="id-mod-integrations" target="id-data-redis" accessType="3"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-166" source="id-node-nginx" target="id-node-browser"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-167" source="id-node-nginx" target="id-node-cms-real"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-168" source="id-node-nginx" target="id-node-lms-real"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-169" source="id-node-app" target="id-node-nginx"/>
+    <element xsi:type="archimate:AssociationRelationship" id="id-rel-170" source="id-node-browser" target="id-net-internet"/>
+    <element xsi:type="archimate:AssociationRelationship" id="id-rel-171" source="id-node-nginx" target="id-net-internet"/>
+    <element xsi:type="archimate:AssociationRelationship" id="id-rel-172" source="id-node-app" target="id-net-compose"/>
+    <element xsi:type="archimate:FlowRelationship" name="снимок статуса заявки" id="id-rel-173" source="id-node-app" target="id-node-cms-real"/>
+    <element xsi:type="archimate:FlowRelationship" name="заявка на учебную группу" id="id-rel-174" source="id-node-app" target="id-node-lms-real"/>
+    <element xsi:type="archimate:FlowRelationship" name="письмо об эскалации" id="id-rel-175" source="id-node-app" target="id-node-smtp-real"/>
+    <element xsi:type="archimate:RealizationRelationship" id="id-rel-176" source="id-node-postgres" target="id-tsvc-db"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-177" source="id-tsvc-db" target="id-node-app"/>
+    <element xsi:type="archimate:RealizationRelationship" id="id-rel-178" source="id-node-redis" target="id-tsvc-cache"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-179" source="id-tsvc-cache" target="id-node-app"/>
+    <element xsi:type="archimate:RealizationRelationship" id="id-rel-180" source="id-node-minio" target="id-tsvc-files"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-181" source="id-tsvc-files" target="id-node-app"/>
+    <element xsi:type="archimate:RealizationRelationship" id="id-rel-182" source="id-node-keycloak" target="id-tsvc-oidc"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-183" source="id-tsvc-oidc" target="id-node-app"/>
+    <element xsi:type="archimate:RealizationRelationship" id="id-rel-184" source="id-node-gotenberg" target="id-tsvc-pdf"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-185" source="id-tsvc-pdf" target="id-node-app"/>
+    <element xsi:type="archimate:RealizationRelationship" id="id-rel-186" source="id-node-mailpit" target="id-tsvc-mail"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-187" source="id-tsvc-mail" target="id-node-app"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="id-rel-188" source="id-node-app" target="id-art-migrations"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="id-rel-189" source="id-node-app" target="id-art-templates"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="id-rel-190" source="id-node-keycloak" target="id-art-realm"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="id-rel-191" source="id-node-postgres" target="id-art-volumes"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="id-rel-192" source="id-node-redis" target="id-art-volumes"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="id-rel-193" source="id-node-minio" target="id-art-volumes"/>
+    <element xsi:type="archimate:RealizationRelationship" id="id-rel-194" source="id-art-image" target="id-app-crm"/>
+    <element xsi:type="archimate:AssociationRelationship" id="id-rel-195" source="id-node-replica" target="id-net-compose"/>
+    <element xsi:type="archimate:ServingRelationship" id="id-rel-196" source="id-node-replica" target="id-node-nginx"/>
+    <element xsi:type="archimate:FlowRelationship" name="на стенде вместо CMS" id="id-rel-197" source="id-node-app" target="id-node-mockcms"/>
+    <element xsi:type="archimate:FlowRelationship" name="на стенде вместо LMS" id="id-rel-198" source="id-node-app" target="id-node-mocklms"/>
+  </folder>
+  <folder name="Views" id="id-folder-views" type="diagrams">
+    <element xsi:type="archimate:ArchimateDiagramModel" name="1. Бизнес: роли, процесс и три сцены" id="id-view-business">
+      <child xsi:type="archimate:Group" id="id-view-business-g001" name="Роли (каталог прав RBAC)">
+        <bounds x="24" y="24" width="320" height="450"/>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o002" archimateElement="id-role-kam">
+          <bounds x="20" y="44" width="280" height="84"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c053" source="id-view-business-o002" target="id-view-business-o011" archimateRelationship="id-rel-037"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c054" source="id-view-business-o002" target="id-view-business-o026" archimateRelationship="id-rel-038"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o003" archimateElement="id-role-lead">
+          <bounds x="20" y="140" width="280" height="84"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c055" source="id-view-business-o003" target="id-view-business-o032" archimateRelationship="id-rel-039"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c058" source="id-view-business-o003" target="id-view-business-o035" archimateRelationship="id-rel-042"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o004" archimateElement="id-role-admin">
+          <bounds x="20" y="236" width="280" height="84"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c056" source="id-view-business-o004" target="id-view-business-o033" archimateRelationship="id-rel-040"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o005" archimateElement="id-role-service">
+          <bounds x="20" y="332" width="280" height="84"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c057" source="id-view-business-o005" target="id-view-business-o034" archimateRelationship="id-rel-041"/>
+        </child>
+      </child>
+      <child xsi:type="archimate:Group" id="id-view-business-g006" name="Контрагенты">
+        <bounds x="24" y="496" width="320" height="200"/>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o007" targetConnections="id-view-business-c063" archimateElement="id-actor-univ">
+          <bounds x="20" y="44" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o008" targetConnections="id-view-business-c064" archimateElement="id-actor-person">
+          <bounds x="20" y="120" width="280" height="64"/>
+        </child>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o009" targetConnections="id-view-business-c076" archimateElement="id-event-application">
+        <bounds x="24" y="720" width="320" height="70"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c059" source="id-view-business-o009" target="id-view-business-o012" archimateRelationship="id-rel-043"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c060" source="id-view-business-o009" target="id-view-business-o027" archimateRelationship="id-rel-044"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o010" archimateElement="id-app-crm">
+        <bounds x="24" y="830" width="320" height="84"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c073" source="id-view-business-o010" target="id-view-business-o011" archimateRelationship="id-rel-057"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c074" source="id-view-business-o010" target="id-view-business-o026" archimateRelationship="id-rel-058"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o011" targetConnections="id-view-business-c053 id-view-business-c073 id-view-business-c077" archimateElement="id-proc-b2b">
+        <bounds x="400" y="24" width="1560" height="320"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c061" source="id-view-business-o011" target="id-view-business-o036" archimateRelationship="id-rel-045"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c065" source="id-view-business-o011" target="id-view-business-o038" archimateRelationship="id-rel-049"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c066" source="id-view-business-o011" target="id-view-business-o040" archimateRelationship="id-rel-050"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c067" source="id-view-business-o011" target="id-view-business-o039" archimateRelationship="id-rel-051"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c068" source="id-view-business-o011" target="id-view-business-o044" archimateRelationship="id-rel-052"/>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o012" targetConnections="id-view-business-c059" archimateElement="id-stage-b2b-contact_search">
+          <bounds x="20" y="60" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o013" archimateElement="id-stage-b2b-communication">
+          <bounds x="320" y="60" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o014" archimateElement="id-stage-b2b-meeting">
+          <bounds x="620" y="60" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o015" archimateElement="id-stage-b2b-document_exchange">
+          <bounds x="920" y="60" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o016" archimateElement="id-stage-b2b-document_revision">
+          <bounds x="1220" y="60" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o017" archimateElement="id-stage-b2b-signing">
+          <bounds x="20" y="146" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o018" archimateElement="id-stage-b2b-materials_handover">
+          <bounds x="320" y="146" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o019" archimateElement="id-stage-b2b-implementation_support">
+          <bounds x="620" y="146" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o020" archimateElement="id-stage-b2b-teacher_training">
+          <bounds x="920" y="146" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o021" archimateElement="id-stage-b2b-program_update">
+          <bounds x="1220" y="146" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o022" archimateElement="id-stage-b2b-classes">
+          <bounds x="20" y="232" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o023" archimateElement="id-stage-b2b-documentation_update">
+          <bounds x="320" y="232" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o024" archimateElement="id-stage-b2b-qualification_upgrade">
+          <bounds x="620" y="232" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o025" archimateElement="id-stage-b2b-execution_control">
+          <bounds x="920" y="232" width="280" height="64"/>
+        </child>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o026" targetConnections="id-view-business-c054 id-view-business-c074" archimateElement="id-proc-b2c">
+        <bounds x="400" y="400" width="1560" height="144"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c062" source="id-view-business-o026" target="id-view-business-o037" archimateRelationship="id-rel-046"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c069" source="id-view-business-o026" target="id-view-business-o038" archimateRelationship="id-rel-053"/>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o027" targetConnections="id-view-business-c060" archimateElement="id-stage-b2c-lead_intake">
+          <bounds x="20" y="60" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o028" archimateElement="id-stage-b2c-offer">
+          <bounds x="320" y="60" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o029" archimateElement="id-stage-b2c-contract_payment">
+          <bounds x="620" y="60" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o030" archimateElement="id-stage-b2c-learning">
+          <bounds x="920" y="60" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o031" archimateElement="id-stage-b2c-completion">
+          <bounds x="1220" y="60" width="280" height="64"/>
+        </child>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o032" targetConnections="id-view-business-c055 id-view-business-c078" archimateElement="id-proc-assign">
+        <bounds x="400" y="580" width="360" height="80"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o033" targetConnections="id-view-business-c056 id-view-business-c079" archimateElement="id-proc-configure">
+        <bounds x="790" y="580" width="360" height="80"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o034" targetConnections="id-view-business-c057 id-view-business-c075" archimateElement="id-proc-exchange">
+        <bounds x="1180" y="580" width="360" height="80"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c070" source="id-view-business-o034" target="id-view-business-o041" archimateRelationship="id-rel-054"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o035" targetConnections="id-view-business-c058 id-view-business-c080" archimateElement="id-proc-report">
+        <bounds x="1570" y="580" width="390" height="80"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c071" source="id-view-business-o035" target="id-view-business-o042" archimateRelationship="id-rel-055"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c072" source="id-view-business-o035" target="id-view-business-o043" archimateRelationship="id-rel-056"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o036" targetConnections="id-view-business-c061" archimateElement="id-bsvc-partnership">
+        <bounds x="2010" y="44" width="320" height="80"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c063" source="id-view-business-o036" target="id-view-business-o007" archimateRelationship="id-rel-047"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o037" targetConnections="id-view-business-c062" archimateElement="id-bsvc-learning">
+        <bounds x="2010" y="150" width="320" height="80"/>
+        <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c064" source="id-view-business-o037" target="id-view-business-o008" archimateRelationship="id-rel-048"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o038" targetConnections="id-view-business-c065 id-view-business-c069" archimateElement="id-bo-interaction">
+        <bounds x="2010" y="270" width="320" height="64"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o039" targetConnections="id-view-business-c067" archimateElement="id-bo-contract">
+        <bounds x="2010" y="346" width="320" height="64"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o040" targetConnections="id-view-business-c066" archimateElement="id-bo-document">
+        <bounds x="2010" y="422" width="320" height="64"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o041" targetConnections="id-view-business-c070" archimateElement="id-bo-group">
+        <bounds x="2010" y="498" width="320" height="64"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o042" targetConnections="id-view-business-c071 id-view-business-c081" archimateElement="id-bo-snapshot">
+        <bounds x="2010" y="574" width="320" height="64"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o043" targetConnections="id-view-business-c072" archimateElement="id-bo-report">
+        <bounds x="2010" y="650" width="320" height="64"/>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-business-o044" targetConnections="id-view-business-c068" archimateElement="id-bo-consent">
+        <bounds x="2010" y="726" width="320" height="64"/>
+      </child>
+      <child xsi:type="archimate:Group" id="id-view-business-g045" name="Три сцены показа (README, раздел «Три сцены»)">
+        <bounds x="400" y="700" width="1560" height="270"/>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o046" archimateElement="id-scene-1">
+          <bounds x="20" y="44" width="490" height="84"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c075" source="id-view-business-o046" target="id-view-business-o034" archimateRelationship="id-rel-063"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c076" source="id-view-business-o046" target="id-view-business-o009" archimateRelationship="id-rel-064"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o047" archimateElement="id-scene-2">
+          <bounds x="530" y="44" width="490" height="84"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c077" source="id-view-business-o047" target="id-view-business-o011" archimateRelationship="id-rel-065"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c078" source="id-view-business-o047" target="id-view-business-o032" archimateRelationship="id-rel-066"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c079" source="id-view-business-o047" target="id-view-business-o033" archimateRelationship="id-rel-067"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-business-o048" archimateElement="id-scene-3">
+          <bounds x="1040" y="44" width="490" height="84"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c080" source="id-view-business-o048" target="id-view-business-o035" archimateRelationship="id-rel-068"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-business-c081" source="id-view-business-o048" target="id-view-business-o042" archimateRelationship="id-rel-069"/>
+        </child>
+        <child xsi:type="archimate:Note" id="id-view-business-n049" textAlignment="1" fillColor="#fffde7">
+          <bounds x="20" y="136" width="490" height="116"/>
+          <content>Заявка с сайта становится взаимодействием; снимок статуса уходит обратно в CMS; учебная группа заводится в системе обучения кнопкой с карточки; результат потока приходит сам и подтверждает стадию «Ведение занятий», не двигая взаимодействие.</content>
+        </child>
+        <child xsi:type="archimate:Note" id="id-view-business-n050" textAlignment="1" fillColor="#fffde7">
+          <bounds x="530" y="136" width="490" height="116"/>
+          <content>Карточка отвечает на четыре вопроса и объясняет словами каждую недоступную кнопку. Руководитель меняет ответственного — доступ меняется в ту же секунду. Администратор правит процесс черновиком, смотрит предпросмотр и применяет ко всем.</content>
+        </child>
+        <child xsi:type="archimate:Note" id="id-view-business-n051" textAlignment="1" fillColor="#fffde7">
+          <bounds x="1040" y="136" width="490" height="116"/>
+          <content>Срез и движение за период, фильтры и колонки в адресной строке, четыре формата выгрузки из одного отчёта. Показатели считаются только по подтверждённым снимкам; записанный ноль и отсутствие данных различаются словами.</content>
+        </child>
+      </child>
+      <child xsi:type="archimate:Note" id="id-view-business-n052" textAlignment="1" fillColor="#fffde7">
+        <bounds x="2010" y="830" width="320" height="180"/>
+        <content>Стадии и переходы внутри процесса — это его действующая редакция (`process_revisions`), а не код: администратор правит их черновиком и применяет ко всем. Порядок стадий задан их позицией, переходы бывают «вперёд», «возврат» и «пропуск»; последние два требуют причины.</content>
+      </child>
+      <documentation>Кто работает в системе, по какому процессу идёт работа с контрагентом и что показывают три сцены демонстрации. Стадии внутри процессов — его редакция, а не код: состав и нормативы меняет администратор. На виде нарисованы не все связи модели: состав процесса и порядок стадий показаны вложенностью и нумерацией, остальные связи видны в дереве модели.</documentation>
+    </element>
+    <element xsi:type="archimate:ArchimateDiagramModel" name="2. Приложение: модули, контракты и интерфейсы" id="id-view-application">
+      <child xsi:type="archimate:Group" id="id-view-application-g001" name="Кто пользуется интерфейсом">
+        <bounds x="24" y="24" width="320" height="200"/>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o002" targetConnections="id-view-application-c061" archimateElement="id-role-kam">
+          <bounds x="20" y="44" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o003" targetConnections="id-view-application-c062 id-view-application-c064" archimateElement="id-role-admin">
+          <bounds x="20" y="120" width="280" height="64"/>
+        </child>
+      </child>
+      <child xsi:type="archimate:Group" id="id-view-application-g004" name="Внешние системы">
+        <bounds x="2140" y="380" width="330" height="470"/>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o005" targetConnections="id-view-application-c063 id-view-application-c069" archimateElement="id-ext-cms">
+          <bounds x="20" y="50" width="290" height="64"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c067" source="id-view-application-o005" target="id-view-application-o038" archimateRelationship="id-rel-111"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o006" targetConnections="id-view-application-c070" archimateElement="id-ext-lms">
+          <bounds x="20" y="126" width="290" height="64"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c068" source="id-view-application-o006" target="id-view-application-o038" archimateRelationship="id-rel-112"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o007" archimateElement="id-ext-keycloak">
+          <bounds x="20" y="202" width="290" height="64"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c066" source="id-view-application-o007" target="id-view-application-o034" archimateRelationship="id-rel-110"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o008" targetConnections="id-view-application-c065" archimateElement="id-ext-webhook">
+          <bounds x="20" y="278" width="290" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o009" targetConnections="id-view-application-c071" archimateElement="id-ext-smtp">
+          <bounds x="20" y="354" width="290" height="64"/>
+        </child>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-application-o010" archimateElement="id-app-crm">
+        <bounds x="400" y="24" width="1700" height="800"/>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o011" archimateElement="id-app-hooks">
+          <bounds x="20" y="56" width="390" height="70"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c072" source="id-view-application-o011" target="id-view-application-o012" archimateRelationship="id-rel-116"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c073" source="id-view-application-o011" target="id-view-application-o013" archimateRelationship="id-rel-117"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o012" targetConnections="id-view-application-c072 id-view-application-c074" archimateElement="id-app-pages">
+          <bounds x="430" y="56" width="390" height="70"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c061" source="id-view-application-o012" target="id-view-application-o002" archimateRelationship="id-rel-105"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c062" source="id-view-application-o012" target="id-view-application-o003" archimateRelationship="id-rel-106"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o013" targetConnections="id-view-application-c073 id-view-application-c075" archimateElement="id-app-api">
+          <bounds x="840" y="56" width="390" height="70"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o014" archimateElement="id-app-pump">
+          <bounds x="1250" y="56" width="430" height="70"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c082" source="id-view-application-o014" target="id-view-application-o025" archimateRelationship="id-rel-126"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c083" source="id-view-application-o014" target="id-view-application-o028" archimateRelationship="id-rel-127"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o015" archimateElement="id-app-contracts">
+          <bounds x="20" y="146" width="390" height="64"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c074" source="id-view-application-o015" target="id-view-application-o012" archimateRelationship="id-rel-118"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c075" source="id-view-application-o015" target="id-view-application-o013" archimateRelationship="id-rel-119"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o016" targetConnections="id-view-application-c086" archimateElement="id-mod-documents">
+          <bounds x="20" y="250" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c087" source="id-view-application-o016" target="id-view-application-o017" archimateRelationship="id-rel-131"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c094" source="id-view-application-o016" target="id-view-application-o021" archimateRelationship="id-rel-138"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c108" source="id-view-application-o016" target="id-view-application-o048" archimateRelationship="id-rel-152"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c109" source="id-view-application-o016" target="id-view-application-o057" archimateRelationship="id-rel-153"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o017" targetConnections="id-view-application-c084 id-view-application-c087" archimateElement="id-mod-stages">
+          <bounds x="356" y="250" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c085" source="id-view-application-o017" target="id-view-application-o018" archimateRelationship="id-rel-129"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c086" source="id-view-application-o017" target="id-view-application-o016" archimateRelationship="id-rel-130"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c103" source="id-view-application-o017" target="id-view-application-o046" archimateRelationship="id-rel-147"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o018" targetConnections="id-view-application-c085 id-view-application-c088 id-view-application-c098" archimateElement="id-mod-interactions">
+          <bounds x="692" y="250" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c084" source="id-view-application-o018" target="id-view-application-o017" archimateRelationship="id-rel-128"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c090" source="id-view-application-o018" target="id-view-application-o024" archimateRelationship="id-rel-134"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c091" source="id-view-application-o018" target="id-view-application-o023" archimateRelationship="id-rel-135"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c104" source="id-view-application-o018" target="id-view-application-o046" archimateRelationship="id-rel-148"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o019" targetConnections="id-view-application-c089 id-view-application-c099" archimateElement="id-mod-directory">
+          <bounds x="1028" y="250" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c088" source="id-view-application-o019" target="id-view-application-o018" archimateRelationship="id-rel-132"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c092" source="id-view-application-o019" target="id-view-application-o023" archimateRelationship="id-rel-136"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c106" source="id-view-application-o019" target="id-view-application-o047" archimateRelationship="id-rel-150"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o020" archimateElement="id-mod-people">
+          <bounds x="1364" y="250" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c089" source="id-view-application-o020" target="id-view-application-o019" archimateRelationship="id-rel-133"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c107" source="id-view-application-o020" target="id-view-application-o047" archimateRelationship="id-rel-151"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o021" targetConnections="id-view-application-c094 id-view-application-c095 id-view-application-c097" archimateElement="id-mod-stats">
+          <bounds x="20" y="332" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c093" source="id-view-application-o021" target="id-view-application-o023" archimateRelationship="id-rel-137"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c110" source="id-view-application-o021" target="id-view-application-o049" archimateRelationship="id-rel-154"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c111" source="id-view-application-o021" target="id-view-application-o048" archimateRelationship="id-rel-155"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o022" archimateElement="id-mod-lms">
+          <bounds x="356" y="332" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c095" source="id-view-application-o022" target="id-view-application-o021" archimateRelationship="id-rel-139"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o023" targetConnections="id-view-application-c091 id-view-application-c092 id-view-application-c093" archimateElement="id-mod-exchange">
+          <bounds x="692" y="332" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c078" source="id-view-application-o023" target="id-view-application-o038" archimateRelationship="id-rel-122"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c079" source="id-view-application-o023" target="id-view-application-o039" archimateRelationship="id-rel-123"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c112" source="id-view-application-o023" target="id-view-application-o050" archimateRelationship="id-rel-156"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o024" targetConnections="id-view-application-c090 id-view-application-c096" archimateElement="id-mod-reports">
+          <bounds x="1028" y="332" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c105" source="id-view-application-o024" target="id-view-application-o046" archimateRelationship="id-rel-149"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o025" targetConnections="id-view-application-c082" archimateElement="id-mod-integrations">
+          <bounds x="1364" y="332" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c080" source="id-view-application-o025" target="id-view-application-o042" archimateRelationship="id-rel-124"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c121" source="id-view-application-o025" target="id-view-application-o056" archimateRelationship="id-rel-165"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o026" archimateElement="id-mod-spreadsheet">
+          <bounds x="20" y="414" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c096" source="id-view-application-o026" target="id-view-application-o024" archimateRelationship="id-rel-140"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c097" source="id-view-application-o026" target="id-view-application-o021" archimateRelationship="id-rel-141"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o027" archimateElement="id-mod-search">
+          <bounds x="356" y="414" width="316" height="66"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o028" targetConnections="id-view-application-c083" archimateElement="id-mod-notifications">
+          <bounds x="692" y="414" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c081" source="id-view-application-o028" target="id-view-application-o041" archimateRelationship="id-rel-125"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c118" source="id-view-application-o028" target="id-view-application-o055" archimateRelationship="id-rel-162"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o029" archimateElement="id-mod-settings">
+          <bounds x="1028" y="414" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c117" source="id-view-application-o029" target="id-view-application-o054" archimateRelationship="id-rel-161"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o030" archimateElement="id-mod-demo">
+          <bounds x="1364" y="414" width="316" height="66"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o031" archimateElement="id-mod-cache">
+          <bounds x="20" y="496" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c098" source="id-view-application-o031" target="id-view-application-o018" archimateRelationship="id-rel-142"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c099" source="id-view-application-o031" target="id-view-application-o019" archimateRelationship="id-rel-143"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c120" source="id-view-application-o031" target="id-view-application-o056" archimateRelationship="id-rel-164"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o032" archimateElement="id-mod-rbac">
+          <bounds x="356" y="496" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c100" source="id-view-application-o032" target="id-view-application-o035" archimateRelationship="id-rel-144"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c114" source="id-view-application-o032" target="id-view-application-o052" archimateRelationship="id-rel-158"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o033" archimateElement="id-mod-audit">
+          <bounds x="692" y="496" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c101" source="id-view-application-o033" target="id-view-application-o035" archimateRelationship="id-rel-145"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c113" source="id-view-application-o033" target="id-view-application-o051" archimateRelationship="id-rel-157"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o034" targetConnections="id-view-application-c066" archimateElement="id-mod-auth">
+          <bounds x="1028" y="496" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c115" source="id-view-application-o034" target="id-view-application-o052" archimateRelationship="id-rel-159"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c119" source="id-view-application-o034" target="id-view-application-o056" archimateRelationship="id-rel-163"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o035" targetConnections="id-view-application-c100 id-view-application-c101" archimateElement="id-mod-api">
+          <bounds x="1364" y="496" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c076" source="id-view-application-o035" target="id-view-application-o040" archimateRelationship="id-rel-120"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c077" source="id-view-application-o035" target="id-view-application-o043" archimateRelationship="id-rel-121"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c116" source="id-view-application-o035" target="id-view-application-o053" archimateRelationship="id-rel-160"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o036" targetConnections="id-view-application-c102" archimateElement="id-mod-db">
+          <bounds x="20" y="578" width="316" height="66"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o037" archimateElement="id-mod-config">
+          <bounds x="356" y="578" width="316" height="66"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c102" source="id-view-application-o037" target="id-view-application-o036" archimateRelationship="id-rel-146"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o038" targetConnections="id-view-application-c067 id-view-application-c068 id-view-application-c078" archimateElement="id-if-intake">
+          <bounds x="692" y="612" width="316" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o039" targetConnections="id-view-application-c079" archimateElement="id-if-outbound">
+          <bounds x="1028" y="612" width="316" height="64"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c069" source="id-view-application-o039" target="id-view-application-o005" archimateRelationship="id-rel-113"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c070" source="id-view-application-o039" target="id-view-application-o006" archimateRelationship="id-rel-114"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o040" targetConnections="id-view-application-c076" archimateElement="id-if-rest">
+          <bounds x="1364" y="612" width="316" height="64"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c063" source="id-view-application-o040" target="id-view-application-o005" archimateRelationship="id-rel-107"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o041" targetConnections="id-view-application-c081" archimateElement="id-if-smtp">
+          <bounds x="692" y="700" width="316" height="64"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c071" source="id-view-application-o041" target="id-view-application-o009" archimateRelationship="id-rel-115"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o042" targetConnections="id-view-application-c080" archimateElement="id-if-webhook">
+          <bounds x="1028" y="700" width="316" height="64"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c065" source="id-view-application-o042" target="id-view-application-o008" archimateRelationship="id-rel-109"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o043" targetConnections="id-view-application-c077" archimateElement="id-if-openapi">
+          <bounds x="1364" y="700" width="316" height="64"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-application-c064" source="id-view-application-o043" target="id-view-application-o003" archimateRelationship="id-rel-108"/>
+        </child>
+        <child xsi:type="archimate:Note" id="id-view-application-n044" textAlignment="1" fillColor="#fffde7">
+          <bounds x="20" y="612" width="652" height="152"/>
+          <content>Слоёв три, и граница между ними одна и та же везде: транспорт (хуки, страницы и формы, API, цикл интеграций) → сервисы `src/lib/server/*` → данные. Сервис принимает `(ctx: ActorContext, input)`, не смотрит в `locals`, не читает заголовки и не строит ответ: он бросает предметную ошибку, а в ответ её превращает транспорт.</content>
+        </child>
+      </child>
+      <child xsi:type="archimate:Group" id="id-view-application-g045" name="Владельцы данных (PostgreSQL, Redis, S3)">
+        <bounds x="400" y="860" width="1700" height="290"/>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o046" targetConnections="id-view-application-c103 id-view-application-c104 id-view-application-c105" archimateElement="id-data-interactions">
+          <bounds x="356" y="50" width="316" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o047" targetConnections="id-view-application-c106 id-view-application-c107" archimateElement="id-data-directory">
+          <bounds x="1028" y="50" width="316" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o048" targetConnections="id-view-application-c108 id-view-application-c111" archimateElement="id-data-documents">
+          <bounds x="20" y="50" width="316" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o049" targetConnections="id-view-application-c110" archimateElement="id-data-stats">
+          <bounds x="20" y="126" width="316" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o050" targetConnections="id-view-application-c112" archimateElement="id-data-exchange">
+          <bounds x="692" y="50" width="316" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o051" targetConnections="id-view-application-c113" archimateElement="id-data-audit">
+          <bounds x="692" y="126" width="316" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o052" targetConnections="id-view-application-c114 id-view-application-c115" archimateElement="id-data-auth">
+          <bounds x="356" y="126" width="316" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o053" targetConnections="id-view-application-c116" archimateElement="id-data-apikeys">
+          <bounds x="1364" y="50" width="316" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o054" targetConnections="id-view-application-c117" archimateElement="id-data-settings">
+          <bounds x="1028" y="126" width="316" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o055" targetConnections="id-view-application-c118" archimateElement="id-data-notifications">
+          <bounds x="692" y="202" width="316" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o056" targetConnections="id-view-application-c119 id-view-application-c120 id-view-application-c121" archimateElement="id-data-redis">
+          <bounds x="1364" y="126" width="316" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-application-o057" targetConnections="id-view-application-c109" archimateElement="id-data-files">
+          <bounds x="20" y="202" width="316" height="64"/>
+        </child>
+      </child>
+      <child xsi:type="archimate:Note" id="id-view-application-n058" textAlignment="1" fillColor="#fffde7">
+        <bounds x="24" y="254" width="320" height="210"/>
+        <content>Нарисованы проверенные связи, а не все: право (`rbac`) спрашивают все модули до данных, событие в журнал (`audit`) пишут все команды, `db` открывает единственную границу транзакции. Полная таблица «модуль → от кого зависит» — в `docs/architecture.md`.</content>
+      </child>
+      <child xsi:type="archimate:Note" id="id-view-application-n059" textAlignment="1" fillColor="#fffde7">
+        <bounds x="24" y="484" width="320" height="210"/>
+        <content>Контракты Zod проверяют и форму в браузере, и тело запроса к API, и строку импорта из файла. Ответ API проверяется своей схемой перед отправкой: не сошёлся — 500, а не «почти правильный» ответ наружу.</content>
+      </child>
+      <child xsi:type="archimate:Note" id="id-view-application-n060" textAlignment="1" fillColor="#fffde7">
+        <bounds x="24" y="714" width="320" height="190"/>
+        <content>Область доступа входит в ключ кэша и в каждый запрос: вуз вне области отвечает «не найдено», а не отказом — иначе перебором идентификаторов было бы видно, что лежит за границей.</content>
+      </child>
+      <documentation>Модульный монолит изнутри: транспорт, сервисы `src/lib/server/*`, общие контракты Zod, интерфейсы наружу и владельцы данных. Зависимости идут в одну сторону; связи на виде — проверенные вызовы, полная таблица зависимостей в `docs/architecture.md`.</documentation>
+    </element>
+    <element xsi:type="archimate:ArchimateDiagramModel" name="3. Технология и развёртывание" id="id-view-technology">
+      <child xsi:type="archimate:Group" id="id-view-technology-g001" name="Снаружи">
+        <bounds x="24" y="24" width="320" height="500"/>
+        <child xsi:type="archimate:DiagramObject" id="id-view-technology-o002" targetConnections="id-view-technology-c039" archimateElement="id-node-browser">
+          <bounds x="20" y="44" width="280" height="64"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c043" source="id-view-technology-o002" target="id-view-technology-o006" archimateRelationship="id-rel-170"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-technology-o003" targetConnections="id-view-technology-c040 id-view-technology-c046" archimateElement="id-node-cms-real">
+          <bounds x="20" y="120" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-technology-o004" targetConnections="id-view-technology-c041 id-view-technology-c047" archimateElement="id-node-lms-real">
+          <bounds x="20" y="196" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-technology-o005" targetConnections="id-view-technology-c048" archimateElement="id-node-smtp-real">
+          <bounds x="20" y="272" width="280" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-technology-o006" targetConnections="id-view-technology-c043 id-view-technology-c044" archimateElement="id-net-internet">
+          <bounds x="20" y="360" width="280" height="64"/>
+        </child>
+      </child>
+      <child xsi:type="archimate:DiagramObject" id="id-view-technology-o007" archimateElement="id-node-host">
+        <bounds x="400" y="24" width="1740" height="740"/>
+        <child xsi:type="archimate:DiagramObject" id="id-view-technology-o008" targetConnections="id-view-technology-c042 id-view-technology-c069" archimateElement="id-node-nginx">
+          <bounds x="20" y="56" width="500" height="76"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c039" source="id-view-technology-o008" target="id-view-technology-o002" archimateRelationship="id-rel-166"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c040" source="id-view-technology-o008" target="id-view-technology-o003" archimateRelationship="id-rel-167"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c041" source="id-view-technology-o008" target="id-view-technology-o004" archimateRelationship="id-rel-168"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c044" source="id-view-technology-o008" target="id-view-technology-o006" archimateRelationship="id-rel-171"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-technology-o009" targetConnections="id-view-technology-c050 id-view-technology-c052 id-view-technology-c054 id-view-technology-c056 id-view-technology-c058 id-view-technology-c060" archimateElement="id-node-app">
+          <bounds x="20" y="160" width="500" height="216"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c042" source="id-view-technology-o009" target="id-view-technology-o008" archimateRelationship="id-rel-169"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c045" source="id-view-technology-o009" target="id-view-technology-o013" archimateRelationship="id-rel-172"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c046" source="id-view-technology-o009" target="id-view-technology-o003" archimateRelationship="id-rel-173"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c047" source="id-view-technology-o009" target="id-view-technology-o004" archimateRelationship="id-rel-174"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c048" source="id-view-technology-o009" target="id-view-technology-o005" archimateRelationship="id-rel-175"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c061" source="id-view-technology-o009" target="id-view-technology-o033" archimateRelationship="id-rel-188"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c062" source="id-view-technology-o009" target="id-view-technology-o034" archimateRelationship="id-rel-189"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c070" source="id-view-technology-o009" target="id-view-technology-o021" archimateRelationship="id-rel-197"/>
+          <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c071" source="id-view-technology-o009" target="id-view-technology-o022" archimateRelationship="id-rel-198"/>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o010" archimateElement="id-sw-node">
+            <bounds x="16" y="46" width="468" height="50"/>
+          </child>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o011" targetConnections="id-view-technology-c067" archimateElement="id-app-crm">
+            <bounds x="16" y="104" width="468" height="50"/>
+          </child>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o012" archimateElement="id-art-image">
+            <bounds x="16" y="162" width="468" height="44"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c067" source="id-view-technology-o012" target="id-view-technology-o011" archimateRelationship="id-rel-194"/>
+          </child>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-technology-o013" targetConnections="id-view-technology-c045 id-view-technology-c068" archimateElement="id-net-compose">
+          <bounds x="560" y="56" width="480" height="64"/>
+        </child>
+        <child xsi:type="archimate:Group" id="id-view-technology-g014" name="Закрытый контур: только внутри сети Compose, наружу не публикуется">
+          <bounds x="560" y="150" width="1150" height="540"/>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o015" archimateElement="id-node-postgres">
+            <bounds x="20" y="50" width="350" height="70"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c049" source="id-view-technology-o015" target="id-view-technology-o023" archimateRelationship="id-rel-176"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c064" source="id-view-technology-o015" target="id-view-technology-o036" archimateRelationship="id-rel-191"/>
+          </child>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o016" archimateElement="id-node-redis">
+            <bounds x="390" y="50" width="350" height="70"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c051" source="id-view-technology-o016" target="id-view-technology-o024" archimateRelationship="id-rel-178"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c065" source="id-view-technology-o016" target="id-view-technology-o036" archimateRelationship="id-rel-192"/>
+          </child>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o017" archimateElement="id-node-minio">
+            <bounds x="760" y="50" width="350" height="70"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c053" source="id-view-technology-o017" target="id-view-technology-o025" archimateRelationship="id-rel-180"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c066" source="id-view-technology-o017" target="id-view-technology-o036" archimateRelationship="id-rel-193"/>
+          </child>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o018" archimateElement="id-node-keycloak">
+            <bounds x="20" y="136" width="350" height="70"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c055" source="id-view-technology-o018" target="id-view-technology-o026" archimateRelationship="id-rel-182"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c063" source="id-view-technology-o018" target="id-view-technology-o035" archimateRelationship="id-rel-190"/>
+          </child>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o019" archimateElement="id-node-gotenberg">
+            <bounds x="390" y="136" width="350" height="70"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c057" source="id-view-technology-o019" target="id-view-technology-o027" archimateRelationship="id-rel-184"/>
+          </child>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o020" archimateElement="id-node-mailpit">
+            <bounds x="760" y="136" width="350" height="70"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c059" source="id-view-technology-o020" target="id-view-technology-o028" archimateRelationship="id-rel-186"/>
+          </child>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o021" targetConnections="id-view-technology-c070" archimateElement="id-node-mockcms">
+            <bounds x="20" y="222" width="350" height="70"/>
+          </child>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o022" targetConnections="id-view-technology-c071" archimateElement="id-node-mocklms">
+            <bounds x="390" y="222" width="350" height="70"/>
+          </child>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o023" targetConnections="id-view-technology-c049" archimateElement="id-tsvc-db">
+            <bounds x="20" y="330" width="350" height="70"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c050" source="id-view-technology-o023" target="id-view-technology-o009" archimateRelationship="id-rel-177"/>
+          </child>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o024" targetConnections="id-view-technology-c051" archimateElement="id-tsvc-cache">
+            <bounds x="390" y="330" width="350" height="70"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c052" source="id-view-technology-o024" target="id-view-technology-o009" archimateRelationship="id-rel-179"/>
+          </child>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o025" targetConnections="id-view-technology-c053" archimateElement="id-tsvc-files">
+            <bounds x="760" y="330" width="350" height="70"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c054" source="id-view-technology-o025" target="id-view-technology-o009" archimateRelationship="id-rel-181"/>
+          </child>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o026" targetConnections="id-view-technology-c055" archimateElement="id-tsvc-oidc">
+            <bounds x="20" y="416" width="350" height="70"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c056" source="id-view-technology-o026" target="id-view-technology-o009" archimateRelationship="id-rel-183"/>
+          </child>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o027" targetConnections="id-view-technology-c057" archimateElement="id-tsvc-pdf">
+            <bounds x="390" y="416" width="350" height="70"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c058" source="id-view-technology-o027" target="id-view-technology-o009" archimateRelationship="id-rel-185"/>
+          </child>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o028" targetConnections="id-view-technology-c059" archimateElement="id-tsvc-mail">
+            <bounds x="760" y="416" width="350" height="70"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c060" source="id-view-technology-o028" target="id-view-technology-o009" archimateRelationship="id-rel-187"/>
+          </child>
+        </child>
+        <child xsi:type="archimate:Group" id="id-view-technology-g029" name="Масштабирование — возможность, на стенде не проверено">
+          <bounds x="20" y="400" width="520" height="310"/>
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o030" archimateElement="id-node-replica">
+            <bounds x="20" y="44" width="480" height="64"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c068" source="id-view-technology-o030" target="id-view-technology-o013" archimateRelationship="id-rel-195"/>
+            <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c069" source="id-view-technology-o030" target="id-view-technology-o008" archimateRelationship="id-rel-196"/>
+          </child>
+          <child xsi:type="archimate:Note" id="id-view-technology-n031" textAlignment="1" fillColor="#fffde7">
+            <bounds x="20" y="118" width="480" height="174"/>
+            <content>Что для этого уже сделано: состояния в процессе нет — запись сессии, счётчики частоты и замок фонового цикла лежат в Redis, файлы в S3, данные в PostgreSQL; проход цикла интеграций берёт общий замок именно потому, что приложение может работать в нескольких процессах, а событие должно уйти получателю один раз. Чего нет: в компоузе один сервис `app`, реплик и балансировки в нём не описано, на нескольких экземплярах стенд не проверялся.</content>
+          </child>
+        </child>
+      </child>
+      <child xsi:type="archimate:Group" id="id-view-technology-g032" name="Артефакты">
+        <bounds x="2180" y="24" width="330" height="420"/>
+        <child xsi:type="archimate:DiagramObject" id="id-view-technology-o033" targetConnections="id-view-technology-c061" archimateElement="id-art-migrations">
+          <bounds x="20" y="50" width="290" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-technology-o034" targetConnections="id-view-technology-c062" archimateElement="id-art-templates">
+          <bounds x="20" y="126" width="290" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-technology-o035" targetConnections="id-view-technology-c063" archimateElement="id-art-realm">
+          <bounds x="20" y="202" width="290" height="64"/>
+        </child>
+        <child xsi:type="archimate:DiagramObject" id="id-view-technology-o036" targetConnections="id-view-technology-c064 id-view-technology-c065 id-view-technology-c066" archimateElement="id-art-volumes">
+          <bounds x="20" y="278" width="290" height="64"/>
+        </child>
+      </child>
+      <child xsi:type="archimate:Note" id="id-view-technology-n037" textAlignment="1" fillColor="#fffde7">
+        <bounds x="2180" y="470" width="330" height="250"/>
+        <content>Порты стенда сдвинуты, чтобы стек не спорил с уже запущенными на машине службами: postgres 55432, redis 56379, keycloak 58080, minio 59000/59001, gotenberg 3001, mailpit 8025, имитаторы 58081 и 58082, приложение 3000. На развёртывании наружу публикуются только приложение и Keycloak, и только на 127.0.0.1.</content>
+      </child>
+      <child xsi:type="archimate:Note" id="id-view-technology-n038" textAlignment="1" fillColor="#fffde7">
+        <bounds x="2180" y="740" width="330" height="190"/>
+        <content>Имитаторы и Mailpit — профиль `stand`: у заказчика на их месте настоящие CMS, LMS и почтовый релей, адрес берётся из настроек интеграций и переменных окружения.</content>
+      </child>
+      <documentation>Стенд и развёртывание: что поднимает Compose, что видно снаружи, что закрыто сетью, какие артефакты едут в образ и как выглядит масштабирование, если оно понадобится.</documentation>
+    </element>
+  </folder>
+  <purpose>Модель архитектуры LCT CRM в нотации ArchiMate 3.2. Описывает проверенное устройство продукта на 2026-09-18: бизнес-роли и процесс работы с контрагентом, модули приложения и владельцев данных, стенд и развёртывание. Всё, что не проверено кодом или компоузом, подписано словами. Автор: Wine Coding Team.</purpose>
+</archimate:model>

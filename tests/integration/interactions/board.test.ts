@@ -112,6 +112,7 @@ async function reasonRoute(): Promise<ProcessRevisionView> {
 					requiresResult: false,
 					requiresConfirmation: false,
 					requiresLmsData: false,
+					requiresDocumentMark: null,
 					isFinal: false,
 					checklist: []
 				},
@@ -124,6 +125,7 @@ async function reasonRoute(): Promise<ProcessRevisionView> {
 					requiresResult: false,
 					requiresConfirmation: false,
 					requiresLmsData: false,
+					requiresDocumentMark: null,
 					isFinal: true,
 					checklist: []
 				}

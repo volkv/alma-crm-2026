@@ -62,7 +62,10 @@ export function toDocumentView(row: typeof documents.$inferSelect): DocumentView
 		createdAt: row.createdAt,
 		agreedAt: row.agreedAt,
 		approvedAt: row.approvedAt,
-		inEffectAt: row.inEffectAt
+		inEffectAt: row.inEffectAt,
+		agreedNote: row.agreedNote,
+		approvedNote: row.approvedNote,
+		inEffectNote: row.inEffectNote
 	};
 }
 

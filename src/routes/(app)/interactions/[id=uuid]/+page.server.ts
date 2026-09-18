@@ -426,7 +426,8 @@ export const actions: Actions = {
 		const parsed = parse(markDocumentStatusSchema, {
 			documentId: data.get('documentId'),
 			fact: data.get('fact'),
-			at: text(data, 'at')
+			at: text(data, 'at'),
+			note: text(data, 'note')
 		});
 
 		if (!parsed.ok) return parsed.failure;
@@ -436,7 +437,8 @@ export const actions: Actions = {
 				actorFromEvent(event),
 				parsed.data.documentId,
 				parsed.data.fact,
-				parsed.data.at === null ? undefined : markMomentFromDay(parsed.data.at)
+				parsed.data.at === null ? undefined : markMomentFromDay(parsed.data.at),
+				parsed.data.note
 			)
 		);
 	},

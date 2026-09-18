@@ -8,7 +8,8 @@
  *
  * Договоры вымышлены целиком: номера, даты, сроки и состав позиций не
  * принадлежат ни одному настоящему соглашению — в отличие от названий вузов и
- * продуктов, которые набор берёт публичные (`directory.ts`).
+ * продуктов, которые набор берёт публичные (`directory.ts`). Это относится и к
+ * договору с физическим лицом: и лицо, и его договор синтетические.
  */
 import { inArray, sql } from 'drizzle-orm';
 import { getDb } from '$lib/server/db';
@@ -83,6 +84,42 @@ const CONTRACTS: readonly ContractSeed[] = [
 				licenseUntil: '2027-06-30'
 			}
 		]
+	},
+	// Группа B2C: договор принадлежит контрагенту и здесь — тому же физическому
+	// или юридическому лицу, с которым идёт процесс. Ничего особенного в нём
+	// нет: та же запись с номером, сроками и позициями.
+	{
+		key: 'mayak-2026',
+		organizationKey: 'mayak',
+		number: 'РТК-2026-0231',
+		signedOn: '2026-02-16',
+		validUntil: '2027-03-31',
+		status: 'active',
+		items: [
+			{
+				productKey: 'analytics',
+				transferStatus: 'transferred',
+				licenseSignedAt: '2026-02-16',
+				licenseUntil: '2027-03-31'
+			},
+			{ productKey: 'docs', transferStatus: 'pending' }
+		]
+	},
+	{
+		key: 'sorokin-2026',
+		organizationKey: 'individual-sorokin',
+		number: 'ФЛ-2026-0031',
+		signedOn: '2026-06-01',
+		validUntil: '2026-12-31',
+		status: 'active',
+		items: [
+			{
+				productKey: 'docs',
+				transferStatus: 'transferred',
+				licenseSignedAt: '2026-06-01',
+				licenseUntil: '2026-12-31'
+			}
+		]
 	}
 ];
 
@@ -94,7 +131,9 @@ const INTERACTION_CONTRACTS: readonly {
 }[] = [
 	{ interactionKey: 'szpu-2025', contractKey: 'szpu-2026', productKeys: ['lms', 'analytics'] },
 	{ interactionKey: 'szpu-vnedrenie', contractKey: 'szpu-2026', productKeys: ['lms', 'cloud'] },
-	{ interactionKey: 'ukct-zanyatiya', contractKey: 'ukct-2026', productKeys: ['lms'] }
+	{ interactionKey: 'ukct-zanyatiya', contractKey: 'ukct-2026', productKeys: ['lms'] },
+	{ interactionKey: 'mayak-dogovor', contractKey: 'mayak-2026', productKeys: ['analytics'] },
+	{ interactionKey: 'sorokin-obuchenie', contractKey: 'sorokin-2026', productKeys: ['docs'] }
 ];
 
 /** Ключ позиции: договор и продукт — та же пара, что уникальна в базе. */

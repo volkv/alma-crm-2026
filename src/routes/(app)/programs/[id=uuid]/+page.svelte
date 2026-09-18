@@ -60,6 +60,13 @@
 			<KeyValueRow label="Код" value={data.program.code} />
 			<KeyValueRow label="Уровень" value={PROGRAM_LEVEL_LABELS[data.program.level]} />
 			<KeyValueRow label="Направление подготовки" value={data.program.directionCode} />
+			<KeyValueRow label="Приоритет">
+				{#if data.program.priority === null}
+					<span class="text-faint">Не назначен</span>
+				{:else}
+					<StatusBadge tone="accent">{data.program.priority}</StatusBadge>
+				{/if}
+			</KeyValueRow>
 			<KeyValueRow label="Состояние">
 				<StatusBadge tone={LIFECYCLE_STATUS_TONES[data.program.status]} dot>
 					{LIFECYCLE_STATUS_LABELS[data.program.status]}

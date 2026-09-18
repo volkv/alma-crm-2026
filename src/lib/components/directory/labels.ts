@@ -9,6 +9,7 @@ import type { FieldOption } from '$lib/components/form/field-select.svelte';
 import type { StatusTone } from '$lib/components/status-badge.svelte';
 import {
 	AFFILIATION_ROLE_KINDS,
+	DIRECTION_STATES,
 	EDUCATION_LEVELS,
 	LIFECYCLE_STATUSES,
 	ORGANIZATION_FORM_KINDS,
@@ -17,6 +18,7 @@ import {
 	SITE_KINDS,
 	type AffiliationRoleKind,
 	type ConsentBasis,
+	type DirectionState,
 	type EducationLevel,
 	type LifecycleStatus,
 	type OrganizationKind,
@@ -86,6 +88,20 @@ export const LIFECYCLE_STATUS_TONES: Record<LifecycleStatus, StatusTone> = {
 };
 
 /**
+ * Состояние направления. Черновика у него нет: направление либо ведут, либо
+ * оно уже история — промежуточного состояния в работе не бывает.
+ */
+export const DIRECTION_STATE_LABELS: Record<DirectionState, string> = {
+	active: 'Действует',
+	archived: 'В архиве'
+};
+
+export const DIRECTION_STATE_TONES: Record<DirectionState, StatusTone> = {
+	active: 'success',
+	archived: 'neutral'
+};
+
+/**
  * Основание обработки персональных данных. Название длиннее кода намеренно:
  * человек в карточке читает не `legal`, а норму, по которой данные лежат.
  */
@@ -120,6 +136,7 @@ export const SITE_KIND_OPTIONS = toOptions(SITE_KINDS, SITE_KIND_LABELS);
 export const AFFILIATION_ROLE_OPTIONS = toOptions(AFFILIATION_ROLE_KINDS, AFFILIATION_ROLE_LABELS);
 export const PROGRAM_LEVEL_OPTIONS = toOptions(PROGRAM_LEVELS, PROGRAM_LEVEL_LABELS);
 export const LIFECYCLE_STATUS_OPTIONS = toOptions(LIFECYCLE_STATUSES, LIFECYCLE_STATUS_LABELS);
+export const DIRECTION_STATE_OPTIONS = toOptions(DIRECTION_STATES, DIRECTION_STATE_LABELS);
 
 /** Тот же список с первой строкой «не указан» — для необязательного поля. */
 export function withEmptyOption(options: FieldOption[], label: string): FieldOption[] {

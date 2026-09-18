@@ -789,7 +789,42 @@ describe('отметки по документу', () => {
 			.from(auditEvents)
 			.where(eq(auditEvents.eventType, 'documents.status_changed'));
 
-		expect(event.details).toMatchObject({ changedFields: ['agreedAt', 'agreedBy'] });
+		expect(event.details).toMatchObject({
+			changedFields: ['agreedAt', 'agreedBy', 'agreedNote']
+		});
+	});
+
+	it('принимает комментарий, показывает его рядом с отметкой и не пишет в журнал', async () => {
+		const { interactionId } = await interactionWithParty();
+		const document = await markable({ interactionId, agedDays: 3 });
+		const day = markDayBounds(document.createdAt).max;
+		const note = 'Протокол учёного совета № 14, подписан проректором';
+
+		const result = await markAction(
+			pageEvent({
+				path: `/documents/${document.id}`,
+				params: { id: document.id },
+				user: sessionUser('admin'),
+				form: { fact: 'approved', at: day, note }
+			})
+		);
+
+		expect(result).toMatchObject({ ok: true });
+
+		const [row] = await database.db.select().from(documents).where(eq(documents.id, document.id));
+
+		expect(row.approvedNote).toBe(note);
+		// Комментарий — текст, который писал человек, и в подробностях события
+		// ему места нет: там только имена полей и ссылки на записи.
+		const [event] = await database.db
+			.select()
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'documents.status_changed'));
+
+		expect(JSON.stringify(event.details)).not.toContain('учёного совета');
+		expect(event.details).toMatchObject({
+			changedFields: ['approvedAt', 'approvedBy', 'approvedNote']
+		});
 	});
 
 	it('принимает день задним числом и отвергает завтрашний и день до документа', async () => {

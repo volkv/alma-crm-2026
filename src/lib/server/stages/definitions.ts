@@ -84,6 +84,7 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresResult: false,
 			requiresConfirmation: false,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('profile_unit_found', 'Найдено профильное подразделение', true),
@@ -100,6 +101,7 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresResult: false,
 			requiresConfirmation: false,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('offer_sent', 'Отправлено описание программ', true),
@@ -116,6 +118,7 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresResult: false,
 			requiresConfirmation: false,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('meeting_scheduled', 'Встреча назначена', true),
@@ -132,6 +135,7 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresResult: false,
 			requiresConfirmation: false,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('package_sent', 'Пакет документов отправлен', true),
@@ -148,6 +152,7 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresResult: false,
 			requiresConfirmation: false,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('remarks_collected', 'Собраны замечания сторон', true),
@@ -163,6 +168,12 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresResult: false,
 			requiresConfirmation: false,
 			requiresLmsData: false,
+			// Единственная стадия процесса, исполнение которой доказывает сам
+			// документ: соглашение либо утверждено, либо нет, и отметка
+			// ответственного «я подтверждаю» этого не заменяет. Отметка
+			// «Утверждён» (`approved`) — та, что означает подписанный сторонами
+			// экземпляр; «Введён в действие» наступает позже и по договору.
+			requiresDocumentMark: 'approved',
 			isFinal: false,
 			checklist: [
 				item('signatories_confirmed', 'Подтверждены подписанты сторон', true),
@@ -179,6 +190,7 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresResult: true,
 			requiresConfirmation: true,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('kit_prepared', 'Комплект материалов подготовлен', true),
@@ -195,6 +207,7 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresResult: true,
 			requiresConfirmation: true,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('rollout_plan_agreed', 'Согласован план внедрения', true),
@@ -211,6 +224,7 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresResult: true,
 			requiresConfirmation: true,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('group_formed', 'Сформирована группа преподавателей', true),
@@ -227,6 +241,7 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresResult: true,
 			requiresConfirmation: true,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('gaps_identified', 'Выявлены расхождения с требованиями', true),
@@ -247,6 +262,7 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			// оттуда — единственное свидетельство, которое не пишет о себе сам
 			// исполнитель. Он же и подтверждает стадию — видом `lms_record`.
 			requiresLmsData: true,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('schedule_published', 'Опубликовано расписание', true),
@@ -263,6 +279,7 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresResult: true,
 			requiresConfirmation: false,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('materials_revised', 'Обновлены учебные материалы', true),
@@ -278,6 +295,7 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresResult: true,
 			requiresConfirmation: true,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('course_selected', 'Подобрана программа повышения квалификации', true),
@@ -294,6 +312,7 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresResult: false,
 			requiresConfirmation: false,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			// Финальная стадия процесса: с неё взаимодействие завершают, а не идут
 			// дальше, и перехода вперёд с неё не требуется.
 			isFinal: true,
@@ -363,6 +382,7 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 			requiresResult: false,
 			requiresConfirmation: false,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('request_understood', 'Запрос понят и зафиксирован', true),
@@ -378,6 +398,7 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 			requiresResult: false,
 			requiresConfirmation: false,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('program_selected', 'Подобрана программа обучения', true),
@@ -395,6 +416,7 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 			// этому — файл, а не отметка «сделано».
 			requiresConfirmation: true,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('contract_signed', 'Договор подписан', true),
@@ -414,6 +436,7 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 			// стадия не требует, поэтому факт обучения здесь — доказательство
 			// исполнения, а не подпись под ним.
 			requiresLmsData: true,
+			requiresDocumentMark: null,
 			isFinal: false,
 			checklist: [
 				item('enrolled', 'Слушатель зачислен в поток', true),
@@ -429,6 +452,7 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 			requiresResult: true,
 			requiresConfirmation: false,
 			requiresLmsData: false,
+			requiresDocumentMark: null,
 			isFinal: true,
 			checklist: [
 				item('assessment_done', 'Итоговая аттестация проведена', true),

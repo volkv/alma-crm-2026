@@ -588,7 +588,10 @@ async function readDocuments(interactionId: string): Promise<InteractionDocument
 			createdAt: documents.createdAt,
 			agreedAt: documents.agreedAt,
 			approvedAt: documents.approvedAt,
-			inEffectAt: documents.inEffectAt
+			inEffectAt: documents.inEffectAt,
+			agreedNote: documents.agreedNote,
+			approvedNote: documents.approvedNote,
+			inEffectNote: documents.inEffectNote
 		})
 		.from(documents)
 		.where(eq(documents.interactionId, interactionId))

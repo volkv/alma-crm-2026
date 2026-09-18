@@ -40,6 +40,7 @@ import {
 	B2C_GROUP_KEY,
 	closeRequiredChecklist,
 	createInteractionOn,
+	provideDocumentMark,
 	provideLmsEvidence,
 	seedProcess,
 	stageId,
@@ -569,6 +570,122 @@ describe('подтверждение стадии', () => {
 			groupExternalId: evidence.groupExternalId,
 			completed: evidence.completed
 		});
+	});
+
+	it('стадию подписания закрывает отметка «Утверждён» по документу дела', async () => {
+		const fixture = await createFixture();
+		await advanceTo(fixture, 'signing');
+		await closeRequiredChecklist(fixture.ctx, fixture.interactionId);
+
+		const command = {
+			interactionId: fixture.interactionId,
+			revision: fixture.revision.version,
+			fromStageId: stageId(fixture.revision, 'signing'),
+			toStageId: stageId(fixture.revision, 'materials_handover'),
+			reason: null,
+			resultText: null,
+			checklistState: {}
+		};
+
+		await expect(advanceStage(fixture.ctx, command)).rejects.toSatisfy(
+			(error: unknown) =>
+				error instanceof ConflictError && /нет документа с отметкой «Утверждён»/.test(error.message)
+		);
+
+		// Отметка ответственного стадию не закрывает: подписан документ или нет —
+		// это факт по документу, а не слово исполнителя.
+		await confirmStage(fixture.ctx, {
+			interactionId: fixture.interactionId,
+			fromStageId: command.fromStageId,
+			confirmation: { kind: 'mark' }
+		});
+
+		await expect(advanceStage(fixture.ctx, command)).rejects.toSatisfy(
+			(error: unknown) =>
+				error instanceof ConflictError && /нет документа с отметкой «Утверждён»/.test(error.message)
+		);
+
+		// Согласование — не утверждение: отметка другого вида требование не
+		// закрывает.
+		await provideDocumentMark(
+			fixture.ctx,
+			database,
+			fixture.interactionId,
+			'agreed',
+			'Протокол разногласий'
+		);
+
+		await expect(advanceStage(fixture.ctx, command)).rejects.toSatisfy(
+			(error: unknown) =>
+				error instanceof ConflictError && /нет документа с отметкой «Утверждён»/.test(error.message)
+		);
+
+		const documentId = await provideDocumentMark(
+			fixture.ctx,
+			database,
+			fixture.interactionId,
+			'approved'
+		);
+
+		await advanceStage(fixture.ctx, command);
+
+		const status = await getInteractionStatus(fixture.ctx, fixture.interactionId);
+		const signing = status.history.find((entry) => entry.snapshot.key === 'signing');
+
+		expect(status.current?.snapshot.key).toBe('materials_handover');
+		// Факт остаётся в закрытой записи: она обязана объяснять, чем стадия
+		// подтверждена, и после того, как с неё ушли.
+		expect(signing?.documentMarkEvidence).toMatchObject({
+			documentId,
+			mark: 'approved',
+			title: 'Соглашение о сотрудничестве'
+		});
+	});
+
+	it('отметка, поставленная до входа на стадию, засчитывается при входе', async () => {
+		const fixture = await createFixture();
+		await advanceTo(fixture, 'document_revision');
+
+		// Подписанный экземпляр приходит тогда, когда его подписали, а не тогда,
+		// когда дело дошло до стадии подписания.
+		const documentId = await provideDocumentMark(
+			fixture.ctx,
+			database,
+			fixture.interactionId,
+			'approved'
+		);
+
+		await closeRequiredChecklist(fixture.ctx, fixture.interactionId);
+		await advanceStage(fixture.ctx, {
+			interactionId: fixture.interactionId,
+			revision: fixture.revision.version,
+			fromStageId: stageId(fixture.revision, 'document_revision'),
+			toStageId: stageId(fixture.revision, 'signing'),
+			reason: null,
+			resultText: null,
+			checklistState: {}
+		});
+
+		const entered = await getInteractionStatus(fixture.ctx, fixture.interactionId);
+
+		// Требование выполнено уже на входе, и карточка это показывает: иначе она
+		// объявляла бы стадию незакрытой, а переход при этом проходил бы.
+		expect(entered.current?.documentMarkEvidence).toMatchObject({ documentId, mark: 'approved' });
+
+		await closeRequiredChecklist(fixture.ctx, fixture.interactionId);
+		await advanceStage(fixture.ctx, {
+			interactionId: fixture.interactionId,
+			revision: fixture.revision.version,
+			fromStageId: stageId(fixture.revision, 'signing'),
+			toStageId: stageId(fixture.revision, 'materials_handover'),
+			reason: null,
+			resultText: null,
+			checklistState: {}
+		});
+
+		const status = await getInteractionStatus(fixture.ctx, fixture.interactionId);
+
+		expect(status.current?.snapshot.key).toBe('materials_handover');
 	});
 });
 

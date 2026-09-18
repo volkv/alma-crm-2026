@@ -8,6 +8,7 @@
  * значит однажды получить четыре разных «демонстрационных процесса».
  */
 import { eq } from 'drizzle-orm';
+import type { DocumentStatusFact } from '$lib/contracts/documents';
 import { lmsEvidenceSchema, type LmsEvidence } from '$lib/contracts/exchange';
 import {
 	createInteractionSchema,
@@ -16,8 +17,14 @@ import {
 	type ProcessRevisionView
 } from '$lib/contracts/interactions';
 import type { ActorContext } from '$lib/server/actor';
-import { interactions, learningGroupResults, learningGroups } from '$lib/server/db/schema';
+import {
+	documents,
+	interactions,
+	learningGroupResults,
+	learningGroups
+} from '$lib/server/db/schema';
 import { withTransaction } from '$lib/server/db/transaction';
+import { markDocument } from '$lib/server/documents/status';
 import { createInteraction } from '$lib/server/interactions/write';
 import { B2B_GROUP_KEY, B2B_PROCESS, B2C_GROUP_KEY } from '$lib/server/stages/definitions';
 import {
@@ -202,6 +209,40 @@ export async function provideLmsEvidence(
 }
 
 /**
+ * Документ дела с нужной отметкой: факт, которым закрывается стадия с
+ * `requiresDocumentMark`.
+ *
+ * Строка документа кладётся напрямую — хранилище файлов для этой проверки ни
+ * при чём, а отметку ставит настоящий сервис (`markDocument`), и подтверждение
+ * стадии ставит тот же движок, что зовётся из интерфейса. Подделать факт
+ * снимком стадии нельзя: проверка перестала бы проверять правило.
+ */
+export async function provideDocumentMark(
+	ctx: ActorContext,
+	database: TestDatabase,
+	interactionId: string,
+	mark: DocumentStatusFact,
+	title = 'Соглашение о сотрудничестве'
+): Promise<string> {
+	const [document] = await database.db
+		.insert(documents)
+		.values({
+			interactionId,
+			kind: 'agreement',
+			title,
+			filePath: `files/${crypto.randomUUID()}`,
+			mime: 'text/plain',
+			sizeBytes: 64,
+			sha256: crypto.randomUUID().replaceAll('-', '').repeat(2)
+		})
+		.returning({ id: documents.id });
+
+	await markDocument(ctx, document.id, mark);
+
+	return document.id;
+}
+
+/**
  * Проводит взаимодействие вперёд до стадии с нужным ключом, закрывая по дороге
  * всё, чего стадия требует. Шаги идут по действующей редакции — той же, что
  * видит карточка.
@@ -239,12 +280,24 @@ export async function advanceTo(
 			});
 		}
 
+		if (current.snapshot.requiresDocumentMark !== null) {
+			await provideDocumentMark(
+				ctx,
+				database,
+				interactionId,
+				current.snapshot.requiresDocumentMark
+			);
+		}
+
 		if (current.snapshot.requiresLmsData) {
 			// Факт обучения подтверждает стадию сам — видом `lms_record`, и
 			// отметка ответственного поверх него стёрла бы то, чем стадия
 			// подтверждена на самом деле.
 			await provideLmsEvidence(ctx, database, interactionId);
-		} else if (current.snapshot.requiresConfirmation) {
+		} else if (
+			current.snapshot.requiresConfirmation &&
+			current.snapshot.requiresDocumentMark === null
+		) {
 			await confirmStage(ctx, {
 				interactionId,
 				fromStageId: current.stageId,
@@ -298,6 +351,7 @@ export function threeStageProcess(
 				requiresResult: false,
 				requiresConfirmation: false,
 				requiresLmsData: false,
+				requiresDocumentMark: null,
 				isFinal: false,
 				checklist: options.checklist?.intake ?? []
 			},
@@ -310,6 +364,7 @@ export function threeStageProcess(
 				requiresResult: false,
 				requiresConfirmation: false,
 				requiresLmsData: false,
+				requiresDocumentMark: null,
 				isFinal: false,
 				checklist: options.checklist?.offer ?? []
 			},
@@ -322,6 +377,7 @@ export function threeStageProcess(
 				requiresResult: false,
 				requiresConfirmation: false,
 				requiresLmsData: false,
+				requiresDocumentMark: null,
 				isFinal: true,
 				checklist: options.checklist?.done ?? []
 			}
@@ -364,6 +420,7 @@ export function twoStageProcess(options: {
 				requiresResult: false,
 				requiresConfirmation: false,
 				requiresLmsData: false,
+				requiresDocumentMark: null,
 				isFinal: false,
 				checklist: []
 			},
@@ -376,6 +433,7 @@ export function twoStageProcess(options: {
 				requiresResult: false,
 				requiresConfirmation: false,
 				requiresLmsData: false,
+				requiresDocumentMark: null,
 				isFinal: true,
 				checklist: []
 			}

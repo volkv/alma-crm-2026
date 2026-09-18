@@ -119,7 +119,11 @@ export function isEncryptedContact(value: string): boolean {
  */
 export function encryptContact(value: string): string {
 	const nonce = randomBytes(NONCE_BYTES);
-	const cipher = createCipheriv(ALGORITHM, keys().cipher, nonce);
+	// Длина тега названа явно: у GCM она допускает восемь значений, и умолчание
+	// библиотеки — не то же самое, что закреплённое решение. Здесь она
+	// закреплена на обоих концах, чтобы расшифровка не согласилась на
+	// укороченный тег, который подобрать в 2^32 раз дешевле.
+	const cipher = createCipheriv(ALGORITHM, keys().cipher, nonce, { authTagLength: TAG_BYTES });
 	const ciphertext = Buffer.concat([cipher.update(value, 'utf8'), cipher.final()]);
 
 	return [
@@ -150,11 +154,25 @@ export function decryptContact(stored: string): string {
 	const ciphertext = Buffer.from(parts[3], 'base64');
 	const tag = Buffer.from(parts[4], 'base64');
 
-	if (nonce.length !== NONCE_BYTES || tag.length !== TAG_BYTES) {
-		throw new PiiCryptoError('Шифртекст контакта испорчен: не та длина вектора или тега');
+	// Длины проверяются до вызова шифра, а не им: GCM принимает восемь длин
+	// тега, и укороченный тег он проверил бы молча — а подобрать его тем
+	// дешевле, чем он короче. Значение не той формы — повреждённое значение, и
+	// сказать об этом надо тем же языком, что и про остальные поломки формата.
+	if (nonce.length !== NONCE_BYTES) {
+		throw new PiiCryptoError(
+			`Повреждённое значение контакта: вектор длиной ${nonce.length} байт вместо ${NONCE_BYTES}`
+		);
 	}
 
-	const decipher = createDecipheriv(ALGORITHM, keys().cipher, nonce);
+	if (tag.length !== TAG_BYTES) {
+		throw new PiiCryptoError(
+			`Повреждённое значение контакта: тег длиной ${tag.length} байт вместо ${TAG_BYTES}`
+		);
+	}
+
+	const decipher = createDecipheriv(ALGORITHM, keys().cipher, nonce, {
+		authTagLength: TAG_BYTES
+	});
 	decipher.setAuthTag(tag);
 
 	try {

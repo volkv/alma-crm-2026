@@ -30,6 +30,7 @@ import {
 	uuid,
 	type AnyPgColumn
 } from 'drizzle-orm/pg-core';
+import type { DocumentMarkEvidence, DocumentStatusFact } from '$lib/contracts/documents';
 import type {
 	ChecklistItem,
 	ChecklistState,
@@ -201,6 +202,15 @@ export const stages = pgTable(
 		 * группе движение дальше не разрешается.
 		 */
 		requiresLmsData: boolean().notNull().default(false),
+		/**
+		 * Отметка, которой по документу взаимодействия подтверждается стадия:
+		 * `agreed`, `approved`, `in_effect`. Пусто — отметки не требуется.
+		 *
+		 * Одна колонка, а не jsonb со списком: стадия задаёт один вопрос
+		 * («подписан ли документ»), и сравнение стадий при публикации читает
+		 * параметр значением, а не разбором структуры.
+		 */
+		requiresDocumentMark: text().$type<DocumentStatusFact>(),
 		checklist: jsonb().$type<ChecklistItem[]>().notNull().default([]),
 		...timestamps
 	},
@@ -546,6 +556,13 @@ export const stageEntries = pgTable(
 		 * видел исполнитель. Форму задаёт контракт обмена.
 		 */
 		lmsEvidence: jsonb(),
+		/**
+		 * Отметка по документу, которой подтверждена стадия: снимок того, что
+		 * видел исполнитель. Документ живёт своей жизнью — его заменяет новая
+		 * редакция, его переименовывают, — а запись стадии обязана объяснять
+		 * подтверждение и через год.
+		 */
+		documentMarkEvidence: jsonb().$type<DocumentMarkEvidence>(),
 		...timestamps
 	},
 	(table) => [

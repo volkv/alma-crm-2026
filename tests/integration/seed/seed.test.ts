@@ -1,4 +1,4 @@
-import { count, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
+import { and, count, eq, inArray, isNotNull, isNull, ne } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import type { RequestEvent } from '@sveltejs/kit';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -14,7 +14,10 @@ import {
 	documents,
 	interactionChanges,
 	interactionContractItems,
+	interactionParties,
 	interactions,
+	learningGroupResults,
+	learningGroups,
 	organizationResponsibles,
 	organizations,
 	processGroups,
@@ -39,7 +42,7 @@ import { hashApiKey } from '$lib/server/api/keys';
 import { exchangeSettingsDefault } from '$lib/server/integrations/settings';
 import { DEFAULT_ROLES, PERMISSION_KEYS, type PermissionKey } from '$lib/server/rbac/permissions';
 import { getRedis } from '$lib/server/redis';
-import { B2B_PROCESS } from '$lib/server/stages/definitions';
+import { B2B_PROCESS, B2C_PROCESS } from '$lib/server/stages/definitions';
 import { CONTRACT_SEED_SIZES } from '../../../scripts/seed/contracts';
 import { DIRECTORY_SEED_SIZES } from '../../../scripts/seed/directory';
 import { STATS_SEED_SIZES } from '../../../scripts/seed/stats';
@@ -186,19 +189,83 @@ describe('сид', () => {
 			B2B_PROCESS.stages.map((stage) => stage.key).sort()
 		);
 
-		// Группа выводится из вида основной стороны, и вуз ведут по `b2b`.
+		// Группа выводится из вида основной стороны: вуз ведут по `b2b`,
+		// физическое и юридическое лицо — по `b2c`.
 		const grouped = await database.db
 			.select({ count: count() })
 			.from(interactions)
 			.where(eq(interactions.processGroupId, b2b.id));
 
-		expect(grouped[0].count).toBe(INTERACTION_SEED_SIZES.interactions);
+		expect(grouped[0].count).toBe(INTERACTION_SEED_SIZES.interactions - INTERACTION_SEED_SIZES.b2c);
 		const ungrouped = await database.db
 			.select({ count: count() })
 			.from(interactions)
 			.where(isNull(interactions.processGroupId));
 
 		expect(ungrouped[0].count).toBe(0);
+	});
+
+	it('ведёт обучение лиц по группе b2c: и физическое лицо, и юридическое', async () => {
+		await runSeed();
+
+		const [b2c] = await database.db
+			.select({ id: processGroups.id })
+			.from(processGroups)
+			.where(eq(processGroups.key, 'b2c'));
+
+		// Основная сторона такой записи — сам контрагент, и его вид решает группу.
+		const parties = await database.db
+			.select({ kind: organizations.kind })
+			.from(interactions)
+			.innerJoin(
+				interactionParties,
+				and(
+					eq(interactionParties.interactionId, interactions.id),
+					eq(interactionParties.isPrimary, true)
+				)
+			)
+			.innerJoin(organizations, eq(organizations.id, interactionParties.organizationId))
+			.where(eq(interactions.processGroupId, b2c.id));
+
+		expect(parties).toHaveLength(INTERACTION_SEED_SIZES.b2c);
+		expect(new Set(parties.map((row) => row.kind))).toStrictEqual(
+			new Set(['individual', 'legal_entity'])
+		);
+
+		// Физическое лицо — это строка организации со ссылкой на человека, а не
+		// вторая копия ФИО: контур персональных данных у него один.
+		const [individual] = await database.db
+			.select({ personId: organizations.personId, shortName: organizations.shortName })
+			.from(organizations)
+			.where(eq(organizations.kind, 'individual'));
+
+		expect(individual.personId).not.toBeNull();
+		expect(individual.shortName).toBe('Сорокин Артём Павлович');
+	});
+
+	it('подтверждает стадию обучения фактом из системы обучения', async () => {
+		await runSeed();
+
+		// Поток и его результат — на каждую запись, дошедшую до стадии с данными
+		// обучения, в обеих группах.
+		await expect(countRows(learningGroups)).resolves.toBe(INTERACTION_SEED_SIZES.learningGroups);
+		await expect(countRows(learningGroupResults)).resolves.toBe(
+			INTERACTION_SEED_SIZES.learningResults
+		);
+
+		// Стадия «Зачисление и обучение» группы b2c без факта не подтверждается и
+		// вперёд не отпускает, поэтому у стоящей на ней записи факт обязан быть.
+		const [{ id: interactionId }] = await database.db
+			.select({ id: interactions.id })
+			.from(interactions)
+			.where(eq(interactions.id, seedId('interaction', 'sorokin-obuchenie')));
+
+		const [entry] = await database.db
+			.select({ evidence: stageEntries.lmsEvidence })
+			.from(stageEntries)
+			.where(and(eq(stageEntries.interactionId, interactionId), isNull(stageEntries.leftAt)));
+
+		expect(entry.evidence).not.toBeNull();
 	});
 
 	it('заводит договоры и привязывает к взаимодействиям их позиции', async () => {
@@ -247,11 +314,23 @@ describe('сид', () => {
 		// Смена ответственного попадает в историю плана: вкладка «Правки плана»
 		// на стенде не должна быть пустой у всех до единого.
 		await expect(countRows(interactionChanges)).resolves.toBe(INTERACTION_SEED_SIZES.handovers);
-		// Каждое соглашение собирается сразу в двух форматах: DOCX и PDF, а к
-		// одному делу приложен скан и его вторая редакция.
+		// Каждое соглашение собирается сразу в двух форматах: DOCX и PDF, к одному
+		// делу приложен скан и его вторая редакция, а у каждого дела, прошедшего
+		// подписание, лежит подписанный экземпляр с отметкой «Утверждён».
 		await expect(countRows(documents)).resolves.toBe(
-			INTERACTION_SEED_SIZES.documents * 2 + INTERACTION_SEED_SIZES.scans
+			INTERACTION_SEED_SIZES.documents * 2 +
+				INTERACTION_SEED_SIZES.scans +
+				INTERACTION_SEED_SIZES.signedAgreements
 		);
+
+		// Отметка «Утверждён» стоит ровно на них: стадия подписания без неё
+		// вперёд не отпускает, а лишних отметок набор не ставит.
+		const approved = await database.db
+			.select({ id: documents.id })
+			.from(documents)
+			.where(isNotNull(documents.approvedAt));
+
+		expect(approved).toHaveLength(INTERACTION_SEED_SIZES.signedAgreements);
 
 		// Завершённое взаимодействие прошло маршрут целиком: по записи на каждую
 		// стадию, и все они закрыты.
@@ -262,7 +341,8 @@ describe('сид', () => {
 			.where(eq(interactions.status, 'completed'));
 
 		expect(completedEntries).toHaveLength(
-			INTERACTION_SEED_SIZES.completed * B2B_PROCESS.stages.length
+			INTERACTION_SEED_SIZES.completedB2b * B2B_PROCESS.stages.length +
+				INTERACTION_SEED_SIZES.completedB2c * B2C_PROCESS.stages.length
 		);
 		expect(completedEntries.filter((entry) => entry.leftAt === null)).toStrictEqual([]);
 	});
@@ -536,10 +616,17 @@ describe('сид', () => {
 	it('кладёт в базу только ИНН, проходящие контрольную сумму', async () => {
 		await runSeed();
 
-		const rows = await database.db.select({ inn: organizations.inn }).from(organizations);
+		// Физическое лицо из счёта исключено: ИНН у него набор не собирает вовсе —
+		// это персональные данные, без которых процесс обучения обходится.
+		const rows = await database.db
+			.select({ inn: organizations.inn })
+			.from(organizations)
+			.where(ne(organizations.kind, 'individual'));
 		const filled = rows.map((row) => row.inn).filter((inn): inn is string => inn !== null);
 
-		expect(filled).toHaveLength(DIRECTORY_SEED_SIZES.organizations);
+		expect(filled).toHaveLength(
+			DIRECTORY_SEED_SIZES.organizations - DIRECTORY_SEED_SIZES.individuals
+		);
 		expect(filled.filter((inn) => !isValidInn(inn))).toStrictEqual([]);
 		expect(new Set(filled).size).toBe(filled.length);
 	});
@@ -556,7 +643,8 @@ describe('сид', () => {
 
 		const rows = await database.db
 			.select({ shortName: organizations.shortName, inn: organizations.inn })
-			.from(organizations);
+			.from(organizations)
+			.where(ne(organizations.kind, 'individual'));
 
 		expect(rows.filter((row) => row.inn === null || !row.inn.startsWith('0000'))).toStrictEqual([]);
 	});

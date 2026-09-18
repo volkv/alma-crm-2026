@@ -151,6 +151,7 @@ async function seedReasonInteraction(): Promise<{ id: string; route: ProcessRevi
 					requiresResult: false,
 					requiresConfirmation: false,
 					requiresLmsData: false,
+					requiresDocumentMark: null,
 					isFinal: false,
 					checklist: []
 				},
@@ -163,6 +164,7 @@ async function seedReasonInteraction(): Promise<{ id: string; route: ProcessRevi
 					requiresResult: false,
 					requiresConfirmation: false,
 					requiresLmsData: false,
+					requiresDocumentMark: null,
 					isFinal: true,
 					checklist: []
 				}

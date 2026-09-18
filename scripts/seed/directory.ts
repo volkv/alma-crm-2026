@@ -215,7 +215,27 @@ const RESPONSIBLES: readonly ResponsibleSeed[] = [
 		userKey: 'zotov',
 		validFrom: '2026-03-02T09:00:00+03:00'
 	},
-	{ key: 'sivt', organizationKey: 'sivt', userKey: 'zotov', validFrom: '2026-03-02T09:00:00+03:00' }
+	{
+		key: 'sivt',
+		organizationKey: 'sivt',
+		userKey: 'zotov',
+		validFrom: '2026-03-02T09:00:00+03:00'
+	},
+	// Контрагенты группы B2C ведёт тот же менеджер: без действующего назначения
+	// ни физлицо, ни юрлицо не попали бы в его область доступа, а вместе с ними
+	// и взаимодействия по ним.
+	{
+		key: 'individual-sorokin',
+		organizationKey: 'individual-sorokin',
+		userKey: 'demo-manager',
+		validFrom: '2026-03-02T09:00:00+03:00'
+	},
+	{
+		key: 'mayak',
+		organizationKey: 'mayak',
+		userKey: 'demo-manager',
+		validFrom: '2026-02-16T09:00:00+03:00'
+	}
 ];
 
 type OrganizationSeed = { key: string } & z.input<typeof createOrganizationSchema>;
@@ -536,6 +556,18 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		notes: 'Компания-заказчик вымышлена.'
 	},
 	{
+		key: 'mayak',
+		kind: 'legal_entity',
+		legalName: 'Общество с ограниченной ответственностью «Маяк-Телеком»',
+		shortName: 'Маяк-Телеком',
+		inn: '0000000265',
+		kpp: '000001026',
+		ogrn: '1260000000260',
+		region: 'Ленинградская область',
+		website: 'https://mayak-telecom.example.com',
+		notes: 'Юридическое лицо обучает своих сотрудников: группа процесса B2C. Организация вымышлена.'
+	},
+	{
 		key: 'operator',
 		kind: 'operator',
 		legalName: 'Общество с ограниченной ответственностью «РТК ИТ»',
@@ -733,6 +765,25 @@ const CONSENTS: readonly ConsentSeed[] = [
 		basis: 'legal',
 		textVersion: '2026-02-01',
 		givenAt: '2026-02-01'
+	},
+	{
+		// Физическое лицо учится за свой счёт: основание обработки — его
+		// собственное согласие, и без него такого контрагента в системе не
+		// заводят вовсе (`docs/directory.md`, «Согласия»).
+		key: 'sorokin-2026',
+		personKey: 'sorokin',
+		basis: 'consent',
+		textVersion: '2026-03-02',
+		givenAt: '2026-03-02'
+	},
+	{
+		// Представителя юридического лица в систему вписал работодатель:
+		// основание — исполнение договора, а не подпись субъекта.
+		key: 'kudryashova-2026',
+		personKey: 'kudryashova',
+		basis: 'contract',
+		textVersion: '2026-02-16',
+		givenAt: '2026-02-16'
 	}
 ];
 
@@ -1365,7 +1416,55 @@ const PEOPLE: readonly PersonSeed[] = [
 			validFrom: '2022-04-01',
 			channel: 'Почта, телефон'
 		}
+	},
+	{
+		// Слушатель-физлицо. Его карточка человека и есть карточка контрагента:
+		// организация вида `individual` ссылается на эту строку, а копии ФИО в
+		// полях организации не появляется (`docs/domain.md`, раздел 2).
+		key: 'sorokin',
+		retentionUntil: '2029-03-02',
+		lastName: 'Сорокин',
+		firstName: 'Артём',
+		middleName: 'Павлович',
+		email: 'a.sorokin@example.com',
+		phone: '+7 900 000-00-41',
+		affiliation: {
+			organizationKey: 'individual-sorokin',
+			position: 'Слушатель',
+			roleKind: 'other',
+			isPrimary: true,
+			validFrom: '2026-03-02',
+			channel: 'Почта'
+		}
+	},
+	{
+		key: 'kudryashova',
+		lastName: 'Кудряшова',
+		firstName: 'Вера',
+		middleName: 'Ильинична',
+		email: 'v.kudryashova@mayak-telecom.example.com',
+		phone: '+7 900 000-00-42',
+		affiliation: {
+			organizationKey: 'mayak',
+			position: 'Руководитель отдела обучения',
+			roleKind: 'other',
+			isPrimary: true,
+			validFrom: '2024-11-11',
+			channel: 'Почта, телефон'
+		}
 	}
+];
+
+/**
+ * Контрагенты-физлица. Отдельным набором, а не строкой в `ORGANIZATIONS`, по
+ * двум причинам. Первая: форма справочника такого контрагента не заводит вовсе
+ * (`ORGANIZATION_FORM_KINDS`), и контракт `createOrganizationSchema`
+ * справедливо его отвергает — как и у заявки с сайта, здесь запись кладётся
+ * напрямую. Вторая: у неё внешний ключ на `people`, поэтому она заливается
+ * после людей, а не вместе с остальными организациями.
+ */
+const INDIVIDUALS: readonly { key: string; personKey: string; name: string }[] = [
+	{ key: 'individual-sorokin', personKey: 'sorokin', name: 'Сорокин Артём Павлович' }
 ];
 
 /**
@@ -1425,6 +1524,8 @@ const PROGRAMS: readonly ProgramSeed[] = [
 		name: 'DevOps-инженер',
 		level: 'bachelor',
 		directionCode: '09.03.01',
+		// Ручной приоритет: с этой программы начинают разговор с вузом.
+		priority: 1,
 		status: 'active',
 		versions: [
 			{ summary: 'Первая редакция программы.', effectiveFrom: '2023-09-01' },
@@ -1502,6 +1603,7 @@ const PROGRAMS: readonly ProgramSeed[] = [
 		name: 'Аналитика на Python',
 		level: 'spo',
 		directionCode: '09.02.06',
+		priority: 2,
 		status: 'active',
 		versions: [
 			{ summary: 'Первая редакция программы.', effectiveFrom: '2021-09-01' },
@@ -1516,6 +1618,7 @@ const PROGRAMS: readonly ProgramSeed[] = [
 		code: 'SCH-01',
 		name: 'Промпт-инжиниринг',
 		level: 'school',
+		priority: 4,
 		status: 'active',
 		versions: [{ summary: 'Первая редакция программы.', effectiveFrom: '2023-09-01' }]
 	},
@@ -1524,6 +1627,7 @@ const PROGRAMS: readonly ProgramSeed[] = [
 		code: 'DPO-01',
 		name: 'Управление проектами',
 		level: 'dpo',
+		priority: 3,
 		status: 'active',
 		versions: [{ summary: 'Первая редакция программы.', effectiveFrom: '2024-02-01' }]
 	}
@@ -1683,6 +1787,25 @@ export async function seedDirectory(tx: Tx, options: { authorUserId: string }): 
 		)
 		.onConflictDoNothing({ target: people.id });
 
+	// Контрагенты-физлица — после людей: у строки организации внешний ключ на
+	// `people`, и раньше ей не на кого ссылаться. Контракт формы справочника
+	// здесь не применяется намеренно: он такой вид не принимает вовсе, а
+	// название организации — это и есть ФИО, второй копии не появляется.
+	await tx
+		.insert(organizations)
+		.values(
+			INDIVIDUALS.map((individual) => ({
+				id: seedId('organization', individual.key),
+				kind: 'individual' as const,
+				educationLevel: null,
+				legalName: individual.name,
+				shortName: individual.name,
+				personId: seedId('person', individual.personKey),
+				isActive: true
+			}))
+		)
+		.onConflictDoNothing({ target: organizations.id });
+
 	await tx
 		.insert(consents)
 		.values(
@@ -1805,7 +1928,9 @@ export const DIRECTORY_SEED_SIZES = {
 		0
 	),
 	responsibles: RESPONSIBLES.length,
-	organizations: ORGANIZATIONS.length,
+	organizations: ORGANIZATIONS.length + INDIVIDUALS.length,
+	/** Из них контрагенты-физлица: у них нет ни ИНН, ни реквизитов. */
+	individuals: INDIVIDUALS.length,
 	sites: SITES.length,
 	people: PEOPLE.length,
 	consents: CONSENTS.length,

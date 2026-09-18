@@ -141,6 +141,7 @@ async function seed(): Promise<void> {
 						requiresResult: false,
 						requiresConfirmation: false,
 						requiresLmsData: false,
+						requiresDocumentMark: null,
 						isFinal: false,
 						checklist: []
 					}
@@ -184,6 +185,23 @@ staff('черновик изменений применяется ко всем 
 	await expect(page.getByRole('row').filter({ hasText: REMOVED_KEY })).toHaveCount(1);
 
 	const dialog = page.getByRole('dialog');
+
+	// Требование «нужна отметка по документу» включается в том же диалоге стадии,
+	// что и остальные: это параметр процесса, а не код. Ставится на стадии, где
+	// никто не стоит, — проверяется поле формы, а не перенос записей.
+	const startRow = page.getByRole('row').filter({ hasText: 'start' });
+	await openLayer(startRow.getByRole('button', { name: 'Изменить' }), dialog);
+
+	const markField = dialog.getByRole('combobox', { name: 'Отметка по документу дела' });
+	const approved = page.getByRole('option', { name: 'Утверждён', exact: true });
+
+	await expect(markField).toHaveText('Не требуется');
+	await openLayer(markField, approved);
+	await approved.click();
+	await dialog.getByRole('button', { name: 'Сохранить стадию' }).click();
+
+	await expect(page.getByText('Стадия сохранена')).toBeVisible();
+	await expect(startRow.getByText('Отметка «Утверждён»')).toBeVisible();
 
 	// Переименование: ключ остаётся прежним, поэтому записи никуда не поедут.
 	const renamedRow = page.getByRole('row').filter({ hasText: RENAMED_KEY });

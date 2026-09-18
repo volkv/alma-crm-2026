@@ -21,7 +21,6 @@ import type { PgTable } from 'drizzle-orm/pg-core';
 import { closeDatabase, getDb } from '$lib/server/db';
 import * as schema from '$lib/server/db/schema';
 import { seedRolesAndPermissions } from '$lib/server/rbac/seed';
-import { B2B_GROUP_KEY } from '$lib/server/stages/definitions';
 import { exchangeKeyReport, seedApiKeys, type ExchangeKeySeedResult } from './api-keys';
 import { seedContracts } from './contracts';
 import { seedDirectory } from './directory';
@@ -62,7 +61,7 @@ export async function seedAll(): Promise<SeedReport> {
 		return { users: seededUsers, exchangeKeys: keys };
 	});
 
-	await seedInteractions({ groupKey: B2B_GROUP_KEY });
+	await seedInteractions();
 	// После взаимодействий: договор ссылается на уже заведённую запись.
 	await seedContracts();
 

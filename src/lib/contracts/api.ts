@@ -21,7 +21,12 @@ import {
 	type ContractView,
 	type OrganizationView
 } from './directory';
-import { DOCUMENT_KINDS, type DocumentListItem, type DocumentView } from './documents';
+import {
+	DOCUMENT_KINDS,
+	DOCUMENT_STATUS_FACTS,
+	type DocumentListItem,
+	type DocumentView
+} from './documents';
 import {
 	EXCHANGE_DIRECTIONS,
 	EXCHANGE_MESSAGE_STATES,
@@ -424,7 +429,10 @@ export const apiDocumentMarksSchema = z.object({
 	interactionId: z.uuid().nullable(),
 	agreedAt: z.iso.datetime().nullable().describe('Согласован'),
 	approvedAt: z.iso.datetime().nullable().describe('Утверждён'),
-	inEffectAt: z.iso.datetime().nullable().describe('Введён в действие')
+	inEffectAt: z.iso.datetime().nullable().describe('Введён в действие'),
+	agreedNote: z.string().nullable().describe('Комментарий к отметке о согласовании'),
+	approvedNote: z.string().nullable().describe('Комментарий к отметке об утверждении'),
+	inEffectNote: z.string().nullable().describe('Комментарий к отметке о введении в действие')
 });
 
 export type ApiDocumentMarks = z.output<typeof apiDocumentMarksSchema>;
@@ -436,7 +444,10 @@ export function toApiDocumentMarks(view: DocumentView): ApiDocumentMarks {
 		interactionId: view.interactionId,
 		agreedAt: view.agreedAt === null ? null : view.agreedAt.toISOString(),
 		approvedAt: view.approvedAt === null ? null : view.approvedAt.toISOString(),
-		inEffectAt: view.inEffectAt === null ? null : view.inEffectAt.toISOString()
+		inEffectAt: view.inEffectAt === null ? null : view.inEffectAt.toISOString(),
+		agreedNote: view.agreedNote,
+		approvedNote: view.approvedNote,
+		inEffectNote: view.inEffectNote
 	};
 }
 
@@ -513,6 +524,10 @@ export const apiProcessStageSchema = z.object({
 	requiresResult: z.boolean(),
 	requiresConfirmation: z.boolean(),
 	requiresLmsData: z.boolean().describe('Стадия подтверждается фактом из системы обучения'),
+	requiresDocumentMark: z
+		.enum(DOCUMENT_STATUS_FACTS)
+		.nullable()
+		.describe('Отметка по документу дела, которой подтверждается стадия; `null` — не требуется'),
 	isFinal: z.boolean(),
 	checklist: z.array(checklistItemSchema)
 });
@@ -580,6 +595,7 @@ export function toApiProcess(detail: ProcessGroupDetail): ApiProcess {
 							requiresResult: stage.requiresResult,
 							requiresConfirmation: stage.requiresConfirmation,
 							requiresLmsData: stage.requiresLmsData,
+							requiresDocumentMark: stage.requiresDocumentMark,
 							isFinal: stage.isFinal,
 							checklist: stage.checklist
 						})),

@@ -8,7 +8,7 @@
  */
 import { z } from 'zod';
 import { moscowDay, moscowDayStart } from './calendar';
-import { id, optionalId, pageQuerySchema, requiredText, searchQuery } from './common';
+import { id, optionalId, optionalText, pageQuerySchema, requiredText, searchQuery } from './common';
 
 /**
  * Три факта по документу фиксируются отдельно: согласован, утверждён, вступил
@@ -30,6 +30,23 @@ export const DOCUMENT_STATUS_FACT_LABELS: Record<DocumentStatusFact, string> = {
 	approved: 'Утверждён',
 	in_effect: 'Введён в действие'
 };
+
+/**
+ * Факт, которым отметка по документу подтверждает стадию.
+ *
+ * Название документа лежит рядом со ссылкой на него не ради удобства: запись
+ * стадии обязана объяснять подтверждение и через год, когда документ заменили
+ * новой редакцией и назвали иначе. Так же устроен и снимок фактов системы
+ * обучения (`lmsEvidenceSchema` в `exchange.ts`).
+ */
+export const documentMarkEvidenceSchema = z.object({
+	documentId: z.uuid(),
+	title: z.string().min(1),
+	mark: z.enum(DOCUMENT_STATUS_FACTS),
+	markedAt: z.iso.datetime({ offset: true })
+});
+
+export type DocumentMarkEvidence = z.output<typeof documentMarkEvidenceSchema>;
 
 /** Что принимаем на загрузку. Всё остальное отклоняем на входе, а не на диске. */
 export const ALLOWED_DOCUMENT_MIME_TYPES = [
@@ -89,7 +106,14 @@ export const markDocumentStatusSchema = z.object({
 	 * только поставить отметку «сейчас». Часа у отметки нет и в договоре:
 	 * согласовывают днём, а не минутой.
 	 */
-	at: z.iso.date({ error: 'Дата указана неверно' }).nullable().default(null)
+	at: z.iso.date({ error: 'Дата указана неверно' }).nullable().default(null),
+	/**
+	 * Чем отметка объясняется: номер протокола, кем подписан экземпляр, на каком
+	 * совещании утвердили. Необязателен и в журнал действий не попадает —
+	 * подробности события принимают только имена полей и ссылки на записи
+	 * (`validateAuditDetails`), а это текст, который писал человек.
+	 */
+	note: optionalText(500)
 });
 
 /**
@@ -368,4 +392,8 @@ export type DocumentView = {
 	agreedAt: Date | null;
 	approvedAt: Date | null;
 	inEffectAt: Date | null;
+	/** Комментарии к отметкам: чем каждая из них объясняется. */
+	agreedNote: string | null;
+	approvedNote: string | null;
+	inEffectNote: string | null;
 };
