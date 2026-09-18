@@ -6,6 +6,7 @@ pnpm-lock.yaml
 /build/
 /static/
 /drizzle/
+/dist/
 /playwright-report/
 /test-results/
 /coverage/

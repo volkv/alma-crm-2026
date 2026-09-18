@@ -19,6 +19,7 @@
 		"test:e2e": "node e2e/stack.ts && playwright test",
 		"mocks:cms": "node --env-file-if-exists=.env mocks/mock-cms/index.ts",
 		"mocks:lms": "node --env-file-if-exists=.env mocks/mock-lms/index.ts",
+		"docs:pdf": "node scripts/docs-pdf/build.ts",
 		"db:generate": "drizzle-kit generate",
 		"db:migrate": "node --env-file-if-exists=.env scripts/migrate.ts",
 		"db:seed": "node --env-file-if-exists=.env scripts/seed/index.ts",

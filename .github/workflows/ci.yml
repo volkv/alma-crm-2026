@@ -10,7 +10,7 @@ concurrency:
   cancel-in-progress: true
 
 # Каждая задача здесь — ровно одна команда, которую разработчик гоняет у себя:
-# `check:all` и `check:security`. Разъезжаться этим спискам нельзя: проверка,
+# `check:all`, `check:security` и `docs:pdf`. Разъезжаться этим спискам нельзя: проверка,
 # которой нет на машине, ловится только после push, а проверка, которой нет в CI,
 # не ловится вовсе. Поэтому и `docker build`, и аудит зависимостей живут внутри
 # `check:all`, а не отдельными шагами workflow.
@@ -93,3 +93,54 @@ jobs:
           path: security-report/
           retention-days: 30
           if-no-files-found: warn
+
+  # Комплект документации: PDF по каждому документу репозитория и общий файл.
+  # Отдельной задачей, а не шагом внутри `check:all`, по той же причине, что и
+  # сканеры: гейт кода от неё не зависит и не ждёт её, а собранный комплект
+  # нужен и на зелёном прогоне — его забирают артефактом и отдают читателю.
+  # Сломанный комплект (пропала картинка, переименован документ) при этом всё
+  # равно виден: задача краснеет.
+  docs-pdf:
+    name: Documentation PDF
+    runs-on: ubuntu-latest
+
+    # Печатает ту же службу, что печатает отчёты и договоры в работающей
+    # системе. Ни базы, ни хранилища, ни самого приложения сборщику не нужно:
+    # он читает файлы репозитория и ходит в службу напрямую.
+    services:
+      gotenberg:
+        image: gotenberg/gotenberg:8
+        ports:
+          - 3001:3000
+        options: >-
+          --health-cmd "curl --silent --fail http://localhost:3000/health"
+          --health-interval 10s
+          --health-timeout 5s
+          --health-retries 10
+
+    steps:
+      - uses: actions/checkout@v5
+
+      - uses: pnpm/action-setup@v6
+
+      - uses: actions/setup-node@v5
+        with:
+          node-version-file: .nvmrc
+          cache: pnpm
+
+      - run: pnpm install --frozen-lockfile
+
+      - name: Build the documentation kit
+        run: pnpm run docs:pdf
+        env:
+          GOTENBERG_URL: http://localhost:3001
+
+      # Каталог целиком, а не один общий файл: рядом с ним лежат отдельные PDF
+      # документов, и читателю, которому нужен только контракт обмена, не
+      # приходится листать весь комплект.
+      - name: Upload the documentation kit
+        uses: actions/upload-artifact@v4
+        with:
+          name: documentation-pdf
+          path: dist/docs-pdf/
+          retention-days: 30

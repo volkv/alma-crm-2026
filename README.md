@@ -654,6 +654,10 @@ pnpm run check:all
 | [`docs/deployment.md`](docs/deployment.md)               | развёртывание на сервере за обратным прокси                              |
 | [`docs/readme-media.md`](docs/readme-media.md)           | как пересобрать снимки и ролики этого README                             |
 
+Всё это одним PDF: `pnpm run docs:pdf` собирает `dist/docs-pdf/lct-crm-documentation.pdf` (нужен
+только `docker compose up -d gotenberg`), а готовый комплект лежит артефактом `documentation-pdf`
+у последнего прогона [CI](https://github.com/volkv/lct-2026/actions/workflows/ci.yml).
+
 ## Команда
 
 <table>
