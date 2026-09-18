@@ -38,6 +38,7 @@ import type {
 	StageSnapshot
 } from '$lib/contracts/interactions';
 import {
+	COMMENT_SOURCES,
 	CONTRACT_STATUSES,
 	INTERACTION_STATUSES,
 	PARTY_ROLES,
@@ -66,6 +67,7 @@ export const partyRoleEnum = pgEnum('party_role', PARTY_ROLES);
 export const stageOutcomeEnum = pgEnum('stage_outcome', STAGE_OUTCOMES);
 export const pauseReasonEnum = pgEnum('pause_reason', PAUSE_REASONS);
 export const contractStatusEnum = pgEnum('contract_status', CONTRACT_STATUSES);
+export const commentSourceEnum = pgEnum('comment_source', COMMENT_SOURCES);
 
 /**
  * Группа процесса: набор видов контрагента, работа с которыми идёт по одному
@@ -662,6 +664,13 @@ export const comments = pgTable(
 			.notNull()
 			.references(() => users.id, { onDelete: 'restrict' }),
 		body: text().notNull(),
+		/**
+		 * Откуда текст. Подписан комментарий заявки сотрудником, который принимает
+		 * входящие, — по автору не отличить, а уничтожению персональных данных
+		 * отличать обязательно: текст заявителя о себе оно стирает, текст
+		 * сотрудника не трогает.
+		 */
+		source: commentSourceEnum().notNull().default('manual'),
 		...timestamps
 	},
 	(table) => [index('comments_interaction_idx').on(table.interactionId, table.createdAt)]

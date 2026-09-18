@@ -25,6 +25,7 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type {
 	AdvanceStageInput,
 	CancelInteractionInput,
+	CommentSource,
 	CompleteInteractionInput,
 	ConfirmStageInput,
 	CreateCommentInput,
@@ -1260,10 +1261,15 @@ export async function setResponsible(
  * Комментарий к взаимодействию. `tx` передаёт тот, кто уже открыл транзакцию:
  * первый комментарий заявки с сайта пишется в той же операции, что и сама
  * заявка, — своей транзакции вложенный вызов не начинает.
+ *
+ * Источник текста в схему запроса не входит и прийти снаружи не может:
+ * «это написал заявитель» — утверждение системы о происхождении текста, и
+ * клиент, который выставил бы его себе сам, отдал бы чужой комментарий на
+ * уничтожение вместе с данными человека.
  */
 export async function addComment(
 	ctx: ActorContext,
-	input: CreateCommentInput,
+	input: CreateCommentInput & { source?: CommentSource },
 	tx?: Tx
 ): Promise<{ id: string }> {
 	requirePermission(ctx, 'interactions.write');
@@ -1275,7 +1281,12 @@ export async function addComment(
 
 		const [comment] = await executor
 			.insert(comments)
-			.values({ interactionId: input.interactionId, authorId, body: input.body })
+			.values({
+				interactionId: input.interactionId,
+				authorId,
+				body: input.body,
+				source: input.source ?? 'manual'
+			})
 			.returning({ id: comments.id });
 
 		await touchInteraction(executor, input.interactionId);

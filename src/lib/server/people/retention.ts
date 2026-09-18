@@ -14,6 +14,7 @@
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import {
 	ANONYMIZED_PERSON_LAST_NAME,
+	ANONYMIZED_TEXT,
 	type PersonView,
 	type SetRetentionInput
 } from '$lib/contracts/directory';
@@ -23,9 +24,12 @@ import { invalidateDirectoryOptions } from '../cache/directory';
 import { invalidateInteractionCards } from '../cache/interactions';
 import { getDb } from '../db';
 import {
+	comments,
 	exchangeMessages,
+	interactionChanges,
 	interactionParties,
 	interactions,
+	notificationDeliveries,
 	organizations,
 	people
 } from '../db/schema';
@@ -112,19 +116,47 @@ export async function setRetention(
 }
 
 /**
+ * Поля предметной истории правок, в прежнем значении которых стоит текст, а не
+ * ссылка или срок.
+ *
+ * Перечислением, а не догадкой по содержимому: в `old_value` лежит `jsonb`, и
+ * «похоже на фамилию» — правило, которое однажды сотрёт сумму или срок.
+ * Заголовок заявки физлица и есть его ФИО, остальные поля истории —
+ * ответственный, периоды, списки идентификаторов — персональных данных не
+ * несут.
+ */
+const TEXT_CHANGE_FIELDS = ['title'] as const;
+
+/**
  * Следы человека за пределами карточки: контрагент-физлицо, названный его ФИО,
- * взаимодействия с этим ФИО в заголовке и тела сообщений обмена по ним.
+ * взаимодействия с этим ФИО в заголовке, тела сообщений обмена по ним, текст
+ * отправленных уведомлений, прежние значения правленого заголовка и текст
+ * заявки, который человек написал о себе сам.
  *
  * Заявка физического лица с сайта заводит организацию, у которой название и
  * есть ФИО (`exchange/intake.ts`), заголовок взаимодействия собирается из того
- * же ФИО, а сообщение, которым заявка приехала, лежит в журнале обмена. Стереть
- * только строку `people` значит объявить данные уничтоженными, оставив три их
- * копии в соседних таблицах.
+ * же ФИО, а сообщение, которым заявка приехала, лежит в журнале обмена. Дальше
+ * этот заголовок расходится копиями: письмо о зависшей записи уносит его в
+ * `notification_deliveries` темой и телом, всякая его правка — в
+ * `interaction_changes` прежним значением. Стереть только строку `people`
+ * значит объявить данные уничтоженными, оставив их копии в шести соседних
+ * таблицах.
  *
  * Название организации заменяется, а не стирается: это её единственное имя, и
  * пустая строка сделала бы справочник нечитаемым. В заголовках меняется ровно
  * прежнее название — точной подстрокой, а не по образцу: заголовок сотрудник
  * правит руками, и угадывать в нём ФИО значит однажды испортить чужой текст.
+ *
+ * Сохранённые тексты — письмо, прежнее значение поля, комментарий заявки —
+ * заменяются целиком пометкой {@link ANONYMIZED_TEXT}, а не чистятся по
+ * образцу: подстрока не найдёт «Иванов И.И.» и номер, разорванный переносом, а
+ * найдя лишнее, испортит текст. Что было письмо, что поле правили и что заявка
+ * несла текст, при этом видно — пропадает только содержание.
+ *
+ * Чего эта функция не трогает: комментарии сотрудников (это содержание работы,
+ * а не данные человека — их писали о деле, и своей фамилии человек в них не
+ * оставлял), причину правки и файлы документов. Границы названы в
+ * `docs/security.md`.
  */
 async function eraseCounterpartyTraces(tx: Tx, personId: string): Promise<void> {
 	const counterparties = await tx
@@ -175,7 +207,75 @@ async function eraseCounterpartyTraces(tx: Tx, personId: string): Promise<void> 
 			.update(exchangeMessages)
 			.set({ payload: sql`jsonb_build_object('anonymizedAt', now())`, envelope: null })
 			.where(inArray(exchangeMessages.interactionId, titled));
+
+		// Тема и тело писем, которые система отправила по этим взаимодействиям:
+		// заголовок и название стороны уходят в них снимком, собранным
+		// `notifications/message.ts`, и переживают правку заголовка — ради этого их
+		// и хранят. Строка журнала остаётся: «письмо было, и вот его исход».
+		await tx
+			.update(notificationDeliveries)
+			.set({ subject: ANONYMIZED_TEXT, body: ANONYMIZED_TEXT, updatedAt: sql`now()` })
+			.where(inArray(notificationDeliveries.interactionId, titled));
+
+		// Прежние значения правленого заголовка. Замена заголовка подстрокой их не
+		// достаёт: в истории лежит текст, каким он был до правки, а правка могла
+		// быть и переименованием заявки в «Договор с колледжем» — тогда ФИО
+		// осталось бы только здесь. Причина правки — текст сотрудника и остаётся.
+		await tx
+			.update(interactionChanges)
+			.set({
+				oldValue: sql`to_jsonb(${ANONYMIZED_TEXT}::text)`,
+				newValue: sql`to_jsonb(${ANONYMIZED_TEXT}::text)`
+			})
+			.where(
+				and(
+					inArray(interactionChanges.interactionId, titled),
+					inArray(interactionChanges.field, [...TEXT_CHANGE_FIELDS])
+				)
+			);
+
+		// Свободный текст заявки: до четырёх тысяч знаков, которые человек написал
+		// о себе сам, — интерес, комментарий, иногда второй телефон. Комментарии
+		// сотрудников той же карточки не трогаются: их различает источник, а не
+		// автор — подписаны и те и другие сотрудником, принимающим входящие.
+		await tx
+			.update(comments)
+			.set({ body: ANONYMIZED_TEXT, updatedAt: sql`now()` })
+			.where(
+				and(inArray(comments.interactionId, titled), eq(comments.source, 'application_intake'))
+			);
 	}
+}
+
+/**
+ * Отпечаток почты в журнале обмена.
+ *
+ * Заявка не кладёт в журнал ни ФИО, ни адреса — только ключ сравнения адреса,
+ * тот же HMAC, что в `people.email_hash` (`exchange/intake.ts`). Ключ сравнения
+ * — это по-прежнему сведения о человеке: по нему «он ли писал нам с этой почты»
+ * проверяется одним сравнением, и пережить уничтожение данных он не должен.
+ *
+ * Ищется он ровно потому, что считается тем же ключом: значение из карточки
+ * подставляется в запрос как есть, без перебора и без разбора чужих тел. Для
+ * контактного лица вуза это единственный путь — организации-физлица у него нет,
+ * и {@link eraseCounterpartyTraces} до его сообщений не доходит вовсе.
+ *
+ * Заменяется отпечаток, а не строка журнала: сообщение с заявкой вуза — история
+ * обмена с организацией, и стереть её тело значило бы уничтожить чужие данные
+ * заодно. Пометка на месте контакта говорит ровно то, что произошло: контакт в
+ * сообщении был, и его уничтожили.
+ */
+async function eraseExchangeContactFingerprint(tx: Tx, emailHash: string | null): Promise<void> {
+	if (emailHash === null) {
+		return;
+	}
+
+	await tx
+		.update(exchangeMessages)
+		.set({
+			payload: sql`jsonb_set(${exchangeMessages.payload}, '{data,contact}', jsonb_build_object('anonymizedAt', now()))`
+		})
+		.where(sql`${exchangeMessages.payload} #>> '{data,contact,emailHash}' = ${emailHash}`);
 }
 
 /**
@@ -233,6 +333,20 @@ export async function anonymizePerson(ctx: ActorContext, personId: string): Prom
 
 	return forgotten(
 		withTransaction(ctx, async (tx) => {
+			// Ключ сравнения адреса — до того, как он будет стёрт: по нему
+			// уничтожение находит отпечаток человека в журнале обмена. Строка берётся
+			// под блокировку, иначе правка контакта, прошедшая между чтением до
+			// транзакции и этим шагом, оставила бы в журнале отпечаток нового адреса.
+			const [locked] = await tx
+				.select({ emailHash: people.emailHash })
+				.from(people)
+				.where(eq(people.id, personId))
+				.for('update');
+
+			if (locked === undefined) {
+				throw new NotFoundError('Человек не найден');
+			}
+
 			const [row] = await tx
 				.update(people)
 				.set({
@@ -262,6 +376,7 @@ export async function anonymizePerson(ctx: ActorContext, personId: string): Prom
 			}
 
 			await eraseCounterpartyTraces(tx, personId);
+			await eraseExchangeContactFingerprint(tx, locked.emailHash);
 
 			await recordAuditEvent(
 				ctx,

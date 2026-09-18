@@ -52,6 +52,18 @@ export const STAGE_OUTCOMES = ['completed', 'returned', 'skipped', 'migrated'] a
 export const CONTRACT_STATUSES = ['draft', 'active', 'closed'] as const;
 /** Почему часы на стадии остановлены. */
 export const PAUSE_REASONS = ['waiting_counterparty', 'waiting_internal', 'other'] as const;
+/**
+ * Откуда взялся текст комментария.
+ *
+ * Различие нужно уничтожению персональных данных, а не экрану. `manual` — текст
+ * сотрудника: его никто не переписывает, это содержание работы. Комментарий
+ * заявки (`application_intake`) — свободный текст, который человек написал о
+ * себе сам в форме на сайте, вместе с фамилией и телефоном внутри; при
+ * обезличивании контрагента-физлица он заменяется пометкой, потому что искать в
+ * нём ФИО подстрокой значило бы однажды испортить чужой текст и всё равно
+ * оставить контакты.
+ */
+export const COMMENT_SOURCES = ['manual', 'application_intake'] as const;
 
 /**
  * Причины помех.
@@ -80,6 +92,7 @@ export type PartyRole = (typeof PARTY_ROLES)[number];
 export type StageOutcome = (typeof STAGE_OUTCOMES)[number];
 export type ContractStatus = (typeof CONTRACT_STATUSES)[number];
 export type PauseReason = (typeof PAUSE_REASONS)[number];
+export type CommentSource = (typeof COMMENT_SOURCES)[number];
 export type BlockerReason = (typeof BLOCKER_REASONS)[number];
 
 /**

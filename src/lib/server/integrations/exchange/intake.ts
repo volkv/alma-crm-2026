@@ -107,11 +107,6 @@ export function hashMessage(message: unknown): string {
 	return createHash('sha256').update(JSON.stringify(message), 'utf8').digest('hex');
 }
 
-/** Отпечаток адреса почты: по нему видно «тот же контакт или другой», и только. */
-function contactFingerprint(email: string): string {
-	return createHash('sha256').update(email.trim().toLowerCase(), 'utf8').digest('hex');
-}
-
 /**
  * Что от заявки остаётся в журнале обмена.
  *
@@ -153,7 +148,13 @@ function journalPayload(message: ApplicationSubmittedMessage): Record<string, un
 								? { educationLevel: applicant.educationLevel }
 								: {})
 						},
-			contact: { emailHash: contactFingerprint(data.contact.email) },
+			// Отпечаток адреса — тот же ключ сравнения, что лежит в
+			// `people.email_hash`: HMAC на ключе установки, а не голый SHA-256.
+			// Адреса перебираемы («фамилия.имя@вуз.ru»), и неключевой хеш
+			// разворачивается словарём — то есть остаётся сведениями о человеке.
+			// На ключе он этого не даёт, а совпадение с колонкой справочника —
+			// то самое, по чему уничтожение данных находит эти строки в журнале.
+			contact: { emailHash: hashEmail(data.contact.email) },
 			programCodes: data.programCodes,
 			productCodes: data.productCodes,
 			transferStatus: data.transferStatus,
@@ -202,6 +203,11 @@ function applicantName(data: ApplicationSubmittedData): string {
  * Первый комментарий: то, что написал заявитель, слово в слово, и расхождения
  * справочника рядом. Неизвестный код программы заявку не отвергает — заявка,
  * потерянная из-за опечатки в коде продукта, это потерянный вуз.
+ *
+ * Текст помечается источником `application_intake`: в нём бывает и фамилия, и
+ * телефон, а живёт он до четырёх тысяч знаков — и уничтожение персональных
+ * данных заменяет его пометкой, не трогая комментарии сотрудников
+ * (`people/retention.ts`).
  */
 function intakeComment(
 	data: ApplicationSubmittedData,
@@ -892,7 +898,11 @@ async function updateExisting(
 	if (comment !== '') {
 		// Комментарий приписывается, а не затирает прежний: повтор ничего не
 		// удаляет.
-		await addComment(ctx, { interactionId: existing.id, body: comment }, tx);
+		await addComment(
+			ctx,
+			{ interactionId: existing.id, body: comment, source: 'application_intake' },
+			tx
+		);
 	}
 
 	const [{ personId }] = await tx
@@ -1019,7 +1029,7 @@ async function createFromApplication(
 	const comment = intakeComment(data, catalogue.unknown, transferStatusApplied);
 
 	if (comment !== '') {
-		await addComment(ctx, { interactionId, body: comment }, tx);
+		await addComment(ctx, { interactionId, body: comment, source: 'application_intake' }, tx);
 	}
 
 	if (counterparty.personId !== null && data.consent !== null && data.consent.given) {
