@@ -14,6 +14,14 @@
  * открытие каждой следующей карточки снова холодное, и пар получается столько,
  * сколько задано `PAIRS`. Ничего сбрасывать между парами не нужно.
  *
+ * После карточек тем же способом меряется экран отчёта за учебный год: списки
+ * фильтров и действующая редакция процесса тоже лежат в Redis, и повторное
+ * открытие раздела их не перечитывает. Здесь холод приходится ждать — у этих
+ * записей поколение не зависит от данных отчёта, и обесценивает их только
+ * запись в справочник, публикация редакции или срок жизни. Поэтому перед
+ * холодным открытием сценарий молчит дольше самого долгого срока (`process.ts`,
+ * 60 секунд), а пар берётся немного: `REPORT_PAIRS`.
+ *
  * Один VU: замер про стоимость одного открытия, а не про поведение под
  * нагрузкой. Нагрузку меряют `browse.js` и `reports.js`.
  */
@@ -25,6 +33,17 @@ import { ACCOUNTS, jar, signIn } from './session.js';
 const BASE_URL = __ENV.BASE_URL;
 const PASSWORD = __ENV.PASSWORD;
 const PAIRS = Number(__ENV.PAIRS || 40);
+const REPORT_PAIRS = Number(__ENV.REPORT_PAIRS || 3);
+
+/** Период отчёта — учебный год: самая дорогая выборка системы. */
+const PERIOD = 'from=2026-09-01&to=2027-08-31';
+
+/**
+ * Сколько молчать перед холодным открытием отчёта. Больше самого долгого срока
+ * жизни записи кэша (редакция процесса — 60 секунд), иначе «холодное» открытие
+ * читало бы то, что положило предыдущее.
+ */
+const REPORT_COLD_SECONDS = 65;
 
 const fixture = JSON.parse(open(__ENV.FIXTURE));
 
@@ -36,12 +55,21 @@ const series = {
 	long: {
 		cold: { total: new Trend('long_cold_total', true), db: new Trend('long_cold_db', true) },
 		warm: { total: new Trend('long_warm_total', true), db: new Trend('long_warm_db', true) }
+	},
+	report: {
+		cold: { total: new Trend('report_cold_total', true), db: new Trend('report_cold_db', true) },
+		warm: { total: new Trend('report_warm_total', true), db: new Trend('report_warm_db', true) }
 	}
 };
 
 export const options = {
 	scenarios: {
-		cache: { executor: 'shared-iterations', vus: 1, iterations: PAIRS, maxDuration: '10m' }
+		cache: {
+			executor: 'shared-iterations',
+			vus: 1,
+			iterations: PAIRS + REPORT_PAIRS,
+			maxDuration: '20m'
+		}
 	},
 	summaryTrendStats: ['med', 'p(95)', 'max', 'avg', 'count']
 };
@@ -62,10 +90,34 @@ function openCard(id) {
 	return http.get(`${BASE_URL}/interactions/${id}`, { jar, headers: HTML });
 }
 
+function openReport() {
+	return http.get(`${BASE_URL}/reports?mode=slice&${PERIOD}`, { jar, headers: HTML });
+}
+
+/** Пара «холодное открытие — повторное» по одному ответу каждая. */
+function pair(kind, first, second) {
+	series[kind].cold.total.add(first.timings.duration);
+	series[kind].cold.db.add(timing(first, 'db'));
+	series[kind].warm.total.add(second.timings.duration);
+	series[kind].warm.db.add(timing(second, 'db'));
+}
+
 export default function () {
 	if (!signedIn) {
 		signIn(BASE_URL, ACCOUNTS[0], PASSWORD);
 		signedIn = true;
+	}
+
+	// Пары карточек идут первыми, отчёт — после них: он ждёт истечения срока
+	// жизни записей кэша и тем задаёт темп всему прогону.
+	if (__ITER >= PAIRS) {
+		sleep(REPORT_COLD_SECONDS);
+
+		const cold = openReport();
+		sleep(0.2);
+		pair('report', cold, openReport());
+
+		return;
 	}
 
 	for (const kind of ['usual', 'long']) {
@@ -73,15 +125,11 @@ export default function () {
 		const id = pool[(__ITER * 37) % pool.length];
 
 		const first = openCard(id);
-		series[kind].cold.total.add(first.timings.duration);
-		series[kind].cold.db.add(timing(first, 'db'));
 
 		// Пауза не ради кэша — он уже записан, — а чтобы два открытия не слились
 		// в одно соединение и не мерили заодно разогрев сокета.
 		sleep(0.2);
 
-		const second = openCard(id);
-		series[kind].warm.total.add(second.timings.duration);
-		series[kind].warm.db.add(timing(second, 'db'));
+		pair(kind, first, openCard(id));
 	}
 }
