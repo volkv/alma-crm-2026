@@ -108,7 +108,7 @@
 			<p
 				class="shrink-0 bg-warning-soft px-3 py-1 text-center text-xs text-warning-soft-foreground sm:px-4"
 			>
-				Демо-режим: данные синтетические
+				Демо-режим: вузы и продукты названы настоящие, люди, договоры и цифры — вымышленные
 			</p>
 		{/if}
 

@@ -65,7 +65,7 @@ registerRoute({
 				cells: [
 					{
 						kind: 'link',
-						value: 'Переговоры с СЗПУ',
+						value: 'Переговоры с СПбПУ',
 						url: 'https://crm.example.org/interactions/a3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d'
 					}
 				]
@@ -93,7 +93,7 @@ registerRoute({
 					points: [
 						{
 							key: '2f1c9a0e-6b3d-4a77-8f21-0c5e9d4b7a10',
-							label: 'СЗПУ',
+							label: 'СПбПУ',
 							value: 1,
 							filter: { param: 'org', value: '2f1c9a0e-6b3d-4a77-8f21-0c5e9d4b7a10' }
 						}

@@ -97,7 +97,7 @@ describe('заявка из CMS в CRM', () => {
 		expect(pick(envelope, 'source.instance')).toBe('itschool-site');
 		expect(pick(envelope, 'data.externalId')).toBe(B2B_EXTERNAL_ID);
 		expect(pick(envelope, 'data.revision')).toBe(1);
-		expect(pick(envelope, 'data.applicant.inn')).toBe('7802450127');
+		expect(pick(envelope, 'data.applicant.inn')).toBe('0000000096');
 	});
 
 	it('у B2C несёт физлицо и согласие', async () => {

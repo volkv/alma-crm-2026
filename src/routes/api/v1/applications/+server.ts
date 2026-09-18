@@ -54,7 +54,7 @@ registerRoute({
 			form: 'b2b',
 			applicant: {
 				kind: 'educational_institution',
-				name: 'СЗПУ',
+				name: 'СПбПУ',
 				inn: '7707083893',
 				ogrn: '1027700132195',
 				educationLevel: 'vo'

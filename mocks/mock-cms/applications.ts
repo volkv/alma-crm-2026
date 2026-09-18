@@ -4,7 +4,8 @@
  * Тела взяты из контракта обмена (`docs/exchange-contract.md`, раздел 3) —
  * ровно те, что там показаны примерами: проверка обязана идти против
  * объявленного контракта, а не против тела, которое имитатор придумал себе
- * сам. Ни один вуз, ни одно имя и ни один адрес настоящему лицу не принадлежат.
+ * сам. Название вуза публичное, как и в сиде стенда; имя, адрес, почта и
+ * реквизиты заявителя вымышлены (`docs/seeds.md`).
  */
 
 export type ApplicationForm = 'b2b' | 'b2c';
@@ -27,19 +28,19 @@ const TEMPLATES: Record<ApplicationForm, ApplicationTemplate> = {
 			form: 'b2b',
 			applicant: {
 				kind: 'educational_institution',
-				name: 'Северо-Западный политехнический университет',
-				inn: '7802450127',
-				ogrn: '1027800000123',
+				name: 'Московский технический университет связи и информатики',
+				inn: '0000000096',
+				ogrn: '1260000000094',
 				educationLevel: 'vo'
 			},
 			contact: {
 				lastName: 'Кузьмина',
 				firstName: 'Наталья',
-				email: 'kuzmina@szpu.example.org',
+				email: 'kuzmina@mtuci.example.org',
 				phone: '+7 900 000-00-11',
 				position: 'Проректор по цифровому развитию'
 			},
-			interest: 'Программа подготовки по прикладной информатике',
+			interest: 'Программа подготовки DevOps-инженеров',
 			programCodes: ['VO-BAK-01'],
 			productCodes: ['RT-DEVOPS'],
 			comment: 'Просим связаться до конца недели.',

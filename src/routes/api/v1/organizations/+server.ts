@@ -28,7 +28,7 @@ registerRoute({
 				kind: 'educational_institution',
 				educationLevel: 'vo',
 				legalName: 'Федеральное государственное бюджетное образовательное учреждение',
-				shortName: 'СЗПУ',
+				shortName: 'СПбПУ',
 				inn: '7707083893',
 				kpp: '770701001',
 				ogrn: '1027700132195',

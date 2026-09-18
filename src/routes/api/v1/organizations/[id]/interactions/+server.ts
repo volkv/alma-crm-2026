@@ -42,11 +42,11 @@ registerRoute({
 		items: [
 			{
 				id: 'a3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
-				title: 'Переговоры с СЗПУ',
+				title: 'Переговоры с СПбПУ',
 				status: 'active',
 				ownerUserId: '9c8b7a65-4321-4098-b7a6-5c4d3e2f1a09',
 				ownerName: 'Иванова Мария',
-				institutionName: 'СЗПУ',
+				institutionName: 'СПбПУ',
 				customerName: null,
 				stageKey: 'document_exchange',
 				stageName: 'Обмен пакетом документов',

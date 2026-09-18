@@ -498,9 +498,8 @@
 		<h2 class="text-sm font-semibold tracking-tight">Карточка записи</h2>
 		<Card.Root>
 			<Card.Header>
-				<Card.Title>Северный университет прикладной информатики № 1</Card.Title>
-				<Card.Description
-					>Взаимодействие № 2026-0147 · подготовка по прикладной информатике</Card.Description
+				<Card.Title>Санкт-Петербургский политехнический университет Петра Великого</Card.Title>
+				<Card.Description>Взаимодействие № 2026-0147 · подготовка DevOps-инженеров</Card.Description
 				>
 				<Card.Action>
 					<StatusBadge tone="accent" dot>В работе</StatusBadge>

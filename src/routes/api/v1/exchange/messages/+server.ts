@@ -38,7 +38,7 @@ registerRoute({
 				eventId: '0f1a2b3c-4d5e-4f60-8a1b-2c3d4e5f6a70',
 				externalId: 'a3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d:1',
 				interactionId: 'a3f1c2d4-5e6f-4a7b-8c9d-0e1f2a3b4c5d',
-				interactionTitle: 'Переговоры с СЗПУ',
+				interactionTitle: 'Переговоры с СПбПУ',
 				state: 'sent',
 				attempt: 1,
 				nextAttemptAt: null,
