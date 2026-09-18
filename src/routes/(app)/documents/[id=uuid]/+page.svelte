@@ -3,8 +3,11 @@
 	import { resolve } from '$app/paths';
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { Label } from '$lib/components/ui/label/index.js';
+	import * as Select from '$lib/components/ui/select/index.js';
 	import ActionAlert from '$lib/components/directory/action-alert.svelte';
 	import Flash from '$lib/components/directory/flash.svelte';
+	import DateField from '$lib/components/form/date-field.svelte';
 	import FileInput from '$lib/components/form/file-input.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import KeyValue from '$lib/components/key-value.svelte';
@@ -15,7 +18,10 @@
 		documentFormat,
 		documentKindLabel,
 		DOCUMENT_ORIGIN_LABELS,
-		GENERATED_DOCUMENT_KIND
+		DOCUMENT_STATUS_FACTS,
+		DOCUMENT_STATUS_FACT_LABELS,
+		GENERATED_DOCUMENT_KIND,
+		type DocumentStatusFact
 	} from '$lib/contracts/documents';
 	import { formatBytes, formatDate, formatDateTime } from '$lib/format';
 	import type { PageProps } from './$types';
@@ -31,13 +37,57 @@
 
 	const generated = $derived(data.document.kind === GENERATED_DOCUMENT_KIND);
 	const format = $derived(documentFormat(data.document.mime)?.toUpperCase() ?? data.document.mime);
+
+	/** Момент каждого факта: `null` — отметки ещё нет. */
+	const moments = $derived<Record<DocumentStatusFact, Date | null>>({
+		agreed: data.document.agreedAt,
+		approved: data.document.approvedAt,
+		in_effect: data.document.inEffectAt
+	});
+	const TONES = {
+		agreed: 'success',
+		approved: 'accent',
+		in_effect: 'info'
+	} as const satisfies Record<DocumentStatusFact, 'success' | 'accent' | 'info'>;
+
+	/**
+	 * Поставленные отметки строкой «что и когда». Подпись с датой собирается
+	 * здесь, а не двумя выражениями в разметке: разорванный на два узла текст
+	 * читается вслух как два разных значения.
+	 */
 	const facts = $derived(
-		[
-			{ label: 'Согласован', at: data.document.agreedAt, tone: 'success' as const },
-			{ label: 'Утверждён', at: data.document.approvedAt, tone: 'accent' as const },
-			{ label: 'Введён в действие', at: data.document.inEffectAt, tone: 'info' as const }
-		].filter((fact) => fact.at !== null)
+		DOCUMENT_STATUS_FACTS.flatMap((fact) => {
+			const at = moments[fact];
+
+			return at === null
+				? []
+				: [
+						{
+							key: fact,
+							label: `${DOCUMENT_STATUS_FACT_LABELS[fact]} ${formatDate(at)}`,
+							tone: TONES[fact]
+						}
+					];
+		})
 	);
+
+	/**
+	 * Факты, которых ещё нет: только их и предлагает форма. Снять отметку
+	 * нельзя — поставленная неизменяема, — поэтому выбирать из отмеченных
+	 * значило бы показывать команду, которой не существует.
+	 */
+	const available = $derived(DOCUMENT_STATUS_FACTS.filter((fact) => moments[fact] === null));
+
+	let fact = $state<DocumentStatusFact>('agreed');
+	let markDay = $state(data.markBounds.max);
+
+	// Отмеченный факт из списка уходит, и выбор обязан уйти с ним: иначе форма
+	// предлагала бы поставить отметку, которая уже стоит.
+	$effect(() => {
+		if (!available.includes(fact) && available.length > 0) {
+			fact = available[0];
+		}
+	});
 </script>
 
 <svelte:head><title>{data.document.title} — LCT CRM</title></svelte:head>
@@ -115,15 +165,62 @@
 			</p>
 		{:else}
 			<ul class="flex flex-wrap items-center gap-2">
-				{#each facts as fact (fact.label)}
+				{#each facts as item (item.key)}
 					<li>
-						<StatusBadge tone={fact.tone} dot>
-							{fact.label}
-							{fact.at === null ? '' : formatDate(fact.at)}
-						</StatusBadge>
+						<StatusBadge tone={item.tone} dot>{item.label}</StatusBadge>
 					</li>
 				{/each}
 			</ul>
+		{/if}
+
+		{#if data.canWrite}
+			{#if available.length === 0}
+				<p class="mt-3 text-xs text-muted-foreground">
+					Все три отметки поставлены. Снять их нельзя: отметка, которую можно переставить, ничего не
+					доказывает.
+				</p>
+			{:else}
+				<form
+					method="POST"
+					action="?/mark"
+					use:enhance
+					class="mt-4 flex flex-wrap items-end gap-3 border-t border-border pt-4"
+				>
+					<div class="flex min-w-48 flex-col gap-1.5">
+						<Label for="markFact">Отметка</Label>
+						<Select.Root
+							type="single"
+							name="fact"
+							bind:value={() => fact, (next) => (fact = next as DocumentStatusFact)}
+						>
+							<Select.Trigger id="markFact" class="w-full">
+								{DOCUMENT_STATUS_FACT_LABELS[fact]}
+							</Select.Trigger>
+							<Select.Content>
+								{#each available as option (option)}
+									<Select.Item value={option} label={DOCUMENT_STATUS_FACT_LABELS[option]} />
+								{/each}
+							</Select.Content>
+						</Select.Root>
+					</div>
+					<div class="flex min-w-48 flex-col gap-1.5">
+						<Label for="markAt">Дата отметки</Label>
+						<DateField
+							id="markAt"
+							name="at"
+							bind:value={markDay}
+							min={data.markBounds.min}
+							max={data.markBounds.max}
+							describedBy="markAtHint"
+						/>
+					</div>
+					<Button type="submit" size="sm">Поставить отметку</Button>
+					<p id="markAtHint" class="w-full text-xs text-muted-foreground">
+						Дату можно поставить задним числом — от дня, когда документ появился в системе, до
+						сегодняшнего. Отметку не снять и не переставить: её ставят заново на новой редакции.
+					</p>
+				</form>
+			{/if}
 		{/if}
 	</section>
 

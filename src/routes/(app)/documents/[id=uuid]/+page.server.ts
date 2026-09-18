@@ -1,5 +1,10 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { resolve } from '$app/paths';
+import {
+	markDayBounds,
+	markDocumentStatusSchema,
+	markMomentFromDay
+} from '$lib/contracts/documents';
 import { actorFromEvent } from '$lib/server/actor';
 import {
 	assertDocumentAccessible,
@@ -7,6 +12,7 @@ import {
 	selectDocumentRow,
 	toDocumentView
 } from '$lib/server/documents/read';
+import { markDocument } from '$lib/server/documents/status';
 import { uploadDocumentRevision } from '$lib/server/documents/upload';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { getInteraction } from '$lib/server/interactions/read';
@@ -45,7 +51,10 @@ export const load: PageServerLoad = async (event) => {
 			document: toDocumentView(row),
 			interaction: interaction === null ? null : { id: interaction.id, title: interaction.title },
 			revisions,
-			canWrite: can(ctx, 'documents.write')
+			canWrite: can(ctx, 'documents.write'),
+			// Границы дня отметки считает сервер: часы браузера бывают какими
+			// угодно, а последнее слово всё равно за сервисом.
+			markBounds: markDayBounds(row.createdAt)
 		};
 	} catch (error) {
 		toPageError(error);
@@ -53,6 +62,43 @@ export const load: PageServerLoad = async (event) => {
 };
 
 export const actions: Actions = {
+	/**
+	 * Отметка по документу: согласован, утверждён, введён в действие.
+	 *
+	 * День приходит из календаря формы, а момент по нему считает контракт: у
+	 * сегодняшнего дня это «сейчас», у прошлого — его начало по Москве. Снять
+	 * отметку нельзя, поэтому форма показывает только те факты, которых ещё нет.
+	 */
+	mark: async (event) => {
+		const data = await event.request.formData();
+		const at = data.get('at');
+		const parsed = markDocumentStatusSchema.safeParse({
+			documentId: event.params.id,
+			fact: data.get('fact'),
+			at: typeof at === 'string' && at.trim() !== '' ? at.trim() : null
+		});
+
+		if (!parsed.success) {
+			return fail(400, {
+				message: 'Отметка не прошла проверку',
+				issues: parsed.error.issues.map((issue) => issue.message)
+			});
+		}
+
+		try {
+			await markDocument(
+				actorFromEvent(event),
+				parsed.data.documentId,
+				parsed.data.fact,
+				parsed.data.at === null ? undefined : markMomentFromDay(parsed.data.at)
+			);
+		} catch (error) {
+			return toActionFailure(error);
+		}
+
+		return { ok: true };
+	},
+
 	/**
 	 * Новая редакция этого документа. Название, вид и взаимодействие сервис
 	 * берёт у заменяемой редакции — форма спрашивает только файл.

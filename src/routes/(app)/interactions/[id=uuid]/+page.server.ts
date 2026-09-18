@@ -17,13 +17,18 @@ import {
 	skipStageSchema,
 	updateInteractionSchema
 } from '$lib/contracts/interactions';
-import { STAGE_ATTACHMENT_DOCUMENT_KIND } from '$lib/contracts/documents';
+import {
+	markDocumentStatusSchema,
+	markMomentFromDay,
+	STAGE_ATTACHMENT_DOCUMENT_KIND
+} from '$lib/contracts/documents';
 import { sendLearningGroupSchema } from '$lib/contracts/exchange';
 import { formatDate } from '$lib/format';
 import { actorFromEvent } from '$lib/server/actor';
 import { DocumentConversionError } from '$lib/server/documents/errors';
 import { generateDocument } from '$lib/server/documents/generate';
 import { listInteractionSupersessions } from '$lib/server/documents/read';
+import { markDocument } from '$lib/server/documents/status';
 import { uploadDocument, uploadDocumentRevision } from '$lib/server/documents/upload';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import {
@@ -395,6 +400,31 @@ export const actions: Actions = {
 				title,
 				file: { mime: file.type, bytes }
 			})
+		);
+	},
+
+	/**
+	 * Отметка по приложенному документу: согласован, утверждён, введён в
+	 * действие. День приходит из календаря диалога, момент по нему считает
+	 * контракт; область доступа и однократность проверяет сервис.
+	 */
+	markDocument: async (event) => {
+		const data = await event.request.formData();
+		const parsed = parse(markDocumentStatusSchema, {
+			documentId: data.get('documentId'),
+			fact: data.get('fact'),
+			at: text(data, 'at')
+		});
+
+		if (!parsed.ok) return parsed.failure;
+
+		return run(() =>
+			markDocument(
+				actorFromEvent(event),
+				parsed.data.documentId,
+				parsed.data.fact,
+				parsed.data.at === null ? undefined : markMomentFromDay(parsed.data.at)
+			)
 		);
 	},
 

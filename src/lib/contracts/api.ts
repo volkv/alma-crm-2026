@@ -20,7 +20,7 @@ import {
 	PROGRAM_LEVELS,
 	type OrganizationView
 } from './directory';
-import { DOCUMENT_KINDS, type DocumentListItem } from './documents';
+import { DOCUMENT_KINDS, type DocumentListItem, type DocumentView } from './documents';
 import {
 	EXCHANGE_DIRECTIONS,
 	EXCHANGE_MESSAGE_STATES,
@@ -366,6 +366,33 @@ export function toApiDocument(view: DocumentListItem): ApiDocument {
 		authorName: view.authorName,
 		supersededById: view.supersededBy === null ? null : view.supersededBy.id,
 		supersededAt: view.supersededBy === null ? null : view.supersededBy.createdAt.toISOString()
+	};
+}
+
+/**
+ * Отметки документа после команды: три независимых факта и их даты. Ответ
+ * описывает документ целиком, а не поставленную отметку, — по нему видно и то,
+ * что на документе стояло раньше, и второй запрос за этим не нужен.
+ */
+export const apiDocumentMarksSchema = z.object({
+	id: z.uuid(),
+	title: z.string(),
+	interactionId: z.uuid().nullable(),
+	agreedAt: z.iso.datetime().nullable().describe('Согласован'),
+	approvedAt: z.iso.datetime().nullable().describe('Утверждён'),
+	inEffectAt: z.iso.datetime().nullable().describe('Введён в действие')
+});
+
+export type ApiDocumentMarks = z.output<typeof apiDocumentMarksSchema>;
+
+export function toApiDocumentMarks(view: DocumentView): ApiDocumentMarks {
+	return {
+		id: view.id,
+		title: view.title,
+		interactionId: view.interactionId,
+		agreedAt: view.agreedAt === null ? null : view.agreedAt.toISOString(),
+		approvedAt: view.approvedAt === null ? null : view.approvedAt.toISOString(),
+		inEffectAt: view.inEffectAt === null ? null : view.inEffectAt.toISOString()
 	};
 }
 

@@ -604,6 +604,7 @@ describe('описание API', () => {
 		expect(Object.keys(paths).sort()).toEqual([
 			'/v1/applications',
 			'/v1/directions',
+			'/v1/documents/{id}/marks',
 			'/v1/exchange/files/{key}',
 			'/v1/exchange/learning-groups/results',
 			'/v1/exchange/messages',

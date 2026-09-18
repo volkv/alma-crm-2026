@@ -7,6 +7,7 @@
  * который лежит на диске.
  */
 import { z } from 'zod';
+import { moscowDay, moscowDayStart } from './calendar';
 import { id, optionalId, pageQuerySchema, requiredText, searchQuery } from './common';
 
 /**
@@ -17,6 +18,18 @@ import { id, optionalId, pageQuerySchema, requiredText, searchQuery } from './co
 export const DOCUMENT_STATUS_FACTS = ['agreed', 'approved', 'in_effect'] as const;
 
 export type DocumentStatusFact = (typeof DOCUMENT_STATUS_FACTS)[number];
+
+/**
+ * Названия отметок. Код едет в базу и в журнал, а на экран выходит название —
+ * и оно одно на список, карточку документа, панель дела и фильтр раздела:
+ * «Утверждён» в одном месте и «Утверждено» в другом читаются как две разных
+ * отметки.
+ */
+export const DOCUMENT_STATUS_FACT_LABELS: Record<DocumentStatusFact, string> = {
+	agreed: 'Согласован',
+	approved: 'Утверждён',
+	in_effect: 'Введён в действие'
+};
 
 /** Что принимаем на загрузку. Всё остальное отклоняем на входе, а не на диске. */
 export const ALLOWED_DOCUMENT_MIME_TYPES = [
@@ -71,11 +84,54 @@ export const markDocumentStatusSchema = z.object({
 	documentId: id('Некорректный идентификатор документа'),
 	fact: z.enum(DOCUMENT_STATUS_FACTS, { error: 'Выберите, какой факт фиксируем' }),
 	/**
-	 * Дата факта. Согласование могло случиться раньше, чем до него дошли руки
-	 * в системе, поэтому её можно указать, а не только «сейчас».
+	 * День факта — календарный, `2026-09-17`. Согласование могло случиться
+	 * раньше, чем до него дошли руки в системе, поэтому день можно назвать, а не
+	 * только поставить отметку «сейчас». Часа у отметки нет и в договоре:
+	 * согласовывают днём, а не минутой.
 	 */
-	at: z.iso.datetime({ offset: true, error: 'Дата указана неверно' }).nullable().default(null)
+	at: z.iso.date({ error: 'Дата указана неверно' }).nullable().default(null)
 });
+
+/**
+ * Границы дня отметки: не раньше дня, когда документ появился в системе, и не
+ * позже сегодняшнего. Обе границы считаются по московскому календарю — по нему
+ * же живут сроки процесса.
+ */
+export type MarkDayBounds = { min: string; max: string };
+
+export function markDayBounds(createdAt: Date, now: Date = new Date()): MarkDayBounds {
+	return { min: moscowDay(createdAt), max: moscowDay(now) };
+}
+
+/**
+ * Что не так с выбранным днём отметки; `null` — день подходит.
+ *
+ * Правило одно на форму и на сервис: форма подставляет эти же границы в
+ * календарь, а последнее слово остаётся за сервисом. Два свода правил — на
+ * клиенте и на сервере — однажды разойдутся, и разойдутся молча.
+ */
+export function markDayIssue(day: string, bounds: MarkDayBounds): string | null {
+	if (day > bounds.max) {
+		return 'Отметка не может быть позже сегодняшнего дня: факта, которого ещё не было, не бывает';
+	}
+
+	if (day < bounds.min) {
+		return 'Отметка не может быть раньше дня, когда документ появился в системе';
+	}
+
+	return null;
+}
+
+/**
+ * Момент отметки по выбранному дню.
+ *
+ * Сегодняшний день — это «сейчас»: время известно, и терять его незачем.
+ * Прошлый день — его начало по Москве: часа, в который случился факт, не знает
+ * никто, а придуманный час выглядел бы в карточке как записанный.
+ */
+export function markMomentFromDay(day: string, now: Date = new Date()): Date {
+	return moscowDay(now) === day ? now : moscowDayStart(day);
+}
 
 /** Переменная шаблона: что подставляем и обязательна ли она. */
 export const documentTemplateVariableSchema = z.object({

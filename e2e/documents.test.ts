@@ -25,6 +25,7 @@ const INTERACTION_ID = seedId('interaction', 'bit-telecom');
 const TAG = crypto.randomUUID().slice(0, 8);
 const LARGE_TAG = crypto.randomUUID().slice(0, 8);
 const REVISION_TAG = crypto.randomUUID().slice(0, 8);
+const MARK_TAG = crypto.randomUUID().slice(0, 8);
 
 const PDF_TITLE = `Скан соглашения ${TAG}`;
 const TEXT_TITLE = `Служебная записка ${TAG}`;
@@ -273,6 +274,74 @@ test('новая редакция заменяет файл в деле, а пр
 		await expect(page).toHaveURL(/revisions=all/);
 		await expect(taggedRows(page, REVISION_TAG)).toHaveCount(2);
 		await expect(taggedRows(page, REVISION_TAG).filter({ hasText: 'Заменён' })).toHaveCount(1);
+	});
+});
+
+test('отметка ставится с карточки документа и остаётся на ней', async ({ page }) => {
+	const title = `Соглашение под отметку ${MARK_TAG}`;
+
+	await page.goto(`/interactions/${INTERACTION_ID}`);
+	await openDocumentsTab(page);
+
+	await upload(page, title, 'Соглашение', {
+		name: 'agreement.pdf',
+		mimeType: 'application/pdf',
+		buffer: PDF_BYTES
+	});
+
+	await test.step('карточка документа открывается из панели дела', async () => {
+		const panel = page
+			.locator('[data-slot="card"]')
+			.filter({ hasText: 'Документы взаимодействия' });
+
+		await panel.locator('li').filter({ hasText: title }).getByRole('link', { name: title }).click();
+
+		await expect(page.getByRole('heading', { level: 1 })).toHaveText(title);
+		// До отметки карточка говорит об этом прямо, а не пустым местом.
+		await expect(page.getByText('Отметок нет:')).toBeVisible();
+	});
+
+	/** Бейдж отметки: подпись и дата одной строкой. */
+	const badge = page.getByText(/Утверждён \d{2}\.\d{2}\.\d{4}/);
+
+	await test.step('форма ставит отметку «Утверждён» сегодняшним днём', async () => {
+		const form = page.locator('form[action="?/mark"]');
+
+		await choose(form.getByLabel('Отметка'), option(page, 'Утверждён'));
+		await form.getByRole('button', { name: 'Поставить отметку' }).click();
+
+		await expect(badge).toBeVisible();
+		await expect(page.getByText('Отметок нет:')).toHaveCount(0);
+
+		await page.screenshot({ path: 'test-results/documents-mark.png', fullPage: true });
+	});
+
+	await test.step('отметка переживает перезагрузку и не ставится второй раз', async () => {
+		await page.reload();
+
+		await expect(badge).toBeVisible();
+
+		// Поставленную отметку не снять и не повторить: в открытом списке формы
+		// её больше нет, остались два других факта.
+		const trigger = page.locator('form[action="?/mark"]').getByLabel('Отметка');
+
+		await expect(async () => {
+			await trigger.click();
+			await expect(option(page, 'Согласован')).toBeVisible({ timeout: 2000 });
+		}).toPass({ timeout: 20_000 });
+
+		await expect(option(page, 'Введён в действие')).toBeVisible();
+		await expect(option(page, 'Утверждён')).toHaveCount(0);
+
+		await page.keyboard.press('Escape');
+	});
+
+	await test.step('раздел документов показывает ту же отметку', async () => {
+		await page.goto('/documents');
+
+		await expect(
+			taggedRows(page, MARK_TAG).first().getByText('Утверждён', { exact: true })
+		).toBeVisible();
 	});
 });
 

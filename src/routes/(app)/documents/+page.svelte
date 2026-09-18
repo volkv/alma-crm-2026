@@ -18,6 +18,8 @@
 		DOCUMENT_FORMATS,
 		DOCUMENT_KINDS,
 		DOCUMENT_ORIGIN_LABELS,
+		DOCUMENT_STATUS_FACTS,
+		DOCUMENT_STATUS_FACT_LABELS,
 		type DocumentListItem
 	} from '$lib/contracts/documents';
 	import { formatBytes, formatDate, formatDateTime, formatNumber } from '$lib/format';
@@ -44,9 +46,12 @@
 	const REVISION_OPTIONS: readonly FieldOption[] = [{ value: 'all', label: 'Все редакции' }];
 
 	const FACT_OPTIONS: readonly FieldOption[] = [
-		{ value: 'agreed', label: 'Согласован' },
-		{ value: 'approved', label: 'Утверждён' },
-		{ value: 'in_effect', label: 'Введён в действие' },
+		...DOCUMENT_STATUS_FACTS.map((fact) => ({
+			value: fact,
+			label: DOCUMENT_STATUS_FACT_LABELS[fact]
+		})),
+		// «Без отметок» — не отсутствие фильтра, а отдельный вопрос: что ещё никто
+		// не согласовал.
 		{ value: 'none', label: 'Без отметок' }
 	];
 

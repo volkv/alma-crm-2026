@@ -14,13 +14,19 @@
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import FileInput from '$lib/components/form/file-input.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
+	import DateField from '$lib/components/form/date-field.svelte';
 	import {
 		documentFormat,
 		documentKindLabel,
+		markDayBounds,
 		DOCUMENT_KIND_LABELS,
+		DOCUMENT_STATUS_FACTS,
+		DOCUMENT_STATUS_FACT_LABELS,
 		GENERATED_DOCUMENT_KIND,
 		UPLOADED_DOCUMENT_KINDS,
-		type DocumentSupersession
+		type DocumentStatusFact,
+		type DocumentSupersession,
+		type MarkDayBounds
 	} from '$lib/contracts/documents';
 	import type { InteractionDocumentView, InteractionView } from '$lib/contracts/interactions';
 	import { formatBytes, formatDate, formatDateTime } from '$lib/format';
@@ -88,6 +94,41 @@
 		revisionOpen = true;
 	}
 
+	/** Отметки, которых у документа ещё нет: поставленную снять нельзя. */
+	function unmarked(document: InteractionDocumentView): DocumentStatusFact[] {
+		const moments: Record<DocumentStatusFact, Date | null> = {
+			agreed: document.agreedAt,
+			approved: document.approvedAt,
+			in_effect: document.inEffectAt
+		};
+
+		return DOCUMENT_STATUS_FACTS.filter((fact) => moments[fact] === null);
+	}
+
+	let markOf = $state<InteractionDocumentView | null>(null);
+	let markOpen = $state(false);
+	let markFact = $state<DocumentStatusFact>('agreed');
+	let markDay = $state('');
+	let markBounds = $state<MarkDayBounds>({ min: '', max: '' });
+
+	/** Что можно отметить у открытого в диалоге документа. */
+	const markOptions = $derived(markOf === null ? [] : unmarked(markOf));
+
+	/**
+	 * Диалог отметки. Границы дня и сегодняшний день считаются при открытии, а
+	 * не заранее: до нажатия их некому показывать, а сервер всё равно проверит
+	 * их сам.
+	 */
+	function askMark(document: InteractionDocumentView) {
+		const available = unmarked(document);
+
+		markOf = document;
+		markFact = available[0] ?? 'agreed';
+		markBounds = markDayBounds(document.createdAt);
+		markDay = markBounds.max;
+		markOpen = true;
+	}
+
 	/** Формат словом; неизвестный тип показывается как записан, а не прячется. */
 	function format(mime: string): string {
 		return documentFormat(mime)?.toUpperCase() ?? mime;
@@ -142,10 +183,24 @@
 								</StatusBadge>
 							{/if}
 							{#if document.agreedAt}
-								<StatusBadge tone="success" dot>Согласован</StatusBadge>
+								<StatusBadge tone="success" dot>
+									{DOCUMENT_STATUS_FACT_LABELS.agreed}
+								</StatusBadge>
 							{/if}
 							{#if document.approvedAt}
-								<StatusBadge tone="accent" dot>Утверждён</StatusBadge>
+								<StatusBadge tone="accent" dot>
+									{DOCUMENT_STATUS_FACT_LABELS.approved}
+								</StatusBadge>
+							{/if}
+							{#if document.inEffectAt}
+								<StatusBadge tone="info" dot>
+									{DOCUMENT_STATUS_FACT_LABELS.in_effect}
+								</StatusBadge>
+							{/if}
+							{#if canUpload && !supersededBy.has(document.id) && unmarked(document).length > 0}
+								<Button variant="ghost" size="sm" onclick={() => askMark(document)}>
+									Отметить
+								</Button>
 							{/if}
 							{#if canUpload && !supersededBy.has(document.id)}
 								<Button variant="ghost" size="sm" onclick={() => askRevision(document)}>
@@ -309,6 +364,65 @@
 			<FileInput id="revisionFile" name="file" label="Файл новой редакции" required />
 			<Dialog.Footer>
 				<Button type="submit" size="sm">Загрузить редакцию</Button>
+			</Dialog.Footer>
+		</form>
+	</Dialog.Content>
+</Dialog.Root>
+
+<Dialog.Root bind:open={markOpen}>
+	<Dialog.Content>
+		<Dialog.Header>
+			<Dialog.Title>Отметка по документу</Dialog.Title>
+			<Dialog.Description>
+				«{markOf?.title ?? ''}»: согласован, утверждён или введён в действие. Это три независимых
+				факта, а не ступени одного статуса. Снять отметку нельзя — поставленная остаётся на этой
+				редакции навсегда.
+			</Dialog.Description>
+		</Dialog.Header>
+
+		<form
+			method="POST"
+			action="?/markDocument"
+			use:enhance={actionEnhance({ onsuccess: () => (markOpen = false) })}
+			class="flex flex-col gap-3"
+		>
+			<input type="hidden" name="documentId" value={markOf?.id ?? ''} />
+
+			<div class="flex flex-col gap-1.5">
+				<Label for="markFact">Отметка</Label>
+				<Select.Root
+					type="single"
+					name="fact"
+					bind:value={() => markFact, (next) => (markFact = next as DocumentStatusFact)}
+				>
+					<Select.Trigger id="markFact" class="w-full">
+						{DOCUMENT_STATUS_FACT_LABELS[markFact]}
+					</Select.Trigger>
+					<Select.Content>
+						{#each markOptions as fact (fact)}
+							<Select.Item value={fact} label={DOCUMENT_STATUS_FACT_LABELS[fact]} />
+						{/each}
+					</Select.Content>
+				</Select.Root>
+			</div>
+
+			<div class="flex flex-col gap-1.5">
+				<Label for="markAt">Дата отметки</Label>
+				<DateField
+					id="markAt"
+					name="at"
+					bind:value={markDay}
+					min={markBounds.min}
+					max={markBounds.max}
+					describedBy="markAtHint"
+				/>
+				<p id="markAtHint" class="text-xs text-muted-foreground">
+					Задним числом — можно, от дня загрузки документа до сегодняшнего.
+				</p>
+			</div>
+
+			<Dialog.Footer>
+				<Button type="submit" size="sm">Поставить отметку</Button>
 			</Dialog.Footer>
 		</form>
 	</Dialog.Content>

@@ -9,12 +9,18 @@
  */
 import { and, eq, isNull } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
-import type { DocumentStatusFact, DocumentView } from '$lib/contracts/documents';
+import { moscowDay } from '$lib/contracts/calendar';
+import {
+	markDayBounds,
+	markDayIssue,
+	type DocumentStatusFact,
+	type DocumentView
+} from '$lib/contracts/documents';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { documents } from '../db/schema';
 import { withTransaction } from '../db/transaction';
-import { ConflictError } from '../errors';
+import { ConflictError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
 import { touchInteraction } from '../stages/commands';
 import { assertDocumentAccessible, selectDocumentRow, toDocumentView } from './read';
@@ -50,7 +56,10 @@ const FACTS: Record<DocumentStatusFact, FactDefinition> = {
  * Ставит отметку по документу.
  *
  * `at` позволяет записать факт, случившийся раньше, чем до него дошли руки в
- * системе; по умолчанию — текущий момент.
+ * системе; по умолчанию — текущий момент. Задним числом — да, вперёд — нет, и
+ * не раньше дня, когда документ появился в системе: до этого дня согласовывать
+ * в системе было нечего. Правило берётся из контракта, тот же самый, которым
+ * форма выставляет границы календаря.
  */
 export async function markDocument(
 	ctx: ActorContext,
@@ -63,8 +72,16 @@ export async function markDocument(
 	const existing = await selectDocumentRow(documentId);
 	await assertDocumentAccessible(ctx, existing);
 
+	const now = new Date();
+	const moment = at ?? now;
+	const issue = markDayIssue(moscowDay(moment), markDayBounds(existing.createdAt, now));
+
+	if (issue !== null) {
+		throw new ValidationError(issue);
+	}
+
 	const definition = FACTS[fact];
-	const values = definition.values(at ?? new Date(), ctx.user?.id ?? null);
+	const values = definition.values(moment, ctx.user?.id ?? null);
 
 	return withTransaction(ctx, async (tx) => {
 		// Условие `is null` в самом UPDATE, а не проверка перед ним: между
@@ -90,7 +107,12 @@ export async function markDocument(
 				type: 'documents.status_changed',
 				outcome: 'success',
 				subject: { type: 'document', id: row.id },
-				details: { changedFields: Object.keys(values) }
+				// Взаимодействие — в подробностях: по отметке спрашивают «в каком
+				// деле это было», и ответ не должен требовать второго запроса.
+				details: {
+					changedFields: Object.keys(values),
+					...(row.interactionId === null ? {} : { interactionId: row.interactionId })
+				}
 			},
 			tx
 		);

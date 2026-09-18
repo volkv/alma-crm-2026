@@ -362,7 +362,7 @@ const cases: Case[] = [
 	{
 		name: 'markDocumentStatus',
 		schema: markDocumentStatusSchema,
-		valid: { documentId: ID, fact: 'approved', at: '2026-09-12T10:00:00+03:00' },
+		valid: { documentId: ID, fact: 'approved', at: '2026-09-12' },
 		invalid: { documentId: ID, fact: 'signed' }
 	},
 	{

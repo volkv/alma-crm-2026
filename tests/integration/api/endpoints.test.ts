@@ -11,11 +11,13 @@
 import type { RequestEvent } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { moscowDay } from '$lib/contracts/calendar';
 import { createInteractionSchema } from '$lib/contracts/interactions';
 import { createApiKey } from '$lib/server/api/keys';
 import {
 	comments,
 	directions,
+	documents,
 	exchangeMessages,
 	learningGroups,
 	products,
@@ -62,6 +64,8 @@ const commentsModule =
 	await import('../../../src/routes/api/v1/interactions/[id]/comments/+server');
 const listComments = commentsModule.GET as Endpoint;
 const createComment = commentsModule.POST as Endpoint;
+const markDocumentRoute = (await import('../../../src/routes/api/v1/documents/[id]/marks/+server'))
+	.POST as Endpoint;
 const listProcessGroups = (await import('../../../src/routes/api/v1/process-groups/+server'))
 	.GET as Endpoint;
 const getProcess = (await import('../../../src/routes/api/v1/process-groups/[key]/+server'))
@@ -178,6 +182,8 @@ async function outsiderUserId(): Promise<string> {
 type Fixture = {
 	organizationId: string;
 	interactionId: string;
+	/** Документ дела: на нём проверяются отметки и их область доступа. */
+	documentId: string;
 };
 
 /** Вуз, взаимодействие на действующем процессе и справочники вокруг них. */
@@ -198,7 +204,12 @@ async function seed(title = 'Взаимодействие для API'): Promise<
 		})
 	);
 
-	return { organizationId, interactionId: interaction.id };
+	const documentId = await insertDocument(database.db, {
+		interactionId: interaction.id,
+		title: 'Соглашение о сотрудничестве'
+	});
+
+	return { organizationId, interactionId: interaction.id, documentId };
 }
 
 /**
@@ -317,6 +328,22 @@ function calls(
 							params: interactionParams,
 							headers: { 'content-type': 'application/json', ...headers },
 							body: JSON.stringify({ body: 'Комментарий из интеграции' })
+						})
+					)
+				)
+		},
+		{
+			name: 'POST /v1/documents/{id}/marks',
+			call: (headers) =>
+				Promise.resolve(
+					markDocumentRoute(
+						apiEvent({
+							method: 'POST',
+							path: `/api/v1/documents/${fixture.documentId}/marks`,
+							routeId: '/api/v1/documents/[id]/marks',
+							params: { id: fixture.documentId },
+							headers: { 'content-type': 'application/json', ...headers },
+							body: JSON.stringify({ fact: 'agreed' })
 						})
 					)
 				)
@@ -537,11 +564,8 @@ describe('история взаимодействия', () => {
 
 describe('документы взаимодействия', () => {
 	it('отдаёт метаданные и не отдаёт ни пути к файлу, ни отпечатка', async () => {
+		// Документ у дела свой, из набора: второй такой же ничего не проверял бы.
 		const fixture = await seed();
-		await insertDocument(database.db, {
-			interactionId: fixture.interactionId,
-			title: 'Соглашение'
-		});
 		const key = await issueKey(TEST_USER_IDS.admin);
 
 		const response = await interactionDocuments(
@@ -558,7 +582,11 @@ describe('документы взаимодействия', () => {
 		expect(payload).toMatchObject({
 			total: 1,
 			items: [
-				{ title: 'Соглашение', mime: 'application/pdf', interactionId: fixture.interactionId }
+				{
+					title: 'Соглашение о сотрудничестве',
+					mime: 'application/pdf',
+					interactionId: fixture.interactionId
+				}
 			]
 		});
 
@@ -581,6 +609,135 @@ describe('документы взаимодействия', () => {
 		);
 
 		expect(response.status).toBe(404);
+	});
+});
+
+describe('отметки по документу', () => {
+	it('ставит отметку и отдаёт все три факта по документу', async () => {
+		const fixture = await seed();
+		const key = await issueKey(TEST_USER_IDS.admin);
+
+		const response = await markDocumentRoute(
+			apiEvent({
+				method: 'POST',
+				path: `/api/v1/documents/${fixture.documentId}/marks`,
+				routeId: '/api/v1/documents/[id]/marks',
+				params: { id: fixture.documentId },
+				headers: bearer(key, { 'content-type': 'application/json' }),
+				body: JSON.stringify({ fact: 'approved' })
+			})
+		);
+		const payload = await body(response);
+
+		expect(response.status).toBe(200);
+		expect(payload).toMatchObject({
+			id: fixture.documentId,
+			interactionId: fixture.interactionId,
+			agreedAt: null,
+			inEffectAt: null
+		});
+		expect(payload.approvedAt).not.toBeNull();
+
+		const [row] = await database.db
+			.select()
+			.from(documents)
+			.where(eq(documents.id, fixture.documentId));
+
+		expect(row.approvedBy).toBe(TEST_USER_IDS.admin);
+	});
+
+	it('ставит отметку задним числом и отказывает дню из будущего', async () => {
+		const fixture = await seed();
+		const key = await issueKey(TEST_USER_IDS.admin);
+		// Документ «появился в системе» неделю назад: сегодняшней загрузке
+		// датировать нечего.
+		const createdAt = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+		await database.db
+			.update(documents)
+			.set({ createdAt })
+			.where(eq(documents.id, fixture.documentId));
+
+		const mark = (at: string): Promise<Response> =>
+			Promise.resolve(
+				markDocumentRoute(
+					apiEvent({
+						method: 'POST',
+						path: `/api/v1/documents/${fixture.documentId}/marks`,
+						routeId: '/api/v1/documents/[id]/marks',
+						params: { id: fixture.documentId },
+						headers: bearer(key, { 'content-type': 'application/json' }),
+						body: JSON.stringify({ fact: 'agreed', at })
+					})
+				)
+			);
+
+		const backdated = moscowDay(createdAt);
+		const accepted = await mark(backdated);
+
+		expect(accepted.status).toBe(200);
+		expect(moscowDay(new Date(String((await body(accepted)).agreedAt)))).toBe(backdated);
+
+		const tomorrow = moscowDay(new Date(Date.now() + 24 * 60 * 60 * 1000));
+		const rejected = await mark(tomorrow);
+
+		expect(rejected.status).toBe(400);
+	});
+
+	it('не ставит вторую отметку на повтор с тем же ключом идемпотентности', async () => {
+		const fixture = await seed();
+		const key = await issueKey(TEST_USER_IDS.admin);
+
+		const post = (): Promise<Response> =>
+			Promise.resolve(
+				markDocumentRoute(
+					apiEvent({
+						method: 'POST',
+						path: `/api/v1/documents/${fixture.documentId}/marks`,
+						routeId: '/api/v1/documents/[id]/marks',
+						params: { id: fixture.documentId },
+						headers: bearer(key, {
+							'content-type': 'application/json',
+							'idempotency-key': 'mark-1'
+						}),
+						body: JSON.stringify({ fact: 'agreed' })
+					})
+				)
+			);
+
+		const first = await post();
+		const second = await post();
+
+		// Без ключа идемпотентности повтор пришёл бы конфликтом: отметка
+		// ставится один раз, и второй ответ не отличить от чужой отметки.
+		expect(first.status).toBe(200);
+		expect(second.headers.get('Idempotency-Replay')).toBe('true');
+		expect(await body(second)).toEqual(await body(first));
+	});
+
+	it('отвечает 404 на документ вне области доступа и отметки не ставит', async () => {
+		const fixture = await seed();
+		const key = await issueKey(await outsiderUserId());
+
+		const response = await markDocumentRoute(
+			apiEvent({
+				method: 'POST',
+				path: `/api/v1/documents/${fixture.documentId}/marks`,
+				routeId: '/api/v1/documents/[id]/marks',
+				params: { id: fixture.documentId },
+				headers: bearer(key, { 'content-type': 'application/json' }),
+				body: JSON.stringify({ fact: 'agreed' })
+			})
+		);
+
+		expect(response.status).toBe(404);
+
+		const [row] = await database.db
+			.select()
+			.from(documents)
+			.where(eq(documents.id, fixture.documentId));
+
+		expect(row.agreedAt).toBeNull();
 	});
 });
 

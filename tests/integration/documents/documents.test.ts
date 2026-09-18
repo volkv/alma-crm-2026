@@ -7,8 +7,11 @@ import type { RequestEvent } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import PizZip from 'pizzip';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { moscowDay, moscowDayStart } from '$lib/contracts/calendar';
 import {
 	documentListQuerySchema,
+	markDayBounds,
+	markMomentFromDay,
 	type DocumentListQuery,
 	type DocumentView
 } from '$lib/contracts/documents';
@@ -40,7 +43,7 @@ import {
 	TEST_USER_IDS,
 	type TestDatabase
 } from '../helpers/db';
-import { pageEvent } from '../helpers/event';
+import { pageEvent, sessionUser } from '../helpers/event';
 
 // См. комментарий в `schema.test.ts`: без этого сервисы пойдут в базу разработчика.
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
@@ -54,6 +57,20 @@ const run = promisify(execFile);
 const downloadEndpoint =
 	await import('../../../src/routes/(app)/documents/[id=uuid]/download/+server');
 const downloadRoute = downloadEndpoint.GET as unknown as (event: RequestEvent) => Promise<Response>;
+
+/**
+ * Действие отметки с карточки документа: разбор формы, перевод дня в момент и
+ * перевод предметной ошибки в отказ формы живут в нём, а не в сервисе.
+ */
+const documentPage = await import('../../../src/routes/(app)/documents/[id=uuid]/+page.server');
+const markAction = documentPage.actions.mark as unknown as (
+	event: RequestEvent
+) => Promise<unknown>;
+
+/** Календарный день, сдвинутый на сутки вперёд или назад. */
+function shiftDay(day: string, days: number): string {
+	return moscowDay(new Date(moscowDayStart(day).getTime() + days * 24 * 60 * 60 * 1000));
+}
 
 let database: TestDatabase;
 
@@ -725,19 +742,35 @@ describe('маршрут скачивания', () => {
 });
 
 describe('отметки по документу', () => {
-	it('ставятся один раз, повторная попытка — конфликт', async () => {
-		const ctx = testActor();
+	const markPdf = Buffer.from('%PDF-1.7\ntrailer\n%%EOF\n', 'latin1');
 
-		const document = await uploadDocument(ctx, {
+	/** Документ дела, «появившийся в системе» названное число дней назад. */
+	async function markable(options: { interactionId?: string; agedDays?: number } = {}) {
+		const document = await uploadDocument(testActor(), {
+			interactionId: options.interactionId,
 			kind: 'agreement',
 			title: 'Соглашение',
-			file: {
-				mime: 'application/pdf',
-				bytes: Buffer.from('%PDF-1.7\ntrailer\n%%EOF\n', 'latin1')
-			}
+			file: { mime: 'application/pdf', bytes: markPdf }
 		});
 
-		const agreedAt = new Date('2026-09-01T10:00:00.000Z');
+		if (options.agedDays !== undefined) {
+			// Задним числом отмечают то, что лежит в системе не первый день:
+			// документ, загруженный минуту назад, нечем датировать в прошлое.
+			const createdAt = new Date(Date.now() - options.agedDays * 24 * 60 * 60 * 1000);
+
+			await database.db.update(documents).set({ createdAt }).where(eq(documents.id, document.id));
+
+			return { id: document.id, createdAt };
+		}
+
+		return { id: document.id, createdAt: document.createdAt };
+	}
+
+	it('ставятся один раз, повторная попытка — конфликт', async () => {
+		const ctx = testActor();
+		const document = await markable({ agedDays: 10 });
+
+		const agreedAt = new Date(Date.now() - 5 * 24 * 60 * 60 * 1000);
 		const marked = await markDocument(ctx, document.id, 'agreed', agreedAt);
 
 		expect(marked.agreedAt).toEqual(agreedAt);
@@ -759,15 +792,80 @@ describe('отметки по документу', () => {
 		expect(event.details).toMatchObject({ changedFields: ['agreedAt', 'agreedBy'] });
 	});
 
+	it('принимает день задним числом и отвергает завтрашний и день до документа', async () => {
+		const ctx = testActor();
+		const document = await markable({ agedDays: 10 });
+		const bounds = markDayBounds(document.createdAt);
+
+		// Днём раньше, чем документ появился в системе, согласовывать было нечего.
+		await expect(
+			markDocument(ctx, document.id, 'agreed', moscowDayStart(shiftDay(bounds.min, -1)))
+		).rejects.toBeInstanceOf(ValidationError);
+
+		// Завтрашнего факта не бывает — ни у формы, ни у ключа API.
+		await expect(
+			markDocument(ctx, document.id, 'agreed', moscowDayStart(shiftDay(bounds.max, 1)))
+		).rejects.toBeInstanceOf(ValidationError);
+
+		const marked = await markDocument(
+			ctx,
+			document.id,
+			'agreed',
+			markMomentFromDay(bounds.min, new Date())
+		);
+
+		expect(marked.agreedAt).not.toBeNull();
+		expect(moscowDay(marked.agreedAt ?? new Date())).toBe(bounds.min);
+	});
+
+	it('ставится с карточки документа и попадает в журнал', async () => {
+		const { interactionId } = await interactionWithParty();
+		const document = await markable({ interactionId, agedDays: 3 });
+		const day = markDayBounds(document.createdAt).max;
+
+		const result = await markAction(
+			pageEvent({
+				path: `/documents/${document.id}`,
+				params: { id: document.id },
+				user: sessionUser('admin'),
+				form: { fact: 'approved', at: day }
+			})
+		);
+
+		expect(result).toMatchObject({ ok: true });
+
+		const [row] = await database.db.select().from(documents).where(eq(documents.id, document.id));
+
+		expect(row.approvedAt).not.toBeNull();
+		expect(row.approvedBy).toBe(TEST_USER_IDS.admin);
+
+		// Событие журнала называет и документ, и дело: «в каком взаимодействии
+		// это было» спрашивают сразу после «кто отметил».
+		const [event] = await database.db
+			.select()
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'documents.status_changed'));
+
+		expect(event.subjectId).toBe(document.id);
+		expect(event.details).toMatchObject({ interactionId });
+	});
+
+	it('не ставится на документ чужого взаимодействия', async () => {
+		const { interactionId } = await interactionWithParty();
+		const document = await markable({ interactionId });
+		const stranger = await insertOrganization(database.db, { shortName: 'Чужой вуз' });
+
+		await expect(
+			markDocument(
+				await scopedActor(database.db, { roleId: 'manager', organizationIds: [stranger] }),
+				document.id,
+				'agreed'
+			)
+		).rejects.toBeInstanceOf(NotFoundError);
+	});
+
 	it('требует право на запись', async () => {
-		const document = await uploadDocument(testActor(), {
-			kind: 'agreement',
-			title: 'Соглашение',
-			file: {
-				mime: 'application/pdf',
-				bytes: Buffer.from('%PDF-1.7\ntrailer\n%%EOF\n', 'latin1')
-			}
-		});
+		const document = await markable();
 
 		await expect(
 			markDocument(testActor({ roleId: 'manager', permissions: [] }), document.id, 'agreed')
