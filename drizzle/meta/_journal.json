@@ -78,6 +78,13 @@
       "when": 1789713966144,
       "tag": "0010_directory_catalog_import",
       "breakpoints": true
+    },
+    {
+      "idx": 11,
+      "version": "7",
+      "when": 1789720659085,
+      "tag": "0011_notification_deliveries",
+      "breakpoints": true
     }
   ]
 }

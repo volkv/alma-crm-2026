@@ -41,6 +41,29 @@ services:
         limits:
           memory: 768M
 
+  # Почтовый сервер стенда. В профиле `stand`, как и имитаторы, и по той же
+  # причине: установка, которая отправляет почту через релей заказчика, не
+  # должна держать рядом второй почтовый сервер, ловящий всё в свой ящик. Стенд
+  # поднимает его явно — `--profile stand` — и тогда же ставит `SMTP_URL` на
+  # `smtp://mailpit:1025` в своём `.env`.
+  mailpit:
+    profiles: ['stand']
+    restart: unless-stopped
+    # `!override`, а не merge: базовый файл публикует оба порта на всех
+    # интерфейсах, и здесь этого быть не должно.
+    #
+    # SMTP наружу не выходит вовсе — письма в ящик стенда пишет только само
+    # приложение из соседнего контейнера. Веб-интерфейс остаётся на loopback
+    # хоста, как приложение и каталог: увидеть его можно лишь через туннель, а
+    # увидеть надо — показать, что уведомление ушло, больше нечем. Писем с
+    # чужими данными в этом ящике не бывает: стенд работает на синтетике.
+    ports: !override
+      - '127.0.0.1:${MAILPIT_PORT:-8025}:8025'
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
   minio:
     restart: unless-stopped
     # Neither the S3 API nor the console is published: the app reaches the
@@ -222,6 +245,14 @@ services:
       # container's root. `iss` is still checked against OIDC_ISSUER_URL from
       # `.env` — the public name.
       OIDC_INTERNAL_URL: http://keycloak:8080/auth
+      # Почта уведомлений. Пусто по умолчанию: установка, которой нечем
+      # отправлять, не должна делать вид, что письма уходят, — канал «почта»
+      # честно пишет в журнал доставок, что сервер не настроен. Стенд с профилем
+      # `stand` ставит в своём `.env` `smtp://mailpit:1025`; установка у
+      # заказчика — адрес своего релея. `environment` сильнее `env_file`, поэтому
+      # переменные названы здесь — иначе их нельзя было бы задать вовсе.
+      SMTP_URL: ${SMTP_URL:-}
+      SMTP_FROM: ${SMTP_FROM:-}
       S3_ENDPOINT: http://minio:9000
       S3_REGION: us-east-1
       S3_BUCKET: lct-documents

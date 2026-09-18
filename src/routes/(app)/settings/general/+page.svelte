@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { enhance } from '$app/forms';
+	import { resolve } from '$app/paths';
 	import { superForm } from 'sveltekit-superforms';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { toast } from 'svelte-sonner';
@@ -8,14 +9,17 @@
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
+	import { Label } from '$lib/components/ui/label/index.js';
 	import ConfirmDialog from '$lib/components/confirm-dialog.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import FormField from '$lib/components/form/form-field.svelte';
 	import { settingSchemas } from '$lib/contracts/settings';
-	import { sessionLimitsSchema } from './schema';
+	import { NOTIFICATION_CHANNEL_LABELS } from '$lib/contracts/notifications';
+	import { sessionLimitsSchema, stuckWatchSchema } from './schema';
 	import type { PageProps } from './$types';
 
 	let { data, form: actionResult }: PageProps = $props();
@@ -57,6 +61,16 @@
 	} = superForm(
 		untrack(() => data.sessionForm),
 		{ validators: zod4Client(sessionLimitsSchema), onUpdated: ({ form }) => notifySaved(form) }
+	);
+
+	const {
+		form: stuckData,
+		errors: stuckErrors,
+		enhance: stuckEnhance,
+		submitting: stuckSubmitting
+	} = superForm(
+		untrack(() => data.stuckWatchForm),
+		{ validators: zod4Client(stuckWatchSchema), onUpdated: ({ form }) => notifySaved(form) }
 	);
 
 	let resetConfirmOpen = $state(false);
@@ -203,6 +217,61 @@
 				})}
 			</div>
 			<FormActions submitting={$sessionSubmitting} submitLabel="Сохранить сроки" />
+		</form>
+	</Card.Content>
+</Card.Root>
+
+<Card.Root>
+	<Card.Header>
+		<Card.Title>Напоминания о зависших взаимодействиях</Card.Title>
+		<Card.Description>
+			Взаимодействие, которое стоит на одной стадии дольше порога, вызывает напоминание руководителю
+			ответственного. Время пауз в этот срок не входит: ждать ответа вуза и стоять — разные вещи.
+			Ноль означает «напоминать сразу»; повтор в любом случае не чаще раза в сутки, пока стадия не
+			сменится. Что и кому ушло, видно в разделе
+			<a class="underline underline-offset-4" href={resolve('/notifications')}>«Уведомления»</a>.
+		</Card.Description>
+	</Card.Header>
+	<Card.Content>
+		{@render formErrors($stuckErrors._errors)}
+		<form
+			method="POST"
+			action="?/stuckWatch"
+			use:stuckEnhance
+			novalidate
+			class="flex flex-col gap-4"
+		>
+			<div class="grid gap-4 sm:grid-cols-2">
+				{@render numberField({
+					name: 'thresholdDays',
+					label: 'Порог зависания, дней',
+					description: 'От 0 до 365',
+					value: $stuckData.thresholdDays,
+					errors: $stuckErrors.thresholdDays,
+					onchange: (next) => ($stuckData.thresholdDays = next)
+				})}
+			</div>
+			<fieldset class="flex flex-col gap-2">
+				<legend class="text-sm font-medium">Каналы</legend>
+				<Label class="flex items-center gap-2 font-normal">
+					<Checkbox name="email" bind:checked={$stuckData.email} />
+					{NOTIFICATION_CHANNEL_LABELS.email}
+				</Label>
+				<Label class="flex items-center gap-2 font-normal">
+					<Checkbox name="telegram" bind:checked={$stuckData.telegram} />
+					{NOTIFICATION_CHANNEL_LABELS.telegram}
+				</Label>
+				<Label class="flex items-center gap-2 font-normal">
+					<Checkbox name="max" bind:checked={$stuckData.max} />
+					{NOTIFICATION_CHANNEL_LABELS.max}
+				</Label>
+				<p class="text-xs text-muted-foreground">
+					Telegram и MAX — заглушки функционала: строка в журнале доставок появляется, реальная
+					отправка не выполняется. Почта отправляет по-настоящему, через почтовый сервер из
+					<code>SMTP_URL</code>.
+				</p>
+			</fieldset>
+			<FormActions submitting={$stuckSubmitting} submitLabel="Сохранить правило" />
 		</form>
 	</Card.Content>
 </Card.Root>

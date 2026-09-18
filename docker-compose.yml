@@ -111,6 +111,23 @@ services:
       timeout: 5s
       retries: 10
 
+  # Почтовый сервер стенда: ловит всю исходящую почту и никуда её не выпускает.
+  # Уведомления о зависших взаимодействиях уходят по-настоящему, по SMTP, и
+  # показывать их на стенде надо так же по-настоящему — но синтетические адреса
+  # демонстрационных записей ведут в никуда, а письмо на настоящий адрес с
+  # публичного стенда было бы рассылкой. Веб-интерфейс на http://localhost:8025
+  # показывает каждое письмо целиком; API `/api/v1/messages` читает прогон.
+  mailpit:
+    image: axllent/mailpit:v1.31.1
+    ports:
+      - '1025:1025'
+      - '8025:8025'
+    healthcheck:
+      test: ['CMD', '/mailpit', 'readyz']
+      interval: 10s
+      timeout: 5s
+      retries: 10
+
   # Object storage for uploaded and generated documents. The image comes from
   # quay.io: MinIO publishes its releases there, and the tag is pinned like
   # every other image in the stack.
@@ -240,6 +257,11 @@ services:
       DATABASE_URL: postgres://lct:lct@postgres:5432/lct
       REDIS_URL: redis://redis:6379
       GOTENBERG_URL: http://gotenberg:3000
+      # Почта уведомлений. В стеке это Mailpit по соседству: письма уходят
+      # по-настоящему и оседают в его веб-интерфейсе на http://localhost:8025.
+      # Установка у заказчика ставит сюда адрес своего релея.
+      SMTP_URL: ${SMTP_URL:-smtp://mailpit:1025}
+      SMTP_FROM: ${SMTP_FROM:-lct-crm@lct-crm.local}
       ORIGIN: http://localhost:3000
       # adapter-node answers 413 to any request body over BODY_SIZE_LIMIT before
       # the app sees it, and its default — 512K — is below the upload ceiling the
@@ -321,6 +343,14 @@ services:
         condition: service_healthy
       gotenberg:
         condition: service_healthy
+      # Письмо, отправленное в ещё не поднявшийся Mailpit, превратилось бы в
+      # строку «не отправлено» на первом же проходе цикла. `required: false` —
+      # потому что на развёртывании Mailpit нет вовсе: там почту принимает релей
+      # заказчика, и ждать здесь нечего (docker-compose.prod.yml, профиль
+      # `stand`).
+      mailpit:
+        condition: service_healthy
+        required: false
       # Without the directory nobody signs in: the application keeps no
       # passwords of its own.
       keycloak:

@@ -1,5 +1,6 @@
 import type { LucideIcon } from '@lucide/svelte';
 import BarChart3Icon from '@lucide/svelte/icons/bar-chart-3';
+import BellIcon from '@lucide/svelte/icons/bell';
 import BookOpenIcon from '@lucide/svelte/icons/book-open';
 import BuildingIcon from '@lucide/svelte/icons/building';
 import DatabaseIcon from '@lucide/svelte/icons/database';
@@ -70,6 +71,15 @@ export const navSections: readonly NavSection[] = [
 	{ href: '/data', label: 'Данные', icon: DatabaseIcon, permission: 'stats.read' },
 	{ href: '/documents', label: 'Документы', icon: FileTextIcon, permission: 'documents.read' },
 	{ href: '/audit', label: 'Журнал', icon: ScrollTextIcon, permission: 'audit.read' },
+	{
+		// Журнал доставок напоминаний. Право у него своё, а не `audit.read`:
+		// эскалация приходит руководителю, и вопрос «почему мне не пришло» —
+		// его, а не службы безопасности (`docs/access-matrix.md`, раздел 3).
+		href: '/notifications',
+		label: 'Уведомления',
+		icon: BellIcon,
+		permission: 'notifications.read'
+	},
 	{
 		// Журнал обмена — техническая хроника, и право у неё то же, что у
 		// настройки обмена: кто ведёт обмен, тот и разбирает его отказы

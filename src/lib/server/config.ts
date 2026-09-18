@@ -35,6 +35,15 @@ function exchangeUrl(withExternalId: boolean) {
 		.transform((value) => (value === '' ? null : value));
 }
 
+/** Разбирается ли строка как адрес почтового сервера `smtp://` или `smtps://`. */
+function isSmtpUrl(value: string): boolean {
+	try {
+		return ['smtp:', 'smtps:'].includes(new URL(value).protocol);
+	} catch {
+		return false;
+	}
+}
+
 const configSchema = z
 	.object({
 		NODE_ENV: z.enum(['development', 'test', 'production']),
@@ -114,6 +123,32 @@ const configSchema = z
 			.default('')
 			.refine((value) => value === '' || value.length >= 32, {
 				error: 'must be at least 32 characters: it is the HMAC key of every outgoing message'
+			})
+			.transform((value) => (value === '' ? null : value)),
+		/**
+		 * Почтовый сервер, через который уходят уведомления, и адрес отправителя.
+		 *
+		 * Умолчания у них нет: адрес чужого узла и обратный адрес письма — это
+		 * решение развёртывания, а подставленный `localhost:25` означал бы письма,
+		 * которые никуда не уходят и об этом молчат. Пустая строка равна «не
+		 * задано» — Compose подставляет пустое значение там, где переменной нет в
+		 * `.env`, и различать эти два случая было бы различением без разницы.
+		 *
+		 * Не задано — канал «почта» не отправляет, а говорит об этом в журнале
+		 * доставок (`src/lib/server/notifications/channels/email.ts`).
+		 */
+		SMTP_URL: z
+			.string()
+			.default('')
+			.refine((value) => value === '' || isSmtpUrl(value), {
+				error: 'must be an smtp:// or smtps:// URL'
+			})
+			.transform((value) => (value === '' ? null : value)),
+		SMTP_FROM: z
+			.string()
+			.default('')
+			.refine((value) => value === '' || z.email().safeParse(value).success, {
+				error: 'must be an e-mail address'
 			})
 			.transform((value) => (value === '' ? null : value)),
 		/**

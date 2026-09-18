@@ -9,7 +9,7 @@ import { AppError, ForbiddenError } from '$lib/server/errors';
 import { errorIssues, toActionFailure, type ActionErrorPayload } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import { getSetting, setSetting } from '$lib/server/settings';
-import { sessionLimitsSchema } from './schema';
+import { sessionLimitsSchema, stuckWatchSchema } from './schema';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -30,7 +30,8 @@ import type { Actions, PageServerLoad } from './$types';
 /** Формы страницы; идентификатор связывает форму на сервере с формой в браузере. */
 const FORM_IDS = {
 	banner: 'login-banner',
-	session: 'session-limits'
+	session: 'session-limits',
+	stuckWatch: 'stuck-watch'
 } as const;
 
 export const load: PageServerLoad = async (event) => {
@@ -40,10 +41,12 @@ export const load: PageServerLoad = async (event) => {
 		error(403, 'Раздел доступен только с правом «Изменение настроек приложения»');
 	}
 
-	const [banner, idleMinutes, absoluteHours] = await Promise.all([
+	const [banner, idleMinutes, absoluteHours, thresholdDays, channels] = await Promise.all([
 		getSetting('login_banner'),
 		getSetting('session_idle_minutes'),
-		getSetting('session_absolute_hours')
+		getSetting('session_absolute_hours'),
+		getSetting('stuck_threshold_days'),
+		getSetting('notification_channels')
 	]);
 
 	return {
@@ -52,6 +55,9 @@ export const load: PageServerLoad = async (event) => {
 		}),
 		sessionForm: await superValidate({ idleMinutes, absoluteHours }, zod4(sessionLimitsSchema), {
 			id: FORM_IDS.session
+		}),
+		stuckWatchForm: await superValidate({ thresholdDays, ...channels }, zod4(stuckWatchSchema), {
+			id: FORM_IDS.stuckWatch
 		}),
 		// Вне демонстрационного стенда действия сброса не существует вовсе, и
 		// карточка объясняет это вместо того, чтобы исчезнуть: пропавшая кнопка
@@ -124,6 +130,33 @@ export const actions: Actions = {
 		}
 
 		return message(form, 'Сроки жизни сессии сохранены');
+	},
+
+	/**
+	 * Порог зависания и каналы — одной кнопкой: правило и способ, которым о нём
+	 * сообщают, это одна настройка. Записываются они двумя ключами, потому что
+	 * читают их разные места: порог — выборка наблюдателя, каналы — его цикл.
+	 */
+	stuckWatch: async (event) => {
+		const form = await superValidate(event.request, zod4(stuckWatchSchema), {
+			id: FORM_IDS.stuckWatch
+		});
+
+		if (!form.valid) {
+			return fail(400, { form });
+		}
+
+		const ctx = actorFromEvent(event);
+		const { thresholdDays, ...channels } = form.data;
+
+		try {
+			await setSetting(ctx, 'stuck_threshold_days', thresholdDays);
+			await setSetting(ctx, 'notification_channels', channels);
+		} catch (failure) {
+			return asFormError(form, failure);
+		}
+
+		return message(form, 'Правило напоминаний сохранено');
 	},
 
 	/**

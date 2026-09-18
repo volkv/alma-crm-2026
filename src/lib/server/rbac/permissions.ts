@@ -39,6 +39,8 @@ export const PERMISSIONS = {
 	'settings.write': 'Изменение настроек приложения',
 	'users.manage': 'Управление пользователями и ролями',
 	'api_keys.manage': 'Управление ключами доступа к API',
+	'notifications.read': 'Просмотр журнала уведомлений',
+	'notifications.manage': 'Повтор отправки уведомлений',
 	'integrations.manage': 'Настройка вебхуков и интеграций с внешними системами',
 	'integrations.manage_endpoints': 'Внешние адреса и секреты подключений',
 	'exchange.intake': 'Приём заявки с сайта',
@@ -85,12 +87,16 @@ export const DEFAULT_ROLES: readonly RoleDefinition[] = [
 		id: 'lead',
 		name: 'Руководитель',
 		description: 'Ведёт свою область, назначает ответственных и видит работу подчинённых',
+		// Журнал уведомлений руководителю остаётся: эскалация приходит ему, и
+		// вопрос «почему мне не пришло» задаёт он. Повтор отправки — нет: он
+		// ходит на чужой почтовый сервер, это работа администратора.
 		permissions: allExcept(
 			'people.anonymize',
 			'stages.configure',
 			'settings.write',
 			'users.manage',
 			'api_keys.manage',
+			'notifications.manage',
 			'integrations.manage',
 			'integrations.manage_endpoints',
 			'exchange.intake',
@@ -126,6 +132,10 @@ export const DEFAULT_ROLES: readonly RoleDefinition[] = [
 			'settings.write',
 			'users.manage',
 			'api_keys.manage',
+			// Эскалация уходит руководителю КАМа, и журнал её доставок — часть той
+			// же вертикали: менеджеру он отвечает не на его вопрос.
+			'notifications.read',
+			'notifications.manage',
 			'integrations.manage',
 			'integrations.manage_endpoints',
 			'exchange.intake',
