@@ -81,17 +81,22 @@ Keycloak вместе с переводом входа (`drizzle/0008_keycloak_i
 | `directions` (новая)                | `id uuid pk`, `code text not null`, `name text not null`, `position integer not null`, `timestamps`                                                                                                                | `unique (code)`, `unique (position)`                                                                                                | `directory`    |
 | `product_directions` (новая)        | `product_id not null → products on delete cascade`, `direction_id not null → directions on delete restrict`, `created_at`                                                                                          | pk `(product_id, direction_id)`; индекс `(direction_id)`                                                                            | `directory`    |
 | `programs` (правка)                 | `+ direction_id uuid null → directions on delete restrict`                                                                                                                                                         | индекс `(direction_id)`; `direction_code` (код ФГОС) остаётся и смысла не меняет                                                    | `directory`    |
-| `contracts` (новая)                 | `id uuid pk`, `organization_id not null → organizations on delete restrict`, `number text not null`, `signed_on date null`, `valid_until date null`, `status` (`draft`/`active`/`closed`), `timestamps`            | `unique (organization_id, number)`; индекс `(organization_id)`; `check`: `valid_until >= signed_on`                                 | `interactions` |
-| `contract_items` (новая)            | `id uuid pk`, `contract_id not null → contracts on delete cascade`, `product_id not null → products on delete restrict`, `license_signed_at date null`, `license_until date null`, `transfer_status text not null` | `unique (contract_id, product_id)`; `unique (id, contract_id)` — чтобы на пару «позиция + её договор» можно было сослаться          | `interactions` |
+| `contracts` (новая)                 | `id uuid pk`, `organization_id not null → organizations on delete restrict`, `number text not null`, `signed_on date null`, `valid_until date null`, `status` (`draft`/`active`/`closed`), `timestamps`            | `unique (organization_id, number)`; индекс `(organization_id)`; `check`: `valid_until >= signed_on`                                 | `directory`    |
+| `contract_items` (новая)            | `id uuid pk`, `contract_id not null → contracts on delete cascade`, `product_id not null → products on delete restrict`, `license_signed_at date null`, `license_until date null`, `transfer_status text not null` | `unique (contract_id, product_id)`; `unique (id, contract_id)` — чтобы на пару «позиция + её договор» можно было сослаться          | `directory`    |
 | `interactions` (правка)             | `+ contract_id uuid null → contracts on delete restrict`                                                                                                                                                           | индекс `(contract_id)`                                                                                                              | `interactions` |
 | `interaction_contract_items` (нов.) | `interaction_id not null → interactions on delete cascade`, `contract_item_id not null`, `contract_id not null`, `created_at`                                                                                      | pk `(interaction_id, contract_item_id)`; составной внешний ключ `(contract_item_id, contract_id) → contract_items(id, contract_id)` | `interactions` |
 
 Договор принадлежит контрагенту, а не взаимодействию: один договор обслуживает несколько
-взаимодействий. Взаимодействие выбирает договор и подмножество его позиций; принадлежность позиции
-именно этому договору держит составной внешний ключ, а не проверка в сервисе. **Источник истины о
+взаимодействий. Отсюда и владелец: договоры и их позиции ведёт `directory`
+(`src/lib/server/directory/contracts.ts`) — там же, где лежит сам контрагент, — а `interactions`
+только выбирает договор и подмножество его позиций. Принадлежность позиции именно этому договору
+держит составной внешний ключ, а не проверка в сервисе. **Источник истины о
 продуктах взаимодействия — `interaction_products`**; позиция договора добавляет к продукту
 коммерческие условия и статус передачи, но состав продуктов не задаёт. Словарь `transfer_status` —
-свободный справочник до получения каталога заказчика (`docs/reports.md`, открытые вопросы).
+свободный справочник до получения каталога заказчика (`docs/reports.md`, открытые вопросы); значения
+приезжают из данных — их ведёт импорт каталога (`docs/directory.md`) и меняет заявка с сайта.
+Порядок дат лицензии (`license_until >= license_signed_at`) сегодня держит сервис, а не `CHECK`:
+ограничения у таблицы нет, и это долг, а не решение.
 
 ### 3.3 Процесс: группы, редакции, стадии
 

@@ -9,47 +9,56 @@
 	import MappingTable from '$lib/components/stats/mapping-table.svelte';
 	import WizardSteps from '$lib/components/stats/wizard-steps.svelte';
 	import {
-		describeStatFile,
-		STAT_FIELD_LABELS,
-		STAT_FIELDS,
-		STAT_FIELD_NONE,
-		STAT_PREVIEW_ROWS,
-		STAT_SNAPSHOT_MODE_LABELS,
-		STAT_SOURCE_LABELS,
-		type StatSnapshotListItem
-	} from '$lib/contracts/stats';
-	import { formatDate, formatNumber, pluralize } from '$lib/format';
+		CATALOG_FIELDS,
+		CATALOG_FIELD_LABELS,
+		CATALOG_FIELD_NONE,
+		CATALOG_PREVIEW_ROWS,
+		CATALOG_WIZARD_STEPS
+	} from '$lib/contracts/directory-import';
+	import { describeStatFile } from '$lib/contracts/stats';
+	import { formatNumber, pluralize } from '$lib/format';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
 
 	let submitting = $state(false);
 
-	const snapshot: StatSnapshotListItem = $derived(data.snapshot);
-
-	/** Поля строки снимка для общей таблицы сопоставления. */
-	const FIELD_OPTIONS = STAT_FIELDS.map((field) => ({
+	/** Поля строки каталога для общей таблицы сопоставления. */
+	const FIELD_OPTIONS = CATALOG_FIELDS.map((field) => ({
 		value: field,
-		label: STAT_FIELD_LABELS[field]
+		label: CATALOG_FIELD_LABELS[field]
 	}));
+
+	/**
+	 * Предложение по колонке в том виде, в каком его показывает таблица: пары
+	 * «колонка → поле» превращаются в список, чтобы значок «Предложено» стоял и у
+	 * колонок, которым предложить нечего.
+	 */
+	const advice = $derived(
+		data.preview.headers.map((column) => ({
+			column,
+			field: data.preview.advice[column] ?? null
+		}))
+	);
 </script>
 
-<svelte:head><title>Сопоставление колонок — LCT CRM</title></svelte:head>
+<svelte:head><title>Сопоставление колонок каталога — LCT CRM</title></svelte:head>
 
 <PageHeader
 	title="Сопоставление колонок"
 	description="Шаг 2 из 3: какая колонка файла что означает. Предложение помечено значком — меняйте его там, где система ошиблась."
-	breadcrumbs={[{ label: 'Данные', href: resolve('/(app)/data') }]}
+	breadcrumbs={[
+		{ label: 'Организации', href: resolve('/(app)/organizations') },
+		{ label: 'Импорт каталога', href: resolve('/(app)/organizations/import') }
+	]}
 />
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
-	<WizardSteps current={2} />
+	<WizardSteps current={2} steps={CATALOG_WIZARD_STEPS} />
 
 	<div class="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted-foreground">
-		<span>Источник: {STAT_SOURCE_LABELS[snapshot.source]}</span>
-		<span>Режим: {STAT_SNAPSHOT_MODE_LABELS[snapshot.mode]}</span>
-		<span>Период: {formatDate(snapshot.periodStart)} — {formatDate(snapshot.periodEnd)}</span>
 		<span>В файле: {pluralize(data.preview.totalRows, ['строка', 'строки', 'строк'])}</span>
+		<span>Колонок: {formatNumber(data.preview.headers.length)}</span>
 	</div>
 
 	<!-- Из чего собрана таблица: съехавшие колонки объясняет прочитанный
@@ -92,20 +101,20 @@
 	>
 		<MappingTable
 			headers={data.preview.headers}
-			advice={data.preview.advice}
+			{advice}
 			mapping={data.preview.mapping}
 			sample={data.preview.sample}
 			fields={FIELD_OPTIONS}
-			noneValue={STAT_FIELD_NONE}
-			previewRows={STAT_PREVIEW_ROWS}
+			noneValue={CATALOG_FIELD_NONE}
+			previewRows={CATALOG_PREVIEW_ROWS}
 		/>
 
 		<p class="text-sm text-muted-foreground">
-			Организацию и программу сопоставить обязательно: без них строку не к чему отнести. Организация
-			узнаётся и по названию, и по ИНН. Если колонки периода в файле нет, строки получат период
-			снимка. Показано {formatNumber(data.preview.headers.length)} колонок.
+			Учебное заведение и продукт сопоставить обязательно: без них строку не к чему отнести. Вуз
+			ищется по ИНН, а без него — по названию; продукт по коду, а без него — по названию. Колонка
+			срока принимает и дату, и один год: «2027» означает 31 декабря 2027 года.
 		</p>
 
-		<FormActions {submitting} submitLabel="Дальше: проверка строк" />
+		<FormActions {submitting} submitLabel="Дальше: предпросмотр" />
 	</form>
 </div>

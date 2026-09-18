@@ -11,17 +11,18 @@
 
 `src/lib/server/db/schema/` — по файлу на предметную область, `index.ts` реэкспортирует всё.
 
-| Файл              | Что внутри                                                                                                                                            |
-| ----------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `shared.ts`       | Повторяющиеся столбцы: `createdAt`/`updatedAt`, внешняя ссылка и её уникальность                                                                      |
-| `auth.ts`         | `permissions`, `roles`, `role_permissions`, `users`                                                                                                   |
-| `settings.ts`     | `app_settings`                                                                                                                                        |
-| `audit.ts`        | `audit_events`                                                                                                                                        |
-| `directory.ts`    | `organizations`, `sites`, `people`, `affiliations`, `consents`, программы и продукты, `directions`, `product_directions`, `organization_responsibles` |
-| `interactions.ts` | Группы процесса и их реестры, редакции процесса, стадии и переходы, взаимодействия, записи стадий, паузы, блокировки, комментарии, договоры           |
-| `documents.ts`    | `document_templates`, `documents`, `stage_entry_documents`                                                                                            |
-| `exchange.ts`     | `exchange_messages`, `learning_groups`, `learning_group_results`                                                                                      |
-| `api.ts`          | `api_keys`                                                                                                                                            |
+| Файл                  | Что внутри                                                                                                                                            |
+| --------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `shared.ts`           | Повторяющиеся столбцы: `createdAt`/`updatedAt`, внешняя ссылка и её уникальность                                                                      |
+| `auth.ts`             | `permissions`, `roles`, `role_permissions`, `users`                                                                                                   |
+| `settings.ts`         | `app_settings`                                                                                                                                        |
+| `audit.ts`            | `audit_events`                                                                                                                                        |
+| `directory.ts`        | `organizations`, `sites`, `people`, `affiliations`, `consents`, программы и продукты, `directions`, `product_directions`, `organization_responsibles` |
+| `directory-import.ts` | `directory_imports`, `directory_import_rows` — загрузка каталога и её строки                                                                          |
+| `interactions.ts`     | Группы процесса и их реестры, редакции процесса, стадии и переходы, взаимодействия, записи стадий, паузы, блокировки, комментарии, договоры           |
+| `documents.ts`        | `document_templates`, `documents`, `stage_entry_documents`                                                                                            |
+| `exchange.ts`         | `exchange_messages`, `learning_groups`, `learning_group_results`                                                                                      |
+| `api.ts`              | `api_keys`                                                                                                                                            |
 
 Соглашения:
 
@@ -45,29 +46,31 @@
 
 ### Ограничения, которые держат инварианты
 
-| Где                                | Что                                                                                                    |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------ |
-| `organizations`                    | CHECK: уровень образования заполнен ровно у учебных заведений                                          |
-| `organizations`                    | Частичная уникальность ИНН `WHERE inn IS NOT NULL`                                                     |
-| `affiliations`                     | Составной внешний ключ `(site_id, organization_id) → sites(id, organization_id)`                       |
-| `stage_entries`                    | Частичная уникальность `(interaction_id) WHERE left_at IS NULL`                                        |
-| `stage_pauses`                     | Частичная уникальность `(stage_entry_id) WHERE ended_at IS NULL`, CHECK `ended_at > started_at`        |
-| `documents`                        | Частичная уникальность `(supersedes_id) WHERE supersedes_id IS NOT NULL`, CHECK «не заменяет сам себя» |
-| `consents`                         | CHECK `withdrawn_at >= given_at` и «автор отзыва только вместе с отзывом»                              |
-| `audit_events`                     | Триггер `BEFORE UPDATE OR DELETE` → исключение                                                         |
-| `organizations`                    | CHECK: ссылка на человека заполнена ровно у вида `individual`; уникальный `person_id`                  |
-| `interaction_parties`              | Частичная уникальность `(interaction_id) WHERE is_primary` — основная сторона одна                     |
-| `organization_responsibles`        | Частичная уникальность `(organization_id, direction_id) NULLS NOT DISTINCT WHERE valid_to IS NULL`     |
-| `process_group_counterparty_kinds` | Первичный ключ по виду контрагента: вид принадлежит ровно одной группе                                 |
-| `process_revisions`                | Уникальность `(group_id, version)`; частичная уникальность `(group_id) WHERE published_at IS NULL`     |
-| `stages`, `stage_transitions`      | Уникальность `(revision_id, key)` и `(revision_id, position)`; `(from_stage_id, to_stage_id)`          |
-| `stage_migration_rules`            | Уникальность `(revision_id, removed_stage_key)`, CHECK «ключи различны»                                |
-| `process_stage_keys`               | Первичный ключ `(group_id, key)`: строка заводится с первым появлением ключа и не удаляется никогда    |
-| `interaction_contract_items`       | Составной внешний ключ `(contract_item_id, contract_id) → contract_items(id, contract_id)`             |
-| `users`                            | Частичная уникальность `external_subject`, CHECK «сам себе не руководитель»                            |
-| `exchange_messages`                | Уникальность `(direction, system, instance, event_id)` — повтор доставки не плодит строк               |
-| `learning_groups`                  | Уникальность `(interaction_id, stream_number)`; частичная уникальность внешнего идентификатора         |
-| `learning_group_results`           | CHECK `completed + expelled <= enrolled`                                                               |
+| Где                                | Что                                                                                                     |
+| ---------------------------------- | ------------------------------------------------------------------------------------------------------- |
+| `organizations`                    | CHECK: уровень образования заполнен ровно у учебных заведений                                           |
+| `organizations`                    | Частичная уникальность ИНН `WHERE inn IS NOT NULL`                                                      |
+| `affiliations`                     | Составной внешний ключ `(site_id, organization_id) → sites(id, organization_id)`                        |
+| `stage_entries`                    | Частичная уникальность `(interaction_id) WHERE left_at IS NULL`                                         |
+| `stage_pauses`                     | Частичная уникальность `(stage_entry_id) WHERE ended_at IS NULL`, CHECK `ended_at > started_at`         |
+| `documents`                        | Частичная уникальность `(supersedes_id) WHERE supersedes_id IS NOT NULL`, CHECK «не заменяет сам себя»  |
+| `consents`                         | CHECK `withdrawn_at >= given_at` и «автор отзыва только вместе с отзывом»                               |
+| `audit_events`                     | Триггер `BEFORE UPDATE OR DELETE` → исключение                                                          |
+| `organizations`                    | CHECK: ссылка на человека заполнена ровно у вида `individual`; уникальный `person_id`                   |
+| `interaction_parties`              | Частичная уникальность `(interaction_id) WHERE is_primary` — основная сторона одна                      |
+| `organization_responsibles`        | Частичная уникальность `(organization_id, direction_id) NULLS NOT DISTINCT WHERE valid_to IS NULL`      |
+| `process_group_counterparty_kinds` | Первичный ключ по виду контрагента: вид принадлежит ровно одной группе                                  |
+| `process_revisions`                | Уникальность `(group_id, version)`; частичная уникальность `(group_id) WHERE published_at IS NULL`      |
+| `stages`, `stage_transitions`      | Уникальность `(revision_id, key)` и `(revision_id, position)`; `(from_stage_id, to_stage_id)`           |
+| `stage_migration_rules`            | Уникальность `(revision_id, removed_stage_key)`, CHECK «ключи различны»                                 |
+| `process_stage_keys`               | Первичный ключ `(group_id, key)`: строка заводится с первым появлением ключа и не удаляется никогда     |
+| `interaction_contract_items`       | Составной внешний ключ `(contract_item_id, contract_id) → contract_items(id, contract_id)`              |
+| `users`                            | Частичная уникальность `external_subject`, CHECK «сам себе не руководитель»                             |
+| `exchange_messages`                | Уникальность `(direction, system, instance, event_id)` — повтор доставки не плодит строк                |
+| `learning_groups`                  | Уникальность `(interaction_id, stream_number)`; частичная уникальность внешнего идентификатора          |
+| `learning_group_results`           | CHECK `completed + expelled <= enrolled`                                                                |
+| `directory_imports`                | CHECK «состояние `confirmed` ровно тогда, когда заполнен `confirmed_at`»                                |
+| `directory_import_rows`            | Уникальность `(import_id, row_no)`; CHECK «действие `error` ровно тогда, когда у строки есть претензии» |
 
 Составной внешний ключ у `affiliations` заменяет триггер: при `site_id IS NULL` правило
 MATCH SIMPLE ничего не требует, а при заполненной площадке она обязана принадлежать той же
@@ -75,6 +78,27 @@ MATCH SIMPLE ничего не требует, а при заполненной 
 `(id, organization_id)` — сослаться можно только на уникальный набор столбцов. Удаление
 оставлено NO ACTION: проверка откладывается до конца оператора, поэтому каскад от
 организации проходит, а точечное удаление площадки, на которую ссылается роль, отвергается.
+
+### Импорт каталога
+
+`directory_imports` и `directory_import_rows` — это **журнал загрузки, а не копия справочника**.
+Результат импорта живёт в своих таблицах: организации, продукты, направления, договоры и позиции
+после применения ничем не отличаются от заведённых руками. Эти две таблицы отвечают на другой
+вопрос — «откуда в справочнике взялась эта строка и что именно импорт с ней сделал».
+
+| Таблица                 | Что внутри                                                                                                                                          |
+| ----------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `directory_imports`     | Загрузка целиком: состояние, исходный файл, сопоставление колонок, счётчики строк по действиям, автор и момент применения                           |
+| `directory_import_rows` | Строка файла: место в нём, разобранные значения, действие, претензии, что заводит и что меняет, ссылки на заведённые организацию, продукт и договор |
+
+Разобранные значения хранятся отдельно от `raw` намеренно: применение работает с ними, а не с
+текстом ячейки, — между предпросмотром и подтверждением файл читать заново нельзя, потому что человек
+согласился с тем, что увидел. Ссылки на записи справочника — `on delete set null`: запись могут
+архивировать и удалять своей жизнью, а строка загрузки остаётся.
+
+CHECK «действие `error` ровно тогда, когда у строки есть претензии» держит правило раздела: строка с
+претензией ничего не записывает, и «ошибка» в предпросмотре означает то же, что и в справочнике.
+Правила самого импорта — в [`directory.md`](directory.md#импорт-каталога).
 
 ### Персональные данные и редакции документов
 

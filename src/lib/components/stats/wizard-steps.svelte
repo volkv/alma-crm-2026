@@ -1,29 +1,38 @@
 <script lang="ts" module>
-	/** Шаги мастера загрузки; каждый живёт на своей странице. */
-	export const WIZARD_STEPS = [
+	/** Один шаг мастера: номер по порядку и то, как он называется. */
+	export type WizardStepDefinition = { number: number; label: string };
+
+	/** Шаги мастера загрузки данных об обучении; каждый живёт на своей странице. */
+	export const WIZARD_STEPS: readonly WizardStepDefinition[] = [
 		{ number: 1, label: 'Файл и период' },
 		{ number: 2, label: 'Сопоставление колонок' },
 		{ number: 3, label: 'Проверка и подтверждение' }
-	] as const;
-
-	export type WizardStep = (typeof WIZARD_STEPS)[number]['number'];
+	];
 </script>
 
 <script lang="ts">
 	import CheckIcon from '@lucide/svelte/icons/check';
 
 	/**
-	 * Где человек находится в загрузке данных и что будет дальше.
+	 * Где человек находится в мастере загрузки и что будет дальше.
 	 *
 	 * Шаги — это отдельные страницы, а не вкладки: у каждого свой адрес, и на
-	 * второй шаг можно вернуться из списка снимков через неделю. Полоска только
+	 * второй шаг можно вернуться из списка через неделю. Полоска только
 	 * показывает место; переходами распоряжаются сами страницы.
+	 *
+	 * Сам набор шагов приходит снаружи: мастеров в продукте два — загрузка
+	 * данных об обучении и импорт каталога, — и они отличаются только
+	 * названиями шагов. Второй такой же компонент рядом разошёлся бы с первым на
+	 * первой же правке разметки.
 	 */
-	let { current }: { current: WizardStep } = $props();
+	let {
+		current,
+		steps = WIZARD_STEPS
+	}: { current: number; steps?: readonly WizardStepDefinition[] } = $props();
 </script>
 
 <ol class="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm" data-slot="wizard-steps">
-	{#each WIZARD_STEPS as step (step.number)}
+	{#each steps as step (step.number)}
 		{@const done = step.number < current}
 		{@const active = step.number === current}
 		<li class="flex items-center gap-2" aria-current={active ? 'step' : undefined}>
@@ -41,7 +50,7 @@
 			</span>
 			<span class={active ? 'font-medium' : 'text-muted-foreground'}>{step.label}</span>
 		</li>
-		{#if step.number < WIZARD_STEPS.length}
+		{#if step.number < steps.length}
 			<li aria-hidden="true" class="h-px w-6 bg-border"></li>
 		{/if}
 	{/each}

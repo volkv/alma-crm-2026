@@ -1,18 +1,17 @@
+<script lang="ts" module>
+	/** Поле, в которое можно сопоставить колонку: значение и его название. */
+	export type MappingFieldOption = { value: string; label: string };
+
+	/** Предложение по колонке; `field: null` — предложить нечего. */
+	export type MappingSuggestion = { column: string; field: string | null };
+</script>
+
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import SparklesIcon from '@lucide/svelte/icons/sparkles';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import StatusBadge from '$lib/components/status-badge.svelte';
-	import {
-		STAT_FIELDS,
-		STAT_FIELD_LABELS,
-		STAT_FIELD_NONE,
-		STAT_PREVIEW_ROWS,
-		type MappingAdvice,
-		type StatField,
-		type StatMapping
-	} from '$lib/contracts/stats';
 
 	/**
 	 * Сопоставление колонок файла с полями строки.
@@ -24,30 +23,36 @@
 	 * Значения полей уходят в форму парами скрытых полей `column` и `field`:
 	 * названия колонок приходят из файла, то есть это произвольный текст, и
 	 * собирать из него имена полей формы нельзя.
+	 *
+	 * Набор полей приходит снаружи: мастеров в продукте два — загрузка данных об
+	 * обучении и импорт каталога, — и таблица у них одна и та же, разные у них
+	 * только поля. Проверку набора держит вызывающий: он собирает список из
+	 * своего перечисления, и колонка в базу уходит через схему, а не отсюда.
 	 */
 	let {
 		headers,
 		advice,
 		mapping,
-		sample
+		sample,
+		fields,
+		noneValue,
+		previewRows
 	}: {
 		headers: readonly string[];
-		advice: readonly MappingAdvice[];
-		/** Сопоставление снимка; пусто, пока шаг не проходили. */
-		mapping: StatMapping;
+		advice: readonly MappingSuggestion[];
+		/** Сопоставление загрузки; пусто, пока шаг не проходили. */
+		mapping: Record<string, string>;
 		/** Первые строки файла: колонка → значение. */
 		sample: readonly Record<string, string>[];
+		fields: readonly MappingFieldOption[];
+		/** Значение «колонку не берём»; разбирает его сервер тем же именем. */
+		noneValue: string;
+		previewRows: number;
 	} = $props();
 
-	const FIELD_OPTIONS = STAT_FIELDS.map((field) => ({
-		value: field,
-		label: STAT_FIELD_LABELS[field]
-	}));
+	const labels = $derived(new Map(fields.map((field) => [field.value, field.label])));
 
-	/** Значение «колонку не берём»; разбирает его сервер тем же именем. */
-	const NONE = STAT_FIELD_NONE;
-
-	function advisedFor(column: string): StatField | null {
+	function advisedFor(column: string): string | null {
 		return advice.find((item) => item.column === column)?.field ?? null;
 	}
 
@@ -60,12 +65,12 @@
 	let chosen = $state<Record<string, string>>(
 		untrack(() =>
 			Object.fromEntries(
-				headers.map((column) => [column, mapping[column] ?? advisedFor(column) ?? NONE])
+				headers.map((column) => [column, mapping[column] ?? advisedFor(column) ?? noneValue])
 			)
 		)
 	);
 
-	const preview = $derived(sample.slice(0, STAT_PREVIEW_ROWS));
+	const preview = $derived(sample.slice(0, previewRows));
 
 	function values(column: string): string {
 		return preview
@@ -99,13 +104,13 @@
 						<div class="flex flex-col gap-1">
 							<Select.Root type="single" name="field" bind:value={chosen[column]}>
 								<Select.Trigger class="w-full" aria-label="Поле для колонки «{column}»">
-									{chosen[column] === NONE
+									{chosen[column] === noneValue
 										? 'Не сопоставлено'
-										: STAT_FIELD_LABELS[chosen[column] as StatField]}
+										: (labels.get(chosen[column]) ?? 'Не сопоставлено')}
 								</Select.Trigger>
 								<Select.Content>
-									<Select.Item value={NONE} label="Не сопоставлено" />
-									{#each FIELD_OPTIONS as option (option.value)}
+									<Select.Item value={noneValue} label="Не сопоставлено" />
+									{#each fields as option (option.value)}
 										<Select.Item value={option.value} label={option.label} />
 									{/each}
 								</Select.Content>

@@ -15,6 +15,8 @@ import { and, eq, max, ne, sql } from 'drizzle-orm';
 import type {
 	AffiliationView,
 	CreateAffiliationInput,
+	CreateDirectionInput,
+	DirectionView,
 	CreateOrganizationInput,
 	CreatePersonInput,
 	CreateProductInput,
@@ -39,6 +41,7 @@ import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
 import {
 	affiliations,
+	directions,
 	organizationResponsibles,
 	organizations,
 	people,
@@ -48,6 +51,9 @@ import {
 	sites
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
+
+/** Кто выполняет запрос: транзакция вызывающего или общий пул. */
+type Executor = Tx | ReturnType<typeof getDb>;
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { withPiiTrace } from '../people/pii-trace';
 import { toPersonView } from '../people/serialize';
@@ -67,6 +73,8 @@ const UNIQUE_VIOLATION = '23505';
  * покажет пятисотую вместо объяснения.
  */
 const CONFLICT_BY_CONSTRAINT: Record<string, string> = {
+	directions_code_key: 'Направление с таким кодом уже заведено',
+	directions_position_key: 'Позиция направления уже занята: повторите попытку',
 	organizations_inn_key: 'Организация с таким ИНН уже заведена',
 	organizations_external_ref_key: 'Эта запись внешней системы уже связана с другой организацией',
 	sites_organization_name_key: 'У организации уже есть площадка с таким названием',
@@ -798,6 +806,70 @@ export async function addProgramVersion(
 	);
 }
 
+/**
+ * Заведение ИТ-направления.
+ *
+ * Позицию в списке назначает сервис, а не форма: направления показываются в
+ * своём порядке значимости, и новое встаёт в конец. Считается она внутри
+ * транзакции по уже заведённым строкам, а гонку двух одновременных заведений
+ * ловит уникальный индекс — проверка в приложении её не поймала бы.
+ */
+export async function createDirection(
+	ctx: ActorContext,
+	input: CreateDirectionInput,
+	tx?: Tx
+): Promise<DirectionView> {
+	await requirePermission(ctx, 'directions.write', { type: 'directions.created' });
+
+	const write = async (executor: Tx): Promise<DirectionView> => {
+		const [last] = await executor.select({ value: max(directions.position) }).from(directions);
+
+		const [row] = await executor
+			.insert(directions)
+			.values({ ...input, position: (last?.value ?? 0) + 1 })
+			.returning();
+
+		await recordAuditEvent(
+			ctx,
+			{
+				type: 'directions.created',
+				outcome: 'success',
+				subject: { type: 'direction', id: row.id }
+			},
+			executor
+		);
+
+		return { id: row.id, code: row.code, name: row.name, position: row.position };
+	};
+
+	return withUniqueConflicts(() => (tx === undefined ? withTransaction(ctx, write) : write(tx)));
+}
+
+/**
+ * Правообладатель продукта обязан существовать — и это всё, что о нём нужно
+ * знать при записи.
+ *
+ * Проверка идёт **без области доступа**, в отличие от чтения карточки
+ * организации. Продукты и программы — общий справочник оператора, область к ним
+ * не применяется (`docs/directory.md`), а вендор в нём — это ссылка, а не
+ * предмет работы: ответственного вендору не назначают никогда, поэтому в чью-то
+ * область он не попадает вовсе. Со scopeFilter руководитель не смог бы записать
+ * ни одного продукта с правообладателем — ни формой, ни импортом каталога.
+ */
+async function assertVendorExists(executor: Executor, id: string): Promise<void> {
+	const [row] = await executor
+		.select({ id: organizations.id })
+		.from(organizations)
+		.where(eq(organizations.id, id))
+		.limit(1);
+
+	if (row === undefined) {
+		throw new ValidationError('Правообладатель не найден', [
+			'Организация-правообладатель не заведена в справочнике'
+		]);
+	}
+}
+
 function toProductView(row: typeof products.$inferSelect): ProductView {
 	return {
 		id: row.id,
@@ -809,33 +881,40 @@ function toProductView(row: typeof products.$inferSelect): ProductView {
 	};
 }
 
+/**
+ * Заведение продукта. `tx` передаёт тот, кто уже открыл транзакцию и отвечает
+ * за операцию целиком: импорт каталога заводит организацию-вендора и её продукт
+ * одной строкой файла — либо обе записи, либо ни одной. Проверка вендора идёт
+ * тем же исполнителем, иначе только что заведённой организации она не увидит.
+ */
 export async function createProduct(
 	ctx: ActorContext,
-	input: CreateProductInput
+	input: CreateProductInput,
+	tx?: Tx
 ): Promise<ProductView> {
 	await requirePermission(ctx, 'products.write', { type: 'products.created' });
 
-	if (input.vendorOrganizationId !== null) {
-		await getOrganization(ctx, input.vendorOrganizationId);
-	}
+	const write = async (executor: Tx): Promise<ProductView> => {
+		if (input.vendorOrganizationId !== null) {
+			await assertVendorExists(executor, input.vendorOrganizationId);
+		}
 
-	return withUniqueConflicts(() =>
-		withTransaction(ctx, async (tx) => {
-			const [row] = await tx.insert(products).values(input).returning();
+		const [row] = await executor.insert(products).values(input).returning();
 
-			await recordAuditEvent(
-				ctx,
-				{
-					type: 'products.created',
-					outcome: 'success',
-					subject: { type: 'product', id: row.id }
-				},
-				tx
-			);
+		await recordAuditEvent(
+			ctx,
+			{
+				type: 'products.created',
+				outcome: 'success',
+				subject: { type: 'product', id: row.id }
+			},
+			executor
+		);
 
-			return toProductView(row);
-		})
-	);
+		return toProductView(row);
+	};
+
+	return withUniqueConflicts(() => (tx === undefined ? withTransaction(ctx, write) : write(tx)));
 }
 
 export async function updateProduct(
@@ -857,7 +936,7 @@ export async function updateProduct(
 	}
 
 	if (fields.vendorOrganizationId !== null) {
-		await getOrganization(ctx, fields.vendorOrganizationId);
+		await assertVendorExists(db, fields.vendorOrganizationId);
 	}
 
 	const archived = fields.status === 'archived' && before.status !== 'archived';

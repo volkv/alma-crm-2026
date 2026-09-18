@@ -71,6 +71,13 @@
       "when": 1789622467679,
       "tag": "0009_exchange_envelope_and_key_binding",
       "breakpoints": true
+    },
+    {
+      "idx": 10,
+      "version": "7",
+      "when": 1789713966144,
+      "tag": "0010_directory_catalog_import",
+      "breakpoints": true
     }
   ]
 }

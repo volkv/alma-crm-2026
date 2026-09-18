@@ -32,7 +32,8 @@ export const load: PageServerLoad = async (event) => {
 			rows: result.items,
 			total: result.total,
 			filtered: query.kind !== null || query.educationLevel !== null || query.q !== null,
-			canWrite: can(ctx, 'organizations.write')
+			canWrite: can(ctx, 'organizations.write'),
+			canImport: can(ctx, 'directory.import')
 		};
 	} catch (error) {
 		toPageError(error);

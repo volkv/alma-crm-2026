@@ -1,4 +1,5 @@
 import { defineConfig, devices } from '@playwright/test';
+import { E2E_EXCHANGE_ENV } from './e2e/exchange-keys.ts';
 
 /**
  * Порт прогона: свой у каждого, чтобы на одной машине помещалось два.
@@ -71,13 +72,16 @@ export default defineConfig({
 			// Демонстрационный вход — часть проверяемого поведения.
 			DEMO_MODE: 'true',
 			// Обмен: приложение ходит до имитаторов из `docker-compose.yml` —
-			// `mock-cms` на 58081 и `mock-lms` на 58082. Секрет подписи тот же, что у
-			// контейнеров; адрес карточки заявки несёт `{externalId}` — на его место
-			// встаёт ключ заявки.
+			// `mock-cms` на 58081 и `mock-lms` на 58082. Адрес карточки заявки несёт
+			// `{externalId}` — на его место встаёт ключ заявки.
 			EXCHANGE_CMS_STATUS_URL: 'http://localhost:58081/api/applications/{externalId}/status',
 			EXCHANGE_LMS_GROUPS_URL: 'http://localhost:58082/api/groups',
 			EXCHANGE_LMS_BASE_URL: 'http://localhost:58082',
-			EXCHANGE_SECRET: 'exchange-stand-secret-0123456789abcdef',
+			// Ключи обмена, имена подключений и секрет подписи — ровно те, с которыми
+			// `e2e/stack.ts` поднял имитаторов. Отсюда их читает и сид прогона:
+			// глобальный сетап запускает его с этим окружением, и ключи стенда
+			// оказываются заведены до первой проверки (`e2e/exchange-keys.ts`).
+			...E2E_EXCHANGE_ENV,
 			TRUST_PROXY: 'false',
 			// Имитаторы и приёмник подписки прогона живут на петле: прогон идёт в
 			// производственном режиме, где умолчание — запрет, и без этой строки

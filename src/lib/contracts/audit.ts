@@ -57,6 +57,14 @@ export const AUDIT_EVENT_TYPES = [
 	'directory.responsible_assigned',
 	'directory.responsible_released',
 	'directory.responsible_reassigned',
+	// Импорт каталога: файл принят, разложен по справочникам, отклонён. Числа
+	// строк едут в подробностях (`<что-то>Count`), потому что «импорт применён»
+	// без них не отвечает на вопрос, что именно он в справочнике поменял.
+	// Собственного события у шага сопоставления нет: он ничего не решает —
+	// предпросмотр пересчитывается сколько угодно раз, а решение это следующий шаг.
+	'directory.import_created',
+	'directory.import_confirmed',
+	'directory.import_rejected',
 	'people.created',
 	'people.updated',
 	'people.affiliation_created',
@@ -70,6 +78,10 @@ export const AUDIT_EVENT_TYPES = [
 	'programs.updated',
 	'programs.version_created',
 	'programs.archived',
+	// ИТ-направление заведено. Отдельное событие, а не правка справочника: по
+	// направлению назначают ответственных и строят разрезы отчёта, и новое
+	// направление меняет картину всем сразу.
+	'directions.created',
 	'products.created',
 	'products.updated',
 	'products.archived',

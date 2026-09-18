@@ -1,19 +1,23 @@
 /**
- * Сопоставление колонок файла с полями строки.
+ * Словарь синонимов колонок для данных об обучении.
  *
  * Выгрузки приходят из разных систем, и одна и та же величина называется в них
- * по-разному: «Подано заявок», «Заявки», «applications». Правила ниже — это
- * словарь синонимов: он **предлагает**, а решает человек. Предложение, которое
- * нельзя отменить в интерфейсе, было бы хуже отсутствия предложения — ошибку
- * такого сопоставления потом не найти.
+ * по-разному: «Подано заявок», «Заявки», «applications». Здесь лежит только
+ * словарь; правило выбора — общее для всех импортов и живёт в
+ * `spreadsheet/mapping.ts`.
  */
 import { STAT_FIELDS, type StatField, type StatMapping } from '$lib/contracts/stats';
+import {
+	fieldMappingConfidence,
+	suggestFieldMapping,
+	type FieldSynonyms
+} from '../spreadsheet/mapping';
 
 /**
  * Синонимы названий колонок. Однобуквенных и слишком общих слов здесь нет
  * намеренно: подстрока «с» нашлась бы в каждом заголовке.
  */
-const SYNONYMS: Record<StatField, readonly string[]> = {
+const SYNONYMS: FieldSynonyms<StatField> = {
 	organization: [
 		'организация',
 		'наименование организации',
@@ -110,101 +114,14 @@ const SYNONYMS: Record<StatField, readonly string[]> = {
 };
 
 /**
- * Название колонки в сравнимом виде: регистр, «ё», знаки препинания и лишние
- * пробелы к делу не относятся — «Охват, план» и «охват план» это одна колонка.
- */
-export function normalizeHeader(header: string): string {
-	return header
-		.toLocaleLowerCase('ru')
-		.replaceAll('ё', 'е')
-		.replaceAll(/[^\p{L}\p{N}]+/gu, ' ')
-		.trim();
-}
-
-/** Совпадение колонки с полем и то, насколько оно уверенное. */
-type Match = {
-	column: string;
-	field: StatField;
-	/** Точное совпадение сильнее вхождения, длинный синоним — сильнее короткого. */
-	score: number;
-	exact: boolean;
-	synonym: string;
-};
-
-function matchesFor(column: string): Match[] {
-	const normalized = normalizeHeader(column);
-	const matches: Match[] = [];
-
-	if (normalized === '') {
-		return matches;
-	}
-
-	for (const field of STAT_FIELDS) {
-		let best: Match | null = null;
-
-		for (const synonym of SYNONYMS[field]) {
-			const exact = normalized === synonym;
-			const hit = exact || normalized.includes(synonym);
-
-			if (!hit) {
-				continue;
-			}
-
-			const score = (exact ? 1000 : 0) + synonym.length;
-
-			if (best === null || score > best.score) {
-				best = { column, field, score, exact, synonym };
-			}
-		}
-
-		if (best !== null) {
-			matches.push(best);
-		}
-	}
-
-	return matches;
-}
-
-/**
- * Предложенное сопоставление: колонка → поле.
- *
- * Одно поле достаётся одной колонке: в выгрузке рядом стоят «Охват, план» и
- * «Охват, факт», и если бы поле могло достаться обеим, предложение зависело бы
- * от порядка колонок. Поэтому совпадения разбираются от самого уверенного к
- * самому слабому, и занятые колонка и поле больше не участвуют.
+ * Предложенное сопоставление: колонка → поле. Правило выбора общее для всех
+ * импортов, здесь к нему подставляется словарь данных об обучении.
  */
 export function suggestMapping(headers: readonly string[]): StatMapping {
-	const matches = headers
-		.flatMap((header) => matchesFor(header))
-		// Порядок колонок в файле — последний ключ: без него два одинаково
-		// уверенных совпадения менялись бы местами от запуска к запуску.
-		.sort(
-			(left, right) =>
-				right.score - left.score || headers.indexOf(left.column) - headers.indexOf(right.column)
-		);
-
-	const mapping: StatMapping = {};
-	const takenFields = new Set<StatField>();
-
-	for (const match of matches) {
-		if (takenFields.has(match.field) || match.column in mapping) {
-			continue;
-		}
-
-		mapping[match.column] = match.field;
-		takenFields.add(match.field);
-	}
-
-	return mapping;
+	return suggestFieldMapping(headers, STAT_FIELDS, SYNONYMS);
 }
 
 /** Насколько уверенно колонка сопоставлена: показывается рядом с предложением. */
 export function mappingConfidence(column: string, field: StatField): number {
-	const match = matchesFor(column).find((candidate) => candidate.field === field);
-
-	if (match === undefined) {
-		return 0;
-	}
-
-	return match.exact ? 1 : 0.6;
+	return fieldMappingConfidence(column, field, STAT_FIELDS, SYNONYMS);
 }

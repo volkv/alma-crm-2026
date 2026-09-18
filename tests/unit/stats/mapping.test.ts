@@ -8,7 +8,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { STAT_FIELDS } from '$lib/contracts/stats';
-import { mappingConfidence, normalizeHeader, suggestMapping } from '$lib/server/stats/mapping';
+import { mappingConfidence, suggestMapping } from '$lib/server/stats/mapping';
+import { normalizeHeader } from '$lib/server/spreadsheet/mapping';
 
 /** Шапка, похожая на настоящую выгрузку вуза. */
 const RUSSIAN_HEADERS = [

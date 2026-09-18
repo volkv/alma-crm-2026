@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
 	import PlusIcon from '@lucide/svelte/icons/plus';
+	import UploadIcon from '@lucide/svelte/icons/upload';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
@@ -106,6 +107,16 @@
 	description="Учебные заведения, компании-заказчики и операторы, с которыми идёт работа."
 >
 	{#snippet actions()}
+		{#if data.canImport}
+			<!-- Вход в мастер импорта стоит здесь, а не отдельным пунктом меню:
+				каталог заказчика — это строки про вузы, и заводят его из справочника
+				организаций. Отдельный раздел обещал бы место, где импорт живёт
+				постоянно, а он одноразовый: файл, предпросмотр, применение. -->
+			<Button variant="outline" href={resolve('/organizations/import')}>
+				<UploadIcon aria-hidden="true" />
+				Импорт каталога
+			</Button>
+		{/if}
 		{#if data.canWrite}
 			<Button href={resolve('/organizations/new')}>
 				<PlusIcon aria-hidden="true" />

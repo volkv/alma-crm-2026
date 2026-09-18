@@ -306,6 +306,19 @@ export const createProgramVersionSchema = z.object({
 	effectiveFrom: isoDate('Укажите дату вступления версии в силу')
 });
 
+/**
+ * ИТ-направление — разрез продуктов и ответственности (DevOps, тестирование), а
+ * не код направления подготовки ФГОС. Позиция в списке своя: у направлений есть
+ * порядок значимости, и алфавит его не выражает. Назначает позицию сервис, а не
+ * форма, поэтому в схеме её нет.
+ */
+export const createDirectionSchema = z.object({
+	code: requiredText(50, 'Укажите код направления'),
+	name: requiredText(200, 'Укажите название направления')
+});
+
+export type CreateDirectionInput = z.output<typeof createDirectionSchema>;
+
 const productFields = {
 	code: requiredText(50, 'Укажите код продукта'),
 	name: requiredText(500, 'Укажите название продукта'),
@@ -507,6 +520,13 @@ export type ProgramView = {
 	level: ProgramLevel;
 	directionCode: string | null;
 	status: LifecycleStatus;
+};
+
+export type DirectionView = {
+	id: string;
+	code: string;
+	name: string;
+	position: number;
 };
 
 export type ProductView = {

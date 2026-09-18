@@ -4,6 +4,7 @@ export * from './api';
 export * from './audit';
 export * from './auth';
 export * from './directory';
+export * from './directory-import';
 export * from './documents';
 export * from './exchange';
 export * from './interactions';
