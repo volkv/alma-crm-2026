@@ -20,7 +20,7 @@
  * ```
  * node scripts/readme-media/capture.ts                     # все кадры README
  * node scripts/readme-media/capture.ts reports exchange    # только названные
- * node scripts/readme-media/capture.ts --set help          # кадры справки
+ * node scripts/readme-media/capture.ts --set=help          # кадры справки
  * node scripts/readme-media/capture.ts --list              # что вообще снимает
  * ```
  */
@@ -90,13 +90,41 @@ const BASE_URL = requiredEnv('MEDIA_BASE_URL', 'http://localhost:3000').replace(
 const PASSWORD = requiredEnv('SEED_DEMO_PASSWORD');
 
 /**
+ * Признак ожившей страницы ставит корневой layout: до него разметка на экране
+ * есть, а диаграммы, всплывающие слои и подсказки первого входа ещё не собраны.
+ */
+async function hydrated(page: Page): Promise<void> {
+	await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: 20_000 });
+}
+
+/**
+ * Закрыть подсказки первого входа так, как их закрывает человек.
+ *
+ * Признак «подсказки показаны» лежит в браузере, а браузер у съёмки каждый раз
+ * чистый: тур открывается на первом же экране любой роли и попал бы на каждый
+ * кадр поверх самого экрана. Нажимается «Пропустить», а не подкладывается
+ * значение в хранилище: скрытого выключателя в продукте нет, и снимок с
+ * подложенным признаком показывал бы систему, которой не существует.
+ */
+async function skipOnboardingTour(page: Page): Promise<void> {
+	const tour = page.getByTestId('onboarding-tour');
+
+	await tour.waitFor({ state: 'visible', timeout: 20_000 });
+	await tour.getByRole('button', { name: 'Пропустить' }).click();
+	await tour.waitFor({ state: 'hidden', timeout: 20_000 });
+}
+
+/**
  * Вход через каталог учётных записей: кнопка на нашей странице, форма Keycloak,
  * возврат в приложение.
  *
  * Поля формы ищутся по идентификаторам (`#username`, `#password`), а не по
  * подписям: подписи Keycloak локализует, и realm стенда стоит на русском.
+ *
+ * `keepTour` оставляет подсказки первого входа открытыми — это нужно ровно
+ * одному кадру на набор, тому, ради которого они и снимаются.
  */
-async function signIn(context: BrowserContext, login: string): Promise<void> {
+async function signIn(context: BrowserContext, login: string, keepTour: boolean): Promise<void> {
 	const page = await context.newPage();
 
 	try {
@@ -107,6 +135,11 @@ async function signIn(context: BrowserContext, login: string): Promise<void> {
 		await page.locator('#password').fill(PASSWORD);
 		await page.locator('#kc-login').click();
 		await page.waitForURL(`${BASE_URL}/`);
+
+		if (!keepTour) {
+			await hydrated(page);
+			await skipOnboardingTour(page);
+		}
 	} finally {
 		await page.close();
 	}
@@ -128,13 +161,41 @@ async function sessions(
 		const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
 
 		if (role !== 'anonymous') {
-			await signIn(context, role);
+			await signIn(context, role, false);
 		}
 
 		contexts.set(role, context);
 	}
 
 	return contexts;
+}
+
+/**
+ * Кадру нужна своя сессия, если он показывает то, что помнит браузер: признак
+ * «подсказки уже показаны» и выбранную тему.
+ *
+ * Общая сессия роли для такого кадра не годится в обе стороны: подсказки в ней
+ * уже закрыты, а выбранная на кадре тёмная тема осталась бы у всех следующих
+ * снимков этой роли. Своя сессия стоит одного входа в каталог и не зависит от
+ * того, в каком порядке кадры сняли.
+ */
+function needsOwnSession(shot: Frame): boolean {
+	return shot.tour === true || shot.theme !== undefined;
+}
+
+/** Сессия под один кадр: тот же вход, но в чистый браузер. */
+async function ownSession(
+	browser: Browser,
+	shot: Frame,
+	viewport: { width: number; height: number }
+): Promise<BrowserContext> {
+	const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
+
+	if (shot.role !== 'anonymous') {
+		await signIn(context, shot.role, shot.tour === true);
+	}
+
+	return context;
 }
 
 /**
@@ -176,10 +237,14 @@ async function capture(context: BrowserContext, shot: Frame, set: FrameSet): Pro
 
 		await page.goto(`${BASE_URL}${shot.path}`, { waitUntil: 'load' });
 
-		// Признак ожившей страницы ставит корневой layout: до него разметка на
-		// экране есть, а диаграммы и всплывающие слои ещё не собраны.
 		if (shot.standalone !== true) {
-			await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: 20_000 });
+			await hydrated(page);
+		}
+
+		// Тема переключается тем же переключателем в шапке, которым её переключает
+		// человек: на кадре видно и выбранное положение, а не только цвета.
+		if (shot.theme !== undefined) {
+			await page.locator(`[data-slot="theme-toggle"] [data-theme-option="${shot.theme}"]`).click();
 		}
 
 		// Шаг кадра идёт до ожидания текста: ждут обычно того, что этот шаг и
@@ -264,7 +329,7 @@ async function main(): Promise<void> {
 	const browser = await chromium.launch();
 	const contexts = await sessions(
 		browser,
-		new Set(selected.map((shot) => shot.role)),
+		new Set(selected.filter((shot) => !needsOwnSession(shot)).map((shot) => shot.role)),
 		set.viewport
 	);
 
@@ -281,13 +346,17 @@ async function main(): Promise<void> {
 
 	try {
 		for (const shot of selected) {
-			const context = contexts.get(shot.role);
-
-			if (context === undefined) {
-				throw new Error(`Сессия роли «${shot.role}» не открыта`);
-			}
+			let own: BrowserContext | null = null;
 
 			try {
+				own = needsOwnSession(shot) ? await ownSession(browser, shot, set.viewport) : null;
+
+				const context = own ?? contexts.get(shot.role);
+
+				if (context === undefined) {
+					throw new Error(`Сессия роли «${shot.role}» не открыта`);
+				}
+
 				const file = await capture(context, shot, set);
 				const { size } = await stat(file);
 
@@ -297,6 +366,8 @@ async function main(): Promise<void> {
 
 				failures.push({ name: shot.name, reason });
 				console.error(`${shot.name}: не снят — ${reason}`);
+			} finally {
+				await own?.close();
 			}
 		}
 	} finally {

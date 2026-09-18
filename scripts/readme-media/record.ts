@@ -50,6 +50,17 @@ const FPS = 8;
 /** Ширина готового GIF: та же, в какой README показывает картинки. */
 const WIDTH = 900;
 
+/**
+ * Сколько цветов оставлять в палитре ролика.
+ *
+ * Не 256: интерфейс — это заливки, рамки и текст, а мягкие фоны темы дают
+ * полутона, которых на экране всё равно не различить, зато в файле они весят.
+ * Сто двадцать восемь цветов отнимают у ролика около пятой части веса и ничего
+ * не меняют на глаз — README открывают с телефона, и лишний мегабайт там
+ * дороже неразличимого оттенка.
+ */
+const COLORS = 128;
+
 function requiredEnv(name: string, fallback?: string): string {
 	const value = process.env[name] ?? fallback;
 
@@ -134,6 +145,18 @@ async function signIn(context: BrowserContext, login: string): Promise<void> {
 		await page.locator('#password').fill(PASSWORD);
 		await page.locator('#kc-login').click();
 		await page.waitForURL(`${BASE_URL}/`);
+
+		// Подсказки первого входа закрываются здесь же, на странице входа, и тем
+		// же нажатием, которым их закрывает человек: браузер записи каждый раз
+		// чистый, и тур открылся бы поверх первого же экрана ролика. Признак
+		// «показаны» принадлежит браузеру, поэтому дальше он молчит.
+		await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: 20_000 });
+
+		const tour = page.getByTestId('onboarding-tour');
+
+		await tour.waitFor({ state: 'visible', timeout: 20_000 });
+		await tour.getByRole('button', { name: 'Пропустить' }).click();
+		await tour.waitFor({ state: 'hidden', timeout: 20_000 });
 	} finally {
 		await page.close();
 	}
@@ -152,7 +175,7 @@ async function toGif(source: string, target: string): Promise<void> {
 		'-i',
 		source,
 		'-vf',
-		`fps=${FPS},scale=${WIDTH}:-1:flags=lanczos,split[s0][s1];[s0]palettegen=stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3`,
+		`fps=${FPS},scale=${WIDTH}:-1:flags=lanczos,split[s0][s1];[s0]palettegen=max_colors=${COLORS}:stats_mode=diff[p];[s1][p]paletteuse=dither=bayer:bayer_scale=3`,
 		'-loop',
 		'0',
 		target

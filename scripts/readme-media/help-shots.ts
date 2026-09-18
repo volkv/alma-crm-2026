@@ -22,6 +22,12 @@ const DEMO_INTERACTION = seedId('interaction', 'szpu-vo');
 /** Взаимодействие с длинной историей: на нём видна лента переходов. */
 const DEMO_HISTORY_INTERACTION = seedId('interaction', 'batse-kontrol');
 
+/**
+ * Взаимодействие на подписании соглашения с приложенным подписанным экземпляром:
+ * его стадия подтверждена не отметкой ответственного, а отметкой по документу.
+ */
+const DEMO_SIGNED_INTERACTION = seedId('interaction', 'bit-telecom');
+
 /** Вуз, у которого ответственность разделена по направлениям. */
 const DEMO_ORGANIZATION = seedId('organization', 'szpu');
 
@@ -46,7 +52,11 @@ function scrollTo(text: string): (page: import('@playwright/test').Page) => Prom
 	const TOP_BAR = 96;
 
 	return async (page) => {
-		const target = page.getByText(text).first();
+		// Совпадение точное: заголовок блока ищется целиком, а не куском текста.
+		// Полоса демонстрационного режима наверху страницы упоминает и договоры, и
+		// продукты, и вузы — по куску текста прокрутка нашла бы её и осталась на
+		// месте, не сказав ни слова.
+		const target = page.getByText(text, { exact: true }).first();
 
 		await target.waitFor({ state: 'visible', timeout: 20_000 });
 		await page.mouse.move(HELP_VIEWPORT.width / 2, HELP_VIEWPORT.height / 2);
@@ -88,6 +98,14 @@ export const HELP_SHOTS: readonly Frame[] = [
 		}
 	},
 	{
+		name: 'user/start-3',
+		path: '/',
+		role: 'manager',
+		caption: 'Подсказки первого входа: рамка вокруг блока и карточка шага',
+		waitFor: 'Сводка: что требует действия',
+		tour: true
+	},
+	{
 		name: 'user/interactions-1',
 		path: '/interactions',
 		role: 'manager',
@@ -117,6 +135,14 @@ export const HELP_SHOTS: readonly Frame[] = [
 		tab: 'История'
 	},
 	{
+		name: 'user/interaction-3',
+		path: `/interactions/${DEMO_SIGNED_INTERACTION}`,
+		role: 'manager',
+		caption: 'Стадия подписания, подтверждённая отметкой по документу дела',
+		waitFor: 'Подтверждено отметкой документа',
+		prepare: scrollTo('Подтверждено отметкой документа')
+	},
+	{
 		name: 'user/documents-1',
 		path: '/documents',
 		role: 'manager',
@@ -125,7 +151,11 @@ export const HELP_SHOTS: readonly Frame[] = [
 	},
 	{
 		name: 'user/documents-2',
-		path: '/documents',
+		// Поиском, а не первой строкой списка: сверху лежит самый свежий файл, и
+		// после любого показа на стенде им оказывается случайное вложение к
+		// переходу. Статья говорит про редакции — нужен документ, у которого их
+		// две, а такой в наборе один.
+		path: `/documents?q=${encodeURIComponent('Скан подписанного соглашения')}`,
 		role: 'manager',
 		caption: 'Карточка документа: отметки и список редакций',
 		waitFor: 'Редакции',
@@ -151,6 +181,16 @@ export const HELP_SHOTS: readonly Frame[] = [
 		prepare: scrollTo('Ответственные')
 	},
 	{
+		name: 'user/directory-3',
+		path: `/organizations/${DEMO_ORGANIZATION}`,
+		role: 'manager',
+		caption: 'Договоры вуза: номер, сроки, состояние и позиции по продуктам',
+		// Ждём подпись блока, а не его заголовок: слово «договоры» есть и в полосе
+		// демонстрационного режима, которая стоит на странице всегда.
+		waitFor: 'Обязательства с этим контрагентом',
+		prepare: scrollTo('Договоры')
+	},
+	{
 		name: 'user/catalog-import-1',
 		path: '/organizations/import',
 		role: 'lead',
@@ -170,6 +210,13 @@ export const HELP_SHOTS: readonly Frame[] = [
 		role: 'manager',
 		caption: 'Продукты: правообладатель и состояние',
 		waitFor: 'Продукты'
+	},
+	{
+		name: 'user/programs-3',
+		path: '/directions',
+		role: 'manager',
+		caption: 'Направления: порядок, код, сколько продуктов и программ собрано',
+		waitFor: 'ИТ-направления оператора'
 	},
 	{
 		name: 'user/reports-1',
@@ -201,9 +248,12 @@ export const HELP_SHOTS: readonly Frame[] = [
 	},
 	{
 		name: 'user/exchange-1',
-		path: `/interactions/${DEMO_INTERACTION}`,
+		// Запись с заведённым потоком, а не первая попавшаяся: пустая панель
+		// показала бы только форму заявки, а статья говорит и про то, что
+		// присылает система обучения обратно.
+		path: `/interactions/${DEMO_HISTORY_INTERACTION}`,
 		role: 'manager',
-		caption: 'Панель «Система обучения» на карточке: заявка на учебную группу',
+		caption: 'Панель «Система обучения»: заявка на группу и строка потока с результатом',
 		waitFor: 'Система обучения',
 		prepare: scrollTo('Система обучения')
 	},
@@ -282,23 +332,11 @@ export const HELP_SHOTS: readonly Frame[] = [
 		name: 'admin/notifications-1',
 		path: '/notifications',
 		role: 'admin',
+		// Прокручивать таблицу вбок больше не нужно: «Попытки» и «Подробности»
+		// на ширине съёмки прячутся сами, а остальные семь колонок помещаются
+		// целиком — кому ушло, чем и дошло ли, видно без прокрутки.
 		caption: 'Журнал уведомлений: взаимодействие, получатель, канал и состояние доставки',
-		waitFor: 'Как это работает',
-		// Колонок в журнале девять, и в окно съёмки они не помещаются — как не
-		// помещаются и в экран ноутбука: таблица прокручивается вбок. Кадр
-		// показывает ту её половину, ради которой раздел открывают, — кому ушло,
-		// чем и дошло ли, — а не «когда» и «повод», одинаковые во всех строках.
-		prepare: async (page) => {
-			// Прокручивается контейнер самой таблицы (`Table.Root` заводит его
-			// сам), а не обёртка вокруг него: к липкой шапке привязан именно он.
-			await page
-				.locator('[data-slot="table-container"]')
-				.first()
-				.evaluate((element) => {
-					element.scrollLeft = 358;
-				});
-			await page.waitForTimeout(200);
-		}
+		waitFor: 'Как это работает'
 	},
 	{
 		name: 'admin/errors-1',
