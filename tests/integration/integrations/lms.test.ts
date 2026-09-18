@@ -119,13 +119,13 @@ async function configureLms(token: string = MOCK_LMS_TOKEN, baseUrl: string = lm
 
 /** Справочник, в котором выгрузке есть что опознать. */
 async function seedDirectory(): Promise<void> {
-	await insertOrganization(database.db, { shortName: 'СЗПУ' });
+	await insertOrganization(database.db, { shortName: 'МФТИ' });
 	// Программа, которую по данным имитатора слушают во всех вузах: строка про
 	// неё обязана опознаться, остальные останутся с претензиями — это и
 	// проверяется.
 	await database.db.insert(programs).values({
 		code: 'VO-MAG-01',
-		name: 'Инженерия данных и машинное обучение',
+		name: 'Low-code аналитика данных',
 		level: 'master',
 		status: 'active'
 	});
