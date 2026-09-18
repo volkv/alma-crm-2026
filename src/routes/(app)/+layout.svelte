@@ -5,6 +5,6 @@
 	let { data, children }: LayoutProps = $props();
 </script>
 
-<AppShell user={data.user} demoMode={data.demoMode}>
+<AppShell user={data.user} demoMode={data.demoMode} demoResetHour={data.demoResetHour}>
 	{@render children()}
 </AppShell>

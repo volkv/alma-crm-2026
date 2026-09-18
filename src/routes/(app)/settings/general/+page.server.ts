@@ -9,7 +9,7 @@ import { AppError, ForbiddenError } from '$lib/server/errors';
 import { errorIssues, toActionFailure, type ActionErrorPayload } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import { getSetting, setSetting } from '$lib/server/settings';
-import { sessionLimitsSchema, stuckWatchSchema } from './schema';
+import { demoScheduleSchema, sessionLimitsSchema, stuckWatchSchema } from './schema';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -31,7 +31,8 @@ import type { Actions, PageServerLoad } from './$types';
 const FORM_IDS = {
 	banner: 'login-banner',
 	session: 'session-limits',
-	stuckWatch: 'stuck-watch'
+	stuckWatch: 'stuck-watch',
+	demoSchedule: 'demo-reset-schedule'
 } as const;
 
 export const load: PageServerLoad = async (event) => {
@@ -41,13 +42,15 @@ export const load: PageServerLoad = async (event) => {
 		error(403, 'Раздел доступен только с правом «Изменение настроек приложения»');
 	}
 
-	const [banner, idleMinutes, absoluteHours, thresholdDays, channels] = await Promise.all([
-		getSetting('login_banner'),
-		getSetting('session_idle_minutes'),
-		getSetting('session_absolute_hours'),
-		getSetting('stuck_threshold_days'),
-		getSetting('notification_channels')
-	]);
+	const [banner, idleMinutes, absoluteHours, thresholdDays, channels, demoSchedule] =
+		await Promise.all([
+			getSetting('login_banner'),
+			getSetting('session_idle_minutes'),
+			getSetting('session_absolute_hours'),
+			getSetting('stuck_threshold_days'),
+			getSetting('notification_channels'),
+			getSetting('demo_reset_schedule')
+		]);
 
 	return {
 		bannerForm: await superValidate(banner, zod4(settingSchemas.login_banner), {
@@ -58,6 +61,9 @@ export const load: PageServerLoad = async (event) => {
 		}),
 		stuckWatchForm: await superValidate({ thresholdDays, ...channels }, zod4(stuckWatchSchema), {
 			id: FORM_IDS.stuckWatch
+		}),
+		demoScheduleForm: await superValidate(demoSchedule, zod4(demoScheduleSchema), {
+			id: FORM_IDS.demoSchedule
 		}),
 		// Вне демонстрационного стенда действия сброса не существует вовсе, и
 		// карточка объясняет это вместо того, чтобы исчезнуть: пропавшая кнопка
@@ -157,6 +163,29 @@ export const actions: Actions = {
 		}
 
 		return message(form, 'Правило напоминаний сохранено');
+	},
+
+	/**
+	 * Расписание сброса стенда. Настройка одна, поэтому форма пишет её одним
+	 * ключом: выключатель и час — это одно правило, и раздельное сохранение
+	 * означало бы стенд, который сбрасывается «в 3 часа, но выключено».
+	 */
+	demoSchedule: async (event) => {
+		const form = await superValidate(event.request, zod4(demoScheduleSchema), {
+			id: FORM_IDS.demoSchedule
+		});
+
+		if (!form.valid) {
+			return fail(400, { form });
+		}
+
+		try {
+			await setSetting(actorFromEvent(event), 'demo_reset_schedule', form.data);
+		} catch (failure) {
+			return asFormError(form, failure);
+		}
+
+		return message(form, 'Расписание сброса сохранено');
 	},
 
 	/**

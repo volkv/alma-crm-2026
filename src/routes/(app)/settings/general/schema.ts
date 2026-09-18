@@ -34,3 +34,17 @@ export const stuckWatchSchema = z.object({
 });
 
 export type StuckWatchInput = z.output<typeof stuckWatchSchema>;
+
+/**
+ * Сброс демонстрационных данных по расписанию: выключатель и час суток.
+ *
+ * Поля плоские по той же причине, что и у наблюдателя: форма уходит обычным
+ * POST, а в теле формы вложенного объекта нет. Собирает их обратно в настройку
+ * действие страницы.
+ */
+export const demoScheduleSchema = z.object({
+	enabled: z.boolean().default(false),
+	hour: settingSchemas.demo_reset_schedule.shape.hour
+});
+
+export type DemoScheduleInput = z.output<typeof demoScheduleSchema>;

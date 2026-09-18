@@ -104,6 +104,15 @@ function serverEnvironment(config: FullConfig): ServerEnv {
 		throw new Error('playwright.config.ts must set DATABASE_URL and REDIS_URL for the web server');
 	}
 
+	// Карточка входа показывает пароль из `DEMO_PASSWORD_HINT`, а пускает тот,
+	// который каталогу ставит этот файл. Разойтись им нельзя: расхождение видно
+	// только человеку, который попробует войти с экрана, — то есть на показе.
+	if (env.DEMO_PASSWORD_HINT !== E2E_PASSWORD) {
+		throw new Error(
+			`playwright.config.ts must set DEMO_PASSWORD_HINT to the password this setup assigns (${E2E_PASSWORD})`
+		);
+	}
+
 	return env as ServerEnv;
 }
 

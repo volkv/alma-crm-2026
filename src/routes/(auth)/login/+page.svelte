@@ -73,8 +73,10 @@
 					<div class="flex flex-col gap-1">
 						<p class="text-sm font-medium">Демо-режим</p>
 						<p class="text-xs text-muted-foreground">
-							Учётные записи стенда: роль и имя входа. Пароль у всех трёх общий — он выдаётся вместе
-							со стендом. Названия вузов и продуктов в системе настоящие, люди, договоры и цифры —
+							Учётные записи стенда: роль и имя входа. Пароль у всех трёх общий{data.demoPassword ===
+							null
+								? ' — он выдаётся вместе со стендом'
+								: ''}. Названия вузов и продуктов в системе настоящие, люди, договоры и цифры —
 							вымышленные.
 						</p>
 					</div>
@@ -88,6 +90,17 @@
 							</li>
 						{/each}
 					</ul>
+					{#if data.demoPassword !== null}
+						<!-- Пароль стенда публичный: его знает всякий, кто открыл репозиторий,
+						     и прятать его от зрителя показа значило бы прятать от одного его. -->
+						<div
+							class="flex items-center justify-between gap-4 rounded-md bg-surface px-2.5 py-1.5"
+							data-testid="demo-password"
+						>
+							<span class="text-sm">Пароль</span>
+							<code class="font-mono text-xs text-muted-foreground">{data.demoPassword}</code>
+						</div>
+					{/if}
 				</div>
 			{/if}
 		{/if}

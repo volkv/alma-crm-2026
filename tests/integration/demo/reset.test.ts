@@ -21,6 +21,7 @@ import {
 	users
 } from '$lib/server/db/schema';
 import { getRedis } from '$lib/server/redis';
+import { setSetting } from '$lib/server/settings';
 import { B2B_GROUP_KEY } from '$lib/server/stages/definitions';
 import {
 	createDraft,
@@ -55,6 +56,7 @@ vi.mock('$lib/server/config', async (importOriginal) => {
 });
 
 const { resetDemoData } = await import('$lib/server/demo/reset');
+const { runDemoResetCycle, serverDay } = await import('$lib/server/demo/schedule');
 
 /** Загрузчик и действие маршрута типизированы своим маршрутом; подделка — общим. */
 type PageLoad = (event: RequestEvent) => Promise<unknown>;
@@ -358,7 +360,10 @@ describe('сброс демонстрационных данных', () => {
 		expect(recorded[0].details).toStrictEqual({
 			interactionCount: REFERENCE.interactions,
 			organizationCount: REFERENCE.organizations,
-			documentCount: 8
+			documentCount: 8,
+			// Чем сброс вызван: кнопкой. У сброса по расписанию здесь `schedule`,
+			// и журнал отвечает на «куда делась запись» прямо.
+			mode: 'manual'
 		});
 	});
 
@@ -456,5 +461,87 @@ describe('сброс демонстрационных данных', () => {
 
 		expect(after).toHaveLength(before.length);
 		expect(keysAfter).toEqual(expect.arrayContaining(after.map((row) => row.filePath)));
+	});
+});
+
+/** Ключ отметки «за какие сутки сброс уже выполнен» — часть наблюдаемого поведения. */
+const LAST_DAY_KEY = 'lct:demo:reset:day';
+
+/** Расписание, которое наступило: час ноль — значит, любой момент суток подходит. */
+const SCHEDULE_NOW = { enabled: true, hour: 0 };
+
+/** Лишняя строка справочника — то же, что оставляет за собой показ. */
+async function addLeftover(): Promise<void> {
+	await database.db.insert(organizations).values({
+		kind: 'customer_company',
+		legalName: 'Общество с ограниченной ответственностью «Осталось от показа»',
+		shortName: 'Остаток показа'
+	});
+}
+
+describe('сброс демонстрационных данных по расписанию', () => {
+	it('в назначенный час проходит, помечает сутки и в те же сутки не повторяется', async () => {
+		await setSetting(testActor(), 'demo_reset_schedule', SCHEDULE_NOW);
+		await addLeftover();
+
+		await expect(countRows(organizations)).resolves.toBe(REFERENCE.organizations + 1);
+		await expect(runDemoResetCycle()).resolves.toBe(true);
+		await expect(snapshotCounts()).resolves.toStrictEqual(REFERENCE);
+
+		// Отметка стоит за сегодняшние сутки: по ней проход и понимает, что за
+		// эти сутки стенд уже сбрасывали.
+		await expect(getRedis().get(LAST_DAY_KEY)).resolves.toBe(serverDay(new Date()));
+
+		await addLeftover();
+
+		// Второй проход тех же суток не делает ничего: показ, идущий днём, не
+		// должен обрываться сбросом на каждом тике таймера.
+		await expect(runDemoResetCycle()).resolves.toBe(false);
+		await expect(countRows(organizations)).resolves.toBe(REFERENCE.organizations + 1);
+	});
+
+	it('выключенное расписание не трогает стенд и не ставит отметку', async () => {
+		await addLeftover();
+
+		await expect(runDemoResetCycle()).resolves.toBe(false);
+		await expect(countRows(organizations)).resolves.toBe(REFERENCE.organizations + 1);
+		await expect(getRedis().get(LAST_DAY_KEY)).resolves.toBeNull();
+	});
+
+	it('вне демонстрационного режима расписание не работает вовсе', async () => {
+		await setSetting(testActor(), 'demo_reset_schedule', SCHEDULE_NOW);
+		demo.mode = false;
+
+		await addLeftover();
+
+		await expect(runDemoResetCycle()).resolves.toBe(false);
+		await expect(countRows(organizations)).resolves.toBe(REFERENCE.organizations + 1);
+	});
+
+	it('пишет в журнал системного актора и способ «по расписанию»', async () => {
+		await setSetting(testActor(), 'demo_reset_schedule', SCHEDULE_NOW);
+
+		await expect(runDemoResetCycle()).resolves.toBe(true);
+
+		const recorded = await database.db
+			.select({
+				source: auditEvents.source,
+				actorUserId: auditEvents.actorUserId,
+				actorLabel: auditEvents.actorLabel,
+				details: auditEvents.details
+			})
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'settings.demo_reset'));
+
+		expect(recorded).toHaveLength(1);
+		expect(recorded[0].source).toBe('system');
+		// Автора у фонового прохода нет: право он проходит по источнику, а не от
+		// чьего-то имени, и приписывать сброс человеку было бы неправдой.
+		expect(recorded[0].actorUserId).toBeNull();
+		expect(recorded[0].actorLabel).toBe('Система');
+		expect(recorded[0].details).toMatchObject({
+			mode: 'schedule',
+			interactionCount: REFERENCE.interactions
+		});
 	});
 });

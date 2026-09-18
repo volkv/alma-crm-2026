@@ -263,6 +263,7 @@ const DETAIL_LABELS: Record<string, string> = {
 	method: 'Метод',
 	status: 'Код ответа',
 	demo: 'Демонстрационный вход',
+	mode: 'Способ',
 	roleId: 'Роль',
 	ownerUserId: 'Владелец (id)'
 };

@@ -45,7 +45,9 @@ test('вход через каталог открывает оболочку п�
 	});
 });
 
-test('страница входа перечисляет демонстрационные учётные записи', async ({ page }) => {
+test('страница входа перечисляет демонстрационные учётные записи и общий пароль', async ({
+	page
+}) => {
 	await page.goto('/login');
 
 	const accounts = page.getByTestId('demo-accounts');
@@ -53,6 +55,11 @@ test('страница входа перечисляет демонстраци�
 	await expect(accounts).toContainText('manager');
 	await expect(accounts).toContainText('lead');
 	await expect(accounts).toContainText('admin');
+
+	// Пароль стенда публичный: зритель показа должен войти с экрана, никого не
+	// спрашивая. Показывается тот, что действительно пускает, — глобальный сетап
+	// сверяет `DEMO_PASSWORD_HINT` с паролем, который ставит каталогу.
+	await expect(page.getByTestId('demo-password')).toContainText(E2E_PASSWORD);
 });
 
 test('неверный пароль каталог объясняет сам и в систему не пускает', async ({ page }) => {

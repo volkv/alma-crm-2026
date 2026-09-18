@@ -1,6 +1,7 @@
 import type { HandleServerError, ServerInit } from '@sveltejs/kit';
 import { sequence } from '@sveltejs/kit/hooks';
 import { getConfig } from '$lib/server/config';
+import { startDemoResetTimer } from '$lib/server/demo/schedule';
 import { csrf } from '$lib/server/hooks/csrf';
 import { guard } from '$lib/server/hooks/guard';
 import { rateLimit } from '$lib/server/hooks/rate-limit';
@@ -20,10 +21,15 @@ import { startIntegrationsTimer } from '$lib/server/integrations/pump';
  * нет — от него понадобилась бы вторая единица развёртывания ради работы,
  * которая занимает секунду в минуту. Два процесса приложения друг другу не
  * мешают: проход берёт замок в Redis (см. `integrations/pump.ts`).
+ *
+ * Расписание сброса демонстрационного стенда идёт своим таймером, а не этим
+ * проходом: `TRUNCATE` с заливкой сида занимает минуты, и под общим замком
+ * цикла он остановил бы на это время обмен (см. `demo/schedule.ts`).
  */
 export const init: ServerInit = () => {
 	getConfig();
 	startIntegrationsTimer();
+	startDemoResetTimer();
 };
 
 /**

@@ -30,7 +30,11 @@ export const SETTING_DEFAULTS: { [TKey in SettingKey]: SettingValue<TKey> } = {
 	// Заглушки выключены: канал, который ничего не отправляет, включают
 	// осознанно — чтобы посмотреть, как выглядит доставка, — а не получают в
 	// наследство от умолчания.
-	notification_channels: { email: true, telegram: false, max: false }
+	notification_channels: { email: true, telegram: false, max: false },
+	// Выключен: фоновая работа, стирающая данные, включается руками и на том
+	// стенде, где стирать есть что. Час — ночной, чтобы сброс не пришёлся на
+	// показ.
+	demo_reset_schedule: { enabled: false, hour: 3 }
 };
 
 export async function getSetting<TKey extends SettingKey>(key: TKey): Promise<SettingValue<TKey>> {

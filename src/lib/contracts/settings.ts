@@ -42,7 +42,24 @@ export const settingSchemas = {
 		.min(0, { error: 'Не меньше нуля' })
 		.max(365, { error: 'Не больше 365 дней' }),
 	/** Какими каналами уходит напоминание о зависшем взаимодействии. */
-	notification_channels: notificationChannelsSchema
+	notification_channels: notificationChannelsSchema,
+	/**
+	 * Сброс демонстрационных данных по расписанию: включён ли он и в каком часу
+	 * суток проходит.
+	 *
+	 * Час — по часам того сервера, на котором работает приложение: другого
+	 * источника времени у фонового прохода нет, а разбирать часовой пояс ради
+	 * ночной операции на стенде значило бы завести настройку, которой никто не
+	 * управляет.
+	 */
+	demo_reset_schedule: z.object({
+		enabled: z.boolean(),
+		hour: z
+			.number({ error: 'Укажите час суток' })
+			.int()
+			.min(0, { error: 'Не меньше 0' })
+			.max(23, { error: 'Не больше 23' })
+	})
 } as const;
 
 export type SettingKey = keyof typeof settingSchemas;

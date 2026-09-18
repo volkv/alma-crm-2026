@@ -19,7 +19,7 @@
 	import FormField from '$lib/components/form/form-field.svelte';
 	import { settingSchemas } from '$lib/contracts/settings';
 	import { NOTIFICATION_CHANNEL_LABELS } from '$lib/contracts/notifications';
-	import { sessionLimitsSchema, stuckWatchSchema } from './schema';
+	import { demoScheduleSchema, sessionLimitsSchema, stuckWatchSchema } from './schema';
 	import type { PageProps } from './$types';
 
 	let { data, form: actionResult }: PageProps = $props();
@@ -71,6 +71,16 @@
 	} = superForm(
 		untrack(() => data.stuckWatchForm),
 		{ validators: zod4Client(stuckWatchSchema), onUpdated: ({ form }) => notifySaved(form) }
+	);
+
+	const {
+		form: demoScheduleData,
+		errors: demoScheduleErrors,
+		enhance: demoScheduleEnhance,
+		submitting: demoScheduleSubmitting
+	} = superForm(
+		untrack(() => data.demoScheduleForm),
+		{ validators: zod4Client(demoScheduleSchema), onUpdated: ({ form }) => notifySaved(form) }
 	);
 
 	let resetConfirmOpen = $state(false);
@@ -282,7 +292,8 @@
 		<Card.Description>
 			Сброс возвращает стенд к тому набору, с которым он поставляется: взаимодействия, документы,
 			справочник и данные об обучении заливаются заново. Учётные записи, роли, описание процесса и
-			журнал действий остаются.
+			журнал действий остаются. Кнопкой — сейчас, расписанием — каждую ночь: стенд общий, и показ
+			начинается с эталонного набора, кто бы что на нём вчера ни наработал.
 		</Card.Description>
 	</Card.Header>
 	<Card.Content class="flex flex-col gap-2">
@@ -301,14 +312,44 @@
 		{#if !data.demoMode}
 			<p class="text-xs text-muted-foreground">
 				Установка работает не в демонстрационном режиме: данные в ней принадлежат организации, а
-				эталона, к которому их возвращать, нет. Сброс включается переменной окружения
-				<code>DEMO_MODE</code>.
+				эталона, к которому их возвращать, нет. Ни кнопки, ни расписания здесь поэтому нет — и то и
+				другое включается переменной окружения <code>DEMO_MODE</code>.
 			</p>
 		{:else}
 			<p class="text-xs text-muted-foreground">
 				Всё, что наработали на стенде за время показа, пропадёт: пройденные стадии, комментарии,
 				загруженные файлы и правки справочника.
 			</p>
+
+			{@render formErrors($demoScheduleErrors._errors)}
+			<form
+				method="POST"
+				action="?/demoSchedule"
+				use:demoScheduleEnhance
+				novalidate
+				class="flex flex-col gap-4 border-t border-border pt-4"
+			>
+				<Label class="flex items-center gap-2 font-normal">
+					<Checkbox name="enabled" bind:checked={$demoScheduleData.enabled} />
+					Сбрасывать стенд ежедневно
+				</Label>
+				<div class="grid gap-4 sm:grid-cols-2">
+					{@render numberField({
+						name: 'hour',
+						label: 'Час сброса',
+						description: 'От 0 до 23, по часам сервера',
+						value: $demoScheduleData.hour,
+						errors: $demoScheduleErrors.hour,
+						onchange: (next) => ($demoScheduleData.hour = next)
+					})}
+				</div>
+				<p class="text-xs text-muted-foreground">
+					Сброс проходит один раз в сутки, не раньше назначенного часа: приложение, которое в этот
+					час не работало, сбросит стенд при первой возможности. Пока расписание включено, об этом
+					сказано полосой демо-режима на каждой странице.
+				</p>
+				<FormActions submitting={$demoScheduleSubmitting} submitLabel="Сохранить расписание" />
+			</form>
 		{/if}
 	</Card.Content>
 </Card.Root>

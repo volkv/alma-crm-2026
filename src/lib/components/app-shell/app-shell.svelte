@@ -26,12 +26,19 @@
 	let {
 		user,
 		demoMode = false,
+		demoResetHour = null,
 		children
 	}: {
 		/** `null` until the session lands; the shell then shows no account menu. */
 		user: SessionUser | null;
 		/** Public demo: say so on every page, the data behind it is invented. */
 		demoMode?: boolean;
+		/**
+		 * Час ежедневного сброса стенда по часам сервера; `null` — расписание
+		 * выключено. Стенд общий, и наработанное на нём живёт до этого часа —
+		 * сказать об этом надо там же, где сказано про выдуманные данные.
+		 */
+		demoResetHour?: number | null;
 		children: Snippet;
 	} = $props();
 
@@ -41,6 +48,11 @@
 	let searchOpen = $state(false);
 
 	const sectionTitle = $derived(sectionFor(page.url.pathname)?.label ?? 'LCT CRM');
+	// Час приходит числом по часам сервера — на экране он обязан выглядеть
+	// временем: «в 3» читается как «в три чего-то».
+	const resetTime = $derived(
+		demoResetHour === null ? null : `${`${demoResetHour}`.padStart(2, '0')}:00`
+	);
 	// Раздел, на который у человека нет права, в меню не показывается: ссылка,
 	// отвечающая 403, — это не навигация.
 	const links = $derived(user === null ? [] : visibleSections(navLinks, user.permissions));
@@ -108,7 +120,8 @@
 			<p
 				class="shrink-0 bg-warning-soft px-3 py-1 text-center text-xs text-warning-soft-foreground sm:px-4"
 			>
-				Демо-режим: вузы и продукты названы настоящие, люди, договоры и цифры — вымышленные
+				Демо-режим: вузы и продукты названы настоящие, люди, договоры и цифры — вымышленные{#if demoResetHour !== null}.
+					Стенд общий, данные сбрасываются ежедневно в {resetTime}{/if}
 			</p>
 		{/if}
 

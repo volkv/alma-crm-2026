@@ -16,9 +16,9 @@
 	"passwordPolicy": "length(12) and notUsername",
 	"bruteForceProtected": true,
 	"permanentLockout": false,
-	"failureFactor": 10,
+	"failureFactor": 30,
 	"waitIncrementSeconds": 60,
-	"maxFailureWaitSeconds": 900,
+	"maxFailureWaitSeconds": 60,
 	"accessTokenLifespan": 300,
 	"ssoSessionIdleTimeout": 1800,
 	"ssoSessionMaxLifespan": 28800,
@@ -48,6 +48,10 @@
 			"redirectUris": [
 				"http://localhost:5173/*",
 				"http://localhost:4173/*",
+				"http://localhost:4174/*",
+				"http://localhost:4175/*",
+				"http://localhost:4176/*",
+				"http://localhost:4177/*",
 				"${CRM_ORIGIN:http://localhost:3000}/*"
 			],
 			"webOrigins": ["+"],
@@ -87,7 +91,7 @@
 				{
 					"type": "password",
 					"temporary": false,
-					"value": "${KEYCLOAK_DEMO_PASSWORD:Demo-Password-2026!}"
+					"value": "${KEYCLOAK_DEMO_PASSWORD:lct-demo-2026}"
 				}
 			],
 			"realmRoles": ["crm-admin"]
@@ -104,7 +108,7 @@
 				{
 					"type": "password",
 					"temporary": false,
-					"value": "${KEYCLOAK_DEMO_PASSWORD:Demo-Password-2026!}"
+					"value": "${KEYCLOAK_DEMO_PASSWORD:lct-demo-2026}"
 				}
 			],
 			"realmRoles": ["crm-lead"]
@@ -121,7 +125,7 @@
 				{
 					"type": "password",
 					"temporary": false,
-					"value": "${KEYCLOAK_DEMO_PASSWORD:Demo-Password-2026!}"
+					"value": "${KEYCLOAK_DEMO_PASSWORD:lct-demo-2026}"
 				}
 			],
 			"realmRoles": ["crm-user"]

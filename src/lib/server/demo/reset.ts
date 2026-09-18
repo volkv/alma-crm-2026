@@ -142,6 +142,14 @@ const RELEASE_LOCK = `
 	return 0
 `;
 
+/**
+ * Чем сброс вызван: кнопкой администратора или расписанием стенда
+ * (`./schedule.ts`). Уезжает в журнал подробностью события: «куда делась
+ * запись, которую я вёл вчера» — вопрос, на который ответ «ночью стенд
+ * сбросился сам» и «кто-то нажал кнопку» это разные ответы.
+ */
+export type DemoResetTrigger = 'manual' | 'schedule';
+
 /** Сколько строк оказалось на стенде после сброса. */
 export type DemoResetResult = {
 	interactionCount: number;
@@ -209,7 +217,10 @@ async function countDemoData(): Promise<DemoResetResult> {
  * сид, что и всё остальное: разорвать эти два шага значило бы получить стенд
  * без процесса, на котором не открывается ни одна карточка.
  */
-export async function resetDemoData(ctx: ActorContext): Promise<DemoResetResult> {
+export async function resetDemoData(
+	ctx: ActorContext,
+	trigger: DemoResetTrigger = 'manual'
+): Promise<DemoResetResult> {
 	// Право проверяется первым и с отметкой в журнале: попытка стереть стенд без
 	// права на это — ровно то, о чём администратор должен узнать.
 	await requirePermission(ctx, 'settings.write', { type: 'settings.demo_reset' });
@@ -253,11 +264,12 @@ export async function resetDemoData(ctx: ActorContext): Promise<DemoResetResult>
 
 		// Числами, а не словами: подробности события — это закрытый набор ссылок
 		// и счётчиков, и «стенд сброшен» без чисел не отвечает на вопрос, к
-		// какому набору его вернули.
+		// какому набору его вернули. Рядом с числами — чем сброс вызван: с
+		// системным актором в строке журнала это и есть «по расписанию».
 		await recordAuditEvent(ctx, {
 			type: 'settings.demo_reset',
 			outcome: 'success',
-			details: result
+			details: { ...result, mode: trigger }
 		});
 
 		return result;
