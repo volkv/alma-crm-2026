@@ -23,7 +23,7 @@
 <Card.Root>
 	<Card.Header>
 		<!-- Заголовок страницы, а не карточки: на странице входа он единственный. -->
-		<h1 class="text-lg leading-snug font-semibold tracking-tight">{data.banner.title}</h1>
+		<h1 class="text-xl leading-snug font-semibold tracking-tight">{data.banner.title}</h1>
 		{#if data.banner.text}
 			<Card.Description>{data.banner.text}</Card.Description>
 		{/if}
@@ -57,25 +57,33 @@
 				получает от него уже проверенную учётную запись и роль.
 			</p>
 
+			<!-- Единственное действие страницы, поэтому кнопка во всю ширину и на
+			     ступень крупнее обычной: у входа РТК ID она выглядит так же. -->
 			<form method="POST" action={loginAction}>
-				<Button type="submit" class="w-full">
+				<Button type="submit" size="lg" class="w-full">
 					<LogInIcon aria-hidden="true" />
 					Войти
 				</Button>
 			</form>
 
 			{#if data.demoAccounts.length > 0}
-				<div class="flex flex-col gap-2 border-t border-border pt-4">
-					<p class="text-sm font-medium">Демо-режим</p>
-					<p class="text-xs text-muted-foreground">
-						Учётные записи стенда: имя входа и роль. Пароль у всех трёх общий — он выдаётся вместе
-						со стендом. Данные в системе синтетические.
-					</p>
-					<ul class="flex flex-col gap-1 text-sm" data-testid="demo-accounts">
+				<div
+					class="flex flex-col gap-3 rounded-lg border border-primary-soft-border bg-primary-soft p-3"
+				>
+					<div class="flex flex-col gap-1">
+						<p class="text-sm font-medium">Демо-режим</p>
+						<p class="text-xs text-muted-foreground">
+							Учётные записи стенда: роль и имя входа. Пароль у всех трёх общий — он выдаётся вместе
+							со стендом. Данные в системе синтетические.
+						</p>
+					</div>
+					<ul class="flex flex-col gap-1.5" data-testid="demo-accounts">
 						{#each data.demoAccounts as account (account.login)}
-							<li class="flex items-baseline justify-between gap-4">
-								<code class="font-mono">{account.login}</code>
-								<span class="text-muted-foreground">{account.roleName}</span>
+							<li
+								class="flex items-center justify-between gap-4 rounded-md bg-surface px-2.5 py-1.5"
+							>
+								<span class="text-sm">{account.roleName}</span>
+								<code class="font-mono text-xs text-muted-foreground">{account.login}</code>
 							</li>
 						{/each}
 					</ul>

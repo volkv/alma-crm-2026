@@ -151,16 +151,31 @@
 		state
 	}));
 
+	/**
+	 * Цвет продукта — это цвет «Дизайн-системы Ростелекома»: у каждого нашего
+	 * токена рядом стоит токен ДС, из которого он взят. Расшифровка целиком —
+	 * docs/design.md.
+	 */
 	const swatches = [
-		{ token: 'bg-canvas', label: 'canvas — фон приложения' },
-		{ token: 'bg-surface', label: 'surface — панели и карточки' },
-		{ token: 'bg-surface-muted', label: 'surface-muted — шапка таблицы' },
-		{ token: 'bg-primary', label: 'primary — акцент' },
-		{ token: 'bg-primary-soft', label: 'primary-soft — мягкий акцент' },
-		{ token: 'bg-success', label: 'success' },
-		{ token: 'bg-warning', label: 'warning' },
-		{ token: 'bg-danger', label: 'danger' },
-		{ token: 'bg-info', label: 'info' }
+		{ token: 'bg-canvas', label: 'canvas — фон приложения', source: 'bg-surface2' },
+		{ token: 'bg-surface', label: 'surface — панели и карточки', source: 'bg-page' },
+		{ token: 'bg-surface-muted', label: 'surface-muted — шапка таблицы', source: 'bg-surface3' },
+		{ token: 'bg-primary', label: 'primary — акцент', source: 'accent-700' },
+		{ token: 'bg-primary-soft', label: 'primary-soft — мягкий акцент', source: 'accent-50' },
+		{ token: 'bg-success', label: 'success', source: 'success-700' },
+		{ token: 'bg-warning', label: 'warning', source: 'warning-500' },
+		{ token: 'bg-danger', label: 'danger', source: 'error-700' },
+		{ token: 'bg-info', label: 'info', source: 'info-500' }
+	];
+
+	/** Шкала кеглей: имя утилиты, вариант ДС и то, где он в продукте встречается. */
+	const typeScale = [
+		{ size: 'text-2xl', source: 'heading-h1 — 28/32', usage: 'числа сводок' },
+		{ size: 'text-xl', source: 'heading-h2 — 22/24', usage: 'заголовок страницы' },
+		{ size: 'text-lg', source: 'body-l — 18/26', usage: 'заголовок диалога' },
+		{ size: 'text-base', source: 'body-m — 16/24', usage: 'заголовок карточки' },
+		{ size: 'text-sm', source: 'body-s — 14/20', usage: 'основной текст' },
+		{ size: 'text-xs', source: 'description-l — 12/16', usage: 'подписи и сноски' }
 	];
 
 	let deleteOpen = $state(false);
@@ -211,15 +226,27 @@
 <div class="flex flex-col gap-8 p-4 sm:p-6">
 	<section class="flex flex-col gap-3">
 		<h2 class="text-sm font-semibold tracking-tight">Токены</h2>
+		<InlineHint>
+			Тема продукта собрана на токенах «Дизайн-системы Ростелекома» (светлая тема): имена наших
+			токенов свои, значения — её. Полная таблица соответствия — в <code class="font-mono"
+				>docs/design.md</code
+			>.
+		</InlineHint>
 		<div class="grid gap-4 md:grid-cols-2">
 			<Card.Root size="sm">
-				<Card.Header><Card.Title>Цвет</Card.Title></Card.Header>
+				<Card.Header>
+					<Card.Title>Цвет</Card.Title>
+					<Card.Description>Слева наш токен, справа — токен ДС под ним.</Card.Description>
+				</Card.Header>
 				<Card.Content>
 					<ul class="flex flex-col gap-2">
 						{#each swatches as swatch (swatch.token)}
 							<li class="flex items-center gap-2.5">
 								<span class="size-5 shrink-0 rounded border border-border {swatch.token}"></span>
-								<span class="text-xs text-muted-foreground">{swatch.label}</span>
+								<span class="min-w-0 flex-1 truncate text-xs text-muted-foreground"
+									>{swatch.label}</span
+								>
+								<code class="shrink-0 font-mono text-xs text-faint">{swatch.source}</code>
 							</li>
 						{/each}
 					</ul>
@@ -227,20 +254,66 @@
 			</Card.Root>
 
 			<Card.Root size="sm">
-				<Card.Header><Card.Title>Типографика и плотность</Card.Title></Card.Header>
+				<Card.Header>
+					<Card.Title>Типографика</Card.Title>
+					<Card.Description>
+						Гарнитура Rostelecom Basis, запасная — Inter Variable. Bold — заголовки, Medium —
+						акцент, Regular — текст.
+					</Card.Description>
+				</Card.Header>
 				<Card.Content>
-					<p class="text-xl font-semibold tracking-tight">Заголовок страницы — 20px</p>
-					<p class="text-base font-medium">Заголовок раздела — 16px</p>
-					<p class="text-sm">Основной текст — 14px, Inter Variable</p>
+					<ul class="flex flex-col gap-2">
+						{#each typeScale as step (step.size)}
+							<li class="flex items-baseline justify-between gap-3">
+								<span class="{step.size} truncate font-semibold tracking-tight">{step.usage}</span>
+								<code class="shrink-0 font-mono text-xs text-faint">{step.source}</code>
+							</li>
+						{/each}
+					</ul>
 					<p class="text-sm text-muted-foreground">Приглушённый текст</p>
-					<p class="text-xs text-faint">Слабый текст — 12px</p>
+					<p class="text-xs text-faint">Слабый текст</p>
 					<p class="text-sm">Цифры моноширинные: 1 234 567 890 · 0.00 · 12.09.2026</p>
-					<div class="mt-2 flex items-center gap-3 text-xs text-muted-foreground">
+				</Card.Content>
+			</Card.Root>
+
+			<Card.Root size="sm" class="md:col-span-2">
+				<Card.Header>
+					<Card.Title>Плотность, радиусы и тени</Card.Title>
+					<Card.Description>
+						Высоты — размеры ДС (36px строка, 32px контрол), радиусы — её шкала, теней две ступени.
+					</Card.Description>
+				</Card.Header>
+				<Card.Content class="gap-4">
+					<div class="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
 						<span class="flex h-control items-center rounded-md border border-border px-2"
 							>контрол 32px</span
 						>
 						<span class="flex h-row items-center rounded-md border border-border px-2"
 							>строка 36px</span
+						>
+					</div>
+					<div class="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+						<span class="flex h-row items-center rounded-sm border border-border px-2"
+							>sm — 4px</span
+						>
+						<span class="flex h-row items-center rounded-md border border-border px-2"
+							>md — 6px</span
+						>
+						<span class="flex h-row items-center rounded-lg border border-border px-2"
+							>lg — 8px</span
+						>
+						<span class="flex h-row items-center rounded-xl border border-border px-2"
+							>xl — 12px</span
+						>
+						<span class="flex h-row items-center rounded-4xl border border-border px-3">пилюля</span
+						>
+					</div>
+					<div class="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
+						<span class="flex h-row items-center rounded-lg bg-surface px-3 shadow-xs"
+							>на холсте — shadow-xs</span
+						>
+						<span class="flex h-row items-center rounded-lg bg-surface px-3 shadow-md"
+							>поверх страницы — shadow-md</span
 						>
 					</div>
 				</Card.Content>

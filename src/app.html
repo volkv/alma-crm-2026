@@ -5,6 +5,28 @@
 		<meta name="viewport" content="width=device-width, initial-scale=1" />
 		<meta name="text-scale" content="scale" />
 		<link rel="icon" href="%sveltekit.assets%/favicon.svg" />
+		<!--
+			Два начертания Rostelecom Basis, которыми набрано почти всё на экране:
+			текстом — Regular, заголовками — Bold. Без предзагрузки браузер узнаёт о
+			них только разобрав таблицу стилей, и первый кадр страницы успевает
+			показаться запасной гарнитурой. Файлов в репозитории нет (docs/design.md,
+			«Шрифт»): там, где их не положили, запрос отвечает 404 и всё идёт на
+			Inter Variable из сборки.
+		-->
+		<link
+			rel="preload"
+			href="%sveltekit.assets%/fonts/RostelecomBasis-Regular.woff2"
+			as="font"
+			type="font/woff2"
+			crossorigin="anonymous"
+		/>
+		<link
+			rel="preload"
+			href="%sveltekit.assets%/fonts/RostelecomBasis-Bold.woff2"
+			as="font"
+			type="font/woff2"
+			crossorigin="anonymous"
+		/>
 		%sveltekit.head%
 	</head>
 	<body data-sveltekit-preload-data="hover">

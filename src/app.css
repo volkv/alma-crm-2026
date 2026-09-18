@@ -14,6 +14,60 @@
 @import '@fontsource-variable/inter';
 
 /*
+ * Rostelecom Basis — фирменная гарнитура интерфейса. Файлов в репозитории нет:
+ * лицензии на распространение у нас не было, поэтому на стенде они приезжают
+ * томом в `/app/build/client/fonts` (docs/deployment.md, «Шрифт»), а локально
+ * кладутся в `static/fonts/`, который git не видит. Когда файлов нет, запрос
+ * отвечает 404, браузер берёт следующее семейство в `--font-sans` — Inter
+ * Variable, который лежит в сборке, — и интерфейс работает целиком: ломаться
+ * тут нечему, меняется только рисунок букв.
+ *
+ * `swap` вместо умолчания: текст обязан быть виден сразу, а не через три
+ * секунды невидимого блока. Начертаний четыре — Light 300, Regular 400,
+ * Medium 500, Bold 700; `font-semibold` (600) браузер по правилам подбора
+ * отдаёт Bold, и это ровно то, что нужно: у ДС заголовки — Bold.
+ */
+@font-face {
+	font-family: 'Rostelecom Basis';
+	font-style: normal;
+	font-weight: 300;
+	font-display: swap;
+	src:
+		url('/fonts/RostelecomBasis-Light.woff2') format('woff2'),
+		url('/fonts/RostelecomBasis-Light.woff') format('woff');
+}
+
+@font-face {
+	font-family: 'Rostelecom Basis';
+	font-style: normal;
+	font-weight: 400;
+	font-display: swap;
+	src:
+		url('/fonts/RostelecomBasis-Regular.woff2') format('woff2'),
+		url('/fonts/RostelecomBasis-Regular.woff') format('woff');
+}
+
+@font-face {
+	font-family: 'Rostelecom Basis';
+	font-style: normal;
+	font-weight: 500;
+	font-display: swap;
+	src:
+		url('/fonts/RostelecomBasis-Medium.woff2') format('woff2'),
+		url('/fonts/RostelecomBasis-Medium.woff') format('woff');
+}
+
+@font-face {
+	font-family: 'Rostelecom Basis';
+	font-style: normal;
+	font-weight: 700;
+	font-display: swap;
+	src:
+		url('/fonts/RostelecomBasis-Bold.woff2') format('woff2'),
+		url('/fonts/RostelecomBasis-Bold.woff') format('woff');
+}
+
+/*
  * The interface is light-only for now. This variant is still required: without
  * it Tailwind's `dark:` utilities — and the vendored primitives use plenty of
  * them — follow `prefers-color-scheme`, so a visitor whose system is dark would
@@ -26,56 +80,119 @@
 
 /*
  * Design tokens. Tailwind 4 is configured in CSS — there is no
- * tailwind.config.js. The raw palette lives here as plain custom properties and
- * is never written in markup; the `@theme` block below maps it onto semantic
- * names, and every semantic name generates utilities (`--color-surface` ->
- * `bg-surface`, `text-surface`, `border-surface`, ...).
+ * tailwind.config.js. Сначала идут значения «Дизайн-системы Ростелекома»
+ * (светлая тема), затем сырая палитра продукта, которая на них ссылается, и
+ * только потом блок `@theme` с семантическими именами: утилиты порождает он
+ * (`--color-surface` -> `bg-surface`, `text-surface`, `border-surface`, ...).
  */
 :root {
 	/*
-	 * Neutral ramp: a cold grey (hue 264), so surfaces stay quiet next to the
-	 * accent instead of drifting warm.
+	 * ─── Дизайн-система Ростелекома, светлая тема ───────────────────────────
+	 *
+	 * Значения второго поколения ДС («Атомаро»), тема Rostelecom Light. Имена
+	 * оставлены такими же, как в источнике (`--atmr-*`), чтобы про любой цвет
+	 * ниже можно было проверить, откуда он взялся. Здесь только те токены,
+	 * которые продукт действительно использует, — вся шкала ДС шире.
+	 *
+	 * Нейтральная шкала (холодная, синеватая) и слои интерфейса.
 	 */
-	--grey-0: oklch(1 0 0);
-	--grey-50: oklch(0.978 0.003 264);
-	--grey-100: oklch(0.962 0.004 264);
-	--grey-200: oklch(0.915 0.006 264);
-	--grey-300: oklch(0.845 0.008 264);
-	--grey-500: oklch(0.565 0.013 264);
-	--grey-600: oklch(0.505 0.014 264);
-	--grey-900: oklch(0.225 0.012 264);
-
-	/* One accent for the whole product. Contrast with white is 5.5:1. */
-	--accent-base: oklch(0.52 0.19 266);
-	--accent-strong: oklch(0.46 0.185 266);
-	--accent-soft: oklch(0.962 0.021 266);
-	--accent-soft-border: oklch(0.895 0.048 266);
-
-	/* Status hues: a solid tone plus a soft background with readable text on it. */
-	--danger-base: oklch(0.52 0.19 27);
-	--danger-soft: oklch(0.963 0.022 27);
-	--danger-soft-foreground: oklch(0.46 0.17 27);
-	--warning-base: oklch(0.62 0.15 68);
-	--warning-soft: oklch(0.966 0.04 74);
-	--warning-soft-foreground: oklch(0.47 0.11 62);
-	--success-base: oklch(0.53 0.13 153);
-	--success-soft: oklch(0.958 0.03 153);
-	--success-soft-foreground: oklch(0.43 0.11 153);
-	--info-base: oklch(0.55 0.12 245);
-	--info-soft: oklch(0.961 0.026 245);
-	--info-soft-foreground: oklch(0.45 0.12 245);
+	--atmr-neutral-0: #fff; /* bg-page, bg-surface1, bg-elevated-* */
+	--atmr-neutral-10: #f9f9fa; /* bg-surface2 */
+	--atmr-neutral-25: #f4f4f5; /* bg-surface3, bg-page-filled */
+	--atmr-neutral-50: #e8e8ee; /* bg-surface4 */
+	--atmr-neutral-200: #b5b7c0; /* граница контролов, вес border-default */
+	--atmr-neutral-500: #585d69; /* base-neutral: тени и слабый текст */
+	--atmr-neutral-600: #434b5a; /* сплошной эквивалент fg-soft */
+	--atmr-neutral-990: #101828; /* fg-default */
 
 	/*
-	 * Two elevation levels, and only two: `raised` for what sits on the canvas
-	 * (cards, the sticky table header) and `overlay` for what floats above the
-	 * page (menus, dialogs, toasts).
+	 * Акцент: оранжевая шкала ДС (base-accent #ff4f12). Продукт берёт не
+	 * вершину шкалы, а две ступени ниже, — почему, сказано у `--accent-base`.
 	 */
-	--elevation-raised:
-		0 1px 2px -1px oklch(0.225 0.02 264 / 0.1), 0 1px 1px oklch(0.225 0.02 264 / 0.06);
-	--elevation-overlay:
-		0 12px 28px -8px oklch(0.225 0.02 264 / 0.18), 0 4px 10px -4px oklch(0.225 0.02 264 / 0.12);
+	--atmr-accent-50: #ffede7;
+	--atmr-accent-100: #ffd3c4;
+	--atmr-accent-700: #b3370d;
+	--atmr-accent-800: #992f0b;
 
-	--radius: 0.5rem;
+	/* Статусы: сплошной тон и мягкая подложка с читаемым текстом на ней. */
+	--atmr-success-50: #e6f7ec;
+	--atmr-success-700: #00782f;
+	--atmr-warning-50: #fff6e7;
+	--atmr-warning-500: #fda610; /* base-warning */
+	--atmr-warning-800: #98640a;
+	--atmr-error-50: #ffe9e9;
+	--atmr-error-700: #b31b1b;
+	--atmr-info-50: #e9f0ff;
+	--atmr-info-500: #1f69ff; /* base-info */
+	--atmr-info-700: #164ab3;
+
+	/* Радиусы ДС; `m` — базовый, им скруглены кнопки и поля. */
+	--atmr-border-radius-xs: 4px;
+	--atmr-border-radius-s: 6px;
+	--atmr-border-radius-m: 8px;
+	--atmr-border-radius-l: 12px;
+	--atmr-border-radius-full: 9999px;
+
+	/* Тени ДС: «падающие вниз», нейтральные. */
+	--atmr-shadow-bottom-s: 0 0 8px 0 rgba(88, 93, 105, 0.1), 0 2px 4px 0 rgba(88, 93, 105, 0.05);
+	--atmr-shadow-bottom-l: 0 0 20px 0 rgba(88, 93, 105, 0.1), 0 12px 20px 0 rgba(88, 93, 105, 0.05);
+
+	/*
+	 * ─── Палитра продукта ───────────────────────────────────────────────────
+	 *
+	 * Нейтральная шкала. Имена наши (компоненты написаны под них), значения —
+	 * из шкалы ДС выше.
+	 */
+	--grey-0: var(--atmr-neutral-0);
+	--grey-50: var(--atmr-neutral-10);
+	--grey-100: var(--atmr-neutral-25);
+	--grey-200: var(--atmr-neutral-50);
+	--grey-300: var(--atmr-neutral-200);
+	--grey-500: var(--atmr-neutral-500);
+	--grey-600: var(--atmr-neutral-600);
+	--grey-900: var(--atmr-neutral-990);
+
+	/*
+	 * Один акцент на весь продукт. ДС ставит на кнопку `accent-500` (#ff4f12) с
+	 * белой подписью — это 3.3:1, ниже порога AA для текста в 14px, а `primary`
+	 * здесь ещё и текст ссылки на белом. Поэтому взяты две ступени той же
+	 * оранжевой шкалы ДС: `accent-700` даёт 6.1:1 и с белым на заливке, и как
+	 * текст на холсте, `accent-800` — 7.6:1 на наведении. Яркий фирменный
+	 * оранжевый остаётся в мягкой паре ниже.
+	 */
+	--accent-base: var(--atmr-accent-700);
+	--accent-strong: var(--atmr-accent-800);
+	--accent-soft: var(--atmr-accent-50);
+	--accent-soft-border: var(--atmr-accent-100);
+
+	/*
+	 * Статусные тона. Сплошной тон у `success` и `danger` — это ступень 700, а
+	 * не 500: на них ложится белый текст (узел маршрута) и они же бывают
+	 * текстом на холсте. `warning` и `info` текста не несут ни разу, поэтому
+	 * остаются ровно теми, что в ДС.
+	 */
+	--danger-base: var(--atmr-error-700);
+	--danger-soft: var(--atmr-error-50);
+	--danger-soft-foreground: var(--atmr-error-700);
+	--warning-base: var(--atmr-warning-500);
+	--warning-soft: var(--atmr-warning-50);
+	--warning-soft-foreground: var(--atmr-warning-800);
+	--success-base: var(--atmr-success-700);
+	--success-soft: var(--atmr-success-50);
+	--success-soft-foreground: var(--atmr-success-700);
+	--info-base: var(--atmr-info-500);
+	--info-soft: var(--atmr-info-50);
+	--info-soft-foreground: var(--atmr-info-700);
+
+	/*
+	 * Два уровня подъёма, и только два: `raised` для того, что лежит на холсте
+	 * (карточки, липкая шапка таблицы), `overlay` для того, что висит над
+	 * страницей (меню, диалоги, тосты). У ДС это `shadow.bottom` ступеней s и l.
+	 */
+	--elevation-raised: var(--atmr-shadow-bottom-s);
+	--elevation-overlay: var(--atmr-shadow-bottom-l);
+
+	--radius: var(--atmr-border-radius-m);
 
 	/*
 	 * Aliases the vendored primitives read through `var(...)` rather than through
@@ -86,9 +203,32 @@
 }
 
 @theme {
+	/*
+	 * Гарнитура ДС, за ней — запасная. Файлов Rostelecom Basis в репозитории
+	 * нет, и на машине, где их не положили, весь интерфейс идёт на Inter
+	 * Variable: он лежит в сборке, в сеть за ним никто не ходит.
+	 */
 	--font-sans:
-		'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue',
-		Arial, 'Noto Sans', sans-serif;
+		'Rostelecom Basis', 'Inter Variable', ui-sans-serif, system-ui, -apple-system, 'Segoe UI',
+		Roboto, 'Helvetica Neue', Arial, 'Noto Sans', sans-serif;
+
+	/*
+	 * Типографическая шкала ДС. Слева — имена Tailwind, которыми написаны
+	 * компоненты, справа — вариант ДС, из которого взяты кегль и интерлиньяж.
+	 * Шаг 20px в шкале ДС отсутствует: за заголовком страницы идёт heading-h2.
+	 */
+	--text-xs: 0.75rem; /* description-l — 12/16 */
+	--text-xs--line-height: 1rem;
+	--text-sm: 0.875rem; /* body-s — 14/20, основной текст продукта */
+	--text-sm--line-height: 1.25rem;
+	--text-base: 1rem; /* body-m — 16/24 */
+	--text-base--line-height: 1.5rem;
+	--text-lg: 1.125rem; /* body-l — 18/26 */
+	--text-lg--line-height: 1.625rem;
+	--text-xl: 1.375rem; /* heading-h2 — 22/24, заголовок страницы */
+	--text-xl--line-height: 1.5rem;
+	--text-2xl: 1.75rem; /* heading-h1 — 28/32, крупные числа сводок */
+	--text-2xl--line-height: 2rem;
 
 	/* Surfaces: the app backdrop, the panels on it, recessed areas inside panels. */
 	--color-canvas: var(--grey-50);
@@ -150,18 +290,24 @@
 
 	/*
 	 * Density. A CRM is read in rows, so the two heights that repeat thousands of
-	 * times are tokens: 36px for a table row, 32px for a control. The rest of the
-	 * spacing scale is Tailwind's 4px step.
+	 * times are tokens: 36px for a table row (`--atmr-size-m` ДС), 32px for a
+	 * control (`--atmr-size-s-chip`). Остальная шкала отступов — модуль 4px,
+	 * он же `--atmr-spacing-1x`. Всё это в rem, а не в px: иначе плотность
+	 * перестанет расти вместе с кеглем, который человек выбрал в браузере.
 	 */
+	--spacing: 0.25rem;
 	--spacing-row: 2.25rem;
 	--spacing-control: 2rem;
 
-	/* Radii. `4xl` is the pill used by badges, not a fourth step on the scale. */
-	--radius-sm: calc(var(--radius) * 0.5);
-	--radius-md: calc(var(--radius) * 0.75);
-	--radius-lg: var(--radius);
-	--radius-xl: calc(var(--radius) * 1.5);
-	--radius-4xl: 999px;
+	/*
+	 * Радиусы ДС один в один: xs, s, m (базовый — кнопки и поля), l. `4xl` —
+	 * пилюля, а не четвёртая ступень шкалы.
+	 */
+	--radius-sm: var(--atmr-border-radius-xs);
+	--radius-md: var(--atmr-border-radius-s);
+	--radius-lg: var(--atmr-border-radius-m);
+	--radius-xl: var(--atmr-border-radius-l);
+	--radius-4xl: var(--atmr-border-radius-full);
 
 	/* Four Tailwind names, two levels: the primitives reach for all four. */
 	--shadow-xs: var(--elevation-raised);
@@ -184,7 +330,9 @@
 		/*
 		 * Figures are read in columns — counts, dates, sums, identifiers — so
 		 * digits keep the same advance width everywhere. Add `proportional-nums`
-		 * on the rare piece of prose where that looks wrong.
+		 * on the rare piece of prose where that looks wrong. У Rostelecom Basis
+		 * `tnum` есть, у Inter Variable тоже, так что правило работает на обеих
+		 * гарнитурах.
 		 */
 		font-variant-numeric: tabular-nums;
 		font-feature-settings: 'tnum' 1;

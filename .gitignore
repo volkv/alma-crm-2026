@@ -10,6 +10,13 @@ node_modules/
 .env.*
 !.env.example
 
+# Fonts
+# Rostelecom Basis: гарнитура интерфейса. Лицензии на распространение у нас нет,
+# поэтому файлы живут вне репозитория — локально их кладут сюда руками, на стенд
+# они приезжают томом (docs/deployment.md, «Шрифт»). Без них интерфейс работает
+# на запасной гарнитуре.
+/static/fonts/
+
 # Tests
 /playwright-report/
 /test-results/
