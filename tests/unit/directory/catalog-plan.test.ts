@@ -14,11 +14,14 @@ import {
 	buildCatalogRows,
 	dryWriter,
 	emptyCatalogState,
+	registerContact,
 	registerContract,
 	registerContractItem,
 	registerDirection,
 	registerOrganization,
 	registerProduct,
+	registerResponsible,
+	registerUser,
 	type CatalogState
 } from '$lib/server/directory/import';
 import type { StatTable } from '$lib/server/stats/parse';
@@ -34,7 +37,10 @@ const HEADERS = [
 	'Дата договора',
 	'Подписание лицензии',
 	'Срок действия лицензии (год)',
-	'Статус по передаче'
+	'Статус по передаче',
+	'ФИО Менеджера',
+	'Ответственные от ВУЗа',
+	'Комментарий'
 ] as const;
 
 const MAPPING: CatalogMapping = {
@@ -48,7 +54,10 @@ const MAPPING: CatalogMapping = {
 	'Дата договора': 'contractSignedOn',
 	'Подписание лицензии': 'licenseSignedAt',
 	'Срок действия лицензии (год)': 'licenseUntil',
-	'Статус по передаче': 'transferStatus'
+	'Статус по передаче': 'transferStatus',
+	'ФИО Менеджера': 'manager',
+	'Ответственные от ВУЗа': 'contacts',
+	Комментарий: 'comment'
 };
 
 /** Таблица файла из строк значений: разбор читает её так же, как настоящую. */
@@ -69,14 +78,18 @@ function table(...rows: string[][]): StatTable {
 	};
 }
 
+/** Кто загружает файл: руководитель с правом назначать ответственных. */
+const ACTOR = { userId: 'usr-lead', canAssignResponsible: true };
+
 /** Справочник, в котором уже есть вуз, продукт, договор и его позиция. */
 function filledState(): CatalogState {
-	const state = emptyCatalogState();
+	const state = emptyCatalogState(ACTOR);
 
-	registerOrganization(state, { id: 'org-szpu', inn: '7802450127', name: 'СЗПУ', inScope: true }, [
-		'СЗПУ',
-		'Северо-Западный политехнический университет'
-	]);
+	registerOrganization(
+		state,
+		{ id: 'org-szpu', inn: '7802450127', name: 'СЗПУ', inScope: true, notes: null },
+		['СЗПУ', 'Северо-Западный политехнический университет']
+	);
 	registerProduct(state, { id: 'prd-lms', name: 'Платформа «Ориентир»' }, 'PRD-LMS-01');
 	registerDirection(state, { id: 'dir-dev', name: 'Разработка' }, 'DEV');
 	registerContract(state, 'org-szpu', {
@@ -337,5 +350,229 @@ describe('строка с претензией', () => {
 
 		expect(results[0].action).toBe('error');
 		expect(results[0].issues[0].message).toContain('значение не заполнено');
+	});
+});
+
+/** Сотрудники оператора: кандидаты в ответственные по колонке менеджера. */
+function withStaff(
+	state: CatalogState,
+	...extra: { id: string; fullName: string }[]
+): CatalogState {
+	registerUser(state, { id: 'usr-lead', fullName: 'Руководитель Демо', assignable: true });
+	registerUser(state, {
+		id: 'usr-veresova',
+		fullName: 'Вересова Анна Сергеевна',
+		assignable: true
+	});
+	registerUser(state, { id: 'usr-zotov', fullName: 'Зотов Павел Игоревич', assignable: true });
+
+	for (const entry of extra) {
+		registerUser(state, { ...entry, assignable: true });
+	}
+
+	return state;
+}
+
+/** Строка про уже заведённый вуз, у которой заполнены только три новых колонки. */
+const around = (manager: string, contacts: string, comment: string): string[] => [
+	...KNOWN,
+	'',
+	'',
+	'',
+	'',
+	'',
+	manager,
+	contacts,
+	comment
+];
+
+describe('менеджер строки', () => {
+	it('назначает ответственного за вуз, у которого его не было', async () => {
+		const results = await plan(withStaff(filledState()), around('Вересова Анна Сергеевна', '', ''));
+
+		expect(results[0].issues).toEqual([]);
+		expect(results[0].action).toBe('create');
+		expect(results[0].creations).toEqual([
+			{ target: 'responsible', subject: 'Вересова Анна Сергеевна' }
+		]);
+	});
+
+	it('узнаёт сотрудника по фамилии с инициалами', async () => {
+		const results = await plan(withStaff(filledState()), around('Вересова А.С.', '', ''));
+
+		expect(results[0].creations).toEqual([
+			{ target: 'responsible', subject: 'Вересова Анна Сергеевна' }
+		]);
+	});
+
+	it('отказывает, когда такого сотрудника нет', async () => {
+		const results = await plan(withStaff(filledState()), around('Неизвестный И. И.', '', ''));
+
+		expect(results[0].action).toBe('error');
+		expect(results[0].issues[0].field).toBe('manager');
+		expect(results[0].issues[0].message).toContain('не найден среди действующих');
+		expect(results[0].creations).toEqual([]);
+	});
+
+	it('отказывает, когда под ФИО подходит несколько сотрудников', async () => {
+		// Две Вересовых А. под одним ключом «фамилия и инициалы»: выбрать одну
+		// значит выбрать наугад, а назначение — это ещё и право видеть вуз.
+		const state = withStaff(filledState(), {
+			id: 'usr-veresova-2',
+			fullName: 'Вересова Алина Семёновна'
+		});
+
+		const results = await plan(state, around('Вересова А. С.', '', ''));
+
+		expect(results[0].action).toBe('error');
+		expect(results[0].issues[0].message).toContain('подходит несколько сотрудников');
+		expect(results[0].creations).toEqual([]);
+	});
+
+	it('не заменяет чужое действующее назначение', async () => {
+		const state = withStaff(filledState());
+		registerResponsible(state, 'org-szpu', { generalUserId: 'usr-zotov', hasDirectional: false });
+
+		const results = await plan(state, around('Вересова Анна Сергеевна', '', ''));
+
+		expect(results[0].action).toBe('error');
+		expect(results[0].issues[0].message).toContain('уже отвечает другой сотрудник');
+	});
+
+	it('отвечает «без изменений», когда тот же человек уже отвечает за вуз', async () => {
+		const state = withStaff(filledState());
+		registerResponsible(state, 'org-szpu', {
+			generalUserId: 'usr-veresova',
+			hasDirectional: false
+		});
+
+		const results = await plan(state, around('Вересова Анна Сергеевна', '', ''));
+
+		expect(results[0].action).toBe('unchanged');
+		expect(results[0].creations).toEqual([]);
+	});
+
+	it('у нового вуза сменяет автора загрузки на менеджера из файла', async () => {
+		// Автором нового вуза сервис справочника ставит того, кто нажал кнопку;
+		// колонка менеджера для того и есть, чтобы вуз достался названному в файле.
+		const results = await plan(withStaff(emptyCatalogState(ACTOR)), [
+			'ТГУИ',
+			'7714111750',
+			'',
+			'Тренажёр «Полигон»',
+			'',
+			'',
+			'',
+			'',
+			'',
+			'',
+			'',
+			'Зотов Павел Игоревич',
+			'',
+			''
+		]);
+
+		expect(results[0].issues).toEqual([]);
+		expect(results[0].creations).toContainEqual({
+			target: 'responsible',
+			subject: 'Зотов Павел Игоревич'
+		});
+	});
+
+	it('без права назначать ответственных колонка менеджера — претензия', async () => {
+		const state = withStaff(emptyCatalogState({ userId: 'usr-lead', canAssignResponsible: false }));
+		registerOrganization(
+			state,
+			{ id: 'org-szpu', inn: '7802450127', name: 'СЗПУ', inScope: true, notes: null },
+			['СЗПУ']
+		);
+		registerProduct(state, { id: 'prd-lms', name: 'Платформа «Ориентир»' }, 'PRD-LMS-01');
+
+		const results = await plan(state, around('Вересова Анна Сергеевна', '', ''));
+
+		expect(results[0].action).toBe('error');
+		expect(results[0].issues[0].message).toContain('права на это у вас нет');
+	});
+});
+
+describe('контакты вуза', () => {
+	it('заводит человека из ячейки и называет его в предпросмотре', async () => {
+		const results = await plan(
+			filledState(),
+			around('', 'Иванова Мария Петровна, +7 (999) 123-45-67, m.ivanova@vuz.ru', '')
+		);
+
+		expect(results[0].issues).toEqual([]);
+		expect(results[0].creations).toEqual([
+			{ target: 'contact', subject: 'Иванова Мария Петровна · СЗПУ' }
+		]);
+	});
+
+	it('повтор той же почты у того же вуза ничего не заводит', async () => {
+		const state = filledState();
+		registerContact(state, 'org-szpu', {
+			lastName: 'Иванова',
+			firstName: 'Мария',
+			middleName: 'Петровна',
+			email: 'M.Ivanova@vuz.ru',
+			phone: null
+		});
+
+		const results = await plan(state, around('', 'Иванова М. П., m.ivanova@vuz.ru', ''));
+
+		expect(results[0].action).toBe('unchanged');
+		expect(results[0].creations).toEqual([]);
+	});
+
+	it('второй раз в том же файле человек не заводится дважды', async () => {
+		const cell = 'Иванова Мария Петровна, m.ivanova@vuz.ru';
+		const results = await plan(filledState(), around('', cell, ''), around('', cell, ''));
+
+		expect(results[0].creations).toHaveLength(1);
+		expect(results[1].creations).toEqual([]);
+	});
+
+	it('не разобранный кусок ячейки — претензия с его текстом', async () => {
+		const results = await plan(filledState(), around('', 'приёмная +7 999 000-00-00', ''));
+
+		expect(results[0].action).toBe('error');
+		expect(results[0].issues[0].field).toBe('contacts');
+		expect(results[0].issues[0].message).toContain('приёмная');
+		expect(results[0].creations).toEqual([]);
+	});
+});
+
+describe('комментарий строки', () => {
+	it('дописывается в примечание вуза, не затирая прежнее', async () => {
+		const state = filledState();
+		const organization = state.organizationByInn.get('7802450127');
+
+		if (organization === undefined) {
+			throw new Error('Вуз не попал в снимок каталога');
+		}
+
+		organization.notes = 'Договор продлевали в августе';
+
+		const results = await plan(state, around('', '', 'Ждут смету на 2027 год'));
+
+		expect(results[0].action).toBe('update');
+		expect(results[0].changes).toEqual([
+			{
+				target: 'organization',
+				subject: 'СЗПУ',
+				field: 'Примечание',
+				from: 'Договор продлевали в августе',
+				to: 'Договор продлевали в августе\nЖдут смету на 2027 год'
+			}
+		]);
+	});
+
+	it('тот же комментарий второй раз ничего не меняет', async () => {
+		const comment = 'Ждут смету на 2027 год';
+		const results = await plan(filledState(), around('', '', comment), around('', '', comment));
+
+		expect(results[0].action).toBe('update');
+		expect(results[1].action).toBe('unchanged');
+		expect(results[1].changes).toEqual([]);
 	});
 });

@@ -314,14 +314,16 @@ export async function scopedActor(
 /** Пользователь в базе: нужен всюду, где стоит внешний ключ на автора действия. */
 export async function insertUser(
 	database: PostgresJsDatabase<typeof schema>,
-	options: { id?: string; email?: string; roleId?: string } = {}
+	options: { id?: string; email?: string; roleId?: string; fullName?: string } = {}
 ): Promise<string> {
 	const [row] = await database
 		.insert(schema.users)
 		.values({
 			id: options.id,
 			email: options.email ?? `user-${crypto.randomUUID()}@example.org`,
-			fullName: 'Тестовый Пользователь',
+			// ФИО задаётся там, где по нему ищут: импорт каталога находит сотрудника
+			// по колонке менеджера, и однофамильцы для него — отдельный случай.
+			fullName: options.fullName ?? 'Тестовый Пользователь',
 			roleId: options.roleId ?? 'admin'
 		})
 		.returning({ id: schema.users.id });

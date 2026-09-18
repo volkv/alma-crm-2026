@@ -30,12 +30,19 @@ const HEADERS = [
 	'Дата договора',
 	'Подписание лицензии',
 	'Срок действия лицензии (год)',
-	'Статус по передаче'
+	'Статус по передаче',
+	'ФИО Менеджера',
+	'Ответственные от ВУЗа',
+	'Комментарий'
 ];
+
+/** Сотрудник стенда, которому файл отдаёт вузы прогона. */
+const MANAGER = 'Вересова Анна Сергеевна';
 
 /**
  * Файл каталога прогона: два вуза, которых на стенде нет, и одна строка с
- * лицензией, истекающей раньше, чем она подписана.
+ * лицензией, истекающей раньше, чем она подписана. Три последние колонки —
+ * рабочие: менеджер, контакты вуза и комментарий.
  *
  * Собирается в памяти, а не лежит в репозитории: названия обязаны быть своими у
  * каждого прогона, иначе второй проход увидел бы записи первого и сказал бы
@@ -53,7 +60,10 @@ function catalogCsv(licenseYear: string): Buffer {
 			'2026-09-10',
 			'2026-09-10',
 			licenseYear,
-			'transferred'
+			'transferred',
+			MANAGER,
+			`Иванова Мария Петровна, +7 (999) 123-45-67, m.ivanova.${TAG}@vuz.ru`,
+			'Ждут смету на следующий год'
 		],
 		[
 			`Вуз ${TAG} Б`,
@@ -65,7 +75,10 @@ function catalogCsv(licenseYear: string): Buffer {
 			'2026-09-11',
 			'2026-09-11',
 			licenseYear,
-			'pending'
+			'pending',
+			MANAGER,
+			`Петров Пётр Петрович, p.petrov.${TAG}@vuz.ru`,
+			'Просили счёт в сентябре'
 		],
 		[
 			`Вуз ${TAG} В`,
@@ -77,7 +90,10 @@ function catalogCsv(licenseYear: string): Buffer {
 			'2026-09-12',
 			'2027-05-01',
 			'2026',
-			'pending'
+			'pending',
+			MANAGER,
+			'',
+			''
 		]
 	];
 
@@ -116,6 +132,14 @@ test('руководитель проходит мастер импорта ка
 	await expect(page.locator('[data-slot="count-error"]')).toHaveText('1');
 	await expect(page.locator('tbody tr[data-row-no]')).toHaveCount(3);
 
+	// Предпросмотр называет и то, что строка делает вокруг справочника: кому
+	// достанется вуз, кто станет его контактом и что допишется в примечание.
+	const first = page.locator('tbody tr[data-row-no="1"]');
+
+	await expect(first).toContainText(`Ответственный за вуз: ${MANAGER}`);
+	await expect(first).toContainText(`Контакт вуза: Иванова Мария Петровна · Вуз ${TAG} А`);
+	await expect(first).toContainText('Примечание: — → Ждут смету на следующий год');
+
 	// Строка с ошибкой объясняет себя словами, а не кодом.
 	await page.getByRole('link', { name: 'Ошибка', exact: true }).click();
 	await expect(page.locator('tbody tr[data-row-no]')).toHaveCount(1);
@@ -130,9 +154,22 @@ test('руководитель проходит мастер импорта ка
 	await expect(page.locator('[data-slot="count-create"]')).toHaveText('2');
 	await expect(page.locator('[data-slot="count-error"]')).toHaveText('1');
 
-	// Вуз, которого не было, теперь в справочнике.
+	// Вуз, которого не было, теперь в справочнике — и ведёт его тот, кого назвал
+	// файл, а не тот, кто нажал кнопку.
 	await page.goto(`/organizations?q=${encodeURIComponent(`Вуз ${TAG} А`)}`);
-	await expect(page.locator('[data-slot="data-table"] tbody tr[data-row]')).toHaveCount(1);
+
+	const found = page.locator('[data-slot="data-table"] tbody tr[data-row]');
+
+	await expect(found).toHaveCount(1);
+
+	// Строку списка открывает клиентский обработчик: до гидратации нажатие
+	// теряется совсем, а повторять переход по записи нечем.
+	await waitForHydration(page);
+	await found.first().click();
+
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText(`Вуз ${TAG} А`);
+	await expect(page.getByText(MANAGER).first()).toBeVisible();
+	await expect(page.getByText('Иванова Мария Петровна').first()).toBeVisible();
 });
 
 test('повтор того же файла ничего не меняет, а продлённая лицензия — обновляет', async ({

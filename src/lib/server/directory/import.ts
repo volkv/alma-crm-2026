@@ -27,8 +27,17 @@
  * означало бы менять карточку, на которую ссылаются взаимодействия и документы,
  * не открывая её. Импорт заводит недостающее и ведёт то, ради чего он и нужен:
  * договоры, лицензии и статусы передачи.
+ *
+ * Три колонки таблицы ложатся не на справочник, а на записи вокруг него:
+ * «ФИО менеджера» — на назначение ответственного за вуз, «Контакты вуза» — на
+ * людей с их ролью и основанием обработки, «Комментарий» — на примечание
+ * карточки вуза. Все три идут теми же тремя правилами: считает их тот же проход,
+ * строка с претензией не делает ни одной из этих записей, а повтор отвечает
+ * «без изменений». Примечание при этом **дописывается**: затереть чужую
+ * заметку загрузкой файла — это то же переписывание карточки, от которого
+ * импорт отказывается везде.
  */
-import { and, count, desc, eq, exists, isNotNull, sql, type SQL } from 'drizzle-orm';
+import { and, count, desc, eq, exists, isNotNull, isNull, ne, sql, type SQL } from 'drizzle-orm';
 import { id as idSchema, type PageResult } from '$lib/contracts/common';
 import {
 	CATALOG_FIELDS,
@@ -51,18 +60,28 @@ import {
 	type CatalogRowIssue,
 	type CatalogRowValues
 } from '$lib/contracts/directory-import';
+import {
+	affiliationPositionSchema,
+	createPersonSchema,
+	organizationNotesSchema
+} from '$lib/contracts/directory';
+import { formatIsoDay } from '$lib/format';
 import { isValidInn } from '$lib/validation/inn';
 import type { ActorContext } from '../actor';
 import { invalidateDirectoryOptions } from '../cache/directory';
 import { recordAuditEvent } from '../audit';
 import {
+	affiliations,
+	consents,
 	contractItems,
 	contracts,
 	directions,
 	directoryImportRows,
 	directoryImports,
 	documents,
+	organizationResponsibles,
 	organizations,
+	people,
 	productDirections,
 	products,
 	users
@@ -71,7 +90,8 @@ import { getDb } from '../db';
 import { withTransaction, type Tx } from '../db/transaction';
 import { discardStaged, promoteBlob, readStoredFile, stageBlob } from '../documents/storage';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
-import { actorScopeFilter, requirePermission, scopeFilter } from '../rbac';
+import { withPiiTrace } from '../people/pii-trace';
+import { actorScopeFilter, can, requirePermission, scopeFilter } from '../rbac';
 import { suggestFieldMapping, type FieldSynonyms } from '../spreadsheet/mapping';
 // Чтение файла общее с импортом данных об обучении: формат по содержимому,
 // кодировка, разделитель, листы книги, две формы JSON и происхождение каждой
@@ -95,7 +115,22 @@ import {
 	type ContractItemState,
 	type ContractState
 } from './contracts';
-import { createDirection, createOrganization, createProduct } from './write';
+import {
+	contactFullName,
+	normalizeContactEmail,
+	normalizeContactPhone,
+	parseContacts,
+	type ContactIdentity,
+	type ParsedContact
+} from './contacts';
+import { assignResponsible } from './responsibles';
+import {
+	createAffiliation,
+	createDirection,
+	createOrganization,
+	createPerson,
+	createProduct
+} from './write';
 
 /** Идентификатор импорта приходит из адреса, то есть от кого угодно. */
 const importIdSchema = idSchema('Некорректный идентификатор импорта');
@@ -155,7 +190,33 @@ const SYNONYMS: FieldSynonyms<CatalogField> = {
 		'срок лицензии',
 		'license until'
 	],
-	transferStatus: ['статус по передаче', 'статус передачи', 'передача', 'статус', 'transfer status']
+	transferStatus: [
+		'статус по передаче',
+		'статус передачи',
+		'передача',
+		'статус',
+		'transfer status'
+	],
+	manager: [
+		'фио менеджера',
+		'фио ответственного',
+		'менеджер',
+		'ответственный',
+		'ответственный менеджер',
+		'кам',
+		'manager',
+		'account manager'
+	],
+	contacts: [
+		'ответственные от вуза',
+		'контакты вуза',
+		'контактное лицо',
+		'контактные лица',
+		'контакты',
+		'контакт',
+		'contacts'
+	],
+	comment: ['комментарий', 'примечание', 'заметка', 'comment', 'note']
 };
 
 /** Предложенное сопоставление колонок: правило общее, словарь — свой. */
@@ -293,12 +354,29 @@ const EMPTY_VALUES: CatalogRowValues = {
 	transferStatus: null
 };
 
+/**
+ * Значения колонок, у которых нет своей колонки в `directory_import_rows`.
+ *
+ * Их не с чем сверять в справочнике и не по чему искать — это ввод для
+ * действий вокруг строки, — поэтому второй копии в базе они не заводят:
+ * подтверждение читает их из сохранённой строки файла (`raw`) по сохранённому
+ * сопоставлению. Файл при этом заново не читается, и правило «человек
+ * согласился с тем, что увидел» не нарушается: `raw` — это и есть та строка,
+ * которую он увидел.
+ */
+export type CatalogRowExtra = {
+	managerName: string | null;
+	contactsText: string | null;
+	comment: string | null;
+};
+
 /** Строка файла, разобранная и с претензиями разбора. */
 export type CatalogSourceRow = {
 	rowNo: number;
 	origin: number;
 	raw: Record<string, string>;
 	values: CatalogRowValues;
+	extra: CatalogRowExtra;
 	issues: CatalogRowIssue[];
 };
 
@@ -351,6 +429,18 @@ function dateOf(
 	return parsed;
 }
 
+/** Колонки без своей колонки строки: и разбор, и подтверждение читают их так. */
+export function extraFromRaw(
+	raw: Record<string, string>,
+	mapping: CatalogMapping
+): CatalogRowExtra {
+	return {
+		managerName: textOf(raw, mapping, 'manager'),
+		contactsText: textOf(raw, mapping, 'contacts'),
+		comment: textOf(raw, mapping, 'comment')
+	};
+}
+
 /** Разбирает таблицу файла в строки каталога. Чистая функция. */
 export function buildCatalogRows(table: StatTable, mapping: CatalogMapping): CatalogSourceRow[] {
 	return table.rows.map((row, position) => {
@@ -388,15 +478,56 @@ export function buildCatalogRows(table: StatTable, mapping: CatalogMapping): Cat
 			transferStatus: textOf(raw, mapping, 'transferStatus')
 		};
 
-		return { rowNo: position + 1, origin: row.origin, raw, values, issues };
+		return {
+			rowNo: position + 1,
+			origin: row.origin,
+			raw,
+			values,
+			extra: extraFromRaw(raw, mapping),
+			issues
+		};
 	});
 }
 
 /* ----------------------------------------------------- состояние каталога */
 
-export type OrganizationEntry = { id: string; inn: string | null; name: string; inScope: boolean };
+export type OrganizationEntry = {
+	id: string;
+	inn: string | null;
+	name: string;
+	inScope: boolean;
+	/** Примечание карточки: комментарий строки дописывается к нему. */
+	notes: string | null;
+};
 export type ProductEntry = { id: string; name: string };
 export type DirectionEntry = { id: string; name: string };
+/** Сотрудник оператора: кандидат в ответственные по колонке менеджера. */
+export type UserEntry = {
+	id: string;
+	fullName: string;
+	/** Может ли вызывающий назначить именно его: себя и своих подчинённых. */
+	assignable: boolean;
+};
+/** Действующие назначения вуза на момент снимка. */
+export type ResponsibleEntry = {
+	/** Кто отвечает за вуз целиком; `null` — общего назначения нет. */
+	generalUserId: string | null;
+	/** Есть ли назначения по направлениям: с ними общее не сосуществует. */
+	hasDirectional: boolean;
+};
+
+/**
+ * Кто загружает файл. Часть снимка, а не отдельный аргумент: решение «этот
+ * менеджер уже назначен» и «этого сотрудника мне назначать нельзя» считается
+ * тем же проходом, что и всё остальное, и на предпросмотре обязано выйти тем
+ * же, чем на применении.
+ */
+export type CatalogActor = {
+	/** Учётная запись вызывающего; `null` — фоновая задача или сид. */
+	userId: string | null;
+	/** Есть ли право `responsibles.manage`: без него колонка менеджера — претензия. */
+	canAssignResponsible: boolean;
+};
 
 /**
  * Каталог целиком в память.
@@ -422,6 +553,13 @@ export type CatalogState = {
 	contracts: Map<string, ContractState>;
 	/** Позиции по паре «договор + продукт». */
 	contractItems: Map<string, ContractItemState>;
+	/** Активные сотрудники по ключам ФИО: полному и «фамилия и инициалы». */
+	userByName: Map<string, UserEntry[]>;
+	/** Действующие назначения по организациям. */
+	responsibles: Map<string, ResponsibleEntry>;
+	/** Контакты организаций: `${organizationId} ${ключ}` — почта, телефон или ФИО. */
+	organizationContacts: Set<string>;
+	actor: CatalogActor;
 };
 
 function pushKeyed<TEntry>(index: Map<string, TEntry[]>, key: string, entry: TEntry): void {
@@ -447,7 +585,31 @@ const contractItemKey = (contractId: string, productId: string): string =>
 const productDirectionKey = (productId: string, directionId: string): string =>
 	`${productId} ${directionId}`;
 
-export function emptyCatalogState(): CatalogState {
+const contactKey = (organizationId: string, key: string): string => `${organizationId} ${key}`;
+
+/**
+ * Ключи, под которыми сотрудник узнаётся по колонке менеджера: полное ФИО и
+ * «фамилия и инициалы». Второй ключ нужен потому, что в рабочей таблице пишут
+ * и «Вересова Анна Сергеевна», и «Вересова А.С.», и это один человек — а вот
+ * две Вересовых А. под этим ключом сойдутся, и тогда строка обязана отказать.
+ */
+export function userNameKeys(fullName: string): string[] {
+	const normalized = normalizeName(fullName);
+	const parts = normalized.split(' ').filter((part) => part !== '');
+
+	if (parts.length < 2) {
+		return normalized === '' ? [] : [normalized];
+	}
+
+	const initials = [parts[0], ...parts.slice(1).map((part) => part.slice(0, 1))].join(' ');
+
+	return initials === normalized ? [normalized] : [normalized, initials];
+}
+
+/** Пустой снимок. Вызывающий без прав и без учётной записи — безопасное умолчание. */
+export function emptyCatalogState(
+	actor: CatalogActor = { userId: null, canAssignResponsible: false }
+): CatalogState {
 	return {
 		organizationByInn: new Map(),
 		organizationByName: new Map(),
@@ -458,7 +620,11 @@ export function emptyCatalogState(): CatalogState {
 		productCodes: new Set(),
 		directionCodes: new Set(),
 		contracts: new Map(),
-		contractItems: new Map()
+		contractItems: new Map(),
+		userByName: new Map(),
+		responsibles: new Map(),
+		organizationContacts: new Set(),
+		actor
 	};
 }
 
@@ -500,6 +666,52 @@ export function registerContract(
 	state.contracts.set(contractKey(organizationId, contract.number), contract);
 }
 
+/** Кладёт сотрудника в снимок под оба его ключа ФИО. */
+export function registerUser(state: CatalogState, entry: UserEntry): void {
+	for (const key of userNameKeys(entry.fullName)) {
+		pushKeyed(state.userByName, key, entry);
+	}
+}
+
+/** Кладёт в снимок действующее назначение вуза. */
+export function registerResponsible(
+	state: CatalogState,
+	organizationId: string,
+	entry: ResponsibleEntry
+): void {
+	state.responsibles.set(organizationId, entry);
+}
+
+/**
+ * Ключи, по которым контакт считается уже заведённым у этой организации:
+ * почта, цифры телефона и ФИО. Любого совпавшего достаточно — один и тот же
+ * человек в двух строках файла записан то с почтой, то с телефоном.
+ */
+export function contactKeys(contact: ContactIdentity): string[] {
+	const keys = [`фио ${normalizeName(contactFullName(contact))}`];
+
+	if (contact.email !== null) {
+		keys.push(`почта ${normalizeContactEmail(contact.email)}`);
+	}
+
+	if (contact.phone !== null) {
+		keys.push(`телефон ${normalizeContactPhone(contact.phone)}`);
+	}
+
+	return keys;
+}
+
+/** Кладёт контакт организации в снимок: по почте, телефону и ФИО сразу. */
+export function registerContact(
+	state: CatalogState,
+	organizationId: string,
+	contact: ContactIdentity
+): void {
+	for (const key of contactKeys(contact)) {
+		state.organizationContacts.add(contactKey(organizationId, key));
+	}
+}
+
 /** Кладёт позицию в снимок по паре «договор + продукт». */
 export function registerContractItem(
 	state: CatalogState,
@@ -522,7 +734,10 @@ export async function loadCatalogState(
 	ctx: ActorContext,
 	executor: Tx | ReturnType<typeof getDb> = getDb()
 ): Promise<CatalogState> {
-	const state = emptyCatalogState();
+	const state = emptyCatalogState({
+		userId: ctx.user?.id ?? null,
+		canAssignResponsible: can(ctx, 'responsibles.manage')
+	});
 
 	const [
 		organizationRows,
@@ -531,14 +746,18 @@ export async function loadCatalogState(
 		directionRows,
 		linkRows,
 		contractRows,
-		itemRows
+		itemRows,
+		userRows,
+		responsibleRows,
+		contactRows
 	] = await Promise.all([
 		executor
 			.select({
 				id: organizations.id,
 				inn: organizations.inn,
 				shortName: organizations.shortName,
-				legalName: organizations.legalName
+				legalName: organizations.legalName,
+				notes: organizations.notes
 			})
 			.from(organizations),
 		executor
@@ -573,7 +792,33 @@ export async function loadCatalogState(
 				licenseUntil: contractItems.licenseUntil,
 				transferStatus: contractItems.transferStatus
 			})
-			.from(contractItems)
+			.from(contractItems),
+		// Сотрудники читаются по всему штату, а не по области: двух однофамильцев
+		// с одним инициалом надо увидеть обоих, даже если один из них чужой, —
+		// иначе строка молча выберет «своего» там, где выбирать нельзя.
+		executor
+			.select({ id: users.id, fullName: users.fullName })
+			.from(users)
+			.where(and(eq(users.isActive, true), ne(users.roleId, 'service'))),
+		executor
+			.select({
+				organizationId: organizationResponsibles.organizationId,
+				userId: organizationResponsibles.userId,
+				directionId: organizationResponsibles.directionId
+			})
+			.from(organizationResponsibles)
+			.where(isNull(organizationResponsibles.validTo)),
+		executor
+			.select({
+				organizationId: affiliations.organizationId,
+				lastName: people.lastName,
+				firstName: people.firstName,
+				middleName: people.middleName,
+				email: people.email,
+				phone: people.phone
+			})
+			.from(affiliations)
+			.innerJoin(people, eq(people.id, affiliations.personId))
 	]);
 
 	const scoped = new Set(scopedRows.map((row) => row.id));
@@ -581,9 +826,42 @@ export async function loadCatalogState(
 	for (const row of organizationRows) {
 		registerOrganization(
 			state,
-			{ id: row.id, inn: row.inn, name: row.shortName, inScope: scoped.has(row.id) },
+			{
+				id: row.id,
+				inn: row.inn,
+				name: row.shortName,
+				inScope: scoped.has(row.id),
+				notes: row.notes
+			},
 			[row.shortName, row.legalName]
 		);
+	}
+
+	for (const row of userRows) {
+		registerUser(state, {
+			id: row.id,
+			fullName: row.fullName,
+			assignable: ctx.scope.kind === 'all' || ctx.scope.userIds.has(row.id)
+		});
+	}
+
+	for (const row of responsibleRows) {
+		const entry = state.responsibles.get(row.organizationId) ?? {
+			generalUserId: null,
+			hasDirectional: false
+		};
+
+		if (row.directionId === null) {
+			entry.generalUserId = row.userId;
+		} else {
+			entry.hasDirectional = true;
+		}
+
+		registerResponsible(state, row.organizationId, entry);
+	}
+
+	for (const row of contactRows) {
+		registerContact(state, row.organizationId, row);
 	}
 
 	for (const row of productRows) {
@@ -646,6 +924,12 @@ export type CatalogWriter = {
 	updateContract(id: string, next: ReturnType<typeof mergeContract>['next']): Promise<void>;
 	contractItem(draft: Parameters<typeof insertContractItem>[2]): Promise<ContractItemState>;
 	updateContractItem(id: string, next: ReturnType<typeof mergeContractItem>['next']): Promise<void>;
+	/** Ответственный за вуз целиком по колонке менеджера. */
+	assignResponsible(input: { organizationId: string; userId: string }): Promise<void>;
+	/** Человек из колонки контактов вместе с его ролью и основанием обработки. */
+	contact(input: { organizationId: string; contact: ParsedContact }): Promise<void>;
+	/** Примечание карточки вуза целиком: комментарий к нему уже дописан. */
+	organizationNotes(input: { organizationId: string; notes: string }): Promise<void>;
 };
 
 /** Исполнитель предпросмотра: ничего не пишет, идентификаторы временные. */
@@ -669,9 +953,24 @@ export function dryWriter(): CatalogWriter {
 		}),
 		updateContract: async () => {},
 		contractItem: async (draft) => ({ id: nextId(), ...mergeContractItem(null, draft).next }),
-		updateContractItem: async () => {}
+		updateContractItem: async () => {},
+		assignResponsible: async () => {},
+		contact: async () => {},
+		organizationNotes: async () => {}
 	};
 }
+
+/**
+ * Основание обработки контактов из рабочей таблицы школы.
+ *
+ * Согласия субъекта у такой записи нет и быть не может: человека в файл вписала
+ * не система, а сотрудник вуза, и подписи под текстом никто не собирал. Данные
+ * представителя контрагента обрабатываются ради договора, который эта же строка
+ * и описывает, — поэтому основание «исполнение договора», а версия текста —
+ * день загрузки, как и у остальных записей без подписанного текста
+ * (`docs/directory.md`, «Допущения S4.1a»).
+ */
+const IMPORT_CONSENT_BASIS = 'contract';
 
 /** Исполнитель подтверждения: пишет через сервисы владельцев записей. */
 function databaseWriter(ctx: ActorContext, tx: Tx): CatalogWriter {
@@ -728,7 +1027,93 @@ function databaseWriter(ctx: ActorContext, tx: Tx): CatalogWriter {
 		contract: async (draft) => insertContract(ctx, tx, draft),
 		updateContract: async (id, next) => updateContract(ctx, tx, id, next),
 		contractItem: async (draft) => insertContractItem(ctx, tx, draft),
-		updateContractItem: async (id, next) => updateContractItem(ctx, tx, id, next)
+		updateContractItem: async (id, next) => updateContractItem(ctx, tx, id, next),
+		// Через сервис назначений, а не своей вставкой: на этих строках держится
+		// область доступа, и правило «общее назначение и назначения по
+		// направлениям не сосуществуют» обязано быть одно на все пути.
+		assignResponsible: async (input) =>
+			assignResponsible(ctx, { ...input, directionId: null, transferInteractions: false }, tx),
+		contact: async ({ organizationId, contact }) => {
+			// Один день на полномочия и на основание обработки: они начинаются
+			// одной записью, и разойтись на границе суток им незачем.
+			const day = formatIsoDay();
+			const person = await createPerson(
+				ctx,
+				{
+					lastName: contact.lastName,
+					firstName: contact.firstName,
+					middleName: contact.middleName,
+					email: contact.email,
+					phone: contact.phone,
+					notes: null
+				},
+				tx
+			);
+
+			await createAffiliation(
+				ctx,
+				{
+					personId: person.id,
+					organizationId,
+					siteId: null,
+					position: contact.position,
+					// Кем человек работает, файл не говорит, а роль — это закрытый
+					// список; «другое» здесь честнее, чем выбранная за него должность.
+					roleKind: 'other',
+					// Основным контактом человека отмечает тот, кто с ним работает:
+					// загрузка файла не знает, кому звонят первым.
+					isPrimary: false,
+					validFrom: day,
+					validTo: null,
+					channel: null
+				},
+				tx
+			);
+
+			// Своей вставкой, как и у заявки с сайта (`exchange/intake.ts`):
+			// `recordConsent` — путь карточки, он сам открывает транзакцию и
+			// проверяет видимость человека, которого в общем пуле ещё нет.
+			const [record] = await tx
+				.insert(consents)
+				.values({
+					personId: person.id,
+					basis: IMPORT_CONSENT_BASIS,
+					textVersion: day,
+					givenAt: day,
+					recordedBy: ctx.user?.id ?? null
+				})
+				.returning({ id: consents.id });
+
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'people.consent_recorded',
+					outcome: 'success',
+					subject: { type: 'consent', id: record.id },
+					details: { personId: person.id }
+				},
+				tx
+			);
+		},
+		organizationNotes: async ({ organizationId, notes }) => {
+			requirePermission(ctx, 'organizations.write');
+
+			await tx
+				.update(organizations)
+				.set({ notes, updatedAt: sql`now()` })
+				.where(eq(organizations.id, organizationId));
+
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'organizations.updated',
+					outcome: 'success',
+					subject: { type: 'organization', id: organizationId },
+					details: { changedFields: ['notes'] }
+				},
+				tx
+			);
+		}
 	};
 }
 
@@ -833,6 +1218,208 @@ function pickOne<TEntry>(
 	}
 
 	return { entry: found[0], message: null };
+}
+
+/** Что строка сделает с назначением ответственного; `null` — ничего. */
+type ManagerPlan = { user: UserEntry } | null;
+
+/** Новое примечание карточки целиком; `null` — дописывать нечего. */
+type NotesPlan = { next: string } | null;
+
+/**
+ * Сотрудник из колонки менеджера и назначение, которое строка сделает.
+ *
+ * Отказов здесь четыре, и все четыре — про то, что выбор сделать нельзя, а не
+ * про то, что он неудобен: права нет, сотрудник не найден, сотрудников
+ * несколько, назначать этого сотрудника вызывающему нельзя. Пятый — чужое
+ * действующее назначение: заменить его загрузкой файла значило бы отобрать вуз
+ * у человека, не открывая карточку.
+ */
+function planManager(
+	state: CatalogState,
+	organization: OrganizationEntry | null,
+	managerName: string | null,
+	issues: CatalogRowIssue[]
+): ManagerPlan {
+	if (managerName === null) {
+		return null;
+	}
+
+	const issue = (message: string): null => {
+		issues.push({ field: 'manager', message });
+
+		return null;
+	};
+
+	if (!state.actor.canAssignResponsible) {
+		return issue(
+			`Колонка «${CATALOG_FIELD_LABELS.manager}» назначает ответственного за вуз, а права на это у вас нет`
+		);
+	}
+
+	const keys = userNameKeys(managerName);
+	const found = keys.map((key) => state.userByName.get(key)).find((entry) => entry !== undefined);
+
+	if (found === undefined) {
+		return issue(`Сотрудник «${managerName}» не найден среди действующих учётных записей`);
+	}
+
+	if (found.length > 1) {
+		return issue(`Под «${managerName}» подходит несколько сотрудников — уточните ФИО`);
+	}
+
+	const user = found[0];
+
+	if (!user.assignable) {
+		return issue(
+			`Назначать можно себя и своих подчинённых: «${user.fullName}» вне вашей области доступа`
+		);
+	}
+
+	// Вуза ещё нет: его заведёт эта же строка, и ответственным по умолчанию
+	// станет тот, кто загрузил файл (`createOrganization`). Менеджер из файла
+	// его сменяет — это не чужое назначение, а то самое, ради чего колонка есть.
+	const current =
+		organization === null
+			? { generalUserId: state.actor.userId, hasDirectional: false }
+			: (state.responsibles.get(organization.id) ?? { generalUserId: null, hasDirectional: false });
+
+	if (current.hasDirectional) {
+		return issue(
+			'У вуза есть ответственные по направлениям: ответственного за вуз целиком назначают на его карточке'
+		);
+	}
+
+	if (current.generalUserId === user.id) {
+		return null;
+	}
+
+	if (current.generalUserId !== null && organization !== null) {
+		return issue(
+			`За вуз «${organization.name}» уже отвечает другой сотрудник: загрузка чужое назначение не заменяет — смените его на карточке вуза`
+		);
+	}
+
+	return { user };
+}
+
+/**
+ * Люди из колонки контактов, которых у вуза ещё нет.
+ *
+ * Проверяются они теми же схемами, что и форма контакта: почта, телефон,
+ * длина имени и должности. Иначе строка обещала бы на предпросмотре контакт,
+ * который потом уронил бы всю загрузку на записи.
+ */
+function planContacts(
+	state: CatalogState,
+	organization: OrganizationEntry | null,
+	contactsText: string | null,
+	issues: CatalogRowIssue[]
+): ParsedContact[] {
+	if (contactsText === null) {
+		return [];
+	}
+
+	const parsed = parseContacts(contactsText);
+
+	for (const chunk of parsed.unparsed) {
+		issues.push({
+			field: 'contacts',
+			message: `Контакт «${chunk}» не разобран: нужны хотя бы фамилия и имя`
+		});
+	}
+
+	const planned: ParsedContact[] = [];
+	const taken = new Set<string>();
+
+	for (const contact of parsed.contacts) {
+		const person = createPersonSchema.safeParse({
+			lastName: contact.lastName,
+			firstName: contact.firstName,
+			middleName: contact.middleName,
+			email: contact.email,
+			phone: contact.phone,
+			notes: null
+		});
+
+		if (!person.success) {
+			for (const problem of person.error.issues) {
+				issues.push({
+					field: 'contacts',
+					message: `Контакт «${contactFullName(contact)}»: ${problem.message}`
+				});
+			}
+
+			continue;
+		}
+
+		const position = affiliationPositionSchema.safeParse(contact.position);
+
+		if (!position.success) {
+			issues.push({
+				field: 'contacts',
+				message: `Контакт «${contactFullName(contact)}»: ${position.error.issues[0].message}`
+			});
+
+			continue;
+		}
+
+		const keys = contactKeys(contact);
+		const known = keys.some(
+			(key) =>
+				taken.has(key) ||
+				(organization !== null && state.organizationContacts.has(contactKey(organization.id, key)))
+		);
+
+		if (known) {
+			continue;
+		}
+
+		for (const key of keys) {
+			taken.add(key);
+		}
+
+		planned.push(contact);
+	}
+
+	return planned;
+}
+
+/**
+ * Примечание карточки вуза после того, как комментарий строки к нему дописан.
+ *
+ * Дописывается, а не затирает: чужая заметка на карточке — это работа человека,
+ * и файл её не отменяет. Тот же комментарий второй раз ничего не меняет — по
+ * этому и работает повторная загрузка.
+ */
+function planNotes(
+	organization: OrganizationEntry | null,
+	comment: string | null,
+	issues: CatalogRowIssue[]
+): NotesPlan {
+	if (comment === null) {
+		return null;
+	}
+
+	const current = organization?.notes ?? null;
+
+	// Строки примечания сравниваются без переводов строки: текст из формы
+	// приходит с `\r\n`, а дописанный загрузкой — с `\n`, и один и тот же
+	// комментарий иначе дописался бы второй раз.
+	if (current !== null && current.split(/\r?\n/).some((line) => line.trim() === comment)) {
+		return null;
+	}
+
+	const next = current === null || current === '' ? comment : `${current}\n${comment}`;
+	const checked = organizationNotesSchema.safeParse(next);
+
+	if (!checked.success) {
+		issues.push({ field: 'comment', message: checked.error.issues[0].message });
+
+		return null;
+	}
+
+	return { next };
 }
 
 /**
@@ -1066,6 +1653,12 @@ async function applyCatalogRow(
 		}
 	}
 
+	/* --- менеджер, контакты и комментарий: записи вокруг справочника --- */
+
+	const managerPlan = planManager(state, organization, row.extra.managerName, issues);
+	const contactsPlan = planContacts(state, organization, row.extra.contactsText, issues);
+	const notesPlan = planNotes(organization, row.extra.comment, issues);
+
 	// Дальше идут записи, и до них доходит только строка без единой претензии:
 	// наполовину применённой строки не бывает.
 	if (issues.length > 0) {
@@ -1081,15 +1674,21 @@ async function applyCatalogRow(
 			kind: 'educational_institution'
 		});
 
-		organization = { id, inn: values.organizationInn, name, inScope: true };
+		organization = { id, inn: values.organizationInn, name, inScope: true, notes: null };
 		registerOrganization(state, organization, [name]);
+		// Ответственным за новый вуз сервис справочника ставит автора записи;
+		// строка с менеджером сменит его ниже, а без менеджера так и останется.
+		registerResponsible(state, id, {
+			generalUserId: state.actor.userId,
+			hasDirectional: false
+		});
 		creations.push({ target: 'organization', subject: name });
 	}
 
 	if (vendorName !== null && vendor === null) {
 		const id = await writer.organization({ name: vendorName, inn: null, kind: 'customer_company' });
 
-		vendor = { id, inn: null, name: vendorName, inScope: true };
+		vendor = { id, inn: null, name: vendorName, inScope: true, notes: null };
 		registerOrganization(state, vendor, [vendorName]);
 		creations.push({ target: 'vendor', subject: vendorName });
 	}
@@ -1194,6 +1793,42 @@ async function applyCatalogRow(
 		registerContractItem(state, contract.id, product.id, contractItem);
 	}
 
+	if (managerPlan !== null) {
+		await writer.assignResponsible({
+			organizationId: organization.id,
+			userId: managerPlan.user.id
+		});
+		registerResponsible(state, organization.id, {
+			generalUserId: managerPlan.user.id,
+			hasDirectional: false
+		});
+		creations.push({ target: 'responsible', subject: managerPlan.user.fullName });
+	}
+
+	for (const contact of contactsPlan) {
+		await writer.contact({ organizationId: organization.id, contact });
+		registerContact(state, organization.id, contact);
+		creations.push({
+			target: 'contact',
+			subject: `${contactFullName(contact)} · ${organization.name}`
+		});
+	}
+
+	if (notesPlan !== null) {
+		await writer.organizationNotes({ organizationId: organization.id, notes: notesPlan.next });
+
+		changes.push({
+			target: 'organization',
+			subject: organization.name,
+			field: 'Примечание',
+			from: organization.notes,
+			to: notesPlan.next
+		});
+		// Снимок идёт дальше с новым примечанием: вторая строка про тот же вуз с
+		// тем же комментарием обязана ответить «без изменений».
+		organization.notes = notesPlan.next;
+	}
+
 	return {
 		rowNo: row.rowNo,
 		action: catalogRowAction({ issues, creations, changes }),
@@ -1293,12 +1928,13 @@ function importScopeFilter(ctx: ActorContext): SQL {
  * Видны ли вызывающему строки файла как есть.
  *
  * Разобранные значения строки — это справочник: вуз, продукт, договор, сроки.
- * `raw` — это сам файл рабочей таблицы заказчика, и в нём лежат колонки,
- * которых импорт не переносит вовсе: ФИО менеджера, ответственные от вуза,
- * комментарий (`docs/directory.md`, «Что импорт не переносит»). Поэтому файл
- * остаётся у того, кто его принёс, и у полного доступа, а область на строки
- * его не открывает: руководитель вуза из файла видит, что загрузка сделала со
- * справочником, но не чужую переписку в соседней колонке.
+ * `raw` — это сам файл рабочей таблицы заказчика: там и колонки, которые никуда
+ * не сопоставили вовсе, и свободный текст с ФИО, телефонами и перепиской
+ * (`docs/directory.md`, «Допущения S4.1a»). Перенесённое из него видно по своим
+ * правилам — контакт по правилам людей, назначение по карточке вуза, — а сама
+ * ячейка остаётся у того, кто файл принёс, и у полного доступа: руководитель
+ * вуза из файла видит, что загрузка сделала со справочником, но не соседнюю
+ * колонку с чужой перепиской.
  */
 function canReadImportRaw(ctx: ActorContext, row: { createdBy: string | null }): boolean {
 	return (
@@ -1598,6 +2234,10 @@ export async function confirmCatalogImport(
 				rowNo: item.rowNo,
 				origin: item.origin,
 				raw: item.raw,
+				// Менеджер, контакты и комментарий читаются из сохранённой строки
+				// файла по сохранённому сопоставлению: своих колонок у них нет, а
+				// файл между предпросмотром и подтверждением не перечитывается.
+				extra: extraFromRaw(item.raw, row.mapping),
 				issues: [],
 				values: {
 					organizationName: item.organizationName,
@@ -1615,10 +2255,14 @@ export async function confirmCatalogImport(
 				}
 			}));
 
-			const results = await applyCatalogRows(
-				await loadCatalogState(ctx, tx),
-				databaseWriter(ctx, tx),
-				sourceRows
+			// Область сбора следа просмотра: заведение контакта возвращает его
+			// карточку, и каждый такой возврат — обращение к персональным данным.
+			// Одна область на всю загрузку вместо события на каждого человека.
+			const state = await loadCatalogState(ctx, tx);
+			const results = await withPiiTrace(
+				ctx,
+				() => applyCatalogRows(state, databaseWriter(ctx, tx), sourceRows),
+				tx
 			);
 
 			const byRowNo = new Map(results.map((result) => [result.rowNo, result]));

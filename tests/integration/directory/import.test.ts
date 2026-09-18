@@ -8,16 +8,20 @@
  * договором, «строка с ошибкой ничего не записала») выполняются на живой схеме.
  */
 import { readFileSync } from 'node:fs';
-import { and, eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CatalogImportView } from '$lib/contracts/directory-import';
 import {
+	affiliations,
 	auditEvents,
+	consents,
 	contractItems,
 	contracts,
 	directions,
 	directoryImportRows,
+	organizationResponsibles,
 	organizations,
+	people,
 	productDirections,
 	products
 } from '$lib/server/db/schema';
@@ -33,7 +37,13 @@ import {
 	suggestCatalogMapping
 } from '$lib/server/directory/import';
 import { ConflictError, ForbiddenError, NotFoundError } from '$lib/server/errors';
-import { insertOrganization, scopedActor, startTestDatabase, testActor } from '../helpers/db';
+import {
+	insertOrganization,
+	insertUser,
+	scopedActor,
+	startTestDatabase,
+	testActor
+} from '../helpers/db';
 import type { TestDatabase } from '../helpers/db';
 
 // См. комментарий в `helpers/db.ts`: без этого сервисы пойдут в базу разработчика.
@@ -649,5 +659,292 @@ describe('видимость загрузки каталога', () => {
 
 		expect(rows.items[0].raw).not.toBeNull();
 		expect((await getCatalogImportPreview(admin, importId)).totalRows).toBe(10);
+	});
+});
+
+describe('менеджер, контакты и комментарий строки', () => {
+	/** Сотрудники оператора, которых называет колонка менеджера файла. */
+	async function seedStaff(): Promise<{ veresova: string; zotov: string }> {
+		const veresova = await insertUser(database.db, {
+			roleId: 'manager',
+			fullName: 'Вересова Анна Сергеевна'
+		});
+		const zotov = await insertUser(database.db, {
+			roleId: 'manager',
+			fullName: 'Зотов Павел Игоревич'
+		});
+
+		// Однофамилец с теми же инициалами: под «Зотов П. И.» строка обязана
+		// отказать, а не выбрать одного из двух наугад.
+		await insertUser(database.db, { roleId: 'manager', fullName: 'Зотов Пётр Ильич' });
+
+		return { veresova, zotov };
+	}
+
+	/** Действующий ответственный вуза целиком. */
+	async function generalResponsible(organizationId: string): Promise<string | null> {
+		const [row] = await database.db
+			.select({ userId: organizationResponsibles.userId })
+			.from(organizationResponsibles)
+			.where(
+				and(
+					eq(organizationResponsibles.organizationId, organizationId),
+					isNull(organizationResponsibles.validTo),
+					isNull(organizationResponsibles.directionId)
+				)
+			);
+
+		return row?.userId ?? null;
+	}
+
+	/** Претензии строк, которые импорт не применил. */
+	async function issuesOf(ctx: ReturnType<typeof testActor>, importId: string): Promise<string[]> {
+		const failed = await listCatalogImportRows(ctx, importId, {
+			action: 'error',
+			page: 1,
+			pageSize: 50
+		});
+
+		return failed.items.flatMap((row) => row.issues.map((issue) => issue.message));
+	}
+
+	it('раскладывает три колонки по действиям и считает их одинаково до и после', async () => {
+		await seedCatalog();
+		await seedStaff();
+
+		const ctx = testActor();
+		const record = await preview(ctx, fixture('catalog-people.csv'), 'таблица.csv');
+
+		expect(COUNTS(record)).toEqual({
+			rowCount: 7,
+			createCount: 3,
+			updateCount: 0,
+			unchangedCount: 1,
+			errorCount: 3
+		});
+
+		const applied = await confirmCatalogImport(ctx, record.id);
+
+		expect(COUNTS(applied)).toEqual(COUNTS(record));
+	});
+
+	it('назначает ответственного по ФИО и по фамилии с инициалами', async () => {
+		const catalog = await seedCatalog();
+		const staff = await seedStaff();
+
+		const ctx = testActor();
+		const record = await preview(ctx, fixture('catalog-people.csv'), 'таблица.csv');
+		await confirmCatalogImport(ctx, record.id);
+
+		expect(await generalResponsible(catalog.szpu)).toBe(staff.veresova);
+		// «Вересова А.С.» — тот же человек: ключ «фамилия и инициалы».
+		expect(await generalResponsible(catalog.pupi)).toBe(staff.veresova);
+
+		// Новый вуз достаётся названному в файле, а не тому, кто нажал кнопку.
+		const [created] = await database.db
+			.select({ id: organizations.id })
+			.from(organizations)
+			.where(eq(organizations.shortName, 'ТГУИ'));
+
+		expect(await generalResponsible(created.id)).toBe(staff.zotov);
+
+		// Назначение записано историей, а не подменой строки: у прежней есть конец.
+		const history = await database.db
+			.select({
+				userId: organizationResponsibles.userId,
+				validTo: organizationResponsibles.validTo
+			})
+			.from(organizationResponsibles)
+			.where(eq(organizationResponsibles.organizationId, created.id));
+
+		expect(history).toHaveLength(2);
+		expect(history.filter((row) => row.validTo === null)).toHaveLength(1);
+	});
+
+	it('не заменяет чужое назначение и отказывает на однофамильцах', async () => {
+		await seedCatalog();
+		await seedStaff();
+
+		const ctx = testActor();
+		const record = await preview(ctx, fixture('catalog-people.csv'), 'таблица.csv');
+		const messages = await issuesOf(ctx, record.id);
+
+		expect(messages.some((message) => message.includes('уже отвечает другой сотрудник'))).toBe(
+			true
+		);
+		expect(messages.some((message) => message.includes('подходит несколько сотрудников'))).toBe(
+			true
+		);
+	});
+
+	it('заводит контакт вуза с ролью, согласием и сроком полномочий', async () => {
+		const catalog = await seedCatalog();
+		await seedStaff();
+
+		const ctx = testActor();
+		const record = await preview(ctx, fixture('catalog-people.csv'), 'таблица.csv');
+		await confirmCatalogImport(ctx, record.id);
+
+		const [contact] = await database.db
+			.select({
+				personId: people.id,
+				email: people.email,
+				phone: people.phone,
+				position: affiliations.position,
+				roleKind: affiliations.roleKind,
+				validTo: affiliations.validTo
+			})
+			.from(affiliations)
+			.innerJoin(people, eq(people.id, affiliations.personId))
+			.where(and(eq(affiliations.organizationId, catalog.szpu), eq(people.lastName, 'Иванова')));
+
+		expect(contact.email).toBe('m.ivanova@szpu.ru');
+		expect(contact.phone).toBe('+7 (999) 123-45-67');
+		expect(contact.roleKind).toBe('other');
+		expect(contact.validTo).toBeNull();
+
+		// Основание обработки записано вместе с человеком: контакт из рабочей
+		// таблицы лежит по договору с вузом, а не по согласию, которого никто не
+		// собирал.
+		const [consent] = await database.db
+			.select({ basis: consents.basis })
+			.from(consents)
+			.where(eq(consents.personId, contact.personId));
+
+		expect(consent.basis).toBe('contract');
+	});
+
+	it('не заводит того же человека дважды и называет неразобранный кусок', async () => {
+		const catalog = await seedCatalog();
+		await seedStaff();
+
+		const ctx = testActor();
+		const record = await preview(ctx, fixture('catalog-people.csv'), 'таблица.csv');
+		await confirmCatalogImport(ctx, record.id);
+
+		// Иванова названа в двух строках — полным ФИО и инициалами с той же почтой.
+		expect(
+			await database.db
+				.select({ id: people.id })
+				.from(affiliations)
+				.innerJoin(people, eq(people.id, affiliations.personId))
+				.where(and(eq(affiliations.organizationId, catalog.szpu), eq(people.lastName, 'Иванова')))
+		).toHaveLength(1);
+
+		const messages = await issuesOf(ctx, record.id);
+
+		expect(messages.some((message) => message.includes('приёмная'))).toBe(true);
+	});
+
+	it('дописывает комментарий в примечание вуза, не затирая прежнее', async () => {
+		const catalog = await seedCatalog();
+		await seedStaff();
+
+		await database.db
+			.update(organizations)
+			.set({ notes: 'Договор продлевали в августе' })
+			.where(eq(organizations.id, catalog.szpu));
+
+		const ctx = testActor();
+		const record = await preview(ctx, fixture('catalog-people.csv'), 'таблица.csv');
+		await confirmCatalogImport(ctx, record.id);
+
+		const [organization] = await database.db
+			.select({ notes: organizations.notes })
+			.from(organizations)
+			.where(eq(organizations.id, catalog.szpu));
+
+		// Прежняя заметка на месте, комментарий дописан один раз: вторая строка
+		// файла говорит то же самое и ничего не меняет.
+		expect(organization.notes).toBe('Договор продлевали в августе\nЖдут смету на 2027 год');
+	});
+
+	it('повторная загрузка того же файла ничего не меняет', async () => {
+		await seedCatalog();
+		await seedStaff();
+
+		const ctx = testActor();
+		const first = await preview(ctx, fixture('catalog-people.csv'), 'таблица.csv');
+		await confirmCatalogImport(ctx, first.id);
+
+		const peopleAfterFirst = await database.db.select({ id: people.id }).from(people);
+		const second = await preview(ctx, fixture('catalog-people.csv'), 'таблица.csv');
+
+		expect(COUNTS(second)).toEqual({
+			rowCount: 7,
+			createCount: 0,
+			updateCount: 0,
+			unchangedCount: 4,
+			errorCount: 3
+		});
+
+		await confirmCatalogImport(ctx, second.id);
+
+		expect(await database.db.select({ id: people.id }).from(people)).toHaveLength(
+			peopleAfterFirst.length
+		);
+	});
+
+	it('руководитель заводит контакт у вуза, который завела эта же строка', async () => {
+		// Вуз, заведённый загрузкой, попадает в область руководителя назначением —
+		// сначала на него самого, потом на менеджера из файла. Контакт заводится
+		// после этого, и его сервис проверяет область тем же условием: до
+		// назначения нового вуза для руководителя не существует вовсе.
+		const catalog = await seedCatalog();
+		const staff = await seedStaff();
+
+		const leadId = await insertUser(database.db, {
+			roleId: 'lead',
+			fullName: 'Руководитель Загрузки'
+		});
+
+		await scopedActor(database.db, {
+			roleId: 'lead',
+			userId: leadId,
+			organizationIds: [catalog.szpu, catalog.pupi]
+		});
+
+		// Область руководителя — он сам и его подчинённые: обоих менеджеров файла
+		// он назначать вправе.
+		const lead = testActor({
+			roleId: 'lead',
+			userId: leadId,
+			scopeUserIds: [leadId, staff.veresova, staff.zotov]
+		});
+
+		const record = await preview(lead, fixture('catalog-people.csv'), 'таблица.csv');
+		await confirmCatalogImport(lead, record.id);
+
+		const [created] = await database.db
+			.select({ id: organizations.id })
+			.from(organizations)
+			.where(eq(organizations.shortName, 'ТГУИ'));
+
+		expect(await generalResponsible(created.id)).toBe(staff.zotov);
+		expect(
+			await database.db
+				.select({ id: people.id })
+				.from(affiliations)
+				.innerJoin(people, eq(people.id, affiliations.personId))
+				.where(and(eq(affiliations.organizationId, created.id), eq(people.lastName, 'Сидорова')))
+		).toHaveLength(1);
+	});
+
+	it('руководитель не назначает сотрудника вне своей области', async () => {
+		const catalog = await seedCatalog();
+		await seedStaff();
+
+		// Вересовой руководителю не подчинён: назначить ей вуз он не может — иначе
+		// раздавал бы работу людям, которых потом не увидит.
+		const lead = await scopedActor(database.db, {
+			roleId: 'lead',
+			organizationIds: [catalog.szpu, catalog.pupi]
+		});
+
+		const record = await preview(lead, fixture('catalog-people.csv'), 'таблица.csv');
+		const messages = await issuesOf(lead, record.id);
+
+		expect(messages.some((message) => message.includes('вне вашей области доступа'))).toBe(true);
+		expect(await generalResponsible(catalog.szpu)).not.toBeNull();
 	});
 });

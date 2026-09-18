@@ -33,6 +33,9 @@ import {
 	users
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
+
+/** Кто выполняет запрос: транзакция вызывающего или общий пул. */
+type Executor = Tx | ReturnType<typeof getDb>;
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
 import { requirePermission, scopeFilter } from '../rbac';
 import { setResponsible } from '../stages/commands';
@@ -194,10 +197,17 @@ async function openInteractionsOf(
  * новому — в той же транзакции, той же командой, что и передача с карточки
  * (`setResponsible`): иначе половина работы осталась бы у человека, который вуз
  * уже не ведёт, и передавать её пришлось бы поштучно.
+ *
+ * `tx` передаёт тот, кто уже держит транзакцию, — импорт каталога назначает
+ * ответственного вместе с заведением вуза. Своей транзакции такой вызов не
+ * начинает и своим соединением ничего не читает: вуз, заведённый секунду назад,
+ * в общем пуле ещё не виден, а второе соединение под уже открытой транзакцией
+ * запирает пул.
  */
 export async function assignResponsible(
 	ctx: ActorContext,
-	input: AssignResponsibleInput
+	input: AssignResponsibleInput,
+	tx?: Tx
 ): Promise<void> {
 	await requirePermission(ctx, 'responsibles.manage', {
 		type: 'directory.responsible_assigned',
@@ -211,13 +221,13 @@ export async function assignResponsible(
 		requirePermission(ctx, 'interactions.reassign');
 	}
 
-	await assertOrganizationAssignable(ctx, input.organizationId);
-	await assertAssignable(ctx, input.userId);
+	const executor: Executor = tx ?? getDb();
 
-	const db = getDb();
+	await assertOrganizationAssignable(ctx, input.organizationId, executor);
+	await assertAssignable(ctx, input.userId, executor);
 
 	if (input.directionId !== null) {
-		const [direction] = await db
+		const [direction] = await executor
 			.select({ id: directions.id })
 			.from(directions)
 			.where(eq(directions.id, input.directionId))
@@ -228,7 +238,7 @@ export async function assignResponsible(
 		}
 	}
 
-	const current = await db
+	const current = await executor
 		.select({
 			id: organizationResponsibles.id,
 			userId: organizationResponsibles.userId,
@@ -266,22 +276,31 @@ export async function assignResponsible(
 		throw new ConflictError('Этот сотрудник уже отвечает за вуз по этому направлению');
 	}
 
-	await withTransaction(ctx, async (tx) => {
+	const write = async (executing: Tx): Promise<void> => {
 		// Момент операции считает база: у неё и у приложения часы разные, а две
 		// строки истории обязаны сойтись символ в символ. Значение возвращается
-		// текстом и уходит обратно приведением: у драйвера для `now()` своего
-		// разбора нет, а точность метки — микросекунды, которых у Date нет.
-		const [{ at }] = await tx.execute<{ at: string }>(sql`select now()::text as at`);
+		// текстом и уходит обратно приведением: у драйвера для `clock_timestamp()`
+		// своего разбора нет, а точность метки — микросекунды, которых у Date нет.
+		//
+		// Часы, а не `now()`: `now()` — это момент начала транзакции, и назначение,
+		// прежняя строка которого записана этой же транзакцией (импорт каталога
+		// заводит вуз и тут же отдаёт его менеджеру из файла), закрылось бы тем же
+		// мгновением, в которое открылось. Такую строку база и не принимает —
+		// `organization_responsibles_period_ordered` требует, чтобы конец был
+		// строго позже начала.
+		const [{ at }] = await executing.execute<{ at: string }>(
+			sql`select clock_timestamp()::text as at`
+		);
 		const moment = sql`${at}::timestamptz`;
 
 		if (replaced !== undefined) {
-			await tx
+			await executing
 				.update(organizationResponsibles)
 				.set({ validTo: moment, updatedAt: sql`now()` })
 				.where(eq(organizationResponsibles.id, replaced.id));
 		}
 
-		await tx.insert(organizationResponsibles).values({
+		await executing.insert(organizationResponsibles).values({
 			organizationId: input.organizationId,
 			userId: input.userId,
 			directionId: input.directionId,
@@ -295,7 +314,7 @@ export async function assignResponsible(
 		const candidates =
 			replaced === undefined || !input.transferInteractions
 				? []
-				: await openInteractionsOf(tx, {
+				: await openInteractionsOf(executing, {
 						organizationId: input.organizationId,
 						ownerUserId: replaced.userId,
 						directionId: input.directionId
@@ -304,7 +323,11 @@ export async function assignResponsible(
 		const transferred =
 			candidates.length === 0
 				? 0
-				: await setResponsible(ctx, { interactionIds: candidates, userId: input.userId }, tx);
+				: await setResponsible(
+						ctx,
+						{ interactionIds: candidates, userId: input.userId },
+						executing
+					);
 
 		await recordAuditEvent(
 			ctx,
@@ -324,9 +347,11 @@ export async function assignResponsible(
 						: { previousUserId: replaced.userId, transferredCount: transferred })
 				}
 			},
-			tx
+			executing
 		);
-	});
+	};
+
+	await (tx === undefined ? withTransaction(ctx, write) : write(tx));
 }
 
 /**
@@ -397,9 +422,10 @@ export async function releaseResponsible(ctx: ActorContext, responsibleId: strin
  */
 async function assertOrganizationAssignable(
 	ctx: ActorContext,
-	organizationId: string
+	organizationId: string,
+	executor: Executor = getDb()
 ): Promise<void> {
-	const [row] = await getDb()
+	const [row] = await executor
 		.select({ id: organizations.id, kind: organizations.kind })
 		.from(organizations)
 		.where(and(eq(organizations.id, organizationId), scopeFilter(ctx, organizations.id)))
@@ -430,8 +456,12 @@ async function assertOrganizationAssignable(
  * мои подчинённые», поэтому проверка сводится к ней. Администратор не ограничен
  * ничем.
  */
-async function assertAssignable(ctx: ActorContext, userId: string): Promise<void> {
-	const [account] = await getDb()
+async function assertAssignable(
+	ctx: ActorContext,
+	userId: string,
+	executor: Executor = getDb()
+): Promise<void> {
+	const [account] = await executor
 		.select({ id: users.id, isActive: users.isActive, roleId: users.roleId })
 		.from(users)
 		.where(eq(users.id, userId))

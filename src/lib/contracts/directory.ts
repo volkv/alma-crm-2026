@@ -108,6 +108,13 @@ const innField = optionalText(12).refine((value) => value === null || isValidInn
 	error: 'ИНН должен состоять из 10 или 12 цифр и проходить проверку контрольной суммы'
 });
 
+/**
+ * Примечание карточки организации. Отдельным именем по той же причине, что и
+ * должность: импорт каталога дописывает в него комментарий строки и обязан
+ * отказать по строке, а не уронить загрузку на записи.
+ */
+export const organizationNotesSchema = optionalText(4000);
+
 const organizationFields = {
 	kind: z.enum(ORGANIZATION_KINDS, { error: 'Выберите тип организации' }),
 	/** Заполнен ровно у учебных заведений — это же правило проверяет база. */
@@ -125,7 +132,7 @@ const organizationFields = {
 		.url({ error: 'Сайт указывают полным адресом, вместе с https://' })
 		.nullable()
 		.default(null),
-	notes: optionalText(4000),
+	notes: organizationNotesSchema,
 	isActive: z.boolean().default(true),
 	...externalRefFields
 };
@@ -239,12 +246,19 @@ export const setRetentionSchema = z.object({
 	retentionUntil: optionalIsoDate('Срок хранения указан неверно')
 });
 
+/**
+ * Должность в роли человека. Отдельным именем, потому что её проверяет не
+ * только форма: импорт каталога собирает должность из ячейки контактов и
+ * обязан отказать по строке той же мерой, а не уронить всю загрузку на записи.
+ */
+export const affiliationPositionSchema = requiredText(300, 'Укажите должность');
+
 const affiliationFields = {
 	personId: id('Выберите человека'),
 	organizationId: id('Выберите организацию'),
 	/** Площадка обязана принадлежать той же организации — это проверяет база. */
 	siteId: optionalId('Некорректный идентификатор площадки'),
-	position: requiredText(300, 'Укажите должность'),
+	position: affiliationPositionSchema,
 	roleKind: z.enum(AFFILIATION_ROLE_KINDS, { error: 'Выберите роль в организации' }),
 	/** Основной контакт организации по процессу: такой отмечают для быстрой связи. */
 	isPrimary: z.boolean().default(false),

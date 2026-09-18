@@ -1,6 +1,9 @@
 <script lang="ts" module>
-	/** Поле, в которое можно сопоставить колонку: значение и его название. */
-	export type MappingFieldOption = { value: string; label: string };
+	/**
+	 * Поле, в которое можно сопоставить колонку: значение, название и, если оно
+	 * есть, допущение — то, что колонка будет означать после выбора.
+	 */
+	export type MappingFieldOption = { value: string; label: string; hint?: string };
 
 	/** Предложение по колонке; `field: null` — предложить нечего. */
 	export type MappingSuggestion = { column: string; field: string | null };
@@ -51,6 +54,13 @@
 	} = $props();
 
 	const labels = $derived(new Map(fields.map((field) => [field.value, field.label])));
+	const hints = $derived(
+		new Map(
+			fields
+				.filter((field) => field.hint !== undefined)
+				.map((field) => [field.value, field.hint as string])
+		)
+	);
 
 	function advisedFor(column: string): string | null {
 		return advice.find((item) => item.column === column)?.field ?? null;
@@ -120,6 +130,13 @@
 									<SparklesIcon class="size-3" aria-hidden="true" />
 									Предложено
 								</StatusBadge>
+							{/if}
+							<!-- Допущение выбранного поля: человек читает его до того, как
+								нажмёт «дальше», а не после применения. -->
+							{#if hints.has(chosen[column])}
+								<p class="text-xs text-muted-foreground" data-slot="field-hint">
+									{hints.get(chosen[column])}
+								</p>
 							{/if}
 						</div>
 					</Table.Cell>
