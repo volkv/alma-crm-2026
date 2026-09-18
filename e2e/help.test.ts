@@ -114,6 +114,72 @@ test('печатная страница содержит все статьи о�
 	await expect(page.getByRole('heading', { level: 3, name: FIRST_ARTICLE })).toBeVisible();
 });
 
+/** Адреса статей из оглавления: реестр статей живёт в сборке, а не в тесте. */
+async function articleAddresses(page: import('@playwright/test').Page): Promise<string[]> {
+	await page.goto('/help');
+
+	return page
+		.getByRole('link')
+		.evaluateAll((links) =>
+			links
+				.map((link) => link.getAttribute('href') ?? '')
+				.filter((href) => /^\/help\/(user|admin)\//.test(href))
+		);
+}
+
+test('у каждой статьи есть снимок экрана, и он отдаётся', async ({ page }) => {
+	const addresses = await articleAddresses(page);
+
+	expect(addresses.length).toBeGreaterThanOrEqual(10);
+
+	for (const address of addresses) {
+		await page.goto(address);
+
+		// Картинки статьи адресуются от корня: тот же текст показывает страница
+		// печати, которая лежит на другом уровне адреса, и относительная ссылка
+		// развалилась бы ровно там, откуда собирают PDF.
+		const sources = await page
+			.locator('img')
+			.evaluateAll((images) =>
+				images
+					.map((image) => image.getAttribute('src') ?? '')
+					.filter((src) => src.startsWith('/help/'))
+			);
+
+		expect(sources, `статья ${address} без иллюстраций`).not.toHaveLength(0);
+
+		for (const source of new Set(sources)) {
+			const response = await page.request.get(source);
+
+			expect(response.status(), `${source} со страницы ${address}`).toBe(200);
+		}
+
+		// Снимок без подписи бесполезен тому, кто читает страницу голосом.
+		const described = await page
+			.locator('img[src^="/help/"]')
+			.evaluateAll((images) => images.every((image) => (image.getAttribute('alt') ?? '') !== ''));
+
+		expect(described, `статья ${address}: у снимка нет подписи`).toBe(true);
+	}
+});
+
+test('печатная версия несёт те же снимки, что и статьи', async ({ page }) => {
+	const addresses = await articleAddresses(page);
+
+	await page.goto('/help/print');
+
+	const printed = await page
+		.locator('img')
+		.evaluateAll((images) =>
+			images
+				.map((image) => image.getAttribute('src') ?? '')
+				.filter((src) => src.startsWith('/help/'))
+		);
+
+	// Хотя бы по одному снимку на статью: иначе PDF окажется беднее экрана.
+	expect(printed.length).toBeGreaterThanOrEqual(addresses.length);
+});
+
 test('справка помещается и на телефон, и на ноутбук', async ({ page }) => {
 	for (const size of [NARROW, WIDE]) {
 		await page.setViewportSize(size);

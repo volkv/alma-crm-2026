@@ -12,19 +12,60 @@
  *
  * Запуск и предварительные условия — `docs/readme-media.md`.
  *
+ * Наборов кадров два, и живут они разной жизнью: снимки README рассказывают о
+ * продукте снаружи, снимки справки стоят внутри статей и едут вместе с
+ * приложением. Общее у них всё, кроме списка кадров, каталога и размера окна, —
+ * поэтому набор выбирается ключом, а скрипт остаётся один.
+ *
  * ```
- * node scripts/readme-media/capture.ts                     # все кадры
+ * node scripts/readme-media/capture.ts                     # все кадры README
  * node scripts/readme-media/capture.ts reports exchange    # только названные
+ * node scripts/readme-media/capture.ts --set help          # кадры справки
  * node scripts/readme-media/capture.ts --list              # что вообще снимает
  * ```
  */
-import { mkdir } from 'node:fs/promises';
+import { execFile } from 'node:child_process';
+import { mkdir, rename, stat } from 'node:fs/promises';
 import path from 'node:path';
-import { chromium, type Browser, type BrowserContext } from '@playwright/test';
+import { promisify } from 'node:util';
+import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
 import { SHOTS, VIEWPORT, type Shot, type ShotRole } from './shots.ts';
+import { HELP_SHOTS, HELP_VIEWPORT } from './help-shots.ts';
 
-/** Куда складываются кадры: тот же каталог, на который ссылается README. */
-const OUTPUT = path.join(import.meta.dirname, '..', '..', 'docs', 'media');
+const run = promisify(execFile);
+
+/**
+ * Кадр со своим шагом на странице.
+ *
+ * Кадры README снимаются с адреса, и этого им хватает. Справке нужны и такие
+ * экраны, которых по адресу не бывает: палитра поиска открывается клавишами, а
+ * карточка документа лежит за нажатием в списке. Поэтому кадр может принести
+ * свой шаг — он делается после того, как страница ожила, и до съёмки.
+ */
+export type Frame = Shot & { prepare?: (page: Page) => Promise<void> };
+
+type FrameSet = {
+	shots: readonly Frame[];
+	/** Куда складываются кадры: имя кадра — путь внутри этого каталога. */
+	output: string;
+	viewport: { width: number; height: number };
+	/**
+	 * Пережимать ли готовый PNG.
+	 *
+	 * Кадры справки едут внутри образа и тянутся в браузер читателя, поэтому их
+	 * вес — часть продукта. Кадры README лежат в репозитории и открываются
+	 * страницей GitHub по одному.
+	 */
+	optimize: boolean;
+};
+
+const MEDIA = path.join(import.meta.dirname, '..', '..', 'docs', 'media');
+const HELP = path.join(import.meta.dirname, '..', '..', 'static', 'help');
+
+const SETS: Record<string, FrameSet> = {
+	readme: { shots: SHOTS, output: MEDIA, viewport: VIEWPORT, optimize: false },
+	help: { shots: HELP_SHOTS, output: HELP, viewport: HELP_VIEWPORT, optimize: true }
+};
 
 function requiredEnv(name: string, fallback?: string): string {
 	const value = process.env[name] ?? fallback;
@@ -78,12 +119,13 @@ async function signIn(context: BrowserContext, login: string): Promise<void> {
  */
 async function sessions(
 	browser: Browser,
-	roles: Set<ShotRole>
+	roles: Set<ShotRole>,
+	viewport: { width: number; height: number }
 ): Promise<Map<ShotRole, BrowserContext>> {
 	const contexts = new Map<ShotRole, BrowserContext>();
 
 	for (const role of roles) {
-		const context = await browser.newContext({ viewport: VIEWPORT, deviceScaleFactor: 1 });
+		const context = await browser.newContext({ viewport, deviceScaleFactor: 1 });
 
 		if (role !== 'anonymous') {
 			await signIn(context, role);
@@ -95,7 +137,36 @@ async function sessions(
 	return contexts;
 }
 
-async function capture(context: BrowserContext, shot: Shot): Promise<string> {
+/**
+ * Пережать PNG палитрой.
+ *
+ * Снимок интерфейса — это сплошные заливки, рамки и текст: цветов на экране
+ * заметно меньше трёхсот, а лежит он полноцветной картинкой. Палитра из 256
+ * цветов отдаёт ту же картинку втрое-вчетверо легче и без потерь, которые
+ * видно: считается она по самому кадру, а не берётся стандартная. Размывание
+ * выключено намеренно — на тексте оно даёт рябь и растит файл.
+ *
+ * Пережимает `ffmpeg`, которым в этом же каталоге собираются ролики: своей
+ * зависимости ради одной команды в проекте не появляется.
+ */
+async function shrink(file: string): Promise<void> {
+	const packed = `${file}.packed.png`;
+
+	await run('ffmpeg', [
+		'-y',
+		'-loglevel',
+		'error',
+		'-i',
+		file,
+		'-vf',
+		'split[source][copy];[source]palettegen=max_colors=256:stats_mode=full[palette];[copy][palette]paletteuse=dither=none',
+		packed
+	]);
+
+	await rename(packed, file);
+}
+
+async function capture(context: BrowserContext, shot: Frame, set: FrameSet): Promise<string> {
 	const page = await context.newPage();
 
 	try {
@@ -111,6 +182,12 @@ async function capture(context: BrowserContext, shot: Shot): Promise<string> {
 			await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: 20_000 });
 		}
 
+		// Шаг кадра идёт до ожидания текста: ждут обычно того, что этот шаг и
+		// открывает.
+		if (shot.prepare !== undefined) {
+			await shot.prepare(page);
+		}
+
 		if (shot.waitFor !== undefined) {
 			await page.getByText(shot.waitFor).first().waitFor({ state: 'visible', timeout: 20_000 });
 		}
@@ -123,9 +200,16 @@ async function capture(context: BrowserContext, shot: Shot): Promise<string> {
 		// карточки: кадр снимается после того, как они закончились.
 		await page.waitForTimeout(600);
 
-		const file = path.join(OUTPUT, `${shot.name}.png`);
+		const file = path.join(set.output, `${shot.name}.png`);
 
+		// Имя кадра может вести по каталогам (`user/start-1`): снимки справки
+		// разложены по разделам так же, как её статьи.
+		await mkdir(path.dirname(file), { recursive: true });
 		await page.screenshot({ path: file, fullPage: shot.fullPage === true });
+
+		if (set.optimize) {
+			await shrink(file);
+		}
 
 		return file;
 	} finally {
@@ -133,11 +217,31 @@ async function capture(context: BrowserContext, shot: Shot): Promise<string> {
 	}
 }
 
+/**
+ * Какой набор кадров снимаем: `--set=help`; по умолчанию README.
+ *
+ * Значение пишется через знак равенства, а не следующим словом: имена кадров
+ * идут теми же аргументами, и кадр README называется `help` — отделённое
+ * пробелом значение было бы не отличить от него.
+ */
+function chooseSet(args: string[]): FrameSet {
+	const flag = args.find((argument) => argument.startsWith('--set='));
+	const key = flag === undefined ? 'readme' : flag.slice('--set='.length);
+	const set = SETS[key];
+
+	if (set === undefined) {
+		throw new Error(`Набора кадров «${key}» нет. Есть: ${Object.keys(SETS).join(', ')}`);
+	}
+
+	return set;
+}
+
 async function main(): Promise<void> {
 	const args = process.argv.slice(2);
+	const set = chooseSet(args);
 
 	if (args.includes('--list')) {
-		for (const shot of SHOTS) {
+		for (const shot of set.shots) {
 			console.log(
 				`${shot.name.padEnd(26)} ${shot.role.padEnd(10)} ${shot.path}  — ${shot.caption}`
 			);
@@ -147,17 +251,22 @@ async function main(): Promise<void> {
 	}
 
 	const names = args.filter((argument) => !argument.startsWith('--'));
-	const selected = names.length === 0 ? SHOTS : SHOTS.filter((shot) => names.includes(shot.name));
-	const unknown = names.filter((name) => !SHOTS.some((shot) => shot.name === name));
+	const selected =
+		names.length === 0 ? set.shots : set.shots.filter((shot) => names.includes(shot.name));
+	const unknown = names.filter((name) => !set.shots.some((shot) => shot.name === name));
 
 	if (unknown.length > 0) {
 		throw new Error(`Кадров с такими именами нет: ${unknown.join(', ')}. Список — «--list»`);
 	}
 
-	await mkdir(OUTPUT, { recursive: true });
+	await mkdir(set.output, { recursive: true });
 
 	const browser = await chromium.launch();
-	const contexts = await sessions(browser, new Set(selected.map((shot) => shot.role)));
+	const contexts = await sessions(
+		browser,
+		new Set(selected.map((shot) => shot.role)),
+		set.viewport
+	);
 
 	/**
 	 * Неснятые кадры копятся, а не останавливают съёмку.
@@ -179,7 +288,10 @@ async function main(): Promise<void> {
 			}
 
 			try {
-				console.log(`${shot.name}: ${await capture(context, shot)}`);
+				const file = await capture(context, shot, set);
+				const { size } = await stat(file);
+
+				console.log(`${shot.name}: ${file} — ${Math.round(size / 1024)} КиБ`);
 			} catch (failure) {
 				const reason = failure instanceof Error ? failure.message.split('\n')[0] : String(failure);
 

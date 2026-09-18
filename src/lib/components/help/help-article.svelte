@@ -20,9 +20,16 @@
 </div>
 
 <style>
+	/* Длину строки держит не сам блок, а его текстовые дети: снимок экрана
+	   показывает целый раздел продукта, и урезанный до ширины абзаца он
+	   перестаёт читаться. Поэтому текст остаётся в 68 знаках, а картинка
+	   занимает всю колонку статьи. */
 	.help-prose {
-		max-width: 68ch;
 		line-height: 1.6;
+	}
+
+	.help-prose :global(:is(p, ul, ol, blockquote, pre, table, h2, h3, h4, h5, h6)) {
+		max-width: 68ch;
 	}
 
 	.help-prose :global(h2),
@@ -88,6 +95,21 @@
 		text-underline-offset: 2px;
 	}
 
+	/* Разметка оборачивает одиночную картинку абзацем — он тоже не должен
+	   держать её в ширине строки. */
+	.help-prose :global(p:has(> img)) {
+		max-width: none;
+	}
+
+	.help-prose :global(img) {
+		display: block;
+		margin-top: 1rem;
+		border-radius: var(--radius-md);
+		border: 1px solid var(--color-border);
+		max-width: 100%;
+		height: auto;
+	}
+
 	.help-prose :global(strong) {
 		font-weight: 600;
 	}
@@ -140,8 +162,16 @@
 	}
 
 	@media print {
-		.help-prose {
+		.help-prose :global(:is(p, ul, ol, blockquote, pre, table, h2, h3, h4, h5, h6)) {
 			max-width: none;
+		}
+
+		/* Снимок не делится между страницами и не уезжает за поле листа: при
+		   ширине окна съёмки 1280×860 шестнадцать сантиметров по ширине дают
+		   около одиннадцати по высоте — это половина полосы A4. */
+		.help-prose :global(img) {
+			break-inside: avoid;
+			max-width: 16cm;
 		}
 
 		/* Заголовок не должен оставаться последней строкой страницы, а таблица —
