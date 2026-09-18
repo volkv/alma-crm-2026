@@ -20,6 +20,7 @@ import {
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { invalidateDirectoryOptions } from '../cache/directory';
+import { invalidateInteractionCards } from '../cache/interactions';
 import { getDb } from '../db';
 import {
 	exchangeMessages,
@@ -178,13 +179,22 @@ async function eraseCounterpartyTraces(tx: Tx, personId: string): Promise<void> 
 }
 
 /**
- * Обезличивание состоялось: подбор контактов, собранный раньше, больше не
- * показывать — выбирать контактом того, чьи данные уничтожены, незачем.
+ * Обезличивание состоялось: собранное раньше больше не показывать.
+ *
+ * Подбор контактов — выбирать контактом того, чьи данные уничтожены, незачем.
+ * Карточки взаимодействий — потому что `eraseCounterpartyTraces` переписывает
+ * заголовки, в которых стояло ФИО, а момента последнего события по записи не
+ * трогает: работы по ней не было, и двигать его ради сброса кэша значило бы
+ * подделать активность. Без этой строки карточка до минуты отдавала бы из Redis
+ * данные, объявленные уничтоженными.
+ *
+ * Обе отметки ставятся **после** фиксации транзакции: обесценить кэш до неё
+ * значит открыть окно, в котором чтение соберёт заново то же самое старое.
  */
 async function forgotten<TResult>(result: Promise<TResult>): Promise<TResult> {
 	const value = await result;
 
-	await invalidateDirectoryOptions();
+	await Promise.all([invalidateDirectoryOptions(), invalidateInteractionCards()]);
 
 	return value;
 }

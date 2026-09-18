@@ -26,10 +26,28 @@
  * маскирует их по правам **и** оставляет след просмотра персональных данных —
  * ответ, отданный из Redis, этот след потерял бы, а закон требует знать, кто
  * видел контакты. Поэтому стороны карточки читаются из базы каждый раз.
+ *
+ * Поверх поколения записи в ключе стоит поколение области — счётчик, который
+ * обесценивает собранное разом. Он нужен ровно одному случаю: уничтожению
+ * персональных данных. Обезличивание переписывает названия и заголовки, в
+ * которых стояло ФИО (`people/retention.ts`), но моментом последнего события по
+ * взаимодействию **не** двигает — работы по записи не было, и подделывать
+ * активность ради сброса кэша нельзя. Без счётчика карточка целую минуту
+ * показывала бы то, что объявлено уничтоженным.
  */
-import { cached, type CacheRegion } from './region';
+import { bumpEpoch, cached, readEpoch, type CacheRegion } from './region';
 
 const INTERACTION_CARD: CacheRegion = { name: 'interaction-card', ttlSeconds: 60 };
+
+/**
+ * Собранные карточки больше не показывать.
+ *
+ * Зовётся после уничтожения персональных данных: оно меняет то, что уже лежит
+ * в кэше, не трогая поколение ни одной записи.
+ */
+export async function invalidateInteractionCards(): Promise<void> {
+	await bumpEpoch(INTERACTION_CARD);
+}
 
 /**
  * Насколько «свежую» запись в кэш не кладут.
@@ -60,9 +78,11 @@ export async function cachedInteractionPart<TValue>(
 		return build();
 	}
 
+	const epoch = await readEpoch(INTERACTION_CARD);
+
 	return cached(
 		INTERACTION_CARD,
-		`${interaction.id}:${interaction.lastActivityAt.toISOString()}:${part}`,
+		`${epoch}:${interaction.id}:${interaction.lastActivityAt.toISOString()}:${part}`,
 		build,
 		revive
 	);

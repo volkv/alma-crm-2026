@@ -25,12 +25,14 @@ import {
 	applyCatalogMapping,
 	confirmCatalogImport,
 	createCatalogImport,
+	getCatalogImport,
 	getCatalogImportPreview,
+	listCatalogImports,
 	listCatalogImportRows,
 	rejectCatalogImport,
 	suggestCatalogMapping
 } from '$lib/server/directory/import';
-import { ConflictError, ForbiddenError } from '$lib/server/errors';
+import { ConflictError, ForbiddenError, NotFoundError } from '$lib/server/errors';
 import { insertOrganization, scopedActor, startTestDatabase, testActor } from '../helpers/db';
 import type { TestDatabase } from '../helpers/db';
 
@@ -520,5 +522,132 @@ describe('право на импорт каталога', () => {
 
 		expect(messages.some((message) => message.includes('вне вашей области доступа'))).toBe(true);
 		expect(record.errorCount).toBeGreaterThan(1);
+	});
+});
+
+describe('видимость загрузки каталога', () => {
+	/** Загрузка целиком: автор — руководитель, которому отданы оба вуза файла. */
+	async function appliedByLead(): Promise<{
+		catalog: Catalog;
+		author: ReturnType<typeof testActor>;
+		importId: string;
+	}> {
+		const catalog = await seedCatalog();
+		const author = await scopedActor(database.db, {
+			roleId: 'lead',
+			organizationIds: [catalog.szpu, catalog.pupi]
+		});
+
+		const record = await preview(author, fixture('catalog-sample.csv'));
+		await confirmCatalogImport(author, record.id);
+
+		return { catalog, author, importId: record.id };
+	}
+
+	it('автор видит свою загрузку целиком, вместе со строками файла', async () => {
+		const { author, importId } = await appliedByLead();
+
+		expect((await listCatalogImports(author)).map((item) => item.id)).toEqual([importId]);
+		expect((await getCatalogImport(author, importId)).status).toBe('confirmed');
+
+		const rows = await listCatalogImportRows(author, importId, {
+			action: null,
+			page: 1,
+			pageSize: 50
+		});
+
+		expect(rows.total).toBe(10);
+		// Строка файла как есть — у того, кто файл принёс.
+		expect(rows.items[0].raw).not.toBeNull();
+		expect(Object.keys(rows.items[0].raw ?? {})).toContain('Название ВУЗа');
+	});
+
+	it('руководитель вуза из файла видит список и итоги, но не строки файла', async () => {
+		const { catalog, importId } = await appliedByLead();
+
+		// Вуз файла передан другому руководителю: загрузка попадает в его область
+		// затронутой организацией, а не авторством.
+		const reader = await scopedActor(database.db, {
+			roleId: 'lead',
+			organizationIds: [catalog.szpu]
+		});
+
+		const list = await listCatalogImports(reader);
+
+		expect(list.map((item) => item.id)).toEqual([importId]);
+		expect(list[0].rowCount).toBe(10);
+		expect((await getCatalogImport(reader, importId)).createCount).toBe(3);
+
+		const rows = await listCatalogImportRows(reader, importId, {
+			action: null,
+			page: 1,
+			pageSize: 50
+		});
+
+		// Итоги построчно видны — что именно загрузка сделала со справочником;
+		// исходные ячейки файла закрыты: в них колонки, которые импорт не переносит.
+		expect(rows.total).toBe(10);
+		expect(rows.items[0].organizationName).not.toBeNull();
+		expect(rows.items.every((row) => row.raw === null)).toBe(true);
+
+		// Предпросмотр — это тот же файл, только шапкой и первыми строками.
+		await expect(getCatalogImportPreview(reader, importId)).rejects.toBeInstanceOf(ForbiddenError);
+	});
+
+	it('вне области загрузки нет вовсе: ни в списке, ни по прямой ссылке', async () => {
+		const { importId } = await appliedByLead();
+
+		const stranger = await scopedActor(database.db, {
+			roleId: 'manager',
+			permissions: ['directory.import', 'organizations.read'],
+			organizationIds: [await insertOrganization(database.db, { shortName: 'Чужой вуз' })]
+		});
+
+		expect(await listCatalogImports(stranger)).toEqual([]);
+		// Чужая запись отвечает «не найдено», а не отказом: иначе перебором
+		// идентификаторов видно, что существует за пределами области.
+		await expect(getCatalogImport(stranger, importId)).rejects.toBeInstanceOf(NotFoundError);
+		await expect(
+			listCatalogImportRows(stranger, importId, { action: null, page: 1, pageSize: 50 })
+		).rejects.toBeInstanceOf(NotFoundError);
+		await expect(getCatalogImportPreview(stranger, importId)).rejects.toBeInstanceOf(NotFoundError);
+		await expect(confirmCatalogImport(stranger, importId)).rejects.toBeInstanceOf(NotFoundError);
+	});
+
+	it('неприменённая загрузка не видна никому, кроме автора и полного доступа', async () => {
+		const catalog = await seedCatalog();
+		const author = await scopedActor(database.db, {
+			roleId: 'lead',
+			organizationIds: [catalog.szpu, catalog.pupi]
+		});
+
+		const record = await preview(author, fixture('catalog-sample.csv'));
+
+		// Ссылки на записи справочника проставляет подтверждение, поэтому у
+		// неприменённой загрузки затронутых организаций нет: делить её не с кем.
+		const reader = await scopedActor(database.db, {
+			roleId: 'lead',
+			organizationIds: [catalog.szpu]
+		});
+
+		expect(await listCatalogImports(reader)).toEqual([]);
+		await expect(getCatalogImport(reader, record.id)).rejects.toBeInstanceOf(NotFoundError);
+		expect((await getCatalogImport(author, record.id)).status).toBe('mapped');
+	});
+
+	it('полный доступ видит и загрузку, и строки файла', async () => {
+		const { importId } = await appliedByLead();
+		const admin = testActor();
+
+		expect((await listCatalogImports(admin)).map((item) => item.id)).toEqual([importId]);
+
+		const rows = await listCatalogImportRows(admin, importId, {
+			action: null,
+			page: 1,
+			pageSize: 50
+		});
+
+		expect(rows.items[0].raw).not.toBeNull();
+		expect((await getCatalogImportPreview(admin, importId)).totalRows).toBe(10);
 	});
 });

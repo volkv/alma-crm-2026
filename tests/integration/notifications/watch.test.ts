@@ -367,6 +367,12 @@ describe('наблюдатель зависших взаимодействий',
 		expect(row.sentAt).not.toBeNull();
 		expect(row.nextNotifyAt).not.toBeNull();
 
+		// Тело письма лежит в строке журнала и совпадает с тем, что принял
+		// почтовый сервер: без него на вопрос «что там было» ответить нечем —
+		// текст собирается на лету и нигде больше не остаётся.
+		expect(row.subject).toBe(letter.subject);
+		expect(row.body).toBe(letter.text);
+
 		// Успехи прохода сводятся в одну запись журнала действий.
 		const events = await database.db
 			.select({ type: auditEvents.eventType })
@@ -425,6 +431,39 @@ describe('наблюдатель зависших взаимодействий',
 
 		const [event] = await database.db
 			.select({ type: auditEvents.eventType, outcome: auditEvents.outcome })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'notifications.skipped'));
+		expect(event).toMatchObject({ outcome: 'failure' });
+	});
+
+	it('выключенному руководителю не пишет, а называет причину в строке журнала', async () => {
+		const scene = await makeScene({ enteredDaysAgo: 21 });
+
+		// Руководитель уволен: учётная запись выключена, а почта в базе осталась.
+		// Письмо о зависшей работе ушло бы тому, кому вход в систему уже закрыт.
+		await database.db.update(users).set({ isActive: false }).where(eq(users.id, scene.managerId!));
+
+		const report = await runNotificationCycle(system());
+
+		expect(report).toMatchObject({ sent: 0, skipped: 1 });
+		expect(smtp.messages).toHaveLength(0);
+
+		const [row] = await deliveries();
+		expect(row).toMatchObject({
+			status: 'skipped',
+			attempts: 0,
+			// Кто имелся в виду, строка называет: иначе искать выключенного
+			// руководителя пришлось бы по всей иерархии.
+			recipientUserId: scene.managerId,
+			interactionId: scene.interactionId
+		});
+		expect(row.lastError).toContain('выключен');
+		// Причина у выключенного своя: незаполненная иерархия чинится назначением
+		// руководителя, а эта — заменой его на действующего.
+		expect(row.lastError).not.toContain('не указан руководитель');
+
+		const [event] = await database.db
+			.select({ outcome: auditEvents.outcome })
 			.from(auditEvents)
 			.where(eq(auditEvents.eventType, 'notifications.skipped'));
 		expect(event).toMatchObject({ outcome: 'failure' });
@@ -507,6 +546,10 @@ describe('наблюдатель зависших взаимодействий',
 			stageEntryId: scene.stageEntryId
 		});
 		expect(row.lastError).toContain('Заглушка');
+		// Текст у заглушки тот же и хранится так же: иначе смотреть на строку
+		// заглушки было бы нечего, а показать она обязана то, что ушло бы.
+		expect(row.subject).toContain('Зависшее взаимодействие');
+		expect(row.body).toContain('остаётся на стадии');
 	});
 
 	it('каждый включённый канал ведёт свою строку', async () => {

@@ -232,8 +232,12 @@ export type CatalogImportRowView = CatalogRowValues & {
 	productId: string | null;
 	contractId: string | null;
 	contractItemId: string | null;
-	/** Строка файла как есть: колонка → значение. */
-	raw: Record<string, string>;
+	/**
+	 * Строка файла как есть: колонка → значение. `null` — строки файла этому
+	 * человеку не показывают: в них есть колонки, которых импорт в справочник не
+	 * переносит (`docs/access-matrix.md`, раздел 3).
+	 */
+	raw: Record<string, string> | null;
 };
 
 /** Счётчики импорта: они же уходят числами в журнал действий. */

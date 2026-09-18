@@ -62,6 +62,8 @@ export async function listNotificationDeliveries(
 			recipientName: recipient.fullName,
 			channel: notificationDeliveries.channel,
 			status: notificationDeliveries.status,
+			subject: notificationDeliveries.subject,
+			body: notificationDeliveries.body,
 			attempts: notificationDeliveries.attempts,
 			lastError: notificationDeliveries.lastError,
 			sentAt: notificationDeliveries.sentAt,

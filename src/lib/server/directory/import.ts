@@ -28,7 +28,7 @@
  * не открывая её. Импорт заводит недостающее и ведёт то, ради чего он и нужен:
  * договоры, лицензии и статусы передачи.
  */
-import { and, count, desc, eq } from 'drizzle-orm';
+import { and, count, desc, eq, exists, isNotNull, sql, type SQL } from 'drizzle-orm';
 import { id as idSchema, type PageResult } from '$lib/contracts/common';
 import {
 	CATALOG_FIELDS,
@@ -70,8 +70,8 @@ import {
 import { getDb } from '../db';
 import { withTransaction, type Tx } from '../db/transaction';
 import { discardStaged, promoteBlob, readStoredFile, stageBlob } from '../documents/storage';
-import { ConflictError, NotFoundError, ValidationError } from '../errors';
-import { requirePermission, scopeFilter } from '../rbac';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
+import { actorScopeFilter, requirePermission, scopeFilter } from '../rbac';
 import { suggestFieldMapping, type FieldSynonyms } from '../spreadsheet/mapping';
 // Чтение файла общее с импортом данных об обучении: формат по содержимому,
 // кодировка, разделитель, листы книги, две формы JSON и происхождение каждой
@@ -1252,11 +1252,75 @@ function toCatalogImportView(row: typeof directoryImports.$inferSelect): Catalog
 	};
 }
 
-async function selectImportRow(id: string): Promise<typeof directoryImports.$inferSelect> {
+/**
+ * Условие «эта загрузка видна вызывающему». Коррелирует со столбцами
+ * `directory_imports`, поэтому годится только для выборок оттуда.
+ *
+ * Видимость — «или» из двух слагаемых, как у взаимодействия
+ * (`interactions/access.ts`):
+ *
+ * 1. **автор загрузки** в области. Свою загрузку человек ведёт от файла до
+ *    применения, и руководитель видит загрузки своих — иначе разбирать вопрос
+ *    «что эта таблица сделала со справочником» было бы не с кем;
+ * 2. **хотя бы одна затронутая организация** в области. Ссылки на записи
+ *    справочника проставляет подтверждение, поэтому у неприменённой загрузки
+ *    затронутых организаций нет вовсе: пока файл не применён, его видит только
+ *    автор (и полный доступ).
+ *
+ * Загрузка вне области отвечает «не найдено», а не отказом: иначе перебором
+ * идентификаторов видно, что существует за её пределами.
+ */
+function importScopeFilter(ctx: ActorContext): SQL {
+	if (ctx.scope.kind === 'all') {
+		return sql`true`;
+	}
+
+	return sql`(${actorScopeFilter(ctx, directoryImports.createdBy)} or ${exists(
+		getDb()
+			.select({ one: sql`1` })
+			.from(directoryImportRows)
+			.where(
+				and(
+					eq(directoryImportRows.importId, directoryImports.id),
+					isNotNull(directoryImportRows.organizationId),
+					scopeFilter(ctx, directoryImportRows.organizationId)
+				)
+			)
+	)})`;
+}
+
+/**
+ * Видны ли вызывающему строки файла как есть.
+ *
+ * Разобранные значения строки — это справочник: вуз, продукт, договор, сроки.
+ * `raw` — это сам файл рабочей таблицы заказчика, и в нём лежат колонки,
+ * которых импорт не переносит вовсе: ФИО менеджера, ответственные от вуза,
+ * комментарий (`docs/directory.md`, «Что импорт не переносит»). Поэтому файл
+ * остаётся у того, кто его принёс, и у полного доступа, а область на строки
+ * его не открывает: руководитель вуза из файла видит, что загрузка сделала со
+ * справочником, но не чужую переписку в соседней колонке.
+ */
+function canReadImportRaw(ctx: ActorContext, row: { createdBy: string | null }): boolean {
+	return (
+		ctx.scope.kind === 'all' || (row.createdBy !== null && row.createdBy === (ctx.user?.id ?? null))
+	);
+}
+
+/** Отказ в строках файла: он идёт только тем, кто саму загрузку уже видит. */
+function rawDenied(): ForbiddenError {
+	return new ForbiddenError(
+		'Строки файла видны только тому, кто его загрузил: в них есть колонки, которые импорт в справочник не переносит'
+	);
+}
+
+async function selectImportRow(
+	ctx: ActorContext,
+	id: string
+): Promise<typeof directoryImports.$inferSelect> {
 	const [row] = await getDb()
 		.select()
 		.from(directoryImports)
-		.where(eq(directoryImports.id, id))
+		.where(and(eq(directoryImports.id, id), importScopeFilter(ctx)))
 		.limit(1);
 
 	if (row === undefined) {
@@ -1400,7 +1464,7 @@ export async function applyCatalogMapping(
 		subject: { type: 'directory_import', id: importId }
 	});
 
-	const row = await selectImportRow(importId);
+	const row = await selectImportRow(ctx, importId);
 	assertEditable(row.status);
 
 	const parsed = catalogMappingSchema.safeParse(mapping);
@@ -1497,7 +1561,7 @@ export async function confirmCatalogImport(
 		subject: { type: 'directory_import', id: importId }
 	});
 
-	await selectImportRow(importId);
+	await selectImportRow(ctx, importId);
 
 	return invalidated(
 		withTransaction(ctx, async (tx) => {
@@ -1630,7 +1694,7 @@ export async function rejectCatalogImport(
 	}
 
 	const explanation = parsed.data.reason;
-	const row = await selectImportRow(importId);
+	const row = await selectImportRow(ctx, importId);
 
 	assertEditable(row.status);
 
@@ -1697,9 +1761,11 @@ const IMPORT_LIST_COLUMNS = {
  * Список короткий и без фильтров намеренно: у импорта нет своего раздела, он
  * живёт кнопкой на справочнике организаций. Отвечает этот список на один
  * вопрос — «где та загрузка, которую я не довёл до конца», — и длинного списка
- * для этого не нужно. Область доступа к самим загрузкам не применяется: одна
- * загрузка описывает сразу десятки вузов, и показать её частично значило бы
- * показать неверные счётчики (то же правило, что у снимков статистики).
+ * для этого не нужно.
+ *
+ * Область применяется целой загрузкой, а не строками: счётчики описывают файл
+ * целиком, и урезать их до своих вузов значило бы показать неверные числа.
+ * Поэтому загрузка либо видна, либо нет — `importScopeFilter`.
  */
 export async function listCatalogImports(
 	ctx: ActorContext,
@@ -1712,6 +1778,7 @@ export async function listCatalogImports(
 		.from(directoryImports)
 		.leftJoin(users, eq(users.id, directoryImports.createdBy))
 		.leftJoin(documents, eq(documents.id, directoryImports.fileDocumentId))
+		.where(importScopeFilter(ctx))
 		.orderBy(desc(directoryImports.createdAt))
 		.limit(limit);
 
@@ -1733,7 +1800,7 @@ export async function getCatalogImport(
 		.from(directoryImports)
 		.leftJoin(users, eq(users.id, directoryImports.createdBy))
 		.leftJoin(documents, eq(documents.id, directoryImports.fileDocumentId))
-		.where(eq(directoryImports.id, id))
+		.where(and(eq(directoryImports.id, id), importScopeFilter(ctx)))
 		.limit(1);
 
 	if (row === undefined) {
@@ -1749,7 +1816,14 @@ export async function getCatalogImportPreview(
 ): Promise<CatalogImportPreview> {
 	requirePermission(ctx, 'directory.import');
 
-	const row = await selectImportRow(id);
+	const row = await selectImportRow(ctx, id);
+
+	// Предпросмотр показывает файл как есть — шапку и первые строки, — поэтому
+	// он идёт по тому же правилу, что и `raw`, а не по видимости загрузки.
+	if (!canReadImportRaw(ctx, row)) {
+		throw rawDenied();
+	}
+
 	const table = await readImportTable(row, CATALOG_PREVIEW_PARSE_LIMIT);
 
 	return {
@@ -1767,7 +1841,10 @@ export async function getCatalogImportPreview(
 	};
 }
 
-function toImportRowView(row: typeof directoryImportRows.$inferSelect): CatalogImportRowView {
+function toImportRowView(
+	row: typeof directoryImportRows.$inferSelect,
+	withRaw: boolean
+): CatalogImportRowView {
 	return {
 		id: row.id,
 		rowNo: row.rowNo,
@@ -1792,17 +1869,25 @@ function toImportRowView(row: typeof directoryImportRows.$inferSelect): CatalogI
 		productId: row.productId,
 		contractId: row.contractId,
 		contractItemId: row.contractItemId,
-		raw: row.raw
+		raw: withRaw ? row.raw : null
 	};
 }
 
-/** Строки импорта: страница предпросмотра и карточки результата. */
+/**
+ * Строки импорта: страница предпросмотра и карточки результата.
+ *
+ * Разобранные значения строки видит каждый, кому видна сама загрузка; строка
+ * файла как есть (`raw`) — только тот, кто файл принёс (`canReadImportRaw`).
+ */
 export async function listCatalogImportRows(
 	ctx: ActorContext,
 	importId: string,
 	options: { action: CatalogRowAction | null; page: number; pageSize: number }
 ): Promise<PageResult<CatalogImportRowView>> {
 	requirePermission(ctx, 'directory.import');
+
+	const record = await selectImportRow(ctx, importId);
+	const withRaw = canReadImportRaw(ctx, record);
 
 	const where =
 		options.action === null
@@ -1826,7 +1911,7 @@ export async function listCatalogImportRows(
 	]);
 
 	return {
-		items: items.map(toImportRowView),
+		items: items.map((item) => toImportRowView(item, withRaw)),
 		total: total?.value ?? 0,
 		page: options.page,
 		pageSize: options.pageSize

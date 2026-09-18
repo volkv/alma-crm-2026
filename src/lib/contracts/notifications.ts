@@ -102,6 +102,12 @@ export type NotificationDeliveryView = {
 	recipientName: string | null;
 	channel: NotificationChannel;
 	status: NotificationDeliveryStatus;
+	/**
+	 * Тема и тело того, что система сказала по этой записи: их складывает сама
+	 * отправка. `null` — строка завелась до того, как текст начали хранить.
+	 */
+	subject: string | null;
+	body: string | null;
 	attempts: number;
 	lastError: string | null;
 	sentAt: Date | null;

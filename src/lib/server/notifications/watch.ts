@@ -17,9 +17,12 @@
  * Получатель — руководитель ответственного за взаимодействие
  * (`users.manager_user_id` владельца). Иерархия та же, на которой держится
  * область доступа руководителя: две иерархии в системе однажды разойдутся
- * (`docs/access-matrix.md`, раздел 1). Руководителя нет — письма нет, но есть
- * строка журнала со статусом «получатель не определён»: эскалация, пропавшая
- * молча, хуже эскалации, которая не состоялась.
+ * (`docs/access-matrix.md`, раздел 1). Руководителя нет или он выключен —
+ * письма нет, но есть строка журнала со статусом «получатель не определён» и
+ * причиной словами: эскалация, пропавшая молча, хуже эскалации, которая не
+ * состоялась. Выключенная запись проверяется наравне с отсутствующей: адрес
+ * уволенного остаётся в базе, и письмо о зависшей работе ушло бы наружу тому,
+ * кому вход в систему уже закрыт.
  *
  * Проход зовётся из `runIntegrationsCycle` под тем же замком в Redis
  * (`integrations/pump.ts`): приложение работает в нескольких процессах, а одно
@@ -47,8 +50,8 @@ import {
 	users
 } from '../db/schema';
 import { getSetting } from '../settings';
-import { sendThroughChannel, type ChannelOutcome } from './channels';
-import { stuckNotificationMessage } from './message';
+import { sendThroughChannel, type ChannelOutcome, type NotificationRecipient } from './channels';
+import { stuckNotificationMessage, type NotificationMessage } from './message';
 import { FAILURE_RETRY_MINUTES, nextNotifyAt } from './schedule';
 
 /** Сколько записей наблюдатель разбирает за один проход одного канала. */
@@ -80,6 +83,12 @@ export type StuckEntry = {
 	recipientUserId: string | null;
 	recipientName: string | null;
 	recipientEmail: string | null;
+	/**
+	 * Работает ли ещё адресат. `null` — руководителя нет вовсе; `false` — он
+	 * указан, но его учётная запись выключена, и письмо ушло бы тому, кого в
+	 * системе больше нет.
+	 */
+	recipientIsActive: boolean | null;
 };
 
 const owner = alias(users, 'owner_user');
@@ -138,7 +147,8 @@ async function readStuck(options: {
 				activeSeconds: stageEntryStatus.activeSeconds,
 				recipientUserId: manager.id,
 				recipientName: manager.fullName,
-				recipientEmail: manager.email
+				recipientEmail: manager.email,
+				recipientIsActive: manager.isActive
 			})
 			.from(stageEntries)
 			.innerJoin(interactions, eq(interactions.id, stageEntries.interactionId))
@@ -197,6 +207,7 @@ export async function readStuckEntry(
 async function claim(
 	entry: StuckEntry,
 	channel: NotificationChannel,
+	message: NotificationMessage,
 	now: Date
 ): Promise<{ id: string; attempts: number }> {
 	const retryAt = new Date(now.getTime() + FAILURE_RETRY_MINUTES * 60 * 1000);
@@ -210,6 +221,8 @@ async function claim(
 			recipientUserId: entry.recipientUserId,
 			channel,
 			status: 'queued',
+			subject: message.subject,
+			body: message.text,
 			nextNotifyAt: retryAt
 		})
 		.onConflictDoUpdate({
@@ -221,6 +234,11 @@ async function claim(
 			set: {
 				status: 'queued',
 				recipientUserId: entry.recipientUserId,
+				// Текст переписывается вместе с попыткой: повтор шлёт не сохранённое
+				// письмо, а то, что система говорит сейчас, — и строка журнала обязана
+				// показывать именно его.
+				subject: message.subject,
+				body: message.text,
 				nextNotifyAt: retryAt,
 				updatedAt: now
 			}
@@ -251,6 +269,43 @@ async function settle(
 }
 
 /**
+ * Кому слать — или почему слать некому.
+ *
+ * Оба исхода «некому» дают одно состояние доставки (`skipped`) и разные слова в
+ * причине: незаполненная иерархия чинится назначением руководителя, а
+ * выключенная запись — заменой его на действующего. Одинаковая фраза на два
+ * разных дела заставила бы администратора искать вслепую.
+ */
+function checkRecipient(
+	entry: StuckEntry
+): { ok: true; recipient: NotificationRecipient } | { ok: false; error: string } {
+	if (entry.recipientUserId === null || entry.recipientName === null) {
+		return {
+			ok: false,
+			error:
+				'У ответственного за взаимодействие не указан руководитель: эскалировать некому. Назначьте руководителя в разделе «Пользователи»'
+		};
+	}
+
+	if (entry.recipientIsActive !== true) {
+		return {
+			ok: false,
+			error:
+				'Руководитель ответственного выключен: письмо ушло бы тому, кому доступ в систему уже закрыт. Назначьте действующего руководителя в разделе «Пользователи»'
+		};
+	}
+
+	return {
+		ok: true,
+		recipient: {
+			userId: entry.recipientUserId,
+			fullName: entry.recipientName,
+			email: entry.recipientEmail
+		}
+	};
+}
+
+/**
  * Одна попытка по одной записи и одному каналу: занять строку, отправить,
  * записать исход. Возвращает исход — его считает вызывающий.
  */
@@ -261,15 +316,28 @@ export async function deliverStuckNotice(
 	thresholdDays: number,
 	now: Date = new Date()
 ): Promise<NotificationDeliveryStatus> {
-	const claimed = await claim(entry, channel, now);
+	// Текст собирается до того, как занята строка: он ни от чего внешнего не
+	// зависит, а строка обязана унести его с собой — и когда письмо ушло, и
+	// когда отправлять оказалось некому.
+	const message = stuckNotificationMessage(
+		{
+			interactionId: entry.interactionId,
+			interactionTitle: entry.interactionTitle,
+			organizationName: entry.organizationName,
+			stageName: entry.stageName,
+			standingDays: Math.floor(entry.activeSeconds / SECONDS_PER_DAY),
+			thresholdDays
+		},
+		getConfig().ORIGIN
+	);
 
-	if (entry.recipientUserId === null || entry.recipientName === null) {
-		const error =
-			'У ответственного за взаимодействие не указан руководитель: эскалировать некому. Назначьте руководителя в разделе «Пользователи»';
+	const claimed = await claim(entry, channel, message, now);
+	const addressee = checkRecipient(entry);
 
+	if (!addressee.ok) {
 		await settle(
 			claimed.id,
-			{ status: 'skipped', error, attempts: claimed.attempts },
+			{ status: 'skipped', error: addressee.error, attempts: claimed.attempts },
 			thresholdDays,
 			now
 		);
@@ -284,27 +352,7 @@ export async function deliverStuckNotice(
 		return 'skipped';
 	}
 
-	const message = stuckNotificationMessage(
-		{
-			interactionId: entry.interactionId,
-			interactionTitle: entry.interactionTitle,
-			organizationName: entry.organizationName,
-			stageName: entry.stageName,
-			standingDays: Math.floor(entry.activeSeconds / SECONDS_PER_DAY),
-			thresholdDays
-		},
-		getConfig().ORIGIN
-	);
-
-	const outcome: ChannelOutcome = await sendThroughChannel(
-		channel,
-		{
-			userId: entry.recipientUserId,
-			fullName: entry.recipientName,
-			email: entry.recipientEmail
-		},
-		message
-	);
+	const outcome: ChannelOutcome = await sendThroughChannel(channel, addressee.recipient, message);
 
 	// Заглушка попыткой не считается: считать её значило бы показывать растущий
 	// счётчик отправок там, где отправки нет вовсе.

@@ -11,6 +11,7 @@
  */
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { ANONYMIZED_PERSON_LAST_NAME } from '$lib/contracts/directory';
 import { invalidateDirectoryOptions } from '$lib/server/cache/directory';
 import {
 	affiliations,
@@ -19,7 +20,8 @@ import {
 	interactionChanges,
 	interactionParties,
 	interactions,
-	organizationResponsibles
+	organizationResponsibles,
+	organizations
 } from '$lib/server/db/schema';
 import { listOrganizationOptions, listPersonOptions } from '$lib/server/directory/read';
 import { createOrganization, createPerson } from '$lib/server/directory/write';
@@ -396,6 +398,50 @@ describe('кэш карточки взаимодействия', () => {
 		expect(trace).toHaveLength(2);
 	});
 
+	it('не показывает данные обезличенного человека, даже собрав карточку до этого', async () => {
+		const ctx = testActor();
+
+		// Заявка физического лица: контрагент назван его ФИО, и то же ФИО стоит в
+		// заголовке взаимодействия (`exchange/intake.ts`).
+		const personId = await insertPerson(database.db, { lastName: 'Соловьёв' });
+		const [counterparty] = await database.db
+			.insert(organizations)
+			.values({
+				kind: 'individual',
+				personId,
+				legalName: 'Соловьёв Тест',
+				shortName: 'Соловьёв Тест'
+			})
+			.returning({ id: organizations.id });
+
+		const interactionId = await settledInteraction();
+
+		await database.db
+			.update(interactions)
+			.set({ title: 'Заявка: Соловьёв Тест' })
+			.where(eq(interactions.id, interactionId));
+
+		await database.db.insert(interactionParties).values({
+			interactionId,
+			organizationId: counterparty.id,
+			partyRole: 'customer',
+			isPrimary: true
+		});
+
+		expect((await getInteraction(ctx, interactionId)).title).toBe('Заявка: Соловьёв Тест');
+
+		await anonymizePerson(ctx, personId);
+
+		// Обезличивание переписывает заголовок, но момента последнего события по
+		// записи не двигает — работы по ней не было. Поколение области обязано
+		// обесценить собранное само, иначе карточка до минуты отдаёт из Redis то,
+		// что объявлено уничтоженным.
+		const after = await getInteraction(ctx, interactionId);
+
+		expect(after.title).not.toContain('Соловьёв');
+		expect(after.title).toBe(`Заявка: ${ANONYMIZED_PERSON_LAST_NAME}`);
+	});
+
 	it('не отдаёт карточку тому, кто её не видит, даже когда она уже в кэше', async () => {
 		const owner = testActor();
 		const interactionId = await settledInteraction();
@@ -426,5 +472,21 @@ describe('ключи кэша', () => {
 		const keys = await getRedis().keys('lct:cache:*');
 
 		expect(keys).toStrictEqual(['lct:cache:directory-options:0:all:all:organizations']);
+	});
+
+	it('у карточки несут поколение области, запись и момент её последнего события', async () => {
+		const ctx = testActor();
+		const interactionId = await settledInteraction();
+
+		await getInteraction(ctx, interactionId);
+
+		const [key] = await getRedis().keys('lct:cache:interaction-card:*');
+		const [, , , epoch, id] = key.split(':');
+
+		// Поколение области стоит первым: без него обезличивание, которое не
+		// двигает момент последнего события, не смогло бы обесценить собранное.
+		expect(epoch).toBe('0');
+		expect(id).toBe(interactionId);
+		expect(key.endsWith(':base')).toBe(true);
 	});
 });
