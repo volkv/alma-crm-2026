@@ -57,7 +57,7 @@ import { getOrganization } from './read';
  * передачи» — единственное утверждение, которое можно сделать о позиции, про
  * передачу которой ничего не сказано.
  */
-export const DEFAULT_TRANSFER_STATUS = 'pending';
+export const DEFAULT_TRANSFER_STATUS = 'ожидает передачи';
 
 /** Одно изменение записи: машинный ключ для кода и название для человека. */
 export type FieldChange = {

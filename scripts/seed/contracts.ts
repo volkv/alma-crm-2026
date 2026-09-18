@@ -24,9 +24,13 @@ import { seedId } from './ids';
 
 /**
  * Статус передачи продукта по позиции. Словарь свободный: каталога заказчика
- * ещё нет, и придумывать перечисление до него — значит угадывать.
+ * ещё нет, и придумывать перечисление до него — значит угадывать. Значения —
+ * те же два слова, которыми оперирует продукт: «передан» ставит человек через
+ * форму позиции, «ожидает передачи» — то, с чем заводится позиция, о которой
+ * файл ничего не сказал (`DEFAULT_TRANSFER_STATUS`,
+ * `src/lib/server/directory/contracts.ts`).
  */
-type TransferStatus = 'transferred' | 'pending';
+type TransferStatus = 'передан' | 'ожидает передачи';
 
 type ContractItemSeed = {
 	productKey: string;
@@ -56,17 +60,17 @@ const CONTRACTS: readonly ContractSeed[] = [
 		items: [
 			{
 				productKey: 'lms',
-				transferStatus: 'transferred',
+				transferStatus: 'передан',
 				licenseSignedAt: '2026-08-20',
 				licenseUntil: '2027-08-31'
 			},
 			{
 				productKey: 'analytics',
-				transferStatus: 'transferred',
+				transferStatus: 'передан',
 				licenseSignedAt: '2026-08-20',
 				licenseUntil: '2027-08-31'
 			},
-			{ productKey: 'cloud', transferStatus: 'pending' }
+			{ productKey: 'cloud', transferStatus: 'ожидает передачи' }
 		]
 	},
 	{
@@ -79,7 +83,7 @@ const CONTRACTS: readonly ContractSeed[] = [
 		items: [
 			{
 				productKey: 'lms',
-				transferStatus: 'transferred',
+				transferStatus: 'передан',
 				licenseSignedAt: '2026-09-01',
 				licenseUntil: '2027-06-30'
 			}
@@ -98,11 +102,11 @@ const CONTRACTS: readonly ContractSeed[] = [
 		items: [
 			{
 				productKey: 'analytics',
-				transferStatus: 'transferred',
+				transferStatus: 'передан',
 				licenseSignedAt: '2026-02-16',
 				licenseUntil: '2027-03-31'
 			},
-			{ productKey: 'docs', transferStatus: 'pending' }
+			{ productKey: 'docs', transferStatus: 'ожидает передачи' }
 		]
 	},
 	{
@@ -115,7 +119,7 @@ const CONTRACTS: readonly ContractSeed[] = [
 		items: [
 			{
 				productKey: 'docs',
-				transferStatus: 'transferred',
+				transferStatus: 'передан',
 				licenseSignedAt: '2026-06-01',
 				licenseUntil: '2026-12-31'
 			}
