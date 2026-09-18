@@ -72,7 +72,8 @@
 		</Alert.Root>
 	{/if}
 
-	<Alert.Root>
+	<!-- `data-tour` — метка для подсказок первого входа (`$lib/onboarding/steps`). -->
+	<Alert.Root data-tour="notifications-log">
 		<Alert.Title>Как это работает</Alert.Title>
 		<Alert.Description>
 			<p>

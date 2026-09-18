@@ -87,63 +87,66 @@
 
 	<FilterBar filter={data.filter} />
 
-	{#if data.messages.items.length === 0}
-		<EmptyState
-			title="Сообщений нет"
-			description="Обмен либо ещё не настроен, либо под этот фильтр ничего не попало."
-		/>
-	{:else}
-		<div class="overflow-x-auto rounded-lg border border-border bg-surface">
-			<Table.Root>
-				<Table.Header>
-					<Table.Row>
-						<Table.Head>Когда</Table.Head>
-						<Table.Head>Направление</Table.Head>
-						<Table.Head class="hidden 2xl:table-cell">Система</Table.Head>
-						<Table.Head>Тип</Table.Head>
-						<Table.Head>Ключи</Table.Head>
-						<Table.Head>Состояние</Table.Head>
-						<Table.Head>Попытки</Table.Head>
-						<!-- Система, ответ и взаимодействие уезжают в строку под
+	<!-- `data-tour` — метка для подсказок первого входа (`$lib/onboarding/steps`). -->
+	<div data-tour="exchange-journal" class="flex min-w-0 flex-col gap-4">
+		{#if data.messages.items.length === 0}
+			<EmptyState
+				title="Сообщений нет"
+				description="Обмен либо ещё не настроен, либо под этот фильтр ничего не попало."
+			/>
+		{:else}
+			<div class="overflow-x-auto rounded-lg border border-border bg-surface">
+				<Table.Root>
+					<Table.Header>
+						<Table.Row>
+							<Table.Head>Когда</Table.Head>
+							<Table.Head>Направление</Table.Head>
+							<Table.Head class="hidden 2xl:table-cell">Система</Table.Head>
+							<Table.Head>Тип</Table.Head>
+							<Table.Head>Ключи</Table.Head>
+							<Table.Head>Состояние</Table.Head>
+							<Table.Head>Попытки</Table.Head>
+							<!-- Система, ответ и взаимодействие уезжают в строку под
 							направлением, состоянием и событием, пока окно уже 1536: ключевые
 							колонки журнала обязаны помещаться на экране в 1280 точек целиком,
 							и с запасом — на машине без фирменной гарнитуры подстановка шире. -->
-						<Table.Head class="hidden 2xl:table-cell">Ответ</Table.Head>
-						<Table.Head class="hidden 2xl:table-cell">Взаимодействие</Table.Head>
-						<Table.Head>Действия</Table.Head>
-					</Table.Row>
-				</Table.Header>
-				<Table.Body>
-					{#each data.messages.items as message (message.id)}
-						<MessageRow {message} />
-					{/each}
-				</Table.Body>
-			</Table.Root>
-		</div>
+							<Table.Head class="hidden 2xl:table-cell">Ответ</Table.Head>
+							<Table.Head class="hidden 2xl:table-cell">Взаимодействие</Table.Head>
+							<Table.Head>Действия</Table.Head>
+						</Table.Row>
+					</Table.Header>
+					<Table.Body>
+						{#each data.messages.items as message (message.id)}
+							<MessageRow {message} />
+						{/each}
+					</Table.Body>
+				</Table.Root>
+			</div>
 
-		<div class="flex items-center justify-between text-sm text-muted-foreground">
-			<span>Всего сообщений: {formatNumber(data.messages.total)}</span>
-			{#if pages > 1}
-				<div class="flex items-center gap-2">
-					<Button
-						variant="outline"
-						size="sm"
-						href={pageHref(data.filter.page - 1)}
-						disabled={data.filter.page <= 1}
-					>
-						Назад
-					</Button>
-					<span>{data.filter.page} из {pages}</span>
-					<Button
-						variant="outline"
-						size="sm"
-						href={pageHref(data.filter.page + 1)}
-						disabled={data.filter.page >= pages}
-					>
-						Вперёд
-					</Button>
-				</div>
-			{/if}
-		</div>
-	{/if}
+			<div class="flex items-center justify-between text-sm text-muted-foreground">
+				<span>Всего сообщений: {formatNumber(data.messages.total)}</span>
+				{#if pages > 1}
+					<div class="flex items-center gap-2">
+						<Button
+							variant="outline"
+							size="sm"
+							href={pageHref(data.filter.page - 1)}
+							disabled={data.filter.page <= 1}
+						>
+							Назад
+						</Button>
+						<span>{data.filter.page} из {pages}</span>
+						<Button
+							variant="outline"
+							size="sm"
+							href={pageHref(data.filter.page + 1)}
+							disabled={data.filter.page >= pages}
+						>
+							Вперёд
+						</Button>
+					</div>
+				{/if}
+			</div>
+		{/if}
+	</div>
 </div>

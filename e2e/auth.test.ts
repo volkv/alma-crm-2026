@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { E2E_USER, E2E_PASSWORD, NO_ROLE_ACCOUNT } from './global-setup';
+import { skipOnboardingTour } from './helpers/onboarding';
 import { signInThroughDirectory } from './helpers/sign-in';
 
 /**
@@ -115,6 +116,10 @@ test('выход возвращает к форме входа и закрыва
 	await signInThroughDirectory(page, E2E_USER);
 	await expect(page).toHaveURL('/');
 
+	// Первый вход в чистом браузере начинается с подсказок, и они стоят слоем
+	// поверх страницы: дальше проверка нажимает на меню учётной записи.
+	await skipOnboardingTour(page);
+
 	// Меню учётной записи открывается кодом на странице, а не браузером:
 	// нажатие до того, как страница ожила, не доходит до компонента. Поэтому
 	// нажимаем, пока меню не откроется, — ждать фиксированную паузу значило бы
@@ -157,6 +162,10 @@ test('гвардия разворачивает анонима на вход и 
 test('форма на странице с погасшей сессией уводит на вход, а не в пятисотую', async ({ page }) => {
 	await signInThroughDirectory(page, E2E_USER);
 	await expect(page).toHaveURL('/');
+
+	// Подсказки первого входа стоят слоем поверх страницы, а дальше проверка
+	// заполняет форму. Признак «показаны» остаётся в браузере до конца проверки.
+	await skipOnboardingTour(page);
 
 	await page.goto('/organizations/new');
 	await page.getByLabel('Полное наименование').fill('Организация без сессии');

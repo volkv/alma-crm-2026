@@ -34,25 +34,31 @@
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<StatTiles counters={overview.counters} />
 
-	<HomeSection
-		title="Где стоит портфель"
-		description="Активные взаимодействия по группам стадий процесса"
-	>
-		<PortfolioBar distribution={overview.distribution} labels={STAGE_CATEGORY_LABELS} />
-	</HomeSection>
+	<!-- `data-tour` — метка для подсказок первого входа: по ней тур находит
+		блок, о котором говорит его шаг (`$lib/onboarding/steps`). -->
+	<div data-tour="home-portfolio">
+		<HomeSection
+			title="Где стоит портфель"
+			description="Активные взаимодействия по группам стадий процесса"
+		>
+			<PortfolioBar distribution={overview.distribution} labels={STAGE_CATEGORY_LABELS} />
+		</HomeSection>
+	</div>
 
-	<HomeSection
-		title="Требуют действия"
-		description={overview.needsAction.basis === 'mine'
-			? 'Ваши взаимодействия: сначала просроченные, затем с помехами и с близким сроком'
-			: 'Просроченные взаимодействия области доступа'}
-	>
-		<NeedsAction
-			tasks={overview.needsAction.tasks}
-			basis={overview.needsAction.basis}
-			now={overview.generatedAt}
-		/>
-	</HomeSection>
+	<div data-tour="home-needs-action">
+		<HomeSection
+			title="Требуют действия"
+			description={overview.needsAction.basis === 'mine'
+				? 'Ваши взаимодействия: сначала просроченные, затем с помехами и с близким сроком'
+				: 'Просроченные взаимодействия области доступа'}
+		>
+			<NeedsAction
+				tasks={overview.needsAction.tasks}
+				basis={overview.needsAction.basis}
+				now={overview.generatedAt}
+			/>
+		</HomeSection>
+	</div>
 
 	<div class="grid grid-cols-1 items-start gap-4 lg:grid-cols-2">
 		<HomeSection title="Ждём вуз" description="Стадии, часы которых остановлены ожиданием">

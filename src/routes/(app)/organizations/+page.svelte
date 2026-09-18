@@ -112,7 +112,12 @@
 				каталог заказчика — это строки про вузы, и заводят его из справочника
 				организаций. Отдельный раздел обещал бы место, где импорт живёт
 				постоянно, а он одноразовый: файл, предпросмотр, применение. -->
-			<Button variant="outline" href={resolve('/organizations/import')}>
+			<!-- `data-tour` — метка для подсказок первого входа (`$lib/onboarding/steps`). -->
+			<Button
+				variant="outline"
+				href={resolve('/organizations/import')}
+				data-tour="directory-import"
+			>
 				<UploadIcon aria-hidden="true" />
 				Импорт каталога
 			</Button>

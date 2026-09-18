@@ -1,4 +1,5 @@
 <script lang="ts">
+	import LifeBuoyIcon from '@lucide/svelte/icons/life-buoy';
 	import LogInIcon from '@lucide/svelte/icons/log-in';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
@@ -6,9 +7,12 @@
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import KeyValue from '$lib/components/key-value.svelte';
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
+	import { getOnboardingTour } from '$lib/onboarding/tour.svelte';
 	import type { PageProps } from './$types';
 
 	let { data, form: actionResult }: PageProps = $props();
+
+	const tour = getOnboardingTour();
 
 	/** И отказ демонстрации, и подтверждение «сессии завершены» приходят одинаково. */
 	const notice = $derived(
@@ -71,3 +75,21 @@
 		{/if}
 	</Card.Content>
 </Card.Root>
+
+{#if tour.steps.length > 0}
+	<Card.Root>
+		<Card.Header>
+			<Card.Title>Подсказки</Card.Title>
+			<Card.Description>
+				Короткий обход экранов вашей роли: он показывается один раз при первом входе. Признак «уже
+				показаны» принадлежит этому браузеру — с другого устройства подсказки начнутся заново.
+			</Card.Description>
+		</Card.Header>
+		<Card.Content>
+			<Button variant="outline" onclick={() => tour.restart()}>
+				<LifeBuoyIcon aria-hidden="true" />
+				Показать подсказки снова
+			</Button>
+		</Card.Content>
+	</Card.Root>
+{/if}

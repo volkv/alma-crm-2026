@@ -308,41 +308,44 @@
 		</div>
 	</div>
 
-	{#if data.view === 'board'}
-		<Board board={data.board} canTransition={data.canTransition} isFiltered={data.isFiltered} />
-	{:else if data.total === 0 && !data.isFiltered}
-		<div class="rounded-lg border border-border bg-surface">
-			<EmptyState
-				title="Взаимодействий пока нет"
-				description="Заведите первое: выберите учебное заведение, программы и ответственного — маршрут стадий подставится сам."
-			>
-				{#snippet action()}
-					<Button href={resolve('/interactions/new')}>
-						<PlusIcon aria-hidden="true" />
-						Создать взаимодействие
-					</Button>
-				{/snippet}
-			</EmptyState>
-		</div>
-	{:else}
-		<!-- Чекбоксы появляются только там, где выделению есть что делать:
+	<!-- `data-tour` — метка для подсказок первого входа (`$lib/onboarding/steps`). -->
+	<div data-tour="interactions-list" class="min-w-0">
+		{#if data.view === 'board'}
+			<Board board={data.board} canTransition={data.canTransition} isFiltered={data.isFiltered} />
+		{:else if data.total === 0 && !data.isFiltered}
+			<div class="rounded-lg border border-border bg-surface">
+				<EmptyState
+					title="Взаимодействий пока нет"
+					description="Заведите первое: выберите учебное заведение, программы и ответственного — маршрут стадий подставится сам."
+				>
+					{#snippet action()}
+						<Button href={resolve('/interactions/new')}>
+							<PlusIcon aria-hidden="true" />
+							Создать взаимодействие
+						</Button>
+					{/snippet}
+				</EmptyState>
+			</div>
+		{:else}
+			<!-- Чекбоксы появляются только там, где выделению есть что делать:
 			назначить ответственного может не всякая роль, а выделение без
 			единого действия обещает работу, которой нет. -->
-		<DataTable
-			{columns}
-			rows={data.rows}
-			total={data.total}
-			getRowId={(row) => row.id}
-			searchPlaceholder="Поиск по названию и организации"
-			emptyTitle="Ничего не найдено"
-			emptyDescription="Под этот запрос и отбор не попало ни одной записи."
-			emptyAction={data.isFiltered ? resetFilters : undefined}
-			initialHiddenColumns={HIDDEN_ON_LAPTOP}
-			defaultSort={{ columnId: 'dueAt', direction: 'asc' }}
-			bulkActions={data.canAssign ? assignAction : undefined}
-			onopen={open}
-		/>
-	{/if}
+			<DataTable
+				{columns}
+				rows={data.rows}
+				total={data.total}
+				getRowId={(row) => row.id}
+				searchPlaceholder="Поиск по названию и организации"
+				emptyTitle="Ничего не найдено"
+				emptyDescription="Под этот запрос и отбор не попало ни одной записи."
+				emptyAction={data.isFiltered ? resetFilters : undefined}
+				initialHiddenColumns={HIDDEN_ON_LAPTOP}
+				defaultSort={{ columnId: 'dueAt', direction: 'asc' }}
+				bulkActions={data.canAssign ? assignAction : undefined}
+				onopen={open}
+			/>
+		{/if}
+	</div>
 </div>
 
 <Dialog.Root bind:open={assignOpen}>

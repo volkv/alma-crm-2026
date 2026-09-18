@@ -217,7 +217,9 @@
 	карточки из четырёх наполовину пустые. `items-start` оставляет каждой высоту
 	по её содержимому.
 -->
-<div class="grid items-start gap-4 md:grid-cols-2">
+<!-- `data-tour` — метка для подсказок первого входа: по ней тур находит четыре
+	вопроса карточки и панель доступных команд (`$lib/onboarding/steps`). -->
+<div class="grid items-start gap-4 md:grid-cols-2" data-tour="interaction-summary">
 	<Card.Root size="sm">
 		<Card.Header>
 			<Card.Title>Что происходит</Card.Title>
@@ -324,7 +326,7 @@
 		</Card.Content>
 	</Card.Root>
 
-	<Card.Root size="sm">
+	<Card.Root size="sm" data-tour="interaction-actions">
 		<Card.Header>
 			<Card.Title>Что могу сейчас</Card.Title>
 		</Card.Header>

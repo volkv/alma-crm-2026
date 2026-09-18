@@ -499,6 +499,12 @@ id-токен проверяется по ключам realm (`auth/oidc.ts::exc
   внутри `Group`, портал уже внутри `Content`, анимацию держат два импорта в `src/app.css`, а
   открывает слой только ожившая страница. Все четыре правила и приёмы для проверок — в
   [`development.md`](development.md), раздел «Всплывающие слои».
+- **Подсказки первого входа** — `src/lib/onboarding/**` и
+  `components/onboarding/onboarding-tour.svelte`: три-пять шагов на роль, рамка вокруг элемента с
+  меткой `data-tour`, ссылка на нужный экран, если элемент живёт в другом разделе. Тур принадлежит
+  оболочке и переживает переход между экранами; признак «показаны» лежит в `localStorage` браузера,
+  а не в базе — на общем демонстрационном стенде учётная запись одна на всех, и признак на стороне
+  сервера израсходовал бы первый же посетитель. Повтор — кнопкой в справке и в профиле.
 - Клиентские модули иногда импортируют из `$lib/server` — но только типы (`SessionUser`,
   `PermissionKey`): такой импорт стирается при сборке и в браузер не попадает.
 
@@ -520,6 +526,7 @@ id-токен проверяется по ключам realm (`auth/oidc.ts::exc
 | отчёт: адрес, строки, форматы                  | `src/lib/server/reports/query.ts`                | `readReportQuery`, `buildReport`, `writers/`         |
 | приём заявки с сайта                           | `src/lib/server/integrations/exchange/intake.ts` | `receiveApplication`                                 |
 | справка: статьи и их порядок                   | `src/lib/help/index.ts`                          | `helpPages`, `findHelpPage`                          |
+| подсказки первого входа: шаги по ролям         | `src/lib/onboarding/steps.ts`                    | `ONBOARDING_TOURS`, `tourFor`, `isStepScreen`        |
 | кэш чтений: механика и поколения               | `src/lib/server/cache/region.ts`                 | `cached`, `bumpEpoch`, `scopeKey`                    |
 | наблюдатель зависших взаимодействий            | `src/lib/server/notifications/watch.ts`          | `runNotificationCycle`, `readStuckEntry`             |
 | шифрование контактов                           | `src/lib/server/people/pii.ts`                   | `contactColumns`, запись и чтение шифртекста         |

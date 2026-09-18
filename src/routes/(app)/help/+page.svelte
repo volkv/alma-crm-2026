@@ -1,12 +1,20 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import LifeBuoyIcon from '@lucide/svelte/icons/life-buoy';
 	import PrinterIcon from '@lucide/svelte/icons/printer';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import PageHeader from '$lib/components/page-header.svelte';
+	import { getOnboardingTour } from '$lib/onboarding/tour.svelte';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	/**
+	 * Подсказки первого входа показываются один раз и на этом устройстве. Позвать
+	 * их обратно человек должен там, где ищет объяснения, — то есть здесь.
+	 */
+	const tour = getOnboardingTour();
 </script>
 
 <svelte:head>
@@ -19,6 +27,14 @@
 	breadcrumbs={[{ label: 'Главная', href: resolve('/') }]}
 >
 	{#snippet actions()}
+		<!-- Кнопки, которая ничего не делает, здесь нет: роли без подсказок их не
+			увидит и не нажмёт. -->
+		{#if tour.steps.length > 0}
+			<Button variant="outline" onclick={() => tour.restart()}>
+				<LifeBuoyIcon aria-hidden="true" />
+				Показать подсказки
+			</Button>
+		{/if}
 		<Button variant="outline" href={resolve('/(app)/help/print')}>
 			<PrinterIcon aria-hidden="true" />
 			Версия для печати
@@ -26,7 +42,8 @@
 	{/snippet}
 </PageHeader>
 
-<div class="flex flex-col gap-4 p-4 sm:p-6">
+<!-- `data-tour` — метка для подсказок первого входа (`$lib/onboarding/steps`). -->
+<div class="flex flex-col gap-4 p-4 sm:p-6" data-tour="help-sections">
 	{#each data.sections as section (section.key)}
 		<Card.Root>
 			<Card.Header>

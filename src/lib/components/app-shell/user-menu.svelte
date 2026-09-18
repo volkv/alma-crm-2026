@@ -1,10 +1,12 @@
 <script lang="ts">
+	import LifeBuoyIcon from '@lucide/svelte/icons/life-buoy';
 	import LogOutIcon from '@lucide/svelte/icons/log-out';
 	import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
 	import * as Avatar from '$lib/components/ui/avatar/index.js';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { initials } from '$lib/format';
+	import { getOnboardingTour } from '$lib/onboarding/tour.svelte';
 	import type { SessionUser } from '$lib/server/auth/types';
 
 	/**
@@ -12,6 +14,13 @@
 	 * changes state, so it must not be reachable by a prefetch or a crawler.
 	 */
 	let { user }: { user: SessionUser } = $props();
+
+	/**
+	 * Подсказки первого входа показываются один раз; вернуть их человек ищет там
+	 * же, где свою учётную запись. Роли без тура пункта не видят: меню не должно
+	 * предлагать действие, которое ничего не делает.
+	 */
+	const tour = getOnboardingTour();
 </script>
 
 <DropdownMenu.Root>
@@ -34,6 +43,12 @@
 			<p class="truncate text-xs text-muted-foreground">{user.email}</p>
 			<p class="mt-1 text-xs text-faint">Роль: {user.roleId}</p>
 		</div>
+		{#if tour.steps.length > 0}
+			<DropdownMenu.Item onSelect={() => tour.restart()}>
+				<LifeBuoyIcon aria-hidden="true" />
+				Показать подсказки снова
+			</DropdownMenu.Item>
+		{/if}
 		<DropdownMenu.Separator />
 		<form method="POST" action="/logout">
 			<DropdownMenu.Item class="w-full">

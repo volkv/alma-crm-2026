@@ -184,7 +184,8 @@
 		{isFiltered}
 	/>
 
-	<div class="grid grid-cols-2 gap-3 sm:grid-cols-4">
+	<!-- `data-tour` — метка для подсказок первого входа (`$lib/onboarding/steps`). -->
+	<div class="grid grid-cols-2 gap-3 sm:grid-cols-4" data-tour="reports-totals">
 		<div class="flex flex-col rounded-lg border border-border bg-surface px-3 py-3">
 			<span class="text-xs text-muted-foreground">
 				{data.meta.mode === 'snapshot' ? 'Взаимодействий' : 'Событий'}

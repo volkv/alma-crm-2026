@@ -29,7 +29,8 @@
 
 <svelte:head><title>Процесс — LCT CRM</title></svelte:head>
 
-<Card.Root>
+<!-- `data-tour` — метка для подсказок первого входа (`$lib/onboarding/steps`). -->
+<Card.Root data-tour="process-groups">
 	<Card.Header>
 		<Card.Title>Процесс</Card.Title>
 		<Card.Description>

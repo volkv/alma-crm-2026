@@ -7,6 +7,7 @@ import { chromium, type FullConfig } from '@playwright/test';
 import postgres from 'postgres';
 import { DEMO_EMAILS, DEMO_LOGINS, STAFF_ADMIN_EMAIL } from '../scripts/seed/users';
 import { ensureAccount, keycloakAdmin, type DirectoryAccount } from './helpers/keycloak-admin';
+import { skipOnboardingTour } from './helpers/onboarding';
 import { signInThroughDirectory } from './helpers/sign-in';
 
 /**
@@ -232,6 +233,12 @@ async function storeSession(
 
 		await signInThroughDirectory(page, credentials);
 		await page.waitForURL('/');
+
+		// Первый вход этой учётной записи начинается с подсказок, и признак «уже
+		// показаны» продукт кладёт в браузер. Сохранённая сессия обязана нести его
+		// с собой: иначе тур встречал бы каждую проверку прогона, а закрывать его
+		// они стали бы вместо того, что проверяют.
+		await skipOnboardingTour(page);
 
 		await context.storageState({ path: file });
 		await context.close();
