@@ -450,6 +450,56 @@ export async function addBoundaryInteraction(
 	return interaction.id;
 }
 
+/**
+ * Наполнение сверх эталона: простые записи на одной стадии, по одной на вуз А.
+ *
+ * Нужны там, где проверяется не семантика, а работа с объёмом: страница экрана
+ * (пятьдесят строк) на восьми записях эталона не отличима от всей выборки, и
+ * ошибка в окне строк осталась бы незамеченной. Титул содержит номер с нулями:
+ * порядок строк в срезе — по вузу, затем по названию, и он обязан быть
+ * предсказуемым.
+ */
+export async function addFillerInteractions(
+	db: Database,
+	ids: ReferenceIds,
+	ownerUserId: string,
+	count: number
+): Promise<string[]> {
+	const revision = await readRevision(db, ids.revisionId);
+	const stage = revision.stages.find((item) => item.key === 'contact_search')!;
+	const created: string[] = [];
+
+	for (let index = 0; index < count; index += 1) {
+		const [interaction] = await db
+			.insert(schema.interactions)
+			.values({
+				title: `Ф-${String(index + 1).padStart(3, '0')} наполнение`,
+				processGroupId: ids.groupId,
+				ownerUserId
+			})
+			.returning({ id: schema.interactions.id });
+
+		await db.insert(schema.interactionParties).values({
+			interactionId: interaction.id,
+			organizationId: ids.organizations.a,
+			partyRole: 'educational_institution',
+			isPrimary: true
+		});
+
+		await db.insert(schema.stageEntries).values({
+			interactionId: interaction.id,
+			stageId: stage.id,
+			stageSnapshot: stageSnapshot(stage),
+			enteredAt: moment('2026-10-05'),
+			responsibleUserId: ownerUserId
+		});
+
+		created.push(interaction.id);
+	}
+
+	return created;
+}
+
 /** Срез на конец сентября: период, которым его спрашивают. */
 export const SEPTEMBER_PERIOD = { from: '2026-09-01', to: '2026-09-30' } as const;
 

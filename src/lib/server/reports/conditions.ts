@@ -12,8 +12,16 @@
  * — как «и». Многозначный признак взаимодействия считается подходящим, если
  * подходит хотя бы одно его значение: взаимодействие с двумя продуктами
  * попадает и в отчёт по первому, и в отчёт по второму.
+ *
+ * Выборка делится надвое, и это деление — не украшение, а цена отклика.
+ * **Колонки выборки** (`SELECTION_COLUMNS`) считаются для каждой строки: по ним
+ * работают фильтры, сортировка и все агрегаты. **Признаки строки**
+ * (`ATTRIBUTE_COLUMNS`) — боковые выборки по связям многие ко многим, и они
+ * считаются только для показанных строк: экрану нужна одна страница, а не все
+ * три тысячи.
  */
 import { and, sql, type SQL } from 'drizzle-orm';
+import type { InteractionStatus } from '$lib/contracts/interactions';
 import type { ReportQuery } from '$lib/contracts/reports';
 import type { ActorContext } from '../actor';
 import { interactionScopeFilter } from '../interactions/access';
@@ -26,17 +34,30 @@ function inList(values: readonly string[]): SQL {
 	)})`;
 }
 
-/** Основная сторона взаимодействия — та, с которой ведётся процесс. */
-const PRIMARY_ORGANIZATION = sql`(
-	select parties.organization_id
-	from interaction_parties parties
-	where parties.interaction_id = interactions.id and parties.is_primary
-	limit 1
-)`;
+/**
+ * Основная сторона взаимодействия — та, с которой ведётся процесс, — и её
+ * организация. Один боковой join на выборку, а не подзапрос в каждом месте, где
+ * про основную сторону спрашивают: подзапросов таких мест набирается четыре
+ * (колонка вуза, ответственный за вуз, фильтр по типу контрагента, фильтр по
+ * ответственному), и база считала бы одно и то же четырежды на строку.
+ *
+ * Ставится сразу за `from interactions` в **каждой** выборке отчёта: и условия,
+ * и колонки ссылаются на `primary_party` и `counterparty` по имени.
+ */
+export const PRIMARY_PARTY_JOIN = sql`
+	left join lateral (
+		select parties.organization_id as id
+		from interaction_parties parties
+		where parties.interaction_id = interactions.id and parties.is_primary
+		limit 1
+	) primary_party on true
+	left join organizations counterparty on counterparty.id = primary_party.id
+`;
 
 /**
  * Условия на взаимодействие. Возвращает одно выражение: вызывающий подставляет
- * его в `where` своего запроса, а не собирает список заново.
+ * его в `where` своего запроса, а не собирает список заново. Запрос обязан
+ * содержать `PRIMARY_PARTY_JOIN`.
  */
 export function interactionConditions(ctx: ActorContext, query: ReportQuery): SQL {
 	const conditions: SQL[] = [interactionScopeFilter(ctx)];
@@ -50,11 +71,7 @@ export function interactionConditions(ctx: ActorContext, query: ReportQuery): SQ
 	}
 
 	if (query.party.length > 0) {
-		conditions.push(sql`exists (
-			select 1 from organizations counterparty
-			where counterparty.id = ${PRIMARY_ORGANIZATION}
-				and counterparty.kind in ${inList(query.party)}
-		)`);
+		conditions.push(sql`counterparty.kind in ${inList(query.party)}`);
 	}
 
 	if (query.dir.length > 0) {
@@ -101,7 +118,7 @@ export function interactionConditions(ctx: ActorContext, query: ReportQuery): SQ
 		// вопрос «кто ведёт этот вуз сейчас» задают именно в настоящем времени.
 		conditions.push(sql`exists (
 			select 1 from organization_responsibles responsible
-			where responsible.organization_id = ${PRIMARY_ORGANIZATION}
+			where responsible.organization_id = primary_party.id
 				and responsible.valid_to is null
 				and responsible.user_id in ${inList(query.assignee)}
 		)`);
@@ -132,16 +149,37 @@ export function interactionConditions(ctx: ActorContext, query: ReportQuery): SQ
 }
 
 /**
+ * Колонки выборки: то, что считается для каждой строки в обоих режимах.
+ *
+ * Здесь только однозначные признаки — те, что не размножают строку и берутся
+ * одним join'ом. По ним работают агрегаты (итоги, воронка, разрезы по вузам и
+ * ответственным) и сортировка страницы, поэтому считать их приходится по всей
+ * выборке. Требуют `PRIMARY_PARTY_JOIN` и join группы процесса.
+ */
+export const SELECTION_COLUMNS = sql`
+	interactions.id as "interactionId",
+	interactions.title as "title",
+	interactions.status as "status",
+	interactions.process_group_id as "processGroupId",
+	interactions.owner_user_id as "ownerUserId",
+	interactions.contract_id as "contractId",
+	process_group.key as "processGroupKey",
+	counterparty.id as "organizationId",
+	counterparty.short_name as "organizationName",
+	counterparty.kind as "organizationKind"
+`;
+
+/**
  * Признаки взаимодействия для строки отчёта. Все — боковыми выборками по одному
  * взаимодействию: `join` по связи «многие ко многим» удвоил бы строку и сломал
  * бы все суммы (зерно строки фиксировано и от выбранных колонок не зависит).
+ *
+ * Считаются только для строк, которые уйдут в ответ: страница экрана или полный
+ * набор выгрузки. Итогам, воронке и разрезам они не нужны — те считаются
+ * агрегирующими запросами по колонкам выборки (`reports/aggregate.ts`).
  */
 export const ATTRIBUTE_COLUMNS = sql`
-	interactions.owner_user_id as "ownerUserId",
 	owner_user.full_name as "ownerName",
-	counterparty.id as "organizationId",
-	counterparty.short_name as "organizationName",
-	counterparty.kind as "organizationKind",
 	contract.number as "contractNumber",
 	coalesce(interaction_products_agg.ids, '{}'::uuid[]) as "productIds",
 	coalesce(interaction_products_agg.names, '{}'::text[]) as "products",
@@ -152,24 +190,26 @@ export const ATTRIBUTE_COLUMNS = sql`
 `;
 
 /**
- * Боковые выборки к признакам. Ответственный за вуз берётся на момент среза:
- * колонка историческая и показывает назначения, действовавшие на `T`.
+ * Боковые выборки к признакам. `source` — псевдоним уже отобранных строк
+ * (страница экрана или весь набор выгрузки): признаки считаются от него, а не
+ * от таблицы взаимодействий, поэтому их цена — это цена показанных строк.
  *
- * Момент передаётся строкой ISO, а не `Date`: у параметра в готовом SQL нет
- * выведенного типа, и драйвер отказывается кодировать объект даты вслепую.
+ * Ответственный за вуз берётся на момент среза: колонка историческая и
+ * показывает назначения, действовавшие на `T`. Момент передаётся строкой ISO, а
+ * не `Date`: у параметра в готовом SQL нет выведенного типа, и драйвер
+ * отказывается кодировать объект даты вслепую.
  */
-export function attributeJoins(asOf: string): SQL {
+export function attributeJoins(asOf: string, source: SQL): SQL {
 	return sql`
-		left join users owner_user on owner_user.id = interactions.owner_user_id
-		left join organizations counterparty on counterparty.id = ${PRIMARY_ORGANIZATION}
-		left join contracts contract on contract.id = interactions.contract_id
+		left join users owner_user on owner_user.id = ${source}."ownerUserId"
+		left join contracts contract on contract.id = ${source}."contractId"
 		left join lateral (
 			select
 				array_agg(product.id order by product.code) as ids,
 				array_agg(product.name order by product.code) as names
 			from interaction_products chosen
 			join products product on product.id = chosen.product_id
-			where chosen.interaction_id = interactions.id
+			where chosen.interaction_id = ${source}."interactionId"
 		) interaction_products_agg on true
 		left join lateral (
 			select
@@ -179,26 +219,27 @@ export function attributeJoins(asOf: string): SQL {
 			where exists (
 					select 1 from interaction_products chosen
 					join product_directions product_direction on product_direction.product_id = chosen.product_id
-					where chosen.interaction_id = interactions.id
+					where chosen.interaction_id = ${source}."interactionId"
 						and product_direction.direction_id = direction.id
 				)
 				or exists (
 					select 1 from interaction_programs chosen
 					join programs program on program.id = chosen.program_id
-					where chosen.interaction_id = interactions.id and program.direction_id = direction.id
+					where chosen.interaction_id = ${source}."interactionId"
+						and program.direction_id = direction.id
 				)
 		) interaction_directions_agg on true
 		left join lateral (
 			select array_agg(distinct item.transfer_status) as names
 			from interaction_contract_items chosen
 			join contract_items item on item.id = chosen.contract_item_id
-			where chosen.interaction_id = interactions.id
+			where chosen.interaction_id = ${source}."interactionId"
 		) interaction_transfer_agg on true
 		left join lateral (
 			select array_agg(distinct assignee.full_name) as names
 			from organization_responsibles responsible
 			join users assignee on assignee.id = responsible.user_id
-			where responsible.organization_id = ${PRIMARY_ORGANIZATION}
+			where responsible.organization_id = ${source}."organizationId"
 				and responsible.valid_from <= ${asOf}::timestamptz
 				and (responsible.valid_to is null or responsible.valid_to > ${asOf}::timestamptz)
 		) interaction_assignees_agg on true
@@ -206,16 +247,26 @@ export function attributeJoins(asOf: string): SQL {
 }
 
 /**
- * Признаки, общие у обоих режимов, в том виде, в каком их отдаёт база.
- * Идентификаторы едут рядом с названиями: по ним разрез строит ссылку «показать
- * только эти», а показывать в ячейке идентификатор нельзя.
+ * Колонки выборки в том виде, в каком их отдаёт база. Идентификаторы едут рядом
+ * с названиями: по ним разрез строит ссылку «показать только эти», а показывать
+ * в ячейке идентификатор нельзя.
  */
-export type ReportAttributes = {
+export type ReportSelection = {
+	interactionId: string;
+	title: string;
+	status: InteractionStatus;
+	processGroupId: string;
+	processGroupKey: string;
 	ownerUserId: string;
-	ownerName: string | null;
+	contractId: string | null;
 	organizationId: string | null;
 	organizationName: string | null;
 	organizationKind: string | null;
+};
+
+/** Признаки строки: считаются только для показанных строк. */
+export type ReportAttributes = {
+	ownerName: string | null;
 	contractNumber: string | null;
 	productIds: string[];
 	products: string[];
@@ -224,5 +275,16 @@ export type ReportAttributes = {
 	transferStatuses: string[];
 	assignees: string[];
 };
+
+/**
+ * Окно страницы. Отсутствие окна — это выгрузка: у неё набор полный, иначе файл
+ * показал бы меньше строк, чем экран, и выглядел бы при этом правдой.
+ */
+export type RowWindow = { limit: number; offset: number };
+
+/** `limit … offset …` или пусто: у выгрузки окна нет. */
+export function windowClause(window: RowWindow | null): SQL {
+	return window === null ? sql`` : sql`limit ${window.limit} offset ${window.offset}`;
+}
 
 export { inList };

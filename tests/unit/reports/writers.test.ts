@@ -6,6 +6,7 @@
  * экранирование в HTML для печати.
  */
 import { describe, expect, it } from 'vitest';
+import { REPORT_PDF_ROWS } from '$lib/contracts/reports';
 import { writeXlsx } from '$lib/server/spreadsheet/write';
 import { XLSX } from '$lib/server/spreadsheet/sheetjs';
 import { checkExportInvariant, checkReportInvariants } from '$lib/server/reports/invariants';
@@ -163,6 +164,58 @@ describe('страница на печать', () => {
 	it('на пустой выборке объясняет пустоту словами', () => {
 		expect(reportHtml(sampleReportView({ rows: [] }))).toContain('не попало ни одной строки');
 	});
+
+	it('печатает первые N строк и говорит, сколько их всего', () => {
+		const total = REPORT_PDF_ROWS + 100;
+		const many = sampleReportView({
+			rows: Array.from({ length: total }, (_, index) => ({
+				...VIEW.rows[0],
+				rowKey: `row-${index}`,
+				interactionId: `row-${index}`
+			})),
+			totals: { rowCount: total, interactionCount: total, paused: 0, overdue: 0 }
+		});
+
+		const html = reportHtml(many);
+
+		// Строк в таблице ровно столько, сколько сводка обещает показать: одна
+		// строка шапки плюс `REPORT_PDF_ROWS` строк тела.
+		expect(html.split('</tr>').length - 1).toBe(REPORT_PDF_ROWS + 1);
+		expect(html).toContain(`Показаны первые ${REPORT_PDF_ROWS} строк из ${total}`);
+		expect(html).toContain('XLSX');
+	});
+
+	it('на выборке меньше потолка о сокращении не пишет', () => {
+		expect(reportHtml(VIEW)).not.toContain('Показаны первые');
+	});
+
+	it('печатает числа обеих диаграмм таблицами, а не отсылает к экрану', () => {
+		const snapshot = reportHtml(VIEW);
+
+		expect(snapshot).toContain('Стадия на дату среза');
+		expect(snapshot).toContain('Закрыто за период');
+
+		const movement = reportHtml(
+			sampleReportView({
+				meta: { ...VIEW.meta, mode: 'movement' },
+				charts: {
+					funnel: null,
+					movement: {
+						step: 'week',
+						buckets: [{ key: '2026-10-01', label: '01.10', from: '2026-10-01', to: '2026-10-07' }],
+						series: [{ key: 'forward', label: 'Вперёд', values: [2] }],
+						migrated: 3,
+						note: 'Недели по московскому календарю.'
+					},
+					breakdowns: []
+				}
+			})
+		);
+
+		expect(movement).toContain('Динамика переходов');
+		expect(movement).toContain('Вперёд');
+		expect(movement).toContain('Перенос при изменении процесса: 3');
+	});
 });
 
 describe('имя файла', () => {
@@ -228,7 +281,24 @@ describe('инварианты', () => {
 
 	it('И5 ловит файл, в котором строк меньше, чем на экране', () => {
 		expect(checkExportInvariant(VIEW, { xlsx: 2, json: 1 })).toStrictEqual([
-			{ invariant: 'И5', message: 'в файле json строк 1, в таблице 2' }
+			{ invariant: 'И5', message: 'в файле json строк 1, ожидалось 2' }
 		]);
+	});
+
+	it('И5 ждёт от PDF сводку: первые N строк, а не всю таблицу', () => {
+		const total = REPORT_PDF_ROWS + 10;
+		const many = sampleReportView({
+			rows: Array.from({ length: total }, (_, index) => ({
+				...VIEW.rows[0],
+				rowKey: `row-${index}`,
+				interactionId: `row-${index}`
+			})),
+			totals: { rowCount: total, interactionCount: total, paused: 0, overdue: 0 }
+		});
+
+		expect(checkExportInvariant(many, { pdf: REPORT_PDF_ROWS, xlsx: total })).toStrictEqual([]);
+		expect(
+			checkExportInvariant(many, { pdf: total }).map((issue) => issue.invariant)
+		).toStrictEqual(['И5']);
 	});
 });

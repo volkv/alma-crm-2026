@@ -20,9 +20,11 @@ import type { RequestEvent } from '@sveltejs/kit';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	REPORT_FORMATS,
+	REPORT_PDF_ROWS,
 	reportQuerySchema,
 	type ReportCell,
-	type ReportQuery
+	type ReportQuery,
+	type ReportView
 } from '$lib/contracts/reports';
 import type { ActorContext } from '$lib/server/actor';
 import { auditEvents } from '$lib/server/db/schema';
@@ -231,6 +233,31 @@ describe('четыре писателя одного отчёта', () => {
 		expect(text).toContain('Срез на 31.12.2026');
 		expect(text).toContain('Вуз А');
 	});
+
+	it('на выборке выше потолка PDF отвечает сводкой, а не отказом', async () => {
+		// Строки берутся у настоящего отчёта и размножаются: проверяется поведение
+		// писателя на объёме, а не семантика выборки — заливать в базу шесть сотен
+		// взаимодействий ради одной пометки незачем.
+		const view = await buildReport(admin(), QUERY);
+		const total = REPORT_PDF_ROWS + 100;
+		const many: ReportView = {
+			...view,
+			rows: Array.from({ length: total }, (_, index) => ({
+				...view.rows[index % view.rows.length],
+				rowKey: `row-${index}`
+			})),
+			totals: { ...view.totals, rowCount: total, interactionCount: total }
+		};
+
+		const file = await renderReport(many, 'pdf');
+
+		expect(file.body.subarray(0, 4).toString('latin1')).toBe('%PDF');
+
+		const text = await pdfText(file.body);
+
+		expect(text).toContain(`Показаны первые ${REPORT_PDF_ROWS} строк из ${total}`);
+		expect(checkExportInvariant(many, { pdf: REPORT_PDF_ROWS })).toStrictEqual([]);
+	}, 120_000);
 
 	it('называет файл режимом, периодом и днём сборки', async () => {
 		const view = await buildReport(admin(), QUERY);

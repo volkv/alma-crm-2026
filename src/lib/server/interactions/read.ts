@@ -65,7 +65,7 @@ import { withPiiTrace } from '../people/pii-trace';
 import { toPersonView } from '../people/serialize';
 import { requirePermission } from '../rbac';
 import { buildProgress, isStale } from '../stages/status';
-import { readActiveRevision, readGroupRow } from '../stages/process';
+import { readActiveRevisionCached, readGroupRow } from '../stages/process';
 import { assertInteractionVisible, interactionScopeFilter } from './access';
 
 /** Условия выборки списка. Одни и те же для страницы и для счётчика. */
@@ -353,7 +353,7 @@ async function readProgress(rows: ListRow[]): Promise<Map<string, StageProgressI
 		await Promise.all(
 			groupIds.map(
 				async (groupId) =>
-					[groupId, await readActiveRevision(db, await readGroupRow(db, groupId))] as const
+					[groupId, await readActiveRevisionCached(await readGroupRow(db, groupId))] as const
 			)
 		)
 	);

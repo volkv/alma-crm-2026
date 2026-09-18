@@ -45,7 +45,7 @@ import {
 	users
 } from '../db/schema';
 import { requirePermission } from '../rbac';
-import { readActiveRevision, readGroupRow } from '../stages/process';
+import { readActiveRevisionCached, readGroupRow } from '../stages/process';
 import { evaluateTransition, type StageState } from '../stages/transitions';
 import { interactionScopeFilter } from './access';
 
@@ -462,7 +462,7 @@ export async function getInteractionBoard(
 		return empty;
 	}
 
-	const revision = await readActiveRevision(db, await readGroupRow(db, group.id));
+	const revision = await readActiveRevisionCached(await readGroupRow(db, group.id));
 
 	// Группа без действующего процесса — это не поломка доски: стадий нет, и
 	// колонок тоже. Отказ здесь скрыл бы соседнюю группу, где работа идёт.

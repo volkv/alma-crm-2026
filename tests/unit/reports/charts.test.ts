@@ -8,10 +8,6 @@
 import { describe, expect, it } from 'vitest';
 import { buildBreakdown, buildFunnel, buildMovementChart } from '$lib/server/reports/charts';
 
-function at(day: string): Date {
-	return new Date(`${day}T12:00:00.000+03:00`);
-}
-
 describe('ось времени динамики переходов', () => {
 	it('до трёх месяцев считает по неделям с понедельника', () => {
 		const chart = buildMovementChart('2026-10-01', '2026-12-31', [], 0);
@@ -41,13 +37,15 @@ describe('ось времени динамики переходов', () => {
 	});
 
 	it('раскладывает события по столбцам и видам', () => {
+		// События приезжают уже сосчитанными по дням: их группирует база, а ось
+		// времени раскладывает группы по неделям.
 		const chart = buildMovementChart(
 			'2026-10-01',
 			'2026-10-14',
 			[
-				{ kind: 'forward', at: at('2026-10-02') },
-				{ kind: 'forward', at: at('2026-10-06') },
-				{ kind: 'return', at: at('2026-10-06') }
+				{ kind: 'forward', day: '2026-10-02', count: 1 },
+				{ kind: 'forward', day: '2026-10-06', count: 1 },
+				{ kind: 'return', day: '2026-10-06', count: 1 }
 			],
 			2
 		);

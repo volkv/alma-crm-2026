@@ -1,10 +1,10 @@
 import { error } from '@sveltejs/kit';
-import { REPORT_PAGE_SIZE, columnsForMode } from '$lib/contracts/reports';
+import { columnsForMode } from '$lib/contracts/reports';
 import { actorFromEvent } from '$lib/server/actor';
 import { toPageError } from '$lib/server/http';
 import { readFilterOptions } from '$lib/server/reports/options';
 import { readReportQuery } from '$lib/server/reports/query';
-import { buildReport } from '$lib/server/reports/rows';
+import { buildReportPage } from '$lib/server/reports/rows';
 import { can } from '$lib/server/rbac';
 import type { PageServerLoad } from './$types';
 
@@ -13,9 +13,9 @@ import type { PageServerLoad } from './$types';
  * человек и так видит в списке взаимодействий, и отдельное право либо дало бы
  * ему лишнее, либо спрятало своё.
  *
- * На экран уезжает страница строк, а итоги и серии диаграмм — целиком: они
- * посчитаны по всей выборке, а не по видимым пятидесяти строкам, и это то самое
- * место, где отчёт и диаграмма могли бы разойтись.
+ * На экран уезжает страница строк, а итоги и серии диаграмм — целиком: их
+ * считает база по всей выборке, а не перебор видимых пятидесяти строк, и это то
+ * самое место, где отчёт и диаграмма могли бы разойтись.
  */
 export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
@@ -27,21 +27,20 @@ export const load: PageServerLoad = async (event) => {
 
 	try {
 		const query = readReportQuery(event.url);
-		const [view, options] = await Promise.all([buildReport(ctx, query), readFilterOptions(ctx)]);
-
 		const requested = Number.parseInt(event.url.searchParams.get('page') ?? '', 10);
-		const pages = Math.max(1, Math.ceil(view.rows.length / REPORT_PAGE_SIZE));
-		const page = Number.isInteger(requested) && requested >= 1 ? Math.min(requested, pages) : 1;
-		const offset = (page - 1) * REPORT_PAGE_SIZE;
+		const [report, options] = await Promise.all([
+			buildReportPage(ctx, query, requested),
+			readFilterOptions(ctx)
+		]);
 
 		return {
-			meta: view.meta,
-			totals: view.totals,
-			charts: view.charts,
-			rows: view.rows.slice(offset, offset + REPORT_PAGE_SIZE),
-			page,
-			pages,
-			pageSize: REPORT_PAGE_SIZE,
+			meta: report.view.meta,
+			totals: report.view.totals,
+			charts: report.view.charts,
+			rows: report.view.rows,
+			page: report.page,
+			pages: report.pages,
+			pageSize: report.pageSize,
 			query,
 			options,
 			/** Каталог колонок режима — из него собран переключатель набора. */

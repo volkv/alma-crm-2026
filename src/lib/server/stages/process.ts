@@ -47,6 +47,7 @@ import {
 	stageTransitions
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
+import { cachedActiveRevision, invalidateProcessRevisions } from '../cache/process';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { enqueueApplicationStatus } from '../integrations/exchange/outbox';
 import { requirePermission } from '../rbac';
@@ -235,6 +236,18 @@ export async function readActiveRevision(
 	group: ProcessGroupRow
 ): Promise<ProcessRevisionView | null> {
 	return group.activeRevisionId === null ? null : readRevision(executor, group.activeRevisionId);
+}
+
+/**
+ * Та же редакция, но из кэша: для тех, кто читает структуру, чтобы показать её,
+ * — карточка, её список и доска. Внутри транзакции звать нельзя и незачем:
+ * правка процесса обязана видеть то, что она сама уже записала, а кэш отвечает
+ * состоянием на момент последней публикации.
+ */
+export async function readActiveRevisionCached(
+	group: ProcessGroupRow
+): Promise<ProcessRevisionView | null> {
+	return cachedActiveRevision(group.id, () => readActiveRevision(getDb(), group));
 }
 
 /** Та же редакция, но её отсутствие — отказ словами, а не пустая лента. */
@@ -1338,7 +1351,7 @@ export async function publishProcess(
 ): Promise<PublicationResult> {
 	await requirePermission(ctx, 'stages.configure', { type: 'stages.process_published' });
 
-	return withTransaction(ctx, async (tx) => {
+	const result = await withTransaction(ctx, async (tx) => {
 		// 1. Блокировка группы: две одновременные публикации выстраиваются в
 		// очередь, а создание взаимодействия ждёт своей разделяемой блокировки.
 		const group = await lockGroup(tx, (await readGroupByKey(tx, groupKey)).id, 'update');
@@ -1488,6 +1501,12 @@ export async function publishProcess(
 			archivedKeyCount
 		};
 	});
+
+	// Действующая редакция сменилась: собранную раньше структуру больше не
+	// показывать. После фиксации, а не внутри: до неё показывать ещё нечего.
+	await invalidateProcessRevisions();
+
+	return result;
 }
 
 /** Одно переехавшее взаимодействие: что попадёт в журнал отдельной строкой. */

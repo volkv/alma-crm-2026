@@ -12,6 +12,7 @@
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { ANONYMIZED_PERSON_LAST_NAME } from '$lib/contracts/directory';
+import type { ActorContext } from '$lib/server/actor';
 import { invalidateDirectoryOptions } from '$lib/server/cache/directory';
 import {
 	affiliations,
@@ -21,7 +22,8 @@ import {
 	interactionParties,
 	interactions,
 	organizationResponsibles,
-	organizations
+	organizations,
+	stages
 } from '$lib/server/db/schema';
 import { listOrganizationOptions, listPersonOptions } from '$lib/server/directory/read';
 import { createOrganization, createPerson } from '$lib/server/directory/write';
@@ -32,7 +34,18 @@ import {
 	listInteractionChanges
 } from '$lib/server/interactions/read';
 import { getRedis } from '$lib/server/redis';
+import { readFilterOptions } from '$lib/server/reports/options';
 import { addComment } from '$lib/server/stages/commands';
+import { B2B_GROUP_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
+import {
+	createDraft,
+	ensureProcess,
+	processDefinition,
+	publishProcess,
+	readActiveRevisionCached,
+	readGroupByKey,
+	updateDraft
+} from '$lib/server/stages/process';
 import {
 	insertInteractionWithStage,
 	insertOrganization,
@@ -488,5 +501,101 @@ describe('ключи кэша', () => {
 		expect(epoch).toBe('0');
 		expect(id).toBe(interactionId);
 		expect(key.endsWith(':base')).toBe(true);
+	});
+});
+
+/** Процесс учебных заведений: его читают карточка, список и доска. */
+async function demoProcess(): Promise<void> {
+	await database.db.transaction((tx) => ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS));
+}
+
+/** Черновик с переименованной первой стадией, применённый ко всем. */
+async function publishRenamedFirstStage(ctx: ActorContext, name: string): Promise<void> {
+	const draft = await createDraft(ctx, B2B_GROUP_KEY);
+	const definition = processDefinition(draft);
+
+	await updateDraft(ctx, B2B_GROUP_KEY, {
+		...definition,
+		stages: definition.stages.map((stage, index) => (index === 0 ? { ...stage, name } : stage))
+	});
+	await publishProcess(ctx, B2B_GROUP_KEY);
+}
+
+describe('кэш действующей редакции процесса', () => {
+	async function activeRevision() {
+		return readActiveRevisionCached(await readGroupByKey(database.db, B2B_GROUP_KEY));
+	}
+
+	it('отдаёт то же, что база, и переживает правку в обход сервиса', async () => {
+		await demoProcess();
+
+		const before = await activeRevision();
+
+		expect(before?.stages[0].name).toBeDefined();
+
+		await database.db
+			.update(stages)
+			.set({ name: 'Переименовано мимо сервиса' })
+			.where(eq(stages.revisionId, before!.id));
+
+		// Ответ из Redis: правку, сделанную мимо публикации, он не видит.
+		expect((await activeRevision())?.stages[0].name).toBe(before!.stages[0].name);
+	});
+
+	it('после применения изменённого процесса читатель видит новую редакцию', async () => {
+		await demoProcess();
+
+		const ctx = testActor();
+		const before = await activeRevision();
+
+		expect(before?.stages[0].name).not.toBe('Поиск контактов заново');
+
+		await publishRenamedFirstStage(ctx, 'Поиск контактов заново');
+
+		// Публикация — единственная точка, где структура меняется, и она же
+		// обесценивает кэш: без сброса читатель целую минуту показывал бы стадии
+		// редакции, которая уже не действует.
+		expect((await activeRevision())?.stages[0].name).toBe('Поиск контактов заново');
+	});
+});
+
+describe('кэш списков фильтров отчёта', () => {
+	it('отдаёт то же, что база, и обесценивается записью в справочник', async () => {
+		const ctx = testActor();
+		await insertOrganizationDirectly('Альфа');
+
+		expect(
+			(await readFilterOptions(ctx)).organizations.map((option) => option.label)
+		).toStrictEqual(['Альфа']);
+
+		await insertOrganizationDirectly('Бета');
+
+		// Ответ из Redis: заведённой мимо сервиса организации в нём нет.
+		expect(
+			(await readFilterOptions(ctx)).organizations.map((option) => option.label)
+		).toStrictEqual(['Альфа']);
+
+		await invalidateDirectoryOptions();
+
+		expect(
+			(await readFilterOptions(ctx)).organizations.map((option) => option.label)
+		).toStrictEqual(['Альфа', 'Бета']);
+	});
+
+	it('после применения изменённого процесса называет стадии по-новому', async () => {
+		const ctx = testActor();
+		await demoProcess();
+
+		const before = await readFilterOptions(ctx);
+
+		expect(before.stages.map((option) => option.label)).not.toContain('Поиск контактов заново');
+
+		await publishRenamedFirstStage(ctx, 'Поиск контактов заново');
+
+		// Поколение процесса стоит в имени записи кэша: публикация меняет имя, и
+		// списки собираются заново, не дожидаясь срока жизни.
+		expect((await readFilterOptions(ctx)).stages.map((option) => option.label)).toContain(
+			'Поиск контактов заново'
+		);
 	});
 });

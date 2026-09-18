@@ -11,11 +11,15 @@
  * запись, чей `left_at` попал в период; вид события восстанавливается из её
  * исхода и из того, открылась ли следующая. Начало работы — первая запись
  * взаимодействия: у неё нет входа «откуда», и по закрытию её не найти.
+ *
+ * Выборка отделена от строк: `movementSelection` отдаёт события с колонками, по
+ * которым считаются итоги, динамика и разрезы, а `readMovementRows` добавляет к
+ * ним признаки — и только для тех строк, которые уйдут в ответ.
  */
-import type { InteractionStatus, StageOutcome } from '$lib/contracts/interactions';
+import type { StageOutcome } from '$lib/contracts/interactions';
 import type { ReportEventKind, ReportQuery } from '$lib/contracts/reports';
 import { moscowDayStart, snapshotMoment } from '$lib/contracts/calendar';
-import { sql } from 'drizzle-orm';
+import { sql, type SQL } from 'drizzle-orm';
 import type { ActorContext } from '../actor';
 import { getDb } from '../db';
 import {
@@ -23,15 +27,16 @@ import {
 	attributeJoins,
 	inList,
 	interactionConditions,
-	type ReportAttributes
+	PRIMARY_PARTY_JOIN,
+	SELECTION_COLUMNS,
+	windowClause,
+	type ReportAttributes,
+	type ReportSelection,
+	type RowWindow
 } from './conditions';
 
-export type MovementRow = ReportAttributes & {
-	interactionId: string;
-	title: string;
-	status: InteractionStatus;
-	processGroupId: string;
-	processGroupKey: string;
+/** Колонки движения сверх общих: само событие. */
+export type MovementSelectionRow = ReportSelection & {
 	/** Покидаемая запись; у начала работы — первая запись взаимодействия. */
 	entryId: string;
 	movedAt: Date;
@@ -46,33 +51,83 @@ export type MovementRow = ReportAttributes & {
 	isStart: boolean;
 };
 
+/** Строка движения в том виде, в каком её показывают: выборка плюс признаки. */
+export type MovementRow = MovementSelectionRow & ReportAttributes;
+
 /** Строка в том виде, в каком её отдаёт драйвер: момент приезжает строкой. */
 type MovementRowRaw = Omit<MovementRow, 'movedAt'> & { movedAt: Date | string };
 
-export async function readMovementRows(
+/**
+ * Считать ли переносы при изменении процесса.
+ *
+ * Отчёту они не строки: перенос — административный переезд, и в таблицу,
+ * в итоги и в серии динамики он не входит, а показывается отдельной отметкой.
+ * Сверке режимов (И4) они нужны целиком: без них разность двух срезов не
+ * сошлась бы с движением на той стадии, откуда запись увезли.
+ */
+export type MigrationMode = 'include' | 'exclude';
+
+/**
+ * Перенос при изменении процесса — то же условие, что ветка `outcome ===
+ * 'migrated'` в `movementEventKind`, записанное для базы. Две формулировки
+ * одного признака, и расхождение между ними ловит инвариант И3: сумма по видам
+ * событий считается разбором `movementEventKind`, а число строк — этим
+ * условием.
+ *
+ * `source` — псевдоним событий: выборка зовёт его по своему имени, агрегат по
+ * своему, а признак остаётся один.
+ *
+ * Сравнение исхода — `is not distinct from`, а не `=`: отмена закрывает запись
+ * **без** исхода, и обычное сравнение дало бы на ней `null`. Отрицание такого
+ * условия — тоже `null`, то есть «не переезд» превратилось бы в «неизвестно», и
+ * отменённое взаимодействие пропало бы из движения молча.
+ */
+export function migrationEvent(source: SQL): SQL {
+	return sql`not ${source}."isStart" and ${source}.outcome is not distinct from 'migrated'`;
+}
+
+/**
+ * Порядок строк движения. Один на страницу и на выгрузку; `isStart` в конце
+ * разводит две строки одной записи — начало работы и уход с неё.
+ */
+function movementOrder(source: SQL): SQL {
+	return sql`${source}."movedAt", ${source}."interactionId", ${source}."entryId", ${source}."isStart"`;
+}
+
+/**
+ * Выборка движения без признаков строки.
+ *
+ * Фильтр по стадии в движении бьёт и по «откуда», и по «куда»: вопрос «что
+ * происходило на этой стадии» включает и приходы на неё, и уходы с неё.
+ */
+export function movementSelection(
 	ctx: ActorContext,
-	query: ReportQuery
-): Promise<MovementRow[]> {
+	query: ReportQuery,
+	migrations: MigrationMode
+): SQL {
 	// Моменты уходят в запрос строками ISO: у параметра в готовом SQL нет
 	// выведенного типа, и драйвер не берётся кодировать объект даты вслепую.
 	const asOf = snapshotMoment(query.to).toISOString();
 	const periodStart = moscowDayStart(query.from).toISOString();
 	const conditions = interactionConditions(ctx, query);
 
-	// Фильтр по стадии в движении бьёт и по «откуда», и по «куда»: вопрос «что
-	// происходило на этой стадии» включает и приходы на неё, и уходы с неё.
-	const stageFilter =
-		query.stage.length > 0
-			? sql`where events."fromKey" in ${inList(query.stage)} or events."toKey" in ${inList(query.stage)}`
-			: sql``;
+	const filters: SQL[] = [];
 
-	const rows = await getDb().execute<MovementRowRaw>(sql`
-		with events as (
+	if (query.stage.length > 0) {
+		filters.push(
+			sql`(events."fromKey" in ${inList(query.stage)} or events."toKey" in ${inList(query.stage)})`
+		);
+	}
+
+	if (migrations === 'exclude') {
+		filters.push(sql`not (${migrationEvent(sql`events`)})`);
+	}
+
+	return sql`
+		select events.*
+		from (
 			select
-				interactions.id as "interactionId",
-				interactions.title as "title",
-				interactions.status as "status",
-				interactions.process_group_id as "processGroupId",
+				${SELECTION_COLUMNS},
 				entry.id as "entryId",
 				entry.left_at as "movedAt",
 				entry.outcome as "outcome",
@@ -84,6 +139,8 @@ export async function readMovementRows(
 				following."entryId" is not null as "hasNext",
 				false as "isStart"
 			from interactions
+			left join process_groups process_group on process_group.id = interactions.process_group_id
+			${PRIMARY_PARTY_JOIN}
 			join stage_entries entry on entry.interaction_id = interactions.id
 			left join lateral (
 				select
@@ -105,10 +162,7 @@ export async function readMovementRows(
 				and entry.left_at < ${asOf}::timestamptz
 			union all
 			select
-				interactions.id,
-				interactions.title,
-				interactions.status,
-				interactions.process_group_id,
+				${SELECTION_COLUMNS},
 				entry.id,
 				entry.entered_at,
 				null,
@@ -120,6 +174,8 @@ export async function readMovementRows(
 				false,
 				true
 			from interactions
+			left join process_groups process_group on process_group.id = interactions.process_group_id
+			${PRIMARY_PARTY_JOIN}
 			join stage_entries entry on entry.interaction_id = interactions.id
 			where ${conditions}
 				and entry.entered_at >= ${periodStart}::timestamptz
@@ -129,14 +185,33 @@ export async function readMovementRows(
 					where earlier.interaction_id = interactions.id
 						and earlier.entered_at < entry.entered_at
 				)
+		) events
+		${filters.length > 0 ? sql`where ${sql.join(filters, sql` and `)}` : sql``}
+	`;
+}
+
+/**
+ * Строки движения с признаками. `window` — страница экрана; без него набор
+ * полный, и это выгрузка.
+ */
+export async function readMovementRows(
+	ctx: ActorContext,
+	query: ReportQuery,
+	options: { migrations: MigrationMode; window?: RowWindow | null }
+): Promise<MovementRow[]> {
+	const asOf = snapshotMoment(query.to).toISOString();
+
+	const rows = await getDb().execute<MovementRowRaw>(sql`
+		with selection as (${movementSelection(ctx, query, options.migrations)}),
+		page as (
+			select * from selection
+			order by ${movementOrder(sql`selection`)}
+			${windowClause(options.window ?? null)}
 		)
-		select events.*, process_group.key as "processGroupKey", ${ATTRIBUTE_COLUMNS}
-		from events
-		join interactions on interactions.id = events."interactionId"
-		left join process_groups process_group on process_group.id = interactions.process_group_id
-		${attributeJoins(asOf)}
-		${stageFilter}
-		order by events."movedAt", events."interactionId", events."entryId"
+		select page.*, ${ATTRIBUTE_COLUMNS}
+		from page
+		${attributeJoins(asOf, sql`page`)}
+		order by ${movementOrder(sql`page`)}
 	`);
 
 	return [...rows].map((row) => ({
@@ -159,7 +234,7 @@ export type MovementEventKind = ReportEventKind | 'migrated';
  * запись без исхода намеренно: стадию не прошли и не пропустили).
  */
 export function movementEventKind(
-	row: Pick<MovementRow, 'isStart' | 'outcome' | 'hasNext'>
+	row: Pick<MovementSelectionRow, 'isStart' | 'outcome' | 'hasNext'>
 ): MovementEventKind {
 	if (row.isStart) {
 		return 'started';

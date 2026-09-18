@@ -17,6 +17,21 @@ import {
 	type ReportFunnelChart,
 	type ReportMovementChart
 } from '$lib/contracts/reports';
+import type { ReportBreakdownCounts, StageCount } from './aggregate';
+import type { StageIndex } from './stages';
+
+/**
+ * Разрезы выборки: ключ, подпись и параметр адреса, которым разрез сужает
+ * отчёт. Каталог один на оба способа посчитать их числа — агрегатом в базе и
+ * перебором строк в проверке инвариантов, — иначе подписи двух способов
+ * разошлись бы, а сравнивать их пришлось бы по одной.
+ */
+export const BREAKDOWN_VIEWS = [
+	{ key: 'organizations', label: 'По вузам и контрагентам', param: 'org' },
+	{ key: 'directions', label: 'По направлениям', param: 'dir' },
+	{ key: 'products', label: 'По продуктам', param: 'prod' },
+	{ key: 'owners', label: 'По ответственным', param: 'owner' }
+] as const satisfies readonly { key: ReportBreakdown['key']; label: string; param: string }[];
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -64,16 +79,38 @@ export function buildBreakdown(
 		}
 	}
 
-	const points: ReportBucket[] = [...counts.entries()]
-		.map(([id, point]) => ({
-			key: id,
+	return breakdownFromCounts(
+		key,
+		label,
+		param,
+		[...counts.entries()].map(([id, point]) => ({ id, label: point.label, value: point.value })),
+		doubleCounted
+	);
+}
+
+/**
+ * Тот же разрез из чисел, посчитанных базой. Порядок строк задаётся здесь, а не
+ * в запросе: «по убыванию, при равенстве — по алфавиту» для русских названий
+ * считает сравнение строк приложения, и второе правило сортировки в SQL
+ * разошлось бы с первым на первой же паре одинаковых чисел.
+ */
+export function breakdownFromCounts(
+	key: ReportBreakdown['key'],
+	label: string,
+	param: string,
+	points: readonly { id: string; label: string; value: number }[],
+	doubleCounted: number
+): ReportBreakdown {
+	const buckets: ReportBucket[] = points
+		.map((point) => ({
+			key: point.id,
 			label: point.label,
 			value: point.value,
-			filter: { param, value: id }
+			filter: { param, value: point.id }
 		}))
 		.sort((left, right) => right.value - left.value || left.label.localeCompare(right.label, 'ru'));
 
-	return { key, label, points, doubleCounted };
+	return { key, label, points: buckets, doubleCounted };
 }
 
 /**
@@ -95,6 +132,76 @@ export function buildFunnel(
 		})),
 		note: 'Распределение на дату, не конверсия: «Завершено» и «Отменено» в воронку не входят и стоят отдельно.'
 	};
+}
+
+/** Четыре разреза из чисел, посчитанных базой. */
+export function buildBreakdowns(counts: ReportBreakdownCounts): ReportBreakdown[] {
+	return BREAKDOWN_VIEWS.map((view) =>
+		breakdownFromCounts(
+			view.key,
+			view.label,
+			view.param,
+			counts[view.key].points,
+			counts[view.key].doubleCounted
+		)
+	);
+}
+
+/**
+ * Воронка из чисел, посчитанных базой.
+ *
+ * Заготовка — все стадии действующих редакций: ноль в стадии значит «никого», а
+ * отсутствие строки читается как «такой стадии нет». Стадия, которой в
+ * действующем процессе уже нет, приписывается в конец с пометкой из снимка:
+ * перенести её строку в соседнюю стадию значило бы изменить прошлое.
+ */
+export function buildFunnelFromCounts(
+	index: StageIndex,
+	stages: readonly StageCount[],
+	closedCounts: Readonly<Record<string, number>>
+): ReportFunnelChart {
+	const counted = new Map(stages.map((stage) => [stage.bucketId, stage]));
+
+	const buckets = index.skeleton().map((stage) => ({
+		key: stage.bucketId,
+		label: stage.label.label,
+		value: counted.get(stage.bucketId)?.value ?? 0,
+		filter: { param: 'stage', value: stage.stageKey },
+		order: stage.label.order,
+		retired: false
+	}));
+
+	for (const stage of stages) {
+		if (buckets.some((bucket) => bucket.key === stage.bucketId)) {
+			continue;
+		}
+
+		const separator = stage.bucketId.indexOf(':');
+		const stageKey = stage.bucketId.slice(separator + 1);
+		const label = index.label(stage.bucketId.slice(0, separator), stageKey, stage.stageName);
+
+		buckets.push({
+			key: stage.bucketId,
+			label: label.label,
+			value: stage.value,
+			filter: { param: 'stage', value: stageKey },
+			order: label.order,
+			retired: true
+		});
+	}
+
+	buckets.sort((left, right) => left.order - right.order);
+
+	return buildFunnel(
+		buckets.map(({ key, label, value, filter, retired }) => ({
+			key,
+			label,
+			value,
+			filter,
+			retired
+		})),
+		closedCounts
+	);
 }
 
 function addDays(day: string, days: number): string {
@@ -138,7 +245,7 @@ const WEEK_STEP_MAX_DAYS = 92;
 export function buildMovementChart(
 	from: string,
 	to: string,
-	events: readonly { kind: ReportEventKind; at: Date }[],
+	events: readonly { kind: ReportEventKind; day: string; count: number }[],
 	migrated: number
 ): ReportMovementChart {
 	const spanDays = Math.round(
@@ -173,8 +280,7 @@ export function buildMovementChart(
 	}));
 
 	for (const event of events) {
-		const day = moscowDay(event.at);
-		const bucketKey = step === 'week' ? weekStart(day) : monthStart(day);
+		const bucketKey = step === 'week' ? weekStart(event.day) : monthStart(event.day);
 		const position = index.get(bucketKey);
 		const row = series.find((item) => item.key === event.kind);
 
@@ -182,7 +288,7 @@ export function buildMovementChart(
 		// времени разошлись: молча терять его нельзя, но и падать отчёту не с
 		// чего — ось строится из того же периода, что и выборка.
 		if (position !== undefined && row !== undefined) {
-			row.values[position] += 1;
+			row.values[position] += event.count;
 		}
 	}
 

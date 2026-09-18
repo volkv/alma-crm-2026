@@ -1,27 +1,38 @@
 /**
- * Сборка отчёта: один набор строк, из которого считаются и таблица, и итоги, и
- * серии диаграмм, и все четыре файла.
+ * Сборка отчёта: числа считает база, строки собираются только для тех, кого
+ * показывают.
  *
- * Набор считается один раз намеренно. Вторая выборка ради итогов или ради
- * диаграммы — это второе определение тех же чисел, и однажды они разойдутся;
- * ценой за единственное определение служит потолок выборки
- * (`REPORT_MAX_ROWS`): выше него отчёт отказывается словами, а не режет молча.
+ * Итоги, воронка, динамика и разрезы описывают всю выборку, а таблица на экране
+ * — одну страницу из пятидесяти строк. Поэтому числа считаются агрегирующими
+ * запросами по тем же условиям `where`, что у таблицы (`reports/aggregate.ts`),
+ * а признаки строки — программы, продукты, направления, ответственный за вуз —
+ * только для строк ответа. Выгрузка берёт набор целиком: файл, в котором строк
+ * меньше, чем на экране, выглядит как правда и врёт.
+ *
+ * Единственность определения от этого не страдает: условия выборки написаны
+ * один раз и подставляются и в строки, и в агрегаты. Что агрегат считает то же,
+ * что подсчёт по полному набору строк, проверяет тест
+ * (`tests/integration/reports/aggregates.test.ts`), сверяя выдачу с эталонным
+ * пересчётом `recountFromRows`.
+ *
+ * Ценой за один набор остаётся потолок выборки (`REPORT_MAX_ROWS`): выше него
+ * отчёт отказывается словами, а не режет молча.
  */
 import { moscowDay, snapshotMoment } from '$lib/contracts/calendar';
 import { PAUSE_REASON_LABELS } from '$lib/contracts/interactions';
 import {
 	REPORT_EVENT_KIND_LABELS,
 	REPORT_MAX_ROWS,
+	REPORT_PAGE_SIZE,
 	REPORT_SCHEMA_VERSION,
 	REPORT_STATE_LABELS,
 	resolveColumns,
 	reportSemantics,
 	type ReportCell,
+	type ReportEventKind,
 	type ReportColumnDefinition,
 	type ReportColumnView,
-	type ReportEventKind,
 	type ReportQuery,
-	type ReportRow,
 	type ReportView
 } from '$lib/contracts/reports';
 import { formatDate } from '$lib/format';
@@ -29,8 +40,13 @@ import type { ActorContext } from '../actor';
 import { getConfig } from '../config';
 import { ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
-import { buildBreakdown, buildFunnel, buildMovementChart, type BreakdownValues } from './charts';
-import type { ReportAttributes } from './conditions';
+import {
+	readMovementAggregates,
+	readSnapshotAggregates,
+	type MovementEventCount
+} from './aggregate';
+import { buildBreakdowns, buildFunnelFromCounts, buildMovementChart } from './charts';
+import type { ReportAttributes, ReportSelection, RowWindow } from './conditions';
 import { describeFilters } from './describe';
 import { movementEventKind, readMovementRows, type MovementRow } from './movement';
 import { describeScope } from './query';
@@ -65,7 +81,7 @@ function interactionUrl(origin: string, interactionId: string): string {
 
 function attributeCell(
 	key: ReportColumnDefinition['key'],
-	row: ReportAttributes & { interactionId: string; title: string; status: string },
+	row: ReportSelection & ReportAttributes,
 	origin: string
 ): ReportCell | null {
 	switch (key) {
@@ -107,14 +123,6 @@ function overdueDays(row: SnapshotRow): number | null {
 	const overdue = row.activeSeconds - row.slaDays * SECONDS_IN_DAY;
 
 	return overdue > 0 ? Math.ceil(overdue / SECONDS_IN_DAY) : null;
-}
-
-function isOverdue(row: SnapshotRow): boolean {
-	return (
-		row.activeSeconds !== null &&
-		row.slaDays !== null &&
-		row.activeSeconds > row.slaDays * SECONDS_IN_DAY
-	);
 }
 
 function snapshotCell(
@@ -200,41 +208,79 @@ function columnViews(
 	}));
 }
 
-/** Разрезы выборки. Считаются по тем же строкам, что и таблица. */
-function breakdowns(rows: readonly (ReportAttributes & { ownerUserId: string })[]) {
-	const organizations: BreakdownValues[] = rows.map((row) => ({
-		ids: row.organizationId === null ? [] : [row.organizationId],
-		names: row.organizationName === null ? [] : [row.organizationName]
-	}));
+/** Страница отчёта: её номер, сколько их всего и строки именно этой. */
+export type ReportPage = {
+	view: ReportView;
+	page: number;
+	pages: number;
+	pageSize: number;
+};
 
-	return [
-		buildBreakdown('organizations', 'По вузам и контрагентам', 'org', organizations),
-		buildBreakdown(
-			'directions',
-			'По направлениям',
-			'dir',
-			rows.map((row) => ({ ids: row.directionIds, names: row.directions }))
-		),
-		buildBreakdown(
-			'products',
-			'По продуктам',
-			'prod',
-			rows.map((row) => ({ ids: row.productIds, names: row.products }))
-		),
-		buildBreakdown(
-			'owners',
-			'По ответственным',
-			'owner',
-			rows.map((row) => ({ ids: [row.ownerUserId], names: [row.ownerName ?? row.ownerUserId] }))
-		)
-	];
+/**
+ * Окно строк по числу строк во всей выборке.
+ *
+ * Номер страницы приводится к действительному **после** того, как посчитаны
+ * итоги: без числа строк во всей выборке страницу не с чем сравнить, а отдать
+ * пустую таблицу на номер, набранный руками, значит показать «ничего не
+ * нашлось» там, где нашлось. `requested` равен `null` у выгрузки: её набор
+ * полный.
+ */
+function resolvePaging(
+	total: number,
+	requested: number | null
+): { window: RowWindow | null; page: number; pages: number } {
+	const pages = Math.max(1, Math.ceil(total / REPORT_PAGE_SIZE));
+
+	if (requested === null) {
+		return { window: null, page: 1, pages };
+	}
+
+	const page = Number.isInteger(requested) && requested >= 1 ? Math.min(requested, pages) : 1;
+
+	return {
+		window: { limit: REPORT_PAGE_SIZE, offset: (page - 1) * REPORT_PAGE_SIZE },
+		page,
+		pages
+	};
+}
+
+/**
+ * Виды событий по группам, посчитанным базой.
+ *
+ * Перенос при изменении процесса переходом не считается: он не строка движения,
+ * а отметка под диаграммой. Выборка его уже отбросила тем же условием, поэтому
+ * группа с таким видом означала бы расхождение двух формулировок одного
+ * признака — и его ловит инвариант И3: сумма по видам перестала бы сходиться с
+ * числом строк.
+ */
+function movementSeries(
+	events: readonly MovementEventCount[]
+): { kind: ReportEventKind; day: string; count: number }[] {
+	const series: { kind: ReportEventKind; day: string; count: number }[] = [];
+
+	for (const event of events) {
+		const kind = movementEventKind(event);
+
+		if (kind !== 'migrated') {
+			series.push({ kind, day: event.day, count: event.count });
+		}
+	}
+
+	return series;
 }
 
 /**
  * Отчёт целиком. Право — `interactions.read`: отчёт показывает ровно то, что
  * человек и так видит в списке, и своего права у раздела нет.
+ *
+ * `requested` — номер страницы экрана; `null` означает всю выборку: так отчёт
+ * собирает выгрузка, и так же его строит проверка инвариантов.
  */
-export async function buildReport(ctx: ActorContext, query: ReportQuery): Promise<ReportView> {
+async function assembleReport(
+	ctx: ActorContext,
+	query: ReportQuery,
+	requested: number | null
+): Promise<ReportPage> {
 	requirePermission(ctx, 'interactions.read');
 
 	const origin = getConfig().ORIGIN.replace(/\/$/, '');
@@ -255,147 +301,92 @@ export async function buildReport(ctx: ActorContext, query: ReportQuery): Promis
 	};
 
 	if (query.mode === 'movement') {
-		const raw = await readMovementRows(ctx, query);
+		// Числа считаются до строк: потолок выборки проверяется по ним, страница
+		// считается от них же, и отказ не стоит вычитанных впустую трёх тысяч
+		// строк.
+		const aggregates = await readMovementAggregates(ctx, query);
 
-		assertFits(raw.length);
+		assertFits(aggregates.totals.rowCount);
 
-		// Перенос при изменении процесса переходом не считается: он не строка
-		// движения, а отметка под диаграммой.
-		const events: { row: MovementRow; kind: ReportEventKind }[] = [];
-		let migrated = 0;
-
-		for (const row of raw) {
-			const kind = movementEventKind(row);
-
-			if (kind === 'migrated') {
-				migrated += 1;
-			} else {
-				events.push({ row, kind });
-			}
-		}
-
-		const rows: ReportRow[] = events.map(({ row, kind }) => ({
-			// Вид события плюс запись о стадии: одна запись даёт начало работы и
-			// уход с неё двумя строками, и различает их только вид.
-			rowKey: `${kind}:${row.entryId}`,
-			interactionId: row.interactionId,
-			stageEntryId: row.entryId,
-			cells: columns.map((column) => movementCell(column, row, index, origin))
-		}));
+		const paging = resolvePaging(aggregates.totals.rowCount, requested);
+		const rows = await readMovementRows(ctx, query, {
+			migrations: 'exclude',
+			window: paging.window
+		});
 
 		return {
-			meta,
-			rows,
-			totals: {
-				rowCount: rows.length,
-				interactionCount: new Set(events.map(({ row }) => row.interactionId)).size,
-				paused: 0,
-				overdue: 0
-			},
-			charts: {
-				funnel: null,
-				movement: buildMovementChart(
-					query.from,
-					query.to,
-					events.map(({ row, kind }) => ({ kind, at: row.movedAt })),
-					migrated
-				),
-				breakdowns: breakdowns(events.map(({ row }) => row))
+			page: paging.page,
+			pages: paging.pages,
+			pageSize: REPORT_PAGE_SIZE,
+			view: {
+				meta,
+				rows: rows.map((row) => ({
+					// Вид события плюс запись о стадии: одна запись даёт начало работы и
+					// уход с неё двумя строками, и различает их только вид.
+					rowKey: `${movementEventKind(row)}:${row.entryId}`,
+					interactionId: row.interactionId,
+					stageEntryId: row.entryId,
+					cells: columns.map((column) => movementCell(column, row, index, origin))
+				})),
+				totals: aggregates.totals,
+				charts: {
+					funnel: null,
+					movement: buildMovementChart(
+						query.from,
+						query.to,
+						movementSeries(aggregates.events),
+						aggregates.migrated
+					),
+					breakdowns: buildBreakdowns(aggregates.breakdowns)
+				}
 			}
 		};
 	}
 
-	const raw = await readSnapshotRows(ctx, query);
+	const aggregates = await readSnapshotAggregates(ctx, query);
 
-	assertFits(raw.length);
+	assertFits(aggregates.totals.rowCount);
 
-	const stageCounts = new Map<string, number>();
-	const closedCounts: Record<string, number> = { completed: 0, cancelled: 0 };
-	let paused = 0;
-	let overdue = 0;
-
-	for (const row of raw) {
-		if (row.entryId !== null && row.stageKey !== null) {
-			const bucketId = `${row.processGroupId}:${row.stageKey}`;
-
-			stageCounts.set(bucketId, (stageCounts.get(bucketId) ?? 0) + 1);
-			index.label(row.processGroupId, row.stageKey, row.stageName);
-
-			if (row.pauseReason !== null) {
-				paused += 1;
-			}
-
-			if (isOverdue(row)) {
-				overdue += 1;
-			}
-		} else {
-			closedCounts[row.status] = (closedCounts[row.status] ?? 0) + 1;
-		}
-	}
-
-	// Заготовка воронки — все стадии действующих редакций: ноль в стадии значит
-	// «никого», а отсутствие строки читается как «такой стадии нет».
-	const funnelBuckets = index.skeleton().map((stage) => ({
-		key: stage.bucketId,
-		label: stage.label.label,
-		value: stageCounts.get(stage.bucketId) ?? 0,
-		filter: { param: 'stage', value: stage.stageKey },
-		order: stage.label.order,
-		retired: false
-	}));
-
-	for (const [bucketId, value] of stageCounts) {
-		if (funnelBuckets.some((bucket) => bucket.key === bucketId)) {
-			continue;
-		}
-
-		const separator = bucketId.indexOf(':');
-		const stageKey = bucketId.slice(separator + 1);
-		const label = index.label(bucketId.slice(0, separator), stageKey, null);
-
-		funnelBuckets.push({
-			key: bucketId,
-			label: label.label,
-			value,
-			filter: { param: 'stage', value: stageKey },
-			order: label.order,
-			retired: true
-		});
-	}
-
-	funnelBuckets.sort((left, right) => left.order - right.order);
-
-	const rows: ReportRow[] = raw.map((row) => ({
-		// В срезе каждое взаимодействие встречается ровно один раз (инвариант И2),
-		// поэтому его идентификатор и есть имя строки.
-		rowKey: row.interactionId,
-		interactionId: row.interactionId,
-		stageEntryId: row.entryId,
-		cells: columns.map((column) => snapshotCell(column, row, index, origin))
-	}));
+	const paging = resolvePaging(aggregates.totals.rowCount, requested);
+	const rows = await readSnapshotRows(ctx, query, paging.window);
 
 	return {
-		meta,
-		rows,
-		totals: {
-			rowCount: rows.length,
-			interactionCount: new Set(raw.map((row) => row.interactionId)).size,
-			paused,
-			overdue
-		},
-		charts: {
-			funnel: buildFunnel(
-				funnelBuckets.map(({ key, label, value, filter, retired }) => ({
-					key,
-					label,
-					value,
-					filter,
-					retired
-				})),
-				closedCounts
-			),
-			movement: null,
-			breakdowns: breakdowns(raw)
+		page: paging.page,
+		pages: paging.pages,
+		pageSize: REPORT_PAGE_SIZE,
+		view: {
+			meta,
+			rows: rows.map((row) => ({
+				// В срезе каждое взаимодействие встречается ровно один раз (инвариант И2),
+				// поэтому его идентификатор и есть имя строки.
+				rowKey: row.interactionId,
+				interactionId: row.interactionId,
+				stageEntryId: row.entryId,
+				cells: columns.map((column) => snapshotCell(column, row, index, origin))
+			})),
+			totals: aggregates.totals,
+			charts: {
+				funnel: buildFunnelFromCounts(index, aggregates.stages, aggregates.closed),
+				movement: null,
+				breakdowns: buildBreakdowns(aggregates.breakdowns)
+			}
 		}
 	};
+}
+
+/**
+ * Отчёт целиком: вся выборка одним набором. Так его собирает выгрузка и так же
+ * его строят проверки инвариантов.
+ */
+export async function buildReport(ctx: ActorContext, query: ReportQuery): Promise<ReportView> {
+	return (await assembleReport(ctx, query, null)).view;
+}
+
+/** Отчёт для экрана: страница строк, итоги и диаграммы по всей выборке. */
+export async function buildReportPage(
+	ctx: ActorContext,
+	query: ReportQuery,
+	requested: number
+): Promise<ReportPage> {
+	return assembleReport(ctx, query, requested);
 }

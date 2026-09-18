@@ -553,10 +553,21 @@ export const stageEntries = pgTable(
 		uniqueIndex('stage_entries_one_open_per_interaction')
 			.on(table.interactionId)
 			.where(sql`${table.leftAt} is null`),
-		index('stage_entries_interaction_idx').on(table.interactionId, table.enteredAt),
+		// Окно записи по одному взаимодействию: срез отчёта ищет запись, накрывшую
+		// момент `T` (`entered_at < T` и `left_at is null or left_at >= T`), и по
+		// той же паре столбцов считается момент закрытия записи. Порядок по входу
+		// обратный: нужная запись — последняя из вошедших до `T`, и она находится
+		// первой же строкой индекса, а `left_at` рядом отсекает не накрывшие.
+		index('stage_entries_interaction_window_idx').on(
+			table.interactionId,
+			table.enteredAt.desc(),
+			table.leftAt
+		),
 		// Отчёт на прошлую дату выбирает записи, чьё окно накрывает срез:
 		// открытые (`left_at is null`) и закрытые позже него.
 		index('stage_entries_window_idx').on(table.enteredAt, table.leftAt),
+		// Движение за период отбирает записи по моменту ухода со стадии.
+		index('stage_entries_left_at_idx').on(table.leftAt),
 		// Индекс по ключу стадии из снимка (`stage_snapshot ->> 'key'`) объявлен
 		// миграцией: индекс по выражению билдер Drizzle не выражает.
 		check(
@@ -589,6 +600,10 @@ export const stagePauses = pgTable(
 		uniqueIndex('stage_pauses_one_open_per_entry')
 			.on(table.stageEntryId)
 			.where(sql`${table.endedAt} is null`),
+		// Паузы записи целиком: срез вычитает их пересечение с окном стадии на
+		// момент `T`, и открытых среди них может не быть вовсе — частичный индекс
+		// выше такому запросу не годится.
+		index('stage_pauses_entry_idx').on(table.stageEntryId, table.startedAt),
 		check('stage_pauses_ended_after_started', sql`${table.endedAt} > ${table.startedAt}`)
 	]
 );

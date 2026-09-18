@@ -5,6 +5,21 @@
  * называющая вуз за пределами области, рассказывает о нём не меньше, чем строка
  * отчёта. Стадии берутся из действующих редакций — по ключу, потому что фильтр
  * бьёт по ключу, а показывается актуальное название.
+ *
+ * Семь выборок на каждое открытие раздела, и ни одна не зависит от того, что
+ * человек ищет: меняются они вместе со справочником и с публикацией процесса,
+ * то есть несопоставимо реже, чем открывается отчёт. Поэтому собранное лежит в
+ * том же кэше, что и подбор из справочника (`cache/directory.ts`): область
+ * доступа и отпечаток действующих назначений уже в ключе, а запись в справочник
+ * уже обесценивает поколение. Структура процесса своей точкой сброса в ключ не
+ * входит, поэтому её поколение добавляется частью имени — публикация меняет имя,
+ * и список стадий собирается заново.
+ *
+ * Чего кэш не покрывает: словарь статусов передачи собирается из позиций
+ * договоров, а правка договора поколения справочника не двигает. Новый статус
+ * появляется в фильтре в пределах срока жизни записи — полминуты; цена вопроса
+ * — одна строка выпадающего списка, и платить за неё точкой сброса в каждой
+ * правке договора незачем.
  */
 import { asc, eq, isNotNull } from 'drizzle-orm';
 import {
@@ -15,12 +30,24 @@ import {
 import { INTERACTION_STATUSES } from '$lib/contracts/interactions';
 import { ORGANIZATION_KINDS } from '$lib/contracts/directory';
 import type { ActorContext } from '../actor';
+import { cachedDirectoryOptions } from '../cache/directory';
+import { readProcessEpoch } from '../cache/process';
 import { getDb } from '../db';
 import { contractItems, directions, organizations, products, programs, users } from '../db/schema';
 import { scopeFilter } from '../rbac';
 import { readActiveProcessGroups } from './stages';
 
 export async function readFilterOptions(ctx: ActorContext): Promise<ReportFilterOptions> {
+	return cachedDirectoryOptions(
+		ctx,
+		`reports:${await readProcessEpoch()}`,
+		() => buildFilterOptions(ctx),
+		// Ни одного поля со временем: в списках только пара «значение и подпись».
+		(stored) => stored as ReportFilterOptions
+	);
+}
+
+async function buildFilterOptions(ctx: ActorContext): Promise<ReportFilterOptions> {
 	const db = getDb();
 
 	const [
