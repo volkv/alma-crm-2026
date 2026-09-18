@@ -300,7 +300,7 @@ requirePermission(ctx, 'organizations.write');
 const where = and(scopeFilter(ctx, organizations.id), eq(organizations.kind, 'operator'));
 ```
 
-Каталог прав и роли по умолчанию — `$lib/server/rbac/permissions`: 35 прав, роли `admin`, `lead`,
+Каталог прав и роли по умолчанию — `$lib/server/rbac/permissions`: 38 прав, роли `admin`, `lead`,
 `manager` и невходящая `service` для ключей обмена. Выборки обязаны применять `scopeFilter` всегда,
 в том числе там, где сегодня у всех полный доступ: правило, которое соблюдают не везде, — это не
 правило. При пустой области условие превращается в `false`, а не в синтаксически невозможный

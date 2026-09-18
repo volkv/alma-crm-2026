@@ -847,10 +847,11 @@ curl -sS -X POST http://localhost:58081/__scenario \
 файл кто-то принимает машиной, а такого потребителя пока нет; описание ниже остаётся
 договорённостью на этот случай.
 
-Выгрузка в JSON едет в **конверте этого документа**, а её содержимое — объект отчёта, описанный в
-`docs/reports.md` (раздел «Экспорт»). Разделение ответственности жёсткое: конверт, `schemaVersion`,
-`source` и общие вложенные типы (организация, программа, продукт, ответственный, документ) — здесь;
-состав строк, колонок, фильтров и итогов — там. Второго описания одних и тех же данных не заводится.
+Выгрузка в JSON едет в **конверте этого документа**, а её содержимое — тот самый объект отчёта,
+который сегодня уезжает телом (`src/lib/server/reports/writers/json.ts`, семантика — `docs/reports.md`,
+раздел «Экспорт»). Разделение ответственности жёсткое: конверт, `schemaVersion` и `source` — здесь;
+состав строк, колонок, фильтров и итогов — там. Второго описания одних и тех же данных не заводится,
+поэтому и пример ниже показывает **настоящую** форму выгрузки, а не переписанную под конверт.
 
 ```json
 {
@@ -859,31 +860,59 @@ curl -sS -X POST http://localhost:58081/__scenario \
 	"occurredAt": "2026-09-20T12:00:00Z",
 	"source": { "system": "crm", "instance": "lct-crm" },
 	"data": {
-		"filters": { "periodStart": "2026-09-01", "periodEnd": "2026-09-30", "programIds": [] },
-		"total": 1,
-		"items": [
+		"schemaVersion": 1,
+		"generatedAt": "2026-09-20T12:00:00.000Z",
+		"asOf": "2026-09-30",
+		"mode": "snapshot",
+		"period": { "start": "2026-09-01", "end": "2026-09-30" },
+		"filters": [{ "label": "Период", "value": "01.09.2026 — 30.09.2026" }],
+		"scope": "все организации",
+		"semantics": "Срез на 30.09.2026: каждое взаимодействие в той стадии, в которой стояло в этот день",
+		"columns": [
 			{
-				"id": "2f1c9a0e-6b3d-4a77-8f21-0c5e9d4b7a10",
-				"externalId": "site-2026-000123",
-				"title": "Заявка с сайта: МТУСИ",
-				"status": "active",
-				"processGroup": "b2b",
-				"stage": {
-					"key": "classes",
-					"name": "Ведение занятий",
-					"enteredAt": "2027-01-10T09:00:00Z"
-				},
-				"organization": { "id": "7b7e0d6a-1c0f-4a55-9f3f-2a1f4c8e9d02", "inn": "0000000096" },
-				"responsible": { "userId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f", "name": "А. Смирнова" },
-				"programs": [{ "id": "1d2c3b4a-5e6f-4a7b-8c9d-0e1f2a3b4c5d", "code": "VO-BAK-01" }],
-				"products": [{ "id": "5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b", "code": "RT-DEVOPS" }],
-				"learningGroups": [{ "streamNumber": 1, "groupExternalId": "2481", "completed": 38 }],
-				"documents": []
+				"key": "interaction",
+				"label": "Взаимодействие",
+				"kind": "link",
+				"sort": "current",
+				"note": "сейчас"
+			}
+		],
+		"totals": { "rowCount": 1, "interactionCount": 1, "paused": 0, "overdue": 0 },
+		"charts": { "funnel": null, "movement": null, "breakdowns": [] },
+		"rows": [
+			{
+				"rowKey": "2f1c9a0e-6b3d-4a77-8f21-0c5e9d4b7a10",
+				"interactionId": "2f1c9a0e-6b3d-4a77-8f21-0c5e9d4b7a10",
+				"stageEntryId": "8d1e2f3a-4b5c-4d6e-9f70-1a2b3c4d5e6f",
+				"url": "https://crm.example.org/interactions/2f1c9a0e-6b3d-4a77-8f21-0c5e9d4b7a10",
+				"values": { "interaction": "Заявка с сайта: МТУСИ" },
+				"documents": [
+					{
+						"id": "6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e",
+						"kind": "agreement",
+						"storageKey": "files/6b7c8d9e-0f1a-4b2c-8d3e-4f5a6b7c8d9e",
+						"sha256": "9f86d081884c7d659a2feaa0c55ad015a3bf4f1b2b0b822cd15d6c15b0f00a08"
+					}
+				],
+				"learningGroups": [
+					{
+						"id": "0a1b2c3d-4e5f-4061-8a2b-3c4d5e6f7081",
+						"externalId": "2481",
+						"resultId": "3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f"
+					}
+				]
 			}
 		]
 	}
 }
 ```
+
+Имена полей учебной группы — те же, что в строке отчёта и в ответе `GET /v1/reports`: `id`,
+`externalId`, `resultId` (`ReportLearningGroupRef` в `src/lib/contracts/reports.ts`). Это **ключи
+связи, а не числа**: по `externalId` находится группа в системе обучения, по `resultId` — та самая
+запись результата, которой подтверждена стадия. Чисел зачисленных и выпущенных здесь нет намеренно —
+они приезжают направлением 6 и живут в `learning_group_results`, а дублировать их в выгрузке значило
+бы завести второй источник для одного числа.
 
 - **Одна выборка на четыре формата.** xlsx, xls, pdf и json собираются из одного и того же запроса
   отчёта (`docs/reports.md`): числа в JSON и в таблице обязаны совпадать, а совпадают они тогда,
