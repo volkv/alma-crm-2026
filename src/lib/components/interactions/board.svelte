@@ -3,10 +3,10 @@
 	import { toast } from 'svelte-sonner';
 	import RouteIcon from '@lucide/svelte/icons/route';
 	import { enhance } from '$app/forms';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
+	import FormDialog from '$lib/components/form-dialog.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type {
@@ -293,33 +293,36 @@
 	<input type="hidden" name="revision" value={board.revision ?? ''} />
 </form>
 
-<Dialog.Root bind:open={() => reasonOpen, (open) => (open ? (reasonOpen = true) : closeReason())}>
-	<Dialog.Content>
-		<Dialog.Header>
-			<Dialog.Title>{pending === null ? 'Перевести' : transitionLabel(pending.option)}</Dialog.Title
-			>
-			<Dialog.Description>
-				{pending?.card.title ?? ''} — объяснение попадёт в историю взаимодействия.
-			</Dialog.Description>
-		</Dialog.Header>
+<!--
+	Закрытие с набранной причиной спрашивает подтверждение: `Esc` и клик вне
+	слоя — это «уйти», а не «отменить ввод», и текст пропадал молча.
+-->
+<FormDialog
+	bind:open={() => reasonOpen, (open) => (open ? (reasonOpen = true) : closeReason())}
+	title={pending === null ? 'Перевести' : transitionLabel(pending.option)}
+	description="{pending?.card.title ?? ''} — объяснение попадёт в историю взаимодействия."
+	dirty={reason.trim() !== ''}
+	discardTitle="Закрыть без сохранения?"
+	discardDescription="Набранная причина пропадёт: перевод не состоится, а текст нигде не сохранится."
+>
+	<!-- На шаге вперёд объяснение — это комментарий «чем закончили стадию»,
+		а не разбор неудачи: спрашивать «что пошло не так» там, где всё
+		прошло хорошо, значит сбивать с толку. -->
+	<FieldTextarea
+		name="reason"
+		label={forward ? 'Комментарий' : 'Причина'}
+		form="board-move"
+		required
+		rows={3}
+		placeholder={forward ? 'Чем закончилась стадия' : 'Что именно пошло не так'}
+		bind:value={reason}
+		errors={reasonError === null ? undefined : [reasonError]}
+	/>
 
-		<!-- На шаге вперёд объяснение — это комментарий «чем закончили стадию»,
-			а не разбор неудачи: спрашивать «что пошло не так» там, где всё
-			прошло хорошо, значит сбивать с толку. -->
-		<FieldTextarea
-			name="reason"
-			label={forward ? 'Комментарий' : 'Причина'}
-			form="board-move"
-			required
-			rows={3}
-			placeholder={forward ? 'Чем закончилась стадия' : 'Что именно пошло не так'}
-			bind:value={reason}
-			errors={reasonError === null ? undefined : [reasonError]}
-		/>
-
-		<Dialog.Footer>
-			<Button type="button" variant="outline" onclick={closeReason}>Отмена</Button>
+	{#snippet footer({ close })}
+		<div class="flex justify-end gap-2">
+			<Button type="button" variant="outline" onclick={close}>Отмена</Button>
 			<Button type="submit" form="board-move">Подтвердить</Button>
-		</Dialog.Footer>
-	</Dialog.Content>
-</Dialog.Root>
+		</div>
+	{/snippet}
+</FormDialog>

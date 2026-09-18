@@ -52,11 +52,24 @@
 	 */
 	const eventParts = $derived(message.eventType.split('.'));
 
+	/**
+	 * Ключ по частям: `crm-group-50d7922d-…-1` — одно слово в полсотни знаков, и
+	 * `break-all` рвал его посреди шестнадцатеричной группы. Сверить такой ключ
+	 * с ответом системы глазами невозможно, поэтому перенос разрешён только там,
+	 * где ключ и так читается по частям — после `-`, `.` и `_`.
+	 */
+	const keyParts = (value: string) => value.split(/(?<=[-._])/);
+
 	const canRetry = $derived(
 		message.direction === 'outbound' &&
 			(RETRIABLE_STATES as readonly string[]).includes(message.state)
 	);
 </script>
+
+<!-- `<wbr>` после каждого разделителя: браузер переносит ключ по ним, а не
+	посреди символов. -->
+{#snippet key(value: string)}{#each keyParts(value) as part, index (index)}{part}<wbr
+		/>{/each}{/snippet}
 
 <Table.Row>
 	<Table.Cell class="whitespace-normal">{formatDateTime(message.createdAt)}</Table.Cell>
@@ -80,9 +93,9 @@
 			</a>
 		{/if}
 	</Table.Cell>
-	<Table.Cell class="max-w-32 font-mono text-xs break-all whitespace-normal">
-		{message.externalId ?? '—'}
-		<span class="block text-muted-foreground">{message.eventId}</span>
+	<Table.Cell class="max-w-32 font-mono text-xs break-words whitespace-normal">
+		{#if message.externalId === null}—{:else}{@render key(message.externalId)}{/if}
+		<span class="block text-muted-foreground">{@render key(message.eventId)}</span>
 	</Table.Cell>
 	<Table.Cell>
 		<StatusBadge {tone} dot>{EXCHANGE_STATE_LABELS[message.state]}</StatusBadge>

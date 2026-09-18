@@ -24,6 +24,7 @@
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 
 	import ConfirmDialog from '$lib/components/confirm-dialog.svelte';
+	import FormDialog from '$lib/components/form-dialog.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import ErrorState from '$lib/components/error-state.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
@@ -179,6 +180,10 @@
 	];
 
 	let deleteOpen = $state(false);
+	/** Витрина диалога с формой: длинное тело, прибитая панель, вопрос при вводе. */
+	let formDialogOpen = $state(false);
+	let dialogNote = $state('');
+	let dialogStage = $state('Согласование условий');
 	let switchOn = $state(true);
 	let checkboxOn = $state(true);
 	let selectedStage = $state<Stage | null>(null);
@@ -457,6 +462,16 @@
 						<Button variant="outline" size="sm" onclick={() => (deleteOpen = true)}>
 							Подтверждение
 						</Button>
+						<Button
+							variant="outline"
+							size="sm"
+							onclick={() => {
+								dialogNote = '';
+								formDialogOpen = true;
+							}}
+						>
+							Диалог с формой
+						</Button>
 					</div>
 				</Card.Content>
 			</Card.Root>
@@ -568,7 +583,8 @@
 			getRowId={(organization) => organization.id}
 			searchPlaceholder="Поиск по названию или региону"
 			emptyTitle="Организации не найдены"
-			emptyDescription="Измените запрос или сбросьте фильтры."
+			emptyDescription="Под этот запрос и отбор не попало ни одной записи."
+			emptyAction={resetShowcaseFilters}
 			onopen={(organization) => toast(organization.name)}
 		>
 			{#snippet bulkActions({ ids, clear })}
@@ -678,6 +694,51 @@
 		</Card.Root>
 	</section>
 </div>
+
+{#snippet resetShowcaseFilters()}
+	<Button variant="outline" size="sm" onclick={() => toast('Фильтры сброшены')}>
+		Сбросить фильтры
+	</Button>
+{/snippet}
+
+<!-- Диалог с формой: тело прокручивается, панель кнопок прибита к низу, а
+	закрытие с набранным текстом спрашивает подтверждение. -->
+<FormDialog
+	bind:open={formDialogOpen}
+	width="lg"
+	title="Перевести на следующую стадию"
+	description="Витрина раскладки: длинная форма, прибитая панель кнопок и вопрос о несохранённом вводе."
+	dirty={dialogNote.trim() !== ''}
+>
+	<form id="ui-kit-dialog-form" class="flex flex-col gap-4">
+		<FieldInput name="uiKitDialogStage" label="Стадия" bind:value={dialogStage} />
+		<FieldTextarea
+			name="uiKitDialogNote"
+			label="Комментарий"
+			description="Наберите что-нибудь и нажмите Esc: диалог спросит, закрывать ли без сохранения."
+			rows={4}
+			bind:value={dialogNote}
+		/>
+		<FileInput
+			id="uiKitDialogFile"
+			label="Вложение"
+			description="Панель кнопок остаётся на месте, сколько бы полей ни было выше."
+		/>
+		<InlineHint>
+			Тело диалога прокручивается само, поэтому слой не вырастает выше окна, а кнопки не уезжают за
+			его край.
+		</InlineHint>
+	</form>
+
+	{#snippet footer({ close })}
+		<FormActions
+			form="ui-kit-dialog-form"
+			submitLabel="Подтвердить"
+			oncancel={close}
+			class="border-t-0 pt-0"
+		/>
+	{/snippet}
+</FormDialog>
 
 <ConfirmDialog
 	bind:open={deleteOpen}

@@ -54,6 +54,7 @@
 		searchPlaceholder,
 		emptyTitle = 'Ничего не найдено',
 		emptyDescription,
+		emptyAction,
 		initialHiddenColumns = [],
 		defaultSort,
 		onopen,
@@ -72,6 +73,12 @@
 		searchPlaceholder?: string;
 		emptyTitle?: string;
 		emptyDescription?: string;
+		/**
+		 * Действие в пустом состоянии — обычно «Сбросить фильтры». Совет снять
+		 * отбор без кнопки, которая его снимает, заставляет человека собирать
+		 * адрес руками: список отобран ссылкой, и снимать отбор должна ссылка.
+		 */
+		emptyAction?: Snippet;
 		/**
 		 * Columns that start hidden on a narrow screen — the ones a reader can
 		 * live without when the important ones would otherwise be cut off. The
@@ -413,7 +420,11 @@
 					{:else if table.getRowModel().rows.length === 0}
 						<Table.Row class="hover:bg-transparent">
 							<Table.Cell colspan={visibleColumnCount} class="p-0">
-								<EmptyState title={emptyTitle} description={emptyDescription} />
+								<EmptyState
+									title={emptyTitle}
+									description={emptyDescription}
+									action={emptyAction}
+								/>
 							</Table.Cell>
 						</Table.Row>
 					{:else}
@@ -455,10 +466,10 @@
 	</div>
 
 	<div class="flex flex-wrap items-center justify-between gap-3 text-sm text-muted-foreground">
+		<!-- Пустой список объяснён один раз — в самой таблице. Второе сообщение
+			«Нет записей» под ней говорило о том же другими словами. -->
 		<p>
-			{#if total === 0}
-				Нет записей
-			{:else}
+			{#if total > 0}
 				{formatNumber(firstOnPage)}–{formatNumber(lastOnPage)} из {formatNumber(total)}
 			{/if}
 		</p>

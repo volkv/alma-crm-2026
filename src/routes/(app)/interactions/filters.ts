@@ -82,6 +82,24 @@ export function filtersHref(url: URL, changes: Partial<InteractionFilters>): Res
 	return (query ? `${LIST_PATH}?${query}` : LIST_PATH) as ResolvedPathname;
 }
 
+/**
+ * Тот же список без единого условия отбора: фильтры, поиск и номер страницы
+ * сняты, а как список показан и как отсортирован — оставлено. Пустое состояние
+ * советует снять отбор, и снимать его должно нажатие, а не сборка адреса
+ * руками.
+ */
+export function clearedFiltersHref(url: URL): ResolvedPathname {
+	const params = new URLSearchParams(url.searchParams);
+
+	for (const name of ['status', 'stage', 'overdue', 'mine', 'group', 'q', 'page']) {
+		params.delete(name);
+	}
+
+	const query = params.toString();
+
+	return (query ? `${LIST_PATH}?${query}` : LIST_PATH) as ResolvedPathname;
+}
+
 /** Подписи смысловых групп стадий — те же, что в карточке и в ленте. */
 export const STAGE_CATEGORY_LABELS: Record<StageCategory, string> = {
 	contact: 'Контакты',

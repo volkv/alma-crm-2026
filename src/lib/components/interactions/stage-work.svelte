@@ -1,8 +1,10 @@
 <script lang="ts">
 	import { tick } from 'svelte';
+	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
+	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -113,6 +115,17 @@
 	let plannedSeats = $state(30);
 	let startsOn = $state('');
 	let endsOn = $state('');
+
+	/**
+	 * Отказ по заявке в систему обучения — у самой формы, а не тостом: тост
+	 * всплывает в углу поверх поля «Окончание» и кнопки отправки, то есть
+	 * закрывает ровно то, что надо исправить, и гаснет вместе с причиной.
+	 */
+	let sendRefusal = $state<{ message: string; description?: string } | null>(null);
+
+	/** Состояние потока словами: пришедший результат важнее судьбы заявки. */
+	const groupState = (group: LearningGroupView) =>
+		group.lastResultAt !== null ? 'Результат получен' : groupStateLabel(group.messageState);
 </script>
 
 {#if entry === null}
@@ -120,8 +133,9 @@
 {:else}
 	<div class="grid items-start gap-4 lg:grid-cols-2">
 		<!-- Якорь: из блока «Что мешает» ведёт ссылка прямо сюда, а не «поищите
-			ниже по странице». Отступ прокрутки — под липкую шапку. -->
-		<Card.Root size="sm" id="stage-checklist" class="scroll-mt-20">
+			ниже по странице». Отступ прокрутки — под липкую шапку вместе с полосой
+			демо-режима: она липкая с ней заодно. -->
+		<Card.Root size="sm" id="stage-checklist" class="scroll-mt-28">
 			<Card.Header>
 				<Card.Title>Чек-лист стадии</Card.Title>
 				<Card.Description>
@@ -342,12 +356,14 @@
 									{/if}
 								</p>
 								<p class="text-xs text-muted-foreground">
-									{groupStateLabel(group.messageState)}
+									{groupState(group)}
 									{#if group.plannedSeats !== null}
 										· мест {group.plannedSeats}
 									{/if}
-									{#if group.enrolled !== null}
-										· зачислено {group.enrolled}, завершили {group.completed}
+									<!-- Три числа, а не два: «отчислены» теряется ровно там, где
+										его и ищут — рядом с зачисленными и завершившими. -->
+									{#if group.enrolled !== null && group.completed !== null && group.expelled !== null}
+										· зачислено {group.enrolled}, завершили {group.completed}, отчислены {group.expelled}
 									{/if}
 								</p>
 								{#if group.lastError !== null}
@@ -363,10 +379,24 @@
 						<InlineHint tone="warning">{exchange.issue}</InlineHint>
 					{/if}
 
+					{#if sendRefusal !== null}
+						<Alert.Root variant="destructive">
+							<TriangleAlertIcon aria-hidden="true" />
+							<Alert.Title>{sendRefusal.message}</Alert.Title>
+							{#if sendRefusal.description}
+								<Alert.Description>{sendRefusal.description}</Alert.Description>
+							{/if}
+						</Alert.Root>
+					{/if}
+
 					<form
 						method="POST"
 						action="?/sendGroup"
-						use:enhance={actionEnhance()}
+						onsubmit={() => (sendRefusal = null)}
+						use:enhance={actionEnhance({
+							onfailure: (refusal) => (sendRefusal = refusal),
+							onsuccess: () => (sendRefusal = null)
+						})}
 						class="grid items-end gap-3 sm:grid-cols-4"
 					>
 						<div class="flex flex-col gap-1.5">

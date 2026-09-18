@@ -22,6 +22,11 @@ function describe(data: unknown): { message: string; description?: string } {
  * историю, поэтому перерисовывать что-то одно бессмысленно. Отказ показывается
  * словами — тем самым сообщением, которое вернул сервер, а не «что-то пошло не
  * так».
+ *
+ * По умолчанию отказ уходит в тост. Форме, которую этот отказ и надо
+ * исправлять, тост не годится: он всплывает в углу, накрывает её поля и гаснет
+ * вместе с причиной, — такая форма передаёт `onfailure` и показывает отказ у
+ * себя.
  */
 export function actionEnhance(
 	options: {
@@ -32,6 +37,12 @@ export function actionEnhance(
 		 * по-русски, а не браузер своим пузырём на своём языке.
 		 */
 		validate?: () => boolean;
+		/**
+		 * Показать отказ самой формой вместо тоста. Вызывается вместо него, а не
+		 * вдобавок: два сообщения об одном отказе спорят друг с другом. Форма,
+		 * которая взяла отказ себе, обязана его показать.
+		 */
+		onfailure?: (refusal: { message: string; description?: string }) => void;
 	} = {}
 ): SubmitFunction {
 	return ({ cancel }) => {
@@ -41,8 +52,13 @@ export function actionEnhance(
 
 		return async ({ result, update }) => {
 			if (result.type === 'failure') {
-				const { message, description } = describe(result.data);
-				toast.error(message, { description });
+				const refusal = describe(result.data);
+
+				if (options.onfailure) {
+					options.onfailure(refusal);
+				} else {
+					toast.error(refusal.message, { description: refusal.description });
+				}
 
 				return;
 			}

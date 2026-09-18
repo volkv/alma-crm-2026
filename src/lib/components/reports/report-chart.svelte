@@ -45,6 +45,20 @@
 	} = $props();
 
 	/**
+	 * Столбцы списком под диаграммой.
+	 *
+	 * Диаграмма нарисована на холсте: столбца в разметке нет, поэтому выбрать его
+	 * можно было только мышью — ни фокуса, ни `Enter`. Список даёт то же самое
+	 * действие кнопкой на каждый столбец, и он же называет числа рядом с
+	 * названиями, а не только внутри картинки.
+	 */
+	const columnTotals = $derived(
+		labels.map((_, index) =>
+			datasets.reduce((total, series) => total + (series.values[index] ?? 0), 0)
+		)
+	);
+
+	/**
 	 * Холст с экземпляром диаграммы на нём.
 	 *
 	 * `canvas` — растр: ни столбца, ни его границ в разметке нет, и добраться до
@@ -182,4 +196,24 @@
 	<div class="h-72" role="img" aria-label="{title}. {summary}">
 		<canvas bind:this={canvas} data-testid="report-chart-canvas"></canvas>
 	</div>
+
+	{#if onselect}
+		<!-- Тот же переход, что и по клику на столбец: с клавиатуры до холста не
+			добраться, а отбор по стадии — не украшение диаграммы, а работа. -->
+		<div class="mt-3 flex flex-wrap items-center gap-1.5">
+			<span class="text-xs text-muted-foreground">Отобрать по столбцу:</span>
+			{#each labels as label, index (label)}
+				<button
+					type="button"
+					class="inline-flex items-center gap-1 rounded-4xl border border-border px-2 py-0.5 text-xs focus-ring hover:bg-surface-muted"
+					aria-label="столбец: {label}, {columnTotals[index]}"
+					data-testid="chart-column"
+					onclick={() => onselect?.(index)}
+				>
+					<span>{label}</span>
+					<span class="font-medium text-muted-foreground">{columnTotals[index]}</span>
+				</button>
+			{/each}
+		</div>
+	{/if}
 </section>

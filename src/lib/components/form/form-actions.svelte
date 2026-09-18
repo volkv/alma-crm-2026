@@ -13,6 +13,7 @@
 		submitLabel = 'Сохранить',
 		cancelLabel = 'Отмена',
 		oncancel,
+		form,
 		class: className
 	}: {
 		/** `$submitting` from superforms. */
@@ -22,6 +23,12 @@
 		cancelLabel?: string;
 		/** Omit when there is nowhere to cancel to. */
 		oncancel?: () => void;
+		/**
+		 * Идентификатор формы, если полоса стоит вне неё — так собран диалог с
+		 * прибитой к низу панелью кнопок (`FormDialog`). Кнопка с атрибутом
+		 * `form` принадлежит названной форме, где бы ни стояла в разметке.
+		 */
+		form?: string;
 		/** Для формы в прокручиваемом слое: закрепить полосу у нижнего края. */
 		class?: string;
 	} = $props();
@@ -36,7 +43,7 @@
 			{cancelLabel}
 		</Button>
 	{/if}
-	<Button type="submit" disabled={submitting}>
+	<Button type="submit" {form} disabled={submitting}>
 		{#if submitting}
 			<LoaderIcon class="animate-spin" aria-hidden="true" />
 		{/if}

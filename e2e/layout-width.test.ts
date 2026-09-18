@@ -223,6 +223,43 @@ test('показатели с выбранным периодом держат �
 });
 
 /**
+ * Отчёт на рабочем экране.
+ *
+ * Страница была шире окна на четыре точки: полоса вкладок «Срез / Движение»
+ * стоит с отрицательным внешним отступом, а полей у страницы не было вовсе —
+ * отступу нечего было съедать. Ими же «Колонки» и «Сбросить фильтр» упирались
+ * в правый край окна.
+ */
+test('отчёт держит ширину рабочего экрана и не липнет к краю', async ({ page }) => {
+	await page.setViewportSize(WIDE);
+	// Отбор включён намеренно: «Сбросить фильтр» появляется только под ним, а
+	// это самая правая кнопка страницы.
+	await page.goto('/reports?state=active');
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Отчёты по взаимодействиям');
+
+	const reset = page.getByRole('link', { name: 'Сбросить фильтр' });
+	const columns = page.getByTestId('report-columns');
+
+	await expect(reset).toBeVisible();
+	await expect(columns).toBeVisible();
+
+	const resetBox = await reset.boundingBox();
+	const columnsBox = await columns.boundingBox();
+
+	if (resetBox === null || columnsBox === null) {
+		throw new Error('кнопки отбора обязаны быть на экране');
+	}
+
+	// Поле страницы на этой ширине — 24 точки; шестнадцать берутся с запасом на
+	// подстановку шрифта.
+	for (const box of [resetBox, columnsBox]) {
+		expect(box.x + box.width).toBeLessThanOrEqual(WIDE.width - 16);
+	}
+
+	expect(await documentOverflow(page)).toBeLessThanOrEqual(0);
+});
+
+/**
  * Ключевые колонки журнала обмена: когда, куда, что за событие и чем кончилось.
  * Ответ получателя и ссылка на взаимодействие до 1536 точек стоят строкой под
  * ними — данные остаются на экране, а таблица перестаёт уезжать вбок.

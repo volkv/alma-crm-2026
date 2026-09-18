@@ -173,6 +173,30 @@ test('navigation moves into a sheet on a phone', async ({ page }) => {
 	await expect(sheet.getByRole('link', { name: 'Организации' })).toBeVisible();
 });
 
+/**
+ * Ссылка «к содержимому»: от начала страницы до таблицы иначе больше десяти
+ * нажатий Tab через всё меню, и так на каждой странице раздела. Ссылка — первое,
+ * до чего доходит Tab, и она видна, как только получает фокус.
+ */
+test('the first tab stop is the skip link and it moves focus to the page', async ({ page }) => {
+	await page.goto('/ui-kit');
+
+	const skip = page.getByRole('link', { name: 'К содержимому' });
+
+	// Tab нажимается по свежей странице, без клика: клик ставит точку отсчёта
+	// обхода на то, по чему кликнули, и следующий Tab идёт уже от неё, а не от
+	// начала документа. Фокус ведёт браузер, а не код страницы, — ждать
+	// гидратации и повторять нажатие незачем.
+	await page.keyboard.press('Tab');
+
+	await expect(skip).toBeFocused();
+	await expect(skip).toBeVisible();
+
+	await page.keyboard.press('Enter');
+
+	await expect(page.locator('#page-content')).toBeFocused();
+});
+
 test('rows answer the keyboard and selection opens the bulk bar', async ({ page }) => {
 	await page.goto('/ui-kit');
 

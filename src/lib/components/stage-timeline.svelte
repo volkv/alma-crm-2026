@@ -101,6 +101,9 @@
 </script>
 
 <script lang="ts">
+	import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
+	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+	import { Button } from '$lib/components/ui/button/index.js';
 	import { formatDate } from '$lib/format';
 	import { cn } from '$lib/utils';
 	import SlaChip from './sla-chip.svelte';
@@ -176,6 +179,48 @@
 	 */
 	let scrolled = false;
 
+	/**
+	 * Что за краем ленты.
+	 *
+	 * Процесс из четырнадцати стадий в тысячу точек не помещается: на экране их
+	 * семь, а подпись у правого края обрезана посередине слова. Само по себе это
+	 * ничего не говорит — обрезанное слово читается как ошибка вёрстки, а не как
+	 * «дальше есть ещё». Поэтому лента говорит об этом словами и даёт две кнопки:
+	 * прокрутить её можно и с клавиатуры, а не только колесом и пальцем.
+	 */
+	let atStart = $state(true);
+	let atEnd = $state(true);
+
+	const scrollable = $derived(!atStart || !atEnd);
+
+	function measure() {
+		if (rail === null) return;
+
+		// Дробные пиксели: масштаб страницы и кегль делают ширину нецелой, и
+		// строгое равенство не срабатывает никогда.
+		atStart = rail.scrollLeft <= 1;
+		atEnd = rail.scrollLeft + rail.clientWidth >= rail.scrollWidth - 1;
+	}
+
+	/** Шаг прокрутки — почти экран ленты: край остаётся виден и после шага. */
+	function step(direction: -1 | 1) {
+		rail?.scrollBy({ left: direction * Math.max(rail.clientWidth - 72, 120), behavior: 'smooth' });
+	}
+
+	$effect(() => {
+		// Длина набора читается намеренно: у другой записи лента другой длины, и
+		// мерить её надо заново.
+		if (rail === null || stages.length === 0) return;
+
+		const element = rail;
+		const observer = new ResizeObserver(() => measure());
+
+		observer.observe(element);
+		measure();
+
+		return () => observer.disconnect();
+	});
+
 	$effect(() => {
 		if (rail === null || scrolled || focusIndex < 0) return;
 
@@ -222,59 +267,90 @@
 		<span class="shrink-0 text-xs text-muted-foreground">{passed}/{stages.length}</span>
 	</div>
 {:else}
-	<div bind:this={rail} class={cn('overflow-x-auto pb-1', className)} data-slot="stage-timeline">
-		<ol class="flex min-w-max items-start">
-			{#each stages as stage, index (stage.id)}
-				{@const look = looks[stage.state]}
-				{@const Icon = look.icon}
-				<li class="flex w-36 shrink-0 flex-col items-center" data-stage={index}>
-					<div class="flex w-full items-center">
-						<span
-							class={cn(
-								'h-0.5 flex-1 rounded-full',
-								index === 0 ? 'bg-transparent' : looks[stages[index - 1].state].rail
-							)}
-							aria-hidden="true"
-						></span>
-						<button
-							type="button"
-							class={cn(
-								'flex size-7 shrink-0 items-center justify-center rounded-full border focus-ring transition-transform hover:scale-110',
-								look.node
-							)}
-							aria-current={stage.state === 'current' ? 'step' : undefined}
-							aria-label={describe(stage)}
-							onclick={() => onselect?.(stage)}
-						>
-							<Icon class="size-4" aria-hidden="true" />
-						</button>
-						<span
-							class={cn(
-								'h-0.5 flex-1 rounded-full',
-								index === stages.length - 1 ? 'bg-transparent' : look.rail
-							)}
-							aria-hidden="true"
-						></span>
-					</div>
-
-					<p class={cn('mt-2 px-1 text-center text-xs leading-tight', look.label)}>
-						{stage.label}
-					</p>
-
-					{#if stage.state === 'current' || stage.state === 'overdue'}
-						<div class="mt-1.5 flex flex-col items-center gap-1">
-							{#if stage.deadline}
-								<SlaChip deadline={stage.deadline} {now} />
-							{/if}
-							{#if stage.assignee}
-								<p class="max-w-32 truncate text-xs text-muted-foreground">{stage.assignee}</p>
-							{/if}
+	<div class={cn('flex flex-col gap-2', className)} data-slot="stage-timeline">
+		<div
+			bind:this={rail}
+			class="overflow-x-auto pb-1"
+			data-slot="stage-timeline-rail"
+			onscroll={measure}
+		>
+			<ol class="flex min-w-max items-start">
+				{#each stages as stage, index (stage.id)}
+					{@const look = looks[stage.state]}
+					{@const Icon = look.icon}
+					<li class="flex w-36 shrink-0 flex-col items-center" data-stage={index}>
+						<div class="flex w-full items-center">
+							<span
+								class={cn(
+									'h-0.5 flex-1 rounded-full',
+									index === 0 ? 'bg-transparent' : looks[stages[index - 1].state].rail
+								)}
+								aria-hidden="true"
+							></span>
+							<button
+								type="button"
+								class={cn(
+									'flex size-7 shrink-0 items-center justify-center rounded-full border focus-ring transition-transform hover:scale-110',
+									look.node
+								)}
+								aria-current={stage.state === 'current' ? 'step' : undefined}
+								aria-label={describe(stage)}
+								onclick={() => onselect?.(stage)}
+							>
+								<Icon class="size-4" aria-hidden="true" />
+							</button>
+							<span
+								class={cn(
+									'h-0.5 flex-1 rounded-full',
+									index === stages.length - 1 ? 'bg-transparent' : look.rail
+								)}
+								aria-hidden="true"
+							></span>
 						</div>
-					{:else if stage.note}
-						<p class="mt-1.5 max-w-32 px-1 text-center text-xs text-faint">{stage.note}</p>
-					{/if}
-				</li>
-			{/each}
-		</ol>
+
+						<p class={cn('mt-2 px-1 text-center text-xs leading-tight', look.label)}>
+							{stage.label}
+						</p>
+
+						{#if stage.state === 'current' || stage.state === 'overdue'}
+							<div class="mt-1.5 flex flex-col items-center gap-1">
+								{#if stage.deadline}
+									<SlaChip deadline={stage.deadline} {now} />
+								{/if}
+								{#if stage.assignee}
+									<p class="max-w-32 truncate text-xs text-muted-foreground">{stage.assignee}</p>
+								{/if}
+							</div>
+						{:else if stage.note}
+							<p class="mt-1.5 max-w-32 px-1 text-center text-xs text-faint">{stage.note}</p>
+						{/if}
+					</li>
+				{/each}
+			</ol>
+		</div>
+
+		{#if scrollable}
+			<div class="flex items-center justify-end gap-2 text-xs text-muted-foreground">
+				<span>Стадий в процессе: {stages.length} — лента прокручивается</span>
+				<Button
+					variant="outline"
+					size="icon-sm"
+					aria-label="Предыдущие стадии"
+					disabled={atStart}
+					onclick={() => step(-1)}
+				>
+					<ChevronLeftIcon aria-hidden="true" />
+				</Button>
+				<Button
+					variant="outline"
+					size="icon-sm"
+					aria-label="Следующие стадии"
+					disabled={atEnd}
+					onclick={() => step(1)}
+				>
+					<ChevronRightIcon aria-hidden="true" />
+				</Button>
+			</div>
+		{/if}
 	</div>
 {/if}

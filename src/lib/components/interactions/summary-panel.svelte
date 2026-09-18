@@ -8,13 +8,13 @@
 	import { enhance } from '$app/forms';
 	import { page } from '$app/state';
 	import * as Card from '$lib/components/ui/card/index.js';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FileInput from '$lib/components/form/file-input.svelte';
+	import FormDialog from '$lib/components/form-dialog.svelte';
 	import SlaChip from '$lib/components/sla-chip.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { anchorHref } from '$lib/components/directory/query';
@@ -77,6 +77,16 @@
 	// Список причин отправляет выбранное скрытым полем, поэтому в нём всегда
 	// что-то выбрано: у нативного списка первый пункт выбран сам.
 	let pauseReason = $state<PauseReason>(PAUSE_REASONS[0]);
+	let pauseNote = $state('');
+	let pauseNextAction = $state('');
+
+	/** Пауза заводится с чистой формой: прошлый ответ уже уехал на сервер. */
+	function openPauseDialog() {
+		pauseReason = PAUSE_REASONS[0];
+		pauseNote = '';
+		pauseNextAction = '';
+		pauseOpen = true;
+	}
 
 	const can = (action: string) => summary.canDo.actions.includes(action as 'pause');
 
@@ -103,16 +113,23 @@
 
 	let reason = $state('');
 	let reasonError = $state<string | null>(null);
+	/**
+	 * Выбранные вложения — такой же несохранённый ввод, как и текст: закрытие
+	 * слоя с ними спрашивает подтверждение.
+	 */
+	let attached = $state<readonly string[]>([]);
 
 	function openTransitionDialog(next: NonNullable<typeof reasonDialog>) {
 		reason = '';
 		reasonError = null;
+		attached = [];
 		reasonDialog = next;
 	}
 
 	function closeTransitionDialog() {
 		reasonDialog = null;
 		reasonError = null;
+		attached = [];
 	}
 
 	/**
@@ -355,7 +372,7 @@
 					size="sm"
 					variant="outline"
 					class="w-full justify-start"
-					onclick={() => (pauseOpen = true)}
+					onclick={openPauseDialog}
 				>
 					<PauseIcon aria-hidden="true" />
 					Поставить на паузу
@@ -377,132 +394,144 @@
 	</Card.Root>
 </div>
 
-<Dialog.Root
-	open={reasonDialog !== null}
-	onOpenChange={(open) => {
-		if (!open) closeTransitionDialog();
-	}}
+<!--
+	Диалог перехода: объяснение и вложения. Закрытие с непустым вводом
+	спрашивает подтверждение — `Esc` и клик вне слоя стирали набранное молча.
+-->
+<FormDialog
+	bind:open={
+		() => reasonDialog !== null,
+		(next) => {
+			if (!next) closeTransitionDialog();
+		}
+	}
+	title={REASON_TITLES[dialogKind]}
+	description="{reasonDialog === null
+		? ''
+		: `Стадия: ${reasonDialog.name}.`} Объяснение попадёт в историю взаимодействия."
+	dirty={reason.trim() !== '' || attached.length > 0}
+	discardTitle="Закрыть без сохранения?"
+	discardDescription="Набранное объяснение и выбранные вложения пропадут: переход не состоится, а текст нигде не сохранится."
 >
-	<Dialog.Content>
-		<Dialog.Header>
-			<Dialog.Title>{REASON_TITLES[dialogKind]}</Dialog.Title>
-			<Dialog.Description>
-				{reasonDialog === null ? '' : `Стадия: ${reasonDialog.name}.`} Объяснение попадёт в историю взаимодействия.
-			</Dialog.Description>
-		</Dialog.Header>
+	<!-- novalidate: проверяет форма и говорит по-русски, а не браузер на своём
+		языке (`docs/development.md`, «Формы»). -->
+	<form
+		id="stage-transition-form"
+		method="POST"
+		action={REASON_ACTIONS[dialogKind]}
+		enctype="multipart/form-data"
+		novalidate
+		use:enhance={actionEnhance({
+			validate: validateReason,
+			onsuccess: () => (reasonDialog = null)
+		})}
+		class="flex flex-col gap-4"
+	>
+		<input type="hidden" name="fromStageId" value={currentStageId} />
+		<input type="hidden" name="toStageId" value={reasonDialog?.toStageId ?? ''} />
+		<input type="hidden" name="revision" value={revision} />
 
-		<!-- novalidate: проверяет форма и говорит по-русски, а не браузер на своём
-			языке (`docs/development.md`, «Формы»). -->
-		<form
-			method="POST"
-			action={REASON_ACTIONS[dialogKind]}
-			enctype="multipart/form-data"
-			novalidate
-			use:enhance={actionEnhance({
-				validate: validateReason,
-				onsuccess: () => (reasonDialog = null)
-			})}
-			class="flex flex-col gap-4"
-		>
-			<input type="hidden" name="fromStageId" value={currentStageId} />
-			<input type="hidden" name="toStageId" value={reasonDialog?.toStageId ?? ''} />
-			<input type="hidden" name="revision" value={revision} />
+		<!-- На шаге вперёд объяснение — это комментарий «чем закончили стадию»,
+			а не разбор неудачи. Необязательность сказана словами: молча уходящая
+			пустая форма оставляет в истории переход без причины. -->
+		<FieldTextarea
+			name="reason"
+			label={reasonLabel}
+			required={reasonRequired}
+			description={reasonRequired
+				? undefined
+				: 'Необязательно, но без него в истории останется переход без причины.'}
+			rows={3}
+			placeholder={dialogKind === 'forward' ? 'Чем закончилась стадия' : 'Что именно пошло не так'}
+			bind:value={reason}
+			errors={reasonError === null ? undefined : [reasonError]}
+		/>
 
-			<!-- На шаге вперёд объяснение — это комментарий «чем закончили стадию»,
-				а не разбор неудачи. -->
-			<FieldTextarea
-				name="reason"
-				label={reasonLabel}
-				required={reasonRequired}
-				rows={3}
-				placeholder={dialogKind === 'forward'
-					? 'Чем закончилась стадия'
-					: 'Что именно пошло не так'}
-				bind:value={reason}
-				errors={reasonError === null ? undefined : [reasonError]}
+		{#if canAttach}
+			<!-- Файл виден на той стадии, где его приложили, а не общим списком
+				по взаимодействию: «чем подтверждена передача материалов» —
+				вопрос к стадии. -->
+			<FileInput
+				id="transitionFiles"
+				name="files"
+				label="Вложения"
+				multiple
+				description="До десяти файлов на переход; они останутся на покидаемой стадии."
+				onchoose={(names) => (attached = names)}
 			/>
+		{/if}
+	</form>
 
-			{#if canAttach}
-				<!-- Файл виден на той стадии, где его приложили, а не общим списком
-					по взаимодействию: «чем подтверждена передача материалов» —
-					вопрос к стадии. -->
-				<FileInput
-					id="transitionFiles"
-					name="files"
-					label="Вложения"
-					multiple
-					description="До десяти файлов на переход; они останутся на покидаемой стадии."
-				/>
-			{/if}
+	{#snippet footer({ close })}
+		<div class="flex justify-end gap-2">
+			<Button type="button" variant="outline" onclick={close}>Отмена</Button>
+			<Button type="submit" form="stage-transition-form">Подтвердить</Button>
+		</div>
+	{/snippet}
+</FormDialog>
 
-			<Dialog.Footer>
-				<Button type="button" variant="outline" onclick={closeTransitionDialog}>Отмена</Button>
-				<Button type="submit">Подтвердить</Button>
-			</Dialog.Footer>
-		</form>
-	</Dialog.Content>
-</Dialog.Root>
+<FormDialog
+	bind:open={pauseOpen}
+	title="Поставить стадию на паузу"
+	description="Часы норматива остановятся: ждать ответа и не успеть — разные вещи."
+	dirty={pauseNote.trim() !== '' || pauseNextAction.trim() !== ''}
+	discardDescription="Набранное о том, чего ждём, пропадёт: стадия останется без паузы."
+>
+	<form
+		id="stage-pause-form"
+		method="POST"
+		action="?/pause"
+		use:enhance={actionEnhance({ onsuccess: () => (pauseOpen = false) })}
+		class="flex flex-col gap-4"
+	>
+		<input type="hidden" name="fromStageId" value={currentStageId} />
 
-<Dialog.Root bind:open={pauseOpen}>
-	<Dialog.Content>
-		<Dialog.Header>
-			<Dialog.Title>Поставить стадию на паузу</Dialog.Title>
-			<Dialog.Description>
-				Часы норматива остановятся: ждать ответа и не успеть — разные вещи.
-			</Dialog.Description>
-		</Dialog.Header>
+		<div class="flex flex-col gap-1.5 text-sm">
+			<Label for="pauseReason">Причина</Label>
+			<Select.Root
+				type="single"
+				name="reason"
+				bind:value={() => pauseReason, (next) => (pauseReason = next as PauseReason)}
+			>
+				<Select.Trigger id="pauseReason" class="w-full">
+					{PAUSE_REASON_LABELS[pauseReason]}
+				</Select.Trigger>
+				<Select.Content>
+					{#each PAUSE_REASONS as reason (reason)}
+						<Select.Item value={reason} label={PAUSE_REASON_LABELS[reason]} />
+					{/each}
+				</Select.Content>
+			</Select.Root>
+		</div>
 
-		<form
-			method="POST"
-			action="?/pause"
-			use:enhance={actionEnhance({ onsuccess: () => (pauseOpen = false) })}
-			class="flex flex-col gap-4"
-		>
-			<input type="hidden" name="fromStageId" value={currentStageId} />
+		<div class="flex flex-col gap-1.5">
+			<Label for="pauseNote">Чего ждём</Label>
+			<Textarea
+				id="pauseNote"
+				name="note"
+				rows={2}
+				required
+				placeholder="Например: подписи ректора"
+				bind:value={pauseNote}
+			/>
+		</div>
 
-			<div class="flex flex-col gap-1.5 text-sm">
-				<Label for="pauseReason">Причина</Label>
-				<Select.Root
-					type="single"
-					name="reason"
-					bind:value={() => pauseReason, (next) => (pauseReason = next as PauseReason)}
-				>
-					<Select.Trigger id="pauseReason" class="w-full">
-						{PAUSE_REASON_LABELS[pauseReason]}
-					</Select.Trigger>
-					<Select.Content>
-						{#each PAUSE_REASONS as reason (reason)}
-							<Select.Item value={reason} label={PAUSE_REASON_LABELS[reason]} />
-						{/each}
-					</Select.Content>
-				</Select.Root>
-			</div>
+		<div class="flex flex-col gap-1.5">
+			<Label for="pauseNextAction">Следующий шаг</Label>
+			<Textarea
+				id="pauseNextAction"
+				name="nextAction"
+				rows={2}
+				placeholder="Что сделаем, когда дождёмся"
+				bind:value={pauseNextAction}
+			/>
+		</div>
+	</form>
 
-			<div class="flex flex-col gap-1.5">
-				<Label for="pauseNote">Чего ждём</Label>
-				<Textarea
-					id="pauseNote"
-					name="note"
-					rows={2}
-					required
-					placeholder="Например: подписи ректора"
-				/>
-			</div>
-
-			<div class="flex flex-col gap-1.5">
-				<Label for="pauseNextAction">Следующий шаг</Label>
-				<Textarea
-					id="pauseNextAction"
-					name="nextAction"
-					rows={2}
-					placeholder="Что сделаем, когда дождёмся"
-				/>
-			</div>
-
-			<Dialog.Footer>
-				<Button type="button" variant="outline" onclick={() => (pauseOpen = false)}>Отмена</Button>
-				<Button type="submit">Поставить на паузу</Button>
-			</Dialog.Footer>
-		</form>
-	</Dialog.Content>
-</Dialog.Root>
+	{#snippet footer({ close })}
+		<div class="flex justify-end gap-2">
+			<Button type="button" variant="outline" onclick={close}>Отмена</Button>
+			<Button type="submit" form="stage-pause-form">Поставить на паузу</Button>
+		</div>
+	{/snippet}
+</FormDialog>

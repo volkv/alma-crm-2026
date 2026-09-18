@@ -68,6 +68,16 @@
 <svelte:window onkeydown={onWindowKeydown} />
 
 <div class="flex min-h-screen bg-canvas">
+	<!-- Первое, до чего доходит Tab: от начала страницы до таблицы иначе больше
+		десяти нажатий через всё меню, и так на каждой странице. Ссылка не
+		видна, пока не получит фокус, — тогда она встаёт в левом верхнем углу. -->
+	<a
+		href="#page-content"
+		class="sr-only rounded-md bg-surface px-3 py-2 text-sm font-medium shadow-md ring-1 focus-ring ring-border focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50"
+	>
+		К содержимому
+	</a>
+
 	<!-- Меню липкое и ростом в экран: на длинной странице — «Сводке», отчётах —
 		уехавшая вверх навигация пропадала ровно там, где до неё дальше всего.
 		Список разделов внутри прокручивается сам, поэтому меню длиннее экрана
@@ -116,64 +126,69 @@
 	</aside>
 
 	<div class="flex min-w-0 flex-1 flex-col">
-		{#if demoMode}
-			<p
-				class="shrink-0 bg-warning-soft px-3 py-1 text-center text-xs text-warning-soft-foreground sm:px-4"
-			>
-				Демо-режим: вузы и продукты названы настоящие, люди, договоры и цифры — вымышленные{#if demoResetHour !== null}.
-					Стенд общий, данные сбрасываются ежедневно в {resetTime}{/if}
-			</p>
-		{/if}
-
-		<header
-			class="sticky top-0 z-30 flex h-14 shrink-0 items-center gap-2 border-b border-border bg-surface px-3 sm:px-4"
-		>
-			<Sheet.Root bind:open={mobileNavOpen}>
-				<Sheet.Trigger>
-					{#snippet child({ props })}
-						<Button
-							{...props}
-							variant="ghost"
-							size="icon-sm"
-							class="md:hidden"
-							aria-label="Разделы"
-						>
-							<MenuIcon aria-hidden="true" />
-						</Button>
-					{/snippet}
-				</Sheet.Trigger>
-				<Sheet.Content side="left" class="w-64 p-0">
-					<Sheet.Header class="h-14 justify-center border-b border-border px-4">
-						<Sheet.Title class="text-sm font-semibold">LCT CRM</Sheet.Title>
-						<Sheet.Description class="sr-only">Разделы системы</Sheet.Description>
-					</Sheet.Header>
-					<AppNav {links} onnavigate={() => (mobileNavOpen = false)} />
-				</Sheet.Content>
-			</Sheet.Root>
-
-			<h2 class="min-w-0 truncate text-sm font-medium">{sectionTitle}</h2>
-
-			<div class="ml-auto flex items-center gap-1.5">
-				<Button
-					variant="outline"
-					size="sm"
-					class="gap-2 text-muted-foreground"
-					onclick={() => (searchOpen = true)}
+		<!-- Полоса демо-режима липкая вместе с шапкой: на длинных экранах
+			(карточка, отчёты, редактор процесса) она уезжала за верх при первой
+			же прокрутке, и большая часть показа шла без отметки «демо». -->
+		<div class="sticky top-0 z-30 shrink-0">
+			{#if demoMode}
+				<p
+					class="bg-warning-soft px-3 py-1 text-center text-xs text-warning-soft-foreground sm:px-4"
 				>
-					<SearchIcon aria-hidden="true" />
-					<span class="hidden sm:inline">Поиск</span>
-					<kbd
-						class="hidden rounded border border-border bg-surface-muted px-1 font-sans text-[10px] sm:inline"
-						>Ctrl+K</kbd
-					>
-				</Button>
-				{#if user}
-					<UserMenu {user} />
-				{/if}
-			</div>
-		</header>
+					Демо-режим: вузы и продукты названы настоящие, люди, договоры и цифры — вымышленные{#if demoResetHour !== null}.
+						Стенд общий, данные сбрасываются ежедневно в {resetTime}{/if}
+				</p>
+			{/if}
 
-		<main class="min-w-0 flex-1">
+			<header class="flex h-14 items-center gap-2 border-b border-border bg-surface px-3 sm:px-4">
+				<Sheet.Root bind:open={mobileNavOpen}>
+					<Sheet.Trigger>
+						{#snippet child({ props })}
+							<Button
+								{...props}
+								variant="ghost"
+								size="icon-sm"
+								class="md:hidden"
+								aria-label="Разделы"
+							>
+								<MenuIcon aria-hidden="true" />
+							</Button>
+						{/snippet}
+					</Sheet.Trigger>
+					<Sheet.Content side="left" class="w-64 p-0">
+						<Sheet.Header class="h-14 justify-center border-b border-border px-4">
+							<Sheet.Title class="text-sm font-semibold">LCT CRM</Sheet.Title>
+							<Sheet.Description class="sr-only">Разделы системы</Sheet.Description>
+						</Sheet.Header>
+						<AppNav {links} onnavigate={() => (mobileNavOpen = false)} />
+					</Sheet.Content>
+				</Sheet.Root>
+
+				<h2 class="min-w-0 truncate text-sm font-medium">{sectionTitle}</h2>
+
+				<div class="ml-auto flex items-center gap-1.5">
+					<Button
+						variant="outline"
+						size="sm"
+						class="gap-2 text-muted-foreground"
+						onclick={() => (searchOpen = true)}
+					>
+						<SearchIcon aria-hidden="true" />
+						<span class="hidden sm:inline">Поиск</span>
+						<kbd
+							class="hidden rounded border border-border bg-surface-muted px-1 font-sans text-[10px] sm:inline"
+							>Ctrl+K</kbd
+						>
+					</Button>
+					{#if user}
+						<UserMenu {user} />
+					{/if}
+				</div>
+			</header>
+		</div>
+
+		<!-- `tabindex="-1"`: по ссылке «к содержимому» фокус обязан переехать сюда,
+			а не остаться в начале страницы. -->
+		<main id="page-content" tabindex="-1" class="min-w-0 flex-1">
 			{@render children()}
 		</main>
 	</div>

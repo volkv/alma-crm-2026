@@ -20,7 +20,8 @@
 		description,
 		accept,
 		multiple = false,
-		required = false
+		required = false,
+		onchoose
 	}: {
 		/** Идентификатор контрола; он же имя поля формы, если имя не задано. */
 		id: string;
@@ -33,6 +34,12 @@
 		/** Несколько файлов за раз: вложения к переходу, а не один документ. */
 		multiple?: boolean;
 		required?: boolean;
+		/**
+		 * Что выбрано: имена файлов после каждого выбора. Нужно форме, которая
+		 * считает выбранный файл несохранённым вводом и спрашивает о нём перед
+		 * закрытием слоя.
+		 */
+		onchoose?: (names: readonly string[]) => void;
 	} = $props();
 
 	let chosen = $state<string[]>([]);
@@ -52,6 +59,7 @@
 
 	function pick(event: Event & { currentTarget: HTMLInputElement }) {
 		chosen = Array.from(event.currentTarget.files ?? [], (file) => file.name);
+		onchoose?.(chosen);
 	}
 </script>
 

@@ -11,7 +11,6 @@
 	import UploadIcon from '@lucide/svelte/icons/upload';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
-	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
@@ -19,6 +18,7 @@
 	import { Label } from '$lib/components/ui/label/index.js';
 	import ConfirmDialog from '$lib/components/confirm-dialog.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
+	import FormDialog from '$lib/components/form-dialog.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
@@ -679,308 +679,310 @@
 	</Card.Root>
 {/if}
 
-<Dialog.Root bind:open={stageOpen}>
-	<Dialog.Content class="max-h-[85vh] overflow-y-auto sm:max-w-lg">
-		<Dialog.Header>
-			<Dialog.Title>
-				{$stageData.originalKey === '' ? 'Новая стадия' : 'Стадия процесса'}
-			</Dialog.Title>
-			<Dialog.Description>
-				Позиция задаёт место в цепочке: номера расставятся по порядку сами. Ключ существующей стадии
-				не меняется — смена ключа означала бы другую работу под прежним именем.
-			</Dialog.Description>
-		</Dialog.Header>
+<FormDialog
+	bind:open={stageOpen}
+	width="lg"
+	title={$stageData.originalKey === '' ? 'Новая стадия' : 'Стадия процесса'}
+	description="Позиция задаёт место в цепочке: номера расставятся по порядку сами. Ключ существующей стадии не меняется — смена ключа означала бы другую работу под прежним именем."
+>
+	{#if $stageErrors._errors}
+		<Alert.Root variant="destructive" class="mb-4">
+			<Alert.Description>
+				<ul class="list-inside list-disc">
+					{#each $stageErrors._errors as issue (issue)}
+						<li>{issue}</li>
+					{/each}
+				</ul>
+			</Alert.Description>
+		</Alert.Root>
+	{/if}
 
-		{#if $stageErrors._errors}
-			<Alert.Root variant="destructive">
-				<Alert.Description>
-					<ul class="list-inside list-disc">
-						{#each $stageErrors._errors as issue (issue)}
-							<li>{issue}</li>
-						{/each}
-					</ul>
-				</Alert.Description>
-			</Alert.Root>
-		{/if}
+	<!-- novalidate: проверяет схема и говорит по-русски, а не браузер на своём языке. -->
+	<form
+		id="stage-form"
+		method="POST"
+		action="?/stage"
+		use:stageEnhance
+		novalidate
+		class="flex flex-col gap-4"
+	>
+		<input type="hidden" name="originalKey" value={$stageData.originalKey} />
 
-		<!-- novalidate: проверяет схема и говорит по-русски, а не браузер на своём языке. -->
-		<form method="POST" action="?/stage" use:stageEnhance novalidate class="flex flex-col gap-4">
-			<input type="hidden" name="originalKey" value={$stageData.originalKey} />
-
-			{@render numberField({
-				name: 'position',
-				label: 'Позиция в процессе',
-				value: $stageData.position,
-				errors: $stageErrors.position,
-				onchange: (next) => ($stageData.position = next)
-			})}
-			{#if $stageData.originalKey === ''}
-				<FieldInput
-					name="key"
-					label="Ключ"
-					description="Латиницей, навсегда: по нему сопоставляются записи при изменении процесса."
-					required
-					bind:value={$stageData.key}
-					errors={$stageErrors.key}
-				/>
-			{:else}
-				<!-- Ключ существующей стадии не правится: смена ключа неотличима от
-					«удалили одну стадию и завели другую», а последствия у этих
-					действий разные. Поле не показываем вовсе — отключённое поле
-					выглядит как «сейчас нельзя», а здесь нельзя всегда. -->
-				<input type="hidden" name="key" value={$stageData.key} />
-				<KeyValue>
-					<KeyValueRow label="Ключ стадии" value={$stageData.key} />
-				</KeyValue>
-			{/if}
+		{@render numberField({
+			name: 'position',
+			label: 'Позиция в процессе',
+			value: $stageData.position,
+			errors: $stageErrors.position,
+			onchange: (next) => ($stageData.position = next)
+		})}
+		{#if $stageData.originalKey === ''}
 			<FieldInput
-				name="name"
-				label="Название"
-				description="Что на этой стадии делают, а не на каком участке процесса она стоит."
+				name="key"
+				label="Ключ"
+				description="Латиницей, навсегда: по нему сопоставляются записи при изменении процесса."
 				required
-				bind:value={$stageData.name}
-				errors={$stageErrors.name}
+				bind:value={$stageData.key}
+				errors={$stageErrors.key}
 			/>
-			<FieldSelect
-				name="category"
-				label="Смысловая группа"
-				required
-				options={STAGE_CATEGORIES.map((category) => ({
-					value: category,
-					label: STAGE_CATEGORY_LABELS[category]
-				}))}
-				bind:value={$stageData.category}
-				errors={$stageErrors.category}
-			/>
-			{@render numberField({
-				name: 'slaDays',
-				label: 'Норматив, дней',
-				description: 'Из него считается срок стадии.',
-				value: $stageData.slaDays,
-				errors: $stageErrors.slaDays,
-				onchange: (next) => ($stageData.slaDays = next)
-			})}
-			{@render numberField({
-				name: 'staleAfterDays',
-				label: 'Протухание, дней',
-				description: '0 — стадия не протухает. Считается от последнего события, а не от входа.',
-				value: $stageData.staleAfterDays,
-				errors: $stageErrors.staleAfterDays,
-				onchange: (next) => ($stageData.staleAfterDays = next)
-			})}
-			<fieldset class="flex flex-col gap-2">
-				<legend class="text-sm font-medium">Что требуется на шаге вперёд</legend>
-				{@render checkboxField({
-					name: 'requiresResult',
-					label: 'Записан результат стадии',
-					checked: $stageData.requiresResult,
-					onchange: (next) => ($stageData.requiresResult = next)
-				})}
-				{@render checkboxField({
-					name: 'requiresConfirmation',
-					label: 'Есть подтверждение: файл, отметка или запись системы обучения',
-					checked: $stageData.requiresConfirmation,
-					onchange: (next) => ($stageData.requiresConfirmation = next)
-				})}
-				{@render checkboxField({
-					name: 'requiresLmsData',
-					label: 'Получены данные системы обучения по взаимодействию',
-					checked: $stageData.requiresLmsData,
-					onchange: (next) => ($stageData.requiresLmsData = next)
-				})}
-				<FieldSelect
-					name="requiresDocumentMark"
-					label="Отметка по документу дела"
-					description="Стадию закрывает сам документ: отметка ответственного её не заменяет."
-					options={[
-						{ value: '', label: 'Не требуется' },
-						...DOCUMENT_STATUS_FACTS.map((fact) => ({
-							value: fact,
-							label: DOCUMENT_STATUS_FACT_LABELS[fact]
-						}))
-					]}
-					bind:value={$stageData.requiresDocumentMark}
-					errors={$stageErrors.requiresDocumentMark}
-				/>
-			</fieldset>
-			<fieldset class="flex flex-col gap-2">
-				<legend class="text-sm font-medium">Место в процессе</legend>
-				{@render checkboxField({
-					name: 'isFinal',
-					label: 'Финальная: с неё взаимодействие завершают, а не идут дальше',
-					checked: $stageData.isFinal,
-					onchange: (next) => ($stageData.isFinal = next)
-				})}
-			</fieldset>
-			<FieldTextarea
-				name="checklist"
-				label="Чек-лист"
-				description={CHECKLIST_HINT}
-				rows={5}
-				placeholder={CHECKLIST_PLACEHOLDER}
-				bind:value={$stageData.checklist}
-				errors={$stageErrors.checklist}
-			/>
-			<!-- Диалог стадии длинный и прокручивается внутри: на телефоне до кнопок
-				было ~460 px прокрутки. Полоса закреплена у нижнего края слоя и
-				перекрывает его отступ, чтобы содержимое не просвечивало под ней. -->
-			<FormActions
-				submitting={$stageSubmitting}
-				submitLabel={$stageData.originalKey === '' ? 'Добавить стадию' : 'Сохранить стадию'}
-				oncancel={() => (stageOpen = false)}
-				class="sticky bottom-0 -mx-6 -mb-6 rounded-b-xl bg-popover px-6 pb-6"
-			/>
-		</form>
-	</Dialog.Content>
-</Dialog.Root>
-
-<Dialog.Root bind:open={transitionOpen}>
-	<Dialog.Content class="max-h-[85vh] overflow-y-auto sm:max-w-lg">
-		<Dialog.Header>
-			<Dialog.Title>
-				{$transitionData.originalFromKey === '' ? 'Новый переход' : 'Переход процесса'}
-			</Dialog.Title>
-			<Dialog.Description>
-				Возврат и пропуск требуют объяснения: это отступление от плана, и без причины история стадий
-				не расскажет, почему процесс пошёл не по порядку.
-			</Dialog.Description>
-		</Dialog.Header>
-
-		{#if $transitionErrors._errors}
-			<Alert.Root variant="destructive">
-				<Alert.Description>
-					<ul class="list-inside list-disc">
-						{#each $transitionErrors._errors as issue (issue)}
-							<li>{issue}</li>
-						{/each}
-					</ul>
-				</Alert.Description>
-			</Alert.Root>
+		{:else}
+			<!-- Ключ существующей стадии не правится: смена ключа неотличима от
+				«удалили одну стадию и завели другую», а последствия у этих
+				действий разные. Поле не показываем вовсе — отключённое поле
+				выглядит как «сейчас нельзя», а здесь нельзя всегда. -->
+			<input type="hidden" name="key" value={$stageData.key} />
+			<KeyValue>
+				<KeyValueRow label="Ключ стадии" value={$stageData.key} />
+			</KeyValue>
 		{/if}
-
-		<!-- novalidate: проверяет схема и говорит по-русски, а не браузер на своём языке. -->
-		<form
-			method="POST"
-			action="?/transition"
-			use:transitionEnhance
-			novalidate
-			class="flex flex-col gap-4"
-		>
-			<input type="hidden" name="originalFromKey" value={$transitionData.originalFromKey} />
-			<input type="hidden" name="originalToKey" value={$transitionData.originalToKey} />
-
-			<FieldSelect
-				name="fromStageKey"
-				label="Откуда"
-				required
-				options={stageOptions}
-				placeholder="Выберите стадию"
-				bind:value={$transitionData.fromStageKey}
-				errors={$transitionErrors.fromStageKey}
-			/>
-			<FieldSelect
-				name="toStageKey"
-				label="Куда"
-				required
-				options={stageOptions}
-				placeholder="Выберите стадию"
-				bind:value={$transitionData.toStageKey}
-				errors={$transitionErrors.toStageKey}
-			/>
-			<FieldSelect
-				name="kind"
-				label="Вид перехода"
-				required
-				options={STAGE_TRANSITION_KINDS.map((kind) => ({
-					value: kind,
-					label: TRANSITION_KIND_LABELS[kind]
-				}))}
-				bind:value={$transitionData.kind}
-				errors={$transitionErrors.kind}
-			/>
-			<FieldSelect
-				name="requiredPermissionKey"
-				label="Требуемое право"
-				required
-				options={data.permissions.map((permission) => ({
-					value: permission.key,
-					label: `${permission.label} (${permission.key})`
-				}))}
-				placeholder="Выберите право"
-				bind:value={$transitionData.requiredPermissionKey}
-				errors={$transitionErrors.requiredPermissionKey}
-			/>
+		<FieldInput
+			name="name"
+			label="Название"
+			description="Что на этой стадии делают, а не на каком участке процесса она стоит."
+			required
+			bind:value={$stageData.name}
+			errors={$stageErrors.name}
+		/>
+		<FieldSelect
+			name="category"
+			label="Смысловая группа"
+			required
+			options={STAGE_CATEGORIES.map((category) => ({
+				value: category,
+				label: STAGE_CATEGORY_LABELS[category]
+			}))}
+			bind:value={$stageData.category}
+			errors={$stageErrors.category}
+		/>
+		{@render numberField({
+			name: 'slaDays',
+			label: 'Норматив, дней',
+			description: 'Из него считается срок стадии.',
+			value: $stageData.slaDays,
+			errors: $stageErrors.slaDays,
+			onchange: (next) => ($stageData.slaDays = next)
+		})}
+		{@render numberField({
+			name: 'staleAfterDays',
+			label: 'Протухание, дней',
+			description: '0 — стадия не протухает. Считается от последнего события, а не от входа.',
+			value: $stageData.staleAfterDays,
+			errors: $stageErrors.staleAfterDays,
+			onchange: (next) => ($stageData.staleAfterDays = next)
+		})}
+		<fieldset class="flex flex-col gap-2">
+			<legend class="text-sm font-medium">Что требуется на шаге вперёд</legend>
 			{@render checkboxField({
-				name: 'requiresReason',
-				label: 'Причина обязательна',
-				checked: $transitionData.requiresReason,
-				onchange: (next) => ($transitionData.requiresReason = next)
+				name: 'requiresResult',
+				label: 'Записан результат стадии',
+				checked: $stageData.requiresResult,
+				onchange: (next) => ($stageData.requiresResult = next)
 			})}
-			<FormActions
-				submitting={$transitionSubmitting}
-				submitLabel={$transitionData.originalFromKey === ''
-					? 'Добавить переход'
-					: 'Сохранить переход'}
-				oncancel={() => (transitionOpen = false)}
+			{@render checkboxField({
+				name: 'requiresConfirmation',
+				label: 'Есть подтверждение: файл, отметка или запись системы обучения',
+				checked: $stageData.requiresConfirmation,
+				onchange: (next) => ($stageData.requiresConfirmation = next)
+			})}
+			{@render checkboxField({
+				name: 'requiresLmsData',
+				label: 'Получены данные системы обучения по взаимодействию',
+				checked: $stageData.requiresLmsData,
+				onchange: (next) => ($stageData.requiresLmsData = next)
+			})}
+			<FieldSelect
+				name="requiresDocumentMark"
+				label="Отметка по документу дела"
+				description="Стадию закрывает сам документ: отметка ответственного её не заменяет."
+				options={[
+					{ value: '', label: 'Не требуется' },
+					...DOCUMENT_STATUS_FACTS.map((fact) => ({
+						value: fact,
+						label: DOCUMENT_STATUS_FACT_LABELS[fact]
+					}))
+				]}
+				bind:value={$stageData.requiresDocumentMark}
+				errors={$stageErrors.requiresDocumentMark}
 			/>
-		</form>
-	</Dialog.Content>
-</Dialog.Root>
+		</fieldset>
+		<fieldset class="flex flex-col gap-2">
+			<legend class="text-sm font-medium">Место в процессе</legend>
+			{@render checkboxField({
+				name: 'isFinal',
+				label: 'Финальная: с неё взаимодействие завершают, а не идут дальше',
+				checked: $stageData.isFinal,
+				onchange: (next) => ($stageData.isFinal = next)
+			})}
+		</fieldset>
+		<FieldTextarea
+			name="checklist"
+			label="Чек-лист"
+			description={CHECKLIST_HINT}
+			rows={5}
+			placeholder={CHECKLIST_PLACEHOLDER}
+			bind:value={$stageData.checklist}
+			errors={$stageErrors.checklist}
+		/>
+	</form>
+
+	{#snippet footer({ close })}
+		<!-- Кнопки стоят вне формы и названы ею атрибутом `form`: панель прибита
+			к нижнему краю слоя, а прокручивается только тело диалога. -->
+		<FormActions
+			form="stage-form"
+			submitting={$stageSubmitting}
+			submitLabel={$stageData.originalKey === '' ? 'Добавить стадию' : 'Сохранить стадию'}
+			oncancel={close}
+			class="border-t-0 pt-0"
+		/>
+	{/snippet}
+</FormDialog>
+
+<FormDialog
+	bind:open={transitionOpen}
+	width="lg"
+	title={$transitionData.originalFromKey === '' ? 'Новый переход' : 'Переход процесса'}
+	description="Возврат и пропуск требуют объяснения: это отступление от плана, и без причины история стадий не расскажет, почему процесс пошёл не по порядку."
+>
+	{#if $transitionErrors._errors}
+		<Alert.Root variant="destructive" class="mb-4">
+			<Alert.Description>
+				<ul class="list-inside list-disc">
+					{#each $transitionErrors._errors as issue (issue)}
+						<li>{issue}</li>
+					{/each}
+				</ul>
+			</Alert.Description>
+		</Alert.Root>
+	{/if}
+
+	<!-- novalidate: проверяет схема и говорит по-русски, а не браузер на своём языке. -->
+	<form
+		id="transition-form"
+		method="POST"
+		action="?/transition"
+		use:transitionEnhance
+		novalidate
+		class="flex flex-col gap-4"
+	>
+		<input type="hidden" name="originalFromKey" value={$transitionData.originalFromKey} />
+		<input type="hidden" name="originalToKey" value={$transitionData.originalToKey} />
+
+		<FieldSelect
+			name="fromStageKey"
+			label="Откуда"
+			required
+			options={stageOptions}
+			placeholder="Выберите стадию"
+			bind:value={$transitionData.fromStageKey}
+			errors={$transitionErrors.fromStageKey}
+		/>
+		<FieldSelect
+			name="toStageKey"
+			label="Куда"
+			required
+			options={stageOptions}
+			placeholder="Выберите стадию"
+			bind:value={$transitionData.toStageKey}
+			errors={$transitionErrors.toStageKey}
+		/>
+		<FieldSelect
+			name="kind"
+			label="Вид перехода"
+			required
+			options={STAGE_TRANSITION_KINDS.map((kind) => ({
+				value: kind,
+				label: TRANSITION_KIND_LABELS[kind]
+			}))}
+			bind:value={$transitionData.kind}
+			errors={$transitionErrors.kind}
+		/>
+		<FieldSelect
+			name="requiredPermissionKey"
+			label="Требуемое право"
+			required
+			options={data.permissions.map((permission) => ({
+				value: permission.key,
+				label: `${permission.label} (${permission.key})`
+			}))}
+			placeholder="Выберите право"
+			bind:value={$transitionData.requiredPermissionKey}
+			errors={$transitionErrors.requiredPermissionKey}
+		/>
+		{@render checkboxField({
+			name: 'requiresReason',
+			label: 'Причина обязательна',
+			checked: $transitionData.requiresReason,
+			onchange: (next) => ($transitionData.requiresReason = next)
+		})}
+	</form>
+
+	{#snippet footer({ close })}
+		<FormActions
+			form="transition-form"
+			submitting={$transitionSubmitting}
+			submitLabel={$transitionData.originalFromKey === ''
+				? 'Добавить переход'
+				: 'Сохранить переход'}
+			oncancel={close}
+			class="border-t-0 pt-0"
+		/>
+	{/snippet}
+</FormDialog>
 
 <!-- Удаление стадии — это и решение о том, куда переедут те, кто на ней стоит:
 	два диалога подряд разнесли бы одно решение на два шага, и о втором забыли бы. -->
-<Dialog.Root bind:open={removeOpen}>
-	<Dialog.Content class="sm:max-w-lg">
-		<Dialog.Header>
-			<Dialog.Title>Удалить стадию «{removing?.name ?? ''}»?</Dialog.Title>
-			<Dialog.Description>
-				Стадия, её чек-лист и переходы, которые её касаются, исчезнут из черновика. Ключ «{removing?.key ??
-					''}» останется занятым навсегда: завести под ним другую стадию будет нельзя.
-			</Dialog.Description>
-		</Dialog.Header>
+<FormDialog
+	bind:open={removeOpen}
+	width="lg"
+	title="Удалить стадию «{removing?.name ?? ''}»?"
+	description="Стадия, её чек-лист и переходы, которые её касаются, исчезнут из черновика. Ключ «{removing?.key ??
+		''}» останется занятым навсегда: завести под ним другую стадию будет нельзя."
+>
+	<form id="remove-stage-form" method="POST" action="?/deleteStage" class="flex flex-col gap-4">
+		<input type="hidden" name="key" value={removing?.key ?? ''} />
 
-		<form method="POST" action="?/deleteStage" class="flex flex-col gap-4">
-			<input type="hidden" name="key" value={removing?.key ?? ''} />
+		<InlineHint tone={standingOn(removing?.key ?? '') > 0 ? 'warning' : 'info'}>
+			Сейчас на этой стадии стоит незавершённых взаимодействий: {formatNumber(
+				standingOn(removing?.key ?? '')
+			)}. При применении черновика они переедут на выбранную стадию, а прежняя запись закроется
+			исходом «перенесена».
+		</InlineHint>
 
-			<InlineHint tone={standingOn(removing?.key ?? '') > 0 ? 'warning' : 'info'}>
-				Сейчас на этой стадии стоит незавершённых взаимодействий: {formatNumber(
-					standingOn(removing?.key ?? '')
-				)}. При применении черновика они переедут на выбранную стадию, а прежняя запись закроется
-				исходом «перенесена».
-			</InlineHint>
+		<FieldSelect
+			name="targetStageKey"
+			label="Куда перенести записи"
+			description="Пусто — предыдущая сохранившаяся стадия, а у первой — следующая."
+			options={removeTargets}
+			placeholder="По умолчанию"
+			bind:value={removeTarget}
+		/>
+	</form>
 
-			<FieldSelect
-				name="targetStageKey"
-				label="Куда перенести записи"
-				description="Пусто — предыдущая сохранившаяся стадия, а у первой — следующая."
-				options={removeTargets}
-				placeholder="По умолчанию"
-				bind:value={removeTarget}
-			/>
-
-			<FormActions submitLabel="Удалить стадию" oncancel={() => (removeOpen = false)} />
-		</form>
-	</Dialog.Content>
-</Dialog.Root>
+	{#snippet footer({ close })}
+		<FormActions
+			form="remove-stage-form"
+			submitLabel="Удалить стадию"
+			oncancel={close}
+			class="border-t-0 pt-0"
+		/>
+	{/snippet}
+</FormDialog>
 
 <!-- Применение ко всем: сначала числа, потом подтверждение. Предпросмотр
 	справочен — пока его читают, КАМы работают, и расхождение чисел операцию не
 	отменяет; фактические числа считает транзакция и пишет в журнал. -->
-<Dialog.Root bind:open={applyOpen}>
-	<Dialog.Content class="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
-		<Dialog.Header>
-			<Dialog.Title>Применить изменения ко всем?</Dialog.Title>
-			<Dialog.Description>
-				Изменение применится ко всем незавершённым взаимодействиям группы сразу. Записи
-				сопоставляются по ключу стадии; переедут только те, чья стадия исчезла.
-			</Dialog.Description>
-		</Dialog.Header>
-
+<FormDialog
+	bind:open={applyOpen}
+	width="xl"
+	title="Применить изменения ко всем?"
+	description="Изменение применится ко всем незавершённым взаимодействиям группы сразу. Записи сопоставляются по ключу стадии; переедут только те, чья стадия исчезла."
+>
+	<div class="flex flex-col gap-4">
 		{#if data.preview !== null}
 			<!-- Два числа, а не одно: «затронуто» на сервере считает только тех, кто
-				переезжает на другую стадию, а переименование и правка параметров
-				видны всем, кто стоит на изменённой стадии. Одно число рядом с
-				«На ней стоит: 3» читалось как ошибка. -->
+			переезжает на другую стадию, а переименование и правка параметров
+			видны всем, кто стоит на изменённой стадии. Одно число рядом с
+			«На ней стоит: 3» читалось как ошибка. -->
 			<div class="flex flex-col gap-0.5 text-sm">
 				<p>
 					Переедут на другую стадию: <strong>{formatNumber(data.preview.affected)}</strong>
@@ -998,9 +1000,9 @@
 				/>
 			{:else}
 				<!-- Карточки, а не таблица: строка диффа с перечнем изменённых
-					параметров растягивала таблицу до 1137 px внутри диалога шириной
-					624, и колонки «На ней стоит» и «Куда переедут» — те самые числа,
-					ради которых предпросмотр и открывают, — уезжали за край. -->
+				параметров растягивала таблицу до 1137 px внутри диалога шириной
+				624, и колонки «На ней стоит» и «Куда переедут» — те самые числа,
+				ради которых предпросмотр и открывают, — уезжали за край. -->
 				<ul class="flex flex-col gap-2">
 					{#each previewRows as row (row.stageKey)}
 						<li class="flex flex-col gap-1.5 rounded-md border border-border p-3">
@@ -1042,17 +1044,17 @@
 				</ul>
 			{/if}
 		{/if}
+	</div>
 
-		<form
-			method="POST"
-			action="?/publish"
-			class="sticky bottom-0 -mx-6 -mb-6 flex justify-end gap-2 rounded-b-xl border-t border-border bg-popover px-6 py-4"
-		>
-			<Button variant="outline" type="button" onclick={() => (applyOpen = false)}>Отмена</Button>
-			<Button type="submit">Применить ко всем</Button>
-		</form>
-	</Dialog.Content>
-</Dialog.Root>
+	<form id="publish-process-form" method="POST" action="?/publish"></form>
+
+	{#snippet footer({ close })}
+		<div class="flex justify-end gap-2">
+			<Button variant="outline" type="button" onclick={close}>Отмена</Button>
+			<Button type="submit" form="publish-process-form">Применить ко всем</Button>
+		</div>
+	{/snippet}
+</FormDialog>
 
 <ConfirmDialog
 	bind:open={discardOpen}

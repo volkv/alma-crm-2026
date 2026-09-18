@@ -141,7 +141,10 @@
 	{/snippet}
 </PageHeader>
 
-<div class="flex flex-col gap-4">
+<!-- Поля страницы такие же, как у остальных разделов: без них полоса вкладок
+	с отрицательным отступом выходила за край окна, а «Колонки» и «Сбросить
+	фильтр» стояли вплотную к правому краю. -->
+<div class="flex flex-col gap-4 p-4 sm:p-6">
 	<nav class="-mx-1 overflow-x-auto px-1 py-0.5" aria-label="Режим отчёта">
 		<div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-[3px]">
 			{#each REPORT_MODES as mode (mode)}

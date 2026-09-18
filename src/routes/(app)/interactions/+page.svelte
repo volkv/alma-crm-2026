@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
 	import { toast } from 'svelte-sonner';
+	import FilterXIcon from '@lucide/svelte/icons/filter-x';
 	import KanbanIcon from '@lucide/svelte/icons/kanban';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import TableIcon from '@lucide/svelte/icons/table';
@@ -34,6 +35,7 @@
 	} from '$lib/contracts/interactions';
 	import { formatDateTime } from '$lib/format';
 	import {
+		clearedFiltersHref,
 		filtersHref,
 		INTERACTION_STATUS_LABELS,
 		STAGE_CATEGORY_LABELS,
@@ -243,6 +245,13 @@
 	{/snippet}
 </PageHeader>
 
+{#snippet resetFilters()}
+	<Button variant="outline" href={clearedFiltersHref(page.url)}>
+		<FilterXIcon aria-hidden="true" />
+		Сбросить фильтры
+	</Button>
+{/snippet}
+
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<div class="flex flex-wrap items-center gap-3">
 		<FilterSelect param="status" label="Статус" options={STATUS_OPTIONS} allLabel="Любой" />
@@ -326,7 +335,8 @@
 			getRowId={(row) => row.id}
 			searchPlaceholder="Поиск по названию и организации"
 			emptyTitle="Ничего не найдено"
-			emptyDescription="Измените запрос или сбросьте фильтры."
+			emptyDescription="Под этот запрос и отбор не попало ни одной записи."
+			emptyAction={data.isFiltered ? resetFilters : undefined}
 			initialHiddenColumns={HIDDEN_ON_LAPTOP}
 			defaultSort={{ columnId: 'dueAt', direction: 'asc' }}
 			bulkActions={data.canAssign ? assignAction : undefined}

@@ -503,6 +503,115 @@ test('шаг вперёд с обязательным объяснением с�
 	await expect(page.getByText(`Причина: ${comment}`)).toBeVisible();
 });
 
+/**
+ * Диалог перехода против случайного `Esc`.
+ *
+ * Объяснение перехода набирают руками и один раз: `Esc`, клик вне слоя и
+ * крестик стирали его молча, и после повторного открытия поле было пустым.
+ * Теперь уход спрашивает подтверждение, а отказ от ухода оставляет набранное
+ * на месте.
+ */
+test('закрытие диалога перехода не выбрасывает набранное молча', async ({ page }) => {
+	const comment = 'Деканат подтвердил контактное лицо письмом';
+
+	await createInteraction(page);
+	await waitForHydration(page);
+
+	await page.getByRole('switch', { name: 'Найдено профильное подразделение' }).click();
+	await page.getByRole('switch', { name: 'Подтверждён контакт ответственного лица' }).click();
+
+	const advance = page.getByRole('button', { name: 'Перейти: Коммуникация и сверка программ' });
+
+	await expect(advance).toBeEnabled();
+	await advance.click();
+
+	const dialog = page.getByRole('dialog');
+	const field = dialog.getByLabel('Комментарий');
+
+	await expect(field).toBeVisible();
+	await field.fill(comment);
+
+	await page.keyboard.press('Escape');
+
+	// Вопрос — отдельным слоем: у него своя роль, и диалог перехода под ним жив.
+	const discard = page.getByRole('alertdialog');
+
+	await expect(discard).toBeVisible();
+	await discard.getByRole('button', { name: 'Вернуться к вводу' }).click();
+	await expect(discard).toHaveCount(0);
+	await expect(field).toHaveValue(comment);
+
+	// Второй раз — с подтверждением: ввод выброшен осознанно, а не молча.
+	await page.keyboard.press('Escape');
+	await expect(discard).toBeVisible();
+	await discard.getByRole('button', { name: 'Закрыть без сохранения' }).click();
+
+	await expect(dialog).toHaveCount(0);
+	await expect(advance).toBeEnabled();
+});
+
+/**
+ * Лента стадий на рабочем экране.
+ *
+ * Процесс работы с вузом — четырнадцать стадий, и в тысячу точек они не
+ * помещаются: на экране семь, остальные за краем. Лента прокручивается внутри
+ * себя, документ вбок не уезжает, а до последней стадии можно добраться
+ * кнопкой — то есть и с клавиатуры, а не только колесом.
+ */
+test('лента стадий прокручивается до последней, не распирая страницу', async ({ page }) => {
+	await page.setViewportSize({ width: 1280, height: 800 });
+	await createInteraction(page);
+	await waitForHydration(page);
+
+	const timeline = page.locator('[data-slot="stage-timeline"]');
+	const rail = timeline.locator('[data-slot="stage-timeline-rail"]');
+	const last = rail.locator('[data-stage]').last();
+
+	await expect(rail).toBeVisible();
+
+	const railBox = await rail.boundingBox();
+	const beforeBox = await last.boundingBox();
+
+	if (railBox === null || beforeBox === null) {
+		throw new Error('лента стадий обязана быть на экране');
+	}
+
+	// Пока не прокрутили — последняя стадия за краем ленты: ровно та ситуация,
+	// в которой подпись у правого края обрезана и об этом надо сказать.
+	expect(beforeBox.x + beforeBox.width).toBeGreaterThan(railBox.x + railBox.width);
+
+	const forward = timeline.getByRole('button', { name: 'Следующие стадии' });
+
+	await expect(forward).toBeVisible();
+
+	// Кнопка — код страницы: нажатие до гидратации теряется, а само нажатие
+	// безопасно повторить — лента упирается в конец и дальше не едет.
+	await expect(async () => {
+		if (await forward.isEnabled()) {
+			await forward.click({ timeout: 5_000 });
+		}
+
+		await expect(forward).toBeDisabled({ timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+
+	const afterBox = await last.boundingBox();
+
+	if (afterBox === null) {
+		throw new Error('последняя стадия обязана быть на экране');
+	}
+
+	// Докрутили до конца: последняя стадия видна целиком, ничем не обрезана.
+	expect(afterBox.x).toBeGreaterThanOrEqual(railBox.x - 1);
+	expect(afterBox.x + afterBox.width).toBeLessThanOrEqual(railBox.x + railBox.width + 1);
+
+	// Прокручивается лента, а не документ.
+	const overflow = await page.evaluate(
+		() => document.documentElement.scrollWidth - document.documentElement.clientWidth
+	);
+
+	expect(overflow).toBeLessThanOrEqual(0);
+});
+
 test('пауза останавливает часы стадии', async ({ page }) => {
 	await createInteraction(page);
 

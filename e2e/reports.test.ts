@@ -375,6 +375,41 @@ test('клик по столбцу воронки ведёт к списку т�
 	await expect(page.getByTestId('report-row-count')).toHaveText(String(expected));
 });
 
+/**
+ * Тот же отбор по столбцу, но с клавиатуры.
+ *
+ * Диаграмма нарисована на холсте: столбца в разметке нет, и выбрать его можно
+ * было только мышью. Под диаграммой стоят кнопки столбцов — по одной на
+ * стадию, с названием и числом в доступном имени, — и `Enter` на такой кнопке
+ * ведёт туда же, куда клик по полосе.
+ */
+test('столбец воронки выбирается с клавиатуры', async ({ page }) => {
+	await seed();
+
+	const period = `from=${moscowDay(daysAgo(SEEDED.periodDaysAgo))}&to=${moscowDay(new Date())}`;
+
+	await page.goto(`/reports?mode=snapshot&group=${GROUP_KEY}&${period}`);
+	await waitForHydration(page);
+
+	// Группа прогона своя, и столбцов в её воронке ровно два: заполненный —
+	// стадия, на которой стоит единственная запись.
+	const column = page.getByTestId('chart-column').filter({ hasText: STAGES[1].name }).first();
+
+	await expect(column).toHaveAccessibleName(`столбец: ${STAGES[1].name}, 1`);
+
+	await column.focus();
+	await expect(column).toBeFocused();
+	await page.keyboard.press('Enter');
+
+	await expect(page).toHaveURL(/stage=/);
+
+	const applied = new URL(page.url()).searchParams;
+
+	expect(applied.get('stage')).toBe(STAGES[1].key);
+	expect(applied.get('group')).toBe(GROUP_KEY);
+	await expect(page.getByTestId('report-row-count')).toHaveText('1');
+});
+
 test('переключение режима пересчитывает итоги на той же выборке', async ({ page }) => {
 	await seed();
 

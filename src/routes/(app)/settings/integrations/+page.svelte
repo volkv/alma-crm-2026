@@ -19,6 +19,7 @@
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
+	import FormDialog from '$lib/components/form-dialog.svelte';
 	import FormField from '$lib/components/form/form-field.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
@@ -624,104 +625,104 @@
 	</Card.Content>
 </Card.Root>
 
-<Dialog.Root bind:open={editorOpen}>
-	<Dialog.Content class="max-h-[85vh] overflow-y-auto sm:max-w-2xl">
-		<Dialog.Header>
-			<Dialog.Title>{$webhook.id === null ? 'Новая подписка' : 'Подписка'}</Dialog.Title>
-			<Dialog.Description>
-				Адрес принимает POST с телом события. По http принимает только адрес на этой же машине —
-				остальным нужен https.
-			</Dialog.Description>
-		</Dialog.Header>
-
-		{#if $webhookErrors._errors}
-			<Alert.Root variant="destructive">
-				<Alert.Description>
-					<ul class="list-inside list-disc">
-						{#each $webhookErrors._errors as issue (issue)}
-							<li>{issue}</li>
-						{/each}
-					</ul>
-				</Alert.Description>
-			</Alert.Root>
-		{/if}
-
-		<form
-			method="POST"
-			action="?/webhook"
-			use:webhookEnhance
-			novalidate
-			class="flex flex-col gap-4"
-		>
-			<FieldInput
-				name="name"
-				label="Название"
-				required
-				placeholder="Портал партнёров"
-				bind:value={$webhook.name}
-				errors={$webhookErrors.name}
-			/>
-			<FieldInput
-				name="url"
-				label="Адрес приёмника"
-				required
-				placeholder="https://partner.example.org/hooks/lct"
-				bind:value={$webhook.url}
-				errors={$webhookErrors.url}
-			/>
-
-			<Label class="flex items-center gap-2 font-normal">
-				<Checkbox bind:checked={$webhook.enabled} />
-				Подписка включена
-			</Label>
-
-			<fieldset class="flex flex-col gap-2">
-				<legend class="text-sm font-medium">События</legend>
-				{#if $webhookErrors.events}
-					<p class="text-xs text-danger">{$webhookErrors.events}</p>
-				{/if}
-				<ScrollArea class="h-64 rounded-md border border-border p-3">
-					{#each AUDIT_EVENT_GROUPS as group (group.prefix)}
-						{@const whole = wholeGroup($webhook.events, group.prefix)}
-						<div class="mb-3 flex flex-col gap-1">
-							<Label class="flex items-center gap-2 text-sm font-medium">
-								<Checkbox
-									checked={whole}
-									onCheckedChange={(checked) =>
-										($webhook.events = toggle(
-											$webhook.events.filter((event) => !event.startsWith(`${group.prefix}.`)),
-											prefixPattern(group.prefix),
-											checked === true
-										))}
-								/>
-								{group.label} — весь раздел
-							</Label>
-							<div class="ml-6 flex flex-col gap-1">
-								{#each group.types as type (type)}
-									<Label class="flex items-center gap-2 text-xs font-normal">
-										<Checkbox
-											checked={whole || $webhook.events.includes(type)}
-											disabled={whole}
-											onCheckedChange={(checked) =>
-												($webhook.events = toggle($webhook.events, type, checked === true))}
-										/>
-										{AUDIT_EVENT_LABELS[type]}
-									</Label>
-								{/each}
-							</div>
-						</div>
+<FormDialog
+	bind:open={editorOpen}
+	width="xl"
+	title={$webhook.id === null ? 'Новая подписка' : 'Подписка'}
+	description="Адрес принимает POST с телом события. По http принимает только адрес на этой же машине — остальным нужен https."
+>
+	{#if $webhookErrors._errors}
+		<Alert.Root variant="destructive" class="mb-4">
+			<Alert.Description>
+				<ul class="list-inside list-disc">
+					{#each $webhookErrors._errors as issue (issue)}
+						<li>{issue}</li>
 					{/each}
-				</ScrollArea>
-			</fieldset>
+				</ul>
+			</Alert.Description>
+		</Alert.Root>
+	{/if}
 
-			<FormActions
-				submitting={$webhookSubmitting}
-				submitLabel={$webhook.id === null ? 'Завести подписку' : 'Сохранить'}
-				oncancel={() => (editorOpen = false)}
-			/>
-		</form>
-	</Dialog.Content>
-</Dialog.Root>
+	<form
+		id="webhook-form"
+		method="POST"
+		action="?/webhook"
+		use:webhookEnhance
+		novalidate
+		class="flex flex-col gap-4"
+	>
+		<FieldInput
+			name="name"
+			label="Название"
+			required
+			placeholder="Портал партнёров"
+			bind:value={$webhook.name}
+			errors={$webhookErrors.name}
+		/>
+		<FieldInput
+			name="url"
+			label="Адрес приёмника"
+			required
+			placeholder="https://partner.example.org/hooks/lct"
+			bind:value={$webhook.url}
+			errors={$webhookErrors.url}
+		/>
+
+		<Label class="flex items-center gap-2 font-normal">
+			<Checkbox bind:checked={$webhook.enabled} />
+			Подписка включена
+		</Label>
+
+		<fieldset class="flex flex-col gap-2">
+			<legend class="text-sm font-medium">События</legend>
+			{#if $webhookErrors.events}
+				<p class="text-xs text-danger">{$webhookErrors.events}</p>
+			{/if}
+			<ScrollArea class="h-64 rounded-md border border-border p-3">
+				{#each AUDIT_EVENT_GROUPS as group (group.prefix)}
+					{@const whole = wholeGroup($webhook.events, group.prefix)}
+					<div class="mb-3 flex flex-col gap-1">
+						<Label class="flex items-center gap-2 text-sm font-medium">
+							<Checkbox
+								checked={whole}
+								onCheckedChange={(checked) =>
+									($webhook.events = toggle(
+										$webhook.events.filter((event) => !event.startsWith(`${group.prefix}.`)),
+										prefixPattern(group.prefix),
+										checked === true
+									))}
+							/>
+							{group.label} — весь раздел
+						</Label>
+						<div class="ml-6 flex flex-col gap-1">
+							{#each group.types as type (type)}
+								<Label class="flex items-center gap-2 text-xs font-normal">
+									<Checkbox
+										checked={whole || $webhook.events.includes(type)}
+										disabled={whole}
+										onCheckedChange={(checked) =>
+											($webhook.events = toggle($webhook.events, type, checked === true))}
+									/>
+									{AUDIT_EVENT_LABELS[type]}
+								</Label>
+							{/each}
+						</div>
+					</div>
+				{/each}
+			</ScrollArea>
+		</fieldset>
+	</form>
+
+	{#snippet footer({ close })}
+		<FormActions
+			form="webhook-form"
+			submitting={$webhookSubmitting}
+			submitLabel={$webhook.id === null ? 'Завести подписку' : 'Сохранить'}
+			oncancel={close}
+			class="border-t-0 pt-0"
+		/>
+	{/snippet}
+</FormDialog>
 
 <Dialog.Root
 	open={issued !== null}
