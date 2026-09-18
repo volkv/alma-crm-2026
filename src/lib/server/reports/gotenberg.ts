@@ -25,9 +25,14 @@ const PAGE_FILE_NAME = 'index.html';
 
 const FOOTER_FILE_NAME = 'footer.html';
 
-/** A4 альбомная, в дюймах — так размеры страницы принимает служба. */
-const PAGE_WIDTH_INCHES = '11.69';
-const PAGE_HEIGHT_INCHES = '8.27';
+/**
+ * A4 в дюймах — так размеры страницы принимает служба. Стороны всегда книжные:
+ * при `landscape=true` Chromium меняет их местами сам, и лист, которому заранее
+ * дали альбомные размеры, возвращается в книжный (проверено прямым запросом
+ * к службе — см. `scripts/docs-pdf/gotenberg.ts`, где та же ловушка обойдена).
+ */
+const PAGE_WIDTH_INCHES = '8.27';
+const PAGE_HEIGHT_INCHES = '11.69';
 
 export async function renderPdf(page: string, footer: string): Promise<Buffer> {
 	const serviceUrl = getConfig().GOTENBERG_URL;

@@ -98,19 +98,49 @@ function sheetRows(file: Buffer, sheetName: string): string[][] {
 	return XLSX.utils.sheet_to_json<string[]>(sheet, { header: 1, raw: false, defval: '' });
 }
 
-async function pdfText(file: Buffer): Promise<string> {
+/** Записывает PDF во временный файл и отдаёт путь; вызывающий сам его удаляет. */
+async function pdfTempFile(file: Buffer): Promise<{ directory: string; path: string }> {
 	const directory = await mkdtemp(join(tmpdir(), 'report-pdf-'));
+	const path = join(directory, 'report.pdf');
+
+	await writeFile(path, file);
+
+	return { directory, path };
+}
+
+async function pdfText(file: Buffer): Promise<string> {
+	const { directory, path } = await pdfTempFile(file);
 
 	try {
-		const path = join(directory, 'report.pdf');
-
-		await writeFile(path, file);
-
 		// `pdftotext` читает файл, а не поток, поэтому PDF ложится во временный
 		// каталог; `-layout` сохраняет колонки таблицы.
 		const { stdout } = await run('pdftotext', ['-layout', path, '-']);
 
 		return stdout;
+	} finally {
+		await rm(directory, { recursive: true, force: true });
+	}
+}
+
+/**
+ * Размер первой страницы в pt. `pdfinfo` — из того же пакета poppler-utils, что
+ * и уже используемый выше `pdftotext` (CI ставит его один раз, см. `ci.yml`),
+ * поэтому отдельного разборщика формата PDF заводить не пришлось.
+ */
+async function pdfFirstPageSize(file: Buffer): Promise<{ width: number; height: number }> {
+	const { directory, path } = await pdfTempFile(file);
+
+	try {
+		const { stdout } = await run('pdfinfo', ['-f', '1', '-l', '1', path]);
+
+		// Строка вида `Page    1 size:  841.92 x 595.92 pts (A4)`.
+		const match = /Page\s+1 size:\s+([\d.]+)\s+x\s+([\d.]+)\s+pts/.exec(stdout);
+
+		if (!match) {
+			throw new Error(`pdfinfo не сообщил размер первой страницы: ${stdout}`);
+		}
+
+		return { width: Number(match[1]), height: Number(match[2]) };
 	} finally {
 		await rm(directory, { recursive: true, force: true });
 	}
@@ -232,6 +262,18 @@ describe('четыре писателя одного отчёта', () => {
 		expect(text).toContain('Отчёт по взаимодействиям');
 		expect(text).toContain('Срез на 31.12.2026');
 		expect(text).toContain('Вуз А');
+	});
+
+	it('печатает PDF альбомным листом, а не книжным', async () => {
+		// Chromium сам меняет стороны листа при `landscape=true`; если код передаёт
+		// службе уже перевёрнутые `paperWidth`/`paperHeight`, страница возвращается
+		// книжной. Единственный надёжный способ поймать регресс — измерить готовый
+		// файл, а не поверить параметрам запроса.
+		const view = await buildReport(admin(), QUERY);
+		const file = await renderReport(view, 'pdf');
+		const size = await pdfFirstPageSize(file.body);
+
+		expect(size.width).toBeGreaterThan(size.height);
 	});
 
 	it('на выборке выше потолка PDF отвечает сводкой, а не отказом', async () => {
