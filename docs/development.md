@@ -22,6 +22,7 @@
 | [`workflow.md`](workflow.md)                   | Правила процесса: группы, черновик, публикация-миграция, гонки               |
 | [`exchange-contract.md`](exchange-contract.md) | Контракт обмена с CMS и LMS v1, журнал обмена, имитаторы                     |
 | [`reports.md`](reports.md)                     | Семантика отчётов: срез и движение, колонки, экспорт, диаграммы, эталон      |
+| [`security.md`](security.md)                   | Сканирование кода, зависимостей и образа, SBOM, пороги отказа и их границы   |
 
 Этот файл — про то, как работать с репозиторием: окружение, команды, устройство каталогов и те
 места, где проект расходится с привычками (Svelte 5, Tailwind 4, Zod 4).
@@ -57,23 +58,34 @@
 | `pnpm run db:studio`        | Drizzle Studio — браузер по данным                                                                                                                                           |
 | `pnpm run check:audit`      | `pnpm audit --prod --audit-level=high` — уязвимости уровня high и выше в `dependencies`                                                                                      |
 | `pnpm run check:docker`     | `docker build .` — образ должен собираться                                                                                                                                   |
+| `pnpm run check:security`   | Сканеры контейнерами: semgrep по коду, Trivy по зависимостям и образу, SBOM в CycloneDX — см. [`security.md`](security.md)                                                   |
 | `pnpm run check:fast`       | Быстрый круг: lint → check → unit; без Docker и без сборки                                                                                                                   |
 | `pnpm run check:all`        | Полный гейт: audit → lint → check → unit → integration → build → e2e → образ                                                                                                 |
 
 `check:fast` гоняем в цикле правки, `check:all` — перед тем, как считать работу законченной.
-`check:all` — это и есть CI: задача workflow не делает ничего сверх него, поэтому зелёный
-`check:all` у себя значит зелёный CI.
+`check:all` — это и есть CI: задача `check` в workflow не делает ничего сверх него, поэтому зелёный
+`check:all` у себя значит зелёную задачу `check`. Вторая задача CI — `security` — так же один в один
+повторяет `check:security`; почему сканеры вынесены отдельно, а не добавлены в `check:all`, написано
+в [`security.md`](security.md).
 
 **Что `check:audit` не покрывает.** Порог `--prod` оставляет в поле зрения только `dependencies`,
 а весь рантайм интерфейса (`@sveltejs/kit`, `bits-ui`, `chart.js`, `marked`, `sveltekit-superforms`)
 живёт в `devDependencies` и приезжает в образ **внутри** `build/`, собранный Vite: пакета в
 `node_modules` образа нет, а его код там есть. Порог `high` вдобавок пропускает всё, что ниже.
-Поэтому на 2026-09-17 гейт зелёный (1 moderate, `exceljs > uuid`), а полный `pnpm audit` показывает
-три записи: `exceljs > uuid <11.1.1` (moderate, прод), `@sveltejs/kit > cookie 0.6.0` (low, едет в
-`build/`) и `drizzle-kit > … > esbuild` (moderate, только сборка). Ни одна из трёх в продукте не достижима:
-имя куки задаёт код, а не внешний ввод; `exceljs` зовёт `uuid.v4()` без своего буфера
-(`lib/xlsx/xform/sheet/cf-ext/cf-rule-ext-xform.js`), а дыра — в проверке границ переданного буфера;
-`drizzle-kit` в образ не попадает вовсе. Список проверяем глазами, пока гейт не станет полным.
+
+Эту дыру закрывает `check:security`. Trivy читает `pnpm-lock.yaml` целиком (`--include-dev-deps`) и
+складывает состав в `sbom-source.cdx.json` — 696 компонентов против 156 в SBOM образа; разница и
+есть то, чего в `node_modules` образа нет, а в `build/` код есть. Обратное тоже верно: пакеты
+базового образа (Alpine, `corepack`, `yarn`) `pnpm audit` не видит вовсе, а `trivy image` видит.
+
+Числа сходятся: на 2026-09-18 `check:audit` зелёный (1 moderate, `exceljs > uuid`), а Trivy по
+lock-файлу показывает те же три записи — `exceljs > uuid 8.3.2` (MEDIUM, прод), `@sveltejs/kit >
+cookie 0.6.0` (LOW, едет в `build/`) и `drizzle-kit > … > esbuild 0.18.20` (MEDIUM, только сборка).
+Ни одна из трёх в продукте не достижима: имя куки задаёт код, а не внешний ввод; `exceljs` зовёт
+`uuid.v4()` без своего буфера (`lib/xlsx/xform/sheet/cf-ext/cf-rule-ext-xform.js`), а дыра — в
+проверке границ переданного буфера; `drizzle-kit` в образ не попадает вовсе. Все три ниже порога
+отказа сканеров, поэтому сборку они не валят — разбор находок и границы проверок в
+[`security.md`](security.md).
 
 ## Структура каталогов
 
@@ -793,11 +805,19 @@ PostgreSQL из compose (её заводит глобальный сетап, е
 
 ## CI
 
-`.github/workflows/ci.yml` — одна задача на каждый push и PR. Она ставит Node из `.nvmrc`, браузер
-Playwright и `poppler-utils`, после чего гоняет `pnpm run check:all` — ровно то, что гоняют у себя
-перед сдачей работы. Отдельных задач под `docker build` и аудит зависимостей нет нарочно: проверка,
-которой нет в `check:all`, ловилась бы только после push. При падении выгружаются
-`playwright-report/` (отчёт) и `test-results/` (трассы, снимки экрана и видео упавших проверок).
+`.github/workflows/ci.yml` — две параллельные задачи на каждый push и PR.
+
+`check` ставит Node из `.nvmrc`, браузер Playwright и `poppler-utils`, после чего гоняет
+`pnpm run check:all` — ровно то, что гоняют у себя перед сдачей работы. Отдельных задач под
+`docker build` и аудит зависимостей нет нарочно: проверка, которой нет в `check:all`, ловилась бы
+только после push. При падении выгружаются `playwright-report/` (отчёт) и `test-results/` (трассы,
+снимки экрана и видео упавших проверок).
+
+`security` собирает образ и гоняет `scripts/security-scan.sh` — то же самое, что
+`pnpm run check:security`. Node и зависимости проекта этой задаче не нужны: сканеры работают
+контейнерами. Отчёты (SARIF, JSON) и оба SBOM выгружаются артефактом `security-reports` на любом
+исходе прогона — SBOM нужен и на зелёном. Почему это отдельная задача, а не шаг `check:all`, —
+[`security.md`](security.md).
 
 ## Правила, которые ломают сборку
 

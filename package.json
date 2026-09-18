@@ -25,6 +25,7 @@
 		"db:studio": "drizzle-kit studio",
 		"check:audit": "pnpm audit --prod --audit-level=high",
 		"check:docker": "docker build .",
+		"check:security": "bash scripts/security-scan.sh",
 		"check:fast": "pnpm run lint && pnpm run check && pnpm run test:unit",
 		"check:all": "pnpm run check:audit && pnpm run lint && pnpm run check && pnpm run test:unit && pnpm run test:integration && pnpm run build && pnpm run test:e2e && pnpm run check:docker"
 	},

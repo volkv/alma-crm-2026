@@ -9,11 +9,19 @@ concurrency:
   group: ${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# Одна задача на весь гейт, и внутри неё — ровно тот же `check:all`, который
-# разработчик гоняет у себя. Разъезжаться этим двум спискам нельзя: проверка,
+# Каждая задача здесь — ровно одна команда, которую разработчик гоняет у себя:
+# `check:all` и `check:security`. Разъезжаться этим спискам нельзя: проверка,
 # которой нет на машине, ловится только после push, а проверка, которой нет в CI,
 # не ловится вовсе. Поэтому и `docker build`, и аудит зависимостей живут внутри
-# `check:all`, а не отдельными задачами workflow.
+# `check:all`, а не отдельными шагами workflow.
+#
+# Сканеры вынесены во вторую задачу, а не добавлены в `check:all`, по двум
+# причинам. Во-первых, их вердикт зависит от внешних лент — базы уязвимостей
+# Trivy и реестра правил semgrep, — и меняется без единой правки в коде: зелёный
+# вчера код краснеет сегодня, и это не повод блокировать сборку кода. Во-вторых,
+# задачи идут параллельно, поэтому общее время прогона не растёт. Локально
+# проверки повторяются одной командой `pnpm run check:security` — см.
+# `docs/security.md`.
 jobs:
   check:
     name: Lint, types, tests, build, image, audit
@@ -58,3 +66,30 @@ jobs:
           path: test-results/
           retention-days: 7
           if-no-files-found: ignore
+
+  security:
+    name: Semgrep, Trivy, SBOM
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v5
+
+      # Сканеры и сборка образа живут в контейнерах, поэтому ни Node, ни
+      # зависимостей проекта этой задаче не нужно: только рабочая копия и Docker.
+      - name: Scan the code, the dependencies and the image
+        run: bash scripts/security-scan.sh
+        env:
+          SECURITY_REPORT_DIR: security-report
+          SECURITY_TRIVY_CACHE: ${{ runner.temp }}/trivy-cache
+
+      # Отчёты нужны и на зелёном прогоне: SBOM — это состав поставки, а находки
+      # ниже порога отказа читают глазами. На упавшем прогоне выгружается то, что
+      # успело собраться, и пустой каталог не должен подменять собой настоящую
+      # причину падения — отсюда предупреждение вместо ошибки.
+      - name: Upload the security reports and the SBOM
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: security-reports
+          path: security-report/
+          retention-days: 30
+          if-no-files-found: warn
