@@ -10,8 +10,14 @@
  * На этих строках держится вся область доступа (`scopeFilter`), поэтому здесь
  * же живут её правила: один действующий ответственный на пару «вуз ×
  * направление», и общее назначение не сосуществует с назначениями по
- * направлениям. Второе уникальный индекс не выражает — `null` и значение для
- * него разные ключи, — поэтому правило держит сервис, и у него есть свой тест.
+ * направлениям. Первое держит база — частичный уникальный индекс
+ * `organization_responsibles_current_key` (`nulls not distinct`, миграция
+ * 0006). Второе индексом не выражается: общее назначение и назначение по
+ * направлению — разные ключи, и никакой уникальностью их не связать. Поэтому
+ * правило проверяет сервис, но проверяет **под блокировкой строки вуза**: без
+ * неё два одновременных назначения читали бы каждое своё «сейчас нет ни того,
+ * ни другого» и оба проходили бы — а лишняя действующая строка здесь означает
+ * лишнего человека с доступом к вузу.
  *
  * Полностью — `docs/access-matrix.md`, раздел 2.
  */
@@ -39,6 +45,7 @@ type Executor = Tx | ReturnType<typeof getDb>;
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
 import { requirePermission, scopeFilter } from '../rbac';
 import { setResponsible } from '../stages/commands';
+import { withUniqueConflicts } from './conflicts';
 
 /** Назначение в том виде, в каком его показывает карточка вуза. */
 export type ResponsibleView = {
@@ -203,6 +210,14 @@ async function openInteractionsOf(
  * начинает и своим соединением ничего не читает: вуз, заведённый секунду назад,
  * в общем пуле ещё не виден, а второе соединение под уже открытой транзакцией
  * запирает пул.
+ *
+ * Правила и запись идут **внутри одной транзакции и после блокировки строки
+ * вуза**: назначения одного вуза меняются по одному. Чтение до транзакции их
+ * не удерживало бы — два одновременных назначения видели бы каждое прежнее
+ * «сейчас», и правило «общее и направленческие не сосуществуют» пропустило бы
+ * обоих (индекс его не выражает, см. заголовок файла). Блокируется именно
+ * организация, а не таблица назначений: строки, которую надо было бы взять,
+ * при первом назначении ещё нет.
  */
 export async function assignResponsible(
 	ctx: ActorContext,
@@ -221,70 +236,79 @@ export async function assignResponsible(
 		requirePermission(ctx, 'interactions.reassign');
 	}
 
-	const executor: Executor = tx ?? getDb();
-
-	await assertOrganizationAssignable(ctx, input.organizationId, executor);
-	await assertAssignable(ctx, input.userId, executor);
-
-	if (input.directionId !== null) {
-		const [direction] = await executor
-			.select({ id: directions.id, isActive: directions.isActive })
-			.from(directions)
-			.where(eq(directions.id, input.directionId))
-			.limit(1);
-
-		if (direction === undefined) {
-			throw new ValidationError('Ответственный не назначен', ['Направление не найдено']);
-		}
-
-		// Спрятать архивное направление из подсказки мало: адрес и тело запроса
-		// набирают руками, а назначение — это ещё и право видеть вуз.
-		if (!direction.isActive) {
-			throw new ValidationError('Ответственный не назначен', [
-				'Направление в архиве: по нему больше не назначают'
-			]);
-		}
-	}
-
-	const current = await executor
-		.select({
-			id: organizationResponsibles.id,
-			userId: organizationResponsibles.userId,
-			directionId: organizationResponsibles.directionId
-		})
-		.from(organizationResponsibles)
-		.where(
-			and(
-				eq(organizationResponsibles.organizationId, input.organizationId),
-				isNull(organizationResponsibles.validTo)
-			)
-		);
-
-	// Общее назначение и назначения по направлениям на одном вузе не
-	// сосуществуют: пока есть строка без направления, по DevOps ответственных
-	// стало бы двое, и правило «один действующий на направление» перестало бы
-	// что-либо значить.
-	const general = current.find((row) => row.directionId === null);
-
-	if (input.directionId === null && current.some((row) => row.directionId !== null)) {
-		throw new ConflictError(
-			'У вуза есть ответственные по направлениям: снимите их, прежде чем назначать ответственного за вуз целиком'
-		);
-	}
-
-	if (input.directionId !== null && general !== undefined) {
-		throw new ConflictError(
-			'У вуза есть ответственный за весь вуз: снимите его, прежде чем назначать по направлениям'
-		);
-	}
-
-	const replaced = current.find((row) => row.directionId === input.directionId);
-
-	if (replaced !== undefined && replaced.userId === input.userId) {
-		throw new ConflictError('Этот сотрудник уже отвечает за вуз по этому направлению');
-	}
-
 	const write = async (executing: Tx): Promise<void> => {
+		// Очередь на назначения этого вуза. Соседний вызов ждёт здесь и дальше
+		// читает уже сложившееся состояние, а не то, которое застал на входе.
+		// Есть ли вуз вовсе и виден ли он вызывающему — скажет проверка следом:
+		// пустой блокировке нечего держать, и это не ошибка.
+		await executing
+			.select({ id: organizations.id })
+			.from(organizations)
+			.where(eq(organizations.id, input.organizationId))
+			.limit(1)
+			.for('update');
+
+		await assertOrganizationAssignable(ctx, input.organizationId, executing);
+		await assertAssignable(ctx, input.userId, executing);
+
+		if (input.directionId !== null) {
+			const [direction] = await executing
+				.select({ id: directions.id, isActive: directions.isActive })
+				.from(directions)
+				.where(eq(directions.id, input.directionId))
+				.limit(1);
+
+			if (direction === undefined) {
+				throw new ValidationError('Ответственный не назначен', ['Направление не найдено']);
+			}
+
+			// Спрятать архивное направление из подсказки мало: адрес и тело запроса
+			// набирают руками, а назначение — это ещё и право видеть вуз.
+			if (!direction.isActive) {
+				throw new ValidationError('Ответственный не назначен', [
+					'Направление в архиве: по нему больше не назначают'
+				]);
+			}
+		}
+
+		const current = await executing
+			.select({
+				id: organizationResponsibles.id,
+				userId: organizationResponsibles.userId,
+				directionId: organizationResponsibles.directionId
+			})
+			.from(organizationResponsibles)
+			.where(
+				and(
+					eq(organizationResponsibles.organizationId, input.organizationId),
+					isNull(organizationResponsibles.validTo)
+				)
+			);
+
+		// Общее назначение и назначения по направлениям на одном вузе не
+		// сосуществуют: пока есть строка без направления, по DevOps ответственных
+		// стало бы двое, и правило «один действующий на направление» перестало бы
+		// что-либо значить.
+		const general = current.find((row) => row.directionId === null);
+
+		if (input.directionId === null && current.some((row) => row.directionId !== null)) {
+			throw new ConflictError(
+				'У вуза есть ответственные по направлениям: снимите их, прежде чем назначать ответственного за вуз целиком'
+			);
+		}
+
+		if (input.directionId !== null && general !== undefined) {
+			throw new ConflictError(
+				'У вуза есть ответственный за весь вуз: снимите его, прежде чем назначать по направлениям'
+			);
+		}
+
+		const replaced = current.find((row) => row.directionId === input.directionId);
+
+		if (replaced !== undefined && replaced.userId === input.userId) {
+			throw new ConflictError('Этот сотрудник уже отвечает за вуз по этому направлению');
+		}
+
 		// Момент операции считает база: у неё и у приложения часы разные, а две
 		// строки истории обязаны сойтись символ в символ. Значение возвращается
 		// текстом и уходит обратно приведением: у драйвера для `clock_timestamp()`
@@ -359,7 +383,10 @@ export async function assignResponsible(
 		);
 	};
 
-	await (tx === undefined ? withTransaction(ctx, write) : write(tx));
+	// Словарь на случай, когда строку завёл кто-то мимо этой очереди: нарушение
+	// `organization_responsibles_current_key` читается как объяснение, а не как
+	// пятисотая.
+	await withUniqueConflicts(() => (tx === undefined ? withTransaction(ctx, write) : write(tx)));
 }
 
 /**
@@ -393,11 +420,26 @@ export async function releaseResponsible(ctx: ActorContext, responsibleId: strin
 
 	await assertOrganizationAssignable(ctx, row.organizationId);
 
-	if (row.validTo !== null) {
-		throw new ConflictError('Назначение уже закрыто');
-	}
-
 	await withTransaction(ctx, async (tx) => {
+		// Состояние перечитывается под блокировкой самой строки: между чтением
+		// выше и записью назначение могли заменить. Без этой проверки снятие
+		// сдвинуло бы `valid_to` уже закрытой строки за `valid_from` того, кто
+		// пришёл ей на смену, — два назначения перекрылись бы во времени, и
+		// отчёт за период насчитал бы вузу двух ответственных.
+		const [locked] = await tx
+			.select({ validTo: organizationResponsibles.validTo })
+			.from(organizationResponsibles)
+			.where(eq(organizationResponsibles.id, row.id))
+			.for('update');
+
+		if (locked === undefined) {
+			throw new NotFoundError('Назначение не найдено');
+		}
+
+		if (locked.validTo !== null) {
+			throw new ConflictError('Назначение уже закрыто');
+		}
+
 		await tx
 			.update(organizationResponsibles)
 			.set({ validTo: sql`now()`, updatedAt: sql`now()` })

@@ -8,8 +8,13 @@
  * назначают, руководитель раздаёт вузы только себе и своим людям, а машинный
  * субъект вузов не ведёт вовсе.
  *
- * Последняя проверка — про следствие, ради которого всё остальное и написано:
- * снятое назначение закрывает доступ немедленно, а не со следующего входа, и
+ * Отдельный раздел — те же правила под одновременными назначениями: проверка
+ * перед записью держит правило ровно настолько, насколько назначения одного
+ * вуза идут по очереди, а лишняя действующая строка означает лишнего человека
+ * с доступом к вузу.
+ *
+ * Проверка про следствие, ради которого всё остальное и написано: снятое
+ * назначение закрывает доступ немедленно, а не со следующего входа, и
  * закрывает его в обоих каналах — и на карточке вуза, и на его
  * взаимодействиях, где человек не владелец.
  */
@@ -24,6 +29,7 @@ import {
 	interactionPrograms,
 	interactions,
 	organizationResponsibles,
+	organizations,
 	productDirections,
 	products,
 	programs
@@ -315,6 +321,221 @@ describe('правила назначения', () => {
 				transferInteractions: false
 			})
 		).rejects.toBeInstanceOf(NotFoundError);
+	});
+});
+
+/**
+ * Одновременные назначения на один вуз.
+ *
+ * Правила раздела 2 проверяются чтением, а область доступа считается
+ * подзапросом по действующим строкам, — значит, всё решает то, что назначение
+ * успело увидеть. Две вкладки руководителя, две кнопки и загрузка каталога
+ * рядом с ними — обычный день; если бы назначения шли параллельно, вуз получил
+ * бы двух действующих ответственных, а вместе со вторым — лишнего человека,
+ * который видит чужие записи. Поэтому здесь проверяется не результат
+ * последовательных вызовов, а исход одновременных.
+ */
+describe('одновременные назначения', () => {
+	function sleep(ms: number): Promise<void> {
+		return new Promise((resolve) => setTimeout(resolve, ms));
+	}
+
+	/** Причина отказа печатается прямо в ожидании: «rejected» без текста ничего не объясняет. */
+	function outcomeOf(result: PromiseSettledResult<unknown>): string {
+		return result.status === 'fulfilled' ? 'fulfilled' : `rejected: ${String(result.reason)}`;
+	}
+
+	/** Действующие назначения вуза — ровно то, по чему считается область доступа. */
+	async function currentAssignments(
+		organizationId: string
+	): Promise<{ userId: string; directionId: string | null }[]> {
+		return database.db
+			.select({
+				userId: organizationResponsibles.userId,
+				directionId: organizationResponsibles.directionId
+			})
+			.from(organizationResponsibles)
+			.where(
+				and(
+					eq(organizationResponsibles.organizationId, organizationId),
+					isNull(organizationResponsibles.validTo)
+				)
+			);
+	}
+
+	it('детерминированно: назначение решает по состоянию, сложившемуся к его очереди', async () => {
+		const admin = testActor();
+		const organizationId = await insertOrganization(database.db, { shortName: 'СЗПУ' });
+		const directionId = await insertDirection('devops', 1);
+		const byDirection = await insertUser(database.db, { roleId: 'manager' });
+		const general = await insertUser(database.db, { roleId: 'manager' });
+
+		// Транзакция A — соседнее назначение, которое ещё не дошло до конца: она
+		// держит строку вуза и уже завела ответственного по направлению.
+		let release: () => void = () => {};
+		const held = new Promise<void>((resolve) => {
+			release = resolve;
+		});
+
+		const holder = database.db.transaction(async (tx) => {
+			await tx
+				.select({ id: organizations.id })
+				.from(organizations)
+				.where(eq(organizations.id, organizationId))
+				.for('update');
+
+			await tx
+				.insert(organizationResponsibles)
+				.values({ organizationId, userId: byDirection, directionId });
+
+			await held;
+		});
+
+		await sleep(100);
+
+		const assignment = assignResponsible(admin, {
+			organizationId,
+			userId: general,
+			directionId: null,
+			transferInteractions: false
+		});
+		let settled = false;
+		void assignment.then(
+			() => (settled = true),
+			() => (settled = true)
+		);
+		await sleep(300);
+
+		// Назначение стоит в очереди и ничего ещё не решило.
+		expect(settled).toBe(false);
+
+		release();
+		await holder;
+
+		// И решает по тому, что застало, когда очередь дошла: общее назначение
+		// поверх направленческого — отказ. Прочитай оно состояние до очереди —
+		// увидело бы пустой вуз, и у вуза стало бы два действующих ответственных,
+		// то есть лишний человек с доступом.
+		await expect(assignment).rejects.toBeInstanceOf(ConflictError);
+
+		expect(await currentAssignments(organizationId)).toStrictEqual([
+			{ userId: byDirection, directionId }
+		]);
+	});
+
+	it('состязательно: два назначения на одну пару выстраиваются в историю', async () => {
+		const admin = testActor();
+
+		for (let run = 0; run < 5; run += 1) {
+			await database.reset();
+
+			const organizationId = await insertOrganization(database.db, { shortName: 'СЗПУ' });
+			const first = await insertUser(database.db, { roleId: 'manager' });
+			const second = await insertUser(database.db, { roleId: 'manager' });
+
+			const outcomes = await Promise.allSettled([
+				assignResponsible(admin, {
+					organizationId,
+					userId: first,
+					directionId: null,
+					transferInteractions: false
+				}),
+				assignResponsible(admin, {
+					organizationId,
+					userId: second,
+					directionId: null,
+					transferInteractions: false
+				})
+			]);
+
+			// Оба вызова законны: второй не отказывает, а встаёт следующим — он
+			// читает состояние вуза уже после первого, а не вместе с ним.
+			expect(outcomes.map(outcomeOf)).toStrictEqual(['fulfilled', 'fulfilled']);
+
+			const rows = await listResponsibles(admin, organizationId);
+			const active = rows.filter((row) => row.validTo === null);
+			const closed = rows.filter((row) => row.validTo !== null);
+
+			expect(active).toHaveLength(1);
+			expect(closed).toHaveLength(1);
+			expect(active[0].userId).not.toBe(closed[0].userId);
+			expect([first, second]).toContain(active[0].userId);
+
+			// История без щели: прежнее закрыто ровно тем моментом, которым открыто
+			// следующее. Строгий порядок внутри строки держит `check`
+			// `organization_responsibles_period_ordered`.
+			expect(closed[0].validTo?.getTime()).toBe(active[0].validFrom.getTime());
+		}
+	}, 60_000);
+
+	it('состязательно: общее назначение и назначение по направлению не расходятся вдвоём', async () => {
+		const admin = testActor();
+
+		for (let run = 0; run < 5; run += 1) {
+			await database.reset();
+
+			const organizationId = await insertOrganization(database.db, { shortName: 'ПУПИ' });
+			const directionId = await insertDirection('devops', 1);
+			const general = await insertUser(database.db, { roleId: 'manager' });
+			const byDirection = await insertUser(database.db, { roleId: 'manager' });
+
+			const outcomes = await Promise.allSettled([
+				assignResponsible(admin, {
+					organizationId,
+					userId: general,
+					directionId: null,
+					transferInteractions: false
+				}),
+				assignResponsible(admin, {
+					organizationId,
+					userId: byDirection,
+					directionId,
+					transferInteractions: false
+				})
+			]);
+
+			// Это правило уникальным индексом не выражается: общее назначение и
+			// назначение по направлению — разные ключи. Проходит ровно один, и
+			// второй читает отказ, а не код PostgreSQL.
+			const refused = outcomes.flatMap((outcome) =>
+				outcome.status === 'rejected' ? [outcome.reason] : []
+			);
+
+			expect(refused).toHaveLength(1);
+			expect(refused[0]).toBeInstanceOf(ConflictError);
+			expect(await currentAssignments(organizationId)).toHaveLength(1);
+		}
+	}, 60_000);
+
+	it('второй действующей строки на ту же пару база не принимает', async () => {
+		const admin = testActor();
+		const organizationId = await insertOrganization(database.db, { shortName: 'СЗПУ' });
+		const kam = await insertUser(database.db, { roleId: 'manager' });
+		const other = await insertUser(database.db, { roleId: 'manager' });
+
+		await assignResponsible(admin, {
+			organizationId,
+			userId: kam,
+			directionId: null,
+			transferInteractions: false
+		});
+
+		// Путь мимо сервиса — ручной SQL, сид, завтрашний код — упирается в тот же
+		// индекс: правило «один действующий на пару вуз × направление» держит база,
+		// а не проверка перед записью.
+		const refusal = await database.db
+			.insert(organizationResponsibles)
+			.values({ organizationId, userId: other, directionId: null })
+			.then(
+				() => null,
+				(error: unknown) => error
+			);
+
+		// Имя ограничения лежит в причине: Drizzle заворачивает ошибку драйвера в
+		// свою, и словарь `directory/conflicts.ts` ищет её там же.
+		expect(String((refusal as Error | null)?.cause)).toContain(
+			'organization_responsibles_current_key'
+		);
 	});
 });
 
