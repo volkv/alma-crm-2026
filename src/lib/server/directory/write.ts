@@ -38,6 +38,7 @@ import type {
 } from '$lib/contracts/directory';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
+import { invalidateDirectoryOptions } from '../cache/directory';
 import { getDb } from '../db';
 import {
 	affiliations,
@@ -163,6 +164,29 @@ async function assertInnIsFree(
 }
 
 /**
+ * Запись в справочник состоялась: подбор, собранный раньше, больше не
+ * показывать.
+ *
+ * Обесценивание идёт **после** того, как запись завершилась, а не внутри неё:
+ * до фиксации транзакции показывать ещё нечего, а сбросить кэш ради отката
+ * значило бы собрать его заново на тех же данных.
+ *
+ * Вложенный вызов — тот, которому транзакцию передали снаружи (приём заявки с
+ * сайта, загрузка каталога файлом), — обесценивает кэш, когда его собственная
+ * работа сделана, но внешняя транзакция ещё не зафиксирована. Владелец
+ * транзакции зовёт `invalidateDirectoryOptions` ещё раз, уже после фиксации:
+ * `INCR` стоит одну команду, а окно между двумя вызовами — единственное место,
+ * где читатель успел бы положить в кэш то, чего ещё нет.
+ */
+async function written<TResult>(result: Promise<TResult>): Promise<TResult> {
+	const value = await result;
+
+	await invalidateDirectoryOptions();
+
+	return value;
+}
+
+/**
  * Заведение организации. `tx` передаёт тот, кто уже открыл транзакцию и
  * отвечает за целостность операции целиком: заявка с сайта заводит организацию,
  * человека, его роль и взаимодействие — либо всё, либо ничего. Своей
@@ -219,7 +243,9 @@ export async function createOrganization(
 		return toOrganizationView(row);
 	};
 
-	return withUniqueConflicts(() => (tx === undefined ? withTransaction(ctx, write) : write(tx)));
+	return written(
+		withUniqueConflicts(() => (tx === undefined ? withTransaction(ctx, write) : write(tx)))
+	);
 }
 
 export async function updateOrganization(
@@ -238,27 +264,29 @@ export async function updateOrganization(
 
 	await assertInnIsFree(ctx, fields.inn, id);
 
-	return withUniqueConflicts(() =>
-		withTransaction(ctx, async (tx) => {
-			const [row] = await tx
-				.update(organizations)
-				.set({ ...fields, updatedAt: sql`now()` })
-				.where(eq(organizations.id, id))
-				.returning();
+	return written(
+		withUniqueConflicts(() =>
+			withTransaction(ctx, async (tx) => {
+				const [row] = await tx
+					.update(organizations)
+					.set({ ...fields, updatedAt: sql`now()` })
+					.where(eq(organizations.id, id))
+					.returning();
 
-			await recordAuditEvent(
-				ctx,
-				{
-					type: 'organizations.updated',
-					outcome: 'success',
-					subject: { type: 'organization', id },
-					details: { changedFields: changedFields(before, fields) }
-				},
-				tx
-			);
+				await recordAuditEvent(
+					ctx,
+					{
+						type: 'organizations.updated',
+						outcome: 'success',
+						subject: { type: 'organization', id },
+						details: { changedFields: changedFields(before, fields) }
+					},
+					tx
+				);
 
-			return toOrganizationView(row);
-		})
+				return toOrganizationView(row);
+			})
+		)
 	);
 }
 
@@ -281,25 +309,27 @@ export async function archiveOrganization(
 		throw new ConflictError('Организация уже в архиве');
 	}
 
-	return withTransaction(ctx, async (tx) => {
-		const [row] = await tx
-			.update(organizations)
-			.set({ isActive: false, updatedAt: sql`now()` })
-			.where(eq(organizations.id, id))
-			.returning();
+	return written(
+		withTransaction(ctx, async (tx) => {
+			const [row] = await tx
+				.update(organizations)
+				.set({ isActive: false, updatedAt: sql`now()` })
+				.where(eq(organizations.id, id))
+				.returning();
 
-		await recordAuditEvent(
-			ctx,
-			{
-				type: 'organizations.deactivated',
-				outcome: 'success',
-				subject: { type: 'organization', id }
-			},
-			tx
-		);
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'organizations.deactivated',
+					outcome: 'success',
+					subject: { type: 'organization', id }
+				},
+				tx
+			);
 
-		return toOrganizationView(row);
-	});
+			return toOrganizationView(row);
+		})
+	);
 }
 
 /**
@@ -325,26 +355,28 @@ export async function restoreOrganization(
 		throw new ConflictError('Организация и так не в архиве');
 	}
 
-	return withTransaction(ctx, async (tx) => {
-		const [row] = await tx
-			.update(organizations)
-			.set({ isActive: true, updatedAt: sql`now()` })
-			.where(eq(organizations.id, id))
-			.returning();
+	return written(
+		withTransaction(ctx, async (tx) => {
+			const [row] = await tx
+				.update(organizations)
+				.set({ isActive: true, updatedAt: sql`now()` })
+				.where(eq(organizations.id, id))
+				.returning();
 
-		await recordAuditEvent(
-			ctx,
-			{
-				type: 'organizations.updated',
-				outcome: 'success',
-				subject: { type: 'organization', id },
-				details: { changedFields: ['isActive'] }
-			},
-			tx
-		);
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'organizations.updated',
+					outcome: 'success',
+					subject: { type: 'organization', id },
+					details: { changedFields: ['isActive'] }
+				},
+				tx
+			);
 
-		return toOrganizationView(row);
-	});
+			return toOrganizationView(row);
+		})
+	);
 }
 
 function toSiteView(row: typeof sites.$inferSelect): SiteView {
@@ -366,23 +398,25 @@ export async function createSite(ctx: ActorContext, input: CreateSiteInput): Pro
 
 	await getOrganization(ctx, input.organizationId);
 
-	return withUniqueConflicts(() =>
-		withTransaction(ctx, async (tx) => {
-			const [row] = await tx.insert(sites).values(input).returning();
+	return written(
+		withUniqueConflicts(() =>
+			withTransaction(ctx, async (tx) => {
+				const [row] = await tx.insert(sites).values(input).returning();
 
-			await recordAuditEvent(
-				ctx,
-				{
-					type: 'organizations.site_created',
-					outcome: 'success',
-					subject: { type: 'site', id: row.id },
-					details: { organizationId: row.organizationId }
-				},
-				tx
-			);
+				await recordAuditEvent(
+					ctx,
+					{
+						type: 'organizations.site_created',
+						outcome: 'success',
+						subject: { type: 'site', id: row.id },
+						details: { organizationId: row.organizationId }
+					},
+					tx
+				);
 
-			return toSiteView(row);
-		})
+				return toSiteView(row);
+			})
+		)
 	);
 }
 
@@ -403,30 +437,32 @@ export async function updateSite(ctx: ActorContext, input: UpdateSiteInput): Pro
 		]);
 	}
 
-	return withUniqueConflicts(() =>
-		withTransaction(ctx, async (tx) => {
-			const [row] = await tx
-				.update(sites)
-				.set({ ...fields, updatedAt: sql`now()` })
-				.where(eq(sites.id, id))
-				.returning();
+	return written(
+		withUniqueConflicts(() =>
+			withTransaction(ctx, async (tx) => {
+				const [row] = await tx
+					.update(sites)
+					.set({ ...fields, updatedAt: sql`now()` })
+					.where(eq(sites.id, id))
+					.returning();
 
-			await recordAuditEvent(
-				ctx,
-				{
-					type: 'organizations.site_updated',
-					outcome: 'success',
-					subject: { type: 'site', id },
-					details: {
-						organizationId: row.organizationId,
-						changedFields: changedFields(before, fields)
-					}
-				},
-				tx
-			);
+				await recordAuditEvent(
+					ctx,
+					{
+						type: 'organizations.site_updated',
+						outcome: 'success',
+						subject: { type: 'site', id },
+						details: {
+							organizationId: row.organizationId,
+							changedFields: changedFields(before, fields)
+						}
+					},
+					tx
+				);
 
-			return toSiteView(row);
-		})
+				return toSiteView(row);
+			})
+		)
 	);
 }
 
@@ -454,7 +490,9 @@ export async function createPerson(
 
 	// Ответ уносит контакты наружу — значит, и он оставляет след просмотра:
 	// правило одно на чтения и на возвраты записи.
-	return withPiiTrace(ctx, () => (tx === undefined ? withTransaction(ctx, write) : write(tx)), tx);
+	return written(
+		withPiiTrace(ctx, () => (tx === undefined ? withTransaction(ctx, write) : write(tx)), tx)
+	);
 }
 
 /**
@@ -491,29 +529,31 @@ export async function updatePerson(
 		throw new ConflictError('Данные человека обезличены: изменить их нельзя');
 	}
 
-	return withPiiTrace(ctx, () =>
-		withTransaction(ctx, async (tx) => {
-			const [row] = await tx
-				.update(people)
-				.set({ ...fields, updatedAt: sql`now()` })
-				.where(eq(people.id, id))
-				.returning();
+	return written(
+		withPiiTrace(ctx, () =>
+			withTransaction(ctx, async (tx) => {
+				const [row] = await tx
+					.update(people)
+					.set({ ...fields, updatedAt: sql`now()` })
+					.where(eq(people.id, id))
+					.returning();
 
-			await recordAuditEvent(
-				ctx,
-				{
-					type: 'people.updated',
-					outcome: 'success',
-					subject: { type: 'person', id },
-					// В журнал попадают только имена изменённых полей: значения здесь —
-					// персональные данные, а журнал неизменяем.
-					details: { changedFields: changedFields(before, fields) }
-				},
-				tx
-			);
+				await recordAuditEvent(
+					ctx,
+					{
+						type: 'people.updated',
+						outcome: 'success',
+						subject: { type: 'person', id },
+						// В журнал попадают только имена изменённых полей: значения здесь —
+						// персональные данные, а журнал неизменяем.
+						details: { changedFields: changedFields(before, fields) }
+					},
+					tx
+				);
 
-			return toPersonView(ctx, row);
-		})
+				return toPersonView(ctx, row);
+			})
+		)
 	);
 }
 
@@ -592,7 +632,9 @@ export async function createAffiliation(
 		return toAffiliationView(ctx, executor, row);
 	};
 
-	return withPiiTrace(ctx, () => (tx === undefined ? withTransaction(ctx, write) : write(tx)), tx);
+	return written(
+		withPiiTrace(ctx, () => (tx === undefined ? withTransaction(ctx, write) : write(tx)), tx)
+	);
 }
 
 /**
@@ -630,31 +672,33 @@ export async function endAffiliation(
 		]);
 	}
 
-	return withPiiTrace(ctx, () =>
-		withTransaction(ctx, async (tx) => {
-			const [row] = await tx
-				.update(affiliations)
-				.set({ validTo: input.validTo, updatedAt: sql`now()` })
-				.where(eq(affiliations.id, input.id))
-				.returning();
+	return written(
+		withPiiTrace(ctx, () =>
+			withTransaction(ctx, async (tx) => {
+				const [row] = await tx
+					.update(affiliations)
+					.set({ validTo: input.validTo, updatedAt: sql`now()` })
+					.where(eq(affiliations.id, input.id))
+					.returning();
 
-			await recordAuditEvent(
-				ctx,
-				{
-					type: 'people.affiliation_updated',
-					outcome: 'success',
-					subject: { type: 'affiliation', id: row.id },
-					details: {
-						personId: row.personId,
-						organizationId: row.organizationId,
-						changedFields: ['validTo']
-					}
-				},
-				tx
-			);
+				await recordAuditEvent(
+					ctx,
+					{
+						type: 'people.affiliation_updated',
+						outcome: 'success',
+						subject: { type: 'affiliation', id: row.id },
+						details: {
+							personId: row.personId,
+							organizationId: row.organizationId,
+							changedFields: ['validTo']
+						}
+					},
+					tx
+				);
 
-			return toAffiliationView(ctx, tx, row);
-		})
+				return toAffiliationView(ctx, tx, row);
+			})
+		)
 	);
 }
 
@@ -675,22 +719,24 @@ export async function createProgram(
 ): Promise<ProgramView> {
 	await requirePermission(ctx, 'programs.write', { type: 'programs.created' });
 
-	return withUniqueConflicts(() =>
-		withTransaction(ctx, async (tx) => {
-			const [row] = await tx.insert(programs).values(input).returning();
+	return written(
+		withUniqueConflicts(() =>
+			withTransaction(ctx, async (tx) => {
+				const [row] = await tx.insert(programs).values(input).returning();
 
-			await recordAuditEvent(
-				ctx,
-				{
-					type: 'programs.created',
-					outcome: 'success',
-					subject: { type: 'program', id: row.id }
-				},
-				tx
-			);
+				await recordAuditEvent(
+					ctx,
+					{
+						type: 'programs.created',
+						outcome: 'success',
+						subject: { type: 'program', id: row.id }
+					},
+					tx
+				);
 
-			return toProgramView(row);
-		})
+				return toProgramView(row);
+			})
+		)
 	);
 }
 
@@ -716,27 +762,29 @@ export async function updateProgram(
 	// «когда программу перестали предлагать», а не листают все правки подряд.
 	const archived = fields.status === 'archived' && before.status !== 'archived';
 
-	return withUniqueConflicts(() =>
-		withTransaction(ctx, async (tx) => {
-			const [row] = await tx
-				.update(programs)
-				.set({ ...fields, updatedAt: sql`now()` })
-				.where(eq(programs.id, id))
-				.returning();
+	return written(
+		withUniqueConflicts(() =>
+			withTransaction(ctx, async (tx) => {
+				const [row] = await tx
+					.update(programs)
+					.set({ ...fields, updatedAt: sql`now()` })
+					.where(eq(programs.id, id))
+					.returning();
 
-			await recordAuditEvent(
-				ctx,
-				{
-					type: archived ? 'programs.archived' : 'programs.updated',
-					outcome: 'success',
-					subject: { type: 'program', id },
-					details: { changedFields: changedFields(before, fields) }
-				},
-				tx
-			);
+				await recordAuditEvent(
+					ctx,
+					{
+						type: archived ? 'programs.archived' : 'programs.updated',
+						outcome: 'success',
+						subject: { type: 'program', id },
+						details: { changedFields: changedFields(before, fields) }
+					},
+					tx
+				);
 
-			return toProgramView(row);
-		})
+				return toProgramView(row);
+			})
+		)
 	);
 }
 
@@ -754,55 +802,57 @@ export async function addProgramVersion(
 		subject: { type: 'program', id: input.programId }
 	});
 
-	return withUniqueConflicts(() =>
-		withTransaction(ctx, async (tx) => {
-			const [program] = await tx
-				.select({ id: programs.id })
-				.from(programs)
-				.where(eq(programs.id, input.programId))
-				.for('update')
-				.limit(1);
+	return written(
+		withUniqueConflicts(() =>
+			withTransaction(ctx, async (tx) => {
+				const [program] = await tx
+					.select({ id: programs.id })
+					.from(programs)
+					.where(eq(programs.id, input.programId))
+					.for('update')
+					.limit(1);
 
-			if (program === undefined) {
-				throw new NotFoundError('Программа не найдена');
-			}
+				if (program === undefined) {
+					throw new NotFoundError('Программа не найдена');
+				}
 
-			const [current] = await tx
-				.select({ value: max(programVersions.version) })
-				.from(programVersions)
-				.where(eq(programVersions.programId, input.programId));
+				const [current] = await tx
+					.select({ value: max(programVersions.version) })
+					.from(programVersions)
+					.where(eq(programVersions.programId, input.programId));
 
-			const [row] = await tx
-				.insert(programVersions)
-				.values({
-					programId: input.programId,
-					version: (current?.value ?? 0) + 1,
-					summary: input.summary,
-					effectiveFrom: input.effectiveFrom,
-					createdBy: ctx.user?.id ?? null
-				})
-				.returning();
+				const [row] = await tx
+					.insert(programVersions)
+					.values({
+						programId: input.programId,
+						version: (current?.value ?? 0) + 1,
+						summary: input.summary,
+						effectiveFrom: input.effectiveFrom,
+						createdBy: ctx.user?.id ?? null
+					})
+					.returning();
 
-			await recordAuditEvent(
-				ctx,
-				{
-					type: 'programs.version_created',
-					outcome: 'success',
-					subject: { type: 'program_version', id: row.id },
-					details: { programId: row.programId }
-				},
-				tx
-			);
+				await recordAuditEvent(
+					ctx,
+					{
+						type: 'programs.version_created',
+						outcome: 'success',
+						subject: { type: 'program_version', id: row.id },
+						details: { programId: row.programId }
+					},
+					tx
+				);
 
-			return {
-				id: row.id,
-				programId: row.programId,
-				version: row.version,
-				summary: row.summary,
-				effectiveFrom: row.effectiveFrom,
-				createdAt: row.createdAt
-			};
-		})
+				return {
+					id: row.id,
+					programId: row.programId,
+					version: row.version,
+					summary: row.summary,
+					effectiveFrom: row.effectiveFrom,
+					createdAt: row.createdAt
+				};
+			})
+		)
 	);
 }
 
@@ -842,7 +892,9 @@ export async function createDirection(
 		return { id: row.id, code: row.code, name: row.name, position: row.position };
 	};
 
-	return withUniqueConflicts(() => (tx === undefined ? withTransaction(ctx, write) : write(tx)));
+	return written(
+		withUniqueConflicts(() => (tx === undefined ? withTransaction(ctx, write) : write(tx)))
+	);
 }
 
 /**
@@ -914,7 +966,9 @@ export async function createProduct(
 		return toProductView(row);
 	};
 
-	return withUniqueConflicts(() => (tx === undefined ? withTransaction(ctx, write) : write(tx)));
+	return written(
+		withUniqueConflicts(() => (tx === undefined ? withTransaction(ctx, write) : write(tx)))
+	);
 }
 
 export async function updateProduct(
@@ -941,26 +995,28 @@ export async function updateProduct(
 
 	const archived = fields.status === 'archived' && before.status !== 'archived';
 
-	return withUniqueConflicts(() =>
-		withTransaction(ctx, async (tx) => {
-			const [row] = await tx
-				.update(products)
-				.set({ ...fields, updatedAt: sql`now()` })
-				.where(eq(products.id, id))
-				.returning();
+	return written(
+		withUniqueConflicts(() =>
+			withTransaction(ctx, async (tx) => {
+				const [row] = await tx
+					.update(products)
+					.set({ ...fields, updatedAt: sql`now()` })
+					.where(eq(products.id, id))
+					.returning();
 
-			await recordAuditEvent(
-				ctx,
-				{
-					type: archived ? 'products.archived' : 'products.updated',
-					outcome: 'success',
-					subject: { type: 'product', id },
-					details: { changedFields: changedFields(before, fields) }
-				},
-				tx
-			);
+				await recordAuditEvent(
+					ctx,
+					{
+						type: archived ? 'products.archived' : 'products.updated',
+						outcome: 'success',
+						subject: { type: 'product', id },
+						details: { changedFields: changedFields(before, fields) }
+					},
+					tx
+				);
 
-			return toProductView(row);
-		})
+				return toProductView(row);
+			})
+		)
 	);
 }

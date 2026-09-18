@@ -6,6 +6,7 @@ import { guard } from '$lib/server/hooks/guard';
 import { rateLimit } from '$lib/server/hooks/rate-limit';
 import { requestId } from '$lib/server/hooks/request-id';
 import { securityHeaders } from '$lib/server/hooks/security-headers';
+import { serverTiming } from '$lib/server/hooks/server-timing';
 import { session } from '$lib/server/hooks/session';
 import { startIntegrationsTimer } from '$lib/server/integrations/pump';
 
@@ -34,8 +35,20 @@ export const init: ServerInit = () => {
  *
  * `csrf` stands before `session`: a form posted from a foreign page is rejected
  * before the session behind it is even looked up.
+ *
+ * `serverTiming` стоит вторым, сразу за идентификатором запроса: замер обязан
+ * покрывать всё, что делает приложение, включая разбор сессии и проверку прав,
+ * — иначе он отвечает не на тот вопрос, который задаёт человек с секундомером.
  */
-export const handle = sequence(requestId, securityHeaders, csrf, session, guard, rateLimit);
+export const handle = sequence(
+	requestId,
+	serverTiming,
+	securityHeaders,
+	csrf,
+	session,
+	guard,
+	rateLimit
+);
 
 /**
  * Отказы, которые сочиняет не приложение, а сам фреймворк: до нашего кода такой

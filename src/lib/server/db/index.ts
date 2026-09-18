@@ -1,6 +1,7 @@
 import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import postgres from 'postgres';
 import { getConfig } from '../config';
+import { trackDatabaseQuery } from '../hooks/server-timing';
 import * as schema from './schema';
 
 let client: postgres.Sql | undefined;
@@ -25,12 +26,90 @@ let database: PostgresJsDatabase<typeof schema> | undefined;
  */
 const POOL_MAX = 24;
 
+/**
+ * Наблюдатель за завершением запроса. Возвращает тот же самый объект запроса:
+ * вызывающий дальше делает с ним что хотел — дописывает `.values()`, ждёт его
+ * или бросает.
+ *
+ * Подписка идёт через `Promise.prototype.then`, а не через `then` самого
+ * запроса: у postgres.js `then` заодно ставит запрос в очередь на выполнение, и
+ * наблюдатель решал бы за вызывающего, когда запрос уйдёт в базу, — а тот ещё
+ * не успел сказать `.values()`.
+ */
+function watch<TQuery extends Promise<unknown>>(query: TQuery): TQuery {
+	const finished = trackDatabaseQuery();
+
+	if (finished !== null) {
+		Promise.prototype.then.call(query, finished, finished);
+	}
+
+	return query;
+}
+
+/** Вход в область транзакции: `begin` и `savepoint` устроены одинаково. */
+type ScopeEntry = (
+	first: string | ((scoped: postgres.TransactionSql) => unknown),
+	second?: (scoped: postgres.TransactionSql) => unknown
+) => Promise<unknown>;
+
+/**
+ * Обёртка над `begin`/`savepoint`: внутрь транзакции вызывающий получает уже
+ * измеряемое соединение. Без этого замер видел бы только чтения вне транзакций
+ * — postgres.js заводит на транзакцию отдельный объект соединения, и запросы
+ * идут через него.
+ */
+function watchScope(enter: ScopeEntry): ScopeEntry {
+	return (first, second) => {
+		const callback = typeof first === 'string' ? second : first;
+
+		if (callback === undefined) {
+			throw new TypeError('Транзакции нужен обработчик');
+		}
+
+		const measured = (scoped: postgres.TransactionSql): unknown => callback(measure(scoped));
+
+		return typeof first === 'string' ? enter(first, measured) : enter(measured);
+	};
+}
+
+/**
+ * Соединение, которое докладывает о времени ожидания базы счётчику запроса
+ * (`hooks/server-timing.ts`).
+ *
+ * Меряется ровно одна точка — `unsafe`, — и этого хватает на всё приложение:
+ * Drizzle отправляет каждый свой запрос именно через неё (`select`, `insert`,
+ * `execute`, курсоры выгрузки). Тегированные шаблоны postgres.js остаются вне
+ * замера; в приложении такой один — проба здоровья ниже.
+ *
+ * Методы подменяются на самом объекте соединения, а не через `Proxy`: объект
+ * postgres.js — вызываемая функция со своими свойствами, и посредник вокруг неё
+ * стоил бы перехвата на каждое обращение к каждому свойству, на каждом запросе.
+ */
+function measure<TSql extends postgres.Sql | postgres.TransactionSql>(sql: TSql): TSql {
+	const unsafe = sql.unsafe.bind(sql);
+
+	sql.unsafe = ((...args: Parameters<typeof unsafe>) =>
+		watch(unsafe(...args))) as typeof sql.unsafe;
+
+	if ('begin' in sql) {
+		sql.begin = watchScope(sql.begin.bind(sql) as ScopeEntry) as typeof sql.begin;
+	}
+
+	if ('savepoint' in sql) {
+		sql.savepoint = watchScope(sql.savepoint.bind(sql) as ScopeEntry) as typeof sql.savepoint;
+	}
+
+	return sql;
+}
+
 function getClient(): postgres.Sql {
-	client ??= postgres(getConfig().DATABASE_URL, {
-		max: POOL_MAX,
-		// Fail a stuck connection attempt instead of hanging a request forever.
-		connect_timeout: 10
-	});
+	client ??= measure(
+		postgres(getConfig().DATABASE_URL, {
+			max: POOL_MAX,
+			// Fail a stuck connection attempt instead of hanging a request forever.
+			connect_timeout: 10
+		})
+	);
 	return client;
 }
 

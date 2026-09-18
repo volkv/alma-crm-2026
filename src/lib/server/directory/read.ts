@@ -47,6 +47,7 @@ import type {
 	SiteView
 } from '$lib/contracts/directory';
 import type { ActorContext } from '../actor';
+import { cachedDirectoryOptions } from '../cache/directory';
 import { getDb } from '../db';
 import {
 	affiliations,
@@ -925,16 +926,30 @@ export async function getProduct(ctx: ActorContext, id: string): Promise<Product
  */
 const OPTIONS_LIMIT = 500;
 
-/** Действующие организации для выпадающего списка формы. */
+/**
+ * Действующие организации для выпадающего списка формы.
+ *
+ * Подбор приезжает почти с каждой формой и меняется только вместе со
+ * справочником, поэтому собранный список живёт в Redis — под ключом своей
+ * области доступа (`cache/directory.ts`). Право проверяется до кэша: запись в
+ * Redis не должна становиться обходом проверки.
+ */
 export async function listOrganizationOptions(ctx: ActorContext): Promise<LookupOption[]> {
 	requirePermission(ctx, 'organizations.read');
 
-	return getDb()
-		.select({ id: organizations.id, label: organizations.shortName })
-		.from(organizations)
-		.where(and(eq(organizations.isActive, true), scopeFilter(ctx, organizations.id)))
-		.orderBy(asc(organizations.shortName))
-		.limit(OPTIONS_LIMIT);
+	return cachedDirectoryOptions(
+		ctx,
+		'organizations',
+		async () =>
+			getDb()
+				.select({ id: organizations.id, label: organizations.shortName })
+				.from(organizations)
+				.where(and(eq(organizations.isActive, true), scopeFilter(ctx, organizations.id)))
+				.orderBy(asc(organizations.shortName))
+				.limit(OPTIONS_LIMIT),
+		// Ни одного поля со временем: подбор — это пара «идентификатор и подпись».
+		(stored) => stored as LookupOption[]
+	);
 }
 
 /**
@@ -945,10 +960,16 @@ export async function listOrganizationOptions(ctx: ActorContext): Promise<Lookup
 export async function listPersonOptions(ctx: ActorContext): Promise<LookupOption[]> {
 	requirePermission(ctx, 'people.read');
 
-	return getDb()
-		.select({ id: people.id, label: fullNameExpression })
-		.from(people)
-		.where(and(personInScope(ctx), isNull(people.anonymizedAt)))
-		.orderBy(asc(people.lastName), asc(people.firstName))
-		.limit(OPTIONS_LIMIT);
+	return cachedDirectoryOptions(
+		ctx,
+		'people',
+		async () =>
+			getDb()
+				.select({ id: people.id, label: fullNameExpression })
+				.from(people)
+				.where(and(personInScope(ctx), isNull(people.anonymizedAt)))
+				.orderBy(asc(people.lastName), asc(people.firstName))
+				.limit(OPTIONS_LIMIT),
+		(stored) => stored as LookupOption[]
+	);
 }

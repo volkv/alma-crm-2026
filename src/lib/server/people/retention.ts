@@ -19,6 +19,7 @@ import {
 } from '$lib/contracts/directory';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
+import { invalidateDirectoryOptions } from '../cache/directory';
 import { getDb } from '../db';
 import {
 	exchangeMessages,
@@ -177,6 +178,18 @@ async function eraseCounterpartyTraces(tx: Tx, personId: string): Promise<void> 
 }
 
 /**
+ * Обезличивание состоялось: подбор контактов, собранный раньше, больше не
+ * показывать — выбирать контактом того, чьи данные уничтожены, незачем.
+ */
+async function forgotten<TResult>(result: Promise<TResult>): Promise<TResult> {
+	const value = await result;
+
+	await invalidateDirectoryOptions();
+
+	return value;
+}
+
+/**
  * Плановое уничтожение персональных данных: фамилия заменяется словом
  * «Обезличено», имя, отчество, контакты и заметки стираются. Роли человека и
  * его след во взаимодействиях остаются — там он больше никем не назван.
@@ -208,42 +221,44 @@ export async function anonymizePerson(ctx: ActorContext, personId: string): Prom
 		throw new ConflictError('Данные человека уже обезличены');
 	}
 
-	return withTransaction(ctx, async (tx) => {
-		const [row] = await tx
-			.update(people)
-			.set({
-				lastName: ANONYMIZED_PERSON_LAST_NAME,
-				// Пустое имя, а не прочерк: собранное из частей ФИО показывает одно
-				// слово «Обезличено», и подставлять вместо стёртого имени значок,
-				// который выглядит как данные, незачем.
-				firstName: '',
-				middleName: null,
-				email: null,
-				phone: null,
-				notes: null,
-				anonymizedAt: sql`now()`,
-				updatedAt: sql`now()`
-			})
-			.where(and(eq(people.id, personId), isNull(people.anonymizedAt)))
-			.returning();
+	return forgotten(
+		withTransaction(ctx, async (tx) => {
+			const [row] = await tx
+				.update(people)
+				.set({
+					lastName: ANONYMIZED_PERSON_LAST_NAME,
+					// Пустое имя, а не прочерк: собранное из частей ФИО показывает одно
+					// слово «Обезличено», и подставлять вместо стёртого имени значок,
+					// который выглядит как данные, незачем.
+					firstName: '',
+					middleName: null,
+					email: null,
+					phone: null,
+					notes: null,
+					anonymizedAt: sql`now()`,
+					updatedAt: sql`now()`
+				})
+				.where(and(eq(people.id, personId), isNull(people.anonymizedAt)))
+				.returning();
 
-		if (row === undefined) {
-			throw new ConflictError('Данные человека уже обезличены');
-		}
+			if (row === undefined) {
+				throw new ConflictError('Данные человека уже обезличены');
+			}
 
-		await eraseCounterpartyTraces(tx, personId);
+			await eraseCounterpartyTraces(tx, personId);
 
-		await recordAuditEvent(
-			ctx,
-			{
-				type: 'people.anonymized',
-				outcome: 'success',
-				subject: { type: 'person', id: row.id },
-				details: { personId: row.id }
-			},
-			tx
-		);
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'people.anonymized',
+					outcome: 'success',
+					subject: { type: 'person', id: row.id },
+					details: { personId: row.id }
+				},
+				tx
+			);
 
-		return toPersonView(ctx, row);
-	});
+			return toPersonView(ctx, row);
+		})
+	);
 }

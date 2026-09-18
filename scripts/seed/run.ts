@@ -26,6 +26,7 @@ import { exchangeKeyReport, seedApiKeys, type ExchangeKeySeedResult } from './ap
 import { seedContracts } from './contracts';
 import { seedDirectory } from './directory';
 import { seedInteractions } from './interactions';
+import { seedLoad, type LoadSeedReport } from './load';
 import { seedProcesses } from './process';
 import { seedStats } from './stats';
 import { seedUsers, type SeededUsers } from './users';
@@ -69,6 +70,22 @@ export async function seedAll(): Promise<SeedReport> {
 }
 
 /**
+ * Демонстрационный набор плюс нагрузочный объём.
+ *
+ * Отдельной функцией, потому что этот же порядок читает нагрузочный прогон:
+ * сначала обычный сид (он идемпотентен и заводит процесс, справочники и людей,
+ * на которых опирается объём), потом — сам объём, одной транзакцией. Половина
+ * нагрузочного набора — это не «частично получилось», а база, на которой замер
+ * ничего не значит.
+ */
+export async function seedWithLoad(): Promise<{ seed: SeedReport; load: LoadSeedReport | null }> {
+	const seed = await seedAll();
+	const load = await getDb().transaction((tx) => seedLoad(tx));
+
+	return { seed, load };
+}
+
+/**
  * Каталог прав и ролей — и ничего больше: ни учётных записей, ни справочников.
  *
  * То же самое делает `scripts/migrate.ts` на каждом применении миграций, и
@@ -87,6 +104,17 @@ const IF_DEMO_FLAG = '--if-demo';
 
 /** Флаг ручного прогона: «приведи каталог прав к коду и на этом всё». */
 const ROLES_ONLY_FLAG = '--roles-only';
+
+/**
+ * Флаг нагрузочного прогона: «залей объём, на котором есть что мерить».
+ *
+ * Демонстрационные данные он не заменяет, а дополняет: нагрузочный набор ведут
+ * те же сотрудники, по тому же процессу и тем же справочником программ и
+ * продуктов. Поэтому флаг сначала прогоняет обычный сид — он идемпотентен, — и
+ * только потом добавляет объём. На демонстрационный стенд этот флаг не ставят:
+ * три тысячи одинаковых карточек показывать нечего.
+ */
+const LOAD_FLAG = '--load';
 
 /** Таблицы каталога прав: по ним видно, что сделал прогон с `--roles-only`. */
 const ROLE_TABLES: Record<string, PgTable> = {
@@ -132,13 +160,36 @@ async function countRows(tables: Record<string, PgTable>): Promise<string> {
 }
 
 export async function main(argv: readonly string[]): Promise<void> {
-	const known = [IF_DEMO_FLAG, ROLES_ONLY_FLAG];
+	const known = [IF_DEMO_FLAG, ROLES_ONLY_FLAG, LOAD_FLAG];
 	const unknown = argv.filter((argument) => !known.includes(argument));
 
 	if (unknown.length > 0) {
 		throw new Error(
 			`Неизвестные аргументы: ${unknown.join(', ')}. Допустимы только ${known.join(', ')}`
 		);
+	}
+
+	if (argv.includes(LOAD_FLAG)) {
+		if (argv.includes(ROLES_ONLY_FLAG) || argv.includes(IF_DEMO_FLAG)) {
+			throw new Error(
+				`${LOAD_FLAG} не сочетается с другими флагами: нагрузочный набор заливают руками и на отдельной установке`
+			);
+		}
+
+		try {
+			const { load } = await seedWithLoad();
+
+			console.log(
+				load === null
+					? 'seed: нагрузочный набор уже залит, повторно он ничего не добавляет'
+					: `seed: нагрузочный набор залит — организаций ${load.organizations}, взаимодействий ${load.interactions}, записей стадий ${load.stageEntries}, комментариев ${load.comments}, правок плана ${load.changes}`
+			);
+			console.log(`seed: готово, в базе ${await countRows(REPORTED_TABLES)}`);
+		} finally {
+			await closeDatabase();
+		}
+
+		return;
 	}
 
 	if (argv.includes(ROLES_ONLY_FLAG)) {

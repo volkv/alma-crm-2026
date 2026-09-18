@@ -37,6 +37,7 @@ import type {
 	StageSnapshot
 } from '$lib/contracts/interactions';
 import type { ActorContext } from '../actor';
+import { cachedInteractionPart } from '../cache/interactions';
 import { getDb } from '../db';
 import {
 	affiliations,
@@ -542,14 +543,10 @@ async function readDocuments(interactionId: string): Promise<InteractionDocument
 	return rows;
 }
 
-export async function getInteraction(
-	ctx: ActorContext,
-	interactionId: string
-): Promise<InteractionView> {
-	requirePermission(ctx, 'interactions.read');
+/** Карточка без сторон: то, что одинаково для всех, кто её видит. */
+type InteractionBase = Omit<InteractionView, 'parties'>;
 
-	await assertInteractionVisible(ctx, interactionId);
-
+async function buildInteractionBase(interactionId: string): Promise<InteractionBase> {
 	const [row] = await getDb()
 		.select({
 			interaction: interactions,
@@ -567,8 +564,7 @@ export async function getInteraction(
 		throw new NotFoundError('Взаимодействие не найдено');
 	}
 
-	const [parties, programList, productList, documentList] = await Promise.all([
-		readParties(ctx, interactionId),
+	const [programList, productList, documentList] = await Promise.all([
 		readPrograms(interactionId),
 		readProducts(interactionId),
 		readDocuments(interactionId)
@@ -592,34 +588,106 @@ export async function getInteraction(
 		externalId: row.interaction.externalId,
 		createdAt: row.interaction.createdAt,
 		updatedAt: row.interaction.updatedAt,
-		parties,
 		programs: programList,
 		products: productList,
 		documents: documentList
 	};
 }
 
+/** Дата из JSON или `null`, если её там не было. */
+function reviveMoment(value: Date | null): Date | null {
+	return value === null ? null : new Date(value);
+}
+
+function reviveInteractionBase(stored: unknown): InteractionBase {
+	const base = stored as InteractionBase;
+
+	return {
+		...base,
+		lastActivityAt: new Date(base.lastActivityAt),
+		createdAt: new Date(base.createdAt),
+		updatedAt: new Date(base.updatedAt),
+		documents: base.documents.map((document) => ({
+			...document,
+			createdAt: new Date(document.createdAt),
+			agreedAt: reviveMoment(document.agreedAt),
+			approvedAt: reviveMoment(document.approvedAt),
+			inEffectAt: reviveMoment(document.inEffectAt)
+		}))
+	};
+}
+
+/**
+ * Карточка взаимодействия целиком.
+ *
+ * Собирается из двух половин, и делятся они не по удобству, а по тому, можно ли
+ * их кэшировать. Всё, что одинаково для любого, кто карточку видит — сама
+ * запись, её процесс, программы, продукты, перечень документов, — живёт в Redis
+ * до следующего события по записи (`cache/interactions.ts`). Стороны читаются
+ * из базы **каждый раз**: их контакты проходят через сериализатор, который
+ * маскирует их по правам и оставляет след просмотра персональных данных, — а
+ * ответ, отданный из кэша, этот след потерял бы.
+ */
+export async function getInteraction(
+	ctx: ActorContext,
+	interactionId: string
+): Promise<InteractionView> {
+	requirePermission(ctx, 'interactions.read');
+
+	const interaction = await assertInteractionVisible(ctx, interactionId);
+
+	const [base, parties] = await Promise.all([
+		cachedInteractionPart(
+			'base',
+			interaction,
+			() => buildInteractionBase(interactionId),
+			reviveInteractionBase
+		),
+		readParties(ctx, interactionId)
+	]);
+
+	return { ...base, parties };
+}
+
+/**
+ * Лента комментариев карточки.
+ *
+ * Читается при каждом открытии, а меняется только когда по взаимодействию
+ * что-то произошло, — поэтому собранная лента живёт в Redis до следующего
+ * события по записи (`cache/interactions.ts`). Право и видимость проверяются
+ * до кэша и по базе: кэш ускоряет ответ, а не решает, кому он положен.
+ */
 export async function listComments(
 	ctx: ActorContext,
 	interactionId: string
 ): Promise<CommentView[]> {
 	requirePermission(ctx, 'interactions.read');
-	await assertInteractionVisible(ctx, interactionId);
+	const interaction = await assertInteractionVisible(ctx, interactionId);
 
-	const rows = await getDb()
-		.select({ comment: comments, authorName: users.fullName })
-		.from(comments)
-		.innerJoin(users, eq(users.id, comments.authorId))
-		.where(eq(comments.interactionId, interactionId))
-		.orderBy(desc(comments.createdAt));
+	return cachedInteractionPart(
+		'comments',
+		interaction,
+		async () => {
+			const rows = await getDb()
+				.select({ comment: comments, authorName: users.fullName })
+				.from(comments)
+				.innerJoin(users, eq(users.id, comments.authorId))
+				.where(eq(comments.interactionId, interactionId))
+				.orderBy(desc(comments.createdAt));
 
-	return rows.map((row) => ({
-		id: row.comment.id,
-		authorId: row.comment.authorId,
-		authorName: row.authorName,
-		body: row.comment.body,
-		createdAt: row.comment.createdAt
-	}));
+			return rows.map((row) => ({
+				id: row.comment.id,
+				authorId: row.comment.authorId,
+				authorName: row.authorName,
+				body: row.comment.body,
+				createdAt: row.comment.createdAt
+			}));
+		},
+		// JSON не знает про `Date`: момент возвращается из строки обратно в дату,
+		// иначе карточка получила бы строку там, где объявлена дата.
+		(stored) =>
+			(stored as CommentView[]).map((row) => ({ ...row, createdAt: new Date(row.createdAt) }))
+	);
 }
 
 /**
@@ -674,7 +742,7 @@ function referencedIds(field: string, value: unknown): string[] | null {
 }
 
 /**
- * Роль стороны рядом с её именем: «СЗПУ (учебное заведение)» и «СЗПУ
+ * Роль стороны рядом с её именем: «СПбПУ (учебное заведение)» и «СПбПУ
  * (компания-заказчик)» — разные строки истории, и без роли правка сторон
  * читалась бы как «ничего не изменилось».
  */
@@ -737,14 +805,35 @@ async function readReferenceNames(
 	return resolved;
 }
 
-/** Предметная история плана: сроки, стороны, программы, ответственный. */
+/**
+ * Предметная история плана: сроки, стороны, программы, ответственный.
+ *
+ * Самое дорогое чтение карточки: к выборке самих строк добавляются подписи
+ * ссылочных значений — до четырёх запросов по справочникам. Поэтому собранная
+ * история живёт в Redis до следующего события по взаимодействию
+ * (`cache/interactions.ts`); переименование вуза доходит до неё по сроку жизни
+ * записи, а не мгновенно.
+ */
 export async function listInteractionChanges(
 	ctx: ActorContext,
 	interactionId: string
 ): Promise<InteractionChangeView[]> {
 	requirePermission(ctx, 'interactions.read');
-	await assertInteractionVisible(ctx, interactionId);
+	const interaction = await assertInteractionVisible(ctx, interactionId);
 
+	return cachedInteractionPart(
+		'changes',
+		interaction,
+		() => buildInteractionChanges(interactionId),
+		(stored) =>
+			(stored as InteractionChangeView[]).map((row) => ({
+				...row,
+				changedAt: new Date(row.changedAt)
+			}))
+	);
+}
+
+async function buildInteractionChanges(interactionId: string): Promise<InteractionChangeView[]> {
 	const rows = await getDb()
 		.select({ change: interactionChanges, authorName: users.fullName })
 		.from(interactionChanges)

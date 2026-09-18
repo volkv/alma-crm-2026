@@ -53,6 +53,7 @@ import {
 } from '$lib/contracts/directory-import';
 import { isValidInn } from '$lib/validation/inn';
 import type { ActorContext } from '../actor';
+import { invalidateDirectoryOptions } from '../cache/directory';
 import { recordAuditEvent } from '../audit';
 import {
 	contractItems,
@@ -1458,6 +1459,22 @@ export async function applyCatalogMapping(
 }
 
 /**
+ * Подтверждение загрузки состоялось: подбор из справочника, собранный раньше,
+ * больше не показывать.
+ *
+ * Своя строка, а не только та, что стоит внутри `createOrganization`: записи
+ * заводятся в транзакции этого подтверждения, и вложенный вызов обесценивает
+ * кэш до её фиксации. Здесь — после.
+ */
+async function invalidated<TResult>(result: Promise<TResult>): Promise<TResult> {
+	const value = await result;
+
+	await invalidateDirectoryOptions();
+
+	return value;
+}
+
+/**
  * Применяет импорт к справочнику.
  *
  * Всё идёт одной транзакцией: состояние каталога снимается внутри неё, строки
@@ -1482,113 +1499,118 @@ export async function confirmCatalogImport(
 
 	await selectImportRow(importId);
 
-	return withTransaction(ctx, async (tx) => {
-		// Состояние перечитывается под блокировкой строки: между проверкой и
-		// записью импорт мог применить кто-то другой.
-		const [row] = await tx
-			.select()
-			.from(directoryImports)
-			.where(eq(directoryImports.id, importId))
-			.for('update');
+	return invalidated(
+		withTransaction(ctx, async (tx) => {
+			// Состояние перечитывается под блокировкой строки: между проверкой и
+			// записью импорт мог применить кто-то другой.
+			const [row] = await tx
+				.select()
+				.from(directoryImports)
+				.where(eq(directoryImports.id, importId))
+				.for('update');
 
-		if (row === undefined) {
-			throw new ConflictError('Импорт каталога больше не существует');
-		}
-
-		assertEditable(row.status);
-
-		if (row.status !== 'mapped') {
-			throw new ConflictError('Импорт ещё не разобран: сначала сопоставьте колонки файла');
-		}
-
-		const stored = await tx
-			.select()
-			.from(directoryImportRows)
-			.where(eq(directoryImportRows.importId, row.id))
-			.orderBy(directoryImportRows.rowNo);
-
-		if (stored.length === 0) {
-			throw new ConflictError('Применять нечего: в файле нет ни одной строки');
-		}
-
-		const pending = stored.filter((item) => item.action !== 'error');
-		const sourceRows: CatalogSourceRow[] = pending.map((item) => ({
-			rowNo: item.rowNo,
-			origin: item.origin,
-			raw: item.raw,
-			issues: [],
-			values: {
-				organizationName: item.organizationName,
-				organizationInn: item.organizationInn,
-				vendorName: item.vendorName,
-				productName: item.productName,
-				productCode: item.productCode,
-				directionName: item.directionName,
-				contractNumber: item.contractNumber,
-				contractSignedOn: item.contractSignedOn,
-				contractValidUntil: item.contractValidUntil,
-				licenseSignedAt: item.licenseSignedAt,
-				licenseUntil: item.licenseUntil,
-				transferStatus: item.transferStatus
+			if (row === undefined) {
+				throw new ConflictError('Импорт каталога больше не существует');
 			}
-		}));
 
-		const results = await applyCatalogRows(
-			await loadCatalogState(ctx, tx),
-			databaseWriter(ctx, tx),
-			sourceRows
-		);
+			assertEditable(row.status);
 
-		const byRowNo = new Map(results.map((result) => [result.rowNo, result]));
+			if (row.status !== 'mapped') {
+				throw new ConflictError('Импорт ещё не разобран: сначала сопоставьте колонки файла');
+			}
 
-		for (const result of results) {
-			await tx
-				.update(directoryImportRows)
+			const stored = await tx
+				.select()
+				.from(directoryImportRows)
+				.where(eq(directoryImportRows.importId, row.id))
+				.orderBy(directoryImportRows.rowNo);
+
+			if (stored.length === 0) {
+				throw new ConflictError('Применять нечего: в файле нет ни одной строки');
+			}
+
+			const pending = stored.filter((item) => item.action !== 'error');
+			const sourceRows: CatalogSourceRow[] = pending.map((item) => ({
+				rowNo: item.rowNo,
+				origin: item.origin,
+				raw: item.raw,
+				issues: [],
+				values: {
+					organizationName: item.organizationName,
+					organizationInn: item.organizationInn,
+					vendorName: item.vendorName,
+					productName: item.productName,
+					productCode: item.productCode,
+					directionName: item.directionName,
+					contractNumber: item.contractNumber,
+					contractSignedOn: item.contractSignedOn,
+					contractValidUntil: item.contractValidUntil,
+					licenseSignedAt: item.licenseSignedAt,
+					licenseUntil: item.licenseUntil,
+					transferStatus: item.transferStatus
+				}
+			}));
+
+			const results = await applyCatalogRows(
+				await loadCatalogState(ctx, tx),
+				databaseWriter(ctx, tx),
+				sourceRows
+			);
+
+			const byRowNo = new Map(results.map((result) => [result.rowNo, result]));
+
+			for (const result of results) {
+				await tx
+					.update(directoryImportRows)
+					.set({
+						action: result.action,
+						issues: result.issues,
+						creations: result.creations,
+						changes: result.changes,
+						organizationId: result.organizationId,
+						productId: result.productId,
+						contractId: result.contractId,
+						contractItemId: result.contractItemId,
+						updatedAt: new Date()
+					})
+					.where(
+						and(
+							eq(directoryImportRows.importId, row.id),
+							eq(directoryImportRows.rowNo, result.rowNo)
+						)
+					);
+			}
+
+			const counts = catalogImportCounts(
+				stored.map((item) => ({ action: byRowNo.get(item.rowNo)?.action ?? item.action }))
+			);
+
+			const [updated] = await tx
+				.update(directoryImports)
 				.set({
-					action: result.action,
-					issues: result.issues,
-					creations: result.creations,
-					changes: result.changes,
-					organizationId: result.organizationId,
-					productId: result.productId,
-					contractId: result.contractId,
-					contractItemId: result.contractItemId,
+					status: 'confirmed',
+					confirmedAt: new Date(),
+					confirmedBy: ctx.user?.id ?? null,
+					...counts,
 					updatedAt: new Date()
 				})
-				.where(
-					and(eq(directoryImportRows.importId, row.id), eq(directoryImportRows.rowNo, result.rowNo))
-				);
-		}
+				.where(eq(directoryImports.id, row.id))
+				.returning();
 
-		const counts = catalogImportCounts(
-			stored.map((item) => ({ action: byRowNo.get(item.rowNo)?.action ?? item.action }))
-		);
+			await recordAuditEvent(
+				ctx,
+				{
+					type: 'directory.import_confirmed',
+					outcome: 'success',
+					subject: { type: 'directory_import', id: row.id },
+					details: counts
+				},
+				tx
+			);
 
-		const [updated] = await tx
-			.update(directoryImports)
-			.set({
-				status: 'confirmed',
-				confirmedAt: new Date(),
-				confirmedBy: ctx.user?.id ?? null,
-				...counts,
-				updatedAt: new Date()
-			})
-			.where(eq(directoryImports.id, row.id))
-			.returning();
-
-		await recordAuditEvent(
-			ctx,
-			{
-				type: 'directory.import_confirmed',
-				outcome: 'success',
-				subject: { type: 'directory_import', id: row.id },
-				details: counts
-			},
-			tx
-		);
-
-		return toCatalogImportView(updated);
-	});
+			return toCatalogImportView(updated);
+		})
+	);
 }
 
 export async function rejectCatalogImport(
