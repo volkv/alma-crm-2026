@@ -1,4 +1,4 @@
-import type { Locator, Page } from '@playwright/test';
+import type { ConsoleMessage, Locator, Page } from '@playwright/test';
 import { expect, test } from './fixtures';
 import { waitForHydration } from './helpers/hydration';
 
@@ -43,6 +43,20 @@ async function firstVisit(page: Page, address = '/'): Promise<Locator> {
 	await expect(tour).toBeVisible({ timeout: 15_000 });
 
 	return tour;
+}
+
+/**
+ * Запрос за файлом фирменной гарнитуры, которого нет.
+ *
+ * Файлов Rostelecom Basis в репозитории нет — лицензии на распространение не
+ * было (`src/app.css`, комментарий к `@font-face`): в чистой копии и в CI они
+ * отвечают 404, браузер берёт следующее семейство (Inter из сборки), и это
+ * задуманное поведение, а не отказ. Проверка консоли здесь — про ошибки нашего
+ * кода, поэтому такие строки в неё не попадают. На машине, где `static/fonts/`
+ * заполнен, их нет вовсе — оттого прогон и расходился с CI.
+ */
+function isMissingFont(message: ConsoleMessage): boolean {
+	return message.location().url.includes('/fonts/');
 }
 
 /** Насколько документ шире экрана. Ноль и меньше — помещается. */
@@ -101,8 +115,11 @@ test('последний шаг закрывает подсказки так ж�
 
 	page.on('pageerror', (error) => errors.push(error.message));
 	page.on('console', (message) => {
-		if (message.type() === 'error') {
-			errors.push(message.text());
+		if (message.type() === 'error' && !isMissingFont(message)) {
+			// Адрес рядом с текстом: «Failed to load resource» без него не говорит,
+			// какого именно ресурса не хватило, — разбирать упавший прогон CI
+			// пришлось бы по трассе.
+			errors.push(`${message.text()} ${message.location().url}`);
 		}
 	});
 
