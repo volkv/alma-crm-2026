@@ -353,8 +353,8 @@ async function scroll(page: Page, distance: number, steps = 5): Promise<void> {
  * снимала бы систему, которой не существует.
  *
  * Браузер входа каждый раз чистый, поэтому сразу после возврата в приложение
- * открываются подсказки первого входа — и закрываются тем же нажатием, что и у
- * человека, до начала сцены. Признак «показаны» не подкладывается в хранилище:
+ * открывается приветствие подсказок — и закрывается кнопкой «Позже», тем же
+ * нажатием, что и у человека, до начала сцены. Признак «показаны» не подкладывается в хранилище:
  * скрытого выключателя в продукте нет (`e2e/helpers/onboarding.ts`,
  * `scripts/readme-media/capture.ts`). Для сессий, снятых заранее
  * (`storageFor`), это гашение не входит в запись вовсе; в единственном живом
@@ -390,7 +390,7 @@ async function signIn(page: Page, login: Role, typed: boolean): Promise<void> {
 	const tour = page.getByTestId('onboarding-tour');
 
 	await tour.waitFor({ state: 'visible', timeout: WAIT });
-	await tour.getByRole('button', { name: 'Пропустить' }).click();
+	await tour.getByRole('button', { name: 'Позже' }).click();
 	await tour.waitFor({ state: 'hidden', timeout: WAIT });
 }
 

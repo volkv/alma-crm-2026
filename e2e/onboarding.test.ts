@@ -1,29 +1,30 @@
-import type { ConsoleMessage, Locator, Page } from '@playwright/test';
+import { test as base, type ConsoleMessage, type Locator, type Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { ADMIN_STATE } from './global-setup';
 import { waitForHydration } from './helpers/hydration';
 
 /**
- * Подсказки первого входа глазами человека, который открыл систему впервые.
+ * Подсказки глазами человека, который открыл систему впервые.
  *
  * Проверяется то, ради чего они есть: тур приходит сам и только один раз, ведёт
- * по экранам роли, уходит по первой просьбе и возвращается из справки. Роль
- * здесь менеджерская — самая массовая на стенде; выбор шагов по роли и по
- * текущему экрану закрыт модульными проверками (`tests/unit/onboarding`).
+ * по экранам роли **сам** — открывая их без единого нажатия по меню, — уходит по
+ * первой просьбе и возвращается из шапки, из справки и из меню учётной записи.
+ * Роль здесь менеджерская, самая массовая на стенде; состав экранов и шагов по
+ * ролям и правам закрыт модульными проверками (`tests/unit/onboarding`).
  *
  * Признак «подсказки показаны» живёт в браузере, поэтому «первый вход» здесь —
  * это сессия из общей фикстуры и чистая память браузера: сервер об этом
  * различии ничего не знает, и подделывать сессию незачем.
  */
 
+/** Демонстрационный администратор: до его настроек тур идёт дольше всех. */
+const adminTest = base.extend<object>({ storageState: ADMIN_STATE });
+
 /** Экран телефона: карточка подсказки на нём встаёт понизу. */
 const NARROW = { width: 390, height: 844 } as const;
 
-const TOUR_STEPS = [
-	'Сводка: что требует действия',
-	'Карточка отвечает на четыре вопроса',
-	'Переход стадии',
-	'Справка и поиск'
-] as const;
+/** Приветствие полного тура: с него начинается первый вход. */
+const WELCOME = 'LCT CRM: система контроля взаимодействия с вузами';
 
 function tourOf(page: Page): Locator {
 	return page.getByTestId('onboarding-tour');
@@ -43,6 +44,26 @@ async function firstVisit(page: Page, address = '/'): Promise<Locator> {
 	await expect(tour).toBeVisible({ timeout: 15_000 });
 
 	return tour;
+}
+
+/**
+ * Довести тур до вступления названного экрана, нажимая только «Далее».
+ *
+ * Именно так тур и проверяется: сколько шагов лежит между экранами, решает
+ * реестр, и число, вписанное в проверку, пришлось бы править на каждый новый
+ * шаг. Человек в этом месте делает ровно одно — жмёт «Далее», пока не окажется
+ * там, куда его ведут.
+ */
+async function advanceToScreen(tour: Locator, title: string): Promise<void> {
+	const label = `${title} · шаг 1 из`;
+
+	await expect(async () => {
+		if (!(await tour.innerText()).includes(label)) {
+			await tour.getByRole('button', { name: 'Далее' }).click();
+
+			throw new Error(`Тур ещё не дошёл до экрана «${title}»`);
+		}
+	}).toPass({ timeout: 60_000 });
 }
 
 /**
@@ -68,49 +89,7 @@ async function documentOverflow(page: Page): Promise<number> {
 	});
 }
 
-test('первый вход начинается с подсказок и ведёт по шагам роли', async ({ page }) => {
-	const tour = await firstVisit(page);
-
-	await expect(tour).toContainText(`Шаг 1 из ${TOUR_STEPS.length}`);
-	await expect(tour.getByRole('heading', { level: 2 })).toHaveText(TOUR_STEPS[0]);
-	// Первый шаг говорит о блоке, который на этом экране есть: рамка ему и нужна.
-	await expect(page.locator('[data-tour="home-needs-action"]')).toBeVisible();
-
-	await tour.getByRole('button', { name: 'Далее' }).click();
-
-	await expect(tour).toContainText(`Шаг 2 из ${TOUR_STEPS.length}`);
-	await expect(tour.getByRole('heading', { level: 2 })).toHaveText(TOUR_STEPS[1]);
-
-	// Блок второго шага живёт в другом разделе, и шаг ведёт туда ссылкой, а не
-	// оставляет человека перед рассказом о том, чего на экране нет.
-	await tour.getByRole('link', { name: 'Открыть «Взаимодействия»' }).click();
-
-	await expect(page).toHaveURL(/\/interactions$/);
-	// Переход между экранами тур переживает: шаг остался тот же.
-	await expect(tour).toContainText(`Шаг 2 из ${TOUR_STEPS.length}`);
-	await expect(tour.getByRole('link', { name: 'Открыть «Взаимодействия»' })).toBeHidden();
-
-	await tour.getByRole('button', { name: 'Назад' }).click();
-	await expect(tour).toContainText(`Шаг 1 из ${TOUR_STEPS.length}`);
-});
-
-test('пропуск закрывает подсказки, и следующий вход обходится без них', async ({ page }) => {
-	const tour = await firstVisit(page);
-
-	await tour.getByRole('button', { name: 'Пропустить' }).click();
-	await expect(tour).toBeHidden();
-
-	// Тот же человек, тот же браузер: подсказки показываются один раз.
-	await page.reload();
-	await waitForHydration(page);
-	await expect(tour).toBeHidden();
-
-	await page.goto('/interactions');
-	await waitForHydration(page);
-	await expect(tour).toBeHidden();
-});
-
-test('последний шаг закрывает подсказки так же, как пропуск', async ({ page }) => {
+test('первый вход начинается с карты тура и ведёт по экранам сам', async ({ page }) => {
 	const errors: string[] = [];
 
 	page.on('pageerror', (error) => errors.push(error.message));
@@ -125,38 +104,96 @@ test('последний шаг закрывает подсказки так ж�
 
 	const tour = await firstVisit(page);
 
-	for (let step = 1; step < TOUR_STEPS.length; step += 1) {
-		await tour.getByRole('button', { name: 'Далее' }).click();
-		await expect(tour).toContainText(`Шаг ${step + 1} из ${TOUR_STEPS.length}`);
-	}
+	// Приветствие: что это за система, куда поведут и сколько это займёт.
+	await expect(tour.getByRole('heading', { level: 2 })).toHaveText(WELCOME);
+	await expect(tour).toContainText('Тур пройдёт по экранам вашей роли');
+	await expect(tour).toContainText('Взаимодействия');
+	await expect(tour).toContainText('примерно');
 
-	await tour.getByRole('button', { name: 'Готово' }).click();
+	await tour.getByRole('button', { name: 'Начать тур' }).click();
+
+	// Сначала оболочка: меню, поиск, значок «?», тема и учётная запись.
+	await expect(tour.getByRole('heading', { level: 2 })).toHaveText('Разделы слева');
+	await expect(tour).toContainText('Оболочка системы');
+
+	await advanceToScreen(tour, 'Сводка');
+	await expect(page).toHaveURL(/\/$/);
+	await expect(tour.getByRole('heading', { level: 2 })).toHaveText('Сводка: с чего начинают день');
+
+	// Дальше тур открывает разделы сам: человек жмёт «Далее», а не ищет пункт
+	// меню. Адрес меняется без единого нажатия по навигации.
+	await advanceToScreen(tour, 'Взаимодействия');
+	await expect(page).toHaveURL(/\/interactions$/);
+
+	// И доходит до открытой записи: идентификатор ей дал сервер, в границах
+	// области доступа этой сессии.
+	await advanceToScreen(tour, 'Карточка взаимодействия');
+	await expect(page).toHaveURL(
+		/\/interactions\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+	);
+
+	await tour.getByRole('button', { name: 'Закрыть подсказки' }).click();
+	await expect(tour).toBeHidden();
+
+	// Тот же человек, тот же браузер: полный тур предлагается один раз.
+	await page.reload();
+	await waitForHydration(page);
+	await expect(tour).toBeHidden();
+
+	// Шаги, чей блок на текущем экране не нашёлся, — обычное состояние тура, а
+	// не отказ: в консоли после прохода пусто.
+	expect(errors).toEqual([]);
+});
+
+test('«Позже» на приветствии закрывает подсказки до следующего устройства', async ({ page }) => {
+	const tour = await firstVisit(page);
+
+	await tour.getByRole('button', { name: 'Позже' }).click();
 	await expect(tour).toBeHidden();
 
 	await page.reload();
 	await waitForHydration(page);
 	await expect(tour).toBeHidden();
 
-	// Шаги, чей блок на текущем экране не нашёлся, — обычное состояние тура, а
-	// не отказ: в консоли после полного прохода пусто.
-	expect(errors).toEqual([]);
+	await page.goto('/interactions');
+	await waitForHydration(page);
+	await expect(tour).toBeHidden();
 });
 
-test('подсказки возвращаются из справки и закрываются с клавиатуры', async ({ page }) => {
-	const tour = tourOf(page);
-
-	await page.goto('/help');
+test('значок «?» открывает подсказки по текущему экрану', async ({ page }) => {
+	await page.goto('/reports');
 	await waitForHydration(page);
 
-	// Сессия прогона уже видела подсказки: сами они не приходят.
+	const tour = tourOf(page);
+
+	// Сессия прогона уже видела приветствие: сам тур не приходит.
 	await expect(tour).toBeHidden();
 
+	const trigger = page.getByRole('button', { name: 'Подсказки и справка' });
+	const item = page.getByRole('menuitem', { name: 'Подсказки по этому экрану' });
+
+	// Точка-напоминание горит, пока подсказки этого экрана не смотрели.
+	await expect(trigger.locator('span')).toBeVisible();
+
+	// Меню открывает код страницы: нажатие до того, как она ожила, теряется
+	// совсем (`docs/development.md`, «Всплывающие слои»).
 	await expect(async () => {
-		await page.getByRole('button', { name: 'Показать подсказки' }).click();
-		await expect(tour).toBeVisible({ timeout: 2000 });
+		await trigger.click();
+		await expect(item).toBeVisible({ timeout: 2000 });
 	}).toPass({ timeout: 20_000 });
 
-	await expect(tour).toContainText(`Шаг 1 из ${TOUR_STEPS.length}`);
+	await expect(page.getByRole('menuitem', { name: 'Статья справки: Отчёты' })).toBeVisible();
+
+	await item.click();
+
+	await expect(tour).toBeVisible();
+	await expect(tour.getByRole('heading', { level: 2 })).toHaveText('Отчёты: срез и движение');
+	await expect(tour).toContainText('Отчёты · шаг 1 из');
+	// Вступление обводит заголовок страницы: «речь об этом экране».
+	await expect(page.locator('[data-tour="page-header"]')).toBeVisible();
+
+	// Вступление показано — напоминать больше не о чем.
+	await expect(trigger.locator('span')).toBeHidden();
 
 	// Фокус переезжает в карточку сам, и Tab из неё не уходит: страница под
 	// туром выключена слоем, и нажимать в ней нечего.
@@ -176,29 +213,37 @@ test('подсказки возвращаются из справки и зак�
 	await expect(tour).toBeHidden();
 });
 
-test('подсказки возвращаются из меню учётной записи', async ({ page }) => {
+test('полный тур возвращается из меню учётной записи, оглавление ведёт к экрану', async ({
+	page
+}) => {
+	await page.goto('/');
+	await waitForHydration(page);
+
 	const tour = tourOf(page);
 
-	await page.goto('/interactions');
-	await waitForHydration(page);
 	await expect(tour).toBeHidden();
 
-	// Меню открывает код страницы: нажатие до того, как она ожила, теряется
-	// совсем (`docs/development.md`, «Всплывающие слои»).
-	const item = page.getByRole('menuitem', { name: 'Показать подсказки снова' });
+	const restart = page.getByRole('menuitem', { name: 'Полный тур по системе' });
 
 	await expect(async () => {
 		await page.getByRole('button', { name: 'Менеджер Демо' }).click();
-		await expect(item).toBeVisible({ timeout: 2000 });
+		await expect(restart).toBeVisible({ timeout: 2000 });
 	}).toPass({ timeout: 20_000 });
 
-	await item.click();
+	await restart.click();
 
+	// Тур начинается с приветствия, а не с того экрана, где его позвали.
 	await expect(tour).toBeVisible();
-	await expect(tour).toContainText(`Шаг 1 из ${TOUR_STEPS.length}`);
-	// Тур начинается сначала, а не с того экрана, где его позвали: первый шаг
-	// живёт на «Сводке» и ведёт туда ссылкой.
-	await expect(tour.getByRole('link', { name: 'Открыть «Сводка»' })).toBeVisible();
+	await expect(tour.getByRole('heading', { level: 2 })).toHaveText(WELCOME);
+
+	await tour.getByRole('button', { name: 'Начать тур' }).click();
+
+	// Оглавление — способ не проходить весь тур подряд.
+	await tour.getByRole('button', { name: 'Оглавление' }).click();
+	await page.getByRole('menuitem', { name: 'Отчёты', exact: true }).click();
+
+	await expect(tour.getByRole('heading', { level: 2 })).toHaveText('Отчёты: срез и движение');
+	await expect(page).toHaveURL(/\/reports$/);
 
 	await page.keyboard.press('Escape');
 	await expect(tour).toBeHidden();
@@ -209,10 +254,39 @@ test('подсказка читается на телефоне и не двиг
 
 	const tour = await firstVisit(page);
 
-	await expect(tour.getByRole('heading', { level: 2 })).toHaveText(TOUR_STEPS[0]);
-	await expect(tour.getByRole('button', { name: 'Пропустить' })).toBeVisible();
+	await expect(tour.getByRole('heading', { level: 2 })).toHaveText(WELCOME);
+	expect(await documentOverflow(page)).toBeLessThanOrEqual(0);
+
+	await tour.getByRole('button', { name: 'Начать тур' }).click();
+
+	// Дальше карточка прижата к низу экрана: рядом с элементом ей не поместиться.
+	await expect(tour.getByRole('button', { name: 'Закрыть подсказки' })).toBeVisible();
 	expect(await documentOverflow(page)).toBeLessThanOrEqual(0);
 
 	await tour.getByRole('button', { name: 'Далее' }).click();
 	expect(await documentOverflow(page)).toBeLessThanOrEqual(0);
+});
+
+adminTest('полный тур администратора доходит до настроек процесса', async ({ page }) => {
+	const tour = await firstVisit(page);
+
+	await tour.getByRole('button', { name: 'Начать тур' }).click();
+
+	await advanceToScreen(tour, 'Сводка');
+	await expect(page).toHaveURL(/\/$/);
+
+	await advanceToScreen(tour, 'Отчёты');
+	await expect(page).toHaveURL(/\/reports$/);
+
+	await advanceToScreen(tour, 'Организации');
+	await expect(page).toHaveURL(/\/organizations$/);
+
+	// Настройки идут последними: сначала работа, потом правила, по которым она
+	// идёт. Дорогу туда тур проходит сам.
+	await advanceToScreen(tour, 'Процесс');
+	await expect(page).toHaveURL(/\/settings\/process$/);
+	await expect(tour.getByRole('heading', { level: 2 })).toHaveText('Процесс');
+
+	await tour.getByRole('button', { name: 'Закрыть подсказки' }).click();
+	await expect(tour).toBeHidden();
 });

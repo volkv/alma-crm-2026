@@ -148,14 +148,15 @@ async function signIn(context: BrowserContext, login: string): Promise<void> {
 
 		// Подсказки первого входа закрываются здесь же, на странице входа, и тем
 		// же нажатием, которым их закрывает человек: браузер записи каждый раз
-		// чистый, и тур открылся бы поверх первого же экрана ролика. Признак
-		// «показаны» принадлежит браузеру, поэтому дальше он молчит.
+		// чистый, и тур открылся бы поверх первого же экрана ролика. Кнопка
+		// «Позже» стоит на приветствии — первом, что видит вошедший впервые.
+		// Признак «показаны» принадлежит браузеру, поэтому дальше он молчит.
 		await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: 20_000 });
 
 		const tour = page.getByTestId('onboarding-tour');
 
 		await tour.waitFor({ state: 'visible', timeout: 20_000 });
-		await tour.getByRole('button', { name: 'Пропустить' }).click();
+		await tour.getByRole('button', { name: 'Позже' }).click();
 		await tour.waitFor({ state: 'hidden', timeout: 20_000 });
 	} finally {
 		await page.close();

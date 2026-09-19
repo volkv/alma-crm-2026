@@ -9,6 +9,7 @@
  * и README ссылается ровно на него.
  */
 import { seedId } from '../seed/ids.ts';
+import type { Frame } from './capture.ts';
 
 /**
  * Взаимодействие, которое показывают на карточке.
@@ -81,7 +82,17 @@ export type Shot = {
 /** Окно съёмки: тот же размер, что у снимков, уже лежащих в `docs/media/`. */
 export const VIEWPORT = { width: 1920, height: 1200 } as const;
 
-export const SHOTS: readonly Shot[] = [
+/**
+ * Заголовок вступления «Сводки» в подсказках.
+ *
+ * Кадр тура снимается не на первой карточке: сначала приветствие, потом шаги
+ * оболочки, и только за ними идёт первый экран. Скрипт жмёт «Далее», пока не
+ * увидит этот заголовок, — считать шаги оболочки числом значило бы чинить кадр
+ * каждый раз, когда в шапке что-то прибавится.
+ */
+const HOME_INTRO = 'Сводка: с чего начинают день';
+
+export const SHOTS: readonly Frame[] = [
 	{
 		name: 'login',
 		path: '/login',
@@ -248,8 +259,35 @@ export const SHOTS: readonly Shot[] = [
 		name: 'onboarding',
 		path: '/',
 		role: 'manager',
-		caption: 'Подсказки первого входа: рамка вокруг блока и карточка шага',
-		waitFor: 'Сводка: что требует действия',
-		tour: true
+		caption: 'Полный тур: карточка шага с полосой прогресса и оглавлением',
+		waitFor: HOME_INTRO,
+		tour: true,
+		prepare: async (page) => {
+			const tour = page.getByTestId('onboarding-tour');
+
+			await tour.waitFor({ state: 'visible', timeout: 20_000 });
+			await tour.getByRole('button', { name: 'Начать тур' }).click();
+
+			const intro = tour.getByRole('heading', { name: HOME_INTRO });
+
+			// Предел на случай, если тур до «Сводки» почему-то не доходит: молчаливый
+			// бесконечный цикл в скрипте съёмки хуже честно не снятого кадра.
+			for (let step = 0; step < 12 && (await intro.count()) === 0; step += 1) {
+				await tour.getByRole('button', { name: 'Далее' }).click();
+			}
+		}
+	},
+	{
+		name: 'help-menu',
+		path: '/interactions',
+		role: 'manager',
+		caption: 'Значок «?» в шапке: подсказки по экрану, полный тур и статья справки',
+		waitFor: 'Этот экран: Взаимодействия',
+		prepare: async (page) => {
+			await page.getByRole('button', { name: 'Подсказки и справка' }).click();
+			await page
+				.getByRole('menuitem', { name: 'Подсказки по этому экрану' })
+				.waitFor({ state: 'visible', timeout: 20_000 });
+		}
 	}
 ];

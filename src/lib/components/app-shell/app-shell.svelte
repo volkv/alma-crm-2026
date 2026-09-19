@@ -8,6 +8,7 @@
 	import PanelLeftOpenIcon from '@lucide/svelte/icons/panel-left-open';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Toaster } from '$lib/components/ui/sonner/index.js';
+	import HelpMenu from '$lib/components/onboarding/help-menu.svelte';
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
 	import { visibleSections } from '$lib/nav';
 	import { theme } from '$lib/theme.svelte';
@@ -84,7 +85,10 @@
 		уехавшая вверх навигация пропадала ровно там, где до неё дальше всего.
 		Список разделов внутри прокручивается сам, поэтому меню длиннее экрана
 		не обрезается. -->
+	<!-- `data-tour` — метка для подсказок: по ней тур находит то, о чём говорит
+		(`$lib/onboarding/screens`). -->
 	<aside
+		data-tour="nav"
 		class="sticky top-0 hidden h-dvh shrink-0 flex-col self-start border-r border-border bg-surface transition-[width] duration-150 md:flex {nav.collapsed
 			? 'w-14'
 			: 'w-60'}"
@@ -172,6 +176,7 @@
 						variant="outline"
 						size="sm"
 						class="gap-2 text-muted-foreground"
+						data-tour="search"
 						onclick={() => (searchOpen = true)}
 					>
 						<SearchIcon aria-hidden="true" />
@@ -181,9 +186,17 @@
 							>Ctrl+K</kbd
 						>
 					</Button>
+					<!-- Значок «?» стоит здесь, а не в разделе справки: подсказки по
+						текущему экрану обязаны быть под рукой на каждом экране, иначе
+						самодокументированной система остаётся только на словах. -->
+					<HelpMenu onsearch={() => (searchOpen = true)} />
 					<!-- Тема живёт в шапке, а не в настройках: выбор принадлежит
-						устройству, и до него должно быть одно нажатие с любой страницы. -->
-					<ThemeToggle />
+						устройству, и до него должно быть одно нажатие с любой страницы.
+						Обёртка несёт метку тура: сам переключатель — три кнопки, и
+						рамка должна обвести их вместе. -->
+					<div data-tour="theme-toggle" class="flex shrink-0 items-center">
+						<ThemeToggle />
+					</div>
 					{#if user}
 						<UserMenu {user} />
 					{/if}

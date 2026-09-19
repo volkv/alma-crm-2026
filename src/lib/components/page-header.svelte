@@ -35,7 +35,14 @@
 	} = $props();
 </script>
 
-<header class="flex flex-col gap-3 border-b border-border bg-surface px-4 py-4 sm:px-6">
+<!-- `data-tour="page-header"` — метка вступления подсказок: рамка вокруг
+	заголовка говорит «речь об этом экране». Заголовок есть у каждого экрана
+	оболочки, поэтому вступление можно показать, ничего не зная о содержимом
+	страницы (`$lib/onboarding/screens`). -->
+<header
+	data-tour="page-header"
+	class="flex flex-col gap-3 border-b border-border bg-surface px-4 py-4 sm:px-6"
+>
 	{#if breadcrumbs.length > 0}
 		<BreadcrumbUi.Root>
 			<BreadcrumbUi.List>

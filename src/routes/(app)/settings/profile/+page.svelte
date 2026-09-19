@@ -76,19 +76,21 @@
 	</Card.Content>
 </Card.Root>
 
-{#if tour.steps.length > 0}
+{#if tour.fullLength > 0}
 	<Card.Root>
 		<Card.Header>
 			<Card.Title>Подсказки</Card.Title>
 			<Card.Description>
-				Короткий обход экранов вашей роли: он показывается один раз при первом входе. Признак «уже
-				показаны» принадлежит этому браузеру — с другого устройства подсказки начнутся заново.
+				Полный обход экранов вашей роли: тур сам открывает каждый экран и рассказывает, что на нём
+				главное. Он показывается один раз при первом входе; подсказки по отдельному экрану всегда
+				под значком «?» в шапке. Признак «уже показаны» принадлежит этому браузеру — с другого
+				устройства подсказки начнутся заново.
 			</Card.Description>
 		</Card.Header>
 		<Card.Content>
-			<Button variant="outline" onclick={() => tour.restart()}>
+			<Button variant="outline" onclick={() => tour.startFull()}>
 				<LifeBuoyIcon aria-hidden="true" />
-				Показать подсказки снова
+				Полный тур по системе
 			</Button>
 		</Card.Content>
 	</Card.Root>

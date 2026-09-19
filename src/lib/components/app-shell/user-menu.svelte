@@ -16,9 +16,10 @@
 	let { user }: { user: SessionUser } = $props();
 
 	/**
-	 * Подсказки первого входа показываются один раз; вернуть их человек ищет там
-	 * же, где свою учётную запись. Роли без тура пункта не видят: меню не должно
-	 * предлагать действие, которое ничего не делает.
+	 * Полный обход системы показывается один раз, при первом входе; вернуть его
+	 * человек ищет там же, где свою учётную запись. Роли без тура пункта не
+	 * видят: меню не должно предлагать действие, которое ничего не делает.
+	 * Подсказки по текущему экрану живут не здесь, а под значком «?» в шапке.
 	 */
 	const tour = getOnboardingTour();
 </script>
@@ -26,7 +27,7 @@
 <DropdownMenu.Root>
 	<DropdownMenu.Trigger>
 		{#snippet child({ props })}
-			<Button {...props} variant="ghost" class="h-control gap-2 px-1.5">
+			<Button {...props} variant="ghost" class="h-control gap-2 px-1.5" data-tour="user-menu">
 				<Avatar.Root size="sm">
 					<Avatar.Fallback class="bg-primary-soft text-xs font-medium text-primary">
 						{initials(user.fullName)}
@@ -43,10 +44,10 @@
 			<p class="truncate text-xs text-muted-foreground">{user.email}</p>
 			<p class="mt-1 text-xs text-faint">Роль: {user.roleId}</p>
 		</div>
-		{#if tour.steps.length > 0}
-			<DropdownMenu.Item onSelect={() => tour.restart()}>
+		{#if tour.fullLength > 0}
+			<DropdownMenu.Item onSelect={() => tour.startFull()}>
 				<LifeBuoyIcon aria-hidden="true" />
-				Показать подсказки снова
+				Полный тур по системе
 			</DropdownMenu.Item>
 		{/if}
 		<DropdownMenu.Separator />

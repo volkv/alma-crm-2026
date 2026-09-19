@@ -11,8 +11,8 @@
 	let { data }: PageProps = $props();
 
 	/**
-	 * Подсказки первого входа показываются один раз и на этом устройстве. Позвать
-	 * их обратно человек должен там, где ищет объяснения, — то есть здесь.
+	 * Полный обход системы показывается один раз и на этом устройстве. Позвать
+	 * его обратно человек должен там, где ищет объяснения, — то есть здесь.
 	 */
 	const tour = getOnboardingTour();
 </script>
@@ -29,10 +29,10 @@
 	{#snippet actions()}
 		<!-- Кнопки, которая ничего не делает, здесь нет: роли без подсказок их не
 			увидит и не нажмёт. -->
-		{#if tour.steps.length > 0}
-			<Button variant="outline" onclick={() => tour.restart()}>
+		{#if tour.fullLength > 0}
+			<Button variant="outline" onclick={() => tour.startFull()}>
 				<LifeBuoyIcon aria-hidden="true" />
-				Показать подсказки
+				Полный тур по системе
 			</Button>
 		{/if}
 		<Button variant="outline" href={resolve('/(app)/help/print')}>
@@ -42,7 +42,7 @@
 	{/snippet}
 </PageHeader>
 
-<!-- `data-tour` — метка для подсказок первого входа (`$lib/onboarding/steps`). -->
+<!-- `data-tour` — метка для подсказок (`$lib/onboarding/screens`). -->
 <div class="flex flex-col gap-4 p-4 sm:p-6" data-tour="help-sections">
 	{#each data.sections as section (section.key)}
 		<Card.Root>
