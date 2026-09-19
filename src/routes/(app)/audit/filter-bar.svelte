@@ -62,7 +62,8 @@
 	const actorName = $derived(actors.find((actor) => actor.id === selected.actor)?.fullName);
 </script>
 
-<div class="flex flex-wrap items-end gap-3">
+<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+<div data-tour="audit-filters" class="flex flex-wrap items-end gap-3">
 	<div class="flex flex-col gap-1.5">
 		<Label for="audit-from" class="text-xs text-muted-foreground">Период с</Label>
 		<DateField

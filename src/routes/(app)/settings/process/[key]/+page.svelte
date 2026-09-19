@@ -324,7 +324,8 @@
 			Что действует сейчас, что готовится к применению и кого это изменение затронет.
 		</Card.Description>
 		<Card.Action>
-			<div class="flex flex-wrap items-center gap-2">
+			<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+			<div data-tour="process-group-draft" class="flex flex-wrap items-center gap-2">
 				<Button variant="ghost" size="sm" href={resolve('/settings/process')}>
 					<ArrowLeftIcon aria-hidden="true" />
 					К списку
@@ -444,7 +445,8 @@
 		</Card.Content>
 	</Card.Root>
 
-	<Card.Root>
+	<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+	<Card.Root data-tour="process-group-stages">
 		<Card.Header>
 			<Card.Title>Стадии</Card.Title>
 			<Card.Description>
@@ -581,7 +583,8 @@
 		</Card.Content>
 	</Card.Root>
 
-	<Card.Root>
+	<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+	<Card.Root data-tour="process-group-transitions">
 		<Card.Header>
 			<Card.Title>Переходы</Card.Title>
 			<Card.Description>

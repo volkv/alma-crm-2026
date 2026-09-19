@@ -72,6 +72,7 @@
 			самое делает кнопка на странице самого имитатора.
 		-->
 		<form
+			data-tour="exchange-demo"
 			method="POST"
 			action="?/demoApplication"
 			use:enhance
@@ -87,7 +88,7 @@
 
 	<FilterBar filter={data.filter} />
 
-	<!-- `data-tour` — метка для подсказок первого входа (`$lib/onboarding/steps`). -->
+	<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
 	<div data-tour="exchange-journal" class="flex min-w-0 flex-col gap-4">
 		{#if data.messages.items.length === 0}
 			<EmptyState

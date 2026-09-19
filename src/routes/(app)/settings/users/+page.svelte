@@ -138,7 +138,9 @@
 {/snippet}
 
 {#snippet actionsCell({ user }: { user: UserView })}
-	<span class="flex flex-wrap justify-end gap-2">
+	<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`);
+		рамка встаёт вокруг команд первой строки списка. -->
+	<span data-tour="users-actions" class="flex flex-wrap justify-end gap-2">
 		{#if user.isLinked && user.roleId !== 'service'}
 			<!-- Каталог перезавели — субъект у того же человека стал другим, и вход
 			     его не узнаёт. Отвязка возвращает запись в состояние «свяжется при
@@ -184,17 +186,22 @@
 			работу видит руководитель и кому уходит эскалация.
 		</InlineHint>
 
-		<DataTable
-			{columns}
-			rows={data.users.items}
-			total={data.users.total}
-			getRowId={(user) => user.id}
-			searchPlaceholder="Поиск по почте и имени"
-			emptyTitle={search === '' ? 'Пользователей пока нет' : 'Ничего не найдено'}
-			emptyDescription={search === ''
-				? undefined
-				: 'Поиск идёт по почте и имени — проверьте, что ищете именно их.'}
-		/>
+		<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`).
+			Обёртка без оформления: у списка своя разметка, а `min-w-0` оставляет ей
+			право сжиматься в колонке. -->
+		<div data-tour="users-list" class="min-w-0">
+			<DataTable
+				{columns}
+				rows={data.users.items}
+				total={data.users.total}
+				getRowId={(user) => user.id}
+				searchPlaceholder="Поиск по почте и имени"
+				emptyTitle={search === '' ? 'Пользователей пока нет' : 'Ничего не найдено'}
+				emptyDescription={search === ''
+					? undefined
+					: 'Поиск идёт по почте и имени — проверьте, что ищете именно их.'}
+			/>
+		</div>
 	</Card.Content>
 </Card.Root>
 

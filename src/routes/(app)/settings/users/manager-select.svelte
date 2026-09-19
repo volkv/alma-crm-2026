@@ -50,7 +50,9 @@
 	}
 </script>
 
-<form method="POST" action="?/manager" bind:this={form}>
+<!-- `data-tour` — метка подсказок по экрану «Пользователи»
+	(`$lib/onboarding/screens`); рамка встаёт вокруг выбора в первой строке. -->
+<form data-tour="users-manager" method="POST" action="?/manager" bind:this={form}>
 	<input type="hidden" name="userId" value={userId} />
 	<input type="hidden" name="managerUserId" value={value === NONE ? '' : value} />
 	<Select.Root type="single" {value} {disabled} onValueChange={choose}>

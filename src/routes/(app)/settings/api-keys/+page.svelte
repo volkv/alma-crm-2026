@@ -167,7 +167,11 @@
 
 {#snippet actionsCell({ key }: { key: ApiKeyView })}
 	{#if key.revokedAt === null}
-		<Button variant="outline" size="sm" onclick={() => askRevoke(key)}>Отозвать</Button>
+		<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`);
+			рамка встаёт вокруг отзыва первого действующего ключа. -->
+		<Button data-tour="api-keys-revoke" variant="outline" size="sm" onclick={() => askRevoke(key)}>
+			Отозвать
+		</Button>
 	{/if}
 {/snippet}
 
@@ -185,13 +189,15 @@
 			от имени которого она обращается.
 		</Card.Description>
 		<Card.Action>
-			<Button size="sm" onclick={() => (createOpen = true)}>
+			<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+			<Button data-tour="api-keys-issue" size="sm" onclick={() => (createOpen = true)}>
 				<PlusIcon aria-hidden="true" />
 				Выпустить ключ
 			</Button>
 		</Card.Action>
 	</Card.Header>
-	<Card.Content>
+	<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+	<Card.Content data-tour="api-keys-list">
 		<DataTable
 			{columns}
 			rows={data.keys}

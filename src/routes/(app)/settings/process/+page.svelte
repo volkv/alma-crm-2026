@@ -29,7 +29,7 @@
 
 <svelte:head><title>Процесс — LCT CRM</title></svelte:head>
 
-<!-- `data-tour` — метка для подсказок первого входа (`$lib/onboarding/steps`). -->
+<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
 <Card.Root data-tour="process-groups">
 	<Card.Header>
 		<Card.Title>Процесс</Card.Title>
@@ -96,7 +96,11 @@
 								<Table.Cell class="text-right" onclick={(event) => event.stopPropagation()}>
 									<!-- Ссылка, а не кнопка: открывает адрес, и открывать его
 										должны уметь и средняя кнопка мыши, и клавиатура. -->
+									<!-- `data-tour` — метка подсказок по этому экрану
+										(`$lib/onboarding/screens`): рамка встаёт вокруг входа в
+										процесс первой группы. -->
 									<Button
+										data-tour="process-open"
 										variant="outline"
 										size="sm"
 										href={resolve('/(app)/settings/process/[key]', { key: group.key })}

@@ -127,7 +127,10 @@
 				</Button>
 			{/if}
 			{#if canRetry}
-				<form method="POST" action="?/retry" use:enhance>
+				<!-- `data-tour` — метка подсказок по этому экрану
+					(`$lib/onboarding/screens`); рамка встаёт вокруг первой строки, где
+					повтор вообще имеет смысл. -->
+				<form data-tour="notifications-retry" method="POST" action="?/retry" use:enhance>
 					<input type="hidden" name="deliveryId" value={delivery.id} />
 					<Button type="submit" size="sm" variant="outline">Повторить</Button>
 				</form>

@@ -160,7 +160,8 @@
 	</FormField>
 {/snippet}
 
-<Card.Root>
+<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+<Card.Root data-tour="general-banner">
 	<Card.Header>
 		<Card.Title>Страница входа</Card.Title>
 		<Card.Description>
@@ -191,7 +192,8 @@
 	</Card.Content>
 </Card.Root>
 
-<Card.Root>
+<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+<Card.Root data-tour="general-sessions">
 	<Card.Header>
 		<Card.Title>Сроки жизни сессии</Card.Title>
 		<Card.Description>
@@ -231,7 +233,8 @@
 	</Card.Content>
 </Card.Root>
 
-<Card.Root>
+<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+<Card.Root data-tour="general-stuck">
 	<Card.Header>
 		<Card.Title>Напоминания о зависших взаимодействиях</Card.Title>
 		<Card.Description>
@@ -286,7 +289,8 @@
 	</Card.Content>
 </Card.Root>
 
-<Card.Root>
+<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+<Card.Root data-tour="general-demo">
 	<Card.Header>
 		<Card.Title>Демо-данные</Card.Title>
 		<Card.Description>

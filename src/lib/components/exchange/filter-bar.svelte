@@ -42,7 +42,9 @@
 	}));
 </script>
 
-<div class="flex flex-wrap items-end gap-3">
+<!-- `data-tour` — метка подсказок по экрану «Внешние системы»
+	(`$lib/onboarding/screens`). -->
+<div data-tour="exchange-filters" class="flex flex-wrap items-end gap-3">
 	<FilterSelect
 		param="direction"
 		label="Направление"

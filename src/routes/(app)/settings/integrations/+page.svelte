@@ -225,7 +225,8 @@
 	</FormField>
 {/snippet}
 
-<Card.Root>
+<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+<Card.Root data-tour="integrations-webhooks">
 	<Card.Header>
 		<Card.Title>Подписки на события</Card.Title>
 		<Card.Description>
@@ -354,7 +355,8 @@
 	</Card.Content>
 </Card.Root>
 
-<Card.Root>
+<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+<Card.Root data-tour="integrations-lms">
 	<Card.Header>
 		<Card.Title>Система обучения</Card.Title>
 		<Card.Description>
@@ -484,7 +486,8 @@
 	</Card.Content>
 </Card.Root>
 
-<Card.Root>
+<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+<Card.Root data-tour="integrations-exchange">
 	<Card.Header>
 		<Card.Title>Обмен с CMS и системой обучения</Card.Title>
 		<Card.Description>

@@ -27,7 +27,8 @@
 	}));
 </script>
 
-<div class="flex flex-wrap items-center gap-3">
+<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+<div data-tour="notifications-filters" class="flex flex-wrap items-center gap-3">
 	<FilterSelect param="status" label="Состояние" options={STATUS_OPTIONS} allLabel="Любое" />
 	<FilterSelect param="channel" label="Канал" options={CHANNEL_OPTIONS} allLabel="Любой" />
 	<!-- Сброс — ссылка на тот же раздел без параметров: адрес без параметра и

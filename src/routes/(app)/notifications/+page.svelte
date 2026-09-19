@@ -72,7 +72,7 @@
 		</Alert.Root>
 	{/if}
 
-	<!-- `data-tour` — метка для подсказок первого входа (`$lib/onboarding/steps`). -->
+	<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
 	<Alert.Root data-tour="notifications-log">
 		<Alert.Title>Как это работает</Alert.Title>
 		<Alert.Description>
@@ -104,7 +104,11 @@
 			description="Либо ни одно взаимодействие ещё не простояло дольше порога, либо под этот фильтр ничего не попало."
 		/>
 	{:else}
-		<div class="overflow-x-auto rounded-lg border border-border bg-surface">
+		<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+		<div
+			data-tour="notifications-deliveries"
+			class="overflow-x-auto rounded-lg border border-border bg-surface"
+		>
 			<Table.Root>
 				<Table.Header>
 					<Table.Row>

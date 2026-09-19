@@ -152,24 +152,29 @@
 >
 	{#snippet actions()}
 		{#if data.canExport}
-			<Button
-				variant="outline"
-				href={exportHref(page.url, 'csv')}
-				disabled={tooManyToExport}
-				data-sveltekit-reload
-			>
-				<DownloadIcon aria-hidden="true" />
-				Экспорт CSV
-			</Button>
-			<Button
-				variant="outline"
-				href={exportHref(page.url, 'json')}
-				disabled={tooManyToExport}
-				data-sveltekit-reload
-			>
-				<DownloadIcon aria-hidden="true" />
-				Экспорт JSON
-			</Button>
+			<!-- Обёртка без оформления: подсказка обводит выгрузку целиком, обе
+				кнопки сразу. Классы те же, что у ряда действий в шапке, — вложенный
+				ряд переносится так же, как переносился бы сам. -->
+			<div data-tour="audit-export" class="flex flex-wrap items-center gap-2">
+				<Button
+					variant="outline"
+					href={exportHref(page.url, 'csv')}
+					disabled={tooManyToExport}
+					data-sveltekit-reload
+				>
+					<DownloadIcon aria-hidden="true" />
+					Экспорт CSV
+				</Button>
+				<Button
+					variant="outline"
+					href={exportHref(page.url, 'json')}
+					disabled={tooManyToExport}
+					data-sveltekit-reload
+				>
+					<DownloadIcon aria-hidden="true" />
+					Экспорт JSON
+				</Button>
+			</div>
 		{/if}
 	{/snippet}
 </PageHeader>
@@ -191,16 +196,21 @@
 		</InlineHint>
 	{/if}
 
-	<DataTable
-		{columns}
-		rows={data.events.items}
-		total={data.events.total}
-		getRowId={(event) => event.id}
-		searchPlaceholder="Поиск по человеку и типу события"
-		emptyTitle="Под фильтр не попало ни одного события"
-		emptyDescription="Проверьте период и условия: журнал пишется только о том, что уже произошло."
-		onopen={openEvent}
-	/>
+	<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`).
+		Обёртка без оформления: у списка своя разметка, а `min-w-0` оставляет её
+		право сжиматься в колонке. -->
+	<div data-tour="audit-events" class="min-w-0">
+		<DataTable
+			{columns}
+			rows={data.events.items}
+			total={data.events.total}
+			getRowId={(event) => event.id}
+			searchPlaceholder="Поиск по человеку и типу события"
+			emptyTitle="Под фильтр не попало ни одного события"
+			emptyDescription="Проверьте период и условия: журнал пишется только о том, что уже произошло."
+			onopen={openEvent}
+		/>
+	</div>
 </div>
 
 <EventSheet event={selected} url={page.url} bind:open={sheetOpen} />
