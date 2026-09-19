@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { E2E_USER, E2E_PASSWORD, NO_ROLE_ACCOUNT } from './global-setup';
+import { waitForHydration } from './helpers/hydration';
 import { skipOnboardingTour } from './helpers/onboarding';
 import { signInThroughDirectory } from './helpers/sign-in';
 
@@ -61,6 +62,25 @@ test('страница входа перечисляет демонстраци�
 	// спрашивая. Показывается тот, что действительно пускает, — глобальный сетап
 	// сверяет `DEMO_PASSWORD_HINT` с паролем, который ставит каталогу.
 	await expect(page.getByTestId('demo-password')).toContainText(E2E_PASSWORD);
+});
+
+test('кнопка на карточке кладёт пароль стенда в буфер обмена', async ({ context, page }) => {
+	// Буфер обмена страницы браузер отдаёт только с разрешения, и читать его
+	// проверка будет тем же способом, каким кнопка пишет.
+	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
+
+	await page.goto('/login');
+	await waitForHydration(page);
+
+	await page.getByTestId('copy-demo-password').click();
+
+	// Ответ карточки виден на ней самой: оболочки приложения, а с ней и
+	// всплывающих сообщений, на странице входа нет.
+	await expect(page.getByTestId('demo-password-notice')).toHaveText('Пароль скопирован');
+
+	const clipboard = await page.evaluate(() => navigator.clipboard.readText());
+
+	expect(clipboard).toBe(E2E_PASSWORD);
 });
 
 test('неверный пароль каталог объясняет сам и в систему не пускает', async ({ page }) => {
