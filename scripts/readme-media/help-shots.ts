@@ -15,6 +15,7 @@
  */
 import { seedId } from '../seed/ids.ts';
 import type { Frame } from './capture.ts';
+import { HOME_INTRO, reachHomeIntro } from './shots.ts';
 
 /** Взаимодействие, на котором показана карточка. Оно же снято для README. */
 const DEMO_INTERACTION = seedId('interaction', 'szpu-vo');
@@ -101,9 +102,10 @@ export const HELP_SHOTS: readonly Frame[] = [
 		name: 'user/start-3',
 		path: '/',
 		role: 'manager',
-		caption: 'Подсказки первого входа: рамка вокруг блока и карточка шага',
-		waitFor: 'Сводка: что требует действия',
-		tour: true
+		caption: 'Полный тур: карточка вступления «Сводки» с полосой прогресса и оглавлением',
+		waitFor: HOME_INTRO,
+		tour: true,
+		prepare: reachHomeIntro
 	},
 	{
 		name: 'user/interactions-1',

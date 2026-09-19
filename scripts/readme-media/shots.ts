@@ -9,6 +9,7 @@
  * и README ссылается ровно на него.
  */
 import { seedId } from '../seed/ids.ts';
+import type { Page } from '@playwright/test';
 import type { Frame } from './capture.ts';
 
 /**
@@ -90,7 +91,27 @@ export const VIEWPORT = { width: 1920, height: 1200 } as const;
  * увидит этот заголовок, — считать шаги оболочки числом значило бы чинить кадр
  * каждый раз, когда в шапке что-то прибавится.
  */
-const HOME_INTRO = 'Сводка: с чего начинают день';
+/** Заголовок вступления «Сводки» — первого экрана полного тура каждой роли. */
+export const HOME_INTRO = 'Сводка: с чего начинают день';
+
+/**
+ * Довести полный тур до вступления «Сводки»: приветствие → «Начать тур» →
+ * шаги оболочки. Кадр тура снимают и README, и справка — один и тот же путь.
+ */
+export async function reachHomeIntro(page: Page): Promise<void> {
+	const tour = page.getByTestId('onboarding-tour');
+
+	await tour.waitFor({ state: 'visible', timeout: 20_000 });
+	await tour.getByRole('button', { name: 'Начать тур' }).click();
+
+	const intro = tour.getByRole('heading', { name: HOME_INTRO });
+
+	// Предел на случай, если тур до «Сводки» почему-то не доходит: молчаливый
+	// бесконечный цикл в скрипте съёмки хуже честно не снятого кадра.
+	for (let step = 0; step < 12 && (await intro.count()) === 0; step += 1) {
+		await tour.getByRole('button', { name: 'Далее' }).click();
+	}
+}
 
 export const SHOTS: readonly Frame[] = [
 	{
@@ -262,20 +283,7 @@ export const SHOTS: readonly Frame[] = [
 		caption: 'Полный тур: карточка шага с полосой прогресса и оглавлением',
 		waitFor: HOME_INTRO,
 		tour: true,
-		prepare: async (page) => {
-			const tour = page.getByTestId('onboarding-tour');
-
-			await tour.waitFor({ state: 'visible', timeout: 20_000 });
-			await tour.getByRole('button', { name: 'Начать тур' }).click();
-
-			const intro = tour.getByRole('heading', { name: HOME_INTRO });
-
-			// Предел на случай, если тур до «Сводки» почему-то не доходит: молчаливый
-			// бесконечный цикл в скрипте съёмки хуже честно не снятого кадра.
-			for (let step = 0; step < 12 && (await intro.count()) === 0; step += 1) {
-				await tour.getByRole('button', { name: 'Далее' }).click();
-			}
-		}
+		prepare: reachHomeIntro
 	},
 	{
 		name: 'help-menu',
