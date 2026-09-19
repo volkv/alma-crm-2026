@@ -1,5 +1,6 @@
 import { expect, test } from '@playwright/test';
 import { E2E_USER, E2E_PASSWORD, NO_ROLE_ACCOUNT } from './global-setup';
+import { pointerlessControls } from './helpers/cursor';
 import { waitForHydration } from './helpers/hydration';
 import { skipOnboardingTour } from './helpers/onboarding';
 import { signInThroughDirectory } from './helpers/sign-in';
@@ -62,6 +63,16 @@ test('страница входа перечисляет демонстраци�
 	// спрашивая. Показывается тот, что действительно пускает, — глобальный сетап
 	// сверяет `DEMO_PASSWORD_HINT` с паролем, который ставит каталогу.
 	await expect(page.getByTestId('demo-password')).toContainText(E2E_PASSWORD);
+});
+
+test('над нажимаемым на входе курсор — «палец»', async ({ page }) => {
+	await page.goto('/login');
+
+	// Вход — первый экран продукта и единственный, который видят без сессии:
+	// оболочки с её кнопками здесь нет, и правила курсора проверяются отдельно от
+	// витрины. Кнопок на карточке всего три — «Войти», копирование пароля стенда
+	// и вход демонстрационной учётной записью, — и все три нажимают.
+	expect(await pointerlessControls(page)).toEqual([]);
 });
 
 test('кнопка на карточке кладёт пароль стенда в буфер обмена', async ({ context, page }) => {

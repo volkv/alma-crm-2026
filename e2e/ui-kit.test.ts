@@ -1,5 +1,6 @@
 import { type Page } from '@playwright/test';
 import { expect, test } from './fixtures';
+import { pointerlessControls } from './helpers/cursor';
 import { waitForHydration } from './helpers/hydration';
 
 /**
@@ -459,6 +460,70 @@ test('текст читается в обеих темах: контраст н�
 			expect.soft(ratio, `${option}: ${pair} — ${ratio.toFixed(2)}:1`).toBeGreaterThanOrEqual(4.5);
 		}
 	}
+});
+
+test('над нажимаемым курсор — «палец»: витрина целиком', async ({ page }) => {
+	await page.goto('/ui-kit');
+
+	await expect(page.getByRole('heading', { level: 1 })).toBeVisible();
+
+	// Витрина держит на одном экране всё, из чего собраны остальные: кнопки всех
+	// видов и размеров, поля, переключатели, вкладки, таблицу с сортировкой и
+	// страницами, оболочку с меню разделов. Одна проверка здесь стоит обхода
+	// десятка экранов.
+	expect(await pointerlessControls(page)).toEqual([]);
+});
+
+test('«палец» доходит и до слоёв поверх страницы: меню, список выбора, палитра', async ({
+	page
+}) => {
+	await page.goto('/ui-kit');
+
+	// Слои рисуются в конце документа, отдельно от страницы, и наследовать её
+	// правила не могут — каждый проверяется открытым.
+	const menu = page.locator('[data-slot="dropdown-menu-content"]');
+
+	// Открывает слой код страницы, и кнопка его переключает: нажатие до оживления
+	// пропадает, лишнее — закрывает открытое. Отсюда повтор только пока закрыто.
+	await expect(async () => {
+		if (!(await menu.isVisible())) {
+			await page.locator('[data-tour="user-menu"]').click({ timeout: 5_000 });
+		}
+
+		await expect(menu).toBeVisible({ timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+
+	expect(await pointerlessControls(page, '[data-slot="dropdown-menu-content"]')).toEqual([]);
+
+	await page.keyboard.press('Escape');
+
+	const list = page.locator('[data-slot="select-content"]');
+
+	await expect(async () => {
+		if (!(await list.isVisible())) {
+			await page.getByRole('combobox', { name: 'Регион' }).click({ timeout: 5_000 });
+		}
+
+		await expect(list).toBeVisible({ timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
+
+	expect(await pointerlessControls(page, '[data-slot="select-content"]')).toEqual([]);
+
+	await page.keyboard.press('Escape');
+
+	const palette = page.getByRole('dialog');
+
+	await expect(async () => {
+		if (!(await palette.isVisible())) {
+			await page.keyboard.press('ControlOrMeta+k');
+		}
+
+		await expect(palette.getByRole('option', { name: 'Взаимодействия' })).toBeVisible({
+			timeout: 2000
+		});
+	}).toPass({ timeout: 20_000 });
+
+	expect(await pointerlessControls(page, '[data-slot="dialog-content"]')).toEqual([]);
 });
 
 test('the kit page is captured for review', async ({ page }) => {

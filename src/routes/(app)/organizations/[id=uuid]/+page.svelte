@@ -347,7 +347,7 @@
 
 		{#if pastResponsibles.length > 0}
 			<details class="border-t border-border px-4 py-3">
-				<summary class="cursor-pointer text-xs font-medium">
+				<summary class="text-xs font-medium">
 					История назначений ({pastResponsibles.length})
 				</summary>
 				<Table.Root class="mt-3">

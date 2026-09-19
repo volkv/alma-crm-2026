@@ -456,6 +456,27 @@ html[data-theme='dark'] {
 	::selection {
 		@apply bg-primary-soft text-foreground;
 	}
+
+	/*
+	 * Указатель на всём, что нажимают. Браузер даёт «палец» только ссылкам: у
+	 * `<button>` по умолчанию стрелка, и в интерфейсе, где почти каждое действие —
+	 * кнопка, стрелка читается как «здесь ничего не будет». Роли перечислены рядом
+	 * с тегом потому, что меню, список выбора и палитра команд — это `div` с ролью,
+	 * а не кнопка. Подпись берёт указатель, только если внутри неё переключатель:
+	 * клик по её тексту меняет состояние, тогда как подпись текстового поля лишь
+	 * передаёт фокус.
+	 */
+	button:not(:disabled),
+	summary,
+	[role='button'],
+	[role='tab'],
+	[role='option'],
+	[role='menuitem'],
+	[role='menuitemcheckbox'],
+	[role='menuitemradio'],
+	label:has([data-slot='checkbox'], [data-slot='switch'], [data-slot='radio-group-item']) {
+		cursor: pointer;
+	}
 }
 
 /**
