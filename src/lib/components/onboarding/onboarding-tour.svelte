@@ -319,6 +319,7 @@
 	{#if frame !== null && !centered}
 		<div
 			class="pointer-events-none fixed z-50 rounded-lg ring-2 ring-primary ring-offset-2 ring-offset-canvas"
+			data-testid="onboarding-frame"
 			style="top: {frame.top}px; left: {frame.left}px; width: {frame.width}px; height: {frame.height}px"
 			aria-hidden="true"
 		></div>
@@ -412,7 +413,9 @@
 					Вернуться к шагу
 				</Button>
 			{:else if !found && stop.target !== null}
-				<p class="text-xs text-warning-soft-foreground">
+				<!-- Признак «блок не найден» нужен проверкам: по нему прогон отличает шаг,
+					нашедший элемент, от шага, который показал подсказку вместо рамки. -->
+				<p class="text-xs text-warning-soft-foreground" data-testid="onboarding-missing">
 					{stop.hint ?? 'На этом экране блока сейчас нет — шаг можно пропустить.'}
 				</p>
 			{/if}
