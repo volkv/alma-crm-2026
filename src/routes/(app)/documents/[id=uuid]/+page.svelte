@@ -112,6 +112,7 @@
 		<Button
 			href={resolve('/(app)/documents/[id=uuid]/download', { id: data.document.id })}
 			data-sveltekit-reload
+			data-tour="document-download"
 		>
 			<DownloadIcon aria-hidden="true" />
 			Скачать
@@ -134,7 +135,7 @@
 		</InlineHint>
 	{/if}
 
-	<section class="rounded-lg border border-border bg-surface p-4 sm:p-6">
+	<section class="rounded-lg border border-border bg-surface p-4 sm:p-6" data-tour="document-facts">
 		<h2 class="mb-4 text-sm font-semibold">Документ</h2>
 		<KeyValue>
 			<KeyValueRow label="Откуда файл">
@@ -245,7 +246,7 @@
 		{/if}
 	</section>
 
-	<section class="rounded-lg border border-border bg-surface">
+	<section class="rounded-lg border border-border bg-surface" data-tour="document-revisions">
 		<header
 			class="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3"
 		>

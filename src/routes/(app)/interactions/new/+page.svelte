@@ -215,7 +215,13 @@
 />
 
 <div class="p-4 sm:p-6">
-	<form method="POST" use:enhance novalidate class="flex max-w-3xl flex-col gap-4">
+	<form
+		method="POST"
+		use:enhance
+		novalidate
+		data-tour="interaction-new-form"
+		class="flex max-w-3xl flex-col gap-4"
+	>
 		{#if $formMessage}
 			<Alert.Root variant="destructive">
 				<Alert.Title>{$formMessage}</Alert.Title>

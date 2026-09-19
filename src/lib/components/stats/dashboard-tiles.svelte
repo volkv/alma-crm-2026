@@ -23,7 +23,12 @@
 	}
 </script>
 
-<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6" data-slot="dashboard-tiles">
+<!-- `data-tour` — метка подсказок (`$lib/onboarding/screens`). -->
+<div
+	class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6"
+	data-slot="dashboard-tiles"
+	data-tour="data-dashboard-tiles"
+>
 	{#each tiles as tile (tile.key)}
 		<div class="flex flex-col rounded-lg border border-border bg-surface px-3 py-3">
 			<span class="text-xs text-muted-foreground">{tile.label}</span>

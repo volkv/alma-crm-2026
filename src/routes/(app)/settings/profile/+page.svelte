@@ -25,7 +25,7 @@
 	<title>Профиль — LCT CRM</title>
 </svelte:head>
 
-<Card.Root>
+<Card.Root data-tour="settings-profile-account">
 	<Card.Header>
 		<Card.Title>Учётная запись</Card.Title>
 		<Card.Description>
@@ -41,7 +41,7 @@
 	</Card.Content>
 </Card.Root>
 
-<Card.Root>
+<Card.Root data-tour="settings-profile-sessions">
 	<Card.Header>
 		<Card.Title>Сессии</Card.Title>
 		<Card.Description>

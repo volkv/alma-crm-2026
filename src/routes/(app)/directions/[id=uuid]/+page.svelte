@@ -104,7 +104,7 @@
 		</KeyValue>
 	</section>
 
-	<section class="rounded-lg border border-border bg-surface">
+	<section class="rounded-lg border border-border bg-surface" data-tour="direction-products">
 		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
 			<h2 class="text-sm font-semibold">Продукты</h2>
 			<span class="text-xs text-muted-foreground">
@@ -188,7 +188,7 @@
 		{/if}
 	</section>
 
-	<section class="rounded-lg border border-border bg-surface">
+	<section class="rounded-lg border border-border bg-surface" data-tour="direction-programs">
 		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
 			<h2 class="text-sm font-semibold">Программы</h2>
 			<span class="text-xs text-muted-foreground">

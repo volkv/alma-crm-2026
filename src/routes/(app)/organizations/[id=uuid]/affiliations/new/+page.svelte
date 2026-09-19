@@ -56,6 +56,7 @@
 		</div>
 	{:else}
 		<form
+			data-tour="organization-affiliation-new-form"
 			method="POST"
 			use:enhance
 			novalidate

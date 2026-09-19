@@ -30,7 +30,13 @@
 	]);
 </script>
 
-<nav class="-mx-1 overflow-x-auto px-1 py-0.5" aria-label="Разделы данных об обучении">
+<!-- `data-tour` — метка подсказок: полосу разделов показывают шаги всех трёх
+	экранов данных об обучении (`$lib/onboarding/screens`). -->
+<nav
+	class="-mx-1 overflow-x-auto px-1 py-0.5"
+	aria-label="Разделы данных об обучении"
+	data-tour="data-sections"
+>
 	<div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-[3px]">
 		{#each tabs as tab (tab.href)}
 			{@const active = page.url.pathname === tab.href}

@@ -67,7 +67,9 @@
 	}
 </script>
 
-<section class="rounded-lg border border-border bg-surface">
+<!-- `data-tour` — метка подсказок: по ней тур находит панель оснований
+	обработки на карточке человека (`$lib/onboarding/screens`). -->
+<section class="rounded-lg border border-border bg-surface" data-tour="person-personal-data">
 	<header
 		class="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3"
 	>

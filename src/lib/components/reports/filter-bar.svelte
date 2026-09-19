@@ -40,7 +40,8 @@
 	}
 </script>
 
-<div class="flex flex-col gap-3" data-slot="report-filters">
+<!-- `data-tour` — метка подсказок (`$lib/onboarding/screens`). -->
+<div class="flex flex-col gap-3" data-slot="report-filters" data-tour="reports-filters">
 	<div class="flex flex-wrap items-end gap-3">
 		<div class="flex flex-col gap-1.5">
 			<Label for="report-from" class="text-xs text-muted-foreground">Период с</Label>

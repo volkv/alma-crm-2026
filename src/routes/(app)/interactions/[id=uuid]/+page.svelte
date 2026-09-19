@@ -99,7 +99,7 @@
 </PageHeader>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
-	<div class="rounded-lg border border-border bg-surface p-4">
+	<div class="rounded-lg border border-border bg-surface p-4" data-tour="interaction-timeline">
 		<StageTimeline
 			stages={toTimelineStages(data.status.progress, {
 				assignee: data.summary.whoActs.responsibleUser?.name ?? null
@@ -147,7 +147,7 @@
 	<Tabs.Root bind:value={() => tab, (next) => openTab(next)} bind:ref={panels} class="min-w-0">
 		<!-- Шесть вкладок в строку шире телефона: на узком экране список
 			прокручивается сам, а не уносит вправо весь документ. -->
-		<Tabs.List class="max-w-full overflow-x-auto">
+		<Tabs.List class="max-w-full overflow-x-auto" data-tour="interaction-tabs">
 			<Tabs.Trigger value="work">Стадия</Tabs.Trigger>
 			<Tabs.Trigger value="documents">Документы</Tabs.Trigger>
 			<Tabs.Trigger value="blockers">Помехи</Tabs.Trigger>

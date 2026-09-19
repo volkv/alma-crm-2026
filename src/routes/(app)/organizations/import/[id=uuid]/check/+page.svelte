@@ -80,7 +80,7 @@
 		</Alert.Root>
 	{/if}
 
-	<div class="grid gap-3 sm:grid-cols-5">
+	<div class="grid gap-3 sm:grid-cols-5" data-tour="organizations-import-check-counts">
 		<div class="rounded-lg border border-border bg-surface p-4">
 			<p class="text-xs text-muted-foreground">Строк в файле</p>
 			<p class="text-xl font-semibold" data-slot="count-rows">
@@ -132,7 +132,7 @@
 			: 'Под этот фильтр не подошла ни одна строка.'}
 	/>
 
-	<div class="grid gap-4 lg:grid-cols-2">
+	<div class="grid gap-4 lg:grid-cols-2" data-tour="organizations-import-check-decide">
 		<Card.Root size="sm">
 			<Card.Header>
 				<Card.Title>Применить</Card.Title>

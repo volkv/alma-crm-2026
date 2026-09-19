@@ -1,5 +1,6 @@
 <script lang="ts" generics="TData extends RowData">
 	import { untrack, type Snippet } from 'svelte';
+	import type { HTMLAttributes } from 'svelte/elements';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import {
@@ -59,7 +60,8 @@
 		defaultSort,
 		onopen,
 		bulkActions,
-		class: className
+		class: className,
+		...rest
 	}: {
 		columns: ColumnDef<DataTableFeatures, TData>[];
 		/** The current page of rows, in the order they should be shown. */
@@ -98,7 +100,12 @@
 		/** Actions over the selected rows; selection is off when this is absent. */
 		bulkActions?: Snippet<[{ ids: string[]; clear: () => void }]>;
 		class?: string;
-	} = $props();
+		/**
+		 * Остальное уезжает на корневой элемент списка. Нужно это одному —
+		 * метке `data-tour`, по которой подсказки находят список на экране: у
+		 * каждого раздела она своя, и зашить её внутрь общего компонента нельзя.
+		 */
+	} & HTMLAttributes<HTMLDivElement> = $props();
 
 	/**
 	 * Ширина окна, ниже которой второстепенные колонки стартуют скрытыми:
@@ -278,7 +285,7 @@
 
 <svelte:window onkeydown={onWindowKeydown} />
 
-<div class={cn('flex flex-col gap-3', className)} data-slot="data-table">
+<div class={cn('flex flex-col gap-3', className)} data-slot="data-table" {...rest}>
 	<div class="flex flex-wrap items-center gap-2">
 		{#if searchPlaceholder}
 			<div class="relative min-w-0 flex-1 sm:max-w-xs">

@@ -66,6 +66,7 @@
 	{/if}
 
 	<form
+		data-tour="organizations-import-form"
 		method="POST"
 		enctype="multipart/form-data"
 		class="flex max-w-3xl flex-col gap-4 rounded-lg border border-border bg-surface p-4 sm:p-6"
@@ -105,7 +106,7 @@
 	</p>
 
 	{#if data.imports.length > 0}
-		<section class="flex flex-col gap-2">
+		<section class="flex flex-col gap-2" data-tour="organizations-import-history">
 			<h2 class="text-sm font-medium">Последние загрузки</h2>
 			<div class="overflow-x-auto rounded-lg border border-border bg-surface">
 				<Table.Root>

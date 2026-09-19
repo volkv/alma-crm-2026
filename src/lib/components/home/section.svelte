@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import type { HTMLAttributes } from 'svelte/elements';
 	import { cn } from '$lib/utils';
 
 	/**
@@ -15,7 +16,8 @@
 		description,
 		action,
 		class: className,
-		children
+		children,
+		...rest
 	}: {
 		title: string;
 		description?: string;
@@ -23,12 +25,18 @@
 		action?: Snippet;
 		class?: string;
 		children: Snippet;
-	} = $props();
+		/**
+		 * Остальное уезжает на сам блок. Нужно это метке `data-tour`: подсказки
+		 * показывают пальцем на конкретный блок страницы, а какой это блок,
+		 * знает только тот, кто его ставит.
+		 */
+	} & HTMLAttributes<HTMLElement> = $props();
 </script>
 
 <section
 	class={cn('flex min-w-0 flex-col rounded-lg border border-border bg-surface', className)}
 	data-slot="home-section"
+	{...rest}
 >
 	<header
 		class="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3"

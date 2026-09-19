@@ -54,7 +54,10 @@
 </PageHeader>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
-	<section class="rounded-lg border border-border bg-surface p-4 sm:p-6">
+	<section
+		class="rounded-lg border border-border bg-surface p-4 sm:p-6"
+		data-tour="program-summary"
+	>
 		<h2 class="mb-4 text-sm font-semibold">Программа</h2>
 		<KeyValue>
 			<KeyValueRow label="Код" value={data.program.code} />
@@ -75,7 +78,7 @@
 		</KeyValue>
 	</section>
 
-	<section class="rounded-lg border border-border bg-surface">
+	<section class="rounded-lg border border-border bg-surface" data-tour="program-versions">
 		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
 			<h2 class="text-sm font-semibold">Версии</h2>
 		</header>

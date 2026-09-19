@@ -31,7 +31,13 @@
 	}: { current: number; steps?: readonly WizardStepDefinition[] } = $props();
 </script>
 
-<ol class="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm" data-slot="wizard-steps">
+<!-- `data-tour` — метка подсказок: полоску шагов показывают оба мастера
+	(`$lib/onboarding/screens`). -->
+<ol
+	class="flex flex-wrap items-center gap-x-3 gap-y-2 text-sm"
+	data-slot="wizard-steps"
+	data-tour="wizard-steps"
+>
 	{#each steps as step (step.number)}
 		{@const done = step.number < current}
 		{@const active = step.number === current}

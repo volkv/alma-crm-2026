@@ -64,7 +64,7 @@
 		</Alert.Root>
 	{/if}
 
-	<div class="grid gap-3 sm:grid-cols-3">
+	<div class="grid gap-3 sm:grid-cols-3" data-tour="data-check-counts">
 		<div class="rounded-lg border border-border bg-surface p-4">
 			<p class="text-xs text-muted-foreground">Строк в файле</p>
 			<p class="text-xl font-semibold">{formatNumber(data.snapshot.rowCount)}</p>
@@ -105,7 +105,7 @@
 			: 'В файле не нашлось ни одной строки данных.'}
 	/>
 
-	<div class="grid gap-4 lg:grid-cols-2">
+	<div class="grid gap-4 lg:grid-cols-2" data-tour="data-check-decide">
 		<Card.Root size="sm">
 			<Card.Header>
 				<Card.Title>Подтвердить</Card.Title>

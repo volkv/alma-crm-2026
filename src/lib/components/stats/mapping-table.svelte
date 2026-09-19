@@ -90,7 +90,9 @@
 	}
 </script>
 
-<div class="overflow-x-auto rounded-lg border border-border bg-surface">
+<!-- `data-tour` — метка подсказок: таблицу показывают шаги обоих мастеров —
+	загрузки данных и импорта каталога (`$lib/onboarding/screens`). -->
+<div class="overflow-x-auto rounded-lg border border-border bg-surface" data-tour="mapping-columns">
 	<Table.Root>
 		<Table.Header>
 			<Table.Row>

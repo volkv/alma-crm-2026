@@ -236,7 +236,7 @@
 			</EmptyState>
 		</div>
 	{:else}
-		<div class="flex flex-wrap items-center gap-3">
+		<div class="flex flex-wrap items-center gap-3" data-tour="documents-filters">
 			<FilterSelect param="kind" label="Вид" options={KIND_OPTIONS} />
 			<FilterSelect param="format" label="Формат" options={FORMAT_OPTIONS} />
 			<FilterSelect param="fact" label="Отметки" options={FACT_OPTIONS} allLabel="Любые" />
@@ -250,6 +250,7 @@
 		</div>
 
 		<DataTable
+			data-tour="documents-table"
 			{columns}
 			rows={data.rows}
 			total={data.total}

@@ -128,7 +128,7 @@
 			</EmptyState>
 		</div>
 	{:else}
-		<div class="flex flex-wrap items-center gap-3">
+		<div class="flex flex-wrap items-center gap-3" data-tour="data-dashboard-period">
 			<PeriodSelect periods={data.periods} />
 			<span class="text-sm text-muted-foreground">
 				{#if dashboard.updatedAt === null}
@@ -288,6 +288,7 @@
 		</Section>
 
 		<Section
+			data-tour="data-dashboard-origin"
 			title="Происхождение"
 			description="Из каких загрузок сложилась картина периода. Актуальность — это подтверждение импорта, а не момент загрузки файла."
 		>

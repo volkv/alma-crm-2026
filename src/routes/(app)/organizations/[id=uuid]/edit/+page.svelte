@@ -42,6 +42,7 @@
 
 <div class="p-4 sm:p-6">
 	<form
+		data-tour="organization-edit-form"
 		method="POST"
 		use:enhance
 		novalidate

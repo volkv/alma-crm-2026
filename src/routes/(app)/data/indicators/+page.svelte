@@ -182,7 +182,7 @@
 			</EmptyState>
 		</div>
 	{:else}
-		<div class="flex flex-wrap items-center gap-3">
+		<div class="flex flex-wrap items-center gap-3" data-tour="data-indicators-filters">
 			<FilterSelect param="period" label="Период" options={PERIOD_OPTIONS} allLabel="Все периоды" />
 			<FilterSelect param="programId" label="Программа" options={PROGRAM_OPTIONS} />
 			<FilterSelect param="organizationId" label="Организация" options={ORGANIZATION_OPTIONS} />
@@ -207,6 +207,7 @@
 
 			<Tabs.Content value="indicators" class="pt-4">
 				<DataTable
+					data-tour="data-indicators-table"
 					{columns}
 					rows={data.rows}
 					total={data.total}

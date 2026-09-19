@@ -198,13 +198,14 @@
 			</EmptyState>
 		</div>
 	{:else}
-		<div class="flex flex-wrap items-center gap-3">
+		<div class="flex flex-wrap items-center gap-3" data-tour="data-filters">
 			<FilterSelect param="source" label="Источник" options={SOURCE_OPTIONS} />
 			<FilterSelect param="status" label="Состояние" options={STATUS_OPTIONS} />
 			<span class="text-sm text-muted-foreground">Всего: {formatNumber(data.total)}</span>
 		</div>
 
 		<DataTable
+			data-tour="data-table"
 			{columns}
 			rows={data.rows}
 			total={data.total}

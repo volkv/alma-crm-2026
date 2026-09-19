@@ -105,11 +105,12 @@
 </PageHeader>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
-	<div class="flex flex-wrap items-center gap-3">
+	<div class="flex flex-wrap items-center gap-3" data-tour="directions-filters">
 		<FilterSelect param="state" label="Состояние" options={DIRECTION_STATE_OPTIONS} />
 	</div>
 
 	<DataTable
+		data-tour="directions-table"
 		{columns}
 		rows={data.rows}
 		total={data.total}

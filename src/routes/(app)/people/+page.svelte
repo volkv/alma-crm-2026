@@ -102,7 +102,7 @@
 </PageHeader>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
-	<div class="flex flex-wrap items-center gap-3">
+	<div class="flex flex-wrap items-center gap-3" data-tour="people-filters">
 		<FilterSelect
 			param="organization"
 			label="Организация"
@@ -121,6 +121,7 @@
 	{/if}
 
 	<DataTable
+		data-tour="people-table"
 		{columns}
 		rows={data.rows}
 		total={data.total}

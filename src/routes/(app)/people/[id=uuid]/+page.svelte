@@ -71,7 +71,10 @@
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<ActionAlert />
 
-	<section class="rounded-lg border border-border bg-surface p-4 sm:p-6">
+	<section
+		class="rounded-lg border border-border bg-surface p-4 sm:p-6"
+		data-tour="person-contacts"
+	>
 		<h2 class="mb-4 text-sm font-semibold">Контактные данные</h2>
 		<KeyValue>
 			<KeyValueRow label="Почта" value={data.person.email} />
@@ -101,7 +104,7 @@
 		/>
 	{/if}
 
-	<section class="rounded-lg border border-border bg-surface">
+	<section class="rounded-lg border border-border bg-surface" data-tour="person-affiliations">
 		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
 			<h2 class="text-sm font-semibold">Роли в организациях</h2>
 			{#if data.canWrite}

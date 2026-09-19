@@ -34,8 +34,8 @@
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<StatTiles counters={overview.counters} />
 
-	<!-- `data-tour` — метка для подсказок первого входа: по ней тур находит
-		блок, о котором говорит его шаг (`$lib/onboarding/steps`). -->
+	<!-- `data-tour` — метка подсказок: по ней тур находит блок, о котором
+		говорит его шаг (`$lib/onboarding/screens`). -->
 	<div data-tour="home-portfolio">
 		<HomeSection
 			title="Где стоит портфель"

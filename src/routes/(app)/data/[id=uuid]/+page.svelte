@@ -67,7 +67,7 @@
 </PageHeader>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
-	<div class="rounded-lg border border-border bg-surface p-4">
+	<div class="rounded-lg border border-border bg-surface p-4" data-tour="data-snapshot-summary">
 		<KeyValue>
 			<KeyValueRow label="Источник">{STAT_SOURCE_LABELS[snapshot.source]}</KeyValueRow>
 			<KeyValueRow label="Режим">
@@ -128,7 +128,7 @@
 		</div>
 	{/if}
 
-	<div class="flex flex-wrap items-center gap-2">
+	<div class="flex flex-wrap items-center gap-2" data-tour="data-snapshot-rows">
 		<Button variant={data.onlyIssues ? 'outline' : 'secondary'} size="sm" href={issuesHref(false)}>
 			Все строки
 		</Button>

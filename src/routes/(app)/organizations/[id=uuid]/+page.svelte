@@ -212,7 +212,7 @@
 		{/if}
 	</section>
 
-	<section class="rounded-lg border border-border bg-surface">
+	<section class="rounded-lg border border-border bg-surface" data-tour="organization-responsibles">
 		<header class="border-b border-border px-4 py-3">
 			<h2 class="text-sm font-semibold">Ответственные</h2>
 			<p class="mt-1 text-xs text-muted-foreground">
@@ -374,7 +374,7 @@
 		{/if}
 	</section>
 
-	<section class="rounded-lg border border-border bg-surface">
+	<section class="rounded-lg border border-border bg-surface" data-tour="organization-sites">
 		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
 			<h2 class="text-sm font-semibold">Площадки</h2>
 			{#if data.canWrite}
@@ -437,7 +437,7 @@
 		canWrite={data.canWrite}
 	/>
 
-	<section class="rounded-lg border border-border bg-surface">
+	<section class="rounded-lg border border-border bg-surface" data-tour="organization-contacts">
 		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
 			<h2 class="text-sm font-semibold">Контакты</h2>
 			{#if data.canWritePeople}

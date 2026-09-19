@@ -126,18 +126,23 @@
 	breadcrumbs={[{ label: 'Главная', href: resolve('/') }]}
 >
 	{#snippet actions()}
-		{#each REPORT_FORMATS as format (format)}
-			<Button
-				variant="outline"
-				size="sm"
-				href={exportHref(page.url, format)}
-				data-sveltekit-reload
-				data-testid="report-export-{format}"
-			>
-				<DownloadIcon aria-hidden="true" />
-				{REPORT_FORMAT_LABELS[format]}
-			</Button>
-		{/each}
+		<!-- Кнопки выгрузки собраны в один блок: подсказка показывает пальцем на
+			выгрузку целиком, а не на первый из форматов. Раскладка та же, что у
+			полосы действий заголовка, — обёртка её повторяет. -->
+		<div class="flex flex-wrap items-center gap-2" data-tour="reports-export">
+			{#each REPORT_FORMATS as format (format)}
+				<Button
+					variant="outline"
+					size="sm"
+					href={exportHref(page.url, format)}
+					data-sveltekit-reload
+					data-testid="report-export-{format}"
+				>
+					<DownloadIcon aria-hidden="true" />
+					{REPORT_FORMAT_LABELS[format]}
+				</Button>
+			{/each}
+		</div>
 	{/snippet}
 </PageHeader>
 
@@ -145,7 +150,7 @@
 	с отрицательным отступом выходила за край окна, а «Колонки» и «Сбросить
 	фильтр» стояли вплотную к правому краю. -->
 <div class="flex flex-col gap-4 p-4 sm:p-6">
-	<nav class="-mx-1 overflow-x-auto px-1 py-0.5" aria-label="Режим отчёта">
+	<nav class="-mx-1 overflow-x-auto px-1 py-0.5" aria-label="Режим отчёта" data-tour="reports-mode">
 		<div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-[3px]">
 			{#each REPORT_MODES as mode (mode)}
 				<a
@@ -184,7 +189,7 @@
 		{isFiltered}
 	/>
 
-	<!-- `data-tour` — метка для подсказок первого входа (`$lib/onboarding/steps`). -->
+	<!-- `data-tour` — метка подсказок (`$lib/onboarding/screens`). -->
 	<div class="grid grid-cols-2 gap-3 sm:grid-cols-4" data-tour="reports-totals">
 		<div class="flex flex-col rounded-lg border border-border bg-surface px-3 py-3">
 			<span class="text-xs text-muted-foreground">

@@ -106,7 +106,9 @@
 	}
 </script>
 
-<section class="rounded-lg border border-border bg-surface">
+<!-- `data-tour` — метка подсказок: по ней тур находит блок договоров на
+	карточке организации (`$lib/onboarding/screens`). -->
+<section class="rounded-lg border border-border bg-surface" data-tour="organization-contracts">
 	<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
 		<div>
 			<h2 class="text-sm font-semibold">Договоры</h2>

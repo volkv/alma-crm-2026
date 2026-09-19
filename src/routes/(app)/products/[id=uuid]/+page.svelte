@@ -39,7 +39,10 @@
 </PageHeader>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
-	<section class="rounded-lg border border-border bg-surface p-4 sm:p-6">
+	<section
+		class="rounded-lg border border-border bg-surface p-4 sm:p-6"
+		data-tour="product-summary"
+	>
 		<h2 class="mb-4 text-sm font-semibold">Продукт</h2>
 		<KeyValue>
 			<KeyValueRow label="Код" value={data.product.code} />

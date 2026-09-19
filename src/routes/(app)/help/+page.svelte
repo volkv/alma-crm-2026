@@ -35,7 +35,7 @@
 				Полный тур по системе
 			</Button>
 		{/if}
-		<Button variant="outline" href={resolve('/(app)/help/print')}>
+		<Button variant="outline" href={resolve('/(app)/help/print')} data-tour="help-print">
 			<PrinterIcon aria-hidden="true" />
 			Версия для печати
 		</Button>

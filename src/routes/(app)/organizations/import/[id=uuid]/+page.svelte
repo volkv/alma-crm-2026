@@ -74,7 +74,7 @@
 		<KeyValueRow label="Примечание" value={data.record.note} />
 	</KeyValue>
 
-	<div class="grid gap-3 sm:grid-cols-4">
+	<div class="grid gap-3 sm:grid-cols-4" data-tour="organizations-import-run-counts">
 		{#each CATALOG_ROW_ACTIONS as action (action)}
 			<div class="rounded-lg border border-border bg-surface p-4">
 				<p class="text-xs text-muted-foreground">{CATALOG_ROW_ACTION_DONE_LABELS[action]}</p>
@@ -90,7 +90,7 @@
 		{/each}
 	</div>
 
-	<div class="flex flex-wrap items-center gap-2">
+	<div class="flex flex-wrap items-center gap-2" data-tour="organizations-import-run-rows">
 		<Button
 			variant={data.action === null ? 'secondary' : 'outline'}
 			size="sm"
