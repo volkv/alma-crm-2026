@@ -771,3 +771,35 @@ test('на ноутбуке список начинается без второ�
 	await page.keyboard.press('Escape');
 	await expect(header.getByText('Ответственный')).toBeVisible();
 });
+
+test('выбранное представление раздел помнит, а ссылка с адресом — важнее памяти', async ({
+	page
+}) => {
+	await createInteraction(page);
+
+	await page.goto('/interactions');
+	await waitForHydration(page);
+	await expect(page.locator('[data-slot="data-table"]')).toBeVisible();
+
+	await page.getByRole('button', { name: 'Доска' }).click();
+	await expect(page).toHaveURL(/[?&]view=board/);
+
+	// Ушли из раздела и вернулись адресом без параметра: «как обычно» — это то,
+	// чем раздел смотрели в прошлый раз, и приходит оно сразу с сервера —
+	// таблицей по дороге не мелькает.
+	await page.goto('/');
+	await page.goto('/interactions');
+	await expect(page.locator('[data-slot="data-table"]')).toHaveCount(0);
+	await waitForHydration(page);
+	await expect(page.locator('[data-slot="data-table"]')).toHaveCount(0);
+
+	// Память личная, а ссылка — общая: пришли по адресу с представлением —
+	// показывается ровно то, чем поделились.
+	await page.goto('/interactions?view=table');
+	await waitForHydration(page);
+	await expect(page.locator('[data-slot="data-table"]')).toBeVisible();
+
+	// И этот выбор становится новым «как обычно».
+	await page.goto('/interactions');
+	await expect(page.locator('[data-slot="data-table"]')).toBeVisible();
+});

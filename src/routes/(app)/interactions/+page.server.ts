@@ -18,7 +18,8 @@ import { can } from '$lib/server/rbac';
 import { advanceStage, returnStage, setResponsible, skipStage } from '$lib/server/stages/commands';
 import { readFilters } from './filters';
 import { responsibleOptions } from './responsible';
-import type { Actions, PageServerLoad } from './$types';
+import { storedView, VIEW_COOKIE } from './view-preference';
+import type { Actions, PageServerLoad, RequestEvent } from './$types';
 
 /** Колонки, по которым список сортируется на сервере. */
 const SORTABLE = new Set(['title', 'dueAt', 'lastActivityAt']);
@@ -42,11 +43,20 @@ function toSort(sortBy: string | null, direction: 'asc' | 'desc'): InteractionSo
 
 /**
  * Выбранное представление. Значение из адреса — это ввод человека: непонятное
- * `view=xyz` не ошибка запроса, а просто не доска, и раздел открывается тем же
- * списком, что и адрес без параметра вовсе.
+ * `view=xyz` не ошибка запроса, а просто не доска.
+ *
+ * Адрес важнее памяти: пришли по ссылке с `view` — показывается ровно то, чем
+ * поделились. Адрес без параметра означает «как обычно», и обычное берётся из
+ * куки — выбора, сделанного в прошлый раз (`view-preference.ts`).
  */
-function readView(url: URL): InteractionViewMode {
-	return url.searchParams.get('view') === 'board' ? 'board' : 'table';
+function readView(event: Pick<RequestEvent, 'url' | 'cookies'>): InteractionViewMode {
+	const requested = event.url.searchParams.get('view');
+
+	if (requested !== null) {
+		return requested === 'board' ? 'board' : 'table';
+	}
+
+	return storedView(event.cookies.get(VIEW_COOKIE));
 }
 
 /** Претензии схемы перехода — словами и рядом с действием, а не «не вышло». */
@@ -61,7 +71,7 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 	const table = readTableQuery(event.url);
 	const filters = readFilters(event.url);
-	const view = readView(event.url);
+	const view = readView(event);
 	const ownerUserId = filters.mine ? (event.locals.user?.id ?? null) : null;
 
 	// Пустой список под фильтром и пустой раздел — разные состояния: в первом

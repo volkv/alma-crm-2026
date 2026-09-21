@@ -41,6 +41,7 @@
 		STAGE_CATEGORY_LABELS,
 		type InteractionFilters
 	} from './filters';
+	import { storeView } from './view-preference';
 	import type { PageProps } from './$types';
 
 	let { data, form }: PageProps = $props();
@@ -149,10 +150,20 @@
 	/**
 	 * Представление живёт в адресе рядом с фильтрами: отобранный набор один, и
 	 * ссылка на него должна переносить и способ, которым на него смотрят.
+	 *
+	 * Оба значения пишутся в адрес явно, и таблица тоже: адрес без параметра
+	 * теперь значит не «таблица», а «как обычно» — то представление, которое
+	 * человек выбрал в прошлый раз.
 	 */
 	function viewHref(mode: InteractionViewMode) {
-		return filterHref(page.url, 'view', mode === 'board' ? 'board' : '');
+		return filterHref(page.url, 'view', mode);
 	}
+
+	// Показанное представление и есть выбор человека — и на него запоминается:
+	// в следующий раз раздел откроется им же (`view-preference.ts`).
+	$effect(() => {
+		storeView(data.view);
+	});
 </script>
 
 <!-- Наименование организации бывает длиной в строку устава, а колонки справа от
