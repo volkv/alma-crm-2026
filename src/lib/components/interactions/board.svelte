@@ -184,84 +184,95 @@
 		/>
 	</div>
 {:else}
-	<p class="text-sm text-muted-foreground">
-		Процесс группы «{board.groupName}»: колонки — его действующие стадии.
-	</p>
-	{#if canTransition}
-		<InlineHint>
-			Карточку можно перетащить в соседнюю колонку — или перевести её пунктом меню на самой
-			карточке. Переход выполняет движок: если стадия к нему не готова, карточка останется на месте
-			и скажет почему.
-		</InlineHint>
-	{/if}
+	<!-- Подпись, подсказка и сама доска — три отдельных куска, и разделяет их
+		этот контейнер: страница ставит доску в обычный блок, и без него они
+		слипались в сплошную стену текста над колонками. -->
+	<div class="flex flex-col gap-3">
+		<p class="text-sm text-muted-foreground">
+			Процесс группы «{board.groupName}»: колонки — его действующие стадии.
+		</p>
+		{#if canTransition}
+			<InlineHint>
+				Карточку можно перетащить в соседнюю колонку — или перевести её пунктом меню на самой
+				карточке. Переход выполняет движок: если стадия к нему не готова, карточка останется на
+				месте и скажет почему.
+			</InlineHint>
+		{/if}
 
-	<!-- Колонок четырнадцать, и на телефоне они не поместятся никогда: вбок
-		уезжает сама доска, а не документ вокруг неё. -->
-	<div class="flex gap-3 overflow-x-auto pb-2" data-slot="interactions-board">
-		{#each board.columns as column (column.stageId)}
-			<section
-				class={cn(
-					'flex w-72 shrink-0 flex-col gap-2 rounded-lg border p-2 transition-colors',
-					hovered === column.stageId && targets.has(column.stageId)
-						? 'border-primary bg-primary-soft'
-						: hovered === column.stageId
-							? 'border-border-strong bg-surface-muted'
-							: dragged !== null && targets.has(column.stageId)
-								? 'border-primary-soft-border bg-surface-muted'
-								: 'border-border bg-surface-muted'
-				)}
-				aria-label="Стадия: {column.name}"
-				ondragover={(event) => over(event, column)}
-				ondragleave={(event) => leave(event, column)}
-				ondrop={(event) => drop(event, column)}
-			>
-				<header class="flex items-start justify-between gap-2">
-					<h2 class="min-w-0 text-xs leading-tight font-medium" title={column.name}>
-						{column.name}
-					</h2>
-					<span class="flex shrink-0 items-center gap-1">
-						<StatusBadge tone="neutral" title="Взаимодействий на стадии">
-							{column.count}
-						</StatusBadge>
-						{#if column.overdue > 0}
-							<StatusBadge tone="danger" dot title="Из них просрочено">
-								{column.overdue}
+		<!-- Колонок четырнадцать, и на телефоне они не поместятся никогда: вбок
+			уезжает сама доска, а не документ вокруг неё. -->
+		<div class="flex gap-3 overflow-x-auto pb-2" data-slot="interactions-board">
+			{#each board.columns as column (column.stageId)}
+				<section
+					class={cn(
+						'flex w-72 shrink-0 flex-col gap-2 rounded-lg border p-2 transition-colors',
+						hovered === column.stageId && targets.has(column.stageId)
+							? 'border-primary bg-primary-soft'
+							: hovered === column.stageId
+								? 'border-border-strong bg-surface-muted'
+								: dragged !== null && targets.has(column.stageId)
+									? 'border-primary-soft-border bg-surface-muted'
+									: 'border-border bg-surface-muted'
+					)}
+					aria-label="Стадия: {column.name}"
+					ondragover={(event) => over(event, column)}
+					ondragleave={(event) => leave(event, column)}
+					ondrop={(event) => drop(event, column)}
+				>
+					<!-- `leading-5` равен высоте плашки со счётчиком: первая строка
+					названия и цифры справа тогда стоят на одной линии, а не расходятся
+					на пару пикселей, когда название переносится на две строки. -->
+					<header class="flex items-start justify-between gap-2">
+						<h2 class="min-w-0 text-sm leading-5 font-semibold" title={column.name}>
+							{column.name}
+						</h2>
+						<span class="flex shrink-0 items-center gap-1">
+							<StatusBadge tone="neutral" title="Взаимодействий на стадии">
+								{column.count}
 							</StatusBadge>
-						{/if}
-					</span>
-				</header>
+							{#if column.overdue > 0}
+								<StatusBadge tone="danger" dot title="Из них просрочено">
+									{column.overdue}
+								</StatusBadge>
+							{/if}
+						</span>
+					</header>
 
-				{#if column.cards.length === 0}
-					<p
-						class="rounded-md border border-dashed border-border px-2 py-8 text-center text-xs text-faint"
-					>
-						Здесь пусто
-					</p>
-				{:else}
-					<ul class="flex max-h-[60vh] flex-col gap-2 overflow-y-auto">
-						{#each column.cards as card (card.id)}
-							<BoardCard
-								{card}
-								{canTransition}
-								dragging={dragged?.id === card.id}
-								onmove={(option) => void move(card, option)}
-								ondragstart={() => (dragged = card)}
-								ondragend={() => {
-									dragged = null;
-									hovered = null;
-								}}
-							/>
-						{/each}
-					</ul>
-				{/if}
+					{#if column.cards.length === 0}
+						<p
+							class="rounded-md border border-dashed border-border px-2 py-8 text-center text-xs text-faint"
+						>
+							Здесь пусто
+						</p>
+					{:else}
+						<!-- Высота колонки — по карточкам в ней: вертикально крутится
+						страница, одна полоса на всё, как в списке. Своя полоса внутри
+						колонки прятала карточки за краем в четырнадцати местах сразу. -->
+						<ul class="flex flex-col gap-2">
+							{#each column.cards as card (card.id)}
+								<BoardCard
+									{card}
+									{canTransition}
+									dragging={dragged?.id === card.id}
+									onmove={(option) => void move(card, option)}
+									ondragstart={() => (dragged = card)}
+									ondragend={() => {
+										dragged = null;
+										hovered = null;
+									}}
+								/>
+							{/each}
+						</ul>
+					{/if}
 
-				{#if column.count > column.cards.length}
-					<p class="text-center text-xs text-muted-foreground">
-						Показаны {column.cards.length} из {column.count}: сузьте фильтр или откройте список.
-					</p>
-				{/if}
-			</section>
-		{/each}
+					{#if column.count > column.cards.length}
+						<p class="text-center text-xs text-muted-foreground">
+							Показаны {column.cards.length} из {column.count}: сузьте фильтр или откройте список.
+						</p>
+					{/if}
+				</section>
+			{/each}
+		</div>
 	</div>
 {/if}
 
