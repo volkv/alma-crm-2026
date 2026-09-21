@@ -88,32 +88,48 @@
 		(`$lib/onboarding/screens`). -->
 	<aside
 		data-tour="nav"
-		class="sticky top-0 hidden h-dvh shrink-0 flex-col self-start border-r border-border bg-surface transition-[width] duration-150 md:flex {nav.collapsed
+		class="sticky top-0 z-30 hidden h-dvh shrink-0 flex-col self-start border-r border-border bg-surface transition-[width] duration-150 md:flex {nav.collapsed
 			? 'w-14'
 			: 'w-60'}"
 	>
-		<!-- Шапка меню: название слева, кнопка сворачивания справа от него.
-			Свёрнутое меню шириной в один значок, и двое рядом туда не встанут:
-			там остаётся кнопка — без неё меню больше не развернуть, а на сводку ведёт
-			ещё и первый пункт списка. -->
+		<!-- Шапка меню: знак системы слева, кнопка сворачивания справа от него.
+			Свёрнутое меню шириной в один значок, и двое рядом туда не встанут —
+			но выгонять оттуда надо кнопку, а не знак: знак и есть то, по чему
+			меню узнают, и он остаётся на месте в обоих состояниях. Кнопка у
+			свёрнутого меню выходит за его правый край и встаёт в отступ
+			страницы — места там ровно на неё, и с содержимым она не спорит. -->
 		<div
-			class="flex h-14 shrink-0 items-center border-b border-border {nav.collapsed
+			class="relative flex h-14 shrink-0 items-center border-b border-border {nav.collapsed
 				? 'justify-center px-2'
 				: 'gap-1 px-3'}"
 		>
-			{#if !nav.collapsed}
-				<a href={resolve('/')} class="flex min-w-0 flex-1 items-center gap-2 rounded-md focus-ring">
-					<span
-						class="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground"
-						aria-hidden="true">CRM</span
-					>
+			<a
+				href={resolve('/')}
+				class="flex min-w-0 items-center gap-2 rounded-md focus-ring {nav.collapsed
+					? ''
+					: 'flex-1'}"
+			>
+				<span
+					class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary px-1 text-xs font-semibold text-primary-foreground"
+					aria-hidden="true">CRM</span
+				>
+				{#if !nav.collapsed}
 					<span class="truncate text-sm font-semibold tracking-tight">LCT CRM</span>
-				</a>
-			{/if}
+				{/if}
+			</a>
+			<!-- Слой кнопки задан меню целиком: `position: sticky` заводит свой
+				слой, и `z-index` изнутри против липкой шапки страницы не работает —
+				меню стоит на `z-30`, шапка на `z-20`.
+
+				Вынесенная кнопка стоит поверх страницы и потому приглушена: в
+				полную силу она спорила с заголовком, рядом с которым висит. Под
+				курсором и под фокусом с клавиатуры она возвращается целиком. -->
 			<Button
 				variant="ghost"
 				size="icon-sm"
-				class="shrink-0 text-muted-foreground"
+				class="shrink-0 text-muted-foreground {nav.collapsed
+					? 'absolute top-1/2 left-full ml-0.5 -translate-y-1/2 bg-surface opacity-30 transition-opacity hover:opacity-100 focus-visible:opacity-100'
+					: ''}"
 				aria-label={nav.collapsed ? 'Развернуть навигацию' : 'Свернуть навигацию'}
 				onclick={() => nav.toggle()}
 			>
