@@ -93,32 +93,28 @@
 			? 'w-14'
 			: 'w-60'}"
 	>
-		<a
-			href={resolve('/')}
-			class="flex h-14 shrink-0 items-center border-b border-border px-3 focus-ring {nav.collapsed
-				? 'justify-center'
-				: 'gap-2'}"
+		<!-- Шапка меню: название слева, кнопка сворачивания справа от него.
+			Свёрнутое меню шириной в один значок, и двое рядом туда не встанут:
+			там остаётся кнопка — без неё меню больше не развернуть, а на сводку ведёт
+			ещё и первый пункт списка. -->
+		<div
+			class="flex h-14 shrink-0 items-center border-b border-border {nav.collapsed
+				? 'justify-center px-2'
+				: 'gap-1 px-3'}"
 		>
-			<span
-				class="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground"
-				aria-hidden="true">CRM</span
-			>
 			{#if !nav.collapsed}
-				<span class="truncate text-sm font-semibold tracking-tight">LCT CRM</span>
-			{:else}
-				<span class="sr-only">LCT CRM — сводка</span>
+				<a href={resolve('/')} class="flex min-w-0 flex-1 items-center gap-2 rounded-md focus-ring">
+					<span
+						class="flex size-7 shrink-0 items-center justify-center rounded-md bg-primary text-xs font-semibold text-primary-foreground"
+						aria-hidden="true">CRM</span
+					>
+					<span class="truncate text-sm font-semibold tracking-tight">LCT CRM</span>
+				</a>
 			{/if}
-		</a>
-
-		<div class="min-h-0 flex-1 overflow-y-auto">
-			<AppNav {links} collapsed={nav.collapsed} />
-		</div>
-
-		<div class="border-t border-border p-2">
 			<Button
 				variant="ghost"
 				size="icon-sm"
-				class="text-muted-foreground {nav.collapsed ? 'mx-auto' : ''}"
+				class="shrink-0 text-muted-foreground"
 				aria-label={nav.collapsed ? 'Развернуть навигацию' : 'Свернуть навигацию'}
 				onclick={() => nav.toggle()}
 			>
@@ -129,6 +125,19 @@
 				{/if}
 			</Button>
 		</div>
+
+		<div class="min-h-0 flex-1 overflow-y-auto">
+			<AppNav {links} collapsed={nav.collapsed} />
+		</div>
+
+		<!-- Учётная запись стоит в подвале меню, а не в шапке страницы: кто
+			вошёл и что ему открыто — один и тот же вопрос, и ответ на него читается в одном
+			столбце. Шапка при этом остаётся про текущую страницу. -->
+		{#if user}
+			<div class="border-t border-border">
+				<UserMenu {user} collapsed={nav.collapsed} side="right" />
+			</div>
+		{/if}
 	</aside>
 
 	<div class="flex min-w-0 flex-1 flex-col">
@@ -160,12 +169,21 @@
 							</Button>
 						{/snippet}
 					</Sheet.Trigger>
-					<Sheet.Content side="left" class="w-64 p-0">
-						<Sheet.Header class="h-14 justify-center border-b border-border px-4">
+					<Sheet.Content side="left" class="w-64 gap-0 p-0">
+						<Sheet.Header class="h-14 shrink-0 justify-center border-b border-border px-4">
 							<Sheet.Title class="text-sm font-semibold">LCT CRM</Sheet.Title>
 							<Sheet.Description class="sr-only">Разделы системы</Sheet.Description>
 						</Sheet.Header>
-						<AppNav {links} onnavigate={() => (mobileNavOpen = false)} />
+						<div class="min-h-0 flex-1 overflow-y-auto">
+							<AppNav {links} onnavigate={() => (mobileNavOpen = false)} />
+						</div>
+						<!-- Та же карточка учётной записи повторяется здесь: на
+							телефоне бокового меню нет, а выход из системы живёт только в ней. -->
+						{#if user}
+							<div class="shrink-0 border-t border-border">
+								<UserMenu {user} variant="dialog" />
+							</div>
+						{/if}
 					</Sheet.Content>
 				</Sheet.Root>
 
@@ -196,9 +214,6 @@
 					<div data-tour="theme-toggle" class="flex shrink-0 items-center">
 						<ThemeToggle />
 					</div>
-					{#if user}
-						<UserMenu {user} />
-					{/if}
 				</div>
 			</header>
 		</div>

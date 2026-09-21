@@ -1,6 +1,9 @@
 <script lang="ts">
 	import { page } from '$app/state';
+	import { resolve } from '$app/paths';
+	import SparklesIcon from '@lucide/svelte/icons/sparkles';
 	import { groupedSections } from '$lib/nav';
+	import { getOnboardingTour } from '$lib/onboarding/tour.svelte';
 	import { cn } from '$lib/utils';
 	import type { NavLink } from './nav-links';
 
@@ -28,6 +31,29 @@
 	const uid = $props.id();
 
 	const groups = $derived(groupedSections(links));
+
+	/**
+	 * Полный обход системы — не адрес, а действие, поэтому в списке
+	 * разделов (`$lib/nav`) его нет: он встаёт в разметке сразу под «Журналом»,
+	 * в той же группе, что и справка: сюда ходят по поводу, а не каждый день.
+	 * Роли без тура пункта не видят: меню не предлагает действие, которое
+	 * ничего не делает. Журнал закрыт правом, и тому, кому он не
+	 * открыт, пункт встаёт после «Справки» — концом той же группы.
+	 */
+	const tour = getOnboardingTour();
+
+	const auditHref = resolve('/(app)/audit');
+	const helpHref = resolve('/(app)/help');
+	/** Пункт, после которого встаёт тур; `null` — показывать его нечего. */
+	const tourAfter = $derived.by(() => {
+		if (tour.fullLength === 0) {
+			return null;
+		}
+
+		const others = links.filter((link) => link.href === auditHref || link.href === helpHref);
+
+		return others[0]?.href ?? null;
+	});
 </script>
 
 <nav class="flex flex-col p-2" aria-label="Разделы">
@@ -73,6 +99,25 @@
 						<span class="truncate">{link.label}</span>
 					{/if}
 				</a>
+				{#if link.href === tourAfter}
+					<button
+						type="button"
+						title={collapsed ? 'Тур по системе' : undefined}
+						onclick={() => {
+							tour.startFull();
+							onnavigate?.();
+						}}
+						class={cn(
+							'flex h-control items-center gap-2.5 rounded-md px-2.5 text-sm text-muted-foreground focus-ring transition-colors hover:bg-surface-muted hover:text-foreground',
+							collapsed && 'justify-center px-0'
+						)}
+					>
+						<SparklesIcon class="size-4 shrink-0" aria-hidden="true" />
+						{#if !collapsed}
+							<span class="truncate">Тур по системе</span>
+						{/if}
+					</button>
+				{/if}
 			{/each}
 		</div>
 	{/each}
