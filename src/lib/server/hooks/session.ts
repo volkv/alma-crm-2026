@@ -2,6 +2,7 @@ import type { Handle } from '@sveltejs/kit';
 import {
 	clearSessionCookie,
 	loadSessionUser,
+	renewSessionCookie,
 	SESSION_COOKIE,
 	touchSession
 } from '$lib/server/auth/session';
@@ -21,6 +22,12 @@ import {
  * SvelteKit attaches pending cookies to a route's response and to the redirect
  * the guard throws alike. A sign-in later in the same request sets the cookie
  * again, and that value wins over the reset.
+ *
+ * Сессию, которая продлилась, хук пересылает браузеру заново: срок жизни
+ * cookie — вторая половина скользящего окна, и без этой пересылки он стоял бы
+ * на месте от самого входа. Тогда браузер выбрасывал бы cookie через
+ * `session_idle_minutes` после входа независимо от работы человека, а
+ * продлённая сессия оставалась бы в Redis без того, чем её предъявить.
  */
 export const session: Handle = async ({ event, resolve }) => {
 	event.locals.user = null;
@@ -29,13 +36,17 @@ export const session: Handle = async ({ event, resolve }) => {
 	const sessionId = event.cookies.get(SESSION_COOKIE);
 
 	if (sessionId !== undefined) {
-		const userId = await touchSession(sessionId);
-		const user = userId === null ? null : await loadSessionUser(userId);
+		const touched = await touchSession(sessionId);
+		const user = touched === null ? null : await loadSessionUser(touched.userId);
 
-		if (user === null) {
+		if (touched === null || user === null) {
 			clearSessionCookie(event.cookies);
 		} else {
 			event.locals.user = user;
+
+			if (touched.renewFor !== null) {
+				renewSessionCookie(event.cookies, sessionId, touched.renewFor);
+			}
 		}
 	}
 

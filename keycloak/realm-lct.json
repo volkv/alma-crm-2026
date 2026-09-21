@@ -80,6 +80,7 @@
 	],
 	"users": [
 		{
+			"id": "9d1f0c2a-0001-4000-8000-000000000001",
 			"username": "admin",
 			"email": "admin@demo.lct-crm.local",
 			"firstName": "Администратор",
@@ -97,6 +98,7 @@
 			"realmRoles": ["crm-admin"]
 		},
 		{
+			"id": "9d1f0c2a-0002-4000-8000-000000000002",
 			"username": "lead",
 			"email": "lead@demo.lct-crm.local",
 			"firstName": "Руководитель",
@@ -114,6 +116,7 @@
 			"realmRoles": ["crm-lead"]
 		},
 		{
+			"id": "9d1f0c2a-0003-4000-8000-000000000003",
 			"username": "manager",
 			"email": "manager@demo.lct-crm.local",
 			"firstName": "Менеджер",

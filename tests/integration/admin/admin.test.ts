@@ -662,7 +662,7 @@ describe('граница демонстрационной сессии', () => {
 		);
 
 		// Чужая сессия пережила попытку.
-		expect(await touchSession(sessionId)).toBe(user.id);
+		expect(await touchSession(sessionId)).toMatchObject({ userId: user.id });
 		await destroySession(sessionId);
 	});
 

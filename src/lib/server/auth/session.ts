@@ -113,12 +113,26 @@ export async function createSession(
 	return sessionId;
 }
 
+/** Что дал разбор cookie: чья это сессия и пора ли переставить её срок. */
+export type TouchedSession = {
+	userId: string;
+	/**
+	 * Новый срок cookie в секундах — или `null`, если продлевать ещё рано.
+	 *
+	 * Срок cookie обязан двигаться вместе с ключом в Redis. Пока он ставился
+	 * один раз при входе, скользящее окно работало только на сервере: браузер
+	 * выбрасывал cookie через `session_idle_minutes` после входа, сколько бы
+	 * человек ни работал, — и продлённая сессия оставалась в Redis без того,
+	 * чем её предъявить.
+	 */
+	renewFor: number | null;
+};
+
 /**
- * Читает сессию и продлевает её. Возвращает идентификатор пользователя или
- * `null`, если сессии нет, она просрочена по бездействию (истёк ключ) или
- * перешагнула предельный срок.
+ * Читает сессию и продлевает её. Возвращает `null`, если сессии нет, она
+ * просрочена по бездействию (истёк ключ) или перешагнула предельный срок.
  */
-export async function touchSession(sessionId: string): Promise<string | null> {
+export async function touchSession(sessionId: string): Promise<TouchedSession | null> {
 	const redis = getRedis();
 	const raw = await redis.get(sessionKey(sessionId));
 
@@ -142,19 +156,22 @@ export async function touchSession(sessionId: string): Promise<string | null> {
 		return null;
 	}
 
-	if (now - Date.parse(record.lastSeenAt) >= TOUCH_INTERVAL_MS) {
+	const lastSeen = Date.parse(record.lastSeenAt);
+
+	// Непонятная отметка — повод продлить, а не повод не продлевать никогда:
+	// `NaN` в любом сравнении даёт `false`, и сессия с испорченной датой тихо
+	// дожила бы до предельного срока без единого продления.
+	if (!Number.isFinite(lastSeen) || now - lastSeen >= TOUCH_INTERVAL_MS) {
 		const remaining = Math.ceil((expiresAt - now) / 1000);
+		const ttl = Math.min(idleSeconds, remaining);
 		const next: SessionRecord = { ...record, lastSeenAt: new Date(now).toISOString() };
 
-		await redis.set(
-			sessionKey(sessionId),
-			JSON.stringify(next),
-			'EX',
-			Math.min(idleSeconds, remaining)
-		);
+		await redis.set(sessionKey(sessionId), JSON.stringify(next), 'EX', ttl);
+
+		return { userId: record.userId, renewFor: ttl };
 	}
 
-	return record.userId;
+	return { userId: record.userId, renewFor: null };
 }
 
 /** Id-токен входа, которым открыта сессия; `null` — сессии уже нет. */
@@ -315,13 +332,25 @@ function cookieOptions(): { httpOnly: true; sameSite: 'lax'; path: '/'; secure: 
 	};
 }
 
+/** Cookie нового входа: живёт по бездействию, но не дольше предельного срока. */
 export async function setSessionCookie(cookies: Cookies, sessionId: string): Promise<void> {
 	const { idleSeconds, absoluteSeconds } = await lifetimes();
 
-	cookies.set(SESSION_COOKIE, sessionId, {
-		...cookieOptions(),
-		maxAge: Math.min(idleSeconds, absoluteSeconds)
-	});
+	renewSessionCookie(cookies, sessionId, Math.min(idleSeconds, absoluteSeconds));
+}
+
+/**
+ * Переставляет срок cookie вслед за продлением ключа в Redis — ровно тем
+ * сроком, что достался ключу, то есть уже с учётом остатка до предельного
+ * срока. Поэтому cookie не переживает предельный срок и гаснет вместе с
+ * сессией, а не сама по себе.
+ *
+ * Зовётся из хука сессии не чаще, чем продлевается сама сессия: `Set-Cookie`
+ * на каждый запрос — это лишний заголовок на каждом `__data.json` и каждой
+ * картинке, а окно в тридцать минут от отставания на минуту не страдает.
+ */
+export function renewSessionCookie(cookies: Cookies, sessionId: string, maxAge: number): void {
+	cookies.set(SESSION_COOKIE, sessionId, { ...cookieOptions(), maxAge });
 }
 
 export function clearSessionCookie(cookies: Cookies): void {

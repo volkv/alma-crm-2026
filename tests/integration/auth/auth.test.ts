@@ -361,7 +361,7 @@ describe('сессии', () => {
 		});
 		openedSessions.add(sessionId);
 
-		expect(await touchSession(sessionId)).toBe(TEST_USER_IDS.manager);
+		expect(await touchSession(sessionId)).toMatchObject({ userId: TEST_USER_IDS.manager });
 
 		await revokeAllSessions(TEST_USER_IDS.manager);
 

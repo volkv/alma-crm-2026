@@ -21,7 +21,7 @@ const realm = JSON.parse(
 	waitIncrementSeconds: number;
 	maxFailureWaitSeconds: number;
 	clients: { clientId: string; redirectUris: string[] }[];
-	users: { username: string; credentials: { value: string }[] }[];
+	users: { id?: string; username: string; credentials: { value: string }[] }[];
 };
 
 /** Значение подстановки `${VAR:умолчание}` — то, с чем realm поднимается локально. */
@@ -43,6 +43,31 @@ function requiredLength(policy: string): number {
 }
 
 describe('realm каталога учётных записей', () => {
+	/**
+	 * `id` пользователя Keycloak — это `sub` его токенов, а `sub` — ключ, которым
+	 * приложение связывает запись каталога со своей (`users.external_subject`).
+	 * Без `id` в файле Keycloak выдаёт новый UUID на каждом импорте, то есть на
+	 * каждом пересоздании контейнера, и те же люди приезжают неузнанными: вход
+	 * отклоняется с «ваша почта уже числится за другой учётной записью системы»,
+	 * а отвязать их может только администратор — под которого тоже надо войти.
+	 *
+	 * Проверка стоит здесь, потому что пропажа `id` ничего не ломает ни в
+	 * импорте, ни в первом входе: она видна вторым входом после пересоздания
+	 * контейнера, то есть в чужой день и на чужой машине.
+	 */
+	it('у демонстрационных записей постоянные идентификаторы', () => {
+		const ids = realm.users.map((user) => {
+			expect(user.id, `у записи «${user.username}» нет id`).toMatch(
+				/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
+			);
+
+			return user.id;
+		});
+
+		// Один и тот же id у двух записей импорт принял бы не целиком.
+		expect(new Set(ids).size).toBe(realm.users.length);
+	});
+
 	it('общий пароль демонстрации отвечает политике самого realm', () => {
 		const policy = realm.passwordPolicy;
 		const length = requiredLength(policy);
