@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import postgres from 'postgres';
 import { test as base, type Page, type TestInfo } from '@playwright/test';
 import { expect, leadTest as test } from './fixtures';
@@ -36,7 +37,7 @@ const PERIOD_KEY = '2026-09-01..2027-08-31';
 /** Период загрузки этого прохода: свой, чтобы не пересечься с данными стенда. */
 const UPLOAD_PERIOD = { start: '2023-09-01', end: '2024-08-31' } as const;
 
-const FIXTURE = new URL('./fixtures/stats-sample.csv', import.meta.url).pathname;
+const FIXTURE = fileURLToPath(new URL('./fixtures/stats-sample.csv', import.meta.url));
 
 /** Метка прогона: делает название файла уникальным в общей базе. */
 const TAG = crypto.randomUUID().slice(0, 8);

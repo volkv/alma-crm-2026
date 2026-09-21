@@ -1,10 +1,11 @@
+import { fileURLToPath } from 'node:url';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
 import { afterAll, beforeAll, expect, it } from 'vitest';
 
-const migrationsFolder = new URL('../../drizzle', import.meta.url).pathname;
+const migrationsFolder = fileURLToPath(new URL('../../drizzle', import.meta.url));
 
 let container: StartedPostgreSqlContainer;
 let client: postgres.Sql;

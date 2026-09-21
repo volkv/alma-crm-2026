@@ -1,6 +1,7 @@
 import { execFile } from 'node:child_process';
 import { mkdir } from 'node:fs/promises';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { promisify } from 'node:util';
 import { Redis } from 'ioredis';
 import { chromium, type FullConfig } from '@playwright/test';
@@ -73,7 +74,7 @@ export const NO_ROLE_ACCOUNT = {
 	password: E2E_PASSWORD
 };
 
-const authDirectory = new URL('../.playwright/auth/', import.meta.url).pathname;
+const authDirectory = fileURLToPath(new URL('../.playwright/auth/', import.meta.url));
 
 /** Сессия демонстрационного менеджера: под ней идут почти все проверки. */
 export const MANAGER_STATE = path.join(authDirectory, 'manager.json');
@@ -160,7 +161,7 @@ async function ensureDatabase(url: string): Promise<void> {
  */
 async function migrateDatabase(env: ServerEnv): Promise<void> {
 	const { stdout } = await run(process.execPath, ['scripts/migrate.ts'], {
-		cwd: new URL('..', import.meta.url).pathname,
+		cwd: fileURLToPath(new URL('..', import.meta.url)),
 		env: { ...process.env, ...env }
 	});
 
@@ -173,7 +174,7 @@ async function migrateDatabase(env: ServerEnv): Promise<void> {
  */
 async function seedDatabase(env: ServerEnv): Promise<void> {
 	const { stdout } = await run(process.execPath, ['scripts/seed/index.ts'], {
-		cwd: new URL('..', import.meta.url).pathname,
+		cwd: fileURLToPath(new URL('..', import.meta.url)),
 		env: { ...process.env, ...env }
 	});
 

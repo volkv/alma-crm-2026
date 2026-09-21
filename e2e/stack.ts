@@ -17,6 +17,7 @@
  * рабочей копии, а не из образа. Контейнер `app` прогону не нужен.
  */
 import { spawnSync } from 'node:child_process';
+import { fileURLToPath } from 'node:url';
 import { E2E_EXCHANGE_ENV } from './exchange-keys.ts';
 
 /**
@@ -51,7 +52,7 @@ const SERVICES = [
 ] as const;
 
 const options = {
-	cwd: new URL('..', import.meta.url).pathname,
+	cwd: fileURLToPath(new URL('..', import.meta.url)),
 	env: {
 		...process.env,
 		...E2E_EXCHANGE_ENV,

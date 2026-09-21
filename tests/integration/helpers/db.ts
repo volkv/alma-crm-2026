@@ -22,6 +22,7 @@
  * — иначе `$env/dynamic/private` останется слепком `.env`, снятым при запуске
  * Vitest, и сервисы пойдут не в контейнер, а в базу разработчика.
  */
+import { fileURLToPath } from 'node:url';
 import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
@@ -37,7 +38,9 @@ import { DEFAULT_ROLES, type PermissionKey } from '$lib/server/rbac/permissions'
 import { defaultRolePermissions, seedRolesAndPermissions } from '$lib/server/rbac/seed';
 import { startTestStorage, type TestStorage } from './storage';
 
-const migrationsFolder = new URL('../../../drizzle', import.meta.url).pathname;
+// `fileURLToPath`, а не `.pathname`: на Windows последний отдаёт
+// `/C:/…/drizzle` — с ведущей косой, — и миграции по такому пути не находятся.
+const migrationsFolder = fileURLToPath(new URL('../../../drizzle', import.meta.url));
 
 /** Таблицы, строки которых приезжают с миграцией, а не с сидом или тестом. */
 const REFERENCE_TABLES = ['process_groups', 'process_group_counterparty_kinds'] as const;
@@ -61,6 +64,9 @@ export type TestDatabase = {
 	stop: () => Promise<void>;
 };
 
+/** Соединения, открытые по ходу подготовки: их закрывает уборка после отказа. */
+type OpenedConnections = { raw?: postgres.Sql; redis?: Redis };
+
 export async function startTestDatabase(): Promise<TestDatabase> {
 	// Параллельно: Redis и MinIO поднимаются заметно быстрее PostgreSQL и на
 	// общем времени файла не сказываются.
@@ -74,6 +80,29 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 		startTestStorage()
 	]);
 
+	// Всё, что дальше, может отказать — миграция, справочные строки, сид, — а
+	// три службы к этому моменту уже подняты. Без этой уборки отказ уносил бы
+	// ссылку на них вместе со стеком: `stop()` вызвать стало бы некому, тест
+	// получил бы `undefined`, а его `afterAll` с `database?.stop()` промолчал
+	// бы — и контейнеры жили бы до конца всего прогона, по трое на файл.
+	const opened: OpenedConnections = {};
+
+	try {
+		return await prepareTestDatabase(container, redisContainer, storage, opened);
+	} catch (error) {
+		opened.redis?.disconnect();
+		await opened.raw?.end({ timeout: 5 }).catch(() => undefined);
+		await Promise.allSettled([container.stop(), redisContainer.stop(), storage.stop()]);
+		throw error;
+	}
+}
+
+async function prepareTestDatabase(
+	container: StartedPostgreSqlContainer,
+	redisContainer: StartedRedisContainer,
+	storage: TestStorage,
+	opened: OpenedConnections
+): Promise<TestDatabase> {
 	const uri = container.getConnectionUri();
 
 	// Конфигурация читается из окружения целиком, поэтому заполняем её целиком:
@@ -103,6 +132,7 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 	}
 
 	const raw = postgres(uri, { max: 1 });
+	opened.raw = raw;
 	await migrate(drizzle(raw), { migrationsFolder });
 
 	// Справочные строки продукта, которые кладёт миграция: группы процесса и
@@ -118,6 +148,7 @@ export async function startTestDatabase(): Promise<TestDatabase> {
 	// Своё соединение, а не общее `getRedis()`: тестам его отдавать незачем, а
 	// закрывают они своё сами — и закрытое общее не годилось бы для уборки.
 	const redis = new Redis(redisContainer.getConnectionUrl());
+	opened.redis = redis;
 
 	// Динамический импорт: к этому моменту окружение уже выставлено, поэтому
 	// первый же `getConfig()` внутри увидит адрес контейнера.

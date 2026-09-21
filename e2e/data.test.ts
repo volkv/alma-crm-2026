@@ -1,4 +1,5 @@
 import { readFile } from 'node:fs/promises';
+import { fileURLToPath } from 'node:url';
 import ExcelJS from 'exceljs';
 import type { Page } from '@playwright/test';
 import { expect, leadTest as test } from './fixtures';
@@ -40,9 +41,9 @@ function ruDay(iso: string): string {
 /** Метка прогона: делает название файла уникальным в общей базе. */
 const TAG = crypto.randomUUID().slice(0, 8);
 
-const FIXTURE = new URL('./fixtures/stats-sample.csv', import.meta.url).pathname;
+const FIXTURE = fileURLToPath(new URL('./fixtures/stats-sample.csv', import.meta.url));
 /** Та же выгрузка, но JSON: объект со списком строк по ключу `rows`. */
-const JSON_FIXTURE = new URL('./fixtures/stats-sample.json', import.meta.url).pathname;
+const JSON_FIXTURE = fileURLToPath(new URL('./fixtures/stats-sample.json', import.meta.url));
 
 /**
  * Книга XLSX собирается в памяти прогоном: двоичный файл в репозитории нельзя
