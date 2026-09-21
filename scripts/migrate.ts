@@ -14,6 +14,7 @@
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
+import { fileURLToPath } from 'node:url';
 import { installKitAliases } from './seed/aliases.ts';
 
 // The app code below is written in build specifiers (`$lib/…`) that plain Node
@@ -38,7 +39,9 @@ if (!process.env.PII_ENCRYPTION_KEY) {
 	throw new Error('PII_ENCRYPTION_KEY is not set; cannot encrypt the contacts of people.');
 }
 
-const migrationsFolder = new URL('../drizzle', import.meta.url).pathname;
+// fileURLToPath, а не .pathname: на Windows у file-URL путь выходит с ведущим
+// слэшем (`/C:/…`), и читать миграции по нему drizzle не умеет.
+const migrationsFolder = fileURLToPath(new URL('../drizzle', import.meta.url));
 
 // Its own connection rather than `getDb()`: the app handle reads the whole
 // configuration, and migrating a database must not require a Redis address or

@@ -9,6 +9,11 @@ const pkg: { version: string } = JSON.parse(
 );
 
 export default defineConfig({
+	// strictPort: `ORIGIN` в `.env` и адреса возврата в realm Keycloak названы
+	// портом 5173. Занят он — прежний dev-сервер обычно и держит, — и Vite молча
+	// уходит на 5174: страницы открываются, а вход через каталог учётных записей
+	// уже нет. Лучше отказ на старте с понятной причиной.
+	server: { port: 5173, strictPort: true },
 	plugins: [
 		tailwindcss(),
 		sveltekit({
