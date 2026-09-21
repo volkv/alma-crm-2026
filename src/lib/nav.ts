@@ -28,7 +28,7 @@ import type { PermissionKey } from '$lib/server/rbac/permissions';
  * stay out of its way.
  */
 export const navGroups = [
-	{ id: 'main', label: 'Главная' },
+	{ id: 'main', label: 'Главное' },
 	{ id: 'directory', label: 'Справочники' },
 	{ id: 'settings', label: 'Настройки' },
 	{ id: 'other', label: 'Остальное' }
