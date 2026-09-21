@@ -69,11 +69,17 @@
 			></div>
 		{/if}
 		<div role="group" aria-labelledby={headingId} class="flex flex-col gap-0.5">
+			<!-- Заголовок группы набран не так, как её пункты, а во всём сразу:
+				мельче, жирнее и контрастнее. Мельче и жирнее — чтобы не читался
+				как ещё один пункт, который почему-то нельзя нажать; контрастнее —
+				потому что бледный он тонул в списке, особенно в тёмной теме.
+				`foreground` — самый сильный текстовый токен, и он сам держит обе
+				темы: в светлой почти чёрный, в тёмной почти белый. -->
 			<p
 				id={headingId}
 				class={collapsed
 					? 'sr-only'
-					: 'px-2.5 pt-1 pb-1.5 text-xs font-medium text-muted-foreground'}
+					: 'px-2.5 pt-1 pb-1.5 text-xs font-semibold tracking-wide text-foreground'}
 			>
 				{group.label}
 			</p>

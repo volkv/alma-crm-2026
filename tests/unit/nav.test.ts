@@ -88,14 +88,14 @@ describe('группы меню', () => {
 		expect(order).toEqual([...order].sort((a, b) => a - b));
 	});
 
-	it('кладут ежедневную работу в «Главную», каталоги в «Справочники», правила в «Настройки»', () => {
+	it('кладут ежедневную работу в «Главное», каталоги в «Справочники», правила в «Настройки»', () => {
 		const grouped = groupedSections(navSections).map((group) => [
 			group.label,
 			group.sections.map((section) => section.label)
 		]);
 
 		expect(grouped).toEqual([
-			['Главная', ['Сводка', 'Взаимодействия', 'Отчёты', 'Документы']],
+			['Главное', ['Сводка', 'Взаимодействия', 'Отчёты', 'Документы']],
 			[
 				'Справочники',
 				['Организации', 'Контакты', 'Программы', 'Продукты', 'Направления', 'Данные об обучении']
@@ -122,7 +122,7 @@ describe('группы меню', () => {
 		// «Справочники» над ничем стоять незачем.
 		const grouped = groupedSections(visibleSections(navSections, new Set()));
 
-		expect(grouped.map((group) => group.label)).toEqual(['Главная', 'Настройки', 'Остальное']);
+		expect(grouped.map((group) => group.label)).toEqual(['Главное', 'Настройки', 'Остальное']);
 	});
 });
 
