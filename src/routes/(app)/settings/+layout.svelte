@@ -44,7 +44,7 @@
 
 <Breadcrumbs
 	items={[
-		{ label: 'Главная', href: resolve('/') },
+		{ label: 'Главное', href: resolve('/') },
 		{ label: 'Настройки' },
 		...(inner !== null && current !== undefined
 			? [{ label: current.label, href: resolve(current.href) }]

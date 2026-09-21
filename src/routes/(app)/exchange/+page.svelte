@@ -56,7 +56,7 @@
 
 <Breadcrumbs
 	items={[
-		{ label: 'Главная', href: resolve('/') },
+		{ label: 'Главное', href: resolve('/') },
 		{ label: 'Настройки' },
 		{ label: 'Внешние системы' }
 	]}

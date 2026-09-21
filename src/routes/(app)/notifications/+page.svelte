@@ -63,7 +63,7 @@
 	так же, как путь к ним. -->
 <Breadcrumbs
 	items={[
-		{ label: 'Главная', href: resolve('/') },
+		{ label: 'Главное', href: resolve('/') },
 		{ label: 'Настройки' },
 		{ label: 'Уведомления' }
 	]}

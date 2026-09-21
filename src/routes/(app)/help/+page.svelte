@@ -42,7 +42,7 @@
 	{/snippet}
 </Header>
 
-<Breadcrumbs items={[{ label: 'Главная', href: resolve('/') }, { label: 'Справка' }]} />
+<Breadcrumbs items={[{ label: 'Главное', href: resolve('/') }, { label: 'Справка' }]} />
 
 <!-- `data-tour` — метка для подсказок (`$lib/onboarding/screens`). -->
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6" data-tour="help-sections">

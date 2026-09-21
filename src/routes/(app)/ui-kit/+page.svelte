@@ -246,7 +246,7 @@
 	{/snippet}
 </Header>
 
-<Breadcrumbs items={[{ label: 'Главная', href: resolve('/') }, { label: 'UI-кит' }]} />
+<Breadcrumbs items={[{ label: 'Главное', href: resolve('/') }, { label: 'UI-кит' }]} />
 
 <div class="flex flex-col gap-8 p-4 sm:px-9 sm:py-6">
 	<section class="flex flex-col gap-3">

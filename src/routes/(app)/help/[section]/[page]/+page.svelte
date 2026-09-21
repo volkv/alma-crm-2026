@@ -20,7 +20,7 @@
 
 <Breadcrumbs
 	items={[
-		{ label: 'Главная', href: resolve('/') },
+		{ label: 'Главное', href: resolve('/') },
 		{ label: 'Справка', href: resolve('/(app)/help') },
 		{ label: data.article.title }
 	]}
