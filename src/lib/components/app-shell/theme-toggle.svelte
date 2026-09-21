@@ -8,10 +8,18 @@
 	/**
 	 * Светлая, тёмная или как в системе.
 	 *
-	 * Три кнопки, а не одна переключающая: у «как в системе» нет положения на
-	 * тумблере — она не третье состояние света, а отказ выбирать за браузер.
-	 * Нажатое положение говорит `aria-pressed`, а не цвет: цвет тут как раз тот,
-	 * которым человек, возможно, и не пользуется.
+	 * Одна кнопка вместо трёх: в шапке место дороже полноты списка, а выбор тут
+	 * из трёх положений по кругу — светлая, тёмная, как в системе. Значок
+	 * показывает не следующее нажатие, а то, что выбрано сейчас: переключатель
+	 * обязан прежде всего отвечать на вопрос «что стоит», а куда он поедет,
+	 * говорят подпись и подсказка.
+	 *
+	 * Значки стоят все три, а видимым один делает CSS по `data-theme-preference`
+	 * на <html> (`app.css`). Рисовать сразу выбранный нельзя: выбор лежит в
+	 * `localStorage`, серверу он неизвестен, и разметка с сервера разошлась бы с
+	 * разметкой после оживления — оживление правило бы чужой <svg> под себя, и от
+	 * значка оставались куски. Атрибут ставит `static/theme.js` до первого кадра,
+	 * поэтому после перезагрузки виден сразу выбранный значок.
 	 *
 	 * Выбор запоминается на устройстве (`$lib/theme.svelte.ts`), поэтому переключатель
 	 * может стоять в нескольких местах сразу — все они показывают один выбор.
@@ -23,29 +31,26 @@
 		dark: MoonIcon,
 		system: MonitorIcon
 	};
+
+	const next = $derived(
+		THEME_PREFERENCES[(THEME_PREFERENCES.indexOf(theme.preference) + 1) % THEME_PREFERENCES.length]
+	);
 </script>
 
-<div
-	role="group"
-	aria-label="Тема оформления"
+<button
+	type="button"
 	data-slot="theme-toggle"
+	data-theme-option={theme.preference}
+	aria-label={`Тема оформления: ${THEME_LABELS[theme.preference]}. Переключить на: ${THEME_LABELS[next]}`}
+	title={`${THEME_LABELS[theme.preference]} — переключить на: ${THEME_LABELS[next]}`}
 	class={cn(
-		'inline-flex shrink-0 items-center gap-0.5 rounded-md border border-border p-0.5',
+		'flex size-8 shrink-0 items-center justify-center rounded-md border border-border text-muted-foreground focus-ring transition-colors hover:bg-surface-muted hover:text-foreground',
 		className
 	)}
+	onclick={() => theme.select(next)}
 >
 	{#each THEME_PREFERENCES as preference (preference)}
 		{@const Icon = icons[preference]}
-		<button
-			type="button"
-			aria-pressed={theme.preference === preference}
-			aria-label={THEME_LABELS[preference]}
-			title={THEME_LABELS[preference]}
-			data-theme-option={preference}
-			class="flex size-7 items-center justify-center rounded-sm text-muted-foreground focus-ring transition-colors hover:bg-surface-muted hover:text-foreground aria-pressed:bg-primary-soft aria-pressed:text-primary"
-			onclick={() => theme.select(preference)}
-		>
-			<Icon class="size-4" aria-hidden="true" />
-		</button>
+		<Icon class="size-4" data-theme-icon={preference} aria-hidden="true" />
 	{/each}
-</div>
+</button>

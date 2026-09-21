@@ -15,12 +15,20 @@
  * Значение атрибута — всегда `light` или `dark`. Выбор «как в системе»
  * хранится в `localStorage` как `system` и разрешается здесь же: значения
  * тёмной темы в `app.css` от этого лежат в одном блоке, а не в двух.
+ *
+ * Рядом встаёт второй атрибут — `data-theme-preference`: не что на экране, а
+ * что выбрано, вместе с неразрешённым `system`. По нему `app.css` показывает
+ * нужный значок на кнопке темы. Сервер выбора не знает и рисует все три значка
+ * сразу, поэтому разметка с сервера и разметка после оживления совпадают, а
+ * видимым значок делает этот атрибут — уже в первом кадре.
  */
 (function () {
 	var stored = localStorage.getItem('lct-crm:theme');
+	var preference = stored === 'dark' || stored === 'system' ? stored : 'light';
 	var dark =
-		stored === 'dark' ||
-		(stored === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
+		preference === 'dark' ||
+		(preference === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);
 
 	document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+	document.documentElement.dataset.themePreference = preference;
 })();

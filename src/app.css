@@ -83,6 +83,30 @@
 @custom-variant dark (&:where([data-theme='dark'], [data-theme='dark'] *));
 
 /*
+ * Значок на кнопке темы: какой из трёх видно, решает `data-theme-preference` на
+ * <html> — сам выбор, вместе с неразрешённым `system`.
+ *
+ * Выбор лежит в `localStorage` и серверу неизвестен, поэтому кнопка приезжает
+ * со всеми тремя значками сразу: разметка с сервера и разметка после оживления
+ * совпадают — иначе оживление правило бы <svg> под собой и от значка оставались
+ * куски. Видимым один делает этот атрибут, а ставит его `static/theme.js` до
+ * первого кадра, так что после перезагрузки значок сразу тот, что выбран.
+ *
+ * Атрибута нет вовсе — значит, скрипт не отработал; тогда видно светлое
+ * положение, то самое умолчание, с которым приехала страница.
+ */
+[data-slot='theme-toggle'] [data-theme-icon] {
+	display: none;
+}
+
+html[data-theme-preference='light'] [data-theme-icon='light'],
+html[data-theme-preference='dark'] [data-theme-icon='dark'],
+html[data-theme-preference='system'] [data-theme-icon='system'],
+html:not([data-theme-preference]) [data-theme-icon='light'] {
+	display: block;
+}
+
+/*
  * Design tokens. Tailwind 4 is configured in CSS — there is no
  * tailwind.config.js. Сначала идут значения «Дизайн-системы Ростелекома»
  * (светлая тема), затем сырая палитра продукта, которая на них ссылается, и

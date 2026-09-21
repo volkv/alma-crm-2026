@@ -244,8 +244,17 @@ async function capture(context: BrowserContext, shot: Frame, set: FrameSet): Pro
 
 		// Тема переключается тем же переключателем в шапке, которым её переключает
 		// человек: на кадре видно и выбранное положение, а не только цвета.
+		// Кнопка одна, положения идут по кругу — отсюда нажатия до нужного.
 		if (shot.theme !== undefined) {
-			await page.locator(`[data-slot="theme-toggle"] [data-theme-option="${shot.theme}"]`).click();
+			const toggle = page.locator('[data-slot="theme-toggle"]').first();
+
+			for (let attempt = 0; attempt < 3; attempt += 1) {
+				if ((await toggle.getAttribute('data-theme-option')) === shot.theme) {
+					break;
+				}
+
+				await toggle.click();
+			}
 		}
 
 		// Шаг кадра идёт до ожидания текста: ждут обычно того, что этот шаг и

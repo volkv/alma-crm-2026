@@ -16,25 +16,25 @@ const firstRowName = (page: Page) =>
 /**
  * Кнопка темы. Переключателей на странице два — в шапке оболочки и на самой
  * витрине, — и это часть проверяемого: выбор один на документ, поэтому нажатие
- * по любому из них обязано отозваться в обоих.
+ * по любому из них обязано отозваться в обоих. Кнопка одна на переключатель, а
+ * выбранное положение она несёт в `data-theme-option`.
  */
-const themeOption = (page: Page, option: 'light' | 'dark' | 'system') =>
-	page.locator(`[data-slot="theme-toggle"] [data-theme-option="${option}"]`).first();
+const themeToggle = (page: Page) => page.locator('[data-slot="theme-toggle"]').first();
 
 /**
  * Выбрать тему и дождаться, пока она встанет.
  *
  * Переключатель — код страницы: нажатие до оживления не доходит ни до кого.
- * Повтор идёт только пока тема не та, которую просили: лишнее нажатие по другой
- * кнопке её бы сменило.
+ * Положения идут по кругу, поэтому нажатие тут одно за попытку: повтор
+ * прокручивает круг дальше, пока не встанет запрошенное.
  */
 async function chooseTheme(page: Page, option: 'light' | 'dark' | 'system'): Promise<void> {
 	await expect(async () => {
-		if ((await themeOption(page, option).getAttribute('aria-pressed')) !== 'true') {
-			await themeOption(page, option).click({ timeout: 5_000 });
+		if ((await themeToggle(page).getAttribute('data-theme-option')) !== option) {
+			await themeToggle(page).click({ timeout: 5_000 });
 		}
 
-		await expect(themeOption(page, option)).toHaveAttribute('aria-pressed', 'true', {
+		await expect(themeToggle(page)).toHaveAttribute('data-theme-option', option, {
 			timeout: 2000
 		});
 	}).toPass({ timeout: 20_000 });
@@ -377,7 +377,7 @@ test('тема по умолчанию светлая, а выбранная т�
 	// Умолчание — светлая, и это решение, а не случайность: показ продукта идёт
 	// на светлом, а тёмную человек выбирает себе сам.
 	await expect(root).toHaveAttribute('data-theme', 'light');
-	await expect(themeOption(page, 'light')).toHaveAttribute('aria-pressed', 'true');
+	await expect(themeToggle(page)).toHaveAttribute('data-theme-option', 'light');
 
 	const light = await pageBackground(page);
 
@@ -391,7 +391,7 @@ test('тема по умолчанию светлая, а выбранная т�
 	expect(brightness(dark)).toBeLessThan(brightness(light));
 
 	// Выбор один на документ: нажали в шапке — отозвалось и на витрине.
-	await expect(page.locator('[data-theme-option="dark"][aria-pressed="true"]')).toHaveCount(2);
+	await expect(page.locator('[data-slot="theme-toggle"][data-theme-option="dark"]')).toHaveCount(2);
 
 	await page.reload();
 
@@ -399,7 +399,7 @@ test('тема по умолчанию светлая, а выбранная т�
 	// компонент, — иначе каждая загрузка начиналась бы вспышкой белого.
 	await expect(root).toHaveAttribute('data-theme', 'dark');
 	expect(await pageBackground(page)).toBe(dark);
-	await expect(themeOption(page, 'dark')).toHaveAttribute('aria-pressed', 'true');
+	await expect(themeToggle(page)).toHaveAttribute('data-theme-option', 'dark');
 });
 
 test('тёмная тема встаёт до того, как страница оживёт', async ({ page }) => {
@@ -417,7 +417,7 @@ test('тёмная тема встаёт до того, как страница 
 	await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
 	// Компоненты и правда не ожили: кнопка темы осталась там, где её отрисовал
 	// сервер, — с умолчанием, а не с выбором.
-	await expect(themeOption(page, 'light')).toHaveAttribute('aria-pressed', 'true');
+	await expect(themeToggle(page)).toHaveAttribute('data-theme-option', 'light');
 });
 
 test('«как в системе» идёт за настройкой браузера', async ({ page }) => {
@@ -440,7 +440,7 @@ test('«как в системе» идёт за настройкой брауз
 	// И то же самое на следующей загрузке: выбор «как в системе» тоже запомнен.
 	await page.reload();
 	await expect(root).toHaveAttribute('data-theme', 'light');
-	await expect(themeOption(page, 'system')).toHaveAttribute('aria-pressed', 'true');
+	await expect(themeToggle(page)).toHaveAttribute('data-theme-option', 'system');
 
 	await page.emulateMedia({ colorScheme: 'dark' });
 	await expect(root).toHaveAttribute('data-theme', 'dark');

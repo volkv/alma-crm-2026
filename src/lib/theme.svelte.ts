@@ -48,6 +48,10 @@ function resolved(): Theme {
 
 function apply(): void {
 	document.documentElement.dataset.theme = resolved();
+	// Второй атрибут — сам выбор, вместе с неразрешённым `system`: по нему
+	// `app.css` показывает на кнопке темы тот значок, который выбран. Держать
+	// это в разметке кнопки нельзя — сервер выбора не знает.
+	document.documentElement.dataset.themePreference = preference;
 }
 
 if (browser) {
