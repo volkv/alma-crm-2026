@@ -52,7 +52,7 @@
 	]}
 />
 
-<div class="flex flex-col gap-4 p-4 sm:p-6">
+<div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	<WizardSteps current={3} />
 
 	{#if form?.message}

@@ -44,7 +44,7 @@
 	]}
 />
 
-<div class="p-4 sm:p-6">
+<div class="p-4 sm:px-9 sm:py-6">
 	{#if data.organizations.length === 0}
 		<div class="max-w-2xl rounded-lg border border-border bg-surface">
 			<EmptyState

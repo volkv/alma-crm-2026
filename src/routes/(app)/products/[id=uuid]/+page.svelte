@@ -39,7 +39,7 @@
 	items={[{ label: 'Продукты', href: resolve('/(app)/products') }, { label: data.product.name }]}
 />
 
-<div class="flex flex-col gap-4 p-4 sm:p-6">
+<div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	<section
 		class="rounded-lg border border-border bg-surface p-4 sm:p-6"
 		data-tour="product-summary"

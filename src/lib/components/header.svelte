@@ -56,7 +56,7 @@
 	заголовка говорит «речь об этом экране» (`$lib/onboarding/screens`). -->
 <header
 	data-tour="page-header"
-	class="order-first border-b border-border bg-surface px-4 py-3 sm:px-6 {sticky
+	class="order-first border-b border-border bg-surface px-4 py-3 sm:px-9 {sticky
 		? 'md:sticky md:top-0 md:z-20'
 		: ''}"
 >

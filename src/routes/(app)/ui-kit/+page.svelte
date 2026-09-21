@@ -248,7 +248,7 @@
 
 <Breadcrumbs items={[{ label: 'Главная', href: resolve('/') }, { label: 'UI-кит' }]} />
 
-<div class="flex flex-col gap-8 p-4 sm:p-6">
+<div class="flex flex-col gap-8 p-4 sm:px-9 sm:py-6">
 	<section class="flex flex-col gap-3">
 		<h2 class="text-sm font-semibold tracking-tight">Токены</h2>
 		<InlineHint>

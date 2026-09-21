@@ -123,12 +123,16 @@
 
 				Вынесенная кнопка стоит поверх страницы и потому приглушена: в
 				полную силу она спорила с заголовком, рядом с которым висит. Под
-				курсором и под фокусом с клавиатуры она возвращается целиком. -->
+				курсором и под фокусом с клавиатуры она возвращается целиком.
+
+				По высоте её ставит `top`, а не сдвиг: нажатие у кнопок сдвигает их
+				на пиксель вниз своим `translate`, и центрирование сдвигом оно
+				стирало — кнопка при нажатии прыгала на пол-роста вниз. -->
 			<Button
 				variant="ghost"
 				size="icon-sm"
 				class="shrink-0 text-muted-foreground {nav.collapsed
-					? 'absolute top-1/2 left-full ml-0.5 -translate-y-1/2 bg-surface opacity-30 transition-opacity hover:opacity-100 focus-visible:opacity-100'
+					? 'absolute top-3.5 left-full ml-0.5 bg-surface opacity-30 transition-opacity hover:opacity-100 focus-visible:opacity-100'
 					: ''}"
 				aria-label={nav.collapsed ? 'Развернуть навигацию' : 'Свернуть навигацию'}
 				onclick={() => nav.toggle()}

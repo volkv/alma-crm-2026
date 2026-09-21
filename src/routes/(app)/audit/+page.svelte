@@ -181,7 +181,7 @@
 
 <Breadcrumbs items={[{ label: 'Главная', href: resolve('/') }, { label: 'Журнал действий' }]} />
 
-<div class="flex flex-col gap-4 p-4 sm:p-6">
+<div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	<FilterBar url={page.url} actors={data.actors} />
 
 	{#if data.exportDenied}

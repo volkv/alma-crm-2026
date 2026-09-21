@@ -131,7 +131,7 @@
 	{/snippet}
 </Header>
 
-<div class="flex flex-col gap-4 p-4 sm:p-6">
+<div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	<div class="flex flex-wrap items-center gap-3" data-tour="organizations-filters">
 		<FilterSelect param="kind" label="Вид" options={ORGANIZATION_KIND_OPTIONS} />
 		<FilterSelect param="level" label="Уровень" options={EDUCATION_LEVEL_OPTIONS} />

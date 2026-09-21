@@ -34,7 +34,7 @@
 	items={[{ label: 'Продукты', href: resolve('/(app)/products') }, { label: 'Новый продукт' }]}
 />
 
-<div class="p-4 sm:p-6">
+<div class="p-4 sm:px-9 sm:py-6">
 	<form
 		data-tour="product-new-form"
 		method="POST"

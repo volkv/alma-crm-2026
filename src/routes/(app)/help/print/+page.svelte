@@ -27,7 +27,7 @@
 	<title>Справка целиком — LCT CRM</title>
 </svelte:head>
 
-<div class="mx-auto flex max-w-3xl flex-col gap-8 p-4 sm:p-6" data-help-print>
+<div class="mx-auto flex max-w-3xl flex-col gap-8 p-4 sm:px-9 sm:py-6" data-help-print>
 	<div class="flex flex-col gap-3">
 		<div class="no-print">
 			<Button variant="outline" href={resolve('/(app)/help')}>

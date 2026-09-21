@@ -252,7 +252,7 @@
 	</Button>
 {/snippet}
 
-<div class="flex flex-col gap-4 p-4 sm:p-6">
+<div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	<div class="flex flex-wrap items-center gap-3" data-tour="interactions-filters">
 		<FilterSelect param="status" label="Статус" options={STATUS_OPTIONS} allLabel="Любой" />
 		<FilterSelect param="stage" label="Стадия" options={STAGE_OPTIONS} allLabel="Любая" />

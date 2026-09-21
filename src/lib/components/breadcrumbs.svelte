@@ -32,7 +32,7 @@
 {#if items.length > 0}
 	<!-- `-order-1` ставит крошки сразу за шапкой, перед полосой демо-режима
 		(`app-shell/app-shell.svelte`). -->
-	<div class="-order-1 border-b border-border bg-surface px-4 py-1.5 sm:px-6">
+	<div class="-order-1 border-b border-border bg-surface px-4 py-1.5 sm:px-9">
 		<BreadcrumbUi.Root>
 			<BreadcrumbUi.List class="gap-1 text-xs sm:gap-2">
 				{#each items as crumb, index (crumb.label)}

@@ -45,7 +45,7 @@
 <Breadcrumbs items={[{ label: 'Главная', href: resolve('/') }, { label: 'Справка' }]} />
 
 <!-- `data-tour` — метка для подсказок (`$lib/onboarding/screens`). -->
-<div class="flex flex-col gap-4 p-4 sm:p-6" data-tour="help-sections">
+<div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6" data-tour="help-sections">
 	{#each data.sections as section (section.key)}
 		<Card.Root>
 			<Card.Header>

@@ -34,7 +34,7 @@
 	items={[{ label: 'Программы', href: resolve('/(app)/programs') }, { label: 'Новая программа' }]}
 />
 
-<div class="p-4 sm:p-6">
+<div class="p-4 sm:px-9 sm:py-6">
 	<form
 		data-tour="program-new-form"
 		method="POST"

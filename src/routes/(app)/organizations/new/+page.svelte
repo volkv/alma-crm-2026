@@ -39,7 +39,7 @@
 	]}
 />
 
-<div class="p-4 sm:p-6">
+<div class="p-4 sm:px-9 sm:py-6">
 	<form
 		data-tour="organization-new-form"
 		method="POST"

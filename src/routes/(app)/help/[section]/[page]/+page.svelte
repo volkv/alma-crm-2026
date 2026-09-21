@@ -29,7 +29,7 @@
 <!-- Оглавление слева отдельной колонкой, а на телефоне — над статьёй: читать
 	руководство по одной странице, не видя соседних, всё равно что читать
 	оглавление вместо книги. -->
-<div class="flex flex-col gap-6 p-4 sm:p-6 lg:flex-row lg:gap-8">
+<div class="flex flex-col gap-6 p-4 sm:px-9 sm:py-6 lg:flex-row lg:gap-8">
 	<div class="lg:w-56 lg:shrink-0">
 		<HelpToc section={data.section} pages={data.pages} current={data.article.slug} />
 	</div>

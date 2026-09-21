@@ -102,7 +102,7 @@
 	]}
 />
 
-<div class="flex flex-col gap-4 p-4 sm:p-6">
+<div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	<div class="rounded-lg border border-border bg-surface p-4" data-tour="interaction-timeline">
 		<StageTimeline
 			stages={toTimelineStages(data.status.progress, {
