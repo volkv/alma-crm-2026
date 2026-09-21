@@ -183,7 +183,7 @@ admin('подсказки ключей доступа показывают вы�
 admin('подсказки общих настроек обходят все четыре карточки', async ({ page }) => {
 	await openScreen(page, '/settings/general');
 
-	const tour = await startScreenTour(page, 'Общие настройки');
+	const tour = await startScreenTour(page, 'Общие');
 
 	await walkScreenTour(page, tour, [
 		{ title: 'Страница входа', target: 'general-banner' },

@@ -3,17 +3,22 @@ import BarChart3Icon from '@lucide/svelte/icons/bar-chart-3';
 import BellIcon from '@lucide/svelte/icons/bell';
 import BookOpenIcon from '@lucide/svelte/icons/book-open';
 import BuildingIcon from '@lucide/svelte/icons/building';
+import CircleUserIcon from '@lucide/svelte/icons/circle-user';
 import CompassIcon from '@lucide/svelte/icons/compass';
 import DatabaseIcon from '@lucide/svelte/icons/database';
 import FileTextIcon from '@lucide/svelte/icons/file-text';
 import GraduationCapIcon from '@lucide/svelte/icons/graduation-cap';
 import HandshakeIcon from '@lucide/svelte/icons/handshake';
+import KeyRoundIcon from '@lucide/svelte/icons/key-round';
 import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
 import PackageIcon from '@lucide/svelte/icons/package';
 import PlugZapIcon from '@lucide/svelte/icons/plug-zap';
 import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
-import SettingsIcon from '@lucide/svelte/icons/settings';
+import SlidersHorizontalIcon from '@lucide/svelte/icons/sliders-horizontal';
+import UserCogIcon from '@lucide/svelte/icons/user-cog';
 import UsersIcon from '@lucide/svelte/icons/users';
+import WebhookIcon from '@lucide/svelte/icons/webhook';
+import WorkflowIcon from '@lucide/svelte/icons/workflow';
 import type { PermissionKey } from '$lib/server/rbac/permissions';
 
 /**
@@ -25,7 +30,8 @@ import type { PermissionKey } from '$lib/server/rbac/permissions';
 export const navGroups = [
 	{ id: 'main', label: 'Главная' },
 	{ id: 'directory', label: 'Справочники' },
-	{ id: 'settings', label: 'Настройки' }
+	{ id: 'settings', label: 'Настройки' },
+	{ id: 'other', label: 'Остальное' }
 ] as const;
 
 export type NavGroupId = (typeof navGroups)[number]['id'];
@@ -141,14 +147,54 @@ export const navSections: readonly NavSection[] = [
 		permission: 'stats.read'
 	},
 
-	// «Настройки» — журналы, обмен и параметры: сюда ходят, когда что-то пошло
-	// не так или надо что-то поменять, а не каждый день.
+	// «Настройки» — правила, по которым система работает. Каждый подраздел стоит
+	// в меню сам: раньше все шесть прятались за одним пунктом и полосой вкладок
+	// внутри него, и дорога к процессу или ключам была вдвое длиннее, чем к
+	// любому другому экрану. Право у пункта — то же, которым открывается сам
+	// подраздел (`src/routes/(app)/settings/sections.ts`).
 	{
-		href: '/audit',
-		label: 'Журнал',
-		icon: ScrollTextIcon,
+		// «Общие» — первым: это правила, которыми живёт вся система, а профиль и
+		// пользователи — про отдельные учётные записи.
+		href: '/settings/general',
+		label: 'Общие',
+		icon: SlidersHorizontalIcon,
 		group: 'settings',
-		permission: 'audit.read'
+		permission: 'settings.write'
+	},
+	{
+		href: '/settings/profile',
+		label: 'Профиль',
+		icon: CircleUserIcon,
+		group: 'settings',
+		permission: null
+	},
+	{
+		href: '/settings/users',
+		label: 'Пользователи',
+		icon: UserCogIcon,
+		group: 'settings',
+		permission: 'users.manage'
+	},
+	{
+		href: '/settings/api-keys',
+		label: 'Ключи доступа',
+		icon: KeyRoundIcon,
+		group: 'settings',
+		permission: 'api_keys.manage'
+	},
+	{
+		href: '/settings/process',
+		label: 'Процесс',
+		icon: WorkflowIcon,
+		group: 'settings',
+		permission: 'stages.configure'
+	},
+	{
+		href: '/settings/integrations',
+		label: 'Интеграции',
+		icon: WebhookIcon,
+		group: 'settings',
+		permission: 'integrations.manage'
 	},
 	{
 		// Журнал доставок напоминаний. Право у него своё, а не `audit.read`:
@@ -170,20 +216,23 @@ export const navSections: readonly NavSection[] = [
 		group: 'settings',
 		permission: 'integrations.manage'
 	},
+
+	// «Остальное» — то, что не работа и не правила: хроника действий и книга о
+	// системе. Ходят сюда по поводу, а не по плану.
 	{
-		// Справка объясняет продукт целиком, поэтому права у неё своего нет: то же
-		// правило, что у «Настроек», — что показать внутри, решает сам раздел.
+		href: '/audit',
+		label: 'Журнал',
+		icon: ScrollTextIcon,
+		group: 'other',
+		permission: 'audit.read'
+	},
+	{
+		// Справка объясняет продукт целиком, поэтому права у неё своего нет: что
+		// показать внутри, решает сам раздел.
 		href: '/help',
 		label: 'Справка',
 		icon: BookOpenIcon,
-		group: 'settings',
-		permission: null
-	},
-	{
-		href: '/settings',
-		label: 'Настройки',
-		icon: SettingsIcon,
-		group: 'settings',
+		group: 'other',
 		permission: null
 	}
 ];

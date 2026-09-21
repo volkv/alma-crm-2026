@@ -222,7 +222,7 @@ test('разделы, которые переживают демонстраци
 
 	// А настройки стенда — наоборот: их на стенде и показывают, включая баннер
 	// страницы входа и сроки жизни сессии.
-	await expect(page.getByRole('link', { name: 'Общие настройки' })).toHaveCount(1);
+	await expect(page.getByRole('link', { name: 'Общие', exact: true })).toHaveCount(1);
 	expect((await page.request.get('/settings/general')).status()).toBe(200);
 });
 

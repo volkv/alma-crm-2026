@@ -238,9 +238,9 @@ describe('право экрана', () => {
 			TOUR_SCREENS.some((screen) => screen.route === section.href)
 		);
 
-		// Раздел настроек своей страницы не имеет — он перенаправляет на профиль;
-		// остальные пункты меню обязаны найтись экраном.
-		expect(roots.length).toBe(navSections.length - 1);
+		// Каждый пункт меню обязан найтись экраном: подсказки объясняют ровно то,
+		// что человек видит в меню, и пункт без экрана остался бы без объяснения.
+		expect(roots.length).toBe(navSections.length);
 
 		for (const section of roots) {
 			const screen = TOUR_SCREENS.find((candidate) => candidate.route === section.href);

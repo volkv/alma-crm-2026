@@ -8,6 +8,7 @@
 import { describe, expect, it } from 'vitest';
 import { groupedSections, navGroups, navSections, visibleSections } from '$lib/nav';
 import { DEFAULT_ROLES, PERMISSIONS } from '$lib/server/rbac/permissions';
+import { SETTINGS_SECTIONS } from '../../src/routes/(app)/settings/sections';
 
 /** Права роли из каталога — те же, что сидируются в базу. */
 function permissionsOf(roleId: string): ReadonlySet<string> {
@@ -44,8 +45,8 @@ describe('разделы меню', () => {
 		expect(menu).toContain('Взаимодействия');
 	});
 
-	it('оставляют «Сводку», «Справку» и «Настройки» даже без единого права: они есть у каждого', () => {
-		expect(labels(new Set())).toEqual(['Сводка', 'Справка', 'Настройки']);
+	it('оставляют «Сводку», «Профиль» и «Справку» даже без единого права: они есть у каждого', () => {
+		expect(labels(new Set())).toEqual(['Сводка', 'Профиль', 'Справка']);
 	});
 
 	it('оставляют менеджеру всё, кроме журнала, и в том же порядке', () => {
@@ -60,8 +61,8 @@ describe('разделы меню', () => {
 			'Продукты',
 			'Направления',
 			'Данные об обучении',
-			'Справка',
-			'Настройки'
+			'Профиль',
+			'Справка'
 		]);
 	});
 
@@ -87,7 +88,7 @@ describe('группы меню', () => {
 		expect(order).toEqual([...order].sort((a, b) => a - b));
 	});
 
-	it('кладут ежедневную работу в «Главную», каталоги в «Справочники», остальное в «Настройки»', () => {
+	it('кладут ежедневную работу в «Главную», каталоги в «Справочники», правила в «Настройки»', () => {
 		const grouped = groupedSections(navSections).map((group) => [
 			group.label,
 			group.sections.map((section) => section.label)
@@ -99,15 +100,51 @@ describe('группы меню', () => {
 				'Справочники',
 				['Организации', 'Контакты', 'Программы', 'Продукты', 'Направления', 'Данные об обучении']
 			],
-			['Настройки', ['Журнал', 'Уведомления', 'Внешние системы', 'Справка', 'Настройки']]
+			[
+				'Настройки',
+				[
+					'Общие',
+					'Профиль',
+					'Пользователи',
+					'Ключи доступа',
+					'Процесс',
+					'Интеграции',
+					'Уведомления',
+					'Внешние системы'
+				]
+			],
+			['Остальное', ['Журнал', 'Справка']]
 		]);
 	});
 
 	it('не показывают заголовок над пустой группой', () => {
-		// Без единого права остаются «Сводка», «Справка» и «Настройки» — заголовку
+		// Без единого права остаются «Сводка», «Профиль» и «Справка» — заголовку
 		// «Справочники» над ничем стоять незачем.
 		const grouped = groupedSections(visibleSections(navSections, new Set()));
 
-		expect(grouped.map((group) => group.label)).toEqual(['Главная', 'Настройки']);
+		expect(grouped.map((group) => group.label)).toEqual(['Главная', 'Настройки', 'Остальное']);
+	});
+});
+
+describe('подразделы настроек', () => {
+	/**
+	 * Пункты меню и таблица подразделов описывают одно и то же множество
+	 * экранов. Список подразделов остаётся: из него оболочка раздела берёт
+	 * название и подпись для заголовка, и по нему же загрузчик отвечает отказом
+	 * по прямой ссылке. Разойтись им нельзя — пункт меню с чужим правом либо
+	 * покажет ссылку на отказ, либо спрячет открытый экран.
+	 */
+	const menu = navSections.filter((section) => section.href.startsWith('/settings'));
+
+	it('стоят в меню все до одного и тем же правом', () => {
+		expect(menu.map((section) => [section.href, section.label, section.permission])).toEqual(
+			SETTINGS_SECTIONS.map((section) => [section.href, section.label, section.permission])
+		);
+	});
+
+	it('лежат в группе «Настройки»', () => {
+		for (const section of menu) {
+			expect(section.group, section.href).toBe('settings');
+		}
 	});
 });

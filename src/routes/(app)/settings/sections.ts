@@ -1,9 +1,13 @@
 /**
- * Разделы настроек и право, которое их открывает.
+ * Подразделы настроек и право, которое их открывает.
  *
- * Список один на меню и на проверку доступа: раздел, которого человек не видит
- * в меню, обязан отвечать отказом и по прямой ссылке. Разойтись этим двум
- * ответам нельзя — поэтому они читают одну таблицу.
+ * Список один на заголовок раздела и на проверку доступа: подраздел, которого
+ * человек не видит, обязан отвечать отказом и по прямой ссылке. Разойтись этим
+ * двум ответам нельзя — поэтому они читают одну таблицу.
+ *
+ * Те же подразделы стоят пунктами главного меню (`$lib/nav`) со своими
+ * значками, и права там обязаны совпадать с правами отсюда — за этим следит
+ * `tests/unit/nav.test.ts`.
  */
 import type { PermissionKey } from '$lib/server/rbac/permissions';
 
@@ -25,6 +29,12 @@ export type SettingsSection = {
 
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 	{
+		href: '/settings/general',
+		label: 'Общие',
+		description: 'Страница входа и сроки жизни сессий',
+		permission: 'settings.write'
+	},
+	{
 		href: '/settings/profile',
 		label: 'Профиль',
 		description: 'Учётная запись, под которой вы вошли, и её сессии',
@@ -41,12 +51,6 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 		label: 'Ключи доступа',
 		description: 'Ключи, которыми внешние системы обращаются к API',
 		permission: 'api_keys.manage'
-	},
-	{
-		href: '/settings/general',
-		label: 'Общие настройки',
-		description: 'Страница входа и сроки жизни сессий',
-		permission: 'settings.write'
 	},
 	{
 		href: '/settings/process',

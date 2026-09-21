@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { enhance } from '$app/forms';
+	import { resolve } from '$app/paths';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -44,9 +45,13 @@
 	<title>Внешние системы — LCT CRM</title>
 </svelte:head>
 
+<!-- Крошка «Настройки» без ссылки — та же, что у остальных страниц этой группы
+	меню: журнал обмена стоит среди настроек, и путь к нему обязан читаться так
+	же, как путь к ним. -->
 <PageHeader
 	title="Внешние системы"
 	description="Журнал обмена с CMS сайта и системой обучения: что пришло, что ушло и чем ответили"
+	breadcrumbs={[{ label: 'Главная', href: resolve('/') }, { label: 'Настройки' }]}
 />
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">

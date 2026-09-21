@@ -1,4 +1,5 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -51,9 +52,13 @@
 	<title>Уведомления — LCT CRM</title>
 </svelte:head>
 
+<!-- Крошка «Настройки» без ссылки — та же, что у остальных страниц этой группы
+	меню: журнал доставок стоит среди настроек, и путь к нему обязан читаться
+	так же, как путь к ним. -->
 <PageHeader
 	title="Уведомления"
 	description="Напоминания о взаимодействиях, которые стоят на одной стадии дольше порога: кому ушли, каким каналом и дошли ли"
+	breadcrumbs={[{ label: 'Главная', href: resolve('/') }, { label: 'Настройки' }]}
 />
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
