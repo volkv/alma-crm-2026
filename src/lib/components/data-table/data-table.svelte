@@ -361,8 +361,12 @@
 
 	<div class="overflow-hidden rounded-lg border border-border bg-surface shadow-xs">
 		<div bind:this={tableRoot}>
-			<Table.Root containerClass="max-h-[70vh]" onkeydown={onTableKeydown}>
-				<Table.Header class="sticky top-0 z-10 bg-surface-muted">
+			<!-- Высоту списка задают строки, а не экран: полоса прокрутки принадлежит
+				странице, одна на всё, и та же, что на карточках и отчётах. Своя полоса
+				внутри таблицы обрезала список по 70vh и заставляла крутить дважды —
+				сначала страницу до таблицы, потом таблицу внутри себя. -->
+			<Table.Root onkeydown={onTableKeydown}>
+				<Table.Header class="bg-surface-muted">
 					{#each table.getHeaderGroups() as headerGroup (headerGroup.id)}
 						<Table.Row class="hover:bg-transparent">
 							{#if selectable}
