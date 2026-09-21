@@ -16,11 +16,27 @@ import SettingsIcon from '@lucide/svelte/icons/settings';
 import UsersIcon from '@lucide/svelte/icons/users';
 import type { PermissionKey } from '$lib/server/rbac/permissions';
 
+/**
+ * The groups the sidebar is split into, in the order they are shown. A heading
+ * is not a link: it only says what kind of thing the sections under it are, so
+ * the eye lands on the daily work first, and the catalogues and the machinery
+ * stay out of its way.
+ */
+export const navGroups = [
+	{ id: 'main', label: 'Главная' },
+	{ id: 'directory', label: 'Справочники' },
+	{ id: 'settings', label: 'Настройки' }
+] as const;
+
+export type NavGroupId = (typeof navGroups)[number]['id'];
+
 export type NavSection = {
 	/** Route the section points at; also the prefix that marks it as active. */
 	href: string;
 	label: string;
 	icon: LucideIcon;
+	/** The heading the section is listed under. */
+	group: NavGroupId;
 	/**
 	 * The permission the section is hidden without. `null` means every signed-in
 	 * user sees it: «Настройки» has no permission of its own, and which pages it
@@ -30,10 +46,12 @@ export type NavSection = {
 };
 
 /**
- * The main navigation, in the order the sidebar shows it. This is the single
- * list every navigation component reads, so a new section is added once.
+ * The main navigation, in the order the sidebar shows it: sorted by group in
+ * the order of `navGroups`, and inside a group by hand. This is the single list
+ * every navigation component reads, so a new section is added once.
  */
 export const navSections: readonly NavSection[] = [
+	// «Главная» — то, с чем менеджер работает каждый день.
 	{
 		// Сводка отвечает на вопрос «с чего начать день», и возвращаются к ней
 		// чаще, чем к любому разделу: без пункта в меню дорога назад была только
@@ -42,12 +60,14 @@ export const navSections: readonly NavSection[] = [
 		href: '/',
 		label: 'Сводка',
 		icon: LayoutDashboardIcon,
+		group: 'main',
 		permission: null
 	},
 	{
 		href: '/interactions',
 		label: 'Взаимодействия',
 		icon: HandshakeIcon,
+		group: 'main',
 		permission: 'interactions.read'
 	},
 	{
@@ -58,17 +78,49 @@ export const navSections: readonly NavSection[] = [
 		href: '/reports',
 		label: 'Отчёты',
 		icon: BarChart3Icon,
+		group: 'main',
 		permission: 'interactions.read'
 	},
+	{
+		// Документы — договоры и акты по шаблону — рождаются из взаимодействий и
+		// правятся вместе с ними: это ежедневная работа, а не каталог, в который
+		// заглядывают раз в месяц.
+		href: '/documents',
+		label: 'Документы',
+		icon: FileTextIcon,
+		group: 'main',
+		permission: 'documents.read'
+	},
+
+	// «Справочники» — общий каталог оператора: кто, чему и по каким программам.
 	{
 		href: '/organizations',
 		label: 'Организации',
 		icon: BuildingIcon,
+		group: 'directory',
 		permission: 'organizations.read'
 	},
-	{ href: '/people', label: 'Контакты', icon: UsersIcon, permission: 'people.read' },
-	{ href: '/programs', label: 'Программы', icon: GraduationCapIcon, permission: 'programs.read' },
-	{ href: '/products', label: 'Продукты', icon: PackageIcon, permission: 'products.read' },
+	{
+		href: '/people',
+		label: 'Контакты',
+		icon: UsersIcon,
+		group: 'directory',
+		permission: 'people.read'
+	},
+	{
+		href: '/programs',
+		label: 'Программы',
+		icon: GraduationCapIcon,
+		group: 'directory',
+		permission: 'programs.read'
+	},
+	{
+		href: '/products',
+		label: 'Продукты',
+		icon: PackageIcon,
+		group: 'directory',
+		permission: 'products.read'
+	},
 	{
 		// Направления стоят в ряду справочников, рядом с программами и продуктами:
 		// это тот же общий каталог оператора. Право у пункта — на чтение:
@@ -76,11 +128,28 @@ export const navSections: readonly NavSection[] = [
 		href: '/directions',
 		label: 'Направления',
 		icon: CompassIcon,
+		group: 'directory',
 		permission: 'directions.read'
 	},
-	{ href: '/data', label: 'Данные об обучении', icon: DatabaseIcon, permission: 'stats.read' },
-	{ href: '/documents', label: 'Документы', icon: FileTextIcon, permission: 'documents.read' },
-	{ href: '/audit', label: 'Журнал', icon: ScrollTextIcon, permission: 'audit.read' },
+	{
+		// Данные об обучении приходят таблицей и живут рядом со справочниками,
+		// которые они пополняют: это загруженные сведения, а не рабочий поток.
+		href: '/data',
+		label: 'Данные об обучении',
+		icon: DatabaseIcon,
+		group: 'directory',
+		permission: 'stats.read'
+	},
+
+	// «Настройки» — журналы, обмен и параметры: сюда ходят, когда что-то пошло
+	// не так или надо что-то поменять, а не каждый день.
+	{
+		href: '/audit',
+		label: 'Журнал',
+		icon: ScrollTextIcon,
+		group: 'settings',
+		permission: 'audit.read'
+	},
 	{
 		// Журнал доставок напоминаний. Право у него своё, а не `audit.read`:
 		// эскалация приходит руководителю, и вопрос «почему мне не пришло» —
@@ -88,6 +157,7 @@ export const navSections: readonly NavSection[] = [
 		href: '/notifications',
 		label: 'Уведомления',
 		icon: BellIcon,
+		group: 'settings',
 		permission: 'notifications.read'
 	},
 	{
@@ -97,6 +167,7 @@ export const navSections: readonly NavSection[] = [
 		href: '/exchange',
 		label: 'Внешние системы',
 		icon: PlugZapIcon,
+		group: 'settings',
 		permission: 'integrations.manage'
 	},
 	{
@@ -105,9 +176,16 @@ export const navSections: readonly NavSection[] = [
 		href: '/help',
 		label: 'Справка',
 		icon: BookOpenIcon,
+		group: 'settings',
 		permission: null
 	},
-	{ href: '/settings', label: 'Настройки', icon: SettingsIcon, permission: null }
+	{
+		href: '/settings',
+		label: 'Настройки',
+		icon: SettingsIcon,
+		group: 'settings',
+		permission: null
+	}
 ];
 
 /**
@@ -126,4 +204,26 @@ export function visibleSections<TSection extends { permission: PermissionKey | n
 	return sections.filter(
 		(section) => section.permission === null || permissions.has(section.permission)
 	);
+}
+
+/** A heading of the sidebar together with the sections shown under it. */
+export type NavGroup<TSection> = {
+	id: NavGroupId;
+	label: string;
+	sections: TSection[];
+};
+
+/**
+ * The sections arranged under their headings, in the order of `navGroups`. A
+ * group none of the given sections belongs to is left out: a heading over
+ * nothing would only announce that something is hidden from this account.
+ */
+export function groupedSections<TSection extends { group: NavGroupId }>(
+	sections: readonly TSection[]
+): NavGroup<TSection>[] {
+	return navGroups.flatMap((group) => {
+		const own = sections.filter((section) => section.group === group.id);
+
+		return own.length === 0 ? [] : [{ id: group.id, label: group.label, sections: own }];
+	});
 }

@@ -6,7 +6,7 @@
  * фильтр: он один на боковую панель и на выдвижную навигацию телефона.
  */
 import { describe, expect, it } from 'vitest';
-import { navSections, visibleSections } from '$lib/nav';
+import { groupedSections, navGroups, navSections, visibleSections } from '$lib/nav';
 import { DEFAULT_ROLES, PERMISSIONS } from '$lib/server/rbac/permissions';
 
 /** Права роли из каталога — те же, что сидируются в базу. */
@@ -53,13 +53,13 @@ describe('разделы меню', () => {
 			'Сводка',
 			'Взаимодействия',
 			'Отчёты',
+			'Документы',
 			'Организации',
 			'Контакты',
 			'Программы',
 			'Продукты',
 			'Направления',
 			'Данные об обучении',
-			'Документы',
 			'Справка',
 			'Настройки'
 		]);
@@ -74,5 +74,40 @@ describe('разделы меню', () => {
 		// «почему мне не пришло» задаёт он же.
 		expect(labels(permissionsOf('lead'))).toContain('Уведомления');
 		expect(labels(permissionsOf('manager'))).not.toContain('Уведомления');
+	});
+});
+
+describe('группы меню', () => {
+	it('идут в порядке каталога групп, и список разделов отсортирован по ним', () => {
+		// Палитра команд показывает разделы плоским списком «в порядке меню»:
+		// порядок пунктов обязан совпадать с порядком групп, иначе меню и палитра
+		// расскажут о продукте по-разному.
+		const order = navSections.map((section) => navGroups.findIndex((g) => g.id === section.group));
+
+		expect(order).toEqual([...order].sort((a, b) => a - b));
+	});
+
+	it('кладут ежедневную работу в «Главную», каталоги в «Справочники», остальное в «Настройки»', () => {
+		const grouped = groupedSections(navSections).map((group) => [
+			group.label,
+			group.sections.map((section) => section.label)
+		]);
+
+		expect(grouped).toEqual([
+			['Главная', ['Сводка', 'Взаимодействия', 'Отчёты', 'Документы']],
+			[
+				'Справочники',
+				['Организации', 'Контакты', 'Программы', 'Продукты', 'Направления', 'Данные об обучении']
+			],
+			['Настройки', ['Журнал', 'Уведомления', 'Внешние системы', 'Справка', 'Настройки']]
+		]);
+	});
+
+	it('не показывают заголовок над пустой группой', () => {
+		// Без единого права остаются «Сводка», «Справка» и «Настройки» — заголовку
+		// «Справочники» над ничем стоять незачем.
+		const grouped = groupedSections(visibleSections(navSections, new Set()));
+
+		expect(grouped.map((group) => group.label)).toEqual(['Главная', 'Настройки']);
 	});
 });
