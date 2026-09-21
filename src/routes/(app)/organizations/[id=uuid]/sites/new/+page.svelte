@@ -8,7 +8,8 @@
 	import type { DirectoryMessage } from '$lib/components/directory/messages';
 	import SiteFields from '$lib/components/directory/site-fields.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import { createSiteSchema, type CreateSiteInput } from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
 
@@ -31,12 +32,13 @@
 
 <svelte:head><title>Новая площадка — LCT CRM</title></svelte:head>
 
-<PageHeader
-	title="Новая площадка"
-	description={data.organization.shortName}
-	breadcrumbs={[
+<Header title="Новая площадка" description={data.organization.shortName} />
+
+<Breadcrumbs
+	items={[
 		{ label: 'Организации', href: resolve('/(app)/organizations') },
-		{ label: data.organization.shortName, href: cardHref }
+		{ label: data.organization.shortName, href: cardHref },
+		{ label: 'Новая площадка' }
 	]}
 />
 

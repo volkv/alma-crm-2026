@@ -9,7 +9,8 @@
 	import type { DirectoryMessage } from '$lib/components/directory/messages';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { createAffiliationSchema, type CreateAffiliationInput } from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
@@ -33,12 +34,13 @@
 
 <svelte:head><title>Новый контакт — LCT CRM</title></svelte:head>
 
-<PageHeader
-	title="Новый контакт"
-	description={data.organization.shortName}
-	breadcrumbs={[
+<Header title="Новый контакт" description={data.organization.shortName} />
+
+<Breadcrumbs
+	items={[
 		{ label: 'Организации', href: resolve('/(app)/organizations') },
-		{ label: data.organization.shortName, href: cardHref }
+		{ label: data.organization.shortName, href: cardHref },
+		{ label: 'Новый контакт' }
 	]}
 />
 

@@ -13,7 +13,8 @@
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import KeyValue from '$lib/components/key-value.svelte';
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatDate } from '$lib/format';
 	import type { PersonAffiliationView } from '$lib/contracts/directory';
@@ -52,7 +53,7 @@
 	}}
 />
 
-<PageHeader title={fullName} breadcrumbs={[{ label: 'Контакты', href: resolve('/(app)/people') }]}>
+<Header title={fullName}>
 	{#snippet actions()}
 		<!-- Обезличенную запись не правят: стёртые данные не возвращают той же
 			строкой, и кнопка, которая это предлагает, врёт. -->
@@ -66,7 +67,9 @@
 			</Button>
 		{/if}
 	{/snippet}
-</PageHeader>
+</Header>
+
+<Breadcrumbs items={[{ label: 'Контакты', href: resolve('/(app)/people') }, { label: fullName }]} />
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<ActionAlert />

@@ -13,7 +13,8 @@
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import KeyValue from '$lib/components/key-value.svelte';
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatDate } from '$lib/format';
 	import type { PageProps } from './$types';
@@ -31,11 +32,7 @@
 	}}
 />
 
-<PageHeader
-	title={data.program.name}
-	description={data.program.code}
-	breadcrumbs={[{ label: 'Программы', href: resolve('/(app)/programs') }]}
->
+<Header title={data.program.name} description={data.program.code}>
 	{#snippet actions()}
 		{#if data.canWrite}
 			<Button
@@ -51,7 +48,11 @@
 			</Button>
 		{/if}
 	{/snippet}
-</PageHeader>
+</Header>
+
+<Breadcrumbs
+	items={[{ label: 'Программы', href: resolve('/(app)/programs') }, { label: data.program.name }]}
+/>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<section

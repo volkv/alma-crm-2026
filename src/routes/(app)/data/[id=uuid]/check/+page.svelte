@@ -11,7 +11,8 @@
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { filterHref } from '$lib/components/directory/query';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import RowsTable from '$lib/components/stats/rows-table.svelte';
 	import WizardSteps from '$lib/components/stats/wizard-steps.svelte';
 	import { STAT_SNAPSHOT_MODE_HINTS } from '$lib/contracts/stats';
@@ -39,10 +40,16 @@
 
 <svelte:head><title>Проверка загрузки — LCT CRM</title></svelte:head>
 
-<PageHeader
+<Header
 	title="Проверка загрузки"
 	description="Шаг 3 из 3: что разобралось, что нет. Подтверждённый снимок попадает в показатели, отклонённый остаётся в системе с объяснением."
-	breadcrumbs={[{ label: 'Данные об обучении', href: resolve('/(app)/data') }]}
+/>
+
+<Breadcrumbs
+	items={[
+		{ label: 'Данные об обучении', href: resolve('/(app)/data') },
+		{ label: 'Проверка загрузки' }
+	]}
 />
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">

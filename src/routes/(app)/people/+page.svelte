@@ -9,7 +9,7 @@
 	import FilterSelect from '$lib/components/directory/filter-select.svelte';
 	import { toLookupOptions } from '$lib/components/directory/labels';
 	import InlineHint from '$lib/components/inline-hint.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type { PersonListItem } from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
@@ -90,7 +90,7 @@
 
 <svelte:head><title>Контакты — LCT CRM</title></svelte:head>
 
-<PageHeader title="Контакты" description="Люди, с которыми идёт работа, и их роли в организациях.">
+<Header title="Контакты" description="Люди, с которыми идёт работа, и их роли в организациях.">
 	{#snippet actions()}
 		{#if data.canWrite}
 			<Button href={resolve('/(app)/people/new')}>
@@ -99,7 +99,7 @@
 			</Button>
 		{/if}
 	{/snippet}
-</PageHeader>
+</Header>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<div class="flex flex-wrap items-center gap-3" data-tour="people-filters">

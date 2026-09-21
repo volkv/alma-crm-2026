@@ -390,8 +390,9 @@ test('тема по умолчанию светлая, а выбранная т�
 	expect(dark).not.toBe(light);
 	expect(brightness(dark)).toBeLessThan(brightness(light));
 
-	// Выбор один на документ: нажали в шапке — отозвалось и на витрине.
-	await expect(page.locator('[data-slot="theme-toggle"][data-theme-option="dark"]')).toHaveCount(2);
+	// Выбор один на документ: нажали в шапке — отозвалось и в нижней панели, и на
+	// витрине.
+	await expect(page.locator('[data-slot="theme-toggle"][data-theme-option="dark"]')).toHaveCount(3);
 
 	await page.reload();
 

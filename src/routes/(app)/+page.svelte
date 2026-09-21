@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { formatDayAndMonth } from '$lib/format';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Header from '$lib/components/header.svelte';
 	import ActivityFeed from '$lib/components/home/activity-feed.svelte';
 	import HomeSection from '$lib/components/home/section.svelte';
 	import NeedsAction from '$lib/components/home/needs-action.svelte';
@@ -23,13 +23,13 @@
 	<title>Сводка — LCT CRM</title>
 </svelte:head>
 
-<PageHeader title="Сводка" description="Что требует внимания сегодня, {today}">
+<Header title="Сводка" description="Что требует внимания сегодня, {today}">
 	{#snippet actions()}
 		<Button variant="outline" href={interactionsHref({ status: 'active', mine: true })}>
 			Мои взаимодействия
 		</Button>
 	{/snippet}
-</PageHeader>
+</Header>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<StatTiles counters={overview.counters} />

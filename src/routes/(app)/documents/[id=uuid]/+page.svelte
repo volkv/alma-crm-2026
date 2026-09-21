@@ -13,7 +13,8 @@
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import KeyValue from '$lib/components/key-value.svelte';
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import {
 		documentFormat,
@@ -103,11 +104,7 @@
 
 <Flash messages={{ revision_uploaded: 'Новая редакция загружена' }} />
 
-<PageHeader
-	title={data.document.title}
-	description="{format} · {formatBytes(data.document.sizeBytes)}"
-	breadcrumbs={[{ label: 'Документы', href: resolve('/(app)/documents') }]}
->
+<Header title={data.document.title} description="{format} · {formatBytes(data.document.sizeBytes)}">
 	{#snippet actions()}
 		<Button
 			href={resolve('/(app)/documents/[id=uuid]/download', { id: data.document.id })}
@@ -118,7 +115,14 @@
 			Скачать
 		</Button>
 	{/snippet}
-</PageHeader>
+</Header>
+
+<Breadcrumbs
+	items={[
+		{ label: 'Документы', href: resolve('/(app)/documents') },
+		{ label: data.document.title }
+	]}
+/>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<ActionAlert />

@@ -81,7 +81,21 @@
 	function element(): HTMLElement | null {
 		const target = tour.stop?.target ?? null;
 
-		return target === null ? null : document.querySelector<HTMLElement>(`[data-tour="${target}"]`);
+		if (target === null) {
+			return null;
+		}
+
+		// Одна метка стоит в двух местах сразу: поиск, справку и тему держат и
+		// меню разделов, и нижняя панель телефона, а видно всегда одно из двух.
+		// Поэтому первый показанный узел, а не первый в разметке: рамка обязана
+		// встать вокруг того, что на экране.
+		for (const node of document.querySelectorAll<HTMLElement>(`[data-tour="${target}"]`)) {
+			if (node.getClientRects().length > 0) {
+				return node;
+			}
+		}
+
+		return null;
 	}
 
 	function sameBox(left: Box | null, right: Box | null): boolean {

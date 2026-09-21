@@ -14,7 +14,8 @@
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import KeyValue from '$lib/components/key-value.svelte';
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type { DirectionState } from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
@@ -59,11 +60,7 @@
 	}}
 />
 
-<PageHeader
-	title={data.direction.name}
-	description={data.direction.code}
-	breadcrumbs={[{ label: 'Направления', href: resolve('/(app)/directions') }]}
->
+<Header title={data.direction.name} description={data.direction.code}>
 	{#snippet actions()}
 		{#if data.canWrite}
 			<Button
@@ -86,7 +83,14 @@
 			{/if}
 		{/if}
 	{/snippet}
-</PageHeader>
+</Header>
+
+<Breadcrumbs
+	items={[
+		{ label: 'Направления', href: resolve('/(app)/directions') },
+		{ label: data.direction.name }
+	]}
+/>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<ActionAlert />

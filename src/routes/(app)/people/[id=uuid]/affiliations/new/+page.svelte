@@ -10,7 +10,8 @@
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { createAffiliationSchema, type CreateAffiliationInput } from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
@@ -33,12 +34,13 @@
 
 <svelte:head><title>Новая роль — LCT CRM</title></svelte:head>
 
-<PageHeader
-	title="Новая роль"
-	description={fullName}
-	breadcrumbs={[
+<Header title="Новая роль" description={fullName} />
+
+<Breadcrumbs
+	items={[
 		{ label: 'Контакты', href: resolve('/(app)/people') },
-		{ label: fullName, href: cardHref }
+		{ label: fullName, href: cardHref },
+		{ label: 'Новая роль' }
 	]}
 />
 

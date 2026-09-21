@@ -7,7 +7,8 @@
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import FilterBar from '$lib/components/exchange/filter-bar.svelte';
 	import MessageRow from '$lib/components/exchange/message-row.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import { formatNumber } from '$lib/format';
 	import type { PageProps } from './$types';
 
@@ -48,10 +49,17 @@
 <!-- Крошка «Настройки» без ссылки — та же, что у остальных страниц этой группы
 	меню: журнал обмена стоит среди настроек, и путь к нему обязан читаться так
 	же, как путь к ним. -->
-<PageHeader
+<Header
 	title="Внешние системы"
 	description="Журнал обмена с CMS сайта и системой обучения: что пришло, что ушло и чем ответили"
-	breadcrumbs={[{ label: 'Главная', href: resolve('/') }, { label: 'Настройки' }]}
+/>
+
+<Breadcrumbs
+	items={[
+		{ label: 'Главная', href: resolve('/') },
+		{ label: 'Настройки' },
+		{ label: 'Внешние системы' }
+	]}
 />
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">

@@ -13,7 +13,8 @@
 	import FilterSelect from '$lib/components/directory/filter-select.svelte';
 	import { filterHref } from '$lib/components/directory/query';
 	import EmptyState from '$lib/components/empty-state.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import ScoreBreakdown from '$lib/components/stats/score-breakdown.svelte';
 	import SectionTabs from '$lib/components/stats/section-tabs.svelte';
 	import { measureText } from '$lib/components/stats/labels';
@@ -151,10 +152,9 @@
 
 <svelte:head><title>Показатели — LCT CRM</title></svelte:head>
 
-<PageHeader
+<Header
 	title="Показатели"
 	description="Считаются по подтверждённым снимкам. Прочерк означает, что данных нет, ноль — что ноль записан в выгрузке."
-	breadcrumbs={[{ label: 'Данные об обучении', href: resolve('/(app)/data') }]}
 >
 	{#snippet actions()}
 		<!-- Выгрузка всегда про один период: без выбора кнопка выключена, а
@@ -164,7 +164,11 @@
 			Выгрузить отчёт (xlsx)
 		</Button>
 	{/snippet}
-</PageHeader>
+</Header>
+
+<Breadcrumbs
+	items={[{ label: 'Данные об обучении', href: resolve('/(app)/data') }, { label: 'Показатели' }]}
+/>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<SectionTabs />

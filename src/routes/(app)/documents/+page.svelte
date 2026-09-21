@@ -9,7 +9,7 @@
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
 	import FilterSelect from '$lib/components/directory/filter-select.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type { FieldOption } from '$lib/components/form/field-select.svelte';
 	import {
@@ -217,7 +217,7 @@
 
 <svelte:head><title>Документы — LCT CRM</title></svelte:head>
 
-<PageHeader
+<Header
 	title="Документы"
 	description="Всё, что приложено к взаимодействиям и собрано по шаблонам: соглашения, приказы, акты и отчёты."
 />

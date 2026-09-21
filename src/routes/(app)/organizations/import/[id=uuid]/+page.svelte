@@ -5,7 +5,8 @@
 	import { filterHref } from '$lib/components/directory/query';
 	import KeyValue from '$lib/components/key-value.svelte';
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import {
 		CATALOG_IMPORT_STATUS_LABELS,
@@ -38,20 +39,21 @@
 
 <svelte:head><title>Загрузка каталога — LCT CRM</title></svelte:head>
 
-<PageHeader
-	title="Загрузка каталога"
-	description="Что этот файл сделал со справочником — построчно."
-	breadcrumbs={[
-		{ label: 'Организации', href: resolve('/(app)/organizations') },
-		{ label: 'Импорт каталога', href: resolve('/(app)/organizations/import') }
-	]}
->
+<Header title="Загрузка каталога" description="Что этот файл сделал со справочником — построчно.">
 	{#snippet actions()}
 		<Button variant="outline" href={resolve('/(app)/organizations/import')}>
 			Загрузить ещё файл
 		</Button>
 	{/snippet}
-</PageHeader>
+</Header>
+
+<Breadcrumbs
+	items={[
+		{ label: 'Организации', href: resolve('/(app)/organizations') },
+		{ label: 'Импорт каталога', href: resolve('/(app)/organizations/import') },
+		{ label: 'Загрузка каталога' }
+	]}
+/>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<div class="flex flex-wrap items-center gap-2">

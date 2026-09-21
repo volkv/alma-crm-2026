@@ -9,7 +9,7 @@
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
 	import FilterSelect from '$lib/components/directory/filter-select.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import SectionTabs from '$lib/components/stats/section-tabs.svelte';
 	import { STAT_SNAPSHOT_STATUS_TONES } from '$lib/components/stats/labels';
@@ -162,7 +162,7 @@
 
 <svelte:head><title>Данные об обучении — LCT CRM</title></svelte:head>
 
-<PageHeader
+<Header
 	title="Данные об обучении"
 	description="Загрузки статистики с сопоставлением колонок, построчной проверкой и подтверждением: показатели считаются только по подтверждённым снимкам."
 >
@@ -174,7 +174,7 @@
 			</Button>
 		{/if}
 	{/snippet}
-</PageHeader>
+</Header>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<SectionTabs />

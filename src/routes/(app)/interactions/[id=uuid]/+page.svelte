@@ -4,7 +4,8 @@
 	import { resolve } from '$app/paths';
 	import * as Tabs from '$lib/components/ui/tabs/index.js';
 	import { filterHref } from '$lib/components/directory/query';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StageTimeline from '$lib/components/stage-timeline.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
@@ -81,11 +82,7 @@
 	<title>{data.interaction.title} — LCT CRM</title>
 </svelte:head>
 
-<PageHeader
-	title={data.interaction.title}
-	description={parties}
-	breadcrumbs={[{ label: 'Взаимодействия', href: resolve('/interactions') }]}
->
+<Header title={data.interaction.title} description={parties}>
 	{#snippet actions()}
 		{#if data.interaction.status !== 'active'}
 			<StatusBadge tone={data.interaction.status === 'completed' ? 'success' : 'neutral'}>
@@ -96,7 +93,14 @@
 			<StatusBadge tone="warning" dot title="Давно не было событий">Тишина</StatusBadge>
 		{/if}
 	{/snippet}
-</PageHeader>
+</Header>
+
+<Breadcrumbs
+	items={[
+		{ label: 'Взаимодействия', href: resolve('/interactions') },
+		{ label: data.interaction.title }
+	]}
+/>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<div class="rounded-lg border border-border bg-surface p-4" data-tour="interaction-timeline">

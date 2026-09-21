@@ -9,7 +9,8 @@
 	} from '$lib/components/directory/labels';
 	import KeyValue from '$lib/components/key-value.svelte';
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type { PageProps } from './$types';
 
@@ -20,11 +21,7 @@
 
 <Flash messages={{ created: 'Продукт создан', updated: 'Изменения сохранены' }} />
 
-<PageHeader
-	title={data.product.name}
-	description={data.product.code}
-	breadcrumbs={[{ label: 'Продукты', href: resolve('/(app)/products') }]}
->
+<Header title={data.product.name} description={data.product.code}>
 	{#snippet actions()}
 		{#if data.canWrite}
 			<Button
@@ -36,7 +33,11 @@
 			</Button>
 		{/if}
 	{/snippet}
-</PageHeader>
+</Header>
+
+<Breadcrumbs
+	items={[{ label: 'Продукты', href: resolve('/(app)/products') }, { label: data.product.name }]}
+/>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<section

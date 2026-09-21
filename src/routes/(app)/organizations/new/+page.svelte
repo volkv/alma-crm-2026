@@ -8,7 +8,8 @@
 	import type { DirectoryMessage } from '$lib/components/directory/messages';
 	import OrganizationFields from '$lib/components/directory/organization-fields.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import { createOrganizationSchema, type CreateOrganizationInput } from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
 
@@ -29,9 +30,13 @@
 
 <svelte:head><title>Новая организация — LCT CRM</title></svelte:head>
 
-<PageHeader
-	title="Новая организация"
-	breadcrumbs={[{ label: 'Организации', href: resolve('/organizations') }]}
+<Header title="Новая организация" />
+
+<Breadcrumbs
+	items={[
+		{ label: 'Организации', href: resolve('/organizations') },
+		{ label: 'Новая организация' }
+	]}
 />
 
 <div class="p-4 sm:p-6">

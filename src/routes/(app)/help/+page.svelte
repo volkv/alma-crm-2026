@@ -4,7 +4,8 @@
 	import PrinterIcon from '@lucide/svelte/icons/printer';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import { getOnboardingTour } from '$lib/onboarding/tour.svelte';
 	import type { PageProps } from './$types';
 
@@ -21,10 +22,9 @@
 	<title>Справка — LCT CRM</title>
 </svelte:head>
 
-<PageHeader
+<Header
 	title="Справка"
 	description="Руководства пользователя и администратора: как устроена работа и как устроена система."
-	breadcrumbs={[{ label: 'Главная', href: resolve('/') }]}
 >
 	{#snippet actions()}
 		<!-- Кнопки, которая ничего не делает, здесь нет: роли без подсказок их не
@@ -40,7 +40,9 @@
 			Версия для печати
 		</Button>
 	{/snippet}
-</PageHeader>
+</Header>
+
+<Breadcrumbs items={[{ label: 'Главная', href: resolve('/') }, { label: 'Справка' }]} />
 
 <!-- `data-tour` — метка для подсказок (`$lib/onboarding/screens`). -->
 <div class="flex flex-col gap-4 p-4 sm:p-6" data-tour="help-sections">

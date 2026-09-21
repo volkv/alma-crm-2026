@@ -8,7 +8,8 @@
 	import type { DirectoryMessage } from '$lib/components/directory/messages';
 	import ProductFields from '$lib/components/directory/product-fields.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import { createProductSchema, type CreateProductInput } from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
 
@@ -29,12 +30,13 @@
 
 <svelte:head><title>{data.product.code}: изменение — LCT CRM</title></svelte:head>
 
-<PageHeader
-	title="Изменение продукта"
-	description={data.product.name}
-	breadcrumbs={[
+<Header title="Изменение продукта" description={data.product.name} />
+
+<Breadcrumbs
+	items={[
 		{ label: 'Продукты', href: resolve('/(app)/products') },
-		{ label: data.product.code, href: cardHref }
+		{ label: data.product.code, href: cardHref },
+		{ label: 'Изменение продукта' }
 	]}
 />
 

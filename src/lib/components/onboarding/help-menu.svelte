@@ -12,21 +12,21 @@
 	import { pluralize } from '$lib/format';
 	import { screenForPath } from '$lib/onboarding/screens';
 	import { getOnboardingTour } from '$lib/onboarding/tour.svelte';
+	import { search } from '$lib/components/app-shell/search.svelte';
 
 	/**
-	 * Значок «?» в шапке: подсказки и справка с любого экрана.
+	 * Значок «?»: подсказки и справка с любого экрана.
 	 *
-	 * Стоит рядом с поиском и темой и не зависит от страницы под ним — это и
-	 * есть обещание самодокументированной системы: что бы человек ни открыл,
-	 * объяснение находится в одном и том же месте, а не там, где его успели
-	 * положить.
+	 * Стоит в подвале меню разделов, а на телефоне — в нижней панели, рядом с
+	 * поиском и темой, и не зависит от страницы под ним — это и есть обещание
+	 * самодокументированной системы: что бы человек ни открыл, объяснение
+	 * находится в одном и том же месте, а не там, где его успели положить.
 	 *
 	 * Точка-напоминание горит, пока подсказки этого экрана на этом устройстве не
 	 * смотрели. Признак лежит в браузере, и до гидратации его не прочитать,
 	 * поэтому тур до тех пор отвечает «смотрели»: точка, мелькнувшая на долю
 	 * секунды после загрузки страницы, — не напоминание, а рябь.
 	 */
-	let { onsearch }: { onsearch: () => void } = $props();
 
 	const tour = getOnboardingTour();
 
@@ -117,7 +117,7 @@
 				</a>
 			{/snippet}
 		</DropdownMenu.Item>
-		<DropdownMenu.Item onSelect={() => onsearch()}>
+		<DropdownMenu.Item onSelect={() => search.show()}>
 			<SearchIcon aria-hidden="true" />
 			<span class="min-w-0 flex-1 truncate">Быстрый поиск</span>
 			<kbd class="rounded border border-border bg-surface-muted px-1 font-sans text-[10px]">

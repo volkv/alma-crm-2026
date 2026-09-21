@@ -9,7 +9,8 @@
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FileInput from '$lib/components/form/file-input.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import WizardSteps from '$lib/components/stats/wizard-steps.svelte';
 	import {
@@ -40,10 +41,16 @@
 
 <svelte:head><title>Импорт каталога — LCT CRM</title></svelte:head>
 
-<PageHeader
+<Header
 	title="Импорт каталога"
 	description="Шаг 1 из 3: файл со строками «вуз — вендор — ПО — договор — лицензия — статус передачи»."
-	breadcrumbs={[{ label: 'Организации', href: resolve('/(app)/organizations') }]}
+/>
+
+<Breadcrumbs
+	items={[
+		{ label: 'Организации', href: resolve('/(app)/organizations') },
+		{ label: 'Импорт каталога' }
+	]}
 />
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">

@@ -1,7 +1,8 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import type { LayoutProps } from './$types';
 
 	/**
@@ -39,15 +40,16 @@
 	);
 </script>
 
-<PageHeader
-	title={inner ?? current?.label ?? 'Настройки'}
-	{description}
-	breadcrumbs={[
+<Header title={inner ?? current?.label ?? 'Настройки'} {description} />
+
+<Breadcrumbs
+	items={[
 		{ label: 'Главная', href: resolve('/') },
 		{ label: 'Настройки' },
 		...(inner !== null && current !== undefined
 			? [{ label: current.label, href: resolve(current.href) }]
-			: [])
+			: []),
+		{ label: inner ?? current?.label ?? 'Настройки' }
 	]}
 />
 

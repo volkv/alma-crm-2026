@@ -5,7 +5,8 @@
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import MappingTable from '$lib/components/stats/mapping-table.svelte';
 	import WizardSteps from '$lib/components/stats/wizard-steps.svelte';
 	import {
@@ -50,12 +51,16 @@
 
 <svelte:head><title>Сопоставление колонок каталога — LCT CRM</title></svelte:head>
 
-<PageHeader
+<Header
 	title="Сопоставление колонок"
 	description="Шаг 2 из 3: какая колонка файла что означает. Предложение помечено значком — меняйте его там, где система ошиблась."
-	breadcrumbs={[
+/>
+
+<Breadcrumbs
+	items={[
 		{ label: 'Организации', href: resolve('/(app)/organizations') },
-		{ label: 'Импорт каталога', href: resolve('/(app)/organizations/import') }
+		{ label: 'Импорт каталога', href: resolve('/(app)/organizations/import') },
+		{ label: 'Сопоставление колонок' }
 	]}
 />
 

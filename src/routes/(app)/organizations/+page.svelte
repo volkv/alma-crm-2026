@@ -16,7 +16,7 @@
 		ORGANIZATION_KIND_OPTIONS,
 		ORGANIZATION_KIND_TONES
 	} from '$lib/components/directory/labels';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatNumber } from '$lib/format';
 	import type { OrganizationRow } from '$lib/contracts/directory';
@@ -102,7 +102,7 @@
 
 <Flash messages={{ archived: 'Организация переведена в архив' }} />
 
-<PageHeader
+<Header
 	title="Организации"
 	description="Учебные заведения, компании-заказчики и операторы, с которыми идёт работа."
 >
@@ -129,7 +129,7 @@
 			</Button>
 		{/if}
 	{/snippet}
-</PageHeader>
+</Header>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<div class="flex flex-wrap items-center gap-3" data-tour="organizations-filters">

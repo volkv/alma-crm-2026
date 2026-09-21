@@ -11,7 +11,8 @@
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import { filterHref } from '$lib/components/directory/query';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import WizardSteps from '$lib/components/stats/wizard-steps.svelte';
 	import {
 		CATALOG_ROW_ACTIONS,
@@ -52,12 +53,16 @@
 
 <svelte:head><title>Предпросмотр импорта каталога — LCT CRM</title></svelte:head>
 
-<PageHeader
+<Header
 	title="Предпросмотр импорта"
 	description="Шаг 3 из 3: что импорт сделает с каждой строкой. Пока вы не подтвердили, в справочнике ничего не изменилось."
-	breadcrumbs={[
+/>
+
+<Breadcrumbs
+	items={[
 		{ label: 'Организации', href: resolve('/(app)/organizations') },
-		{ label: 'Импорт каталога', href: resolve('/(app)/organizations/import') }
+		{ label: 'Импорт каталога', href: resolve('/(app)/organizations/import') },
+		{ label: 'Предпросмотр импорта' }
 	]}
 />
 

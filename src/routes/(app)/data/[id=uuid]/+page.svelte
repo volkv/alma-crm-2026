@@ -6,7 +6,8 @@
 	import KeyValue from '$lib/components/key-value.svelte';
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
 	import { filterHref } from '$lib/components/directory/query';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import RowsTable from '$lib/components/stats/rows-table.svelte';
 	import { STAT_SNAPSHOT_STATUS_TONES } from '$lib/components/stats/labels';
@@ -33,10 +34,9 @@
 
 <svelte:head><title>Снимок данных — LCT CRM</title></svelte:head>
 
-<PageHeader
+<Header
 	title="Снимок данных: {STAT_SOURCE_LABELS[snapshot.source]}"
 	description={snapshot.fileName ?? 'Загрузка без файла'}
-	breadcrumbs={[{ label: 'Данные об обучении', href: resolve('/(app)/data') }]}
 >
 	{#snippet actions()}
 		<StatusBadge tone={STAT_SNAPSHOT_STATUS_TONES[snapshot.status]}>
@@ -64,7 +64,14 @@
 			</Button>
 		{/if}
 	{/snippet}
-</PageHeader>
+</Header>
+
+<Breadcrumbs
+	items={[
+		{ label: 'Данные об обучении', href: resolve('/(app)/data') },
+		{ label: `Снимок данных: ${STAT_SOURCE_LABELS[snapshot.source]}` }
+	]}
+/>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<div class="rounded-lg border border-border bg-surface p-4" data-tour="data-snapshot-summary">

@@ -14,7 +14,7 @@
 		PROGRAM_LEVEL_LABELS,
 		PROGRAM_LEVEL_OPTIONS
 	} from '$lib/components/directory/labels';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type { ProgramListItem } from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
@@ -102,7 +102,7 @@
 
 <svelte:head><title>Программы — LCT CRM</title></svelte:head>
 
-<PageHeader
+<Header
 	title="Программы"
 	description="Образовательные программы оператора: по ним сверяют планы и отчёты. Порядок — ручной приоритет, затем название."
 >
@@ -114,7 +114,7 @@
 			</Button>
 		{/if}
 	{/snippet}
-</PageHeader>
+</Header>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<div class="flex flex-wrap items-center gap-3" data-tour="programs-filters">

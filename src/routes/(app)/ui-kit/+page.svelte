@@ -30,7 +30,8 @@
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import KeyValue from '$lib/components/key-value.svelte';
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import SlaChip from '$lib/components/sla-chip.svelte';
 	import StageTimeline, {
 		type Stage,
@@ -227,10 +228,9 @@
 	<div class="w-32"><StageTimeline stages={route} compact now={SHOWCASE_NOW} /></div>
 {/snippet}
 
-<PageHeader
+<Header
 	title="UI-кит"
 	description="Все элементы интерфейса в одном месте: как они выглядят, как называются и в каких состояниях бывают."
-	breadcrumbs={[{ label: 'Главная', href: resolve('/') }]}
 >
 	{#snippet actions()}
 		<Button
@@ -244,7 +244,9 @@
 			Действие
 		</Button>
 	{/snippet}
-</PageHeader>
+</Header>
+
+<Breadcrumbs items={[{ label: 'Главная', href: resolve('/') }, { label: 'UI-кит' }]} />
 
 <div class="flex flex-col gap-8 p-4 sm:p-6">
 	<section class="flex flex-col gap-3">

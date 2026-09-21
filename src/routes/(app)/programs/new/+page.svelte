@@ -8,7 +8,8 @@
 	import type { DirectoryMessage } from '$lib/components/directory/messages';
 	import ProgramFields from '$lib/components/directory/program-fields.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import { createProgramSchema, type CreateProgramInput } from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
 
@@ -27,9 +28,10 @@
 
 <svelte:head><title>Новая программа — LCT CRM</title></svelte:head>
 
-<PageHeader
-	title="Новая программа"
-	breadcrumbs={[{ label: 'Программы', href: resolve('/(app)/programs') }]}
+<Header title="Новая программа" />
+
+<Breadcrumbs
+	items={[{ label: 'Программы', href: resolve('/(app)/programs') }, { label: 'Новая программа' }]}
 />
 
 <div class="p-4 sm:p-6">

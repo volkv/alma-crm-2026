@@ -9,7 +9,8 @@
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FileInput from '$lib/components/form/file-input.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import WizardSteps from '$lib/components/stats/wizard-steps.svelte';
 	import {
 		STAT_FILE_FORMATS_HINT,
@@ -57,10 +58,16 @@
 
 <svelte:head><title>Загрузка данных — LCT CRM</title></svelte:head>
 
-<PageHeader
+<Header
 	title="Загрузка данных"
 	description="Шаг 1 из 3: файл выгрузки, её источник, режим и отчётный период."
-	breadcrumbs={[{ label: 'Данные об обучении', href: resolve('/(app)/data') }]}
+/>
+
+<Breadcrumbs
+	items={[
+		{ label: 'Данные об обучении', href: resolve('/(app)/data') },
+		{ label: 'Загрузка данных' }
+	]}
 />
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">

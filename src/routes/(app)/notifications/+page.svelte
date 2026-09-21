@@ -3,8 +3,9 @@
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Header from '$lib/components/header.svelte';
 	import { formatNumber } from '$lib/format';
 	import {
 		NOTIFICATION_CHANNELS,
@@ -52,13 +53,20 @@
 	<title>Уведомления — LCT CRM</title>
 </svelte:head>
 
+<Header
+	title="Уведомления"
+	description="Напоминания о взаимодействиях, которые стоят на одной стадии дольше порога: кому ушли, каким каналом и дошли ли"
+/>
+
 <!-- Крошка «Настройки» без ссылки — та же, что у остальных страниц этой группы
 	меню: журнал доставок стоит среди настроек, и путь к нему обязан читаться
 	так же, как путь к ним. -->
-<PageHeader
-	title="Уведомления"
-	description="Напоминания о взаимодействиях, которые стоят на одной стадии дольше порога: кому ушли, каким каналом и дошли ли"
-	breadcrumbs={[{ label: 'Главная', href: resolve('/') }, { label: 'Настройки' }]}
+<Breadcrumbs
+	items={[
+		{ label: 'Главная', href: resolve('/') },
+		{ label: 'Настройки' },
+		{ label: 'Уведомления' }
+	]}
 />
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">

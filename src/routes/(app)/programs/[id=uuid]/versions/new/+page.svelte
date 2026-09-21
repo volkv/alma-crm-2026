@@ -9,7 +9,8 @@
 	import ProgramVersionFields from '$lib/components/directory/program-version-fields.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import {
 		createProgramVersionSchema,
 		type CreateProgramVersionInput
@@ -33,12 +34,13 @@
 
 <svelte:head><title>Новая версия программы — LCT CRM</title></svelte:head>
 
-<PageHeader
-	title="Новая версия"
-	description={data.program.name}
-	breadcrumbs={[
+<Header title="Новая версия" description={data.program.name} />
+
+<Breadcrumbs
+	items={[
 		{ label: 'Программы', href: resolve('/(app)/programs') },
-		{ label: data.program.code, href: cardHref }
+		{ label: data.program.code, href: cardHref },
+		{ label: 'Новая версия' }
 	]}
 />
 

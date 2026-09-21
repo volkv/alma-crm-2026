@@ -1,30 +1,33 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import MenuIcon from '@lucide/svelte/icons/menu';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import PanelLeftCloseIcon from '@lucide/svelte/icons/panel-left-close';
 	import PanelLeftOpenIcon from '@lucide/svelte/icons/panel-left-open';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Toaster } from '$lib/components/ui/sonner/index.js';
-	import HelpMenu from '$lib/components/onboarding/help-menu.svelte';
-	import * as Sheet from '$lib/components/ui/sheet/index.js';
 	import { visibleSections } from '$lib/nav';
 	import { theme } from '$lib/theme.svelte';
 	import type { SessionUser } from '$lib/server/auth/types';
+	import AppDock from './app-dock.svelte';
 	import AppNav from './app-nav.svelte';
 	import CommandPalette from './command-palette.svelte';
-	import ThemeToggle from './theme-toggle.svelte';
 	import UserMenu from './user-menu.svelte';
 	import { createNavCollapse } from './nav-collapse.svelte';
-	import { navLinks, sectionFor } from './nav-links';
+	import { navLinks } from './nav-links';
+	import { search } from './search.svelte';
 
 	/**
-	 * The frame every page of the application sits in: sections on the left, the
-	 * current section and the account on top, the page itself in the middle. A
-	 * page renders only its own content — the shell owns navigation, search and
-	 * the toast outlet, so none of that is repeated per route.
+	 * The frame every page of the application sits in: sections and the account
+	 * on the left, the page itself filling the rest. A page renders its own
+	 * content and its own header — the shell owns navigation, search and the
+	 * toast outlet, so none of that is repeated per route.
+	 *
+	 * Своей верхней полосы у оболочки нет: заголовок страницы стоял в ней
+	 * вторым, мелким шрифтом, над тем же заголовком этажом ниже. Шапка теперь
+	 * одна и принадлежит странице (`$lib/components/header.svelte`) вместе со
+	 * справкой и темой; поиск переехал в меню разделов. На телефоне, где меню
+	 * нет, всё это держит нижняя панель (`app-dock.svelte`).
 	 */
 	let {
 		user,
@@ -47,10 +50,6 @@
 
 	const nav = createNavCollapse();
 
-	let mobileNavOpen = $state(false);
-	let searchOpen = $state(false);
-
-	const sectionTitle = $derived(sectionFor(page.url.pathname)?.label ?? 'LCT CRM');
 	// Час приходит числом по часам сервера — на экране он обязан выглядеть
 	// временем: «в 3» читается как «в три чего-то».
 	const resetTime = $derived(
@@ -63,7 +62,7 @@
 	function onWindowKeydown(event: KeyboardEvent) {
 		if (event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)) {
 			event.preventDefault();
-			searchOpen = true;
+			search.show();
 		}
 	}
 </script>
@@ -126,6 +125,33 @@
 			</Button>
 		</div>
 
+		<!-- Поиск — первой строкой меню, а не в его подвале: это вход в систему
+			наравне с разделами, им находят запись, когда не знают, в каком она
+			разделе. У свёрнутого меню остаётся один значок, подпись и Ctrl+K
+			уходят в название кнопки для читалки. -->
+		<div class="shrink-0 border-b border-border p-2">
+			<Button
+				variant="outline"
+				size="sm"
+				data-tour="search"
+				aria-label="Поиск по системе, Ctrl+K"
+				class="w-full gap-2 text-muted-foreground {nav.collapsed
+					? 'justify-center px-0'
+					: 'justify-start'}"
+				onclick={() => search.show()}
+			>
+				<SearchIcon aria-hidden="true" />
+				{#if !nav.collapsed}
+					<span>Поиск</span>
+					<kbd
+						class="ml-auto rounded border border-border bg-surface-muted px-1 font-sans text-[10px]"
+					>
+						Ctrl+K
+					</kbd>
+				{/if}
+			</Button>
+		</div>
+
 		<div class="min-h-0 flex-1 overflow-y-auto">
 			<AppNav {links} collapsed={nav.collapsed} />
 		</div>
@@ -141,92 +167,47 @@
 	</aside>
 
 	<div class="flex min-w-0 flex-1 flex-col">
-		<!-- Полоса демо-режима липкая вместе с шапкой: на длинных экранах
-			(карточка, отчёты, редактор процесса) она уезжала за верх при первой
-			же прокрутке, и большая часть показа шла без отметки «демо». -->
-		<div class="sticky top-0 z-30 shrink-0">
+		<!-- `tabindex="-1"`: по ссылке «к содержимому» фокус обязан переехать сюда,
+			а не остаться в начале страницы.
+
+			Колонка, а не блок, ради порядка ниже: полоса демо-режима стоит в
+			разметке первой, а на экране — третьей.
+
+			Отступ снизу — под нижнюю панель телефона: она висит над страницей, и
+			без отступа последняя строка списка остаётся под ней. -->
+		<main
+			id="page-content"
+			tabindex="-1"
+			class="flex min-w-0 flex-1 flex-col pb-[calc(5.5rem+env(safe-area-inset-bottom))] md:pb-0"
+		>
+			<!-- Полоса демо-режима стоит под шапкой и крошками страницы, а не над
+				ними: сверху она сдвигала шапку вниз относительно шапки бокового меню,
+				и две полосы, которые обязаны читаться одной строкой, расходились.
+
+				Порядком её ставит на место `order`: шапка и крошки приходят внутри
+				`children`, и разметкой полосу между ними не вписать. Шапка объявляет
+				себя первой, крошки — вторыми, всё остальное идёт следом в порядке
+				разметки (`$lib/components/header.svelte`). У страницы на старой
+				шапке порядка нет — полоса остаётся над ней, как была. -->
 			{#if demoMode}
-				<p
-					class="bg-warning-soft px-3 py-1 text-center text-xs text-warning-soft-foreground sm:px-4"
-				>
-					Демо-режим: вузы и продукты названы настоящие, люди, договоры и цифры — вымышленные{#if demoResetHour !== null}.
-						Стенд общий, данные сбрасываются ежедневно в {resetTime}{/if}
-				</p>
+				<div class="shrink-0" data-demo-banner>
+					<p
+						class="bg-warning-soft px-3 py-1 text-center text-xs text-warning-soft-foreground sm:px-4"
+					>
+						Демо-режим: вузы и продукты названы настоящие, люди, договоры и цифры — вымышленные{#if demoResetHour !== null}.
+							Стенд общий, данные сбрасываются ежедневно в {resetTime}{/if}
+					</p>
+				</div>
 			{/if}
 
-			<header class="flex h-14 items-center gap-2 border-b border-border bg-surface px-3 sm:px-4">
-				<Sheet.Root bind:open={mobileNavOpen}>
-					<Sheet.Trigger>
-						{#snippet child({ props })}
-							<Button
-								{...props}
-								variant="ghost"
-								size="icon-sm"
-								class="md:hidden"
-								aria-label="Разделы"
-							>
-								<MenuIcon aria-hidden="true" />
-							</Button>
-						{/snippet}
-					</Sheet.Trigger>
-					<Sheet.Content side="left" class="w-64 gap-0 p-0">
-						<Sheet.Header class="h-14 shrink-0 justify-center border-b border-border px-4">
-							<Sheet.Title class="text-sm font-semibold">LCT CRM</Sheet.Title>
-							<Sheet.Description class="sr-only">Разделы системы</Sheet.Description>
-						</Sheet.Header>
-						<div class="min-h-0 flex-1 overflow-y-auto">
-							<AppNav {links} onnavigate={() => (mobileNavOpen = false)} />
-						</div>
-						<!-- Та же карточка учётной записи повторяется здесь: на
-							телефоне бокового меню нет, а выход из системы живёт только в ней. -->
-						{#if user}
-							<div class="shrink-0 border-t border-border">
-								<UserMenu {user} variant="dialog" />
-							</div>
-						{/if}
-					</Sheet.Content>
-				</Sheet.Root>
-
-				<h2 class="min-w-0 truncate text-sm font-medium">{sectionTitle}</h2>
-
-				<div class="ml-auto flex items-center gap-1.5">
-					<Button
-						variant="outline"
-						size="sm"
-						class="gap-2 text-muted-foreground"
-						data-tour="search"
-						onclick={() => (searchOpen = true)}
-					>
-						<SearchIcon aria-hidden="true" />
-						<span class="hidden sm:inline">Поиск</span>
-						<kbd
-							class="hidden rounded border border-border bg-surface-muted px-1 font-sans text-[10px] sm:inline"
-							>Ctrl+K</kbd
-						>
-					</Button>
-					<!-- Значок «?» стоит здесь, а не в разделе справки: подсказки по
-						текущему экрану обязаны быть под рукой на каждом экране, иначе
-						самодокументированной система остаётся только на словах. -->
-					<HelpMenu onsearch={() => (searchOpen = true)} />
-					<!-- Тема живёт в шапке, а не в настройках: выбор принадлежит
-						устройству, и до него должно быть одно нажатие с любой страницы.
-						Обёртка несёт метку тура: рамка обводит кнопку целиком. -->
-					<div data-tour="theme-toggle" class="flex shrink-0 items-center">
-						<ThemeToggle />
-					</div>
-				</div>
-			</header>
-		</div>
-
-		<!-- `tabindex="-1"`: по ссылке «к содержимому» фокус обязан переехать сюда,
-			а не остаться в начале страницы. -->
-		<main id="page-content" tabindex="-1" class="min-w-0 flex-1">
 			{@render children()}
 		</main>
 	</div>
 </div>
 
-<CommandPalette bind:open={searchOpen} {links} />
+<AppDock {links} {user} />
+
+<CommandPalette bind:open={search.open} {links} />
 <!-- Тост рисует свой слой со своими переменными: тему ему говорят отдельно,
 	иначе он остаётся светлым посреди тёмной страницы. -->
 <Toaster position="bottom-right" closeButton theme={theme.resolved} />

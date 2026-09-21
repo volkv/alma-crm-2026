@@ -14,7 +14,8 @@
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import FormField from '$lib/components/form/form-field.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import OrganizationPicker from '$lib/components/interactions/organization-picker.svelte';
 	import { NO_OPTION, toLookupOptions, withEmptyOption } from '$lib/components/directory/labels';
 	import type { ContractView, LookupOption } from '$lib/contracts/directory';
@@ -208,10 +209,16 @@
 	<title>Новое взаимодействие — LCT CRM</title>
 </svelte:head>
 
-<PageHeader
+<Header
 	title="Новое взаимодействие"
 	description="Кто участвует, какие программы и продукты, кто отвечает и в какие сроки."
-	breadcrumbs={[{ label: 'Взаимодействия', href: resolve('/interactions') }]}
+/>
+
+<Breadcrumbs
+	items={[
+		{ label: 'Взаимодействия', href: resolve('/interactions') },
+		{ label: 'Новое взаимодействие' }
+	]}
 />
 
 <div class="p-4 sm:p-6">

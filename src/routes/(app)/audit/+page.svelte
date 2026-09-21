@@ -7,7 +7,8 @@
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
 	import InlineHint from '$lib/components/inline-hint.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatDateTime, formatNumber } from '$lib/format';
 	import type { AuditEventView, AuditOutcome } from '$lib/contracts/audit';
@@ -145,10 +146,9 @@
 	</span>
 {/snippet}
 
-<PageHeader
+<Header
 	title="Журнал действий"
 	description="Кто, что и чем кончилось. Записи неизменяемы: их нельзя исправить или удалить."
-	breadcrumbs={[{ label: 'Главная', href: resolve('/') }]}
 >
 	{#snippet actions()}
 		{#if data.canExport}
@@ -177,7 +177,9 @@
 			</div>
 		{/if}
 	{/snippet}
-</PageHeader>
+</Header>
+
+<Breadcrumbs items={[{ label: 'Главная', href: resolve('/') }, { label: 'Журнал действий' }]} />
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<FilterBar url={page.url} actors={data.actors} />

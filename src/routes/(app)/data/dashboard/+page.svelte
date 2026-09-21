@@ -11,7 +11,8 @@
 	import { tableHref } from '$lib/components/data-table/query';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import Section from '$lib/components/home/section.svelte';
 	import DashboardTiles from '$lib/components/stats/dashboard-tiles.svelte';
 	import PeriodSelect from '$lib/components/stats/period-select.svelte';
@@ -93,10 +94,9 @@
 
 <svelte:head><title>Дашборд данных — LCT CRM</title></svelte:head>
 
-<PageHeader
+<Header
 	title="Дашборд данных"
 	description="Портфель обучения за один отчётный период: сколько программ и вузов, сколько заявок и обучающихся и из каких загрузок это сложилось."
-	breadcrumbs={[{ label: 'Данные об обучении', href: resolve('/(app)/data') }]}
 >
 	{#snippet actions()}
 		{#if dashboard !== null}
@@ -106,7 +106,14 @@
 			</Button>
 		{/if}
 	{/snippet}
-</PageHeader>
+</Header>
+
+<Breadcrumbs
+	items={[
+		{ label: 'Данные об обучении', href: resolve('/(app)/data') },
+		{ label: 'Дашборд данных' }
+	]}
+/>
 
 <div class="flex flex-col gap-4 p-4 sm:p-6">
 	<SectionTabs />

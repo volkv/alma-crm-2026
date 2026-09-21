@@ -19,7 +19,7 @@
 	import FilterSelect from '$lib/components/directory/filter-select.svelte';
 	import type { FieldOption } from '$lib/components/form/field-select.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Header from '$lib/components/header.svelte';
 	import SlaChip from '$lib/components/sla-chip.svelte';
 	import StageTimeline from '$lib/components/stage-timeline.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
@@ -233,7 +233,7 @@
 	<title>Взаимодействия — LCT CRM</title>
 </svelte:head>
 
-<PageHeader
+<Header
 	title="Взаимодействия"
 	description="Работа с учебными заведениями: где стоит каждое дело и сколько у него осталось времени."
 >
@@ -243,7 +243,7 @@
 			Создать взаимодействие
 		</Button>
 	{/snippet}
-</PageHeader>
+</Header>
 
 {#snippet resetFilters()}
 	<Button variant="outline" href={clearedFiltersHref(page.url)}>

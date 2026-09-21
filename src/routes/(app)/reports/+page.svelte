@@ -4,7 +4,8 @@
 	import { resolve } from '$app/paths';
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import BreakdownCard from '$lib/components/reports/breakdown-card.svelte';
 	import FilterBar from '$lib/components/reports/filter-bar.svelte';
@@ -120,10 +121,9 @@
 	}
 </script>
 
-<PageHeader
+<Header
 	title="Отчёты по взаимодействиям"
 	description="Где работа стоит на дату и что за период произошло. Числа экрана, диаграмм и файлов — одни и те же."
-	breadcrumbs={[{ label: 'Главная', href: resolve('/') }]}
 >
 	{#snippet actions()}
 		<!-- Кнопки выгрузки собраны в один блок: подсказка показывает пальцем на
@@ -144,7 +144,11 @@
 			{/each}
 		</div>
 	{/snippet}
-</PageHeader>
+</Header>
+
+<Breadcrumbs
+	items={[{ label: 'Главная', href: resolve('/') }, { label: 'Отчёты по взаимодействиям' }]}
+/>
 
 <!-- Поля страницы такие же, как у остальных разделов: без них полоса вкладок
 	с отрицательным отступом выходила за край окна, а «Колонки» и «Сбросить

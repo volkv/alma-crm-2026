@@ -5,7 +5,8 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import HelpArticle from '$lib/components/help/help-article.svelte';
 	import HelpToc from '$lib/components/help/help-toc.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -15,12 +16,13 @@
 	<title>{data.article.title} — Справка — LCT CRM</title>
 </svelte:head>
 
-<PageHeader
-	title={data.article.title}
-	description={data.article.summary}
-	breadcrumbs={[
+<Header title={data.article.title} description={data.article.summary} />
+
+<Breadcrumbs
+	items={[
 		{ label: 'Главная', href: resolve('/') },
-		{ label: 'Справка', href: resolve('/(app)/help') }
+		{ label: 'Справка', href: resolve('/(app)/help') },
+		{ label: data.article.title }
 	]}
 />
 

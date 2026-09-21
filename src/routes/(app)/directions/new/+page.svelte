@@ -8,7 +8,8 @@
 	import FormAlert from '$lib/components/directory/form-alert.svelte';
 	import type { DirectoryMessage } from '$lib/components/directory/messages';
 	import FormActions from '$lib/components/form/form-actions.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import { createDirectionSchema, type CreateDirectionInput } from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
 
@@ -27,9 +28,13 @@
 
 <svelte:head><title>Новое направление — LCT CRM</title></svelte:head>
 
-<PageHeader
-	title="Новое направление"
-	breadcrumbs={[{ label: 'Направления', href: resolve('/(app)/directions') }]}
+<Header title="Новое направление" />
+
+<Breadcrumbs
+	items={[
+		{ label: 'Направления', href: resolve('/(app)/directions') },
+		{ label: 'Новое направление' }
+	]}
 />
 
 <div class="p-4 sm:p-6">

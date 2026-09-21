@@ -8,7 +8,8 @@
 	import type { DirectoryMessage } from '$lib/components/directory/messages';
 	import PersonFields from '$lib/components/directory/person-fields.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
-	import PageHeader from '$lib/components/page-header.svelte';
+	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
+	import Header from '$lib/components/header.svelte';
 	import { createPersonSchema, type CreatePersonInput } from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
 
@@ -27,9 +28,10 @@
 
 <svelte:head><title>Новый человек — LCT CRM</title></svelte:head>
 
-<PageHeader
-	title="Новый человек"
-	breadcrumbs={[{ label: 'Контакты', href: resolve('/(app)/people') }]}
+<Header title="Новый человек" />
+
+<Breadcrumbs
+	items={[{ label: 'Контакты', href: resolve('/(app)/people') }, { label: 'Новый человек' }]}
 />
 
 <div class="p-4 sm:p-6">
