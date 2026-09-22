@@ -619,11 +619,11 @@ describe('описание API', () => {
 			'/v1/organizations',
 			'/v1/organizations/{id}',
 			'/v1/organizations/{id}/interactions',
-			'/v1/workspaces',
-			'/v1/workspaces/{key}',
 			'/v1/products',
 			'/v1/programs',
-			'/v1/reports'
+			'/v1/reports',
+			'/v1/workspaces',
+			'/v1/workspaces/{key}'
 		]);
 		expect(paths['/v1/organizations'].get).toMatchObject({ security: [{ bearerAuth: [] }] });
 
