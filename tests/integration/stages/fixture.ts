@@ -26,7 +26,7 @@ import {
 import { withTransaction } from '$lib/server/db/transaction';
 import { markDocument } from '$lib/server/documents/status';
 import { createInteraction } from '$lib/server/interactions/write';
-import { B2B_GROUP_KEY, B2B_PROCESS, B2C_GROUP_KEY } from '$lib/server/stages/definitions';
+import { B2B_WORKSPACE_KEY, B2B_PROCESS, B2C_WORKSPACE_KEY } from '$lib/server/stages/definitions';
 import {
 	advanceStage,
 	applyLmsEvidence,
@@ -37,41 +37,41 @@ import {
 import {
 	ensureProcess,
 	readActiveRevision,
-	readGroupByKey,
-	readGroupRow,
+	readWorkspaceByKey,
+	readWorkspaceRow,
 	requireActiveRevision
 } from '$lib/server/stages/process';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import { insertOrganization, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
 
-export { B2B_GROUP_KEY, B2B_PROCESS, B2C_GROUP_KEY };
+export { B2B_WORKSPACE_KEY, B2B_PROCESS, B2C_WORKSPACE_KEY };
 
 /** Действующая редакция группы: тесты читают её, чтобы адресовать стадии. */
 export async function activeRevision(
 	database: TestDatabase,
-	groupKey: string
+	workspaceKey: string
 ): Promise<ProcessRevisionView> {
-	const group = await readGroupByKey(database.db, groupKey);
+	const workspace = await readWorkspaceByKey(database.db, workspaceKey);
 
-	return requireActiveRevision(database.db, group);
+	return requireActiveRevision(database.db, workspace);
 }
 
 /** Есть ли у группы действующая редакция вообще. */
-export async function hasProcess(database: TestDatabase, groupKey: string): Promise<boolean> {
-	const group = await readGroupByKey(database.db, groupKey);
+export async function hasProcess(database: TestDatabase, workspaceKey: string): Promise<boolean> {
+	const workspace = await readWorkspaceByKey(database.db, workspaceKey);
 
-	return (await readActiveRevision(database.db, group)) !== null;
+	return (await readActiveRevision(database.db, workspace)) !== null;
 }
 
 /** Заводит процесс группы и возвращает его действующую редакцию. */
 export async function seedProcess(
 	database: TestDatabase,
-	groupKey: string,
+	workspaceKey: string,
 	definition: ProcessDefinitionInput
 ): Promise<ProcessRevisionView> {
-	await database.db.transaction((tx) => ensureProcess(tx, groupKey, definition));
+	await database.db.transaction((tx) => ensureProcess(tx, workspaceKey, definition));
 
-	return activeRevision(database, groupKey);
+	return activeRevision(database, workspaceKey);
 }
 
 /** Стадия редакции по ключу: тесты адресуют стадии именами, а не номерами. */
@@ -172,7 +172,7 @@ export async function provideLmsEvidence(
 		.from(learningGroups)
 		.where(eq(learningGroups.interactionId, interactionId));
 
-	const [group] = await database.db
+	const [workspace] = await database.db
 		.insert(learningGroups)
 		.values({
 			interactionId,
@@ -186,7 +186,7 @@ export async function provideLmsEvidence(
 		.returning({ id: learningGroups.id });
 
 	await database.db.insert(learningGroupResults).values({
-		learningGroupId: group.id,
+		learningGroupId: workspace.id,
 		occurredAt,
 		...counters
 	});
@@ -195,7 +195,7 @@ export async function provideLmsEvidence(
 		system: 'lms',
 		instance: 'moodle-test',
 		groupExternalId,
-		learningGroupId: group.id,
+		learningGroupId: workspace.id,
 		occurredAt: occurredAt.toISOString(),
 		...counters,
 		finishedOn: null,
@@ -254,13 +254,13 @@ export async function advanceTo(
 	key: string
 ): Promise<void> {
 	const [row] = await database.db
-		.select({ groupId: interactions.processGroupId })
+		.select({ workspaceId: interactions.workspaceId })
 		.from(interactions)
 		.where(eq(interactions.id, interactionId));
 
 	const revision = await requireActiveRevision(
 		database.db,
-		await readGroupRow(database.db, row.groupId)
+		await readWorkspaceRow(database.db, row.workspaceId)
 	);
 
 	for (let step = 0; step < revision.stages.length + 1; step += 1) {

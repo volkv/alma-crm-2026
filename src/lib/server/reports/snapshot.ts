@@ -120,7 +120,7 @@ export function snapshotSelection(ctx: ActorContext, query: ReportQuery): SQL {
 			covering."pauseReason" as "pauseReason",
 			closing."closedAt" as "closedAt"
 		from interactions
-		left join process_groups process_group on process_group.id = interactions.process_group_id
+		left join workspaces workspace on workspace.id = interactions.workspace_id
 		${PRIMARY_PARTY_JOIN}
 		left join lateral (
 			select

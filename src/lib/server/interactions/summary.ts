@@ -16,7 +16,7 @@ import type { ActorContext } from '../actor';
 import { getDb } from '../db';
 import { interactionParties, organizations } from '../db/schema';
 import { can, requirePermission } from '../rbac';
-import { readGroupRow, requireActiveRevision } from '../stages/process';
+import { readWorkspaceRow, requireActiveRevision } from '../stages/process';
 import { getInteractionStatus } from '../stages/status';
 import { evaluateTransition, type StageState } from '../stages/transitions';
 import { assertInteractionVisible } from './access';
@@ -43,10 +43,10 @@ export async function getInteractionSummary(
 	requirePermission(ctx, 'interactions.read');
 
 	const interaction = await assertInteractionVisible(ctx, interactionId);
-	const group = await readGroupRow(getDb(), interaction.processGroupId);
+	const workspace = await readWorkspaceRow(getDb(), interaction.workspaceId);
 	const [status, revision] = await Promise.all([
 		getInteractionStatus(ctx, interactionId),
-		requireActiveRevision(getDb(), group)
+		requireActiveRevision(getDb(), workspace)
 	]);
 
 	const current = status.current;

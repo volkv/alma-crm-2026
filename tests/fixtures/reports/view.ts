@@ -98,20 +98,20 @@ export function sampleReportView(overrides: Partial<ReportView> = {}): ReportVie
 		totals: { rowCount: 2, interactionCount: 2, paused: 0, overdue: 1 },
 		charts: {
 			funnel: {
-				groups: [
+				workspaces: [
 					{
-						groupId: '88888888-8888-4888-8888-888888888888',
-						groupKey: 'b2b',
-						groupName: 'Работа с вузами',
+						workspaceId: '88888888-8888-4888-8888-888888888888',
+						workspaceKey: 'b2b',
+						workspaceName: 'Работа с вузами',
 						stages: [
 							{
-								key: 'group:contact_search',
+								key: 'workspace:contact_search',
 								label: 'Поиск контактных лиц',
 								value: 1,
 								filter: { param: 'stage', value: 'contact_search' }
 							},
 							{
-								key: 'group:meeting',
+								key: 'workspace:meeting',
 								label: 'Встреча',
 								value: 0,
 								filter: { param: 'stage', value: 'meeting' }

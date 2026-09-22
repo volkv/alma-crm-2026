@@ -1,7 +1,7 @@
 import postgres from 'postgres';
 import { expect, test as base, type Browser, type Locator } from '@playwright/test';
 import { MANAGER_STATE, STAFF_ADMIN_STATE, E2E_USER } from './global-setup';
-import { seedProcessGroup } from './helpers/process-group';
+import { seedWorkspace } from './helpers/workspace';
 
 /**
  * Процесс глазами администратора: черновик изменений, предпросмотр и
@@ -65,7 +65,7 @@ async function seed(): Promise<void> {
 
 	try {
 		await sql.begin(async (tx) => {
-			const { groupId, stageIds } = await seedProcessGroup(tx, {
+			const { workspaceId, stageIds } = await seedWorkspace(tx, {
 				key: GROUP_KEY,
 				name: 'Проверка изменения процесса',
 				description: 'Группа прогона: вида контрагента за ней не закреплено',
@@ -109,7 +109,7 @@ async function seed(): Promise<void> {
 			const [interaction] = await tx<{ id: string }[]>`
 				insert into interactions ${tx({
 					title: INTERACTION_TITLE,
-					process_group_id: groupId,
+					workspace_id: workspaceId,
 					owner_user_id: owner.id
 				})}
 				returning id
@@ -184,7 +184,7 @@ async function seedDialogGroup(): Promise<void> {
 
 	try {
 		await sql.begin(async (tx) => {
-			await seedProcessGroup(tx, {
+			await seedWorkspace(tx, {
 				key: DIALOG_GROUP_KEY,
 				name: 'Проверка диалога стадии',
 				description: 'Группа прогона: вида контрагента за ней не закреплено',
@@ -402,7 +402,7 @@ async function checkManagerSeesMigration(browser: Browser): Promise<void> {
 	const page = await context.newPage();
 
 	try {
-		await page.goto(`/interactions?view=board&group=${GROUP_KEY}`);
+		await page.goto(`/interactions?view=board&workspace=${GROUP_KEY}`);
 
 		// Колонки — стадии действующего процесса: удалённой среди них нет.
 		await expect(page.getByRole('heading', { name: RENAMED_NAME })).toBeVisible();

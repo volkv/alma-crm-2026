@@ -1,8 +1,8 @@
 /**
  * Взаимодействие с контрагентом и процесс, по которому оно идёт.
  *
- * Процесс принадлежит группе контрагентов: в группе действует ровно одна
- * редакция структуры, и взаимодействие ссылается на группу, а не на редакцию.
+ * Процесс принадлежит пространству: в нём действует ровно одна редакция
+ * структуры, и взаимодействие ссылается на пространство, а не на редакцию.
  * Прежние редакции остаются в базе — на их стадии ссылаются закрытые записи
  * истории. Текущая стадия — это открытая запись `stage_entries` (у неё пустой
  * `left_at`), отдельного поля-кэша нет: кэш пришлось бы синхронизировать, а
@@ -70,27 +70,28 @@ export const contractStatusEnum = pgEnum('contract_status', CONTRACT_STATUSES);
 export const commentSourceEnum = pgEnum('comment_source', COMMENT_SOURCES);
 
 /**
- * Группа процесса: набор видов контрагента, работа с которыми идёт по одному
- * сценарию. Их две — `b2b` и `b2c`, — и добавить третью можно строкой.
+ * Пространство: рабочее место направления. Своё меню, свои взаимодействия,
+ * свой процесс. Их два — `b2b` и `b2c`, — и добавить третье можно строкой.
  *
  * Действующая редакция вынесена в колонку, а не выводится запросом «последняя
  * опубликованная»: публикация обязана переключать процесс одним значением,
- * которое читается под блокировкой группы, иначе переход и публикация
- * разойдутся на гонке. Принадлежность редакции своей группе проверяет
+ * которое читается под блокировкой пространства, иначе переход и публикация
+ * разойдутся на гонке. Принадлежность редакции своему пространству проверяет
  * транзакция публикации.
  */
-export const processGroups = pgTable(
-	'process_groups',
+export const workspaces = pgTable(
+	'workspaces',
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		key: text().notNull(),
 		name: text().notNull(),
 		description: text(),
 		/**
-		 * Редакция, по которой идёт работа: одна на группу. Вынесена в колонку, а
-		 * не выводится запросом «последняя опубликованная», потому что публикация
-		 * обязана переключать процесс одним значением, читаемым под блокировкой
-		 * группы, — иначе переход и публикация разойдутся на гонке.
+		 * Редакция, по которой идёт работа: одна на пространство. Вынесена в
+		 * колонку, а не выводится запросом «последняя опубликованная», потому что
+		 * публикация обязана переключать процесс одним значением, читаемым под
+		 * блокировкой пространства, — иначе переход и публикация разойдутся на
+		 * гонке.
 		 */
 		activeRevisionId: uuid().references((): AnyPgColumn => processRevisions.id, {
 			onDelete: 'restrict'
@@ -99,18 +100,18 @@ export const processGroups = pgTable(
 		...timestamps
 	},
 	(table) => [
-		unique('process_groups_key_key').on(table.key),
-		unique('process_groups_position_key').on(table.position)
+		unique('workspaces_key_key').on(table.key),
+		unique('workspaces_position_key').on(table.position)
 	]
 );
 
 /**
- * Единственная таблица соответствия «вид контрагента → группа процесса». По ней
- * группу выбирают и форма создания взаимодействия, и приём заявки с сайта.
+ * Единственная таблица соответствия «вид контрагента → пространство». По ней
+ * пространство выбирают и форма создания взаимодействия, и приём заявки.
  *
- * Первичный ключ по виду и есть ограничение «вид принадлежит ровно одной
- * группе»: проверка в приложении гоночна и не переживает правку данных мимо
- * приложения. Видов, которые основной стороной не бывают (`customer_company`,
+ * Первичный ключ по виду и есть ограничение «вид принадлежит ровно одному
+ * пространству»: проверка в приложении гоночна и не переживает правку данных
+ * мимо приложения. Видов, которые основной стороной не бывают (`customer_company`,
  * `operator`), в таблице нет вовсе.
  */
 export const processGroupCounterpartyKinds = pgTable(
@@ -119,24 +120,24 @@ export const processGroupCounterpartyKinds = pgTable(
 		kind: organizationKindEnum().primaryKey(),
 		groupId: uuid()
 			.notNull()
-			.references(() => processGroups.id, { onDelete: 'restrict' })
+			.references(() => workspaces.id, { onDelete: 'restrict' })
 	},
 	(table) => [index('process_group_counterparty_kinds_group_idx').on(table.groupId)]
 );
 
 /**
- * Реестр ключей стадий группы. Строка заводится при первом появлении ключа и не
- * удаляется никогда: идентичность стадии — пара «группа + ключ», и удалённый
- * ключ обязан остаться занятым. Иначе под именем `signing` однажды появилась бы
- * стадия с другим смыслом, и лента карточки, отчёт и перенос сопоставили бы по
- * нему разные работы.
+ * Реестр ключей стадий пространства. Строка заводится при первом появлении
+ * ключа и не удаляется никогда: идентичность стадии — пара «пространство +
+ * ключ», и удалённый ключ обязан остаться занятым. Иначе под именем `signing`
+ * однажды появилась бы стадия с другим смыслом, и лента карточки, отчёт и
+ * перенос сопоставили бы по нему разные работы.
  */
 export const processStageKeys = pgTable(
 	'process_stage_keys',
 	{
 		groupId: uuid()
 			.notNull()
-			.references(() => processGroups.id, { onDelete: 'cascade' }),
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
 		key: text().notNull(),
 		firstSeenAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 		/** Ключ убрали из процесса; вернуть его с другим смыслом нельзя. */
@@ -146,10 +147,10 @@ export const processStageKeys = pgTable(
 );
 
 /**
- * Редакция процесса группы: снимок структуры — стадии и переходы.
+ * Редакция процесса пространства: снимок структуры — стадии и переходы.
  *
- * Пока `published_at` пуст, редакция — черновик, и его правят; у группы он
- * один, это держит частичная уникальность. Опубликованная редакция заморожена:
+ * Пока `published_at` пуст, редакция — черновик, и его правят; у пространства
+ * он один, это держит частичная уникальность. Опубликованная редакция заморожена:
  * на её стадии ссылаются записи истории, и правка задним числом переписала бы
  * то, что видел исполнитель. Изменение процесса — новая редакция и миграция
  * незавершённых взаимодействий на неё.
@@ -160,8 +161,8 @@ export const processRevisions = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		groupId: uuid()
 			.notNull()
-			.references((): AnyPgColumn => processGroups.id, { onDelete: 'cascade' }),
-		/** Номер редакции внутри группы, начиная с 1. Пользователь его не выбирает. */
+			.references((): AnyPgColumn => workspaces.id, { onDelete: 'cascade' }),
+		/** Номер редакции внутри пространства, с 1. Пользователь его не выбирает. */
 		version: integer().notNull(),
 		name: text().notNull(),
 		/** Чем эта редакция отличается от предыдущей — словами автора черновика. */
@@ -341,13 +342,14 @@ export const interactions = pgTable(
 		id: uuid().primaryKey().defaultRandom(),
 		title: text().notNull(),
 		/**
-		 * Группа процесса: по ней взаимодействие находит действующую редакцию.
-		 * Выводится из вида основной стороны и меняется только вместе с ней;
-		 * смена группы у идущего взаимодействия — это начало другого процесса.
+		 * Пространство, в котором идёт работа: по нему взаимодействие находит
+		 * действующую редакцию. Выводится из вида основной стороны и меняется
+		 * только вместе с ней; смена пространства у идущего взаимодействия — это
+		 * начало другого процесса.
 		 */
-		processGroupId: uuid()
+		workspaceId: uuid()
 			.notNull()
-			.references(() => processGroups.id, { onDelete: 'restrict' }),
+			.references(() => workspaces.id, { onDelete: 'restrict' }),
 		/** Договор, по которому идёт работа; позиции выбираются из него. */
 		contractId: uuid().references((): AnyPgColumn => contracts.id, { onDelete: 'restrict' }),
 		/**
@@ -377,7 +379,7 @@ export const interactions = pgTable(
 	},
 	(table) => [
 		index('interactions_status_idx').on(table.status),
-		index('interactions_group_status_idx').on(table.processGroupId, table.status),
+		index('interactions_workspace_status_idx').on(table.workspaceId, table.status),
 		index('interactions_contract_idx').on(table.contractId),
 		index('interactions_owner_idx').on(table.ownerUserId),
 		index('interactions_last_activity_idx').on(table.lastActivityAt),
@@ -704,9 +706,9 @@ export const stageEntryStatus = pgView('stage_entry_status', {
 	isOverdue: boolean().notNull()
 }).existing();
 
-export const processGroupsRelations = relations(processGroups, ({ one, many }) => ({
+export const workspacesRelations = relations(workspaces, ({ one, many }) => ({
 	activeRevision: one(processRevisions, {
-		fields: [processGroups.activeRevisionId],
+		fields: [workspaces.activeRevisionId],
 		references: [processRevisions.id]
 	}),
 	counterpartyKinds: many(processGroupCounterpartyKinds),
@@ -717,17 +719,17 @@ export const processGroupsRelations = relations(processGroups, ({ one, many }) =
 export const processGroupCounterpartyKindsRelations = relations(
 	processGroupCounterpartyKinds,
 	({ one }) => ({
-		group: one(processGroups, {
+		workspace: one(workspaces, {
 			fields: [processGroupCounterpartyKinds.groupId],
-			references: [processGroups.id]
+			references: [workspaces.id]
 		})
 	})
 );
 
 export const processStageKeysRelations = relations(processStageKeys, ({ one }) => ({
-	group: one(processGroups, {
+	workspace: one(workspaces, {
 		fields: [processStageKeys.groupId],
-		references: [processGroups.id]
+		references: [workspaces.id]
 	})
 }));
 
@@ -764,9 +766,9 @@ export const interactionContractItemsRelations = relations(interactionContractIt
 }));
 
 export const processRevisionsRelations = relations(processRevisions, ({ one, many }) => ({
-	group: one(processGroups, {
+	workspace: one(workspaces, {
 		fields: [processRevisions.groupId],
-		references: [processGroups.id]
+		references: [workspaces.id]
 	}),
 	stages: many(stages),
 	transitions: many(stageTransitions),
@@ -795,9 +797,9 @@ export const stageTransitionsRelations = relations(stageTransitions, ({ one }) =
 }));
 
 export const interactionsRelations = relations(interactions, ({ one, many }) => ({
-	processGroup: one(processGroups, {
-		fields: [interactions.processGroupId],
-		references: [processGroups.id]
+	workspace: one(workspaces, {
+		fields: [interactions.workspaceId],
+		references: [workspaces.id]
 	}),
 	contract: one(contracts, { fields: [interactions.contractId], references: [contracts.id] }),
 	contractItems: many(interactionContractItems),

@@ -2,7 +2,7 @@
  * Стадии действующей редакции процесса — единственное место отчёта, которое
  * знает, как редакция связана со своими стадиями.
  *
- * Отчёт группирует строки по паре «группа процесса + ключ стадии из снимка» и
+ * Отчёт группирует строки по паре «пространство + ключ стадии из снимка» и
  * от редакции не зависит: ключ записан в момент входа и не переписывается,
  * поэтому переиздание процесса, перенумерация позиций и переименование на числа
  * не влияют. Редакция нужна ровно для двух вещей — показать актуальное название
@@ -15,7 +15,7 @@
  */
 import { asc, eq } from 'drizzle-orm';
 import { getDb } from '../db';
-import { processGroups, stages } from '../db/schema';
+import { stages, workspaces } from '../db/schema';
 
 /** Стадия действующей редакции: ключ, актуальное название и место в порядке. */
 export type ReportStage = {
@@ -24,115 +24,137 @@ export type ReportStage = {
 	position: number;
 };
 
-export type ReportProcessGroup = {
+export type ReportWorkspace = {
 	id: string;
 	key: string;
 	name: string;
-	/** В порядке процесса. Пусто, если действующей редакции у группы ещё нет. */
+	/**
+	 * В порядке процесса. Пусто, если действующей редакции у пространства ещё
+	 * нет.
+	 */
 	stages: readonly ReportStage[];
 };
 
 /**
- * Все группы процесса с их действующими стадиями, в порядке групп.
+ * Все пространства с их действующими стадиями, в порядке пространств.
  *
- * Читаются все группы, а не только те, что встретились в выборке: воронка
+ * Читаются все пространства, а не только те, что встретились в выборке: воронка
  * обязана показать и стадию, на которой сейчас никто не стоит, — ноль в ней
  * значит «никого», а отсутствие строки читается как «такой стадии нет».
  */
-export async function readActiveProcessGroups(): Promise<Map<string, ReportProcessGroup>> {
+export async function readActiveWorkspaces(): Promise<Map<string, ReportWorkspace>> {
 	const rows = await getDb()
 		.select({
-			groupId: processGroups.id,
-			groupKey: processGroups.key,
-			groupName: processGroups.name,
+			workspaceId: workspaces.id,
+			workspaceKey: workspaces.key,
+			workspaceName: workspaces.name,
 			stageKey: stages.key,
 			stageName: stages.name,
 			stagePosition: stages.position
 		})
-		.from(processGroups)
+		.from(workspaces)
 		// Единственная строка отчёта про устройство редакции: действующая редакция
-		// группы и её стадии.
-		.leftJoin(stages, eq(stages.revisionId, processGroups.activeRevisionId))
-		.orderBy(asc(processGroups.position), asc(stages.position));
+		// пространства и её стадии.
+		.leftJoin(stages, eq(stages.revisionId, workspaces.activeRevisionId))
+		.orderBy(asc(workspaces.position), asc(stages.position));
 
-	const groups = new Map<string, ReportProcessGroup & { stages: ReportStage[] }>();
+	const found = new Map<string, ReportWorkspace & { stages: ReportStage[] }>();
 
 	for (const row of rows) {
-		let group = groups.get(row.groupId);
+		let workspace = found.get(row.workspaceId);
 
-		if (group === undefined) {
-			group = { id: row.groupId, key: row.groupKey, name: row.groupName, stages: [] };
-			groups.set(row.groupId, group);
+		if (workspace === undefined) {
+			workspace = {
+				id: row.workspaceId,
+				key: row.workspaceKey,
+				name: row.workspaceName,
+				stages: []
+			};
+			found.set(row.workspaceId, workspace);
 		}
 
 		if (row.stageKey !== null && row.stageName !== null && row.stagePosition !== null) {
-			group.stages.push({ key: row.stageKey, name: row.stageName, position: row.stagePosition });
+			workspace.stages.push({
+				key: row.stageKey,
+				name: row.stageName,
+				position: row.stagePosition
+			});
 		}
 	}
 
-	return groups;
+	return found;
 }
 
 /** Название и место стадии в порядке процесса. */
 export type StageLabel = {
 	/**
-	 * Название для таблицы и сверки: с группой в скобках, когда групп с
-	 * процессом больше одной. В строке таблицы иначе не понять, чья это стадия.
+	 * Название для таблицы и сверки: с пространством в скобках, когда
+	 * пространств с процессом больше одного. В строке таблицы иначе не понять,
+	 * чья это стадия.
 	 */
 	label: string;
-	/** Название без группы: воронка группы уже названа своим заголовком. */
+	/**
+	 * Название без пространства: воронка пространства уже названа своим
+	 * заголовком.
+	 */
 	name: string;
 	order: number;
 	retired: boolean;
 };
 
-/** Стадии одной группы процесса — заготовка её воронки, в порядке процесса. */
-export type StageSkeletonGroup = {
-	groupId: string;
-	groupKey: string;
-	groupName: string;
+/** Стадии одного пространства — заготовка его воронки, в порядке процесса. */
+export type StageSkeletonWorkspace = {
+	workspaceId: string;
+	workspaceKey: string;
+	workspaceName: string;
 	stages: { bucketId: string; stageKey: string; label: StageLabel }[];
 };
 
 export type StageIndex = {
-	label: (groupId: string, key: string, snapshotName: string | null) => StageLabel;
+	label: (workspaceId: string, key: string, snapshotName: string | null) => StageLabel;
 	stageName: (key: string) => string;
-	/** Группа процесса по идентификатору: её ключ уходит в фильтр воронки. */
-	group: (groupId: string) => ReportProcessGroup | null;
-	/** Заготовка воронок: по группе на процесс, стадии — в порядке процесса. */
-	skeleton: () => StageSkeletonGroup[];
+	/** Пространство по идентификатору: его ключ уходит в фильтр воронки. */
+	workspace: (workspaceId: string) => ReportWorkspace | null;
+	/**
+	 * Заготовка воронок: по воронке на пространство, стадии — в порядке
+	 * процесса.
+	 */
+	skeleton: () => StageSkeletonWorkspace[];
 };
 
 /**
- * Индекс стадий. Группировка идёт по паре «группа процесса + ключ стадии», а не
+ * Индекс стадий. Группировка идёт по паре «пространство + ключ стадии», а не
  * по названию и не по идентификатору стадии: ключ записан в момент входа и не
  * переписывается, поэтому переиздание процесса и переименование на числа не
- * влияют. Группа в ключе обязательна — одинаковые ключи в разных группах это
- * законная ситуация, и без неё две разные стадии слились бы в одну строку.
+ * влияют. Пространство в ключе обязательно — одинаковые ключи в разных
+ * пространствах это законная ситуация, и без него две разные стадии слились бы
+ * в одну строку.
  */
-export function createStageIndex(groups: Map<string, ReportProcessGroup>): StageIndex {
+export function createStageIndex(workspacesById: Map<string, ReportWorkspace>): StageIndex {
 	const known = new Map<string, StageLabel>();
-	const skeleton: StageSkeletonGroup[] = [];
+	const skeleton: StageSkeletonWorkspace[] = [];
 	const nameByKey = new Map<string, string>();
 	const retired = new Map<string, StageLabel>();
 	let order = 0;
 
-	// Название стадии дополняется группой, только когда групп с процессом больше
-	// одной: иначе «Встреча (B2B)» повторяет то, что и так написано на экране.
-	const prefixed = [...groups.values()].filter((group) => group.stages.length > 0).length > 1;
+	// Название стадии дополняется пространством, только когда пространств с
+	// процессом больше одного: иначе «Встреча (B2B)» повторяет то, что и так
+	// написано на экране.
+	const prefixed =
+		[...workspacesById.values()].filter((workspace) => workspace.stages.length > 0).length > 1;
 
-	for (const group of groups.values()) {
-		const bucket: StageSkeletonGroup = {
-			groupId: group.id,
-			groupKey: group.key,
-			groupName: group.name,
+	for (const workspace of workspacesById.values()) {
+		const bucket: StageSkeletonWorkspace = {
+			workspaceId: workspace.id,
+			workspaceKey: workspace.key,
+			workspaceName: workspace.name,
 			stages: []
 		};
 
-		for (const stage of group.stages) {
-			const bucketId = `${group.id}:${stage.key}`;
+		for (const stage of workspace.stages) {
+			const bucketId = `${workspace.id}:${stage.key}`;
 			const label: StageLabel = {
-				label: prefixed ? `${stage.name} (${group.name})` : stage.name,
+				label: prefixed ? `${stage.name} (${workspace.name})` : stage.name,
 				name: stage.name,
 				order: order++,
 				retired: false
@@ -150,8 +172,8 @@ export function createStageIndex(groups: Map<string, ReportProcessGroup>): Stage
 	}
 
 	return {
-		label(groupId, key, snapshotName) {
-			const bucketId = `${groupId}:${key}`;
+		label(workspaceId, key, snapshotName) {
+			const bucketId = `${workspaceId}:${key}`;
 			const found = known.get(bucketId);
 
 			if (found !== undefined) {
@@ -176,8 +198,8 @@ export function createStageIndex(groups: Map<string, ReportProcessGroup>): Stage
 		stageName(key) {
 			return nameByKey.get(key) ?? key;
 		},
-		group(groupId) {
-			return groups.get(groupId) ?? null;
+		workspace(workspaceId) {
+			return workspacesById.get(workspaceId) ?? null;
 		},
 		skeleton() {
 			return skeleton;

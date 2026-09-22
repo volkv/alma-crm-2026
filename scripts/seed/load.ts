@@ -51,8 +51,8 @@ import {
 } from '$lib/server/db/schema';
 import type { Tx } from '$lib/server/db/transaction';
 import { contactColumns } from '$lib/server/people/pii';
-import { B2B_GROUP_KEY } from '$lib/server/stages/definitions';
-import { readActiveRevision, readGroupByKey, stageSnapshot } from '$lib/server/stages/process';
+import { B2B_WORKSPACE_KEY } from '$lib/server/stages/definitions';
+import { readActiveRevision, readWorkspaceByKey, stageSnapshot } from '$lib/server/stages/process';
 import { seedId } from './ids';
 
 /** Размеры набора. Их же печатает отчёт заливки и читает документация. */
@@ -190,12 +190,12 @@ export async function seedLoad(tx: Tx): Promise<LoadSeedReport | null> {
 		return null;
 	}
 
-	const group = await readGroupByKey(tx, B2B_GROUP_KEY);
-	const revision = await readActiveRevision(tx, group);
+	const workspace = await readWorkspaceByKey(tx, B2B_WORKSPACE_KEY);
+	const revision = await readActiveRevision(tx, workspace);
 
 	if (revision === null || revision.stages.length === 0) {
 		throw new Error(
-			'Нагрузочный набор опирается на действующий процесс группы «b2b»: залейте сначала демонстрационный набор'
+			'Нагрузочный набор опирается на действующий процесс пространства «b2b»: залейте сначала демонстрационный набор'
 		);
 	}
 
@@ -323,7 +323,7 @@ export async function seedLoad(tx: Tx): Promise<LoadSeedReport | null> {
 		interactionRows.push({
 			id: interactionId,
 			title: `${INTERACTION_TITLES[spread(index, INTERACTION_TITLES.length)]} № ${index}`,
-			processGroupId: group.id,
+			workspaceId: workspace.id,
 			status: (completed ? 'completed' : 'active') as 'completed' | 'active',
 			agreementPeriodStart: '2026-09-01',
 			agreementPeriodEnd: '2027-08-31',

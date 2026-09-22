@@ -29,7 +29,7 @@ import {
 import type { ReportAttributes, ReportSelection } from './conditions';
 import { movementEventKind, readMovementRows, type MovementRow } from './movement';
 import { readSnapshotRows } from './snapshot';
-import { createStageIndex, readActiveProcessGroups, type StageIndex } from './stages';
+import { createStageIndex, readActiveWorkspaces, type StageIndex } from './stages';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SECONDS_IN_DAY = 86_400;
@@ -54,11 +54,13 @@ export function checkReportInvariants(view: ReportView): InvariantViolation[] {
 	const rowCount = view.totals.rowCount;
 
 	if (view.charts.funnel !== null) {
-		// Воронок столько, сколько групп процесса в выборке, и сходится с числом
+		// Воронок столько, сколько пространств в выборке, и сходится с числом
 		// строк их общая сумма: разделение по процессам — это способ показать, а
 		// не два разных отчёта.
 		const stages = sum(
-			view.charts.funnel.groups.flatMap((group) => group.stages.map((bucket) => bucket.value))
+			view.charts.funnel.workspaces.flatMap((workspace) =>
+				workspace.stages.map((bucket) => bucket.value)
+			)
 		);
 		const closed = sum(view.charts.funnel.closed.map((bucket) => bucket.value));
 
@@ -137,7 +139,7 @@ export async function recountFromRows(
 	ctx: ActorContext,
 	query: ReportQuery
 ): Promise<{ totals: ReportTotals; charts: ReportCharts }> {
-	const index = createStageIndex(await readActiveProcessGroups());
+	const index = createStageIndex(await readActiveWorkspaces());
 
 	return query.mode === 'movement'
 		? recountMovement(ctx, query)
@@ -178,7 +180,7 @@ async function recountSnapshot(
 
 	for (const row of rows) {
 		if (row.entryId !== null && row.stageKey !== null) {
-			const bucketId = `${row.processGroupId}:${row.stageKey}`;
+			const bucketId = `${row.workspaceId}:${row.stageKey}`;
 
 			stageCounts.set(bucketId, (stageCounts.get(bucketId) ?? 0) + 1);
 
@@ -309,7 +311,7 @@ export async function reconcileModes(
 	ctx: ActorContext,
 	query: ReportQuery
 ): Promise<ModeReconciliationRow[]> {
-	const index = createStageIndex(await readActiveProcessGroups());
+	const index = createStageIndex(await readActiveWorkspaces());
 	const beforePeriod = moscowDay(new Date(moscowDayStart(query.from).getTime() - DAY_MS));
 
 	const [startRows, endRows, events] = await Promise.all([
@@ -326,11 +328,11 @@ export async function reconcileModes(
 	const migratedOut = new Map<string, number>();
 	const labels = new Map<string, string>();
 
-	const stageBucket = (groupId: string, key: string, name: string | null): string => {
-		const bucketId = `${groupId}:${key}`;
+	const stageBucket = (workspaceId: string, key: string, name: string | null): string => {
+		const bucketId = `${workspaceId}:${key}`;
 
 		if (!labels.has(bucketId)) {
-			labels.set(bucketId, index.label(groupId, key, name).label);
+			labels.set(bucketId, index.label(workspaceId, key, name).label);
 		}
 
 		return bucketId;
@@ -342,7 +344,7 @@ export async function reconcileModes(
 	] as const) {
 		for (const row of rows) {
 			if (row.entryId !== null && row.stageKey !== null) {
-				bump(counts, stageBucket(row.processGroupId, row.stageKey, row.stageName));
+				bump(counts, stageBucket(row.workspaceId, row.stageKey, row.stageName));
 			} else {
 				labels.set(row.status, CLOSED_LABELS[row.status] ?? row.status);
 				bump(counts, row.status);
@@ -357,11 +359,11 @@ export async function reconcileModes(
 		const into = migration ? migratedIn : entered;
 
 		if (event.fromKey !== null && !event.isStart) {
-			bump(outOf, stageBucket(event.processGroupId, event.fromKey, event.fromName));
+			bump(outOf, stageBucket(event.workspaceId, event.fromKey, event.fromName));
 		}
 
 		if (event.toKey !== null) {
-			bump(into, stageBucket(event.processGroupId, event.toKey, event.toName));
+			bump(into, stageBucket(event.workspaceId, event.toKey, event.toName));
 		} else if (kind === 'completed' || kind === 'cancelled') {
 			// Закрытие — это вход в свою корзину: иначе выборка среза выросла бы
 			// на строку, которой в движении не соответствует ни одно событие.

@@ -3,17 +3,17 @@ import type { RequestHandler } from './$types';
 import { apiProcessSchema, toApiProcess } from '$lib/contracts/api';
 import { apiHandler, type ApiEndpointConfig } from '$lib/server/api/handler';
 import { registerRoute } from '$lib/server/api/openapi';
-import { getProcessGroup } from '$lib/server/stages/process';
+import { getWorkspace } from '$lib/server/stages/process';
 
 const processEndpoint = {
 	auth: 'key',
-	// Ключ, а не идентификатор: адрес группы читают люди, и в сообщениях обмена
-	// стоит он же.
+	// Ключ, а не идентификатор: адрес пространства читают люди, и в сообщениях
+	// обмена стоит он же.
 	params: z.object({
 		key: z
 			.string()
-			.min(1, { error: 'Укажите ключ группы процесса' })
-			.max(100, { error: 'Ключ группы процесса не длиннее 100 символов' })
+			.min(1, { error: 'Укажите ключ пространства' })
+			.max(100, { error: 'Ключ пространства не длиннее 100 символов' })
 	}),
 	output: apiProcessSchema,
 	permission: 'stages.configure'
@@ -21,8 +21,8 @@ const processEndpoint = {
 
 registerRoute({
 	method: 'get',
-	path: '/v1/process-groups/{key}',
-	summary: 'Действующий процесс группы',
+	path: '/v1/workspaces/{key}',
+	summary: 'Действующий процесс пространства',
 	description:
 		'Стадии действующей редакции с ключами, сроками и требованиями — результат, подтверждение, ' +
 		'данные обучения, чек-лист — и разрешённые переходы между ними. Идентификатор стадии здесь ' +
@@ -33,7 +33,7 @@ registerRoute({
 	tags: ['Процесс'],
 	config: processEndpoint,
 	example: {
-		group: {
+		workspace: {
 			id: 'b7c8d9e0-f1a2-4b3c-8d4e-5f6a7b8c9d0e',
 			key: 'b2b',
 			name: 'Учебные заведения',
@@ -97,5 +97,5 @@ registerRoute({
 });
 
 export const GET: RequestHandler = apiHandler(processEndpoint, async (ctx, { params }) =>
-	toApiProcess(await getProcessGroup(ctx, params.key))
+	toApiProcess(await getWorkspace(ctx, params.key))
 );

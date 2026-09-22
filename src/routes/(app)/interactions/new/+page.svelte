@@ -51,17 +51,17 @@
 	);
 
 	/**
-	 * Что скажет подсказка о процессе. Группу выбирает не человек, а вид
+	 * Что скажет подсказка о процессе. Пространство выбирает не человек, а вид
 	 * организации, отмеченной основной стороной, — поэтому здесь перечислены
-	 * группы и то, описан ли в них процесс: узнать об этом после сохранения
-	 * означало бы отказ там, где заполнена вся форма.
+	 * пространства и то, описан ли в них процесс: узнать об этом после
+	 * сохранения означало бы отказ там, где заполнена вся форма.
 	 */
-	const emptyProcess = $derived(data.groups.some((group) => group.stageCount === 0));
+	const emptyProcess = $derived(data.workspaces.some((workspace) => workspace.stageCount === 0));
 	const processHint = $derived(
-		data.groups
+		data.workspaces
 			.map(
-				(group) =>
-					`${group.name} — ${group.stageCount === 0 ? 'процесс ещё не описан' : `${group.stageCount} стадий`}`
+				(workspace) =>
+					`${workspace.name} — ${workspace.stageCount === 0 ? 'процесс ещё не описан' : `${workspace.stageCount} стадий`}`
 			)
 			.join('; ')
 	);
@@ -328,7 +328,7 @@
 					стороны выглядел бы как выбор одного лишь участника. -->
 				<InlineHint tone={emptyProcess ? 'warning' : 'info'}>
 					Процесс определится по основной стороне: {processHint}. Взаимодействие начнётся с первой
-					стадии действующего процесса своей группы.
+					стадии действующего процесса своего пространства.
 				</InlineHint>
 
 				<FieldSelect

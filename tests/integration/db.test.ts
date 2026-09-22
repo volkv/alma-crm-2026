@@ -45,24 +45,24 @@ it('records applied migrations in the drizzle bookkeeping table', async () => {
 });
 
 /**
- * Группы процесса и соответствие «вид контрагента → группа» — часть продукта, а
- * не демонстрационные данные: без них у взаимодействия нет процесса. Поэтому их
- * кладёт миграция, и на пустой установке они обязаны быть сразу.
+ * Пространства и соответствие «вид контрагента → пространство» — часть продукта,
+ * а не демонстрационные данные: без них у взаимодействия нет процесса. Поэтому
+ * их кладёт миграция, и на пустой установке они обязаны быть сразу.
  */
-it('ships the process groups and their counterparty kinds with the migrations', async () => {
-	const groups = await client<{ key: string; position: number }[]>`
-		select key, position from process_groups order by position
+it('ships the workspaces and their counterparty kinds with the migrations', async () => {
+	const rows = await client<{ key: string; position: number }[]>`
+		select key, position from workspaces order by position
 	`;
 
-	expect(groups.map((group) => ({ ...group }))).toStrictEqual([
+	expect(rows.map((row) => ({ ...row }))).toStrictEqual([
 		{ key: 'b2b', position: 1 },
 		{ key: 'b2c', position: 2 }
 	]);
 
 	const mapping = await client<{ kind: string; key: string }[]>`
-		select kinds.kind, groups.key
+		select kinds.kind, workspaces.key
 		from process_group_counterparty_kinds kinds
-		join process_groups groups on groups.id = kinds.group_id
+		join workspaces on workspaces.id = kinds.group_id
 		order by kinds.kind
 	`;
 

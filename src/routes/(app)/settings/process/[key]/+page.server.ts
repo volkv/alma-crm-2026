@@ -15,7 +15,7 @@ import { PERMISSIONS, PERMISSION_KEYS } from '$lib/server/rbac/permissions';
 import {
 	createDraft,
 	discardDraft,
-	getProcessGroup,
+	getWorkspace,
 	previewPublication,
 	processDefinition,
 	publishProcess,
@@ -25,7 +25,7 @@ import { parseChecklist, stageFormSchema, transitionFormSchema } from './schema'
 import type { Actions, PageServerLoad } from './$types';
 
 /**
- * Процесс одной группы контрагентов.
+ * Процесс одного пространства.
  *
  * Действующая структура открыта только на чтение: по ней идут взаимодействия и
  * с неё сняты слепки пройденных стадий. Изменение готовят черновиком — копией
@@ -34,8 +34,8 @@ import type { Actions, PageServerLoad } from './$types';
  *
  * Черновик правится целиком: каждое действие собирает структуру заново и отдаёт
  * её `updateDraft`, а тот переписывает стадии, переходы и правила переноса под
- * блокировкой строки группы. Отсюда и чтение перед каждой записью: правится не
- * поле, а описание процесса.
+ * блокировкой строки пространства. Отсюда и чтение перед каждой записью:
+ * правится не поле, а описание процесса.
  */
 
 /** Формы страницы; идентификатор связывает форму на сервере с формой в браузере. */
@@ -49,7 +49,7 @@ export const load: PageServerLoad = async (event) => {
 	}
 
 	try {
-		const detail = await getProcessGroup(ctx, event.params.key);
+		const detail = await getWorkspace(ctx, event.params.key);
 
 		// Предпросмотр считается сразу вместе со страницей: он справочен, не
 		// берёт блокировок, и держать за ним отдельный запрос значило бы
@@ -65,9 +65,9 @@ export const load: PageServerLoad = async (event) => {
 			// Заголовок и крошки принадлежат макету настроек, а какой именно
 			// процесс открыт, знает только эта страница: по «Настройки ›
 			// Настройки» было не понять, чей процесс правят.
-			settingsTitle: detail.group.name,
+			settingsTitle: detail.workspace.name,
 			settingsDescription:
-				detail.group.description ?? 'Стадии, нормативы и переходы этой группы контрагентов',
+				detail.workspace.description ?? 'Стадии, нормативы и переходы этого пространства',
 			preview,
 			stageForm: await superValidate(zod4(stageFormSchema), { id: FORM_IDS.stage }),
 			transitionForm: await superValidate(zod4(transitionFormSchema), {
@@ -111,12 +111,12 @@ function asFormError<Out extends Record<string, unknown>, M, In extends Record<s
  */
 async function readDraftDefinition(
 	ctx: ActorContext,
-	groupKey: string
+	workspaceKey: string
 ): Promise<ProcessDefinitionInput> {
-	const { draft } = await getProcessGroup(ctx, groupKey);
+	const { draft } = await getWorkspace(ctx, workspaceKey);
 
 	if (draft === null) {
-		throw new ConflictError('У группы нет черновика изменений: сначала заведите его');
+		throw new ConflictError('У пространства нет черновика изменений: сначала заведите его');
 	}
 
 	return processDefinition(draft);

@@ -18,7 +18,7 @@ import type { TourSamples } from '$lib/onboarding/screens';
 import type { ActorContext } from '$lib/server/actor';
 import { stageEntries } from '$lib/server/db/schema';
 import { createInteraction } from '$lib/server/interactions/write';
-import { B2B_GROUP_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
+import { B2B_WORKSPACE_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
 import { ensureProcess } from '$lib/server/stages/process';
 import {
 	daysFrom,
@@ -57,7 +57,7 @@ const admin = (): ActorContext => testActor({ roleId: 'admin' });
 
 /** Процесс учебных заведений: его стадии и ведут взаимодействия набора. */
 async function demoProcess(): Promise<string> {
-	return database.db.transaction((tx) => ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS));
+	return database.db.transaction((tx) => ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
 }
 
 async function makeInteraction(options: {

@@ -17,7 +17,7 @@ import { eq, isNull, and, sql } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import type { StageOutcome } from '$lib/contracts/interactions';
 import * as schema from '$lib/server/db/schema';
-import { B2B_GROUP_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
+import { B2B_WORKSPACE_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
 import { readRevision, stageSnapshot } from '$lib/server/stages/process';
 
 type Database = PostgresJsDatabase<typeof schema>;
@@ -95,7 +95,7 @@ const INTERACTIONS: readonly {
 ];
 
 export type ReferenceIds = {
-	groupId: string;
+	workspaceId: string;
 	revisionId: string;
 	ownerUserId: string;
 	organizations: { a: string; b: string };
@@ -140,11 +140,11 @@ async function openEntry(db: Database, interactionId: string) {
  * только стадии — переходы он не использует, потому что записи о стадиях
  * укладывает сам.
  */
-async function ensureRevision(db: Database, groupId: string): Promise<string> {
+async function ensureRevision(db: Database, workspaceId: string): Promise<string> {
 	const [revision] = await db
 		.insert(schema.processRevisions)
 		.values({
-			groupId,
+			groupId: workspaceId,
 			version: 1,
 			name: B2B_PROCESS.name,
 			note: B2B_PROCESS.note,
@@ -161,21 +161,21 @@ async function ensureRevision(db: Database, groupId: string): Promise<string> {
 	);
 
 	await db
-		.update(schema.processGroups)
+		.update(schema.workspaces)
 		.set({ activeRevisionId: revision.id })
-		.where(eq(schema.processGroups.id, groupId));
+		.where(eq(schema.workspaces.id, workspaceId));
 
 	return revision.id;
 }
 
 /** Заливает эталонный набор и возвращает идентификаторы его записей. */
 export async function seedReferenceSet(db: Database, ownerUserId: string): Promise<ReferenceIds> {
-	const [group] = await db
-		.select({ id: schema.processGroups.id })
-		.from(schema.processGroups)
-		.where(eq(schema.processGroups.key, B2B_GROUP_KEY));
+	const [workspace] = await db
+		.select({ id: schema.workspaces.id })
+		.from(schema.workspaces)
+		.where(eq(schema.workspaces.key, B2B_WORKSPACE_KEY));
 
-	const revisionId = await ensureRevision(db, group.id);
+	const revisionId = await ensureRevision(db, workspace.id);
 	const revision = await readRevision(db, revisionId);
 	const stageByKey = new Map(revision.stages.map((stage) => [stage.key, stage]));
 
@@ -263,7 +263,7 @@ export async function seedReferenceSet(db: Database, ownerUserId: string): Promi
 			.insert(schema.interactions)
 			.values({
 				title: definition.title,
-				processGroupId: group.id,
+				workspaceId: workspace.id,
 				ownerUserId,
 				contractId: definition.code === 'В-1' ? contract.id : null
 			})
@@ -408,7 +408,7 @@ export async function seedReferenceSet(db: Database, ownerUserId: string): Promi
 		.returning({ id: schema.learningGroupResults.id });
 
 	return {
-		groupId: group.id,
+		workspaceId: workspace.id,
 		revisionId,
 		ownerUserId,
 		organizations: { a: organizationA.id, b: organizationB.id },
@@ -480,7 +480,7 @@ export async function addBoundaryInteraction(
 		.insert(schema.interactions)
 		.values({
 			title: 'В-9 переход ровно в полночь',
-			processGroupId: ids.groupId,
+			workspaceId: ids.workspaceId,
 			ownerUserId
 		})
 		.returning({ id: schema.interactions.id });
@@ -538,7 +538,7 @@ export async function addFillerInteractions(
 			.insert(schema.interactions)
 			.values({
 				title: `Ф-${String(index + 1).padStart(3, '0')} наполнение`,
-				processGroupId: ids.groupId,
+				workspaceId: ids.workspaceId,
 				ownerUserId
 			})
 			.returning({ id: schema.interactions.id });

@@ -66,22 +66,22 @@ function bucketList(title: string, buckets: readonly ReportBucket[]): string {
 }
 
 /**
- * Воронка таблицей — по одной на группу процесса. Заголовок называет процесс,
- * когда групп в выборке больше одной: одинаковые ключи стадий в B2B и B2C —
- * законная ситуация, и без имени процесса две строки читались бы как одна.
+ * Воронка таблицей — по одной на пространство. Заголовок называет пространство,
+ * когда их в выборке больше одного: одинаковые ключи стадий в B2B и B2C —
+ * законная ситуация, и без имени две строки читались бы как одна.
  */
 function funnelHtml(funnel: ReportFunnelChart | null): string {
 	if (funnel === null) {
 		return '';
 	}
 
-	const stages = funnel.groups
-		.map((group) =>
+	const stages = funnel.workspaces
+		.map((workspace) =>
 			bucketList(
-				funnel.groups.length > 1
-					? `Стадия на дату среза — ${group.groupName}`
+				funnel.workspaces.length > 1
+					? `Стадия на дату среза — ${workspace.workspaceName}`
 					: 'Стадия на дату среза',
-				group.stages
+				workspace.stages
 			)
 		)
 		.join('');

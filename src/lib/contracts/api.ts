@@ -42,7 +42,7 @@ import {
 	type CommentView,
 	type InteractionChangeView,
 	type InteractionStatusView,
-	type ProcessGroupDetail,
+	type WorkspaceDetail,
 	type StageEntryView
 } from './interactions';
 import { REPORT_MODES, type ReportBucket, type ReportView } from './reports';
@@ -498,19 +498,19 @@ export function toApiLearningGroup(view: LearningGroupView): ApiLearningGroup {
 	};
 }
 
-/** Группа процесса: по какому маршруту идут взаимодействия этого вида. */
-export const apiProcessGroupSchema = z.object({
+/** Пространство: рабочее место направления и процесс, по которому оно идёт. */
+export const apiWorkspaceSchema = z.object({
 	id: z.uuid(),
-	key: z.string().describe('Ключ группы: `b2b` — учебные заведения, `b2c` — лица'),
+	key: z.string().describe('Ключ пространства: `b2b` — учебные заведения, `b2c` — лица'),
 	name: z.string(),
 	description: z.string().nullable(),
 	position: z.number().int(),
 	stageCount: z.number().int().describe('Сколько стадий в действующей редакции'),
 	activeInteractions: z.number().int(),
-	hasDraft: z.boolean().describe('У группы есть неопубликованный черновик процесса')
+	hasDraft: z.boolean().describe('У пространства есть неопубликованный черновик процесса')
 });
 
-export type ApiProcessGroup = z.output<typeof apiProcessGroupSchema>;
+export type ApiWorkspace = z.output<typeof apiWorkspaceSchema>;
 
 /** Стадия действующего процесса вместе с правилами, которые она требует. */
 export const apiProcessStageSchema = z.object({
@@ -546,12 +546,12 @@ export const apiProcessTransitionSchema = z.object({
 export type ApiProcessTransition = z.output<typeof apiProcessTransitionSchema>;
 
 /**
- * Действующий процесс группы. Черновик и его замечания сюда не входят:
+ * Действующий процесс пространства. Черновик и его замечания сюда не входят:
  * интеграция работает по опубликованному маршруту, а незавершённая настройка —
  * дело сотрудника, а не внешней системы.
  */
 export const apiProcessSchema = z.object({
-	group: apiProcessGroupSchema,
+	workspace: apiWorkspaceSchema,
 	counterpartyKinds: z
 		.array(z.string())
 		.describe('Виды контрагентов, которые идут по этому процессу'),
@@ -565,16 +565,16 @@ export const apiProcessSchema = z.object({
 			transitions: z.array(apiProcessTransitionSchema)
 		})
 		.nullable()
-		.describe('Действующая редакция; `null` — процесс группы ещё не заведён')
+		.describe('Действующая редакция; `null` — процесс пространства не заведён')
 });
 
 export type ApiProcess = z.output<typeof apiProcessSchema>;
 
-export function toApiProcess(detail: ProcessGroupDetail): ApiProcess {
+export function toApiProcess(detail: WorkspaceDetail): ApiProcess {
 	const active = detail.active;
 
 	return {
-		group: detail.group,
+		workspace: detail.workspace,
 		counterpartyKinds: detail.counterpartyKinds,
 		revision:
 			active === null
@@ -743,17 +743,17 @@ export const apiReportSchema = z.object({
 	charts: z.object({
 		funnel: z
 			.object({
-				groups: z
+				workspaces: z
 					.array(
 						z.object({
-							groupId: z.uuid(),
-							groupKey: z.string(),
-							groupName: z.string(),
+							workspaceId: z.uuid(),
+							workspaceKey: z.string(),
+							workspaceName: z.string(),
 							stages: z.array(apiReportBucketSchema)
 						})
 					)
 					.describe(
-						'По воронке на группу процесса: у B2B и B2C свои стадии, и одинаковые ключи в ' +
+						'По воронке на пространство: у B2B и B2C свои стадии, и одинаковые ключи в ' +
 							'них законны — в одном списке две разные стадии слились бы в одну строку'
 					),
 				closed: z.array(apiReportBucketSchema),
@@ -845,11 +845,11 @@ export function toApiReport(view: ReportView): ApiReport {
 				view.charts.funnel === null
 					? null
 					: {
-							groups: view.charts.funnel.groups.map((group) => ({
-								groupId: group.groupId,
-								groupKey: group.groupKey,
-								groupName: group.groupName,
-								stages: group.stages.map(bucket)
+							workspaces: view.charts.funnel.workspaces.map((funnel) => ({
+								workspaceId: funnel.workspaceId,
+								workspaceKey: funnel.workspaceKey,
+								workspaceName: funnel.workspaceName,
+								stages: funnel.stages.map(bucket)
 							})),
 							closed: view.charts.funnel.closed.map(bucket),
 							note: view.charts.funnel.note

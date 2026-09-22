@@ -4,10 +4,11 @@
  *
  * Список отвечает на вопрос «что с этой записью», доска — на вопрос «где стоит
  * работа целиком»: сколько дел висит на обмене документами и сколько из них уже
- * просрочено. Колонки — стадии действующей редакции одной группы, а карточка
- * стоит ровно в той колонке, где открыта её запись стадии. Выбора версии на
- * доске нет: в группе действует ровно один процесс, и его номер человеку не
- * нужен. Группу задаёт фильтр списка — доска и список показывают один отбор.
+ * просрочено. Колонки — стадии действующей редакции одного пространства, а
+ * карточка стоит ровно в той колонке, где открыта её запись стадии. Выбора
+ * версии на доске нет: в пространстве действует ровно один процесс, и его номер
+ * человеку не нужен. Пространство задаёт фильтр списка — доска и список
+ * показывают один отбор.
  *
  * Выборка — один запрос: карточки, число карточек на стадии и число
  * просроченных считаются оконными функциями за один проход, а не запросом на
@@ -36,7 +37,7 @@ import {
 	interactionPrograms,
 	interactions,
 	organizations,
-	processGroups,
+	workspaces,
 	products,
 	programs,
 	stageEntries,
@@ -45,7 +46,7 @@ import {
 	users
 } from '../db/schema';
 import { requirePermission } from '../rbac';
-import { readActiveRevisionCached, readGroupRow } from '../stages/process';
+import { readActiveRevisionCached, readWorkspaceRow } from '../stages/process';
 import { evaluateTransition, type StageState } from '../stages/transitions';
 import { interactionScopeFilter } from './access';
 
@@ -59,10 +60,12 @@ import { interactionScopeFilter } from './access';
  */
 export const CARDS_PER_COLUMN = 25;
 
-/** Отбор доски: фильтры те же, что у списка, плюс группа процесса. */
+/** Отбор доски: фильтры те же, что у списка, плюс пространство. */
 export type InteractionBoardQuery = {
-	/** Ключ группы из фильтра списка; пусто — берётся та, где есть работа. */
-	group: string | null;
+	/**
+	 * Ключ пространства из фильтра списка; пусто — берётся то, где есть работа.
+	 */
+	workspace: string | null;
 	status: InteractionStatus | null;
 	stageCategory: StageCategory | null;
 	overdue: boolean;
@@ -70,8 +73,8 @@ export type InteractionBoardQuery = {
 	q: string | null;
 };
 
-/** Группа вместе с числом взаимодействий области доступа, идущих по ней. */
-export type BoardGroupOption = {
+/** Пространство вместе с числом взаимодействий области доступа, идущих в нём. */
+export type BoardWorkspaceOption = {
 	id: string;
 	key: string;
 	name: string;
@@ -80,55 +83,55 @@ export type BoardGroupOption = {
 };
 
 /**
- * Группы процесса и число взаимодействий области доступа, которые по ним идут.
- * Группа без процесса тоже в списке: «здесь ещё ничего не описано» — это ответ,
- * а исчезнувшая строка выглядит как исчезнувший сценарий работы.
+ * Пространства и число взаимодействий области доступа, которые в них идут.
+ * Пространство без процесса тоже в списке: «здесь ещё ничего не описано» — это
+ * ответ, а исчезнувшая строка выглядит как исчезнувший сценарий работы.
  */
-async function readGroupOptions(ctx: ActorContext): Promise<BoardGroupOption[]> {
+async function readWorkspaceOptions(ctx: ActorContext): Promise<BoardWorkspaceOption[]> {
 	return getDb()
 		.select({
-			id: processGroups.id,
-			key: processGroups.key,
-			name: processGroups.name,
-			position: processGroups.position,
+			id: workspaces.id,
+			key: workspaces.key,
+			name: workspaces.name,
+			position: workspaces.position,
 			interactions: count(interactions.id)
 		})
-		.from(processGroups)
+		.from(workspaces)
 		.leftJoin(
 			interactions,
 			and(
-				eq(interactions.processGroupId, processGroups.id),
+				eq(interactions.workspaceId, workspaces.id),
 				eq(interactions.status, 'active'),
 				interactionScopeFilter(ctx)
 			)
 		)
-		.groupBy(processGroups.id)
-		.orderBy(asc(processGroups.position));
+		.groupBy(workspaces.id)
+		.orderBy(asc(workspaces.position));
 }
 
 /**
- * Какую группу показать.
+ * Какое пространство показать.
  *
- * Фильтр списка сильнее всего: запрошенная группа открывается, даже если по ней
- * сейчас никто не идёт. Без фильтра открывается та, на которой есть работа, —
- * группа без единого взаимодействия показала бы пустую доску там, где работа
- * есть на соседней.
+ * Фильтр списка сильнее всего: запрошенное пространство открывается, даже если в
+ * нём сейчас никто не идёт. Без фильтра открывается то, где есть работа, —
+ * пространство без единого взаимодействия показало бы пустую доску там, где
+ * работа есть в соседнем.
  */
-export function chooseBoardGroup(
-	groups: readonly BoardGroupOption[],
+export function chooseBoardWorkspace(
+	options: readonly BoardWorkspaceOption[],
 	requested: string | null
-): BoardGroupOption | null {
-	const asked = requested === null ? undefined : groups.find((group) => group.key === requested);
+): BoardWorkspaceOption | null {
+	const asked = requested === null ? undefined : options.find((option) => option.key === requested);
 
 	if (asked !== undefined) {
 		return asked;
 	}
 
-	const withWork = [...groups]
-		.filter((group) => group.interactions > 0)
+	const withWork = [...options]
+		.filter((option) => option.interactions > 0)
 		.sort((left, right) => right.interactions - left.interactions);
 
-	return withWork[0] ?? groups[0] ?? null;
+	return withWork[0] ?? options[0] ?? null;
 }
 
 /**
@@ -136,8 +139,15 @@ export function chooseBoardGroup(
  * намеренно: доска берёт из записи стадии то, что списку не нужно, — чек-лист,
  * результат, подтверждение и данные обучения для приговора по переходу.
  */
-function boardConditions(ctx: ActorContext, groupId: string, query: InteractionBoardQuery): SQL[] {
-	const conditions: SQL[] = [interactionScopeFilter(ctx), eq(interactions.processGroupId, groupId)];
+function boardConditions(
+	ctx: ActorContext,
+	workspaceId: string,
+	query: InteractionBoardQuery
+): SQL[] {
+	const conditions: SQL[] = [
+		interactionScopeFilter(ctx),
+		eq(interactions.workspaceId, workspaceId)
+	];
 
 	if (query.status !== null) {
 		conditions.push(eq(interactions.status, query.status));
@@ -189,7 +199,7 @@ function boardConditions(ctx: ActorContext, groupId: string, query: InteractionB
  * колонки — по сроку, потому что смотрят на доску ради того, что горит;
  * идентификатор последним ключом убирает неопределённость у одинаковых сроков.
  */
-async function readBoardRows(ctx: ActorContext, groupId: string, query: InteractionBoardQuery) {
+async function readBoardRows(ctx: ActorContext, workspaceId: string, query: InteractionBoardQuery) {
 	const db = getDb();
 
 	const ranked = db
@@ -227,7 +237,7 @@ async function readBoardRows(ctx: ActorContext, groupId: string, query: Interact
 		)
 		.innerJoin(stages, eq(stages.id, stageEntries.stageId))
 		.innerJoin(stageEntryStatus, eq(stageEntryStatus.stageEntryId, stageEntries.id))
-		.where(and(...boardConditions(ctx, groupId, query)))
+		.where(and(...boardConditions(ctx, workspaceId, query)))
 		.as('board');
 
 	return db
@@ -447,31 +457,31 @@ export async function getInteractionBoard(
 	requirePermission(ctx, 'interactions.read');
 
 	const db = getDb();
-	const group = chooseBoardGroup(await readGroupOptions(ctx), query.group);
+	const workspace = chooseBoardWorkspace(await readWorkspaceOptions(ctx), query.workspace);
 
 	const empty: InteractionBoardView = {
-		groupId: group?.id ?? null,
-		groupKey: group?.key ?? null,
-		groupName: group?.name ?? null,
+		workspaceId: workspace?.id ?? null,
+		workspaceKey: workspace?.key ?? null,
+		workspaceName: workspace?.name ?? null,
 		columns: [],
 		total: 0,
 		cardsPerColumn: CARDS_PER_COLUMN,
 		revision: null
 	};
 
-	if (group === null) {
+	if (workspace === null) {
 		return empty;
 	}
 
-	const revision = await readActiveRevisionCached(await readGroupRow(db, group.id));
+	const revision = await readActiveRevisionCached(await readWorkspaceRow(db, workspace.id));
 
-	// Группа без действующего процесса — это не поломка доски: стадий нет, и
-	// колонок тоже. Отказ здесь скрыл бы соседнюю группу, где работа идёт.
+	// Пространство без действующего процесса — это не поломка доски: стадий нет,
+	// и колонок тоже. Отказ здесь скрыл бы соседнее пространство, где работа идёт.
 	if (revision === null) {
 		return empty;
 	}
 
-	const rows = await readBoardRows(ctx, group.id, query);
+	const rows = await readBoardRows(ctx, workspace.id, query);
 
 	const ids = rows.map((row) => row.id);
 
@@ -518,9 +528,9 @@ export async function getInteractionBoard(
 	});
 
 	return {
-		groupId: group.id,
-		groupKey: group.key,
-		groupName: group.name,
+		workspaceId: workspace.id,
+		workspaceKey: workspace.key,
+		workspaceName: workspace.name,
 		columns: buildBoardColumns(revision.stages, entries),
 		total: entries.length,
 		cardsPerColumn: CARDS_PER_COLUMN,

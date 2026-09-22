@@ -14,7 +14,7 @@ import {
 	organizationResponsibles,
 	organizations,
 	processGroupCounterpartyKinds,
-	processGroups,
+	workspaces,
 	stageEntries,
 	stageEntryStatus,
 	stagePauses,
@@ -67,7 +67,7 @@ describe('миграции', () => {
 				'comments', 'document_templates', 'documents', 'api_keys',
 				'consents', 'stage_entry_status',
 				'directions', 'product_directions', 'organization_responsibles',
-				'process_groups', 'process_group_counterparty_kinds', 'process_stage_keys',
+				'workspaces', 'process_group_counterparty_kinds', 'process_stage_keys',
 				'stage_migration_rules', 'contracts', 'contract_items',
 				'interaction_contract_items', 'stage_entry_documents',
 				'learning_groups', 'learning_group_results', 'exchange_messages'
@@ -107,7 +107,7 @@ describe('миграции', () => {
 			from information_schema.columns
 			where table_schema = 'public'
 				and table_name = 'interactions'
-				and column_name = 'process_group_id'
+				and column_name = 'workspace_id'
 		`;
 
 		expect(row.nullable).toBe('NO');
@@ -532,11 +532,11 @@ describe('группы процесса', () => {
 	 * возвращает их снимком (`helpers/db.ts`). Что их кладёт именно миграция,
 	 * проверяет `db.test.ts` — там база не чистится.
 	 */
-	async function groupId(key: string): Promise<string> {
+	async function workspaceId(key: string): Promise<string> {
 		const [row] = await database.db
-			.select({ id: processGroups.id })
-			.from(processGroups)
-			.where(eq(processGroups.key, key));
+			.select({ id: workspaces.id })
+			.from(workspaces)
+			.where(eq(workspaces.key, key));
 
 		expect(row).toBeDefined();
 
@@ -544,7 +544,7 @@ describe('группы процесса', () => {
 	}
 
 	it('не позволяет виду контрагента принадлежать двум группам', async () => {
-		const b2c = await groupId('b2c');
+		const b2c = await workspaceId('b2c');
 
 		// Первичный ключ по виду и есть ограничение «вид принадлежит ровно одной
 		// группе»: проверка в сервисе такого не удержит.
@@ -557,9 +557,9 @@ describe('группы процесса', () => {
 		).toBe('23505');
 
 		const rows = await database.db
-			.select({ kind: processGroupCounterpartyKinds.kind, key: processGroups.key })
+			.select({ kind: processGroupCounterpartyKinds.kind, key: workspaces.key })
 			.from(processGroupCounterpartyKinds)
-			.innerJoin(processGroups, eq(processGroups.id, processGroupCounterpartyKinds.groupId))
+			.innerJoin(workspaces, eq(workspaces.id, processGroupCounterpartyKinds.groupId))
 			.orderBy(processGroupCounterpartyKinds.kind);
 
 		expect(rows.map((row) => `${row.kind}:${row.key}`)).toStrictEqual([
@@ -787,7 +787,7 @@ describe('обмен с внешними системами', () => {
 		const ownerUserId = await insertUser(database.db);
 		const { interactionId } = await insertInteractionWithStage(database.db, { ownerUserId });
 
-		const [group] = await database.db
+		const [workspace] = await database.db
 			.insert(learningGroups)
 			.values({ interactionId, streamNumber: 1, system: 'lms', instance: 'moodle' })
 			.returning({ id: learningGroups.id });
@@ -804,7 +804,7 @@ describe('обмен с внешними системами', () => {
 		expect(
 			await failureCode(
 				database.db.insert(learningGroupResults).values({
-					learningGroupId: group.id,
+					learningGroupId: workspace.id,
 					occurredAt: new Date(),
 					enrolled: 10,
 					completed: 8,
@@ -814,7 +814,7 @@ describe('обмен с внешними системами', () => {
 		).toBe('23514');
 
 		await database.db.insert(learningGroupResults).values({
-			learningGroupId: group.id,
+			learningGroupId: workspace.id,
 			occurredAt: new Date(),
 			enrolled: 10,
 			completed: 8,

@@ -28,7 +28,7 @@ import {
 import { saveContract, saveContractItem } from '$lib/server/directory/contracts';
 import { createInteraction } from '$lib/server/interactions/write';
 import { getRedis } from '$lib/server/redis';
-import { B2B_GROUP_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
+import { B2B_WORKSPACE_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
 import { ensureProcess } from '$lib/server/stages/process';
 import {
 	insertDocument,
@@ -70,9 +70,9 @@ const listComments = commentsModule.GET as Endpoint;
 const createComment = commentsModule.POST as Endpoint;
 const markDocumentRoute = (await import('../../../src/routes/api/v1/documents/[id]/marks/+server'))
 	.POST as Endpoint;
-const listProcessGroups = (await import('../../../src/routes/api/v1/process-groups/+server'))
+const listWorkspaces = (await import('../../../src/routes/api/v1/workspaces/+server'))
 	.GET as Endpoint;
-const getProcess = (await import('../../../src/routes/api/v1/process-groups/[key]/+server'))
+const getProcess = (await import('../../../src/routes/api/v1/workspaces/[key]/+server'))
 	.GET as Endpoint;
 const report = (await import('../../../src/routes/api/v1/reports/+server')).GET as Endpoint;
 const exchangeJournal = (await import('../../../src/routes/api/v1/exchange/messages/+server'))
@@ -193,7 +193,7 @@ type Fixture = {
 /** Вуз, взаимодействие на действующем процессе и справочники вокруг них. */
 async function seed(title = 'Взаимодействие для API'): Promise<Fixture> {
 	const ctx = testActor();
-	await database.db.transaction((tx) => ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS));
+	await database.db.transaction((tx) => ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
 
 	const organizationId = await insertOrganization(database.db, {
 		shortName: `Вуз ${crypto.randomUUID().slice(0, 8)}`
@@ -362,23 +362,23 @@ function calls(
 				)
 		},
 		{
-			name: 'GET /v1/process-groups',
+			name: 'GET /v1/workspaces',
 			call: (headers) =>
 				Promise.resolve(
-					listProcessGroups(
-						apiEvent({ path: '/api/v1/process-groups', routeId: '/api/v1/process-groups', headers })
+					listWorkspaces(
+						apiEvent({ path: '/api/v1/workspaces', routeId: '/api/v1/workspaces', headers })
 					)
 				)
 		},
 		{
-			name: 'GET /v1/process-groups/{key}',
+			name: 'GET /v1/workspaces/{key}',
 			call: (headers) =>
 				Promise.resolve(
 					getProcess(
 						apiEvent({
-							path: `/api/v1/process-groups/${B2B_GROUP_KEY}`,
-							routeId: '/api/v1/process-groups/[key]',
-							params: { key: B2B_GROUP_KEY },
+							path: `/api/v1/workspaces/${B2B_WORKSPACE_KEY}`,
+							routeId: '/api/v1/workspaces/[key]',
+							params: { key: B2B_WORKSPACE_KEY },
 							headers
 						})
 					)
@@ -956,36 +956,36 @@ describe('комментарии взаимодействия', () => {
 });
 
 describe('процесс', () => {
-	it('отдаёт группы процесса и стадии действующей редакции с ключами', async () => {
+	it('отдаёт пространства и стадии действующей редакции с ключами', async () => {
 		await seed();
 		const key = await issueKey(TEST_USER_IDS.admin);
 
-		const groups = await listProcessGroups(
+		const list = await listWorkspaces(
 			apiEvent({
-				path: '/api/v1/process-groups',
-				routeId: '/api/v1/process-groups',
+				path: '/api/v1/workspaces',
+				routeId: '/api/v1/workspaces',
 				headers: bearer(key)
 			})
 		);
-		const groupsBody = await body(groups);
+		const listBody = await body(list);
 
-		expect(groups.status).toBe(200);
+		expect(list.status).toBe(200);
 		expect(
-			(groupsBody.items as { key: string }[]).some((group) => group.key === B2B_GROUP_KEY)
+			(listBody.items as { key: string }[]).some((item) => item.key === B2B_WORKSPACE_KEY)
 		).toBe(true);
 
 		const process = await getProcess(
 			apiEvent({
-				path: `/api/v1/process-groups/${B2B_GROUP_KEY}`,
-				routeId: '/api/v1/process-groups/[key]',
-				params: { key: B2B_GROUP_KEY },
+				path: `/api/v1/workspaces/${B2B_WORKSPACE_KEY}`,
+				routeId: '/api/v1/workspaces/[key]',
+				params: { key: B2B_WORKSPACE_KEY },
 				headers: bearer(key)
 			})
 		);
 		const payload = await body(process);
 
 		expect(process.status).toBe(200);
-		expect(payload).toMatchObject({ group: { key: B2B_GROUP_KEY } });
+		expect(payload).toMatchObject({ workspace: { key: B2B_WORKSPACE_KEY } });
 
 		const revision = payload.revision as {
 			version: number;
@@ -1015,10 +1015,10 @@ describe('процесс', () => {
 		await seed();
 		const key = await issueKey(TEST_USER_IDS.manager);
 
-		const response = await listProcessGroups(
+		const response = await listWorkspaces(
 			apiEvent({
-				path: '/api/v1/process-groups',
-				routeId: '/api/v1/process-groups',
+				path: '/api/v1/workspaces',
+				routeId: '/api/v1/workspaces',
 				headers: bearer(key)
 			})
 		);
@@ -1032,8 +1032,8 @@ describe('процесс', () => {
 
 		const response = await getProcess(
 			apiEvent({
-				path: '/api/v1/process-groups/unknown',
-				routeId: '/api/v1/process-groups/[key]',
+				path: '/api/v1/workspaces/unknown',
+				routeId: '/api/v1/workspaces/[key]',
 				params: { key: 'unknown' },
 				headers: bearer(key)
 			})

@@ -118,15 +118,15 @@ function summarySheet(view: ReportView): SpreadsheetWriteSheet {
 	if (view.charts.funnel !== null) {
 		const funnel = view.charts.funnel;
 
-		// Воронка своя у каждой группы процесса: одинаковые ключи стадий в B2B и
+		// Воронка своя у каждого пространства: одинаковые ключи стадий в B2B и
 		// B2C законны, и в одном списке две разные стадии слились бы в одну строку.
-		for (const group of funnel.groups) {
+		for (const workspace of funnel.workspaces) {
 			rows.push(
 				...bucketRows(
-					funnel.groups.length > 1
-						? `Стадия на дату среза — ${group.groupName}`
+					funnel.workspaces.length > 1
+						? `Стадия на дату среза — ${workspace.workspaceName}`
 						: 'Стадия на дату среза',
-					group.stages
+					workspace.stages
 				)
 			);
 			rows.push([]);

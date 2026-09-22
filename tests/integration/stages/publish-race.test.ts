@@ -28,7 +28,7 @@ import {
 	createDraft,
 	processDefinition,
 	publishProcess,
-	readGroupByKey,
+	readWorkspaceByKey,
 	updateDraft
 } from '$lib/server/stages/process';
 import { getInteractionStatus } from '$lib/server/stages/status';
@@ -37,7 +37,7 @@ import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '
 import {
 	activeRevision,
 	advanceTo,
-	B2C_GROUP_KEY,
+	B2C_WORKSPACE_KEY,
 	createInteractionOn,
 	seedProcess,
 	stageId,
@@ -81,10 +81,10 @@ function sleep(ms: number): Promise<void> {
 
 /** Черновик, который переименовывает первую стадию: сопоставление полное. */
 async function prepareRename(ctx: ActorContext): Promise<void> {
-	const draft = await createDraft(ctx, B2C_GROUP_KEY);
+	const draft = await createDraft(ctx, B2C_WORKSPACE_KEY);
 	const definition = processDefinition(draft);
 
-	await updateDraft(ctx, B2C_GROUP_KEY, {
+	await updateDraft(ctx, B2C_WORKSPACE_KEY, {
 		...definition,
 		stages: definition.stages.map((stage) =>
 			stage.key === 'first' ? { ...stage, name: 'Первая стадия, иначе названная' } : stage
@@ -110,7 +110,7 @@ async function assertSettled(interactionId: string): Promise<void> {
 		.innerJoin(stages, eq(stages.id, stageEntries.stageId))
 		.where(and(eq(stageEntries.interactionId, interactionId), isNull(stageEntries.leftAt)));
 
-	const active = await activeRevision(database, B2C_GROUP_KEY);
+	const active = await activeRevision(database, B2C_WORKSPACE_KEY);
 
 	expect(open).toHaveLength(1);
 	expect(open[0].revisionId).toBe(active.id);
@@ -119,7 +119,7 @@ async function assertSettled(interactionId: string): Promise<void> {
 describe('переход и применение изменений', () => {
 	it('детерминированно: публикация ждёт заблокированное взаимодействие', async () => {
 		const ctx = admin();
-		const before = await seedProcess(database, B2C_GROUP_KEY, twoStageProcess({}));
+		const before = await seedProcess(database, B2C_WORKSPACE_KEY, twoStageProcess({}));
 		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
 
 		await prepareRename(ctx);
@@ -149,7 +149,7 @@ describe('переход и применение изменений', () => {
 		await sleep(100);
 
 		// Публикация упирается в блокировку и ждёт.
-		const publication = publishProcess(ctx, B2C_GROUP_KEY);
+		const publication = publishProcess(ctx, B2C_WORKSPACE_KEY);
 		let settled = false;
 		void publication.then(
 			() => (settled = true),
@@ -190,7 +190,7 @@ describe('переход и применение изменений', () => {
 		for (let run = 0; run < 20; run += 1) {
 			await database.reset();
 
-			const revision = await seedProcess(database, B2C_GROUP_KEY, twoStageProcess({}));
+			const revision = await seedProcess(database, B2C_WORKSPACE_KEY, twoStageProcess({}));
 			const { interactionId } = await createInteractionOn(ctx, database, {
 				kind: 'legal_entity'
 			});
@@ -218,7 +218,7 @@ describe('переход и применение изменений', () => {
 			const [move, publication] = await Promise.allSettled([
 				(lead === 'move' ? Promise.resolve() : sleep(50)).then(() => advanceStage(ctx, command)),
 				(lead === 'publication' ? Promise.resolve() : sleep(50)).then(() =>
-					publishProcess(ctx, B2C_GROUP_KEY)
+					publishProcess(ctx, B2C_WORKSPACE_KEY)
 				)
 			]);
 
@@ -254,11 +254,11 @@ describe('переход и применение изменений', () => {
 
 	it('отказывает команде, собранной по прежней редакции', async () => {
 		const ctx = admin();
-		const revision = await seedProcess(database, B2C_GROUP_KEY, twoStageProcess({}));
+		const revision = await seedProcess(database, B2C_WORKSPACE_KEY, twoStageProcess({}));
 		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
 
 		await prepareRename(ctx);
-		await publishProcess(ctx, B2C_GROUP_KEY);
+		await publishProcess(ctx, B2C_WORKSPACE_KEY);
 
 		// Карточка была отрисована до применения: стадия та же строка по
 		// идентификатору, но принадлежит прежней редакции.
@@ -282,7 +282,7 @@ describe('переход и применение изменений', () => {
 		expect(status.history).toEqual([]);
 
 		// С номером действующей редакции тот же переход проходит.
-		const fresh = await activeRevision(database, B2C_GROUP_KEY);
+		const fresh = await activeRevision(database, B2C_WORKSPACE_KEY);
 		await advanceStage(ctx, {
 			interactionId,
 			fromStageId: stageId(fresh, 'first'),
@@ -295,14 +295,14 @@ describe('переход и применение изменений', () => {
 
 		const moved = await getInteractionStatus(ctx, interactionId);
 		expect(moved.current?.snapshot.key).toBe('second');
-		expect(await readGroupByKey(database.db, B2C_GROUP_KEY)).toBeTruthy();
+		expect(await readWorkspaceByKey(database.db, B2C_WORKSPACE_KEY)).toBeTruthy();
 	});
 });
 
 describe('переход в удаляемую стадию, пока публикация ждёт', () => {
 	it('публикация переживает вход, случившийся после её старта', async () => {
 		const ctx = admin();
-		const revision = await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+		const revision = await seedProcess(database, B2C_WORKSPACE_KEY, threeStageProcess());
 
 		const created = [];
 		for (let index = 0; index < 3; index += 1) {
@@ -322,9 +322,9 @@ describe('переход в удаляемую стадию, пока публи
 		// не понадобилось бы.
 		await advanceTo(ctx, database, occupantId, 'offer');
 
-		const draft = await createDraft(ctx, B2C_GROUP_KEY);
+		const draft = await createDraft(ctx, B2C_WORKSPACE_KEY);
 
-		await updateDraft(ctx, B2C_GROUP_KEY, {
+		await updateDraft(ctx, B2C_WORKSPACE_KEY, {
 			...processDefinition(draft),
 			migrationRules: [{ removedStageKey: 'offer', targetStageKey: 'done' }],
 			stages: processDefinition(draft).stages.filter((stage) => stage.key !== 'offer'),
@@ -356,7 +356,7 @@ describe('переход в удаляемую стадию, пока публи
 
 		await sleep(100);
 
-		const publication = publishProcess(ctx, B2C_GROUP_KEY);
+		const publication = publishProcess(ctx, B2C_WORKSPACE_KEY);
 		let settled = false;
 		void publication.then(
 			() => (settled = true),
@@ -447,7 +447,7 @@ describe('закрытие взаимодействия, пока идёт пу�
 		// Команда ждёт: публикация проходит целиком, пока она стоит.
 		expect(settled).toBe(false);
 
-		await publishProcess(admin(), B2C_GROUP_KEY);
+		await publishProcess(admin(), B2C_WORKSPACE_KEY);
 
 		release();
 		await holder;
@@ -464,7 +464,7 @@ describe('закрытие взаимодействия, пока идёт пу�
 		revision: number;
 	}> {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+		await seedProcess(database, B2C_WORKSPACE_KEY, threeStageProcess());
 
 		// Взаимодействие ведёт КАМ: его область видит запись по владельцу, а
 		// условие видимости всё равно тянет в план назначения — на них команда и
@@ -476,9 +476,9 @@ describe('закрытие взаимодействия, пока идёт пу�
 
 		await advanceTo(ctx, database, interactionId, 'offer');
 
-		const draft = await createDraft(ctx, B2C_GROUP_KEY);
+		const draft = await createDraft(ctx, B2C_WORKSPACE_KEY);
 
-		await updateDraft(ctx, B2C_GROUP_KEY, {
+		await updateDraft(ctx, B2C_WORKSPACE_KEY, {
 			...processDefinition(draft),
 			migrationRules: [{ removedStageKey: 'offer', targetStageKey: 'done' }],
 			stages: processDefinition(draft).stages.filter((stage) => stage.key !== 'offer'),

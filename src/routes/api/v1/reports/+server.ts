@@ -95,11 +95,11 @@ registerRoute({
 		totals: { rowCount: 1, interactionCount: 1, paused: 0, overdue: 0 },
 		charts: {
 			funnel: {
-				groups: [
+				workspaces: [
 					{
-						groupId: '7c1e2f3a-4b5c-4d6e-8f70-1a2b3c4d5e6f',
-						groupKey: 'b2b',
-						groupName: 'Работа с вузами',
+						workspaceId: '7c1e2f3a-4b5c-4d6e-8f70-1a2b3c4d5e6f',
+						workspaceKey: 'b2b',
+						workspaceName: 'Работа с вузами',
 						stages: [
 							{
 								key: '7c1e2f3a-4b5c-4d6e-8f70-1a2b3c4d5e6f:document_exchange',

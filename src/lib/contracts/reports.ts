@@ -451,8 +451,8 @@ export const reportQuerySchema = z.object({
 	/** Статус передачи по позициям договора — свободный словарь справочника. */
 	transfer: multiValue,
 	party: multiEnum(ORGANIZATION_KINDS),
-	/** Группа процесса — по ключу (`b2b`, `b2c`). */
-	group: multiValue,
+	/** Пространство — по ключу (`b2b`, `b2c`). */
+	workspace: multiValue,
 	overdue: flag,
 	paused: flag,
 	cols: multiValue
@@ -478,7 +478,7 @@ export const REPORT_PARAMS = [
 	'state',
 	'transfer',
 	'party',
-	'group',
+	'workspace',
 	'overdue',
 	'paused',
 	'cols'
@@ -617,25 +617,25 @@ export type ReportBucket = {
 };
 
 /**
- * Воронка одной группы процесса.
+ * Воронка одного пространства.
  *
- * Стадии разных групп в одну воронку не складываются: у B2B и B2C свои процессы
- * и свои стадии, а одинаковые ключи в них — законная ситуация. Полоса «Встреча»
- * рядом с полосой «Оплата» из другого процесса выглядит как один путь, которым
- * она не является.
+ * Стадии разных пространств в одну воронку не складываются: у B2B и B2C свои
+ * процессы и свои стадии, а одинаковые ключи в них — законная ситуация. Полоса
+ * «Встреча» рядом с полосой «Оплата» из другого процесса выглядит как один
+ * путь, которым она не является.
  */
-export type ReportFunnelGroup = {
-	groupId: string;
-	/** Ключ группы (`b2b`, `b2c`) — им же сужается отчёт по клику на полосу. */
-	groupKey: string;
-	groupName: string;
+export type ReportFunnelWorkspace = {
+	workspaceId: string;
+	/** Ключ пространства (`b2b`, `b2c`) — им сужается отчёт по клику. */
+	workspaceKey: string;
+	workspaceName: string;
 	stages: readonly ReportBucket[];
 };
 
 /** Воронка: распределение на дату, не конверсия. */
 export type ReportFunnelChart = {
-	/** По одной воронке на группу процесса, в порядке групп. */
-	groups: readonly ReportFunnelGroup[];
+	/** По одной воронке на пространство, в порядке пространств. */
+	workspaces: readonly ReportFunnelWorkspace[];
 	closed: readonly ReportBucket[];
 	note: string;
 };
@@ -714,7 +714,7 @@ export type ReportFilterOptions = {
 	products: FilterOption[];
 	owners: FilterOption[];
 	stages: FilterOption[];
-	groups: FilterOption[];
+	workspaces: FilterOption[];
 	parties: FilterOption[];
 	states: FilterOption[];
 	transferStatuses: FilterOption[];

@@ -15,7 +15,7 @@ import { DEMO_EMAILS } from '../scripts/seed/users';
 import { E2E_MOCK_CONTROL_TOKEN } from './exchange-keys';
 import { ADMIN_STATE, LEAD_STATE, MANAGER_STATE, STAFF_ADMIN_STATE } from './global-setup';
 import { waitForHydration } from './helpers/hydration';
-import { seedProcessGroup } from './helpers/process-group';
+import { seedWorkspace } from './helpers/workspace';
 
 /**
  * Сквозной проход по продукту одной историей: от заявки с сайта до отчёта.
@@ -163,7 +163,7 @@ test.setTimeout(180_000);
 type MockState = {
 	objects: {
 		applications?: { externalId: string; statuses: { data: Record<string, unknown> }[] }[];
-		groups?: { requestExternalId: string; groupExternalId: string }[];
+		workspaces?: { requestExternalId: string; groupExternalId: string }[];
 	};
 	journal: {
 		direction: string;
@@ -249,7 +249,7 @@ async function seed(databaseUrl: string): Promise<{ main: string; moved: string 
 
 	try {
 		return await sql.begin(async (tx) => {
-			const { groupId, stageIds } = await seedProcessGroup(tx, {
+			const { workspaceId, stageIds } = await seedWorkspace(tx, {
 				key: GROUP_KEY,
 				name: GROUP_NAME,
 				description: 'Группа прохода: вида контрагента за ней не закреплено',
@@ -326,7 +326,7 @@ async function seed(databaseUrl: string): Promise<{ main: string; moved: string 
 				const [row] = await tx<{ id: string }[]>`
 					insert into interactions ${tx({
 						title,
-						process_group_id: groupId,
+						workspace_id: workspaceId,
 						owner_user_id: ownerId
 					})}
 					returning id
@@ -479,7 +479,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		await expect(manager.getByRole('row').filter({ hasText: COLLEGE.name })).toHaveCount(0);
 
 		// Доска группы: своя работа стоит на первой стадии, чужая не показана.
-		await manager.goto(`/interactions?view=board&group=${GROUP_KEY}`);
+		await manager.goto(`/interactions?view=board&workspace=${GROUP_KEY}`);
 		await expect(manager.getByRole('heading', { name: STAGES[0].name })).toBeVisible();
 		await expect(manager.getByRole('link', { name: MAIN_TITLE })).toBeVisible();
 		await expect(manager.getByRole('link', { name: MOVED_TITLE })).toHaveCount(0);
@@ -550,7 +550,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		await manager.goto(`/organizations?q=${encodeURIComponent(MARK)}`);
 		await expect(manager.getByRole('row').filter({ hasText: COLLEGE.name })).toHaveCount(1);
 
-		await manager.goto(`/interactions?view=board&group=${GROUP_KEY}`);
+		await manager.goto(`/interactions?view=board&workspace=${GROUP_KEY}`);
 		await expect(manager.getByRole('link', { name: MOVED_TITLE })).toBeVisible();
 	});
 
@@ -612,7 +612,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		await expect(admin.getByText(/Процесс изменён/)).toBeVisible();
 
 		// Доска КАМа: колонка названа по-новому, удалённой стадии нет вовсе.
-		await manager.goto(`/interactions?view=board&group=${GROUP_KEY}`);
+		await manager.goto(`/interactions?view=board&workspace=${GROUP_KEY}`);
 		await expect(manager.getByRole('heading', { name: RENAMED_NAME })).toBeVisible();
 		await expect(manager.getByRole('heading', { name: STAGES[2].name })).toHaveCount(0);
 
@@ -752,22 +752,22 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		await expect(manager.locator('input[name="startsOn"]')).toHaveValue('2026-10-01');
 		await manager.getByRole('button', { name: 'Отправить в LMS' }).click();
 
-		const requestExternalId = `crm-group-${mainId}-1`;
+		const requestExternalId = `crm-workspace-${mainId}-1`;
 
 		await expect(async () => {
 			const state = await mockState(request, LMS_URL);
 
 			expect(
-				state.objects.groups?.find((item) => item.requestExternalId === requestExternalId)
+				state.objects.workspaces?.find((item) => item.requestExternalId === requestExternalId)
 			).toBeDefined();
 		}).toPass({ timeout: 30_000, intervals: [1000] });
 
-		const group = (await mockState(request, LMS_URL)).objects.groups?.find(
+		const workspace = (await mockState(request, LMS_URL)).objects.workspaces?.find(
 			(item) => item.requestExternalId === requestExternalId
 		);
 
-		expect(group).toBeDefined();
-		learningGroupId = group!.groupExternalId;
+		expect(workspace).toBeDefined();
+		learningGroupId = workspace!.groupExternalId;
 
 		// Карточка показывает заведённый поток и его имя в чужой системе.
 		await manager.reload();
@@ -776,7 +776,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 
 		// Результат группы: стадию он подтверждает, но никуда её не двигает —
 		// переход остаётся решением сотрудника.
-		const result = await request.post('/api/v1/exchange/learning-groups/results', {
+		const result = await request.post('/api/v1/exchange/learning-workspaces/results', {
 			headers: { authorization: `Bearer ${lmsExchangeKey}`, 'content-type': 'application/json' },
 			data: envelope('learning_group.result', 'lms', {
 				groupExternalId: learningGroupId,

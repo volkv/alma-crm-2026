@@ -4,7 +4,7 @@ import { B2B_PROCESS } from '$lib/server/stages/definitions';
 import { expect, test } from './fixtures';
 import { E2E_USER } from './global-setup';
 import { waitForHydration } from './helpers/hydration';
-import { seedProcessGroup } from './helpers/process-group';
+import { seedWorkspace } from './helpers/workspace';
 
 /**
  * Взаимодействие глазами менеджера: список, заведение через форму и работа на
@@ -38,7 +38,7 @@ const REASON_ROUTE = {
 	 * подменять его ради одной проверки незачем. Вида контрагента за этой группой
 	 * не закреплено — записи по ней прогон заводит сам.
 	 */
-	group: 'e2e-forward-reason',
+	workspace: 'e2e-forward-reason',
 	name: `${MARK} Процесс с объяснением`,
 	stages: [
 		{ key: 'terms_agreed', name: 'Согласование условий', category: 'contact' },
@@ -55,7 +55,7 @@ const REASON_ROUTE = {
  * Ключ группы новый, поэтому её редакция описывает ровно эти стадии.
  */
 const MARK_ROUTE = {
-	group: 'e2e-document-mark',
+	workspace: 'e2e-document-mark',
 	name: `${MARK} Процесс с отметкой документа`,
 	interactionTitle: `${MARK} Отметка документа`,
 	stages: [
@@ -90,7 +90,7 @@ async function seed(): Promise<void> {
 			// Процесс учебных заведений: его кладёт набор данных стенда, но прогон
 			// не обязан на это полагаться — без стадий взаимодействие не завести.
 			// Группа при этом своя не бывает: за `b2b` закреплён вид контрагента.
-			await seedProcessGroup(tx, {
+			await seedWorkspace(tx, {
 				key: 'b2b',
 				name: null,
 				revisionName: process.name,
@@ -101,8 +101,8 @@ async function seed(): Promise<void> {
 
 			// Процесс с обязательным объяснением — в своей группе: там своя
 			// редакция и свои записи.
-			await seedProcessGroup(tx, {
-				key: REASON_ROUTE.group,
+			await seedWorkspace(tx, {
+				key: REASON_ROUTE.workspace,
 				name: 'Проверка обязательного объяснения',
 				revisionName: REASON_ROUTE.name,
 				stages: REASON_ROUTE.stages.map((stage) => ({
@@ -127,8 +127,8 @@ async function seed(): Promise<void> {
 			// стоит на подписании соглашения, но редакция той группы заводится
 			// один раз и переживает прогон, и на базе, залитой прежней версией,
 			// проверка говорила бы о вчерашнем процессе.
-			await seedProcessGroup(tx, {
-				key: MARK_ROUTE.group,
+			await seedWorkspace(tx, {
+				key: MARK_ROUTE.workspace,
 				name: 'Проверка отметки по документу',
 				revisionName: MARK_ROUTE.name,
 				stages: MARK_ROUTE.stages.map((stage) => ({
@@ -233,14 +233,14 @@ async function createReasonInteraction(): Promise<string> {
 				select s.id, r.group_id
 				from stages s
 				join process_revisions r on r.id = s.revision_id
-				join process_groups g on g.id = r.group_id
-				where g.key = ${REASON_ROUTE.group} and s.position = 1
+				join workspaces g on g.id = r.group_id
+				where g.key = ${REASON_ROUTE.workspace} and s.position = 1
 			`;
 
 			const [interaction] = await tx<{ id: string }[]>`
 				insert into interactions ${tx({
 					title: `${MARK} Объяснение ${crypto.randomUUID().slice(0, 8)}`,
-					process_group_id: stage.group_id,
+					workspace_id: stage.group_id,
 					owner_user_id: owner.id
 				})}
 				returning id
@@ -298,14 +298,14 @@ async function createMarkInteraction(): Promise<string> {
 				select s.id, r.group_id
 				from stages s
 				join process_revisions r on r.id = s.revision_id
-				join process_groups g on g.id = r.group_id
-				where g.key = ${MARK_ROUTE.group} and s.position = 1
+				join workspaces g on g.id = r.group_id
+				where g.key = ${MARK_ROUTE.workspace} and s.position = 1
 			`;
 
 			const [interaction] = await tx<{ id: string }[]>`
 				insert into interactions ${tx({
 					title: `${MARK_ROUTE.interactionTitle} ${crypto.randomUUID().slice(0, 8)}`,
-					process_group_id: stage.group_id,
+					workspace_id: stage.group_id,
 					owner_user_id: owner.id
 				})}
 				returning id

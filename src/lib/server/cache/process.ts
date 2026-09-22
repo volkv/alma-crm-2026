@@ -1,6 +1,6 @@
 /**
- * Кэш структуры процесса: действующая редакция группы и списки, которые из неё
- * собираются.
+ * Кэш структуры процесса: действующая редакция пространства и списки, которые
+ * из неё собираются.
  *
  * Действующую редакцию со стадиями, переходами и правилами переноса читают
  * почти все экраны работы — карточка, её сводка, список, доска, — и каждое
@@ -49,18 +49,18 @@ export async function readProcessEpoch(): Promise<string> {
 }
 
 /**
- * Действующая редакция группы: готовая или собранная заново.
+ * Действующая редакция процесса пространства: готовая или собранная заново.
  *
- * Ключ — группа, а не редакция: иначе публикация обесценивала бы кэш сама
+ * Ключ — пространство, а не редакция: иначе публикация обесценивала бы кэш сама
  * собой, и явной точки сброса в коде не было бы вовсе.
  */
 export async function cachedActiveRevision(
-	groupId: string,
+	workspaceId: string,
 	build: () => Promise<ProcessRevisionView | null>
 ): Promise<ProcessRevisionView | null> {
 	const epoch = await readProcessEpoch();
 
-	return cached(PROCESS_REVISION, `${epoch}:${groupId}`, build, (stored) => {
+	return cached(PROCESS_REVISION, `${epoch}:${workspaceId}`, build, (stored) => {
 		const revision = stored as
 			| (Omit<ProcessRevisionView, 'publishedAt'> & {
 					publishedAt: string | null;

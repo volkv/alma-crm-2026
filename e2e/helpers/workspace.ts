@@ -10,7 +10,7 @@ import type {
  * Замок, под которым прогон заводит группы процесса. Один на все файлы, и это
  * главное в нём.
  *
- * Место группы в списке уникально (`process_groups_position_key`), а свободное
+ * Место группы в списке уникально (`workspaces_position_key`), а свободное
  * считается от занятых. Два файла, считающие его одновременно, получают одно и
  * то же число, и второй падает на вставке; фиксированные номера сталкиваются
  * ещё проще — файл, заводящий группу заново, освобождает своё место, и сосед
@@ -48,7 +48,7 @@ export type SeedTransition = {
 	requiresReason?: boolean;
 };
 
-export type SeedProcessGroupOptions = {
+export type SeedWorkspaceOptions = {
 	key: string;
 	/**
 	 * Название группы, если её заводит прогон. `null` — группу кладёт миграция
@@ -81,8 +81,8 @@ export type SeedProcessGroupOptions = {
 	};
 };
 
-export type SeededProcessGroup = {
-	groupId: string;
+export type SeededWorkspace = {
+	workspaceId: string;
 	/** Действующая редакция группы: заведённая здесь или уже стоявшая. */
 	revisionId: string;
 	/** Идентификаторы стадий действующей редакции по ключу стадии. */
@@ -102,14 +102,14 @@ export type SeededProcessGroup = {
  * промежуток. Замок берётся первым же запросом, поэтому вызов стоит в начале
  * транзакции — всё, что файл заводит дальше, оказывается под ним же.
  */
-export async function seedProcessGroup(
+export async function seedWorkspace(
 	tx: postgres.TransactionSql,
-	options: SeedProcessGroupOptions
-): Promise<SeededProcessGroup> {
+	options: SeedWorkspaceOptions
+): Promise<SeededWorkspace> {
 	await tx`select pg_advisory_xact_lock(${PROCESS_GROUP_LOCK})`;
 
 	if (options.reset !== undefined) {
-		await dropGroup(tx, options.key, options.reset.interactionTitleLike);
+		await dropWorkspace(tx, options.key, options.reset.interactionTitleLike);
 	}
 
 	if (options.name !== null) {
@@ -118,70 +118,70 @@ export async function seedProcessGroup(
 		// совпадёт с чужим. Под замком счёт верен: следующий желающий увидит уже
 		// записанную строку.
 		await tx`
-			insert into process_groups (key, name, description, position)
+			insert into workspaces (key, name, description, position)
 			select
 				${options.key},
 				${options.name},
 				${options.description ?? null},
 				coalesce(max(position), 0) + 1
-			from process_groups
+			from workspaces
 			on conflict (key) do nothing
 		`;
 	}
 
-	const [group] = await tx<{ id: string; active_revision_id: string | null }[]>`
-		select id, active_revision_id from process_groups where key = ${options.key}
+	const [workspace] = await tx<{ id: string; active_revision_id: string | null }[]>`
+		select id, active_revision_id from workspaces where key = ${options.key}
 	`;
 
-	if (group === undefined) {
+	if (workspace === undefined) {
 		throw new Error(`Группа процесса «${options.key}» не заведена миграцией`);
 	}
 
-	const revisionId = group.active_revision_id ?? (await publishRevision(tx, group.id, options));
+	const revisionId = workspace.active_revision_id ?? (await publishRevision(tx, workspace.id, options));
 
 	const stageRows = await tx<{ id: string; key: string }[]>`
 		select id, key from stages where revision_id = ${revisionId}
 	`;
 
 	return {
-		groupId: group.id,
+		workspaceId: workspace.id,
 		revisionId,
 		stageIds: new Map(stageRows.map((row) => [row.key, row.id]))
 	};
 }
 
 /** Группа прошлого прогона со всем, что за ней держится. */
-async function dropGroup(
+async function dropWorkspace(
 	tx: postgres.TransactionSql,
 	key: string,
 	interactionTitleLike: string
 ): Promise<void> {
 	await tx`delete from interactions where title like ${interactionTitleLike}`;
 
-	const [group] = await tx<{ id: string }[]>`
-		select id from process_groups where key = ${key}
+	const [workspace] = await tx<{ id: string }[]>`
+		select id from workspaces where key = ${key}
 	`;
 
-	if (group === undefined) {
+	if (workspace === undefined) {
 		return;
 	}
 
-	await tx`delete from interactions where process_group_id = ${group.id}`;
-	await tx`update process_groups set active_revision_id = null where id = ${group.id}`;
-	await tx`delete from process_revisions where group_id = ${group.id}`;
-	await tx`delete from process_stage_keys where group_id = ${group.id}`;
-	await tx`delete from process_groups where id = ${group.id}`;
+	await tx`delete from interactions where workspace_id = ${workspace.id}`;
+	await tx`update workspaces set active_revision_id = null where id = ${workspace.id}`;
+	await tx`delete from process_revisions where group_id = ${workspace.id}`;
+	await tx`delete from process_stage_keys where group_id = ${workspace.id}`;
+	await tx`delete from workspaces where id = ${workspace.id}`;
 }
 
 /** Первая редакция группы: стадии, переходы, реестр ключей и переключение. */
 async function publishRevision(
 	tx: postgres.TransactionSql,
-	groupId: string,
-	options: SeedProcessGroupOptions
+	workspaceId: string,
+	options: SeedWorkspaceOptions
 ): Promise<string> {
 	const [revision] = await tx<{ id: string }[]>`
 		insert into process_revisions ${tx({
-			group_id: groupId,
+			group_id: workspaceId,
 			version: 1,
 			name: options.revisionName,
 			note: options.revisionNote ?? null,
@@ -219,7 +219,7 @@ async function publishRevision(
 		// Реестр ключей заводится вместе с первой редакцией: без него применение
 		// изменений посчитало бы все ключи новыми.
 		await tx`
-			insert into process_stage_keys ${tx({ group_id: groupId, key: stage.key })}
+			insert into process_stage_keys ${tx({ group_id: workspaceId, key: stage.key })}
 			on conflict do nothing
 		`;
 	}
@@ -237,7 +237,7 @@ async function publishRevision(
 		`;
 	}
 
-	await tx`update process_groups set active_revision_id = ${revision.id} where id = ${groupId}`;
+	await tx`update workspaces set active_revision_id = ${revision.id} where id = ${workspaceId}`;
 
 	return revision.id;
 }

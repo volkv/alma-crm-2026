@@ -69,12 +69,16 @@ import {
 } from '$lib/server/stages/commands';
 import type { ProcessDefinitionInput, ProcessRevisionView } from '$lib/contracts/interactions';
 import {
-	B2B_GROUP_KEY,
+	B2B_WORKSPACE_KEY,
 	B2B_PROCESS,
-	B2C_GROUP_KEY,
+	B2C_WORKSPACE_KEY,
 	B2C_PROCESS
 } from '$lib/server/stages/definitions';
-import { readGroupByKey, readGroupRow, requireActiveRevision } from '$lib/server/stages/process';
+import {
+	readWorkspaceByKey,
+	readWorkspaceRow,
+	requireActiveRevision
+} from '$lib/server/stages/process';
 import { seedId } from './ids';
 import { SERVICE_USER_EMAIL } from './users';
 
@@ -106,10 +110,10 @@ type LearningSeed = {
 };
 
 /**
- * Стороны взаимодействия. Их состав и есть разница между группами процесса: у
+ * Стороны взаимодействия. Их состав и есть разница между пространствами: у
  * работы с вузом сторон три (вуз, компания-заказчик, оператор), у обучения лица
- * — две (сам контрагент и оператор), и группу система выводит из вида основной
- * стороны, а не из поля набора.
+ * — две (сам контрагент и оператор), и пространство система выводит из вида
+ * основной стороны, а не из поля набора.
  */
 type CounterpartySeed =
 	| {
@@ -755,8 +759,8 @@ const INTERACTIONS: readonly InteractionSeed[] = [
  * Четыре записи, и каждая отвечает на свой вопрос демонстрации: заявка только
  * что принята, договор на оплате, обучение идёт (и подтверждено фактом из
  * системы обучения), обучение закончено с выданным документом. Контрагентов
- * двое — физическое лицо и юридическое, — потому что группа `b2c` собирает
- * именно их, а процесс у них один.
+ * двое — физическое лицо и юридическое, — потому что пространство `b2c`
+ * собирает именно их, а процесс у них один.
  */
 const B2C_INTERACTIONS: readonly InteractionSeed[] = [
 	{
@@ -837,8 +841,8 @@ const B2C_INTERACTIONS: readonly InteractionSeed[] = [
 ];
 
 /**
- * Весь набор взаимодействий: обе группы процесса одним списком. Порядок
- * значения не имеет — каждая запись сама говорит, по какому процессу идёт.
+ * Весь набор взаимодействий: оба пространства одним списком. Порядок значения
+ * не имеет — каждая запись сама говорит, по какому процессу идёт.
  */
 const ALL_INTERACTIONS: readonly InteractionSeed[] = [...INTERACTIONS, ...B2C_INTERACTIONS];
 
@@ -881,9 +885,9 @@ function processOf(seed: InteractionSeed): ProcessDefinitionInput {
 	return 'institution' in seed ? B2B_PROCESS : B2C_PROCESS;
 }
 
-/** Ключ группы процесса записи — тем же правилом, что и само описание. */
-function groupKeyOf(seed: InteractionSeed): string {
-	return 'institution' in seed ? B2B_GROUP_KEY : B2C_GROUP_KEY;
+/** Ключ пространства записи — тем же правилом, что и само описание. */
+function workspaceKeyOf(seed: InteractionSeed): string {
+	return 'institution' in seed ? B2B_WORKSPACE_KEY : B2C_WORKSPACE_KEY;
 }
 
 /** Просрочка — следствие данных набора, а не отдельный флаг: часы считает база. */
@@ -909,10 +913,10 @@ function isOverdueSeed(seed: InteractionSeed): boolean {
  */
 export const INTERACTION_SEED_SIZES = {
 	interactions: ALL_INTERACTIONS.length,
-	/** Записи группы B2C: обучение физических и юридических лиц. */
+	/** Записи пространства B2C: обучение физических и юридических лиц. */
 	b2c: B2C_INTERACTIONS.length,
 	completed: ALL_INTERACTIONS.filter((seed) => seed.completedWith !== undefined).length,
-	/** Завершённые по группам: маршруты у групп разной длины. */
+	/** Завершённые по пространствам: маршруты у них разной длины. */
 	completedB2b: INTERACTIONS.filter((seed) => seed.completedWith !== undefined).length,
 	completedB2c: B2C_INTERACTIONS.filter((seed) => seed.completedWith !== undefined).length,
 	overdue: ALL_INTERACTIONS.filter(isOverdueSeed).length,
@@ -1170,7 +1174,7 @@ async function createSeededInteraction(
 	db: Database,
 	id: string,
 	input: CreateInteractionInput,
-	group: { id: string; key: string; revision: ProcessRevisionView }
+	workspace: { id: string; key: string; revision: ProcessRevisionView }
 ): Promise<boolean> {
 	return db.transaction(async (tx: Tx) => {
 		const created = await tx
@@ -1178,7 +1182,7 @@ async function createSeededInteraction(
 			.values({
 				id,
 				title: input.title,
-				processGroupId: group.id,
+				workspaceId: workspace.id,
 				agreementPeriodStart: input.agreementPeriodStart,
 				agreementPeriodEnd: input.agreementPeriodEnd,
 				academicPeriodStart: input.academicPeriodStart,
@@ -1233,7 +1237,7 @@ async function createSeededInteraction(
 				type: 'interactions.created',
 				outcome: 'success',
 				subject: { type: 'interaction', id },
-				details: { processGroupKey: group.key, revisionId: group.revision.id }
+				details: { workspaceKey: workspace.key, revisionId: workspace.revision.id }
 			},
 			tx
 		);
@@ -1241,8 +1245,8 @@ async function createSeededInteraction(
 		await startInteractionIn(
 			ctx,
 			tx,
-			{ id, processGroupId: group.id, ownerUserId: input.ownerUserId },
-			group.revision
+			{ id, workspaceId: workspace.id, ownerUserId: input.ownerUserId },
+			workspace.revision
 		);
 
 		return true;
@@ -1824,20 +1828,20 @@ async function readExisting(db: Database, ids: string[]): Promise<Set<string>> {
 export async function seedInteractions(): Promise<void> {
 	const db = getDb();
 
-	// Обе группы процесса разом: набор ведёт и работу с вузами, и обучение
+	// Оба пространства разом: набор ведёт и работу с вузами, и обучение
 	// физических и юридических лиц, а по какому процессу идёт запись, говорит
 	// вид её контрагента — тем же правилом, что и у команды создания.
 	const plans = new Map<
 		string,
-		{ group: Awaited<ReturnType<typeof readGroupRow>>; plan: Process }
+		{ workspace: Awaited<ReturnType<typeof readWorkspaceRow>>; plan: Process }
 	>();
 
-	for (const groupKey of [B2B_GROUP_KEY, B2C_GROUP_KEY]) {
-		const group = await readGroupRow(db, (await readGroupByKey(db, groupKey)).id);
-		const revision = await requireActiveRevision(db, group);
+	for (const workspaceKey of [B2B_WORKSPACE_KEY, B2C_WORKSPACE_KEY]) {
+		const workspace = await readWorkspaceRow(db, (await readWorkspaceByKey(db, workspaceKey)).id);
+		const revision = await requireActiveRevision(db, workspace);
 
-		plans.set(groupKey, {
-			group,
+		plans.set(workspaceKey, {
+			workspace,
 			plan: {
 				stages: [...revision.stages].sort((left, right) => left.position - right.position),
 				forward: new Map(
@@ -1884,20 +1888,20 @@ export async function seedInteractions(): Promise<void> {
 			throw new Error(`Учётная запись «${seed.owner}» не заведена`);
 		}
 
-		const groupKey = groupKeyOf(seed);
-		const process = plans.get(groupKey);
+		const workspaceKey = workspaceKeyOf(seed);
+		const process = plans.get(workspaceKey);
 
 		if (process === undefined) {
-			throw new Error(`Группа процесса «${groupKey}» не заведена`);
+			throw new Error(`Пространство «${workspaceKey}» не заведено`);
 		}
 
-		const { group, plan } = process;
+		const { workspace, plan } = process;
 		const stages = plan.stages;
 		const input = toCreateInput(seed, versions);
 
 		if (
 			!(await createSeededInteraction(ctx, db, id, input, {
-				...group,
+				...workspace,
 				revision: plan.revisionView
 			}))
 		) {

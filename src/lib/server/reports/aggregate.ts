@@ -49,7 +49,7 @@ export type BreakdownCounts = {
 
 export type ReportBreakdownCounts = Record<ReportBreakdown['key'], BreakdownCounts>;
 
-/** Стадия среза: пара «группа процесса + ключ» и число строк на ней. */
+/** Стадия среза: пара «пространство + ключ» и число строк на ней. */
 export type StageCount = { bucketId: string; stageName: string | null; value: number };
 
 export type SnapshotAggregates = {
@@ -233,7 +233,7 @@ const SNAPSHOT_TOTALS = sql`
 `;
 
 /**
- * Воронка: число взаимодействий на каждой паре «группа процесса + ключ стадии».
+ * Воронка: число взаимодействий на каждой паре «пространство + ключ стадии».
  * Группировка идёт по ключу из снимка, а не по стадии действующей редакции:
  * ключ записан в момент входа и не переписывается.
  *
@@ -243,13 +243,13 @@ const SNAPSHOT_TOTALS = sql`
 const SNAPSHOT_BUCKETS = sql`
 	select
 		'stage' as facet,
-		selection."processGroupId"::text || ':' || selection."stageKey" as id,
+		selection."workspaceId"::text || ':' || selection."stageKey" as id,
 		min(selection."stageName") as label,
 		count(*)::integer as value,
 		${NO_EVENT}
 	from selection
 	where selection."entryId" is not null and selection."stageKey" is not null
-	group by selection."processGroupId", selection."stageKey"
+	group by selection."workspaceId", selection."stageKey"
 	union all
 	select 'closed', selection.status::text, null, count(*)::integer, ${NO_EVENT}
 	from selection

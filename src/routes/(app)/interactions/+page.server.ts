@@ -82,7 +82,7 @@ export const load: PageServerLoad = async (event) => {
 		filters.stageCategory !== null ||
 		filters.overdue ||
 		filters.mine ||
-		filters.group !== null;
+		filters.workspace !== null;
 
 	const common = {
 		filters,
@@ -97,7 +97,7 @@ export const load: PageServerLoad = async (event) => {
 	// таблица — за выборку доски.
 	if (view === 'board') {
 		const board = await getInteractionBoard(ctx, {
-			group: filters.group,
+			workspace: filters.workspace,
 			status: filters.status,
 			stageCategory: filters.stageCategory,
 			overdue: filters.overdue,
@@ -110,7 +110,7 @@ export const load: PageServerLoad = async (event) => {
 
 	const query = interactionListQuerySchema.parse({
 		status: filters.status,
-		group: filters.group,
+		workspace: filters.workspace,
 		stageCategory: filters.stageCategory,
 		overdue: filters.overdue,
 		ownerUserId,

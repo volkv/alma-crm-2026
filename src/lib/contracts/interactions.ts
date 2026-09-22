@@ -384,10 +384,10 @@ export const interactionListQuerySchema = z.object({
 	ownerUserId: optionalId('Некорректный идентификатор ответственного'),
 	organizationId: optionalId('Некорректный идентификатор организации'),
 	/**
-	 * Группа процесса ключом (`b2b`, `b2c`). По ней же доска выбирает, чьи
-	 * стадии станут колонками: список и доска — один отбор, показанный дважды.
+	 * Пространство ключом (`b2b`, `b2c`). По нему же доска выбирает, чьи стадии
+	 * станут колонками: список и доска — один отбор, показанный дважды.
 	 */
-	group: optionalText(100),
+	workspace: optionalText(100),
 	/** Смысловая группа текущей стадии: «на каком участке процесса стоим». */
 	stageCategory: z.enum(STAGE_CATEGORIES).nullable().default(null),
 	/** Только просроченные: срок текущей стадии уже прошёл. */
@@ -788,7 +788,7 @@ export type StageMigrationRuleView = {
 };
 
 /**
- * Редакция процесса: снимок структуры группы. Номер редакции живёт в базе и в
+ * Редакция процесса: снимок его структуры. Номер редакции живёт в базе и в
  * журнале, но пользовательских решений не принимает — версию никто не выбирает.
  */
 export type ProcessRevisionView = {
@@ -803,8 +803,8 @@ export type ProcessRevisionView = {
 	migrationRules: StageMigrationRuleView[];
 };
 
-/** Группа процесса в списке раздела «Процесс». */
-export type ProcessGroupSummary = {
+/** Пространство в списке раздела «Процесс». */
+export type WorkspaceSummary = {
 	id: string;
 	key: string;
 	name: string;
@@ -812,18 +812,18 @@ export type ProcessGroupSummary = {
 	position: number;
 	/** Сколько стадий в действующей редакции; ноль — процесс ещё не заведён. */
 	stageCount: number;
-	/** Сколько незавершённых взаимодействий идут по этому процессу сейчас. */
+	/** Сколько незавершённых взаимодействий идут в этом пространстве сейчас. */
 	activeInteractions: number;
 	hasDraft: boolean;
 };
 
-/** Процесс группы целиком: что действует, что в черновике и что ему мешает. */
-export type ProcessGroupDetail = {
-	group: ProcessGroupSummary;
-	/** Действующая редакция; `null` — процесс группы ещё не заведён. */
+/** Процесс пространства целиком: что действует, что в черновике и что мешает. */
+export type WorkspaceDetail = {
+	workspace: WorkspaceSummary;
+	/** Действующая редакция; `null` — процесс пространства ещё не заведён. */
 	active: ProcessRevisionView | null;
 	draft: ProcessRevisionView | null;
-	/** Что мешает применить черновик ко всем; у группы без черновика — пусто. */
+	/** Что мешает применить черновик; у пространства без черновика — пусто. */
 	issues: string[];
 	/** Виды контрагентов, работа с которыми идёт по этому процессу. */
 	counterpartyKinds: string[];
@@ -1032,10 +1032,10 @@ export type InteractionView = {
 	id: string;
 	title: string;
 	status: InteractionStatus;
-	/** Группа процесса: выводится из вида основной стороны и не выбирается. */
-	processGroupId: string;
-	processGroupKey: string;
-	processGroupName: string;
+	/** Пространство: выводится из вида основной стороны и не выбирается. */
+	workspaceId: string;
+	workspaceKey: string;
+	workspaceName: string;
 	agreementPeriodStart: string | null;
 	agreementPeriodEnd: string | null;
 	academicPeriodStart: string | null;
@@ -1103,7 +1103,7 @@ export type InteractionListItem = {
 /** Состояние взаимодействия: где стоим, сколько осталось, что мешает. */
 export type InteractionStatusView = {
 	interactionId: string;
-	processGroupId: string;
+	workspaceId: string;
 	/**
 	 * Номер действующей редакции процесса на момент отрисовки. Команда перехода
 	 * возвращает его серверу, и тот сверяет номер под блокировкой: стадия с тем
@@ -1268,16 +1268,17 @@ export type InteractionBoardColumn = {
 };
 
 /**
- * Доска: стадии действующего процесса одной группы и карточки по ним.
+ * Доска: стадии действующего процесса одного пространства и карточки по ним.
  *
- * Выбора версии на доске нет: в группе действует ровно один процесс. Группу
- * задаёт фильтр списка, а без фильтра берётся та, где у смотрящего есть работа.
+ * Выбора версии на доске нет: в пространстве действует ровно один процесс.
+ * Пространство задаёт фильтр списка, а без фильтра берётся то, где у
+ * смотрящего есть работа.
  */
 export type InteractionBoardView = {
-	/** Группа, чьи стадии стали колонками; пусто, когда процесс не заведён. */
-	groupId: string | null;
-	groupKey: string | null;
-	groupName: string | null;
+	/** Пространство, чьи стадии стали колонками; пусто — процесса нет. */
+	workspaceId: string | null;
+	workspaceKey: string | null;
+	workspaceName: string | null;
 	columns: InteractionBoardColumn[];
 	/** Сколько карточек показано на доске. */
 	total: number;
@@ -1341,8 +1342,8 @@ export function toApiInteraction(view: InteractionListItem): ApiInteraction {
  * отдаёт только интерфейс, где маскирование делает `toPersonView`.
  */
 export const apiInteractionDetailSchema = apiInteractionSchema.extend({
-	processGroupKey: z.string().describe('Группа процесса: `b2b` — учебные заведения, `b2c` — лица'),
-	processGroupName: z.string(),
+	workspaceKey: z.string().describe('Пространство: `b2b` — учебные заведения, `b2c` — лица'),
+	workspaceName: z.string(),
 	processRevision: z
 		.number()
 		.int()
@@ -1431,8 +1432,8 @@ export function toApiInteractionDetail(
 		isStale: extra.isStale,
 		openBlockers: extra.openBlockers,
 		lastActivityAt: view.lastActivityAt.toISOString(),
-		processGroupKey: view.processGroupKey,
-		processGroupName: view.processGroupName,
+		workspaceKey: view.workspaceKey,
+		workspaceName: view.workspaceName,
 		processRevision: status.revision,
 		agreementPeriodStart: view.agreementPeriodStart,
 		agreementPeriodEnd: view.agreementPeriodEnd,

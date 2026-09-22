@@ -35,9 +35,9 @@ import {
 } from '../helpers/db';
 import {
 	advanceTo as walkTo,
-	B2B_GROUP_KEY,
+	B2B_WORKSPACE_KEY,
 	B2B_PROCESS,
-	B2C_GROUP_KEY,
+	B2C_WORKSPACE_KEY,
 	closeRequiredChecklist,
 	createInteractionOn,
 	provideDocumentMark,
@@ -76,7 +76,7 @@ type Fixture = {
 /** Взаимодействие на процессе учебных заведений: четырнадцать стадий. */
 async function createFixture(): Promise<Fixture> {
 	const ctx = admin();
-	const revision = await seedProcess(database, B2B_GROUP_KEY, B2B_PROCESS);
+	const revision = await seedProcess(database, B2B_WORKSPACE_KEY, B2B_PROCESS);
 	const { interactionId, organizationId } = await createInteractionOn(ctx, database, {
 		title: 'Подготовка специалистов'
 	});
@@ -98,7 +98,7 @@ async function createReasonFixture(): Promise<Fixture> {
 	const ctx = admin();
 	const revision = await seedProcess(
 		database,
-		B2C_GROUP_KEY,
+		B2C_WORKSPACE_KEY,
 		twoStageProcess({ name: 'Процесс с объяснением шага вперёд', requiresReason: true })
 	);
 
@@ -890,16 +890,16 @@ describe('журнал действий', () => {
 	});
 
 	it('записывает отказ настроить процесс', async () => {
-		await seedProcess(database, B2B_GROUP_KEY, B2B_PROCESS);
+		await seedProcess(database, B2B_WORKSPACE_KEY, B2B_PROCESS);
 
 		const manager = testActor({ roleId: 'manager' });
 
 		// Процесс — это устройство работы: он меняет правила для всех взаимодействий
 		// сразу, и попытка его тронуть без права должна остаться в журнале, а не
 		// только в ответе тому, кто её сделал.
-		await expect(createDraft(manager, B2B_GROUP_KEY)).rejects.toBeInstanceOf(ForbiddenError);
-		await expect(discardDraft(manager, B2B_GROUP_KEY)).rejects.toBeInstanceOf(ForbiddenError);
-		await expect(publishProcess(manager, B2B_GROUP_KEY)).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(createDraft(manager, B2B_WORKSPACE_KEY)).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(discardDraft(manager, B2B_WORKSPACE_KEY)).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(publishProcess(manager, B2B_WORKSPACE_KEY)).rejects.toBeInstanceOf(ForbiddenError);
 
 		const denied = await database.db
 			.select({ type: auditEvents.eventType, actorUserId: auditEvents.actorUserId })

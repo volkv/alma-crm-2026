@@ -277,11 +277,11 @@ describe('инварианты', () => {
 				...VIEW.charts,
 				funnel: {
 					...VIEW.charts.funnel!,
-					groups: [
+					workspaces: [
 						{
-							groupId: '88888888-8888-4888-8888-888888888888',
-							groupKey: 'b2b',
-							groupName: 'Работа с вузами',
+							workspaceId: '88888888-8888-4888-8888-888888888888',
+							workspaceKey: 'b2b',
+							workspaceName: 'Работа с вузами',
 							stages: [{ key: 'g:contact', label: 'Контакты', value: 5, filter: null }]
 						}
 					]

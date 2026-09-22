@@ -21,13 +21,13 @@ import {
 } from '$lib/server/interactions/read';
 import { getInteractionSummary } from '$lib/server/interactions/summary';
 import { createInteraction, updateInteraction } from '$lib/server/interactions/write';
-import { B2B_GROUP_KEY, B2B_PROCESS, B2C_GROUP_KEY } from '$lib/server/stages/definitions';
+import { B2B_WORKSPACE_KEY, B2B_PROCESS, B2C_WORKSPACE_KEY } from '$lib/server/stages/definitions';
 import {
 	createDraft,
 	ensureProcess,
 	processDefinition,
 	publishProcess,
-	resolveProcessGroup,
+	resolveWorkspace,
 	updateDraft
 } from '$lib/server/stages/process';
 import {
@@ -70,7 +70,7 @@ const emptyQuery = interactionListQuerySchema.parse({});
 
 /** Процесс учебных заведений: без него взаимодействие завести нельзя. */
 async function demoProcess(): Promise<string> {
-	return database.db.transaction((tx) => ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS));
+	return database.db.transaction((tx) => ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
 }
 
 async function insertProgram(code: string): Promise<string> {
@@ -175,11 +175,11 @@ describe('заведение взаимодействия', () => {
 
 		const card = await getInteraction(ctx, created.id);
 
-		expect(card.processGroupKey).toBe(B2B_GROUP_KEY);
+		expect(card.workspaceKey).toBe(B2B_WORKSPACE_KEY);
 		// Та же таблица соответствий, что и у приёма заявки: второго правила
 		// выбора группы в продукте нет.
-		expect((await resolveProcessGroup(database.db, 'legal_entity')).key).toBe(B2C_GROUP_KEY);
-		await expect(resolveProcessGroup(database.db, 'operator')).rejects.toThrow(
+		expect((await resolveWorkspace(database.db, 'legal_entity')).key).toBe(B2C_WORKSPACE_KEY);
+		await expect(resolveWorkspace(database.db, 'operator')).rejects.toThrow(
 			/не может быть основной стороной/
 		);
 	});
@@ -652,9 +652,9 @@ describe('закрытие по номеру редакции', () => {
 
 		// Администратор применил изменение процесса: структура та же, редакция
 		// другая — ровно тот случай, который одной сверкой стадии не поймать.
-		const draft = await createDraft(ctx, B2B_GROUP_KEY);
-		await updateDraft(ctx, B2B_GROUP_KEY, processDefinition(draft));
-		await publishProcess(ctx, B2B_GROUP_KEY);
+		const draft = await createDraft(ctx, B2B_WORKSPACE_KEY);
+		await updateDraft(ctx, B2B_WORKSPACE_KEY, processDefinition(draft));
+		await publishProcess(ctx, B2B_WORKSPACE_KEY);
 
 		const after = (await getInteractionStatus(ctx, created.id)).revision;
 

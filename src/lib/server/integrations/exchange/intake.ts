@@ -60,7 +60,7 @@ import {
 	organizationResponsibles,
 	organizations,
 	people,
-	processGroups,
+	workspaces,
 	products,
 	programs,
 	users
@@ -84,7 +84,8 @@ const DEFAULT_POSITION = 'Контактное лицо (заявка с сай�
 
 /** Кем контрагент участвует во взаимодействии — по его виду в справочнике. */
 const PARTY_ROLE_BY_KIND: Record<string, PartyRole> = {
-	// Контрагент группы B2C учится сам и сам платит: в ролях сторон это заказчик.
+	// Контрагент пространства B2C учится сам и сам платит: в ролях сторон это
+	// заказчик.
 	individual: 'customer',
 	legal_entity: 'customer',
 	educational_institution: 'educational_institution'
@@ -1014,10 +1015,10 @@ async function updateExisting(
 		await recordApplicationConsent(ctx, tx, personId, data.consent);
 	}
 
-	const [group] = await tx
-		.select({ key: processGroups.key })
+	const [workspace] = await tx
+		.select({ key: workspaces.key })
 		.from(interactions)
-		.innerJoin(processGroups, eq(processGroups.id, interactions.processGroupId))
+		.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
 		.where(eq(interactions.id, existing.id))
 		.limit(1);
 
@@ -1026,7 +1027,10 @@ async function updateExisting(
 		interactionId: existing.id,
 		organizationId: existing.organizationId,
 		contactPersonId: contactPersonId,
-		processGroup: group.key,
+		// Поле ответа `processGroup` — часть договора с сайтом и остаётся под
+		// прежним именем: внешний контракт меняют отдельно от внутренней
+		// перестройки, чтобы не складывать два независимых риска.
+		processGroup: workspace.key,
 		needsReview: false
 	};
 }
@@ -1068,9 +1072,10 @@ async function createFromApplication(
 
 	const catalogue = await resolveCatalogue(tx, data);
 
-	// Группа процесса и её действующая редакция читаются внутри транзакции, под
-	// разделяемой блокировкой группы: это делает `createInteractionIn`. Группа
-	// выводится из вида контрагента — единственной таблицей соответствий.
+	// Пространство и действующая редакция его процесса читаются внутри
+	// транзакции, под разделяемой блокировкой пространства: это делает
+	// `createInteractionIn`. Само пространство выводится из вида контрагента —
+	// единственной таблицей соответствий.
 	const interactionId = await createInteractionIn(ctx, tx, {
 		title: interactionTitle(applicantName(data), data.interest),
 		agreementPeriodStart: null,

@@ -20,11 +20,11 @@ export type InteractionFilters = {
 	/** Только те, где ответственный — текущий пользователь. */
 	mine: boolean;
 	/**
-	 * Группа процесса ключом (`b2b`, `b2c`). Список и доска — один отбор,
+	 * Пространство ключом (`b2b`, `b2c`). Список и доска — один отбор,
 	 * показанный двумя способами, поэтому колонки доски задаёт этот же фильтр:
 	 * второго выбора «чей процесс показать» в разделе нет.
 	 */
-	group: string | null;
+	workspace: string | null;
 };
 
 const STATUS_VALUES = new Set(['active', 'completed', 'cancelled']);
@@ -42,7 +42,7 @@ export function readFilters(url: URL): InteractionFilters {
 				: null,
 		overdue: url.searchParams.get('overdue') === 'true',
 		mine: url.searchParams.get('mine') === 'true',
-		group: url.searchParams.get('group')
+		workspace: url.searchParams.get('workspace')
 	};
 }
 
@@ -71,7 +71,7 @@ export function filtersHref(url: URL, changes: Partial<InteractionFilters>): Res
 	apply('stage', next.stageCategory);
 	apply('overdue', next.overdue ? 'true' : null);
 	apply('mine', next.mine ? 'true' : null);
-	apply('group', next.group);
+	apply('workspace', next.workspace);
 	params.delete('page');
 
 	const query = params.toString();
@@ -91,7 +91,7 @@ export function filtersHref(url: URL, changes: Partial<InteractionFilters>): Res
 export function clearedFiltersHref(url: URL): ResolvedPathname {
 	const params = new URLSearchParams(url.searchParams);
 
-	for (const name of ['status', 'stage', 'overdue', 'mine', 'group', 'q', 'page']) {
+	for (const name of ['status', 'stage', 'overdue', 'mine', 'workspace', 'q', 'page']) {
 		params.delete(name);
 	}
 

@@ -15,7 +15,7 @@ import {
 	type ReportBucket,
 	type ReportEventKind,
 	type ReportFunnelChart,
-	type ReportFunnelGroup,
+	type ReportFunnelWorkspace,
 	type ReportMovementChart
 } from '$lib/contracts/reports';
 import type { ReportBreakdownCounts, StageCount } from './aggregate';
@@ -119,16 +119,16 @@ export function breakdownFromCounts(
  * не считает — при возвратах и пропусках «дошедших» не определено однозначно, а
  * красивое неверное число хуже отсутствующего.
  *
- * Группы процесса идут отдельными воронками: у B2B и B2C свои стадии, и полосы
+ * Пространства идут отдельными воронками: у B2B и B2C свои стадии, и полосы
  * двух процессов в одной картинке читаются как один путь, которым они не
  * являются. «Завершено» и «Отменено» общие — они не стадия ничьего процесса.
  */
 export function buildFunnel(
-	groups: readonly ReportFunnelGroup[],
+	workspaces: readonly ReportFunnelWorkspace[],
 	closedCounts: Readonly<Record<string, number>>
 ): ReportFunnelChart {
 	return {
-		groups,
+		workspaces,
 		closed: REPORT_CLOSED_BUCKETS.map((bucket) => ({
 			key: bucket,
 			label: REPORT_CLOSED_BUCKET_LABELS[bucket],
@@ -155,24 +155,25 @@ export function buildBreakdowns(counts: ReportBreakdownCounts): ReportBreakdown[
 /** Полоса воронки вместе с местом в порядке процесса: порядок в выдачу не едет. */
 type FunnelBucketDraft = ReportBucket & { order: number };
 
-type FunnelGroupDraft = {
-	groupId: string;
-	groupKey: string;
-	groupName: string;
+type FunnelWorkspaceDraft = {
+	workspaceId: string;
+	workspaceKey: string;
+	workspaceName: string;
 	buckets: FunnelBucketDraft[];
 };
 
 /**
- * Воронки из чисел, посчитанных базой, — по одной на группу процесса.
+ * Воронки из чисел, посчитанных базой, — по одной на пространство.
  *
  * Заготовка — все стадии действующих редакций: ноль в стадии значит «никого», а
  * отсутствие строки читается как «такой стадии нет». Стадия, которой в
- * действующем процессе уже нет, приписывается в конец своей группы с пометкой из
- * снимка: перенести её строку в соседнюю стадию значило бы изменить прошлое.
+ * действующем процессе уже нет, приписывается в конец своего пространства с
+ * пометкой из снимка: перенести её строку в соседнюю стадию значило бы изменить
+ * прошлое.
  *
- * Группа попадает в выдачу, если в выборке есть хоть одна её строка: вторая
- * пустая воронка рядом с непустой — это не ответ, а шум. Когда на стадиях нет
- * никого вовсе, показываются все процессы: тогда нули и есть ответ.
+ * Пространство попадает в выдачу, если в выборке есть хоть одна его строка:
+ * вторая пустая воронка рядом с непустой — это не ответ, а шум. Когда на стадиях
+ * нет никого вовсе, показываются все процессы: тогда нули и есть ответ.
  */
 export function buildFunnelFromCounts(
 	index: StageIndex,
@@ -180,20 +181,20 @@ export function buildFunnelFromCounts(
 	closedCounts: Readonly<Record<string, number>>
 ): ReportFunnelChart {
 	const counted = new Map(stages.map((stage) => [stage.bucketId, stage]));
-	const drafts = new Map<string, FunnelGroupDraft>();
+	const drafts = new Map<string, FunnelWorkspaceDraft>();
 	const placed = new Set<string>();
 
-	for (const group of index.skeleton()) {
-		drafts.set(group.groupId, {
-			groupId: group.groupId,
-			groupKey: group.groupKey,
-			groupName: group.groupName,
-			buckets: group.stages.map((stage) => {
+	for (const workspace of index.skeleton()) {
+		drafts.set(workspace.workspaceId, {
+			workspaceId: workspace.workspaceId,
+			workspaceKey: workspace.workspaceKey,
+			workspaceName: workspace.workspaceName,
+			buckets: workspace.stages.map((stage) => {
 				placed.add(stage.bucketId);
 
 				return {
 					key: stage.bucketId,
-					// Название без группы: воронка уже подписана именем процесса.
+					// Название без пространства: воронка уже подписана его именем.
 					label: stage.label.name,
 					value: counted.get(stage.bucketId)?.value ?? 0,
 					filter: { param: 'stage', value: stage.stageKey },
@@ -210,21 +211,21 @@ export function buildFunnelFromCounts(
 		}
 
 		const separator = stage.bucketId.indexOf(':');
-		const groupId = stage.bucketId.slice(0, separator);
+		const workspaceId = stage.bucketId.slice(0, separator);
 		const stageKey = stage.bucketId.slice(separator + 1);
-		const label = index.label(groupId, stageKey, stage.stageName);
-		let draft = drafts.get(groupId);
+		const label = index.label(workspaceId, stageKey, stage.stageName);
+		let draft = drafts.get(workspaceId);
 
 		if (draft === undefined) {
-			const group = index.group(groupId);
+			const workspace = index.workspace(workspaceId);
 
 			draft = {
-				groupId,
-				groupKey: group?.key ?? groupId,
-				groupName: group?.name ?? groupId,
+				workspaceId,
+				workspaceKey: workspace?.key ?? workspaceId,
+				workspaceName: workspace?.name ?? workspaceId,
 				buckets: []
 			};
-			drafts.set(groupId, draft);
+			drafts.set(workspaceId, draft);
 		}
 
 		draft.buckets.push({
@@ -237,14 +238,14 @@ export function buildFunnelFromCounts(
 		});
 	}
 
-	const groups = [...drafts.values()].filter((draft) => draft.buckets.length > 0);
-	const counting = groups.filter((draft) => draft.buckets.some((bucket) => bucket.value > 0));
+	const drawn = [...drafts.values()].filter((draft) => draft.buckets.length > 0);
+	const counting = drawn.filter((draft) => draft.buckets.some((bucket) => bucket.value > 0));
 
 	return buildFunnel(
-		(counting.length > 0 ? counting : groups).map((draft) => ({
-			groupId: draft.groupId,
-			groupKey: draft.groupKey,
-			groupName: draft.groupName,
+		(counting.length > 0 ? counting : drawn).map((draft) => ({
+			workspaceId: draft.workspaceId,
+			workspaceKey: draft.workspaceKey,
+			workspaceName: draft.workspaceName,
 			stages: [...draft.buckets]
 				.sort((left, right) => left.order - right.order)
 				.map(({ key, label, value, filter, retired }) => ({

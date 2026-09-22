@@ -35,7 +35,7 @@ import { readProcessEpoch } from '../cache/process';
 import { getDb } from '../db';
 import { contractItems, directions, organizations, products, programs, users } from '../db/schema';
 import { scopeFilter } from '../rbac';
-import { readActiveProcessGroups } from './stages';
+import { readActiveWorkspaces } from './stages';
 
 export async function readFilterOptions(ctx: ActorContext): Promise<ReportFilterOptions> {
 	return cachedDirectoryOptions(
@@ -57,7 +57,7 @@ async function buildFilterOptions(ctx: ActorContext): Promise<ReportFilterOption
 		productRows,
 		ownerRows,
 		transferRows,
-		groups
+		workspaces
 	] = await Promise.all([
 		db
 			.select({ value: organizations.id, label: organizations.shortName })
@@ -88,15 +88,15 @@ async function buildFilterOptions(ctx: ActorContext): Promise<ReportFilterOption
 			.from(contractItems)
 			.where(isNotNull(contractItems.transferStatus))
 			.orderBy(asc(contractItems.transferStatus)),
-		readActiveProcessGroups()
+		readActiveWorkspaces()
 	]);
 
 	const stages = new Map<string, string>();
 
-	for (const group of groups.values()) {
-		for (const stage of group.stages) {
-			// Ключ один на все группы, где он встретился: фильтр бьёт по ключу, и
-			// два пункта с одним ключом означали бы выбор без разницы.
+	for (const workspace of workspaces.values()) {
+		for (const stage of workspace.stages) {
+			// Ключ один на все пространства, где он встретился: фильтр бьёт по
+			// ключу, и два пункта с одним ключом означали бы выбор без разницы.
 			if (!stages.has(stage.key)) {
 				stages.set(stage.key, stage.name);
 			}
@@ -110,7 +110,10 @@ async function buildFilterOptions(ctx: ActorContext): Promise<ReportFilterOption
 		products: productRows,
 		owners: ownerRows,
 		stages: [...stages].map(([value, label]) => ({ value, label })),
-		groups: [...groups.values()].map((group) => ({ value: group.key, label: group.name })),
+		workspaces: [...workspaces.values()].map((workspace) => ({
+			value: workspace.key,
+			label: workspace.name
+		})),
 		parties: ORGANIZATION_KINDS.map((kind) => ({
 			value: kind,
 			label: REPORT_PARTY_LABELS[kind]

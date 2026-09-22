@@ -31,7 +31,7 @@ import {
 import type { Tx } from '../db/transaction';
 import { requirePermission } from '../rbac';
 import { assertInteractionVisible } from '../interactions/access';
-import { readGroupRow, requireActiveRevision } from './process';
+import { readWorkspaceRow, requireActiveRevision } from './process';
 
 type Executor = Tx | ReturnType<typeof getDb>;
 
@@ -301,11 +301,11 @@ export async function getInteractionStatus(
 
 	const interaction = await assertInteractionVisible(ctx, interactionId);
 	const db = getDb();
-	const group = await readGroupRow(db, interaction.processGroupId);
+	const workspace = await readWorkspaceRow(db, interaction.workspaceId);
 
 	const [{ rows, pauses, attachments }, revision, blockerList] = await Promise.all([
 		readEntries(db, eq(stageEntries.interactionId, interactionId)),
-		requireActiveRevision(db, group),
+		requireActiveRevision(db, workspace),
 		readBlockers(db, interactionId)
 	]);
 
@@ -320,7 +320,7 @@ export async function getInteractionStatus(
 
 	return {
 		interactionId,
-		processGroupId: group.id,
+		workspaceId: workspace.id,
 		revision: revision.version,
 		current,
 		history: views.filter((view) => view.leftAt !== null),

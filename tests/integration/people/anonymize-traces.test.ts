@@ -31,9 +31,9 @@ import { anonymizePerson } from '$lib/server/people/retention';
 import { getRedis } from '$lib/server/redis';
 import { addComment } from '$lib/server/stages/commands';
 import {
-	B2B_GROUP_KEY,
+	B2B_WORKSPACE_KEY,
 	B2B_PROCESS,
-	B2C_GROUP_KEY,
+	B2C_WORKSPACE_KEY,
 	B2C_PROCESS
 } from '$lib/server/stages/definitions';
 import { ensureProcess } from '$lib/server/stages/process';
@@ -88,8 +88,8 @@ beforeEach(async () => {
 	await database.reset();
 
 	await database.db.transaction(async (tx) => {
-		await ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS);
-		await ensureProcess(tx, B2C_GROUP_KEY, B2C_PROCESS);
+		await ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS);
+		await ensureProcess(tx, B2C_WORKSPACE_KEY, B2C_PROCESS);
 	});
 
 	await setExchangeSettings(testActor(), {

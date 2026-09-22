@@ -51,7 +51,7 @@ import { describeFilters } from './describe';
 import { movementEventKind, readMovementRows, type MovementRow } from './movement';
 import { describeScope } from './query';
 import { readSnapshotRows, type SnapshotRow } from './snapshot';
-import { createStageIndex, readActiveProcessGroups, type StageIndex } from './stages';
+import { createStageIndex, readActiveWorkspaces, type StageIndex } from './stages';
 
 const SECONDS_IN_DAY = 86_400;
 
@@ -143,7 +143,7 @@ function snapshotCell(
 		case 'stage':
 			return row.stageKey === null
 				? EMPTY_TEXT
-				: text(index.label(row.processGroupId, row.stageKey, row.stageName).label);
+				: text(index.label(row.workspaceId, row.stageKey, row.stageName).label);
 		case 'stageEnteredAt':
 			return { kind: 'date', value: row.enteredAt === null ? null : moscowDay(row.enteredAt) };
 		case 'daysOnStage':
@@ -176,11 +176,11 @@ function movementCell(
 		case 'stageFrom':
 			return row.fromKey === null
 				? EMPTY_TEXT
-				: text(index.label(row.processGroupId, row.fromKey, row.fromName).label);
+				: text(index.label(row.workspaceId, row.fromKey, row.fromName).label);
 		case 'stageTo':
 			return row.toKey === null
 				? EMPTY_TEXT
-				: text(index.label(row.processGroupId, row.toKey, row.toName).label);
+				: text(index.label(row.workspaceId, row.toKey, row.toName).label);
 		case 'moveKind': {
 			const kind = movementEventKind(row);
 
@@ -287,7 +287,7 @@ async function assembleReport(
 
 	const origin = getConfig().ORIGIN.replace(/\/$/, '');
 	const asOf = snapshotMoment(query.to);
-	const index = createStageIndex(await readActiveProcessGroups());
+	const index = createStageIndex(await readActiveWorkspaces());
 	const columns = resolveColumns(query.mode, query.cols);
 
 	const meta = {

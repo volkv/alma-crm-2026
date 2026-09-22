@@ -54,16 +54,16 @@ export function interactionScopeFilter(ctx: ActorContext): SQL {
 
 /**
  * Взаимодействие, которое вызывающему разрешено видеть, или `NotFoundError`.
- * Возвращает группу процесса: она нужна почти всем, кто это проверяет.
+ * Возвращает пространство: оно нужно почти всем, кто это проверяет.
  */
 export async function assertInteractionVisible(
 	ctx: ActorContext,
 	interactionId: string
-): Promise<{ id: string; processGroupId: string; ownerUserId: string; lastActivityAt: Date }> {
+): Promise<{ id: string; workspaceId: string; ownerUserId: string; lastActivityAt: Date }> {
 	const [row] = await getDb()
 		.select({
 			id: interactions.id,
-			processGroupId: interactions.processGroupId,
+			workspaceId: interactions.workspaceId,
 			ownerUserId: interactions.ownerUserId,
 			lastActivityAt: interactions.lastActivityAt
 		})

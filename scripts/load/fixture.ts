@@ -27,8 +27,8 @@ installKitAliases();
 const { and, count, desc, eq, isNull } = await import('drizzle-orm');
 const { closeDatabase, getDb } = await import('$lib/server/db');
 const { comments, interactions, stageEntries } = await import('$lib/server/db/schema');
-const { B2B_GROUP_KEY } = await import('$lib/server/stages/definitions');
-const { readActiveRevision, readGroupByKey } = await import('$lib/server/stages/process');
+const { B2B_WORKSPACE_KEY } = await import('$lib/server/stages/definitions');
+const { readActiveRevision, readWorkspaceByKey } = await import('$lib/server/stages/process');
 
 type StageSnapshotShape = {
 	key: string;
@@ -42,11 +42,11 @@ type StageSnapshotShape = {
 
 try {
 	const db = getDb();
-	const group = await readGroupByKey(db, B2B_GROUP_KEY);
-	const revision = await readActiveRevision(db, group);
+	const workspace = await readWorkspaceByKey(db, B2B_WORKSPACE_KEY);
+	const revision = await readActiveRevision(db, workspace);
 
 	if (revision === null) {
-		throw new Error('У группы «b2b» нет действующей редакции процесса');
+		throw new Error('У пространства «b2b» нет действующей редакции процесса');
 	}
 
 	/** Куда ведёт шаг вперёд с каждой стадии редакции. */

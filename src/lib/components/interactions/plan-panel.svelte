@@ -138,7 +138,7 @@
 							? null
 							: interaction.products.map((product) => product.name).join('; ')}
 					/>
-					<KeyValueRow label="Процесс" value={interaction.processGroupName} />
+					<KeyValueRow label="Процесс" value={interaction.workspaceName} />
 					<KeyValueRow label="Договор">
 						{#if interaction.contract === null}
 							<span class="text-faint">не выбран</span>

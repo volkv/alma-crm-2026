@@ -12,7 +12,7 @@ import {
 	buildFunnelFromCounts,
 	buildMovementChart
 } from '$lib/server/reports/charts';
-import { createStageIndex, type ReportProcessGroup } from '$lib/server/reports/stages';
+import { createStageIndex, type ReportWorkspace } from '$lib/server/reports/stages';
 import { valueLabelPoints } from '$lib/components/reports/value-labels';
 
 describe('ось времени динамики переходов', () => {
@@ -122,9 +122,9 @@ describe('воронка', () => {
 		const funnel = buildFunnel(
 			[
 				{
-					groupId: 'g',
-					groupKey: 'b2b',
-					groupName: 'Работа с вузами',
+					workspaceId: 'g',
+					workspaceKey: 'b2b',
+					workspaceName: 'Работа с вузами',
 					stages: [{ key: 'g:contact', label: 'Контакты', value: 3, filter: null }]
 				}
 			],
@@ -139,7 +139,7 @@ describe('воронка', () => {
 describe('воронка по группам процесса', () => {
 	/** Две группы с одинаковым ключом стадии: законная ситуация, см. `domain.md`. */
 	function index() {
-		const groups = new Map<string, ReportProcessGroup>([
+		const workspaces = new Map<string, ReportWorkspace>([
 			[
 				'g-b2b',
 				{
@@ -166,7 +166,7 @@ describe('воронка по группам процесса', () => {
 			]
 		]);
 
-		return createStageIndex(groups);
+		return createStageIndex(workspaces);
 	}
 
 	it('не складывает одинаковые ключи стадий разных процессов в одну полосу', () => {
@@ -179,12 +179,12 @@ describe('воронка по группам процесса', () => {
 			{}
 		);
 
-		expect(funnel.groups.map((group) => group.groupKey)).toStrictEqual(['b2b', 'b2c']);
-		expect(funnel.groups[0].stages.map((bucket) => [bucket.label, bucket.value])).toStrictEqual([
+		expect(funnel.workspaces.map((workspace) => workspace.workspaceKey)).toStrictEqual(['b2b', 'b2c']);
+		expect(funnel.workspaces[0].stages.map((bucket) => [bucket.label, bucket.value])).toStrictEqual([
 			['Контакты', 0],
 			['Встреча', 3]
 		]);
-		expect(funnel.groups[1].stages.map((bucket) => [bucket.label, bucket.value])).toStrictEqual([
+		expect(funnel.workspaces[1].stages.map((bucket) => [bucket.label, bucket.value])).toStrictEqual([
 			['Консультация', 2],
 			['Оплата', 0]
 		]);
@@ -197,15 +197,15 @@ describe('воронка по группам процесса', () => {
 			{}
 		);
 
-		expect(funnel.groups.map((group) => group.groupKey)).toStrictEqual(['b2b']);
+		expect(funnel.workspaces.map((workspace) => workspace.workspaceKey)).toStrictEqual(['b2b']);
 	});
 
 	it('на пустой выборке показывает все процессы: нули и есть ответ', () => {
 		const funnel = buildFunnelFromCounts(index(), [], {});
 
-		expect(funnel.groups.map((group) => group.groupKey)).toStrictEqual(['b2b', 'b2c']);
+		expect(funnel.workspaces.map((workspace) => workspace.workspaceKey)).toStrictEqual(['b2b', 'b2c']);
 		expect(
-			funnel.groups.flatMap((group) => group.stages).every((bucket) => bucket.value === 0)
+			funnel.workspaces.flatMap((workspace) => workspace.stages).every((bucket) => bucket.value === 0)
 		).toBe(true);
 	});
 
@@ -219,7 +219,7 @@ describe('воронка по группам процесса', () => {
 			{}
 		);
 
-		const stages = funnel.groups[0].stages;
+		const stages = funnel.workspaces[0].stages;
 
 		expect(stages.at(-1)).toStrictEqual({
 			key: 'g-b2b:old',

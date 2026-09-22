@@ -220,7 +220,7 @@ const SUBJECT_LABELS: Record<string, string> = {
 	contract: 'Договор',
 	contract_item: 'Позиция договора',
 	interaction: 'Взаимодействие',
-	process_group: 'Группа процесса',
+	process_group: 'Пространство',
 	document: 'Документ',
 	stat_snapshot: 'Снимок данных',
 	user: 'Пользователь',

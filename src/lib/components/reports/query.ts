@@ -88,7 +88,7 @@ export type ReportPeriod = { mode: ReportMode; from: string; to: string };
  * числом на столбце. Общий список `/interactions` показывает **текущую** стадию
  * и ни периода, ни режима не знает — переход туда молча показал бы другой набор.
  *
- * Переход добавляет к выборке группу процесса и ключ стадии и **не снимает**
+ * Переход добавляет к выборке пространство и ключ стадии и **не снимает**
  * остальные фильтры: вуз, направление, программа, продукт, ответственный и
  * состояние остаются в адресе, потому что столбец нарисован под ними же.
  * Режим и период выписываются явно: ссылку отправляют коллеге, а «сегодня» у
@@ -97,10 +97,10 @@ export type ReportPeriod = { mode: ReportMode; from: string; to: string };
 export function stageDrilldownHref(
 	url: URL,
 	period: ReportPeriod,
-	groupKey: string,
+	workspaceKey: string,
 	stageKey: string
 ): ResolvedPathname {
-	return reportHref(url, { ...period, group: groupKey, stage: stageKey });
+	return reportHref(url, { ...period, workspace: workspaceKey, stage: stageKey });
 }
 
 /**
@@ -182,17 +182,17 @@ const INTERACTIONS_PATH = resolve('/interactions');
 export function interactionsHref(url: URL): ResolvedPathname {
 	const params = new URLSearchParams();
 	const states = selectedValues(url, 'state');
-	const groups = selectedValues(url, 'group');
+	const workspaces = selectedValues(url, 'workspace');
 
 	if (states.length === 1) {
 		params.set('status', states[0]);
 	}
 
-	// Группу процесса список понимает и называет тем же ключом. Стадию — нет:
+	// Пространство список понимает и называет тем же ключом. Стадию — нет:
 	// у него в `stage` лежит смысловая группа стадий, а не ключ, и ключ отчёта
 	// он бы молча не понял, показав выборку шире обещанной.
-	if (groups.length === 1) {
-		params.set('group', groups[0]);
+	if (workspaces.length === 1) {
+		params.set('workspace', workspaces[0]);
 	}
 
 	if (url.searchParams.get('overdue') === 'true') {
@@ -230,10 +230,10 @@ export function unsupportedListFilters(url: URL): string[] {
 		dropped.push('несколько состояний сразу');
 	}
 
-	// Одну группу процесса список понимает; несколько сразу — нет: у него это
+	// Одно пространство список понимает; несколько сразу — нет: у него это
 	// один выбор «чей процесс показать».
-	if (selectedValues(url, 'group').length > 1) {
-		dropped.push('несколько групп процесса сразу');
+	if (selectedValues(url, 'workspace').length > 1) {
+		dropped.push('несколько пространств сразу');
 	}
 
 	return dropped;

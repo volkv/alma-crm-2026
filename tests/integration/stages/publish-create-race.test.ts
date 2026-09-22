@@ -13,7 +13,7 @@
  */
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { interactions, processGroups, stageEntries, stages } from '$lib/server/db/schema';
+import { interactions, workspaces, stageEntries, stages } from '$lib/server/db/schema';
 import {
 	createDraft,
 	processDefinition,
@@ -22,7 +22,7 @@ import {
 } from '$lib/server/stages/process';
 import type { ActorContext } from '$lib/server/actor';
 import { startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
-import { B2C_GROUP_KEY, createInteractionOn, seedProcess, twoStageProcess } from './fixture';
+import { B2C_WORKSPACE_KEY, createInteractionOn, seedProcess, twoStageProcess } from './fixture';
 
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
 
@@ -53,10 +53,10 @@ function reasonOf(outcome: PromiseSettledResult<unknown>): string {
 
 /** Черновик, который переименовывает первую стадию: сопоставление полное. */
 async function prepareRename(ctx: ActorContext): Promise<void> {
-	const draft = await createDraft(ctx, B2C_GROUP_KEY);
+	const draft = await createDraft(ctx, B2C_WORKSPACE_KEY);
 	const definition = processDefinition(draft);
 
-	await updateDraft(ctx, B2C_GROUP_KEY, {
+	await updateDraft(ctx, B2C_WORKSPACE_KEY, {
 		...definition,
 		stages: definition.stages.map((stage) =>
 			stage.key === 'first' ? { ...stage, name: 'Первая стадия после правки' } : stage
@@ -78,14 +78,14 @@ async function assertNoStrayEntries(): Promise<number> {
 		.select({ id: stageEntries.id })
 		.from(stageEntries)
 		.innerJoin(interactions, eq(interactions.id, stageEntries.interactionId))
-		.innerJoin(processGroups, eq(processGroups.id, interactions.processGroupId))
+		.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
 		.innerJoin(stages, eq(stages.id, stageEntries.stageId))
 		.where(
 			and(
 				isNull(stageEntries.leftAt),
 				// Стадия открытой записи обязана принадлежать действующей редакции
 				// своей группы — это и есть инвариант раздела «Гонки».
-				eq(stages.revisionId, processGroups.activeRevisionId)
+				eq(stages.revisionId, workspaces.activeRevisionId)
 			)
 		);
 
@@ -105,7 +105,7 @@ async function assertNoStrayEntries(): Promise<number> {
 describe('применение изменений и заведение взаимодействия', () => {
 	it('детерминированно: публикация ждёт разделяемую блокировку создания', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, twoStageProcess({}));
+		await seedProcess(database, B2C_WORKSPACE_KEY, twoStageProcess({}));
 		await prepareRename(ctx);
 
 		// Транзакция создания берёт `FOR SHARE` на строку группы и держит её.
@@ -116,9 +116,9 @@ describe('применение изменений и заведение взаи
 
 		const holder = database.db.transaction(async (tx) => {
 			await tx
-				.select({ id: processGroups.id })
-				.from(processGroups)
-				.where(eq(processGroups.key, B2C_GROUP_KEY))
+				.select({ id: workspaces.id })
+				.from(workspaces)
+				.where(eq(workspaces.key, B2C_WORKSPACE_KEY))
 				.for('share');
 
 			await held;
@@ -126,7 +126,7 @@ describe('применение изменений и заведение взаи
 
 		await sleep(100);
 
-		const publication = publishProcess(ctx, B2C_GROUP_KEY);
+		const publication = publishProcess(ctx, B2C_WORKSPACE_KEY);
 		let settled = false;
 		void publication.then(
 			() => (settled = true),
@@ -155,12 +155,12 @@ describe('применение изменений и заведение взаи
 
 		for (let run = 0; run < 20; run += 1) {
 			await database.reset();
-			await seedProcess(database, B2C_GROUP_KEY, twoStageProcess({}));
+			await seedProcess(database, B2C_WORKSPACE_KEY, twoStageProcess({}));
 			await prepareRename(ctx);
 
 			const [created, publication] = await Promise.allSettled([
 				createInteractionOn(ctx, database, { kind: 'legal_entity' }),
-				publishProcess(ctx, B2C_GROUP_KEY)
+				publishProcess(ctx, B2C_WORKSPACE_KEY)
 			]);
 
 			// Причина отказа печатается прямо в ожидании: «rejected» без текста не

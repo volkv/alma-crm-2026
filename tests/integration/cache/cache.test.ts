@@ -36,14 +36,14 @@ import {
 import { getRedis } from '$lib/server/redis';
 import { readFilterOptions } from '$lib/server/reports/options';
 import { addComment } from '$lib/server/stages/commands';
-import { B2B_GROUP_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
+import { B2B_WORKSPACE_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
 import {
 	createDraft,
 	ensureProcess,
 	processDefinition,
 	publishProcess,
 	readActiveRevisionCached,
-	readGroupByKey,
+	readWorkspaceByKey,
 	updateDraft
 } from '$lib/server/stages/process';
 import {
@@ -509,24 +509,24 @@ describe('ключи кэша', () => {
 
 /** Процесс учебных заведений: его читают карточка, список и доска. */
 async function demoProcess(): Promise<void> {
-	await database.db.transaction((tx) => ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS));
+	await database.db.transaction((tx) => ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
 }
 
 /** Черновик с переименованной первой стадией, применённый ко всем. */
 async function publishRenamedFirstStage(ctx: ActorContext, name: string): Promise<void> {
-	const draft = await createDraft(ctx, B2B_GROUP_KEY);
+	const draft = await createDraft(ctx, B2B_WORKSPACE_KEY);
 	const definition = processDefinition(draft);
 
-	await updateDraft(ctx, B2B_GROUP_KEY, {
+	await updateDraft(ctx, B2B_WORKSPACE_KEY, {
 		...definition,
 		stages: definition.stages.map((stage, index) => (index === 0 ? { ...stage, name } : stage))
 	});
-	await publishProcess(ctx, B2B_GROUP_KEY);
+	await publishProcess(ctx, B2B_WORKSPACE_KEY);
 }
 
 describe('кэш действующей редакции процесса', () => {
 	async function activeRevision() {
-		return readActiveRevisionCached(await readGroupByKey(database.db, B2B_GROUP_KEY));
+		return readActiveRevisionCached(await readWorkspaceByKey(database.db, B2B_WORKSPACE_KEY));
 	}
 
 	it('отдаёт то же, что база, и переживает правку в обход сервиса', async () => {

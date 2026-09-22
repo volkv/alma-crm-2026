@@ -13,7 +13,7 @@ import {
 	auditEvents,
 	exchangeMessages,
 	interactions,
-	processGroups,
+	workspaces,
 	processStageKeys,
 	stageEntries,
 	stageEntryStatus,
@@ -35,7 +35,7 @@ import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '
 import {
 	activeRevision,
 	advanceTo,
-	B2C_GROUP_KEY,
+	B2C_WORKSPACE_KEY,
 	createInteractionOn,
 	provideDocumentMark,
 	seedProcess,
@@ -130,20 +130,20 @@ async function entriesOf(interactionId: string) {
 /** Заводит черновик, правит его и применяет ко всем. */
 async function publishWith(
 	ctx: ActorContext,
-	groupKey: string,
+	workspaceKey: string,
 	change: (definition: ReturnType<typeof processDefinition>) => ReturnType<typeof processDefinition>
 ) {
-	const draft = await createDraft(ctx, groupKey);
+	const draft = await createDraft(ctx, workspaceKey);
 
-	await updateDraft(ctx, groupKey, change(processDefinition(draft)));
+	await updateDraft(ctx, workspaceKey, change(processDefinition(draft)));
 
-	return publishProcess(ctx, groupKey);
+	return publishProcess(ctx, workspaceKey);
 }
 
 describe('перепривязка открытых записей', () => {
 	it('переносит открытые записи и не трогает закрытые', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+		await seedProcess(database, B2C_WORKSPACE_KEY, threeStageProcess());
 
 		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
 		await advanceTo(ctx, database, interactionId, 'offer');
@@ -151,7 +151,7 @@ describe('перепривязка открытых записей', () => {
 		const before = await entriesOf(interactionId);
 		const closedBefore = before.filter((entry) => entry.leftAt !== null);
 
-		const result = await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
+		const result = await publishWith(ctx, B2C_WORKSPACE_KEY, (definition) => ({
 			...definition,
 			stages: definition.stages.map((stage) =>
 				stage.key === 'offer' ? { ...stage, name: 'Предложение и условия', slaDays: 9 } : stage
@@ -161,7 +161,7 @@ describe('перепривязка открытых записей', () => {
 		const after = await entriesOf(interactionId);
 		const closedAfter = after.filter((entry) => entry.leftAt !== null);
 		const open = await openEntry(interactionId);
-		const active = await activeRevision(database, B2C_GROUP_KEY);
+		const active = await activeRevision(database, B2C_WORKSPACE_KEY);
 
 		expect(result.reboundCount).toBe(1);
 		expect(result.migratedCount).toBe(0);
@@ -193,14 +193,14 @@ describe('перепривязка открытых записей', () => {
 
 	it('переезд закрывает запись исходом «перенесена» и открывает новую', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+		await seedProcess(database, B2C_WORKSPACE_KEY, threeStageProcess());
 
 		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
 		await advanceTo(ctx, database, interactionId, 'offer');
 
 		const before = await entriesOf(interactionId);
 
-		const result = await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
+		const result = await publishWith(ctx, B2C_WORKSPACE_KEY, (definition) => ({
 			...definition,
 			stages: definition.stages.filter((stage) => stage.key !== 'offer'),
 			transitions: [
@@ -240,14 +240,14 @@ describe('перепривязка открытых записей', () => {
 
 	it('переносит записи на выбранную стадию, а не на подставленную по умолчанию', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+		await seedProcess(database, B2C_WORKSPACE_KEY, threeStageProcess());
 
 		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
 		await advanceTo(ctx, database, interactionId, 'offer');
 
 		// По умолчанию записи с «Предложения» уехали бы назад, на «Приём»
 		// (предыдущая сохранившаяся стадия). Правило говорит другое.
-		const result = await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
+		const result = await publishWith(ctx, B2C_WORKSPACE_KEY, (definition) => ({
 			...definition,
 			migrationRules: [{ removedStageKey: 'offer', targetStageKey: 'done' }],
 			stages: definition.stages.filter((stage) => stage.key !== 'offer'),
@@ -273,7 +273,7 @@ describe('перепривязка открытых записей', () => {
 		const ctx = admin();
 		await seedProcess(
 			database,
-			B2C_GROUP_KEY,
+			B2C_WORKSPACE_KEY,
 			threeStageProcess({
 				checklist: {
 					offer: [
@@ -296,7 +296,7 @@ describe('перепривязка открытых записей', () => {
 		await setChecklistItem(ctx, { interactionId, key: 'papers', done: true });
 		await setChecklistItem(ctx, { interactionId, key: 'price', done: true });
 
-		await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
+		await publishWith(ctx, B2C_WORKSPACE_KEY, (definition) => ({
 			...definition,
 			stages: definition.stages.filter((stage) => stage.key !== 'offer'),
 			transitions: [
@@ -318,7 +318,7 @@ describe('перепривязка открытых записей', () => {
 		expect(open.checklistState).toStrictEqual({ papers: true });
 
 		const status = await getInteractionStatus(ctx, interactionId);
-		const target = await activeRevision(database, B2C_GROUP_KEY);
+		const target = await activeRevision(database, B2C_WORKSPACE_KEY);
 		const move = {
 			interactionId,
 			fromStageId: open.stageId,
@@ -345,7 +345,7 @@ describe('перепривязка открытых записей', () => {
 
 	it('включённое требование отметки видит отметку, поставленную раньше', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+		await seedProcess(database, B2C_WORKSPACE_KEY, threeStageProcess());
 
 		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
 		await advanceTo(ctx, database, interactionId, 'offer');
@@ -353,7 +353,7 @@ describe('перепривязка открытых записей', () => {
 		// Документ дела утверждён, пока стадия отметки ещё не требовала.
 		const documentId = await provideDocumentMark(ctx, database, interactionId, 'approved');
 
-		await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
+		await publishWith(ctx, B2C_WORKSPACE_KEY, (definition) => ({
 			...definition,
 			stages: definition.stages.map((stage) =>
 				stage.key === 'offer' ? { ...stage, requiresDocumentMark: 'approved' as const } : stage
@@ -367,7 +367,7 @@ describe('перепривязка открытых записей', () => {
 		expect(status.current?.snapshot.requiresDocumentMark).toBe('approved');
 		expect(status.current?.documentMarkEvidence).toMatchObject({ documentId, mark: 'approved' });
 
-		const target = await activeRevision(database, B2C_GROUP_KEY);
+		const target = await activeRevision(database, B2C_WORKSPACE_KEY);
 
 		await advanceStage(ctx, {
 			interactionId,
@@ -384,7 +384,7 @@ describe('перепривязка открытых записей', () => {
 
 	it('переносит паузу вместе с записью и не запускает часы стадии', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+		await seedProcess(database, B2C_WORKSPACE_KEY, threeStageProcess());
 
 		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
 		await advanceTo(ctx, database, interactionId, 'offer');
@@ -402,7 +402,7 @@ describe('перепривязка открытых записей', () => {
 
 		const pausedBefore = await entryStatus(interactionId);
 
-		const result = await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
+		const result = await publishWith(ctx, B2C_WORKSPACE_KEY, (definition) => ({
 			...definition,
 			stages: definition.stages.filter((stage) => stage.key !== 'offer'),
 			transitions: [
@@ -462,7 +462,7 @@ describe('перепривязка открытых записей', () => {
 
 	it('сообщает CMS о переезде и двигает `updated_at` взаимодействия', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+		await seedProcess(database, B2C_WORKSPACE_KEY, threeStageProcess());
 
 		// Адрес получателя никуда не ведёт намеренно: доставка идёт отдельным
 		// циклом, а проверка смотрит на очередь.
@@ -496,7 +496,7 @@ describe('перепривязка открытых записей', () => {
 
 		await database.db.delete(exchangeMessages);
 
-		const result = await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
+		const result = await publishWith(ctx, B2C_WORKSPACE_KEY, (definition) => ({
 			...definition,
 			stages: definition.stages.filter((stage) => stage.key !== 'offer'),
 			transitions: [
@@ -544,17 +544,17 @@ describe('перепривязка открытых записей', () => {
 describe('атомарность', () => {
 	it('черновик с неполным сопоставлением не публикуется и ничего не меняет', async () => {
 		const ctx = admin();
-		const active = await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+		const active = await seedProcess(database, B2C_WORKSPACE_KEY, threeStageProcess());
 
 		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
 		await advanceTo(ctx, database, interactionId, 'offer');
 
-		const draft = await createDraft(ctx, B2C_GROUP_KEY);
+		const draft = await createDraft(ctx, B2C_WORKSPACE_KEY);
 		const definition = processDefinition(draft);
 
 		// Стадия убрана, а правило переноса стёрто руками: ровно тот случай, когда
 		// незавершённым взаимодействиям некуда переехать.
-		await updateDraft(ctx, B2C_GROUP_KEY, {
+		await updateDraft(ctx, B2C_WORKSPACE_KEY, {
 			...definition,
 			stages: definition.stages.filter((stage) => stage.key !== 'offer'),
 			transitions: [
@@ -572,17 +572,17 @@ describe('атомарность', () => {
 			sql`delete from stage_migration_rules where revision_id = ${draft.id}::uuid`
 		);
 
-		await expect(publishProcess(ctx, B2C_GROUP_KEY)).rejects.toBeInstanceOf(ValidationError);
+		await expect(publishProcess(ctx, B2C_WORKSPACE_KEY)).rejects.toBeInstanceOf(ValidationError);
 
-		const [group] = await database.db
-			.select({ activeRevisionId: processGroups.activeRevisionId })
-			.from(processGroups)
-			.where(eq(processGroups.key, B2C_GROUP_KEY));
+		const [workspace] = await database.db
+			.select({ activeRevisionId: workspaces.activeRevisionId })
+			.from(workspaces)
+			.where(eq(workspaces.key, B2C_WORKSPACE_KEY));
 		const open = await openEntry(interactionId);
 
 		// Ни опубликованной редакции, ни перепривязанных записей: сбой на середине
 		// не оставляет половины изменения.
-		expect(group.activeRevisionId).toBe(active.id);
+		expect(workspace.activeRevisionId).toBe(active.id);
 		expect(open.revisionId).toBe(active.id);
 		expect(open.stageKey).toBe('offer');
 	});
@@ -591,9 +591,9 @@ describe('атомарность', () => {
 describe('реестр ключей и журнал', () => {
 	it('архивирует снятый ключ и не даёт завести стадию под ним заново', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+		await seedProcess(database, B2C_WORKSPACE_KEY, threeStageProcess());
 
-		await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
+		await publishWith(ctx, B2C_WORKSPACE_KEY, (definition) => ({
 			...definition,
 			stages: definition.stages.filter((stage) => stage.key !== 'offer'),
 			transitions: [
@@ -616,10 +616,10 @@ describe('реестр ключей и журнал', () => {
 
 		// Черновик, заводящий стадию под архивным ключом, не применяется: иначе
 		// история прошлого года приросла бы записями совсем другой работы.
-		const draft = await createDraft(ctx, B2C_GROUP_KEY);
+		const draft = await createDraft(ctx, B2C_WORKSPACE_KEY);
 		const definition = processDefinition(draft);
 
-		await updateDraft(ctx, B2C_GROUP_KEY, {
+		await updateDraft(ctx, B2C_WORKSPACE_KEY, {
 			...definition,
 			stages: [
 				definition.stages[0],
@@ -656,21 +656,21 @@ describe('реестр ключей и журнал', () => {
 			]
 		});
 
-		await expect(publishProcess(ctx, B2C_GROUP_KEY)).rejects.toSatisfy(
+		await expect(publishProcess(ctx, B2C_WORKSPACE_KEY)).rejects.toSatisfy(
 			(error: unknown) =>
 				error instanceof ValidationError &&
-				error.issues.some((issue) => /уже был в этой группе и снят/.test(issue))
+				error.issues.some((issue) => /уже был в этом процессе и снят/.test(issue))
 		);
 	});
 
 	it('пишет оба события публикации с числами и строку на каждое переехавшее', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+		await seedProcess(database, B2C_WORKSPACE_KEY, threeStageProcess());
 
 		const { interactionId } = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
 		await advanceTo(ctx, database, interactionId, 'offer');
 
-		await publishWith(ctx, B2C_GROUP_KEY, (definition) => ({
+		await publishWith(ctx, B2C_WORKSPACE_KEY, (definition) => ({
 			...definition,
 			stages: definition.stages.filter((stage) => stage.key !== 'offer'),
 			transitions: [
@@ -696,7 +696,7 @@ describe('реестр ключей и журнал', () => {
 		const migrated = events.find((event) => event.type === 'stages.process_migrated');
 		const perInteraction = events.filter((event) => event.type === 'interactions.stage_migrated');
 
-		expect(published?.details).toMatchObject({ groupKey: B2C_GROUP_KEY, stageCount: 2 });
+		expect(published?.details).toMatchObject({ workspaceKey: B2C_WORKSPACE_KEY, stageCount: 2 });
 		expect(migrated?.details).toMatchObject({ reboundCount: 0, migratedCount: 1 });
 		expect(perInteraction).toHaveLength(1);
 		expect(perInteraction[0].subjectId).toBe(interactionId);

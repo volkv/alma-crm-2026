@@ -3,7 +3,7 @@ import type { Page } from '@playwright/test';
 import type { StageSnapshot } from '$lib/contracts/interactions';
 import { expect, test } from './fixtures';
 import { waitForHydration } from './helpers/hydration';
-import { seedProcessGroup } from './helpers/process-group';
+import { seedWorkspace } from './helpers/workspace';
 
 /**
  * Главная глазами менеджера: плитки портфеля, список «требуют действия»,
@@ -134,7 +134,7 @@ async function seed(): Promise<void> {
 
 	try {
 		await sql.begin(async (tx) => {
-			const { groupId, stageIds } = await seedProcessGroup(tx, {
+			const { workspaceId, stageIds } = await seedWorkspace(tx, {
 				key: GROUP_KEY,
 				name: 'Проверка сводки главной',
 				revisionName: 'Процесс проверки сводки',
@@ -176,7 +176,7 @@ async function seed(): Promise<void> {
 					insert into interactions ${tx({
 						id: record.id,
 						title: record.title,
-						process_group_id: groupId,
+						workspace_id: workspaceId,
 						status: 'active',
 						owner_user_id: manager.id,
 						last_activity_at: daysAgo(record.silentDaysAgo)

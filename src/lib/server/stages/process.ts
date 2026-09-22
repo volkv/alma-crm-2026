@@ -1,11 +1,11 @@
 /**
- * Живой процесс: структура группы, её черновик и публикация как миграция.
+ * Живой процесс: структура пространства, её черновик и публикация как миграция.
  *
- * В каждой группе контрагентов действует ровно одна редакция структуры, и
- * пользователь её не выбирает: номер редакции остаётся в базе и в журнале, но
- * ни одного решения не принимает. Изменение процесса — это черновик, который
- * применяют ко всем сразу, а применение переносит открытые записи стадий на
- * новую структуру по устойчивым ключам.
+ * В каждом пространстве действует ровно одна редакция структуры, и пользователь
+ * её не выбирает: номер редакции остаётся в базе и в журнале, но ни одного
+ * решения не принимает. Изменение процесса — это черновик, который применяют ко
+ * всем сразу, а применение переносит открытые записи стадий на новую структуру
+ * по устойчивым ключам.
  *
  * Три правила, из которых выведено остальное:
  *
@@ -13,16 +13,17 @@
  *    атомарна и проходит под блокировками;
  * 2. история не переписывается: закрытые записи остаются на стадиях тех
  *    редакций, при которых их прошли, и их снимки не трогает никто;
- * 3. порядок блокировок односторонний — сначала группа, потом взаимодействия по
- *    возрастанию идентификатора, — поэтому взаимного замка не возникает.
+ * 3. порядок блокировок односторонний — сначала пространство, потом
+ *    взаимодействия по возрастанию идентификатора, — поэтому взаимного замка не
+ *    возникает.
  */
 import { and, asc, count, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
 import { DOCUMENT_STATUS_FACT_LABELS, type DocumentMarkEvidence } from '$lib/contracts/documents';
 import {
 	processDefinitionSchema,
 	type ProcessDefinitionInput,
-	type ProcessGroupDetail,
-	type ProcessGroupSummary,
+	type WorkspaceDetail,
+	type WorkspaceSummary,
 	type ProcessPreview,
 	type ProcessPreviewRow,
 	type ProcessRevisionView,
@@ -38,7 +39,7 @@ import { getDb } from '../db';
 import {
 	interactions,
 	processGroupCounterpartyKinds,
-	processGroups,
+	workspaces,
 	processRevisions,
 	processStageKeys,
 	stageEntries,
@@ -57,8 +58,8 @@ import { requirePermission } from '../rbac';
 /** Любой исполнитель запроса: транзакция вызывающего или общий пул. */
 export type Executor = Tx | ReturnType<typeof getDb>;
 
-/** Строка группы в том объёме, в каком её читают операции процесса. */
-export type ProcessGroupRow = {
+/** Строка пространства в том объёме, в каком её читают операции процесса. */
+export type WorkspaceRow = {
 	id: string;
 	key: string;
 	name: string;
@@ -179,27 +180,33 @@ export async function readRevision(
 	};
 }
 
-/** Группа по идентификатору. Отсутствие — это поломка данных, а не состояние. */
-export async function readGroupRow(executor: Executor, groupId: string): Promise<ProcessGroupRow> {
+/**
+ * Пространство по идентификатору. Отсутствие — это поломка данных, а не
+ * состояние.
+ */
+export async function readWorkspaceRow(
+	executor: Executor,
+	workspaceId: string
+): Promise<WorkspaceRow> {
 	const [row] = await executor
 		.select({
-			id: processGroups.id,
-			key: processGroups.key,
-			name: processGroups.name,
-			activeRevisionId: processGroups.activeRevisionId
+			id: workspaces.id,
+			key: workspaces.key,
+			name: workspaces.name,
+			activeRevisionId: workspaces.activeRevisionId
 		})
-		.from(processGroups)
-		.where(eq(processGroups.id, groupId));
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId));
 
 	if (row === undefined) {
-		throw new NotFoundError('Группа процесса не найдена');
+		throw new NotFoundError('Пространство не найдено');
 	}
 
 	return row;
 }
 
 /**
- * Группа под блокировкой.
+ * Пространство под блокировкой.
  *
  * `update` берут публикация и правка черновика — две такие операции
  * выстраиваются в очередь. `share` берёт создание взаимодействия и приём
@@ -208,39 +215,41 @@ export async function readGroupRow(executor: Executor, groupId: string): Promise
  * публикации, встало бы на стадию редакции, которая уже не действует, — шаг
  * «заблокировать незавершённые» таких строк ещё не видит.
  */
-export async function lockGroup(
+export async function lockWorkspace(
 	tx: Tx,
-	groupId: string,
+	workspaceId: string,
 	mode: 'update' | 'share'
-): Promise<ProcessGroupRow> {
+): Promise<WorkspaceRow> {
 	const query = tx
 		.select({
-			id: processGroups.id,
-			key: processGroups.key,
-			name: processGroups.name,
-			activeRevisionId: processGroups.activeRevisionId
+			id: workspaces.id,
+			key: workspaces.key,
+			name: workspaces.name,
+			activeRevisionId: workspaces.activeRevisionId
 		})
-		.from(processGroups)
-		.where(eq(processGroups.id, groupId));
+		.from(workspaces)
+		.where(eq(workspaces.id, workspaceId));
 
 	const [row] = await (mode === 'update' ? query.for('update') : query.for('share'));
 
 	if (row === undefined) {
-		throw new NotFoundError('Группа процесса не найдена');
+		throw new NotFoundError('Пространство не найдено');
 	}
 
 	return row;
 }
 
 /**
- * Действующая редакция группы. Её отсутствие — рабочее состояние: группа
- * заведена миграцией, а процесс в ней ещё не описан.
+ * Действующая редакция процесса пространства. Её отсутствие — рабочее
+ * состояние: пространство заведено миграцией, а процесс в нём ещё не описан.
  */
 export async function readActiveRevision(
 	executor: Executor,
-	group: ProcessGroupRow
+	workspace: WorkspaceRow
 ): Promise<ProcessRevisionView | null> {
-	return group.activeRevisionId === null ? null : readRevision(executor, group.activeRevisionId);
+	return workspace.activeRevisionId === null
+		? null
+		: readRevision(executor, workspace.activeRevisionId);
 }
 
 /**
@@ -250,21 +259,21 @@ export async function readActiveRevision(
  * состоянием на момент последней публикации.
  */
 export async function readActiveRevisionCached(
-	group: ProcessGroupRow
+	workspace: WorkspaceRow
 ): Promise<ProcessRevisionView | null> {
-	return cachedActiveRevision(group.id, () => readActiveRevision(getDb(), group));
+	return cachedActiveRevision(workspace.id, () => readActiveRevision(getDb(), workspace));
 }
 
 /** Та же редакция, но её отсутствие — отказ словами, а не пустая лента. */
 export async function requireActiveRevision(
 	executor: Executor,
-	group: ProcessGroupRow
+	workspace: WorkspaceRow
 ): Promise<ProcessRevisionView> {
-	const revision = await readActiveRevision(executor, group);
+	const revision = await readActiveRevision(executor, workspace);
 
 	if (revision === null) {
 		throw new ConflictError(
-			`Для группы «${group.name}» процесс ещё не описан: заведите стадии в разделе «Процесс» и примените их ко всем`
+			`Для пространства «${workspace.name}» процесс ещё не описан: заведите стадии в разделе «Процесс» и примените их ко всем`
 		);
 	}
 
@@ -272,23 +281,20 @@ export async function requireActiveRevision(
 }
 
 /**
- * Группа процесса по виду контрагента. Таблица соответствий одна на продукт:
+ * Пространство по виду контрагента. Таблица соответствий одна на продукт:
  * второе правило выбора означало бы, что одна и та же заявка получает разные
  * процессы в зависимости от канала.
  */
-export async function resolveProcessGroup(
-	executor: Executor,
-	kind: string
-): Promise<ProcessGroupRow> {
+export async function resolveWorkspace(executor: Executor, kind: string): Promise<WorkspaceRow> {
 	const [row] = await executor
 		.select({
-			id: processGroups.id,
-			key: processGroups.key,
-			name: processGroups.name,
-			activeRevisionId: processGroups.activeRevisionId
+			id: workspaces.id,
+			key: workspaces.key,
+			name: workspaces.name,
+			activeRevisionId: workspaces.activeRevisionId
 		})
 		.from(processGroupCounterpartyKinds)
-		.innerJoin(processGroups, eq(processGroups.id, processGroupCounterpartyKinds.groupId))
+		.innerJoin(workspaces, eq(workspaces.id, processGroupCounterpartyKinds.groupId))
 		.where(eq(processGroupCounterpartyKinds.kind, kind as 'educational_institution'))
 		.limit(1);
 
@@ -449,12 +455,17 @@ async function writeRevisionContent(
 	return idByKey;
 }
 
-/** Следующий номер редакции внутри группы. */
-async function nextVersion(executor: Executor, groupId: string): Promise<number> {
+/**
+ * Следующий номер редакции внутри пространства. Колонка редакции пока зовётся
+ * `group_id` и указывает на пространство: цепочка редакций переедет на процесс
+ * отдельным шагом, и двигать её заодно с местом значило бы смешать две правки в
+ * одной миграции.
+ */
+async function nextVersion(executor: Executor, workspaceId: string): Promise<number> {
 	const [row] = await executor
 		.select({ value: sql<number>`coalesce(max(${processRevisions.version}), 0)::int` })
 		.from(processRevisions)
-		.where(eq(processRevisions.groupId, groupId));
+		.where(eq(processRevisions.groupId, workspaceId));
 
 	return (row?.value ?? 0) + 1;
 }
@@ -558,12 +569,12 @@ function stageDifferences(before: ComparableStage, after: ComparableStage): stri
 }
 
 /**
- * Сопоставление стадий по ключу в пределах группы.
+ * Сопоставление стадий по ключу в пределах процесса пространства.
  *
  * Именно по ключу, а не по идентификатору строки: строка `stages` живёт внутри
- * редакции и меняется с каждой публикацией, а ключ внутри группы не меняется
- * никогда. Переименование отличается от «удалили и добавили» тем же ключом —
- * иначе история стадии обрывалась бы на каждой правке названия.
+ * редакции и меняется с каждой публикацией, а ключ внутри одного процесса не
+ * меняется никогда. Переименование отличается от «удалили и добавили» тем же
+ * ключом — иначе история стадии обрывалась бы на каждой правке названия.
  */
 export function matchStages(
 	active: readonly ComparableStage[],
@@ -665,7 +676,7 @@ export type DraftShape = {
 export function validateProcessDraft(
 	draft: DraftShape,
 	context: {
-		/** Ключи, которые в этой группе когда-то были и помечены архивными. */
+		/** Ключи, которые в этом процессе когда-то были и помечены архивными. */
 		archivedKeys: ReadonlySet<string>;
 		/** Ключи действующей структуры по порядку; пусто у первой редакции. */
 		activeOrderedKeys: readonly string[];
@@ -702,12 +713,12 @@ export function validateProcessDraft(
 			);
 		}
 
-		// Ключ, который когда-либо был в группе и убран, остаётся занятым: иначе
-		// история прошлого года, сопоставленная по ключу, приросла бы записями
-		// совсем другой работы, и никакой отчёт этого не покажет.
+		// Ключ, который когда-либо был в этом процессе и убран, остаётся занятым:
+		// иначе история прошлого года, сопоставленная по ключу, приросла бы
+		// записями совсем другой работы, и никакой отчёт этого не покажет.
 		if (context.archivedKeys.has(stage.key)) {
 			issues.push(
-				`Ключ «${stage.key}» уже был в этой группе и снят: заведите стадию под другим ключом`
+				`Ключ «${stage.key}» уже был в этом процессе и снят: заведите стадию под другим ключом`
 			);
 		}
 	}
@@ -891,18 +902,19 @@ export function buildPreview(input: {
 }
 
 /* ------------------------------------------------------------------------- *
- * Чтение: список групп и процесс одной группы.
+ * Чтение: список пространств и процесс одного пространства.
  * ------------------------------------------------------------------------- */
 
 /**
- * Сколько незавершённых взаимодействий стоит на каждом ключе стадии группы.
+ * Сколько незавершённых взаимодействий пространства стоит на каждом ключе
+ * стадии.
  *
  * По ключу из стадии, а не из снимка: снимок описывает то, что видел
  * исполнитель, а перенос работает с тем, где запись стоит сейчас.
  */
 async function countOpenByStageKey(
 	executor: Executor,
-	groupId: string
+	workspaceId: string
 ): Promise<Map<string, number>> {
 	const rows = await executor
 		.select({ key: stages.key, value: count() })
@@ -912,7 +924,7 @@ async function countOpenByStageKey(
 		.where(
 			and(
 				isNull(stageEntries.leftAt),
-				eq(interactions.processGroupId, groupId),
+				eq(interactions.workspaceId, workspaceId),
 				eq(interactions.status, 'active')
 			)
 		)
@@ -921,143 +933,156 @@ async function countOpenByStageKey(
 	return new Map(rows.map((row) => [row.key, row.value]));
 }
 
-/** Архивные ключи группы: заводить стадию под ними нельзя. */
-async function readArchivedKeys(executor: Executor, groupId: string): Promise<Set<string>> {
+/**
+ * Архивные ключи процесса пространства: заводить стадию под ними нельзя. Реестр
+ * ключей пока привязан колонкой `group_id` к пространству — на процесс он
+ * переедет вместе с редакциями.
+ */
+async function readArchivedKeys(executor: Executor, workspaceId: string): Promise<Set<string>> {
 	const rows = await executor
 		.select({ key: processStageKeys.key })
 		.from(processStageKeys)
 		.where(
-			and(eq(processStageKeys.groupId, groupId), sql`${processStageKeys.archivedAt} is not null`)
+			and(
+				eq(processStageKeys.groupId, workspaceId),
+				sql`${processStageKeys.archivedAt} is not null`
+			)
 		);
 
 	return new Set(rows.map((row) => row.key));
 }
 
 /**
- * Группы процесса со счётчиками. Счётчики считаются отдельными запросами, а не
+ * Пространства со счётчиками. Счётчики считаются отдельными запросами, а не
  * соединением: стадии и взаимодействия — разные множества, и одно соединение
  * перемножило бы их, дав правдоподобное, но неверное число.
  */
-export async function listProcessGroups(ctx: ActorContext): Promise<ProcessGroupSummary[]> {
+export async function listWorkspaces(ctx: ActorContext): Promise<WorkspaceSummary[]> {
 	await requirePermission(ctx, 'stages.configure', { type: 'stages.process_viewed' });
 
-	return readProcessGroups();
+	return readWorkspaces();
 }
 
 /**
- * Те же группы, но для того, кто заводит взаимодействие, а не настраивает
+ * Те же пространства, но для того, кто заводит взаимодействие, а не настраивает
  * процесс. Форма заведения показывает ими, что произойдёт после сохранения, и
- * говорит заранее, если в группе процесса ещё нет; права настраивать процесс у
- * КАМа при этом нет, и требовать его здесь значило бы закрыть форму от того,
- * кто ею и пользуется.
+ * говорит заранее, если в пространстве процесса ещё нет; права настраивать
+ * процесс у КАМа при этом нет, и требовать его здесь значило бы закрыть форму
+ * от того, кто ею и пользуется.
  */
-export async function listProcessGroupsForWork(ctx: ActorContext): Promise<ProcessGroupSummary[]> {
+export async function listWorkspacesForWork(ctx: ActorContext): Promise<WorkspaceSummary[]> {
 	requirePermission(ctx, 'interactions.write');
 
-	return readProcessGroups();
+	return readWorkspaces();
 }
 
-async function readProcessGroups(): Promise<ProcessGroupSummary[]> {
+async function readWorkspaces(): Promise<WorkspaceSummary[]> {
 	const db = getDb();
 
-	const [groups, stageCounts, activeCounts, drafts] = await Promise.all([
-		db.select().from(processGroups).orderBy(asc(processGroups.position)),
+	const [rows, stageCounts, activeCounts, drafts] = await Promise.all([
+		db.select().from(workspaces).orderBy(asc(workspaces.position)),
 		db
 			.select({ revisionId: stages.revisionId, value: count() })
 			.from(stages)
 			.groupBy(stages.revisionId),
 		db
-			.select({ groupId: interactions.processGroupId, value: count() })
+			.select({ workspaceId: interactions.workspaceId, value: count() })
 			.from(interactions)
 			.where(eq(interactions.status, 'active'))
-			.groupBy(interactions.processGroupId),
+			.groupBy(interactions.workspaceId),
 		db
-			.select({ groupId: processRevisions.groupId })
+			// Черновик висит на колонке `group_id`, которая сегодня указывает на
+			// пространство: цепочка редакций переедет на процесс отдельным шагом.
+			.select({ workspaceId: processRevisions.groupId })
 			.from(processRevisions)
 			.where(isNull(processRevisions.publishedAt))
 	]);
 
 	const stagesByRevision = new Map(stageCounts.map((row) => [row.revisionId, row.value]));
-	const activeByGroup = new Map(activeCounts.map((row) => [row.groupId, row.value]));
-	const draftGroups = new Set(drafts.map((row) => row.groupId));
+	const activeByWorkspace = new Map(activeCounts.map((row) => [row.workspaceId, row.value]));
+	const workspacesWithDraft = new Set(drafts.map((row) => row.workspaceId));
 
-	return groups.map((group) => ({
-		id: group.id,
-		key: group.key,
-		name: group.name,
-		description: group.description,
-		position: group.position,
+	return rows.map((workspace) => ({
+		id: workspace.id,
+		key: workspace.key,
+		name: workspace.name,
+		description: workspace.description,
+		position: workspace.position,
 		stageCount:
-			group.activeRevisionId === null ? 0 : (stagesByRevision.get(group.activeRevisionId) ?? 0),
-		activeInteractions: activeByGroup.get(group.id) ?? 0,
-		hasDraft: draftGroups.has(group.id)
+			workspace.activeRevisionId === null
+				? 0
+				: (stagesByRevision.get(workspace.activeRevisionId) ?? 0),
+		activeInteractions: activeByWorkspace.get(workspace.id) ?? 0,
+		hasDraft: workspacesWithDraft.has(workspace.id)
 	}));
 }
 
-/** Группа по ключу. Ключ, а не идентификатор: адрес раздела читают люди. */
-export async function readGroupByKey(executor: Executor, key: string): Promise<ProcessGroupRow> {
+/** Пространство по ключу. Ключ, а не идентификатор: адрес раздела читают люди. */
+export async function readWorkspaceByKey(executor: Executor, key: string): Promise<WorkspaceRow> {
 	const [row] = await executor
 		.select({
-			id: processGroups.id,
-			key: processGroups.key,
-			name: processGroups.name,
-			activeRevisionId: processGroups.activeRevisionId
+			id: workspaces.id,
+			key: workspaces.key,
+			name: workspaces.name,
+			activeRevisionId: workspaces.activeRevisionId
 		})
-		.from(processGroups)
-		.where(eq(processGroups.key, key));
+		.from(workspaces)
+		.where(eq(workspaces.key, key));
 
 	if (row === undefined) {
-		throw new NotFoundError('Группа процесса не найдена');
+		throw new NotFoundError('Пространство не найдено');
 	}
 
 	return row;
 }
 
-/** Черновик группы, если он заведён. У группы он один. */
+/** Черновик пространства, если он заведён. У пространства он один. */
 export async function readDraft(
 	executor: Executor,
-	groupId: string
+	workspaceId: string
 ): Promise<ProcessRevisionView | null> {
 	const [row] = await executor
 		.select({ id: processRevisions.id })
 		.from(processRevisions)
-		.where(and(eq(processRevisions.groupId, groupId), isNull(processRevisions.publishedAt)))
+		.where(and(eq(processRevisions.groupId, workspaceId), isNull(processRevisions.publishedAt)))
 		.limit(1);
 
 	return row === undefined ? null : readRevision(executor, row.id);
 }
 
-/** Процесс группы целиком: что действует, что в черновике и что ему мешает. */
-export async function getProcessGroup(
+/**
+ * Процесс пространства целиком: что действует, что в черновике и что ему мешает.
+ */
+export async function getWorkspace(
 	ctx: ActorContext,
-	groupKey: string
-): Promise<ProcessGroupDetail> {
+	workspaceKey: string
+): Promise<WorkspaceDetail> {
 	await requirePermission(ctx, 'stages.configure', { type: 'stages.process_viewed' });
 
 	const db = getDb();
-	const group = await readGroupByKey(db, groupKey);
+	const workspace = await readWorkspaceByKey(db, workspaceKey);
 
 	const [summaries, active, draft, kinds, openByKey, archivedKeys] = await Promise.all([
-		listProcessGroups(ctx),
-		readActiveRevision(db, group),
-		readDraft(db, group.id),
+		listWorkspaces(ctx),
+		readActiveRevision(db, workspace),
+		readDraft(db, workspace.id),
 		db
 			.select({ kind: processGroupCounterpartyKinds.kind })
 			.from(processGroupCounterpartyKinds)
-			.where(eq(processGroupCounterpartyKinds.groupId, group.id))
+			.where(eq(processGroupCounterpartyKinds.groupId, workspace.id))
 			.orderBy(asc(processGroupCounterpartyKinds.kind)),
-		countOpenByStageKey(db, group.id),
-		readArchivedKeys(db, group.id)
+		countOpenByStageKey(db, workspace.id),
+		readArchivedKeys(db, workspace.id)
 	]);
 
-	const summary = summaries.find((row) => row.id === group.id);
+	const summary = summaries.find((row) => row.id === workspace.id);
 
 	if (summary === undefined) {
-		throw new NotFoundError('Группа процесса не найдена');
+		throw new NotFoundError('Пространство не найдено');
 	}
 
 	return {
-		group: summary,
+		workspace: summary,
 		active,
 		draft,
 		counterpartyKinds: kinds.map((row) => row.kind),
@@ -1121,38 +1146,42 @@ function keysOutsideDraft(archived: ReadonlySet<string>, draft: ProcessRevisionV
  *
  * Так меняется процесс: действующую редакцию править нельзя, а писать её
  * заново руками значит переписать четырнадцать стадий ради правки одного
- * норматива. У группы без процесса черновик заводится пустым — с одной
+ * норматива. У пространства без процесса черновик заводится пустым — с одной
  * стадией, потому что процесса без стадий не существует.
  */
 export async function createDraft(
 	ctx: ActorContext,
-	groupKey: string
+	workspaceKey: string
 ): Promise<ProcessRevisionView> {
 	await requirePermission(ctx, 'stages.configure', { type: 'stages.draft_created' });
 
 	return withTransaction(ctx, async (tx) => {
-		const group = await lockGroup(tx, (await readGroupByKey(tx, groupKey)).id, 'update');
-		const existing = await readDraft(tx, group.id);
+		const workspace = await lockWorkspace(
+			tx,
+			(await readWorkspaceByKey(tx, workspaceKey)).id,
+			'update'
+		);
+		const existing = await readDraft(tx, workspace.id);
 
 		if (existing !== null) {
 			throw new ConflictError(
-				'У группы уже есть черновик изменений: доведите его до применения или отмените'
+				'У пространства уже есть черновик изменений: доведите его до применения или отмените'
 			);
 		}
 
-		const active = await readActiveRevision(tx, group);
+		const active = await readActiveRevision(tx, workspace);
 
 		if (active === null) {
 			throw new ConflictError(
-				`Для группы «${group.name}» ещё нет действующего процесса: сначала заведите его стадии набором данных`
+				`Для пространства «${workspace.name}» ещё нет действующего процесса: сначала заведите его стадии набором данных`
 			);
 		}
 
 		const [created] = await tx
 			.insert(processRevisions)
 			.values({
-				groupId: group.id,
-				version: await nextVersion(tx, group.id),
+				groupId: workspace.id,
+				version: await nextVersion(tx, workspace.id),
 				name: active.name,
 				note: active.note
 			})
@@ -1170,8 +1199,8 @@ export async function createDraft(
 			{
 				type: 'stages.draft_created',
 				outcome: 'success',
-				subject: { type: 'process_group', id: group.id },
-				details: { groupKey: group.key, revisionId: created.id }
+				subject: { type: 'process_group', id: workspace.id },
+				details: { workspaceKey: workspace.key, revisionId: created.id }
 			},
 			tx
 		);
@@ -1183,13 +1212,14 @@ export async function createDraft(
 /**
  * Правка черновика: стадии, переходы и правила переноса переписываются целиком.
  *
- * Под той же блокировкой группы, что и публикация: иначе два открытых редактора
- * пишут в одну редакцию, а публикация видит наполовину чужой черновик.
- * Блокировка держится на время сохранения формы, а не на время редактирования.
+ * Под той же блокировкой пространства, что и публикация: иначе два открытых
+ * редактора пишут в одну редакцию, а публикация видит наполовину чужой
+ * черновик. Блокировка держится на время сохранения формы, а не на время
+ * редактирования.
  */
 export async function updateDraft(
 	ctx: ActorContext,
-	groupKey: string,
+	workspaceKey: string,
 	input: ProcessDefinitionInput
 ): Promise<ProcessRevisionView> {
 	await requirePermission(ctx, 'stages.configure', { type: 'stages.draft_updated' });
@@ -1206,14 +1236,18 @@ export async function updateDraft(
 	const definition = parsed.data;
 
 	return withTransaction(ctx, async (tx) => {
-		const group = await lockGroup(tx, (await readGroupByKey(tx, groupKey)).id, 'update');
-		const draft = await readDraft(tx, group.id);
+		const workspace = await lockWorkspace(
+			tx,
+			(await readWorkspaceByKey(tx, workspaceKey)).id,
+			'update'
+		);
+		const draft = await readDraft(tx, workspace.id);
 
 		if (draft === null) {
-			throw new NotFoundError('У группы нет черновика изменений');
+			throw new NotFoundError('У пространства нет черновика изменений');
 		}
 
-		const active = await readActiveRevision(tx, group);
+		const active = await readActiveRevision(tx, workspace);
 
 		await tx.delete(stageTransitions).where(eq(stageTransitions.revisionId, draft.id));
 		await tx.delete(stageMigrationRules).where(eq(stageMigrationRules.revisionId, draft.id));
@@ -1231,9 +1265,9 @@ export async function updateDraft(
 			{
 				type: 'stages.draft_updated',
 				outcome: 'success',
-				subject: { type: 'process_group', id: group.id },
+				subject: { type: 'process_group', id: workspace.id },
 				details: {
-					groupKey: group.key,
+					workspaceKey: workspace.key,
 					revisionId: draft.id,
 					stageCount: definition.stages.length,
 					transitionCount: definition.transitions.length
@@ -1284,15 +1318,19 @@ export function withDefaultRules(
 }
 
 /** Отмена черновика: редакция и её содержимое удаляются целиком. */
-export async function discardDraft(ctx: ActorContext, groupKey: string): Promise<void> {
+export async function discardDraft(ctx: ActorContext, workspaceKey: string): Promise<void> {
 	await requirePermission(ctx, 'stages.configure', { type: 'stages.draft_discarded' });
 
 	await withTransaction(ctx, async (tx) => {
-		const group = await lockGroup(tx, (await readGroupByKey(tx, groupKey)).id, 'update');
-		const draft = await readDraft(tx, group.id);
+		const workspace = await lockWorkspace(
+			tx,
+			(await readWorkspaceByKey(tx, workspaceKey)).id,
+			'update'
+		);
+		const draft = await readDraft(tx, workspace.id);
 
 		if (draft === null) {
-			throw new NotFoundError('У группы нет черновика изменений');
+			throw new NotFoundError('У пространства нет черновика изменений');
 		}
 
 		// Стадии, переходы и правила уходят каскадом: черновик — это редакция
@@ -1304,8 +1342,8 @@ export async function discardDraft(ctx: ActorContext, groupKey: string): Promise
 			{
 				type: 'stages.draft_discarded',
 				outcome: 'success',
-				subject: { type: 'process_group', id: group.id },
-				details: { groupKey: group.key, revisionId: draft.id }
+				subject: { type: 'process_group', id: workspace.id },
+				details: { workspaceKey: workspace.key, revisionId: draft.id }
 			},
 			tx
 		);
@@ -1326,22 +1364,22 @@ export async function discardDraft(ctx: ActorContext, groupKey: string): Promise
  */
 export async function previewPublication(
 	ctx: ActorContext,
-	groupKey: string
+	workspaceKey: string
 ): Promise<ProcessPreview> {
 	await requirePermission(ctx, 'stages.configure', { type: 'stages.process_viewed' });
 
 	const db = getDb();
-	const group = await readGroupByKey(db, groupKey);
-	const draft = await readDraft(db, group.id);
+	const workspace = await readWorkspaceByKey(db, workspaceKey);
+	const draft = await readDraft(db, workspace.id);
 
 	if (draft === null) {
-		throw new NotFoundError('У группы нет черновика изменений');
+		throw new NotFoundError('У пространства нет черновика изменений');
 	}
 
 	const [active, openByKey, archivedKeys] = await Promise.all([
-		readActiveRevision(db, group),
-		countOpenByStageKey(db, group.id),
-		readArchivedKeys(db, group.id)
+		readActiveRevision(db, workspace),
+		countOpenByStageKey(db, workspace.id),
+		readArchivedKeys(db, workspace.id)
 	]);
 
 	const issues = validateProcessDraft(toDraftShape(draft), {
@@ -1351,7 +1389,9 @@ export async function previewPublication(
 	});
 
 	return buildPreview({
-		groupId: group.id,
+		// Поле предпросмотра пока зовётся `groupId`: оно переедет на процесс тем
+		// же шагом, что и цепочка редакций.
+		groupId: workspace.id,
 		matches: matchStages(active?.stages ?? [], draft.stages),
 		openByKey,
 		migrationRules: draft.migrationRules,
@@ -1362,8 +1402,8 @@ export async function previewPublication(
 
 /** Чем закончилась публикация: числа, которые уходят в журнал и на экран. */
 export type PublicationResult = {
-	groupId: string;
-	groupKey: string;
+	workspaceId: string;
+	workspaceKey: string;
 	version: number;
 	/** Записей, перепривязанных к стадии с тем же ключом. */
 	reboundCount: number;
@@ -1377,30 +1417,34 @@ export type PublicationResult = {
  * Применение черновика ко всем.
  *
  * Единственная операция, которая меняет действующий процесс, и она же переносит
- * все незавершённые взаимодействия группы на новую структуру. Порядок шагов
- * фиксирован и объяснён по месту.
+ * все незавершённые взаимодействия пространства на новую структуру. Порядок
+ * шагов фиксирован и объяснён по месту.
  */
 export async function publishProcess(
 	ctx: ActorContext,
-	groupKey: string
+	workspaceKey: string
 ): Promise<PublicationResult> {
 	await requirePermission(ctx, 'stages.configure', { type: 'stages.process_published' });
 
 	const result = await withTransaction(ctx, async (tx) => {
-		// 1. Блокировка группы: две одновременные публикации выстраиваются в
+		// 1. Блокировка пространства: две одновременные публикации выстраиваются в
 		// очередь, а создание взаимодействия ждёт своей разделяемой блокировки.
-		const group = await lockGroup(tx, (await readGroupByKey(tx, groupKey)).id, 'update');
+		const workspace = await lockWorkspace(
+			tx,
+			(await readWorkspaceByKey(tx, workspaceKey)).id,
+			'update'
+		);
 
 		// 2. Перечитать черновик под блокировкой и проверить его целиком.
-		const draft = await readDraft(tx, group.id);
+		const draft = await readDraft(tx, workspace.id);
 
 		if (draft === null) {
-			throw new NotFoundError('У группы нет черновика изменений');
+			throw new NotFoundError('У пространства нет черновика изменений');
 		}
 
-		const active = await readActiveRevision(tx, group);
-		const openByKey = await countOpenByStageKey(tx, group.id);
-		const archivedKeys = await readArchivedKeys(tx, group.id);
+		const active = await readActiveRevision(tx, workspace);
+		const openByKey = await countOpenByStageKey(tx, workspace.id);
+		const archivedKeys = await readArchivedKeys(tx, workspace.id);
 
 		const issues = validateProcessDraft(toDraftShape(draft), {
 			archivedKeys: keysOutsideDraft(archivedKeys, draft),
@@ -1412,18 +1456,19 @@ export async function publishProcess(
 			throw new ValidationError('Черновик нельзя применить ко всем', issues);
 		}
 
-		// 3. Блокировка незавершённых взаимодействий группы по возрастанию
+		// 3. Блокировка незавершённых взаимодействий пространства по возрастанию
 		// идентификатора: фиксированный порядок исключает взаимный замок.
 		const locked = await tx
 			.select({ id: interactions.id, ownerUserId: interactions.ownerUserId })
 			.from(interactions)
-			.where(and(eq(interactions.processGroupId, group.id), eq(interactions.status, 'active')))
+			.where(and(eq(interactions.workspaceId, workspace.id), eq(interactions.status, 'active')))
 			.orderBy(asc(interactions.id))
 			.for('update');
 
 		// 4. Момент операции — после **всех** ожиданий, а не только после
-		// блокировки группы. `now()` в PostgreSQL это начало транзакции, а
-		// публикация ждёт дважды: строку группы и каждую строку взаимодействия.
+		// блокировки пространства. `now()` в PostgreSQL это начало транзакции, а
+		// публикация ждёт дважды: строку пространства и каждую строку
+		// взаимодействия.
 		// Момент, снятый до шага 3, оказался бы раньше входа на стадию у того,
 		// кто перешёл, пока публикация стояла в очереди за его строкой: `left_at`
 		// закрываемой записи вышел бы раньше её `entered_at`, и база отказала бы
@@ -1451,11 +1496,11 @@ export async function publishProcess(
 			.where(eq(processRevisions.id, draft.id));
 
 		await tx
-			.update(processGroups)
+			.update(workspaces)
 			.set({ activeRevisionId: draft.id, updatedAt: at })
-			.where(eq(processGroups.id, group.id));
+			.where(eq(workspaces.id, workspace.id));
 
-		const archivedKeyCount = await syncStageKeys(tx, group.id, draft, at);
+		const archivedKeyCount = await syncStageKeys(tx, workspace.id, draft, at);
 
 		// 8. События журнала с фактическими числами: предпросмотр справочен,
 		// а отвечать на вопрос «что произошло» обязаны эти строки.
@@ -1464,9 +1509,9 @@ export async function publishProcess(
 			{
 				type: 'stages.process_published',
 				outcome: 'success',
-				subject: { type: 'process_group', id: group.id },
+				subject: { type: 'process_group', id: workspace.id },
 				details: {
-					groupKey: group.key,
+					workspaceKey: workspace.key,
 					revisionId: draft.id,
 					versionCount: draft.version,
 					stageCount: draft.stages.length,
@@ -1482,9 +1527,9 @@ export async function publishProcess(
 			{
 				type: 'stages.process_migrated',
 				outcome: 'success',
-				subject: { type: 'process_group', id: group.id },
+				subject: { type: 'process_group', id: workspace.id },
 				details: {
-					groupKey: group.key,
+					workspaceKey: workspace.key,
 					revisionId: draft.id,
 					reboundCount: moved.reboundCount,
 					migratedCount: moved.migrated.length
@@ -1528,8 +1573,8 @@ export async function publishProcess(
 		}
 
 		return {
-			groupId: group.id,
-			groupKey: group.key,
+			workspaceId: workspace.id,
+			workspaceKey: workspace.key,
 			version: draft.version,
 			reboundCount: moved.reboundCount,
 			migratedCount: moved.migrated.length,
@@ -1557,7 +1602,7 @@ type MigratedInteraction = {
  * Отметки чек-листа, которые переезжают вместе с записью на другую стадию.
  *
  * Переезжает пункт, совпавший **и ключом, и подписью**. Ключи чек-листа
- * уникальны внутри стадии, а не внутри группы: `papers` на «Документах» и
+ * уникальны внутри стадии, а не внутри процесса: `papers` на «Документах» и
  * `papers` на «Проверке» — два разных требования, и совпадение ключа при
  * переезде случайно. Отметка описывает сделанную работу, и переносить её на
  * требование с другой формулировкой значит засчитать невыполненное: шаг вперёд
@@ -1592,7 +1637,7 @@ function keptChecklistMarks(
  *
  * Перепривязываются **только открытые** записи: закрытые остаются на стадиях
  * своих редакций — там, где их прошли, — и их снимки не трогает никто. Иначе
- * каждая публикация переписывала бы всю историю группы одной длинной
+ * каждая публикация переписывала бы всю историю пространства одной длинной
  * транзакцией под блокировкой, двигая `updated_at` у записей, в которых ничего
  * не произошло.
  */
@@ -1746,14 +1791,15 @@ export async function migrateEntries(
 }
 
 /**
- * Реестр ключей группы: новые ключи заводятся, исчезнувшие помечаются
- * архивными. Строка не удаляется никогда — ключ, который когда-либо был в
- * группе, остаётся занятым, иначе под именем `signing` однажды появилась бы
- * стадия с другим смыслом.
+ * Реестр ключей процесса пространства: новые ключи заводятся, исчезнувшие
+ * помечаются архивными. Строка не удаляется никогда — ключ, который когда-либо
+ * здесь был, остаётся занятым, иначе под именем `signing` однажды появилась бы
+ * стадия с другим смыслом. Колонка реестра пока зовётся `group_id` и указывает
+ * на пространство: на процесс она переедет вместе с редакциями.
  */
 export async function syncStageKeys(
 	tx: Tx,
-	groupId: string,
+	workspaceId: string,
 	revision: ProcessRevisionView,
 	at: Date
 ): Promise<number> {
@@ -1762,7 +1808,7 @@ export async function syncStageKeys(
 	if (keys.length > 0) {
 		await tx
 			.insert(processStageKeys)
-			.values(keys.map((key) => ({ groupId, key, firstSeenAt: at })))
+			.values(keys.map((key) => ({ groupId: workspaceId, key, firstSeenAt: at })))
 			.onConflictDoNothing();
 
 		// Ключ вернулся в процесс до того, как его архив кого-нибудь смутил:
@@ -1770,7 +1816,7 @@ export async function syncStageKeys(
 		await tx
 			.update(processStageKeys)
 			.set({ archivedAt: null })
-			.where(and(eq(processStageKeys.groupId, groupId), inArray(processStageKeys.key, keys)));
+			.where(and(eq(processStageKeys.groupId, workspaceId), inArray(processStageKeys.key, keys)));
 	}
 
 	const archived = await tx
@@ -1778,7 +1824,7 @@ export async function syncStageKeys(
 		.set({ archivedAt: at })
 		.where(
 			and(
-				eq(processStageKeys.groupId, groupId),
+				eq(processStageKeys.groupId, workspaceId),
 				isNull(processStageKeys.archivedAt),
 				keys.length === 0 ? sql`true` : notInArray(processStageKeys.key, keys)
 			)
@@ -1789,20 +1835,20 @@ export async function syncStageKeys(
 }
 
 /**
- * Процесс группы, с которым приезжает стенд. Идемпотентно: если у группы уже
- * есть действующая редакция, возвращается её идентификатор и ничего не
- * пишется. Зовут сиды и тесты, поэтому функция принимает транзакцию вызывающего
- * и не проверяет прав — решение принял код, который её позвал.
+ * Процесс пространства, с которым приезжает стенд. Идемпотентно: если у
+ * пространства уже есть действующая редакция, возвращается её идентификатор и
+ * ничего не пишется. Зовут сиды и тесты, поэтому функция принимает транзакцию
+ * вызывающего и не проверяет прав — решение принял код, который её позвал.
  */
 export async function ensureProcess(
 	tx: Tx,
-	groupKey: string,
+	workspaceKey: string,
 	definition: ProcessDefinitionInput
 ): Promise<string> {
-	const group = await readGroupByKey(tx, groupKey);
+	const workspace = await readWorkspaceByKey(tx, workspaceKey);
 
-	if (group.activeRevisionId !== null) {
-		return group.activeRevisionId;
+	if (workspace.activeRevisionId !== null) {
+		return workspace.activeRevisionId;
 	}
 
 	const parsed = processDefinitionSchema.parse(definition);
@@ -1811,8 +1857,8 @@ export async function ensureProcess(
 	const [revision] = await tx
 		.insert(processRevisions)
 		.values({
-			groupId: group.id,
-			version: await nextVersion(tx, group.id),
+			groupId: workspace.id,
+			version: await nextVersion(tx, workspace.id),
 			name: parsed.name,
 			note: parsed.note,
 			publishedAt: at
@@ -1822,11 +1868,11 @@ export async function ensureProcess(
 	await writeRevisionContent(tx, revision.id, parsed);
 
 	await tx
-		.update(processGroups)
+		.update(workspaces)
 		.set({ activeRevisionId: revision.id, updatedAt: at })
-		.where(eq(processGroups.id, group.id));
+		.where(eq(workspaces.id, workspace.id));
 
-	await syncStageKeys(tx, group.id, await readRevision(tx, revision.id), at);
+	await syncStageKeys(tx, workspace.id, await readRevision(tx, revision.id), at);
 
 	return revision.id;
 }

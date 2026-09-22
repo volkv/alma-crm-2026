@@ -21,7 +21,7 @@ import {
 import { startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
 import {
 	advanceTo,
-	B2C_GROUP_KEY,
+	B2C_WORKSPACE_KEY,
 	createInteractionOn,
 	seedProcess,
 	threeStageProcess
@@ -83,8 +83,8 @@ function shape(view: ReportView) {
 		rowKeys: view.rows.map((row) => row.rowKey).sort(),
 		interactions: view.rows.map((row) => row.interactionId).sort(),
 		totals: { rowCount: view.totals.rowCount, interactionCount: view.totals.interactionCount },
-		funnel: view.charts.funnel?.groups
-			.flatMap((group) => group.stages)
+		funnel: view.charts.funnel?.workspaces
+			.flatMap((workspace) => workspace.stages)
 			.map((bucket) => `${bucket.key}=${bucket.value}`)
 			.sort(),
 		closed: view.charts.funnel?.closed.map((bucket) => `${bucket.key}=${bucket.value}`).sort()
@@ -97,7 +97,7 @@ const MOVEMENT = { mode: 'movement' as const, from: '2026-09-01', to: '2026-09-1
 describe('отчёт на прошлую дату до и после применения изменений', () => {
 	it('даёт то же распределение по стадиям и то же движение', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, threeStageProcess());
+		await seedProcess(database, B2C_WORKSPACE_KEY, threeStageProcess());
 
 		const first = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
 		const second = await createInteractionOn(ctx, database, { kind: 'legal_entity' });
@@ -116,10 +116,10 @@ describe('отчёт на прошлую дату до и после приме�
 		// Публикация делает всё разом: «Приём» удаляется (его записи переезжают
 		// на «Предложение»), «Предложение» переименовывается и получает другой
 		// норматив.
-		const draft = await createDraft(ctx, B2C_GROUP_KEY);
+		const draft = await createDraft(ctx, B2C_WORKSPACE_KEY);
 		const definition = processDefinition(draft);
 
-		await updateDraft(ctx, B2C_GROUP_KEY, {
+		await updateDraft(ctx, B2C_WORKSPACE_KEY, {
 			...definition,
 			migrationRules: [{ removedStageKey: 'intake', targetStageKey: 'offer' }],
 			stages: definition.stages
@@ -138,7 +138,7 @@ describe('отчёт на прошлую дату до и после приме�
 			]
 		});
 
-		const published = await publishProcess(ctx, B2C_GROUP_KEY);
+		const published = await publishProcess(ctx, B2C_WORKSPACE_KEY);
 
 		expect(published.migratedCount).toBe(1);
 		expect(published.reboundCount).toBe(2);

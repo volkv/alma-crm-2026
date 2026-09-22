@@ -4,7 +4,7 @@ import type { Page } from '@playwright/test';
 import type { StageSnapshot } from '$lib/contracts/interactions';
 import { expect, test } from './fixtures';
 import { waitForHydration } from './helpers/hydration';
-import { seedProcessGroup } from './helpers/process-group';
+import { seedWorkspace } from './helpers/workspace';
 
 /**
  * Раздел отчётов глазами человека: режим, набор колонок, выгрузка и клик по
@@ -114,7 +114,7 @@ async function seed(): Promise<void> {
 			// Группу заводит общий хелпер: он же берёт замок, под которым идёт и
 			// остальная подготовка. Файлы прогона идут параллельно, и редакцию заводит
 			// кто-то один.
-			const { groupId, stageIds } = await seedProcessGroup(tx, {
+			const { workspaceId, stageIds } = await seedWorkspace(tx, {
 				key: GROUP_KEY,
 				name: 'Проверка раздела отчётов',
 				revisionName: 'Процесс проверки отчётов',
@@ -150,7 +150,7 @@ async function seed(): Promise<void> {
 				insert into interactions ${tx({
 					id: SEEDED.interactionId,
 					title: SEEDED.title,
-					process_group_id: groupId,
+					workspace_id: workspaceId,
 					status: 'active',
 					owner_user_id: manager.id,
 					last_activity_at: daysAgo(SEEDED.movedDaysAgo)
@@ -363,7 +363,7 @@ test('клик по столбцу воронки ведёт к списку т�
 	// что уже было выбрано: столбец нарисован под теми же условиями.
 	const applied = new URL(page.url()).searchParams;
 
-	expect(applied.get('group')).not.toBeNull();
+	expect(applied.get('workspace')).not.toBeNull();
 	expect(applied.get('stage')).not.toBeNull();
 	expect(applied.get('mode')).toBe('snapshot');
 	expect(applied.get('from')).toMatch(/^\d{4}-\d{2}-\d{2}$/);
@@ -388,7 +388,7 @@ test('столбец воронки выбирается с клавиатуры
 
 	const period = `from=${moscowDay(daysAgo(SEEDED.periodDaysAgo))}&to=${moscowDay(new Date())}`;
 
-	await page.goto(`/reports?mode=snapshot&group=${GROUP_KEY}&${period}`);
+	await page.goto(`/reports?mode=snapshot&workspace=${GROUP_KEY}&${period}`);
 	await waitForHydration(page);
 
 	// Группа прогона своя, и столбцов в её воронке ровно два: заполненный —
@@ -406,7 +406,7 @@ test('столбец воронки выбирается с клавиатуры
 	const applied = new URL(page.url()).searchParams;
 
 	expect(applied.get('stage')).toBe(STAGES[1].key);
-	expect(applied.get('group')).toBe(GROUP_KEY);
+	expect(applied.get('workspace')).toBe(GROUP_KEY);
 	await expect(page.getByTestId('report-row-count')).toHaveText('1');
 });
 
@@ -415,7 +415,7 @@ test('переключение режима пересчитывает итог�
 
 	const errors = clientErrors(page);
 	const period = `from=${moscowDay(daysAgo(SEEDED.periodDaysAgo))}&to=${moscowDay(new Date())}`;
-	const address = `/reports?mode=snapshot&group=${GROUP_KEY}&${period}`;
+	const address = `/reports?mode=snapshot&workspace=${GROUP_KEY}&${period}`;
 
 	await page.goto(address);
 	await waitForHydration(page);

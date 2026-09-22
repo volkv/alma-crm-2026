@@ -25,7 +25,7 @@
 		REPORT_FORMAT_LABELS,
 		REPORT_MODES,
 		REPORT_MODE_LABELS,
-		type ReportFunnelGroup,
+		type ReportFunnelWorkspace,
 		type ReportParam
 	} from '$lib/contracts/reports';
 	import { formatNumber, pluralize } from '$lib/format';
@@ -46,9 +46,9 @@
 	const droppedByList = $derived(unsupportedListFilters(page.url));
 
 	/** Пересказ воронки словами: `canvas` для чтения с экрана недоступен. */
-	function funnelSummary(group: ReportFunnelGroup): string {
+	function funnelSummary(workspace: ReportFunnelWorkspace): string {
 		return (
-			group.stages
+			workspace.stages
 				.filter((bucket) => bucket.value > 0)
 				.map((bucket) => `${bucket.label}: ${bucket.value}`)
 				.join('; ') || 'на стадиях никого'
@@ -93,14 +93,14 @@
 	 * Клик по полосе воронки ведёт к списку взаимодействий, которые за ней
 	 * стоят, — к таблице этого же отчёта под диаграммой: только она считает
 	 * стадию на дату среза так же, как воронка, и число её строк равно числу на
-	 * полосе. В адрес уезжают группа процесса и ключ стадии, остальные фильтры
+	 * полосе. В адрес уезжают пространство и ключ стадии, остальные фильтры
 	 * остаются — полоса нарисована под ними же.
 	 */
-	function selectStage(group: ReportFunnelGroup, index: number) {
-		const bucket = group.stages[index];
+	function selectStage(workspace: ReportFunnelWorkspace, index: number) {
+		const bucket = workspace.stages[index];
 
 		if (bucket?.filter != null) {
-			void goto(stageDrilldownHref(page.url, period, group.groupKey, bucket.filter.value), {
+			void goto(stageDrilldownHref(page.url, period, workspace.workspaceKey, bucket.filter.value), {
 				keepFocus: true,
 				noScroll: true
 			});
@@ -241,26 +241,26 @@
 
 	{#if data.charts.funnel !== null}
 		{@const funnel = data.charts.funnel}
-		<!-- Воронка своя у каждой группы процесса: у B2B и B2C разные стадии, и
+		<!-- Воронка своя у каждого пространства: у B2B и B2C разные стадии, и
 		     полосы двух процессов в одной картинке читались бы как один путь. -->
-		{#each funnel.groups as group (group.groupId)}
+		{#each funnel.workspaces as workspace (workspace.workspaceId)}
 			<ReportChart
-				title={funnel.groups.length > 1
-					? `Распределение по стадиям на дату среза — ${group.groupName}`
+				title={funnel.workspaces.length > 1
+					? `Распределение по стадиям на дату среза — ${workspace.workspaceName}`
 					: 'Распределение по стадиям на дату среза'}
 				note={funnel.note}
-				fileName="Отчёт по взаимодействиям — воронка {group.groupName}"
-				summary={funnelSummary(group)}
-				labels={group.stages.map((bucket) => bucket.label)}
+				fileName="Отчёт по взаимодействиям — воронка {workspace.workspaceName}"
+				summary={funnelSummary(workspace)}
+				labels={workspace.stages.map((bucket) => bucket.label)}
 				datasets={[
 					{
 						label: 'Взаимодействий',
-						values: group.stages.map((bucket) => bucket.value),
+						values: workspace.stages.map((bucket) => bucket.value),
 						token: '--color-primary'
 					}
 				]}
 				horizontal
-				onselect={(index) => selectStage(group, index)}
+				onselect={(index) => selectStage(workspace, index)}
 			/>
 		{/each}
 		<p class="text-xs text-muted-foreground">

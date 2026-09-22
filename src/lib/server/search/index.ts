@@ -54,7 +54,7 @@ const READERS: Record<SearchKind, GroupReader> = {
 			status: null,
 			ownerUserId: null,
 			organizationId: null,
-			group: null,
+			workspace: null,
 			stageCategory: null,
 			overdue: false,
 			sort: '-lastActivityAt',

@@ -78,7 +78,7 @@
 	<div class="flex flex-wrap items-center gap-2">
 		<MultiFilter param="org" label="Вуз" options={options.organizations} />
 		<MultiFilter param="party" label="Тип контрагента" options={options.parties} />
-		<MultiFilter param="group" label="Группа процесса" options={options.groups} />
+		<MultiFilter param="workspace" label="Пространство" options={options.workspaces} />
 		<MultiFilter param="dir" label="Направление" options={options.directions} />
 		<MultiFilter param="prog" label="Программа" options={options.programs} />
 		<MultiFilter param="prod" label="Продукт" options={options.products} />

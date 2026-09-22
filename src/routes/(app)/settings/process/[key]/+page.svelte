@@ -46,7 +46,7 @@
 	let { data, form: actionResult }: PageProps = $props();
 
 	const detail = $derived(data.detail);
-	const group = $derived(detail.group);
+	const workspace = $derived(detail.workspace);
 	const draft = $derived(detail.draft);
 	/** На экране правится черновик, а без него читается действующий процесс. */
 	const shown = $derived(draft ?? detail.active);
@@ -241,7 +241,7 @@
 	);
 </script>
 
-<svelte:head><title>{group.name} — процесс — LCT CRM</title></svelte:head>
+<svelte:head><title>{workspace.name} — процесс — LCT CRM</title></svelte:head>
 
 {#snippet numberField({
 	name,
@@ -317,9 +317,10 @@
 
 <Card.Root>
 	<Card.Header>
-		<!-- Имя группы стоит в заголовке страницы и в крошках, поэтому карточка
-			отвечает не «какая группа», а «что с её процессом сейчас». -->
-		<Card.Title>Процесс группы</Card.Title>
+		<!-- Имя пространства стоит в заголовке страницы и в крошках, поэтому
+			карточка отвечает не «какое пространство», а «что с его процессом
+			сейчас». -->
+		<Card.Title>Процесс пространства</Card.Title>
 		<Card.Description>
 			Что действует сейчас, что готовится к применению и кого это изменение затронет.
 		</Card.Description>
@@ -364,10 +365,13 @@
 	<Card.Content class="flex flex-col gap-4">
 		<KeyValue>
 			<KeyValueRow label="Кого ведём по этому процессу" value={counterpartyKinds} />
-			<KeyValueRow label="Стадий в действующем процессе" value={formatNumber(group.stageCount)} />
+			<KeyValueRow
+				label="Стадий в действующем процессе"
+				value={formatNumber(workspace.stageCount)}
+			/>
 			<KeyValueRow
 				label="Незавершённых взаимодействий"
-				value={formatNumber(group.activeInteractions)}
+				value={formatNumber(workspace.activeInteractions)}
 			/>
 			<KeyValueRow label="Состояние">
 				<span class="flex flex-wrap items-center gap-1">
@@ -385,13 +389,13 @@
 
 		{#if detail.active === null}
 			<InlineHint tone="warning">
-				У группы ещё нет процесса: стадии приезжают с начальными данными установки. Пока их нет,
-				взаимодействие в этой группе завести нельзя — форма откажет словами.
+				У пространства ещё нет процесса: стадии приезжают с начальными данными установки. Пока их
+				нет, взаимодействие в этом пространстве завести нельзя — форма откажет словами.
 			</InlineHint>
 		{:else if editable}
 			<InlineHint tone="info">
 				Черновик изменений — копия действующего процесса. Пока он не применён, на работу он не
-				влияет. «Применить ко всем» перенесёт все незавершённые взаимодействия группы на новую
+				влияет. «Применить ко всем» перенесёт все незавершённые взаимодействия пространства на новую
 				структуру одной операцией: стадии сопоставляются по ключу, а тем, чья стадия исчезла, нужно
 				правило переноса.
 			</InlineHint>
@@ -978,7 +982,7 @@
 	bind:open={applyOpen}
 	width="xl"
 	title="Применить изменения ко всем?"
-	description="Изменение применится ко всем незавершённым взаимодействиям группы сразу. Записи сопоставляются по ключу стадии; переедут только те, чья стадия исчезла."
+	description="Изменение применится ко всем незавершённым взаимодействиям пространства сразу. Записи сопоставляются по ключу стадии; переедут только те, чья стадия исчезла."
 >
 	<div class="flex flex-col gap-4">
 		{#if data.preview !== null}

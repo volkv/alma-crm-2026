@@ -38,9 +38,9 @@ import { withTransaction } from '$lib/server/db/transaction';
 import { getRedis } from '$lib/server/redis';
 import { advanceStage } from '$lib/server/stages/commands';
 import {
-	B2B_GROUP_KEY,
+	B2B_WORKSPACE_KEY,
 	B2B_PROCESS,
-	B2C_GROUP_KEY,
+	B2C_WORKSPACE_KEY,
 	B2C_PROCESS
 } from '$lib/server/stages/definitions';
 import { ensureProcess } from '$lib/server/stages/process';
@@ -181,8 +181,8 @@ beforeEach(async () => {
 	await database.reset();
 
 	await database.db.transaction(async (tx) => {
-		await ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS);
-		await ensureProcess(tx, B2C_GROUP_KEY, B2C_PROCESS);
+		await ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS);
+		await ensureProcess(tx, B2C_WORKSPACE_KEY, B2C_PROCESS);
 	});
 
 	apiKey = await serviceKey('cms');
@@ -1090,9 +1090,9 @@ describe('вложение обмена', () => {
 			.insert(interactions)
 			.values({
 				title: 'Заведено руками',
-				processGroupId: (
+				workspaceId: (
 					await database.db
-						.select({ id: interactions.processGroupId })
+						.select({ id: interactions.workspaceId })
 						.from(interactions)
 						.where(eq(interactions.id, data.interactionId))
 				)[0].id,

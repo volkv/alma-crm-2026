@@ -619,8 +619,8 @@ describe('описание API', () => {
 			'/v1/organizations',
 			'/v1/organizations/{id}',
 			'/v1/organizations/{id}/interactions',
-			'/v1/process-groups',
-			'/v1/process-groups/{key}',
+			'/v1/workspaces',
+			'/v1/workspaces/{key}',
 			'/v1/products',
 			'/v1/programs',
 			'/v1/reports'

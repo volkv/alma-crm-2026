@@ -199,7 +199,7 @@ admin('подсказки процесса доводят от списка гр
 	const tour = await startScreenTour(page, 'Процесс');
 
 	await walkScreenTour(page, tour, [
-		{ title: 'Процесс описан данными', target: 'process-groups' },
+		{ title: 'Процесс описан данными', target: 'workspaces' },
 		{ title: 'Вход в редактор процесса', target: 'process-open' }
 	]);
 });

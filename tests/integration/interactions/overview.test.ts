@@ -19,7 +19,7 @@ import { interactionParties, interactions, stageEntries } from '$lib/server/db/s
 import { getWorkOverview } from '$lib/server/interactions/overview';
 import { createInteraction } from '$lib/server/interactions/write';
 import { addComment, pauseStage, raiseBlocker } from '$lib/server/stages/commands';
-import { B2B_GROUP_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
+import { B2B_WORKSPACE_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
 import { ensureProcess } from '$lib/server/stages/process';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import {
@@ -53,7 +53,7 @@ const admin = (): ActorContext => testActor({ roleId: 'admin' });
 
 /** Процесс учебных заведений: его стадии и ведут взаимодействия набора. */
 async function demoProcess(): Promise<string> {
-	return database.db.transaction((tx) => ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS));
+	return database.db.transaction((tx) => ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
 }
 
 /** Взаимодействие с одним вузом; процесс сразу ставит его на первую стадию. */

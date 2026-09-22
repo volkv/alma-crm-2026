@@ -139,7 +139,7 @@ export function movementSelection(
 				following."entryId" is not null as "hasNext",
 				false as "isStart"
 			from interactions
-			left join process_groups process_group on process_group.id = interactions.process_group_id
+			left join workspaces workspace on workspace.id = interactions.workspace_id
 			${PRIMARY_PARTY_JOIN}
 			join stage_entries entry on entry.interaction_id = interactions.id
 			left join lateral (
@@ -174,7 +174,7 @@ export function movementSelection(
 				false,
 				true
 			from interactions
-			left join process_groups process_group on process_group.id = interactions.process_group_id
+			left join workspaces workspace on workspace.id = interactions.workspace_id
 			${PRIMARY_PARTY_JOIN}
 			join stage_entries entry on entry.interaction_id = interactions.id
 			where ${conditions}

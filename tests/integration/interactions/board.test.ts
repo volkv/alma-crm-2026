@@ -25,8 +25,8 @@ import {
 } from '$lib/server/interactions/board';
 import { createInteraction } from '$lib/server/interactions/write';
 import { pauseStage, setChecklistItem } from '$lib/server/stages/commands';
-import { B2B_GROUP_KEY, B2B_PROCESS, B2C_GROUP_KEY } from '$lib/server/stages/definitions';
-import { ensureProcess, readGroupByKey, requireActiveRevision } from '$lib/server/stages/process';
+import { B2B_WORKSPACE_KEY, B2B_PROCESS, B2C_WORKSPACE_KEY } from '$lib/server/stages/definitions';
+import { ensureProcess, readWorkspaceByKey, requireActiveRevision } from '$lib/server/stages/process';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import { getDb } from '$lib/server/db';
 import {
@@ -71,7 +71,7 @@ const admin = (): ActorContext => testActor({ roleId: 'admin' });
 const manager = (): ActorContext => testActor({ roleId: 'manager' });
 
 const EMPTY_QUERY: InteractionBoardQuery = {
-	group: null,
+	workspace: null,
 	status: null,
 	stageCategory: null,
 	overdue: false,
@@ -85,9 +85,9 @@ function query(overrides: Partial<InteractionBoardQuery> = {}): InteractionBoard
 
 /** Процесс учебных заведений: четырнадцать стадий и его действующая редакция. */
 async function demoRoute(): Promise<ProcessRevisionView> {
-	await database.db.transaction((tx) => ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS));
+	await database.db.transaction((tx) => ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
 
-	return requireActiveRevision(getDb(), await readGroupByKey(getDb(), B2B_GROUP_KEY));
+	return requireActiveRevision(getDb(), await readWorkspaceByKey(getDb(), B2B_WORKSPACE_KEY));
 }
 
 /**
@@ -98,7 +98,7 @@ async function demoRoute(): Promise<ProcessRevisionView> {
  */
 async function reasonRoute(): Promise<ProcessRevisionView> {
 	await database.db.transaction((tx) =>
-		ensureProcess(tx, B2C_GROUP_KEY, {
+		ensureProcess(tx, B2C_WORKSPACE_KEY, {
 			name: 'Процесс с объяснением шага вперёд',
 			note: null,
 			migrationRules: [],
@@ -142,7 +142,7 @@ async function reasonRoute(): Promise<ProcessRevisionView> {
 		})
 	);
 
-	return requireActiveRevision(getDb(), await readGroupByKey(getDb(), B2C_GROUP_KEY));
+	return requireActiveRevision(getDb(), await readWorkspaceByKey(getDb(), B2C_WORKSPACE_KEY));
 }
 
 function stageIdOf(route: ProcessRevisionView, key: string): string {
@@ -259,7 +259,7 @@ describe('выборка доски', () => {
 
 		const board = await getInteractionBoard(ctx, query());
 
-		expect(board.groupKey).toBe(B2B_GROUP_KEY);
+		expect(board.workspaceKey).toBe(B2B_WORKSPACE_KEY);
 		expect(board.columns).toHaveLength(route.stages.length);
 		// Порядок колонок задаёт процесс: первая стадия слева, последняя справа.
 		expect(board.columns.at(0)?.name).toBe('Поиск контактных лиц');
@@ -629,7 +629,7 @@ describe('перевод карточки', () => {
 
 		// Карточка знает о требовании заранее: доска спрашивает объяснение до
 		// команды, а не показывает отказ после неё.
-		const board = await getInteractionBoard(ctx, query({ group: B2C_GROUP_KEY }));
+		const board = await getInteractionBoard(ctx, query({ workspace: B2C_WORKSPACE_KEY }));
 		const card = columnOf(board, 'Первая стадия').cards[0];
 
 		expect(card.transitions[0]).toMatchObject({

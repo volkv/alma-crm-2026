@@ -19,7 +19,7 @@
 | `audit.ts`            | `audit_events`                                                                                                                                        |
 | `directory.ts`        | `organizations`, `sites`, `people`, `affiliations`, `consents`, программы и продукты, `directions`, `product_directions`, `organization_responsibles` |
 | `directory-import.ts` | `directory_imports`, `directory_import_rows` — загрузка каталога и её строки                                                                          |
-| `interactions.ts`     | Группы процесса и их реестры, редакции процесса, стадии и переходы, взаимодействия, записи стадий, паузы, блокировки, комментарии, договоры           |
+| `interactions.ts`     | Пространства и их реестры, редакции процесса, стадии и переходы, взаимодействия, записи стадий, паузы, блокировки, комментарии, договоры              |
 | `documents.ts`        | `document_templates`, `documents`, `stage_entry_documents`                                                                                            |
 | `exchange.ts`         | `exchange_messages`, `learning_groups`, `learning_group_results`                                                                                      |
 | `api.ts`              | `api_keys`                                                                                                                                            |
@@ -59,7 +59,7 @@
 | `organizations`                    | CHECK: ссылка на человека заполнена ровно у вида `individual`; уникальный `person_id`                   |
 | `interaction_parties`              | Частичная уникальность `(interaction_id) WHERE is_primary` — основная сторона одна                      |
 | `organization_responsibles`        | Частичная уникальность `(organization_id, direction_id) NULLS NOT DISTINCT WHERE valid_to IS NULL`      |
-| `process_group_counterparty_kinds` | Первичный ключ по виду контрагента: вид принадлежит ровно одной группе                                  |
+| `process_group_counterparty_kinds` | Первичный ключ по виду контрагента: вид принадлежит ровно одному пространству                           |
 | `process_revisions`                | Уникальность `(group_id, version)`; частичная уникальность `(group_id) WHERE published_at IS NULL`      |
 | `stages`, `stage_transitions`      | Уникальность `(revision_id, key)` и `(revision_id, position)`; `(from_stage_id, to_stage_id)`           |
 | `stage_migration_rules`            | Уникальность `(revision_id, removed_stage_key)`, CHECK «ключи различны»                                 |
@@ -156,20 +156,29 @@ CHECK «действие `error` ровно тогда, когда у строк
 которая владеет соответствующим кодом. Иначе схема и сервисы разъехались бы на середине волны.
 
 Добавлено префлайтом: таблицы `directions`, `product_directions`, `organization_responsibles`,
-`process_groups`, `process_group_counterparty_kinds`, `process_stage_keys`, `stage_migration_rules`,
-`contracts`, `contract_items`, `interaction_contract_items`, `stage_entry_documents`,
-`learning_groups`, `learning_group_results`, `exchange_messages`; колонки `organizations.person_id`,
-`users.manager_user_id`, `users.external_subject`, `programs.direction_id`, `stages.is_final`,
-`stages.requires_lms_data`, `interactions.process_group_id`, `interactions.contract_id`,
+`workspaces` (тогда `process_groups`), `process_group_counterparty_kinds`, `process_stage_keys`,
+`stage_migration_rules`, `contracts`, `contract_items`, `interaction_contract_items`,
+`stage_entry_documents`, `learning_groups`, `learning_group_results`, `exchange_messages`; колонки
+`organizations.person_id`, `users.manager_user_id`, `users.external_subject`,
+`programs.direction_id`, `stages.is_final`, `stages.requires_lms_data`,
+`interactions.workspace_id` (тогда `process_group_id`), `interactions.contract_id`,
 `interactions.external_revision`, `stage_entries.migrated_at`,
 `stage_entries.migrated_from_stage_key`, `stage_entries.lms_evidence`; значения перечислений
 `organization_kind` (`individual`, `legal_entity`) и `stage_outcome` (`migrated`).
 
 Живой процесс (`drizzle/0007_*`) доведён: `stage_routes` переименована в `process_revisions` и
 получила `group_id` вместо `key` и `is_default`, `stages.route_id` и `stage_transitions.route_id`
-стали `revision_id`, `interactions.process_group_id` стала обязательной, а `interactions.route_id`
-удалена последним шагом — после проверки «ни одной открытой записи вне действующей редакции своей
-группы». Реестр ключей (`process_stage_keys`) с этого момента ведёт публикация.
+стали `revision_id`, ссылка взаимодействия на своё пространство стала обязательной, а
+`interactions.route_id` удалена последним шагом — после проверки «ни одной открытой записи вне
+действующей редакции своего пространства». Реестр ключей (`process_stage_keys`) с этого момента
+ведёт публикация.
+
+Группа процесса стала пространством (`drizzle/0019_*`): `process_groups` переименована в
+`workspaces`, `interactions.process_group_id` — в `interactions.workspace_id`, а индекс
+`interactions_group_status_idx` — в `interactions_workspace_status_idx`. Это `alter table … rename`,
+а не пересоздание: данные, внешние ключи и идентификаторы уцелели. Колонки `group_id` у
+`process_revisions` и `process_stage_keys` пока остались прежними — они переедут на процесс, когда
+он станет отдельной сущностью. Зачем это всё — `docs/workspaces.md`.
 
 Вход через каталог учётных записей (`drizzle/0008_*`) доведён: `users.password_hash`,
 `password_changed_at` и три столбца второго фактора удалены — своих паролей в базе больше нет, —
@@ -184,23 +193,24 @@ CHECK «действие `error` ровно тогда, когда у строк
 | `external_source = 'site'` → `<система>:<экземпляр>`                         | обмен      |
 | Перенос словарей `exchange_direction` и `exchange_message_state` в контракты | обмен      |
 
-**Группы процесса кладёт миграция, а их стадии — набор данных.** Без групп у взаимодействия нет
+**Пространства кладёт миграция, а их стадии — набор данных.** Без пространства у взаимодействия нет
 процесса, а у заявки с сайта — сценария, поэтому `b2b` и `b2c` вместе с соответствием «вид
-контрагента → группа» приезжают на любую установку. Стадии — нет: навязывать заказчику наши
+контрагента → пространство» приезжают на любую установку. Стадии — нет: навязывать заказчику наши
 четырнадцать стадий установкой схемы незачем, и заводит их `ensureProcess` из сида.
-`tests/integration/db.test.ts` проверяет, что миграция группы действительно кладёт: `reset()` в
-остальных интеграционных тестах чистит таблицы целиком, и туда эти строки возвращает снимок, снятый
-прогоном сразу после миграций (`tests/integration/helpers/db.ts`).
+`tests/integration/db.test.ts` проверяет, что миграция пространства действительно кладёт: `reset()`
+в остальных интеграционных тестах чистит таблицы целиком, и туда эти строки возвращает снимок,
+снятый прогоном сразу после миграций (`tests/integration/helpers/db.ts`).
 
 **Что делает миграция 0007 с данными.** Порядок фиксирован, и каждый шаг восстановим до последнего:
-редакции привязываются к группам по семейству прежнего маршрута (`university-partnership` → `b2b`,
-прочие семейства — по группе на семейство, их завела 0006); у группы остаётся один черновик —
-последний, остальные удаляются вместе со своими стадиями; в каждой редакции появляется финальная
-стадия (последняя по порядку, если ни одна не отмечена); открытые записи перепривязываются **по
-ключу** к стадии действующей редакции своей группы, закрытые не трогаются; слепки открытых записей
-пересобираются по стадии, закрытые получают два новых признака выключенными; `DO $$ … RAISE
-EXCEPTION` проверяет, что открытых записей вне действующей редакции не осталось, — и только после
-этого `interactions.process_group_id` становится обязательной, а `route_id` удаляется.
+редакции привязываются к пространствам по семейству прежнего маршрута (`university-partnership` →
+`b2b`, прочие семейства — по пространству на семейство, их завела 0006); у пространства остаётся
+один черновик — последний, остальные удаляются вместе со своими стадиями; в каждой редакции
+появляется финальная стадия (последняя по порядку, если ни одна не отмечена); открытые записи
+перепривязываются **по ключу** к стадии действующей редакции своего пространства, закрытые не
+трогаются; слепки открытых записей пересобираются по стадии, закрытые получают два новых признака
+выключенными; `DO $$ … RAISE EXCEPTION` проверяет, что открытых записей вне действующей редакции не
+осталось, — и только после этого ссылка взаимодействия на пространство становится обязательной, а
+`route_id` удаляется.
 
 **Новое значение перечисления и одна транзакция.** Мигратор Drizzle применяет все непримененные
 файлы одной транзакцией, а PostgreSQL запрещает пользоваться значением перечисления, добавленным в

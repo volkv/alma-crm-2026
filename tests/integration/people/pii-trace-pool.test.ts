@@ -26,7 +26,7 @@ import type { ActorContext } from '$lib/server/actor';
 import { auditEvents } from '$lib/server/db/schema';
 import { createPerson } from '$lib/server/directory/write';
 import { receiveApplication } from '$lib/server/integrations/exchange/intake';
-import { B2B_GROUP_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
+import { B2B_WORKSPACE_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
 import { ensureProcess } from '$lib/server/stages/process';
 import { setExchangeSettings } from '$lib/server/integrations/settings';
 import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
@@ -60,7 +60,7 @@ afterAll(async () => {
 beforeEach(async () => {
 	await database.reset();
 	await database.db.transaction(async (tx) => {
-		await ensureProcess(tx, B2B_GROUP_KEY, B2B_PROCESS);
+		await ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS);
 	});
 
 	// Заявку применяет сотрудник, принимающий входящие: его называет настройка

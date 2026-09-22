@@ -61,7 +61,7 @@ import {
 	sites,
 	stageEntries,
 	stageEntryStatus,
-	processGroups,
+	workspaces,
 	users
 } from '../db/schema';
 import { NotFoundError } from '../errors';
@@ -69,7 +69,7 @@ import { withPiiTrace } from '../people/pii-trace';
 import { toPersonView } from '../people/serialize';
 import { requirePermission } from '../rbac';
 import { buildProgress, isStale } from '../stages/status';
-import { readActiveRevisionCached, readGroupRow } from '../stages/process';
+import { readActiveRevisionCached, readWorkspaceRow } from '../stages/process';
 import { assertInteractionVisible, interactionScopeFilter } from './access';
 
 /** Условия выборки списка. Одни и те же для страницы и для счётчика. */
@@ -100,19 +100,16 @@ function listConditions(ctx: ActorContext, query: InteractionListQuery): SQL[] {
 		);
 	}
 
-	if (query.group !== null) {
-		// Группа задаётся ключом, а не идентификатором: он стоит в адресе, его
-		// читают люди, и он не меняется от установки к установке.
+	if (query.workspace !== null) {
+		// Пространство задаётся ключом, а не идентификатором: он стоит в адресе,
+		// его читают люди, и он не меняется от установки к установке.
 		conditions.push(
 			exists(
 				getDb()
 					.select({ one: sql`1` })
-					.from(processGroups)
+					.from(workspaces)
 					.where(
-						and(
-							eq(processGroups.id, interactions.processGroupId),
-							eq(processGroups.key, query.group)
-						)
+						and(eq(workspaces.id, interactions.workspaceId), eq(workspaces.key, query.workspace))
 					)
 			)
 		);
@@ -338,7 +335,8 @@ type ListRow = {
 
 /**
  * Лента процесса для каждой строки списка. Действующая редакция читается по
- * одному разу на группу, а не на строку: в списке они почти всегда одинаковые.
+ * одному разу на пространство, а не на строку: в списке они почти всегда
+ * одинаковые.
  *
  * Записи сопоставляются со стадиями по ключу из снимка: строка `stages` живёт
  * внутри редакции, и после изменения процесса соединение по `stage_id`
@@ -352,12 +350,15 @@ async function readProgress(rows: ListRow[]): Promise<Map<string, StageProgressI
 	}
 
 	const db = getDb();
-	const groupIds = [...new Set(rows.map((row) => row.interaction.processGroupId))];
+	const workspaceIds = [...new Set(rows.map((row) => row.interaction.workspaceId))];
 	const revisions = new Map(
 		await Promise.all(
-			groupIds.map(
-				async (groupId) =>
-					[groupId, await readActiveRevisionCached(await readGroupRow(db, groupId))] as const
+			workspaceIds.map(
+				async (workspaceId) =>
+					[
+						workspaceId,
+						await readActiveRevisionCached(await readWorkspaceRow(db, workspaceId))
+					] as const
 			)
 		)
 	);
@@ -387,7 +388,7 @@ async function readProgress(rows: ListRow[]): Promise<Map<string, StageProgressI
 	const blocking = await readBlockingInteractions(rows.map((row) => row.interaction.id));
 
 	for (const row of rows) {
-		const revision = revisions.get(row.interaction.processGroupId);
+		const revision = revisions.get(row.interaction.workspaceId);
 
 		if (revision === undefined || revision === null) {
 			continue;
@@ -607,12 +608,12 @@ async function buildInteractionBase(interactionId: string): Promise<InteractionB
 	const [row] = await getDb()
 		.select({
 			interaction: interactions,
-			processGroupKey: processGroups.key,
-			processGroupName: processGroups.name,
+			workspaceKey: workspaces.key,
+			workspaceName: workspaces.name,
 			ownerName: users.fullName
 		})
 		.from(interactions)
-		.innerJoin(processGroups, eq(processGroups.id, interactions.processGroupId))
+		.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
 		.innerJoin(users, eq(users.id, interactions.ownerUserId))
 		.where(eq(interactions.id, interactionId))
 		.limit(1);
@@ -632,9 +633,9 @@ async function buildInteractionBase(interactionId: string): Promise<InteractionB
 		id: row.interaction.id,
 		title: row.interaction.title,
 		status: row.interaction.status,
-		processGroupId: row.interaction.processGroupId,
-		processGroupKey: row.processGroupKey,
-		processGroupName: row.processGroupName,
+		workspaceId: row.interaction.workspaceId,
+		workspaceKey: row.workspaceKey,
+		workspaceName: row.workspaceName,
 		agreementPeriodStart: row.interaction.agreementPeriodStart,
 		agreementPeriodEnd: row.interaction.agreementPeriodEnd,
 		academicPeriodStart: row.interaction.academicPeriodStart,

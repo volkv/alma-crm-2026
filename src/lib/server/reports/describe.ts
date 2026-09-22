@@ -16,7 +16,7 @@ import {
 } from '$lib/contracts/reports';
 import { formatDate } from '$lib/format';
 import { getDb } from '../db';
-import { directions, organizations, processGroups, products, programs, users } from '../db/schema';
+import { directions, organizations, products, programs, users, workspaces } from '../db/schema';
 
 async function namesByIds(
 	ids: readonly string[],
@@ -52,7 +52,7 @@ export async function describeFilters(
 		productNames,
 		ownerNames,
 		assigneeNames,
-		groupNames
+		workspaceNames
 	] = await Promise.all([
 		namesByIds(query.org, (ids) =>
 			db
@@ -84,12 +84,12 @@ export async function describeFilters(
 		namesByIds(query.assignee, (ids) =>
 			db.select({ id: users.id, name: users.fullName }).from(users).where(inArray(users.id, ids))
 		),
-		query.group.length === 0
+		query.workspace.length === 0
 			? Promise.resolve([])
 			: db
-					.select({ key: processGroups.key, name: processGroups.name })
-					.from(processGroups)
-					.where(inArray(processGroups.key, [...query.group]))
+					.select({ key: workspaces.key, name: workspaces.name })
+					.from(workspaces)
+					.where(inArray(workspaces.key, [...query.workspace]))
 					.then((rows) => rows.map((row) => row.name))
 	]);
 
@@ -109,7 +109,7 @@ export async function describeFilters(
 		'Тип контрагента',
 		query.party.map((kind) => REPORT_PARTY_LABELS[kind])
 	);
-	add('Группа процесса', groupNames);
+	add('Пространство', workspaceNames);
 	add('Направление', directionNames);
 	add('Программа', programNames);
 	add('Продукт', productNames);

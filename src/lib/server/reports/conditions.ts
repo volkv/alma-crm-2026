@@ -141,11 +141,11 @@ export function interactionConditions(ctx: ActorContext, query: ReportQuery): SQ
 		)`);
 	}
 
-	if (query.group.length > 0) {
+	if (query.workspace.length > 0) {
 		conditions.push(sql`exists (
-			select 1 from process_groups process_group
-			where process_group.id = interactions.process_group_id
-				and process_group.key in ${inList(query.group)}
+			select 1 from workspaces workspace
+			where workspace.id = interactions.workspace_id
+				and workspace.key in ${inList(query.workspace)}
 		)`);
 	}
 
@@ -158,16 +158,16 @@ export function interactionConditions(ctx: ActorContext, query: ReportQuery): SQ
  * Здесь только однозначные признаки — те, что не размножают строку и берутся
  * одним join'ом. По ним работают агрегаты (итоги, воронка, разрезы по вузам и
  * ответственным) и сортировка страницы, поэтому считать их приходится по всей
- * выборке. Требуют `PRIMARY_PARTY_JOIN` и join группы процесса.
+ * выборке. Требуют `PRIMARY_PARTY_JOIN` и join пространства.
  */
 export const SELECTION_COLUMNS = sql`
 	interactions.id as "interactionId",
 	interactions.title as "title",
 	interactions.status as "status",
-	interactions.process_group_id as "processGroupId",
+	interactions.workspace_id as "workspaceId",
 	interactions.owner_user_id as "ownerUserId",
 	interactions.contract_id as "contractId",
-	process_group.key as "processGroupKey",
+	workspace.key as "workspaceKey",
 	counterparty.id as "organizationId",
 	counterparty.short_name as "organizationName",
 	counterparty.kind as "organizationKind"
@@ -297,8 +297,8 @@ export type ReportSelection = {
 	interactionId: string;
 	title: string;
 	status: InteractionStatus;
-	processGroupId: string;
-	processGroupKey: string;
+	workspaceId: string;
+	workspaceKey: string;
 	ownerUserId: string;
 	contractId: string | null;
 	organizationId: string | null;

@@ -2,13 +2,13 @@
  * Заведение и правка взаимодействия.
  *
  * Взаимодействие не существует вне процесса: оно создаётся сразу на первой
- * стадии действующей редакции своей группы, в той же транзакции. Запись без
- * стадии — это запись, про которую нельзя сказать, что с ней происходит, и
- * появляться она не должна даже на мгновение.
+ * стадии действующей редакции процесса своего пространства, в той же
+ * транзакции. Запись без стадии — это запись, про которую нельзя сказать, что с
+ * ней происходит, и появляться она не должна даже на мгновение.
  *
- * Группу человек не выбирает: она выводится из вида основной стороны по
+ * Пространство человек не выбирает: оно выводится из вида основной стороны по
  * единственной таблице соответствий. Редакция читается внутри транзакции под
- * разделяемой блокировкой группы — иначе запись, созданная в миллисекунду
+ * разделяемой блокировкой пространства — иначе запись, созданная в миллисекунду
  * публикации, встала бы на стадию редакции, которая уже не действует.
  *
  * Правка плана попадает в предметную историю (`interaction_changes`): сдвиг
@@ -47,7 +47,7 @@ import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { requirePermission, scopeFilter } from '../rbac';
 import { startInteractionIn } from '../stages/commands';
-import { lockGroup, requireActiveRevision, resolveProcessGroup } from '../stages/process';
+import { lockWorkspace, requireActiveRevision, resolveWorkspace } from '../stages/process';
 import { interactionScopeFilter } from './access';
 import { getInteraction } from './read';
 
@@ -74,7 +74,7 @@ function parseCreate(input: CreateInteractionDraft): CreateInteractionInput {
  *
  * Схема контракта требует ровно одну такую сторону; здесь остаётся снять
  * неопределённость типа, и делается это в одном месте: от основной стороны
- * зависят и группа процесса, и область доступа, и разойтись в ответе на вопрос
+ * зависят и пространство, и область доступа, и разойтись в ответе на вопрос
  * «кто здесь основной» эти две проверки не должны.
  */
 function requirePrimaryParty(parties: PartyInput[]): PartyInput {
@@ -90,13 +90,13 @@ function requirePrimaryParty(parties: PartyInput[]): PartyInput {
 }
 
 /**
- * Группа процесса взаимодействия — по виду основной стороны.
+ * Пространство взаимодействия — по виду основной стороны.
  *
  * Выбора из списка нет намеренно: ответ известен из данных, а список был бы
  * лишней возможностью ошибиться. Организация читается в той же транзакции, что
- * и запись, — вид основной стороны и группа обязаны совпасть.
+ * и запись, — вид основной стороны и пространство обязаны совпасть.
  */
-async function resolveGroupForParties(tx: Tx, parties: PartyInput[]): Promise<string> {
+async function resolveWorkspaceForParties(tx: Tx, parties: PartyInput[]): Promise<string> {
 	const primary = requirePrimaryParty(parties);
 
 	const [organization] = await tx
@@ -109,7 +109,7 @@ async function resolveGroupForParties(tx: Tx, parties: PartyInput[]): Promise<st
 		throw new NotFoundError('Организация-участник не найдена');
 	}
 
-	return (await resolveProcessGroup(tx, organization.kind)).id;
+	return (await resolveWorkspace(tx, organization.kind)).id;
 }
 
 /**
@@ -357,18 +357,18 @@ export async function createInteractionIn(
 	await assertContractAllowed(tx, definition);
 	await assertOwnerExists(tx, definition.ownerUserId);
 
-	const groupId = await resolveGroupForParties(tx, definition.parties);
-	// Разделяемая блокировка группы: пока публикация держит исключительную,
-	// создание ждёт, — и наоборот. Так первая стадия берётся из той редакции,
-	// которая действует после обеих операций, а не между ними.
-	const group = await lockGroup(tx, groupId, 'share');
-	const revision = await requireActiveRevision(tx, group);
+	const workspaceId = await resolveWorkspaceForParties(tx, definition.parties);
+	// Разделяемая блокировка пространства: пока публикация держит
+	// исключительную, создание ждёт, — и наоборот. Так первая стадия берётся из
+	// той редакции, которая действует после обеих операций, а не между ними.
+	const workspace = await lockWorkspace(tx, workspaceId, 'share');
+	const revision = await requireActiveRevision(tx, workspace);
 
 	const [created] = await tx
 		.insert(interactions)
 		.values({
 			title: definition.title,
-			processGroupId: group.id,
+			workspaceId: workspace.id,
 			contractId: definition.contractId,
 			agreementPeriodStart: definition.agreementPeriodStart,
 			agreementPeriodEnd: definition.agreementPeriodEnd,
@@ -378,7 +378,7 @@ export async function createInteractionIn(
 			externalSource: definition.externalSource,
 			externalId: definition.externalId
 		})
-		.returning({ id: interactions.id, processGroupId: interactions.processGroupId });
+		.returning({ id: interactions.id, workspaceId: interactions.workspaceId });
 
 	await writeRelations(tx, created.id, definition);
 
@@ -388,7 +388,7 @@ export async function createInteractionIn(
 			type: 'interactions.created',
 			outcome: 'success',
 			subject: { type: 'interaction', id: created.id },
-			details: { processGroupKey: group.key, revisionId: revision.id }
+			details: { workspaceKey: workspace.key, revisionId: revision.id }
 		},
 		tx
 	);
@@ -400,7 +400,7 @@ export async function createInteractionIn(
 		tx,
 		{
 			id: created.id,
-			processGroupId: created.processGroupId,
+			workspaceId: created.workspaceId,
 			ownerUserId: definition.ownerUserId
 		},
 		revision
@@ -493,12 +493,12 @@ export async function updateInteraction(
 		await assertContractAllowed(tx, definition);
 		await assertOwnerExists(tx, definition.ownerUserId);
 
-		// Группа выводится из вида основной стороны и меняется только вместе с
-		// ней; смена группы у идущего взаимодействия — это начало другого
-		// процесса, и такое взаимодействие закрывают, а не переписывают.
-		const groupId = await resolveGroupForParties(tx, definition.parties);
+		// Пространство выводится из вида основной стороны и меняется только
+		// вместе с ней; смена пространства у идущего взаимодействия — это начало
+		// другого процесса, и такое взаимодействие закрывают, а не переписывают.
+		const workspaceId = await resolveWorkspaceForParties(tx, definition.parties);
 
-		if (groupId !== before.processGroupId) {
+		if (workspaceId !== before.workspaceId) {
 			throw new ConflictError(
 				'Смена основной стороны меняет процесс: закройте это взаимодействие и заведите новое'
 			);

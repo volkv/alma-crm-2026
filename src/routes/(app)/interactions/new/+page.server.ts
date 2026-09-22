@@ -8,7 +8,7 @@ import { listProducts, listPrograms } from '$lib/server/directory/read';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { createInteraction } from '$lib/server/interactions/write';
 import { requirePermission } from '$lib/server/rbac';
-import { listProcessGroupsForWork } from '$lib/server/stages/process';
+import { listWorkspacesForWork } from '$lib/server/stages/process';
 import { responsibleOptions } from '../responsible';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -26,12 +26,13 @@ export const load: PageServerLoad = async (event) => {
 		toPageError(cause);
 	}
 
-	const [groups, programs, products, users, form] = await Promise.all([
-		// Группы читаются не ради выбора: процесс выводится из вида основной
-		// стороны. Форма показывает ими, что произойдёт после сохранения, — и
-		// говорит заранее, если в группе процесса ещё нет. Право здесь то же,
-		// что у самого заведения, а не право настраивать процесс.
-		listProcessGroupsForWork(ctx),
+	const [workspaces, programs, products, users, form] = await Promise.all([
+		// Пространства читаются не ради выбора: процесс выводится из вида
+		// основной стороны. Форма показывает ими, что произойдёт после
+		// сохранения, — и говорит заранее, если в пространстве процесса ещё нет.
+		// Право здесь то же, что у самого заведения, а не право настраивать
+		// процесс.
+		listWorkspacesForWork(ctx),
 		listPrograms(ctx, catalogPage),
 		listProducts(ctx, catalogPage),
 		responsibleOptions(event),
@@ -44,7 +45,7 @@ export const load: PageServerLoad = async (event) => {
 
 	return {
 		form,
-		groups,
+		workspaces,
 		programs: programs.items,
 		products: products.items,
 		users

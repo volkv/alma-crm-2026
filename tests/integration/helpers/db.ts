@@ -43,7 +43,7 @@ import { startTestStorage, type TestStorage } from './storage';
 const migrationsFolder = fileURLToPath(new URL('../../../drizzle', import.meta.url));
 
 /** Таблицы, строки которых приезжают с миграцией, а не с сидом или тестом. */
-const REFERENCE_TABLES = ['process_groups', 'process_group_counterparty_kinds'] as const;
+const REFERENCE_TABLES = ['workspaces', 'process_group_counterparty_kinds'] as const;
 
 export type TestDatabase = {
 	/** Тот же самый handle, что получают сервисы через `getDb()`. */
@@ -472,22 +472,22 @@ export async function insertInteractionWithStage(
 	const suffix = crypto.randomUUID().slice(0, 8);
 
 	const [maxPosition] = await database
-		.select({ value: sql<number>`coalesce(max(${schema.processGroups.position}), 0)::int` })
-		.from(schema.processGroups);
+		.select({ value: sql<number>`coalesce(max(${schema.workspaces.position}), 0)::int` })
+		.from(schema.workspaces);
 
-	const [group] = await database
-		.insert(schema.processGroups)
+	const [workspace] = await database
+		.insert(schema.workspaces)
 		.values({
 			key: `test-${suffix}`,
 			name: 'Тестовая группа процесса',
 			position: maxPosition.value + 1
 		})
-		.returning({ id: schema.processGroups.id });
+		.returning({ id: schema.workspaces.id });
 
 	const [revision] = await database
 		.insert(schema.processRevisions)
 		.values({
-			groupId: group.id,
+			groupId: workspace.id,
 			version: 1,
 			name: 'Тестовый процесс',
 			publishedAt: new Date()
@@ -508,15 +508,15 @@ export async function insertInteractionWithStage(
 		.returning({ id: schema.stages.id });
 
 	await database
-		.update(schema.processGroups)
+		.update(schema.workspaces)
 		.set({ activeRevisionId: revision.id })
-		.where(eq(schema.processGroups.id, group.id));
+		.where(eq(schema.workspaces.id, workspace.id));
 
 	const [interaction] = await database
 		.insert(schema.interactions)
 		.values({
 			title: 'Тестовое взаимодействие',
-			processGroupId: group.id,
+			workspaceId: workspace.id,
 			ownerUserId: options.ownerUserId
 		})
 		.returning({ id: schema.interactions.id });

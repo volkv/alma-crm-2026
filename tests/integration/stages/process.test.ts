@@ -15,20 +15,20 @@ import { ConflictError, ForbiddenError, NotFoundError } from '$lib/server/errors
 import {
 	createDraft,
 	discardDraft,
-	getProcessGroup,
-	listProcessGroups,
+	getWorkspace,
+	listWorkspaces,
 	previewPublication,
 	processDefinition,
-	readGroupByKey,
+	readWorkspaceByKey,
 	syncStageKeys,
 	updateDraft
 } from '$lib/server/stages/process';
 import type { ActorContext } from '$lib/server/actor';
 import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
 import {
-	B2B_GROUP_KEY,
+	B2B_WORKSPACE_KEY,
 	B2B_PROCESS,
-	B2C_GROUP_KEY,
+	B2C_WORKSPACE_KEY,
 	createInteractionOn,
 	seedProcess,
 	twoStageProcess
@@ -55,14 +55,14 @@ const admin = (): ActorContext => testActor({ roleId: 'admin' });
 describe('список групп процесса', () => {
 	it('отдаёт обе группы со счётчиками стадий и незавершённых взаимодействий', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2B_GROUP_KEY, B2B_PROCESS);
+		await seedProcess(database, B2B_WORKSPACE_KEY, B2B_PROCESS);
 		await createInteractionOn(ctx, database, { title: 'Работа с вузом' });
 
-		const groups = await listProcessGroups(ctx);
-		const b2b = groups.find((group) => group.key === B2B_GROUP_KEY);
-		const b2c = groups.find((group) => group.key === B2C_GROUP_KEY);
+		const workspaces = await listWorkspaces(ctx);
+		const b2b = workspaces.find((workspace) => workspace.key === B2B_WORKSPACE_KEY);
+		const b2c = workspaces.find((workspace) => workspace.key === B2C_WORKSPACE_KEY);
 
-		expect(groups).toHaveLength(2);
+		expect(workspaces).toHaveLength(2);
 		expect(b2b?.stageCount).toBe(B2B_PROCESS.stages.length);
 		expect(b2b?.activeInteractions).toBe(1);
 		expect(b2b?.hasDraft).toBe(false);
@@ -75,7 +75,7 @@ describe('список групп процесса', () => {
 	it('закрыт для роли без права на настройку и оставляет след отказа', async () => {
 		const manager = testActor({ roleId: 'manager' });
 
-		await expect(listProcessGroups(manager)).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(listWorkspaces(manager)).rejects.toBeInstanceOf(ForbiddenError);
 
 		const denied = await database.db
 			.select({ type: auditEvents.eventType, actorUserId: auditEvents.actorUserId })
@@ -88,8 +88,8 @@ describe('список групп процесса', () => {
 
 describe('реестр ключей стадий', () => {
 	it('заводит все ключи редакции и архивирует те, которых в ней не стало', async () => {
-		const revision = await seedProcess(database, B2B_GROUP_KEY, B2B_PROCESS);
-		const group = await readGroupByKey(database.db, B2B_GROUP_KEY);
+		const revision = await seedProcess(database, B2B_WORKSPACE_KEY, B2B_PROCESS);
+		const workspace = await readWorkspaceByKey(database.db, B2B_WORKSPACE_KEY);
 
 		// Реестр ведётся списком ключей целиком, а не по одному: запрос со
 		// списком параметров легко написать так, что PostgreSQL примет его за
@@ -97,7 +97,7 @@ describe('реестр ключей стадий', () => {
 		const keys = await database.db
 			.select({ key: processStageKeys.key, archivedAt: processStageKeys.archivedAt })
 			.from(processStageKeys)
-			.where(eq(processStageKeys.groupId, group.id));
+			.where(eq(processStageKeys.groupId, workspace.id));
 
 		expect(keys.map((row) => row.key).sort()).toEqual(
 			revision.stages.map((stage) => stage.key).sort()
@@ -111,7 +111,7 @@ describe('реестр ключей стадий', () => {
 		};
 
 		const archived = await database.db.transaction((tx) =>
-			syncStageKeys(tx, group.id, shortened, new Date())
+			syncStageKeys(tx, workspace.id, shortened, new Date())
 		);
 
 		expect(archived).toBe(revision.stages.length - 3);
@@ -119,7 +119,7 @@ describe('реестр ключей стадий', () => {
 		const after = await database.db
 			.select({ key: processStageKeys.key, archivedAt: processStageKeys.archivedAt })
 			.from(processStageKeys)
-			.where(eq(processStageKeys.groupId, group.id));
+			.where(eq(processStageKeys.groupId, workspace.id));
 
 		// Строки не удаляются никогда: ключ, который когда-либо был в группе,
 		// остаётся занятым.
@@ -133,12 +133,12 @@ describe('реестр ключей стадий', () => {
 
 		// Ключ вернулся в процесс — отметка снимается: иначе редактор откажет в
 		// стадии, которая уже стоит.
-		await database.db.transaction((tx) => syncStageKeys(tx, group.id, revision, new Date()));
+		await database.db.transaction((tx) => syncStageKeys(tx, workspace.id, revision, new Date()));
 
 		const restored = await database.db
 			.select({ key: processStageKeys.key })
 			.from(processStageKeys)
-			.where(and(eq(processStageKeys.groupId, group.id), isNull(processStageKeys.archivedAt)));
+			.where(and(eq(processStageKeys.groupId, workspace.id), isNull(processStageKeys.archivedAt)));
 
 		expect(restored).toHaveLength(revision.stages.length);
 	});
@@ -147,9 +147,9 @@ describe('реестр ключей стадий', () => {
 describe('черновик изменений', () => {
 	it('создаётся копией действующего процесса', async () => {
 		const ctx = admin();
-		const active = await seedProcess(database, B2B_GROUP_KEY, B2B_PROCESS);
+		const active = await seedProcess(database, B2B_WORKSPACE_KEY, B2B_PROCESS);
 
-		const draft = await createDraft(ctx, B2B_GROUP_KEY);
+		const draft = await createDraft(ctx, B2B_WORKSPACE_KEY);
 
 		expect(draft.publishedAt).toBeNull();
 		expect(draft.version).toBe(active.version + 1);
@@ -157,17 +157,17 @@ describe('черновик изменений', () => {
 		expect(draft.transitions).toHaveLength(active.transitions.length);
 
 		// Действующая редакция копией не тронута: по ней идут взаимодействия.
-		const detail = await getProcessGroup(ctx, B2B_GROUP_KEY);
+		const detail = await getWorkspace(ctx, B2B_WORKSPACE_KEY);
 		expect(detail.active?.id).toBe(active.id);
-		expect(detail.group.hasDraft).toBe(true);
+		expect(detail.workspace.hasDraft).toBe(true);
 	});
 
 	it('не заводит второй черновик той же группы', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2B_GROUP_KEY, B2B_PROCESS);
-		await createDraft(ctx, B2B_GROUP_KEY);
+		await seedProcess(database, B2B_WORKSPACE_KEY, B2B_PROCESS);
+		await createDraft(ctx, B2B_WORKSPACE_KEY);
 
-		await expect(createDraft(ctx, B2B_GROUP_KEY)).rejects.toBeInstanceOf(ConflictError);
+		await expect(createDraft(ctx, B2B_WORKSPACE_KEY)).rejects.toBeInstanceOf(ConflictError);
 
 		// Редакций две — действующая и черновик; третьей строки не появилось.
 		const revisions = await database.db
@@ -181,18 +181,18 @@ describe('черновик изменений', () => {
 	it('не заводится у группы без действующего процесса', async () => {
 		// Черновик — копия действующей структуры; копировать нечего, и говорить об
 		// этом надо словами, а не пустым редактором.
-		await expect(createDraft(admin(), B2C_GROUP_KEY)).rejects.toBeInstanceOf(ConflictError);
+		await expect(createDraft(admin(), B2C_WORKSPACE_KEY)).rejects.toBeInstanceOf(ConflictError);
 	});
 
 	it('переписывает стадии целиком и проставляет правило переноса по умолчанию', async () => {
 		const ctx = admin();
-		const active = await seedProcess(database, B2B_GROUP_KEY, B2B_PROCESS);
-		const draft = await createDraft(ctx, B2B_GROUP_KEY);
+		const active = await seedProcess(database, B2B_WORKSPACE_KEY, B2B_PROCESS);
+		const draft = await createDraft(ctx, B2B_WORKSPACE_KEY);
 
 		const definition = processDefinition(draft);
 		const without = definition.stages.filter((stage) => stage.key !== 'document_revision');
 
-		const saved = await updateDraft(ctx, B2B_GROUP_KEY, {
+		const saved = await updateDraft(ctx, B2B_WORKSPACE_KEY, {
 			...definition,
 			stages: without,
 			transitions: definition.transitions.filter(
@@ -225,10 +225,10 @@ describe('черновик изменений', () => {
 
 	it('отменяется вместе со своими стадиями и переходами', async () => {
 		const ctx = admin();
-		const active = await seedProcess(database, B2B_GROUP_KEY, B2B_PROCESS);
-		const draft = await createDraft(ctx, B2B_GROUP_KEY);
+		const active = await seedProcess(database, B2B_WORKSPACE_KEY, B2B_PROCESS);
+		const draft = await createDraft(ctx, B2B_WORKSPACE_KEY);
 
-		await discardDraft(ctx, B2B_GROUP_KEY);
+		await discardDraft(ctx, B2B_WORKSPACE_KEY);
 
 		const revisions = await database.db.select({ id: processRevisions.id }).from(processRevisions);
 		const orphans = await database.db
@@ -238,14 +238,14 @@ describe('черновик изменений', () => {
 
 		expect(revisions.map((revision) => revision.id)).toEqual([active.id]);
 		expect(orphans).toEqual([]);
-		await expect(discardDraft(ctx, B2B_GROUP_KEY)).rejects.toBeInstanceOf(NotFoundError);
+		await expect(discardDraft(ctx, B2B_WORKSPACE_KEY)).rejects.toBeInstanceOf(NotFoundError);
 	});
 });
 
 describe('предпросмотр применения', () => {
 	it('считает числа по каждой затронутой стадии и итог', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, twoStageProcess({}));
+		await seedProcess(database, B2C_WORKSPACE_KEY, twoStageProcess({}));
 
 		const one = await createInteractionOn(ctx, database, {
 			title: 'Первое обучение',
@@ -256,17 +256,17 @@ describe('предпросмотр применения', () => {
 			kind: 'legal_entity'
 		});
 
-		const draft = await createDraft(ctx, B2C_GROUP_KEY);
+		const draft = await createDraft(ctx, B2C_WORKSPACE_KEY);
 		const definition = processDefinition(draft);
 
-		await updateDraft(ctx, B2C_GROUP_KEY, {
+		await updateDraft(ctx, B2C_WORKSPACE_KEY, {
 			...definition,
 			stages: definition.stages.map((stage) =>
 				stage.key === 'first' ? { ...stage, name: 'Первое знакомство' } : stage
 			)
 		});
 
-		const preview = await previewPublication(ctx, B2C_GROUP_KEY);
+		const preview = await previewPublication(ctx, B2C_WORKSPACE_KEY);
 		const first = preview.rows.find((row) => row.stageKey === 'first');
 		const second = preview.rows.find((row) => row.stageKey === 'second');
 
@@ -283,21 +283,21 @@ describe('предпросмотр применения', () => {
 
 	it('называет числом тех, кто переедет с удалённой стадии', async () => {
 		const ctx = admin();
-		await seedProcess(database, B2C_GROUP_KEY, twoStageProcess({}));
+		await seedProcess(database, B2C_WORKSPACE_KEY, twoStageProcess({}));
 		await createInteractionOn(ctx, database, { kind: 'legal_entity' });
 
-		const draft = await createDraft(ctx, B2C_GROUP_KEY);
+		const draft = await createDraft(ctx, B2C_WORKSPACE_KEY);
 		const definition = processDefinition(draft);
 
 		// Удаляем первую стадию: цель по умолчанию у неё — следующая, предыдущей
 		// у первой стадии не бывает.
-		await updateDraft(ctx, B2C_GROUP_KEY, {
+		await updateDraft(ctx, B2C_WORKSPACE_KEY, {
 			...definition,
 			stages: definition.stages.filter((stage) => stage.key !== 'first'),
 			transitions: []
 		});
 
-		const preview = await previewPublication(ctx, B2C_GROUP_KEY);
+		const preview = await previewPublication(ctx, B2C_WORKSPACE_KEY);
 		const removed = preview.rows.find((row) => row.stageKey === 'first');
 
 		expect(removed?.change).toBe('removed');

@@ -10,7 +10,7 @@ import {
 	interactions,
 	organizations,
 	people,
-	processGroups,
+	workspaces,
 	processRevisions,
 	processStageKeys,
 	programs,
@@ -22,12 +22,12 @@ import {
 } from '$lib/server/db/schema';
 import { getRedis } from '$lib/server/redis';
 import { setSetting } from '$lib/server/settings';
-import { B2B_GROUP_KEY } from '$lib/server/stages/definitions';
+import { B2B_WORKSPACE_KEY } from '$lib/server/stages/definitions';
 import {
 	createDraft,
 	processDefinition,
 	publishProcess,
-	readGroupByKey,
+	readWorkspaceByKey,
 	requireActiveRevision,
 	updateDraft
 } from '$lib/server/stages/process';
@@ -185,31 +185,31 @@ describe('сброс демонстрационных данных', () => {
 	});
 
 	it('сохраняет группы процесса, но пересобирает их редакции и убирает черновик', async () => {
-		const [group] = await database.db
-			.select({ id: processGroups.id, activeRevisionId: processGroups.activeRevisionId })
-			.from(processGroups)
-			.where(eq(processGroups.key, 'b2b'))
+		const [workspace] = await database.db
+			.select({ id: workspaces.id, activeRevisionId: workspaces.activeRevisionId })
+			.from(workspaces)
+			.where(eq(workspaces.key, 'b2b'))
 			.limit(1);
 
 		const [draft] = await database.db
 			.insert(processRevisions)
-			.values({ groupId: group.id, version: 99, name: 'Черновик показа' })
+			.values({ groupId: workspace.id, version: 99, name: 'Черновик показа' })
 			.returning({ id: processRevisions.id });
 
 		await resetDemoData(testActor());
 
-		const [groupAfter] = await database.db
-			.select({ id: processGroups.id, activeRevisionId: processGroups.activeRevisionId })
-			.from(processGroups)
-			.where(eq(processGroups.key, 'b2b'))
+		const [workspaceAfter] = await database.db
+			.select({ id: workspaces.id, activeRevisionId: workspaces.activeRevisionId })
+			.from(workspaces)
+			.where(eq(workspaces.key, 'b2b'))
 			.limit(1);
 
 		// Группу кладёт миграция, и на неё ссылаются взаимодействия: она та же.
 		// Редакция — эталонная и заведена заново, потому что эталонный набор
 		// взаимодействий сид проводит по её стадиям.
-		expect(groupAfter.id).toBe(group.id);
-		expect(groupAfter.activeRevisionId).not.toBeNull();
-		expect(groupAfter.activeRevisionId).not.toBe(group.activeRevisionId);
+		expect(workspaceAfter.id).toBe(workspace.id);
+		expect(workspaceAfter.activeRevisionId).not.toBeNull();
+		expect(workspaceAfter.activeRevisionId).not.toBe(workspace.activeRevisionId);
 
 		const leftovers = await database.db
 			.select({ value: count() })
@@ -222,15 +222,15 @@ describe('сброс демонстрационных данных', () => {
 		const revisions = await database.db
 			.select({ value: count() })
 			.from(processRevisions)
-			.where(eq(processRevisions.groupId, group.id));
+			.where(eq(processRevisions.groupId, workspace.id));
 
 		expect(revisions[0].value).toBe(1);
 	});
 
 	it('возвращает стенд к эталону после применённого изменения процесса', async () => {
 		const ctx = testActor();
-		const group = await readGroupByKey(database.db, B2B_GROUP_KEY);
-		const active = await requireActiveRevision(database.db, group);
+		const workspace = await readWorkspaceByKey(database.db, B2B_WORKSPACE_KEY);
+		const active = await requireActiveRevision(database.db, workspace);
 
 		// Стадия, на которой эталонный набор кого-нибудь оставляет: именно её
 		// ключ сид спрашивает у живой редакции, когда ведёт набор заново.
@@ -249,7 +249,7 @@ describe('сброс демонстрационных данных', () => {
 		expect(removable).toBeDefined();
 
 		const removedKey = removable?.key;
-		const draft = await createDraft(ctx, B2B_GROUP_KEY);
+		const draft = await createDraft(ctx, B2B_WORKSPACE_KEY);
 		const definition = processDefinition(draft);
 
 		// Переходы через удаляемую стадию сшиваются напрямую: иначе процесс
@@ -288,14 +288,14 @@ describe('сброс демонстрационных данных', () => {
 			)
 			.at(-1);
 
-		await updateDraft(ctx, B2B_GROUP_KEY, {
+		await updateDraft(ctx, B2B_WORKSPACE_KEY, {
 			...definition,
 			migrationRules: [{ removedStageKey: removedKey ?? '', targetStageKey: target?.key ?? '' }],
 			stages: survivors,
 			transitions: [...kept, ...bridges]
 		});
 
-		await publishProcess(ctx, B2B_GROUP_KEY);
+		await publishProcess(ctx, B2B_WORKSPACE_KEY);
 
 		// До правки сброс на таком стенде падал посреди заливки: эталонный набор
 		// взаимодействий сид ведёт по живой редакции и упирался в стадию,
@@ -309,7 +309,7 @@ describe('сброс демонстрационных данных', () => {
 
 		const restored = await requireActiveRevision(
 			database.db,
-			await readGroupByKey(database.db, B2B_GROUP_KEY)
+			await readWorkspaceByKey(database.db, B2B_WORKSPACE_KEY)
 		);
 
 		expect(restored.stages.map((stage) => stage.key).sort()).toStrictEqual(

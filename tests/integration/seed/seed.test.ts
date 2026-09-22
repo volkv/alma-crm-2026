@@ -20,7 +20,7 @@ import {
 	learningGroups,
 	organizationResponsibles,
 	organizations,
-	processGroups,
+	workspaces,
 	people,
 	permissions,
 	processStageKeys,
@@ -173,9 +173,9 @@ describe('сид', () => {
 		await runSeed();
 
 		const [b2b] = await database.db
-			.select({ id: processGroups.id, activeRevisionId: processGroups.activeRevisionId })
-			.from(processGroups)
-			.where(eq(processGroups.key, 'b2b'));
+			.select({ id: workspaces.id, activeRevisionId: workspaces.activeRevisionId })
+			.from(workspaces)
+			.where(eq(workspaces.key, 'b2b'));
 
 		// Действующая редакция группы — тот самый процесс, который завёл набор.
 		expect(b2b.activeRevisionId).not.toBeNull();
@@ -194,13 +194,13 @@ describe('сид', () => {
 		const grouped = await database.db
 			.select({ count: count() })
 			.from(interactions)
-			.where(eq(interactions.processGroupId, b2b.id));
+			.where(eq(interactions.workspaceId, b2b.id));
 
 		expect(grouped[0].count).toBe(INTERACTION_SEED_SIZES.interactions - INTERACTION_SEED_SIZES.b2c);
 		const ungrouped = await database.db
 			.select({ count: count() })
 			.from(interactions)
-			.where(isNull(interactions.processGroupId));
+			.where(isNull(interactions.workspaceId));
 
 		expect(ungrouped[0].count).toBe(0);
 	});
@@ -209,9 +209,9 @@ describe('сид', () => {
 		await runSeed();
 
 		const [b2c] = await database.db
-			.select({ id: processGroups.id })
-			.from(processGroups)
-			.where(eq(processGroups.key, 'b2c'));
+			.select({ id: workspaces.id })
+			.from(workspaces)
+			.where(eq(workspaces.key, 'b2c'));
 
 		// Основная сторона такой записи — сам контрагент, и его вид решает группу.
 		const parties = await database.db
@@ -225,7 +225,7 @@ describe('сид', () => {
 				)
 			)
 			.innerJoin(organizations, eq(organizations.id, interactionParties.organizationId))
-			.where(eq(interactions.processGroupId, b2c.id));
+			.where(eq(interactions.workspaceId, b2c.id));
 
 		expect(parties).toHaveLength(INTERACTION_SEED_SIZES.b2c);
 		expect(new Set(parties.map((row) => row.kind))).toStrictEqual(

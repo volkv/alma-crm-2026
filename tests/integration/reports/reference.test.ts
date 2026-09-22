@@ -90,7 +90,7 @@ function query(input: z.input<typeof reportQuerySchema>): ReportQuery {
 
 /** Полосы всех воронок подряд: воронка своя у каждой группы процесса. */
 function funnelStages(view: ReportView) {
-	return view.charts.funnel?.groups.flatMap((group) => group.stages) ?? [];
+	return view.charts.funnel?.workspaces.flatMap((workspace) => workspace.stages) ?? [];
 }
 
 /** Число в стадии воронки по ключу: корзина — это пара «группа + ключ». */
@@ -717,7 +717,7 @@ describe('от числа к подтверждению', () => {
 
 		for (const row of rows) {
 			expect(row.documents.map((document) => document.id)).toStrictEqual([ids.documentId]);
-			expect(row.learningGroups.map((group) => group.id)).toStrictEqual([ids.learningGroupId]);
+			expect(row.learningGroups.map((workspace) => workspace.id)).toStrictEqual([ids.learningGroupId]);
 		}
 	});
 });

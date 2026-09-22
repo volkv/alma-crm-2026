@@ -62,7 +62,7 @@ import {
 	documents,
 	interactionChanges,
 	interactions,
-	processGroups,
+	workspaces,
 	processRevisions,
 	stageEntries,
 	stageEntryDocuments,
@@ -79,10 +79,10 @@ import { can, requirePermission } from '../rbac';
 import { interactionScopeFilter } from '../interactions/access';
 import {
 	firstStage,
-	readGroupRow,
+	readWorkspaceRow,
 	requireActiveRevision,
 	stageSnapshot,
-	type ProcessGroupRow
+	type WorkspaceRow
 } from './process';
 import { evaluateTransition, transitionPermission, type StageState } from './transitions';
 
@@ -113,7 +113,7 @@ function actingUserId(ctx: ActorContext): string {
 	return ctx.user.id;
 }
 
-type LockedInteraction = { id: string; processGroupId: string; ownerUserId: string };
+type LockedInteraction = { id: string; workspaceId: string; ownerUserId: string };
 
 /** Кто выполняет запрос: транзакция команды или общий пул для чтения. */
 type Executor = Tx | ReturnType<typeof getDb>;
@@ -130,7 +130,7 @@ async function lockInteraction(
 	const [row] = await tx
 		.select({
 			id: interactions.id,
-			processGroupId: interactions.processGroupId,
+			workspaceId: interactions.workspaceId,
 			ownerUserId: interactions.ownerUserId
 		})
 		.from(interactions)
@@ -152,8 +152,8 @@ async function readRevisionVersion(tx: Tx, interactionId: string): Promise<numbe
 	const [row] = await tx
 		.select({ version: processRevisions.version })
 		.from(interactions)
-		.innerJoin(processGroups, eq(processGroups.id, interactions.processGroupId))
-		.innerJoin(processRevisions, eq(processRevisions.id, processGroups.activeRevisionId))
+		.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
+		.innerJoin(processRevisions, eq(processRevisions.id, workspaces.activeRevisionId))
 		.where(eq(interactions.id, interactionId))
 		.limit(1);
 
@@ -345,7 +345,7 @@ async function readStage(tx: Tx, stageId: string): Promise<typeof stages.$inferS
  * уникальный индекс `stage_entries_one_open_per_interaction`).
  *
  * Редакция приезжает параметром: её читает тот, кто уже держит разделяемую
- * блокировку группы, — иначе взаимодействие, созданное в миллисекунду
+ * блокировку пространства, — иначе взаимодействие, созданное в миллисекунду
  * публикации, встало бы на стадию редакции, которая уже не действует.
  */
 export async function startInteractionIn(
@@ -408,7 +408,7 @@ async function readTransition(
 
 	if (row === undefined) {
 		throw new ValidationError('В процессе нет такого перехода', [
-			'Переход между этими стадиями не описан в действующем процессе группы'
+			'Переход между этими стадиями не описан в действующем процессе пространства'
 		]);
 	}
 
@@ -462,11 +462,11 @@ type MoveInput = {
  */
 async function requireCurrentRevision(
 	tx: Tx,
-	group: ProcessGroupRow,
+	workspace: WorkspaceRow,
 	expected: number,
 	repeat: string
 ): Promise<ProcessRevisionView> {
-	const revision = await requireActiveRevision(tx, group);
+	const revision = await requireActiveRevision(tx, workspace);
 
 	if (revision.version !== expected) {
 		throw new ConflictError(
@@ -526,8 +526,8 @@ async function attachDocuments(
 async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 	await withTransaction(ctx, async (tx) => {
 		const interaction = await lockInteraction(ctx, tx, input.interactionId);
-		const group = await readGroupRow(tx, interaction.processGroupId);
-		const revision = await requireCurrentRevision(tx, group, input.revision, 'переход');
+		const workspace = await readWorkspaceRow(tx, interaction.workspaceId);
+		const revision = await requireCurrentRevision(tx, workspace, input.revision, 'переход');
 		const entry = await requireOpenEntry(tx, input.interactionId);
 		const transition = await readTransition(
 			tx,
@@ -1500,12 +1500,12 @@ export async function completeInteraction(
 
 	await withTransaction(ctx, async (tx) => {
 		const interaction = await lockInteraction(ctx, tx, input.interactionId);
-		const group = await readGroupRow(tx, interaction.processGroupId);
+		const workspace = await readWorkspaceRow(tx, interaction.workspaceId);
 
 		// Тот же механизм, что у перехода: «завершить» нажимают, посмотрев на
 		// финальную стадию и её требования, и публикация, прошедшая до нажатия,
 		// меняет и то и другое.
-		await requireCurrentRevision(tx, group, input.revision, 'завершение');
+		await requireCurrentRevision(tx, workspace, input.revision, 'завершение');
 
 		const state = await readClosingState(ctx, tx, interaction);
 		const verdict = closingVerdict(state);
@@ -1554,9 +1554,9 @@ export async function cancelInteraction(
 
 	await withTransaction(ctx, async (tx) => {
 		const interaction = await lockInteraction(ctx, tx, input.interactionId);
-		const group = await readGroupRow(tx, interaction.processGroupId);
+		const workspace = await readWorkspaceRow(tx, interaction.workspaceId);
 
-		await requireCurrentRevision(tx, group, input.revision, 'отмену');
+		await requireCurrentRevision(tx, workspace, input.revision, 'отмену');
 
 		const verdict = closingVerdict(await readClosingState(ctx, tx, interaction));
 

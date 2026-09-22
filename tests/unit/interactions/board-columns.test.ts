@@ -12,7 +12,7 @@ import type { InteractionBoardCard, StageView } from '$lib/contracts/interaction
 import {
 	boardCardState,
 	buildBoardColumns,
-	chooseBoardGroup,
+	chooseBoardWorkspace,
 	type BoardEntry
 } from '$lib/server/interactions/board';
 
@@ -122,7 +122,7 @@ describe('boardCardState', () => {
 	});
 });
 
-describe('chooseBoardGroup', () => {
+describe('chooseBoardWorkspace', () => {
 	const withWork = {
 		id: 'group-a',
 		key: 'b2b',
@@ -139,24 +139,24 @@ describe('chooseBoardGroup', () => {
 	};
 
 	it('открывает группу из фильтра, даже если по ней никто не идёт', () => {
-		expect(chooseBoardGroup([withWork, empty], 'b2c')?.id).toBe('group-b');
+		expect(chooseBoardWorkspace([withWork, empty], 'b2c')?.id).toBe('group-b');
 	});
 
 	it('не верит непонятному ключу из адреса', () => {
-		expect(chooseBoardGroup([withWork, empty], 'не-группа')?.id).toBe('group-a');
+		expect(chooseBoardWorkspace([withWork, empty], 'не-группа')?.id).toBe('group-a');
 	});
 
 	it('без фильтра берёт ту, где работы больше', () => {
 		const busier = { ...empty, interactions: 9 };
 
-		expect(chooseBoardGroup([withWork, busier], null)?.id).toBe('group-b');
+		expect(chooseBoardWorkspace([withWork, busier], null)?.id).toBe('group-b');
 	});
 
 	it('возвращается к первой по порядку, когда работы нет нигде', () => {
-		expect(chooseBoardGroup([{ ...withWork, interactions: 0 }, empty], null)?.id).toBe('group-a');
+		expect(chooseBoardWorkspace([{ ...withWork, interactions: 0 }, empty], null)?.id).toBe('group-a');
 	});
 
 	it('без групп не выбирает ничего', () => {
-		expect(chooseBoardGroup([], null)).toBeNull();
+		expect(chooseBoardWorkspace([], null)).toBeNull();
 	});
 });
