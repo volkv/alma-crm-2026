@@ -25,9 +25,9 @@ import { DOCUMENT_STATUS_FACT_LABELS, type DocumentMarkEvidence } from '$lib/con
 import {
 	processDefinitionSchema,
 	type AssignWorkspaceWorkflowInput,
+	type CreateWorkflowInput,
 	type CreateWorkspaceInput,
 	type ProcessDefinitionInput,
-	type WorkspaceDetail,
 	type WorkspaceSummary,
 	type ProcessPreview,
 	type ProcessPreviewRow,
@@ -39,6 +39,7 @@ import {
 	type StageSnapshot,
 	type StageTransitionView,
 	type StageView,
+	type WorkflowDetail,
 	type WorkflowSummary
 } from '$lib/contracts/interactions';
 import type { ActorContext } from '../actor';
@@ -46,7 +47,7 @@ import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
 import {
 	interactions,
-	processGroupCounterpartyKinds,
+	workspaceIntakeRoutes,
 	workspaces,
 	workflows,
 	processRevisions,
@@ -408,16 +409,22 @@ export async function requireActiveRevisionForWorkspace(
 }
 
 /**
- * Пространство по виду контрагента. Таблица соответствий одна на продукт:
- * второе правило выбора означало бы, что одна и та же заявка получает разные
- * процессы в зависимости от канала.
+ * Пространство, в которое попадает заявка от контрагента такого вида.
+ *
+ * Зовётся только из приёма извне: взаимодействие, заведённое руками, место не
+ * выводит — его заводят внутри пространства, и ключ стоит в адресе. У заявки
+ * человека нет, а адресат обязан быть однозначным, и это держит первичный ключ
+ * таблицы по виду.
  */
-export async function resolveWorkspace(executor: Executor, kind: string): Promise<WorkspaceRow> {
+export async function resolveIntakeWorkspace(
+	executor: Executor,
+	kind: string
+): Promise<WorkspaceRow> {
 	const [row] = await executor
 		.select(workspaceColumns)
-		.from(processGroupCounterpartyKinds)
-		.innerJoin(workspaces, eq(workspaces.id, processGroupCounterpartyKinds.groupId))
-		.where(eq(processGroupCounterpartyKinds.kind, kind as 'educational_institution'))
+		.from(workspaceIntakeRoutes)
+		.innerJoin(workspaces, eq(workspaces.id, workspaceIntakeRoutes.workspaceId))
+		.where(eq(workspaceIntakeRoutes.kind, kind as 'educational_institution'))
 		.limit(1);
 
 	if (row === undefined) {
@@ -1193,7 +1200,7 @@ export async function listWorkflows(ctx: ActorContext): Promise<WorkflowSummary[
 
 	const db = getDb();
 
-	const [rows, stageCounts, assigned] = await Promise.all([
+	const [rows, stageCounts, assigned, activeCounts, drafts] = await Promise.all([
 		db.select().from(workflows).orderBy(asc(workflows.key)),
 		db
 			.select({ revisionId: stages.revisionId, value: count() })
@@ -1202,11 +1209,27 @@ export async function listWorkflows(ctx: ActorContext): Promise<WorkflowSummary[
 		db
 			.select({ workflowId: workspaces.workflowId, value: count() })
 			.from(workspaces)
-			.groupBy(workspaces.workflowId)
+			.groupBy(workspaces.workflowId),
+		// Незавершённые считаются по всем пространствам процесса разом: правка
+		// коснётся их всех, и число в строке обязано говорить именно об этом.
+		db
+			.select({ workflowId: workspaces.workflowId, value: count(interactions.id) })
+			.from(workspaces)
+			.innerJoin(
+				interactions,
+				and(eq(interactions.workspaceId, workspaces.id), eq(interactions.status, 'active'))
+			)
+			.groupBy(workspaces.workflowId),
+		db
+			.select({ workflowId: processRevisions.workflowId })
+			.from(processRevisions)
+			.where(isNull(processRevisions.publishedAt))
 	]);
 
 	const stagesByRevision = new Map(stageCounts.map((row) => [row.revisionId, row.value]));
 	const workspacesByWorkflow = new Map(assigned.map((row) => [row.workflowId, row.value]));
+	const activeByWorkflow = new Map(activeCounts.map((row) => [row.workflowId, row.value]));
+	const withDraft = new Set(drafts.map((row) => row.workflowId));
 
 	return rows.map((workflow) => ({
 		id: workflow.id,
@@ -1217,7 +1240,9 @@ export async function listWorkflows(ctx: ActorContext): Promise<WorkflowSummary[
 			workflow.activeRevisionId === null
 				? 0
 				: (stagesByRevision.get(workflow.activeRevisionId) ?? 0),
-		workspaces: workspacesByWorkflow.get(workflow.id) ?? 0
+		workspaces: workspacesByWorkflow.get(workflow.id) ?? 0,
+		activeInteractions: activeByWorkflow.get(workflow.id) ?? 0,
+		hasDraft: withDraft.has(workflow.id)
 	}));
 }
 
@@ -1494,40 +1519,38 @@ export async function readDraft(
 /**
  * Процесс пространства целиком: что действует, что в черновике и что ему мешает.
  */
-export async function getWorkspace(
-	ctx: ActorContext,
-	workspaceKey: string
-): Promise<WorkspaceDetail> {
+export async function getWorkflow(ctx: ActorContext, workflowKey: string): Promise<WorkflowDetail> {
 	await requirePermission(ctx, 'stages.configure', { type: 'stages.process_viewed' });
 
 	const db = getDb();
-	const workspace = await readWorkspaceByKey(db, workspaceKey);
-	const workflow = await readWorkflowForWorkspace(db, workspace.id);
+	const workflow = await readWorkflowByKey(db, workflowKey);
 
-	const [summaries, active, draft, kinds, openByKey, archivedKeys] = await Promise.all([
-		listWorkspaces(ctx),
-		workflow === null ? null : readActiveRevision(db, workflow),
-		workflow === null ? null : readDraft(db, workflow.id),
+	const [summaries, active, draft, assigned, openByKey, archivedKeys] = await Promise.all([
+		listWorkflows(ctx),
+		readActiveRevision(db, workflow),
+		readDraft(db, workflow.id),
+		// Кому процесс назначен: редактор обязан сказать заранее, чью работу
+		// изменит публикация. Одно описание может обслуживать несколько мест.
 		db
-			.select({ kind: processGroupCounterpartyKinds.kind })
-			.from(processGroupCounterpartyKinds)
-			.where(eq(processGroupCounterpartyKinds.groupId, workspace.id))
-			.orderBy(asc(processGroupCounterpartyKinds.kind)),
-		workflow === null ? new Map<string, number>() : countOpenByStageKey(db, workflow.id),
-		workflow === null ? new Set<string>() : readArchivedKeys(db, workflow.id)
+			.select({ key: workspaces.key, name: workspaces.name })
+			.from(workspaces)
+			.where(eq(workspaces.workflowId, workflow.id))
+			.orderBy(asc(workspaces.position)),
+		countOpenByStageKey(db, workflow.id),
+		readArchivedKeys(db, workflow.id)
 	]);
 
-	const summary = summaries.find((row) => row.id === workspace.id);
+	const summary = summaries.find((row) => row.id === workflow.id);
 
 	if (summary === undefined) {
-		throw new NotFoundError('Пространство не найдено');
+		throw new NotFoundError('Процесс не найден');
 	}
 
 	return {
-		workspace: summary,
+		workflow: summary,
 		active,
 		draft,
-		counterpartyKinds: kinds.map((row) => row.kind),
+		workspaces: assigned,
 		issues:
 			draft === null
 				? []
@@ -1537,6 +1560,57 @@ export async function getWorkspace(
 						openByKey
 					})
 	};
+}
+
+/**
+ * Новый процесс — пустой, без единой стадии.
+ *
+ * Стадии заводят черновиком, а не формой создания: описание работы — это
+ * четырнадцать строк с нормативами и переходами, и просить их разом у того, кто
+ * только придумал название, значило бы отложить заведение до конца работы.
+ */
+export async function createWorkflow(
+	ctx: ActorContext,
+	input: CreateWorkflowInput
+): Promise<WorkflowSummary> {
+	await requirePermission(ctx, 'stages.configure', { type: 'workflows.created' });
+
+	const workflowId = await withTransaction(ctx, async (tx) => {
+		const [taken] = await tx
+			.select({ id: workflows.id })
+			.from(workflows)
+			.where(eq(workflows.key, input.key));
+
+		if (taken !== undefined) {
+			throw new ConflictError(`Процесс с ключом «${input.key}» уже заведён`);
+		}
+
+		const [created] = await tx
+			.insert(workflows)
+			.values({ key: input.key, name: input.name, description: input.description })
+			.returning({ id: workflows.id });
+
+		await recordAuditEvent(
+			ctx,
+			{
+				type: 'workflows.created',
+				outcome: 'success',
+				subject: { type: 'workflow', id: created.id },
+				details: { workflowKey: input.key }
+			},
+			tx
+		);
+
+		return created.id;
+	});
+
+	const summary = (await listWorkflows(ctx)).find((row) => row.id === workflowId);
+
+	if (summary === undefined) {
+		throw new NotFoundError('Процесс не найден сразу после создания');
+	}
+
+	return summary;
 }
 
 /** Ключи стадий редакции по порядку; у отсутствующей редакции — пусто. */
@@ -1584,22 +1658,16 @@ function keysOutsideDraft(archived: ReadonlySet<string>, draft: ProcessRevisionV
  * ------------------------------------------------------------------------- */
 
 /**
- * Процесс пространства под блокировкой — вход всех операций настройки.
- *
- * Пространство здесь только адрес: раздел настройки открывается по его ключу
- * (`/settings/process/[key]`), а правится и блокируется процесс, который ему
- * назначен. Разделение адресов — работа отдельного шага; разделение того, что
- * блокируется, откладывать нельзя.
+ * Процесс по ключу под блокировкой — вход всех операций настройки. Раздел
+ * открывается ключом процесса (`/settings/workflows/[key]`): правят описание
+ * работы, а не место, где по нему работают.
  */
-async function lockWorkflowOfWorkspace(
+async function lockWorkflowByKey(
 	tx: Tx,
-	workspaceKey: string,
+	workflowKey: string,
 	mode: 'update' | 'share'
 ): Promise<WorkflowRow> {
-	const workspace = await readWorkspaceByKey(tx, workspaceKey);
-	const workflow = await requireWorkflowForWorkspace(tx, workspace);
-
-	return lockWorkflow(tx, workflow.id, mode);
+	return lockWorkflow(tx, (await readWorkflowByKey(tx, workflowKey)).id, mode);
 }
 
 /**
@@ -1612,12 +1680,12 @@ async function lockWorkflowOfWorkspace(
  */
 export async function createDraft(
 	ctx: ActorContext,
-	workspaceKey: string
+	workflowKey: string
 ): Promise<ProcessRevisionView> {
 	await requirePermission(ctx, 'stages.configure', { type: 'stages.draft_created' });
 
 	return withTransaction(ctx, async (tx) => {
-		const workflow = await lockWorkflowOfWorkspace(tx, workspaceKey, 'update');
+		const workflow = await lockWorkflowByKey(tx, workflowKey, 'update');
 		const existing = await readDraft(tx, workflow.id);
 
 		if (existing !== null) {
@@ -1676,7 +1744,7 @@ export async function createDraft(
  */
 export async function updateDraft(
 	ctx: ActorContext,
-	workspaceKey: string,
+	workflowKey: string,
 	input: ProcessDefinitionInput
 ): Promise<ProcessRevisionView> {
 	await requirePermission(ctx, 'stages.configure', { type: 'stages.draft_updated' });
@@ -1693,7 +1761,7 @@ export async function updateDraft(
 	const definition = parsed.data;
 
 	return withTransaction(ctx, async (tx) => {
-		const workflow = await lockWorkflowOfWorkspace(tx, workspaceKey, 'update');
+		const workflow = await lockWorkflowByKey(tx, workflowKey, 'update');
 		const draft = await readDraft(tx, workflow.id);
 
 		if (draft === null) {
@@ -1771,11 +1839,11 @@ export function withDefaultRules(
 }
 
 /** Отмена черновика: редакция и её содержимое удаляются целиком. */
-export async function discardDraft(ctx: ActorContext, workspaceKey: string): Promise<void> {
+export async function discardDraft(ctx: ActorContext, workflowKey: string): Promise<void> {
 	await requirePermission(ctx, 'stages.configure', { type: 'stages.draft_discarded' });
 
 	await withTransaction(ctx, async (tx) => {
-		const workflow = await lockWorkflowOfWorkspace(tx, workspaceKey, 'update');
+		const workflow = await lockWorkflowByKey(tx, workflowKey, 'update');
 		const draft = await readDraft(tx, workflow.id);
 
 		if (draft === null) {
@@ -1813,13 +1881,12 @@ export async function discardDraft(ctx: ActorContext, workspaceKey: string): Pro
  */
 export async function previewPublication(
 	ctx: ActorContext,
-	workspaceKey: string
+	workflowKey: string
 ): Promise<ProcessPreview> {
 	await requirePermission(ctx, 'stages.configure', { type: 'stages.process_viewed' });
 
 	const db = getDb();
-	const workspace = await readWorkspaceByKey(db, workspaceKey);
-	const workflow = await requireWorkflowForWorkspace(db, workspace);
+	const workflow = await readWorkflowByKey(db, workflowKey);
 	const draft = await readDraft(db, workflow.id);
 
 	if (draft === null) {
@@ -1870,7 +1937,7 @@ export type PublicationResult = {
  */
 export async function publishProcess(
 	ctx: ActorContext,
-	workspaceKey: string
+	workflowKey: string
 ): Promise<PublicationResult> {
 	await requirePermission(ctx, 'stages.configure', { type: 'stages.process_published' });
 
@@ -1879,7 +1946,7 @@ export async function publishProcess(
 		// очередь, а создание взаимодействия ждёт своей разделяемой блокировки.
 		// Именно процесса, а не пространства: у процесса, назначенного двум
 		// местам, блокировка места пропустила бы вторую публикацию.
-		const workflow = await lockWorkflowOfWorkspace(tx, workspaceKey, 'update');
+		const workflow = await lockWorkflowByKey(tx, workflowKey, 'update');
 
 		// 2. Перечитать черновик под блокировкой и проверить его целиком.
 		const draft = await readDraft(tx, workflow.id);

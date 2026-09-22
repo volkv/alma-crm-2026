@@ -17,7 +17,7 @@ export type SettingsHref =
 	| '/settings/api-keys'
 	| '/settings/general'
 	| '/settings/workspaces'
-	| '/settings/process'
+	| '/settings/workflows'
 	| '/settings/integrations';
 
 export type SettingsSection = {
@@ -60,9 +60,9 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 		permission: 'stages.configure'
 	},
 	{
-		href: '/settings/process',
-		label: 'Процесс',
-		description: 'Стадии и переходы по пространствам, черновик изменений',
+		href: '/settings/workflows',
+		label: 'Процессы',
+		description: 'Описания работы: стадии, переходы и черновик изменений',
 		permission: 'stages.configure'
 	},
 	{

@@ -206,8 +206,8 @@ const STATIC_SECTIONS: readonly NavSection[] = [
 		permission: 'stages.configure'
 	},
 	{
-		href: '/settings/process',
-		label: 'Процесс',
+		href: '/settings/workflows',
+		label: 'Процессы',
 		icon: WorkflowIcon,
 		group: SETTINGS,
 		permission: 'stages.configure'

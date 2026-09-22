@@ -698,7 +698,7 @@ describe('реестр ключей и журнал', () => {
 		const migrated = events.find((event) => event.type === 'stages.process_migrated');
 		const perInteraction = events.filter((event) => event.type === 'interactions.stage_migrated');
 
-		expect(published?.details).toMatchObject({ workspaceKey: B2C_WORKSPACE_KEY, stageCount: 2 });
+		expect(published?.details).toMatchObject({ workflowKey: B2C_WORKSPACE_KEY, stageCount: 2 });
 		expect(migrated?.details).toMatchObject({ reboundCount: 0, migratedCount: 1 });
 		expect(perInteraction).toHaveLength(1);
 		expect(perInteraction[0].subjectId).toBe(interactionId);

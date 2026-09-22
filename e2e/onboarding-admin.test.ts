@@ -194,7 +194,7 @@ admin('подсказки общих настроек обходят все че
 });
 
 admin('подсказки процесса доводят от списка групп до входа в редактор', async ({ page }) => {
-	await openScreen(page, '/settings/process');
+	await openScreen(page, '/settings/workflows');
 
 	const tour = await startScreenTour(page, 'Процесс');
 
@@ -205,12 +205,12 @@ admin('подсказки процесса доводят от списка гр
 });
 
 admin('подсказки редактора процесса открываются на группе из списка', async ({ page }) => {
-	await openScreen(page, '/settings/process');
+	await openScreen(page, '/settings/workflows');
 
 	// Адрес редактора несёт ключ группы, и придумать его тур не может: сюда
 	// приходят строкой списка — так же, как пришёл бы человек.
 	await page.getByRole('link', { name: 'Открыть процесс: Учебные заведения' }).click();
-	await page.waitForURL('**/settings/process/b2b');
+	await page.waitForURL('**/settings/workflows/b2b');
 	await waitForHydration(page);
 
 	const tour = await startScreenTour(page, 'Редактор процесса группы');

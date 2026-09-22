@@ -836,6 +836,9 @@ export type WorkflowSummary = {
 	stageCount: number;
 	/** Скольким пространствам процесс назначен. */
 	workspaces: number;
+	/** Сколько незавершённых взаимодействий идёт по нему во всех них. */
+	activeInteractions: number;
+	hasDraft: boolean;
 };
 
 /**
@@ -890,17 +893,39 @@ export const reorderWorkspacesSchema = z.object({
 
 export type ReorderWorkspacesInput = z.output<typeof reorderWorkspacesSchema>;
 
-/** Процесс пространства целиком: что действует, что в черновике и что мешает. */
-export type WorkspaceDetail = {
-	workspace: WorkspaceSummary;
-	/** Действующая редакция; `null` — процесс пространства ещё не заведён. */
+/** Процесс целиком: что действует, что в черновике и что мешает его применить. */
+export type WorkflowDetail = {
+	workflow: WorkflowSummary;
+	/** Действующая редакция; `null` — стадии ещё не заведены. */
 	active: ProcessRevisionView | null;
 	draft: ProcessRevisionView | null;
 	/** Что мешает применить черновик; у процесса без черновика — пусто. */
 	issues: string[];
-	/** Виды контрагентов, работа с которыми идёт по этому процессу. */
-	counterpartyKinds: string[];
+	/**
+	 * Пространства, которым процесс назначен, по порядку в меню. Публикация
+	 * меняет работу во всех сразу, и редактор обязан сказать это заранее.
+	 */
+	workspaces: { key: string; name: string }[];
 };
+
+/** Ключ процесса: он стоит в адресе редактора и читается людьми. */
+export const workflowKeySchema = z
+	.string({ error: 'Укажите ключ процесса' })
+	.trim()
+	.min(2, { error: 'Ключ процесса — не короче двух символов' })
+	.max(40, { error: 'Ключ процесса — не длиннее 40 символов' })
+	.regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, {
+		error: 'Ключ процесса: строчные латинские буквы, цифры и дефис между ними'
+	});
+
+/** Заведение процесса. Стадии в нём описывают черновиком, а не этой формой. */
+export const createWorkflowSchema = z.object({
+	key: workflowKeySchema,
+	name: requiredText(200, 'Укажите название процесса'),
+	description: optionalText(500)
+});
+
+export type CreateWorkflowInput = z.output<typeof createWorkflowSchema>;
 
 /** Что стало со стадией действующей структуры в черновике. */
 export const STAGE_CHANGE_KINDS = ['kept', 'renamed', 'changed', 'added', 'removed'] as const;

@@ -238,7 +238,7 @@ staff('диалог стадии помещается в окно, а кнопк
 	await seedDialogGroup();
 
 	await page.setViewportSize(WIDE);
-	await page.goto(`/settings/process/${DIALOG_GROUP_KEY}`);
+	await page.goto(`/settings/workflows/${DIALOG_GROUP_KEY}`);
 
 	await expect(page.getByRole('heading', { level: 1 })).toContainText('Проверка диалога стадии');
 	await page.getByRole('button', { name: 'Черновик изменений' }).click();
@@ -290,7 +290,7 @@ staff('диалог стадии помещается в окно, а кнопк
 staff('черновик изменений применяется ко всем и переносит записи', async ({ page, browser }) => {
 	await seed();
 
-	await page.goto('/settings/process');
+	await page.goto('/settings/workflows');
 
 	// Список — это группы контрагентов, а не версии процесса: номера редакции на
 	// экране нет вовсе.
@@ -426,6 +426,6 @@ manager('настройка процесса КАМу не принадлежи�
 	// Меню настроек собирается из прав: чего нет в нём, того нет и по ссылке.
 	await expect(page.getByRole('link', { name: 'Процесс' })).toHaveCount(0);
 
-	const response = await page.request.get('/settings/process');
+	const response = await page.request.get('/settings/workflows');
 	expect(response.status()).toBe(403);
 });

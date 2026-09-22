@@ -28,7 +28,7 @@ import {
 	ensureWorkflow,
 	processDefinition,
 	publishProcess,
-	resolveWorkspace,
+	resolveIntakeWorkspace,
 	updateDraft
 } from '$lib/server/stages/process';
 import {
@@ -183,8 +183,8 @@ describe('заведение взаимодействия', () => {
 		expect((await getInteraction(ctx, created.id)).workspaceKey).toBe(B2B_WORKSPACE_KEY);
 		// Таблица соответствий осталась, но только для приёма заявки с сайта:
 		// там выбирать некому, и вид контрагента — единственное, что известно.
-		expect((await resolveWorkspace(database.db, 'legal_entity')).key).toBe(B2C_WORKSPACE_KEY);
-		await expect(resolveWorkspace(database.db, 'operator')).rejects.toThrow(
+		expect((await resolveIntakeWorkspace(database.db, 'legal_entity')).key).toBe(B2C_WORKSPACE_KEY);
+		await expect(resolveIntakeWorkspace(database.db, 'operator')).rejects.toThrow(
 			/не может быть основной стороной/
 		);
 	});

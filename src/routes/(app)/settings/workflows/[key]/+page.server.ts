@@ -15,7 +15,7 @@ import { PERMISSIONS, PERMISSION_KEYS } from '$lib/server/rbac/permissions';
 import {
 	createDraft,
 	discardDraft,
-	getWorkspace,
+	getWorkflow,
 	previewPublication,
 	processDefinition,
 	publishProcess,
@@ -25,17 +25,20 @@ import { parseChecklist, stageFormSchema, transitionFormSchema } from './schema'
 import type { Actions, PageServerLoad } from './$types';
 
 /**
- * Процесс одного пространства.
+ * Редактор одного процесса. Открывается ключом процесса, а не пространства:
+ * описание работы живёт само по себе, и одно и то же может обслуживать
+ * несколько направлений.
  *
  * Действующая структура открыта только на чтение: по ней идут взаимодействия и
  * с неё сняты слепки пройденных стадий. Изменение готовят черновиком — копией
- * действующей структуры — и применяют ко всем одной операцией, которая
- * переносит незавершённые взаимодействия на новую структуру.
+ * действующей структуры — и применяют одной операцией, которая переносит
+ * незавершённые взаимодействия **всех** пространств процесса на новую
+ * структуру.
  *
  * Черновик правится целиком: каждое действие собирает структуру заново и отдаёт
  * её `updateDraft`, а тот переписывает стадии, переходы и правила переноса под
- * блокировкой строки пространства. Отсюда и чтение перед каждой записью:
- * правится не поле, а описание процесса.
+ * блокировкой строки процесса. Отсюда и чтение перед каждой записью: правится
+ * не поле, а описание процесса.
  */
 
 /** Формы страницы; идентификатор связывает форму на сервере с формой в браузере. */
@@ -49,7 +52,7 @@ export const load: PageServerLoad = async (event) => {
 	}
 
 	try {
-		const detail = await getWorkspace(ctx, event.params.key);
+		const detail = await getWorkflow(ctx, event.params.key);
 
 		// Предпросмотр считается сразу вместе со страницей: он справочен, не
 		// берёт блокировок, и держать за ним отдельный запрос значило бы
@@ -65,9 +68,8 @@ export const load: PageServerLoad = async (event) => {
 			// Заголовок и крошки принадлежат макету настроек, а какой именно
 			// процесс открыт, знает только эта страница: по «Настройки ›
 			// Настройки» было не понять, чей процесс правят.
-			settingsTitle: detail.workspace.name,
-			settingsDescription:
-				detail.workspace.description ?? 'Стадии, нормативы и переходы этого пространства',
+			settingsTitle: detail.workflow.name,
+			settingsDescription: detail.workflow.description ?? 'Стадии, нормативы и переходы процесса',
 			preview,
 			stageForm: await superValidate(zod4(stageFormSchema), { id: FORM_IDS.stage }),
 			transitionForm: await superValidate(zod4(transitionFormSchema), {
@@ -111,12 +113,12 @@ function asFormError<Out extends Record<string, unknown>, M, In extends Record<s
  */
 async function readDraftDefinition(
 	ctx: ActorContext,
-	workspaceKey: string
+	workflowKey: string
 ): Promise<ProcessDefinitionInput> {
-	const { draft } = await getWorkspace(ctx, workspaceKey);
+	const { draft } = await getWorkflow(ctx, workflowKey);
 
 	if (draft === null) {
-		throw new ConflictError('У пространства нет черновика изменений: сначала заведите его');
+		throw new ConflictError('У процесса нет черновика изменений: сначала заведите его');
 	}
 
 	return processDefinition(draft);

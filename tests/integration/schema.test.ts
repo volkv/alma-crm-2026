@@ -13,7 +13,7 @@ import {
 	learningGroups,
 	organizationResponsibles,
 	organizations,
-	processGroupCounterpartyKinds,
+	workspaceIntakeRoutes,
 	workspaces,
 	stageEntries,
 	stageEntryStatus,
@@ -67,7 +67,7 @@ describe('миграции', () => {
 				'comments', 'document_templates', 'documents', 'api_keys',
 				'consents', 'stage_entry_status',
 				'directions', 'product_directions', 'organization_responsibles',
-				'workspaces', 'workflows', 'process_group_counterparty_kinds', 'process_stage_keys',
+				'workspaces', 'workflows', 'workspace_intake_routes', 'process_stage_keys',
 				'stage_migration_rules', 'contracts', 'contract_items',
 				'interaction_contract_items', 'stage_entry_documents',
 				'learning_groups', 'learning_group_results', 'exchange_messages'
@@ -551,16 +551,16 @@ describe('группы процесса', () => {
 		expect(
 			await failureCode(
 				database.db
-					.insert(processGroupCounterpartyKinds)
-					.values({ kind: 'educational_institution', groupId: b2c })
+					.insert(workspaceIntakeRoutes)
+					.values({ kind: 'educational_institution', workspaceId: b2c })
 			)
 		).toBe('23505');
 
 		const rows = await database.db
-			.select({ kind: processGroupCounterpartyKinds.kind, key: workspaces.key })
-			.from(processGroupCounterpartyKinds)
-			.innerJoin(workspaces, eq(workspaces.id, processGroupCounterpartyKinds.groupId))
-			.orderBy(processGroupCounterpartyKinds.kind);
+			.select({ kind: workspaceIntakeRoutes.kind, key: workspaces.key })
+			.from(workspaceIntakeRoutes)
+			.innerJoin(workspaces, eq(workspaces.id, workspaceIntakeRoutes.workspaceId))
+			.orderBy(workspaceIntakeRoutes.kind);
 
 		expect(rows.map((row) => `${row.kind}:${row.key}`)).toStrictEqual([
 			'educational_institution:b2b',

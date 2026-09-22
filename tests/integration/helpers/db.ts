@@ -45,7 +45,7 @@ import { startTestStorage, type TestStorage } from './storage';
  * стоять после той, на которую ссылается. Пространство ссылается на процесс, а
  * соответствие видов контрагента — на пространство.
  */
-const REFERENCE_TABLES = ['workflows', 'workspaces', 'process_group_counterparty_kinds'] as const;
+const REFERENCE_TABLES = ['workflows', 'workspaces', 'workspace_intake_routes'] as const;
 
 export type TestDatabase = {
 	/** Тот же самый handle, что получают сервисы через `getDb()`. */

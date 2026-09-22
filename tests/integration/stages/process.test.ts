@@ -15,7 +15,7 @@ import { ConflictError, ForbiddenError, NotFoundError } from '$lib/server/errors
 import {
 	createDraft,
 	discardDraft,
-	getWorkspace,
+	getWorkflow,
 	listWorkspaces,
 	previewPublication,
 	processDefinition,
@@ -159,9 +159,9 @@ describe('черновик изменений', () => {
 		expect(draft.transitions).toHaveLength(active.transitions.length);
 
 		// Действующая редакция копией не тронута: по ней идут взаимодействия.
-		const detail = await getWorkspace(ctx, B2B_WORKSPACE_KEY);
+		const detail = await getWorkflow(ctx, B2B_WORKSPACE_KEY);
 		expect(detail.active?.id).toBe(active.id);
-		expect(detail.workspace.hasDraft).toBe(true);
+		expect(detail.workflow.hasDraft).toBe(true);
 	});
 
 	it('не заводит второй черновик той же группы', async () => {

@@ -289,12 +289,12 @@ staff('журнал обмена держит ключевые колонки н
 staff('таблица стадий процесса держит ключевые колонки на 1280', async ({ page }) => {
 	await page.setViewportSize(WIDE);
 
-	await page.goto('/settings/process');
+	await page.goto('/settings/workflows');
 	await expect(page.getByRole('heading', { name: 'Процесс' })).toBeVisible();
 	expect(await tableOverflow(page)).toBeLessThanOrEqual(0);
 
 	// Группа стенда с самым длинным процессом: четырнадцать стадий работы с вузом.
-	await page.goto('/settings/process/b2b');
+	await page.goto('/settings/workflows/b2b');
 	await expect(page.getByRole('heading', { level: 1 })).toContainText('Учебные заведения');
 
 	for (const column of ['Ключ', 'Название', 'Норматив', 'Требует']) {

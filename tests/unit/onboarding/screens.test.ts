@@ -245,8 +245,8 @@ describe('адрес экрана', () => {
 	});
 
 	it('ключ процесса — любой сегмент, а не идентификатор', () => {
-		expect(screenForPath('/settings/process/b2b')?.id).toBe('settings-process-group');
-		expect(screenForPath('/settings/process')?.id).toBe('settings-process');
+		expect(screenForPath('/settings/workflows/b2b')?.id).toBe('settings-process-group');
+		expect(screenForPath('/settings/workflows')?.id).toBe('settings-process');
 	});
 });
 

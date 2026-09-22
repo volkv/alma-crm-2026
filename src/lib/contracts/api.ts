@@ -42,7 +42,8 @@ import {
 	type CommentView,
 	type InteractionChangeView,
 	type InteractionStatusView,
-	type WorkspaceDetail,
+	type ProcessRevisionView,
+	type WorkspaceSummary,
 	type StageEntryView
 } from './interactions';
 import { REPORT_MODES, type ReportBucket, type ReportView } from './reports';
@@ -552,9 +553,6 @@ export type ApiProcessTransition = z.output<typeof apiProcessTransitionSchema>;
  */
 export const apiProcessSchema = z.object({
 	workspace: apiWorkspaceSchema,
-	counterpartyKinds: z
-		.array(z.string())
-		.describe('Виды контрагентов, которые идут по этому процессу'),
 	revision: z
 		.object({
 			version: z.number().int(),
@@ -570,12 +568,12 @@ export const apiProcessSchema = z.object({
 
 export type ApiProcess = z.output<typeof apiProcessSchema>;
 
-export function toApiProcess(detail: WorkspaceDetail): ApiProcess {
-	const active = detail.active;
-
+export function toApiProcess(
+	workspace: WorkspaceSummary,
+	active: ProcessRevisionView | null
+): ApiProcess {
 	return {
-		workspace: detail.workspace,
-		counterpartyKinds: detail.counterpartyKinds,
+		workspace,
 		revision:
 			active === null
 				? null

@@ -174,7 +174,11 @@ describe('сид', () => {
 		await runSeed();
 
 		const [b2b] = await database.db
-			.select({ id: workspaces.id, activeRevisionId: workflows.activeRevisionId })
+			.select({
+				id: workspaces.id,
+				workflowId: workflows.id,
+				activeRevisionId: workflows.activeRevisionId
+			})
 			.from(workspaces)
 			.innerJoin(workflows, eq(workflows.id, workspaces.workflowId))
 			.where(eq(workspaces.key, 'b2b'));
@@ -182,17 +186,19 @@ describe('сид', () => {
 		// Действующая редакция процесса — та самая, которую завёл набор.
 		expect(b2b.activeRevisionId).not.toBeNull();
 
+		// Реестр ключей висит на процессе, а не на месте: если два пространства
+		// работают по одному процессу, стадия `signing` в них одна и та же.
 		const keys = await database.db
 			.select({ key: processStageKeys.key })
 			.from(processStageKeys)
-			.where(eq(processStageKeys.workflowId, b2b.id));
+			.where(eq(processStageKeys.workflowId, b2b.workflowId));
 
 		expect(keys.map((row) => row.key).sort()).toStrictEqual(
 			B2B_PROCESS.stages.map((stage) => stage.key).sort()
 		);
 
-		// Группа выводится из вида основной стороны: вуз ведут по `b2b`,
-		// физическое и юридическое лицо — по `b2c`.
+		// Сид заводит записи в том пространстве, которое назвал сам: вуз — в
+		// `b2b`, физическое и юридическое лицо — в `b2c`.
 		const grouped = await database.db
 			.select({ count: count() })
 			.from(interactions)

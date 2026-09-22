@@ -69,7 +69,7 @@ import { withTransaction, type Tx } from '../../db/transaction';
 import { createAffiliation, createOrganization, createPerson } from '../../directory/write';
 import { AppError, ConflictError, ForbiddenError, ValidationError } from '../../errors';
 import { createInteractionIn } from '../../interactions/write';
-import { resolveWorkspace } from '../../stages/process';
+import { resolveIntakeWorkspace } from '../../stages/process';
 import { hashEmail, hashPhone, phoneColumns } from '../../people/pii';
 import { withPiiTrace } from '../../people/pii-trace';
 import { requirePermission } from '../../rbac';
@@ -1078,7 +1078,7 @@ async function createFromApplication(
 	// адресат обязан быть однозначным. Внутри пространства действующая редакция
 	// читается под разделяемой блокировкой процесса — это делает
 	// `createInteractionIn`.
-	const workspace = await resolveWorkspace(tx, data.applicant.kind);
+	const workspace = await resolveIntakeWorkspace(tx, data.applicant.kind);
 
 	const interactionId = await createInteractionIn(ctx, tx, workspace.key, {
 		title: interactionTitle(applicantName(data), data.interest),

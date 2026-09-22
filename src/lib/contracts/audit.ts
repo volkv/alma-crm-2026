@@ -147,6 +147,9 @@ export const AUDIT_EVENT_TYPES = [
 	'workspaces.renamed',
 	'workspaces.reordered',
 	'workspaces.workflow_assigned',
+	// Процесс заводят отдельно от места: одно описание работы может обслуживать
+	// несколько пространств, и его появление — самостоятельное решение.
+	'workflows.created',
 	'documents.uploaded',
 	'documents.generated',
 	'documents.downloaded',

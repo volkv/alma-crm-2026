@@ -557,7 +557,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 	});
 
 	test('4. Администратор правит живой процесс: записи переезжают, история цела', async () => {
-		await admin.goto('/settings/process');
+		await admin.goto('/settings/workflows');
 		await admin.getByRole('link', { name: GROUP_NAME, exact: true }).click();
 
 		await expect(admin.getByRole('button', { name: 'Черновик изменений' })).toBeEnabled();

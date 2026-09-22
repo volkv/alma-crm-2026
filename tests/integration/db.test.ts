@@ -84,8 +84,8 @@ it('ships the workspaces and their counterparty kinds with the migrations', asyn
 
 	const mapping = await client<{ kind: string; key: string }[]>`
 		select kinds.kind, workspaces.key
-		from process_group_counterparty_kinds kinds
-		join workspaces on workspaces.id = kinds.group_id
+		from workspace_intake_routes kinds
+		join workspaces on workspaces.id = kinds.workspace_id
 		order by kinds.kind
 	`;
 

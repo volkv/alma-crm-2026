@@ -113,11 +113,12 @@ describe('процесс, назначенный двум пространств
 		const before = await activeOf(B2B_WORKSPACE_KEY);
 
 		// Стадия «Предложение» исчезает, и правило по умолчанию уводит тех, кто на
-		// ней стоял, на ближайшую уцелевшую назад.
-		const draft = await createDraft(ctx, B2B_WORKSPACE_KEY);
+		// ней стоял, на ближайшую уцелевшую назад. Черновик и публикация зовутся
+		// ключом процесса: правят описание работы, а не место, где по нему идут.
+		const draft = await createDraft(ctx, SHARED_KEY);
 		const definition = processDefinition(draft);
 
-		await updateDraft(ctx, B2B_WORKSPACE_KEY, {
+		await updateDraft(ctx, SHARED_KEY, {
 			...definition,
 			stages: definition.stages.filter((stage) => stage.key !== 'offer'),
 			transitions: [
@@ -131,7 +132,7 @@ describe('процесс, назначенный двум пространств
 			]
 		});
 
-		const result = await publishProcess(ctx, B2B_WORKSPACE_KEY);
+		const result = await publishProcess(ctx, SHARED_KEY);
 
 		// Публикацию затеяли из одного места, а сосчитала она оба: процесс один,
 		// и записи на исчезнувшей стадии есть в обоих.
@@ -149,14 +150,15 @@ describe('процесс, назначенный двум пространств
 		await expect(stageKeyOf(ctx, inB2c.interactionId)).resolves.toBe('intake');
 	});
 
-	it('отказывает в черновике из второго пространства: черновик один на процесс', async () => {
+	it('держит один черновик на процесс, а не на место, где по нему работают', async () => {
 		const ctx = admin();
 		await shareProcess();
 
-		await createDraft(ctx, B2B_WORKSPACE_KEY);
+		await createDraft(ctx, SHARED_KEY);
 
-		// Черновик заведён «в b2b», но принадлежит процессу, и второе место видит
-		// тот же самый: иначе два описания одной работы опубликовались бы оба.
-		await expect(createDraft(ctx, B2C_WORKSPACE_KEY)).rejects.toThrow(/черновик/i);
+		// Черновик принадлежит процессу: два описания одной работы опубликовались
+		// бы оба, и какое из них описывает работу, стало бы вопросом порядка
+		// нажатий.
+		await expect(createDraft(ctx, SHARED_KEY)).rejects.toThrow(/черновик/i);
 	});
 });

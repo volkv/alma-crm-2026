@@ -3,7 +3,8 @@ import type { RequestHandler } from './$types';
 import { apiProcessSchema, toApiProcess } from '$lib/contracts/api';
 import { apiHandler, type ApiEndpointConfig } from '$lib/server/api/handler';
 import { registerRoute } from '$lib/server/api/openapi';
-import { getWorkspace } from '$lib/server/stages/process';
+import { NotFoundError } from '$lib/server/errors';
+import { listWorkspaces, readActiveRevisionForWorkspace } from '$lib/server/stages/process';
 
 const processEndpoint = {
 	auth: 'key',
@@ -43,7 +44,6 @@ registerRoute({
 			activeInteractions: 12,
 			hasDraft: false
 		},
-		counterpartyKinds: ['educational_institution'],
 		revision: {
 			version: 2,
 			name: 'Процесс работы с учебными заведениями',
@@ -96,6 +96,14 @@ registerRoute({
 	}
 });
 
-export const GET: RequestHandler = apiHandler(processEndpoint, async (ctx, { params }) =>
-	toApiProcess(await getWorkspace(ctx, params.key))
-);
+export const GET: RequestHandler = apiHandler(processEndpoint, async (ctx, { params }) => {
+	const workspace = (await listWorkspaces(ctx)).find((row) => row.key === params.key);
+
+	if (workspace === undefined) {
+		throw new NotFoundError('Пространство не найдено');
+	}
+
+	// Действующая редакция — у назначенного процесса; у пространства без него
+	// её нет вовсе, и ответ честно говорит `null`, а не выдумывает пустую.
+	return toApiProcess(workspace, await readActiveRevisionForWorkspace(workspace.id));
+});

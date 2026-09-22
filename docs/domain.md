@@ -49,11 +49,12 @@
 стороной не бывают: у работы должен быть один контрагент, иначе от порядка строк зависит область
 доступа.
 Организация-вендор (на неё ссылается `products.vendor_organization_id`) стороной не бывает вовсе.
-Соответствие «вид → пространство» хранится строками `process_group_counterparty_kinds`, а не набором
+Соответствие «вид → пространство» хранится строками `workspace_intake_routes`, а не набором
 в строке пространства: «вид ведёт ровно в одно пространство» должно держать ограничение, а не
 соглашение. Спрашивают эту таблицу в одном месте — при приёме заявки с сайта, у которой нет
-человека, выбирающего место. Взаимодействие, заведённое руками, её не спрашивает: место названо
-адресом формы.
+человека, выбирающего место (`resolveIntakeWorkspace`). Взаимодействие, заведённое руками, её не
+спрашивает: место названо адресом формы. Отсюда и имя таблицы: она перестала быть настройкой
+процесса и осталась маршрутом приёма извне.
 
 **Физическое лицо** — это организация вида `individual` с обязательной ссылкой `person_id` на
 `people`. Отдельной таблицы контрагентов не заводим: так ФИО, контакты, согласия, маскирование,
@@ -118,17 +119,17 @@ Keycloak вместе с переводом входа (`drizzle/0008_keycloak_i
 
 ### 3.3 Процесс: пространства, процессы, редакции, стадии
 
-| Таблица                                    | Колонки                                                                                                                                                                        | Индексы и ограничения                                                                                                                                                    | Владелец |
-| ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | -------- |
-| `workspaces` (новая)                       | `id uuid pk`, `key text not null`, `name`, `description null`, `workflow_id uuid null → workflows on delete restrict`, `position integer not null`, `timestamps`               | `unique (key)`, `unique (position)`; ссылка на процесс допускает пустоту — «процесс не назначен» рабочее состояние                                                       | `stages` |
-| `workflows` (новая)                        | `id uuid pk`, `key text not null`, `name`, `description null`, `active_revision_id uuid null → process_revisions on delete restrict`, `timestamps`                             | `unique (key)`; действующая редакция — свойство процесса, её принадлежность процессу проверяет транзакция публикации                                                     | `stages` |
-| `process_group_counterparty_kinds` (новая) | `kind organization_kind pk`, `group_id not null → workspaces on delete restrict`                                                                                               | маршруты приёма извне; первичный ключ по `kind` и есть ограничение «вид ведёт ровно в одно пространство»; индекс `(group_id)`                                            | `stages` |
-| `process_revisions` (из `stage_routes`)    | `id`, `workflow_id not null → workflows on delete cascade`, `version integer not null`, `name`, `note null`, `published_at null`, `timestamps`; `key` и `is_default` удаляются | `unique (workflow_id, version)`; `unique (workflow_id) where published_at is null` — один черновик на процесс                                                            | `stages` |
-| `process_stage_keys` (новая)               | `workflow_id not null → workflows`, `key text not null`, `first_seen_at`, `archived_at null`                                                                                   | pk `(workflow_id, key)`; строка заводится при первом появлении ключа и не удаляется никогда                                                                              | `stages` |
-| `stages` (правка)                          | `route_id` → `revision_id → process_revisions`; `+ is_final boolean not null default false`, `+ requires_lms_data boolean not null default false`                              | существующие `unique (revision_id, key)` и `(revision_id, position)` сохраняются; связь с реестром ключей ведёт сервис публикации: у `stages` нет своей колонки процесса | `stages` |
-| `stage_transitions` (правка)               | `route_id` → `revision_id`                                                                                                                                                     | `unique (from_stage_id, to_stage_id)` сохраняется                                                                                                                        | `stages` |
-| `stage_migration_rules` (новая)            | `id uuid pk`, `revision_id not null → process_revisions on delete cascade`, `removed_stage_key text not null`, `target_stage_key text not null`                                | `unique (revision_id, removed_stage_key)`; `check`: ключи различны                                                                                                       | `stages` |
-| `interactions` (правка)                    | `route_id` → `workspace_id not null → workspaces on delete restrict`                                                                                                           | индекс `(workspace_id, status)`                                                                                                                                          | `stages` |
+| Таблица                                 | Колонки                                                                                                                                                                        | Индексы и ограничения                                                                                                                                                        | Владелец |
+| --------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | -------- |
+| `workspaces` (новая)                    | `id uuid pk`, `key text not null`, `name`, `description null`, `workflow_id uuid null → workflows on delete restrict`, `position integer not null`, `timestamps`               | `unique (key)`, `unique (position)`; ссылка на процесс допускает пустоту — «процесс не назначен» рабочее состояние                                                           | `stages` |
+| `workflows` (новая)                     | `id uuid pk`, `key text not null`, `name`, `description null`, `active_revision_id uuid null → process_revisions on delete restrict`, `timestamps`                             | `unique (key)`; действующая редакция — свойство процесса, её принадлежность процессу проверяет транзакция публикации                                                         | `stages` |
+| `workspace_intake_routes` (новая)       | `kind organization_kind pk`, `workspace_id not null → workspaces on delete restrict`                                                                                           | маршруты приёма извне; первичный ключ по `kind` и есть ограничение «вид ведёт ровно в одно пространство»; индекс `workspace_intake_routes_workspace_idx` по `(workspace_id)` | `stages` |
+| `process_revisions` (из `stage_routes`) | `id`, `workflow_id not null → workflows on delete cascade`, `version integer not null`, `name`, `note null`, `published_at null`, `timestamps`; `key` и `is_default` удаляются | `unique (workflow_id, version)`; `unique (workflow_id) where published_at is null` — один черновик на процесс                                                                | `stages` |
+| `process_stage_keys` (новая)            | `workflow_id not null → workflows`, `key text not null`, `first_seen_at`, `archived_at null`                                                                                   | pk `(workflow_id, key)`; строка заводится при первом появлении ключа и не удаляется никогда                                                                                  | `stages` |
+| `stages` (правка)                       | `route_id` → `revision_id → process_revisions`; `+ is_final boolean not null default false`, `+ requires_lms_data boolean not null default false`                              | существующие `unique (revision_id, key)` и `(revision_id, position)` сохраняются; связь с реестром ключей ведёт сервис публикации: у `stages` нет своей колонки процесса     | `stages` |
+| `stage_transitions` (правка)            | `route_id` → `revision_id`                                                                                                                                                     | `unique (from_stage_id, to_stage_id)` сохраняется                                                                                                                            | `stages` |
+| `stage_migration_rules` (новая)         | `id uuid pk`, `revision_id not null → process_revisions on delete cascade`, `removed_stage_key text not null`, `target_stage_key text not null`                                | `unique (revision_id, removed_stage_key)`; `check`: ключи различны                                                                                                           | `stages` |
+| `interactions` (правка)                 | `route_id` → `workspace_id not null → workspaces on delete restrict`                                                                                                           | индекс `(workspace_id, status)`                                                                                                                                              | `stages` |
 
 **Процесс вынесен из пространства** (`workflows`), а место работы на него ссылается
 (`workspaces.workflow_id`), ради одного: **один процесс можно назначить нескольким пространствам**.
@@ -208,6 +209,11 @@ Keycloak вместе с переводом входа (`drizzle/0008_keycloak_i
 процесса»: на каждое пространство завели процесс с тем же ключом, и редакции с реестром ключей
 переехали на него.
 
+А `process_group_counterparty_kinds` из строк выше сегодня зовётся `workspace_intake_routes`
+(`drizzle/0021_*`): выбирать процесс по виду контрагента больше не нужно — место заведения стоит в
+адресе формы, — и у таблицы осталось одно дело, приём заявок извне. Первичный ключ по виду при этом
+сохранён: он и есть требование однозначного адресата, а не пережиток прежнего выбора.
+
 ## 6. Инварианты
 
 ### Держит база
@@ -216,7 +222,7 @@ Keycloak вместе с переводом входа (`drizzle/0008_keycloak_i
 | ----------------------------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | У незавершённого взаимодействия ровно одна открытая запись стадии | частичный уникальный индекс по `interaction_id where left_at is null`                                                       |
 | У взаимодействия ровно одна основная сторона                      | частичный уникальный индекс по `interaction_id where is_primary`                                                            |
-| Вид заявителя с сайта ведёт ровно в одно пространство             | первичный ключ `process_group_counterparty_kinds.kind`                                                                      |
+| Вид заявителя с сайта ведёт ровно в одно пространство             | первичный ключ `workspace_intake_routes.kind`                                                                               |
 | У процесса не больше одного черновика                             | частичный уникальный индекс по `workflow_id where published_at is null`                                                     |
 | Ключи и позиции стадий уникальны внутри редакции                  | `unique (revision_id, key)` и `(revision_id, position)`                                                                     |
 | Позиция договора принадлежит договору взаимодействия              | составной внешний ключ `(contract_item_id, contract_id)`                                                                    |

@@ -137,23 +137,28 @@ export const workflows = pgTable(
 );
 
 /**
- * Единственная таблица соответствия «вид контрагента → пространство». По ней
- * пространство выбирают и форма создания взаимодействия, и приём заявки.
+ * Маршруты приёма извне: в какое пространство попадает заявка с сайта от
+ * контрагента такого вида.
  *
- * Первичный ключ по виду и есть ограничение «вид принадлежит ровно одному
- * пространству»: проверка в приложении гоночна и не переживает правку данных
- * мимо приложения. Видов, которые основной стороной не бывают (`customer_company`,
- * `operator`), в таблице нет вовсе.
+ * Только для приёма. Взаимодействие, заведённое руками, эту таблицу не
+ * спрашивает: его заводят внутри пространства, и место известно из адреса. У
+ * заявки человека нет, а адресат обязан быть однозначным — отсюда и первичный
+ * ключ по виду: два маршрута на один вид означали бы, что одна и та же заявка
+ * попадает то в одно место, то в другое. Проверка в приложении гоночна и не
+ * переживает правку данных мимо приложения.
+ *
+ * Видов, которые заявителем не бывают (`customer_company`, `operator`), в
+ * таблице нет вовсе.
  */
-export const processGroupCounterpartyKinds = pgTable(
-	'process_group_counterparty_kinds',
+export const workspaceIntakeRoutes = pgTable(
+	'workspace_intake_routes',
 	{
 		kind: organizationKindEnum().primaryKey(),
-		groupId: uuid()
+		workspaceId: uuid()
 			.notNull()
 			.references(() => workspaces.id, { onDelete: 'restrict' })
 	},
-	(table) => [index('process_group_counterparty_kinds_group_idx').on(table.groupId)]
+	(table) => [index('workspace_intake_routes_workspace_idx').on(table.workspaceId)]
 );
 
 /**
@@ -746,7 +751,7 @@ export const workspacesRelations = relations(workspaces, ({ one, many }) => ({
 		fields: [workspaces.workflowId],
 		references: [workflows.id]
 	}),
-	counterpartyKinds: many(processGroupCounterpartyKinds),
+	intakeRoutes: many(workspaceIntakeRoutes),
 	interactions: many(interactions)
 }));
 
@@ -760,15 +765,12 @@ export const workflowsRelations = relations(workflows, ({ one, many }) => ({
 	workspaces: many(workspaces)
 }));
 
-export const processGroupCounterpartyKindsRelations = relations(
-	processGroupCounterpartyKinds,
-	({ one }) => ({
-		workspace: one(workspaces, {
-			fields: [processGroupCounterpartyKinds.groupId],
-			references: [workspaces.id]
-		})
+export const workspaceIntakeRoutesRelations = relations(workspaceIntakeRoutes, ({ one }) => ({
+	workspace: one(workspaces, {
+		fields: [workspaceIntakeRoutes.workspaceId],
+		references: [workspaces.id]
 	})
-);
+}));
 
 export const processStageKeysRelations = relations(processStageKeys, ({ one }) => ({
 	workflow: one(workflows, {
