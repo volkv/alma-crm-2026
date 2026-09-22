@@ -78,6 +78,8 @@ export const actions: Actions = {
 			});
 		}
 
-		redirect(303, `/interactions/${createdId}`);
+		// Прямо в карточку её пространства, а не через прежний адрес: место
+		// известно — это то, в котором стоит форма.
+		redirect(303, `/w/${encodeURIComponent(event.params.workspace)}/interactions/${createdId}`);
 	}
 };

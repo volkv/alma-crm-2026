@@ -91,7 +91,8 @@ test('договор заводится на карточке вуза и дое
 	// Взаимодействие выбирает договор контрагента и его позицию.
 	const title = `Работа по договору ${mark}`;
 
-	await page.goto('/interactions/new');
+	// Пространство — в адресе: форма заводит запись именно в нём.
+	await page.goto('/w/b2b/interactions/new');
 	await waitForHydration(page);
 
 	const picker = page.getByLabel(/^Учебное заведение/);

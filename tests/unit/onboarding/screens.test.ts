@@ -143,6 +143,7 @@ function helpArticles(): Map<string, string> {
 }
 
 const FULL_SAMPLES: TourSamples = {
+	workspace: 'b2b',
 	interaction: '2f0b0d3c-0000-4000-8000-000000000001',
 	organization: '2f0b0d3c-0000-4000-8000-000000000002',
 	person: '2f0b0d3c-0000-4000-8000-000000000003',
@@ -177,10 +178,16 @@ describe('реестр экранов', () => {
 
 	it('даёт образец каждому экрану записи и никому больше', () => {
 		for (const screen of TOUR_SCREENS) {
-			const hasParameter = screen.route.includes('[');
+			// Пространство в пути — не открываемая запись, а сегмент адреса:
+			// образца экрана оно не требует, но без ключа адрес не собирается.
+			const hasRecord = screen.route.replaceAll('[workspace]', '').includes('[');
+			const hasWorkspace = screen.route.includes('[workspace]');
 
 			if (screen.sample !== undefined) {
-				expect(hasParameter, screen.id).toBe(true);
+				expect(hasRecord, screen.id).toBe(true);
+			}
+
+			if (screen.sample !== undefined || hasWorkspace) {
 				expect(screenHref(screen, FULL_SAMPLES), screen.id).not.toBeNull();
 				expect(screenHref(screen, null), screen.id).toBeNull();
 			} else {
@@ -192,12 +199,12 @@ describe('реестр экранов', () => {
 
 describe('адрес экрана', () => {
 	it('узнаёт открытую запись и не путает её с формой', () => {
-		const card = screenForPath('/interactions/2f0b0d3c-0000-4000-8000-000000000001');
-		const created = screenForPath('/interactions/new');
+		const card = screenForPath('/w/b2b/interactions/2f0b0d3c-0000-4000-8000-000000000001');
+		const created = screenForPath('/w/b2b/interactions/new');
 
 		expect(card?.id).toBe('interaction');
 		expect(created?.id).toBe('interaction-new');
-		expect(screenForPath('/interactions')?.id).toBe('interactions');
+		expect(screenForPath('/w/b2b/interactions')?.id).toBe('interactions');
 	});
 
 	it('главная — это только корень', () => {
@@ -227,12 +234,14 @@ describe('адрес экрана', () => {
 			throw new Error('Экран карточки взаимодействия пропал из реестра');
 		}
 
-		expect(isScreenPath(card, '/interactions/2f0b0d3c-0000-4000-8000-000000000001')).toBe(true);
-		expect(isScreenPath(card, '/interactions/new')).toBe(false);
-		expect(isScreenPath(card, '/interactions')).toBe(false);
-		expect(isScreenPath(card, '/interactions/2f0b0d3c-0000-4000-8000-000000000001/edit')).toBe(
-			false
+		expect(isScreenPath(card, '/w/b2b/interactions/2f0b0d3c-0000-4000-8000-000000000001')).toBe(
+			true
 		);
+		expect(isScreenPath(card, '/w/b2b/interactions/new')).toBe(false);
+		expect(isScreenPath(card, '/w/b2b/interactions')).toBe(false);
+		expect(
+			isScreenPath(card, '/w/b2b/interactions/2f0b0d3c-0000-4000-8000-000000000001/edit')
+		).toBe(false);
 	});
 
 	it('ключ процесса — любой сегмент, а не идентификатор', () => {
@@ -243,8 +252,10 @@ describe('адрес экрана', () => {
 
 describe('право экрана', () => {
 	it('совпадает с правом пункта меню у корней разделов', () => {
+		// Сопоставление по образцу маршрута, а не по строке: у секции пространства
+		// в адресе стоит ключ, а у экрана — параметр `[workspace]`.
 		const roots = MENU.filter((section) =>
-			TOUR_SCREENS.some((screen) => screen.route === section.href)
+			TOUR_SCREENS.some((screen) => isScreenPath(screen, section.href))
 		);
 
 		// Каждый пункт меню обязан найтись экраном: подсказки объясняют ровно то,
@@ -252,7 +263,7 @@ describe('право экрана', () => {
 		expect(roots.length).toBe(MENU.length);
 
 		for (const section of roots) {
-			const screen = TOUR_SCREENS.find((candidate) => candidate.route === section.href);
+			const screen = TOUR_SCREENS.find((candidate) => isScreenPath(candidate, section.href));
 
 			expect(screen?.permission ?? null, section.href).toBe(section.permission);
 		}
@@ -324,15 +335,24 @@ describe('полный тур роли', () => {
 			const permissions = permissionsOf(roleId);
 			const stops = fullTourFor(roleId, permissions, FULL_SAMPLES);
 			const screens = tourChapters(stops).map((chapter) => chapter.screenId);
-			const routes = screens.map(
-				(id) => TOUR_SCREENS.find((screen) => screen.id === id)?.route ?? ''
-			);
 
 			for (const section of visibleSections(MENU, permissions)) {
-				const covered = routes.some(
-					(route) =>
-						route === section.href || (section.href !== '/' && route.startsWith(`${section.href}/`))
-				);
+				// Сопоставление по образцу маршрута, а не по строке: у секции
+				// пространства в адресе стоит ключ, а у экрана — параметр. Тур
+				// объясняет раздел один раз: показать одно и то же дважды, по разу
+				// на направление, значило бы утомить ради полноты.
+				const covered = screens.some((id) => {
+					const screen = TOUR_SCREENS.find((candidate) => candidate.id === id);
+
+					if (screen === undefined) {
+						return false;
+					}
+
+					return (
+						isScreenPath(screen, section.href) ||
+						(section.href !== '/' && screen.route.startsWith(`${section.href}/`))
+					);
+				});
 
 				expect(covered, `${roleId} → ${section.href}`).toBe(true);
 			}

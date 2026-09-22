@@ -41,6 +41,12 @@ export type EventOptions = {
 	form?: Record<string, string>;
 	/** Заголовки запроса; нужны тому, кто решает по `Accept`, чем отвечать. */
 	headers?: Record<string, string>;
+	/**
+	 * Данные вышележащего загрузчика: их отдаёт `await event.parent()`. Нужны
+	 * там, где ветка маршрутов разбирает свой сегмент один раз на всех — как
+	 * `/w/[workspace]` разбирает пространство.
+	 */
+	parent?: Record<string, unknown>;
 };
 
 export function pageEvent(options: EventOptions = {}): RequestEvent {
@@ -70,6 +76,7 @@ export function pageEvent(options: EventOptions = {}): RequestEvent {
 			user: options.user ?? sessionUser('admin'),
 			apiKey: null
 		},
+		parent: async () => options.parent ?? {},
 		getClientAddress: () => '198.51.100.10',
 		setHeaders: () => {},
 		isDataRequest: false,

@@ -13,13 +13,7 @@
  */
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import {
-	interactions,
-	workflows,
-	workspaces,
-	stageEntries,
-	stages
-} from '$lib/server/db/schema';
+import { interactions, workflows, workspaces, stageEntries, stages } from '$lib/server/db/schema';
 import {
 	createDraft,
 	processDefinition,

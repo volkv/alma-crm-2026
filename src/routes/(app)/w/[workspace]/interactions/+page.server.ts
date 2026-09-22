@@ -73,6 +73,9 @@ export const load: PageServerLoad = async (event) => {
 	const filters = readFilters(event.url);
 	const view = readView(event);
 	const ownerUserId = filters.mine ? (event.locals.user?.id ?? null) : null;
+	// Пространство приходит из адреса: его разобрал и проверил загрузчик ветки
+	// (`/w/[workspace]/+layout.server.ts`), и незнакомый ключ до сюда не доходит.
+	const { workspace } = await event.parent();
 
 	// Пустой список под фильтром и пустой раздел — разные состояния: в первом
 	// случае человеку нужно снять фильтр, во втором — завести первую запись.
@@ -81,8 +84,7 @@ export const load: PageServerLoad = async (event) => {
 		filters.status !== null ||
 		filters.stageCategory !== null ||
 		filters.overdue ||
-		filters.mine ||
-		filters.workspace !== null;
+		filters.mine;
 
 	const common = {
 		filters,
@@ -96,8 +98,7 @@ export const load: PageServerLoad = async (event) => {
 	// Грузится только то, что показано: доска не платит за страницу таблицы, а
 	// таблица — за выборку доски.
 	if (view === 'board') {
-		const board = await getInteractionBoard(ctx, {
-			workspace: filters.workspace,
+		const board = await getInteractionBoard(ctx, workspace, {
 			status: filters.status,
 			stageCategory: filters.stageCategory,
 			overdue: filters.overdue,
@@ -110,7 +111,7 @@ export const load: PageServerLoad = async (event) => {
 
 	const query = interactionListQuerySchema.parse({
 		status: filters.status,
-		workspace: filters.workspace,
+		workspace: workspace.key,
 		stageCategory: filters.stageCategory,
 		overdue: filters.overdue,
 		ownerUserId,

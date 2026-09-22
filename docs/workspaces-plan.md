@@ -28,17 +28,17 @@ rename column` сохраняют данные, внешние ключи и и�
 Что придётся править, по убыванию плотности (`processGroups`, `processGroupId`, `processGroupKey`,
 `process_group`):
 
-| Файл                                         | Вхождений | Характер правки                        |
-| -------------------------------------------- | --------- | -------------------------------------- |
-| `src/lib/server/stages/process.ts`           | 38        | ядро: редакции, публикация, перенос    |
-| `src/lib/server/db/schema/interactions.ts`   | 23        | таблицы и комментарии                  |
-| `src/lib/server/interactions/read.ts`        | 11        | отбор списка                           |
-| `src/lib/server/interactions/board.ts`       | 10        | доска, выбор группы                    |
-| `src/lib/server/stages/commands.ts`          | 8         | переходы                               |
-| `src/lib/server/reports/{stages,conditions}.ts` | 7 + 7  | воронка и условия отбора               |
-| `src/lib/server/interactions/write.ts`       | 5         | создание, вывод группы из контрагента  |
-| `src/lib/contracts/interactions.ts`          | 5         | контракты списка и карточки            |
-| остальные 13 файлов                          | 1–4       | механическое переименование            |
+| Файл                                            | Вхождений | Характер правки                       |
+| ----------------------------------------------- | --------- | ------------------------------------- |
+| `src/lib/server/stages/process.ts`              | 38        | ядро: редакции, публикация, перенос   |
+| `src/lib/server/db/schema/interactions.ts`      | 23        | таблицы и комментарии                 |
+| `src/lib/server/interactions/read.ts`           | 11        | отбор списка                          |
+| `src/lib/server/interactions/board.ts`          | 10        | доска, выбор группы                   |
+| `src/lib/server/stages/commands.ts`             | 8         | переходы                              |
+| `src/lib/server/reports/{stages,conditions}.ts` | 7 + 7     | воронка и условия отбора              |
+| `src/lib/server/interactions/write.ts`          | 5         | создание, вывод группы из контрагента |
+| `src/lib/contracts/interactions.ts`             | 5         | контракты списка и карточки           |
+| остальные 13 файлов                             | 1–4       | механическое переименование           |
 
 Тестов, знающих про группу процесса, — двадцать файлов, включая `tests/integration/helpers/db.ts`
 и `tests/integration/stages/fixture.ts`; сначала правятся эти два, дальше остальные идут следом.
@@ -81,13 +81,13 @@ alter table interactions rename column process_group_id to workspace_id;
 1. `create table workflows` — `id`, `key` (уникален), `name`, `description`, `active_revision_id`
    (FK на `process_revisions`, `on delete restrict`), временные метки.
 2. Строка процесса на каждое пространство: `insert into workflows (key, name, …) select key, name,
-   … from workspaces` — ключи совпадают, потому что сегодня процесс и место — одно и то же.
+… from workspaces` — ключи совпадают, потому что сегодня процесс и место — одно и то же.
 3. `alter table workspaces add column workflow_id uuid references workflows(id) on delete restrict`
    — **допускает пустоту**, заполняется по совпадению ключа.
 4. `alter table process_revisions rename column group_id to workflow_id` и перенаправление FK на
    `workflows` по совпадению ключа; то же для `process_stage_keys`.
 5. Перенос `active_revision_id` из `workspaces` в `workflows`, затем `alter table workspaces drop
-   column active_revision_id`.
+column active_revision_id`.
 6. Переименование частичного уникального индекса `process_revisions_one_draft_per_group` →
    `…_one_draft_per_workflow` и уникальности `(group_id, version)` → `(workflow_id, version)`.
 

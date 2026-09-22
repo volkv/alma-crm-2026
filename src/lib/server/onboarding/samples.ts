@@ -33,7 +33,7 @@ import {
 	listProgramRows
 } from '$lib/server/directory/read';
 import { listDocuments } from '$lib/server/documents/read';
-import { listInteractions } from '$lib/server/interactions/read';
+import { chooseWorkspaceForWork, listInteractions } from '$lib/server/interactions/read';
 import { can } from '$lib/server/rbac';
 import type { PermissionKey } from '$lib/server/rbac/permissions';
 import { listSnapshots } from '$lib/server/stats/read';
@@ -116,54 +116,78 @@ async function sampleOrganization(ctx: ActorContext): Promise<string | null> {
 }
 
 /**
+ * Пространство, в которое тур поведёт показывать взаимодействия: то, где у
+ * человека есть работа. Без права на чтение взаимодействий — `null`: раздела
+ * ему всё равно не покажут.
+ */
+async function sampleWorkspace(ctx: ActorContext): Promise<string | null> {
+	if (!can(ctx, 'interactions.read')) {
+		return null;
+	}
+
+	return (await chooseWorkspaceForWork(ctx))?.key ?? null;
+}
+
+/**
  * Что тур сможет открыть этой сессии. Запросы идут разом: их восемь, каждый за
  * одной строкой, и последовательная очередь сделала бы старт тура заметно
  * медленнее без единой причины.
  */
 export async function tourSamples(ctx: ActorContext): Promise<TourSamples> {
-	const [interaction, organization, person, program, product, direction, documentId, dataSnapshot] =
-		await Promise.all([
-			sampleInteraction(ctx),
-			sampleOrganization(ctx),
-			first(
-				ctx,
-				'people.read',
-				() => listPeople(ctx, peopleListQuerySchema.parse({ pageSize: 1 })),
-				(item) => item.person.id
-			),
-			first(
-				ctx,
-				'programs.read',
-				() => listProgramRows(ctx, programDirectoryQuerySchema.parse({ pageSize: 1 })),
-				(item) => item.program.id
-			),
-			first(
-				ctx,
-				'products.read',
-				() => listProductRows(ctx, productDirectoryQuerySchema.parse({ pageSize: 1 })),
-				(item) => item.product.id
-			),
-			first(
-				ctx,
-				'directions.read',
-				() => listDirectionRows(ctx, directionDirectoryQuerySchema.parse({ pageSize: 1 })),
-				(item) => item.direction.id
-			),
-			first(
-				ctx,
-				'documents.read',
-				() => listDocuments(ctx, documentListQuerySchema.parse({ pageSize: 1 })),
-				(item) => item.id
-			),
-			first(
-				ctx,
-				'stats.read',
-				() => listSnapshots(ctx, statSnapshotListQuerySchema.parse({ pageSize: 1 })),
-				(item) => item.id
-			)
-		]);
+	const [
+		workspace,
+		interaction,
+		organization,
+		person,
+		program,
+		product,
+		direction,
+		documentId,
+		dataSnapshot
+	] = await Promise.all([
+		sampleWorkspace(ctx),
+		sampleInteraction(ctx),
+		sampleOrganization(ctx),
+		first(
+			ctx,
+			'people.read',
+			() => listPeople(ctx, peopleListQuerySchema.parse({ pageSize: 1 })),
+			(item) => item.person.id
+		),
+		first(
+			ctx,
+			'programs.read',
+			() => listProgramRows(ctx, programDirectoryQuerySchema.parse({ pageSize: 1 })),
+			(item) => item.program.id
+		),
+		first(
+			ctx,
+			'products.read',
+			() => listProductRows(ctx, productDirectoryQuerySchema.parse({ pageSize: 1 })),
+			(item) => item.product.id
+		),
+		first(
+			ctx,
+			'directions.read',
+			() => listDirectionRows(ctx, directionDirectoryQuerySchema.parse({ pageSize: 1 })),
+			(item) => item.direction.id
+		),
+		first(
+			ctx,
+			'documents.read',
+			() => listDocuments(ctx, documentListQuerySchema.parse({ pageSize: 1 })),
+			(item) => item.id
+		),
+		first(
+			ctx,
+			'stats.read',
+			() => listSnapshots(ctx, statSnapshotListQuerySchema.parse({ pageSize: 1 })),
+			(item) => item.id
+		)
+	]);
 
 	return {
+		workspace,
 		interaction,
 		organization,
 		person,

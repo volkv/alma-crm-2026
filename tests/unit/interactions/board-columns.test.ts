@@ -9,12 +9,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import type { InteractionBoardCard, StageView } from '$lib/contracts/interactions';
-import {
-	boardCardState,
-	buildBoardColumns,
-	chooseBoardWorkspace,
-	type BoardEntry
-} from '$lib/server/interactions/board';
+import { boardCardState, buildBoardColumns, type BoardEntry } from '$lib/server/interactions/board';
 
 const REVISION_ID = '11111111-1111-4111-8111-111111111111';
 
@@ -119,44 +114,5 @@ describe('boardCardState', () => {
 		expect(boardCardState({ blockingBlockers: 0, isPaused: false, isOverdue: false })).toBe(
 			'current'
 		);
-	});
-});
-
-describe('chooseBoardWorkspace', () => {
-	const withWork = {
-		id: 'group-a',
-		key: 'b2b',
-		name: 'Учебные заведения',
-		position: 1,
-		interactions: 5
-	};
-	const empty = {
-		id: 'group-b',
-		key: 'b2c',
-		name: 'Физические и юридические лица',
-		position: 2,
-		interactions: 0
-	};
-
-	it('открывает группу из фильтра, даже если по ней никто не идёт', () => {
-		expect(chooseBoardWorkspace([withWork, empty], 'b2c')?.id).toBe('group-b');
-	});
-
-	it('не верит непонятному ключу из адреса', () => {
-		expect(chooseBoardWorkspace([withWork, empty], 'не-группа')?.id).toBe('group-a');
-	});
-
-	it('без фильтра берёт ту, где работы больше', () => {
-		const busier = { ...empty, interactions: 9 };
-
-		expect(chooseBoardWorkspace([withWork, busier], null)?.id).toBe('group-b');
-	});
-
-	it('возвращается к первой по порядку, когда работы нет нигде', () => {
-		expect(chooseBoardWorkspace([{ ...withWork, interactions: 0 }, empty], null)?.id).toBe('group-a');
-	});
-
-	it('без групп не выбирает ничего', () => {
-		expect(chooseBoardWorkspace([], null)).toBeNull();
 	});
 });

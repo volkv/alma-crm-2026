@@ -56,6 +56,7 @@
 	 */
 	let {
 		card,
+		workspace,
 		/** Есть ли право двигать стадии: без него карточка не перетаскивается. */
 		canTransition,
 		dragging = false,
@@ -64,6 +65,8 @@
 		ondragend
 	}: {
 		card: InteractionBoardCard;
+		/** Ключ пространства: карточка открывается его адресом. */
+		workspace: string;
 		canTransition: boolean;
 		/** Эту карточку сейчас тащат. */
 		dragging?: boolean;
@@ -103,7 +106,7 @@
 >
 	<div class="flex items-start gap-1">
 		<a
-			href={resolve('/(app)/interactions/[id=uuid]', { id: card.id })}
+			href={resolve('/(app)/w/[workspace]/interactions/[id=uuid]', { workspace, id: card.id })}
 			class="line-clamp-2 min-w-0 flex-1 font-medium focus-ring hover:underline"
 			title="{card.title} — стадия {stateTitles[card.state]}"
 		>

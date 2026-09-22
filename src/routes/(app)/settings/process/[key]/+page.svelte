@@ -39,7 +39,7 @@
 		type StageView
 	} from '$lib/contracts/interactions';
 	import { ORGANIZATION_KIND_LABELS } from '$lib/components/directory/labels';
-	import { STAGE_CATEGORY_LABELS } from '../../../interactions/filters';
+	import { STAGE_CATEGORY_LABELS } from '../../../w/[workspace]/interactions/filters';
 	import { CHECKLIST_HINT, formatChecklist, stageFormSchema, transitionFormSchema } from './schema';
 	import type { PageProps } from './$types';
 

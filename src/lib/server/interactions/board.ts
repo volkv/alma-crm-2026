@@ -7,8 +7,8 @@
  * просрочено. Колонки — стадии действующей редакции одного пространства, а
  * карточка стоит ровно в той колонке, где открыта её запись стадии. Выбора
  * версии на доске нет: в пространстве действует ровно один процесс, и его номер
- * человеку не нужен. Пространство задаёт фильтр списка — доска и список
- * показывают один отбор.
+ * человеку не нужен. Пространство задаёт адрес — доска и список показывают одно
+ * и то же место, а не то, где сегодня больше работы.
  *
  * Выборка — один запрос: карточки, число карточек на стадии и число
  * просроченных считаются оконными функциями за один проход, а не запросом на
@@ -60,79 +60,14 @@ import { interactionScopeFilter } from './access';
  */
 export const CARDS_PER_COLUMN = 25;
 
-/** Отбор доски: фильтры те же, что у списка, плюс пространство. */
+/** Отбор доски: фильтры те же, что у списка. Пространство задано адресом. */
 export type InteractionBoardQuery = {
-	/**
-	 * Ключ пространства из фильтра списка; пусто — берётся то, где есть работа.
-	 */
-	workspace: string | null;
 	status: InteractionStatus | null;
 	stageCategory: StageCategory | null;
 	overdue: boolean;
 	ownerUserId: string | null;
 	q: string | null;
 };
-
-/** Пространство вместе с числом взаимодействий области доступа, идущих в нём. */
-export type BoardWorkspaceOption = {
-	id: string;
-	key: string;
-	name: string;
-	position: number;
-	interactions: number;
-};
-
-/**
- * Пространства и число взаимодействий области доступа, которые в них идут.
- * Пространство без процесса тоже в списке: «здесь ещё ничего не описано» — это
- * ответ, а исчезнувшая строка выглядит как исчезнувший сценарий работы.
- */
-async function readWorkspaceOptions(ctx: ActorContext): Promise<BoardWorkspaceOption[]> {
-	return getDb()
-		.select({
-			id: workspaces.id,
-			key: workspaces.key,
-			name: workspaces.name,
-			position: workspaces.position,
-			interactions: count(interactions.id)
-		})
-		.from(workspaces)
-		.leftJoin(
-			interactions,
-			and(
-				eq(interactions.workspaceId, workspaces.id),
-				eq(interactions.status, 'active'),
-				interactionScopeFilter(ctx)
-			)
-		)
-		.groupBy(workspaces.id)
-		.orderBy(asc(workspaces.position));
-}
-
-/**
- * Какое пространство показать.
- *
- * Фильтр списка сильнее всего: запрошенное пространство открывается, даже если в
- * нём сейчас никто не идёт. Без фильтра открывается то, где есть работа, —
- * пространство без единого взаимодействия показало бы пустую доску там, где
- * работа есть в соседнем.
- */
-export function chooseBoardWorkspace(
-	options: readonly BoardWorkspaceOption[],
-	requested: string | null
-): BoardWorkspaceOption | null {
-	const asked = requested === null ? undefined : options.find((option) => option.key === requested);
-
-	if (asked !== undefined) {
-		return asked;
-	}
-
-	const withWork = [...options]
-		.filter((option) => option.interactions > 0)
-		.sort((left, right) => right.interactions - left.interactions);
-
-	return withWork[0] ?? options[0] ?? null;
-}
 
 /**
  * Условия отбора карточек. Повторяют фильтры списка (`interactions/read.ts`)
@@ -408,6 +343,9 @@ export function boardTransitions(
 		.sort((left, right) => positionOf(left.toStageId) - positionOf(right.toStageId));
 }
 
+/** Пространство, чью доску собирают: его задаёт адрес, а не отбор. */
+export type BoardWorkspace = { id: string; key: string; name: string };
+
 /** Карточка вместе со счётчиками её колонки: то, что раскладывают по доске. */
 export type BoardEntry = {
 	card: InteractionBoardCard;
@@ -452,33 +390,26 @@ export function buildBoardColumns(
 
 export async function getInteractionBoard(
 	ctx: ActorContext,
+	workspace: BoardWorkspace,
 	query: InteractionBoardQuery
 ): Promise<InteractionBoardView> {
 	requirePermission(ctx, 'interactions.read');
 
-	const db = getDb();
-	const workspace = chooseBoardWorkspace(await readWorkspaceOptions(ctx), query.workspace);
-
-	const empty: InteractionBoardView = {
-		workspaceId: workspace?.id ?? null,
-		workspaceKey: workspace?.key ?? null,
-		workspaceName: workspace?.name ?? null,
-		columns: [],
-		total: 0,
-		cardsPerColumn: CARDS_PER_COLUMN,
-		revision: null
-	};
-
-	if (workspace === null) {
-		return empty;
-	}
-
 	const revision = await readActiveRevisionForWorkspace(workspace.id);
 
-	// Пространство без действующего процесса — это не поломка доски: стадий нет,
-	// и колонок тоже. Отказ здесь скрыл бы соседнее пространство, где работа идёт.
+	// Пространство без назначенного процесса — это не поломка доски: стадий нет,
+	// и колонок тоже. Доска в этом случае объясняет словами, что работать здесь
+	// пока нечем, а отказ выглядел бы как поломка.
 	if (revision === null) {
-		return empty;
+		return {
+			workspaceId: workspace.id,
+			workspaceKey: workspace.key,
+			workspaceName: workspace.name,
+			columns: [],
+			total: 0,
+			cardsPerColumn: CARDS_PER_COLUMN,
+			revision: null
+		};
 	}
 
 	const rows = await readBoardRows(ctx, workspace.id, query);

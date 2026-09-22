@@ -126,7 +126,9 @@ test('первый вход начинается с карты тура и ве�
 	// Дальше тур открывает разделы сам: человек жмёт «Далее», а не ищет пункт
 	// меню. Адрес меняется без единого нажатия по навигации.
 	await advanceToScreen(tour, 'Взаимодействия');
-	await expect(page).toHaveURL(/\/interactions$/);
+	// Пространство стоит в адресе: у экрана подсказок параметризованный путь, и
+	// тур ведёт в то место, ключ которого дал сервер.
+	await expect(page).toHaveURL(/\/w\/[^/]+\/interactions$/);
 
 	// И доходит до открытой записи: идентификатор ей дал сервер, в границах
 	// области доступа этой сессии.
@@ -158,7 +160,7 @@ test('«Позже» на приветствии закрывает подска
 	await waitForHydration(page);
 	await expect(tour).toBeHidden();
 
-	await page.goto('/interactions');
+	await page.goto('/w/b2b/interactions');
 	await waitForHydration(page);
 	await expect(tour).toBeHidden();
 });

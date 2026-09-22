@@ -717,7 +717,9 @@ describe('от числа к подтверждению', () => {
 
 		for (const row of rows) {
 			expect(row.documents.map((document) => document.id)).toStrictEqual([ids.documentId]);
-			expect(row.learningGroups.map((workspace) => workspace.id)).toStrictEqual([ids.learningGroupId]);
+			expect(row.learningGroups.map((workspace) => workspace.id)).toStrictEqual([
+				ids.learningGroupId
+			]);
 		}
 	});
 });

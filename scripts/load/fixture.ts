@@ -28,9 +28,8 @@ const { and, count, desc, eq, isNull } = await import('drizzle-orm');
 const { closeDatabase, getDb } = await import('$lib/server/db');
 const { comments, interactions, stageEntries } = await import('$lib/server/db/schema');
 const { B2B_WORKSPACE_KEY } = await import('$lib/server/stages/definitions');
-const { readActiveRevision, readWorkflowForWorkspace, readWorkspaceByKey } = await import(
-	'$lib/server/stages/process'
-);
+const { readActiveRevision, readWorkflowForWorkspace, readWorkspaceByKey } =
+	await import('$lib/server/stages/process');
 
 type StageSnapshotShape = {
 	key: string;

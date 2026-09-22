@@ -30,13 +30,14 @@ const CUSTOMER = {
  * Процесс, у которого объяснения требует именно шаг вперёд. В процессе учебных
  * заведений такого перехода нет, а правило процесса обязано быть выполнимым:
  * без поля для объяснения переход вперёд стал бы невозможен вовсе. Он живёт в
- * группе `b2c`: в одной группе действует ровно один процесс.
+ * своём пространстве: в пространстве действует ровно один процесс.
  */
 const REASON_ROUTE = {
 	/**
-	 * Своя группа, а не `b2c`: там действует процесс стенда из пяти стадий, и
-	 * подменять его ради одной проверки незачем. Вида контрагента за этой группой
-	 * не закреплено — записи по ней прогон заводит сам.
+	 * Своё пространство, а не `b2c`: там действует процесс стенда из пяти стадий,
+	 * и подменять его ради одной проверки незачем. Вида контрагента за этим
+	 * пространством не закреплено — записи в нём прогон заводит сам. Его ключ
+	 * стоит и в адресе карточки: `/w/<ключ>/interactions/<id>`.
 	 */
 	workspace: 'e2e-forward-reason',
 	name: `${MARK} Процесс с объяснением`,
@@ -49,10 +50,10 @@ const REASON_ROUTE = {
 /**
  * Процесс, стадию которого закрывает отметка по документу дела.
  *
- * Своя группа, а не `b2b`: в процессе стенда требование стоит на подписании
- * соглашения, но редакция той группы заводится один раз и переживает прогон —
- * на базе, залитой прежней версией, проверка говорила бы о вчерашнем процессе.
- * Ключ группы новый, поэтому её редакция описывает ровно эти стадии.
+ * Своё пространство, а не `b2b`: в процессе стенда требование стоит на
+ * подписании соглашения, но редакция того процесса заводится один раз и
+ * переживает прогон — на базе, залитой прежней версией, проверка говорила бы о
+ * вчерашнем процессе. Ключ новый, поэтому редакция описывает ровно эти стадии.
  */
 const MARK_ROUTE = {
 	workspace: 'e2e-document-mark',
@@ -76,7 +77,7 @@ function databaseUrl(): string {
 }
 
 /**
- * Процессы групп и две организации. Идемпотентно и под блокировкой: замок
+ * Процессы пространств и две организации. Идемпотентно и под блокировкой: замок
  * берёт общий хелпер первым же запросом, и под ним идёт вся подготовка — файлы
  * прогона выполняются параллельно, и два рабочих процесса не должны заводить
  * редакцию одновременно.
@@ -89,7 +90,8 @@ async function seed(): Promise<void> {
 		await sql.begin(async (tx) => {
 			// Процесс учебных заведений: его кладёт набор данных стенда, но прогон
 			// не обязан на это полагаться — без стадий взаимодействие не завести.
-			// Группа при этом своя не бывает: за `b2b` закреплён вид контрагента.
+			// Пространство при этом своё не бывает: за `b2b` закреплён вид
+			// контрагента.
 			await seedWorkspace(tx, {
 				key: 'b2b',
 				name: null,
@@ -99,7 +101,7 @@ async function seed(): Promise<void> {
 				transitions: process.transitions
 			});
 
-			// Процесс с обязательным объяснением — в своей группе: там своя
+			// Процесс с обязательным объяснением — в своём пространстве: там своя
 			// редакция и свои записи.
 			await seedWorkspace(tx, {
 				key: REASON_ROUTE.workspace,
@@ -123,10 +125,10 @@ async function seed(): Promise<void> {
 				]
 			});
 
-			// Процесс с отметкой по документу — в своей группе: в `b2b` требование
-			// стоит на подписании соглашения, но редакция той группы заводится
-			// один раз и переживает прогон, и на базе, залитой прежней версией,
-			// проверка говорила бы о вчерашнем процессе.
+			// Процесс с отметкой по документу — в своём пространстве: в `b2b`
+			// требование стоит на подписании соглашения, но редакция того процесса
+			// заводится один раз и переживает прогон, и на базе, залитой прежней
+			// версией, проверка говорила бы о вчерашнем процессе.
 			await seedWorkspace(tx, {
 				key: MARK_ROUTE.workspace,
 				name: 'Проверка отметки по документу',
@@ -191,7 +193,7 @@ test.beforeAll(async () => {
 async function createInteraction(page: import('@playwright/test').Page): Promise<string> {
 	const title = `${MARK} ${crypto.randomUUID().slice(0, 8)}`;
 
-	await page.goto('/interactions/new');
+	await page.goto('/w/b2b/interactions/new');
 
 	// Подсказки организаций появляются только после того, как страница ожила:
 	// ввод до гидратации не доходит до компонента, а под нагрузкой прогона это
@@ -217,8 +219,8 @@ async function createInteraction(page: import('@playwright/test').Page): Promise
 
 /**
  * Взаимодействие на процессе с обязательным объяснением. Заводится прямо в
- * базе: форма выводит группу из вида основной стороны, а здесь нужна другая
- * группа и её контрагент.
+ * базе: форма выводит пространство из вида основной стороны, а здесь нужно
+ * другое пространство и его контрагент.
  */
 async function createReasonInteraction(): Promise<string> {
 	const sql = postgres(databaseUrl(), { max: 1, connect_timeout: 10 });
@@ -354,7 +356,7 @@ test('отметка по документу закрывает стадию, а
 	const title = `Соглашение ${crypto.randomUUID().slice(0, 8)}`;
 	const note = 'Протокол учёного совета № 14';
 
-	await page.goto(`/interactions/${interactionId}`);
+	await page.goto(`/w/${MARK_ROUTE.workspace}/interactions/${interactionId}`);
 	await waitForHydration(page);
 
 	const advance = page.getByRole('button', { name: `Перейти: ${MARK_ROUTE.stages[1].name}` });
@@ -418,7 +420,7 @@ test('отметка по документу закрывает стадию, а
 test('список открывается, ищет и фильтрует по адресу', async ({ page }) => {
 	const title = await createInteraction(page);
 
-	await page.goto('/interactions');
+	await page.goto('/w/b2b/interactions');
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Взаимодействия');
 
 	await page.getByPlaceholder('Поиск по названию и организации').fill(title);
@@ -479,7 +481,7 @@ test('шаг вперёд с обязательным объяснением с�
 	const comment = 'Условия согласованы протоколом встречи';
 	const interactionId = await createReasonInteraction();
 
-	await page.goto(`/interactions/${interactionId}`);
+	await page.goto(`/w/${REASON_ROUTE.workspace}/interactions/${interactionId}`);
 	await waitForHydration(page);
 
 	const advance = page.getByRole('button', {
@@ -677,12 +679,12 @@ test('список и карточка держат ширину экрана и
 	await page.screenshot({ path: 'test-results/interactions-card-mobile.png', fullPage: true });
 
 	await page.setViewportSize({ width: 1280, height: 800 });
-	await page.goto('/interactions');
+	await page.goto('/w/b2b/interactions');
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Взаимодействия');
 	await page.screenshot({ path: 'test-results/interactions-list-desktop.png', fullPage: true });
 
 	await page.setViewportSize({ width: 390, height: 844 });
-	await page.goto('/interactions');
+	await page.goto('/w/b2b/interactions');
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Взаимодействия');
 	expect(await pageOverflow(page)).toBeLessThanOrEqual(0);
 	await page.screenshot({ path: 'test-results/interactions-list-mobile.png', fullPage: true });
@@ -717,7 +719,7 @@ test('на ноутбуке срок виден целиком, а не крае
 	// то, ради чего его открывают: он решает, за что браться сегодня. Колонка,
 	// которая уехала за правый край, отвечает на этот вопрос только прокруткой.
 	await page.setViewportSize({ width: 1280, height: 900 });
-	await page.goto('/interactions');
+	await page.goto('/w/b2b/interactions');
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Взаимодействия');
 
 	const header = page.locator('[data-slot="data-table"] thead');
@@ -748,7 +750,7 @@ test('на ноутбуке список начинается без второ�
 	await createInteraction(page);
 
 	await page.setViewportSize({ width: 1280, height: 800 });
-	await page.goto('/interactions');
+	await page.goto('/w/b2b/interactions');
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Взаимодействия');
 
 	const header = page.locator('[data-slot="data-table"] thead');
@@ -777,7 +779,7 @@ test('выбранное представление раздел помнит, �
 }) => {
 	await createInteraction(page);
 
-	await page.goto('/interactions');
+	await page.goto('/w/b2b/interactions');
 	await waitForHydration(page);
 	await expect(page.locator('[data-slot="data-table"]')).toBeVisible();
 
@@ -788,18 +790,18 @@ test('выбранное представление раздел помнит, �
 	// чем раздел смотрели в прошлый раз, и приходит оно сразу с сервера —
 	// таблицей по дороге не мелькает.
 	await page.goto('/');
-	await page.goto('/interactions');
+	await page.goto('/w/b2b/interactions');
 	await expect(page.locator('[data-slot="data-table"]')).toHaveCount(0);
 	await waitForHydration(page);
 	await expect(page.locator('[data-slot="data-table"]')).toHaveCount(0);
 
 	// Память личная, а ссылка — общая: пришли по адресу с представлением —
 	// показывается ровно то, чем поделились.
-	await page.goto('/interactions?view=table');
+	await page.goto('/w/b2b/interactions?view=table');
 	await waitForHydration(page);
 	await expect(page.locator('[data-slot="data-table"]')).toBeVisible();
 
 	// И этот выбор становится новым «как обычно».
-	await page.goto('/interactions');
+	await page.goto('/w/b2b/interactions');
 	await expect(page.locator('[data-slot="data-table"]')).toBeVisible();
 });

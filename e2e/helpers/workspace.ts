@@ -7,20 +7,20 @@ import type {
 } from '$lib/contracts/interactions';
 
 /**
- * Замок, под которым прогон заводит группы процесса. Один на все файлы, и это
+ * Замок, под которым прогон заводит пространства. Один на все файлы, и это
  * главное в нём.
  *
- * Место группы в списке уникально (`workspaces_position_key`), а свободное
+ * Место пространства в списке уникально (`workspaces_position_key`), а свободное
  * считается от занятых. Два файла, считающие его одновременно, получают одно и
  * то же число, и второй падает на вставке; фиксированные номера сталкиваются
- * ещё проще — файл, заводящий группу заново, освобождает своё место, и сосед
- * успевает его занять. Замок на файл от этого не спасает: сталкиваются как раз
- * разные файлы.
+ * ещё проще — файл, заводящий пространство заново, освобождает своё место, и
+ * сосед успевает его занять. Замок на файл от этого не спасает: сталкиваются
+ * как раз разные файлы.
  *
  * Число произвольное, но общее: `pg_advisory_xact_lock` различает замки только
  * по нему.
  */
-const PROCESS_GROUP_LOCK = 918273640;
+const WORKSPACE_LOCK = 918273640;
 
 /**
  * Стадия редакции прогона. Необязательные признаки совпадают с умолчаниями
@@ -51,10 +51,13 @@ export type SeedTransition = {
 export type SeedWorkspaceOptions = {
 	key: string;
 	/**
-	 * Название группы, если её заводит прогон. `null` — группу кладёт миграция
-	 * (`b2b`, `b2c`): за такой закреплены виды контрагента, и завести её своими
-	 * руками нельзя — форма создания взаимодействия группу без вида не нашла бы.
-	 * Поэтому отсутствие такой группы это ошибка стенда, а не повод её создать.
+	 * Название пространства, если его заводит прогон. Им же называется и процесс:
+	 * прогон заводит их парой, с общим ключом.
+	 *
+	 * `null` — пространство кладёт миграция (`b2b`, `b2c`): за такими закреплены
+	 * виды контрагента, и завести их своими руками нельзя — форма создания
+	 * взаимодействия пространство без вида не нашла бы. Поэтому отсутствие такого
+	 * пространства это ошибка стенда, а не повод его создать.
 	 */
 	name: string | null;
 	description?: string;
@@ -64,18 +67,19 @@ export type SeedWorkspaceOptions = {
 	stages: readonly SeedStage[];
 	transitions?: readonly SeedTransition[];
 	/**
-	 * Чистый лист вместо идемпотентности: группа сносится вместе с редакциями,
-	 * реестром ключей и своими взаимодействиями и заводится заново.
+	 * Чистый лист вместо идемпотентности: пространство сносится вместе с
+	 * процессом, его редакциями, реестром ключей и своими взаимодействиями и
+	 * заводится заново.
 	 *
 	 * Нужен там, где проверка меняет процесс: изменение необратимо — удалённый
-	 * ключ стадии остаётся занятым за группой навсегда, — и второй прогон
+	 * ключ стадии остаётся занятым за процессом навсегда, — и второй прогон
 	 * начинался бы уже с другого состояния.
 	 */
 	reset?: {
 		/**
 		 * Шаблон `like` для названий записей прошлого прогона. Они сносятся помимо
-		 * группы: взаимодействие могло переехать в другую, а его записи стадий
-		 * продолжали бы держать стадии этой, и группа не удалилась бы.
+		 * пространства: взаимодействие могло переехать в другое, а его записи
+		 * стадий продолжали бы держать стадии этого, и процесс не удалился бы.
 		 */
 		interactionTitleLike: string;
 	};
@@ -83,22 +87,22 @@ export type SeedWorkspaceOptions = {
 
 export type SeededWorkspace = {
 	workspaceId: string;
-	/** Действующая редакция группы: заведённая здесь или уже стоявшая. */
+	/** Действующая редакция процесса: заведённая здесь или уже стоявшая. */
 	revisionId: string;
 	/** Идентификаторы стадий действующей редакции по ключу стадии. */
 	stageIds: Map<string, string>;
 };
 
 /**
- * Группа процесса прогона с действующей редакцией и стадиями — идемпотентно и
- * под общим замком.
+ * Пространство прогона с назначенным процессом, его действующей редакцией и
+ * стадиями — идемпотентно и под общим замком.
  *
  * Идемпотентность здесь означает «повторный вызов оставляет то же состояние»:
- * группа заводится, если её нет, редакция — если у группы нет действующей.
- * Файл, которому нужен чистый лист, просит `reset`.
+ * пространство и процесс заводятся, если их нет, редакция — если у процесса нет
+ * действующей. Файл, которому нужен чистый лист, просит `reset`.
  *
  * Вызывается внутри транзакции самого файла: заведённые записи ссылаются на
- * группу, и разрывать это на две транзакции значило бы пускать соседей в
+ * пространство, и разрывать это на две транзакции значило бы пускать соседей в
  * промежуток. Замок берётся первым же запросом, поэтому вызов стоит в начале
  * транзакции — всё, что файл заводит дальше, оказывается под ним же.
  */
@@ -106,38 +110,60 @@ export async function seedWorkspace(
 	tx: postgres.TransactionSql,
 	options: SeedWorkspaceOptions
 ): Promise<SeededWorkspace> {
-	await tx`select pg_advisory_xact_lock(${PROCESS_GROUP_LOCK})`;
+	await tx`select pg_advisory_xact_lock(${WORKSPACE_LOCK})`;
 
 	if (options.reset !== undefined) {
 		await dropWorkspace(tx, options.key, options.reset.interactionTitleLike);
 	}
 
 	if (options.name !== null) {
-		// Место считается от занятых, а не берётся числом: группы заводят и
+		// Процесс заводится первым: пространство на него ссылается, и без него
+		// ссылку было бы некуда поставить. Ключ у них общий — тот же, каким
+		// сшивала их миграция выделения процесса.
+		await tx`
+			insert into workflows (key, name, description)
+			values (${options.key}, ${options.name}, ${options.description ?? null})
+			on conflict (key) do nothing
+		`;
+
+		// Место считается от занятых, а не берётся числом: пространства заводят и
 		// миграции, и соседние файлы прогона, и любое число рано или поздно
 		// совпадёт с чужим. Под замком счёт верен: следующий желающий увидит уже
 		// записанную строку.
 		await tx`
-			insert into workspaces (key, name, description, position)
+			insert into workspaces (key, name, description, position, workflow_id)
 			select
 				${options.key},
 				${options.name},
 				${options.description ?? null},
-				coalesce(max(position), 0) + 1
+				coalesce(max(position), 0) + 1,
+				(select id from workflows where key = ${options.key})
 			from workspaces
 			on conflict (key) do nothing
 		`;
 	}
 
-	const [workspace] = await tx<{ id: string; active_revision_id: string | null }[]>`
-		select id, active_revision_id from workspaces where key = ${options.key}
+	const [workspace] = await tx<{ id: string; workflow_id: string | null }[]>`
+		select id, workflow_id from workspaces where key = ${options.key}
 	`;
 
 	if (workspace === undefined) {
-		throw new Error(`Группа процесса «${options.key}» не заведена миграцией`);
+		throw new Error(`Пространство «${options.key}» не заведено миграцией`);
 	}
 
-	const revisionId = workspace.active_revision_id ?? (await publishRevision(tx, workspace.id, options));
+	if (workspace.workflow_id === null) {
+		throw new Error(`Пространству «${options.key}» не назначен процесс`);
+	}
+
+	// Действующая редакция — свойство процесса, а не места: один процесс можно
+	// назначить нескольким пространствам, и переключать её на каждом из них
+	// порознь было бы нечем.
+	const [workflow] = await tx<{ active_revision_id: string | null }[]>`
+		select active_revision_id from workflows where id = ${workspace.workflow_id}
+	`;
+
+	const revisionId =
+		workflow?.active_revision_id ?? (await publishRevision(tx, workspace.workflow_id, options));
 
 	const stageRows = await tx<{ id: string; key: string }[]>`
 		select id, key from stages where revision_id = ${revisionId}
@@ -150,7 +176,7 @@ export async function seedWorkspace(
 	};
 }
 
-/** Группа прошлого прогона со всем, что за ней держится. */
+/** Пространство прошлого прогона со всем, что за ним держится. */
 async function dropWorkspace(
 	tx: postgres.TransactionSql,
 	key: string,
@@ -162,26 +188,38 @@ async function dropWorkspace(
 		select id from workspaces where key = ${key}
 	`;
 
-	if (workspace === undefined) {
+	if (workspace !== undefined) {
+		await tx`delete from interactions where workspace_id = ${workspace.id}`;
+		await tx`delete from workspaces where id = ${workspace.id}`;
+	}
+
+	// Процесс сносится после места: ссылка `workspaces.workflow_id` запрещает
+	// удаление, пока место стоит. Порядок внутри тот же по той же причине —
+	// процесс держит свою действующую редакцию, и снять её нужно до того, как
+	// редакции удалятся.
+	const [workflow] = await tx<{ id: string }[]>`
+		select id from workflows where key = ${key}
+	`;
+
+	if (workflow === undefined) {
 		return;
 	}
 
-	await tx`delete from interactions where workspace_id = ${workspace.id}`;
-	await tx`update workspaces set active_revision_id = null where id = ${workspace.id}`;
-	await tx`delete from process_revisions where group_id = ${workspace.id}`;
-	await tx`delete from process_stage_keys where group_id = ${workspace.id}`;
-	await tx`delete from workspaces where id = ${workspace.id}`;
+	await tx`update workflows set active_revision_id = null where id = ${workflow.id}`;
+	await tx`delete from process_revisions where workflow_id = ${workflow.id}`;
+	await tx`delete from process_stage_keys where workflow_id = ${workflow.id}`;
+	await tx`delete from workflows where id = ${workflow.id}`;
 }
 
-/** Первая редакция группы: стадии, переходы, реестр ключей и переключение. */
+/** Первая редакция процесса: стадии, переходы, реестр ключей и переключение. */
 async function publishRevision(
 	tx: postgres.TransactionSql,
-	workspaceId: string,
+	workflowId: string,
 	options: SeedWorkspaceOptions
 ): Promise<string> {
 	const [revision] = await tx<{ id: string }[]>`
 		insert into process_revisions ${tx({
-			group_id: workspaceId,
+			workflow_id: workflowId,
 			version: 1,
 			name: options.revisionName,
 			note: options.revisionNote ?? null,
@@ -219,7 +257,7 @@ async function publishRevision(
 		// Реестр ключей заводится вместе с первой редакцией: без него применение
 		// изменений посчитало бы все ключи новыми.
 		await tx`
-			insert into process_stage_keys ${tx({ group_id: workspaceId, key: stage.key })}
+			insert into process_stage_keys ${tx({ workflow_id: workflowId, key: stage.key })}
 			on conflict do nothing
 		`;
 	}
@@ -237,7 +275,7 @@ async function publishRevision(
 		`;
 	}
 
-	await tx`update workspaces set active_revision_id = ${revision.id} where id = ${workspaceId}`;
+	await tx`update workflows set active_revision_id = ${revision.id} where id = ${workflowId}`;
 
 	return revision.id;
 }

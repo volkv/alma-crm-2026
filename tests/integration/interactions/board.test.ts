@@ -21,6 +21,7 @@ import { programs, stageEntries } from '$lib/server/db/schema';
 import {
 	CARDS_PER_COLUMN,
 	getInteractionBoard,
+	type BoardWorkspace,
 	type InteractionBoardQuery
 } from '$lib/server/interactions/board';
 import { createInteraction } from '$lib/server/interactions/write';
@@ -52,7 +53,7 @@ vi.mock('$env/dynamic/private', () => ({ env: process.env }));
 type PageLoad = (event: RequestEvent) => Promise<unknown>;
 type FormAction = (event: RequestEvent) => Promise<unknown>;
 
-const listPage = await import('../../../src/routes/(app)/interactions/+page.server');
+const listPage = await import('../../../src/routes/(app)/w/[workspace]/interactions/+page.server');
 
 const loadList = listPage.load as unknown as PageLoad;
 const transitionAction = listPage.actions.transition as unknown as FormAction;
@@ -75,7 +76,6 @@ const admin = (): ActorContext => testActor({ roleId: 'admin' });
 const manager = (): ActorContext => testActor({ roleId: 'manager' });
 
 const EMPTY_QUERY: InteractionBoardQuery = {
-	workspace: null,
 	status: null,
 	stageCategory: null,
 	overdue: false,
@@ -85,6 +85,16 @@ const EMPTY_QUERY: InteractionBoardQuery = {
 
 function query(overrides: Partial<InteractionBoardQuery> = {}): InteractionBoardQuery {
 	return { ...EMPTY_QUERY, ...overrides };
+}
+
+/**
+ * Пространство, чью доску собирают. Задаётся адресом — доска его больше не
+ * выбирает, — поэтому тесты называют его так же явно, как маршрут.
+ */
+async function workspaceOf(key: string): Promise<BoardWorkspace> {
+	const row = await readWorkspaceByKey(getDb(), key);
+
+	return { id: row.id, key: row.key, name: row.name };
 }
 
 /** Процесс учебных заведений: четырнадцать стадий и его действующая редакция. */
@@ -267,7 +277,7 @@ describe('выборка доски', () => {
 
 		await closeChecklist(ctx, first);
 
-		const board = await getInteractionBoard(ctx, query());
+		const board = await getInteractionBoard(ctx, await workspaceOf(B2B_WORKSPACE_KEY), query());
 
 		expect(board.workspaceKey).toBe(B2B_WORKSPACE_KEY);
 		expect(board.columns).toHaveLength(route.stages.length);
@@ -313,7 +323,7 @@ describe('выборка доски', () => {
 			note: 'Ждём ответа приёмной комиссии'
 		});
 
-		const board = await getInteractionBoard(ctx, query());
+		const board = await getInteractionBoard(ctx, await workspaceOf(B2B_WORKSPACE_KEY), query());
 		const contacts = columnOf(board, 'Поиск контактных лиц');
 		const states = new Map(contacts.cards.map((card) => [card.title, card.state]));
 
@@ -336,7 +346,10 @@ describe('выборка доски', () => {
 			});
 		}
 
-		const contacts = columnOf(await getInteractionBoard(ctx, query()), 'Поиск контактных лиц');
+		const contacts = columnOf(
+			await getInteractionBoard(ctx, await workspaceOf(B2B_WORKSPACE_KEY), query()),
+			'Поиск контактных лиц'
+		);
 
 		expect(contacts.count).toBe(CARDS_PER_COLUMN + 3);
 		expect(contacts.cards).toHaveLength(CARDS_PER_COLUMN);
@@ -359,7 +372,7 @@ describe('выборка доски', () => {
 			programIds: [program.id]
 		});
 
-		const board = await getInteractionBoard(ctx, query());
+		const board = await getInteractionBoard(ctx, await workspaceOf(B2B_WORKSPACE_KEY), query());
 		const card = columnOf(board, 'Поиск контактных лиц').cards.find(
 			(candidate) => candidate.id === interactionId
 		);
@@ -381,7 +394,10 @@ describe('выборка доски', () => {
 		await makeInteraction(ctx, { title: 'Чужое', organizationId: foreign });
 
 		const scoped = await scopedActor(database.db, { roleId: 'manager', organizationIds: [mine] });
-		const contacts = columnOf(await getInteractionBoard(scoped, query()), 'Поиск контактных лиц');
+		const contacts = columnOf(
+			await getInteractionBoard(scoped, await workspaceOf(B2B_WORKSPACE_KEY), query()),
+			'Поиск контактных лиц'
+		);
 
 		expect(contacts.count).toBe(1);
 		expect(contacts.cards.map((card) => card.title)).toEqual(['Моё']);
@@ -405,20 +421,36 @@ describe('выборка доски', () => {
 
 		await enteredDaysAgo(late, 30);
 
-		const overdue = await getInteractionBoard(ctx, query({ overdue: true }));
+		const overdue = await getInteractionBoard(
+			ctx,
+			await workspaceOf(B2B_WORKSPACE_KEY),
+			query({ overdue: true })
+		);
 		expect(overdue.total).toBe(1);
 		expect(columnOf(overdue, 'Поиск контактных лиц').count).toBe(1);
 
-		const searched = await getInteractionBoard(ctx, query({ q: 'Южный' }));
+		const searched = await getInteractionBoard(
+			ctx,
+			await workspaceOf(B2B_WORKSPACE_KEY),
+			query({ q: 'Южный' })
+		);
 		expect(searched.columns.flatMap((column) => column.cards).map((card) => card.title)).toEqual([
 			'Южное дело'
 		]);
 
-		const owned = await getInteractionBoard(ctx, query({ ownerUserId: TEST_USER_IDS.manager }));
+		const owned = await getInteractionBoard(
+			ctx,
+			await workspaceOf(B2B_WORKSPACE_KEY),
+			query({ ownerUserId: TEST_USER_IDS.manager })
+		);
 		expect(owned.total).toBe(1);
 
 		// Завершённых на доске нет: они не стоят ни на одной стадии.
-		const completed = await getInteractionBoard(ctx, query({ status: 'completed' }));
+		const completed = await getInteractionBoard(
+			ctx,
+			await workspaceOf(B2B_WORKSPACE_KEY),
+			query({ status: 'completed' })
+		);
 		expect(completed.total).toBe(0);
 	});
 
@@ -433,7 +465,10 @@ describe('выборка доски', () => {
 			ownerUserId: TEST_USER_IDS.manager
 		});
 
-		const before = columnOf(await getInteractionBoard(ctx, query()), 'Поиск контактных лиц');
+		const before = columnOf(
+			await getInteractionBoard(ctx, await workspaceOf(B2B_WORKSPACE_KEY), query()),
+			'Поиск контактных лиц'
+		);
 		const forward = before.cards[0].transitions.find((option) => option.kind === 'forward');
 
 		expect(forward).toMatchObject({
@@ -444,7 +479,10 @@ describe('выборка доски', () => {
 
 		await closeChecklist(ctx, interactionId);
 
-		const after = columnOf(await getInteractionBoard(ctx, query()), 'Поиск контактных лиц');
+		const after = columnOf(
+			await getInteractionBoard(ctx, await workspaceOf(B2B_WORKSPACE_KEY), query()),
+			'Поиск контактных лиц'
+		);
 
 		expect(after.cards[0].transitions.find((option) => option.kind === 'forward')?.allowed).toBe(
 			true
@@ -458,7 +496,17 @@ describe('выборка доски', () => {
 
 		await makeInteraction(ctx, { title: 'Дело раздела', organizationId });
 
-		const data = (await loadList(pageEvent({ path: '/interactions', query: '?view=board' }))) as {
+		const workspace = await workspaceOf(B2B_WORKSPACE_KEY);
+
+		const data = (await loadList(
+			pageEvent({
+				path: `/w/${workspace.key}/interactions`,
+				query: '?view=board',
+				routeId: '/(app)/w/[workspace]/interactions',
+				params: { workspace: workspace.key },
+				parent: { workspace: { ...workspace, hasWorkflow: true } }
+			})
+		)) as {
 			view: string;
 			board: InteractionBoardView;
 			canTransition: boolean;
@@ -496,7 +544,7 @@ describe('перевод карточки', () => {
 
 		expect(moved).toEqual({ moved: true });
 
-		const board = await getInteractionBoard(ctx, query());
+		const board = await getInteractionBoard(ctx, await workspaceOf(B2B_WORKSPACE_KEY), query());
 
 		expect(columnOf(board, 'Поиск контактных лиц').count).toBe(0);
 		expect(columnOf(board, 'Коммуникация и сверка программ').cards.map((card) => card.id)).toEqual([
@@ -537,8 +585,10 @@ describe('перевод карточки', () => {
 
 		// И доска тому, у кого права нет, про этот переход честно говорит то же самое.
 		const observer = testActor({ roleId: 'manager', permissions: ['interactions.read'] });
-		const card = columnOf(await getInteractionBoard(observer, query()), 'Поиск контактных лиц')
-			.cards[0];
+		const card = columnOf(
+			await getInteractionBoard(observer, await workspaceOf(B2B_WORKSPACE_KEY), query()),
+			'Поиск контактных лиц'
+		).cards[0];
 
 		expect(card.transitions.every((option) => !option.allowed)).toBe(true);
 		expect(card.transitions[0].reasons.join(' ')).toContain('stages.transition');
@@ -639,7 +689,7 @@ describe('перевод карточки', () => {
 
 		// Карточка знает о требовании заранее: доска спрашивает объяснение до
 		// команды, а не показывает отказ после неё.
-		const board = await getInteractionBoard(ctx, query({ workspace: B2C_WORKSPACE_KEY }));
+		const board = await getInteractionBoard(ctx, await workspaceOf(B2C_WORKSPACE_KEY), query());
 		const card = columnOf(board, 'Первая стадия').cards[0];
 
 		expect(card.transitions[0]).toMatchObject({

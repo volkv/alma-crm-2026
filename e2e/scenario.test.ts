@@ -478,15 +478,17 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		// Колледж пока ведёт руководитель — КАМу его не видно.
 		await expect(manager.getByRole('row').filter({ hasText: COLLEGE.name })).toHaveCount(0);
 
-		// Доска группы: своя работа стоит на первой стадии, чужая не показана.
-		await manager.goto(`/interactions?view=board&workspace=${GROUP_KEY}`);
+		// Доска пространства: своя работа стоит на первой стадии, чужая не показана.
+		// Пространство задано адресом, а не отбором: ссылка на доску открывает у
+		// любого одно и то же место.
+		await manager.goto(`/w/${GROUP_KEY}/interactions?view=board`);
 		await expect(manager.getByRole('heading', { name: STAGES[0].name })).toBeVisible();
 		await expect(manager.getByRole('link', { name: MAIN_TITLE })).toBeVisible();
 		await expect(manager.getByRole('link', { name: MOVED_TITLE })).toHaveCount(0);
 	});
 
 	test('2. КАМ двигает стадию с комментарием и файлом', async () => {
-		await manager.goto(`/interactions/${mainId}`);
+		await manager.goto(`/w/${GROUP_KEY}/interactions/${mainId}`);
 		await waitForHydration(manager);
 		await expect(manager.getByRole('heading', { level: 1 })).toHaveText(MAIN_TITLE);
 
@@ -550,7 +552,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		await manager.goto(`/organizations?q=${encodeURIComponent(MARK)}`);
 		await expect(manager.getByRole('row').filter({ hasText: COLLEGE.name })).toHaveCount(1);
 
-		await manager.goto(`/interactions?view=board&workspace=${GROUP_KEY}`);
+		await manager.goto(`/w/${GROUP_KEY}/interactions?view=board`);
 		await expect(manager.getByRole('link', { name: MOVED_TITLE })).toBeVisible();
 	});
 
@@ -612,19 +614,19 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		await expect(admin.getByText(/Процесс изменён/)).toBeVisible();
 
 		// Доска КАМа: колонка названа по-новому, удалённой стадии нет вовсе.
-		await manager.goto(`/interactions?view=board&workspace=${GROUP_KEY}`);
+		await manager.goto(`/w/${GROUP_KEY}/interactions?view=board`);
 		await expect(manager.getByRole('heading', { name: RENAMED_NAME })).toBeVisible();
 		await expect(manager.getByRole('heading', { name: STAGES[2].name })).toHaveCount(0);
 
 		// Переехавшее взаимодействие стоит на целевой стадии, и карточка
 		// объясняет перенос словами.
-		await manager.goto(`/interactions/${movedId}`);
+		await manager.goto(`/w/${GROUP_KEY}/interactions/${movedId}`);
 		await expect(manager.getByText(/Стадия перенесена при изменении процесса/)).toBeVisible();
 		await expect(manager.getByRole('button', { name: /^Перейти:/ })).toBeVisible();
 
 		// История второго шага пережила правку процесса целиком: и объяснение, и
 		// приложенный файл на месте.
-		await manager.goto(`/interactions/${mainId}`);
+		await manager.goto(`/w/${GROUP_KEY}/interactions/${mainId}`);
 		await manager.getByRole('tab', { name: 'История' }).click();
 		await expect(manager.getByText(`Причина: ${STEP_COMMENT}`)).toBeVisible();
 		await expect(manager.getByText(`Вложения: ${STEP_FILE}`)).toBeVisible();
@@ -699,7 +701,9 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		// входящие стоит демонстрационный КАМ, и вуз заявки попал в его область.
 		const expectedTitle = `Заявка с сайта: ${APPLICANT_NAME}`;
 
-		await manager.goto(`/interactions?q=${encodeURIComponent(APPLICANT_NAME)}`);
+		// Пространство заявки — стенда, а не прохода: его определяет таблица
+		// соответствий по виду заявителя, и вуз попадает в `b2b`.
+		await manager.goto(`/w/b2b/interactions?q=${encodeURIComponent(APPLICANT_NAME)}`);
 		await expect(manager.getByText(expectedTitle)).toBeVisible();
 
 		// Снимок статуса уходит в чужой процесс по сети. Отправляет его цикл
@@ -735,7 +739,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 	test('6. Учебная группа уходит в LMS, результат возвращается на карточку', async ({
 		request
 	}) => {
-		await manager.goto(`/interactions/${mainId}`);
+		await manager.goto(`/w/${GROUP_KEY}/interactions/${mainId}`);
 		await waitForHydration(manager);
 
 		// Стадия требует данных обучения, и их ещё не получали: карточка говорит

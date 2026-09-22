@@ -93,7 +93,9 @@ describe('validateAuditDetails', () => {
 	});
 
 	it('пропускает устойчивые имена: по ключу сопоставляют стадии разных редакций', () => {
-		expect(validateAuditDetails({ fromStageKey: 'contact_search', workspaceKey: 'b2b' })).toEqual([]);
+		expect(validateAuditDetails({ fromStageKey: 'contact_search', workspaceKey: 'b2b' })).toEqual(
+			[]
+		);
 	});
 
 	it('не пускает под видом имени свободный текст', () => {

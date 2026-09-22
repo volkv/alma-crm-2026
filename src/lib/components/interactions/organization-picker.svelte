@@ -15,6 +15,7 @@
 	 */
 	let {
 		id,
+		lookupPath,
 		value = $bindable(null),
 		label = $bindable(null),
 		placeholder = 'Начните вводить название или ИНН',
@@ -24,6 +25,11 @@
 	}: {
 		/** Идентификатор контрола: на него ссылается подпись поля. */
 		id: string;
+		/**
+		 * Адрес подсказок. Приходит снаружи, потому что маршрут лежит внутри
+		 * пространства, а ключ пространства знает страница, а не поле ввода.
+		 */
+		lookupPath: string;
 		/** Выбранная организация или `null`. */
 		value?: string | null;
 		/** Название выбранной организации — для показа в поле. */
@@ -48,7 +54,7 @@
 
 		try {
 			const response = await fetch(
-				`/interactions/lookup?kind=organizations&q=${encodeURIComponent(text)}`
+				`${lookupPath}?kind=organizations&q=${encodeURIComponent(text)}`
 			);
 
 			if (!response.ok) {

@@ -103,7 +103,7 @@ src/
   hooks.server.ts              init (конфигурация и два фоновых таймера) и sequence из хуков
   app.d.ts                     App.Locals и App.Error
   lib/
-    nav.ts                     разделы главной навигации
+    nav.ts                     разделы главной навигации: постоянные и по секции на пространство
     format.ts                  даты, числа, склонение, инициалы
     utils.ts                   cn() и служебные типы shadcn-svelte
     components/ui/             примитивы shadcn-svelte, вендорятся в репозиторий
@@ -123,9 +123,10 @@ src/
   routes/
     +layout.svelte             корневой layout: app.css и отметка о гидратации
     (app)/                     всё, что живёт внутри оболочки приложения
-      +layout.server.ts        locals.user для оболочки
+      +layout.server.ts        locals.user, режим стенда и пространства для оболочки
       +layout.svelte           AppShell
       +page.svelte             главная
+      w/[workspace]/           процессные разделы под ключом пространства (взаимодействия)
       ui-kit/                  витрина компонентов
     api/health/+server.ts      GET /api/health
 drizzle/                       SQL-миграции и журнал drizzle-kit

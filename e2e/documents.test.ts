@@ -17,6 +17,9 @@ import { expect, test } from './fixtures';
 /** Взаимодействие, в карточку которого проход кладёт свои файлы. */
 const INTERACTION_ID = seedId('interaction', 'bit-telecom');
 
+/** Пространство этой записи: ключ стоит в адресе карточки, а не в отборе. */
+const WORKSPACE = 'b2b';
+
 /**
  * Метка прогона: делает названия уникальными в общей базе. У каждого теста своя
  * — иначе тест, который считает свои строки, увидел бы ещё и чужие, когда оба
@@ -139,7 +142,7 @@ test('раздел показывает загруженные документ�
 	page
 }) => {
 	await test.step('файлы загружаются из карточки взаимодействия', async () => {
-		await page.goto(`/interactions/${INTERACTION_ID}`);
+		await page.goto(`/w/${WORKSPACE}/interactions/${INTERACTION_ID}`);
 		await openDocumentsTab(page);
 
 		await upload(page, PDF_TITLE, 'Соглашение', {
@@ -218,7 +221,7 @@ test('новая редакция заменяет файл в деле, а пр
 }) => {
 	const title = `Скан соглашения ${REVISION_TAG}`;
 
-	await page.goto(`/interactions/${INTERACTION_ID}`);
+	await page.goto(`/w/${WORKSPACE}/interactions/${INTERACTION_ID}`);
 	await openDocumentsTab(page);
 
 	await upload(page, title, 'Соглашение', {
@@ -283,7 +286,7 @@ test('новая редакция заменяет файл в деле, а пр
 test('отметка ставится с карточки документа и остаётся на ней', async ({ page }) => {
 	const title = `Соглашение под отметку ${MARK_TAG}`;
 
-	await page.goto(`/interactions/${INTERACTION_ID}`);
+	await page.goto(`/w/${WORKSPACE}/interactions/${INTERACTION_ID}`);
 	await openDocumentsTab(page);
 
 	await upload(page, title, 'Соглашение', {
@@ -365,7 +368,7 @@ test('отметка ставится с карточки документа и 
 test('скан на 1,2 МБ доходит до приложения, а не упирается в потолок тела запроса', async ({
 	page
 }) => {
-	await page.goto(`/interactions/${INTERACTION_ID}`);
+	await page.goto(`/w/${WORKSPACE}/interactions/${INTERACTION_ID}`);
 	await openDocumentsTab(page);
 
 	// Подписка до отправки: ответ на форму нужен целиком, а не по следам в UI.

@@ -402,7 +402,7 @@ async function checkManagerSeesMigration(browser: Browser): Promise<void> {
 	const page = await context.newPage();
 
 	try {
-		await page.goto(`/interactions?view=board&workspace=${GROUP_KEY}`);
+		await page.goto(`/w/${GROUP_KEY}/interactions?view=board`);
 
 		// Колонки — стадии действующего процесса: удалённой среди них нет.
 		await expect(page.getByRole('heading', { name: RENAMED_NAME })).toBeVisible();

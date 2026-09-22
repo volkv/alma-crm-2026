@@ -40,6 +40,12 @@ export const INTRO_TARGET = 'page-header';
  * экран из тура выпадает, а не ведёт на несуществующий адрес.
  */
 export type TourSamples = {
+	/**
+	 * Ключ пространства, в которое тур поведёт показывать взаимодействия.
+	 * Стоит особняком от остальных образцов: это не запись, которую открывают,
+	 * а сегмент адреса, без которого раздела просто нет.
+	 */
+	workspace: string | null;
 	interaction: string | null;
 	organization: string | null;
 	person: string | null;
@@ -172,19 +178,46 @@ export function screenForPath(pathname: string): TourScreen | null {
  * без образца адреса нет вовсе — вести некуда, и такой экран из тура выпадает.
  */
 export function screenHref(screen: TourScreen, samples: TourSamples | null): string | null {
-	if (screen.sample === undefined) {
-		return screen.route;
+	const parts: string[] = [];
+
+	for (const part of segments(screen.route)) {
+		if (!part.startsWith('[')) {
+			parts.push(part);
+			continue;
+		}
+
+		// Пространство подставляется по имени параметра, а не по образцу экрана:
+		// у карточки взаимодействия их два — место в пути и сама запись, — и
+		// подставить один и тот же идентификатор в оба значило бы собрать адрес,
+		// которого не существует.
+		if (part === '[workspace]') {
+			const workspace = samples?.workspace ?? null;
+
+			if (workspace === null) {
+				return null;
+			}
+
+			parts.push(workspace);
+			continue;
+		}
+
+		// Экран без образца — тот, на который приходят из записи, а не из тура:
+		// его адрес остаётся шаблоном, и открыть его тур не предлагает.
+		if (screen.sample === undefined) {
+			parts.push(part);
+			continue;
+		}
+
+		const sample = samples?.[screen.sample] ?? null;
+
+		if (sample === null) {
+			return null;
+		}
+
+		parts.push(sample);
 	}
 
-	const sample = samples?.[screen.sample] ?? null;
-
-	if (sample === null) {
-		return null;
-	}
-
-	return `/${segments(screen.route)
-		.map((part) => (part.startsWith('[') ? sample : part))
-		.join('/')}`;
+	return `/${parts.join('/')}`;
 }
 
 /** Адрес статьи справки об экране. */

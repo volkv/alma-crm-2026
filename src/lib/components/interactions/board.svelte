@@ -252,6 +252,7 @@
 							{#each column.cards as card (card.id)}
 								<BoardCard
 									{card}
+									workspace={board.workspaceKey ?? ''}
 									{canTransition}
 									dragging={dragged?.id === card.id}
 									onmove={(option) => void move(card, option)}

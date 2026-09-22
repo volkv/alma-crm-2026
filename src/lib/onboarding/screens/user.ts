@@ -46,7 +46,7 @@ export const USER_SCREENS: readonly TourScreen[] = [
 	{
 		id: 'interactions',
 		title: 'Взаимодействия',
-		route: '/interactions',
+		route: '/w/[workspace]/interactions',
 		permission: 'interactions.read',
 		help: HELP_INTERACTIONS,
 		intro: {
@@ -80,7 +80,7 @@ export const USER_SCREENS: readonly TourScreen[] = [
 	{
 		id: 'interaction',
 		title: 'Карточка взаимодействия',
-		route: '/interactions/[id=uuid]',
+		route: '/w/[workspace]/interactions/[id=uuid]',
 		sample: 'interaction',
 		permission: 'interactions.read',
 		help: HELP_INTERACTION,
@@ -122,7 +122,7 @@ export const USER_SCREENS: readonly TourScreen[] = [
 	{
 		id: 'interaction-new',
 		title: 'Новое взаимодействие',
-		route: '/interactions/new',
+		route: '/w/[workspace]/interactions/new',
 		permission: 'interactions.write',
 		help: HELP_INTERACTIONS,
 		intro: {

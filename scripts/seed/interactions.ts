@@ -74,10 +74,7 @@ import {
 	B2C_WORKSPACE_KEY,
 	B2C_PROCESS
 } from '$lib/server/stages/definitions';
-import {
-	readWorkspaceByKey,
-	requireActiveRevisionForWorkspace
-} from '$lib/server/stages/process';
+import { readWorkspaceByKey, requireActiveRevisionForWorkspace } from '$lib/server/stages/process';
 import { seedId } from './ids';
 import { SERVICE_USER_EMAIL } from './users';
 

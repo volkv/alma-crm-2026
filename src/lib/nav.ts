@@ -259,7 +259,7 @@ const STATIC_SECTIONS: readonly NavSection[] = [
  */
 function workspaceSection(workspace: NavWorkspace): NavSection {
 	return {
-		href: '/interactions',
+		href: `/w/${workspace.key}/interactions`,
 		label: 'Взаимодействия',
 		icon: HandshakeIcon,
 		group: { id: `workspace:${workspace.key}`, label: workspace.name },

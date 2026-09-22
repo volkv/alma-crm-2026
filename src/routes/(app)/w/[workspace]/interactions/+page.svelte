@@ -139,12 +139,16 @@
 	 */
 	const HIDDEN_ON_LAPTOP = ['customerName', 'ownerName', 'lastActivityAt'];
 
+	/** Ключ пространства стоит в адресе, и все ссылки раздела считаются от него. */
+	const workspace = $derived(data.workspace.key);
+	const newHref = $derived(resolve('/(app)/w/[workspace]/interactions/new', { workspace }));
+
 	function open(row: InteractionListItem) {
-		return goto(resolve('/(app)/interactions/[id=uuid]', { id: row.id }));
+		return goto(resolve('/(app)/w/[workspace]/interactions/[id=uuid]', { workspace, id: row.id }));
 	}
 
 	function go(changes: Partial<InteractionFilters>) {
-		return goto(filtersHref(page.url, changes), { keepFocus: true, noScroll: true });
+		return goto(filtersHref(page.url, workspace, changes), { keepFocus: true, noScroll: true });
 	}
 
 	/**
@@ -246,10 +250,10 @@
 
 <Header
 	title="Взаимодействия"
-	description="Работа с учебными заведениями: где стоит каждое дело и сколько у него осталось времени."
+	description="{data.workspace.name}: где стоит каждое дело и сколько у него осталось времени."
 >
 	{#snippet actions()}
-		<Button href={resolve('/interactions/new')}>
+		<Button href={newHref}>
 			<PlusIcon aria-hidden="true" />
 			Создать взаимодействие
 		</Button>
@@ -257,7 +261,7 @@
 </Header>
 
 {#snippet resetFilters()}
-	<Button variant="outline" href={clearedFiltersHref(page.url)}>
+	<Button variant="outline" href={clearedFiltersHref(page.url, workspace)}>
 		<FilterXIcon aria-hidden="true" />
 		Сбросить фильтры
 	</Button>
@@ -331,7 +335,7 @@
 					description="Заведите первое: выберите учебное заведение, программы и ответственного — маршрут стадий подставится сам."
 				>
 					{#snippet action()}
-						<Button href={resolve('/interactions/new')}>
+						<Button href={newHref}>
 							<PlusIcon aria-hidden="true" />
 							Создать взаимодействие
 						</Button>

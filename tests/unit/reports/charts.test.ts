@@ -179,15 +179,22 @@ describe('воронка по группам процесса', () => {
 			{}
 		);
 
-		expect(funnel.workspaces.map((workspace) => workspace.workspaceKey)).toStrictEqual(['b2b', 'b2c']);
-		expect(funnel.workspaces[0].stages.map((bucket) => [bucket.label, bucket.value])).toStrictEqual([
-			['Контакты', 0],
-			['Встреча', 3]
+		expect(funnel.workspaces.map((workspace) => workspace.workspaceKey)).toStrictEqual([
+			'b2b',
+			'b2c'
 		]);
-		expect(funnel.workspaces[1].stages.map((bucket) => [bucket.label, bucket.value])).toStrictEqual([
-			['Консультация', 2],
-			['Оплата', 0]
-		]);
+		expect(funnel.workspaces[0].stages.map((bucket) => [bucket.label, bucket.value])).toStrictEqual(
+			[
+				['Контакты', 0],
+				['Встреча', 3]
+			]
+		);
+		expect(funnel.workspaces[1].stages.map((bucket) => [bucket.label, bucket.value])).toStrictEqual(
+			[
+				['Консультация', 2],
+				['Оплата', 0]
+			]
+		);
 	});
 
 	it('не рисует пустую воронку рядом с непустой', () => {
@@ -203,9 +210,14 @@ describe('воронка по группам процесса', () => {
 	it('на пустой выборке показывает все процессы: нули и есть ответ', () => {
 		const funnel = buildFunnelFromCounts(index(), [], {});
 
-		expect(funnel.workspaces.map((workspace) => workspace.workspaceKey)).toStrictEqual(['b2b', 'b2c']);
+		expect(funnel.workspaces.map((workspace) => workspace.workspaceKey)).toStrictEqual([
+			'b2b',
+			'b2c'
+		]);
 		expect(
-			funnel.workspaces.flatMap((workspace) => workspace.stages).every((bucket) => bucket.value === 0)
+			funnel.workspaces
+				.flatMap((workspace) => workspace.stages)
+				.every((bucket) => bucket.value === 0)
 		).toBe(true);
 	});
 

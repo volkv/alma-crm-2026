@@ -178,6 +178,12 @@ const INTERACTIONS_PATH = resolve('/interactions');
  * продукта. Поэтому переносится то, что список действительно умеет, а о
  * несовпадении экран говорит словами рядом со ссылкой: молча суженный или
  * расширенный список хуже, чем честно неполный.
+ *
+ * Пространство переносится не отбором, а адресом: у списка оно стоит в пути, и
+ * параметра для него больше нет. Отчёт сквозной, и выбрать в нём можно
+ * несколько направлений сразу или ни одного — такую ссылку одним адресом не
+ * выразить, и она ведёт на прежний адрес, который сам уводит туда, где у
+ * смотрящего есть работа.
  */
 export function interactionsHref(url: URL): ResolvedPathname {
 	const params = new URLSearchParams();
@@ -188,20 +194,17 @@ export function interactionsHref(url: URL): ResolvedPathname {
 		params.set('status', states[0]);
 	}
 
-	// Пространство список понимает и называет тем же ключом. Стадию — нет:
-	// у него в `stage` лежит смысловая группа стадий, а не ключ, и ключ отчёта
-	// он бы молча не понял, показав выборку шире обещанной.
-	if (workspaces.length === 1) {
-		params.set('workspace', workspaces[0]);
-	}
-
 	if (url.searchParams.get('overdue') === 'true') {
 		params.set('overdue', 'true');
 	}
 
 	const query = params.toString();
+	const path =
+		workspaces.length === 1
+			? (`/w/${encodeURIComponent(workspaces[0])}/interactions` as ResolvedPathname)
+			: INTERACTIONS_PATH;
 
-	return (query ? `${INTERACTIONS_PATH}?${query}` : INTERACTIONS_PATH) as ResolvedPathname;
+	return (query ? `${path}?${query}` : path) as ResolvedPathname;
 }
 
 /** Какие фильтры отчёта список взаимодействий не понимает. */

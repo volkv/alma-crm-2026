@@ -182,7 +182,7 @@ staff(
 		// контрагентом и взаимодействием, а сразу взаимодействие. Поиск по ключу
 		// прогона, а не первая страница списка: список отсортирован по сроку стадии,
 		// и свежая заявка со сроком в будущем стоит в нём последней.
-		await page.goto(`/interactions?q=${encodeURIComponent(externalId)}`);
+		await page.goto(`/w/b2b/interactions?q=${encodeURIComponent(externalId)}`);
 		await expect(page.getByText(`Заявка с сайта: ${applicantName}`)).toBeVisible();
 
 		// Направление 2: снимок статуса уходит в чужой процесс. Первую попытку
@@ -234,7 +234,7 @@ staff(
 		await expect(await journalCell(page, statusRow, 'Попытки')).toContainText('2');
 
 		// Направление 3: заявку на учебную группу отправляет сотрудник с карточки.
-		await page.goto(`/interactions/${interactionId}`);
+		await page.goto(`/w/b2b/interactions/${interactionId}`);
 		await expect(page.getByRole('heading', { level: 1 })).toContainText('Заявка с сайта');
 
 		await page.getByLabel('Мест в потоке').fill('45');

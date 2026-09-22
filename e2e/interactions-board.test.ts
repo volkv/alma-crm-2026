@@ -1,4 +1,5 @@
 import { expect, test } from './fixtures';
+import { LEAD_STATE } from './global-setup';
 
 /**
  * Доска взаимодействий глазами менеджера: переключение представления, перевод
@@ -8,6 +9,9 @@ import { expect, test } from './fixtures';
  * только с ним, — а находит его на доске поиском в адресе: база прогона общая,
  * и в колонке рядом стоят записи стенда и соседних проверок.
  */
+
+/** Пространство учебных заведений: его ключ стоит в адресе доски. */
+const WORKSPACE = 'b2b';
 
 /** Вуз из набора стенда: организации заводит сид, а не эта проверка. */
 const INSTITUTION = 'СПбПУ';
@@ -21,7 +25,7 @@ type Page = import('@playwright/test').Page;
 async function createInteraction(page: Page): Promise<string> {
 	const title = `E2E-ДОСКА ${crypto.randomUUID().slice(0, 8)}`;
 
-	await page.goto('/interactions/new');
+	await page.goto(`/w/${WORKSPACE}/interactions/new`);
 
 	// Подсказки организаций появляются только после того, как страница ожила:
 	// ввод до гидратации не доходит до компонента, а под нагрузкой прогона это
@@ -53,7 +57,7 @@ async function closeChecklist(page: Page): Promise<void> {
 
 /** Доска, отобранная до одной записи: в общей базе прогона соседей хватает. */
 async function openBoard(page: Page, title: string): Promise<void> {
-	await page.goto(`/interactions?view=board&q=${encodeURIComponent(title)}`);
+	await page.goto(`/w/${WORKSPACE}/interactions?view=board&q=${encodeURIComponent(title)}`);
 	await expect(page.locator('[data-slot="interactions-board"]')).toBeVisible();
 }
 
@@ -80,7 +84,7 @@ async function openCardMenu(page: Page, stage: string, title: string): Promise<v
 test('переключатель приводит к доске и сохраняет отбор', async ({ page }) => {
 	const title = await createInteraction(page);
 
-	await page.goto(`/interactions?q=${encodeURIComponent(title)}`);
+	await page.goto(`/w/${WORKSPACE}/interactions?q=${encodeURIComponent(title)}`);
 	await page.getByRole('link', { name: 'Доска' }).click();
 
 	await expect(page).toHaveURL(/[?&]view=board/);
@@ -97,11 +101,11 @@ test('переключатель приводит к доске и сохран�
 	await expect(first.locator('[data-slot="status-badge"]').first()).toHaveText('1');
 	await expect(column(page, SECOND_STAGE).getByText('Здесь пусто')).toBeVisible();
 
-	// Выбора версии процесса на доске нет: в группе действует ровно один
+	// Выбора версии процесса на доске нет: в пространстве действует ровно один
 	// процесс, и его номер не участвует ни в одном решении.
 	await expect(page.getByRole('button', { name: /^Маршрут/ })).toHaveCount(0);
 	await expect(page.getByText(/версия \d/i)).toHaveCount(0);
-	await expect(page.getByText(/Процесс группы «/)).toBeVisible();
+	await expect(page.getByText(/Процесс пространства «/)).toBeVisible();
 
 	await page.screenshot({ path: 'test-results/interactions-board-desktop.png', fullPage: true });
 });
@@ -176,4 +180,37 @@ test('доска уезжает вбок внутри себя, а не вмес
 	expect(scrollable).toBe(true);
 
 	await page.screenshot({ path: 'test-results/interactions-board-mobile.png', fullPage: true });
+});
+
+test('адрес доски открывает одно и то же место, а незнакомый ключ — 404', async ({
+	page,
+	browser
+}) => {
+	// Пространство задаёт адрес, а не загруженность смотрящего: ссылка,
+	// скопированная из адресной строки, у коллеги открывает ту же доску. Пока
+	// доска выбирала место сама, это было неправдой.
+	const address = `/w/${WORKSPACE}/interactions?view=board`;
+	const caption = /Процесс пространства «Учебные заведения»/;
+
+	await page.goto(address);
+	await expect(page.getByText(caption)).toBeVisible();
+
+	const context = await browser.newContext({ storageState: LEAD_STATE });
+
+	try {
+		const lead = await context.newPage();
+
+		await lead.goto(address);
+		await expect(lead.getByText(caption)).toBeVisible();
+	} finally {
+		await context.close();
+	}
+
+	// Незнакомый ключ — отказ словами, а не молчаливый показ соседнего
+	// пространства: человек пришёл по ссылке и обязан узнать, что её адресата нет.
+	const missing = await page.goto('/w/no-such-workspace/interactions');
+
+	expect(missing?.status()).toBe(404);
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Страница не найдена');
+	await expect(page.getByText('Пространство не найдено')).toBeVisible();
 });

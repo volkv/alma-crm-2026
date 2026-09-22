@@ -22,8 +22,10 @@ type Endpoint = (event: RequestEvent) => Promise<Response>;
 
 const hooks = await import('../../../src/hooks.server');
 const overviewPage = await import('../../../src/routes/(app)/+page.server');
-const newInteractionPage = await import('../../../src/routes/(app)/interactions/new/+page.server');
-const lookupEndpoint = await import('../../../src/routes/(app)/interactions/lookup/+server');
+const newInteractionPage =
+	await import('../../../src/routes/(app)/w/[workspace]/interactions/new/+page.server');
+const lookupEndpoint =
+	await import('../../../src/routes/(app)/w/[workspace]/interactions/lookup/+server');
 const downloadEndpoint =
 	await import('../../../src/routes/(app)/documents/[id=uuid]/download/+server');
 

@@ -131,7 +131,7 @@ test('демонстрационный проход: карточка, стад�
 	}
 
 	await test.step('список показывает просроченные взаимодействия', async () => {
-		await page.goto('/interactions?overdue=true&size=100');
+		await page.goto('/w/b2b/interactions?overdue=true&size=100');
 
 		await expect(page.getByRole('heading', { level: 1 })).toHaveText('Взаимодействия');
 
@@ -147,7 +147,7 @@ test('демонстрационный проход: карточка, стад�
 		// ожила и переход не случился.
 		await expect(async () => {
 			await page.getByRole('row').filter({ hasText: TARGET_TITLE }).first().click();
-			await expect(page).toHaveURL(`/interactions/${INTERACTION_ID}`, { timeout: 3000 });
+			await expect(page).toHaveURL(`/w/b2b/interactions/${INTERACTION_ID}`, { timeout: 3000 });
 		}).toPass({ timeout: 20_000 });
 
 		await expect(page.getByRole('heading', { level: 1 })).toHaveText(TARGET_TITLE);

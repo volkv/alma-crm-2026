@@ -138,7 +138,9 @@ describe('реестр ключей стадий', () => {
 		const restored = await database.db
 			.select({ key: processStageKeys.key })
 			.from(processStageKeys)
-			.where(and(eq(processStageKeys.workflowId, workflow.id), isNull(processStageKeys.archivedAt)));
+			.where(
+				and(eq(processStageKeys.workflowId, workflow.id), isNull(processStageKeys.archivedAt))
+			);
 
 		expect(restored).toHaveLength(revision.stages.length);
 	});

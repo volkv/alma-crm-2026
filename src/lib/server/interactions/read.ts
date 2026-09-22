@@ -218,6 +218,49 @@ async function readPartyNames(
 	return result;
 }
 
+/**
+ * Пространство, в которое отвести человека, пришедшего по прежнему адресу
+ * `/interactions`.
+ *
+ * То, где у него есть работа: место без единого взаимодействия открыло бы
+ * пустой список там, где работа идёт по соседству. Это ровно то правило, по
+ * которому раньше доска выбирала группу, — с одной разницей: теперь оно решает,
+ * куда отвести, и срабатывает однократно, а не подменяет содержимое экрана при
+ * каждом заходе.
+ */
+export async function chooseWorkspaceForWork(
+	ctx: ActorContext
+): Promise<{ id: string; key: string } | null> {
+	requirePermission(ctx, 'interactions.read');
+
+	const rows = await getDb()
+		.select({
+			id: workspaces.id,
+			key: workspaces.key,
+			position: workspaces.position,
+			value: count(interactions.id)
+		})
+		.from(workspaces)
+		.leftJoin(
+			interactions,
+			and(
+				eq(interactions.workspaceId, workspaces.id),
+				eq(interactions.status, 'active'),
+				interactionScopeFilter(ctx)
+			)
+		)
+		.groupBy(workspaces.id)
+		.orderBy(asc(workspaces.position));
+
+	const withWork = [...rows]
+		.filter((row) => row.value > 0)
+		.sort((left, right) => right.value - left.value);
+
+	const chosen = withWork[0] ?? rows[0];
+
+	return chosen === undefined ? null : { id: chosen.id, key: chosen.key };
+}
+
 export async function listInteractions(
 	ctx: ActorContext,
 	query: InteractionListQuery

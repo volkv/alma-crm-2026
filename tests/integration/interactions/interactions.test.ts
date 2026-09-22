@@ -131,7 +131,7 @@ describe('заведение взаимодействия', () => {
 		expect(status.current?.snapshot.position).toBe(1);
 	});
 
-	it('отказывает словами, когда процесс группы ещё не описан', async () => {
+	it('отказывает словами, когда в процессе пространства ещё нет стадий', async () => {
 		const ctx = admin();
 		// Заводим процесс только учебным заведениям; у физических и юридических
 		// лиц его нет, и отказ обязан сказать об этом, а не упасть на пустой ленте.
@@ -152,8 +152,7 @@ describe('заведение взаимодействия', () => {
 				})
 			)
 		).rejects.toSatisfy(
-			(error: unknown) =>
-				error instanceof ConflictError && /процесс ещё не описан/.test(error.message)
+			(error: unknown) => error instanceof ConflictError && /ещё нет стадий/.test(error.message)
 		);
 	});
 

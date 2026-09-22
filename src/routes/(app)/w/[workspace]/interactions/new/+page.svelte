@@ -25,9 +25,14 @@
 		PARTY_ROLE_LABELS
 	} from '$lib/contracts/interactions';
 	import { formatDate } from '$lib/format';
+	import { listPath } from '../filters';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	/** Адреса раздела: ключ пространства стоит в пути, и его знает страница. */
+	const listHref = $derived(listPath(data.workspace.key));
+	const lookupPath = $derived(`${listHref}/lookup`);
 
 	const {
 		form,
@@ -92,7 +97,7 @@
 		organizationId: string
 	): Promise<TItem[]> {
 		const response = await fetch(
-			`/interactions/lookup?kind=${kind}&organizationId=${encodeURIComponent(organizationId)}`
+			`${lookupPath}?kind=${kind}&organizationId=${encodeURIComponent(organizationId)}`
 		);
 
 		if (!response.ok) {
@@ -215,10 +220,7 @@
 />
 
 <Breadcrumbs
-	items={[
-		{ label: 'Взаимодействия', href: resolve('/interactions') },
-		{ label: 'Новое взаимодействие' }
-	]}
+	items={[{ label: data.workspace.name, href: listHref }, { label: 'Новое взаимодействие' }]}
 />
 
 <div class="p-4 sm:px-9 sm:py-6">
@@ -255,6 +257,7 @@
 							{id}
 							{describedBy}
 							{invalid}
+							{lookupPath}
 							value={institution?.id ?? null}
 							label={institution?.label ?? null}
 							onselect={(option) => {
@@ -299,6 +302,7 @@
 							{id}
 							{describedBy}
 							{invalid}
+							{lookupPath}
 							placeholder="Компания, для которой готовят специалистов"
 							value={customer?.id ?? null}
 							label={customer?.label ?? null}
@@ -492,7 +496,7 @@
 		<FormActions
 			submitting={$submitting}
 			submitLabel="Создать взаимодействие"
-			oncancel={() => goto(resolve('/interactions'))}
+			oncancel={() => goto(listHref)}
 		/>
 	</form>
 </div>

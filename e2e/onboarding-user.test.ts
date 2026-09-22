@@ -148,11 +148,11 @@ async function openFirstRow(page: Page, address: string, section: string): Promi
 
 test('подсказки сводки и списка взаимодействий проходят по элементам', async ({ page }) => {
 	await walkAndExpectComplete(page, '/', 'Сводка');
-	await walkAndExpectComplete(page, '/interactions', 'Взаимодействия');
+	await walkAndExpectComplete(page, '/w/b2b/interactions', 'Взаимодействия');
 });
 
 test('карточка взаимодействия: лента стадий, четыре вопроса и вкладки', async ({ page }) => {
-	await openFirstRow(page, '/interactions', 'interactions');
+	await openFirstRow(page, '/w/b2b/interactions', 'interactions');
 
 	const missed = await walkScreenTour(page, 'Карточка взаимодействия');
 
@@ -203,7 +203,7 @@ leadTest('шаги под правом показывают то, чего у м
 	// Переназначение ответственного (`interactions.reassign`) и импорт каталога
 	// (`directory.import`) КАМу закрыты, и шаги про них выпадают из его тура
 	// вместе с кнопками. Руководителю они есть — значит, есть и шаги.
-	await page.goto('/interactions');
+	await page.goto('/w/b2b/interactions');
 
 	const interactions = await openScreenTour(page);
 

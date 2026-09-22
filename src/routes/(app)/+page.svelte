@@ -10,7 +10,7 @@
 	import WaitingList from '$lib/components/home/waiting-list.svelte';
 	import { interactionsHref } from '$lib/components/home/links';
 	import { AUDIT_EVENT_LABELS } from './audit/labels';
-	import { STAGE_CATEGORY_LABELS } from './interactions/filters';
+	import { STAGE_CATEGORY_LABELS } from './w/[workspace]/interactions/filters';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();

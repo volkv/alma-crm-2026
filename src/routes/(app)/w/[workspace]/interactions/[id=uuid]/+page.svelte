@@ -97,7 +97,10 @@
 
 <Breadcrumbs
 	items={[
-		{ label: 'Взаимодействия', href: resolve('/interactions') },
+		{
+			label: data.workspace.name,
+			href: resolve('/(app)/w/[workspace]/interactions', { workspace: data.workspace.key })
+		},
 		{ label: data.interaction.title }
 	]}
 />
