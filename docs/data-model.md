@@ -19,7 +19,7 @@
 | `audit.ts`            | `audit_events`                                                                                                                                        |
 | `directory.ts`        | `organizations`, `sites`, `people`, `affiliations`, `consents`, программы и продукты, `directions`, `product_directions`, `organization_responsibles` |
 | `directory-import.ts` | `directory_imports`, `directory_import_rows` — загрузка каталога и её строки                                                                          |
-| `interactions.ts`     | Пространства и их реестры, редакции процесса, стадии и переходы, взаимодействия, записи стадий, паузы, блокировки, комментарии, договоры              |
+| `interactions.ts`     | Пространства и их реестры, процессы, редакции процесса, стадии и переходы, взаимодействия, записи стадий, паузы, блокировки, комментарии, договоры    |
 | `documents.ts`        | `document_templates`, `documents`, `stage_entry_documents`                                                                                            |
 | `exchange.ts`         | `exchange_messages`, `learning_groups`, `learning_group_results`                                                                                      |
 | `api.ts`              | `api_keys`                                                                                                                                            |
@@ -46,31 +46,32 @@
 
 ### Ограничения, которые держат инварианты
 
-| Где                                | Что                                                                                                     |
-| ---------------------------------- | ------------------------------------------------------------------------------------------------------- |
-| `organizations`                    | CHECK: уровень образования заполнен ровно у учебных заведений                                           |
-| `organizations`                    | Частичная уникальность ИНН `WHERE inn IS NOT NULL`                                                      |
-| `affiliations`                     | Составной внешний ключ `(site_id, organization_id) → sites(id, organization_id)`                        |
-| `stage_entries`                    | Частичная уникальность `(interaction_id) WHERE left_at IS NULL`                                         |
-| `stage_pauses`                     | Частичная уникальность `(stage_entry_id) WHERE ended_at IS NULL`, CHECK `ended_at > started_at`         |
-| `documents`                        | Частичная уникальность `(supersedes_id) WHERE supersedes_id IS NOT NULL`, CHECK «не заменяет сам себя»  |
-| `consents`                         | CHECK `withdrawn_at >= given_at` и «автор отзыва только вместе с отзывом»                               |
-| `audit_events`                     | Триггер `BEFORE UPDATE OR DELETE` → исключение                                                          |
-| `organizations`                    | CHECK: ссылка на человека заполнена ровно у вида `individual`; уникальный `person_id`                   |
-| `interaction_parties`              | Частичная уникальность `(interaction_id) WHERE is_primary` — основная сторона одна                      |
-| `organization_responsibles`        | Частичная уникальность `(organization_id, direction_id) NULLS NOT DISTINCT WHERE valid_to IS NULL`      |
-| `process_group_counterparty_kinds` | Первичный ключ по виду контрагента: вид принадлежит ровно одному пространству                           |
-| `process_revisions`                | Уникальность `(group_id, version)`; частичная уникальность `(group_id) WHERE published_at IS NULL`      |
-| `stages`, `stage_transitions`      | Уникальность `(revision_id, key)` и `(revision_id, position)`; `(from_stage_id, to_stage_id)`           |
-| `stage_migration_rules`            | Уникальность `(revision_id, removed_stage_key)`, CHECK «ключи различны»                                 |
-| `process_stage_keys`               | Первичный ключ `(group_id, key)`: строка заводится с первым появлением ключа и не удаляется никогда     |
-| `interaction_contract_items`       | Составной внешний ключ `(contract_item_id, contract_id) → contract_items(id, contract_id)`              |
-| `users`                            | Частичная уникальность `external_subject`, CHECK «сам себе не руководитель»                             |
-| `exchange_messages`                | Уникальность `(direction, system, instance, event_id)` — повтор доставки не плодит строк                |
-| `learning_groups`                  | Уникальность `(interaction_id, stream_number)`; частичная уникальность внешнего идентификатора          |
-| `learning_group_results`           | CHECK `completed + expelled <= enrolled`                                                                |
-| `directory_imports`                | CHECK «состояние `confirmed` ровно тогда, когда заполнен `confirmed_at`»                                |
-| `directory_import_rows`            | Уникальность `(import_id, row_no)`; CHECK «действие `error` ровно тогда, когда у строки есть претензии» |
+| Где                                | Что                                                                                                      |
+| ---------------------------------- | -------------------------------------------------------------------------------------------------------- |
+| `organizations`                    | CHECK: уровень образования заполнен ровно у учебных заведений                                            |
+| `organizations`                    | Частичная уникальность ИНН `WHERE inn IS NOT NULL`                                                       |
+| `affiliations`                     | Составной внешний ключ `(site_id, organization_id) → sites(id, organization_id)`                         |
+| `stage_entries`                    | Частичная уникальность `(interaction_id) WHERE left_at IS NULL`                                          |
+| `stage_pauses`                     | Частичная уникальность `(stage_entry_id) WHERE ended_at IS NULL`, CHECK `ended_at > started_at`          |
+| `documents`                        | Частичная уникальность `(supersedes_id) WHERE supersedes_id IS NOT NULL`, CHECK «не заменяет сам себя»   |
+| `consents`                         | CHECK `withdrawn_at >= given_at` и «автор отзыва только вместе с отзывом»                                |
+| `audit_events`                     | Триггер `BEFORE UPDATE OR DELETE` → исключение                                                           |
+| `organizations`                    | CHECK: ссылка на человека заполнена ровно у вида `individual`; уникальный `person_id`                    |
+| `interaction_parties`              | Частичная уникальность `(interaction_id) WHERE is_primary` — основная сторона одна                       |
+| `organization_responsibles`        | Частичная уникальность `(organization_id, direction_id) NULLS NOT DISTINCT WHERE valid_to IS NULL`       |
+| `process_group_counterparty_kinds` | Первичный ключ по виду контрагента: вид принадлежит ровно одному пространству                            |
+| `workflows`                        | Уникальность `key`; `workspaces.workflow_id` — `on delete restrict`: назначенный процесс не удалить      |
+| `process_revisions`                | Уникальность `(workflow_id, version)`; частичная уникальность `(workflow_id) WHERE published_at IS NULL` |
+| `stages`, `stage_transitions`      | Уникальность `(revision_id, key)` и `(revision_id, position)`; `(from_stage_id, to_stage_id)`            |
+| `stage_migration_rules`            | Уникальность `(revision_id, removed_stage_key)`, CHECK «ключи различны»                                  |
+| `process_stage_keys`               | Первичный ключ `(workflow_id, key)`: строка заводится с первым появлением ключа и не удаляется никогда   |
+| `interaction_contract_items`       | Составной внешний ключ `(contract_item_id, contract_id) → contract_items(id, contract_id)`               |
+| `users`                            | Частичная уникальность `external_subject`, CHECK «сам себе не руководитель»                              |
+| `exchange_messages`                | Уникальность `(direction, system, instance, event_id)` — повтор доставки не плодит строк                 |
+| `learning_groups`                  | Уникальность `(interaction_id, stream_number)`; частичная уникальность внешнего идентификатора           |
+| `learning_group_results`           | CHECK `completed + expelled <= enrolled`                                                                 |
+| `directory_imports`                | CHECK «состояние `confirmed` ровно тогда, когда заполнен `confirmed_at`»                                 |
+| `directory_import_rows`            | Уникальность `(import_id, row_no)`; CHECK «действие `error` ровно тогда, когда у строки есть претензии»  |
 
 Составной внешний ключ у `affiliations` заменяет триггер: при `site_id IS NULL` правило
 MATCH SIMPLE ничего не требует, а при заполненной площадке она обязана принадлежать той же
@@ -176,9 +177,29 @@ CHECK «действие `error` ровно тогда, когда у строк
 Группа процесса стала пространством (`drizzle/0019_*`): `process_groups` переименована в
 `workspaces`, `interactions.process_group_id` — в `interactions.workspace_id`, а индекс
 `interactions_group_status_idx` — в `interactions_workspace_status_idx`. Это `alter table … rename`,
-а не пересоздание: данные, внешние ключи и идентификаторы уцелели. Колонки `group_id` у
-`process_revisions` и `process_stage_keys` пока остались прежними — они переедут на процесс, когда
-он станет отдельной сущностью. Зачем это всё — `docs/workspaces.md`.
+а не пересоздание: данные, внешние ключи и идентификаторы уцелели. Колонок `group_id` у
+`process_revisions` и `process_stage_keys` 0019 не касалась — они переехали следующей миграцией,
+когда процесс стал отдельной сущностью. Зачем это всё — `docs/workspaces.md`.
+
+Процесс выделен из пространства (`drizzle/0020_*`): заведена таблица `workflows` — `key`, `name`,
+`description`, `active_revision_id`, — и на каждое пространство в неё положен процесс с тем же
+ключом и именем, потому что до этого места работы и самой работы было одно и то же.
+`workspaces.workflow_id` говорит, какой процесс назначен месту, и **допускает пустоту**:
+пространство заводят раньше, чем описывают его работу, и требовать готовый процесс заранее
+значило бы запретить заводить пространство. `workspaces.active_revision_id` удалена —
+действующая редакция стала свойством процесса (`workflows.active_revision_id`): публикация
+переключает её одним значением, и значение обязано быть одно на процесс, а не по одному на
+каждое место, которому он назначен. `process_revisions.group_id` и `process_stage_keys.group_id`
+переименованы в `workflow_id` и смотрят на `workflows`; уникальность редакции стала
+`(workflow_id, version)`, частичная уникальность черновика —
+`process_revisions_one_draft_per_workflow`, первичный ключ реестра ключей — `(workflow_id, key)`.
+Всё это ради одного: **один процесс можно назначить нескольким пространствам**, — а тогда стадия
+`signing` в них обязана быть одной и той же стадией, иначе отчёт по двум местам не складывается.
+Порядок шагов внутри миграции фиксирован: процессы, ссылка из пространства, редакции и реестр,
+перенос действующей редакции — и только потом снятие колонки. Пока `workspaces.active_revision_id`
+на месте, `DO $$ … RAISE EXCEPTION` сверяет, что у каждого пространства действующая редакция
+процесса та же, что была у места; отказ на этом шаге оставляет данные восстановимыми, после
+удаления колонки — уже нет.
 
 Вход через каталог учётных записей (`drizzle/0008_*`) доведён: `users.password_hash`,
 `password_changed_at` и три столбца второго фактора удалены — своих паролей в базе больше нет, —
@@ -194,9 +215,11 @@ CHECK «действие `error` ровно тогда, когда у строк
 | Перенос словарей `exchange_direction` и `exchange_message_state` в контракты | обмен      |
 
 **Пространства кладёт миграция, а их стадии — набор данных.** Без пространства у взаимодействия нет
-процесса, а у заявки с сайта — сценария, поэтому `b2b` и `b2c` вместе с соответствием «вид
-контрагента → пространство» приезжают на любую установку. Стадии — нет: навязывать заказчику наши
-четырнадцать стадий установкой схемы незачем, и заводит их `ensureProcess` из сида.
+места, а у заявки с сайта — адресата, поэтому `b2b` и `b2c` вместе с соответствием «вид
+контрагента → пространство» приезжают на любую установку; заодно 0020 кладёт по процессу на
+каждое из них и назначает его. Стадии — нет: навязывать заказчику наши четырнадцать стадий
+установкой схемы незачем, и описывает их `ensureWorkflow` из сида, а назначение процесса
+пространству — отдельное действие, `assignWorkflow`.
 `tests/integration/db.test.ts` проверяет, что миграция пространства действительно кладёт: `reset()`
 в остальных интеграционных тестах чистит таблицы целиком, и туда эти строки возвращает снимок,
 снятый прогоном сразу после миграций (`tests/integration/helpers/db.ts`).

@@ -76,8 +76,7 @@ import {
 } from '$lib/server/stages/definitions';
 import {
 	readWorkspaceByKey,
-	readWorkspaceRow,
-	requireActiveRevision
+	requireActiveRevisionForWorkspace
 } from '$lib/server/stages/process';
 import { seedId } from './ids';
 import { SERVICE_USER_EMAIL } from './users';
@@ -1833,12 +1832,12 @@ export async function seedInteractions(): Promise<void> {
 	// вид её контрагента — тем же правилом, что и у команды создания.
 	const plans = new Map<
 		string,
-		{ workspace: Awaited<ReturnType<typeof readWorkspaceRow>>; plan: Process }
+		{ workspace: Awaited<ReturnType<typeof readWorkspaceByKey>>; plan: Process }
 	>();
 
 	for (const workspaceKey of [B2B_WORKSPACE_KEY, B2C_WORKSPACE_KEY]) {
-		const workspace = await readWorkspaceRow(db, (await readWorkspaceByKey(db, workspaceKey)).id);
-		const revision = await requireActiveRevision(db, workspace);
+		const workspace = await readWorkspaceByKey(db, workspaceKey);
+		const revision = await requireActiveRevisionForWorkspace(db, workspace.id);
 
 		plans.set(workspaceKey, {
 			workspace,

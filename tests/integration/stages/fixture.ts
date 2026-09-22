@@ -35,41 +35,52 @@ import {
 	setStageResult
 } from '$lib/server/stages/commands';
 import {
-	ensureProcess,
-	readActiveRevision,
+	assignWorkflow,
+	ensureWorkflow,
+	readActiveRevisionForWorkspace,
 	readWorkspaceByKey,
-	readWorkspaceRow,
-	requireActiveRevision
+	requireActiveRevisionForWorkspace
 } from '$lib/server/stages/process';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import { insertOrganization, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
 
 export { B2B_WORKSPACE_KEY, B2B_PROCESS, B2C_WORKSPACE_KEY };
 
-/** Действующая редакция группы: тесты читают её, чтобы адресовать стадии. */
+/**
+ * Действующая редакция процесса пространства: тесты читают её, чтобы адресовать
+ * стадии.
+ */
 export async function activeRevision(
 	database: TestDatabase,
 	workspaceKey: string
 ): Promise<ProcessRevisionView> {
 	const workspace = await readWorkspaceByKey(database.db, workspaceKey);
 
-	return requireActiveRevision(database.db, workspace);
+	return requireActiveRevisionForWorkspace(database.db, workspace.id);
 }
 
-/** Есть ли у группы действующая редакция вообще. */
+/** Есть ли в пространстве действующая редакция вообще. */
 export async function hasProcess(database: TestDatabase, workspaceKey: string): Promise<boolean> {
 	const workspace = await readWorkspaceByKey(database.db, workspaceKey);
 
-	return (await readActiveRevision(database.db, workspace)) !== null;
+	return (await readActiveRevisionForWorkspace(workspace.id)) !== null;
 }
 
-/** Заводит процесс группы и возвращает его действующую редакцию. */
+/**
+ * Заводит процесс, назначает его пространству и возвращает действующую
+ * редакцию. Ключ процесса берётся тот же, что у пространства: на стенде так и
+ * есть, а тесту, которому нужен один процесс на два места, назначение доступно
+ * отдельным вызовом.
+ */
 export async function seedProcess(
 	database: TestDatabase,
 	workspaceKey: string,
 	definition: ProcessDefinitionInput
 ): Promise<ProcessRevisionView> {
-	await database.db.transaction((tx) => ensureProcess(tx, workspaceKey, definition));
+	await database.db.transaction(async (tx) => {
+		await ensureWorkflow(tx, workspaceKey, definition);
+		await assignWorkflow(tx, workspaceKey, workspaceKey);
+	});
 
 	return activeRevision(database, workspaceKey);
 }
@@ -258,10 +269,7 @@ export async function advanceTo(
 		.from(interactions)
 		.where(eq(interactions.id, interactionId));
 
-	const revision = await requireActiveRevision(
-		database.db,
-		await readWorkspaceRow(database.db, row.workspaceId)
-	);
+	const revision = await requireActiveRevisionForWorkspace(database.db, row.workspaceId);
 
 	for (let step = 0; step < revision.stages.length + 1; step += 1) {
 		const status = await getInteractionStatus(ctx, interactionId);

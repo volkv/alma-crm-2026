@@ -52,7 +52,12 @@ import {
 import type { Tx } from '$lib/server/db/transaction';
 import { contactColumns } from '$lib/server/people/pii';
 import { B2B_WORKSPACE_KEY } from '$lib/server/stages/definitions';
-import { readActiveRevision, readWorkspaceByKey, stageSnapshot } from '$lib/server/stages/process';
+import {
+	readActiveRevision,
+	readWorkflowForWorkspace,
+	readWorkspaceByKey,
+	stageSnapshot
+} from '$lib/server/stages/process';
 import { seedId } from './ids';
 
 /** Размеры набора. Их же печатает отчёт заливки и читает документация. */
@@ -191,7 +196,8 @@ export async function seedLoad(tx: Tx): Promise<LoadSeedReport | null> {
 	}
 
 	const workspace = await readWorkspaceByKey(tx, B2B_WORKSPACE_KEY);
-	const revision = await readActiveRevision(tx, workspace);
+	const workflow = await readWorkflowForWorkspace(tx, workspace.id);
+	const revision = workflow === null ? null : await readActiveRevision(tx, workflow);
 
 	if (revision === null || revision.stages.length === 0) {
 		throw new Error(

@@ -14,6 +14,7 @@ import {
 	exchangeMessages,
 	interactions,
 	workspaces,
+	workflows,
 	processStageKeys,
 	stageEntries,
 	stageEntryStatus,
@@ -574,15 +575,16 @@ describe('атомарность', () => {
 
 		await expect(publishProcess(ctx, B2C_WORKSPACE_KEY)).rejects.toBeInstanceOf(ValidationError);
 
-		const [workspace] = await database.db
-			.select({ activeRevisionId: workspaces.activeRevisionId })
+		const [workflow] = await database.db
+			.select({ activeRevisionId: workflows.activeRevisionId })
 			.from(workspaces)
+			.innerJoin(workflows, eq(workflows.id, workspaces.workflowId))
 			.where(eq(workspaces.key, B2C_WORKSPACE_KEY));
 		const open = await openEntry(interactionId);
 
 		// Ни опубликованной редакции, ни перепривязанных записей: сбой на середине
 		// не оставляет половины изменения.
-		expect(workspace.activeRevisionId).toBe(active.id);
+		expect(workflow.activeRevisionId).toBe(active.id);
 		expect(open.revisionId).toBe(active.id);
 		expect(open.stageKey).toBe('offer');
 	});

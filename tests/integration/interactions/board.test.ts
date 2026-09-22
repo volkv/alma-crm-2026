@@ -26,7 +26,11 @@ import {
 import { createInteraction } from '$lib/server/interactions/write';
 import { pauseStage, setChecklistItem } from '$lib/server/stages/commands';
 import { B2B_WORKSPACE_KEY, B2B_PROCESS, B2C_WORKSPACE_KEY } from '$lib/server/stages/definitions';
-import { ensureProcess, readWorkspaceByKey, requireActiveRevision } from '$lib/server/stages/process';
+import {
+	ensureWorkflow,
+	readWorkspaceByKey,
+	requireActiveRevisionForWorkspace
+} from '$lib/server/stages/process';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import { getDb } from '$lib/server/db';
 import {
@@ -85,9 +89,12 @@ function query(overrides: Partial<InteractionBoardQuery> = {}): InteractionBoard
 
 /** Процесс учебных заведений: четырнадцать стадий и его действующая редакция. */
 async function demoRoute(): Promise<ProcessRevisionView> {
-	await database.db.transaction((tx) => ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
+	await database.db.transaction((tx) => ensureWorkflow(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
 
-	return requireActiveRevision(getDb(), await readWorkspaceByKey(getDb(), B2B_WORKSPACE_KEY));
+	return requireActiveRevisionForWorkspace(
+		getDb(),
+		(await readWorkspaceByKey(getDb(), B2B_WORKSPACE_KEY)).id
+	);
 }
 
 /**
@@ -98,7 +105,7 @@ async function demoRoute(): Promise<ProcessRevisionView> {
  */
 async function reasonRoute(): Promise<ProcessRevisionView> {
 	await database.db.transaction((tx) =>
-		ensureProcess(tx, B2C_WORKSPACE_KEY, {
+		ensureWorkflow(tx, B2C_WORKSPACE_KEY, {
 			name: 'Процесс с объяснением шага вперёд',
 			note: null,
 			migrationRules: [],
@@ -142,7 +149,10 @@ async function reasonRoute(): Promise<ProcessRevisionView> {
 		})
 	);
 
-	return requireActiveRevision(getDb(), await readWorkspaceByKey(getDb(), B2C_WORKSPACE_KEY));
+	return requireActiveRevisionForWorkspace(
+		getDb(),
+		(await readWorkspaceByKey(getDb(), B2C_WORKSPACE_KEY)).id
+	);
 }
 
 function stageIdOf(route: ProcessRevisionView, key: string): string {

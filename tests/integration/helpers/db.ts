@@ -38,8 +38,14 @@ import { defaultRolePermissions, seedRolesAndPermissions } from '$lib/server/rba
 import { databaseUri, redisUri, type IntegrationStack } from './stack';
 import { startTestStorage, type TestStorage } from './storage';
 
-/** Таблицы, строки которых приезжают с миграцией, а не с сидом или тестом. */
-const REFERENCE_TABLES = ['workspaces', 'process_group_counterparty_kinds'] as const;
+/**
+ * Таблицы, строки которых приезжают с миграцией, а не с сидом или тестом.
+ *
+ * Порядок значим: строки возвращаются в нём, и ссылающаяся таблица обязана
+ * стоять после той, на которую ссылается. Пространство ссылается на процесс, а
+ * соответствие видов контрагента — на пространство.
+ */
+const REFERENCE_TABLES = ['workflows', 'workspaces', 'process_group_counterparty_kinds'] as const;
 
 export type TestDatabase = {
 	/** Тот же самый handle, что получают сервисы через `getDb()`. */
@@ -217,7 +223,7 @@ async function prepareTestDatabase(
 			await raw.unsafe(`truncate table ${list} restart identity cascade`);
 		}
 
-		// Порядок тот же, что в списке: соответствие видов ссылается на группы.
+		// Порядок тот же, что в списке, и он там объяснён: внешние ключи.
 		for (const table of REFERENCE_TABLES) {
 			const rows = reference.get(table) ?? [];
 
@@ -506,9 +512,9 @@ export async function insertDocument(
 }
 
 /**
- * Редакция с одной стадией и взаимодействие на ней. Группа берётся своя на
- * каждый вызов: в группе действует ровно одна редакция, и два таких
- * взаимодействия в одной группе переписали бы друг другу процесс.
+ * Редакция с одной стадией и взаимодействие на ней. Процесс и пространство
+ * берутся свои на каждый вызов: в процессе действует ровно одна редакция, и два
+ * таких взаимодействия в одном месте переписали бы друг другу процесс.
  */
 export async function insertInteractionWithStage(
 	database: PostgresJsDatabase<typeof schema>,
@@ -521,19 +527,25 @@ export async function insertInteractionWithStage(
 		.select({ value: sql<number>`coalesce(max(${schema.workspaces.position}), 0)::int` })
 		.from(schema.workspaces);
 
+	const [workflow] = await database
+		.insert(schema.workflows)
+		.values({ key: `test-${suffix}`, name: 'Тестовый процесс' })
+		.returning({ id: schema.workflows.id });
+
 	const [workspace] = await database
 		.insert(schema.workspaces)
 		.values({
 			key: `test-${suffix}`,
-			name: 'Тестовая группа процесса',
-			position: maxPosition.value + 1
+			name: 'Тестовое пространство',
+			position: maxPosition.value + 1,
+			workflowId: workflow.id
 		})
 		.returning({ id: schema.workspaces.id });
 
 	const [revision] = await database
 		.insert(schema.processRevisions)
 		.values({
-			groupId: workspace.id,
+			workflowId: workflow.id,
 			version: 1,
 			name: 'Тестовый процесс',
 			publishedAt: new Date()
@@ -554,9 +566,9 @@ export async function insertInteractionWithStage(
 		.returning({ id: schema.stages.id });
 
 	await database
-		.update(schema.workspaces)
+		.update(schema.workflows)
 		.set({ activeRevisionId: revision.id })
-		.where(eq(schema.workspaces.id, workspace.id));
+		.where(eq(schema.workflows.id, workflow.id));
 
 	const [interaction] = await database
 		.insert(schema.interactions)

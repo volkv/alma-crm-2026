@@ -36,7 +36,7 @@ import {
 	B2C_WORKSPACE_KEY,
 	B2C_PROCESS
 } from '$lib/server/stages/definitions';
-import { ensureProcess } from '$lib/server/stages/process';
+import { ensureWorkflow } from '$lib/server/stages/process';
 import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
 
 /**
@@ -88,8 +88,8 @@ beforeEach(async () => {
 	await database.reset();
 
 	await database.db.transaction(async (tx) => {
-		await ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS);
-		await ensureProcess(tx, B2C_WORKSPACE_KEY, B2C_PROCESS);
+		await ensureWorkflow(tx, B2B_WORKSPACE_KEY, B2B_PROCESS);
+		await ensureWorkflow(tx, B2C_WORKSPACE_KEY, B2C_PROCESS);
 	});
 
 	await setExchangeSettings(testActor(), {

@@ -11,7 +11,11 @@ import { createApiKey } from '$lib/server/api/keys';
 import { createInteraction } from '$lib/server/interactions/write';
 import { getRedis } from '$lib/server/redis';
 import { B2B_WORKSPACE_KEY, B2B_PROCESS, B2C_WORKSPACE_KEY } from '$lib/server/stages/definitions';
-import { ensureProcess, readWorkspaceByKey, requireActiveRevision } from '$lib/server/stages/process';
+import {
+	ensureWorkflow,
+	readWorkspaceByKey,
+	requireActiveRevisionForWorkspace
+} from '$lib/server/stages/process';
 import { setChecklistItem } from '$lib/server/stages/commands';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import {
@@ -105,14 +109,17 @@ async function issueKey(roleId: string): Promise<string> {
 	return created.key;
 }
 
-/** Действующая редакция группы: по ней тесты адресуют стадии. */
+/** Действующая редакция процесса пространства: по ней тесты адресуют стадии. */
 async function revisionOf(workspaceKey: string): Promise<ProcessRevisionView> {
-	return requireActiveRevision(database.db, await readWorkspaceByKey(database.db, workspaceKey));
+	return requireActiveRevisionForWorkspace(
+		database.db,
+		(await readWorkspaceByKey(database.db, workspaceKey)).id
+	);
 }
 
 async function seedInteraction(): Promise<{ id: string; revision: ProcessRevisionView }> {
 	const ctx = testActor();
-	await database.db.transaction((tx) => ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
+	await database.db.transaction((tx) => ensureWorkflow(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
 	const organizationId = await insertOrganization(database.db, { shortName: 'Вуз для API' });
 
 	const interaction = await createInteraction(
@@ -137,7 +144,7 @@ async function seedReasonInteraction(): Promise<{ id: string; route: ProcessRevi
 	const ctx = testActor();
 
 	await database.db.transaction((tx) =>
-		ensureProcess(tx, B2C_WORKSPACE_KEY, {
+		ensureWorkflow(tx, B2C_WORKSPACE_KEY, {
 			name: 'Процесс с объяснением шага вперёд',
 			note: null,
 			migrationRules: [],

@@ -24,7 +24,7 @@ import { createInteraction, updateInteraction } from '$lib/server/interactions/w
 import { B2B_WORKSPACE_KEY, B2B_PROCESS, B2C_WORKSPACE_KEY } from '$lib/server/stages/definitions';
 import {
 	createDraft,
-	ensureProcess,
+	ensureWorkflow,
 	processDefinition,
 	publishProcess,
 	resolveWorkspace,
@@ -70,7 +70,7 @@ const emptyQuery = interactionListQuerySchema.parse({});
 
 /** Процесс учебных заведений: без него взаимодействие завести нельзя. */
 async function demoProcess(): Promise<string> {
-	return database.db.transaction((tx) => ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
+	return database.db.transaction((tx) => ensureWorkflow(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
 }
 
 async function insertProgram(code: string): Promise<string> {

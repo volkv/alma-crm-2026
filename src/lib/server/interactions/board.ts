@@ -46,7 +46,7 @@ import {
 	users
 } from '../db/schema';
 import { requirePermission } from '../rbac';
-import { readActiveRevisionCached, readWorkspaceRow } from '../stages/process';
+import { readActiveRevisionForWorkspace } from '../stages/process';
 import { evaluateTransition, type StageState } from '../stages/transitions';
 import { interactionScopeFilter } from './access';
 
@@ -473,7 +473,7 @@ export async function getInteractionBoard(
 		return empty;
 	}
 
-	const revision = await readActiveRevisionCached(await readWorkspaceRow(db, workspace.id));
+	const revision = await readActiveRevisionForWorkspace(workspace.id);
 
 	// Пространство без действующего процесса — это не поломка доски: стадий нет,
 	// и колонок тоже. Отказ здесь скрыл бы соседнее пространство, где работа идёт.

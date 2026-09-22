@@ -135,7 +135,7 @@ describe('цель переноса по умолчанию', () => {
 describe('правила переноса черновика', () => {
 	const activeRevision = {
 		id: 'r1',
-		groupId: 'g1',
+		workflowId: 'g1',
 		version: 1,
 		name: 'Процесс',
 		note: null,
@@ -284,7 +284,7 @@ describe('пригодность структуры к работе', () => {
 		expect(issues).toMatch(/названа кодом своей смысловой группы/);
 	});
 
-	it('не пускает стадию под архивным ключом и пускает тот же ключ в другом пространстве', () => {
+	it('не пускает стадию под архивным ключом и пускает тот же ключ в другом процессе', () => {
 		const draft = chain();
 
 		expect(
@@ -376,7 +376,7 @@ describe('пригодность структуры к работе', () => {
 describe('сборка предпросмотра', () => {
 	it('считает итог, разбивку и отмечает стадию, на которой никого нет', () => {
 		const preview = buildPreview({
-			groupId: 'g1',
+			workflowId: 'g1',
 			matches: matchStages(
 				[stage('one'), stage('two'), stage('three')],
 				[stage('one'), stage('three', { name: 'Иначе' })]
@@ -407,7 +407,7 @@ describe('сборка предпросмотра', () => {
 
 	it('переносит претензии проверки в предпросмотр', () => {
 		const preview = buildPreview({
-			groupId: 'g1',
+			workflowId: 'g1',
 			matches: [],
 			openByKey: new Map(),
 			migrationRules: [],

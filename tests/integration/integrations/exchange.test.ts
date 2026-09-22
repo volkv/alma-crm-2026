@@ -43,7 +43,7 @@ import {
 	B2C_WORKSPACE_KEY,
 	B2C_PROCESS
 } from '$lib/server/stages/definitions';
-import { ensureProcess } from '$lib/server/stages/process';
+import { ensureWorkflow } from '$lib/server/stages/process';
 import { advanceTo } from '../stages/fixture';
 import { startMockCms } from '../../../mocks/mock-cms/service.ts';
 import { startMockLms } from '../../../mocks/mock-lms/service.ts';
@@ -181,8 +181,8 @@ beforeEach(async () => {
 	await database.reset();
 
 	await database.db.transaction(async (tx) => {
-		await ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS);
-		await ensureProcess(tx, B2C_WORKSPACE_KEY, B2C_PROCESS);
+		await ensureWorkflow(tx, B2B_WORKSPACE_KEY, B2B_PROCESS);
+		await ensureWorkflow(tx, B2C_WORKSPACE_KEY, B2C_PROCESS);
 	});
 
 	apiKey = await serviceKey('cms');

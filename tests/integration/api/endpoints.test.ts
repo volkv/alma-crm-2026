@@ -29,7 +29,7 @@ import { saveContract, saveContractItem } from '$lib/server/directory/contracts'
 import { createInteraction } from '$lib/server/interactions/write';
 import { getRedis } from '$lib/server/redis';
 import { B2B_WORKSPACE_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
-import { ensureProcess } from '$lib/server/stages/process';
+import { ensureWorkflow } from '$lib/server/stages/process';
 import {
 	insertDocument,
 	insertOrganization,
@@ -193,7 +193,7 @@ type Fixture = {
 /** Вуз, взаимодействие на действующем процессе и справочники вокруг них. */
 async function seed(title = 'Взаимодействие для API'): Promise<Fixture> {
 	const ctx = testActor();
-	await database.db.transaction((tx) => ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
+	await database.db.transaction((tx) => ensureWorkflow(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
 
 	const organizationId = await insertOrganization(database.db, {
 		shortName: `Вуз ${crypto.randomUUID().slice(0, 8)}`

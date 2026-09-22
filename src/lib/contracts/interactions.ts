@@ -793,7 +793,7 @@ export type StageMigrationRuleView = {
  */
 export type ProcessRevisionView = {
 	id: string;
-	groupId: string;
+	workflowId: string;
 	version: number;
 	name: string;
 	note: string | null;
@@ -810,6 +810,8 @@ export type WorkspaceSummary = {
 	name: string;
 	description: string | null;
 	position: number;
+	/** Назначенный процесс; `null` — работать в пространстве ещё нечем. */
+	workflow: { id: string; key: string; name: string } | null;
 	/** Сколько стадий в действующей редакции; ноль — процесс ещё не заведён. */
 	stageCount: number;
 	/** Сколько незавершённых взаимодействий идут в этом пространстве сейчас. */
@@ -823,7 +825,7 @@ export type WorkspaceDetail = {
 	/** Действующая редакция; `null` — процесс пространства ещё не заведён. */
 	active: ProcessRevisionView | null;
 	draft: ProcessRevisionView | null;
-	/** Что мешает применить черновик; у пространства без черновика — пусто. */
+	/** Что мешает применить черновик; у процесса без черновика — пусто. */
 	issues: string[];
 	/** Виды контрагентов, работа с которыми идёт по этому процессу. */
 	counterpartyKinds: string[];
@@ -854,7 +856,7 @@ export type ProcessPreviewRow = {
  * транзакция публикации, и в журнал попадают они.
  */
 export type ProcessPreview = {
-	groupId: string;
+	workflowId: string;
 	/** Сколько незавершённых взаимодействий затронет изменение. */
 	affected: number;
 	rows: ProcessPreviewRow[];

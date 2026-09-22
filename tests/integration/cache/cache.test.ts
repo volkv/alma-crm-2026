@@ -39,10 +39,10 @@ import { addComment } from '$lib/server/stages/commands';
 import { B2B_WORKSPACE_KEY, B2B_PROCESS } from '$lib/server/stages/definitions';
 import {
 	createDraft,
-	ensureProcess,
+	ensureWorkflow,
 	processDefinition,
 	publishProcess,
-	readActiveRevisionCached,
+	readActiveRevisionForWorkspace,
 	readWorkspaceByKey,
 	updateDraft
 } from '$lib/server/stages/process';
@@ -509,7 +509,7 @@ describe('ключи кэша', () => {
 
 /** Процесс учебных заведений: его читают карточка, список и доска. */
 async function demoProcess(): Promise<void> {
-	await database.db.transaction((tx) => ensureProcess(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
+	await database.db.transaction((tx) => ensureWorkflow(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
 }
 
 /** Черновик с переименованной первой стадией, применённый ко всем. */
@@ -526,7 +526,9 @@ async function publishRenamedFirstStage(ctx: ActorContext, name: string): Promis
 
 describe('кэш действующей редакции процесса', () => {
 	async function activeRevision() {
-		return readActiveRevisionCached(await readWorkspaceByKey(database.db, B2B_WORKSPACE_KEY));
+		return readActiveRevisionForWorkspace(
+			(await readWorkspaceByKey(database.db, B2B_WORKSPACE_KEY)).id
+		);
 	}
 
 	it('отдаёт то же, что база, и переживает правку в обход сервиса', async () => {

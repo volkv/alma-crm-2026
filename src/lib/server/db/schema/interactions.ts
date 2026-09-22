@@ -1,8 +1,9 @@
 /**
  * Взаимодействие с контрагентом и процесс, по которому оно идёт.
  *
- * Процесс принадлежит пространству: в нём действует ровно одна редакция
- * структуры, и взаимодействие ссылается на пространство, а не на редакцию.
+ * Процесс живёт сам по себе, а пространство на него ссылается: в процессе
+ * действует ровно одна редакция структуры, и взаимодействие ссылается на
+ * пространство, а не на редакцию.
  * Прежние редакции остаются в базе — на их стадии ссылаются закрытые записи
  * истории. Текущая стадия — это открытая запись `stage_entries` (у неё пустой
  * `left_at`), отдельного поля-кэша нет: кэш пришлось бы синхронизировать, а
@@ -73,11 +74,9 @@ export const commentSourceEnum = pgEnum('comment_source', COMMENT_SOURCES);
  * Пространство: рабочее место направления. Своё меню, свои взаимодействия,
  * свой процесс. Их два — `b2b` и `b2c`, — и добавить третье можно строкой.
  *
- * Действующая редакция вынесена в колонку, а не выводится запросом «последняя
- * опубликованная»: публикация обязана переключать процесс одним значением,
- * которое читается под блокировкой пространства, иначе переход и публикация
- * разойдутся на гонке. Принадлежность редакции своему пространству проверяет
- * транзакция публикации.
+ * Работу описывает не оно, а назначенный ему процесс (`workflows`): на одном
+ * процессе может стоять несколько пространств, и действующая редакция — его
+ * свойство, а не свойство места.
  */
 export const workspaces = pgTable(
 	'workspaces',
@@ -87,13 +86,15 @@ export const workspaces = pgTable(
 		name: text().notNull(),
 		description: text(),
 		/**
-		 * Редакция, по которой идёт работа: одна на пространство. Вынесена в
-		 * колонку, а не выводится запросом «последняя опубликованная», потому что
-		 * публикация обязана переключать процесс одним значением, читаемым под
-		 * блокировкой пространства, — иначе переход и публикация разойдутся на
-		 * гонке.
+		 * Процесс, по которому здесь работают. Допускает пустоту: пространство
+		 * заводят раньше, чем описывают его работу, и «процесс не назначен» —
+		 * рабочее состояние, которое доска объясняет словами. Требовать готовый
+		 * процесс заранее значило бы запретить заводить пространство.
+		 *
+		 * `restrict`: процесс, назначенный хоть одному месту, не удаляется
+		 * молча — сначала снимают назначение.
 		 */
-		activeRevisionId: uuid().references((): AnyPgColumn => processRevisions.id, {
+		workflowId: uuid().references((): AnyPgColumn => workflows.id, {
 			onDelete: 'restrict'
 		}),
 		position: integer().notNull(),
@@ -103,6 +104,36 @@ export const workspaces = pgTable(
 		unique('workspaces_key_key').on(table.key),
 		unique('workspaces_position_key').on(table.position)
 	]
+);
+
+/**
+ * Процесс: описание работы — стадии, переходы, нормативы, чек-листы, — живущее
+ * само по себе.
+ *
+ * Вынесен из пространства, а не встроен в него, ради одного: один процесс можно
+ * назначить нескольким пространствам. Два направления, работающих по одному
+ * сценарию, — это два пространства и один процесс, а не две копии четырнадцати
+ * стадий, которые разъедутся на первой же правке.
+ *
+ * Действующая редакция — свойство процесса, и вынесена в колонку, а не
+ * выводится запросом «последняя опубликованная»: публикация обязана переключать
+ * процесс одним значением, читаемым под блокировкой процесса, иначе переход и
+ * публикация разойдутся на гонке. Блокировать при этом пространство, а не
+ * процесс, значило бы пропустить гонку у процесса, назначенного двум местам.
+ */
+export const workflows = pgTable(
+	'workflows',
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		key: text().notNull(),
+		name: text().notNull(),
+		description: text(),
+		activeRevisionId: uuid().references((): AnyPgColumn => processRevisions.id, {
+			onDelete: 'restrict'
+		}),
+		...timestamps
+	},
+	(table) => [unique('workflows_key_key').on(table.key)]
 );
 
 /**
@@ -126,31 +157,35 @@ export const processGroupCounterpartyKinds = pgTable(
 );
 
 /**
- * Реестр ключей стадий пространства. Строка заводится при первом появлении
- * ключа и не удаляется никогда: идентичность стадии — пара «пространство +
- * ключ», и удалённый ключ обязан остаться занятым. Иначе под именем `signing`
- * однажды появилась бы стадия с другим смыслом, и лента карточки, отчёт и
- * перенос сопоставили бы по нему разные работы.
+ * Реестр ключей стадий процесса. Строка заводится при первом появлении ключа и
+ * не удаляется никогда: идентичность стадии — пара «процесс + ключ», и
+ * удалённый ключ обязан остаться занятым. Иначе под именем `signing` однажды
+ * появилась бы стадия с другим смыслом, и лента карточки, отчёт и перенос
+ * сопоставили бы по нему разные работы.
+ *
+ * Пара именно «процесс + ключ», а не «пространство + ключ»: если два
+ * пространства работают по одному процессу, стадия `signing` в них — одна и та
+ * же стадия, и отчёт по ним складывается.
  */
 export const processStageKeys = pgTable(
 	'process_stage_keys',
 	{
-		groupId: uuid()
+		workflowId: uuid()
 			.notNull()
-			.references(() => workspaces.id, { onDelete: 'cascade' }),
+			.references(() => workflows.id, { onDelete: 'cascade' }),
 		key: text().notNull(),
 		firstSeenAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
 		/** Ключ убрали из процесса; вернуть его с другим смыслом нельзя. */
 		archivedAt: timestamp({ withTimezone: true })
 	},
-	(table) => [primaryKey({ columns: [table.groupId, table.key] })]
+	(table) => [primaryKey({ columns: [table.workflowId, table.key] })]
 );
 
 /**
- * Редакция процесса пространства: снимок структуры — стадии и переходы.
+ * Редакция процесса: снимок структуры — стадии и переходы.
  *
- * Пока `published_at` пуст, редакция — черновик, и его правят; у пространства
- * он один, это держит частичная уникальность. Опубликованная редакция заморожена:
+ * Пока `published_at` пуст, редакция — черновик, и его правят; у процесса он
+ * один, это держит частичная уникальность. Опубликованная редакция заморожена:
  * на её стадии ссылаются записи истории, и правка задним числом переписала бы
  * то, что видел исполнитель. Изменение процесса — новая редакция и миграция
  * незавершённых взаимодействий на неё.
@@ -159,10 +194,10 @@ export const processRevisions = pgTable(
 	'process_revisions',
 	{
 		id: uuid().primaryKey().defaultRandom(),
-		groupId: uuid()
+		workflowId: uuid()
 			.notNull()
-			.references((): AnyPgColumn => workspaces.id, { onDelete: 'cascade' }),
-		/** Номер редакции внутри пространства, с 1. Пользователь его не выбирает. */
+			.references((): AnyPgColumn => workflows.id, { onDelete: 'cascade' }),
+		/** Номер редакции внутри процесса, с 1. Пользователь его не выбирает. */
 		version: integer().notNull(),
 		name: text().notNull(),
 		/** Чем эта редакция отличается от предыдущей — словами автора черновика. */
@@ -171,11 +206,11 @@ export const processRevisions = pgTable(
 		...timestamps
 	},
 	(table) => [
-		unique('process_revisions_group_version_key').on(table.groupId, table.version),
+		unique('process_revisions_workflow_version_key').on(table.workflowId, table.version),
 		// Два незаконченных описания одного процесса нечем свести: опубликуются
 		// оба, и какое описывает работу, станет вопросом порядка нажатий.
-		uniqueIndex('process_revisions_one_draft_per_group')
-			.on(table.groupId)
+		uniqueIndex('process_revisions_one_draft_per_workflow')
+			.on(table.workflowId)
 			.where(sql`${table.publishedAt} is null`)
 	]
 );
@@ -707,13 +742,22 @@ export const stageEntryStatus = pgView('stage_entry_status', {
 }).existing();
 
 export const workspacesRelations = relations(workspaces, ({ one, many }) => ({
-	activeRevision: one(processRevisions, {
-		fields: [workspaces.activeRevisionId],
-		references: [processRevisions.id]
+	workflow: one(workflows, {
+		fields: [workspaces.workflowId],
+		references: [workflows.id]
 	}),
 	counterpartyKinds: many(processGroupCounterpartyKinds),
-	stageKeys: many(processStageKeys),
 	interactions: many(interactions)
+}));
+
+export const workflowsRelations = relations(workflows, ({ one, many }) => ({
+	activeRevision: one(processRevisions, {
+		fields: [workflows.activeRevisionId],
+		references: [processRevisions.id]
+	}),
+	revisions: many(processRevisions),
+	stageKeys: many(processStageKeys),
+	workspaces: many(workspaces)
 }));
 
 export const processGroupCounterpartyKindsRelations = relations(
@@ -727,9 +771,9 @@ export const processGroupCounterpartyKindsRelations = relations(
 );
 
 export const processStageKeysRelations = relations(processStageKeys, ({ one }) => ({
-	workspace: one(workspaces, {
-		fields: [processStageKeys.groupId],
-		references: [workspaces.id]
+	workflow: one(workflows, {
+		fields: [processStageKeys.workflowId],
+		references: [workflows.id]
 	})
 }));
 
@@ -766,9 +810,9 @@ export const interactionContractItemsRelations = relations(interactionContractIt
 }));
 
 export const processRevisionsRelations = relations(processRevisions, ({ one, many }) => ({
-	workspace: one(workspaces, {
-		fields: [processRevisions.groupId],
-		references: [workspaces.id]
+	workflow: one(workflows, {
+		fields: [processRevisions.workflowId],
+		references: [workflows.id]
 	}),
 	stages: many(stages),
 	transitions: many(stageTransitions),

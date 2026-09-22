@@ -19,7 +19,7 @@ import {
 	listWorkspaces,
 	previewPublication,
 	processDefinition,
-	readWorkspaceByKey,
+	readWorkflowByKey,
 	syncStageKeys,
 	updateDraft
 } from '$lib/server/stages/process';
@@ -89,7 +89,7 @@ describe('список групп процесса', () => {
 describe('реестр ключей стадий', () => {
 	it('заводит все ключи редакции и архивирует те, которых в ней не стало', async () => {
 		const revision = await seedProcess(database, B2B_WORKSPACE_KEY, B2B_PROCESS);
-		const workspace = await readWorkspaceByKey(database.db, B2B_WORKSPACE_KEY);
+		const workflow = await readWorkflowByKey(database.db, B2B_WORKSPACE_KEY);
 
 		// Реестр ведётся списком ключей целиком, а не по одному: запрос со
 		// списком параметров легко написать так, что PostgreSQL примет его за
@@ -97,7 +97,7 @@ describe('реестр ключей стадий', () => {
 		const keys = await database.db
 			.select({ key: processStageKeys.key, archivedAt: processStageKeys.archivedAt })
 			.from(processStageKeys)
-			.where(eq(processStageKeys.groupId, workspace.id));
+			.where(eq(processStageKeys.workflowId, workflow.id));
 
 		expect(keys.map((row) => row.key).sort()).toEqual(
 			revision.stages.map((stage) => stage.key).sort()
@@ -111,7 +111,7 @@ describe('реестр ключей стадий', () => {
 		};
 
 		const archived = await database.db.transaction((tx) =>
-			syncStageKeys(tx, workspace.id, shortened, new Date())
+			syncStageKeys(tx, workflow.id, shortened, new Date())
 		);
 
 		expect(archived).toBe(revision.stages.length - 3);
@@ -119,9 +119,9 @@ describe('реестр ключей стадий', () => {
 		const after = await database.db
 			.select({ key: processStageKeys.key, archivedAt: processStageKeys.archivedAt })
 			.from(processStageKeys)
-			.where(eq(processStageKeys.groupId, workspace.id));
+			.where(eq(processStageKeys.workflowId, workflow.id));
 
-		// Строки не удаляются никогда: ключ, который когда-либо был в группе,
+		// Строки не удаляются никогда: ключ, который когда-либо был в процессе,
 		// остаётся занятым.
 		expect(after).toHaveLength(revision.stages.length);
 		expect(
@@ -133,12 +133,12 @@ describe('реестр ключей стадий', () => {
 
 		// Ключ вернулся в процесс — отметка снимается: иначе редактор откажет в
 		// стадии, которая уже стоит.
-		await database.db.transaction((tx) => syncStageKeys(tx, workspace.id, revision, new Date()));
+		await database.db.transaction((tx) => syncStageKeys(tx, workflow.id, revision, new Date()));
 
 		const restored = await database.db
 			.select({ key: processStageKeys.key })
 			.from(processStageKeys)
-			.where(and(eq(processStageKeys.groupId, workspace.id), isNull(processStageKeys.archivedAt)));
+			.where(and(eq(processStageKeys.workflowId, workflow.id), isNull(processStageKeys.archivedAt)));
 
 		expect(restored).toHaveLength(revision.stages.length);
 	});

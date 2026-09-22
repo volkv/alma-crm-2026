@@ -13,7 +13,13 @@
  */
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { interactions, workspaces, stageEntries, stages } from '$lib/server/db/schema';
+import {
+	interactions,
+	workflows,
+	workspaces,
+	stageEntries,
+	stages
+} from '$lib/server/db/schema';
 import {
 	createDraft,
 	processDefinition,
@@ -79,13 +85,14 @@ async function assertNoStrayEntries(): Promise<number> {
 		.from(stageEntries)
 		.innerJoin(interactions, eq(interactions.id, stageEntries.interactionId))
 		.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
+		.innerJoin(workflows, eq(workflows.id, workspaces.workflowId))
 		.innerJoin(stages, eq(stages.id, stageEntries.stageId))
 		.where(
 			and(
 				isNull(stageEntries.leftAt),
 				// Стадия открытой записи обязана принадлежать действующей редакции
-				// своей группы — это и есть инвариант раздела «Гонки».
-				eq(stages.revisionId, workspaces.activeRevisionId)
+				// своего процесса — это и есть инвариант раздела «Гонки».
+				eq(stages.revisionId, workflows.activeRevisionId)
 			)
 		);
 

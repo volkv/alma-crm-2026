@@ -15,7 +15,7 @@
  */
 import { asc, eq } from 'drizzle-orm';
 import { getDb } from '../db';
-import { stages, workspaces } from '../db/schema';
+import { stages, workflows, workspaces } from '../db/schema';
 
 /** Стадия действующей редакции: ключ, актуальное название и место в порядке. */
 export type ReportStage = {
@@ -54,8 +54,9 @@ export async function readActiveWorkspaces(): Promise<Map<string, ReportWorkspac
 		})
 		.from(workspaces)
 		// Единственная строка отчёта про устройство редакции: действующая редакция
-		// пространства и её стадии.
-		.leftJoin(stages, eq(stages.revisionId, workspaces.activeRevisionId))
+		// назначенного процесса и её стадии.
+		.leftJoin(workflows, eq(workflows.id, workspaces.workflowId))
+		.leftJoin(stages, eq(stages.revisionId, workflows.activeRevisionId))
 		.orderBy(asc(workspaces.position), asc(stages.position));
 
 	const found = new Map<string, ReportWorkspace & { stages: ReportStage[] }>();

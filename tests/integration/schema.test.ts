@@ -67,14 +67,14 @@ describe('миграции', () => {
 				'comments', 'document_templates', 'documents', 'api_keys',
 				'consents', 'stage_entry_status',
 				'directions', 'product_directions', 'organization_responsibles',
-				'workspaces', 'process_group_counterparty_kinds', 'process_stage_keys',
+				'workspaces', 'workflows', 'process_group_counterparty_kinds', 'process_stage_keys',
 				'stage_migration_rules', 'contracts', 'contract_items',
 				'interaction_contract_items', 'stage_entry_documents',
 				'learning_groups', 'learning_group_results', 'exchange_messages'
 			]) as name
 		`;
 
-		expect(rows).toHaveLength(45);
+		expect(rows).toHaveLength(46);
 		expect(rows.filter((row) => row.name === null)).toEqual([]);
 	});
 
@@ -113,16 +113,16 @@ describe('миграции', () => {
 		expect(row.nullable).toBe('NO');
 	});
 
-	it('держат один черновик на группу частичным уникальным индексом', async () => {
+	it('держат один черновик на процесс частичным уникальным индексом', async () => {
 		const [row] = await database.raw<{ name: string }[]>`
 			select indexname as name
 			from pg_indexes
 			where schemaname = 'public'
 				and tablename = 'process_revisions'
-				and indexname = 'process_revisions_one_draft_per_group'
+				and indexname = 'process_revisions_one_draft_per_workflow'
 		`;
 
-		expect(row?.name).toBe('process_revisions_one_draft_per_group');
+		expect(row?.name).toBe('process_revisions_one_draft_per_workflow');
 	});
 });
 

@@ -63,6 +63,7 @@ import {
 	interactionChanges,
 	interactions,
 	workspaces,
+	workflows,
 	processRevisions,
 	stageEntries,
 	stageEntryDocuments,
@@ -77,13 +78,7 @@ import { readLmsEvidence } from '../integrations/exchange/evidence';
 import { enqueueApplicationStatus } from '../integrations/exchange/outbox';
 import { can, requirePermission } from '../rbac';
 import { interactionScopeFilter } from '../interactions/access';
-import {
-	firstStage,
-	readWorkspaceRow,
-	requireActiveRevision,
-	stageSnapshot,
-	type WorkspaceRow
-} from './process';
+import { firstStage, requireActiveRevisionForWorkspace, stageSnapshot } from './process';
 import { evaluateTransition, transitionPermission, type StageState } from './transitions';
 
 /**
@@ -153,7 +148,8 @@ async function readRevisionVersion(tx: Tx, interactionId: string): Promise<numbe
 		.select({ version: processRevisions.version })
 		.from(interactions)
 		.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
-		.innerJoin(processRevisions, eq(processRevisions.id, workspaces.activeRevisionId))
+		.innerJoin(workflows, eq(workflows.id, workspaces.workflowId))
+		.innerJoin(processRevisions, eq(processRevisions.id, workflows.activeRevisionId))
 		.where(eq(interactions.id, interactionId))
 		.limit(1);
 
@@ -462,11 +458,11 @@ type MoveInput = {
  */
 async function requireCurrentRevision(
 	tx: Tx,
-	workspace: WorkspaceRow,
+	workspaceId: string,
 	expected: number,
 	repeat: string
 ): Promise<ProcessRevisionView> {
-	const revision = await requireActiveRevision(tx, workspace);
+	const revision = await requireActiveRevisionForWorkspace(tx, workspaceId);
 
 	if (revision.version !== expected) {
 		throw new ConflictError(
@@ -526,8 +522,12 @@ async function attachDocuments(
 async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 	await withTransaction(ctx, async (tx) => {
 		const interaction = await lockInteraction(ctx, tx, input.interactionId);
-		const workspace = await readWorkspaceRow(tx, interaction.workspaceId);
-		const revision = await requireCurrentRevision(tx, workspace, input.revision, 'переход');
+		const revision = await requireCurrentRevision(
+			tx,
+			interaction.workspaceId,
+			input.revision,
+			'переход'
+		);
 		const entry = await requireOpenEntry(tx, input.interactionId);
 		const transition = await readTransition(
 			tx,
@@ -1500,12 +1500,10 @@ export async function completeInteraction(
 
 	await withTransaction(ctx, async (tx) => {
 		const interaction = await lockInteraction(ctx, tx, input.interactionId);
-		const workspace = await readWorkspaceRow(tx, interaction.workspaceId);
-
 		// Тот же механизм, что у перехода: «завершить» нажимают, посмотрев на
 		// финальную стадию и её требования, и публикация, прошедшая до нажатия,
 		// меняет и то и другое.
-		await requireCurrentRevision(tx, workspace, input.revision, 'завершение');
+		await requireCurrentRevision(tx, interaction.workspaceId, input.revision, 'завершение');
 
 		const state = await readClosingState(ctx, tx, interaction);
 		const verdict = closingVerdict(state);
@@ -1554,9 +1552,7 @@ export async function cancelInteraction(
 
 	await withTransaction(ctx, async (tx) => {
 		const interaction = await lockInteraction(ctx, tx, input.interactionId);
-		const workspace = await readWorkspaceRow(tx, interaction.workspaceId);
-
-		await requireCurrentRevision(tx, workspace, input.revision, 'отмену');
+		await requireCurrentRevision(tx, interaction.workspaceId, input.revision, 'отмену');
 
 		const verdict = closingVerdict(await readClosingState(ctx, tx, interaction));
 

@@ -47,7 +47,13 @@ import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { requirePermission, scopeFilter } from '../rbac';
 import { startInteractionIn } from '../stages/commands';
-import { lockWorkspace, requireActiveRevision, resolveWorkspace } from '../stages/process';
+import {
+	lockWorkflow,
+	readWorkspaceRow,
+	requireActiveRevision,
+	requireWorkflowForWorkspace,
+	resolveWorkspace
+} from '../stages/process';
 import { interactionScopeFilter } from './access';
 import { getInteraction } from './read';
 
@@ -358,11 +364,16 @@ export async function createInteractionIn(
 	await assertOwnerExists(tx, definition.ownerUserId);
 
 	const workspaceId = await resolveWorkspaceForParties(tx, definition.parties);
-	// Разделяемая блокировка пространства: пока публикация держит
-	// исключительную, создание ждёт, — и наоборот. Так первая стадия берётся из
-	// той редакции, которая действует после обеих операций, а не между ними.
-	const workspace = await lockWorkspace(tx, workspaceId, 'share');
-	const revision = await requireActiveRevision(tx, workspace);
+	const workspace = await readWorkspaceRow(tx, workspaceId);
+	// Разделяемая блокировка процесса: пока публикация держит исключительную,
+	// создание ждёт, — и наоборот. Так первая стадия берётся из той редакции,
+	// которая действует после обеих операций, а не между ними.
+	const workflow = await lockWorkflow(
+		tx,
+		(await requireWorkflowForWorkspace(tx, workspace)).id,
+		'share'
+	);
+	const revision = await requireActiveRevision(tx, workflow);
 
 	const [created] = await tx
 		.insert(interactions)

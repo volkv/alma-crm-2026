@@ -239,8 +239,8 @@ curl -sS -X POST "$BASE/v1/interactions" \
 
 | Метод и путь                | Право                 | Что делает                                                                   |
 | --------------------------- | --------------------- | ---------------------------------------------------------------------------- |
-| `GET /v1/workspaces`        | `stages.configure`    | пространства со счётчиками стадий и незавершённых взаимодействий             |
-| `GET /v1/workspaces/{key}`  | `stages.configure`    | стадии действующей редакции с ключами и разрешённые переходы                 |
+| `GET /v1/workspaces`        | `stages.configure`    | пространства с назначенным процессом и счётчиками стадий и взаимодействий    |
+| `GET /v1/workspaces/{key}`  | `stages.configure`    | стадии действующей редакции назначенного процесса и разрешённые переходы     |
 | `GET /v1/reports`           | `interactions.read`   | отчёт: `mode=snapshot` — срез, `mode=movement` — движение; период обязателен |
 | `GET /v1/exchange/messages` | `integrations.manage` | журнал обмена страницей: фильтры `direction`, `system`, `state`, поиск `q`   |
 

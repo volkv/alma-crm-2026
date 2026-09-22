@@ -21,6 +21,7 @@ import {
 	organizationResponsibles,
 	organizations,
 	workspaces,
+	workflows,
 	people,
 	permissions,
 	processStageKeys,
@@ -169,21 +170,22 @@ describe('сид', () => {
 		expect(reporting).toHaveLength(3);
 	});
 
-	it('привязывает процесс к группе и проставляет её взаимодействиям', async () => {
+	it('назначает процесс пространству и проставляет его взаимодействиям', async () => {
 		await runSeed();
 
 		const [b2b] = await database.db
-			.select({ id: workspaces.id, activeRevisionId: workspaces.activeRevisionId })
+			.select({ id: workspaces.id, activeRevisionId: workflows.activeRevisionId })
 			.from(workspaces)
+			.innerJoin(workflows, eq(workflows.id, workspaces.workflowId))
 			.where(eq(workspaces.key, 'b2b'));
 
-		// Действующая редакция группы — тот самый процесс, который завёл набор.
+		// Действующая редакция процесса — та самая, которую завёл набор.
 		expect(b2b.activeRevisionId).not.toBeNull();
 
 		const keys = await database.db
 			.select({ key: processStageKeys.key })
 			.from(processStageKeys)
-			.where(eq(processStageKeys.groupId, b2b.id));
+			.where(eq(processStageKeys.workflowId, b2b.id));
 
 		expect(keys.map((row) => row.key).sort()).toStrictEqual(
 			B2B_PROCESS.stages.map((stage) => stage.key).sort()

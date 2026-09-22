@@ -11,6 +11,7 @@ import {
 	organizations,
 	people,
 	workspaces,
+	workflows,
 	processRevisions,
 	processStageKeys,
 	programs,
@@ -28,7 +29,7 @@ import {
 	processDefinition,
 	publishProcess,
 	readWorkspaceByKey,
-	requireActiveRevision,
+	requireActiveRevisionForWorkspace,
 	updateDraft
 } from '$lib/server/stages/process';
 import { CONTRACT_SEED_SIZES } from '../../../scripts/seed/contracts';
@@ -184,32 +185,32 @@ describe('сброс демонстрационных данных', () => {
 		await expect(redis.get('lct:session:проверка-сброса')).resolves.toBe('открыта');
 	});
 
-	it('сохраняет группы процесса, но пересобирает их редакции и убирает черновик', async () => {
-		const [workspace] = await database.db
-			.select({ id: workspaces.id, activeRevisionId: workspaces.activeRevisionId })
-			.from(workspaces)
-			.where(eq(workspaces.key, 'b2b'))
+	it('сохраняет процессы, но пересобирает их редакции и убирает черновик', async () => {
+		const [workflow] = await database.db
+			.select({ id: workflows.id, activeRevisionId: workflows.activeRevisionId })
+			.from(workflows)
+			.where(eq(workflows.key, 'b2b'))
 			.limit(1);
 
 		const [draft] = await database.db
 			.insert(processRevisions)
-			.values({ groupId: workspace.id, version: 99, name: 'Черновик показа' })
+			.values({ workflowId: workflow.id, version: 99, name: 'Черновик показа' })
 			.returning({ id: processRevisions.id });
 
 		await resetDemoData(testActor());
 
-		const [workspaceAfter] = await database.db
-			.select({ id: workspaces.id, activeRevisionId: workspaces.activeRevisionId })
-			.from(workspaces)
-			.where(eq(workspaces.key, 'b2b'))
+		const [workflowAfter] = await database.db
+			.select({ id: workflows.id, activeRevisionId: workflows.activeRevisionId })
+			.from(workflows)
+			.where(eq(workflows.key, 'b2b'))
 			.limit(1);
 
-		// Группу кладёт миграция, и на неё ссылаются взаимодействия: она та же.
+		// Процесс кладёт миграция, и на него смотрит пространство: он тот же.
 		// Редакция — эталонная и заведена заново, потому что эталонный набор
 		// взаимодействий сид проводит по её стадиям.
-		expect(workspaceAfter.id).toBe(workspace.id);
-		expect(workspaceAfter.activeRevisionId).not.toBeNull();
-		expect(workspaceAfter.activeRevisionId).not.toBe(workspace.activeRevisionId);
+		expect(workflowAfter.id).toBe(workflow.id);
+		expect(workflowAfter.activeRevisionId).not.toBeNull();
+		expect(workflowAfter.activeRevisionId).not.toBe(workflow.activeRevisionId);
 
 		const leftovers = await database.db
 			.select({ value: count() })
@@ -218,11 +219,11 @@ describe('сброс демонстрационных данных', () => {
 
 		expect(leftovers[0].value).toBe(0);
 
-		// Опубликованная редакция ровно одна на группу: прежние не остаются.
+		// Опубликованная редакция ровно одна на процесс: прежние не остаются.
 		const revisions = await database.db
 			.select({ value: count() })
 			.from(processRevisions)
-			.where(eq(processRevisions.groupId, workspace.id));
+			.where(eq(processRevisions.workflowId, workflow.id));
 
 		expect(revisions[0].value).toBe(1);
 	});
@@ -230,7 +231,7 @@ describe('сброс демонстрационных данных', () => {
 	it('возвращает стенд к эталону после применённого изменения процесса', async () => {
 		const ctx = testActor();
 		const workspace = await readWorkspaceByKey(database.db, B2B_WORKSPACE_KEY);
-		const active = await requireActiveRevision(database.db, workspace);
+		const active = await requireActiveRevisionForWorkspace(database.db, workspace.id);
 
 		// Стадия, на которой эталонный набор кого-нибудь оставляет: именно её
 		// ключ сид спрашивает у живой редакции, когда ведёт набор заново.
@@ -307,9 +308,9 @@ describe('сброс демонстрационных данных', () => {
 
 		await expect(snapshotCounts()).resolves.toStrictEqual(REFERENCE);
 
-		const restored = await requireActiveRevision(
+		const restored = await requireActiveRevisionForWorkspace(
 			database.db,
-			await readWorkspaceByKey(database.db, B2B_WORKSPACE_KEY)
+			(await readWorkspaceByKey(database.db, B2B_WORKSPACE_KEY)).id
 		);
 
 		expect(restored.stages.map((stage) => stage.key).sort()).toStrictEqual(

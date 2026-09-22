@@ -141,10 +141,17 @@ async function openEntry(db: Database, interactionId: string) {
  * укладывает сам.
  */
 async function ensureRevision(db: Database, workspaceId: string): Promise<string> {
+	const [workspace] = await db
+		.select({ workflowId: schema.workspaces.workflowId })
+		.from(schema.workspaces)
+		.where(eq(schema.workspaces.id, workspaceId));
+
+	const workflowId = workspace.workflowId!;
+
 	const [revision] = await db
 		.insert(schema.processRevisions)
 		.values({
-			groupId: workspaceId,
+			workflowId,
 			version: 1,
 			name: B2B_PROCESS.name,
 			note: B2B_PROCESS.note,
@@ -161,9 +168,9 @@ async function ensureRevision(db: Database, workspaceId: string): Promise<string
 	);
 
 	await db
-		.update(schema.workspaces)
+		.update(schema.workflows)
 		.set({ activeRevisionId: revision.id })
-		.where(eq(schema.workspaces.id, workspaceId));
+		.where(eq(schema.workflows.id, workflowId));
 
 	return revision.id;
 }
