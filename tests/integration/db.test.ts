@@ -1,25 +1,48 @@
+/**
+ * Миграции на пустой установке: что получает тот, кто ставит систему с нуля.
+ *
+ * База здесь своя и пустая, а не снятая с образца, как у остальных файлов
+ * (`helpers/db.ts`): образец — это и есть результат миграций, и проверять его
+ * значило бы спрашивать у ответа, верен ли он. PostgreSQL берётся общий,
+ * прогонный: контейнер ради одной пустой базы не нужен.
+ */
 import { fileURLToPath } from 'node:url';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
 import { drizzle } from 'drizzle-orm/postgres-js';
 import { migrate } from 'drizzle-orm/postgres-js/migrator';
 import postgres from 'postgres';
-import { afterAll, beforeAll, expect, it } from 'vitest';
+import { afterAll, beforeAll, expect, inject, it } from 'vitest';
+import { databaseUri } from './helpers/stack';
 
 const migrationsFolder = fileURLToPath(new URL('../../drizzle', import.meta.url));
+const databaseName = `lct_migrations_${crypto.randomUUID().replaceAll('-', '')}`;
 
-let container: StartedPostgreSqlContainer;
 let client: postgres.Sql;
 
 beforeAll(async () => {
-	container = await new PostgreSqlContainer('postgres:17-alpine').start();
-	client = postgres(container.getConnectionUri(), { max: 1 });
+	const stack = inject('integrationStack');
+	const admin = postgres(stack.postgresUri, { max: 1 });
+
+	try {
+		await admin.unsafe(`create database "${databaseName}"`);
+	} finally {
+		await admin.end();
+	}
+
+	client = postgres(databaseUri(stack.postgresUri, databaseName), { max: 1 });
 
 	await migrate(drizzle(client), { migrationsFolder });
 });
 
 afterAll(async () => {
 	await client?.end();
-	await container?.stop();
+
+	const admin = postgres(inject('integrationStack').postgresUri, { max: 1 });
+
+	try {
+		await admin.unsafe(`drop database if exists "${databaseName}" with (force)`);
+	} finally {
+		await admin.end();
+	}
 });
 
 it('talks to the database', async () => {

@@ -2,9 +2,12 @@
  * Проба живости: приложение без хранилища файлов здоровым не считается.
  *
  * Проверять это на заглушке бессмысленно — вопрос ровно в том, как ведёт себя
- * проба, когда настоящее хранилище перестало отвечать. Поэтому файл поднимает
- * своё окружение и в середине гасит ему хранилище: после этого ни один тест
- * этого файла в хранилище уже не ходит.
+ * проба, когда настоящее хранилище перестало отвечать. Поэтому файл в середине
+ * гасит хранилище: после этого ни один тест этого файла в него уже не ходит.
+ *
+ * Хранилище здесь своё, а не общее на прогон (`isolatedStorage`): погашенное
+ * общее унесло бы вместе с собой и все соседние файлы. Это единственный файл,
+ * которому нужен собственный MinIO.
  */
 import type { RequestEvent } from '@sveltejs/kit';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -21,7 +24,7 @@ type HealthBody = { status: string; db: string; redis: string; storage: string }
 let database: TestDatabase;
 
 beforeAll(async () => {
-	database = await startTestDatabase();
+	database = await startTestDatabase({ isolatedStorage: true });
 }, 300_000);
 
 afterAll(async () => {

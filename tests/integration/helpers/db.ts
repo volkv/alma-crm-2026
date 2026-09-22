@@ -1,17 +1,19 @@
 /**
  * Настоящее окружение для интеграционных тестов.
  *
- * Контейнеры PostgreSQL 17, Redis 8 и MinIO поднимаются на файл тестов, к базе
- * применяются миграции из `drizzle/` и заливается каталог прав. Проверять схему
- * на заглушке бессмысленно: триггеры, частичные индексы, CHECK и представление —
- * это и есть то, что проверяется; то же и с Redis: счётчики попыток, лимиты и
- * сессии живут в нём, и подделка проверяла бы подделку. Хранилище файлов —
- * `helpers/storage.ts`, поднимается вместе с ними.
+ * PostgreSQL 17, Redis 8 и MinIO поднимает глобальный сетап — один набор на
+ * прогон (`../global-setup.ts`). Файл тестов берёт у них своё: базу, снятую с
+ * образца, в котором миграции из `drizzle/` уже применены, свою логическую базу
+ * Redis и свой бакет. Проверять схему на заглушке бессмысленно: триггеры,
+ * частичные индексы, CHECK и представление — это и есть то, что проверяется; то
+ * же и с Redis: счётчики попыток, лимиты и сессии живут в нём, и подделка
+ * проверяла бы подделку. Хранилище файлов — `helpers/storage.ts`.
  *
- * Свои службы на файл, а не общие из `docker-compose.yml`: прогон не должен
- * ни зависеть от того, что насчитал предыдущий, ни мешать соседнему. Из compose
- * остаётся только Gotenberg (`GOTENBERG_URL`) — он тяжёлый, тянуть по контейнеру
- * на файл ради тестов документов дороже, чем держать один на машину.
+ * Своё состояние на файл, а не общие службы из `docker-compose.yml`: прогон не
+ * должен ни зависеть от того, что насчитал предыдущий, ни мешать соседнему.
+ * Контейнер на файл покупал это же свойство впятеро дороже, чем нужно. Из
+ * compose остаётся только Gotenberg (`GOTENBERG_URL`) — он тяжёлый, и поднимать
+ * его прогоном ради тестов документов дороже, чем держать один на машину.
  *
  * Файл теста обязан объявить в самом верху
  *
@@ -22,25 +24,19 @@
  * — иначе `$env/dynamic/private` останется слепком `.env`, снятым при запуске
  * Vitest, и сервисы пойдут не в контейнер, а в базу разработчика.
  */
-import { fileURLToPath } from 'node:url';
-import { PostgreSqlContainer, type StartedPostgreSqlContainer } from '@testcontainers/postgresql';
-import { RedisContainer, type StartedRedisContainer } from '@testcontainers/redis';
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
-import { drizzle, type PostgresJsDatabase } from 'drizzle-orm/postgres-js';
-import { migrate } from 'drizzle-orm/postgres-js/migrator';
+import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { Redis } from 'ioredis';
 import postgres from 'postgres';
+import { inject } from 'vitest';
 import type { StageSnapshot } from '$lib/contracts/interactions';
 import type { AccessScope, ActorContext } from '$lib/server/actor';
 import * as schema from '$lib/server/db/schema';
 import { contactColumns } from '$lib/server/people/pii';
 import { DEFAULT_ROLES, type PermissionKey } from '$lib/server/rbac/permissions';
 import { defaultRolePermissions, seedRolesAndPermissions } from '$lib/server/rbac/seed';
+import { databaseUri, redisUri, type IntegrationStack } from './stack';
 import { startTestStorage, type TestStorage } from './storage';
-
-// `fileURLToPath`, а не `.pathname`: на Windows последний отдаёт
-// `/C:/…/drizzle` — с ведущей косой, — и миграции по такому пути не находятся.
-const migrationsFolder = fileURLToPath(new URL('../../../drizzle', import.meta.url));
 
 /** Таблицы, строки которых приезжают с миграцией, а не с сидом или тестом. */
 const REFERENCE_TABLES = ['workspaces', 'process_group_counterparty_kinds'] as const;
@@ -50,66 +46,113 @@ export type TestDatabase = {
 	db: PostgresJsDatabase<typeof schema>;
 	/** Отдельное соединение для сырого SQL: DDL, проверки ограничений. */
 	raw: postgres.Sql;
-	/** Хранилище файлов этого прогона — взгляд на него со стороны. */
+	/** Хранилище файлов этого файла тестов — взгляд на него со стороны. */
 	storage: TestStorage;
 	/**
 	 * Возвращает окружение к началу: чистит таблицы, заново заливает каталог
-	 * прав и стирает Redis целиком.
+	 * прав и стирает логическую базу Redis.
 	 *
 	 * Redis сюда входит наравне с базой. Счётчики лимитов и пачек живут окно в
 	 * целую минуту и очистку таблиц переживают: без этой строки тест видел бы
 	 * то, что насчитал предыдущий, и порядок тестов в файле стал бы значимым.
 	 */
 	reset: () => Promise<void>;
+	/** Убирает за файлом: сносит его базу и бакет. Службы прогона не трогает. */
 	stop: () => Promise<void>;
 };
 
 /** Соединения, открытые по ходу подготовки: их закрывает уборка после отказа. */
 type OpenedConnections = { raw?: postgres.Sql; redis?: Redis };
 
-export async function startTestDatabase(): Promise<TestDatabase> {
-	// Параллельно: Redis и MinIO поднимаются заметно быстрее PostgreSQL и на
-	// общем времени файла не сказываются.
-	const [container, redisContainer, storage]: [
-		StartedPostgreSqlContainer,
-		StartedRedisContainer,
-		TestStorage
-	] = await Promise.all([
-		new PostgreSqlContainer('postgres:17-alpine').start(),
-		new RedisContainer('redis:8-alpine').start(),
-		startTestStorage()
-	]);
+/**
+ * Служебное подключение к PostgreSQL: им заводят и сносят базы файлов.
+ *
+ * Открывается на один запрос и тут же закрывается. Держать его открытым всё
+ * время файла незачем, а снести базу, пока к серверу висит лишнее соединение
+ * этого же процесса, мешает ровно в тот момент, когда уборке уже некогда.
+ */
+async function withAdmin<TResult>(
+	stack: IntegrationStack,
+	work: (sql: postgres.Sql) => Promise<TResult>
+): Promise<TResult> {
+	const admin = postgres(stack.postgresUri, { max: 1 });
 
-	// Всё, что дальше, может отказать — миграция, справочные строки, сид, — а
-	// три службы к этому моменту уже подняты. Без этой уборки отказ уносил бы
-	// ссылку на них вместе со стеком: `stop()` вызвать стало бы некому, тест
-	// получил бы `undefined`, а его `afterAll` с `database?.stop()` промолчал
-	// бы — и контейнеры жили бы до конца всего прогона, по трое на файл.
+	try {
+		return await work(admin);
+	} finally {
+		await admin.end();
+	}
+}
+
+export async function startTestDatabase(options?: {
+	/**
+	 * Своё хранилище файлов на этот файл тестов вместо общего.
+	 *
+	 * Нужно там, где проверка гасит хранилище посреди прогона: общее унесло бы
+	 * вместе с ним и соседние файлы. Цена — контейнер MinIO на такой файл.
+	 */
+	isolatedStorage?: boolean;
+}): Promise<TestDatabase> {
+	const stack = inject('integrationStack');
+
+	// Своя база на файл тестов, снятая с образца: миграции в нём применены один
+	// раз на прогон, и копия достаётся за сотню миллисекунд вместо секунды.
+	const databaseName = `lct_test_${crypto.randomUUID().replaceAll('-', '')}`;
+	await withAdmin(stack, (admin) =>
+		admin.unsafe(`create database "${databaseName}" template "${stack.templateDatabase}"`)
+	);
+
+	const storage = await startTestStorage(
+		options?.isolatedStorage === true ? undefined : { server: stack.storage }
+	).catch(async (error: unknown) => {
+		await dropTestDatabase(stack, databaseName);
+		throw error;
+	});
+
+	// Всё, что дальше, может отказать — справочные строки, сид, — а база и бакет
+	// к этому моменту уже заведены. Без этой уборки отказ уносил бы ссылку на них
+	// вместе со стеком: `stop()` вызвать стало бы некому, тест получил бы
+	// `undefined`, а его `afterAll` с `database?.stop()` промолчал бы — и база с
+	// бакетом дожили бы до конца всего прогона, по паре на файл.
 	const opened: OpenedConnections = {};
 
 	try {
-		return await prepareTestDatabase(container, redisContainer, storage, opened);
+		return await prepareTestDatabase(stack, databaseName, storage, opened);
 	} catch (error) {
 		opened.redis?.disconnect();
 		await opened.raw?.end({ timeout: 5 }).catch(() => undefined);
-		await Promise.allSettled([container.stop(), redisContainer.stop(), storage.stop()]);
+		await storage.stop().catch(() => undefined);
+		await dropTestDatabase(stack, databaseName);
 		throw error;
 	}
 }
 
+/**
+ * Сносит базу файла тестов. `force` отцепляет то, что осталось подключённым:
+ * упавший тест мог не дойти до закрытия, а без этого `DROP DATABASE` откажет и
+ * уборка упала бы вслед за проверкой, спрятав её причину.
+ */
+async function dropTestDatabase(stack: IntegrationStack, name: string): Promise<void> {
+	await withAdmin(stack, (admin) =>
+		admin.unsafe(`drop database if exists "${name}" with (force)`)
+	).catch(() => undefined);
+}
+
 async function prepareTestDatabase(
-	container: StartedPostgreSqlContainer,
-	redisContainer: StartedRedisContainer,
+	stack: IntegrationStack,
+	databaseName: string,
 	storage: TestStorage,
 	opened: OpenedConnections
 ): Promise<TestDatabase> {
-	const uri = container.getConnectionUri();
+	const uri = databaseUri(stack.postgresUri, databaseName);
 
 	// Конфигурация читается из окружения целиком, поэтому заполняем её целиком:
 	// иначе `getConfig()` справедливо упадёт на первой же недостающей переменной.
+	const redisUrl = redisUri(stack.redisUrl);
+
 	process.env.NODE_ENV = 'test';
 	process.env.DATABASE_URL = uri;
-	process.env.REDIS_URL = redisContainer.getConnectionUrl();
+	process.env.REDIS_URL = redisUrl;
 	process.env.GOTENBERG_URL = 'http://localhost:3001';
 	process.env.ORIGIN = 'http://localhost:5173';
 	process.env.DEMO_MODE = 'false';
@@ -126,20 +169,20 @@ async function prepareTestDatabase(
 	process.env.OIDC_CLIENT_SECRET = 'lct-crm-dev-secret';
 
 	// Адрес и ключи хранилища знает только `helpers/storage.ts`: контейнеру
-	// достался случайный порт, а имя бакета и ключи он придумывает сам.
+	// достался случайный порт, а имя бакета он придумывает сам.
 	for (const [name, value] of Object.entries(storage.env)) {
 		process.env[name] = value;
 	}
 
 	const raw = postgres(uri, { max: 1 });
 	opened.raw = raw;
-	await migrate(drizzle(raw), { migrationsFolder });
 
 	// Справочные строки продукта, которые кладёт миграция: группы процесса и
-	// соответствие «вид контрагента → группа». TRUNCATE в `reset()` уносит их
-	// вместе со всем остальным, а повторно применить миграцию нельзя — поэтому
-	// прогон снимает их один раз и возвращает после каждой чистки. Снимок, а не
-	// копия значений: копия разошлась бы с миграцией на первой же правке.
+	// соответствие «вид контрагента → группа». В базу они приехали с образца.
+	// TRUNCATE в `reset()` уносит их вместе со всем остальным, а повторно
+	// применить миграцию нельзя — поэтому файл снимает их один раз и возвращает
+	// после каждой чистки. Снимок, а не копия значений: копия разошлась бы с
+	// миграцией на первой же правке.
 	const reference = new Map<string, Record<string, unknown>[]>();
 	for (const table of REFERENCE_TABLES) {
 		reference.set(table, await raw.unsafe(`select * from "${table}"`));
@@ -147,7 +190,7 @@ async function prepareTestDatabase(
 
 	// Своё соединение, а не общее `getRedis()`: тестам его отдавать незачем, а
 	// закрывают они своё сами — и закрытое общее не годилось бы для уборки.
-	const redis = new Redis(redisContainer.getConnectionUrl());
+	const redis = new Redis(redisUrl);
 	opened.redis = redis;
 
 	// Динамический импорт: к этому моменту окружение уже выставлено, поэтому
@@ -157,7 +200,9 @@ async function prepareTestDatabase(
 	const db = getDb();
 
 	const reset = async (): Promise<void> => {
-		await redis.flushall();
+		// `flushdb`, а не `flushall`: Redis у прогона общий, и логическая база
+		// соседнего рабочего процесса — не то, что этому файлу можно чистить.
+		await redis.flushdb();
 
 		const tables = await raw<{ name: string }[]>`
 			select table_name as name
@@ -209,7 +254,8 @@ async function prepareTestDatabase(
 			closeStorage();
 			await raw.end();
 			await redis.quit();
-			await Promise.all([container.stop(), redisContainer.stop(), storage.stop()]);
+			await storage.stop();
+			await dropTestDatabase(stack, databaseName);
 		}
 	};
 }
