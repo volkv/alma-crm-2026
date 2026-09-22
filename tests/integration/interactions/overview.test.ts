@@ -63,6 +63,7 @@ async function makeInteraction(
 ): Promise<string> {
 	const created = await createInteraction(
 		ctx,
+		B2B_WORKSPACE_KEY,
 		createInteractionSchema.parse({
 			title: options.title,
 			ownerUserId: options.ownerUserId ?? TEST_USER_IDS.admin,

@@ -187,7 +187,8 @@ function columnOf(board: InteractionBoardView, name: string) {
 
 /**
  * Взаимодействие с одним контрагентом; процесс сразу ставит его на первую
- * стадию. Группа выводится из вида организации, а не задаётся параметром.
+ * стадию. Пространство задаётся параметром — так же, как его задаёт адрес
+ * формы, — и по умолчанию это пространство учебных заведений.
  */
 async function makeInteraction(
 	ctx: ActorContext,
@@ -197,10 +198,12 @@ async function makeInteraction(
 		ownerUserId?: string;
 		programIds?: string[];
 		partyRole?: 'educational_institution' | 'customer';
+		workspaceKey?: string;
 	}
 ): Promise<string> {
 	const created = await createInteraction(
 		ctx,
+		options.workspaceKey ?? B2B_WORKSPACE_KEY,
 		createInteractionSchema.parse({
 			title: options.title,
 			ownerUserId: options.ownerUserId ?? TEST_USER_IDS.admin,
@@ -684,6 +687,7 @@ describe('перевод карточки', () => {
 			title: 'Шаг вперёд с объяснением',
 			organizationId,
 			partyRole: 'customer',
+			workspaceKey: B2C_WORKSPACE_KEY,
 			ownerUserId: TEST_USER_IDS.manager
 		});
 

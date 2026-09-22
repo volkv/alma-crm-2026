@@ -1,4 +1,4 @@
-import { redirect } from '@sveltejs/kit';
+import { error, redirect } from '@sveltejs/kit';
 import { fail, message, superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { catalogListQuerySchema } from '$lib/contracts/directory';
@@ -8,7 +8,6 @@ import { listProducts, listPrograms } from '$lib/server/directory/read';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { createInteraction } from '$lib/server/interactions/write';
 import { requirePermission } from '$lib/server/rbac';
-import { listWorkspacesForWork } from '$lib/server/stages/process';
 import { responsibleOptions } from '../responsible';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -26,13 +25,20 @@ export const load: PageServerLoad = async (event) => {
 		toPageError(cause);
 	}
 
-	const [workspaces, programs, products, users, form] = await Promise.all([
-		// Пространства читаются не ради выбора: процесс выводится из вида
-		// основной стороны. Форма показывает ими, что произойдёт после
-		// сохранения, — и говорит заранее, если в пространстве процесса ещё нет.
-		// Право здесь то же, что у самого заведения, а не право настраивать
-		// процесс.
-		listWorkspacesForWork(ctx),
+	const { workspace } = await event.parent();
+
+	// Пространству без процесса завести запись нечем: стадии, на которую её
+	// ставить, не существует. Отказ здесь, а не после заполнения формы, и
+	// словами, а не пустым списком: доска такого пространства кнопку «Завести»
+	// не показывает вовсе, но адрес набирают и руками.
+	if (!workspace.hasWorkflow) {
+		error(
+			409,
+			`Пространству «${workspace.name}» не назначен процесс: выберите его в настройках пространств, иначе взаимодействию не с чего начать`
+		);
+	}
+
+	const [programs, products, users, form] = await Promise.all([
 		listPrograms(ctx, catalogPage),
 		listProducts(ctx, catalogPage),
 		responsibleOptions(event),
@@ -45,7 +51,6 @@ export const load: PageServerLoad = async (event) => {
 
 	return {
 		form,
-		workspaces,
 		programs: programs.items,
 		products: products.items,
 		users
@@ -65,7 +70,11 @@ export const actions: Actions = {
 		let createdId: string;
 
 		try {
-			const created = await createInteraction(actorFromEvent(event), form.data);
+			const created = await createInteraction(
+				actorFromEvent(event),
+				event.params.workspace,
+				form.data
+			);
 			createdId = created.id;
 		} catch (error) {
 			// Соответствие предметной ошибки и кода ответа живёт в одном месте;

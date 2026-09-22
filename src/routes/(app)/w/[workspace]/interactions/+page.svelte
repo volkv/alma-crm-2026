@@ -253,10 +253,15 @@
 	description="{data.workspace.name}: где стоит каждое дело и сколько у него осталось времени."
 >
 	{#snippet actions()}
-		<Button href={newHref}>
-			<PlusIcon aria-hidden="true" />
-			Создать взаимодействие
-		</Button>
+		<!-- В пространстве без назначенного процесса заводить нечего: стадии, на
+			которую встанет запись, не существует. Кнопки нет вовсе — предложить
+			действие и отказать в нём хуже, чем не предлагать. -->
+		{#if data.workspace.hasWorkflow}
+			<Button href={newHref}>
+				<PlusIcon aria-hidden="true" />
+				Создать взаимодействие
+			</Button>
+		{/if}
 	{/snippet}
 </Header>
 
@@ -335,10 +340,12 @@
 					description="Заведите первое: выберите учебное заведение, программы и ответственного — маршрут стадий подставится сам."
 				>
 					{#snippet action()}
-						<Button href={newHref}>
-							<PlusIcon aria-hidden="true" />
-							Создать взаимодействие
-						</Button>
+						{#if data.workspace.hasWorkflow}
+							<Button href={newHref}>
+								<PlusIcon aria-hidden="true" />
+								Создать взаимодействие
+							</Button>
+						{/if}
 					{/snippet}
 				</EmptyState>
 			</div>

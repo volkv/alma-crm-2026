@@ -124,6 +124,7 @@ async function seedInteraction(): Promise<{ id: string; revision: ProcessRevisio
 
 	const interaction = await createInteraction(
 		ctx,
+		B2B_WORKSPACE_KEY,
 		createInteractionSchema.parse({
 			title: 'Взаимодействие для API',
 			ownerUserId: TEST_USER_IDS.admin,
@@ -195,6 +196,7 @@ async function seedReasonInteraction(): Promise<{ id: string; route: ProcessRevi
 
 	const interaction = await createInteraction(
 		ctx,
+		B2C_WORKSPACE_KEY,
 		createInteractionSchema.parse({
 			title: 'Переход с объяснением через API',
 			ownerUserId: TEST_USER_IDS.admin,

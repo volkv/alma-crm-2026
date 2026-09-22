@@ -37,7 +37,6 @@ import {
 	interactionPrograms,
 	interactions,
 	organizations,
-	workspaces,
 	products,
 	programs,
 	stageEntries,

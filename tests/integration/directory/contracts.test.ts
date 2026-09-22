@@ -125,6 +125,7 @@ describe('взаимодействие по договору', () => {
 
 		const created = await createInteraction(
 			ctx,
+			B2B_WORKSPACE_KEY,
 			createInteractionSchema.parse({
 				title: 'Поставка тренажёра сетевых лабораторий',
 				ownerUserId: TEST_USER_IDS.admin,
@@ -158,6 +159,7 @@ describe('взаимодействие по договору', () => {
 		await expect(
 			createInteraction(
 				ctx,
+				B2B_WORKSPACE_KEY,
 				createInteractionSchema.parse({
 					title: 'Работа по чужой позиции',
 					ownerUserId: TEST_USER_IDS.admin,
@@ -184,6 +186,7 @@ describe('взаимодействие по договору', () => {
 		await expect(
 			createInteraction(
 				ctx,
+				B2B_WORKSPACE_KEY,
 				createInteractionSchema.parse({
 					title: 'Работа по договору соседнего вуза',
 					ownerUserId: TEST_USER_IDS.admin,
@@ -212,6 +215,7 @@ describe('взаимодействие по договору', () => {
 		await expect(
 			createInteraction(
 				ctx,
+				B2B_WORKSPACE_KEY,
 				createInteractionSchema.parse({
 					title: 'Позиция без продукта',
 					ownerUserId: TEST_USER_IDS.admin,
@@ -239,6 +243,7 @@ describe('правка договора у взаимодействия', () => 
 
 		const created = await createInteraction(
 			ctx,
+			B2B_WORKSPACE_KEY,
 			createInteractionSchema.parse({
 				title: 'Правка договора',
 				ownerUserId: TEST_USER_IDS.admin,

@@ -59,7 +59,7 @@
 | `organizations`                    | CHECK: ссылка на человека заполнена ровно у вида `individual`; уникальный `person_id`                    |
 | `interaction_parties`              | Частичная уникальность `(interaction_id) WHERE is_primary` — основная сторона одна                       |
 | `organization_responsibles`        | Частичная уникальность `(organization_id, direction_id) NULLS NOT DISTINCT WHERE valid_to IS NULL`       |
-| `process_group_counterparty_kinds` | Первичный ключ по виду контрагента: вид принадлежит ровно одному пространству                            |
+| `process_group_counterparty_kinds` | Первичный ключ по виду заявителя: маршрут приёма извне ведёт ровно в одно пространство                   |
 | `workflows`                        | Уникальность `key`; `workspaces.workflow_id` — `on delete restrict`: назначенный процесс не удалить      |
 | `process_revisions`                | Уникальность `(workflow_id, version)`; частичная уникальность `(workflow_id) WHERE published_at IS NULL` |
 | `stages`, `stage_transitions`      | Уникальность `(revision_id, key)` и `(revision_id, position)`; `(from_stage_id, to_stage_id)`            |

@@ -3,7 +3,7 @@
  * список с фильтрами и область доступа. Проверяется на настоящей базе — область
  * доступа живёт в SQL, а история правок опирается на внешние ключи.
  */
-import { eq } from 'drizzle-orm';
+import { eq, sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInteractionSchema, updateInteractionSchema } from '$lib/contracts/interactions';
 import {
@@ -11,7 +11,8 @@ import {
 	interactionChanges,
 	interactions,
 	products,
-	programs
+	programs,
+	workspaces
 } from '$lib/server/db/schema';
 import { ConflictError, ForbiddenError, NotFoundError } from '$lib/server/errors';
 import {
@@ -104,6 +105,7 @@ describe('заведение взаимодействия', () => {
 
 		const created = await createInteraction(
 			ctx,
+			B2B_WORKSPACE_KEY,
 			createInteractionSchema.parse({
 				title: 'Подготовка по информационной безопасности',
 				ownerUserId: TEST_USER_IDS.admin,
@@ -145,6 +147,7 @@ describe('заведение взаимодействия', () => {
 		await expect(
 			createInteraction(
 				ctx,
+				B2C_WORKSPACE_KEY,
 				createInteractionSchema.parse({
 					title: 'Обучение без процесса',
 					ownerUserId: TEST_USER_IDS.admin,
@@ -156,30 +159,66 @@ describe('заведение взаимодействия', () => {
 		);
 	});
 
-	it('выводит группу процесса из вида основной стороны', async () => {
+	it('ставит запись в то пространство, чей ключ передали', async () => {
 		const ctx = admin();
 		await demoProcess();
 
-		const institutionId = await insertOrganization(database.db, { shortName: 'Вуз' });
+		// Основная сторона — юридическое лицо, а место передано пространством
+		// учебных заведений: запись встаёт туда, куда её завели. Вид контрагента
+		// место больше не выбирает — его выбирает человек, открывший форму.
+		const organizationId = await insertOrganization(database.db, {
+			shortName: 'Заказчик',
+			kind: 'legal_entity'
+		});
 		const created = await createInteraction(
 			ctx,
+			B2B_WORKSPACE_KEY,
 			createInteractionSchema.parse({
-				title: 'Работа с вузом',
+				title: 'Работа в выбранном пространстве',
 				ownerUserId: TEST_USER_IDS.admin,
-				parties: [
-					{ organizationId: institutionId, partyRole: 'educational_institution', isPrimary: true }
-				]
+				parties: [{ organizationId, partyRole: 'customer', isPrimary: true }]
 			})
 		);
 
-		const card = await getInteraction(ctx, created.id);
-
-		expect(card.workspaceKey).toBe(B2B_WORKSPACE_KEY);
-		// Та же таблица соответствий, что и у приёма заявки: второго правила
-		// выбора группы в продукте нет.
+		expect((await getInteraction(ctx, created.id)).workspaceKey).toBe(B2B_WORKSPACE_KEY);
+		// Таблица соответствий осталась, но только для приёма заявки с сайта:
+		// там выбирать некому, и вид контрагента — единственное, что известно.
 		expect((await resolveWorkspace(database.db, 'legal_entity')).key).toBe(B2C_WORKSPACE_KEY);
 		await expect(resolveWorkspace(database.db, 'operator')).rejects.toThrow(
 			/не может быть основной стороной/
+		);
+	});
+
+	it('отказывает словами, когда пространству не назначен процесс', async () => {
+		const ctx = admin();
+		await demoProcess();
+
+		// Пространство без процесса — законное состояние: его заводят раньше,
+		// чем выбирают процесс. Ставить запись в нём не на что, и отказ обязан
+		// назвать причину, а не упасть на пустой ссылке.
+		const [maxPosition] = await database.db
+			.select({ value: sql<number>`coalesce(max(${workspaces.position}), 0)::int` })
+			.from(workspaces);
+
+		await database.db
+			.insert(workspaces)
+			.values({ key: 'empty', name: 'Пустое место', position: maxPosition.value + 1 });
+
+		const organizationId = await insertOrganization(database.db, { shortName: 'Вуз' });
+
+		await expect(
+			createInteraction(
+				ctx,
+				'empty',
+				createInteractionSchema.parse({
+					title: 'Работа в месте без процесса',
+					ownerUserId: TEST_USER_IDS.admin,
+					parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
+				})
+			)
+		).rejects.toSatisfy(
+			(error: unknown) =>
+				error instanceof ConflictError && /не назначен процесс/.test(error.message)
 		);
 	});
 });
@@ -215,6 +254,7 @@ describe('область доступа при заведении', () => {
 		// самую обычную запись.
 		const created = await createInteraction(
 			manager,
+			B2B_WORKSPACE_KEY,
 			createInteractionSchema.parse({
 				title: 'Подготовка с заказчиком и оператором',
 				ownerUserId: managerId,
@@ -247,6 +287,7 @@ describe('область доступа при заведении', () => {
 		await expect(
 			createInteraction(
 				manager,
+				B2B_WORKSPACE_KEY,
 				createInteractionSchema.parse({
 					title: 'Чужая работа',
 					ownerUserId: managerId,
@@ -275,6 +316,7 @@ describe('область доступа при заведении', () => {
 
 		const created = await createInteraction(
 			manager,
+			B2B_WORKSPACE_KEY,
 			createInteractionSchema.parse({
 				title: 'Состав дополняется по ходу',
 				ownerUserId: managerId,
@@ -319,6 +361,7 @@ describe('правка плана', () => {
 
 		const created = await createInteraction(
 			ctx,
+			B2B_WORKSPACE_KEY,
 			createInteractionSchema.parse({
 				title: 'Первое название',
 				ownerUserId: TEST_USER_IDS.admin,
@@ -358,6 +401,7 @@ describe('правка плана', () => {
 
 		const created = await createInteraction(
 			ctx,
+			B2B_WORKSPACE_KEY,
 			createInteractionSchema.parse({
 				title: 'Смена ответственного',
 				ownerUserId: TEST_USER_IDS.admin,
@@ -396,6 +440,7 @@ describe('правка плана', () => {
 
 		const created = await createInteraction(
 			ctx,
+			B2B_WORKSPACE_KEY,
 			createInteractionSchema.parse({
 				title: 'Передача работы',
 				ownerUserId: TEST_USER_IDS.admin,
@@ -478,6 +523,7 @@ describe('список и область доступа', () => {
 		] as const) {
 			await createInteraction(
 				ctx,
+				B2B_WORKSPACE_KEY,
 				createInteractionSchema.parse({
 					title,
 					ownerUserId: TEST_USER_IDS.admin,
@@ -518,6 +564,7 @@ describe('список и область доступа', () => {
 		for (const title of ['Первое', 'Второе', 'Третье', 'Четвёртое', 'Пятое', 'Шестое']) {
 			await createInteraction(
 				ctx,
+				B2B_WORKSPACE_KEY,
 				createInteractionSchema.parse({
 					title,
 					ownerUserId: TEST_USER_IDS.admin,
@@ -563,6 +610,7 @@ describe('список и область доступа', () => {
 
 		const visible = await createInteraction(
 			ctx,
+			B2B_WORKSPACE_KEY,
 			createInteractionSchema.parse({
 				title: 'Своё',
 				ownerUserId: TEST_USER_IDS.admin,
@@ -572,6 +620,7 @@ describe('список и область доступа', () => {
 
 		const hidden = await createInteraction(
 			ctx,
+			B2B_WORKSPACE_KEY,
 			createInteractionSchema.parse({
 				title: 'Чужое',
 				ownerUserId: TEST_USER_IDS.admin,
@@ -598,6 +647,7 @@ describe('список и область доступа', () => {
 
 		const created = await createInteraction(
 			ctx,
+			B2B_WORKSPACE_KEY,
 			createInteractionSchema.parse({
 				title: 'Что могу сейчас',
 				ownerUserId: TEST_USER_IDS.admin,
@@ -640,6 +690,7 @@ describe('закрытие по номеру редакции', () => {
 
 		const created = await createInteraction(
 			ctx,
+			B2B_WORKSPACE_KEY,
 			createInteractionSchema.parse({
 				title,
 				ownerUserId: TEST_USER_IDS.admin,
@@ -734,6 +785,7 @@ describe('история правок: имена вместо идентифи�
 
 		const created = await createInteraction(
 			ctx,
+			B2B_WORKSPACE_KEY,
 			createInteractionSchema.parse({
 				title: 'История с именами',
 				ownerUserId: TEST_USER_IDS.admin,
@@ -785,6 +837,7 @@ describe('история правок: имена вместо идентифи�
 
 		const created = await createInteraction(
 			ctx,
+			B2B_WORKSPACE_KEY,
 			createInteractionSchema.parse({
 				title: 'История с удалённым продуктом',
 				ownerUserId: TEST_USER_IDS.admin,

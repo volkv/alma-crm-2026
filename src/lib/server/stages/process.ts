@@ -1075,19 +1075,6 @@ export async function listWorkspaces(ctx: ActorContext): Promise<WorkspaceSummar
 	return readWorkspaces();
 }
 
-/**
- * Те же пространства, но для того, кто заводит взаимодействие, а не настраивает
- * процесс. Форма заведения показывает ими, что произойдёт после сохранения, и
- * говорит заранее, если в пространстве процесса ещё нет; права настраивать
- * процесс у КАМа при этом нет, и требовать его здесь значило бы закрыть форму
- * от того, кто ею и пользуется.
- */
-export async function listWorkspacesForWork(ctx: ActorContext): Promise<WorkspaceSummary[]> {
-	requirePermission(ctx, 'interactions.write');
-
-	return readWorkspaces();
-}
-
 async function readWorkspaces(): Promise<WorkspaceSummary[]> {
 	const db = getDb();
 

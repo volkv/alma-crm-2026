@@ -376,20 +376,29 @@ interactions.owner_user_id = any(<userIds>)
 
 ### Взаимодействия
 
-| Действие                               | Право                   | Роли            | Область | Канал                                                                                                                       |
-| -------------------------------------- | ----------------------- | --------------- | ------- | --------------------------------------------------------------------------------------------------------------------------- |
-| Список, доска, сводка                  | `interactions.read`     | все             | own     | `/w/[workspace]/interactions` load; `GET /api/v1/interactions`                                                              |
-| Карточка                               | `interactions.read`     | все             | own     | `/w/[workspace]/interactions/[id]` load; `GET /api/v1/interactions/[id]`                                                    |
-| Создать                                | `interactions.write`    | все             | own     | `/w/[workspace]/interactions/new` action; область требуется от основной стороны                                             |
-| Переход, возврат, пропуск, пауза, итог | `stages.transition`     | все             | own     | actions `advance`, `return`, `skip`, `pause`, `resume`, `result`; `POST /api/v1/interactions/[id]/transitions`              |
-| **Подтвердить стадию**                 | `stages.confirm`        | все, `service`  | own     | action `confirm`; подтверждение из LMS (`docs/exchange-contract.md`, §6)                                                    |
-| Комментарий                            | `interactions.write`    | все             | own     | action `comment`                                                                                                            |
-| Чек-лист, блокеры                      | `interactions.write`    | все             | own     | actions `checklist`, `raiseBlocker`, `resolveBlocker`                                                                       |
-| Исполнитель стадии                     | `interactions.write`    | все             | own     | action `assign`: `stage_entries.responsible_user_id`, владельца записи не меняет                                            |
-| **Сменить владельца взаимодействия**   | `interactions.reassign` | `lead`, `admin` | own     | action `reassign`; `setResponsible`; `updateInteraction` при смене `ownerUserId`; передача при замене ответственного за вуз |
-| Завершить, отменить                    | `interactions.write`    | все             | own     | actions `complete`, `cancel`                                                                                                |
-| Выбрать договор и его позиции          | `interactions.write`    | все             | own     | action `contract` на вкладке «План»; сам договор ведут в карточке контрагента                                               |
-| Отправить группу в систему обучения    | `exchange.send`         | все             | own     | кнопка карточки (`docs/exchange-contract.md`, §5)                                                                           |
+| Действие                               | Право                   | Роли            | Область | Канал                                                                                                                                        |
+| -------------------------------------- | ----------------------- | --------------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------------- |
+| Список, доска, сводка                  | `interactions.read`     | все             | own     | `/w/[workspace]/interactions` load; `GET /api/v1/interactions`                                                                               |
+| Карточка                               | `interactions.read`     | все             | own     | `/w/[workspace]/interactions/[id]` load; `GET /api/v1/interactions/[id]`                                                                     |
+| Создать                                | `interactions.write`    | все             | own     | `/w/[workspace]/interactions/new` action; пространство — из адреса, область требуется от основной стороны; в пространстве без процесса — 409 |
+| Переход, возврат, пропуск, пауза, итог | `stages.transition`     | все             | own     | actions `advance`, `return`, `skip`, `pause`, `resume`, `result`; `POST /api/v1/interactions/[id]/transitions`                               |
+| **Подтвердить стадию**                 | `stages.confirm`        | все, `service`  | own     | action `confirm`; подтверждение из LMS (`docs/exchange-contract.md`, §6)                                                                     |
+| Комментарий                            | `interactions.write`    | все             | own     | action `comment`                                                                                                                             |
+| Чек-лист, блокеры                      | `interactions.write`    | все             | own     | actions `checklist`, `raiseBlocker`, `resolveBlocker`                                                                                        |
+| Исполнитель стадии                     | `interactions.write`    | все             | own     | action `assign`: `stage_entries.responsible_user_id`, владельца записи не меняет                                                             |
+| **Сменить владельца взаимодействия**   | `interactions.reassign` | `lead`, `admin` | own     | action `reassign`; `setResponsible`; `updateInteraction` при смене `ownerUserId`; передача при замене ответственного за вуз                  |
+| Завершить, отменить                    | `interactions.write`    | все             | own     | actions `complete`, `cancel`                                                                                                                 |
+| Выбрать договор и его позиции          | `interactions.write`    | все             | own     | action `contract` на вкладке «План»; сам договор ведут в карточке контрагента                                                                |
+| Отправить группу в систему обучения    | `exchange.send`         | все             | own     | кнопка карточки (`docs/exchange-contract.md`, §5)                                                                                            |
+
+**Пространство правом не заведует, но заведение в нём ограничивает.** Место записи приходит ключом
+из адреса формы, а не из вида основной стороны, и отдельного права на пространство нет: право одно,
+`interactions.write`, и в первой редакции пространства — раскладка меню и отбор, а не граница
+доступа (`docs/workspaces.md`). Зато в пространстве без назначенного процесса форма отказывает
+всем: загрузчик `/w/[workspace]/interactions/new` отвечает 409 словами, потому что стадии, на
+которую поставить запись, не существует. Это не отказ по правам — его получит и администратор, — и
+живёт он в загрузчике, а не в разметке: кнопку на доске такого пространства не рисуют вовсе, но
+адрес набирают и руками.
 
 Смена владельца отделена от `interactions.write` намеренно: передать чужую работу себе — не то же
 самое, что вести свою, и право на это имеет тот, кто отвечает за распределение нагрузки. **Право

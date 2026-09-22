@@ -6,10 +6,10 @@
  * транзакции. Запись без стадии — это запись, про которую нельзя сказать, что с
  * ней происходит, и появляться она не должна даже на мгновение.
  *
- * Пространство человек не выбирает: оно выводится из вида основной стороны по
- * единственной таблице соответствий. Редакция читается внутри транзакции под
- * разделяемой блокировкой пространства — иначе запись, созданная в миллисекунду
- * публикации, встала бы на стадию редакции, которая уже не действует.
+ * Пространство приходит параметром: запись заводят внутри него, и его ключ
+ * стоит в адресе формы. Редакция читается внутри транзакции под разделяемой
+ * блокировкой процесса — иначе запись, созданная в миллисекунду публикации,
+ * встала бы на стадию редакции, которая уже не действует.
  *
  * Правка плана попадает в предметную историю (`interaction_changes`): сдвиг
  * сроков и смена ответственного — это решения, и они обязаны быть объяснимы
@@ -44,15 +44,14 @@ import {
 	users
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
-import { ConflictError, NotFoundError, ValidationError } from '../errors';
+import { NotFoundError, ValidationError } from '../errors';
 import { requirePermission, scopeFilter } from '../rbac';
 import { startInteractionIn } from '../stages/commands';
 import {
 	lockWorkflow,
-	readWorkspaceRow,
+	readWorkspaceByKey,
 	requireActiveRevision,
-	requireWorkflowForWorkspace,
-	resolveWorkspace
+	requireWorkflowForWorkspace
 } from '../stages/process';
 import { interactionScopeFilter } from './access';
 import { getInteraction } from './read';
@@ -93,29 +92,6 @@ function requirePrimaryParty(parties: PartyInput[]): PartyInput {
 	}
 
 	return primary;
-}
-
-/**
- * Пространство взаимодействия — по виду основной стороны.
- *
- * Выбора из списка нет намеренно: ответ известен из данных, а список был бы
- * лишней возможностью ошибиться. Организация читается в той же транзакции, что
- * и запись, — вид основной стороны и пространство обязаны совпасть.
- */
-async function resolveWorkspaceForParties(tx: Tx, parties: PartyInput[]): Promise<string> {
-	const primary = requirePrimaryParty(parties);
-
-	const [organization] = await tx
-		.select({ kind: organizations.kind })
-		.from(organizations)
-		.where(eq(organizations.id, primary.organizationId))
-		.limit(1);
-
-	if (organization === undefined) {
-		throw new NotFoundError('Организация-участник не найдена');
-	}
-
-	return (await resolveWorkspace(tx, organization.kind)).id;
 }
 
 /**
@@ -353,6 +329,7 @@ async function writeRelations(
 export async function createInteractionIn(
 	ctx: ActorContext,
 	tx: Tx,
+	workspaceKey: string,
 	input: CreateInteractionDraft
 ): Promise<string> {
 	requirePermission(ctx, 'interactions.write');
@@ -363,8 +340,11 @@ export async function createInteractionIn(
 	await assertContractAllowed(tx, definition);
 	await assertOwnerExists(tx, definition.ownerUserId);
 
-	const workspaceId = await resolveWorkspaceForParties(tx, definition.parties);
-	const workspace = await readWorkspaceRow(tx, workspaceId);
+	// Пространство приходит параметром, а не выводится из вида основной стороны:
+	// запись заводят внутри места, и место известно из адреса. Вывод по виду
+	// контрагента остался ровно там, где выбирать некому, — в приёме заявки с
+	// сайта.
+	const workspace = await readWorkspaceByKey(tx, workspaceKey);
 	// Разделяемая блокировка процесса: пока публикация держит исключительную,
 	// создание ждёт, — и наоборот. Так первая стадия берётся из той редакции,
 	// которая действует после обеих операций, а не между ними.
@@ -422,9 +402,12 @@ export async function createInteractionIn(
 
 export async function createInteraction(
 	ctx: ActorContext,
+	workspaceKey: string,
 	input: CreateInteractionDraft
 ): Promise<InteractionView> {
-	const interactionId = await withTransaction(ctx, (tx) => createInteractionIn(ctx, tx, input));
+	const interactionId = await withTransaction(ctx, (tx) =>
+		createInteractionIn(ctx, tx, workspaceKey, input)
+	);
 
 	return getInteraction(ctx, interactionId);
 }
@@ -504,16 +487,12 @@ export async function updateInteraction(
 		await assertContractAllowed(tx, definition);
 		await assertOwnerExists(tx, definition.ownerUserId);
 
-		// Пространство выводится из вида основной стороны и меняется только
-		// вместе с ней; смена пространства у идущего взаимодействия — это начало
-		// другого процесса, и такое взаимодействие закрывают, а не переписывают.
-		const workspaceId = await resolveWorkspaceForParties(tx, definition.parties);
-
-		if (workspaceId !== before.workspaceId) {
-			throw new ConflictError(
-				'Смена основной стороны меняет процесс: закройте это взаимодействие и заведите новое'
-			);
-		}
+		// Пространство правкой не меняется: его нет во входных данных вовсе.
+		// Проверка «смена основной стороны меняет процесс» была нужна, пока место
+		// выводилось из вида контрагента; теперь оно выбрано человеком при
+		// заведении и принадлежит записи, а не её сторонам. Перенести запись в
+		// другое пространство по-прежнему нельзя — такую закрывают и заводят
+		// заново.
 
 		// Передать чужую работу себе — не то же самое, что вести свою: смену
 		// владельца разрешает отдельное право, и проверяется оно во всех

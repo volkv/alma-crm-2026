@@ -2,7 +2,6 @@
 	import { untrack } from 'svelte';
 	import { superForm } from 'sveltekit-superforms';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
-	import { resolve } from '$app/paths';
 	import { goto } from '$app/navigation';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
@@ -53,22 +52,6 @@
 			stickyNavbar: 'header',
 			taintedMessage: 'Введённые данные не сохранены. Уйти со страницы?'
 		}
-	);
-
-	/**
-	 * Что скажет подсказка о процессе. Пространство выбирает не человек, а вид
-	 * организации, отмеченной основной стороной, — поэтому здесь перечислены
-	 * пространства и то, описан ли в них процесс: узнать об этом после
-	 * сохранения означало бы отказ там, где заполнена вся форма.
-	 */
-	const emptyProcess = $derived(data.workspaces.some((workspace) => workspace.stageCount === 0));
-	const processHint = $derived(
-		data.workspaces
-			.map(
-				(workspace) =>
-					`${workspace.name} — ${workspace.stageCount === 0 ? 'процесс ещё не описан' : `${workspace.stageCount} стадий`}`
-			)
-			.join('; ')
 	);
 
 	let institution = $state<LookupOption | null>(null);
@@ -327,12 +310,12 @@
 					errors={$errors.title}
 				/>
 
-				<!-- Процесс не выбирают: он выводится из вида организации, отмеченной
-					основной стороной. Подсказка объясняет это заранее — иначе выбор
-					стороны выглядел бы как выбор одного лишь участника. -->
-				<InlineHint tone={emptyProcess ? 'warning' : 'info'}>
-					Процесс определится по основной стороне: {processHint}. Взаимодействие начнётся с первой
-					стадии действующего процесса своего пространства.
+				<!-- Пространство не выбирают в форме: запись заводят внутри него, и
+					его имя стоит в заголовке. Подсказка называет место словами —
+					иначе «куда именно она встанет» остаётся догадкой. -->
+				<InlineHint tone="info">
+					Запись встанет в пространство «{data.workspace.name}» на первую стадию действующей
+					редакции его процесса.
 				</InlineHint>
 
 				<FieldSelect

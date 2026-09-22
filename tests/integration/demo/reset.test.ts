@@ -10,7 +10,6 @@ import {
 	interactions,
 	organizations,
 	people,
-	workspaces,
 	workflows,
 	processRevisions,
 	processStageKeys,

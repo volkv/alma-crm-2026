@@ -69,6 +69,7 @@ import { withTransaction, type Tx } from '../../db/transaction';
 import { createAffiliation, createOrganization, createPerson } from '../../directory/write';
 import { AppError, ConflictError, ForbiddenError, ValidationError } from '../../errors';
 import { createInteractionIn } from '../../interactions/write';
+import { resolveWorkspace } from '../../stages/process';
 import { hashEmail, hashPhone, phoneColumns } from '../../people/pii';
 import { withPiiTrace } from '../../people/pii-trace';
 import { requirePermission } from '../../rbac';
@@ -1072,11 +1073,14 @@ async function createFromApplication(
 
 	const catalogue = await resolveCatalogue(tx, data);
 
-	// Пространство и действующая редакция его процесса читаются внутри
-	// транзакции, под разделяемой блокировкой пространства: это делает
-	// `createInteractionIn`. Само пространство выводится из вида контрагента —
-	// единственной таблицей соответствий.
-	const interactionId = await createInteractionIn(ctx, tx, {
+	// Пространство приёму называет таблица соответствий «вид контрагента →
+	// пространство»: у заявки с сайта нет человека, который выбрал бы место, а
+	// адресат обязан быть однозначным. Внутри пространства действующая редакция
+	// читается под разделяемой блокировкой процесса — это делает
+	// `createInteractionIn`.
+	const workspace = await resolveWorkspace(tx, data.applicant.kind);
+
+	const interactionId = await createInteractionIn(ctx, tx, workspace.key, {
 		title: interactionTitle(applicantName(data), data.interest),
 		agreementPeriodStart: null,
 		agreementPeriodEnd: null,

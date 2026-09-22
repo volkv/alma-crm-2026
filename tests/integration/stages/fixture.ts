@@ -97,8 +97,11 @@ export function stageId(revision: ProcessRevisionView, key: string): string {
 }
 
 /**
- * Взаимодействие на процессе своей группы. Группу задаёт вид организации,
- * а не параметр: ровно так же её выбирает форма и приём заявки.
+ * Взаимодействие в пространстве, отвечающем виду контрагента: учебное
+ * заведение — в пространстве учебных заведений, юридическое лицо — в
+ * пространстве юридических и физических лиц. Место приходит параметром, и
+ * здесь его подбирает по смыслу сам вызов — так же, как это делает человек,
+ * открывший форму в своём пространстве.
  */
 export async function createInteractionOn(
 	ctx: ActorContext,
@@ -120,6 +123,7 @@ export async function createInteractionOn(
 
 	const interaction = await createInteraction(
 		ctx,
+		kind === 'educational_institution' ? B2B_WORKSPACE_KEY : B2C_WORKSPACE_KEY,
 		createInteractionSchema.parse({
 			title: options.title ?? 'Подготовка специалистов',
 			ownerUserId: options.ownerUserId ?? TEST_USER_IDS.admin,

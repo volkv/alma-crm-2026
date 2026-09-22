@@ -201,6 +201,7 @@ async function seed(title = 'Взаимодействие для API'): Promise<
 
 	const interaction = await createInteraction(
 		ctx,
+		B2B_WORKSPACE_KEY,
 		createInteractionSchema.parse({
 			title,
 			ownerUserId: TEST_USER_IDS.admin,
