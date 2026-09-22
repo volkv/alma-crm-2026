@@ -1,5 +1,6 @@
 import { getConfig } from '$lib/server/config';
 import { getSetting } from '$lib/server/settings';
+import { listWorkspacesForNav } from '$lib/server/stages/process';
 import type { LayoutServerLoad } from './$types';
 
 /**
@@ -15,14 +16,24 @@ import type { LayoutServerLoad } from './$types';
  * зрителю, что данные общие и до какого часа они доживут. Вне демонстрационного
  * режима расписания не существует, и настройку незачем читать на каждой
  * странице.
+ *
+ * Пространства едут здесь же и по той же причине: у каждого своя секция в
+ * панели, панель одинакова на каждой странице, и собирать её в каждом маршруте
+ * значило бы получить четыре разных меню. Неавторизованному не отдаётся ничего:
+ * до входа меню не рисуется вовсе.
  */
 export const load: LayoutServerLoad = async ({ locals }) => {
 	const demoMode = getConfig().DEMO_MODE;
-	const schedule = demoMode ? await getSetting('demo_reset_schedule') : null;
+
+	const [schedule, workspaces] = await Promise.all([
+		demoMode ? getSetting('demo_reset_schedule') : null,
+		locals.user === null ? [] : listWorkspacesForNav()
+	]);
 
 	return {
 		user: locals.user,
 		demoMode,
-		demoResetHour: schedule !== null && schedule.enabled ? schedule.hour : null
+		demoResetHour: schedule !== null && schedule.enabled ? schedule.hour : null,
+		workspaces
 	};
 };

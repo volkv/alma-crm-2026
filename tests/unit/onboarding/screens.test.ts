@@ -12,7 +12,7 @@ import { readdirSync, readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { parseHelpArticle } from '$lib/help/article';
-import { navSections, visibleSections } from '$lib/nav';
+import { navSections, visibleSections, type NavWorkspace } from '$lib/nav';
 import {
 	INTRO_TARGET,
 	isScreenPath,
@@ -32,6 +32,15 @@ import {
 } from '$lib/onboarding/tours';
 import { onboardingScreenKey, onboardingStorageKey } from '$lib/onboarding/storage';
 import { DEFAULT_ROLES } from '$lib/server/rbac/permissions';
+
+/** Пространства стенда: меню собирается из базы, и подсказки — по нему же. */
+const NAV_WORKSPACES: NavWorkspace[] = [
+	{ key: 'b2b', name: 'Учебные заведения', hasWorkflow: true },
+	{ key: 'b2c', name: 'Корпоративное обучение', hasWorkflow: true }
+];
+
+/** Меню в том составе, в каком его видит человек на стенде. */
+const MENU = navSections(NAV_WORKSPACES);
 
 const REPO = fileURLToPath(new URL('../../../', import.meta.url));
 const APP_ROUTES = `${REPO}src/routes/(app)`;
@@ -234,13 +243,13 @@ describe('адрес экрана', () => {
 
 describe('право экрана', () => {
 	it('совпадает с правом пункта меню у корней разделов', () => {
-		const roots = navSections.filter((section) =>
+		const roots = MENU.filter((section) =>
 			TOUR_SCREENS.some((screen) => screen.route === section.href)
 		);
 
 		// Каждый пункт меню обязан найтись экраном: подсказки объясняют ровно то,
 		// что человек видит в меню, и пункт без экрана остался бы без объяснения.
-		expect(roots.length).toBe(navSections.length);
+		expect(roots.length).toBe(MENU.length);
 
 		for (const section of roots) {
 			const screen = TOUR_SCREENS.find((candidate) => candidate.route === section.href);
@@ -319,7 +328,7 @@ describe('полный тур роли', () => {
 				(id) => TOUR_SCREENS.find((screen) => screen.id === id)?.route ?? ''
 			);
 
-			for (const section of visibleSections(navSections, permissions)) {
+			for (const section of visibleSections(MENU, permissions)) {
 				const covered = routes.some(
 					(route) =>
 						route === section.href || (section.href !== '/' && route.startsWith(`${section.href}/`))

@@ -248,7 +248,10 @@ export async function readWorkflowRow(
 
 /** Процесс по ключу. Ключ, а не идентификатор: адрес раздела читают люди. */
 export async function readWorkflowByKey(executor: Executor, key: string): Promise<WorkflowRow> {
-	const [row] = await executor.select(workflowColumns).from(workflows).where(eq(workflows.key, key));
+	const [row] = await executor
+		.select(workflowColumns)
+		.from(workflows)
+		.where(eq(workflows.key, key));
 
 	if (row === undefined) {
 		throw new NotFoundError('Процесс не найден');
@@ -1142,6 +1145,46 @@ async function readWorkspaces(): Promise<WorkspaceSummary[]> {
 	}));
 }
 
+/** Пространство в том объёме, в каком его показывает боковая панель. */
+export type WorkspaceNavItem = {
+	id: string;
+	key: string;
+	name: string;
+	position: number;
+	/** Процесс назначен: без него внутри пусто, и доска объясняет почему. */
+	hasWorkflow: boolean;
+};
+
+/**
+ * Пространства для меню. Отдельный запрос, а не `listWorkspaces`: тот считает
+ * стадии, взаимодействия и черновики, а панель рисуется на каждой странице, и
+ * платить тремя выборками за четыре слова в заголовке незачем.
+ *
+ * Без проверки права: меню — это раскладка, а не доступ. Какие секции покажет
+ * панель, решает право каждой из них (`visibleSections`), а загрузчик раздела
+ * проверяет его ещё раз — адрес набирают руками.
+ */
+export async function listWorkspacesForNav(): Promise<WorkspaceNavItem[]> {
+	const rows = await getDb()
+		.select({
+			id: workspaces.id,
+			key: workspaces.key,
+			name: workspaces.name,
+			position: workspaces.position,
+			workflowId: workspaces.workflowId
+		})
+		.from(workspaces)
+		.orderBy(asc(workspaces.position));
+
+	return rows.map((row) => ({
+		id: row.id,
+		key: row.key,
+		name: row.name,
+		position: row.position,
+		hasWorkflow: row.workflowId !== null
+	}));
+}
+
 /** Пространство по ключу. Ключ, а не идентификатор: адрес раздела читают люди. */
 export async function readWorkspaceByKey(executor: Executor, key: string): Promise<WorkspaceRow> {
 	const [row] = await executor
@@ -1164,9 +1207,7 @@ export async function readDraft(
 	const [row] = await executor
 		.select({ id: processRevisions.id })
 		.from(processRevisions)
-		.where(
-			and(eq(processRevisions.workflowId, workflowId), isNull(processRevisions.publishedAt))
-		)
+		.where(and(eq(processRevisions.workflowId, workflowId), isNull(processRevisions.publishedAt)))
 		.limit(1);
 
 	return row === undefined ? null : readRevision(executor, row.id);
@@ -1194,9 +1235,7 @@ export async function getWorkspace(
 			.from(processGroupCounterpartyKinds)
 			.where(eq(processGroupCounterpartyKinds.groupId, workspace.id))
 			.orderBy(asc(processGroupCounterpartyKinds.kind)),
-		workflow === null
-			? new Map<string, number>()
-			: countOpenByStageKey(db, workflow.id),
+		workflow === null ? new Map<string, number>() : countOpenByStageKey(db, workflow.id),
 		workflow === null ? new Set<string>() : readArchivedKeys(db, workflow.id)
 	]);
 
@@ -1946,9 +1985,7 @@ export async function syncStageKeys(
 		await tx
 			.update(processStageKeys)
 			.set({ archivedAt: null })
-			.where(
-				and(eq(processStageKeys.workflowId, workflowId), inArray(processStageKeys.key, keys))
-			);
+			.where(and(eq(processStageKeys.workflowId, workflowId), inArray(processStageKeys.key, keys)));
 	}
 
 	const archived = await tx

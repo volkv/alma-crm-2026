@@ -6,7 +6,7 @@
 	import PanelLeftOpenIcon from '@lucide/svelte/icons/panel-left-open';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Toaster } from '$lib/components/ui/sonner/index.js';
-	import { visibleSections } from '$lib/nav';
+	import { visibleSections, type NavWorkspace } from '$lib/nav';
 	import { theme } from '$lib/theme.svelte';
 	import type { SessionUser } from '$lib/server/auth/types';
 	import AppDock from './app-dock.svelte';
@@ -31,12 +31,18 @@
 	 */
 	let {
 		user,
+		workspaces = [],
 		demoMode = false,
 		demoResetHour = null,
 		children
 	}: {
 		/** `null` until the session lands; the shell then shows no account menu. */
 		user: SessionUser | null;
+		/**
+		 * Пространства из базы: каждое даёт свою секцию в панели. Пустой список —
+		 * до входа: меню тогда не рисуется вовсе.
+		 */
+		workspaces?: readonly NavWorkspace[];
 		/** Public demo: say so on every page, the data behind it is invented. */
 		demoMode?: boolean;
 		/**
@@ -57,7 +63,9 @@
 	);
 	// Раздел, на который у человека нет права, в меню не показывается: ссылка,
 	// отвечающая 403, — это не навигация.
-	const links = $derived(user === null ? [] : visibleSections(navLinks, user.permissions));
+	const links = $derived(
+		user === null ? [] : visibleSections(navLinks(workspaces), user.permissions)
+	);
 
 	function onWindowKeydown(event: KeyboardEvent) {
 		if (event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)) {

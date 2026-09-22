@@ -22,27 +22,47 @@ import WorkflowIcon from '@lucide/svelte/icons/workflow';
 import type { PermissionKey } from '$lib/server/rbac/permissions';
 
 /**
- * The groups the sidebar is split into, in the order they are shown. A heading
- * is not a link: it only says what kind of thing the sections under it are, so
- * the eye lands on the daily work first, and the catalogues and the machinery
- * stay out of its way.
+ * A heading of the sidebar. A heading is not a link: it only says what kind of
+ * thing the sections under it are, so the eye lands on the daily work first,
+ * and the catalogues and the machinery stay out of its way.
+ *
+ * Заголовок едет вместе с секцией, а не лежит отдельным списком: секции
+ * пространств приходят из базы, и отдельный список заголовков пришлось бы
+ * собирать вторым проходом и держать с ними в согласии.
  */
-export const navGroups = [
-	{ id: 'main', label: 'Главное' },
-	{ id: 'directory', label: 'Справочники' },
-	{ id: 'settings', label: 'Настройки' },
-	{ id: 'other', label: 'Остальное' }
-] as const;
+export type NavGroup = {
+	id: string;
+	label: string;
+};
 
-export type NavGroupId = (typeof navGroups)[number]['id'];
+/** Постоянные заголовки: они есть на любой установке и в любом составе прав. */
+const MAIN: NavGroup = { id: 'main', label: 'Главное' };
+const DIRECTORY: NavGroup = { id: 'directory', label: 'Справочники' };
+const SETTINGS: NavGroup = { id: 'settings', label: 'Настройки' };
+const OTHER: NavGroup = { id: 'other', label: 'Остальное' };
+
+/**
+ * Пространство в том объёме, в каком его знает панель: заголовок секции и
+ * ключ, которым она отличается от соседней.
+ */
+export type NavWorkspace = {
+	key: string;
+	name: string;
+	/**
+	 * Процесс назначен. Пространство без процесса секцию всё равно получает:
+	 * скрывать его — значит прятать то, что человек только что создал, и
+	 * оставлять его гадать, завелось ли. Что внутри пусто, объясняет доска.
+	 */
+	hasWorkflow: boolean;
+};
 
 export type NavSection = {
 	/** Route the section points at; also the prefix that marks it as active. */
 	href: string;
 	label: string;
 	icon: LucideIcon;
-	/** The heading the section is listed under. */
-	group: NavGroupId;
+	/** The heading the section is listed under, with its own label. */
+	group: NavGroup;
 	/**
 	 * The permission the section is hidden without. `null` means every signed-in
 	 * user sees it: «Настройки» has no permission of its own, and which pages it
@@ -52,11 +72,11 @@ export type NavSection = {
 };
 
 /**
- * The main navigation, in the order the sidebar shows it: sorted by group in
- * the order of `navGroups`, and inside a group by hand. This is the single list
- * every navigation component reads, so a new section is added once.
+ * Разделы, которые есть всегда и не принадлежат ни одному направлению: сводка,
+ * общие справочники, настройки и хроника. Порядок списка — это порядок меню:
+ * заголовок встаёт там, где встретилась первая его секция.
  */
-export const navSections: readonly NavSection[] = [
+const STATIC_SECTIONS: readonly NavSection[] = [
 	// «Главная» — то, с чем менеджер работает каждый день.
 	{
 		// Сводка отвечает на вопрос «с чего начать день», и возвращаются к ней
@@ -66,15 +86,8 @@ export const navSections: readonly NavSection[] = [
 		href: '/',
 		label: 'Сводка',
 		icon: LayoutDashboardIcon,
-		group: 'main',
+		group: MAIN,
 		permission: null
-	},
-	{
-		href: '/interactions',
-		label: 'Взаимодействия',
-		icon: HandshakeIcon,
-		group: 'main',
-		permission: 'interactions.read'
 	},
 	{
 		// Отчёт показывает ровно то, что человек и так видит в списке
@@ -84,7 +97,7 @@ export const navSections: readonly NavSection[] = [
 		href: '/reports',
 		label: 'Отчёты',
 		icon: BarChart3Icon,
-		group: 'main',
+		group: MAIN,
 		permission: 'interactions.read'
 	},
 	{
@@ -94,7 +107,7 @@ export const navSections: readonly NavSection[] = [
 		href: '/documents',
 		label: 'Документы',
 		icon: FileTextIcon,
-		group: 'main',
+		group: MAIN,
 		permission: 'documents.read'
 	},
 
@@ -103,28 +116,28 @@ export const navSections: readonly NavSection[] = [
 		href: '/organizations',
 		label: 'Организации',
 		icon: BuildingIcon,
-		group: 'directory',
+		group: DIRECTORY,
 		permission: 'organizations.read'
 	},
 	{
 		href: '/people',
 		label: 'Контакты',
 		icon: UsersIcon,
-		group: 'directory',
+		group: DIRECTORY,
 		permission: 'people.read'
 	},
 	{
 		href: '/programs',
 		label: 'Программы',
 		icon: GraduationCapIcon,
-		group: 'directory',
+		group: DIRECTORY,
 		permission: 'programs.read'
 	},
 	{
 		href: '/products',
 		label: 'Продукты',
 		icon: PackageIcon,
-		group: 'directory',
+		group: DIRECTORY,
 		permission: 'products.read'
 	},
 	{
@@ -134,7 +147,7 @@ export const navSections: readonly NavSection[] = [
 		href: '/directions',
 		label: 'Направления',
 		icon: CompassIcon,
-		group: 'directory',
+		group: DIRECTORY,
 		permission: 'directions.read'
 	},
 	{
@@ -143,7 +156,7 @@ export const navSections: readonly NavSection[] = [
 		href: '/data',
 		label: 'Данные об обучении',
 		icon: DatabaseIcon,
-		group: 'directory',
+		group: DIRECTORY,
 		permission: 'stats.read'
 	},
 
@@ -158,42 +171,42 @@ export const navSections: readonly NavSection[] = [
 		href: '/settings/general',
 		label: 'Общие',
 		icon: SlidersHorizontalIcon,
-		group: 'settings',
+		group: SETTINGS,
 		permission: 'settings.write'
 	},
 	{
 		href: '/settings/profile',
 		label: 'Профиль',
 		icon: CircleUserIcon,
-		group: 'settings',
+		group: SETTINGS,
 		permission: null
 	},
 	{
 		href: '/settings/users',
 		label: 'Пользователи',
 		icon: UserCogIcon,
-		group: 'settings',
+		group: SETTINGS,
 		permission: 'users.manage'
 	},
 	{
 		href: '/settings/api-keys',
 		label: 'Ключи доступа',
 		icon: KeyRoundIcon,
-		group: 'settings',
+		group: SETTINGS,
 		permission: 'api_keys.manage'
 	},
 	{
 		href: '/settings/process',
 		label: 'Процесс',
 		icon: WorkflowIcon,
-		group: 'settings',
+		group: SETTINGS,
 		permission: 'stages.configure'
 	},
 	{
 		href: '/settings/integrations',
 		label: 'Интеграции',
 		icon: WebhookIcon,
-		group: 'settings',
+		group: SETTINGS,
 		permission: 'integrations.manage'
 	},
 	{
@@ -203,7 +216,7 @@ export const navSections: readonly NavSection[] = [
 		href: '/notifications',
 		label: 'Уведомления',
 		icon: BellIcon,
-		group: 'settings',
+		group: SETTINGS,
 		permission: 'notifications.read'
 	},
 	{
@@ -213,7 +226,7 @@ export const navSections: readonly NavSection[] = [
 		href: '/exchange',
 		label: 'Внешние системы',
 		icon: PlugZapIcon,
-		group: 'settings',
+		group: SETTINGS,
 		permission: 'integrations.manage'
 	},
 
@@ -223,7 +236,7 @@ export const navSections: readonly NavSection[] = [
 		href: '/audit',
 		label: 'Журнал',
 		icon: ScrollTextIcon,
-		group: 'other',
+		group: OTHER,
 		permission: 'audit.read'
 	},
 	{
@@ -232,10 +245,44 @@ export const navSections: readonly NavSection[] = [
 		href: '/help',
 		label: 'Справка',
 		icon: BookOpenIcon,
-		group: 'other',
+		group: OTHER,
 		permission: null
 	}
 ];
+
+/**
+ * Секция пространства: одна на направление, и пока в ней один пункт.
+ *
+ * Заголовок — имя пространства, а не слово «Пространство»: человек ходит в
+ * «Учебные заведения», а не в «пространство номер один». Право то же, что у
+ * списка взаимодействий: внутри секции пока только он.
+ */
+function workspaceSection(workspace: NavWorkspace): NavSection {
+	return {
+		href: '/interactions',
+		label: 'Взаимодействия',
+		icon: HandshakeIcon,
+		group: { id: `workspace:${workspace.key}`, label: workspace.name },
+		permission: 'interactions.read'
+	};
+}
+
+/**
+ * Меню целиком: постоянные разделы и по секции на пространство.
+ *
+ * Пространства приходят из базы и встают между «Главным» и «Справочниками» —
+ * сразу за тем, с чего начинают день, и до общего каталога: направление это
+ * ежедневная работа, а справочник — то, куда заглядывают по поводу.
+ *
+ * Функция, а не готовый список: пространства заводит заказчик, и их состав
+ * известен только во время запроса.
+ */
+export function navSections(workspaces: readonly NavWorkspace[]): NavSection[] {
+	const main = STATIC_SECTIONS.filter((section) => section.group === MAIN);
+	const rest = STATIC_SECTIONS.filter((section) => section.group !== MAIN);
+
+	return [...main, ...workspaces.map(workspaceSection), ...rest];
+}
 
 /**
  * The sections these permissions open. A section the user has no right to is
@@ -256,23 +303,33 @@ export function visibleSections<TSection extends { permission: PermissionKey | n
 }
 
 /** A heading of the sidebar together with the sections shown under it. */
-export type NavGroup<TSection> = {
-	id: NavGroupId;
-	label: string;
+export type NavGroupWithSections<TSection> = NavGroup & {
 	sections: TSection[];
 };
 
 /**
- * The sections arranged under their headings, in the order of `navGroups`. A
- * group none of the given sections belongs to is left out: a heading over
- * nothing would only announce that something is hidden from this account.
+ * The sections arranged under their headings, in the order they are given: a
+ * heading appears where its first section does. A heading over nothing does not
+ * appear at all — it would only announce that something is hidden from this
+ * account.
  */
-export function groupedSections<TSection extends { group: NavGroupId }>(
+export function groupedSections<TSection extends { group: NavGroup }>(
 	sections: readonly TSection[]
-): NavGroup<TSection>[] {
-	return navGroups.flatMap((group) => {
-		const own = sections.filter((section) => section.group === group.id);
+): NavGroupWithSections<TSection>[] {
+	const groups: NavGroupWithSections<TSection>[] = [];
+	const byId = new Map<string, NavGroupWithSections<TSection>>();
 
-		return own.length === 0 ? [] : [{ id: group.id, label: group.label, sections: own }];
-	});
+	for (const section of sections) {
+		let group = byId.get(section.group.id);
+
+		if (group === undefined) {
+			group = { id: section.group.id, label: section.group.label, sections: [] };
+			byId.set(group.id, group);
+			groups.push(group);
+		}
+
+		group.sections.push(section);
+	}
+
+	return groups;
 }

@@ -15,7 +15,12 @@
 	const tour = setOnboardingTour(createOnboardingTour(() => data.user));
 </script>
 
-<AppShell user={data.user} demoMode={data.demoMode} demoResetHour={data.demoResetHour}>
+<AppShell
+	user={data.user}
+	workspaces={data.workspaces}
+	demoMode={data.demoMode}
+	demoResetHour={data.demoResetHour}
+>
 	{@render children()}
 </AppShell>
 
