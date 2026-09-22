@@ -27,7 +27,10 @@
 	<title>Справка целиком — LCT CRM</title>
 </svelte:head>
 
-<div class="mx-auto flex max-w-3xl flex-col gap-8 p-4 sm:px-9 sm:py-6" data-help-print>
+<!-- `w-full` обязателен: с одними полями по краям колонка ужимается по
+	содержимому, и блок кода — он не переносится — растягивал её шире экрана
+	телефона вместе со всей страницей. Прокрутка у блока своя. -->
+<div class="mx-auto flex w-full max-w-3xl flex-col gap-8 p-4 sm:px-9 sm:py-6" data-help-print>
 	<div class="flex flex-col gap-3">
 		<div class="no-print">
 			<Button variant="outline" href={resolve('/(app)/help')}>

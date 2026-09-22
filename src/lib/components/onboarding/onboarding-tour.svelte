@@ -98,6 +98,11 @@
 		return null;
 	}
 
+	/** Просил ли человек систему не двигать: настройка устройства, а не наша. */
+	function reducedMotion(): boolean {
+		return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+	}
+
 	function sameBox(left: Box | null, right: Box | null): boolean {
 		if (left === null || right === null) {
 			return left === right;
@@ -260,8 +265,12 @@
 
 		// Кадром позже: после перехода между экранами разметка новой страницы к
 		// этому моменту ещё не смонтирована, и искать в ней нечего.
+		//
+		// Плавность — только тем, кто её не просил отключать: карточка ходит за
+		// элементом покадрово, и пока страница едет, она едет вместе с ней. Кому
+		// движение мешает, тому шаг встаёт сразу.
 		const handle = requestAnimationFrame(() => {
-			element()?.scrollIntoView({ block: 'center', behavior: 'smooth' });
+			element()?.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });
 			card?.focus();
 		});
 

@@ -781,7 +781,7 @@ test('выбранное представление раздел помнит, �
 	await waitForHydration(page);
 	await expect(page.locator('[data-slot="data-table"]')).toBeVisible();
 
-	await page.getByRole('button', { name: 'Доска' }).click();
+	await page.getByRole('link', { name: 'Доска' }).click();
 	await expect(page).toHaveURL(/[?&]view=board/);
 
 	// Ушли из раздела и вернулись адресом без параметра: «как обычно» — это то,

@@ -216,9 +216,7 @@ test('значок «?» открывает подсказки по текуще
 	await expect(tour).toBeHidden();
 });
 
-test('полный тур возвращается из меню учётной записи, оглавление ведёт к экрану', async ({
-	page
-}) => {
+test('полный тур возвращается из меню разделов, оглавление ведёт к экрану', async ({ page }) => {
 	await page.goto('/');
 	await waitForHydration(page);
 
@@ -226,14 +224,9 @@ test('полный тур возвращается из меню учётной 
 
 	await expect(tour).toBeHidden();
 
-	const restart = page.getByRole('menuitem', { name: 'Полный тур по системе' });
-
-	await expect(async () => {
-		await page.getByRole('button', { name: 'Менеджер Демо' }).click();
-		await expect(restart).toBeVisible({ timeout: 2000 });
-	}).toPass({ timeout: 20_000 });
-
-	await restart.click();
+	// Зов тура стоит в самом меню разделов, под списком «Главное»: карточка
+	// учётной записи внизу отвечает только за то, кто вошёл, и за выход.
+	await page.getByRole('button', { name: 'Тур по системе' }).click();
 
 	// Тур начинается с приветствия, а не с того экрана, где его позвали.
 	await expect(tour).toBeVisible();
@@ -246,7 +239,9 @@ test('полный тур возвращается из меню учётной 
 	await page.getByRole('menuitem', { name: 'Отчёты', exact: true }).click();
 
 	await expect(tour.getByRole('heading', { level: 2 })).toHaveText('Отчёты: срез и движение');
-	await expect(page).toHaveURL(/\/reports$/);
+	// Карточка меняется сразу, а экран под ней открывает переход: на занятой
+	// машине страница отчётов отвечает дольше пяти секунд по умолчанию.
+	await expect(page).toHaveURL(/\/reports$/, { timeout: 15_000 });
 
 	await page.keyboard.press('Escape');
 	await expect(tour).toBeHidden();
