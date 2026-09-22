@@ -446,15 +446,16 @@ describe('демонстрационная сессия', () => {
 		const user = await loadSessionUser(TEST_USER_IDS.admin);
 
 		expect(user?.isDemo).toBe(true);
-		// Заведённая учётная запись и выпущенный ключ живут дольше сессии, адрес
-		// подключения уводит данные на чужой узел, обезличивание необратимо.
-		expect(user?.permissions.has('users.manage')).toBe(false);
-		expect(user?.permissions.has('api_keys.manage')).toBe(false);
+		// Адрес подключения — единственное, чего не отменяет суточный сброс
+		// стенда: по нему сервер пойдёт запросами на указанный узел.
 		expect(user?.permissions.has('integrations.manage_endpoints')).toBe(false);
-		expect(user?.permissions.has('people.anonymize')).toBe(false);
 
-		// А всё, что на стенде показывают, остаётся: правка процесса, журнал
-		// обмена, настройки и выгрузка журнала.
+		// Всё остальное показывают целиком, потому что сброс это возвращает:
+		// учётные записи, ключи, обезличивание, правка процесса, журнал обмена,
+		// настройки и выгрузка журнала.
+		expect(user?.permissions.has('users.manage')).toBe(true);
+		expect(user?.permissions.has('api_keys.manage')).toBe(true);
+		expect(user?.permissions.has('people.anonymize')).toBe(true);
 		expect(user?.permissions.has('stages.configure')).toBe(true);
 		expect(user?.permissions.has('integrations.manage')).toBe(true);
 		expect(user?.permissions.has('settings.write')).toBe(true);

@@ -527,13 +527,14 @@ describe('граница демонстрационной сессии', () => {
 		expect(data.events.items[0].userAgent).toBe('Chrome');
 
 		// Выгрузка демонстрации остаётся: она обязана огрублять адрес и клиента
-		// ровно так же, как экран, — и огрубляет. А выбор действующего лица
-		// пуст: список пользователей демонстрации не принадлежит.
+		// ровно так же, как экран, — и огрубляет. Выбор действующего лица тоже:
+		// он строится по списку пользователей, а раздел пользователей стенду
+		// открыт.
 		expect(data.canExport).toBe(true);
-		expect(data.actors).toEqual([]);
+		expect(data.actors.length).toBeGreaterThan(0);
 	});
 
-	it('оставляет демонстрации учёт согласий, но не уничтожение данных', async () => {
+	it('оставляет демонстрации и учёт согласий, и обезличивание', async () => {
 		const user = await demoSessionUser('admin');
 
 		// Согласия и сроки хранения — это и есть то, что на стенде показывают про
@@ -541,14 +542,23 @@ describe('граница демонстрационной сессии', () => {
 		// отзывают.
 		expect(user.permissions.has('people.manage_consents')).toBe(true);
 
-		// Обезличивание не переигрывается: имя и контакты стираются насовсем, а
-		// сид их не возвращает — посетитель стенда стёр бы справочник для всех,
-		// кто придёт после него.
-		expect(user.permissions.has('people.anonymize')).toBe(false);
+		// Обезличивание внутри показа необратимо, но справочник людей заливается
+		// сидом заново, то есть стёртое посетителем возвращается ближайшим
+		// сбросом стенда. Показывать 152-ФЗ без второй его половины незачем.
+		expect(user.permissions.has('people.anonymize')).toBe(true);
+	});
+
+	it('не отдаёт демонстрации адреса интеграций ни при какой роли', async () => {
+		const user = await demoSessionUser('admin');
+
+		// Единственное, что остаётся вычтенным: в поле адреса посетитель пишет
+		// чужой узел, и сервер стенда начинает ходить туда запросами от своего
+		// имени — до ближайшего сброса и безотносительно демонстрации.
+		expect(user.permissions.has('integrations.manage_endpoints')).toBe(false);
 
 		// Вычитание — у сессии, а не у роли: сама роль права не лишается.
 		const role = await loadRolePermissions('admin');
-		expect(role.has('people.anonymize')).toBe(true);
+		expect(role.has('integrations.manage_endpoints')).toBe(true);
 	});
 
 	it('отдаёт демонстрации выгрузку журнала с тем же огрублением, что и экран', async () => {
@@ -579,15 +589,18 @@ describe('граница демонстрационной сессии', () => {
 		expect(exported).toEqual([{ outcome: 'success', actorUserId: user.id }]);
 	});
 
-	it('не пускает демонстрацию в раздел пользователей', async () => {
+	it('пускает демонстрацию в раздел пользователей', async () => {
 		const user = await demoSessionUser('admin');
 
-		await expect(loadUsers(pageEvent({ path: '/settings/users', user }))).rejects.toMatchObject({
-			status: 403
-		});
+		// Раздел открыт: закрытым он читается как раздел, которого в продукте
+		// нет, — а он есть, и на стенде его и показывают.
+		const data = (await loadUsers(pageEvent({ path: '/settings/users', user }))) as UsersPageData;
 
-		// Отказ не в разметке, а в правах: форма, отправленная мимо страницы,
-		// получает то же самое — и не претензию к полям, а 403.
+		expect(data.users.items.map((row) => row.email)).toContain('manager@example.org');
+
+		// Выключение проходит, и переживает оно показ только до ближайшего
+		// сброса: эталонные записи сид включает обратно
+		// (`restoreSeededAccounts` в `scripts/seed/users.ts`).
 		const result = await deactivateUserAction(
 			pageEvent({
 				path: '/settings/users',
@@ -596,34 +609,33 @@ describe('граница демонстрационной сессии', () => {
 			})
 		);
 
-		expect(result).toMatchObject({
-			status: 403,
-			data: { message: 'Недостаточно прав: требуется «users.manage»' }
+		expect(result).toEqual({
+			message: 'Учётная запись выключена, её сессии завершены',
+			issues: []
 		});
 	});
 
-	it('не даёт демонстрации выпустить ключ доступа', async () => {
+	it('даёт демонстрации выпустить ключ доступа: его уносит сброс', async () => {
 		const user = await demoSessionUser('admin');
 
-		await expect(loadKeys(pageEvent({ path: '/settings/api-keys', user }))).rejects.toMatchObject({
-			status: 403
-		});
+		await expect(loadKeys(pageEvent({ path: '/settings/api-keys', user }))).resolves.toBeTruthy();
 
 		const result = await createKeyAction(
 			pageEvent({
 				path: '/settings/api-keys',
 				user,
-				form: { name: 'Ключ мимо стенда', ownerUserId: user.id }
+				form: { name: 'Ключ показа', ownerUserId: user.id }
 			})
 		);
 
-		expect(result).toMatchObject({
-			status: 403,
-			data: { message: 'Недостаточно прав: требуется «api_keys.manage»' }
-		});
+		const issued = formOf(result).message as { name: string; key: string };
 
-		// Ключ пережил бы демонстрацию и пускал бы в API после неё — его нет.
-		expect(await listApiKeys(testActor())).toEqual([]);
+		expect(issued.name).toBe('Ключ показа');
+
+		// Сам по себе такой ключ пускал бы в API стенда и после ухода
+		// посетителя: он не привязан ни к сессии, ни к его записи. Поэтому
+		// `api_keys` стоит в списке очистки сброса (`$lib/server/demo/reset.ts`).
+		expect(await listApiKeys(testActor())).toHaveLength(1);
 	});
 
 	it('оставляет демонстрации настройки стенда: их на нём и показывают', async () => {
