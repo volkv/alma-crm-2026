@@ -816,8 +816,79 @@ export type WorkspaceSummary = {
 	stageCount: number;
 	/** Сколько незавершённых взаимодействий идут в этом пространстве сейчас. */
 	activeInteractions: number;
+	/**
+	 * Сколько взаимодействий заведено в нём всего, включая закрытые. По этому
+	 * числу решается, можно ли сменить процесс: закрытая запись помнит свои
+	 * стадии не хуже открытой, и ключи чужого процесса ей так же ничего не
+	 * говорят.
+	 */
+	interactions: number;
 	hasDraft: boolean;
 };
+
+/** Процесс в списке: то, что видно при назначении его пространству. */
+export type WorkflowSummary = {
+	id: string;
+	key: string;
+	name: string;
+	description: string | null;
+	/** Сколько стадий в действующей редакции; ноль — стадии ещё не заведены. */
+	stageCount: number;
+	/** Скольким пространствам процесс назначен. */
+	workspaces: number;
+};
+
+/**
+ * Ключ пространства: он стоит в адресе, и его читают люди.
+ *
+ * Строчные латинские буквы, цифры и дефис — потому что ключ едет сегментом
+ * пути, попадает в письма и в закладки, и кириллица там превращается в
+ * проценты. Длина — под заголовок секции меню, а не под предложение.
+ */
+export const workspaceKeySchema = z
+	.string({ error: 'Укажите ключ пространства' })
+	.trim()
+	.min(2, { error: 'Ключ пространства — не короче двух символов' })
+	.max(40, { error: 'Ключ пространства — не длиннее 40 символов' })
+	.regex(/^[a-z0-9]+(-[a-z0-9]+)*$/, {
+		error: 'Ключ пространства: строчные латинские буквы, цифры и дефис между ними'
+	});
+
+/** Заведение пространства. Процесс можно назначить сразу, а можно позже. */
+export const createWorkspaceSchema = z.object({
+	key: workspaceKeySchema,
+	name: requiredText(200, 'Укажите название пространства'),
+	description: optionalText(500),
+	/** Ключ процесса; `null` — пространство заводится без него. */
+	workflowKey: optionalText(40)
+});
+
+export type CreateWorkspaceInput = z.output<typeof createWorkspaceSchema>;
+
+/** Переименование: ключ не меняется — он стоит в разосланных ссылках. */
+export const renameWorkspaceSchema = z.object({
+	key: workspaceKeySchema,
+	name: requiredText(200, 'Укажите название пространства'),
+	description: optionalText(500)
+});
+
+export type RenameWorkspaceInput = z.output<typeof renameWorkspaceSchema>;
+
+/** Назначение процесса пространству. */
+export const assignWorkspaceWorkflowSchema = z.object({
+	key: workspaceKeySchema,
+	/** Ключ процесса; `null` — снять назначение. */
+	workflowKey: optionalText(40)
+});
+
+export type AssignWorkspaceWorkflowInput = z.output<typeof assignWorkspaceWorkflowSchema>;
+
+/** Новый порядок пространств: ключи целиком, в том порядке, в каком их видно. */
+export const reorderWorkspacesSchema = z.object({
+	keys: z.array(workspaceKeySchema).min(1, { error: 'Порядок задаётся списком ключей' })
+});
+
+export type ReorderWorkspacesInput = z.output<typeof reorderWorkspacesSchema>;
 
 /** Процесс пространства целиком: что действует, что в черновике и что мешает. */
 export type WorkspaceDetail = {

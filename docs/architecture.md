@@ -84,7 +84,8 @@ input)`, не смотрит в `locals`, не читает заголовки �
 1. `src/routes/+layout.server.ts` отдаёт `requestId` — его цитирует страница ошибки.
 2. `src/routes/(app)/+layout.server.ts` отдаёт `locals.user`, флаг `DEMO_MODE` и список пространств
    оболочке (`AppShell`): навигация и меню учётной записи одинаковы на всех страницах, а секции
-   пространств приходят из базы и известны только во время запроса.
+   пространств приходят из базы и известны только во время запроса: их состав правит заказчик сам, в
+   `/settings/workspaces`, а не миграция.
    Ветка `(app)/w/[workspace]/` добавляет к этому свой `+layout.server.ts`: он разбирает ключ
    пространства из пути, отвечает 404 на незнакомый и отдаёт `data.workspace` всем страницам под
    собой — разбирать ключ в каждом загрузчике значило бы повторять проверку четырежды.
@@ -155,7 +156,7 @@ input)`, не смотрит в `locals`, не читает заголовки �
 | `settings/`      | настройки приложения со значениями по умолчанию                                   | `getSetting`, `setSetting`, `SETTING_DEFAULTS`                                                                 | `db`, `rbac`, `audit`                                  |
 | `directory/`     | организации, площадки, люди, роли, программы, продукты                            | `read.ts` (выборки), `write.ts` (команды)                                                                      | `db`, `rbac`, `audit`, `people`                        |
 | `people/`        | персональные данные: маскирование, согласия, срок хранения, след просмотра        | `toPersonView`, `withPiiTrace`, `recordConsent`, `anonymizePerson`                                             | `db`, `rbac`, `audit`                                  |
-| `stages/`        | пространства, процессы и их редакции, правила перехода, команды движка, состояние | `evaluateTransition`, `advanceStage`…, `getInteractionStatus`, `publishProcess`                                | `db`, `rbac`, `audit`, `interactions/access`           |
+| `stages/`        | пространства, процессы и их редакции, правила перехода, команды движка, состояние | `evaluateTransition`, `advanceStage`…, `getInteractionStatus`, `publishProcess`, `createWorkspace`…            | `db`, `rbac`, `audit`, `interactions/access`           |
 | `interactions/`  | взаимодействие: создание, список, карточка, сводка, доска, сводная картина        | `createInteraction`, `listInteractions`, `getInteractionSummary`, `getWorkOverview`                            | `db`, `rbac`, `audit`, `stages`, `people`              |
 | `documents/`     | хранилище файлов, проверка содержимого, шаблоны, генерация, отметки               | `stageBlob`/`promoteBlob`, `uploadDocument`, `generateDocument`, `readDocumentForDownload`, `readDocumentMark` | `db`, `rbac`, `audit`, `config`, `stages/commands`     |
 | `stats/`         | данные об обучении: разбор файла, сопоставление, снимки, показатели, дашборд      | `createSnapshot`, `applyMapping`, `confirmSnapshot`, `getStatsDashboard`, `buildStatsReport`                   | `db`, `rbac`, `audit`, `documents`, `spreadsheet`      |
@@ -493,6 +494,9 @@ id-токен проверяется по ключам realm (`auth/oidc.ts::exc
   Оболочка — `(app)/+layout.svelte` → `AppShell` (`components/app-shell/`): боковая навигация
   с поиском, нижняя панель телефона, палитра поиска, место для всплывающих уведомлений.
   Своей верхней полосы у неё нет: шапку рисует сама страница (`components/header.svelte`).
+- **Пространства заводит заказчик** — `(app)/settings/workspaces`: список, заведение,
+  переименование, порядок секций в меню и назначение процесса, под правом `stages.configure`. Ключ
+  пространства переименованием не меняется: он стоит сегментом адреса, а адрес уже разослан.
 - **Процессные разделы стоят под `(app)/w/[workspace]/`** — сегодня это взаимодействия целиком:
   список, доска, карточка, форма заведения и подсказка организаций (`lookup`). Ключ пространства —
   сегмент пути, а не параметр запроса: список в этом продукте есть ссылка, и ссылка на доску без
@@ -527,32 +531,33 @@ id-токен проверяется по ключам realm (`auth/oidc.ts::exc
 
 ## Как найти
 
-| Вопрос                                         | Файл                                             | Что смотреть                                                   |
-| ---------------------------------------------- | ------------------------------------------------ | -------------------------------------------------------------- |
-| правило перехода между стадиями                | `src/lib/server/stages/transitions.ts`           | `evaluateTransition`, `transitionPermission`                   |
-| выполнение перехода, блокировки                | `src/lib/server/stages/commands.ts`              | `moveStage`, `lockInteraction`                                 |
-| проверка права                                 | `src/lib/server/rbac/index.ts`                   | `can`, `requirePermission`                                     |
-| каталог прав и роли по умолчанию               | `src/lib/server/rbac/permissions.ts`             | `PERMISSIONS`, `DEFAULT_ROLES`                                 |
-| сужение выборки по области доступа             | `src/lib/server/rbac/index.ts`                   | `scopeFilter`                                                  |
-| то же для взаимодействий и документов          | `src/lib/server/interactions/access.ts`          | `interactionScopeFilter`, `assertInteractionVisible`           |
-| адаптер LMS                                    | `src/lib/server/integrations/lms/moodle.ts`      | `createMoodleClient`, `MoodleError`                            |
-| что адаптер делает с ответами                  | `src/lib/server/integrations/lms/sync.ts`        | `collectRows`, `syncLms`                                       |
-| подпись вебхука                                | `src/lib/server/integrations/delivery.ts`        | `signPayload`, `verifySignature`, `postWebhook`                |
-| журнал: запись и выгрузка                      | `src/lib/server/audit/index.ts`                  | `recordAuditEvent`, `exportAuditEvents`                        |
-| журнал: словарь событий и правила подробностей | `src/lib/contracts/audit.ts`                     | `AUDIT_EVENT_TYPES`, `validateAuditDetails`                    |
-| отчёт: адрес, строки, форматы                  | `src/lib/server/reports/query.ts`                | `readReportQuery`, `buildReport`, `writers/`                   |
-| приём заявки с сайта                           | `src/lib/server/integrations/exchange/intake.ts` | `receiveApplication`                                           |
-| справка: статьи и их порядок                   | `src/lib/help/index.ts`                          | `helpPages`, `findHelpPage`                                    |
-| подсказки: реестр экранов и туры по ролям      | `src/lib/onboarding/screens.ts`, `tours.ts`      | `TOUR_SCREENS`, `fullTourFor`, `screenTourFor`, `isScreenPath` |
-| кэш чтений: механика и поколения               | `src/lib/server/cache/region.ts`                 | `cached`, `bumpEpoch`, `scopeKey`                              |
-| наблюдатель зависших взаимодействий            | `src/lib/server/notifications/watch.ts`          | `runNotificationCycle`, `readStuckEntry`                       |
-| шифрование контактов                           | `src/lib/server/people/pii.ts`                   | `contactColumns`, запись и чтение шифртекста                   |
-| замер времени ответа                           | `src/lib/server/hooks/server-timing.ts`          | `serverTiming`, `trackDatabaseQuery`                           |
-| вход: обмен кода на токены                     | `src/lib/server/auth/oidc.ts`                    | `authorizationUrl`, `exchangeCode`                             |
-| маскирование персональных данных               | `src/lib/server/people/serialize.ts`             | `toPersonView`                                                 |
-| след просмотра персональных данных             | `src/lib/server/people/pii-trace.ts`             | `withPiiTrace`, `notePiiView`                                  |
-| обёртка эндпоинта API                          | `src/lib/server/api/handler.ts`                  | `apiHandler`                                                   |
-| граница транзакции                             | `src/lib/server/db/transaction.ts`               | `withTransaction`                                              |
+| Вопрос                                         | Файл                                             | Что смотреть                                                      |
+| ---------------------------------------------- | ------------------------------------------------ | ----------------------------------------------------------------- |
+| правило перехода между стадиями                | `src/lib/server/stages/transitions.ts`           | `evaluateTransition`, `transitionPermission`                      |
+| выполнение перехода, блокировки                | `src/lib/server/stages/commands.ts`              | `moveStage`, `lockInteraction`                                    |
+| заведение пространства, порядок, назначение    | `src/lib/server/stages/process.ts`               | `createWorkspace`, `reorderWorkspaces`, `assignWorkspaceWorkflow` |
+| проверка права                                 | `src/lib/server/rbac/index.ts`                   | `can`, `requirePermission`                                        |
+| каталог прав и роли по умолчанию               | `src/lib/server/rbac/permissions.ts`             | `PERMISSIONS`, `DEFAULT_ROLES`                                    |
+| сужение выборки по области доступа             | `src/lib/server/rbac/index.ts`                   | `scopeFilter`                                                     |
+| то же для взаимодействий и документов          | `src/lib/server/interactions/access.ts`          | `interactionScopeFilter`, `assertInteractionVisible`              |
+| адаптер LMS                                    | `src/lib/server/integrations/lms/moodle.ts`      | `createMoodleClient`, `MoodleError`                               |
+| что адаптер делает с ответами                  | `src/lib/server/integrations/lms/sync.ts`        | `collectRows`, `syncLms`                                          |
+| подпись вебхука                                | `src/lib/server/integrations/delivery.ts`        | `signPayload`, `verifySignature`, `postWebhook`                   |
+| журнал: запись и выгрузка                      | `src/lib/server/audit/index.ts`                  | `recordAuditEvent`, `exportAuditEvents`                           |
+| журнал: словарь событий и правила подробностей | `src/lib/contracts/audit.ts`                     | `AUDIT_EVENT_TYPES`, `validateAuditDetails`                       |
+| отчёт: адрес, строки, форматы                  | `src/lib/server/reports/query.ts`                | `readReportQuery`, `buildReport`, `writers/`                      |
+| приём заявки с сайта                           | `src/lib/server/integrations/exchange/intake.ts` | `receiveApplication`                                              |
+| справка: статьи и их порядок                   | `src/lib/help/index.ts`                          | `helpPages`, `findHelpPage`                                       |
+| подсказки: реестр экранов и туры по ролям      | `src/lib/onboarding/screens.ts`, `tours.ts`      | `TOUR_SCREENS`, `fullTourFor`, `screenTourFor`, `isScreenPath`    |
+| кэш чтений: механика и поколения               | `src/lib/server/cache/region.ts`                 | `cached`, `bumpEpoch`, `scopeKey`                                 |
+| наблюдатель зависших взаимодействий            | `src/lib/server/notifications/watch.ts`          | `runNotificationCycle`, `readStuckEntry`                          |
+| шифрование контактов                           | `src/lib/server/people/pii.ts`                   | `contactColumns`, запись и чтение шифртекста                      |
+| замер времени ответа                           | `src/lib/server/hooks/server-timing.ts`          | `serverTiming`, `trackDatabaseQuery`                              |
+| вход: обмен кода на токены                     | `src/lib/server/auth/oidc.ts`                    | `authorizationUrl`, `exchangeCode`                                |
+| маскирование персональных данных               | `src/lib/server/people/serialize.ts`             | `toPersonView`                                                    |
+| след просмотра персональных данных             | `src/lib/server/people/pii-trace.ts`             | `withPiiTrace`, `notePiiView`                                     |
+| обёртка эндпоинта API                          | `src/lib/server/api/handler.ts`                  | `apiHandler`                                                      |
+| граница транзакции                             | `src/lib/server/db/transaction.ts`               | `withTransaction`                                                 |
 
 ## Масштабирование
 

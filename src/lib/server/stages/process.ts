@@ -24,17 +24,22 @@ import { and, asc, count, eq, inArray, isNull, notInArray, sql } from 'drizzle-o
 import { DOCUMENT_STATUS_FACT_LABELS, type DocumentMarkEvidence } from '$lib/contracts/documents';
 import {
 	processDefinitionSchema,
+	type AssignWorkspaceWorkflowInput,
+	type CreateWorkspaceInput,
 	type ProcessDefinitionInput,
 	type WorkspaceDetail,
 	type WorkspaceSummary,
 	type ProcessPreview,
 	type ProcessPreviewRow,
 	type ProcessRevisionView,
+	type RenameWorkspaceInput,
+	type ReorderWorkspacesInput,
 	type StageChangeKind,
 	type StageMigrationRuleView,
 	type StageSnapshot,
 	type StageTransitionView,
-	type StageView
+	type StageView,
+	type WorkflowSummary
 } from '$lib/contracts/interactions';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
@@ -1078,7 +1083,7 @@ export async function listWorkspaces(ctx: ActorContext): Promise<WorkspaceSummar
 async function readWorkspaces(): Promise<WorkspaceSummary[]> {
 	const db = getDb();
 
-	const [rows, stageCounts, activeCounts, drafts] = await Promise.all([
+	const [rows, stageCounts, activeCounts, totalCounts, drafts] = await Promise.all([
 		db
 			.select({
 				id: workspaces.id,
@@ -1104,6 +1109,10 @@ async function readWorkspaces(): Promise<WorkspaceSummary[]> {
 			.where(eq(interactions.status, 'active'))
 			.groupBy(interactions.workspaceId),
 		db
+			.select({ workspaceId: interactions.workspaceId, value: count() })
+			.from(interactions)
+			.groupBy(interactions.workspaceId),
+		db
 			.select({ workflowId: processRevisions.workflowId })
 			.from(processRevisions)
 			.where(isNull(processRevisions.publishedAt))
@@ -1111,6 +1120,7 @@ async function readWorkspaces(): Promise<WorkspaceSummary[]> {
 
 	const stagesByRevision = new Map(stageCounts.map((row) => [row.revisionId, row.value]));
 	const activeByWorkspace = new Map(activeCounts.map((row) => [row.workspaceId, row.value]));
+	const totalByWorkspace = new Map(totalCounts.map((row) => [row.workspaceId, row.value]));
 	const workflowsWithDraft = new Set(drafts.map((row) => row.workflowId));
 
 	return rows.map((workspace) => ({
@@ -1128,6 +1138,7 @@ async function readWorkspaces(): Promise<WorkspaceSummary[]> {
 				? 0
 				: (stagesByRevision.get(workspace.activeRevisionId) ?? 0),
 		activeInteractions: activeByWorkspace.get(workspace.id) ?? 0,
+		interactions: totalByWorkspace.get(workspace.id) ?? 0,
 		hasDraft: workspace.workflowId !== null && workflowsWithDraft.has(workspace.workflowId)
 	}));
 }
@@ -1170,6 +1181,286 @@ export async function listWorkspacesForNav(): Promise<WorkspaceNavItem[]> {
 		position: row.position,
 		hasWorkflow: row.workflowId !== null
 	}));
+}
+
+/* ------------------------------------------------------------------------- *
+ * Настройка пространств: завести, переименовать, переставить, назначить процесс.
+ * ------------------------------------------------------------------------- */
+
+/** Процессы со счётчиками: список, из которого выбирают при назначении. */
+export async function listWorkflows(ctx: ActorContext): Promise<WorkflowSummary[]> {
+	await requirePermission(ctx, 'stages.configure', { type: 'stages.process_viewed' });
+
+	const db = getDb();
+
+	const [rows, stageCounts, assigned] = await Promise.all([
+		db.select().from(workflows).orderBy(asc(workflows.key)),
+		db
+			.select({ revisionId: stages.revisionId, value: count() })
+			.from(stages)
+			.groupBy(stages.revisionId),
+		db
+			.select({ workflowId: workspaces.workflowId, value: count() })
+			.from(workspaces)
+			.groupBy(workspaces.workflowId)
+	]);
+
+	const stagesByRevision = new Map(stageCounts.map((row) => [row.revisionId, row.value]));
+	const workspacesByWorkflow = new Map(assigned.map((row) => [row.workflowId, row.value]));
+
+	return rows.map((workflow) => ({
+		id: workflow.id,
+		key: workflow.key,
+		name: workflow.name,
+		description: workflow.description,
+		stageCount:
+			workflow.activeRevisionId === null
+				? 0
+				: (stagesByRevision.get(workflow.activeRevisionId) ?? 0),
+		workspaces: workspacesByWorkflow.get(workflow.id) ?? 0
+	}));
+}
+
+/** Сколько взаимодействий заведено в пространстве — всех, а не только идущих. */
+async function countInteractions(executor: Executor, workspaceId: string): Promise<number> {
+	const [row] = await executor
+		.select({ value: count() })
+		.from(interactions)
+		.where(eq(interactions.workspaceId, workspaceId));
+
+	return row?.value ?? 0;
+}
+
+/**
+ * Процесс по ключу, если он назван. Пустой ключ — законный ответ «не назначен»:
+ * пространство заводят раньше, чем описывают его работу.
+ */
+async function optionalWorkflow(tx: Tx, workflowKey: string | null): Promise<WorkflowRow | null> {
+	return workflowKey === null ? null : readWorkflowByKey(tx, workflowKey);
+}
+
+/**
+ * Новое пространство.
+ *
+ * Заведение перестаёт быть миграцией: раньше строку клал SQL
+ * (`drizzle/0006_process_groups_backfill.sql`), и «движок, который заказчик
+ * настраивает сам» на этом заканчивался, не начавшись.
+ *
+ * Место в списке — следующее за последним: порядок правят перестановкой, а не
+ * вводом числа, и заводить пространство сразу в середину незачем.
+ */
+export async function createWorkspace(
+	ctx: ActorContext,
+	input: CreateWorkspaceInput
+): Promise<WorkspaceSummary> {
+	await requirePermission(ctx, 'stages.configure', { type: 'workspaces.created' });
+
+	const workspaceId = await withTransaction(ctx, async (tx) => {
+		const [taken] = await tx
+			.select({ id: workspaces.id })
+			.from(workspaces)
+			.where(eq(workspaces.key, input.key));
+
+		if (taken !== undefined) {
+			throw new ConflictError(`Пространство с ключом «${input.key}» уже заведено`);
+		}
+
+		const workflow = await optionalWorkflow(tx, input.workflowKey);
+
+		const [last] = await tx
+			.select({ value: sql<number>`coalesce(max(${workspaces.position}), 0)::int` })
+			.from(workspaces);
+
+		const [created] = await tx
+			.insert(workspaces)
+			.values({
+				key: input.key,
+				name: input.name,
+				description: input.description,
+				workflowId: workflow?.id ?? null,
+				position: (last?.value ?? 0) + 1
+			})
+			.returning({ id: workspaces.id });
+
+		await recordAuditEvent(
+			ctx,
+			{
+				type: 'workspaces.created',
+				outcome: 'success',
+				subject: { type: 'workspace', id: created.id },
+				// Ключ процесса кладётся, только когда он есть: журнал не пишет
+				// «назначено ничто» — отсутствие назначения видно по его молчанию.
+				details:
+					workflow === null
+						? { workspaceKey: input.key }
+						: { workspaceKey: input.key, workflowKey: workflow.key }
+			},
+			tx
+		);
+
+		return created.id;
+	});
+
+	const summary = (await readWorkspaces()).find((row) => row.id === workspaceId);
+
+	if (summary === undefined) {
+		throw new NotFoundError('Пространство не найдено сразу после создания');
+	}
+
+	return summary;
+}
+
+/**
+ * Переименование. Ключ не меняется: он стоит в адресе, а адрес уже разослан
+ * ссылками — менять его значит ломать чужие закладки ради опечатки в названии.
+ */
+export async function renameWorkspace(
+	ctx: ActorContext,
+	input: RenameWorkspaceInput
+): Promise<void> {
+	await requirePermission(ctx, 'stages.configure', { type: 'workspaces.renamed' });
+
+	await withTransaction(ctx, async (tx) => {
+		const workspace = await readWorkspaceByKey(tx, input.key);
+
+		await tx
+			.update(workspaces)
+			.set({ name: input.name, description: input.description, updatedAt: new Date() })
+			.where(eq(workspaces.id, workspace.id));
+
+		await recordAuditEvent(
+			ctx,
+			{
+				type: 'workspaces.renamed',
+				outcome: 'success',
+				subject: { type: 'workspace', id: workspace.id },
+				details: { workspaceKey: workspace.key }
+			},
+			tx
+		);
+	});
+}
+
+/**
+ * Назначение процесса пространству.
+ *
+ * Назначить можно всегда, сменить — только пока в пространстве нет ни одного
+ * взаимодействия. Причина не в осторожности: при публикации новой редакции
+ * ключи стадий сохраняют смысл, и незавершённые записи переносятся правилами;
+ * при смене процесса смысл теряют все ключи сразу, и переносить нечем. Иначе —
+ * новое пространство.
+ *
+ * Проверка здесь, а не в форме: адрес набирают руками, а форму может и не быть
+ * той, которую показали.
+ */
+export async function assignWorkspaceWorkflow(
+	ctx: ActorContext,
+	input: AssignWorkspaceWorkflowInput
+): Promise<void> {
+	await requirePermission(ctx, 'stages.configure', { type: 'workspaces.workflow_assigned' });
+
+	await withTransaction(ctx, async (tx) => {
+		const workspace = await readWorkspaceByKey(tx, input.key);
+		const workflow = await optionalWorkflow(tx, input.workflowKey);
+		const nextId = workflow?.id ?? null;
+
+		if (nextId === workspace.workflowId) {
+			return;
+		}
+
+		if (workspace.workflowId !== null && (await countInteractions(tx, workspace.id)) > 0) {
+			throw new ConflictError(
+				`В пространстве «${workspace.name}» уже есть взаимодействия: сменить процесс им нечем — ключи стадий нового процесса ничего не значат для записей старого. Заведите новое пространство`
+			);
+		}
+
+		await tx
+			.update(workspaces)
+			.set({ workflowId: nextId, updatedAt: new Date() })
+			.where(eq(workspaces.id, workspace.id));
+
+		await recordAuditEvent(
+			ctx,
+			{
+				type: 'workspaces.workflow_assigned',
+				outcome: 'success',
+				subject: { type: 'workspace', id: workspace.id },
+				details:
+					workflow === null
+						? { workspaceKey: workspace.key }
+						: { workspaceKey: workspace.key, workflowKey: workflow.key }
+			},
+			tx
+		);
+	});
+}
+
+/**
+ * Новый порядок пространств — списком ключей целиком, а не «подвинуть одно».
+ *
+ * Место уникально, и присвоить его в лоб нельзя: на середине перестановки два
+ * пространства оказались бы на одном номере, и база отказала бы раньше, чем
+ * перестановка закончилась. Поэтому два прохода в одной транзакции: сначала
+ * все уезжают за пределы занятого диапазона, потом встают на свои места.
+ *
+ * Список приходит целиком: половина порядка — это не порядок, и «подвинуть
+ * одно» пришлось бы разбирать на те же два прохода, только неявно.
+ */
+export async function reorderWorkspaces(
+	ctx: ActorContext,
+	input: ReorderWorkspacesInput
+): Promise<void> {
+	await requirePermission(ctx, 'stages.configure', { type: 'workspaces.reordered' });
+
+	await withTransaction(ctx, async (tx) => {
+		const rows = await tx
+			.select({ id: workspaces.id, key: workspaces.key })
+			.from(workspaces)
+			.orderBy(asc(workspaces.position))
+			.for('update');
+
+		const idByKey = new Map(rows.map((row) => [row.key, row.id]));
+		const unknown = input.keys.filter((key) => !idByKey.has(key));
+
+		if (unknown.length > 0) {
+			throw new NotFoundError(`Неизвестные пространства: ${unknown.join(', ')}`);
+		}
+
+		if (input.keys.length !== rows.length || new Set(input.keys).size !== input.keys.length) {
+			throw new ValidationError('Порядок задаётся списком всех пространств', [
+				'В списке должно быть каждое пространство ровно один раз'
+			]);
+		}
+
+		const parking = rows.length + 1;
+
+		for (const [index, row] of rows.entries()) {
+			await tx
+				.update(workspaces)
+				.set({ position: parking + index })
+				.where(eq(workspaces.id, row.id));
+		}
+
+		for (const [index, key] of input.keys.entries()) {
+			await tx
+				.update(workspaces)
+				.set({ position: index + 1, updatedAt: new Date() })
+				.where(eq(workspaces.id, idByKey.get(key)!));
+		}
+
+		await recordAuditEvent(
+			ctx,
+			{
+				type: 'workspaces.reordered',
+				outcome: 'success',
+				// Не перечень ключей: подробности журнала принимают устойчивое имя,
+				// а не список имён через запятую. Новый порядок и так виден в
+				// данных, а событие отвечает на вопрос «кто и когда его трогал».
+				details: { workspaceCount: input.keys.length }
+			},
+			tx
+		);
+	});
 }
 
 /** Пространство по ключу. Ключ, а не идентификатор: адрес раздела читают люди. */

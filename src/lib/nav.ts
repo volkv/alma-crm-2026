@@ -11,6 +11,7 @@ import GraduationCapIcon from '@lucide/svelte/icons/graduation-cap';
 import HandshakeIcon from '@lucide/svelte/icons/handshake';
 import KeyRoundIcon from '@lucide/svelte/icons/key-round';
 import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
+import LayoutGridIcon from '@lucide/svelte/icons/layout-grid';
 import PackageIcon from '@lucide/svelte/icons/package';
 import PlugZapIcon from '@lucide/svelte/icons/plug-zap';
 import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
@@ -194,6 +195,15 @@ const STATIC_SECTIONS: readonly NavSection[] = [
 		icon: KeyRoundIcon,
 		group: SETTINGS,
 		permission: 'api_keys.manage'
+	},
+	{
+		// Пространства стоят перед процессом: сначала заводят направление, потом
+		// описывают, как в нём работают. Тот же порядок и в таблице подразделов.
+		href: '/settings/workspaces',
+		label: 'Пространства',
+		icon: LayoutGridIcon,
+		group: SETTINGS,
+		permission: 'stages.configure'
 	},
 	{
 		href: '/settings/process',
