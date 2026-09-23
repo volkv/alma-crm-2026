@@ -1,6 +1,8 @@
 /**
- * Взаимодействия демонстрационного стенда: тридцать записей на разных стадиях
- * маршрута, с историей, паузами, помехами, комментариями и документами.
+ * Взаимодействия демонстрационного стенда: больше сотни записей на разных
+ * стадиях маршрута обоих пространств, с историей за последний год, паузами,
+ * помехами, комментариями и документами — воронка, а не десяток витринных
+ * карточек.
  *
  * Историю пишет сам движок стадий: набор зовёт те же команды, что и карточка
  * (`advanceStage`, `confirmStage`, `pauseStage`, …). Разложить записи стадий
@@ -9,6 +11,19 @@
  * реализация в сиде однажды разойдётся с первой. Поэтому набор не пишет в
  * `stage_entries` ничего, кроме времени: движок ставит `now()`, а
  * демонстрации нужна запись, которая идёт третий месяц.
+ *
+ * Два слоя данных. `INTERACTIONS` и `B2C_INTERACTIONS` — сюжетные записи
+ * демонстрационного сценария (тур, скринкаст, `e2e/scenario.test.ts` и
+ * соседние проходы находят их по ключу и по названию): их состав и ключи
+ * трогать нельзя, новые записи встают рядом. `FUNNEL_INTERACTIONS`,
+ * `B2B_EXTRA` и `B2C_EXTRA` — объём для воронки и отчётов: записи той же
+ * формы, но их девяносто с лишним, и разница между соседними в основном в
+ * подставленных вузе, программе и сроке. Строки просчитаны вне рантайма
+ * скриптом, который перебирает вуз, контакт, программу и срок по порядковому
+ * номеру записи без `Math.random`, и вставлены как обычные литералы — в самом
+ * наборе кода для их генерации нет, чтобы это оставалось обычным, читаемым
+ * списком данных, а не программой, которую нужно выполнить, чтобы увидеть,
+ * что заливается.
  *
  * Названия вузов и продуктов публичные, всё остальное вымышлено — см.
  * `directory.ts`: организации, люди, программы и продукты берутся оттуда по тем
@@ -58,6 +73,7 @@ import {
 	addComment,
 	advanceStage,
 	applyLmsEvidence,
+	cancelInteraction,
 	completeInteraction,
 	confirmStage,
 	pauseStage,
@@ -187,12 +203,18 @@ type InteractionSeed = CounterpartySeed & {
 	handedTo?: OwnerKey;
 	/** Итог: заполнен у завершённых, маршрут при этом пройден целиком. */
 	completedWith?: string;
+	/**
+	 * Причина отмены: заполнена у отменённых. В отличие от завершения, отмена не
+	 * требует финальной стадии — дело останавливают там, где до него дошли.
+	 */
+	cancelledWith?: string;
 };
 
 /**
- * Тридцать взаимодействий. Больше всего их на ранних стадиях и на
- * исполнительских: так выглядит живая воронка — контактов много, до занятий
- * доходят единицы.
+ * Тридцать сюжетных взаимодействий демонстрационного сценария: их ключи и
+ * состав использует тур, скринкаст и `e2e/scenario.test.ts` — не трогать, не
+ * перемешивать. Основной объём воронки — в `FUNNEL_INTERACTIONS` и
+ * `B2B_EXTRA` ниже.
  */
 const INTERACTIONS: readonly InteractionSeed[] = [
 	{
@@ -765,13 +787,1499 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 ];
 
 /**
+ * Основной объём воронки: семьдесят восемь записей на всех четырнадцати
+ * стадиях процесса «Работа с ВУЗ» — больше на ранних и меньше на поздних,
+ * как и выглядит живая воронка. Институт, контакт, программа, продукт,
+ * ответственный и срок подставлены по порядковому номеру записи; часть
+ * стоит на стадии дольше норматива — это и даёт просрочки в отчёте.
+ */
+const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
+	{
+		key: 'szpu-contact_search-0',
+		title: 'СПбПУ: DevOps-инженеров, первый контакт',
+		institution: 'szpu',
+		contact: 'guryev',
+		sites: ['szpu-dept-is'],
+		customer: 'digital',
+		programs: ['vo-bak-01'],
+		products: ['lms'],
+		owner: 'demo-manager',
+		stage: 'contact_search',
+		startedDaysAgo: 12,
+		sinceDaysAgo: 12,
+		lastActivityDaysAgo: 5,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'pupi-contact_search-1',
+		title: 'МФТИ: аналитику данных (low-code), первый контакт',
+		institution: 'pupi',
+		contact: 'ignatyeva',
+		sites: ['pupi-dept-ai'],
+		customer: 'technosphere',
+		programs: ['vo-mag-01'],
+		owner: 'veresova',
+		stage: 'contact_search',
+		startedDaysAgo: 2,
+		sinceDaysAgo: 2,
+		lastActivityDaysAgo: 1,
+		agreement: ['2026-09-01', '2027-08-31'],
+		closeChecklist: true
+	},
+	{
+		key: 'uguis-contact_search-2',
+		title: 'ТПУ: web-разработку на «Аколе», первый контакт',
+		institution: 'uguis',
+		contact: 'koltsov',
+		customer: 'irbis',
+		programs: ['vo-bak-02'],
+		products: ['lab'],
+		owner: 'zotov',
+		stage: 'contact_search',
+		startedDaysAgo: 4,
+		sinceDaysAgo: 4,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-08-31'],
+		comments: ['Ищем профильное подразделение, контакт пока не подтверждён.']
+	},
+	{
+		key: 'sivt-contact_search-3',
+		title: 'НГУЭУ: аналитику данных (low-code), первый контакт',
+		institution: 'sivt',
+		contact: 'pankratov',
+		customer: 'meridian',
+		programs: ['vo-mag-01'],
+		owner: 'demo-manager',
+		stage: 'contact_search',
+		startedDaysAgo: 5,
+		sinceDaysAgo: 5,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'yutus-contact_search-4',
+		title: 'ВолгГТУ: web-разработку на «Аколе», первый контакт',
+		institution: 'yutus',
+		contact: 'rodionova',
+		customer: 'ladoga',
+		programs: ['vo-bak-02'],
+		products: ['lab'],
+		owner: 'veresova',
+		stage: 'contact_search',
+		startedDaysAgo: 24,
+		sinceDaysAgo: 24,
+		lastActivityDaysAgo: 10,
+		agreement: ['2026-09-01', '2027-08-31'],
+		closeChecklist: true
+	},
+	{
+		key: 'batse-contact_search-5',
+		title: 'Университет Иннополис: управление проектами, первый контакт',
+		institution: 'batse',
+		contact: 'tarasyuk',
+		customer: 'polarcode',
+		programs: ['dpo-01'],
+		owner: 'zotov',
+		stage: 'contact_search',
+		startedDaysAgo: 2,
+		sinceDaysAgo: 2,
+		lastActivityDaysAgo: 1,
+		agreement: ['2026-10-01', '2027-09-30']
+	},
+	{
+		key: 'vkgtu-contact_search-6',
+		title: 'ЧГУ им. И. Н. Ульянова: web-разработку на «Аколе», первый контакт',
+		institution: 'vkgtu',
+		contact: 'fedotov',
+		sites: ['vkgtu-main'],
+		customer: 'digital',
+		programs: ['vo-bak-02'],
+		products: ['lab'],
+		owner: 'demo-manager',
+		stage: 'contact_search',
+		startedDaysAgo: 4,
+		sinceDaysAgo: 4,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'sruit-contact_search-7',
+		title: 'Московский Политех: управление проектами, первый контакт',
+		institution: 'sruit',
+		contact: 'chernysheva',
+		customer: 'technosphere',
+		programs: ['dpo-01'],
+		owner: 'veresova',
+		stage: 'contact_search',
+		startedDaysAgo: 5,
+		sinceDaysAgo: 5,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-10-01', '2027-09-30'],
+		closeChecklist: true,
+		comments: ['Ищем профильное подразделение, контакт пока не подтверждён.']
+	},
+	{
+		key: 'bit-contact_search-8',
+		title: 'МТУСИ: web-разработку на «Аколе», первый контакт',
+		institution: 'bit',
+		contact: 'shcherbak',
+		customer: 'irbis',
+		programs: ['vo-bak-02'],
+		products: ['lab'],
+		owner: 'zotov',
+		stage: 'contact_search',
+		startedDaysAgo: 21,
+		sinceDaysAgo: 21,
+		lastActivityDaysAgo: 8,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'puts-contact_search-9',
+		title: 'СГТУ им. Гагарина Ю. А.: web-разработку на «Аколе», первый контакт',
+		institution: 'puts',
+		contact: 'yurchenko',
+		customer: 'meridian',
+		programs: ['vo-bak-02'],
+		owner: 'demo-manager',
+		stage: 'contact_search',
+		startedDaysAgo: 2,
+		sinceDaysAgo: 2,
+		lastActivityDaysAgo: 1,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'paid-contact_search-10',
+		title: 'НИУ «МЭИ»: мобильную разработку на «Авроре», первый контакт',
+		institution: 'paid',
+		contact: 'vikhrova',
+		sites: ['paid-main'],
+		customer: 'ladoga',
+		programs: ['vo-bak-03'],
+		products: ['cloud'],
+		owner: 'veresova',
+		stage: 'contact_search',
+		startedDaysAgo: 4,
+		sinceDaysAgo: 4,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-08-31'],
+		closeChecklist: true
+	},
+	{
+		key: 'ukct-communication-11',
+		title: 'УКЦТ: SQL-разработчиков, сверка программы',
+		institution: 'ukct',
+		contact: 'dementyev',
+		sites: ['ukct-main'],
+		customer: 'polarcode',
+		programs: ['spo-01'],
+		owner: 'zotov',
+		stage: 'communication',
+		startedDaysAgo: 53,
+		sinceDaysAgo: 15,
+		lastActivityDaysAgo: 6,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'nkis-communication-12',
+		title: 'НКИС: аналитику на Python, сверка программы',
+		institution: 'nkis',
+		contact: 'zueva',
+		sites: ['nkis-main'],
+		customer: 'digital',
+		programs: ['spo-02'],
+		products: ['analytics'],
+		owner: 'demo-manager',
+		stage: 'communication',
+		startedDaysAgo: 47,
+		sinceDaysAgo: 4,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-08-31'],
+		comments: ['Программу и условия отправили, ждём вопросы от вуза.']
+	},
+	{
+		key: 'vts-communication-13',
+		title: 'ВТС: аналитику на Python, сверка программы',
+		institution: 'vts',
+		contact: 'karpov',
+		customer: 'technosphere',
+		programs: ['spo-02'],
+		owner: 'veresova',
+		stage: 'communication',
+		startedDaysAgo: 53,
+		sinceDaysAgo: 5,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-08-31'],
+		closeChecklist: true
+	},
+	{
+		key: 'skpa-communication-14',
+		title: 'СКПА: SQL-разработчиков, сверка программы',
+		institution: 'skpa',
+		contact: 'lebedeva',
+		customer: 'irbis',
+		programs: ['spo-01'],
+		owner: 'zotov',
+		stage: 'communication',
+		startedDaysAgo: 59,
+		sinceDaysAgo: 6,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'lyceum306-communication-15',
+		title: 'Лицей № 306 «Гравитон»: промпт-инжиниринг, сверка программы',
+		institution: 'lyceum306',
+		contact: 'morozov',
+		customer: 'meridian',
+		programs: ['school-01'],
+		owner: 'demo-manager',
+		stage: 'communication',
+		startedDaysAgo: 85,
+		sinceDaysAgo: 27,
+		lastActivityDaysAgo: 11,
+		agreement: ['2026-09-01', '2027-05-31']
+	},
+	{
+		key: 'school47-communication-16',
+		title: 'Школа № 47 «Вектор»: промпт-инжиниринг, сверка программы',
+		institution: 'school47',
+		contact: 'novikova',
+		customer: 'ladoga',
+		programs: ['school-01'],
+		owner: 'veresova',
+		stage: 'communication',
+		startedDaysAgo: 42,
+		sinceDaysAgo: 4,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-05-31'],
+		closeChecklist: true
+	},
+	{
+		key: 'szpu-communication-17',
+		title: 'СПбПУ: мобильную разработку на «Авроре», сверка программы',
+		institution: 'szpu',
+		contact: 'efimov',
+		sites: ['szpu-dept-is'],
+		customer: 'polarcode',
+		programs: ['vo-bak-03'],
+		owner: 'zotov',
+		stage: 'communication',
+		startedDaysAgo: 48,
+		sinceDaysAgo: 5,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-08-31'],
+		comments: ['Программу и условия отправили, ждём вопросы от вуза.']
+	},
+	{
+		key: 'pupi-communication-18',
+		title: 'МФТИ: DevOps-инженеров, сверка программы',
+		institution: 'pupi',
+		contact: 'zharova',
+		sites: ['pupi-main'],
+		customer: 'digital',
+		programs: ['vo-bak-01'],
+		products: ['analytics'],
+		owner: 'demo-manager',
+		stage: 'communication',
+		startedDaysAgo: 54,
+		sinceDaysAgo: 6,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'uguis-communication-19',
+		title: 'ТПУ: управление проектами, сверка программы',
+		institution: 'uguis',
+		contact: 'lapina',
+		customer: 'technosphere',
+		programs: ['dpo-01'],
+		owner: 'veresova',
+		stage: 'communication',
+		startedDaysAgo: 77,
+		sinceDaysAgo: 24,
+		lastActivityDaysAgo: 10,
+		agreement: ['2026-10-01', '2027-09-30'],
+		closeChecklist: true
+	},
+	{
+		key: 'sivt-communication-20',
+		title: 'НГУЭУ: управление проектами, сверка программы',
+		institution: 'sivt',
+		contact: 'nesterov',
+		sites: ['sivt-main'],
+		customer: 'irbis',
+		programs: ['dpo-01'],
+		products: ['lms'],
+		owner: 'zotov',
+		stage: 'communication',
+		startedDaysAgo: 62,
+		sinceDaysAgo: 4,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-10-01', '2027-09-30']
+	},
+	{
+		key: 'yutus-meeting-21',
+		title: 'ВолгГТУ: управление проектами, встреча с подразделением',
+		institution: 'yutus',
+		contact: 'savelyev',
+		customer: 'meridian',
+		programs: ['dpo-01'],
+		owner: 'demo-manager',
+		stage: 'meeting',
+		startedDaysAgo: 81,
+		sinceDaysAgo: 19,
+		lastActivityDaysAgo: 8,
+		agreement: ['2026-10-01', '2027-09-30']
+	},
+	{
+		key: 'batse-meeting-22',
+		title: 'Университет Иннополис: управление проектами, встреча с подразделением',
+		institution: 'batse',
+		contact: 'ulyanova',
+		customer: 'ladoga',
+		programs: ['dpo-01'],
+		products: ['docs'],
+		owner: 'veresova',
+		stage: 'meeting',
+		startedDaysAgo: 72,
+		sinceDaysAgo: 5,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-10-01', '2027-09-30'],
+		closeChecklist: true,
+		comments: ['Встречу согласовали, уточняем состав участников.']
+	},
+	{
+		key: 'vkgtu-meeting-23',
+		title: 'ЧГУ им. И. Н. Ульянова: распределённые реестры, встреча с подразделением',
+		institution: 'vkgtu',
+		contact: 'khabibullina',
+		sites: ['vkgtu-main'],
+		customer: 'polarcode',
+		programs: ['vo-mag-02'],
+		owner: 'zotov',
+		stage: 'meeting',
+		startedDaysAgo: 79,
+		sinceDaysAgo: 7,
+		lastActivityDaysAgo: 3,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'sruit-meeting-24',
+		title: 'Московский Политех: управление проектами, встреча с подразделением',
+		institution: 'sruit',
+		contact: 'shilov',
+		customer: 'digital',
+		programs: ['dpo-01'],
+		products: ['docs'],
+		owner: 'demo-manager',
+		stage: 'meeting',
+		startedDaysAgo: 86,
+		sinceDaysAgo: 9,
+		lastActivityDaysAgo: 4,
+		agreement: ['2026-10-01', '2027-09-30']
+	},
+	{
+		key: 'bit-meeting-25',
+		title: 'МТУСИ: управление проектами, встреча с подразделением',
+		institution: 'bit',
+		contact: 'eldarova',
+		customer: 'technosphere',
+		programs: ['dpo-01'],
+		owner: 'veresova',
+		stage: 'meeting',
+		startedDaysAgo: 113,
+		sinceDaysAgo: 31,
+		lastActivityDaysAgo: 12,
+		agreement: ['2026-10-01', '2027-09-30'],
+		closeChecklist: true
+	},
+	{
+		key: 'puts-meeting-26',
+		title: 'СГТУ им. Гагарина Ю. А.: управление проектами, встреча с подразделением',
+		institution: 'puts',
+		contact: 'yakovleva',
+		customer: 'irbis',
+		programs: ['dpo-01'],
+		products: ['lab'],
+		owner: 'zotov',
+		stage: 'meeting',
+		startedDaysAgo: 67,
+		sinceDaysAgo: 5,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-10-01', '2027-09-30']
+	},
+	{
+		key: 'paid-meeting-27',
+		title: 'НИУ «МЭИ»: управление проектами, встреча с подразделением',
+		institution: 'paid',
+		contact: 'gorbunova',
+		sites: ['paid-main'],
+		customer: 'meridian',
+		programs: ['dpo-01'],
+		owner: 'demo-manager',
+		stage: 'meeting',
+		startedDaysAgo: 74,
+		sinceDaysAgo: 7,
+		lastActivityDaysAgo: 3,
+		agreement: ['2026-10-01', '2027-09-30'],
+		comments: ['Встречу согласовали, уточняем состав участников.']
+	},
+	{
+		key: 'ukct-meeting-28',
+		title: 'УКЦТ: аналитику на Python, встреча с подразделением',
+		institution: 'ukct',
+		contact: 'ershova',
+		sites: ['ukct-main'],
+		customer: 'ladoga',
+		programs: ['spo-02'],
+		products: ['lms'],
+		owner: 'veresova',
+		stage: 'meeting',
+		startedDaysAgo: 81,
+		sinceDaysAgo: 9,
+		lastActivityDaysAgo: 4,
+		agreement: ['2026-09-01', '2027-08-31'],
+		closeChecklist: true
+	},
+	{
+		key: 'nkis-meeting-29',
+		title: 'НКИС: SQL-разработчиков, встреча с подразделением',
+		institution: 'nkis',
+		contact: 'ilyin',
+		sites: ['nkis-lab'],
+		customer: 'polarcode',
+		programs: ['spo-01'],
+		owner: 'zotov',
+		stage: 'meeting',
+		startedDaysAgo: 105,
+		sinceDaysAgo: 28,
+		lastActivityDaysAgo: 11,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'vts-document_exchange-30',
+		title: 'ВТС: аналитику на Python, обмен пакетом документов',
+		institution: 'vts',
+		contact: 'karpov',
+		customer: 'digital',
+		programs: ['spo-02'],
+		owner: 'demo-manager',
+		stage: 'document_exchange',
+		startedDaysAgo: 101,
+		sinceDaysAgo: 15,
+		lastActivityDaysAgo: 6,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'skpa-document_exchange-31',
+		title: 'СКПА: SQL-разработчиков, обмен пакетом документов',
+		institution: 'skpa',
+		contact: 'lebedeva',
+		customer: 'technosphere',
+		programs: ['spo-01'],
+		owner: 'veresova',
+		stage: 'document_exchange',
+		startedDaysAgo: 95,
+		sinceDaysAgo: 4,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-08-31'],
+		closeChecklist: true
+	},
+	{
+		key: 'lyceum306-document_exchange-32',
+		title: 'Лицей № 306 «Гравитон»: промпт-инжиниринг, обмен пакетом документов',
+		institution: 'lyceum306',
+		contact: 'morozov',
+		customer: 'irbis',
+		programs: ['school-01'],
+		owner: 'zotov',
+		stage: 'document_exchange',
+		startedDaysAgo: 101,
+		sinceDaysAgo: 5,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-05-31'],
+		comments: ['Пакет документов отправлен, ждём встречный от вуза.']
+	},
+	{
+		key: 'school47-document_exchange-33',
+		title: 'Школа № 47 «Вектор»: промпт-инжиниринг, обмен пакетом документов',
+		institution: 'school47',
+		contact: 'novikova',
+		customer: 'meridian',
+		programs: ['school-01'],
+		owner: 'demo-manager',
+		stage: 'document_exchange',
+		startedDaysAgo: 107,
+		sinceDaysAgo: 6,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-05-31']
+	},
+	{
+		key: 'szpu-document_exchange-34',
+		title: 'СПбПУ: управление проектами, обмен пакетом документов',
+		institution: 'szpu',
+		contact: 'astakhov',
+		sites: ['szpu-main'],
+		customer: 'ladoga',
+		programs: ['dpo-01'],
+		products: ['cloud'],
+		owner: 'veresova',
+		stage: 'document_exchange',
+		startedDaysAgo: 133,
+		sinceDaysAgo: 27,
+		lastActivityDaysAgo: 11,
+		agreement: ['2026-10-01', '2027-09-30'],
+		closeChecklist: true
+	},
+	{
+		key: 'pupi-document_exchange-35',
+		title: 'МФТИ: управление проектами, обмен пакетом документов',
+		institution: 'pupi',
+		contact: 'ignatyeva',
+		sites: ['pupi-dept-ai'],
+		customer: 'polarcode',
+		programs: ['dpo-01'],
+		owner: 'zotov',
+		stage: 'document_exchange',
+		startedDaysAgo: 90,
+		sinceDaysAgo: 4,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-10-01', '2027-09-30']
+	},
+	{
+		key: 'uguis-document_exchange-36',
+		title: 'ТПУ: web-разработку на «Аколе», обмен пакетом документов',
+		institution: 'uguis',
+		contact: 'mukhin',
+		sites: ['uguis-dept-auto'],
+		customer: 'digital',
+		programs: ['vo-bak-02'],
+		products: ['lab'],
+		owner: 'demo-manager',
+		stage: 'document_exchange',
+		startedDaysAgo: 96,
+		sinceDaysAgo: 5,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'sivt-document_revision-37',
+		title: 'НГУЭУ: аналитику данных (low-code), правки соглашения',
+		institution: 'sivt',
+		contact: 'orekhova',
+		sites: ['sivt-main'],
+		customer: 'technosphere',
+		programs: ['vo-mag-01'],
+		owner: 'veresova',
+		stage: 'document_revision',
+		startedDaysAgo: 122,
+		sinceDaysAgo: 12,
+		lastActivityDaysAgo: 5,
+		agreement: ['2026-09-01', '2027-08-31'],
+		closeChecklist: true,
+		comments: ['Собираем замечания сторон по проекту соглашения.']
+	},
+	{
+		key: 'yutus-document_revision-38',
+		title: 'ВолгГТУ: web-разработку на «Аколе», правки соглашения',
+		institution: 'yutus',
+		contact: 'rodionova',
+		customer: 'irbis',
+		programs: ['vo-bak-02'],
+		products: ['lab'],
+		owner: 'zotov',
+		stage: 'document_revision',
+		startedDaysAgo: 117,
+		sinceDaysAgo: 2,
+		lastActivityDaysAgo: 1,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'batse-document_revision-39',
+		title: 'Университет Иннополис: управление проектами, правки соглашения',
+		institution: 'batse',
+		contact: 'tarasyuk',
+		customer: 'meridian',
+		programs: ['dpo-01'],
+		owner: 'demo-manager',
+		stage: 'document_revision',
+		startedDaysAgo: 124,
+		sinceDaysAgo: 4,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-10-01', '2027-09-30']
+	},
+	{
+		key: 'vkgtu-document_revision-40',
+		title: 'ЧГУ им. И. Н. Ульянова: управление проектами, правки соглашения',
+		institution: 'vkgtu',
+		contact: 'tsvetkov',
+		sites: ['vkgtu-dept-comm'],
+		customer: 'ladoga',
+		programs: ['dpo-01'],
+		products: ['docs'],
+		owner: 'veresova',
+		stage: 'document_revision',
+		startedDaysAgo: 130,
+		sinceDaysAgo: 5,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-10-01', '2027-09-30'],
+		closeChecklist: true
+	},
+	{
+		key: 'sruit-document_revision-41',
+		title: 'Московский Политех: управление проектами, правки соглашения',
+		institution: 'sruit',
+		contact: 'chernysheva',
+		customer: 'polarcode',
+		programs: ['dpo-01'],
+		owner: 'zotov',
+		stage: 'document_revision',
+		startedDaysAgo: 154,
+		sinceDaysAgo: 24,
+		lastActivityDaysAgo: 10,
+		agreement: ['2026-10-01', '2027-09-30']
+	},
+	{
+		key: 'bit-document_revision-42',
+		title: 'МТУСИ: web-разработку на «Аколе», правки соглашения',
+		institution: 'bit',
+		contact: 'shcherbak',
+		customer: 'digital',
+		programs: ['vo-bak-02'],
+		products: ['lab'],
+		owner: 'demo-manager',
+		stage: 'document_revision',
+		startedDaysAgo: 112,
+		sinceDaysAgo: 2,
+		lastActivityDaysAgo: 1,
+		agreement: ['2026-09-01', '2027-08-31'],
+		comments: ['Собираем замечания сторон по проекту соглашения.']
+	},
+	{
+		key: 'puts-signing-43',
+		title: 'СГТУ им. Гагарина Ю. А.: web-разработку на «Аколе», подписание соглашения',
+		institution: 'puts',
+		contact: 'yurchenko',
+		customer: 'technosphere',
+		programs: ['vo-bak-02'],
+		owner: 'veresova',
+		stage: 'signing',
+		startedDaysAgo: 153,
+		sinceDaysAgo: 19,
+		lastActivityDaysAgo: 8,
+		agreement: ['2026-09-01', '2027-08-31'],
+		closeChecklist: true
+	},
+	{
+		key: 'paid-signing-44',
+		title: 'НИУ «МЭИ»: мобильную разработку на «Авроре», подписание соглашения',
+		institution: 'paid',
+		contact: 'vikhrova',
+		sites: ['paid-main'],
+		customer: 'irbis',
+		programs: ['vo-bak-03'],
+		products: ['cloud'],
+		owner: 'zotov',
+		stage: 'signing',
+		startedDaysAgo: 144,
+		sinceDaysAgo: 5,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'ukct-signing-45',
+		title: 'УКЦТ: SQL-разработчиков, подписание соглашения',
+		institution: 'ukct',
+		contact: 'dementyev',
+		sites: ['ukct-main'],
+		customer: 'meridian',
+		programs: ['spo-01'],
+		owner: 'demo-manager',
+		stage: 'signing',
+		startedDaysAgo: 151,
+		sinceDaysAgo: 7,
+		lastActivityDaysAgo: 3,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'nkis-signing-46',
+		title: 'НКИС: аналитику на Python, подписание соглашения',
+		institution: 'nkis',
+		contact: 'zueva',
+		sites: ['nkis-main'],
+		customer: 'ladoga',
+		programs: ['spo-02'],
+		products: ['analytics'],
+		owner: 'veresova',
+		stage: 'signing',
+		startedDaysAgo: 158,
+		sinceDaysAgo: 9,
+		lastActivityDaysAgo: 4,
+		agreement: ['2026-09-01', '2027-08-31'],
+		closeChecklist: true
+	},
+	{
+		key: 'vts-signing-47',
+		title: 'ВТС: аналитику на Python, подписание соглашения',
+		institution: 'vts',
+		contact: 'karpov',
+		customer: 'polarcode',
+		programs: ['spo-02'],
+		owner: 'zotov',
+		stage: 'signing',
+		startedDaysAgo: 185,
+		sinceDaysAgo: 31,
+		lastActivityDaysAgo: 12,
+		agreement: ['2026-09-01', '2027-08-31'],
+		comments: ['Соглашение на подписи у руководства вуза.']
+	},
+	{
+		key: 'skpa-signing-48',
+		title: 'СКПА: SQL-разработчиков, подписание соглашения',
+		institution: 'skpa',
+		contact: 'lebedeva',
+		customer: 'digital',
+		programs: ['spo-01'],
+		owner: 'demo-manager',
+		stage: 'signing',
+		startedDaysAgo: 139,
+		sinceDaysAgo: 5,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'lyceum306-materials_handover-49',
+		title: 'Лицей № 306 «Гравитон»: промпт-инжиниринг, передача материалов',
+		institution: 'lyceum306',
+		contact: 'morozov',
+		customer: 'technosphere',
+		programs: ['school-01'],
+		owner: 'veresova',
+		stage: 'materials_handover',
+		startedDaysAgo: 173,
+		sinceDaysAgo: 15,
+		lastActivityDaysAgo: 6,
+		agreement: ['2026-09-01', '2027-05-31'],
+		closeChecklist: true
+	},
+	{
+		key: 'school47-materials_handover-50',
+		title: 'Школа № 47 «Вектор»: промпт-инжиниринг, передача материалов',
+		institution: 'school47',
+		contact: 'novikova',
+		customer: 'irbis',
+		programs: ['school-01'],
+		owner: 'zotov',
+		stage: 'materials_handover',
+		startedDaysAgo: 167,
+		sinceDaysAgo: 4,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-05-31']
+	},
+	{
+		key: 'szpu-materials_handover-51',
+		title: 'СПбПУ: DevOps-инженеров, передача материалов',
+		institution: 'szpu',
+		contact: 'guryev',
+		sites: ['szpu-dept-is'],
+		customer: 'meridian',
+		programs: ['vo-bak-01'],
+		owner: 'demo-manager',
+		stage: 'materials_handover',
+		startedDaysAgo: 173,
+		sinceDaysAgo: 5,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-08-31']
+	},
+	{
+		key: 'pupi-materials_handover-52',
+		title: 'МФТИ: аналитику данных (low-code), передача материалов',
+		institution: 'pupi',
+		contact: 'zharova',
+		sites: ['pupi-main'],
+		customer: 'ladoga',
+		programs: ['vo-mag-01'],
+		products: ['analytics'],
+		owner: 'veresova',
+		stage: 'materials_handover',
+		startedDaysAgo: 179,
+		sinceDaysAgo: 6,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-09-01', '2027-08-31'],
+		closeChecklist: true,
+		comments: ['Готовим комплект материалов и лицензии к передаче.']
+	},
+	{
+		key: 'uguis-materials_handover-53',
+		title: 'ТПУ: управление проектами, передача материалов',
+		institution: 'uguis',
+		contact: 'koltsov',
+		customer: 'polarcode',
+		programs: ['dpo-01'],
+		owner: 'zotov',
+		stage: 'materials_handover',
+		startedDaysAgo: 205,
+		sinceDaysAgo: 27,
+		lastActivityDaysAgo: 11,
+		agreement: ['2026-10-01', '2027-09-30']
+	},
+	{
+		key: 'sivt-implementation_support-54',
+		title: 'НГУЭУ: управление проектами, сопровождение внедрения',
+		institution: 'sivt',
+		contact: 'pankratov',
+		customer: 'digital',
+		programs: ['dpo-01'],
+		products: ['lms'],
+		owner: 'demo-manager',
+		stage: 'implementation_support',
+		startedDaysAgo: 208,
+		sinceDaysAgo: 26,
+		lastActivityDaysAgo: 10,
+		agreement: ['2026-10-01', '2027-09-30']
+	},
+	{
+		key: 'yutus-implementation_support-55',
+		title: 'ВолгГТУ: управление проектами, сопровождение внедрения',
+		institution: 'yutus',
+		contact: 'savelyev',
+		customer: 'technosphere',
+		programs: ['dpo-01'],
+		owner: 'veresova',
+		stage: 'implementation_support',
+		startedDaysAgo: 194,
+		sinceDaysAgo: 7,
+		lastActivityDaysAgo: 3,
+		agreement: ['2026-10-01', '2027-09-30'],
+		closeChecklist: true
+	},
+	{
+		key: 'batse-implementation_support-56',
+		title: 'Университет Иннополис: управление проектами, сопровождение внедрения',
+		institution: 'batse',
+		contact: 'ulyanova',
+		customer: 'irbis',
+		programs: ['dpo-01'],
+		products: ['docs'],
+		owner: 'zotov',
+		stage: 'implementation_support',
+		startedDaysAgo: 202,
+		sinceDaysAgo: 10,
+		lastActivityDaysAgo: 4,
+		agreement: ['2026-10-01', '2027-09-30']
+	},
+	{
+		key: 'vkgtu-implementation_support-57',
+		title: 'ЧГУ им. И. Н. Ульянова: web-разработку на «Аколе», сопровождение внедрения',
+		institution: 'vkgtu',
+		contact: 'fedotov',
+		sites: ['vkgtu-main'],
+		customer: 'meridian',
+		programs: ['vo-bak-02'],
+		owner: 'demo-manager',
+		stage: 'implementation_support',
+		startedDaysAgo: 211,
+		sinceDaysAgo: 14,
+		lastActivityDaysAgo: 6,
+		agreement: ['2026-09-01', '2027-08-31'],
+		comments: ['Настраиваем учебную среду вместе с ИТ-службой вуза.']
+	},
+	{
+		key: 'sruit-teacher_training-58',
+		title: 'Московский Политех: управление проектами, обучение преподавателей',
+		institution: 'sruit',
+		contact: 'shilov',
+		customer: 'ladoga',
+		programs: ['dpo-01'],
+		products: ['docs'],
+		owner: 'veresova',
+		stage: 'teacher_training',
+		startedDaysAgo: 241,
+		sinceDaysAgo: 35,
+		lastActivityDaysAgo: 14,
+		agreement: ['2025-10-01', '2026-09-30'],
+		closeChecklist: true
+	},
+	{
+		key: 'bit-teacher_training-59',
+		title: 'МТУСИ: управление проектами, обучение преподавателей',
+		institution: 'bit',
+		contact: 'eldarova',
+		customer: 'polarcode',
+		programs: ['dpo-01'],
+		owner: 'zotov',
+		stage: 'teacher_training',
+		startedDaysAgo: 221,
+		sinceDaysAgo: 10,
+		lastActivityDaysAgo: 4,
+		agreement: ['2025-10-01', '2026-09-30']
+	},
+	{
+		key: 'puts-teacher_training-60',
+		title: 'СГТУ им. Гагарина Ю. А.: управление проектами, обучение преподавателей',
+		institution: 'puts',
+		contact: 'yakovleva',
+		customer: 'digital',
+		programs: ['dpo-01'],
+		products: ['lab'],
+		owner: 'demo-manager',
+		stage: 'teacher_training',
+		startedDaysAgo: 231,
+		sinceDaysAgo: 15,
+		lastActivityDaysAgo: 6,
+		agreement: ['2025-10-01', '2026-09-30']
+	},
+	{
+		key: 'paid-teacher_training-61',
+		title: 'НИУ «МЭИ»: управление проектами, обучение преподавателей',
+		institution: 'paid',
+		contact: 'gorbunova',
+		sites: ['paid-main'],
+		customer: 'technosphere',
+		programs: ['dpo-01'],
+		owner: 'veresova',
+		stage: 'teacher_training',
+		startedDaysAgo: 240,
+		sinceDaysAgo: 19,
+		lastActivityDaysAgo: 8,
+		agreement: ['2025-10-01', '2026-09-30'],
+		closeChecklist: true
+	},
+	{
+		key: 'ukct-program_update-62',
+		title: 'УКЦТ: аналитику на Python, актуализация программы',
+		institution: 'ukct',
+		contact: 'ershova',
+		sites: ['ukct-main'],
+		customer: 'irbis',
+		programs: ['spo-02'],
+		products: ['lms'],
+		owner: 'zotov',
+		stage: 'program_update',
+		startedDaysAgo: 256,
+		sinceDaysAgo: 26,
+		lastActivityDaysAgo: 10,
+		agreement: ['2025-09-01', '2026-08-31'],
+		comments: ['Сверяем программу с актуальными требованиями вуза.']
+	},
+	{
+		key: 'nkis-program_update-63',
+		title: 'НКИС: SQL-разработчиков, актуализация программы',
+		institution: 'nkis',
+		contact: 'ilyin',
+		sites: ['nkis-lab'],
+		customer: 'meridian',
+		programs: ['spo-01'],
+		owner: 'demo-manager',
+		stage: 'program_update',
+		startedDaysAgo: 242,
+		sinceDaysAgo: 7,
+		lastActivityDaysAgo: 3,
+		agreement: ['2025-09-01', '2026-08-31']
+	},
+	{
+		key: 'vts-program_update-64',
+		title: 'ВТС: аналитику на Python, актуализация программы',
+		institution: 'vts',
+		contact: 'karpov',
+		customer: 'ladoga',
+		programs: ['spo-02'],
+		owner: 'veresova',
+		stage: 'program_update',
+		startedDaysAgo: 250,
+		sinceDaysAgo: 10,
+		lastActivityDaysAgo: 4,
+		agreement: ['2025-09-01', '2026-08-31'],
+		closeChecklist: true
+	},
+	{
+		key: 'skpa-program_update-65',
+		title: 'СКПА: SQL-разработчиков, актуализация программы',
+		institution: 'skpa',
+		contact: 'lebedeva',
+		customer: 'polarcode',
+		programs: ['spo-01'],
+		owner: 'zotov',
+		stage: 'program_update',
+		startedDaysAgo: 259,
+		sinceDaysAgo: 14,
+		lastActivityDaysAgo: 6,
+		agreement: ['2025-09-01', '2026-08-31']
+	},
+	{
+		key: 'lyceum306-classes-66',
+		title: 'Лицей № 306 «Гравитон»: промпт-инжиниринг, ведение занятий',
+		institution: 'lyceum306',
+		contact: 'morozov',
+		customer: 'digital',
+		programs: ['school-01'],
+		owner: 'demo-manager',
+		stage: 'classes',
+		startedDaysAgo: 289,
+		sinceDaysAgo: 35,
+		lastActivityDaysAgo: 14,
+		agreement: ['2025-09-01', '2026-05-31'],
+		academic: ['2025-09-01', '2026-05-31'],
+		learning: {
+			groupExternalId: '70421',
+			purpose: 'students',
+			plannedSeats: 18,
+			enrolled: 18,
+			completed: 0,
+			expelled: 1
+		}
+	},
+	{
+		key: 'school47-classes-67',
+		title: 'Школа № 47 «Вектор»: промпт-инжиниринг, ведение занятий',
+		institution: 'school47',
+		contact: 'novikova',
+		customer: 'technosphere',
+		programs: ['school-01'],
+		owner: 'veresova',
+		stage: 'classes',
+		startedDaysAgo: 269,
+		sinceDaysAgo: 10,
+		lastActivityDaysAgo: 4,
+		agreement: ['2025-09-01', '2026-05-31'],
+		academic: ['2025-09-01', '2026-05-31'],
+		learning: {
+			groupExternalId: '70422',
+			purpose: 'students',
+			plannedSeats: 23,
+			enrolled: 22,
+			completed: 0,
+			expelled: 2
+		},
+		closeChecklist: true,
+		comments: ['Занятия идут по расписанию, посещаемость в норме.']
+	},
+	{
+		key: 'szpu-classes-68',
+		title: 'СПбПУ: мобильную разработку на «Авроре», ведение занятий',
+		institution: 'szpu',
+		contact: 'efimov',
+		sites: ['szpu-dept-is'],
+		customer: 'irbis',
+		programs: ['vo-bak-03'],
+		products: ['analytics'],
+		owner: 'zotov',
+		stage: 'classes',
+		startedDaysAgo: 279,
+		sinceDaysAgo: 15,
+		lastActivityDaysAgo: 6,
+		agreement: ['2025-09-01', '2026-08-31'],
+		academic: ['2025-09-01', '2026-06-30'],
+		learning: {
+			groupExternalId: '70423',
+			purpose: 'students',
+			plannedSeats: 28,
+			enrolled: 26,
+			completed: 0,
+			expelled: 1
+		}
+	},
+	{
+		key: 'pupi-classes-69',
+		title: 'МФТИ: DevOps-инженеров, ведение занятий',
+		institution: 'pupi',
+		contact: 'ignatyeva',
+		sites: ['pupi-dept-ai'],
+		customer: 'meridian',
+		programs: ['vo-bak-01'],
+		owner: 'demo-manager',
+		stage: 'classes',
+		startedDaysAgo: 288,
+		sinceDaysAgo: 19,
+		lastActivityDaysAgo: 8,
+		agreement: ['2025-09-01', '2026-08-31'],
+		academic: ['2025-09-01', '2026-06-30'],
+		learning: {
+			groupExternalId: '70424',
+			purpose: 'students',
+			plannedSeats: 33,
+			enrolled: 33,
+			completed: 0,
+			expelled: 2
+		}
+	},
+	{
+		key: 'uguis-documentation_update-70',
+		title: 'ТПУ: web-разработку на «Аколе», актуализация документации',
+		institution: 'uguis',
+		contact: 'lapina',
+		customer: 'ladoga',
+		programs: ['vo-bak-02'],
+		products: ['lab'],
+		owner: 'veresova',
+		stage: 'documentation_update',
+		startedDaysAgo: 297,
+		sinceDaysAgo: 19,
+		lastActivityDaysAgo: 8,
+		agreement: ['2025-09-01', '2026-08-31'],
+		academic: ['2025-09-01', '2026-06-30'],
+		learning: {
+			groupExternalId: '70425',
+			purpose: 'students',
+			plannedSeats: 38,
+			enrolled: 37,
+			completed: 35,
+			expelled: 1
+		},
+		closeChecklist: true
+	},
+	{
+		key: 'sivt-documentation_update-71',
+		title: 'НГУЭУ: аналитику данных (low-code), актуализация документации',
+		institution: 'sivt',
+		contact: 'nesterov',
+		sites: ['sivt-main'],
+		customer: 'polarcode',
+		programs: ['vo-mag-01'],
+		owner: 'zotov',
+		stage: 'documentation_update',
+		startedDaysAgo: 288,
+		sinceDaysAgo: 5,
+		lastActivityDaysAgo: 2,
+		agreement: ['2025-09-01', '2026-08-31'],
+		academic: ['2025-09-01', '2026-06-30'],
+		learning: {
+			groupExternalId: '70426',
+			purpose: 'students',
+			plannedSeats: 43,
+			enrolled: 41,
+			completed: 37,
+			expelled: 2
+		}
+	},
+	{
+		key: 'yutus-documentation_update-72',
+		title: 'ВолгГТУ: web-разработку на «Аколе», актуализация документации',
+		institution: 'yutus',
+		contact: 'rodionova',
+		customer: 'digital',
+		programs: ['vo-bak-02'],
+		products: ['lab'],
+		owner: 'demo-manager',
+		stage: 'documentation_update',
+		startedDaysAgo: 295,
+		sinceDaysAgo: 7,
+		lastActivityDaysAgo: 3,
+		agreement: ['2025-09-01', '2026-08-31'],
+		academic: ['2025-09-01', '2026-06-30'],
+		learning: {
+			groupExternalId: '70427',
+			purpose: 'students',
+			plannedSeats: 18,
+			enrolled: 18,
+			completed: 17,
+			expelled: 1
+		},
+		comments: ['Обновляем учебные материалы по итогам семестра.']
+	},
+	{
+		key: 'batse-qualification_upgrade-73',
+		title: 'Университет Иннополис: управление проектами, повышение квалификации',
+		institution: 'batse',
+		contact: 'tarasyuk',
+		customer: 'technosphere',
+		programs: ['dpo-01'],
+		owner: 'veresova',
+		stage: 'qualification_upgrade',
+		startedDaysAgo: 337,
+		sinceDaysAgo: 35,
+		lastActivityDaysAgo: 14,
+		agreement: ['2025-10-01', '2026-09-30'],
+		academic: ['2025-10-01', '2026-06-30'],
+		learning: {
+			groupExternalId: '70428',
+			purpose: 'teachers',
+			plannedSeats: 23,
+			enrolled: 22,
+			completed: 19,
+			expelled: 2
+		},
+		closeChecklist: true
+	},
+	{
+		key: 'vkgtu-qualification_upgrade-74',
+		title: 'ЧГУ им. И. Н. Ульянова: распределённые реестры, повышение квалификации',
+		institution: 'vkgtu',
+		contact: 'khabibullina',
+		sites: ['vkgtu-main'],
+		customer: 'irbis',
+		programs: ['vo-mag-02'],
+		products: ['security'],
+		owner: 'zotov',
+		stage: 'qualification_upgrade',
+		startedDaysAgo: 317,
+		sinceDaysAgo: 10,
+		lastActivityDaysAgo: 4,
+		agreement: ['2025-09-01', '2026-08-31'],
+		academic: ['2025-09-01', '2026-06-30'],
+		learning: {
+			groupExternalId: '70429',
+			purpose: 'students',
+			plannedSeats: 28,
+			enrolled: 26,
+			completed: 23,
+			expelled: 1
+		}
+	},
+	{
+		key: 'sruit-qualification_upgrade-75',
+		title: 'Московский Политех: управление проектами, повышение квалификации',
+		institution: 'sruit',
+		contact: 'chernysheva',
+		customer: 'meridian',
+		programs: ['dpo-01'],
+		owner: 'demo-manager',
+		stage: 'qualification_upgrade',
+		startedDaysAgo: 327,
+		sinceDaysAgo: 15,
+		lastActivityDaysAgo: 6,
+		agreement: ['2025-10-01', '2026-09-30'],
+		academic: ['2025-10-01', '2026-06-30'],
+		learning: {
+			groupExternalId: '70430',
+			purpose: 'teachers',
+			plannedSeats: 33,
+			enrolled: 33,
+			completed: 31,
+			expelled: 2
+		}
+	},
+	{
+		key: 'bit-execution_control-76',
+		title: 'МТУСИ: web-разработку на «Аколе», контроль исполнения',
+		institution: 'bit',
+		contact: 'shcherbak',
+		customer: 'ladoga',
+		programs: ['vo-bak-02'],
+		products: ['lab'],
+		owner: 'veresova',
+		stage: 'execution_control',
+		startedDaysAgo: 351,
+		sinceDaysAgo: 25,
+		lastActivityDaysAgo: 10,
+		agreement: ['2025-09-01', '2026-08-31'],
+		academic: ['2025-09-01', '2026-06-30'],
+		learning: {
+			groupExternalId: '70431',
+			purpose: 'students',
+			plannedSeats: 38,
+			enrolled: 37,
+			completed: 35,
+			expelled: 1
+		},
+		closeChecklist: true
+	},
+	{
+		key: 'puts-execution_control-77',
+		title: 'СГТУ им. Гагарина Ю. А.: web-разработку на «Аколе», контроль исполнения',
+		institution: 'puts',
+		contact: 'yurchenko',
+		customer: 'polarcode',
+		programs: ['vo-bak-02'],
+		owner: 'zotov',
+		stage: 'execution_control',
+		startedDaysAgo: 338,
+		sinceDaysAgo: 7,
+		lastActivityDaysAgo: 3,
+		agreement: ['2025-09-01', '2026-08-31'],
+		academic: ['2025-09-01', '2026-06-30'],
+		learning: {
+			groupExternalId: '70432',
+			purpose: 'students',
+			plannedSeats: 43,
+			enrolled: 41,
+			completed: 37,
+			expelled: 2
+		},
+		comments: ['Сверяем плановые и фактические показатели за период.']
+	}
+];
+/**
+ * Довесок к тридцати сюжетным записям: несколько дел с другим исходом.
+ *
+ * Завершённые здесь — тот же путь, что у пяти существующих: маршрут пройден
+ * целиком. Отменённые — новый исход: `cancelledWith` останавливает дело там,
+ * где до него дошли, без требования дойти до финальной стадии. Все пять
+ * отменены рано — до подписания, — потому что так эти сделки чаще всего и
+ * срываются: подписанное соглашение расторгают редко, а вот до него не
+ * доходят часто.
+ */
+const B2B_EXTRA: readonly InteractionSeed[] = [
+	{
+		key: 'uguis-2025b',
+		title: 'ТПУ: web-разработка на «Аколе», выпуск 2025/2026',
+		institution: 'uguis',
+		contact: 'lapina',
+		customer: 'technosphere',
+		programs: ['vo-bak-02'],
+		products: ['lab'],
+		owner: 'zotov',
+		stage: 'execution_control',
+		startedDaysAgo: 310,
+		sinceDaysAgo: 18,
+		lastActivityDaysAgo: 18,
+		agreement: ['2025-09-01', '2026-08-31'],
+		academic: ['2025-09-01', '2026-06-30'],
+		learning: {
+			groupExternalId: '70600',
+			purpose: 'students',
+			plannedSeats: 36,
+			enrolled: 35,
+			completed: 33,
+			expelled: 2
+		},
+		completedWith:
+			'Web-разработка на «Аколе» прочитана полностью, 33 студента получили документы об обучении.'
+	},
+	{
+		key: 'vkgtu-2025-mag',
+		title: 'ЧГУ им. И. Н. Ульянова: распределённые реестры, выпуск 2025/2026',
+		institution: 'vkgtu',
+		contact: 'fedotov',
+		sites: ['vkgtu-main'],
+		customer: 'meridian',
+		programs: ['vo-mag-02'],
+		products: ['security'],
+		owner: 'demo-manager',
+		stage: 'execution_control',
+		startedDaysAgo: 340,
+		sinceDaysAgo: 22,
+		lastActivityDaysAgo: 22,
+		agreement: ['2025-09-01', '2026-08-31'],
+		academic: ['2025-09-01', '2026-06-30'],
+		learning: {
+			groupExternalId: '70601',
+			purpose: 'students',
+			plannedSeats: 15,
+			enrolled: 14,
+			completed: 12,
+			expelled: 1
+		},
+		completedWith:
+			'Магистерская программа по распределённым реестрам закрыта, документы выданы двенадцати выпускникам.'
+	},
+	{
+		key: 'ukct-2025-spo',
+		title: 'УКЦТ: аналитика на Python, выпуск 2025/2026',
+		institution: 'ukct',
+		contact: 'ershova',
+		sites: ['ukct-main'],
+		customer: 'ladoga',
+		programs: ['spo-02'],
+		products: ['lms'],
+		owner: 'veresova',
+		stage: 'execution_control',
+		startedDaysAgo: 295,
+		sinceDaysAgo: 14,
+		lastActivityDaysAgo: 14,
+		agreement: ['2025-09-01', '2026-06-30'],
+		academic: ['2025-09-01', '2026-06-30'],
+		learning: {
+			groupExternalId: '70602',
+			purpose: 'students',
+			plannedSeats: 32,
+			enrolled: 30,
+			completed: 28,
+			expelled: 2
+		},
+		completedWith: 'Группа СПО завершила обучение, дипломы о переподготовке выданы.'
+	},
+	{
+		key: 'skpa-otkaz-contact',
+		title: 'СКПА: SQL-разработчики, вторая группа',
+		institution: 'skpa',
+		contact: 'lebedeva',
+		customer: 'technosphere',
+		programs: ['spo-01'],
+		owner: 'zotov',
+		stage: 'contact_search',
+		startedDaysAgo: 40,
+		sinceDaysAgo: 40,
+		lastActivityDaysAgo: 40,
+		agreement: ['2026-09-01', '2027-08-31'],
+		cancelledWith:
+			'Колледж не вышел на связь: профильное подразделение за месяц не нашли, работу остановили.'
+	},
+	{
+		key: 'vts-otkaz-comm',
+		title: 'ВТС: аналитика на Python, вечерний поток',
+		institution: 'vts',
+		contact: 'karpov',
+		customer: 'ladoga',
+		programs: ['spo-02'],
+		owner: 'demo-manager',
+		stage: 'communication',
+		startedDaysAgo: 55,
+		sinceDaysAgo: 30,
+		lastActivityDaysAgo: 28,
+		agreement: ['2026-09-01', '2027-08-31'],
+		cancelledWith: 'Техникум перенёс набор на следующий год: бюджет на курс не согласовали.'
+	},
+	{
+		key: 'batse-otkaz-meeting',
+		title: 'Университет Иннополис: повышение квалификации, весенний поток',
+		institution: 'batse',
+		contact: 'tarasyuk',
+		customer: 'irbis',
+		programs: ['dpo-01'],
+		owner: 'veresova',
+		stage: 'meeting',
+		startedDaysAgo: 70,
+		sinceDaysAgo: 35,
+		lastActivityDaysAgo: 33,
+		agreement: ['2026-10-01', '2027-09-30'],
+		cancelledWith:
+			'Встречу трижды переносили: вуз выбрал другого подрядчика по повышению квалификации.'
+	},
+	{
+		key: 'paid-otkaz-docs',
+		title: 'НИУ «МЭИ»: мобильная разработка на «Авроре», пилотный поток',
+		institution: 'paid',
+		contact: 'vikhrova',
+		sites: ['paid-main'],
+		customer: 'digital',
+		programs: ['vo-bak-03'],
+		owner: 'zotov',
+		stage: 'document_exchange',
+		startedDaysAgo: 90,
+		sinceDaysAgo: 45,
+		lastActivityDaysAgo: 40,
+		agreement: ['2026-09-01', '2027-08-31'],
+		cancelledWith:
+			'Реквизиты так и не сверили: переписка с вузом прекратилась после смены проректора.'
+	},
+	{
+		key: 'sruit-otkaz-revision',
+		title: 'Московский Политех: управление проектами, корпоративная группа',
+		institution: 'sruit',
+		contact: 'chernysheva',
+		customer: 'polarcode',
+		programs: ['dpo-01'],
+		owner: 'demo-manager',
+		stage: 'document_revision',
+		startedDaysAgo: 100,
+		sinceDaysAgo: 20,
+		lastActivityDaysAgo: 18,
+		agreement: ['2026-10-01', '2027-09-30'],
+		cancelledWith: 'Юридическая служба вуза отклонила правки без альтернативы, стороны разошлись.'
+	}
+];
+
+/**
  * Коммерческое обучение — короткий процесс из пяти стадий.
  *
- * Четыре записи, и каждая отвечает на свой вопрос демонстрации: заявка только
- * что принята, договор на оплате, обучение идёт (и подтверждено фактом из
- * системы обучения), обучение закончено с выданным документом. Контрагентов
- * двое — физическое лицо и юридическое, — потому что пространство `b2c`
- * собирает именно их, а процесс у них один.
+ * Четыре сюжетные записи, и каждая отвечает на свой вопрос демонстрации: заявка
+ * только что принята, договор на оплате, обучение идёт (и подтверждено фактом
+ * из системы обучения), обучение закончено с выданным документом. Ключи и
+ * состав — часть демонстрационного сценария, не трогать. Довесок — в
+ * `B2C_EXTRA` ниже: те же два контрагента, физическое лицо и юридическое, —
+ * пространство `b2c` собирает именно их, а процесс у них один, — ведут ещё
+ * несколько дел за год.
  */
 const B2C_INTERACTIONS: readonly InteractionSeed[] = [
 	{
@@ -854,10 +2362,152 @@ const B2C_INTERACTIONS: readonly InteractionSeed[] = [
 ];
 
 /**
+ * Довесок к четырём сюжетным записям B2C: та же пара контрагентов ведёт
+ * ещё несколько дел — так и выглядела бы их история за год, — плюс завершённое
+ * и отменённое дело, которых у исходных четырёх не было.
+ */
+const B2C_EXTRA: readonly InteractionSeed[] = [
+	{
+		key: 'mayak-offer-1',
+		title: 'Маяк-Телеком: аналитика на Python, предложение для отдела ИТ',
+		counterparty: 'mayak',
+		contact: 'kudryashova',
+		programs: ['spo-02'],
+		owner: 'demo-manager',
+		stage: 'offer',
+		startedDaysAgo: 10,
+		sinceDaysAgo: 6,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-11-01', '2027-04-30']
+	},
+	{
+		key: 'sorokin-offer-1',
+		title: 'Сорокин А. П.: промпт-инжиниринг, предложение',
+		counterparty: 'individual-sorokin',
+		contact: 'sorokin',
+		programs: ['school-01'],
+		owner: 'demo-manager',
+		stage: 'offer',
+		startedDaysAgo: 8,
+		sinceDaysAgo: 5,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-10-01', '2027-01-31']
+	},
+	{
+		key: 'mayak-offer-2',
+		title: 'Маяк-Телеком: управление проектами, предложение для руководителей смен',
+		counterparty: 'mayak',
+		contact: 'kudryashova',
+		programs: ['dpo-01'],
+		owner: 'demo-manager',
+		stage: 'offer',
+		startedDaysAgo: 15,
+		sinceDaysAgo: 9,
+		lastActivityDaysAgo: 4,
+		agreement: ['2026-11-15', '2027-05-15']
+	},
+	{
+		key: 'sorokin-zayavka-2',
+		title: 'Сорокин А. П.: аналитика на Python, вторая заявка',
+		counterparty: 'individual-sorokin',
+		contact: 'sorokin',
+		programs: ['spo-02'],
+		owner: 'demo-manager',
+		stage: 'lead_intake',
+		startedDaysAgo: 3,
+		sinceDaysAgo: 3,
+		lastActivityDaysAgo: 1,
+		agreement: ['2026-09-15', '2026-12-15']
+	},
+	{
+		key: 'mayak-dogovor-2',
+		title: 'Маяк-Телеком: промпт-инжиниринг, вторая группа сотрудников',
+		counterparty: 'mayak',
+		contact: 'kudryashova',
+		programs: ['school-01'],
+		owner: 'demo-manager',
+		stage: 'contract_payment',
+		startedDaysAgo: 35,
+		sinceDaysAgo: 12,
+		lastActivityDaysAgo: 5,
+		agreement: ['2026-08-01', '2027-01-31'],
+		comments: ['Договор согласован, ждём оплату по счёту от бухгалтерии заказчика.']
+	},
+	{
+		key: 'mayak-obuchenie-2',
+		title: 'Маяк-Телеком: SQL-разработчики, поток 2026/2',
+		counterparty: 'mayak',
+		contact: 'kudryashova',
+		programs: ['spo-01'],
+		products: ['docs'],
+		owner: 'demo-manager',
+		stage: 'learning',
+		startedDaysAgo: 70,
+		sinceDaysAgo: 25,
+		lastActivityDaysAgo: 5,
+		agreement: ['2026-07-01', '2026-12-31'],
+		academic: ['2026-08-01', '2026-12-15'],
+		learning: {
+			groupExternalId: '70503',
+			purpose: 'upskilling',
+			plannedSeats: 8,
+			enrolled: 8,
+			completed: 0,
+			expelled: 0
+		},
+		closeChecklist: true
+	},
+	{
+		key: 'sorokin-vypusk',
+		title: 'Сорокин А. П.: SQL-разработчик, выпуск 2026',
+		counterparty: 'individual-sorokin',
+		contact: 'sorokin',
+		programs: ['spo-01'],
+		products: ['docs'],
+		owner: 'demo-manager',
+		stage: 'completion',
+		startedDaysAgo: 150,
+		sinceDaysAgo: 20,
+		lastActivityDaysAgo: 20,
+		agreement: ['2026-04-01', '2026-09-30'],
+		academic: ['2026-05-01', '2026-08-31'],
+		learning: {
+			groupExternalId: '70504',
+			purpose: 'upskilling',
+			plannedSeats: 1,
+			enrolled: 1,
+			completed: 1,
+			expelled: 0
+		},
+		completedWith: 'Курс SQL-разработчика завершён, удостоверение выдано.'
+	},
+	{
+		key: 'sorokin-otkaz',
+		title: 'Сорокин А. П.: управление проектами, вторая заявка',
+		counterparty: 'individual-sorokin',
+		contact: 'sorokin',
+		programs: ['dpo-01'],
+		owner: 'demo-manager',
+		stage: 'contract_payment',
+		startedDaysAgo: 45,
+		sinceDaysAgo: 20,
+		lastActivityDaysAgo: 18,
+		agreement: ['2026-08-01', '2027-01-31'],
+		cancelledWith: 'Слушатель отказался от обучения после счёта: оплату переносить не стал.'
+	}
+];
+
+/** Все записи пространства `b2b`: сюжетные, воронка и довесок с другим исходом. */
+const B2B_ALL: readonly InteractionSeed[] = [...INTERACTIONS, ...FUNNEL_INTERACTIONS, ...B2B_EXTRA];
+
+/** Все записи пространства `b2c`: сюжетные и довесок. */
+const B2C_ALL: readonly InteractionSeed[] = [...B2C_INTERACTIONS, ...B2C_EXTRA];
+
+/**
  * Весь набор взаимодействий: оба пространства одним списком. Порядок значения
  * не имеет — каждая запись сама говорит, по какому процессу идёт.
  */
-const ALL_INTERACTIONS: readonly InteractionSeed[] = [...INTERACTIONS, ...B2C_INTERACTIONS];
+const ALL_INTERACTIONS: readonly InteractionSeed[] = [...B2B_ALL, ...B2C_ALL];
 
 /**
  * Результат стадии там, где маршрут его требует. Пустая строка движок не
@@ -905,7 +2555,11 @@ function workspaceKeyOf(seed: InteractionSeed): string {
 
 /** Просрочка — следствие данных набора, а не отдельный флаг: часы считает база. */
 function isOverdueSeed(seed: InteractionSeed): boolean {
-	if (seed.completedWith !== undefined || seed.pause !== undefined) {
+	if (
+		seed.completedWith !== undefined ||
+		seed.cancelledWith !== undefined ||
+		seed.pause !== undefined
+	) {
 		return false;
 	}
 
@@ -916,7 +2570,12 @@ function isOverdueSeed(seed: InteractionSeed): boolean {
 		throw new Error(`В процессе «${process.name}» нет стадии «${seed.stage}»`);
 	}
 
-	return seed.sinceDaysAgo > stage.slaDays;
+	// «>=», а не «>»: представление `stage_entry_status` сравнивает `due_at`
+	// (момент входа плюс норматив) со временем чтения, а не со временем
+	// заливки. У записи, вошедшей в стадию ровно `slaDays` дней назад, `due_at`
+	// совпадает с моментом заливки и оказывается раньше любого более позднего
+	// чтения — она просрочена всегда, а не только пока идёт сама заливка.
+	return seed.sinceDaysAgo >= stage.slaDays;
 }
 
 /**
@@ -927,11 +2586,20 @@ function isOverdueSeed(seed: InteractionSeed): boolean {
 export const INTERACTION_SEED_SIZES = {
 	interactions: ALL_INTERACTIONS.length,
 	/** Записи пространства B2C: обучение физических и юридических лиц. */
-	b2c: B2C_INTERACTIONS.length,
+	b2c: B2C_ALL.length,
 	completed: ALL_INTERACTIONS.filter((seed) => seed.completedWith !== undefined).length,
 	/** Завершённые по пространствам: маршруты у них разной длины. */
-	completedB2b: INTERACTIONS.filter((seed) => seed.completedWith !== undefined).length,
-	completedB2c: B2C_INTERACTIONS.filter((seed) => seed.completedWith !== undefined).length,
+	completedB2b: B2B_ALL.filter((seed) => seed.completedWith !== undefined).length,
+	completedB2c: B2C_ALL.filter((seed) => seed.completedWith !== undefined).length,
+	/**
+	 * Отменённые: маршрут не пройден, дело остановлено там, где до него дошли.
+	 * В отличие от завершённых, отмена не требует финальной стадии — считать по
+	 * пространствам всё равно приходится: у отменённого дела нет всех записей
+	 * стадий маршрута, а у завершённого есть.
+	 */
+	cancelled: ALL_INTERACTIONS.filter((seed) => seed.cancelledWith !== undefined).length,
+	cancelledB2b: B2B_ALL.filter((seed) => seed.cancelledWith !== undefined).length,
+	cancelledB2c: B2C_ALL.filter((seed) => seed.cancelledWith !== undefined).length,
 	overdue: ALL_INTERACTIONS.filter(isOverdueSeed).length,
 	paused: ALL_INTERACTIONS.filter((seed) => seed.pause !== undefined).length,
 	blockers: ALL_INTERACTIONS.filter((seed) => seed.blocker !== undefined).length,
@@ -1989,6 +3657,17 @@ export async function seedInteractions(): Promise<void> {
 				revision: plan.revision,
 				summary: seed.completedWith,
 				force: false
+			});
+		}
+
+		// Отмена не требует финальной стадии: дело останавливают там, где до него
+		// дошли, — в отличие от завершения, чек-лист и результат текущей стадии
+		// закрывать не нужно.
+		if (seed.cancelledWith !== undefined) {
+			await cancelInteraction(ctx, {
+				interactionId: id,
+				revision: plan.revision,
+				reason: seed.cancelledWith
 			});
 		}
 

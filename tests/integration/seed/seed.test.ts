@@ -325,10 +325,14 @@ describe('сид', () => {
 		await expect(countRows(interactions)).resolves.toBe(INTERACTION_SEED_SIZES.interactions);
 
 		const open = await openEntries();
-		const active = INTERACTION_SEED_SIZES.interactions - INTERACTION_SEED_SIZES.completed;
+		const active =
+			INTERACTION_SEED_SIZES.interactions -
+			INTERACTION_SEED_SIZES.completed -
+			INTERACTION_SEED_SIZES.cancelled;
 
 		// Открытая запись ровно одна у каждого незакрытого взаимодействия, и ни
-		// одной у завершённых: закрытие выводит взаимодействие с маршрута.
+		// одной у завершённых или отменённых: закрытие выводит взаимодействие с
+		// маршрута в обоих случаях.
 		expect(open).toHaveLength(active);
 		expect(new Set(open.map((entry) => entry.interactionId)).size).toBe(active);
 		expect(open.filter((entry) => entry.isOverdue)).toHaveLength(INTERACTION_SEED_SIZES.overdue);
@@ -340,6 +344,16 @@ describe('сид', () => {
 			.where(eq(interactions.status, 'completed'));
 
 		expect(completed).toHaveLength(INTERACTION_SEED_SIZES.completed);
+
+		// Отменённое дело тоже сходит с маршрута: у него нет открытой записи
+		// стадии, но, в отличие от завершённого, нет и записи на каждую стадию
+		// маршрута — она есть только на пройденные.
+		const cancelled = await database.db
+			.select({ id: interactions.id })
+			.from(interactions)
+			.where(eq(interactions.status, 'cancelled'));
+
+		expect(cancelled).toHaveLength(INTERACTION_SEED_SIZES.cancelled);
 
 		await expect(countRows(comments)).resolves.toBe(INTERACTION_SEED_SIZES.comments);
 		await expect(countRows(blockers)).resolves.toBe(INTERACTION_SEED_SIZES.blockers);
