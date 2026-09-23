@@ -42,6 +42,7 @@ function actor(requestId: string, permissions: readonly string[]): ActorContext 
 			email: 'tester@example.org',
 			fullName: 'Тестовый Пользователь',
 			roleId: 'manager',
+			roleName: 'Менеджер',
 			permissions: new Set(permissions),
 			isDemo: false,
 			scope: { kind: 'all' }

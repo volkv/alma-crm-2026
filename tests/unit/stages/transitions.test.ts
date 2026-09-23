@@ -25,6 +25,7 @@ function actor(permissions: PermissionKey[]): ActorContext {
 			email: 'tester@example.org',
 			fullName: 'Тестовый Пользователь',
 			roleId: 'manager',
+			roleName: 'Менеджер',
 			permissions: new Set<string>(permissions),
 			isDemo: false,
 			scope: { kind: 'all' }

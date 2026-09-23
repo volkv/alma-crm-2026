@@ -14,6 +14,7 @@
 	import CommandPalette from './command-palette.svelte';
 	import UserMenu from './user-menu.svelte';
 	import { createNavCollapse } from './nav-collapse.svelte';
+	import { createNavGroups, setNavGroups } from './nav-groups.svelte';
 	import { navLinks } from './nav-links';
 	import { search } from './search.svelte';
 
@@ -55,6 +56,10 @@
 	} = $props();
 
 	const nav = createNavCollapse();
+	// Свёрнутые группы меню — один экземпляр на оболочку: боковая панель и
+	// выдвижное меню телефона показывают один и тот же список, и расходиться в
+	// том, что в нём свёрнуто, им незачем.
+	setNavGroups(createNavGroups());
 
 	// Час приходит числом по часам сервера — на экране он обязан выглядеть
 	// временем: «в 3» читается как «в три чего-то».

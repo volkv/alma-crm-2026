@@ -1,4 +1,6 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
+	import CircleUserIcon from '@lucide/svelte/icons/circle-user';
 	import LogOutIcon from '@lucide/svelte/icons/log-out';
 	import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
 	import * as Avatar from '$lib/components/ui/avatar/index.js';
@@ -13,10 +15,15 @@
 	 * Who is signed in, and the way out. Signing out is a POST, not a link: it
 	 * changes state, so it must not be reachable by a prefetch or a crawler.
 	 *
-	 * Карточка стоит в подвале меню разделов и называет только имя: «кто
-	 * вошёл» — не действие, его читают мельком, а почта и роль спрашиваются редко и
-	 * нарочно — они внутри, под нажатием. Возврат подсказок отсюда ушёл в само
-	 * меню разделов («Тур по системе»), а подсказки по экрану — под значок «?».
+	 * Карточка стоит в подвале меню разделов и называет имя и роль: на вопрос
+	 * «кто я здесь и что мне можно» отвечают вместе, и роль — первое, обо что
+	 * спотыкаются, когда экран выглядит не так, как у соседа. Почта
+	 * спрашивается реже и нарочно — она внутри, под нажатием.
+	 *
+	 * Оттуда же открывается «Профиль»: учётная запись человека — не правило
+	 * системы, и в ряду настроек ей не место (`$lib/nav`). Ищут её там, где
+	 * написано, кто вошёл. Возврат подсказок отсюда ушёл в само меню разделов
+	 * («Тур по системе»), а подсказки по экрану — под значок «?».
 	 */
 	let {
 		user,
@@ -37,6 +44,8 @@
 		 */
 		variant?: 'menu' | 'dialog';
 	} = $props();
+
+	const profileHref = resolve('/(app)/settings/profile');
 
 	// Карточка занимает весь подвал и отступы держит сама: фон, который
 	// загорается под курсором и при открытом списке, обязан заливать всю полосу
@@ -60,9 +69,15 @@
 		</Avatar.Fallback>
 	</Avatar.Root>
 	{#if collapsed}
-		<span class="sr-only">{user.fullName} — учётная запись</span>
+		<span class="sr-only">{user.fullName} — учётная запись, роль: {user.roleName}</span>
 	{:else}
-		<span class="min-w-0 flex-1 truncate text-left text-sm font-medium">{user.fullName}</span>
+		<!-- Роль строкой ниже имени и мельче его: она подпись к имени, а не
+			второе имя. Обе строки обрезаются по отдельности — длинное имя не
+			должно вытеснять роль за край. -->
+		<span class="flex min-w-0 flex-1 flex-col text-left">
+			<span class="truncate text-sm font-medium">{user.fullName}</span>
+			<span class="truncate text-xs text-muted-foreground">{user.roleName}</span>
+		</span>
 		<ChevronsUpDownIcon class="size-4 shrink-0 text-muted-foreground" aria-hidden="true" />
 	{/if}
 {/snippet}
@@ -90,9 +105,13 @@
 				<div class="min-w-0">
 					<p class="truncate text-sm font-medium">{user.fullName}</p>
 					<p class="truncate text-xs text-muted-foreground">{user.email}</p>
-					<p class="mt-1 text-xs text-faint">Роль: {user.roleId}</p>
+					<p class="mt-1 text-xs text-faint">Роль: {user.roleName}</p>
 				</div>
 			</div>
+			<Button href={profileHref} variant="outline" class="w-full">
+				<CircleUserIcon aria-hidden="true" />
+				Профиль
+			</Button>
 			<form method="POST" action="/logout">
 				<Button type="submit" variant="outline" class="w-full">
 					<LogOutIcon aria-hidden="true" />
@@ -114,8 +133,17 @@
 			<div class="px-2 py-1.5">
 				<p class="truncate text-sm font-medium">{user.fullName}</p>
 				<p class="truncate text-xs text-muted-foreground">{user.email}</p>
-				<p class="mt-1 text-xs text-faint">Роль: {user.roleId}</p>
+				<p class="mt-1 text-xs text-faint">Роль: {user.roleName}</p>
 			</div>
+			<DropdownMenu.Separator />
+			<DropdownMenu.Item>
+				{#snippet child({ props })}
+					<a {...props} href={profileHref}>
+						<CircleUserIcon aria-hidden="true" />
+						Профиль
+					</a>
+				{/snippet}
+			</DropdownMenu.Item>
 			<DropdownMenu.Separator />
 			<form method="POST" action="/logout">
 				<DropdownMenu.Item class="w-full">

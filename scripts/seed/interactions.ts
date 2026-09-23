@@ -986,6 +986,7 @@ function seedActor(user: {
 			email: user.email,
 			fullName: user.fullName,
 			roleId: user.roleId,
+			roleName: user.roleId,
 			permissions: defaultRolePermissions(user.roleId),
 			isDemo: false,
 			scope: { kind: 'all' }

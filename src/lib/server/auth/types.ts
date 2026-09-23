@@ -11,6 +11,13 @@ export type SessionUser = {
 	fullName: string;
 	roleId: string;
 	/**
+	 * Как роль называется по-человечески: её и показывают в карточке учётной
+	 * записи. Ключ роли туда не годится — `lead` ничего не говорит тому, кто
+	 * его не заводил, — а взять название на стороне браузера неоткуда: роли
+	 * живут в базе, и рядом с ними заводят свои.
+	 */
+	roleName: string;
+	/**
 	 * Permission codes this session may act on, as a set for O(1) checks. Those
 	 * of the role, minus what a demo session never gets — see
 	 * `demoSessionPermissions` in `$lib/server/rbac`.

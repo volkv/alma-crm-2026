@@ -333,6 +333,7 @@ export function testActor(options?: {
 			email: 'tester@example.org',
 			fullName: 'Тестовый Пользователь',
 			roleId,
+			roleName: roleId,
 			permissions,
 			isDemo: false,
 			scope

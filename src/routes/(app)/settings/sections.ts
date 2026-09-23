@@ -6,8 +6,11 @@
  * двум ответам нельзя — поэтому они читают одну таблицу.
  *
  * Те же подразделы стоят пунктами главного меню (`$lib/nav`) со своими
- * значками, и права там обязаны совпадать с правами отсюда — за этим следит
- * `tests/unit/nav.test.ts`.
+ * значками, в том же порядке и с теми же правами — за этим следит
+ * `tests/unit/nav.test.ts`. Исключение одно и названо здесь же: «Профиль»
+ * (`personal: true`) в меню разделов не стоит, потому что это не правило
+ * системы, а учётная запись вошедшего, — к ней ходят из карточки в подвале
+ * меню, где написано, кто вошёл.
  */
 import type { PermissionKey } from '$lib/server/rbac/permissions';
 
@@ -26,6 +29,13 @@ export type SettingsSection = {
 	description: string;
 	/** `null` — раздел про самого вошедшего, отдельного права на него нет. */
 	permission: PermissionKey | null;
+	/**
+	 * Подраздел про самого вошедшего, а не про устройство системы: в главное
+	 * меню он не попадает и открывается из карточки учётной записи. В таблице
+	 * он всё равно нужен — из неё оболочка настроек берёт название и подпись
+	 * для заголовка страницы.
+	 */
+	personal?: true;
 };
 
 export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
@@ -36,22 +46,10 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 		permission: 'settings.write'
 	},
 	{
-		href: '/settings/profile',
-		label: 'Профиль',
-		description: 'Учётная запись, под которой вы вошли, и её сессии',
-		permission: null
-	},
-	{
 		href: '/settings/users',
 		label: 'Пользователи',
 		description: 'Кто работает в системе, с какой ролью и кому подчиняется',
 		permission: 'users.manage'
-	},
-	{
-		href: '/settings/api-keys',
-		label: 'Ключи доступа',
-		description: 'Ключи, которыми внешние системы обращаются к API',
-		permission: 'api_keys.manage'
 	},
 	{
 		href: '/settings/workspaces',
@@ -66,9 +64,24 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 		permission: 'stages.configure'
 	},
 	{
+		href: '/settings/api-keys',
+		label: 'Ключи доступа',
+		description: 'Ключи, которыми внешние системы обращаются к API',
+		permission: 'api_keys.manage'
+	},
+	{
 		href: '/settings/integrations',
 		label: 'Интеграции',
 		description: 'Вебхуки, обмен с системой обучения и приём заявок с сайта',
 		permission: 'integrations.manage'
+	},
+	{
+		// Последним и вне ряда: в меню разделов его нет, и порядок здесь нужен
+		// только заголовку страницы.
+		href: '/settings/profile',
+		label: 'Профиль',
+		description: 'Учётная запись, под которой вы вошли, и её сессии',
+		permission: null,
+		personal: true
 	}
 ];

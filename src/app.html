@@ -36,6 +36,13 @@
 			не строкой прямо здесь, сказано в самом `static/theme.js`.
 		-->
 		<script src="%sveltekit.assets%/theme.js"></script>
+		<!--
+			Свёрнутые группы меню. По той же причине и на тех же условиях, что и
+			тема: какие группы свёрнуты, знает браузер человека, а не сервер, и без
+			этого скрипта меню на каждой загрузке успевало бы показаться раскрытым
+			и схлопнуться. Подробности — в самом `static/nav-groups.js`.
+		-->
+		<script src="%sveltekit.assets%/nav-groups.js"></script>
 	</head>
 	<body data-sveltekit-preload-data="hover">
 		<div style="display: contents">%sveltekit.body%</div>

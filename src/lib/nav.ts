@@ -3,7 +3,6 @@ import BarChart3Icon from '@lucide/svelte/icons/bar-chart-3';
 import BellIcon from '@lucide/svelte/icons/bell';
 import BookOpenIcon from '@lucide/svelte/icons/book-open';
 import BuildingIcon from '@lucide/svelte/icons/building';
-import CircleUserIcon from '@lucide/svelte/icons/circle-user';
 import CompassIcon from '@lucide/svelte/icons/compass';
 import DatabaseIcon from '@lucide/svelte/icons/database';
 import FileTextIcon from '@lucide/svelte/icons/file-text';
@@ -166,8 +165,14 @@ const STATIC_SECTIONS: readonly NavSection[] = [
 	// внутри него, и дорога к процессу или ключам была вдвое длиннее, чем к
 	// любому другому экрану. Право у пункта — то же, которым открывается сам
 	// подраздел (`src/routes/(app)/settings/sections.ts`).
+	//
+	// Порядок — от того, что заводят и правят чаще, к тому, что настраивают
+	// однажды: общие правила, люди, направления и их процессы, а ключи, обмен и
+	// журналы доставки — следом. «Профиля» в этом ряду нет: учётная запись
+	// человека — не правило системы, и открывается она из карточки в подвале
+	// меню, где написано, кто вошёл.
 	{
-		// «Общие» — первым: это правила, которыми живёт вся система, а профиль и
+		// «Общие» — первым: это правила, которыми живёт вся система, а
 		// пользователи — про отдельные учётные записи.
 		href: '/settings/general',
 		label: 'Общие',
@@ -176,25 +181,11 @@ const STATIC_SECTIONS: readonly NavSection[] = [
 		permission: 'settings.write'
 	},
 	{
-		href: '/settings/profile',
-		label: 'Профиль',
-		icon: CircleUserIcon,
-		group: SETTINGS,
-		permission: null
-	},
-	{
 		href: '/settings/users',
 		label: 'Пользователи',
 		icon: UserCogIcon,
 		group: SETTINGS,
 		permission: 'users.manage'
-	},
-	{
-		href: '/settings/api-keys',
-		label: 'Ключи доступа',
-		icon: KeyRoundIcon,
-		group: SETTINGS,
-		permission: 'api_keys.manage'
 	},
 	{
 		// Пространства стоят перед процессом: сначала заводят направление, потом
@@ -211,6 +202,13 @@ const STATIC_SECTIONS: readonly NavSection[] = [
 		icon: WorkflowIcon,
 		group: SETTINGS,
 		permission: 'stages.configure'
+	},
+	{
+		href: '/settings/api-keys',
+		label: 'Ключи доступа',
+		icon: KeyRoundIcon,
+		group: SETTINGS,
+		permission: 'api_keys.manage'
 	},
 	{
 		href: '/settings/integrations',

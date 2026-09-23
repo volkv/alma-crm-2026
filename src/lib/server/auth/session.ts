@@ -282,6 +282,7 @@ export async function loadSessionUser(userId: string): Promise<SessionUser | nul
 			email: users.email,
 			fullName: users.fullName,
 			roleId: users.roleId,
+			roleName: roles.name,
 			isDemo: users.isDemo,
 			isActive: users.isActive
 		})
@@ -307,6 +308,7 @@ export async function loadSessionUser(userId: string): Promise<SessionUser | nul
 		email: row.email,
 		fullName: row.fullName,
 		roleId: row.roleId,
+		roleName: row.roleName,
 		permissions: isDemo ? demoSessionPermissions(rolePermissions) : rolePermissions,
 		isDemo,
 		scope

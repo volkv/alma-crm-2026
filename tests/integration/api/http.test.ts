@@ -248,6 +248,7 @@ describe('вход по ключу', () => {
 			email: 'admin@example.org',
 			fullName: 'Тестовый Администратор',
 			roleId: 'admin',
+			roleName: 'Администратор',
 			permissions: new Set(['organizations.read']),
 			isDemo: false,
 			scope: { kind: 'all' }
@@ -642,6 +643,7 @@ describe('страница документации', () => {
 		email: 'manager@example.org',
 		fullName: 'Тестовый Менеджер',
 		roleId: 'manager',
+		roleName: 'Менеджер',
 		permissions: new Set(),
 		isDemo: false,
 		scope: { kind: 'all' }
