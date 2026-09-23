@@ -655,6 +655,7 @@ pnpm run check:all
 | [`docs/data-model.md`](docs/data-model.md)               | схема базы, контракты, вызов сервисов, ошибки и права                    |
 | [`docs/directory.md`](docs/directory.md)                 | организации, площадки, люди, программы, продукты                         |
 | [`docs/documents.md`](docs/documents.md)                 | хранилище, шаблоны, генерация, загрузка, скачивание                      |
+| [`docs/enrichment.md`](docs/enrichment.md)               | реквизиты вуза из ЕГРЮЛ и раздела `/sveden` на его сайте                 |
 | [`docs/stats.md`](docs/stats.md)                         | снимки статистики, сопоставление колонок, показатели, рейтинг            |
 | [`docs/api.md`](docs/api.md)                             | публичный API: ключи, лимиты, идемпотентность, ошибки                    |
 | [`docs/admin.md`](docs/admin.md)                         | журнал действий и настройки                                              |
