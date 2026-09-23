@@ -14,12 +14,18 @@
 import { z } from 'zod';
 import { id, requiredText } from './common';
 import {
+	AFFILIATION_ROLE_KINDS,
 	EDUCATION_LEVELS,
 	LIFECYCLE_STATUSES,
 	ORGANIZATION_KINDS,
 	PROGRAM_LEVELS,
+	type AffiliationView,
 	type ContractView,
-	type OrganizationView
+	type OrganizationView,
+	type PersonListItem,
+	type PersonView,
+	type ProductDetail,
+	type ProgramDetail
 } from './directory';
 import {
 	DOCUMENT_KINDS,
@@ -45,6 +51,8 @@ import {
 	type InteractionChangeView,
 	type InteractionStatusView,
 	type ProcessRevisionView,
+	type WorkflowDetail,
+	type WorkspaceMembership,
 	type WorkspaceSummary,
 	type StageEntryView
 } from './interactions';
@@ -151,10 +159,45 @@ export const apiProgramSchema = z.object({
 	name: z.string(),
 	level: z.enum(PROGRAM_LEVELS),
 	directionCode: z.string().nullable().describe('Код направления подготовки, например `09.03.01`'),
+	priority: z
+		.number()
+		.int()
+		.nullable()
+		.describe('Ручной приоритет показа: 1 — самая важная программа, `null` — не назначен'),
 	status: z.enum(LIFECYCLE_STATUSES)
 });
 
 export type ApiProgram = z.output<typeof apiProgramSchema>;
+
+/** Программа вместе с историей версий: что менялось и с какого дня действует. */
+export const apiProgramDetailSchema = apiProgramSchema.extend({
+	versions: z
+		.array(
+			z.object({
+				id: z.uuid(),
+				version: z.number().int(),
+				summary: z.string(),
+				effectiveFrom: z.iso.date(),
+				createdAt: z.iso.datetime()
+			})
+		)
+		.describe('Версии программы, свежие сверху')
+});
+
+export type ApiProgramDetail = z.output<typeof apiProgramDetailSchema>;
+
+export function toApiProgramDetail(detail: ProgramDetail): ApiProgramDetail {
+	return {
+		...detail.program,
+		versions: detail.versions.map((version) => ({
+			id: version.id,
+			version: version.version,
+			summary: version.summary,
+			effectiveFrom: version.effectiveFrom,
+			createdAt: version.createdAt.toISOString()
+		}))
+	};
+}
 
 /** Продукт оператора: то, что предлагают вузу. */
 export const apiProductSchema = z.object({
@@ -167,6 +210,144 @@ export const apiProductSchema = z.object({
 });
 
 export type ApiProduct = z.output<typeof apiProductSchema>;
+
+/** Продукт вместе с названием вендора — так его показывает карточка. */
+export const apiProductDetailSchema = apiProductSchema.extend({
+	vendorName: z.string().nullable().describe('Краткое наименование вендора; `null` — не указан')
+});
+
+export type ApiProductDetail = z.output<typeof apiProductDetailSchema>;
+
+export function toApiProductDetail(detail: ProductDetail): ApiProductDetail {
+	return { ...detail.product, vendorName: detail.vendor?.label ?? null };
+}
+
+/**
+ * Человек справочника. Контакты отдаются открыто только тогда, когда у
+ * владельца ключа есть право `people.read_pii`; иначе они замаскированы, и
+ * `contactsMasked` говорит, что «i***@vuz.ru» — это маска, а не адрес.
+ */
+export const apiPersonSchema = z.object({
+	id: z.uuid(),
+	lastName: z.string(),
+	firstName: z.string(),
+	middleName: z.string().nullable(),
+	email: z.string().nullable(),
+	phone: z.string().nullable(),
+	notes: z.string().nullable(),
+	contactsMasked: z
+		.boolean()
+		.describe('Почта и телефон замаскированы: у владельца ключа нет права видеть их'),
+	retentionUntil: z.iso
+		.date()
+		.nullable()
+		.describe('До какого дня хранятся данные; `null` — срок не назначен'),
+	anonymizedAt: z.iso
+		.datetime()
+		.nullable()
+		.describe('Когда данные обезличены; обезличивание необратимо')
+});
+
+export type ApiPerson = z.output<typeof apiPersonSchema>;
+
+export function toApiPerson(view: PersonView): ApiPerson {
+	return {
+		...view,
+		anonymizedAt: view.anonymizedAt === null ? null : view.anonymizedAt.toISOString()
+	};
+}
+
+/** Строка списка людей: сам человек и организации, где у него есть роль. */
+export const apiPersonListItemSchema = apiPersonSchema.extend({
+	organizations: z
+		.array(z.object({ id: z.uuid(), shortName: z.string() }))
+		.describe('Организации в области доступа владельца ключа, где у человека есть роль'),
+	retentionExpired: z.boolean().describe('Срок хранения назначен и прошёл')
+});
+
+export type ApiPersonListItem = z.output<typeof apiPersonListItemSchema>;
+
+export function toApiPersonListItem(item: PersonListItem): ApiPersonListItem {
+	return {
+		...toApiPerson(item.person),
+		organizations: item.organizations.map((option) => ({
+			id: option.id,
+			shortName: option.label
+		})),
+		retentionExpired: item.retentionExpired
+	};
+}
+
+/**
+ * Контакт организации — роль человека в ней: должность, период полномочий и
+ * канал связи. Человек один, ролей у него может быть несколько.
+ */
+export const apiContactSchema = z.object({
+	id: z.uuid().describe('Идентификатор роли'),
+	person: apiPersonSchema,
+	organizationId: z.uuid(),
+	siteId: z.uuid().nullable().describe('Площадка организации; `null` — организация целиком'),
+	position: z.string(),
+	roleKind: z.enum(AFFILIATION_ROLE_KINDS),
+	isPrimary: z.boolean().describe('Основной контакт организации по процессу'),
+	validFrom: z.iso.date(),
+	validTo: z.iso.date().nullable().describe('Конец полномочий; `null` — действуют'),
+	channel: z.string().nullable().describe('Как договорились общаться')
+});
+
+export type ApiContact = z.output<typeof apiContactSchema>;
+
+export function toApiContact(view: AffiliationView): ApiContact {
+	return { ...view, person: toApiPerson(view.person) };
+}
+
+/**
+ * Ответственный за вуз: пользователь, направление и период. Назначения не
+ * удаляются, а закрываются, поэтому в списке есть и история.
+ */
+export const apiResponsibleSchema = z.object({
+	id: z.uuid(),
+	userId: z.uuid(),
+	userFullName: z.string(),
+	directionId: z
+		.uuid()
+		.nullable()
+		.describe('ИТ-направление; `null` — ответственный за вуз целиком'),
+	directionName: z.string().nullable(),
+	validFrom: z.iso.datetime(),
+	validTo: z.iso.datetime().nullable().describe('`null` — назначение действует'),
+	assignedByFullName: z.string().nullable()
+});
+
+export type ApiResponsible = z.output<typeof apiResponsibleSchema>;
+
+export function toApiResponsible(
+	view: Omit<ApiResponsible, 'validFrom' | 'validTo'> & { validFrom: Date; validTo: Date | null }
+): ApiResponsible {
+	return {
+		...view,
+		validFrom: view.validFrom.toISOString(),
+		validTo: view.validTo === null ? null : view.validTo.toISOString()
+	};
+}
+
+/** Назначение ответственного за вуз. */
+export const apiAssignResponsibleRequestSchema = z.object({
+	userId: id('Некорректный идентификатор сотрудника'),
+	directionId: id('Некорректный идентификатор направления')
+		.nullable()
+		.default(null)
+		.describe('ИТ-направление; `null` — за вуз целиком'),
+	transferInteractions: z
+		.boolean()
+		.default(false)
+		.describe(
+			'Передать новому ответственному незавершённые взаимодействия прежнего; требует права ' +
+				'`interactions.reassign`'
+		)
+});
+
+export type ApiAssignResponsibleRequest = z.output<typeof apiAssignResponsibleRequestSchema>;
 
 /** ИТ-направление: разрез работы, по которому назначают ответственных. */
 export const apiDirectionSchema = z.object({
@@ -585,6 +766,49 @@ export const apiProcessTransitionSchema = z.object({
 
 export type ApiProcessTransition = z.output<typeof apiProcessTransitionSchema>;
 
+/** Редакция процесса: стадии и разрешённые переходы между ними. */
+export const apiProcessRevisionSchema = z.object({
+	version: z.number().int(),
+	name: z.string(),
+	note: z.string().nullable(),
+	publishedAt: z.iso.datetime().nullable().describe('`null` — черновик, ещё не применён'),
+	stages: z.array(apiProcessStageSchema),
+	transitions: z.array(apiProcessTransitionSchema)
+});
+
+export type ApiProcessRevision = z.output<typeof apiProcessRevisionSchema>;
+
+export function toApiProcessRevision(revision: ProcessRevisionView): ApiProcessRevision {
+	return {
+		version: revision.version,
+		name: revision.name,
+		note: revision.note,
+		publishedAt: revision.publishedAt === null ? null : revision.publishedAt.toISOString(),
+		stages: revision.stages.map((stage) => ({
+			id: stage.id,
+			key: stage.key,
+			name: stage.name,
+			position: stage.position,
+			category: stage.category,
+			slaDays: stage.slaDays,
+			staleAfterDays: stage.staleAfterDays,
+			requiresResult: stage.requiresResult,
+			requiresConfirmation: stage.requiresConfirmation,
+			requiresLmsData: stage.requiresLmsData,
+			requiresDocumentMark: stage.requiresDocumentMark,
+			isFinal: stage.isFinal,
+			checklist: stage.checklist
+		})),
+		transitions: revision.transitions.map((transition) => ({
+			fromStageId: transition.fromStageId,
+			toStageId: transition.toStageId,
+			kind: transition.kind,
+			requiredPermissionKey: transition.requiredPermissionKey,
+			requiresReason: transition.requiresReason
+		}))
+	};
+}
+
 /**
  * Действующий процесс пространства. Черновик и его замечания сюда не входят:
  * интеграция работает по опубликованному маршруту, а незавершённая настройка —
@@ -592,15 +816,7 @@ export type ApiProcessTransition = z.output<typeof apiProcessTransitionSchema>;
  */
 export const apiProcessSchema = z.object({
 	workspace: apiWorkspaceSchema,
-	revision: z
-		.object({
-			version: z.number().int(),
-			name: z.string(),
-			note: z.string().nullable(),
-			publishedAt: z.iso.datetime().nullable(),
-			stages: z.array(apiProcessStageSchema),
-			transitions: z.array(apiProcessTransitionSchema)
-		})
+	revision: apiProcessRevisionSchema
 		.nullable()
 		.describe('Действующая редакция; `null` — процесс пространства не заведён')
 });
@@ -611,41 +827,96 @@ export function toApiProcess(
 	workspace: WorkspaceSummary,
 	active: ProcessRevisionView | null
 ): ApiProcess {
+	return { workspace, revision: active === null ? null : toApiProcessRevision(active) };
+}
+
+/** Состав пространства: кто в нём работает и за сколько незавершённых записей отвечает. */
+export const apiWorkspaceMembersSchema = z.object({
+	workspace: z.object({ id: z.uuid(), key: z.string(), name: z.string() }),
+	members: z.array(
+		z.object({
+			userId: z.uuid(),
+			fullName: z.string(),
+			roleName: z.string(),
+			isActive: z.boolean(),
+			since: z.iso.datetime().describe('С какого момента сотрудник в пространстве'),
+			ownedActive: z
+				.number()
+				.int()
+				.describe('За сколько незавершённых взаимодействий пространства он отвечает')
+		})
+	)
+});
+
+export type ApiWorkspaceMembers = z.output<typeof apiWorkspaceMembersSchema>;
+
+export function toApiWorkspaceMembers(membership: WorkspaceMembership): ApiWorkspaceMembers {
 	return {
-		workspace,
-		revision:
-			active === null
-				? null
-				: {
-						version: active.version,
-						name: active.name,
-						note: active.note,
-						publishedAt: active.publishedAt === null ? null : active.publishedAt.toISOString(),
-						stages: active.stages.map((stage) => ({
-							id: stage.id,
-							key: stage.key,
-							name: stage.name,
-							position: stage.position,
-							category: stage.category,
-							slaDays: stage.slaDays,
-							staleAfterDays: stage.staleAfterDays,
-							requiresResult: stage.requiresResult,
-							requiresConfirmation: stage.requiresConfirmation,
-							requiresLmsData: stage.requiresLmsData,
-							requiresDocumentMark: stage.requiresDocumentMark,
-							isFinal: stage.isFinal,
-							checklist: stage.checklist
-						})),
-						transitions: active.transitions.map((transition) => ({
-							fromStageId: transition.fromStageId,
-							toStageId: transition.toStageId,
-							kind: transition.kind,
-							requiredPermissionKey: transition.requiredPermissionKey,
-							requiresReason: transition.requiresReason
-						}))
-					}
+		workspace: { id: membership.id, key: membership.key, name: membership.name },
+		members: membership.members.map((member) => ({
+			...member,
+			since: member.since.toISOString()
+		}))
 	};
 }
+
+/** Процесс — описание работы, которое назначают одному или нескольким пространствам. */
+export const apiWorkflowSchema = z.object({
+	id: z.uuid(),
+	key: z.string().describe('Ключ процесса; им процесс адресуется в пути'),
+	name: z.string(),
+	description: z.string().nullable(),
+	stageCount: z.number().int().describe('Сколько стадий в действующей редакции'),
+	workspaces: z.number().int().describe('Скольким пространствам процесс назначен'),
+	activeInteractions: z.number().int().describe('Незавершённых взаимодействий во всех них'),
+	hasDraft: z.boolean().describe('Есть неопубликованный черновик')
+});
+
+export type ApiWorkflow = z.output<typeof apiWorkflowSchema>;
+
+/**
+ * Процесс целиком: действующая редакция, черновик и то, что мешает его
+ * применить. Это взгляд настройщика, а не исполнителя: внешней системе, которая
+ * двигает взаимодействия, нужен `GET /v1/workspaces/{key}`.
+ */
+export const apiWorkflowDetailSchema = z.object({
+	workflow: apiWorkflowSchema,
+	workspaces: z
+		.array(z.object({ key: z.string(), name: z.string() }))
+		.describe('Пространства, чью работу изменит публикация'),
+	active: apiProcessRevisionSchema
+		.nullable()
+		.describe('Действующая редакция; `null` — не заведена'),
+	draft: apiProcessRevisionSchema.nullable().describe('Черновик; `null` — изменений нет'),
+	issues: z.array(z.string()).describe('Что мешает применить черновик; пусто — публиковать можно')
+});
+
+export type ApiWorkflowDetail = z.output<typeof apiWorkflowDetailSchema>;
+
+export function toApiWorkflowDetail(detail: WorkflowDetail): ApiWorkflowDetail {
+	return {
+		workflow: detail.workflow,
+		workspaces: detail.workspaces,
+		active: detail.active === null ? null : toApiProcessRevision(detail.active),
+		draft: detail.draft === null ? null : toApiProcessRevision(detail.draft),
+		issues: detail.issues
+	};
+}
+
+/** Итог публикации черновика: фактические числа из транзакции. */
+export const apiPublicationSchema = z.object({
+	workflowId: z.uuid(),
+	workflowKey: z.string(),
+	version: z.number().int().describe('Номер ставшей действующей редакции'),
+	reboundCount: z.number().int().describe('Записей, перепривязанных к стадии с тем же ключом'),
+	migratedCount: z
+		.number()
+		.int()
+		.describe('Взаимодействий, переехавших на другую стадию по правилу переноса'),
+	archivedKeyCount: z.number().int().describe('Ключей стадий, снятых публикацией')
+});
+
+export type ApiPublication = z.output<typeof apiPublicationSchema>;
 
 /** Сообщение журнала обмена: что ушло и пришло, в каком оно состоянии. */
 export const apiExchangeMessageSchema = z.object({

@@ -23,7 +23,7 @@ describe('маршруты публичного API', () => {
 	const routes = registeredRoutes();
 
 	it('зарегистрированы все и по одному разу', () => {
-		expect(routes.length).toBeGreaterThanOrEqual(20);
+		expect(routes.length).toBeGreaterThanOrEqual(43);
 		expect(new Set(routes.map((route) => `${route.method} ${route.path}`)).size).toBe(
 			routes.length
 		);
@@ -83,7 +83,7 @@ describe('маршруты публичного API', () => {
 		const document = buildOpenApiDocument();
 		const paths = document.paths ?? {};
 
-		expect(Object.keys(paths).length).toBeGreaterThanOrEqual(19);
+		expect(Object.keys(paths).length).toBeGreaterThanOrEqual(33);
 
 		for (const [path, operations] of Object.entries(paths)) {
 			for (const [method, operation] of Object.entries(operations)) {
