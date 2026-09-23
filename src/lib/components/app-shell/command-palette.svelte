@@ -1,6 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import type { LucideIcon } from '@lucide/svelte';
+	import type { LucideIcon } from '$lib/icon';
 	import BuildingIcon from '@lucide/svelte/icons/building';
 	import GraduationCapIcon from '@lucide/svelte/icons/graduation-cap';
 	import HandshakeIcon from '@lucide/svelte/icons/handshake';

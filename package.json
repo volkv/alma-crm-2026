@@ -12,7 +12,7 @@
 		"build": "vite build",
 		"preview": "vite preview",
 		"check": "svelte-kit sync && svelte-check --tsconfig ./tsconfig.json",
-		"lint": "svelte-kit sync && eslint . && prettier --check .",
+		"lint": "svelte-kit sync && eslint . --cache --cache-location node_modules/.cache/eslint/ --cache-strategy content && prettier --check . --cache --cache-location node_modules/.cache/prettier",
 		"format": "prettier --write .",
 		"test:unit": "vitest run --project unit",
 		"test:integration": "docker compose up -d --wait gotenberg && vitest run --project integration",

@@ -18,7 +18,7 @@
 
 <script lang="ts">
 	import type { Snippet } from 'svelte';
-	import type { LucideIcon } from '@lucide/svelte';
+	import type { LucideIcon } from '$lib/icon';
 	import InfoIcon from '@lucide/svelte/icons/info';
 	import { cn } from '$lib/utils';
 

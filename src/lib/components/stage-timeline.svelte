@@ -1,5 +1,5 @@
 <script lang="ts" module>
-	import type { LucideIcon } from '@lucide/svelte';
+	import type { LucideIcon } from '$lib/icon';
 	import CircleCheckIcon from '@lucide/svelte/icons/circle-check';
 	import CircleDotIcon from '@lucide/svelte/icons/circle-dot';
 	import CirclePauseIcon from '@lucide/svelte/icons/circle-pause';

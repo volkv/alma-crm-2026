@@ -1,4 +1,4 @@
-import type { LucideIcon } from '@lucide/svelte';
+import type { LucideIcon } from '$lib/icon';
 import BarChart3Icon from '@lucide/svelte/icons/bar-chart-3';
 import BellIcon from '@lucide/svelte/icons/bell';
 import BookOpenIcon from '@lucide/svelte/icons/book-open';
