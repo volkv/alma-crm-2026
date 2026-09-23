@@ -12,6 +12,7 @@
 	import RowsTable from '$lib/components/stats/rows-table.svelte';
 	import { STAT_SNAPSHOT_STATUS_TONES } from '$lib/components/stats/labels';
 	import {
+		isCollectedSnapshot,
 		isEmptyCoverage,
 		STAT_FIELD_LABELS,
 		STAT_SNAPSHOT_MODE_HINTS,
@@ -27,6 +28,7 @@
 
 	const snapshot = $derived(data.snapshot);
 	const mappedColumns = $derived(Object.entries(snapshot.mapping));
+	const collected = $derived(isCollectedSnapshot(snapshot));
 
 	/** Ссылка на тот же экран с другим фильтром: список — это адрес. */
 	const issuesHref = (onlyIssues: boolean) => filterHref(page.url, 'issues', onlyIssues ? '1' : '');
@@ -36,7 +38,8 @@
 
 <Header
 	title="Снимок данных: {STAT_SOURCE_LABELS[snapshot.source]}"
-	description={snapshot.fileName ?? 'Загрузка без файла'}
+	description={snapshot.fileName ??
+		(collected ? 'Собран из результатов учебных групп' : 'Загрузка без файла')}
 >
 	{#snippet actions()}
 		<StatusBadge tone={STAT_SNAPSHOT_STATUS_TONES[snapshot.status]}>
@@ -91,7 +94,7 @@
 			</KeyValueRow>
 			<KeyValueRow label="Область покрытия">
 				{#if isEmptyCoverage(snapshot.coverage)}
-					Всё, что есть в файле
+					{collected ? 'Все учебные группы периода' : 'Всё, что есть в файле'}
 				{:else}
 					{pluralize(snapshot.coverageSize, ['запись', 'записи', 'записей'])} справочника
 				{/if}

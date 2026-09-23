@@ -18,15 +18,25 @@
 import { z } from 'zod';
 import { optionalId, optionalText, pageQuerySchema, searchQuery } from './common';
 import type { ProgramLevel } from './directory';
+import type { RankingView } from './ranking';
 
-/** Откуда пришли данные снимка. */
+/**
+ * Откуда пришли данные снимка.
+ *
+ * `lms` — результаты системы обучения, каким бы путём они ни приехали: файлом
+ * выгрузки или сборкой из результатов учебных групп, которые система обучения
+ * уже прислала по обмену (`stats/groups.ts`). Источник один, потому что и
+ * данные одни: полная сборка за период замещает полную выгрузку того же
+ * периода и наоборот, а два текущих снимка одних и тех же групп посчитали бы
+ * людей дважды. Путь виден по снимку: у сборки нет файла.
+ */
 export const STAT_SOURCES = ['file', 'lms', 'site', 'manual'] as const;
 
 export type StatSource = (typeof STAT_SOURCES)[number];
 
 export const STAT_SOURCE_LABELS: Record<StatSource, string> = {
 	file: 'Файл',
-	lms: 'Выгрузка LMS',
+	lms: 'Результаты LMS',
 	site: 'Заявки с сайта',
 	manual: 'Ручной ввод'
 };
@@ -294,6 +304,64 @@ export const createStatSnapshotSchema = z
 
 export type CreateStatSnapshotInput = z.output<typeof createStatSnapshotSchema>;
 
+/**
+ * Период сборки снимка из результатов учебных групп. Файла у сборки нет, и
+ * от формы загрузки остаётся только период: источник у неё всегда `lms`, режим
+ * всегда полный.
+ */
+export const groupSnapshotPeriodSchema = z
+	.object({
+		periodKind: z.enum(STAT_PERIOD_KINDS, { error: 'Выберите вид периода' }),
+		periodStart: z.iso.date({ error: 'Укажите начало периода' }),
+		periodEnd: z.iso.date({ error: 'Укажите конец периода' })
+	})
+	.refine((input) => input.periodEnd >= input.periodStart, {
+		error: 'Конец периода раньше его начала',
+		path: ['periodEnd']
+	});
+
+export type GroupSnapshotPeriod = z.output<typeof groupSnapshotPeriodSchema>;
+
+/** Строка будущего снимка: организация × программа, сложенные по группам. */
+export type GroupSnapshotRow = {
+	organizationId: string;
+	organizationName: string;
+	programId: string;
+	programCode: string;
+	programName: string;
+	/** Групп в строке — они же параллельные потоки. */
+	streams: number;
+	/** Сколько из них уже прислали хотя бы один результат. */
+	withResult: number;
+	enrolled: number | null;
+	completed: number | null;
+	/** Имена групп в системе обучения — происхождение строки. */
+	groupLabels: string[];
+};
+
+/** Текущий снимок, который полная сборка заместит при подтверждении. */
+export type GroupSnapshotReplaced = {
+	snapshotId: string;
+	fileName: string | null;
+	confirmedAt: Date | null;
+	rowCount: number;
+};
+
+/** Что попадёт в снимок и что нет — до того, как его соберут. */
+export type GroupSnapshotPreview = {
+	period: GroupSnapshotPeriod;
+	rows: GroupSnapshotRow[];
+	totals: {
+		groups: number;
+		withResult: number;
+		enrolled: number | null;
+		completed: number | null;
+	};
+	/** Группы периода, которые не к чему отнести, — с причиной. */
+	skipped: { withoutProgram: number; withoutOrganization: number };
+	replaces: GroupSnapshotReplaced[];
+};
+
 export const rejectStatSnapshotSchema = z.object({
 	reason: z
 		.string({ error: 'Объясните, почему снимок отклонён' })
@@ -413,6 +481,21 @@ export type StatSnapshotView = {
 	confirmedBy: string | null;
 };
 
+/**
+ * Снимок собран сервером из результатов учебных групп, а не загружен файлом.
+ *
+ * Отдельного признака у снимка нет — и не нужен: мастер загрузки всегда
+ * оставляет файл и сопоставление колонок, а сборка не оставляет ни того, ни
+ * другого. Правило одно на все экраны, чтобы «собран из групп» не значило на
+ * списке одно, а на карточке другое.
+ */
+export function isCollectedSnapshot(snapshot: {
+	fileDocumentId: string | null;
+	mapping: StatMapping;
+}): boolean {
+	return snapshot.fileDocumentId === null && Object.keys(snapshot.mapping).length === 0;
+}
+
 /** Строка списка снимков: имена вместо идентификаторов, счётчики рядом. */
 export type StatSnapshotListItem = StatSnapshotView & {
 	/** Кто загрузил; `null` — если учётной записи уже нет. */
@@ -473,69 +556,6 @@ export type StatIndicatorRow = {
 	rowCount: number;
 	snapshotCount: number;
 };
-
-/**
- * Веса рейтинга программ — **гипотеза до технического задания**.
- *
- * Смысл: заявка — это спрос, зачисление — подтверждённый спрос, а параллельный
- * поток — целая дополнительная группа, то есть спрос, который уже потребовал
- * от вуза отдельного расписания. Отсюда порядок величин; точные веса и сам
- * набор слагаемых определяются по датасету заказчика.
- *
- * Веса объявлены здесь, а не в запросе, потому что рейтинг обязан объясняться:
- * интерфейс показывает разложение на слагаемые, а не только итоговое число.
- */
-export const RANKING_WEIGHTS = {
-	applications: 1,
-	enrolled: 2,
-	parallelStreams: 5
-} as const satisfies Partial<Record<StatMeasureField, number>>;
-
-export type RankingComponentKey = keyof typeof RANKING_WEIGHTS;
-
-export const RANKING_COMPONENT_KEYS = Object.keys(RANKING_WEIGHTS) as RankingComponentKey[];
-
-/** Одно слагаемое рейтинга: что взяли, с каким весом и сколько это дало. */
-export type RankingComponent = {
-	component: RankingComponentKey;
-	/** `null` — данных нет; в сумму такое слагаемое входит нулём. */
-	value: number | null;
-	weight: number;
-	contribution: number;
-};
-
-export type ProgramRankingItem = {
-	programId: string;
-	programCode: string;
-	programName: string;
-	score: number;
-	/** Сумма вкладов равна `score` — иначе объяснение не объясняет. */
-	explanation: RankingComponent[];
-	/** По скольким организациям сложился показатель. */
-	organizationCount: number;
-};
-
-/**
- * Разложение рейтинга на слагаемые. Чистая функция: одна и та же на сервере и
- * в проверках, потому что «почему такой порядок» — это часть ответа, а не
- * оформление.
- */
-export function explainScore(values: Record<RankingComponentKey, number | null>): {
-	score: number;
-	explanation: RankingComponent[];
-} {
-	const explanation = RANKING_COMPONENT_KEYS.map((component) => {
-		const value = values[component];
-		const weight = RANKING_WEIGHTS[component];
-
-		return { component, value, weight, contribution: (value ?? 0) * weight };
-	});
-
-	return {
-		score: explanation.reduce((total, part) => total + part.contribution, 0),
-		explanation
-	};
-}
 
 /**
  * Группы программ на дашборде: школьные отдельно от вузовских.
@@ -636,8 +656,12 @@ export type StatDashboardView = {
 	totals: StatDashboardTotals;
 	groups: StatDashboardGroupRow[];
 	organizations: StatDashboardOrganizationRow[];
-	/** Рейтинг за тот же период: тот же расчёт, что и на вкладке «Рейтинг». */
-	ranking: ProgramRankingItem[];
+	/**
+	 * Рейтинг программ и направлений за тот же период. Считается по фактам
+	 * системы, а не по снимкам (`contracts/ranking.ts`): плитки отвечают «что
+	 * загружено и принято», рейтинг — «что происходит в работе».
+	 */
+	ranking: RankingView;
 	sources: StatDashboardSource[];
 	/**
 	 * Когда картина периода последний раз менялась: момент подтверждения

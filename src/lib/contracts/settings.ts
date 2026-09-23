@@ -8,6 +8,7 @@
  */
 import { z } from 'zod';
 import { notificationChannelsSchema } from './notifications';
+import { rankingWeightsSchema } from './ranking';
 
 export const settingSchemas = {
 	/** Текст на странице входа: предупреждение о доступе, контакты поддержки. */
@@ -59,7 +60,12 @@ export const settingSchemas = {
 			.int()
 			.min(0, { error: 'Не меньше 0' })
 			.max(23, { error: 'Не больше 23' })
-	})
+	}),
+	/**
+	 * Веса рейтинга программ и направлений. Формула — гипотеза команды, и
+	 * подбирать её по данным заказчика должен тот, кто их видит, без выпуска.
+	 */
+	ranking_weights: rankingWeightsSchema
 } as const;
 
 export type SettingKey = keyof typeof settingSchemas;

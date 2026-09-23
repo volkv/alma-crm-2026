@@ -1,21 +1,15 @@
 <script lang="ts">
-	import { goto } from '$app/navigation';
-	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
 	import ChartNoAxesColumnIcon from '@lucide/svelte/icons/chart-no-axes-column';
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import * as Table from '$lib/components/ui/table/index.js';
-	import * as Tabs from '$lib/components/ui/tabs/index.js';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
 	import FilterSelect from '$lib/components/directory/filter-select.svelte';
-	import { filterHref } from '$lib/components/directory/query';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
 	import Header from '$lib/components/header.svelte';
-	import ScoreBreakdown from '$lib/components/stats/score-breakdown.svelte';
 	import SectionTabs from '$lib/components/stats/section-tabs.svelte';
 	import { measureText } from '$lib/components/stats/labels';
 	import type { FieldOption } from '$lib/components/form/field-select.svelte';
@@ -129,14 +123,6 @@
 	const exportHref = $derived(
 		periodKey === '' ? undefined : `${resolve('/(app)/data/export')}?period=${periodKey}`
 	);
-
-	/** Вкладка живёт в адресе: открытый рейтинг — это ссылка, а не состояние экрана. */
-	function selectTab(value: string) {
-		return goto(filterHref(page.url, 'tab', value === 'ranking' ? 'ranking' : ''), {
-			keepFocus: true,
-			noScroll: true
-		});
-	}
 </script>
 
 {#snippet programCell(row: StatIndicatorRow)}
@@ -200,86 +186,15 @@
 			</p>
 		{/if}
 
-		<Tabs.Root value={data.tab} onValueChange={selectTab}>
-			<!-- Две подписи в строку шире телефона: на узком экране список
-			     прокручивается сам, а не уносит вправо весь документ (так же
-			     сделано на карточке взаимодействия и в `stats/section-tabs`). -->
-			<Tabs.List class="max-w-full overflow-x-auto">
-				<Tabs.Trigger value="indicators">По программам и организациям</Tabs.Trigger>
-				<Tabs.Trigger value="ranking">Рейтинг программ</Tabs.Trigger>
-			</Tabs.List>
-
-			<Tabs.Content value="indicators" class="pt-4">
-				<DataTable
-					data-tour="data-indicators-table"
-					{columns}
-					rows={data.rows}
-					total={data.total}
-					getRowId={(row) => `${row.programId}-${row.organizationId}-${row.periodStart}`}
-					emptyTitle="Под фильтр ничего не подошло"
-					emptyDescription="Снимите фильтр или выберите другой период."
-					initialHiddenColumns={['coveragePlan', 'coverageFact', 'snapshotCount']}
-				/>
-			</Tabs.Content>
-
-			<Tabs.Content value="ranking" class="pt-4">
-				{#if data.selected === null}
-					<div class="rounded-lg border border-border bg-surface">
-						<EmptyState
-							title="Выберите период"
-							description="Рейтинг считается по одному отчётному периоду: сложить все периоды подряд значит посчитать одних и тех же обучающихся дважды."
-						/>
-					</div>
-				{:else if data.ranking.length === 0}
-					<div class="rounded-lg border border-border bg-surface">
-						<EmptyState
-							title="Ранжировать нечего"
-							description="За выбранный период нет подтверждённых данных ни по одной программе."
-						/>
-					</div>
-				{:else}
-					<div class="overflow-x-auto rounded-lg border border-border bg-surface">
-						<Table.Root>
-							<Table.Header>
-								<Table.Row>
-									<Table.Head class="w-12 text-right">Место</Table.Head>
-									<Table.Head>Программа</Table.Head>
-									<Table.Head class="text-right">Балл</Table.Head>
-									<Table.Head class="text-right">Организаций</Table.Head>
-									<Table.Head class="w-96">Почему</Table.Head>
-								</Table.Row>
-							</Table.Header>
-							<Table.Body>
-								{#each data.ranking as item, index (item.programId)}
-									<Table.Row>
-										<Table.Cell class="text-right text-muted-foreground">{index + 1}</Table.Cell>
-										<Table.Cell>
-											<span class="flex min-w-0 flex-col">
-												<span class="font-medium">{item.programName}</span>
-												<span class="text-xs text-muted-foreground">{item.programCode}</span>
-											</span>
-										</Table.Cell>
-										<Table.Cell class="text-right font-medium">
-											{formatNumber(item.score)}
-										</Table.Cell>
-										<Table.Cell class="text-right">
-											{formatNumber(item.organizationCount)}
-										</Table.Cell>
-										<Table.Cell>
-											<ScoreBreakdown explanation={item.explanation} />
-										</Table.Cell>
-									</Table.Row>
-								{/each}
-							</Table.Body>
-						</Table.Root>
-					</div>
-
-					<p class="pt-3 text-sm text-muted-foreground">
-						Балл — сумма слагаемых в колонке «почему». Веса — гипотеза до технического задания: они
-						объявлены в контрактах одним списком и меняются вместе с объяснением.
-					</p>
-				{/if}
-			</Tabs.Content>
-		</Tabs.Root>
+		<DataTable
+			data-tour="data-indicators-table"
+			{columns}
+			rows={data.rows}
+			total={data.total}
+			getRowId={(row) => `${row.programId}-${row.organizationId}-${row.periodStart}`}
+			emptyTitle="Под фильтр ничего не подошло"
+			emptyDescription="Снимите фильтр или выберите другой период."
+			initialHiddenColumns={['coveragePlan', 'coverageFact', 'snapshotCount']}
+		/>
 	{/if}
 </div>

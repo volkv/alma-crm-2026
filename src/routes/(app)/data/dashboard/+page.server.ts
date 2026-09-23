@@ -25,9 +25,6 @@ import type { PageServerLoad } from './$types';
  * которому есть данные, и дальше экран — это ссылка.
  */
 
-/** Сколько программ показывает дашборд: это верхушка рейтинга, а не отчёт. */
-const TOP_PROGRAMS = 5;
-
 /** Порядок по умолчанию: распределение открывают ради самых больших чисел. */
 const DEFAULT_SORT: StatDashboardSortKey = 'enrolled';
 
@@ -104,7 +101,6 @@ export const load: PageServerLoad = async (event) => {
 			return {
 				periods,
 				dashboard: null,
-				topPrograms: [],
 				organizations: [],
 				sortBy,
 				sortDirection,
@@ -127,7 +123,6 @@ export const load: PageServerLoad = async (event) => {
 		return {
 			periods,
 			dashboard,
-			topPrograms: dashboard.ranking.slice(0, TOP_PROGRAMS),
 			organizations: sortOrganizations(dashboard.organizations, sortBy, sortDirection),
 			sortBy,
 			sortDirection,

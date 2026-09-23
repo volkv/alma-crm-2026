@@ -2,10 +2,14 @@
  * Дашборд портфеля данных: одна картина одного отчётного периода.
  *
  * Собирается одним сервисом — плитки, разбивка по группам программ,
- * распределение по вузам, рейтинг и происхождение обязаны сходиться между
- * собой, а собранные по отдельности они сойтись не обязаны. Числа при этом
- * по-прежнему считает представление `stat_program_indicators`: здесь они
- * только складываются в вид, удобный экрану и выгрузке.
+ * распределение по вузам и происхождение обязаны сходиться между собой, а
+ * собранные по отдельности они сойтись не обязаны. Числа при этом по-прежнему
+ * считает представление `stat_program_indicators`: здесь они только
+ * складываются в вид, удобный экрану и выгрузке. Рейтинг — исключение: он
+ * считается по фактам системы, а не по снимкам (`stats/ranking.ts`), и
+ * приезжает сюда тем же сервисом, что и на экран рейтинга. Поэтому
+ * подтверждение снимка его не меняет, а новая заявка или результат группы
+ * доходят до дашборда по сроку жизни записи.
  *
  * Периоды не складываются между собой: период входит в ключ группировки
  * показателей, и сложить пересекающиеся значило бы посчитать одних и тех же
@@ -37,8 +41,8 @@ import type { ActorContext } from '../actor';
 import { assignmentsKey, scopeKey } from '../cache/region';
 import { requirePermission } from '../rbac';
 import { getRedis } from '../redis';
+import { getRanking } from './ranking';
 import {
-	rankPrograms,
 	readDashboardGroups,
 	readDashboardOrganizations,
 	readDashboardOrigin,
@@ -86,7 +90,7 @@ async function buildStatsDashboard(
 		readDashboardGroups(ctx, period),
 		readDashboardOrganizations(ctx, period),
 		readDashboardOrigin(ctx, period),
-		rankPrograms(ctx, { period })
+		getRanking(ctx, period)
 	]);
 
 	const confirmed = origin.sources

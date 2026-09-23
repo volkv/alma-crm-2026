@@ -2,18 +2,14 @@ import { readTableQuery } from '$lib/components/data-table/query';
 import { parseStatPeriodKey, statIndicatorQuerySchema } from '$lib/contracts/stats';
 import { actorFromEvent } from '$lib/server/actor';
 import { toPageError } from '$lib/server/http';
-import {
-	listIndicatorFilters,
-	listIndicators,
-	listPeriods,
-	rankPrograms
-} from '$lib/server/stats/read';
+import { listIndicatorFilters, listIndicators, listPeriods } from '$lib/server/stats/read';
 import type { PageServerLoad } from './$types';
 
 /**
- * Показатели и рейтинг программ.
+ * Показатели по подтверждённым снимкам. Рейтинг программ живёт отдельно
+ * (`/data/ranking`): он считается по фактам системы, а не по снимкам.
  *
- * Период, фильтры и вкладка живут в адресе: «заявки по этой программе за
+ * Период и фильтры живут в адресе: «заявки по этой программе за
  * 2025/2026» — это ссылка, которую посылают коллеге, а не состояние экрана.
  * Периоды между собой не складываются, поэтому без выбранного периода строки
  * приходят как есть, по одной на период.
@@ -37,19 +33,12 @@ export const load: PageServerLoad = async (event) => {
 			listIndicatorFilters(ctx)
 		]);
 
-		// Рейтинг считается только по выбранному периоду. Сложить все периоды
-		// подряд — это посчитать одних и тех же обучающихся дважды, поэтому без
-		// выбора рейтинга нет, а вкладка объясняет, чего не хватает.
-		const ranking = period === null ? [] : await rankPrograms(ctx, { period });
-
 		return {
 			periods,
 			selected: period,
 			rows: indicators.items,
 			total: indicators.total,
-			ranking,
 			filters,
-			tab: event.url.searchParams.get('tab') === 'ranking' ? 'ranking' : 'indicators',
 			filtered: query.programId !== null || query.organizationId !== null
 		};
 	} catch (error) {

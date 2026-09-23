@@ -16,6 +16,7 @@
 	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
 	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
+	import RankingPlace from '$lib/components/stats/ranking-place.svelte';
 	import { formatDate } from '$lib/format';
 	import type { PageProps } from './$types';
 
@@ -78,6 +79,10 @@
 			</KeyValueRow>
 		</KeyValue>
 	</section>
+
+	{#if data.ranking}
+		<RankingPlace place={data.ranking.place} period={data.ranking.period} />
+	{/if}
 
 	<section class="rounded-lg border border-border bg-surface" data-tour="program-versions">
 		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">

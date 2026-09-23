@@ -1,6 +1,8 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { resolve } from '$app/paths';
 import { catalogListQuerySchema } from '$lib/contracts/directory';
+import { academicYearOf, rankingPlaceOf } from '$lib/contracts/ranking';
+import { formatIsoDay } from '$lib/format';
 import { actorFromEvent } from '$lib/server/actor';
 import { getDirection, listProducts } from '$lib/server/directory/read';
 import {
@@ -11,6 +13,7 @@ import {
 } from '$lib/server/directory/write';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
+import { getRanking } from '$lib/server/stats/ranking';
 import type { Actions, PageServerLoad } from './$types';
 
 /** Каталог продуктов для формы привязки: действующие, одной страницей. */
@@ -35,7 +38,21 @@ export const load: PageServerLoad = async (event) => {
 					.map((product) => ({ id: product.id, label: `${product.code} — ${product.name}` }))
 			: [];
 
-		return { ...detail, canWrite, productOptions };
+		// Место в рейтинге направлений — за текущий учебный год и только тому,
+		// кто видит данные об обучении: рейтинг считается по его области доступа.
+		const ranking = can(ctx, 'stats.read')
+			? await getRanking(ctx, academicYearOf(formatIsoDay()))
+			: null;
+
+		return {
+			...detail,
+			canWrite,
+			productOptions,
+			ranking:
+				ranking === null
+					? null
+					: { period: ranking.period, place: rankingPlaceOf(ranking.directions, event.params.id) }
+		};
 	} catch (error) {
 		toPageError(error);
 	}

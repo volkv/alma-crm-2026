@@ -20,15 +20,14 @@ import ExcelJS from 'exceljs';
 import {
 	coverageShare,
 	statDashboardTiles,
-	STAT_FIELD_LABELS,
 	STAT_PERIOD_KIND_LABELS,
 	STAT_PROGRAM_GROUP_LABELS,
 	STAT_SNAPSHOT_MODE_LABELS,
 	STAT_SOURCE_LABELS,
-	RANKING_COMPONENT_KEYS,
 	type StatDashboardView,
 	type StatMeasures
 } from '$lib/contracts/stats';
+import { describeFormula, RANKING_FACT_LABELS, RANKING_FACTS } from '$lib/contracts/ranking';
 import { formatDate, formatDateTime, formatIsoDay } from '$lib/format';
 import { spreadsheetText } from '../spreadsheet';
 import { statFileMime } from './format';
@@ -147,6 +146,11 @@ function fillSummary(workbook: ExcelJS.Workbook, view: StatDashboardView, day: s
 	}
 }
 
+/**
+ * Рейтинг программ по фактам системы. Балл обязан объясняться: рядом с ним
+ * лежат сами факты, их вклад и поправка за ручной приоритет, а последней
+ * строкой — формула, по которой всё это сложено, с пометкой, что это гипотеза.
+ */
 function fillPrograms(workbook: ExcelJS.Workbook, view: StatDashboardView): void {
 	const sheet = addSheet(workbook, 'Программы', [
 		{ header: 'Место', width: 8 },
@@ -154,23 +158,33 @@ function fillPrograms(workbook: ExcelJS.Workbook, view: StatDashboardView): void
 		{ header: 'Программа', width: 44 },
 		{ header: 'Балл', width: 10 },
 		{ header: 'Организаций', width: 14 },
-		// Балл обязан объясняться: рядом с ним лежат сами слагаемые и их вклад.
-		...RANKING_COMPONENT_KEYS.flatMap((component) => [
-			{ header: STAT_FIELD_LABELS[component], width: 18 },
-			{ header: `${STAT_FIELD_LABELS[component]}, вклад`, width: 22 }
-		])
+		...RANKING_FACTS.flatMap((fact) => [
+			{ header: RANKING_FACT_LABELS[fact], width: 18 },
+			{ header: `${RANKING_FACT_LABELS[fact]}, вклад`, width: 22 }
+		]),
+		{ header: 'Ручной приоритет', width: 18 },
+		{ header: 'Приоритет, вклад', width: 18 }
 	]);
 
-	view.ranking.forEach((item, index) => {
+	for (const entry of view.ranking.programs) {
 		sheet.addRow([
-			index + 1,
-			spreadsheetText(item.programCode),
-			spreadsheetText(item.programName),
-			item.score,
-			item.organizationCount,
-			...item.explanation.flatMap((part) => [part.value, part.contribution])
+			entry.place,
+			spreadsheetText(entry.code),
+			spreadsheetText(entry.name),
+			entry.score,
+			entry.organizationCount,
+			...entry.components.flatMap((part) => [part.value, part.contribution]),
+			entry.priority,
+			entry.priorityBonus
 		]);
-	});
+	}
+
+	sheet.addRow([]);
+	sheet.addRow([
+		spreadsheetText(
+			`Гипотеза команды, не формула заказчика; веса настраиваются: ${describeFormula(view.ranking.weights)}`
+		)
+	]);
 }
 
 function fillOrganizations(workbook: ExcelJS.Workbook, view: StatDashboardView): void {

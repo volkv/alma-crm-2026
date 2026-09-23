@@ -36,13 +36,13 @@
 </script>
 
 <div class="flex max-w-full min-w-0 items-center gap-2">
-	<Label for="dashboard-period" class="font-normal whitespace-nowrap text-muted-foreground">
+	<Label for="stat-period" class="font-normal whitespace-nowrap text-muted-foreground">
 		Период
 	</Label>
 	<Select.Root type="single" {value} onValueChange={select}>
 		<!-- На узком экране название периода длиннее экрана: контрол сжимается,
 		     а не растягивает страницу вбок. -->
-		<Select.Trigger id="dashboard-period" class="min-w-0">
+		<Select.Trigger id="stat-period" class="min-w-0">
 			<span class="truncate">{selected}</span>
 		</Select.Trigger>
 		<Select.Content>

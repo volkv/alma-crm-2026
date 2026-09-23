@@ -1,67 +1,125 @@
 /**
- * Объяснение рейтинга.
+ * Рейтинг по фактам системы.
  *
- * Проверяется ровно одно обещание интерфейса: сумма слагаемых в колонке
- * «почему» равна баллу. Разошлись бы они — и объяснение перестало бы объяснять,
- * а рейтинг превратился в число, которое предлагают принять на веру.
+ * Два обещания экрана: сумма слагаемых вместе с поправкой за приоритет равна
+ * баллу — иначе объяснение не объясняет, — и одни и те же люди не считаются
+ * дважды: у группы берётся последний результат, а заявка с двумя программами
+ * одного направления даёт направлению одну заявку.
  */
 import { describe, expect, it } from 'vitest';
 import {
-	explainScore,
-	RANKING_COMPONENT_KEYS,
-	RANKING_WEIGHTS,
-	type RankingComponentKey
-} from '$lib/contracts/stats';
+	DEFAULT_RANKING_WEIGHTS,
+	explainPlace,
+	rankSubjects,
+	scoreFacts
+} from '$lib/contracts/ranking';
+import { aggregateFacts, latestResults, type GroupFact } from '$lib/server/stats/facts';
 
-function values(
-	input: Partial<Record<RankingComponentKey, number | null>>
-): Record<RankingComponentKey, number | null> {
-	return {
-		applications: input.applications ?? null,
-		enrolled: input.enrolled ?? null,
-		parallelStreams: input.parallelStreams ?? null
-	};
-}
+const WEIGHTS = DEFAULT_RANKING_WEIGHTS;
 
-describe('балл программы', () => {
-	it('складывается из вкладов, и сумма вкладов равна баллу', () => {
-		const { score, explanation } = explainScore(
-			values({ applications: 120, enrolled: 90, parallelStreams: 4 })
+describe('балл', () => {
+	it('равен сумме вкладов и поправки за ручной приоритет', () => {
+		const score = scoreFacts(
+			{ applications: 4, streams: 2, enrolled: 50, completed: 40 },
+			WEIGHTS,
+			1
 		);
 
-		expect(score).toBe(
-			120 * RANKING_WEIGHTS.applications +
-				90 * RANKING_WEIGHTS.enrolled +
-				4 * RANKING_WEIGHTS.parallelStreams
+		expect(score.priorityBonus).toBe(5 * WEIGHTS.priorityStep);
+		expect(score.score).toBe(
+			score.components.reduce((total, part) => total + part.contribution, 0) + score.priorityBonus
 		);
-		expect(explanation.reduce((total, part) => total + part.contribution, 0)).toBe(score);
 	});
 
-	it('называет каждое слагаемое вместе с его весом', () => {
-		const { explanation } = explainScore(values({ applications: 10 }));
+	it('объясняет место отрывом от соседа и называет приоритет решением человека', () => {
+		const ranked = rankSubjects(
+			[
+				{
+					id: 'a',
+					code: 'A',
+					name: 'Первая',
+					facts: { applications: 0, streams: 1, enrolled: 20, completed: null },
+					priority: null,
+					organizationCount: 1
+				},
+				{
+					id: 'b',
+					code: 'B',
+					name: 'Вторая',
+					facts: { applications: 0, streams: 1, enrolled: 20, completed: null },
+					priority: 2,
+					organizationCount: 1
+				}
+			],
+			WEIGHTS
+		);
 
-		expect(explanation.map((part) => part.component)).toStrictEqual(RANKING_COMPONENT_KEYS);
+		expect(ranked.map((entry) => entry.id)).toStrictEqual(['b', 'a']);
+		expect(explainPlace(ranked, 1)).toContain(`На ${4 * WEIGHTS.priorityStep} баллов меньше`);
+		expect(explainPlace(ranked, 0)).toContain('Ручной приоритет 2');
+	});
+});
 
-		for (const part of explanation) {
-			expect(part.weight).toBe(RANKING_WEIGHTS[part.component]);
-			expect(part.contribution).toBe((part.value ?? 0) * part.weight);
-		}
+describe('без двойного счёта', () => {
+	it('у группы берётся последний результат, а не сумма всех', () => {
+		const latest = latestResults([
+			{
+				learningGroupId: 'g',
+				occurredAt: new Date('2026-06-30T10:00:00Z'),
+				enrolled: 25,
+				completed: 20,
+				finishedOn: '2026-06-30'
+			},
+			{
+				learningGroupId: 'g',
+				occurredAt: new Date('2026-03-01T10:00:00Z'),
+				enrolled: 25,
+				completed: 0,
+				finishedOn: null
+			}
+		]);
+
+		expect(latest.get('g')?.completed).toBe(20);
 	});
 
-	it('отличает отсутствие данных от нуля, но в сумму берёт и то и другое нулём', () => {
-		const empty = explainScore(values({}));
-		const zero = explainScore(values({ applications: 0, enrolled: 0, parallelStreams: 0 }));
+	it('заявка с двумя программами одного направления даёт ему одну заявку', () => {
+		const direction = () => 'd';
+		const groups: GroupFact[] = [
+			{
+				groupId: 'g1',
+				label: 'LMS-1',
+				programId: 'p1',
+				organizationId: 'o1',
+				hasResult: true,
+				enrolled: 25,
+				completed: 20
+			}
+		];
+		const byDirection = aggregateFacts(
+			[
+				{ interactionId: 'i1', programId: 'p1', organizationId: 'o1' },
+				{ interactionId: 'i1', programId: 'p2', organizationId: 'o1' }
+			],
+			groups,
+			direction
+		);
+		const byProgram = aggregateFacts(
+			[
+				{ interactionId: 'i1', programId: 'p1', organizationId: 'o1' },
+				{ interactionId: 'i1', programId: 'p2', organizationId: 'o1' }
+			],
+			groups,
+			(programId) => programId
+		);
 
-		expect(empty.score).toBe(0);
-		expect(zero.score).toBe(0);
-		expect(empty.explanation[0].value).toBeNull();
-		expect(zero.explanation[0].value).toBe(0);
-	});
-
-	it('даёт большему набору больший балл', () => {
-		const small = explainScore(values({ applications: 10, enrolled: 5, parallelStreams: 1 }));
-		const big = explainScore(values({ applications: 100, enrolled: 80, parallelStreams: 3 }));
-
-		expect(big.score).toBeGreaterThan(small.score);
+		expect(byDirection.get('d')).toStrictEqual({
+			applications: 1,
+			streams: 1,
+			enrolled: 25,
+			completed: 20,
+			organizationCount: 1
+		});
+		expect(byProgram.get('p1')?.applications).toBe(1);
+		expect(byProgram.get('p2')?.applications).toBe(1);
 	});
 });

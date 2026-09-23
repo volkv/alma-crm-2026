@@ -10,13 +10,10 @@ import { and, asc, count, desc, eq, ilike, isNull, or, sql, type SQL } from 'dri
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { id as idSchema, type PageResult } from '$lib/contracts/common';
 import {
-	explainScore,
 	statProgramGroupOf,
 	STAT_PREVIEW_PARSE_LIMIT,
 	STAT_PROGRAM_GROUPS,
 	type MappingAdvice,
-	type ProgramRankingItem,
-	type RankingComponentKey,
 	type StatDashboardGroupRow,
 	type StatDashboardOrganizationRow,
 	type StatDashboardSource,
@@ -525,65 +522,6 @@ export async function listIndicators(
 		page: query.page,
 		pageSize: query.pageSize
 	};
-}
-
-/**
- * Рейтинг программ за период.
- *
- * Порядок без объяснения — это не ответ: вместе с местом каждая программа
- * приносит разложение своего числа на слагаемые (`explainScore`), и сумма
- * вкладов равна самому числу. Веса — гипотеза до технического задания и живут
- * в контрактах рядом с объяснением.
- */
-export async function rankPrograms(
-	ctx: ActorContext,
-	input: { period: { start: string; end: string } | null }
-): Promise<ProgramRankingItem[]> {
-	requirePermission(ctx, 'stats.read');
-
-	const rows = await getDb()
-		.select({
-			programId: statProgramIndicators.programId,
-			programCode: programs.code,
-			programName: programs.name,
-			applications: sql<number | null>`sum(${statProgramIndicators.applications})::integer`,
-			enrolled: sql<number | null>`sum(${statProgramIndicators.enrolled})::integer`,
-			parallelStreams: sql<number | null>`sum(${statProgramIndicators.parallelStreams})::integer`,
-			organizationCount: sql<number>`count(distinct ${statProgramIndicators.organizationId})::integer`
-		})
-		.from(statProgramIndicators)
-		.innerJoin(programs, eq(programs.id, statProgramIndicators.programId))
-		.where(
-			and(scopeFilter(ctx, statProgramIndicators.organizationId), ...periodCondition(input.period))
-		)
-		.groupBy(statProgramIndicators.programId, programs.code, programs.name);
-
-	return (
-		rows
-			.map((row) => {
-				const values: Record<RankingComponentKey, number | null> = {
-					applications: row.applications,
-					enrolled: row.enrolled,
-					parallelStreams: row.parallelStreams
-				};
-				const { score, explanation } = explainScore(values);
-
-				return {
-					programId: row.programId,
-					programCode: row.programCode,
-					programName: row.programName,
-					score,
-					explanation,
-					organizationCount: row.organizationCount
-				};
-			})
-			// Равные баллы разводятся кодом программы: иначе порядок зависел бы от
-			// того, в каком порядке PostgreSQL вернул группы.
-			.sort(
-				(left, right) =>
-					right.score - left.score || left.programCode.localeCompare(right.programCode)
-			)
-	);
 }
 
 /**

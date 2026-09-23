@@ -15,7 +15,7 @@
 	import Header from '$lib/components/header.svelte';
 	import RowsTable from '$lib/components/stats/rows-table.svelte';
 	import WizardSteps from '$lib/components/stats/wizard-steps.svelte';
-	import { STAT_SNAPSHOT_MODE_HINTS } from '$lib/contracts/stats';
+	import { isCollectedSnapshot, STAT_SNAPSHOT_MODE_HINTS } from '$lib/contracts/stats';
 	import { formatNumber, pluralize } from '$lib/format';
 	import type { PageProps } from './$types';
 
@@ -24,6 +24,9 @@
 	let submitting = $state(false);
 
 	const valid = $derived(data.snapshot.rowCount - data.snapshot.errorCount);
+
+	/** Сборку из учебных групп не загружали мастером: шагов файла и колонок у неё нет. */
+	const collected = $derived(isCollectedSnapshot(data.snapshot));
 
 	/** Ссылка на тот же экран с другим фильтром: список — это адрес. */
 	const issuesHref = (onlyIssues: boolean) => filterHref(page.url, 'issues', onlyIssues ? '1' : '');
@@ -53,7 +56,13 @@
 />
 
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
-	<WizardSteps current={3} />
+	{#if collected}
+		<p class="text-sm text-muted-foreground">
+			{data.snapshot.note}
+		</p>
+	{:else}
+		<WizardSteps current={3} />
+	{/if}
 
 	{#if form?.message}
 		<Alert.Root variant="destructive">
@@ -73,7 +82,7 @@
 
 	<div class="grid gap-3 sm:grid-cols-3" data-tour="data-check-counts">
 		<div class="rounded-lg border border-border bg-surface p-4">
-			<p class="text-xs text-muted-foreground">Строк в файле</p>
+			<p class="text-xs text-muted-foreground">{collected ? 'Строк в снимке' : 'Строк в файле'}</p>
 			<p class="text-xl font-semibold">{formatNumber(data.snapshot.rowCount)}</p>
 		</div>
 		<div class="rounded-lg border border-border bg-surface p-4">

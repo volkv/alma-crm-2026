@@ -5,8 +5,8 @@
 	import { cn } from '$lib/utils';
 
 	/**
-	 * Три взгляда на данные об обучении: загрузки, показатели и портфель
-	 * периода.
+	 * Четыре взгляда на данные об обучении: загрузки, показатели, рейтинг
+	 * программ по фактам системы и портфель периода.
 	 *
 	 * Это ссылки, а не состояние экрана: у каждого взгляда свой адрес, и
 	 * открытый дашборд можно послать коллеге. Отчётный период переезжает вместе
@@ -26,11 +26,12 @@
 	const tabs = $derived([
 		{ href: resolve('/(app)/data'), label: 'Снимки', carriesPeriod: false },
 		{ href: resolve('/(app)/data/indicators'), label: 'Показатели', carriesPeriod: true },
+		{ href: resolve('/(app)/data/ranking'), label: 'Рейтинг', carriesPeriod: true },
 		{ href: resolve('/(app)/data/dashboard'), label: 'Дашборд', carriesPeriod: true }
 	]);
 </script>
 
-<!-- `data-tour` — метка подсказок: полосу разделов показывают шаги всех трёх
+<!-- `data-tour` — метка подсказок: полосу разделов показывают шаги всех
 	экранов данных об обучении (`$lib/onboarding/screens`). -->
 <nav
 	class="-mx-1 overflow-x-auto px-1 py-0.5"

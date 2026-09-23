@@ -16,7 +16,7 @@
 	import Section from '$lib/components/home/section.svelte';
 	import DashboardTiles from '$lib/components/stats/dashboard-tiles.svelte';
 	import PeriodSelect from '$lib/components/stats/period-select.svelte';
-	import ScoreBreakdown from '$lib/components/stats/score-breakdown.svelte';
+	import RankingList from '$lib/components/stats/ranking-list.svelte';
 	import SectionTabs from '$lib/components/stats/section-tabs.svelte';
 	import { measureText } from '$lib/components/stats/labels';
 	import {
@@ -50,13 +50,11 @@
 	/** Ссылка на выгрузку: тот же период, что и на экране. */
 	const exportHref = $derived(withPeriod(resolve('/(app)/data/export'), {}));
 
-	/** Весь рейтинг за тот же период. */
-	const rankingHref = $derived(withPeriod(resolve('/(app)/data/indicators'), { tab: 'ranking' }));
+	/** Сколько программ показывает дашборд: это верхушка рейтинга, а не отчёт. */
+	const TOP_PROGRAMS = 5;
 
-	/** Показатели одной программы за тот же период. */
-	function indicatorsHref(programId: string): ResolvedPathname {
-		return withPeriod(resolve('/(app)/data/indicators'), { programId });
-	}
+	/** Весь рейтинг за тот же период. */
+	const rankingHref = $derived(withPeriod(resolve('/(app)/data/ranking'), {}));
 
 	/**
 	 * Ссылка на тот же экран с другим порядком строк: повторный выбор той же
@@ -158,49 +156,19 @@
 		<div class="grid gap-4 xl:grid-cols-2">
 			<Section
 				title="Топ программ по рейтингу"
-				description="Балл — сумма слагаемых, перечисленных под названием; веса объявлены в контрактах."
+				description="По фактам системы за тот же период: заявки с сайта, потоки, обучающиеся и завершившие. Формула — гипотеза команды, веса настраиваются."
 			>
 				{#snippet action()}
 					<Button variant="outline" size="sm" href={rankingHref}>Весь рейтинг</Button>
 				{/snippet}
 
-				{#if dashboard.ranking.length === 0}
-					<EmptyState
-						title="Ранжировать нечего"
-						description="За выбранный период нет подтверждённых данных ни по одной программе."
-					/>
-				{:else}
-					<!-- Не таблица: четыре колонки, из которых последняя — три строки
-						объяснения, на половине экрана 1280 или 1440 уезжали за край с
-						прокруткой, о которой ничего не сообщало. Балл и объяснение —
-						это и есть ответ рейтинга, и прятать их нельзя. -->
-					<ul class="flex flex-col divide-y divide-border" data-slot="program-ranking">
-						{#each data.topPrograms as item, index (item.programId)}
-							<li class="flex flex-col gap-1.5 px-4 py-3" data-program={item.programCode}>
-								<div class="flex items-baseline gap-2">
-									<span class="w-4 shrink-0 text-right text-xs text-muted-foreground">
-										{index + 1}
-									</span>
-									<a href={indicatorsHref(item.programId)} class="flex min-w-0 flex-col focus-ring">
-										<span class="font-medium underline-offset-2 hover:underline">
-											{item.programName}
-										</span>
-										<span class="text-xs text-muted-foreground">{item.programCode}</span>
-									</a>
-									<span class="ml-auto flex shrink-0 items-baseline gap-1">
-										<span class="text-xs text-muted-foreground">Балл</span>
-										<span class="font-medium" data-slot="score-value">
-											{formatNumber(item.score)}
-										</span>
-									</span>
-								</div>
-								<div class="pl-6">
-									<ScoreBreakdown explanation={item.explanation} />
-								</div>
-							</li>
-						{/each}
-					</ul>
-				{/if}
+				<RankingList
+					entries={dashboard.ranking.programs}
+					limit={TOP_PROGRAMS}
+					hrefOf={(id) => resolve('/(app)/programs/[id=uuid]', { id })}
+					emptyTitle="Ранжировать нечего"
+					emptyDescription="За период в вашей области нет ни заявок с сайта, ни учебных групп с программой."
+				/>
 			</Section>
 
 			<Section

@@ -9,6 +9,7 @@
  * отсутствующей.
  */
 import { eq } from 'drizzle-orm';
+import { DEFAULT_RANKING_WEIGHTS } from '$lib/contracts/ranking';
 import { settingSchemas, type SettingKey, type SettingValue } from '$lib/contracts/settings';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
@@ -34,7 +35,8 @@ export const SETTING_DEFAULTS: { [TKey in SettingKey]: SettingValue<TKey> } = {
 	// Выключен: фоновая работа, стирающая данные, включается руками и на том
 	// стенде, где стирать есть что. Час — ночной, чтобы сброс не пришёлся на
 	// показ.
-	demo_reset_schedule: { enabled: false, hour: 3 }
+	demo_reset_schedule: { enabled: false, hour: 3 },
+	ranking_weights: DEFAULT_RANKING_WEIGHTS
 };
 
 export async function getSetting<TKey extends SettingKey>(key: TKey): Promise<SettingValue<TKey>> {

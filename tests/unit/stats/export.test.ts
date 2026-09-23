@@ -13,6 +13,7 @@
  */
 import ExcelJS from 'exceljs';
 import { describe, expect, it } from 'vitest';
+import { DEFAULT_RANKING_WEIGHTS, rankSubjects } from '$lib/contracts/ranking';
 import type { StatDashboardView } from '$lib/contracts/stats';
 import { buildStatsReport, statsReportFileName } from '$lib/server/stats/export';
 
@@ -82,20 +83,25 @@ const VIEW: StatDashboardView = {
 			coverageFact: 60
 		}
 	],
-	ranking: [
-		{
-			programId: '00000000-0000-4000-8000-000000000101',
-			programCode: 'VO-BAK-01',
-			programName: 'Прикладная информатика',
-			score: 210,
-			explanation: [
-				{ component: 'applications', value: 200, weight: 1, contribution: 200 },
-				{ component: 'enrolled', value: 0, weight: 2, contribution: 0 },
-				{ component: 'parallelStreams', value: 2, weight: 5, contribution: 10 }
+	ranking: {
+		period: { start: '2026-09-01', end: '2027-08-31' },
+		weights: DEFAULT_RANKING_WEIGHTS,
+		programs: rankSubjects(
+			[
+				{
+					id: '00000000-0000-4000-8000-000000000101',
+					code: 'VO-BAK-01',
+					name: 'Прикладная информатика',
+					facts: { applications: 2, streams: 1, enrolled: 25, completed: 20 },
+					priority: 1,
+					organizationCount: 1
+				}
 			],
-			organizationCount: 1
-		}
-	],
+			DEFAULT_RANKING_WEIGHTS
+		),
+		directions: [],
+		outside: { groupsWithoutProgram: 0, applicationsWithoutProgram: 0, programsWithoutDirection: 0 }
+	},
 	sources: [
 		{
 			snapshotId: '00000000-0000-4000-8000-000000000201',
@@ -184,11 +190,12 @@ describe('числа отчёта', () => {
 		expect(row[5]).toBeUndefined();
 	});
 
-	it('раскладывает балл программы на слагаемые и их вклад', async () => {
+	it('раскладывает балл программы на факты, их вклад и поправку за приоритет', async () => {
 		const row = findRow(sheet(await readReport(), 'Программы'), 'Прикладная информатика');
 
-		expect(row[3]).toBe(210);
-		expect(row.slice(5)).toStrictEqual([200, 200, 0, 0, 2, 10]);
+		// Веса по умолчанию: 3 × 2 + 10 × 1 + 1 × 25 + 2 × 20 + 10 × 5 шагов приоритета.
+		expect(row[3]).toBe(131);
+		expect(row.slice(5)).toStrictEqual([2, 6, 1, 10, 25, 25, 20, 40, 1, 50]);
 	});
 
 	it('называет период и актуальность на листе «Сводка»', async () => {

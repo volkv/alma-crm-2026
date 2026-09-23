@@ -3,6 +3,7 @@
 	import { resolve } from '$app/paths';
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
 	import DatabaseIcon from '@lucide/svelte/icons/database';
+	import LayersIcon from '@lucide/svelte/icons/layers';
 	import UploadIcon from '@lucide/svelte/icons/upload';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
@@ -15,6 +16,7 @@
 	import { STAT_SNAPSHOT_STATUS_TONES } from '$lib/components/stats/labels';
 	import type { FieldOption } from '$lib/components/form/field-select.svelte';
 	import {
+		isCollectedSnapshot,
 		isEmptyCoverage,
 		STAT_SNAPSHOT_MODE_LABELS,
 		STAT_SNAPSHOT_STATUSES,
@@ -121,6 +123,8 @@
 			<span class="max-w-56 truncate text-xs text-muted-foreground" title={row.fileName}>
 				{row.fileName}
 			</span>
+		{:else if isCollectedSnapshot(row)}
+			<span class="text-xs text-muted-foreground">собран из учебных групп</span>
 		{/if}
 	</span>
 {/snippet}
@@ -168,6 +172,10 @@
 >
 	{#snippet actions()}
 		{#if data.canImport}
+			<Button variant="outline" href={resolve('/(app)/data/collect')}>
+				<LayersIcon aria-hidden="true" />
+				Собрать из результатов групп
+			</Button>
 			<Button href={resolve('/(app)/data/new')}>
 				<UploadIcon aria-hidden="true" />
 				Загрузить файл
