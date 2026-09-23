@@ -650,11 +650,13 @@ export async function insertInteractionWithStage(
 		})
 		.returning({ id: schema.interactions.id });
 
-	// Своё пространство на каждую запись — и в нём её владелец с руководителем:
-	// без членства запись не видна тому, кто её ведёт, а эскалация не уходит.
+	// Своё пространство на каждую запись — и в нём все сотрудники, как в любом
+	// пространстве установки после миграции членства: владелец, его
+	// руководитель, тот, кому работу передадут. Кроме заведённых без членства
+	// (`insertUser({ workspaces: 'none' })`): у них нет ни одной строки членства.
 	await joinWorkspaces(
 		database,
-		sql`w.id = ${workspace.id} and (u.id = ${options.ownerUserId} or u.id = (select manager_user_id from users where id = ${options.ownerUserId}))`
+		sql`w.id = ${workspace.id} and (u.id = ${options.ownerUserId} or exists (select 1 from workspace_members m where m.user_id = u.id))`
 	);
 
 	return {
