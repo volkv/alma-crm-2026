@@ -24,6 +24,7 @@
 	import StageTimeline from '$lib/components/stage-timeline.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import Board from '$lib/components/interactions/board.svelte';
+	import ListFilter from '$lib/components/interactions/list-filter.svelte';
 	import { toTimelineStages } from '$lib/components/interactions/timeline';
 	import { filterHref } from '$lib/components/directory/query';
 	import {
@@ -39,7 +40,9 @@
 		filtersHref,
 		INTERACTION_STATUS_LABELS,
 		STAGE_CATEGORY_LABELS,
-		type InteractionFilters
+		toggledFilterHref,
+		type InteractionFilters,
+		type ListAttributeParam
 	} from './filters';
 	import { storeView } from './view-preference';
 	import type { PageProps } from './$types';
@@ -149,6 +152,14 @@
 
 	function go(changes: Partial<InteractionFilters>) {
 		return goto(filtersHref(page.url, workspace, changes), { keepFocus: true, noScroll: true });
+	}
+
+	/** Добавляет или снимает одно значение многозначного фильтра: вуз, направление, программа, продукт. */
+	function toggleAttr(param: ListAttributeParam, value: string) {
+		void goto(toggledFilterHref(page.url, workspace, param, value), {
+			keepFocus: true,
+			noScroll: true
+		});
 	}
 
 	/**
@@ -276,6 +287,34 @@
 	<div class="flex flex-wrap items-center gap-3" data-tour="interactions-filters">
 		<FilterSelect param="status" label="Статус" options={STATUS_OPTIONS} allLabel="Любой" />
 		<FilterSelect param="stage" label="Стадия" options={STAGE_OPTIONS} allLabel="Любая" />
+		<ListFilter
+			label="Вуз"
+			options={data.filterOptions.organizations}
+			selected={data.filters.org}
+			testId="interactions-filter-org"
+			ontoggle={(value) => toggleAttr('org', value)}
+		/>
+		<ListFilter
+			label="Направление"
+			options={data.filterOptions.directions}
+			selected={data.filters.dir}
+			testId="interactions-filter-dir"
+			ontoggle={(value) => toggleAttr('dir', value)}
+		/>
+		<ListFilter
+			label="Программа"
+			options={data.filterOptions.programs}
+			selected={data.filters.prog}
+			testId="interactions-filter-prog"
+			ontoggle={(value) => toggleAttr('prog', value)}
+		/>
+		<ListFilter
+			label="Продукт"
+			options={data.filterOptions.products}
+			selected={data.filters.prod}
+			testId="interactions-filter-prod"
+			ontoggle={(value) => toggleAttr('prod', value)}
+		/>
 
 		<Button
 			variant={data.filters.overdue ? 'default' : 'outline'}

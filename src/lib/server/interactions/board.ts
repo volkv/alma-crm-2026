@@ -48,6 +48,7 @@ import { requirePermission } from '../rbac';
 import { readActiveRevisionForWorkspace } from '../stages/process';
 import { evaluateTransition, type StageState } from '../stages/transitions';
 import { interactionScopeFilter } from './access';
+import { interactionAttributeConditions } from './read';
 
 /**
  * Сколько карточек показывает колонка.
@@ -66,6 +67,11 @@ export type InteractionBoardQuery = {
 	overdue: boolean;
 	ownerUserId: string | null;
 	q: string | null;
+	/** Вуз, направление, программа, продукт — как в списке (`interactions/read.ts`). */
+	org: readonly string[];
+	dir: readonly string[];
+	prog: readonly string[];
+	prod: readonly string[];
 };
 
 /**
@@ -80,7 +86,8 @@ function boardConditions(
 ): SQL[] {
 	const conditions: SQL[] = [
 		interactionScopeFilter(ctx),
-		eq(interactions.workspaceId, workspaceId)
+		eq(interactions.workspaceId, workspaceId),
+		...interactionAttributeConditions(query)
 	];
 
 	if (query.status !== null) {

@@ -57,6 +57,10 @@ const READERS: Record<SearchKind, GroupReader> = {
 			workspace: null,
 			stageCategory: null,
 			overdue: false,
+			org: [],
+			dir: [],
+			prog: [],
+			prod: [],
 			sort: '-lastActivityAt',
 			q: query,
 			...PAGE

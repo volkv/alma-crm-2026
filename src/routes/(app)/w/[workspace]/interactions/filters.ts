@@ -22,10 +22,36 @@ export type InteractionFilters = {
 	overdue: boolean;
 	/** Только те, где ответственный — текущий пользователь. */
 	mine: boolean;
+	/** Вуз — основная сторона взаимодействия. */
+	org: string[];
+	/** Направление — объединение направлений продуктов и программ, как в отчёте. */
+	dir: string[];
+	prog: string[];
+	prod: string[];
 };
 
 const STATUS_VALUES = new Set(['active', 'completed', 'cancelled']);
 const CATEGORY_VALUES = new Set<string>(STAGE_CATEGORIES);
+
+/** Многозначный параметр списка: имена и смысл значений — как у отчёта (`org`, `dir`, `prog`, `prod`). */
+export const LIST_ATTRIBUTE_PARAMS = ['org', 'dir', 'prog', 'prod'] as const;
+export type ListAttributeParam = (typeof LIST_ATTRIBUTE_PARAMS)[number];
+
+const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
+
+/**
+ * Значения многозначного параметра из адреса: через запятую и через повтор —
+ * одно и то же, как у отчёта (`components/reports/query.ts`). Непонятное
+ * значение (не идентификатор) отбрасывается молча — это не ошибка запроса, а
+ * просто не фильтр: правят ссылку руками не реже, чем ссылку на отчёт.
+ */
+function readIds(url: URL, param: ListAttributeParam): string[] {
+	return url.searchParams
+		.getAll(param)
+		.flatMap((value) => value.split(','))
+		.map((value) => value.trim())
+		.filter((value) => UUID_PATTERN.test(value));
+}
 
 export function readFilters(url: URL): InteractionFilters {
 	const status = url.searchParams.get('status');
@@ -38,7 +64,11 @@ export function readFilters(url: URL): InteractionFilters {
 				? (stageCategory as StageCategory)
 				: null,
 		overdue: url.searchParams.get('overdue') === 'true',
-		mine: url.searchParams.get('mine') === 'true'
+		mine: url.searchParams.get('mine') === 'true',
+		org: readIds(url, 'org'),
+		dir: readIds(url, 'dir'),
+		prog: readIds(url, 'prog'),
+		prod: readIds(url, 'prod')
 	};
 }
 
@@ -70,10 +100,18 @@ export function filtersHref(
 		}
 	};
 
+	const applyIds = (key: ListAttributeParam, values: readonly string[]) => {
+		apply(key, values.length === 0 ? null : values.join(','));
+	};
+
 	apply('status', next.status);
 	apply('stage', next.stageCategory);
 	apply('overdue', next.overdue ? 'true' : null);
 	apply('mine', next.mine ? 'true' : null);
+	applyIds('org', next.org);
+	applyIds('dir', next.dir);
+	applyIds('prog', next.prog);
+	applyIds('prod', next.prod);
 	params.delete('page');
 
 	const query = params.toString();
@@ -86,6 +124,26 @@ export function filtersHref(
 }
 
 /**
+ * Ссылка с добавленным или снятым значением многозначного фильтра: вуз,
+ * направление, программа, продукт. Пункты дропдауна выбирают обычно несколько
+ * подряд, и полная замена набора на каждый клик читалась бы как чужое
+ * поведение по сравнению с одиночными фильтрами выше.
+ */
+export function toggledFilterHref(
+	url: URL,
+	workspace: string,
+	param: ListAttributeParam,
+	value: string
+): ResolvedPathname {
+	const current = readFilters(url)[param];
+	const next = current.includes(value)
+		? current.filter((item) => item !== value)
+		: [...current, value];
+
+	return filtersHref(url, workspace, { [param]: next } as Partial<InteractionFilters>);
+}
+
+/**
  * Тот же список без единого условия отбора: фильтры, поиск и номер страницы
  * сняты, а как список показан и как отсортирован — оставлено. Пустое состояние
  * советует снять отбор, и снимать его должно нажатие, а не сборка адреса
@@ -94,7 +152,15 @@ export function filtersHref(
 export function clearedFiltersHref(url: URL, workspace: string): ResolvedPathname {
 	const params = new URLSearchParams(url.searchParams);
 
-	for (const name of ['status', 'stage', 'overdue', 'mine', 'q', 'page']) {
+	for (const name of [
+		'status',
+		'stage',
+		'overdue',
+		'mine',
+		'q',
+		'page',
+		...LIST_ATTRIBUTE_PARAMS
+	]) {
 		params.delete(name);
 	}
 

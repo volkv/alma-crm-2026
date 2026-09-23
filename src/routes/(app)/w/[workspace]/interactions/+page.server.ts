@@ -13,7 +13,7 @@ import { readTableQuery } from '$lib/components/data-table/query';
 import { actorFromEvent } from '$lib/server/actor';
 import { toActionFailure } from '$lib/server/http';
 import { getInteractionBoard } from '$lib/server/interactions/board';
-import { listInteractions } from '$lib/server/interactions/read';
+import { listInteractions, readInteractionFilterOptions } from '$lib/server/interactions/read';
 import { can } from '$lib/server/rbac';
 import { advanceStage, returnStage, setResponsible, skipStage } from '$lib/server/stages/commands';
 import { readFilters } from './filters';
@@ -84,7 +84,11 @@ export const load: PageServerLoad = async (event) => {
 		filters.status !== null ||
 		filters.stageCategory !== null ||
 		filters.overdue ||
-		filters.mine;
+		filters.mine ||
+		filters.org.length > 0 ||
+		filters.dir.length > 0 ||
+		filters.prog.length > 0 ||
+		filters.prod.length > 0;
 
 	const common = {
 		filters,
@@ -96,17 +100,24 @@ export const load: PageServerLoad = async (event) => {
 	};
 
 	// Грузится только то, что показано: доска не платит за страницу таблицы, а
-	// таблица — за выборку доски.
+	// таблица — за выборку доски. Варианты фильтров нужны обоим представлениям.
 	if (view === 'board') {
-		const board = await getInteractionBoard(ctx, workspace, {
-			status: filters.status,
-			stageCategory: filters.stageCategory,
-			overdue: filters.overdue,
-			ownerUserId,
-			q: table.search === '' ? null : table.search
-		});
+		const [board, filterOptions] = await Promise.all([
+			getInteractionBoard(ctx, workspace, {
+				status: filters.status,
+				stageCategory: filters.stageCategory,
+				overdue: filters.overdue,
+				ownerUserId,
+				q: table.search === '' ? null : table.search,
+				org: filters.org,
+				dir: filters.dir,
+				prog: filters.prog,
+				prod: filters.prod
+			}),
+			readInteractionFilterOptions(ctx, workspace.id)
+		]);
 
-		return { view: 'board' as const, ...common, board };
+		return { view: 'board' as const, ...common, board, filterOptions };
 	}
 
 	const query = interactionListQuerySchema.parse({
@@ -115,15 +126,20 @@ export const load: PageServerLoad = async (event) => {
 		stageCategory: filters.stageCategory,
 		overdue: filters.overdue,
 		ownerUserId,
+		org: filters.org,
+		dir: filters.dir,
+		prog: filters.prog,
+		prod: filters.prod,
 		sort: toSort(table.sortBy, table.sortDirection),
 		q: table.search,
 		page: table.page,
 		pageSize: table.size
 	});
 
-	const [result, users] = await Promise.all([
+	const [result, users, filterOptions] = await Promise.all([
 		listInteractions(ctx, query),
-		responsibleOptions(event)
+		responsibleOptions(event),
+		readInteractionFilterOptions(ctx, workspace.id)
 	]);
 
 	return {
@@ -131,7 +147,8 @@ export const load: PageServerLoad = async (event) => {
 		...common,
 		rows: result.items,
 		total: result.total,
-		users
+		users,
+		filterOptions
 	};
 };
 

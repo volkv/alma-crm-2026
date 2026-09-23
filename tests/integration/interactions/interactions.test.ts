@@ -8,8 +8,10 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import { createInteractionSchema, updateInteractionSchema } from '$lib/contracts/interactions';
 import {
 	auditEvents,
+	directions,
 	interactionChanges,
 	interactions,
+	productDirections,
 	products,
 	programs,
 	workspaces
@@ -554,6 +556,83 @@ describe('список и область доступа', () => {
 		expect(searched.items[0].institutionName).toBe('Политех');
 		expect(byCategory.total).toBe(2);
 		expect(overdue.total).toBe(0);
+	});
+
+	it('фильтрует по направлению — объединение направлений продуктов и программ', async () => {
+		const ctx = admin();
+		await demoProcess();
+
+		const [direction] = await database.db
+			.insert(directions)
+			.values({ code: 'qa-dir', name: 'Тестирование', position: 1 })
+			.returning({ id: directions.id });
+
+		// Второе направление подтверждает, что фильтр сужает, а не показывает всё.
+		await database.db
+			.insert(directions)
+			.values({ code: 'other-dir', name: 'Другое', position: 2 })
+			.returning({ id: directions.id });
+
+		const productId = await insertProduct('via-product');
+		await database.db.insert(productDirections).values({ productId, directionId: direction.id });
+
+		const programId = await insertProgram('via-program');
+		await database.db
+			.update(programs)
+			.set({ directionId: direction.id })
+			.where(eq(programs.id, programId));
+
+		const viaProductOrg = await insertOrganization(database.db, { shortName: 'Через продукт' });
+		const viaProgramOrg = await insertOrganization(database.db, { shortName: 'Через программу' });
+		const outsideOrg = await insertOrganization(database.db, { shortName: 'Мимо направления' });
+
+		const viaProduct = await createInteraction(
+			ctx,
+			B2B_WORKSPACE_KEY,
+			createInteractionSchema.parse({
+				title: 'Через продукт',
+				ownerUserId: TEST_USER_IDS.admin,
+				parties: [
+					{ organizationId: viaProductOrg, partyRole: 'educational_institution', isPrimary: true }
+				],
+				productIds: [productId]
+			})
+		);
+
+		const viaProgram = await createInteraction(
+			ctx,
+			B2B_WORKSPACE_KEY,
+			createInteractionSchema.parse({
+				title: 'Через программу',
+				ownerUserId: TEST_USER_IDS.admin,
+				parties: [
+					{ organizationId: viaProgramOrg, partyRole: 'educational_institution', isPrimary: true }
+				],
+				programs: [{ programId }]
+			})
+		);
+
+		await createInteraction(
+			ctx,
+			B2B_WORKSPACE_KEY,
+			createInteractionSchema.parse({
+				title: 'Мимо направления',
+				ownerUserId: TEST_USER_IDS.admin,
+				parties: [
+					{ organizationId: outsideOrg, partyRole: 'educational_institution', isPrimary: true }
+				]
+			})
+		);
+
+		const filtered = await listInteractions(
+			ctx,
+			interactionListQuerySchema.parse({ dir: [direction.id] })
+		);
+
+		expect(filtered.total).toBe(2);
+		expect(new Set(filtered.items.map((item) => item.id))).toStrictEqual(
+			new Set([viaProduct.id, viaProgram.id])
+		);
 	});
 
 	it('держит порядок страниц, когда ключ сортировки у строк одинаковый', async () => {

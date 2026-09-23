@@ -15,6 +15,7 @@ import {
 	exists,
 	ilike,
 	inArray,
+	isNotNull,
 	isNull,
 	or,
 	sql,
@@ -27,6 +28,7 @@ import type {
 	InteractionChangeView,
 	InteractionContractView,
 	InteractionDocumentView,
+	InteractionFilterOptions,
 	InteractionListItem,
 	InteractionListQuery,
 	InteractionPartyView,
@@ -46,6 +48,7 @@ import {
 	comments,
 	contractItems,
 	contracts,
+	directions,
 	documents,
 	interactionChanges,
 	interactionContractItems,
@@ -56,6 +59,7 @@ import {
 	interactions,
 	organizations,
 	people,
+	productDirections,
 	products,
 	programs,
 	sites,
@@ -72,9 +76,124 @@ import { buildProgress, isStale } from '../stages/status';
 import { readActiveRevisionForWorkspace } from '../stages/process';
 import { assertInteractionVisible, interactionScopeFilter } from './access';
 
+/** Отбор по вузу, направлению, программе и продукту: поля общие у списка и у доски. */
+export type InteractionAttributeQuery = {
+	/** Вуз — основная сторона взаимодействия. */
+	org: readonly string[];
+	/** Направление — объединение направлений продуктов и программ. */
+	dir: readonly string[];
+	prog: readonly string[];
+	prod: readonly string[];
+};
+
+/**
+ * Условия по вузу, направлению, программе и продукту.
+ *
+ * Общие для списка (`listConditions`) и доски (`interactions/board.ts`
+ * `boardConditions`): набор один, и это тот же набор, что фильтрует отчёт
+ * (`reports/conditions.ts`), — иначе строки списка на фильтре по направлению
+ * разошлись бы с числом отчёта на том же фильтре.
+ *
+ * «Вуз» — основная сторона (`is_primary`), а не любой контрагент: это то
+ * учебное заведение, ради которого взаимодействие завели, а не любая сторона,
+ * когда-либо в нём поучаствовавшая.
+ */
+export function interactionAttributeConditions(query: InteractionAttributeQuery): SQL[] {
+	const db = getDb();
+	const conditions: SQL[] = [];
+
+	if (query.org.length > 0) {
+		conditions.push(
+			exists(
+				db
+					.select({ one: sql`1` })
+					.from(interactionParties)
+					.where(
+						and(
+							eq(interactionParties.interactionId, interactions.id),
+							eq(interactionParties.isPrimary, true),
+							inArray(interactionParties.organizationId, query.org)
+						)
+					)
+			)
+		);
+	}
+
+	if (query.dir.length > 0) {
+		const viaProducts = exists(
+			db
+				.select({ one: sql`1` })
+				.from(interactionProducts)
+				.innerJoin(
+					productDirections,
+					eq(productDirections.productId, interactionProducts.productId)
+				)
+				.where(
+					and(
+						eq(interactionProducts.interactionId, interactions.id),
+						inArray(productDirections.directionId, query.dir)
+					)
+				)
+		);
+
+		const viaPrograms = exists(
+			db
+				.select({ one: sql`1` })
+				.from(interactionPrograms)
+				.innerJoin(programs, eq(programs.id, interactionPrograms.programId))
+				.where(
+					and(
+						eq(interactionPrograms.interactionId, interactions.id),
+						inArray(programs.directionId, query.dir)
+					)
+				)
+		);
+
+		const combined = or(viaProducts, viaPrograms);
+
+		if (combined !== undefined) {
+			conditions.push(combined);
+		}
+	}
+
+	if (query.prog.length > 0) {
+		conditions.push(
+			exists(
+				db
+					.select({ one: sql`1` })
+					.from(interactionPrograms)
+					.where(
+						and(
+							eq(interactionPrograms.interactionId, interactions.id),
+							inArray(interactionPrograms.programId, query.prog)
+						)
+					)
+			)
+		);
+	}
+
+	if (query.prod.length > 0) {
+		conditions.push(
+			exists(
+				db
+					.select({ one: sql`1` })
+					.from(interactionProducts)
+					.where(
+						and(
+							eq(interactionProducts.interactionId, interactions.id),
+							inArray(interactionProducts.productId, query.prod)
+						)
+					)
+			)
+		);
+	}
+
+	return conditions;
+}
+
 /** Условия выборки списка. Одни и те же для страницы и для счётчика. */
 function listConditions(ctx: ActorContext, query: InteractionListQuery): SQL[] {
-	const conditions: SQL[] = [interactionScopeFilter(ctx)];
+	const conditions: SQL[] = [interactionScopeFilter(ctx), ...interactionAttributeConditions(query)];
 
 	if (query.status !== null) {
 		conditions.push(eq(interactions.status, query.status));
@@ -355,6 +474,105 @@ export async function listInteractions(
 		total: totalRows[0]?.value ?? 0,
 		page: query.page,
 		pageSize: query.pageSize
+	};
+}
+
+/**
+ * Варианты фильтров вуз/направление/программа/продукт списка и доски.
+ *
+ * Каталог отчёта (`reports/options.ts`) сюда не годится без правки: он несёт
+ * весь справочник в области доступа, а не то, что реально встречается в
+ * пространстве, — направления и продукты не привязаны к пространству в схеме,
+ * и без сужения по фактическому участию список предлагал бы выбрать «Продукт
+ * X», под которым в этом пространстве нет ни одной записи. Поэтому запрос
+ * свой: он идёт не от справочника, а от взаимодействий пространства в области
+ * доступа — тем же отбором, что `interactionScopeFilter` даёт списку.
+ *
+ * Не кэшируется: страница списка и так делает несколько запросов на
+ * открытие, а объём данных на пространство — единицы и десятки строк, не
+ * тысячи.
+ */
+export async function readInteractionFilterOptions(
+	ctx: ActorContext,
+	workspaceId: string
+): Promise<InteractionFilterOptions> {
+	requirePermission(ctx, 'interactions.read');
+
+	const db = getDb();
+	const scope = and(interactionScopeFilter(ctx), eq(interactions.workspaceId, workspaceId));
+
+	const [organizationRows, programRows, productRows, programDirectionRows] = await Promise.all([
+		db
+			.selectDistinct({ value: organizations.id, label: organizations.shortName })
+			.from(interactions)
+			.innerJoin(
+				interactionParties,
+				and(
+					eq(interactionParties.interactionId, interactions.id),
+					eq(interactionParties.isPrimary, true)
+				)
+			)
+			.innerJoin(organizations, eq(organizations.id, interactionParties.organizationId))
+			.where(scope)
+			.orderBy(asc(organizations.shortName)),
+		db
+			.selectDistinct({ value: programs.id, label: programs.name })
+			.from(interactions)
+			.innerJoin(interactionPrograms, eq(interactionPrograms.interactionId, interactions.id))
+			.innerJoin(programs, eq(programs.id, interactionPrograms.programId))
+			.where(scope)
+			.orderBy(asc(programs.name)),
+		db
+			.selectDistinct({ value: products.id, label: products.name })
+			.from(interactions)
+			.innerJoin(interactionProducts, eq(interactionProducts.interactionId, interactions.id))
+			.innerJoin(products, eq(products.id, interactionProducts.productId))
+			.where(scope)
+			.orderBy(asc(products.name)),
+		db
+			.selectDistinct({ value: programs.directionId })
+			.from(interactions)
+			.innerJoin(interactionPrograms, eq(interactionPrograms.interactionId, interactions.id))
+			.innerJoin(programs, eq(programs.id, interactionPrograms.programId))
+			.where(and(scope, isNotNull(programs.directionId)))
+		// Продукты уже отобраны выше — направления продукта читаются по ним, а не
+		// вторым проходом по взаимодействиям.
+	]);
+
+	const productDirectionRows =
+		productRows.length === 0
+			? []
+			: await db
+					.selectDistinct({ value: productDirections.directionId })
+					.from(productDirections)
+					.where(
+						inArray(
+							productDirections.productId,
+							productRows.map((row) => row.value)
+						)
+					);
+
+	const directionIds = new Set<string>([
+		...programDirectionRows
+			.map((row) => row.value)
+			.filter((value): value is string => value !== null),
+		...productDirectionRows.map((row) => row.value)
+	]);
+
+	const directionRows =
+		directionIds.size === 0
+			? []
+			: await db
+					.select({ value: directions.id, label: directions.name })
+					.from(directions)
+					.where(inArray(directions.id, [...directionIds]))
+					.orderBy(asc(directions.position));
+
+	return {
+		organizations: organizationRows,
+		directions: directionRows,
+		programs: programRows,
+		products: productRows
 	};
 }
 

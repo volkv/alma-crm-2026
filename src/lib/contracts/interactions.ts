@@ -379,6 +379,25 @@ export const INTERACTION_SORTS = [
 
 export type InteractionSort = (typeof INTERACTION_SORTS)[number];
 
+/**
+ * Многозначный параметр адреса: `dir=a,b` и `dir=a&dir=b` — одно и то же.
+ * Непонятное значение — не ошибка запроса, а просто не фильтр: ссылку на
+ * список правят руками не реже, чем ссылку на отчёт.
+ *
+ * Имена и смысл — те же, что у отчёта (`org`, `dir`, `prog`, `prod` в
+ * `contracts/reports.ts`): вуз, направление, программа и продукт значат одно и
+ * то же в списке и в отчёте, и ссылка одного читается фильтром другого.
+ */
+const multiUuid = z
+	.union([z.string(), z.array(z.string())])
+	.default([])
+	.transform((value) =>
+		(Array.isArray(value) ? value : [value])
+			.flatMap((item) => item.split(','))
+			.map((item) => item.trim())
+			.filter((item) => z.uuid().safeParse(item).success)
+	);
+
 export const interactionListQuerySchema = z.object({
 	status: z.enum(INTERACTION_STATUSES).nullable().default(null),
 	ownerUserId: optionalId('Некорректный идентификатор ответственного'),
@@ -395,6 +414,15 @@ export const interactionListQuerySchema = z.object({
 		.union([z.boolean(), z.enum(['true', 'false'])])
 		.default(false)
 		.transform((value) => value === true || value === 'true'),
+	/** Вуз — основная сторона взаимодействия (`interaction_parties.is_primary`). */
+	org: multiUuid,
+	/**
+	 * Направление — объединение направлений продуктов и программ взаимодействия,
+	 * тем же условием, что у отчёта (`reports/conditions.ts`).
+	 */
+	dir: multiUuid,
+	prog: multiUuid,
+	prod: multiUuid,
 	sort: z.enum(INTERACTION_SORTS).default('-lastActivityAt'),
 	q: searchQuery,
 	...pageQuerySchema.shape
@@ -731,6 +759,24 @@ export type UpdateInteractionInput = z.output<typeof updateInteractionSchema>;
 export type CreateInteractionDraft = z.input<typeof createInteractionSchema>;
 export type UpdateInteractionDraft = z.input<typeof updateInteractionSchema>;
 export type InteractionListQuery = z.output<typeof interactionListQuerySchema>;
+
+/** Пункт выпадающего списка фильтра: то же значение и подпись, что у отчёта. */
+export type InteractionFilterOption = { value: string; label: string };
+
+/**
+ * Варианты фильтров вуз/направление/программа/продукт списка и доски —
+ * узкие: только то, что реально встречается в пространстве и в области
+ * доступа того, кто список открыл (`interactions/read.ts`,
+ * `readInteractionFilterOptions`). Каталог отчёта (`reports/options.ts`)
+ * здесь не подходит — он не сужен ни по пространству, ни по факту участия в
+ * взаимодействии.
+ */
+export type InteractionFilterOptions = {
+	organizations: InteractionFilterOption[];
+	directions: InteractionFilterOption[];
+	programs: InteractionFilterOption[];
+	products: InteractionFilterOption[];
+};
 export type AdvanceStageInput = z.output<typeof advanceStageSchema>;
 export type ReturnStageInput = z.output<typeof returnStageSchema>;
 export type SkipStageInput = z.output<typeof skipStageSchema>;
