@@ -77,7 +77,7 @@ registerRoute({
 		}
 	},
 	example: {
-		schemaVersion: '1.0',
+		schemaVersion: '1.1',
 		result: 'created',
 		data: {
 			externalId: 'site-2026-000123',

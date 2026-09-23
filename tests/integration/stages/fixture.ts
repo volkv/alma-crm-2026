@@ -9,7 +9,7 @@
  */
 import { eq } from 'drizzle-orm';
 import type { DocumentStatusFact } from '$lib/contracts/documents';
-import { lmsEvidenceSchema, type LmsEvidence } from '$lib/contracts/exchange';
+import type { LmsEvidence } from '$lib/contracts/exchange';
 import {
 	createInteractionSchema,
 	type ChecklistItem,
@@ -19,9 +19,11 @@ import {
 import type { ActorContext } from '$lib/server/actor';
 import {
 	documents,
+	interactionPrograms,
 	interactions,
 	learningGroupResults,
-	learningGroups
+	learningGroups,
+	programs
 } from '$lib/server/db/schema';
 import { withTransaction } from '$lib/server/db/transaction';
 import { markDocument } from '$lib/server/documents/status';
@@ -160,13 +162,49 @@ export async function closeRequiredChecklist(
 }
 
 /**
- * Факт системы обучения по взаимодействию: поток и его результат.
+ * Программа взаимодействия, по которой заводится учебная группа. Своя на
+ * каждый вызов, если у взаимодействия программы ещё нет: стадию подтверждает
+ * только группа, чья программа входит в программы взаимодействия.
+ */
+export async function ensureInteractionProgram(
+	database: TestDatabase,
+	interactionId: string
+): Promise<string> {
+	const [existing] = await database.db
+		.select({ programId: interactionPrograms.programId })
+		.from(interactionPrograms)
+		.where(eq(interactionPrograms.interactionId, interactionId))
+		.limit(1);
+
+	if (existing !== undefined) {
+		return existing.programId;
+	}
+
+	const [program] = await database.db
+		.insert(programs)
+		.values({
+			code: `P-${crypto.randomUUID().slice(0, 8)}`,
+			name: 'Программа подготовки',
+			level: 'bachelor',
+			status: 'active'
+		})
+		.returning({ id: programs.id });
+
+	await database.db.insert(interactionPrograms).values({ interactionId, programId: program.id });
+
+	return program.id;
+}
+
+/**
+ * Итог обучения по взаимодействию: поток и его итоговый результат.
  *
  * Стадия с `requiresLmsData` ждёт именно его, и подделать его снимком стадии
  * нельзя — проверка перестала бы проверять правило. Строки те же, что кладёт
  * приём результата (`docs/exchange-contract.md`, направление 4), а
  * подтверждение ставит тот же движок, что зовёт приём: тест отличается от
- * настоящего обмена только тем, что сообщение не едет по сети.
+ * настоящего обмена только тем, что сообщение не едет по сети. Результат
+ * итоговый — с завершившими и датой окончания: промежуточный стадию не
+ * подтверждает.
  */
 export async function provideLmsEvidence(
 	ctx: ActorContext,
@@ -177,9 +215,11 @@ export async function provideLmsEvidence(
 		completed: 18,
 		expelled: 1
 	}
-): Promise<LmsEvidence> {
+): Promise<Extract<LmsEvidence, { kind: 'result' }>> {
 	const groupExternalId = crypto.randomUUID().slice(0, 8);
 	const occurredAt = new Date();
+	const finishedOn = occurredAt.toISOString().slice(0, 10);
+	const programId = await ensureInteractionProgram(database, interactionId);
 	// Номер потока свой у каждого вызова: второй поток по взаимодействию —
 	// обычное дело, и уникальность пары «взаимодействие + номер» этого ждёт.
 	const streams = await database.db
@@ -187,7 +227,7 @@ export async function provideLmsEvidence(
 		.from(learningGroups)
 		.where(eq(learningGroups.interactionId, interactionId));
 
-	const [workspace] = await database.db
+	const [group] = await database.db
 		.insert(learningGroups)
 		.values({
 			interactionId,
@@ -196,27 +236,31 @@ export async function provideLmsEvidence(
 			instance: 'moodle-test',
 			groupExternalId,
 			plannedSeats: counters.enrolled,
-			lastResultAt: occurredAt
+			lastResultAt: occurredAt,
+			programId,
+			purpose: 'students'
 		})
 		.returning({ id: learningGroups.id });
 
 	await database.db.insert(learningGroupResults).values({
-		learningGroupId: workspace.id,
+		learningGroupId: group.id,
 		occurredAt,
+		finishedOn,
 		...counters
 	});
 
-	const evidence = lmsEvidenceSchema.parse({
+	const evidence: Extract<LmsEvidence, { kind: 'result' }> = {
+		kind: 'result',
 		system: 'lms',
 		instance: 'moodle-test',
 		groupExternalId,
-		learningGroupId: workspace.id,
+		learningGroupId: group.id,
 		occurredAt: occurredAt.toISOString(),
 		...counters,
-		finishedOn: null,
+		finishedOn,
 		periodStart: null,
 		periodEnd: null
-	});
+	};
 
 	await withTransaction(ctx, (tx) => applyLmsEvidence(ctx, tx, { interactionId, evidence }));
 

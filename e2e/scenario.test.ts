@@ -341,6 +341,13 @@ async function seed(databaseUrl: string): Promise<{ main: string; moved: string 
 					})}
 				`;
 
+				// Программа: учебная группа заводится по программе взаимодействия,
+				// и единственную форма подставляет сама.
+				await tx`
+					insert into interaction_programs (interaction_id, program_id)
+					select ${row.id}, id from programs where code = 'VO-BAK-01'
+				`;
+
 				await tx`
 					insert into stage_entries ${tx({
 						interaction_id: row.id,
@@ -742,11 +749,20 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		await manager.goto(`/w/${GROUP_KEY}/interactions/${mainId}`);
 		await waitForHydration(manager);
 
-		// Стадия требует данных обучения, и их ещё не получали: карточка говорит
+		// Стадия требует итога обучения, и его ещё не получали: карточка говорит
 		// об этом словами, а не гасит кнопку молча.
 		await expect(
-			manager.getByText('Стадии нужны данные системы обучения — их ещё не получали.')
+			manager.getByText('Стадии нужен итог обучения из системы обучения — его ещё не получали.')
 		).toBeVisible();
+
+		// Программа у взаимодействия одна — форма подставила её сама; для кого
+		// поток, выбирает сотрудник.
+		await expect(manager.getByTestId('learning-groups')).toContainText('VO-BAK-01');
+
+		const purpose = manager.getByRole('option', { name: 'Обучение студентов' });
+
+		await openLayer(manager.getByLabel('Для кого обучение'), purpose);
+		await purpose.click();
 
 		await manager.getByLabel('Мест в потоке').fill('45');
 		// Дату держит компонент: человек пишет `01.10.2026`, а форме уходит

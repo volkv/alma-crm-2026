@@ -11,7 +11,7 @@
  * состав определяет контракт, а не то, кто нажал кнопку. Что именно уезжает,
  * решено раньше — постановкой сообщения в очередь под правами сотрудника.
  */
-import { and, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 import {
 	applicationStatusDataSchema,
 	learningGroupRequestedDataSchema,
@@ -22,9 +22,9 @@ import {
 	comments,
 	contracts,
 	interactionParties,
-	interactionProducts,
-	interactionPrograms,
 	interactions,
+	learningGroupProducts,
+	learningGroups,
 	organizations,
 	products,
 	programs,
@@ -139,7 +139,7 @@ export function groupRequestExternalId(interactionId: string, streamNumber: numb
 	return `crm-group-${interactionId}-${streamNumber}`;
 }
 
-/** Тело `learning_group.requested`; `null` — взаимодействия больше нет. */
+/** Тело `learning_group.requested`; `null` — взаимодействия или группы больше нет. */
 export async function buildLearningGroupRequest(
 	payload: unknown
 ): Promise<Record<string, unknown> | null> {
@@ -190,19 +190,36 @@ export async function buildLearningGroupRequest(
 		return null;
 	}
 
-	const [program] = await db
-		.select({ id: programs.id, code: programs.code })
-		.from(interactionPrograms)
-		.innerJoin(programs, eq(programs.id, interactionPrograms.programId))
-		.where(eq(interactionPrograms.interactionId, interactionId))
+	// Что и для кого обучается, закреплено строкой группы при заявке: тело
+	// берёт это оттуда, а не из взаимодействия, у которого программ и
+	// продуктов бывает несколько.
+	const [group] = await db
+		.select({
+			id: learningGroups.id,
+			purpose: learningGroups.purpose,
+			programId: programs.id,
+			programCode: programs.code
+		})
+		.from(learningGroups)
+		.leftJoin(programs, eq(programs.id, learningGroups.programId))
+		.where(
+			and(
+				eq(learningGroups.interactionId, interactionId),
+				eq(learningGroups.streamNumber, streamNumber)
+			)
+		)
 		.limit(1);
 
-	const [product] = await db
+	if (group === undefined) {
+		return null;
+	}
+
+	const groupProducts = await db
 		.select({ id: products.id, code: products.code })
-		.from(interactionProducts)
-		.innerJoin(products, eq(products.id, interactionProducts.productId))
-		.where(eq(interactionProducts.interactionId, interactionId))
-		.limit(1);
+		.from(learningGroupProducts)
+		.innerJoin(products, eq(products.id, learningGroupProducts.productId))
+		.where(eq(learningGroupProducts.learningGroupId, group.id))
+		.orderBy(asc(products.code));
 
 	const [contract] =
 		interaction.contractId === null
@@ -217,8 +234,15 @@ export async function buildLearningGroupRequest(
 		externalId: groupRequestExternalId(interactionId, streamNumber),
 		interactionId,
 		organization: { id: organization.id, inn: organization.inn, name: organization.name },
-		program: program === undefined ? null : { id: program.id, code: program.code },
-		product: product === undefined ? null : { id: product.id, code: product.code },
+		program:
+			group.programId === null || group.programCode === null
+				? null
+				: { id: group.programId, code: group.programCode },
+		// Поле `1.0` несёт продукт, только когда он у группы один: выбрать
+		// «главный» из нескольких значило бы соврать получателю старой версии.
+		product: groupProducts.length === 1 ? groupProducts[0] : null,
+		products: groupProducts,
+		purpose: group.purpose,
 		contract: contract === undefined ? null : { id: contract.id, number: contract.number },
 		stream: {
 			number: streamNumber,

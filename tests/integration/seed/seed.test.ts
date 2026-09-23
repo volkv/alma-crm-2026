@@ -1,4 +1,4 @@
-import { and, count, eq, inArray, isNotNull, isNull, ne } from 'drizzle-orm';
+import { and, count, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import type { RequestEvent } from '@sveltejs/kit';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -261,19 +261,43 @@ describe('сид', () => {
 			INTERACTION_SEED_SIZES.learningResults
 		);
 
-		// Стадия «Зачисление и обучение» группы b2c без факта не подтверждается и
-		// вперёд не отпускает, поэтому у стоящей на ней записи факт обязан быть.
-		const [{ id: interactionId }] = await database.db
-			.select({ id: interactions.id })
-			.from(interactions)
-			.where(eq(interactions.id, seedId('interaction', 'sorokin-obuchenie')));
+		// Поток закрепляет, что и для кого обучается: программу записи и
+		// назначение.
+		const [group] = await database.db
+			.select({ programId: learningGroups.programId, purpose: learningGroups.purpose })
+			.from(learningGroups)
+			.where(eq(learningGroups.interactionId, seedId('interaction', 'sorokin-obuchenie')));
 
-		const [entry] = await database.db
+		expect(group).toEqual({ programId: seedId('program', 'dpo-01'), purpose: 'upskilling' });
+
+		// Стадия «Зачисление и обучение» стоит на промежуточном результате:
+		// данные получены, обучение идёт, — и стадия не подтверждена. Стенду
+		// нужно и это состояние, а не только завершённые потоки.
+		const [open] = await database.db
 			.select({ evidence: stageEntries.lmsEvidence })
 			.from(stageEntries)
-			.where(and(eq(stageEntries.interactionId, interactionId), isNull(stageEntries.leftAt)));
+			.where(
+				and(
+					eq(stageEntries.interactionId, seedId('interaction', 'sorokin-obuchenie')),
+					isNull(stageEntries.leftAt)
+				)
+			);
 
-		expect(entry.evidence).not.toBeNull();
+		expect(open.evidence).toBeNull();
+
+		// Пройденную «Ведение занятий» подтвердил итог: завершившие и дата
+		// окончания.
+		const [passed] = await database.db
+			.select({ evidence: stageEntries.lmsEvidence })
+			.from(stageEntries)
+			.where(
+				and(
+					eq(stageEntries.interactionId, seedId('interaction', 'szpu-2025')),
+					sql`${stageEntries.stageSnapshot} ->> 'key' = 'classes'`
+				)
+			);
+
+		expect(passed.evidence).toMatchObject({ kind: 'result', completed: 48 });
 	});
 
 	it('заводит договоры и привязывает к взаимодействиям их позиции', async () => {

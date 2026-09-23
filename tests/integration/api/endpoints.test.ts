@@ -857,7 +857,15 @@ describe('учебные группы взаимодействия', () => {
 					groupExternalId: 'LMS-1',
 					startsOn: '2026-10-01',
 					messageState: null,
-					enrolled: null
+					enrolled: null,
+					// Группа заведена мимо заявки: ни программы, ни назначения у неё нет,
+					// и стадию она не подтверждает.
+					program: null,
+					products: [],
+					purpose: null,
+					trainingState: 'awaiting',
+					completionMark: null,
+					countsForStage: false
 				}
 			]
 		});

@@ -119,6 +119,7 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'exchange.message_failed': 'Сообщение обмена не доставлено',
 	'exchange.message_dismissed': 'Сообщение обмена разобрано вручную',
 	'exchange.group_requested': 'Учебная группа отправлена в систему обучения',
+	'exchange.group_completed': 'Обучение группы отмечено завершённым',
 	'reports.exported': 'Отчёт по взаимодействиям выгружен',
 	'audit.exported': 'Журнал выгружен',
 	'api.request': 'Обращение к API',

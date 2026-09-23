@@ -58,6 +58,11 @@ type LearningGroup = {
 	courseExternalId: string;
 	url: string;
 	interactionId: string | null;
+	/** Что обучается: код программы и коды продуктов из заявки CRM. */
+	programCode: string | null;
+	productCodes: string[];
+	/** Для кого обучение: `students`, `teachers`, `upskilling`; `null` — заявка `1.0`. */
+	purpose: string | null;
 	plannedSeats: number | null;
 	startsOn: string | null;
 	endsOn: string | null;
@@ -78,6 +83,15 @@ function nested(data: Record<string, unknown>, key: string): Record<string, unkn
 	const value = data[key];
 
 	return isRecord(value) ? value : {};
+}
+
+/** Коды продуктов заявки: список `products` появился в схеме `1.1`. */
+function readProductCodes(data: Record<string, unknown>): string[] {
+	return Array.isArray(data.products)
+		? data.products
+				.map((item) => (isRecord(item) ? readString(item.code) : null))
+				.filter((code): code is string => code !== null)
+		: [];
 }
 
 /**
@@ -261,7 +275,8 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 				}
 
 				const stream = nested(envelope.data, 'stream');
-				const course = courseForProgram(readString(nested(envelope.data, 'program').code));
+				const programCode = readString(nested(envelope.data, 'program').code);
+				const course = courseForProgram(programCode);
 				const groupExternalId = stableGroupId(requestExternalId, (id) => findGroup(id) !== null);
 				const group: LearningGroup = {
 					requestExternalId,
@@ -269,6 +284,9 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 					courseExternalId: String(course.id),
 					url: `${publicUrl()}/course/view.php?id=${course.id}`,
 					interactionId: readString(envelope.data.interactionId),
+					programCode,
+					productCodes: readProductCodes(envelope.data),
+					purpose: readString(envelope.data.purpose),
 					plannedSeats: Number.isInteger(stream.plannedSeats)
 						? (stream.plannedSeats as number)
 						: null,
@@ -286,7 +304,7 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 					status: 201,
 					eventId: envelope.eventId,
 					eventType: envelope.eventType,
-					note: `заведена группа ${group.groupExternalId} на курсе ${course.idnumber}`,
+					note: `заведена группа ${group.groupExternalId} на курсе ${course.idnumber}${group.purpose === null ? '' : ` (${group.purpose})`}`,
 					payload: envelope
 				});
 

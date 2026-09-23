@@ -20,12 +20,16 @@ import {
 	jsonb,
 	pgEnum,
 	pgTable,
+	primaryKey,
 	text,
 	timestamp,
 	unique,
 	uniqueIndex,
 	uuid
 } from 'drizzle-orm/pg-core';
+import { LEARNING_PURPOSES } from '$lib/contracts/exchange';
+import { users } from './auth';
+import { products, programs } from './directory';
 import { documents } from './documents';
 import { interactions } from './interactions';
 import { createdAt } from './shared';
@@ -49,6 +53,7 @@ export const EXCHANGE_MESSAGE_STATES = [
 
 export const exchangeDirectionEnum = pgEnum('exchange_direction', EXCHANGE_DIRECTIONS);
 export const exchangeMessageStateEnum = pgEnum('exchange_message_state', EXCHANGE_MESSAGE_STATES);
+export const learningPurposeEnum = pgEnum('learning_purpose', LEARNING_PURPOSES);
 
 /**
  * Одно входящее или исходящее сообщение контракта обмена.
@@ -126,6 +131,11 @@ export const exchangeMessages = pgTable(
  * Своей таблицей, а не полем взаимодействия: потоков у одного взаимодействия
  * бывает несколько, и у группы своя жизнь, которая продолжается после того, как
  * стадия пройдена.
+ *
+ * Группа закрепляет, **что** и **для кого** обучается: программу, продукты и
+ * назначение. Выбор делается один раз, при заявке, и не следует за правкой
+ * взаимодействия: в системе обучения группа уже заведена по этой программе, и
+ * переписать её задним числом значило бы солгать о том, что туда ушло.
  */
 export const learningGroups = pgTable(
 	'learning_groups',
@@ -146,6 +156,21 @@ export const learningGroups = pgTable(
 		endsOn: date(),
 		/** Момент последнего подтверждённого результата — вывод из истории. */
 		lastResultAt: timestamp({ withTimezone: true }),
+		/**
+		 * Программа группы. `null` — только у групп, заведённых до закрепления,
+		 * где выбор нельзя восстановить однозначно (миграция `0023`); новая
+		 * группа без программы не заводится.
+		 */
+		programId: uuid().references(() => programs.id, { onDelete: 'restrict' }),
+		/** Для кого обучение; `null` — у групп, заведённых до закрепления. */
+		purpose: learningPurposeEnum(),
+		/**
+		 * Отметка сотрудника «обучение завершено»: итога из системы обучения нет,
+		 * а обучение закончилось. Момент и комментарий ставятся вместе.
+		 */
+		completionMarkedAt: timestamp({ withTimezone: true }),
+		completionMarkedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+		completionComment: text(),
 		...createdAt
 	},
 	(table) => [
@@ -153,8 +178,31 @@ export const learningGroups = pgTable(
 		unique('learning_groups_interaction_stream_key').on(table.interactionId, table.streamNumber),
 		uniqueIndex('learning_groups_external_key')
 			.on(table.system, table.instance, table.groupExternalId)
-			.where(sql`${table.groupExternalId} is not null`)
+			.where(sql`${table.groupExternalId} is not null`),
+		check(
+			'learning_groups_completion_mark_whole',
+			sql`(${table.completionMarkedAt} is null) = (${table.completionComment} is null)`
+		)
 	]
+);
+
+/**
+ * Продукты группы — подмножество продуктов взаимодействия на момент заявки.
+ * Таблицей, а не массивом: продукт — запись справочника, и ссылка на неё
+ * обязана держать внешний ключ.
+ */
+export const learningGroupProducts = pgTable(
+	'learning_group_products',
+	{
+		learningGroupId: uuid()
+			.notNull()
+			.references(() => learningGroups.id, { onDelete: 'cascade' }),
+		productId: uuid()
+			.notNull()
+			.references(() => products.id, { onDelete: 'restrict' }),
+		...createdAt
+	},
+	(table) => [primaryKey({ columns: [table.learningGroupId, table.productId] })]
 );
 
 /**
@@ -215,7 +263,17 @@ export const learningGroupsRelations = relations(learningGroups, ({ one, many })
 		fields: [learningGroups.interactionId],
 		references: [interactions.id]
 	}),
+	program: one(programs, { fields: [learningGroups.programId], references: [programs.id] }),
+	products: many(learningGroupProducts),
 	results: many(learningGroupResults)
+}));
+
+export const learningGroupProductsRelations = relations(learningGroupProducts, ({ one }) => ({
+	group: one(learningGroups, {
+		fields: [learningGroupProducts.learningGroupId],
+		references: [learningGroups.id]
+	}),
+	product: one(products, { fields: [learningGroupProducts.productId], references: [products.id] })
 }));
 
 export const learningGroupResultsRelations = relations(learningGroupResults, ({ one }) => ({

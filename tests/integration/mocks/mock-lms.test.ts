@@ -99,6 +99,24 @@ describe('заявка на учебную группу', () => {
 		expect(pick(body, 'data.url')).toBe('http://lms.stand.example/course/view.php?id=101');
 	});
 
+	it('помнит, что и для кого обучается: программу, продукты и назначение', async () => {
+		await requestGroup(lms, {
+			data: {
+				products: [
+					{ id: '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b', code: 'RT-DEVOPS' },
+					{ id: '6f7a8b9c-0d1e-4f2a-9b3c-4d5e6f7a8b9c', code: 'RT-YAGA' }
+				],
+				purpose: 'teachers'
+			}
+		});
+
+		const state = await readJson(await fetch(`${lms.url}/__state`));
+
+		expect(pick(state, 'objects.groups.0.programCode')).toBe('VO-BAK-01');
+		expect(pick(state, 'objects.groups.0.productCodes')).toEqual(['RT-DEVOPS', 'RT-YAGA']);
+		expect(pick(state, 'objects.groups.0.purpose')).toBe('teachers');
+	});
+
 	it('на повторную заявку возвращает ту же группу, а не заводит вторую', async () => {
 		const first = await readJson(await requestGroup(lms));
 		const second = await requestGroup(lms);

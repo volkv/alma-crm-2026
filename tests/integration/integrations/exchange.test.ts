@@ -44,7 +44,7 @@ import {
 	B2C_PROCESS
 } from '$lib/server/stages/definitions';
 import { ensureWorkflow } from '$lib/server/stages/process';
-import { advanceTo } from '../stages/fixture';
+import { advanceTo, ensureInteractionProgram } from '../stages/fixture';
 import { startMockCms } from '../../../mocks/mock-cms/service.ts';
 import { startMockLms } from '../../../mocks/mock-lms/service.ts';
 import type { MockService } from '../../../mocks/shared/http.ts';
@@ -880,22 +880,24 @@ describe('учебная группа', () => {
 		interactionId: string;
 		groupExternalId: string;
 	}> {
-		const response = await intake(apiEvent({ body: envelope(B2B_DATA), key: apiKey }));
-		const { data } = (await response.json()) as { data: { interactionId: string } };
+		const interactionId = await acceptedInteraction();
 
 		await requestLearningGroup(testActor(), {
-			interactionId: data.interactionId,
+			interactionId,
 			streamNumber: 1,
 			plannedSeats: 45,
 			startsOn: '2026-10-01',
-			endsOn: '2027-05-31'
+			endsOn: '2027-05-31',
+			programId: null,
+			productIds: [],
+			purpose: 'students'
 		});
 
-		const [group] = await listLearningGroups(testActor(), data.interactionId);
+		const [group] = await listLearningGroups(testActor(), interactionId);
 
 		expect(group.groupExternalId).not.toBeNull();
 
-		return { interactionId: data.interactionId, groupExternalId: group.groupExternalId! };
+		return { interactionId, groupExternalId: group.groupExternalId! };
 	}
 
 	it('заводится действием сотрудника и получает имя в системе обучения', async () => {
@@ -925,7 +927,10 @@ describe('учебная группа', () => {
 				streamNumber: 1,
 				plannedSeats: 45,
 				startsOn: null,
-				endsOn: null
+				endsOn: null,
+				programId: null,
+				productIds: [],
+				purpose: 'students'
 			})
 		).rejects.toMatchObject({ code: 'conflict' });
 	});
@@ -940,7 +945,10 @@ describe('учебная группа', () => {
 				streamNumber: 1,
 				plannedSeats: 10,
 				startsOn: null,
-				endsOn: null
+				endsOn: null,
+				programId: null,
+				productIds: [],
+				purpose: 'students'
 			})
 		).rejects.toMatchObject({ code: 'forbidden' });
 	});
@@ -1176,9 +1184,16 @@ async function pointGroupsAt(url: string): Promise<void> {
 }
 
 /** Заявка с сайта, из которой дальше заводится учебная группа. */
+/**
+ * Взаимодействие из заявки с сайта, у которого есть программа: группа
+ * заводится по программе, а заявка с сайта её не несёт — её добавляет
+ * сотрудник в карточке.
+ */
 async function acceptedInteraction(): Promise<string> {
 	const response = await intake(apiEvent({ body: envelope(B2B_DATA), key: apiKey }));
 	const { data } = (await response.json()) as { data: { interactionId: string } };
+
+	await ensureInteractionProgram(database, data.interactionId);
 
 	return data.interactionId;
 }
@@ -1213,7 +1228,10 @@ describe('конверт исходящего сообщения', () => {
 				streamNumber: 1,
 				plannedSeats: 45,
 				startsOn: '2026-10-01',
-				endsOn: '2027-05-31'
+				endsOn: '2027-05-31',
+				programId: null,
+				productIds: [],
+				purpose: 'students'
 			});
 
 			expect(outcome.delivered).toBe(false);
@@ -1263,7 +1281,10 @@ describe('конверт исходящего сообщения', () => {
 				streamNumber: 1,
 				plannedSeats: 45,
 				startsOn: '2026-10-01',
-				endsOn: '2027-05-31'
+				endsOn: '2027-05-31',
+				programId: null,
+				productIds: [],
+				purpose: 'students'
 			});
 
 			const [failed] = await database.db
@@ -1309,7 +1330,10 @@ describe('ответ системы обучения', () => {
 				streamNumber: 1,
 				plannedSeats: 45,
 				startsOn: '2026-10-01',
-				endsOn: '2027-05-31'
+				endsOn: '2027-05-31',
+				programId: null,
+				productIds: [],
+				purpose: 'students'
 			});
 
 			expect(outcome.delivered).toBe(false);

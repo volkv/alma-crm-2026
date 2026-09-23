@@ -13,11 +13,15 @@
  */
 import { z } from 'zod';
 import { isValidInn } from '$lib/validation/inn';
-import { optionalIsoDate, optionalText, pageQuerySchema, requiredText } from './common';
+import { optionalId, optionalIsoDate, optionalText, pageQuerySchema, requiredText } from './common';
 import { EDUCATION_LEVELS } from './directory';
 
-/** Версия схемы, на которой говорит контракт v1. */
-export const EXCHANGE_SCHEMA_VERSION = '1.0';
+/**
+ * Версия схемы, на которой говорит контракт v1. `1.1` добавила в заявку на
+ * учебную группу закреплённые программу, продукты и назначение обучения —
+ * необязательными полями, поэтому получатель `1.0` её читает как прежде.
+ */
+export const EXCHANGE_SCHEMA_VERSION = '1.1';
 
 /** Чей это экземпляр: `crm` — наша система, остальные — чужие. */
 export const EXCHANGE_SYSTEMS = ['cms', 'lms', 'crm'] as const;
@@ -312,12 +316,38 @@ export const applicationStatusDataSchema = z.object({
 /* Направление 3: CRM → LMS, заявка на учебную группу                  */
 /* ------------------------------------------------------------------ */
 
+/**
+ * Для кого обучение: студенты вуза или колледжа, преподаватели, повышение
+ * квалификации работающих. Назначение закрепляет группа, а не взаимодействие:
+ * по одному соглашению с вузом идут и поток студентов, и поток преподавателей.
+ */
+export const LEARNING_PURPOSES = ['students', 'teachers', 'upskilling'] as const;
+
+export type LearningPurpose = (typeof LEARNING_PURPOSES)[number];
+
+export const LEARNING_PURPOSE_LABELS: Record<LearningPurpose, string> = {
+	students: 'Обучение студентов',
+	teachers: 'Обучение преподавателей',
+	upskilling: 'Повышение квалификации'
+};
+
+const catalogRefSchema = z.object({ id: z.uuid(), code: z.string() });
+
 export const learningGroupRequestedDataSchema = z.object({
 	externalId: z.string(),
 	interactionId: z.uuid(),
 	organization: z.object({ id: z.uuid(), inn: z.string().nullable(), name: z.string() }),
-	program: z.object({ id: z.uuid(), code: z.string() }).nullable(),
-	product: z.object({ id: z.uuid(), code: z.string() }).nullable(),
+	/** Программа, закреплённая за группой. `null` — только у групп, заведённых до `1.1`. */
+	program: catalogRefSchema.nullable(),
+	/**
+	 * Поле `1.0`: единственный продукт группы. У группы с несколькими продуктами
+	 * здесь `null`, а полный состав — в `products`.
+	 */
+	product: catalogRefSchema.nullable(),
+	/** С `1.1`: продукты группы — подмножество продуктов взаимодействия. */
+	products: z.array(catalogRefSchema),
+	/** С `1.1`: для кого обучение. `null` — только у групп, заведённых до `1.1`. */
+	purpose: z.enum(LEARNING_PURPOSES).nullable(),
 	contract: z.object({ id: z.uuid(), number: z.string() }).nullable(),
 	stream: z.object({
 		number: z.number().int().min(1),
@@ -361,10 +391,41 @@ export const sendLearningGroupSchema = z.object({
 	// названной даты начала, и требовать её значило бы запретить заводить группу
 	// до того, как расписание согласовано.
 	startsOn: optionalIsoDate('Дата начала занятий указана неверно'),
-	endsOn: optionalIsoDate('Дата окончания занятий указана неверно')
+	endsOn: optionalIsoDate('Дата окончания занятий указана неверно'),
+	// Программа и продукты выбираются из тех, что есть у взаимодействия. Пустой
+	// выбор допустим только там, где выбирать не из чего или вариант один, —
+	// это решает сервис, который знает состав взаимодействия; схема лишь
+	// проверяет форму значений.
+	programId: optionalId('Некорректный идентификатор программы'),
+	productIds: z
+		.array(z.uuid({ error: 'Некорректный идентификатор продукта' }))
+		.max(50)
+		.default([])
+		.refine((ids) => new Set(ids).size === ids.length, {
+			error: 'Продукт выбран дважды'
+		}),
+	purpose: z.enum(LEARNING_PURPOSES, {
+		error: 'Укажите, для кого обучение: студенты, преподаватели или повышение квалификации'
+	})
 });
 
 export type SendLearningGroupInput = z.output<typeof sendLearningGroupSchema>;
+
+/**
+ * Отметка сотрудника «обучение завершено». Нужна там, где система обучения
+ * итога не прислала, а обучение закончилось: без объяснения такая отметка —
+ * слово против отсутствия данных, поэтому комментарий обязателен.
+ */
+export const completeLearningGroupSchema = z.object({
+	interactionId: z.uuid({ error: 'Некорректный идентификатор взаимодействия' }),
+	learningGroupId: z.uuid({ error: 'Некорректный идентификатор учебной группы' }),
+	comment: requiredText(
+		1000,
+		'Объясните, почему обучение считается завершённым без итога из системы обучения'
+	)
+});
+
+export type CompleteLearningGroupInput = z.output<typeof completeLearningGroupSchema>;
 
 /* ------------------------------------------------------------------ */
 /* Направление 4: LMS → CRM, результат учебной группы                  */
@@ -426,25 +487,62 @@ export const learningGroupResultResponseSchema = z.object({
 export type LearningGroupResultResponse = z.output<typeof learningGroupResultResponseSchema>;
 
 /**
- * Факт системы обучения в том виде, в каком он ложится в `stage_entries
+ * Итоговый ли результат группы: обучение закончилось, и есть кому его
+ * закончить. Промежуточный результат — это «данные получены», а не «обучение
+ * завершено»: у него нет даты окончания или ещё нет ни одного завершившего.
+ *
+ * Правило одно на продукт: его спрашивают и приём результата, решая, закрывает
+ * ли факт стадию, и карточка, объясняя сотруднику, чего стадия ещё ждёт.
+ */
+export function isFinalLearningResult(result: {
+	completed: number | null;
+	finishedOn: string | null;
+}): boolean {
+	return (result.completed ?? 0) > 0 && result.finishedOn !== null;
+}
+
+/**
+ * Факт завершения обучения в том виде, в каком он ложится в `stage_entries
  * .lms_evidence` и показывается на карточке. Это снимок, а не ссылка: запись
  * стадии обязана объяснять подтверждение и тогда, когда группу уже удалили.
+ *
+ * Видов два. `result` — итоговый результат группы из системы обучения;
+ * промежуточный сюда не попадает никогда. `manual` — отметка сотрудника
+ * «обучение завершено» с комментарием: итога из чужой системы нет, а обучение
+ * закончилось.
  */
-export const lmsEvidenceSchema = z.object({
-	system: z.string(),
-	instance: z.string(),
-	groupExternalId: z.string(),
-	learningGroupId: z.uuid(),
-	occurredAt: z.string(),
-	enrolled: z.number().int(),
-	completed: z.number().int(),
-	expelled: z.number().int(),
-	finishedOn: z.string().nullable(),
-	periodStart: z.string().nullable(),
-	periodEnd: z.string().nullable()
-});
+export const lmsEvidenceSchema = z.discriminatedUnion('kind', [
+	z.object({
+		kind: z.literal('result'),
+		system: z.string(),
+		instance: z.string(),
+		groupExternalId: z.string(),
+		learningGroupId: z.uuid(),
+		occurredAt: z.string(),
+		enrolled: z.number().int(),
+		completed: z.number().int(),
+		expelled: z.number().int(),
+		finishedOn: z.string().nullable(),
+		periodStart: z.string().nullable(),
+		periodEnd: z.string().nullable()
+	}),
+	z.object({
+		kind: z.literal('manual'),
+		learningGroupId: z.uuid(),
+		groupExternalId: z.string().nullable(),
+		streamNumber: z.number().int(),
+		markedAt: z.string(),
+		markedByUserId: z.uuid(),
+		comment: z.string()
+	})
+]);
 
 export type LmsEvidence = z.output<typeof lmsEvidenceSchema>;
+
+/** Завершает ли факт обучение: итоговый результат либо отметка сотрудника. */
+export function isTrainingCompleted(evidence: LmsEvidence): boolean {
+	return evidence.kind === 'manual' || isFinalLearningResult(evidence);
+}
 
 /* ------------------------------------------------------------------ */
 /* Журнал обмена                                                       */
@@ -521,7 +619,31 @@ export type LearningGroupView = {
 	enrolled: number | null;
 	completed: number | null;
 	expelled: number | null;
+	/** Дата окончания обучения из последнего результата. */
+	finishedOn: string | null;
+	/** Закреплённая программа; `null` — группа заведена до закрепления. */
+	program: { id: string; code: string; name: string } | null;
+	products: { id: string; code: string; name: string }[];
+	purpose: LearningPurpose | null;
+	/**
+	 * Что известно об обучении: `awaiting` — результатов ещё нет,
+	 * `in_progress` — данные получены, но итога нет, `completed` — итоговый
+	 * результат или отметка сотрудника.
+	 */
+	trainingState: LearningTrainingState;
+	/** Отметка «обучение завершено»; `null` — её не ставили. */
+	completionMark: { at: Date; byName: string | null; comment: string } | null;
+	/**
+	 * Засчитывается ли группа стадии этого взаимодействия: её программа входит
+	 * в программы взаимодействия. Группа по программе, которую из
+	 * взаимодействия убрали, стадию не подтверждает.
+	 */
+	countsForStage: boolean;
 };
+
+export const LEARNING_TRAINING_STATES = ['awaiting', 'in_progress', 'completed'] as const;
+
+export type LearningTrainingState = (typeof LEARNING_TRAINING_STATES)[number];
 
 export const exchangeFilterSchema = z.object({
 	direction: z.enum(EXCHANGE_DIRECTIONS).nullable().default(null),

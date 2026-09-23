@@ -555,7 +555,7 @@ describe('подтверждение стадии', () => {
 
 		await expect(advanceStage(fixture.ctx, command)).rejects.toSatisfy(
 			(error: unknown) =>
-				error instanceof ConflictError && /не получены данные системы обучения/.test(error.message)
+				error instanceof ConflictError && /Обучение не завершено/.test(error.message)
 		);
 
 		const evidence = await provideLmsEvidence(fixture.ctx, database, fixture.interactionId);

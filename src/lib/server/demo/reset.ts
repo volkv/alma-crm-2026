@@ -120,6 +120,7 @@ const DEMO_DATA_TABLES = [
 	// Обмен с внешними системами
 	'exchange_messages',
 	'learning_groups',
+	'learning_group_products',
 	'learning_group_results'
 ] as const;
 

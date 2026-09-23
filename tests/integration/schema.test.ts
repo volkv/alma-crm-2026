@@ -70,11 +70,12 @@ describe('миграции', () => {
 				'workspaces', 'workflows', 'workspace_intake_routes', 'process_stage_keys',
 				'stage_migration_rules', 'contracts', 'contract_items',
 				'interaction_contract_items', 'stage_entry_documents',
-				'learning_groups', 'learning_group_results', 'exchange_messages'
+				'learning_groups', 'learning_group_products', 'learning_group_results',
+				'exchange_messages'
 			]) as name
 		`;
 
-		expect(rows).toHaveLength(46);
+		expect(rows).toHaveLength(47);
 		expect(rows.filter((row) => row.name === null)).toEqual([]);
 	});
 

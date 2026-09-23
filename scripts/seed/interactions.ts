@@ -23,7 +23,7 @@ import {
 	type StageView
 } from '$lib/contracts/interactions';
 import type { DocumentStatusFact } from '$lib/contracts/documents';
-import { lmsEvidenceSchema } from '$lib/contracts/exchange';
+import type { LearningPurpose, LmsEvidence } from '$lib/contracts/exchange';
 import { formatDate } from '$lib/format';
 import type { ActorContext } from '$lib/server/actor';
 import { recordAuditEvent } from '$lib/server/audit';
@@ -37,6 +37,7 @@ import {
 	interactionProducts,
 	interactionPrograms,
 	interactions,
+	learningGroupProducts,
 	learningGroupResults,
 	learningGroups,
 	programVersions,
@@ -94,11 +95,18 @@ type BlockerSeed = { reasonCode: BlockerReason; description: string; blocksTrans
  * подтверждается и вперёд не отпускает.
  *
  * `completed: 0` — это идущее обучение, а не ноль выпускников: у такого потока
- * нет и даты окончания.
+ * нет и даты окончания. Такой результат — «данные получены»: стадию он не
+ * подтверждает, и запись остаётся на ней, пока не придёт итог.
  */
 type LearningSeed = {
 	/** Имя группы на стороне системы обучения: его выдаёт она, а не CRM. */
 	groupExternalId: string;
+	/**
+	 * Для кого поток. Программу группа закрепляет единственную программу записи,
+	 * продукты — все продукты записи: так заявку заполнил бы сотрудник, у
+	 * которого выбора нет.
+	 */
+	purpose: LearningPurpose;
 	plannedSeats: number;
 	enrolled: number;
 	completed: number;
@@ -600,6 +608,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		// выпускников у потока ещё нет.
 		learning: {
 			groupExternalId: '70411',
+			purpose: 'students',
 			plannedSeats: 30,
 			enrolled: 28,
 			completed: 0,
@@ -621,6 +630,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		agreement: ['2025-09-01', '2026-08-31'],
 		learning: {
 			groupExternalId: '70412',
+			purpose: 'teachers',
 			plannedSeats: 25,
 			enrolled: 24,
 			completed: 22,
@@ -646,6 +656,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		// Числа потока сходятся с итогом: документы получили сорок восемь.
 		learning: {
 			groupExternalId: '70413',
+			purpose: 'students',
 			plannedSeats: 50,
 			enrolled: 50,
 			completed: 48,
@@ -669,6 +680,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		agreement: ['2025-09-01', '2026-08-31'],
 		learning: {
 			groupExternalId: '70414',
+			purpose: 'students',
 			plannedSeats: 12,
 			enrolled: 10,
 			completed: 7,
@@ -694,6 +706,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		agreement: ['2025-09-01', '2026-06-30'],
 		learning: {
 			groupExternalId: '70415',
+			purpose: 'students',
 			plannedSeats: 40,
 			enrolled: 38,
 			completed: 35,
@@ -717,6 +730,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		// Набор перевыполнен: сорок мест в потоке, зачислено сорок пять.
 		learning: {
 			groupExternalId: '70416',
+			purpose: 'students',
 			plannedSeats: 40,
 			enrolled: 45,
 			completed: 41,
@@ -740,6 +754,7 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 		agreement: ['2025-09-01', '2026-08-31'],
 		learning: {
 			groupExternalId: '70417',
+			purpose: 'teachers',
 			plannedSeats: 25,
 			enrolled: 26,
 			completed: 24,
@@ -790,6 +805,7 @@ const B2C_INTERACTIONS: readonly InteractionSeed[] = [
 		// Обучение идёт: выпускников ещё нет, даты окончания у потока тоже.
 		learning: {
 			groupExternalId: '70501',
+			purpose: 'upskilling',
 			plannedSeats: 1,
 			enrolled: 1,
 			completed: 0,
@@ -827,6 +843,7 @@ const B2C_INTERACTIONS: readonly InteractionSeed[] = [
 		academic: ['2026-02-01', '2026-05-31'],
 		learning: {
 			groupExternalId: '70502',
+			purpose: 'upskilling',
 			plannedSeats: 10,
 			enrolled: 11,
 			completed: 10,
@@ -1264,8 +1281,8 @@ async function createSeededInteraction(
  * Действует машинный субъект, а не менеджер: результат прислала чужая система,
  * и подпись сотрудника под ним была бы неправдой.
  *
- * Повторный вызов ничего не портит: строки узнают себя по ключам, а факт на
- * открытой записи стадии перезаписывается тем же значением.
+ * Повторный вызов ничего не портит: строки узнают себя по ключам, а стадия,
+ * уже подтверждённая итогом, второй раз не подтверждается.
  */
 async function recordLearningResult(
 	service: ActorContext,
@@ -1282,13 +1299,20 @@ async function recordLearningResult(
 		);
 	}
 
+	if (seed.programs.length !== 1) {
+		throw new Error(
+			`Взаимодействию «${seed.key}» с потоком обучения нужна ровно одна программа: группа закрепляет её без выбора`
+		);
+	}
+
 	const [periodStart, periodEnd] = seed.academic ?? seed.agreement;
 	const learningGroupId = seedId('learning-group', seed.key);
 	// Точных дат у набора нет, а порядок важен: поток заводят задолго до
 	// результата, а результат — последнее, что по взаимодействию случилось.
 	const requestedAt = daysBefore(runStart, seed.lastActivityDaysAgo + 30);
 	const occurredAt = daysBefore(runStart, seed.lastActivityDaysAgo);
-	const evidence = lmsEvidenceSchema.parse({
+	const evidence = {
+		kind: 'result',
 		system: 'lms',
 		instance,
 		groupExternalId: learning.groupExternalId,
@@ -1301,7 +1325,7 @@ async function recordLearningResult(
 		finishedOn: learning.completed === 0 ? null : periodEnd,
 		periodStart,
 		periodEnd
-	});
+	} satisfies LmsEvidence;
 
 	await withTransaction(service, async (tx: Tx) => {
 		await tx
@@ -1317,9 +1341,23 @@ async function recordLearningResult(
 				plannedSeats: learning.plannedSeats,
 				startsOn: periodStart,
 				endsOn: periodEnd,
-				lastResultAt: occurredAt
+				lastResultAt: occurredAt,
+				programId: seedId('program', seed.programs[0]),
+				purpose: learning.purpose
 			})
 			.onConflictDoNothing({ target: learningGroups.id });
+
+		if ((seed.products ?? []).length > 0) {
+			await tx
+				.insert(learningGroupProducts)
+				.values(
+					(seed.products ?? []).map((product) => ({
+						learningGroupId,
+						productId: seedId('product', product)
+					}))
+				)
+				.onConflictDoNothing();
+		}
 
 		await tx
 			.insert(learningGroupResults)

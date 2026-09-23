@@ -10,7 +10,11 @@ import type {
 	StageTransitionView
 } from '$lib/contracts/interactions';
 import type { ActorContext } from '$lib/server/actor';
-import { evaluateTransition, type StageState } from '$lib/server/stages/transitions';
+import {
+	evaluateTransition,
+	LMS_NOT_COMPLETED,
+	type StageState
+} from '$lib/server/stages/transitions';
 import type { PermissionKey } from '$lib/server/rbac/permissions';
 
 const STAGE_ID = '11111111-1111-4111-8111-111111111111';
@@ -204,7 +208,7 @@ describe('evaluateTransition', () => {
 		const requiring = state({ snapshot: snapshot({ requiresLmsData: true }) });
 
 		expect(evaluateTransition(worker, requiring, transition()).reasons).toContain(
-			'По стадии не получены данные системы обучения'
+			LMS_NOT_COMPLETED
 		);
 
 		// Факты приходят по взаимодействию, а не по стадии: важно, что они есть,

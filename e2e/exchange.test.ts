@@ -62,7 +62,13 @@ type MockState = {
 			revision: number | null;
 			statuses: { data: Record<string, unknown> }[];
 		}[];
-		groups?: { requestExternalId: string; groupExternalId: string }[];
+		groups?: {
+			requestExternalId: string;
+			groupExternalId: string;
+			programCode: string | null;
+			productCodes: string[];
+			purpose: string | null;
+		}[];
 	};
 	journal: {
 		direction: string;
@@ -104,6 +110,17 @@ async function applyScenario(
 	});
 
 	expect(response.status()).toBe(200);
+}
+
+/**
+ * Открывает всплывающий список и ждёт его. Нажатие до того, как страница
+ * ожила, список не открывает, поэтому оно повторяется, пока слой не появится.
+ */
+async function openLayer(trigger: Locator, layer: Locator): Promise<void> {
+	await expect(async () => {
+		await trigger.click();
+		await expect(layer).toBeVisible({ timeout: 2000 });
+	}).toPass({ timeout: 20_000 });
 }
 
 /** Строка журнала обмена на экране «Внешние системы» по типу события. */
@@ -160,7 +177,10 @@ staff(
 						phone: '+7 900 000-00-11',
 						position: 'Проректор по цифровому развитию'
 					},
-					interest: 'Программа подготовки DevOps-инженеров'
+					interest: 'Программа подготовки DevOps-инженеров',
+					// Две программы: группу по такому взаимодействию сотрудник обязан
+					// привязать к одной из них сам.
+					programCodes: ['VO-BAK-01', 'VO-MAG-01']
 				}
 			}
 		});
@@ -237,13 +257,30 @@ staff(
 		await page.goto(`/w/b2b/interactions/${interactionId}`);
 		await expect(page.getByRole('heading', { level: 1 })).toContainText('Заявка с сайта');
 
-		await page.getByLabel('Мест в потоке').fill('45');
 		// Дату держит компонент: человек пишет `01.10.2026`, а форме уходит
 		// `2026-10-01` скрытым полем, — и набранное до того, как страница ожила, в
 		// эту форму не попадает совсем.
 		await waitForHydration(page);
+		await page.getByLabel('Мест в потоке').fill('45');
 		await page.getByLabel('Начало занятий').fill('01.10.2026');
 		await expect(page.locator('input[name="startsOn"]')).toHaveValue('2026-10-01');
+
+		const purpose = page.getByRole('option', { name: 'Обучение студентов' });
+
+		await openLayer(page.getByLabel('Для кого обучение'), purpose);
+		await purpose.click();
+
+		// Программ у взаимодействия две, и первая попавшаяся вместо выбора учила
+		// бы не тому: без выбора заявка не уходит, а форма говорит почему.
+		await page.getByRole('button', { name: 'Отправить в LMS' }).click();
+		await expect(
+			page.getByText('Выберите программу группы: у взаимодействия их несколько')
+		).toBeVisible();
+
+		const program = page.getByRole('option', { name: /VO-MAG-01/ });
+
+		await openLayer(page.getByLabel('Программа', { exact: true }), program);
+		await program.click();
 		await page.getByRole('button', { name: 'Отправить в LMS' }).click();
 
 		const groupRequestId = `crm-group-${interactionId}-1`;
@@ -260,7 +297,9 @@ staff(
 			(item) => item.requestExternalId === groupRequestId
 		);
 
-		expect(group).toBeDefined();
+		// В систему обучения ушло выбранное: программа, а не первая из двух, и
+		// назначение потока.
+		expect(group).toMatchObject({ programCode: 'VO-MAG-01', purpose: 'students' });
 
 		// Карточка показывает заведённый поток и его имя в системе обучения.
 		await page.reload();
@@ -291,8 +330,27 @@ staff(
 		expect(crossed.status()).toBe(403);
 
 		// Направление 4: результат потока отправляет сама система обучения — тем же
-		// триггером, которым его отправляют со страницы имитатора. Стадию он
-		// подтверждает, но никуда её не двигает: переход остаётся за человеком.
+		// триггером, которым его отправляют со страницы имитатора. Сначала
+		// промежуточный: данные получены, обучение идёт, — итогом он не считается.
+		const interim = await request.post(`${LMS_URL}/__send-result`, {
+			data: {
+				requestExternalId: groupRequestId,
+				counters: { enrolled: 45, completed: 0, expelled: 1 }
+			}
+		});
+
+		expect(interim.status()).toBe(200);
+
+		await page.reload();
+
+		const streamRow = page.getByTestId('learning-group').first();
+
+		await expect(streamRow).toContainText('Данные получены, обучение идёт');
+		await expect(streamRow).toContainText('завершили 0');
+
+		// Итоговый результат: завершившие и дата окончания. Стадию, которой нужны
+		// данные обучения, он подтверждает, но никуда её не двигает: переход
+		// остаётся за человеком.
 		const result = await request.post(`${LMS_URL}/__send-result`, {
 			data: {
 				requestExternalId: groupRequestId,
@@ -314,7 +372,8 @@ staff(
 		// Факт виден на карточке: числа приехали из чужой системы и стали частью
 		// работы по взаимодействию.
 		await page.reload();
-		await expect(page.getByText('завершили 38', { exact: false }).first()).toBeVisible();
+		await expect(streamRow).toContainText('Обучение завершено');
+		await expect(streamRow).toContainText('завершили 38');
 
 		// И журнал обмена показывает обе стороны одним списком — вместе с тем, чем
 		// ответил получатель.

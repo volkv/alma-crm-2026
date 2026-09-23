@@ -22,7 +22,7 @@ import {
 	markMomentFromDay,
 	STAGE_ATTACHMENT_DOCUMENT_KIND
 } from '$lib/contracts/documents';
-import { sendLearningGroupSchema } from '$lib/contracts/exchange';
+import { completeLearningGroupSchema, sendLearningGroupSchema } from '$lib/contracts/exchange';
 import { formatDate } from '$lib/format';
 import { NO_OPTION } from '$lib/components/directory/labels';
 import { actorFromEvent } from '$lib/server/actor';
@@ -35,6 +35,7 @@ import { uploadDocument, uploadDocumentRevision } from '$lib/server/documents/up
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import {
+	markLearningGroupCompleted,
 	readInteractionExchange,
 	requestLearningGroup
 } from '$lib/server/integrations/exchange/groups';
@@ -511,7 +512,14 @@ export const actions: Actions = {
 			streamNumber: data.get('streamNumber'),
 			plannedSeats: data.get('plannedSeats'),
 			startsOn: text(data, 'startsOn'),
-			endsOn: text(data, 'endsOn')
+			endsOn: text(data, 'endsOn'),
+			// Пустой выбор программы — это «не выбрано», а не пустой
+			// идентификатор: подставить единственную или отказать решает сервис.
+			programId: text(data, 'programId'),
+			productIds: data
+				.getAll('productIds')
+				.filter((value): value is string => typeof value === 'string' && value !== ''),
+			purpose: text(data, 'purpose')
 		});
 
 		if (!parsed.ok) {
@@ -531,6 +539,24 @@ export const actions: Actions = {
 		} catch (cause) {
 			return toActionFailure(cause);
 		}
+	},
+
+	/**
+	 * Отметка «обучение завершено» по группе: итога из системы обучения нет, а
+	 * обучение закончилось. Комментарий обязателен — это объяснение, почему
+	 * данных нет, а стадия закрыта.
+	 */
+	completeGroup: async (event) => {
+		const data = await event.request.formData();
+		const parsed = parse(completeLearningGroupSchema, {
+			interactionId: event.params.id,
+			learningGroupId: data.get('learningGroupId'),
+			comment: data.get('comment')
+		});
+
+		if (!parsed.ok) return parsed.failure;
+
+		return run(() => markLearningGroupCompleted(actorFromEvent(event), parsed.data));
 	},
 
 	generate: async (event) => generateAgreement(event),

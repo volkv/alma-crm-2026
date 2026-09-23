@@ -52,7 +52,7 @@ import {
 	type DocumentMarkEvidence,
 	type DocumentStatusFact
 } from '$lib/contracts/documents';
-import type { LmsEvidence } from '$lib/contracts/exchange';
+import { isTrainingCompleted, type LmsEvidence } from '$lib/contracts/exchange';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
@@ -74,12 +74,17 @@ import {
 import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
 import { readDocumentMark } from '../documents/evidence';
-import { readLmsEvidence } from '../integrations/exchange/evidence';
+import { groupCountsForStage, readLmsEvidence } from '../integrations/exchange/evidence';
 import { enqueueApplicationStatus } from '../integrations/exchange/outbox';
 import { can, requirePermission } from '../rbac';
 import { interactionScopeFilter } from '../interactions/access';
 import { firstStage, requireActiveRevisionForWorkspace, stageSnapshot } from './process';
-import { evaluateTransition, transitionPermission, type StageState } from './transitions';
+import {
+	evaluateTransition,
+	LMS_NOT_COMPLETED,
+	transitionPermission,
+	type StageState
+} from './transitions';
 
 /**
  * Момент, который ставит база: часы приложения и базы могут расходиться.
@@ -606,7 +611,8 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 				// первой записи ждала блокировку.
 				enteredAt: left.leftAt ?? now,
 				responsibleUserId: entry.responsibleUserId ?? interaction.ownerUserId,
-				documentMarkEvidence: targetMark
+				documentMarkEvidence: targetMark,
+				...(await lmsEntryPatch(tx, input.interactionId, stageSnapshot(target)))
 			})
 			.returning({ id: stageEntries.id });
 
@@ -936,16 +942,84 @@ export async function confirmStage(ctx: ActorContext, input: ConfirmStageInput):
 export type LmsEvidenceOutcome = { confirmed: boolean; note: string };
 
 /**
- * Факт системы обучения ложится на открытую запись стадии.
+ * Подтверждение, которое ставит сам факт обучения: итог из системы обучения —
+ * запись в ней (`lms_record`), отметка сотрудника — отметка ответственного.
+ * Другого способа объяснить, чем подтверждена стадия, в записи нет.
+ */
+function lmsConfirmation(evidence: LmsEvidence): StageConfirmation {
+	return evidence.kind === 'result'
+		? {
+				kind: 'lms_record',
+				source: `${evidence.system}:${evidence.instance}`,
+				recordId: evidence.groupExternalId
+			}
+		: { kind: 'mark', byUserId: evidence.markedByUserId, at: evidence.markedAt };
+}
+
+/**
+ * Снимок факта обучения для записи, на которую взаимодействие входит.
+ *
+ * Итог, пришедший до входа на стадию, засчитывается сразу при входе: система
+ * обучения присылает результат по своему расписанию, а не по нашему процессу.
+ * Снимок кладётся в запись, а не только вычисляется на лету, — иначе сводка и
+ * доска, читающие запись, показывали бы «обучение не завершено» там, где
+ * переход уже разрешён.
+ */
+async function lmsEntryPatch(
+	tx: Tx,
+	interactionId: string,
+	snapshot: StageSnapshot
+): Promise<{
+	lmsEvidence?: LmsEvidence;
+	confirmation?: StageConfirmation;
+	confirmedAt?: typeof now;
+	confirmedBy?: string;
+}> {
+	if (!snapshot.requiresLmsData) {
+		return {};
+	}
+
+	const evidence = await readLmsEvidence(tx, interactionId);
+
+	if (evidence === null) {
+		return {};
+	}
+
+	if (!snapshot.requiresConfirmation) {
+		return { lmsEvidence: evidence };
+	}
+
+	// Итог из системы обучения подписывает не человек; отметку — её автор.
+	return {
+		lmsEvidence: evidence,
+		confirmation: lmsConfirmation(evidence),
+		confirmedAt: now,
+		...(evidence.kind === 'manual' ? { confirmedBy: evidence.markedByUserId } : {})
+	};
+}
+
+/**
+ * Факт завершения обучения ложится на открытую запись стадии.
+ *
+ * Засчитывается не всякий факт, а только тот, что **завершает** обучение по
+ * **нужной группе**: итоговый результат (завершили больше нуля и есть дата
+ * окончания) или отметка сотрудника — по группе этого взаимодействия, чья
+ * программа входит в его программы. Промежуточный результат — это «данные
+ * получены»: он сохранён историей и виден на карточке, но стадию не
+ * подтверждает.
  *
  * Стадию это подтверждает, но никуда не двигает: переход — решение сотрудника,
  * и права `stages.transition` у машинного субъекта нет вовсе. Если открыта
- * другая стадия, сообщение всё равно принимается: факт уже сохранён историей
- * результатов и засчитается, когда взаимодействие дойдёт до нужной стадии
- * (`readStageState`).
+ * другая стадия, факт всё равно сохранён и засчитается, когда взаимодействие
+ * дойдёт до нужной стадии (`lmsEntryPatch`, `readStageState`).
  *
- * Зовётся из транзакции приёмника вместе с записью результата: «факт сохранён»
- * и «стадия подтверждена» обязаны случиться вместе или не случиться вовсе.
+ * Стадия, уже подтверждённая итогом обучения, второй раз не подтверждается:
+ * повтор результата и следующий итог по другому потоку не плодят ни записей
+ * журнала, ни новых снимков — снимок объясняет, чем стадию закрыли первым.
+ *
+ * Зовётся из транзакции приёмника или отметки вместе с записью факта: «факт
+ * сохранён» и «стадия подтверждена» обязаны случиться вместе или не случиться
+ * вовсе.
  */
 export async function applyLmsEvidence(
 	ctx: ActorContext,
@@ -955,6 +1029,20 @@ export async function applyLmsEvidence(
 	requirePermission(ctx, 'stages.confirm');
 
 	await lockInteraction(ctx, tx, input.interactionId);
+
+	if (!isTrainingCompleted(input.evidence)) {
+		return {
+			confirmed: false,
+			note: 'Данные обучения получены, но обучение не завершено: нет завершивших или даты окончания — стадию подтвердит итоговый результат'
+		};
+	}
+
+	if (!(await groupCountsForStage(tx, input.interactionId, input.evidence.learningGroupId))) {
+		return {
+			confirmed: false,
+			note: 'Стадия не подтверждена: программа группы не входит в программы взаимодействия'
+		};
+	}
 
 	const entry = await readOpenEntryRow(tx, input.interactionId);
 
@@ -972,16 +1060,16 @@ export async function applyLmsEvidence(
 		};
 	}
 
-	// Подтверждение записью в системе обучения — то же самое, что ставит
-	// сотрудник вручную видом `lms_record`: другого способа объяснить, чем
-	// подтверждена стадия, в записи нет.
+	if (entry.lmsEvidence !== null) {
+		return {
+			confirmed: false,
+			note: `Стадия «${entry.stageSnapshot.name}» уже подтверждена итогом обучения: факт сохранён, подтверждение прежнее`
+		};
+	}
+
 	const confirmation: StageConfirmation | null =
 		entry.stageSnapshot.requiresConfirmation && entry.confirmation === null
-			? {
-					kind: 'lms_record',
-					source: `${input.evidence.system}:${input.evidence.instance}`,
-					recordId: input.evidence.groupExternalId
-				}
+			? lmsConfirmation(input.evidence)
 			: entry.confirmation;
 
 	await tx
@@ -1004,14 +1092,14 @@ export async function applyLmsEvidence(
 			type: 'interactions.confirmed',
 			outcome: 'success',
 			subject: { type: 'interaction', id: input.interactionId },
-			details: { stageEntryId: entry.id }
+			details: { stageEntryId: entry.id, learningGroupId: input.evidence.learningGroupId }
 		},
 		tx
 	);
 
 	return {
 		confirmed: true,
-		note: `Стадия «${entry.stageSnapshot.name}» подтверждена данными системы обучения`
+		note: `Стадия «${entry.stageSnapshot.name}» подтверждена: обучение завершено`
 	};
 }
 
@@ -1398,7 +1486,7 @@ export function missingStageEvidence(entry: {
 	}
 
 	if (entry.stageSnapshot.requiresLmsData && entry.lmsEvidence === null) {
-		missing.push('По стадии не получены данные системы обучения');
+		missing.push(LMS_NOT_COMPLETED);
 	}
 
 	const requiredMark = entry.stageSnapshot.requiresDocumentMark;

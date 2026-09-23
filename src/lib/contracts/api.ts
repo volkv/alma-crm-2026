@@ -30,6 +30,8 @@ import {
 import {
 	EXCHANGE_DIRECTIONS,
 	EXCHANGE_MESSAGE_STATES,
+	LEARNING_PURPOSES,
+	LEARNING_TRAINING_STATES,
 	type ExchangeMessageView,
 	type LearningGroupView
 } from './exchange';
@@ -474,7 +476,28 @@ export const apiLearningGroupSchema = z.object({
 	lastError: z.string().nullable(),
 	enrolled: z.number().int().nullable(),
 	completed: z.number().int().nullable(),
-	expelled: z.number().int().nullable()
+	expelled: z.number().int().nullable(),
+	finishedOn: z.iso.date().nullable().describe('Дата окончания обучения из последнего результата'),
+	program: z
+		.object({ id: z.uuid(), code: z.string(), name: z.string() })
+		.nullable()
+		.describe('Программа, закреплённая за группой при заявке'),
+	products: z
+		.array(z.object({ id: z.uuid(), code: z.string(), name: z.string() }))
+		.describe('Продукты группы — подмножество продуктов взаимодействия'),
+	purpose: z.enum(LEARNING_PURPOSES).nullable().describe('Для кого обучение'),
+	trainingState: z
+		.enum(LEARNING_TRAINING_STATES)
+		.describe(
+			'`awaiting` — результатов нет, `in_progress` — данные получены, итога нет, `completed` — итоговый результат или отметка сотрудника'
+		),
+	completionMark: z
+		.object({ at: z.iso.datetime(), byName: z.string().nullable(), comment: z.string() })
+		.nullable()
+		.describe('Отметка сотрудника «обучение завершено»'),
+	countsForStage: z
+		.boolean()
+		.describe('Засчитывается ли группа стадии: её программа входит в программы взаимодействия')
 });
 
 export type ApiLearningGroup = z.output<typeof apiLearningGroupSchema>;
@@ -495,7 +518,21 @@ export function toApiLearningGroup(view: LearningGroupView): ApiLearningGroup {
 		lastError: view.lastError,
 		enrolled: view.enrolled,
 		completed: view.completed,
-		expelled: view.expelled
+		expelled: view.expelled,
+		finishedOn: view.finishedOn,
+		program: view.program,
+		products: view.products,
+		purpose: view.purpose,
+		trainingState: view.trainingState,
+		completionMark:
+			view.completionMark === null
+				? null
+				: {
+						at: view.completionMark.at.toISOString(),
+						byName: view.completionMark.byName,
+						comment: view.completionMark.comment
+					},
+		countsForStage: view.countsForStage
 	};
 }
 

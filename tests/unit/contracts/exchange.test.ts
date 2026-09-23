@@ -11,11 +11,15 @@ import {
 	applicationSubmittedSchema,
 	EXCHANGE_SCHEMA_VERSION,
 	externalSourceOf,
+	isFinalLearningResult,
 	isSupportedSchemaVersion,
+	isTrainingCompleted,
 	learningGroupResultSchema,
+	lmsEvidenceSchema,
 	MAX_APPLICATION_REVISION,
 	parseExternalSource,
-	PROCESS_GROUP_BY_APPLICANT
+	PROCESS_GROUP_BY_APPLICANT,
+	sendLearningGroupSchema
 } from '$lib/contracts/exchange';
 
 const APPLICATION = {
@@ -113,7 +117,7 @@ describe('конверт сообщения', () => {
 		expect(isSupportedSchemaVersion('1.0')).toBe(true);
 		expect(isSupportedSchemaVersion('1.7')).toBe(true);
 		expect(isSupportedSchemaVersion('2.0')).toBe(false);
-		expect(EXCHANGE_SCHEMA_VERSION).toBe('1.0');
+		expect(EXCHANGE_SCHEMA_VERSION).toBe('1.1');
 	});
 });
 
@@ -222,5 +226,81 @@ describe('результат учебной группы', () => {
 				data: { ...RESULT.data, groupExternalId: '' }
 			})
 		).toThrow();
+	});
+});
+
+describe('итог обучения', () => {
+	it('итоговым считает только результат с завершившими и датой окончания', () => {
+		expect(isFinalLearningResult({ completed: 38, finishedOn: '2027-05-20' })).toBe(true);
+		// Промежуточный результат: обучение идёт, выпускников ещё нет.
+		expect(isFinalLearningResult({ completed: 0, finishedOn: '2027-05-20' })).toBe(false);
+		// Числа есть, а дата окончания не названа — поток не закончен.
+		expect(isFinalLearningResult({ completed: 38, finishedOn: null })).toBe(false);
+		expect(isFinalLearningResult({ completed: null, finishedOn: '2027-05-20' })).toBe(false);
+	});
+
+	it('различает факт результата и отметку сотрудника', () => {
+		const result = lmsEvidenceSchema.parse({
+			kind: 'result',
+			system: 'lms',
+			instance: 'moodle-itschool',
+			groupExternalId: '2481',
+			learningGroupId: '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b',
+			occurredAt: '2027-01-10T06:00:00.000Z',
+			enrolled: 45,
+			completed: 0,
+			expelled: 1,
+			finishedOn: null,
+			periodStart: null,
+			periodEnd: null
+		});
+		const mark = lmsEvidenceSchema.parse({
+			kind: 'manual',
+			learningGroupId: '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b',
+			groupExternalId: null,
+			streamNumber: 1,
+			markedAt: '2027-05-21T06:00:00.000Z',
+			markedByUserId: '3c4d5e6f-7a8b-4c9d-8e0f-1a2b3c4d5e6f',
+			comment: 'Итоговая ведомость пришла бумагой'
+		});
+
+		expect(isTrainingCompleted(result)).toBe(false);
+		expect(isTrainingCompleted(mark)).toBe(true);
+		// Снимок без вида — прежняя форма до разделения — больше не разбирается.
+		expect(lmsEvidenceSchema.safeParse({ ...result, kind: undefined }).success).toBe(false);
+	});
+});
+
+describe('заявка на учебную группу', () => {
+	const FORM = {
+		interactionId: '2f1c9a0e-6b3d-4a77-8f21-0c5e9d4b7a10',
+		streamNumber: '1',
+		plannedSeats: '45',
+		startsOn: null,
+		endsOn: null
+	};
+
+	it('требует назначения обучения: для кого поток, выбирает сотрудник', () => {
+		const refused = sendLearningGroupSchema.safeParse(FORM);
+
+		expect(refused.success).toBe(false);
+		expect(refused.error?.issues.map((issue) => issue.message)).toContain(
+			'Укажите, для кого обучение: студенты, преподаватели или повышение квалификации'
+		);
+
+		expect(sendLearningGroupSchema.parse({ ...FORM, purpose: 'teachers' })).toMatchObject({
+			purpose: 'teachers',
+			programId: null,
+			productIds: []
+		});
+	});
+
+	it('не принимает один продукт дважды', () => {
+		const id = '5e6f7a8b-9c0d-4e1f-8a2b-3c4d5e6f7a8b';
+
+		expect(
+			sendLearningGroupSchema.safeParse({ ...FORM, purpose: 'students', productIds: [id, id] })
+				.success
+		).toBe(false);
 	});
 });
