@@ -30,6 +30,7 @@ import type { ReportAttributes, ReportSelection } from './conditions';
 import { movementEventKind, readMovementRows, type MovementRow } from './movement';
 import { readSnapshotRows } from './snapshot';
 import { createStageIndex, readActiveWorkspaces, type StageIndex } from './stages';
+import { readReportSnapshot, type ReportExecutor } from './transaction';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 const SECONDS_IN_DAY = 86_400;
@@ -139,11 +140,13 @@ export async function recountFromRows(
 	ctx: ActorContext,
 	query: ReportQuery
 ): Promise<{ totals: ReportTotals; charts: ReportCharts }> {
-	const index = createStageIndex(await readActiveWorkspaces());
+	return readReportSnapshot(ctx, async ({ tx }) => {
+		const index = createStageIndex(await readActiveWorkspaces(tx));
 
-	return query.mode === 'movement'
-		? recountMovement(ctx, query)
-		: recountSnapshot(ctx, query, index);
+		return query.mode === 'movement'
+			? recountMovement(tx, ctx, query)
+			: recountSnapshot(tx, ctx, query, index);
+	});
 }
 
 /** Разрезы по полному набору строк: те же подписи, что у агрегата. */
@@ -167,11 +170,12 @@ function breakdownsFromRows(rows: readonly (ReportSelection & ReportAttributes)[
 }
 
 async function recountSnapshot(
+	db: ReportExecutor,
 	ctx: ActorContext,
 	query: ReportQuery,
 	index: StageIndex
 ): Promise<{ totals: ReportTotals; charts: ReportCharts }> {
-	const rows = await readSnapshotRows(ctx, query);
+	const rows = await readSnapshotRows(db, ctx, query);
 	const stageCounts = new Map<string, number>();
 	const closed: Record<string, number> = {};
 	const stageNames = new Map<string, string | null>();
@@ -233,12 +237,13 @@ async function recountSnapshot(
 }
 
 async function recountMovement(
+	db: ReportExecutor,
 	ctx: ActorContext,
 	query: ReportQuery
 ): Promise<{ totals: ReportTotals; charts: ReportCharts }> {
 	// Переносы читаются вместе со всеми: их надо отделить тем же разбором, что
 	// и в продукте, а не условием выборки.
-	const raw = await readMovementRows(ctx, query, { migrations: 'include' });
+	const raw = await readMovementRows(db, ctx, query, { migrations: 'include' });
 	const events: { row: MovementRow; kind: ReportEventKind }[] = [];
 	let migrated = 0;
 
@@ -311,14 +316,21 @@ export async function reconcileModes(
 	ctx: ActorContext,
 	query: ReportQuery
 ): Promise<ModeReconciliationRow[]> {
-	const index = createStageIndex(await readActiveWorkspaces());
 	const beforePeriod = moscowDay(new Date(moscowDayStart(query.from).getTime() - DAY_MS));
 
-	const [startRows, endRows, events] = await Promise.all([
-		readSnapshotRows(ctx, { ...query, mode: 'snapshot', to: beforePeriod }),
-		readSnapshotRows(ctx, { ...query, mode: 'snapshot' }),
-		readMovementRows(ctx, { ...query, mode: 'movement' }, { migrations: 'include' })
-	]);
+	// Два среза и движение — из одного снимка: сверка режимов, прочитанная в
+	// три разных момента, ловила бы не ошибку границ, а соседний переход.
+	const { index, startRows, endRows, events } = await readReportSnapshot(ctx, async ({ tx }) => ({
+		index: createStageIndex(await readActiveWorkspaces(tx)),
+		startRows: await readSnapshotRows(tx, ctx, { ...query, mode: 'snapshot', to: beforePeriod }),
+		endRows: await readSnapshotRows(tx, ctx, { ...query, mode: 'snapshot' }),
+		events: await readMovementRows(
+			tx,
+			ctx,
+			{ ...query, mode: 'movement' },
+			{ migrations: 'include' }
+		)
+	}));
 
 	const start = new Map<string, number>();
 	const end = new Map<string, number>();

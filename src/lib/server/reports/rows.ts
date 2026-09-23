@@ -17,7 +17,13 @@
  *
  * Ценой за один набор остаётся потолок выборки (`REPORT_MAX_ROWS`): выше него
  * отчёт отказывается словами, а не режет молча.
+ *
+ * Все чтения одного отчёта — стадии процесса, названия фильтров, итоги и
+ * строки — идут одной транзакцией `repeatable read` (`readReportSnapshot`):
+ * итоги и строки обязаны описывать одно и то же состояние базы, а не два
+ * соседних.
  */
+import { randomUUID } from 'node:crypto';
 import { moscowDay, snapshotMoment } from '$lib/contracts/calendar';
 import { PAUSE_REASON_LABELS } from '$lib/contracts/interactions';
 import {
@@ -52,6 +58,7 @@ import { movementEventKind, readMovementRows, type MovementRow } from './movemen
 import { describeScope } from './query';
 import { readSnapshotRows, type SnapshotRow } from './snapshot';
 import { createStageIndex, readActiveWorkspaces, type StageIndex } from './stages';
+import { readReportSnapshot, type ReportSnapshot } from './transaction';
 
 const SECONDS_IN_DAY = 86_400;
 
@@ -285,18 +292,28 @@ async function assembleReport(
 ): Promise<ReportPage> {
 	requirePermission(ctx, 'interactions.read');
 
+	return readReportSnapshot(ctx, (snapshot) => assembleInSnapshot(snapshot, ctx, query, requested));
+}
+
+async function assembleInSnapshot(
+	{ tx, takenAt }: ReportSnapshot,
+	ctx: ActorContext,
+	query: ReportQuery,
+	requested: number | null
+): Promise<ReportPage> {
 	const origin = getConfig().ORIGIN.replace(/\/$/, '');
 	const asOf = snapshotMoment(query.to);
-	const index = createStageIndex(await readActiveWorkspaces());
+	const index = createStageIndex(await readActiveWorkspaces(tx));
 	const columns = resolveColumns(query.mode, query.cols);
 
 	const meta = {
 		schemaVersion: REPORT_SCHEMA_VERSION,
-		generatedAt: new Date().toISOString(),
+		reportId: randomUUID(),
+		generatedAt: takenAt.toISOString(),
 		asOf: asOf.toISOString(),
 		mode: query.mode,
 		period: { start: query.from, end: query.to },
-		filters: await describeFilters(query, index.stageName),
+		filters: await describeFilters(tx, query, index.stageName),
 		scope: describeScope(ctx),
 		semantics: reportSemantics(query.mode, query.from, query.to),
 		columns: columnViews(columns, query.to)
@@ -306,12 +323,12 @@ async function assembleReport(
 		// Числа считаются до строк: потолок выборки проверяется по ним, страница
 		// считается от них же, и отказ не стоит вычитанных впустую трёх тысяч
 		// строк.
-		const aggregates = await readMovementAggregates(ctx, query);
+		const aggregates = await readMovementAggregates(tx, ctx, query);
 
 		assertFits(aggregates.totals.rowCount);
 
 		const paging = resolvePaging(aggregates.totals.rowCount, requested);
-		const rows = await readMovementRows(ctx, query, {
+		const rows = await readMovementRows(tx, ctx, query, {
 			migrations: 'exclude',
 			window: paging.window
 		});
@@ -347,12 +364,12 @@ async function assembleReport(
 		};
 	}
 
-	const aggregates = await readSnapshotAggregates(ctx, query);
+	const aggregates = await readSnapshotAggregates(tx, ctx, query);
 
 	assertFits(aggregates.totals.rowCount);
 
 	const paging = resolvePaging(aggregates.totals.rowCount, requested);
-	const rows = await readSnapshotRows(ctx, query, paging.window);
+	const rows = await readSnapshotRows(tx, ctx, query, paging.window);
 
 	return {
 		page: paging.page,

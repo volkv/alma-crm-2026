@@ -46,6 +46,7 @@ registerRoute({
 	example: {
 		meta: {
 			schemaVersion: 1,
+			reportId: '5b0f3c1e-8d2a-4e6f-9a7b-1c3d5e7f9a0b',
 			generatedAt: '2026-09-18T09:00:00.000Z',
 			asOf: '2026-09-18T20:59:59.999Z',
 			mode: 'snapshot',

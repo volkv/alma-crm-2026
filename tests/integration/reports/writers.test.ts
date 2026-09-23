@@ -262,6 +262,8 @@ describe('четыре писателя одного отчёта', () => {
 		expect(text).toContain('Отчёт по взаимодействиям');
 		expect(text).toContain('Срез на 31.12.2026');
 		expect(text).toContain('Вуз А');
+		// Сборка называет себя в шапке: идентификатор стоит в файле.
+		expect(text).toContain(view.meta.reportId);
 	});
 
 	it('печатает PDF альбомным листом, а не книжным', async () => {
@@ -344,7 +346,15 @@ describe('маршрут выгрузки', () => {
 
 		expect(events.length).toBe(1);
 		expect(events[0].outcome).toBe('success');
+		// Идентификатор из листа «Фильтры» находит своё событие журнала: файл,
+		// пришедший по почте, связывается с тем, кто и когда его собрал.
+		const reportId = sheetRows(body, 'Фильтры')
+			.find((row) => row[0] === 'Идентификатор отчёта')
+			?.at(1);
+
+		expect(reportId).toMatch(/^[0-9a-f-]{36}$/);
 		expect(events[0].details).toStrictEqual({
+			reportId,
 			mode: 'snapshot',
 			periodStart: QUARTER_PERIOD.from,
 			periodEnd: QUARTER_PERIOD.to,

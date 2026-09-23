@@ -11,6 +11,7 @@ import { sql } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { reportQuerySchema, type ReportQuery, type ReportView } from '$lib/contracts/reports';
 import type { ActorContext } from '$lib/server/actor';
+import { formatIsoDay } from '$lib/format';
 import { buildReport } from '$lib/server/reports/rows';
 import {
 	createDraft,
@@ -95,7 +96,7 @@ const PERIOD = { mode: 'snapshot' as const, from: '2026-09-01', to: '2026-09-10'
 const MOVEMENT = { mode: 'movement' as const, from: '2026-09-01', to: '2026-09-10' };
 
 describe('отчёт на прошлую дату до и после применения изменений', () => {
-	it('даёт то же распределение по стадиям и то же движение', async () => {
+	it('даёт то же распределение по стадиям, то же движение и ту же просрочку', async () => {
 		const ctx = admin();
 		await seedProcess(database, B2C_WORKSPACE_KEY, threeStageProcess());
 
@@ -146,7 +147,7 @@ describe('отчёт на прошлую дату до и после приме�
 		const after = await buildReport(ctx, query(PERIOD));
 		const afterMovement = await buildReport(ctx, query(MOVEMENT));
 
-		// Распределение по стадиям и движение — то, что обещано неизменным
+		// Распределение по стадиям и движение не меняются
 		// (`docs/reports.md`, «Историческая семантика при изменении процесса»).
 		expect(shape(after)).toStrictEqual(shape(before));
 		expect(shape(afterMovement)).toStrictEqual(shape(beforeMovement));
@@ -158,18 +159,42 @@ describe('отчёт на прошлую дату до и после приме�
 		expect(stageCell(after)).not.toBe(stageCell(before));
 		expect(stageCell(after)).toMatch(/Предложение вузу/);
 
-		// Оговорённое исключение, и здесь оно закреплено числами, чтобы
-		// «эталонность» не понималась шире обещанного (`docs/reports.md`):
-		// просрочка считается по нормативу из снимка, а снимок **открытой**
-		// записи публикация пересобирает. Норматив «Предложения» вырос с 5 до 90
-		// дней — и две строки, стоявшие на нём, перестали быть просроченными на
-		// 10 сентября. Третья осталась: её запись закрыта переездом, и снимок
-		// закрытой записи не трогает никто.
+		// Просрочка на прошлую дату тоже не меняется: она считается по нормативу,
+		// действовавшему для записи на дату среза, а не по снимку, который
+		// публикация пересобрала. Норматив «Предложения» вырос с 5 до 90 дней, но
+		// 10 сентября он был пятидневным — и все три строки просрочены, как и до
+		// публикации. Третья стоит на «Приёме», его запись закрыта переездом.
 		const afterOverdue = await buildReport(ctx, query({ ...PERIOD, overdue: 'true' }));
+		const overdueRows = (view: ReportView) => view.rows.map((row) => row.interactionId).sort();
 
 		expect(before.totals.overdue).toBe(3);
-		expect(beforeOverdue.rows).toHaveLength(3);
-		expect(after.totals.overdue).toBe(1);
-		expect(afterOverdue.rows.map((row) => row.interactionId)).toStrictEqual([third.interactionId]);
+		expect(after.totals.overdue).toBe(3);
+		expect(overdueRows(afterOverdue)).toStrictEqual(overdueRows(beforeOverdue));
+		expect(overdueRows(afterOverdue)).toStrictEqual(
+			[first.interactionId, second.interactionId, third.interactionId].sort()
+		);
+
+		// Колонка просрочки считает дни тем же нормативом: девять с лишним дней на
+		// «Предложении» против пяти — пять дней просрочки, а не ноль.
+		const overdueCell = (view: ReportView, interactionId: string) =>
+			view.rows.find((row) => row.interactionId === interactionId)?.cells.at(-1);
+		const withOverdue = await buildReport(
+			ctx,
+			query({ ...PERIOD, cols: 'interaction,organization,overdueDays' })
+		);
+
+		expect(overdueCell(withOverdue, first.interactionId)).toStrictEqual({
+			kind: 'number',
+			value: 5
+		});
+
+		// После публикации действует новый норматив: на сегодня девяносто дней
+		// ещё не прошли ни у кого, и ни одна строка не просрочена.
+		const today = await buildReport(
+			ctx,
+			query({ mode: 'snapshot', from: '2026-09-01', to: formatIsoDay() })
+		);
+
+		expect(today.totals.overdue).toBe(0);
 	});
 });

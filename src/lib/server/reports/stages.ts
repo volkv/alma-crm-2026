@@ -14,8 +14,8 @@
  * в четырёх модулях.
  */
 import { asc, eq } from 'drizzle-orm';
-import { getDb } from '../db';
 import { stages, workflows, workspaces } from '../db/schema';
+import type { ReportExecutor } from './transaction';
 
 /** Стадия действующей редакции: ключ, актуальное название и место в порядке. */
 export type ReportStage = {
@@ -42,8 +42,10 @@ export type ReportWorkspace = {
  * обязана показать и стадию, на которой сейчас никто не стоит, — ноль в ней
  * значит «никого», а отсутствие строки читается как «такой стадии нет».
  */
-export async function readActiveWorkspaces(): Promise<Map<string, ReportWorkspace>> {
-	const rows = await getDb()
+export async function readActiveWorkspaces(
+	db: ReportExecutor
+): Promise<Map<string, ReportWorkspace>> {
+	const rows = await db
 		.select({
 			workspaceId: workspaces.id,
 			workspaceKey: workspaces.key,

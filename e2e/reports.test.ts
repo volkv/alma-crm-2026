@@ -217,6 +217,16 @@ test('раздел открывается срезом и объясняет п�
 	await expect(page.getByRole('heading', { name: 'Отчёты по взаимодействиям' })).toBeVisible();
 	await expect(page.getByText(SNAPSHOT_RULE)).toBeVisible();
 	await expect(page.getByTestId('report-row-count')).toBeVisible();
+
+	// Под правилом сказано, какие фильтры смотрят на дату среза, а какие — на
+	// сегодня, и что просрочка считается по нормативу того дня.
+	await expect(page.getByTestId('report-filter-moments')).toContainText(
+		'по нормативу стадии, действовавшему в тот день'
+	);
+	await expect(page.getByTestId('report-filter-moments')).toContainText('по текущим');
+	await expect(page.getByTestId('report-identity')).toContainText(
+		'прочитаны из одного состояния базы'
+	);
 });
 
 test('переключение режима меняет адрес и правило на экране', async ({ page }) => {
@@ -230,6 +240,7 @@ test('переключение режима меняет адрес и прав�
 	// отведённые по умолчанию пять секунд.
 	await expect(page).toHaveURL(/mode=movement/, { timeout: 30_000 });
 	await expect(page.getByText(MOVEMENT_RULE)).toBeVisible();
+	await expect(page.getByTestId('report-filter-moments')).toContainText('конец периода');
 
 	// Колонки движения появляются вместе с режимом: «Вид события» в срезе нет.
 	await expect(page.getByRole('columnheader', { name: /Вид события/ })).toBeVisible();

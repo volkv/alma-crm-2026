@@ -40,7 +40,10 @@ export async function renderReport(
 		case 'json':
 			return { ...file, body: reportJson(view) };
 		case 'pdf':
-			return { ...file, body: await renderPdf(reportHtml(view), reportFooterHtml()) };
+			return {
+				...file,
+				body: await renderPdf(reportHtml(view), reportFooterHtml(view.meta.reportId))
+			};
 	}
 }
 

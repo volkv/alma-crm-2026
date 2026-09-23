@@ -140,13 +140,17 @@ const STYLE = `
 	.cut { font-size: 9px; color: #10151f; background: #fdf2c7; padding: 3px 5px; margin: 0 0 6px; }
 `;
 
-/** Подвал печати: нумерацию страниц подставляет сам движок печати. */
-export function reportFooterHtml(): string {
+/**
+ * Подвал печати: нумерацию страниц подставляет сам движок печати. Идентификатор
+ * отчёта стоит на каждой странице: распечатку разбирают по листам, и лист без
+ * шапки обязан называть сборку, из которой он взят.
+ */
+export function reportFooterHtml(reportId: string): string {
 	return `<!doctype html><html><head><meta charset="utf-8"><style>
 		body { font: 8px "DejaVu Sans", Arial, sans-serif; color: #4b5563; width: 100%; margin: 0 0.4in; }
 		.line { display: flex; justify-content: space-between; }
 	</style></head><body><div class="line">
-		<span>Отчёт по взаимодействиям</span>
+		<span>Отчёт по взаимодействиям · ${escapeHtml(reportId)}</span>
 		<span class="pageNumber"></span>/<span class="totalPages"></span>
 	</div></body></html>`;
 }
@@ -194,10 +198,11 @@ export function reportHtml(view: ReportView): string {
 	];
 
 	const filters = [
+		{ label: 'Идентификатор отчёта', value: view.meta.reportId },
+		{ label: 'Отчёт собран', value: formatDateTime(view.meta.generatedAt) },
 		{ label: 'Режим', value: REPORT_MODE_LABELS[view.meta.mode] },
 		...view.meta.filters.filter((filter) => filter.label !== 'Режим'),
 		{ label: 'Область доступа', value: view.meta.scope },
-		{ label: 'Отчёт собран', value: formatDateTime(view.meta.generatedAt) },
 		...totals
 	]
 		.map((filter) => `<dt>${escapeHtml(filter.label)}</dt><dd>${escapeHtml(filter.value)}</dd>`)

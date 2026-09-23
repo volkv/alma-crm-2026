@@ -36,6 +36,7 @@ export function reportJson(view: ReportView): Buffer {
 
 	const payload = {
 		schemaVersion: view.meta.schemaVersion,
+		reportId: view.meta.reportId,
 		generatedAt: view.meta.generatedAt,
 		asOf: view.meta.asOf,
 		mode: view.meta.mode,

@@ -95,10 +95,11 @@ function columnWidth(key: ReportColumnKey): number {
 function filtersSheet(view: ReportView): SpreadsheetWriteSheet {
 	const rows: SpreadsheetWriteCell[][] = [
 		['Показатель', 'Значение'],
+		['Идентификатор отчёта', view.meta.reportId],
+		['Отчёт собран', formatDateTime(view.meta.generatedAt)],
 		['Режим', REPORT_MODE_LABELS[view.meta.mode]],
 		...view.meta.filters.map((filter): SpreadsheetWriteCell[] => [filter.label, filter.value]),
 		['Область доступа', view.meta.scope],
-		['Отчёт собран', formatDateTime(view.meta.generatedAt)],
 		['Строк в отчёте', view.totals.rowCount],
 		['Взаимодействий в выборке', view.totals.interactionCount],
 		[],

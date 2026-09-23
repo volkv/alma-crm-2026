@@ -700,7 +700,14 @@ export const apiReportSchema = z.object({
 			.number()
 			.int()
 			.describe('Версия схемы отчёта; растёт при изменении состава полей'),
-		generatedAt: z.iso.datetime(),
+		reportId: z
+			.uuid()
+			.describe(
+				'Идентификатор сборки: новый у каждой, тот же стоит в шапке каждой выгрузки и в журнале'
+			),
+		generatedAt: z.iso
+			.datetime()
+			.describe('Момент снимка базы, из которого прочитаны и итоги, и строки'),
 		asOf: z.iso.datetime().describe('Момент среза `T`, на который посчитан отчёт'),
 		mode: z.enum(REPORT_MODES),
 		period: z.object({ start: z.iso.date(), end: z.iso.date() }),
@@ -809,6 +816,7 @@ export function toApiReport(view: ReportView): ApiReport {
 	return {
 		meta: {
 			schemaVersion: view.meta.schemaVersion,
+			reportId: view.meta.reportId,
 			generatedAt: view.meta.generatedAt,
 			asOf: view.meta.asOf,
 			mode: view.meta.mode,

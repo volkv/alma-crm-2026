@@ -88,7 +88,7 @@ async function buildFilterOptions(ctx: ActorContext): Promise<ReportFilterOption
 			.from(contractItems)
 			.where(isNotNull(contractItems.transferStatus))
 			.orderBy(asc(contractItems.transferStatus)),
-		readActiveWorkspaces()
+		readActiveWorkspaces(db)
 	]);
 
 	const stages = new Map<string, string>();

@@ -37,13 +37,16 @@ export const GET: RequestHandler = async (event) => {
 		const view = await buildReport(ctx, query);
 		const file = await renderReport(view, requested);
 
-		// В подробностях события — режим, границы периода, число строк и формат.
-		// Что именно унесли, видно по ним; фильтры не кладём: они содержат
-		// свободный текст, а журнал его не принимает.
+		// В подробностях события — идентификатор отчёта, режим, границы периода,
+		// число строк и формат. Идентификатор стоит и в самом файле: по нему файл,
+		// пришедший по почте, находит своё событие — кто, когда и что собрал.
+		// Фильтры не кладём: они содержат свободный текст, а журнал его не
+		// принимает.
 		await recordAuditEvent(ctx, {
 			type: 'reports.exported',
 			outcome: 'success',
 			details: {
+				reportId: view.meta.reportId,
 				mode: query.mode,
 				periodStart: query.from,
 				periodEnd: query.to,

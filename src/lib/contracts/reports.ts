@@ -229,7 +229,9 @@ export const REPORT_COLUMNS: readonly ReportColumnDefinition[] = [
 		key: 'state',
 		label: 'Состояние',
 		kind: 'text',
-		sort: 'current',
+		// На момент `T`: в работе, если на `T` стояло на стадии, иначе исход
+		// закрытия. Тем же выражением отбирает фильтр «Состояние».
+		sort: 'historical',
 		modes: BOTH_MODES,
 		byDefault: true,
 		required: false,
@@ -443,10 +445,11 @@ export const reportQuerySchema = z.object({
 	prod: multiUuid,
 	/** Ответственный за взаимодействие — тот, кто ведёт его сейчас. */
 	owner: multiUuid,
-	/** Действующий ответственный за вуз. */
+	/** Ответственный за вуз по назначениям, действовавшим на момент `T`. */
 	assignee: multiUuid,
 	/** Стадия — по ключу; в движении бьёт и по «откуда», и по «куда». */
 	stage: multiValue,
+	/** Состояние на момент `T`. */
 	state: multiEnum(INTERACTION_STATUSES),
 	/** Статус передачи по позициям договора — свободный словарь справочника. */
 	transfer: multiValue,
@@ -592,7 +595,16 @@ export type ReportFilterView = { label: string; value: string };
 
 export type ReportMeta = {
 	schemaVersion: number;
-	/** Момент сборки отчёта. */
+	/**
+	 * Идентификатор этой сборки. Новый у каждой: по нему файл находится в
+	 * журнале действий (событие выгрузки несёт тот же идентификатор), и два
+	 * файла с одним периодом, но разными числами различаются не на глаз.
+	 */
+	reportId: string;
+	/**
+	 * Момент сборки — момент снимка базы, из которого прочитаны и итоги, и
+	 * строки (`readReportSnapshot`).
+	 */
 	generatedAt: string;
 	/** Момент среза `T`. */
 	asOf: string;

@@ -15,8 +15,8 @@ import {
 	type ReportQuery
 } from '$lib/contracts/reports';
 import { formatDate } from '$lib/format';
-import { getDb } from '../db';
 import { directions, organizations, products, programs, users, workspaces } from '../db/schema';
+import type { ReportExecutor } from './transaction';
 
 async function namesByIds(
 	ids: readonly string[],
@@ -40,11 +40,10 @@ async function namesByIds(
  * вместе с отчётом.
  */
 export async function describeFilters(
+	db: ReportExecutor,
 	query: ReportQuery,
 	stageName: (key: string) => string
 ): Promise<ReportFilterView[]> {
-	const db = getDb();
-
 	const [
 		organizationNames,
 		directionNames,
@@ -98,29 +97,46 @@ export async function describeFilters(
 		{ label: 'Период', value: `${formatDate(query.from)} — ${formatDate(query.to)}` }
 	];
 
-	const add = (label: string, values: readonly string[]): void => {
+	// Каждый фильтр назван вместе с моментом, на который он проверяется, — теми
+	// же пометками, что у колонок (`columnViews`): «на 30.09.2026» или «сейчас».
+	// Без пометки файл с фильтром «Ответственный за вуз» читается двумя
+	// способами — кто отвечал тогда или кто отвечает сегодня.
+	const atMoment = `на ${formatDate(query.to)}`;
+	const now = 'сейчас';
+
+	// Пространство взаимодействия не меняется никогда, и момент ему не нужен.
+	const add = (label: string, note: string | null, values: readonly string[]): void => {
 		if (values.length > 0) {
-			filters.push({ label, value: values.join(', ') });
+			filters.push({
+				label: note === null ? label : `${label} (${note})`,
+				value: values.join(', ')
+			});
 		}
 	};
 
-	add('Вуз или контрагент', organizationNames);
+	add('Вуз или контрагент', now, organizationNames);
 	add(
 		'Тип контрагента',
+		now,
 		query.party.map((kind) => REPORT_PARTY_LABELS[kind])
 	);
-	add('Пространство', workspaceNames);
-	add('Направление', directionNames);
-	add('Программа', programNames);
-	add('Продукт', productNames);
-	add('Ответственный', ownerNames);
-	add('Ответственный за вуз', assigneeNames);
-	add('Стадия', query.stage.map(stageName));
+	add('Пространство', null, workspaceNames);
+	add('Направление', now, directionNames);
+	add('Программа', now, programNames);
+	add('Продукт', now, productNames);
+	add('Ответственный', now, ownerNames);
+	add('Ответственный за вуз', atMoment, assigneeNames);
+	add(
+		'Стадия',
+		query.mode === 'snapshot' ? atMoment : 'откуда или куда перешли',
+		query.stage.map(stageName)
+	);
 	add(
 		'Состояние',
+		atMoment,
 		query.state.map((state) => REPORT_STATE_LABELS[state])
 	);
-	add('Статус передачи', query.transfer);
+	add('Статус передачи', now, query.transfer);
 
 	if (query.overdue) {
 		filters.push({ label: 'Только просроченные', value: 'на момент среза' });

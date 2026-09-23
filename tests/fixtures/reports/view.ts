@@ -9,6 +9,7 @@ export function sampleReportView(overrides: Partial<ReportView> = {}): ReportVie
 	const view: ReportView = {
 		meta: {
 			schemaVersion: 1,
+			reportId: '0f6d8a52-3c1b-4e7a-9d2f-5b8c1e4a7f30',
 			generatedAt: '2026-09-17T09:00:00.000Z',
 			asOf: '2026-12-31T21:00:00.000Z',
 			mode: 'snapshot',

@@ -14,7 +14,7 @@
  * попадает и в отчёт по первому, и в отчёт по второму.
  *
  * Выборка делится надвое, и это деление — не украшение, а цена отклика.
- * **Колонки выборки** (`SELECTION_COLUMNS`) считаются для каждой строки: по ним
+ * **Колонки выборки** (`selectionColumns`) считаются для каждой строки: по ним
  * работают фильтры, сортировка и все агрегаты. **Признаки строки**
  * (`ATTRIBUTE_COLUMNS`) — боковые выборки по связям многие ко многим, и они
  * считаются только для показанных строк: экрану нужна одна страница, а не все
@@ -27,6 +27,7 @@ import type {
 	ReportLearningGroupRef,
 	ReportQuery
 } from '$lib/contracts/reports';
+import { snapshotMoment } from '$lib/contracts/calendar';
 import type { ActorContext } from '../actor';
 import { interactionScopeFilter } from '../interactions/access';
 
@@ -59,11 +60,66 @@ export const PRIMARY_PARTY_JOIN = sql`
 `;
 
 /**
+ * Момент `T` отчёта строкой ISO — конец дня «по». Один на оба режима: срез
+ * стоит на нём, движение кончается им.
+ *
+ * Строкой, а не `Date`: у параметра в готовом SQL нет выведенного типа, и
+ * драйвер не берётся кодировать объект даты вслепую.
+ */
+export function reportMoment(query: ReportQuery): string {
+	return snapshotMoment(query.to).toISOString();
+}
+
+/**
+ * Состояние взаимодействия на момент `T`.
+ *
+ * Хранится только текущее состояние, но прошлое из него восстанавливается
+ * однозначно: пока взаимодействие не закрыто, у него есть открытая запись о
+ * стадии, а закрытие закрывает последнюю. Значит, запись, накрывающая `T`,
+ * есть ровно тогда, когда на `T` оно было в работе; нет её — оно уже было
+ * закрыто, и закрыто тем исходом, что записан сейчас: вновь открыть закрытое
+ * продукт не умеет. Граница та же, что у стадии среза: `entered_at < T <=
+ * left_at`.
+ *
+ * Одно выражение на фильтр «Состояние» и на одноимённую колонку: иначе фильтр
+ * «В работе» по текущему состоянию отбирал бы строки, у которых в колонке на ту
+ * же дату написано «Завершено», — или наоборот.
+ */
+export function statusAt(asOf: string): SQL {
+	return sql`(case
+		when exists (
+			select 1 from stage_entries status_entry
+			where status_entry.interaction_id = interactions.id
+				and status_entry.entered_at < ${asOf}::timestamptz
+				and (status_entry.left_at is null or status_entry.left_at >= ${asOf}::timestamptz)
+		) then 'active'
+		else interactions.status::text
+	end)`;
+}
+
+/**
+ * Назначение ответственного за вуз, действовавшее на момент `T`. Одно условие
+ * на фильтр «Ответственный за вуз» и на одноимённую колонку: фильтр по
+ * сегодняшним назначениям при колонке на дату среза отбирал бы строки, в
+ * которых отобранного человека не видно.
+ */
+function responsibleAt(asOf: string): SQL {
+	return sql`responsible.valid_from <= ${asOf}::timestamptz
+		and (responsible.valid_to is null or responsible.valid_to > ${asOf}::timestamptz)`;
+}
+
+/**
  * Условия на взаимодействие. Возвращает одно выражение: вызывающий подставляет
  * его в `where` своего запроса, а не собирает список заново. Запрос обязан
  * содержать `PRIMARY_PARTY_JOIN`.
+ *
+ * Фильтр и колонка с одним смыслом читают одно и то же значение на один и тот
+ * же момент: стадия, состояние, ответственный за вуз, просрочка и пауза — на
+ * `T`; вуз, тип контрагента, направление, программа, продукт, ответственный за
+ * взаимодействие и статус передачи — текущие, и так же помечены их колонки.
  */
 export function interactionConditions(ctx: ActorContext, query: ReportQuery): SQL {
+	const asOf = reportMoment(query);
 	const conditions: SQL[] = [interactionScopeFilter(ctx)];
 
 	if (query.org.length > 0) {
@@ -117,19 +173,16 @@ export function interactionConditions(ctx: ActorContext, query: ReportQuery): SQ
 	}
 
 	if (query.assignee.length > 0) {
-		// Фильтр по ответственному за вуз работает по действующим назначениям, а
-		// одноимённая колонка историческая: это признак вуза, а не записи, и
-		// вопрос «кто ведёт этот вуз сейчас» задают именно в настоящем времени.
 		conditions.push(sql`exists (
 			select 1 from organization_responsibles responsible
 			where responsible.organization_id = primary_party.id
-				and responsible.valid_to is null
+				and ${responsibleAt(asOf)}
 				and responsible.user_id in ${inList(query.assignee)}
 		)`);
 	}
 
 	if (query.state.length > 0) {
-		conditions.push(sql`interactions.status in ${inList(query.state)}`);
+		conditions.push(sql`${statusAt(asOf)} in ${inList(query.state)}`);
 	}
 
 	if (query.transfer.length > 0) {
@@ -159,11 +212,14 @@ export function interactionConditions(ctx: ActorContext, query: ReportQuery): SQ
  * одним join'ом. По ним работают агрегаты (итоги, воронка, разрезы по вузам и
  * ответственным) и сортировка страницы, поэтому считать их приходится по всей
  * выборке. Требуют `PRIMARY_PARTY_JOIN` и join пространства.
+ *
+ * Состояние — на момент `T` (`statusAt`), тем же выражением, что у фильтра.
  */
-export const SELECTION_COLUMNS = sql`
+export function selectionColumns(asOf: string): SQL {
+	return sql`
 	interactions.id as "interactionId",
 	interactions.title as "title",
-	interactions.status as "status",
+	${statusAt(asOf)} as "status",
 	interactions.workspace_id as "workspaceId",
 	interactions.owner_user_id as "ownerUserId",
 	interactions.contract_id as "contractId",
@@ -172,6 +228,7 @@ export const SELECTION_COLUMNS = sql`
 	counterparty.short_name as "organizationName",
 	counterparty.kind as "organizationKind"
 `;
+}
 
 /**
  * Признаки взаимодействия для строки отчёта. Все — боковыми выборками по одному
@@ -202,10 +259,9 @@ export const ATTRIBUTE_COLUMNS = sql`
  * (страница экрана или весь набор выгрузки): признаки считаются от него, а не
  * от таблицы взаимодействий, поэтому их цена — это цена показанных строк.
  *
- * Ответственный за вуз берётся на момент среза: колонка историческая и
- * показывает назначения, действовавшие на `T`. Момент передаётся строкой ISO, а
- * не `Date`: у параметра в готовом SQL нет выведенного типа, и драйвер
- * отказывается кодировать объект даты вслепую.
+ * Ответственный за вуз берётся на момент `T` тем же условием, что у фильтра
+ * (`responsibleAt`): колонка историческая и показывает назначения,
+ * действовавшие на `T`.
  */
 export function attributeJoins(asOf: string, source: SQL): SQL {
 	return sql`
@@ -256,8 +312,7 @@ export function attributeJoins(asOf: string, source: SQL): SQL {
 			from organization_responsibles responsible
 			join users assignee on assignee.id = responsible.user_id
 			where responsible.organization_id = ${source}."organizationId"
-				and responsible.valid_from <= ${asOf}::timestamptz
-				and (responsible.valid_to is null or responsible.valid_to > ${asOf}::timestamptz)
+				and ${responsibleAt(asOf)}
 		) interaction_assignees_agg on true
 		left join lateral (
 			select json_agg(json_build_object(

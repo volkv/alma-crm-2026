@@ -7,11 +7,11 @@
  */
 import { describe, expect, it } from 'vitest';
 import { REPORT_PDF_ROWS } from '$lib/contracts/reports';
-import { writeXlsx } from '$lib/server/spreadsheet/write';
+import { writeXls, writeXlsx } from '$lib/server/spreadsheet/write';
 import { XLSX } from '$lib/server/spreadsheet/sheetjs';
 import { checkExportInvariant, checkReportInvariants } from '$lib/server/reports/invariants';
 import { reportFileName } from '$lib/server/reports/writers/filename';
-import { reportHtml } from '$lib/server/reports/writers/html';
+import { reportFooterHtml, reportHtml } from '$lib/server/reports/writers/html';
 import { reportJson } from '$lib/server/reports/writers/json';
 import { reportSheets } from '$lib/server/reports/writers/sheets';
 import { sampleReportView } from '../../fixtures/reports/view';
@@ -245,6 +245,52 @@ describe('страница на печать', () => {
 		expect(movement).toContain('Динамика переходов');
 		expect(movement).toContain('Вперёд');
 		expect(movement).toContain('Перенос при изменении процесса: 3');
+	});
+});
+
+describe('каждый файл называет свою сборку', () => {
+	// Идентификатор и момент сборки читаются из самого файла, а не из объекта:
+	// проверяется то, что увидит получивший файл.
+	const { reportId } = VIEW.meta;
+	const generated = '17.09.2026';
+
+	function workbookText(body: Buffer): string {
+		const workbook = XLSX.read(body, { type: 'buffer' });
+
+		return XLSX.utils
+			.sheet_to_json<string[]>(workbook.Sheets['Фильтры'], { header: 1, raw: false, defval: '' })
+			.map((row) => row.join(' | '))
+			.join('\n');
+	}
+
+	it.each([
+		['xlsx', writeXlsx],
+		['xls', writeXls]
+	] as const)('%s: идентификатор, момент сборки и период на листе фильтров', (_, write) => {
+		const text = workbookText(write(reportSheets(VIEW)));
+
+		expect(text).toContain(`Идентификатор отчёта | ${reportId}`);
+		expect(text).toMatch(new RegExp(`Отчёт собран \\| ${generated.replaceAll('.', '\\.')}`));
+		expect(text).toContain('Период | 01.10.2026 — 31.12.2026');
+	});
+
+	it('pdf: в шапке и в подвале каждой страницы', () => {
+		const html = reportHtml(VIEW);
+
+		expect(html).toContain(`<dt>Идентификатор отчёта</dt><dd>${reportId}</dd>`);
+		expect(html).toMatch(/<dt>Отчёт собран<\/dt><dd>17\.09\.2026/);
+		expect(html).toContain('<dt>Период</dt><dd>01.10.2026 — 31.12.2026</dd>');
+		expect(reportFooterHtml(reportId)).toContain(reportId);
+	});
+
+	it('json: идентификатор, момент сборки, срез, период и фильтры', () => {
+		const payload = JSON.parse(reportJson(VIEW).toString('utf8')) as Record<string, unknown>;
+
+		expect(payload.reportId).toBe(reportId);
+		expect(payload.generatedAt).toBe(VIEW.meta.generatedAt);
+		expect(payload.asOf).toBe(VIEW.meta.asOf);
+		expect(payload.period).toStrictEqual(VIEW.meta.period);
+		expect(payload.filters).toStrictEqual(VIEW.meta.filters);
 	});
 });
 

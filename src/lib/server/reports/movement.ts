@@ -18,22 +18,23 @@
  */
 import type { StageOutcome } from '$lib/contracts/interactions';
 import type { ReportEventKind, ReportQuery } from '$lib/contracts/reports';
-import { moscowDayStart, snapshotMoment } from '$lib/contracts/calendar';
+import { moscowDayStart } from '$lib/contracts/calendar';
 import { sql, type SQL } from 'drizzle-orm';
 import type { ActorContext } from '../actor';
-import { getDb } from '../db';
 import {
 	ATTRIBUTE_COLUMNS,
 	attributeJoins,
 	inList,
 	interactionConditions,
 	PRIMARY_PARTY_JOIN,
-	SELECTION_COLUMNS,
+	reportMoment,
+	selectionColumns,
 	windowClause,
 	type ReportAttributes,
 	type ReportSelection,
 	type RowWindow
 } from './conditions';
+import type { ReportExecutor } from './transaction';
 
 /** Колонки движения сверх общих: само событие. */
 export type MovementSelectionRow = ReportSelection & {
@@ -107,7 +108,7 @@ export function movementSelection(
 ): SQL {
 	// Моменты уходят в запрос строками ISO: у параметра в готовом SQL нет
 	// выведенного типа, и драйвер не берётся кодировать объект даты вслепую.
-	const asOf = snapshotMoment(query.to).toISOString();
+	const asOf = reportMoment(query);
 	const periodStart = moscowDayStart(query.from).toISOString();
 	const conditions = interactionConditions(ctx, query);
 
@@ -127,7 +128,7 @@ export function movementSelection(
 		select events.*
 		from (
 			select
-				${SELECTION_COLUMNS},
+				${selectionColumns(asOf)},
 				entry.id as "entryId",
 				entry.left_at as "movedAt",
 				entry.outcome as "outcome",
@@ -162,7 +163,7 @@ export function movementSelection(
 				and entry.left_at < ${asOf}::timestamptz
 			union all
 			select
-				${SELECTION_COLUMNS},
+				${selectionColumns(asOf)},
 				entry.id,
 				entry.entered_at,
 				null,
@@ -195,13 +196,14 @@ export function movementSelection(
  * полный, и это выгрузка.
  */
 export async function readMovementRows(
+	db: ReportExecutor,
 	ctx: ActorContext,
 	query: ReportQuery,
 	options: { migrations: MigrationMode; window?: RowWindow | null }
 ): Promise<MovementRow[]> {
-	const asOf = snapshotMoment(query.to).toISOString();
+	const asOf = reportMoment(query);
 
-	const rows = await getDb().execute<MovementRowRaw>(sql`
+	const rows = await db.execute<MovementRowRaw>(sql`
 		with selection as (${movementSelection(ctx, query, options.migrations)}),
 		page as (
 			select * from selection

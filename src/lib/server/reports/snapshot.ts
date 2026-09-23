@@ -11,7 +11,8 @@
  * Срок, паузы и просрочка считаются здесь же, выражением с параметром `T`, а не
  * представлением `stage_entry_status`: оно считает окно открытой записи до
  * `now()` и параметра не принимает, поэтому срез на сентябрь, построенный в
- * декабре, дал бы декабрьские числа.
+ * декабре, дал бы декабрьские числа. Норматив — тот, что действовал для записи
+ * на `T` (`slaAt`), а не тот, что записан в её снимок сейчас.
  *
  * Выборка отделена от строк: `snapshotSelection` отдаёт условия и колонки, по
  * которым считаются итоги и воронка, а `readSnapshotRows` добавляет к ним
@@ -19,22 +20,23 @@
  */
 import type { PauseReason } from '$lib/contracts/interactions';
 import type { ReportQuery } from '$lib/contracts/reports';
-import { moscowDayStart, snapshotMoment } from '$lib/contracts/calendar';
+import { moscowDayStart } from '$lib/contracts/calendar';
 import { sql, type SQL } from 'drizzle-orm';
 import type { ActorContext } from '../actor';
-import { getDb } from '../db';
 import {
 	ATTRIBUTE_COLUMNS,
 	attributeJoins,
 	inList,
 	interactionConditions,
 	PRIMARY_PARTY_JOIN,
-	SELECTION_COLUMNS,
+	reportMoment,
+	selectionColumns,
 	windowClause,
 	type ReportAttributes,
 	type ReportSelection,
 	type RowWindow
 } from './conditions';
+import type { ReportExecutor } from './transaction';
 
 /** Колонки среза сверх общих: где строка стоит на `T` и сколько уже стоит. */
 export type SnapshotSelectionRow = ReportSelection & {
@@ -43,6 +45,7 @@ export type SnapshotSelectionRow = ReportSelection & {
 	enteredAt: Date | null;
 	stageKey: string | null;
 	stageName: string | null;
+	/** Норматив стадии, действовавший для этой записи на `T` (`slaAt`). */
 	slaDays: number | null;
 	/** Окно записи до `T` минус пересечение с паузами, в секундах. */
 	activeSeconds: number | null;
@@ -81,6 +84,75 @@ function snapshotOrder(source: SQL): SQL {
 }
 
 /**
+ * Норматив записи о стадии на момент `T`, в днях.
+ *
+ * Снимок записи (`stage_snapshot`) хранит норматив, но не навсегда: публикация
+ * изменённого процесса пересобирает снимки **открытых** записей — изменение
+ * обязано применяться ко всем, кто сейчас на стадии (`migrateEntries`). Снимок
+ * записи, открытой во время публикации, после неё говорит о новом нормативе, и
+ * срез на дату до публикации посчитал бы по нему просрочку задним числом.
+ *
+ * Прошлое при этом не потеряно: опубликованные редакции заморожены и хранят
+ * стадии со своими нормативами. Поэтому правило такое.
+ *
+ * 1. Ищется первая публикация процесса **не раньше** `T`, которая застала
+ *    запись открытой (`entered_at` раньше публикации, `left_at` позже или
+ *    пусто) и была именно сменой редакции — у неё есть опубликованная
+ *    предшественница. Первая редакция процесса ничего не перепривязывает.
+ * 2. Такой нет — снимок с `T` не переписывался, и норматив берётся из него.
+ * 3. Такая есть — на `T` действовала её предшественница: между `T` и этой
+ *    публикацией других смен редакции не было (иначе первой была бы она), а
+ *    открытая запись привязана к стадии действующей редакции. Норматив — у
+ *    стадии предшественницы с ключом записи; ключ перепривязкой не меняется.
+ *
+ * Публикация ровно в момент `T` считается случившейся после среза — так же,
+ * как переход ровно в `T` относится уже к следующим суткам.
+ *
+ * Процесс записи — процесс её стадии: пространству, в котором есть
+ * взаимодействия, процесс сменить нельзя, так что он один на всю жизнь записи.
+ */
+function slaAt(asOf: string): SQL {
+	return sql`(
+		select case
+			when rebinding."publishedAt" is null then (entry.stage_snapshot ->> 'slaDays')::integer
+			else previous_stage.sla_days
+		end
+		from stages bound_stage
+		join process_revisions bound_revision on bound_revision.id = bound_stage.revision_id
+		left join lateral (
+			select later.published_at as "publishedAt"
+			from process_revisions later
+			where later.workflow_id = bound_revision.workflow_id
+				and later.published_at >= ${asOf}::timestamptz
+				and later.published_at > entry.entered_at
+				and (entry.left_at is null or entry.left_at > later.published_at)
+				and exists (
+					select 1 from process_revisions earlier
+					where earlier.workflow_id = later.workflow_id
+						and earlier.published_at < later.published_at
+				)
+			order by later.published_at
+			limit 1
+		) rebinding on true
+		left join lateral (
+			select stage.sla_days
+			from process_revisions previous
+			join stages stage
+				on stage.revision_id = previous.id
+				and stage.key = entry.stage_snapshot ->> 'key'
+			where previous.id = (
+				select candidate.id from process_revisions candidate
+				where candidate.workflow_id = bound_revision.workflow_id
+					and candidate.published_at < rebinding."publishedAt"
+				order by candidate.published_at desc
+				limit 1
+			)
+		) previous_stage on true
+		where bound_stage.id = entry.stage_id
+	)`;
+}
+
+/**
  * Выборка среза без признаков строки: условия, стадия на `T`, срок и пауза.
  *
  * Отсюда считаются и итоги, и воронка, и разрезы — по тем же условиям `where`,
@@ -90,7 +162,7 @@ function snapshotOrder(source: SQL): SQL {
 export function snapshotSelection(ctx: ActorContext, query: ReportQuery): SQL {
 	// Моменты уходят в запрос строками ISO: у параметра в готовом SQL нет
 	// выведенного типа, и драйвер не берётся кодировать объект даты вслепую.
-	const asOf = snapshotMoment(query.to).toISOString();
+	const asOf = reportMoment(query);
 	const periodStart = moscowDayStart(query.from).toISOString();
 	const conditions = interactionConditions(ctx, query);
 
@@ -110,7 +182,7 @@ export function snapshotSelection(ctx: ActorContext, query: ReportQuery): SQL {
 
 	return sql`
 		select
-			${SELECTION_COLUMNS},
+			${selectionColumns(asOf)},
 			covering."entryId" as "entryId",
 			covering."enteredAt" as "enteredAt",
 			covering."stageKey" as "stageKey",
@@ -128,7 +200,7 @@ export function snapshotSelection(ctx: ActorContext, query: ReportQuery): SQL {
 				entry.entered_at as "enteredAt",
 				entry.stage_snapshot ->> 'key' as "stageKey",
 				entry.stage_snapshot ->> 'name' as "stageName",
-				(entry.stage_snapshot ->> 'slaDays')::integer as "slaDays",
+				${slaAt(asOf)} as "slaDays",
 				(
 					extract(epoch from (${asOf}::timestamptz - entry.entered_at))
 					- coalesce((
@@ -189,13 +261,14 @@ export function snapshotSelection(ctx: ActorContext, query: ReportQuery): SQL {
  * хватает отклику.
  */
 export async function readSnapshotRows(
+	db: ReportExecutor,
 	ctx: ActorContext,
 	query: ReportQuery,
 	window: RowWindow | null = null
 ): Promise<SnapshotRow[]> {
-	const asOf = snapshotMoment(query.to).toISOString();
+	const asOf = reportMoment(query);
 
-	const rows = await getDb().execute<SnapshotRowRaw>(sql`
+	const rows = await db.execute<SnapshotRowRaw>(sql`
 		with selection as (${snapshotSelection(ctx, query)}),
 		page as (
 			select * from selection

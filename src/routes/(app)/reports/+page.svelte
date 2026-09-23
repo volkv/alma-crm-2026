@@ -28,7 +28,7 @@
 		type ReportFunnelWorkspace,
 		type ReportParam
 	} from '$lib/contracts/reports';
-	import { formatNumber, pluralize } from '$lib/format';
+	import { formatDate, formatDateTime, formatNumber, pluralize } from '$lib/format';
 	import { cn } from '$lib/utils';
 	import type { PageProps } from './$types';
 
@@ -174,16 +174,21 @@
 
 	<InlineHint tone="info">{data.meta.semantics}</InlineHint>
 
-	{#if data.meta.mode === 'snapshot'}
-		<!-- Оговорка к правилу среза, а не к экрану: распределение по стадиям и
-		     движение на прошлую дату эталонны, просрочка — нет. -->
-		<p class="text-xs text-muted-foreground">
-			Просрочка на прошлую дату считается по действующему нормативу стадии: у записи, которая не
-			закрыта до сих пор, публикация изменённого процесса пересобирает снимок, и вместе с нормативом
-			меняется число просроченных на прежнюю дату. Распределение по стадиям и движение так не
-			меняются.
-		</p>
-	{/if}
+	<!-- Какие фильтры смотрят на дату, а какие на сегодня: те же пометки стоят
+	     у колонок, и фильтр с колонкой одного смысла читают одно значение. -->
+	<p class="text-xs text-muted-foreground" data-testid="report-filter-moments">
+		{#if data.meta.mode === 'snapshot'}
+			Стадия, состояние, ответственный за вуз, просрочка и пауза — на {formatDate(
+				data.meta.period.end
+			)}. Просрочка считается по нормативу стадии, действовавшему в тот день: правка процесса её
+			задним числом не меняет.
+		{:else}
+			Состояние и ответственный за вуз — на {formatDate(data.meta.period.end)}, конец периода;
+			стадия — та, из которой или в которую перешли.
+		{/if}
+		Вуз, тип контрагента, направление, программа, продукт, ответственный и статус передачи — по текущим
+		значениям записи.
+	</p>
 
 	<FilterBar
 		query={data.query}
@@ -340,6 +345,12 @@
 			/>
 		{/each}
 	</div>
+
+	<p class="text-xs text-faint" data-testid="report-identity">
+		Собран {formatDateTime(data.meta.generatedAt)}: итоги, диаграммы и строки прочитаны из одного
+		состояния базы. Выгрузка собирается заново и несёт в шапке свой идентификатор и момент сборки —
+		те же, что в журнале действий.
+	</p>
 
 	<p class="text-xs text-faint">
 		Область доступа: {data.meta.scope}. Колонки с пометкой «на дату» считаются на момент среза и

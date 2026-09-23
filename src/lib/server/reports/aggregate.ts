@@ -22,9 +22,9 @@ import type { StageOutcome } from '$lib/contracts/interactions';
 import type { ReportBreakdown, ReportQuery, ReportTotals } from '$lib/contracts/reports';
 import { sql, type SQL } from 'drizzle-orm';
 import type { ActorContext } from '../actor';
-import { getDb } from '../db';
 import { migrationEvent, movementSelection } from './movement';
 import { snapshotSelection } from './snapshot';
+import type { ReportExecutor } from './transaction';
 
 /** Строка агрегата: одна форма на все разделы, чтобы обойтись одним запросом. */
 type AggregateRow = {
@@ -211,8 +211,9 @@ function total(rows: readonly AggregateRow[], id: string): number {
 
 /**
  * Итоги среза: сколько строк, сколько из них на паузе и сколько просрочено на
- * момент `T`. Просрочка сравнивается с нормативом из снимка записи — тем же
- * выражением, что и колонка просрочки, и фильтр «только просроченные».
+ * момент `T`. Просрочка сравнивается с нормативом, действовавшим для записи на
+ * `T`, — той же колонкой выборки, что у колонки просрочки и фильтра «только
+ * просроченные».
  */
 const SNAPSHOT_TOTALS = sql`
 	select 'totals' as facet, counted.id as id, null::text as label, counted.value::integer as value, ${NO_EVENT}
@@ -258,10 +259,11 @@ const SNAPSHOT_BUCKETS = sql`
 `;
 
 export async function readSnapshotAggregates(
+	db: ReportExecutor,
 	ctx: ActorContext,
 	query: ReportQuery
 ): Promise<SnapshotAggregates> {
-	const result = await getDb().execute<AggregateRow>(sql`
+	const result = await db.execute<AggregateRow>(sql`
 		with selection as (${snapshotSelection(ctx, query)}),
 		${DIRECTION_LINKS}
 		${SNAPSHOT_TOTALS}
@@ -344,6 +346,7 @@ function movementFacets(keep: SQL): SQL {
 }
 
 export async function readMovementAggregates(
+	db: ReportExecutor,
 	ctx: ActorContext,
 	query: ReportQuery
 ): Promise<MovementAggregates> {
@@ -351,7 +354,7 @@ export async function readMovementAggregates(
 	// сводки, а не потерять. Всё остальное считается по событиям без них.
 	const keep = sql`not (${migrationEvent(sql`selection`)})`;
 
-	const result = await getDb().execute<AggregateRow>(sql`
+	const result = await db.execute<AggregateRow>(sql`
 		with selection as (${movementSelection(ctx, query, 'include')}),
 		${DIRECTION_LINKS}
 		${movementFacets(keep)}
