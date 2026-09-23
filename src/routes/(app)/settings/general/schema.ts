@@ -48,3 +48,14 @@ export const demoScheduleSchema = z.object({
 });
 
 export type DemoScheduleInput = z.output<typeof demoScheduleSchema>;
+
+/**
+ * Внешние источники паспорта организации: выключатель и суточная квота на
+ * сотрудника. Поля плоские — форма уходит обычным POST.
+ */
+export const enrichmentSchema = z.object({
+	enabled: z.boolean().default(false),
+	dailyQuota: settingSchemas.enrichment.shape.dailyQuota
+});
+
+export type EnrichmentInput = z.output<typeof enrichmentSchema>;

@@ -2,17 +2,17 @@ import { describe, expect, it } from 'vitest';
 import { lookupQueryKind, type LegalEntity } from '$lib/contracts/enrichment';
 import { guessEducationLevel, guessKind } from '$lib/server/enrichment/classify';
 import { legalStatus, readSuggestions, toLegalEntity } from '$lib/server/enrichment/dadata';
-import { buildDraft, draftWarnings, namesAgree } from '$lib/server/enrichment';
+import { registryPassport } from '$lib/server/enrichment';
 import {
 	charsetOf,
 	normalizeWebsite,
 	readSvedenPage,
 	siteFromEmails,
-	svedenCandidates
+	withinSite
 } from '$lib/server/enrichment/sveden';
 
 /**
- * Сборка черновика карточки: распознавание строки поиска, разбор ответа
+ * Сборка паспорта организации: распознавание строки поиска, разбор ответа
  * справочника, догадки о виде и уровне, чтение раздела сайта и замечания
  * сотруднику. Сети здесь нет — проверяются те части, которые решают, что в
  * итоге увидит человек.
@@ -157,10 +157,11 @@ describe('поиск сайта', () => {
 		expect(normalizeWebsite('  ')).toBeNull();
 	});
 
-	it('раздел ищется от корня сайта, а не от переданного пути', () => {
-		expect(svedenCandidates('https://spbstu.ru/education')[0]).toBe(
-			'https://spbstu.ru/sveden/common'
-		);
+	it('ходить разрешено только по домену сайта из карточки', () => {
+		expect(withinSite('spbstu.ru', 'www.spbstu.ru')).toBe(true);
+		expect(withinSite('www.miet.ru', 'sveden.miet.ru')).toBe(true);
+		expect(withinSite('spbstu.ru', 'spbstu.ru.evil.example')).toBe(false);
+		expect(withinSite('spbstu.ru', 'notspbstu.ru')).toBe(false);
 	});
 });
 
@@ -210,101 +211,42 @@ describe('раздел «Сведения об образовательной о
 	});
 });
 
-describe('черновик карточки', () => {
-	const sveden = readSvedenPage(
-		'https://polytech.example.ru/sveden/common',
-		'<span itemprop="fullName">Такой-то политехнический университет</span><span itemprop="shortName">Политех</span>'
-	);
+describe('паспорт по ответу реестра', () => {
+	const fetchedAt = '2026-09-24T09:00:00.000Z';
 
-	it('реквизиты берутся из ЕГРЮЛ, названия — с сайта', () => {
-		const { draft, sources } = buildDraft(entity, sveden, {
-			value: 'https://polytech.example.ru',
-			fromInput: false
+	it('реквизиты — из ЕГРЮЛ, вид и сайт — догадка, у каждого значения дата', () => {
+		const passport = registryPassport('7802084569', [entity], fetchedAt);
+
+		expect(passport.fields.inn).toEqual({ value: '7802084569', source: 'dadata', fetchedAt });
+		expect(passport.fields.legalName?.source).toBe('dadata');
+		expect(passport.fields.kind).toEqual({
+			value: 'educational_institution',
+			source: 'guess',
+			fetchedAt
 		});
-
-		expect(draft.inn).toBe('7802084569');
-		expect(sources.inn).toBe('dadata');
-		expect(draft.legalName).toBe('Такой-то политехнический университет');
-		expect(sources.legalName).toBe('sveden');
-		expect(draft.shortName).toBe('Политех');
-		expect(draft.kind).toBe('educational_institution');
-		expect(draft.educationLevel).toBe('vo');
-		expect(sources.website).toBe('guess');
-	});
-
-	it('без раздела названия остаются теми, что в реестре', () => {
-		const { draft, sources } = buildDraft(entity, null, { value: null, fromInput: false });
-
-		expect(draft.legalName).toBe(entity.legalName);
-		expect(sources.legalName).toBe('dadata');
-		expect(draft.website).toBeNull();
-	});
-
-	it('уровень образования заполняется только у учебного заведения', () => {
-		const company = { ...entity, legalName: 'ООО «Ромашка»', okved: '62.01' };
-		const { draft } = buildDraft(company, null, { value: null, fromInput: false });
-
-		expect(draft.kind).toBe('legal_entity');
-		expect(draft.educationLevel).toBeNull();
-	});
-
-	it('названный человеком сайт помечается как введённый вручную', () => {
-		const { sources } = buildDraft(entity, sveden, {
+		expect(passport.fields.educationLevel?.value).toBe('vo');
+		expect(passport.fields.website).toEqual({
 			value: 'https://polytech.example.ru',
-			fromInput: true
+			source: 'guess',
+			fetchedAt
 		});
-
-		expect(sources.website).toBe('input');
 	});
-});
 
-describe('замечания сотруднику', () => {
-	const draftOf = (value: LegalEntity, report = null) =>
-		buildDraft(value, report, { value: 'https://polytech.example.ru', fromInput: true }).draft;
+	it('пустое значение источника не предлагается стереть поле карточки', () => {
+		const passport = registryPassport('x', [{ ...entity, kpp: null, emails: [] }], fetchedAt);
 
-	it('о ликвидации говорят прямо', () => {
-		const dead = { ...entity, status: 'liquidated' as const };
-		const warnings = draftWarnings(dead, [], draftOf(dead), null);
+		expect(passport.fields.kpp).toBeUndefined();
+		expect(passport.fields.website).toBeUndefined();
+	});
+
+	it('о ликвидации и филиале говорят прямо', () => {
+		const { warnings } = registryPassport(
+			'x',
+			[{ ...entity, status: 'liquidated', isBranch: true }],
+			fetchedAt
+		);
 
 		expect(warnings.some((text) => text.includes('ликвидирована'))).toBe(true);
-	});
-
-	it('филиал отмечается отдельно: ИНН у него общий с головной организацией', () => {
-		const branch = { ...entity, isBranch: true };
-
-		expect(draftWarnings(branch, [], draftOf(branch), null).some((t) => t.includes('филиал'))).toBe(
-			true
-		);
-	});
-
-	it('непрочитанный раздел означает, что принадлежность сайта не подтверждена', () => {
-		const warnings = draftWarnings(entity, [], draftOf(entity), null);
-
-		expect(warnings.some((text) => text.includes('не прочитался'))).toBe(true);
-	});
-
-	it('расхождение названий в реестре и на сайте показывается сотруднику', () => {
-		const other = readSvedenPage(
-			'https://polytech.example.ru/sveden/common',
-			'<span itemprop="fullName">Совсем другая организация</span>'
-		);
-		const { draft } = buildDraft(entity, other, {
-			value: 'https://polytech.example.ru',
-			fromInput: true
-		});
-
-		expect(
-			draftWarnings(entity, [], draft, other).some((text) => text.includes('не совпадают'))
-		).toBe(true);
-	});
-
-	it('разное написание одного и того же названия расхождением не считается', () => {
-		expect(
-			namesAgree(
-				'ФГАОУ ВО «Такой-то политехнический университет»',
-				'Такой-то политехнический университет'
-			)
-		).toBe(true);
-		expect(namesAgree('Такой-то политех', 'Совсем другая организация')).toBe(false);
+		expect(warnings.some((text) => text.includes('филиал'))).toBe(true);
 	});
 });

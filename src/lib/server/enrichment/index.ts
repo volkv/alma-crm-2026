@@ -1,33 +1,45 @@
 /**
- * Поиск организации во внешних источниках: от строки до черновика карточки.
+ * Паспорт организации из внешних источников: от строки поиска или сайта до
+ * предложения полей карточки.
  *
- * Порядок один и тот же, что бы ни ввёл сотрудник. Строка распознаётся как ИНН
- * или как название (`lookupQueryKind`), по ней спрашивается справочник
- * юридических лиц (`dadata.ts`), у первого попавшего ищется сайт, по сайту
- * читается раздел «Сведения об образовательной организации» (`sveden.ts`), и
- * всё это сводится в поля карточки с пометкой, откуда взялось каждое.
+ * Два входа, по шагам работы сотрудника. По названию или ИНН спрашивается
+ * справочник юридических лиц (`dadata.ts`) — оттуда реквизиты. По сайту из
+ * карточки читается раздел «Сведения об образовательной организации»
+ * (`sveden.ts`) — оттуда наименования, кандидаты в контакты и программы.
+ * Третий вход — снимок JSON, загруженный файлом: тот же паспорт, собранный
+ * там, где источники были включены.
  *
- * Модуль изолирован намеренно: он ничего не пишет в базу, ничего не знает про
- * справочник организаций и не вызывается из его форм. Наружу он отдаёт
- * черновик, а что с ним делать — решает то место, куда его однажды подключат.
- *
- * Результат всегда неполон и местами неверен: ЕГРЮЛ отстаёт от жизни, сайт
- * вуза заполняли руками, а вид организации и уровень образования вообще
- * угаданы. Поэтому вместе с черновиком идут `sources` — откуда каждое поле — и
- * `warnings` — что именно стоит посмотреть глазами.
+ * Модуль ничего не пишет в справочник. Наружу он отдаёт паспорт под номером
+ * (`passports.ts`), а записывает принятые поля форма организации — когда
+ * сотрудник увидел разницу, отметил нужное и сохранил. Результат всегда неполон
+ * и местами неверен: ЕГРЮЛ отстаёт от жизни, сайт вуза заполняли руками, а вид
+ * организации угадан. Поэтому у каждого значения — источник и дата, а рядом —
+ * замечания, что посмотреть глазами.
  */
+import { createHash } from 'node:crypto';
 import {
 	lookupQueryKind,
-	type DraftSources,
+	organizationPassportSchema,
+	passportValueFits,
+	PASSPORT_FIELDS,
+	type FieldSource,
+	type IssuedPassport,
 	type LegalEntity,
-	type OrganizationDraft,
-	type OrganizationLookupResult,
-	type SvedenReport
+	type LookupQueryKind,
+	type OrganizationPassport,
+	type PassportField,
+	type PassportValue,
+	type SiteReport
 } from '$lib/contracts/enrichment';
+import type { ActorContext } from '../actor';
+import { cached, type CacheRegion } from '../cache/region';
+import { NotFoundError, ValidationError } from '../errors';
+import { requirePermission } from '../rbac';
+import { consumeQuota, requireEnabled } from './access';
 import { guessEducationLevel, guessKind } from './classify';
-import { findParties } from './dadata';
-import { NotFoundError } from '../errors';
-import { fetchSveden, normalizeWebsite, siteFromEmails } from './sveden';
+import { DadataError, DADATA_NOT_CONFIGURED, findParties, isDadataConfigured } from './dadata';
+import { issuePassport } from './passports';
+import { fetchSiteReport, normalizeWebsite, siteFromEmails } from './sveden';
 
 /** Состояния ЕГРЮЛ, о которых сотруднику говорят отдельно. */
 const STATUS_WARNINGS: Record<string, string> = {
@@ -39,84 +51,90 @@ const STATUS_WARNINGS: Record<string, string> = {
 };
 
 /**
- * Наименование в виде, пригодном для сравнения: без кавычек, регистра и лишних
- * пробелов. Один и тот же вуз в выписке и на своём сайте пишется по-разному —
- * «ФГАОУ ВО „Такой-то университет“» против «Такой-то университет», — и
- * сравнивать их посимвольно значит всегда получать «не совпало».
+ * Ответы источников живут сутки. Реквизиты вуза меняются реже, чем раз в год,
+ * а лимит подсказок у поставщика общий на стенд. Перепроверки по расписанию нет
+ * намеренно: паспорт спрашивают, когда заводят или правят карточку, и держать
+ * его свежим без человека, который на него смотрит, незачем.
  */
-export function comparableName(value: string): string {
-	return value
-		.toLocaleLowerCase('ru')
-		.replace(/[«»"'`„“”]/g, ' ')
-		.replace(/ё/g, 'е')
-		.replace(/\s+/g, ' ')
-		.trim();
+const ENRICHMENT_CACHE: CacheRegion = { name: 'enrichment', ttlSeconds: 24 * 60 * 60 };
+
+function valueOf(
+	value: string | null | undefined,
+	source: FieldSource,
+	fetchedAt: string
+): PassportValue | undefined {
+	const trimmed = value?.trim();
+
+	return trimmed === undefined || trimmed === ''
+		? undefined
+		: { value: trimmed, source, fetchedAt };
 }
 
-/** Говорят ли выписка и сайт об одной организации. */
-export function namesAgree(fromRegistry: string, fromSite: string): boolean {
-	const registry = comparableName(fromRegistry);
-	const site = comparableName(fromSite);
+/** Поля без пустых: пустое значение источника — не предложение стереть поле. */
+function compact(
+	fields: Partial<Record<PassportField, PassportValue | undefined>>
+): OrganizationPassport['fields'] {
+	const result: OrganizationPassport['fields'] = {};
 
-	return registry.includes(site) || site.includes(registry);
+	for (const field of PASSPORT_FIELDS) {
+		const value = fields[field];
+
+		if (value !== undefined) {
+			result[field] = value;
+		}
+	}
+
+	return result;
 }
 
 /**
- * Черновик карточки из выписки и раздела сайта.
+ * Паспорт по ответу реестра.
  *
- * Правило на все поля одно: реквизиты берутся из ЕГРЮЛ, названия — с сайта.
- * ИНН, КПП, ОГРН и регион существуют в реестре и больше нигде; наименование в
- * реестре записано так, как его подали на регистрацию («ФГБОУ ВО ...»), а на
- * своём сайте вуз пишет то, как он называется. Для карточки, которую читает
- * человек, второе полезнее — но только если раздел действительно нашёлся.
+ * Реквизиты — ИНН, КПП, ОГРН, регион, наименования — как их отдал ЕГРЮЛ. Вид
+ * организации и уровень образования угаданы по ОКВЭД и названию, сайт — по
+ * домену почты из выписки; все три помечены догадкой.
  */
-export function buildDraft(
-	entity: LegalEntity,
-	sveden: SvedenReport | null,
-	website: { value: string | null; fromInput: boolean }
-): { draft: OrganizationDraft; sources: DraftSources } {
-	const siteFullName = sveden?.found === true ? sveden.fields.fullName : null;
-	const siteShortName = sveden?.found === true ? sveden.fields.shortName : null;
-	const legalName = siteFullName ?? entity.legalName;
-	const shortName = siteShortName ?? entity.shortName;
-	const educationLevel = guessEducationLevel(legalName, entity.okved);
-	const kind = guessKind(legalName, entity.okved);
+export function registryPassport(
+	query: string,
+	entities: readonly LegalEntity[],
+	fetchedAt: string
+): OrganizationPassport {
+	const [entity, ...others] = entities;
+
+	if (entity === undefined) {
+		throw new NotFoundError('По этой строке в реестре никого нет');
+	}
+
+	const kind = guessKind(entity.legalName, entity.okved);
+	const educationLevel =
+		kind === 'educational_institution' ? guessEducationLevel(entity.legalName, entity.okved) : null;
 
 	return {
-		draft: {
-			kind,
-			// Уровень заполняют ровно у учебных заведений — это же проверяет база.
-			educationLevel: kind === 'educational_institution' ? educationLevel : null,
-			legalName,
-			shortName,
-			inn: entity.inn,
-			kpp: entity.kpp,
-			ogrn: entity.ogrn,
-			region: entity.region,
-			website: website.value
-		},
-		sources: {
-			kind: 'guess',
-			educationLevel: 'guess',
-			legalName: siteFullName === null ? 'dadata' : 'sveden',
-			shortName: siteShortName === null ? 'dadata' : 'sveden',
-			inn: 'dadata',
-			kpp: 'dadata',
-			ogrn: 'dadata',
-			region: 'dadata',
-			// Не названный человеком сайт — это догадка по домену почты из выписки,
-			// а не вычитанное где-то значение, и помечен он именно так.
-			website: website.fromInput ? 'input' : 'guess'
-		}
+		version: 1,
+		query,
+		entity,
+		others,
+		fields: compact({
+			kind: valueOf(kind, 'guess', fetchedAt),
+			educationLevel: valueOf(educationLevel, 'guess', fetchedAt),
+			legalName: valueOf(entity.legalName, 'dadata', fetchedAt),
+			shortName: valueOf(entity.shortName, 'dadata', fetchedAt),
+			inn: valueOf(entity.inn, 'dadata', fetchedAt),
+			kpp: valueOf(entity.kpp, 'dadata', fetchedAt),
+			ogrn: valueOf(entity.ogrn, 'dadata', fetchedAt),
+			region: valueOf(entity.region, 'dadata', fetchedAt),
+			website: valueOf(siteFromEmails(entity.emails), 'guess', fetchedAt)
+		}),
+		site: null,
+		warnings: registryWarnings(entity, others, kind)
 	};
 }
 
-/** Что сотруднику стоит проверить глазами, прежде чем заводить карточку. */
-export function draftWarnings(
+/** Что проверить глазами в ответе реестра, прежде чем принимать реквизиты. */
+export function registryWarnings(
 	entity: LegalEntity,
-	others: LegalEntity[],
-	draft: OrganizationDraft,
-	sveden: SvedenReport | null
+	others: readonly LegalEntity[],
+	kind: string
 ): string[] {
 	const warnings: string[] = [];
 	const statusWarning = STATUS_WARNINGS[entity.status];
@@ -135,24 +153,15 @@ export function draftWarnings(
 		);
 	}
 
-	if (draft.kind !== 'educational_institution') {
+	if (kind !== 'educational_institution') {
 		warnings.push(
-			'По названию и коду ОКВЭД это не похоже на образовательную организацию: вид и уровень образования выбраны наугад'
+			'По названию и коду ОКВЭД это не похоже на образовательную организацию: вид угадан'
 		);
 	}
 
-	if (draft.website === null) {
-		warnings.push('Сайт не нашёлся: в ЕГРЮЛ его нет, а почты, по домену которой его искать, тоже');
-	} else if (sveden === null || !sveden.found) {
+	if (siteFromEmails(entity.emails) !== null) {
 		warnings.push(
-			`Раздел «Сведения об образовательной организации» по адресу ${draft.website} не прочитался, и что сайт принадлежит этой организации, ничем не подтверждено`
-		);
-	} else if (
-		sveden.fields.fullName !== null &&
-		!namesAgree(entity.legalName, sveden.fields.fullName)
-	) {
-		warnings.push(
-			`Наименование в ЕГРЮЛ и на сайте не совпадают: «${entity.legalName}» против «${sveden.fields.fullName}»`
+			'Сайт в ЕГРЮЛ не хранится и угадан по домену почты из выписки: проверьте его, прежде чем читать раздел «Сведения»'
 		);
 	}
 
@@ -160,45 +169,179 @@ export function draftWarnings(
 }
 
 /**
- * Полный поиск: справочник, сайт, раздел, черновик.
+ * Паспорт по разделу `/sveden` сайта.
  *
- * `NotFoundError`, а не пустой результат: «по такой строке никого нет» — это
- * отказ, который страница показывает так же, как любой другой, а не особое
- * состояние, которое каждый вызывающий разбирал бы сам.
+ * Из полей карточки сайт предлагает только наименования: реквизиты живут в
+ * реестре, и сайт, где ИНН набран руками, ему не соперник. Остальное —
+ * руководители подразделений и программы — идёт списками для просмотра.
  */
-export async function lookupOrganization(
-	raw: string,
-	websiteHint: string | null = null
-): Promise<OrganizationLookupResult> {
-	const { kind, query } = lookupQueryKind(raw);
-	const entities = await findParties(query, kind);
-	const [entity, ...others] = entities;
+export function sitePassport(report: SiteReport): OrganizationPassport {
+	const common = report.common.found ? report.common.fields : null;
 
-	if (entity === undefined) {
-		throw new NotFoundError(
-			kind === 'inn'
-				? 'Организация с таким ИНН в справочнике не найдена'
-				: 'По этому названию в справочнике ничего не нашлось'
+	return {
+		version: 1,
+		query: null,
+		entity: null,
+		others: [],
+		fields: compact({
+			legalName: valueOf(common?.fullName, 'sveden', report.fetchedAt),
+			shortName: valueOf(common?.shortName, 'sveden', report.fetchedAt)
+		}),
+		site: report,
+		warnings: siteWarnings(report)
+	};
+}
+
+/** Что не прочиталось на сайте — сказано словами, а не пустыми блоками. */
+export function siteWarnings(report: SiteReport): string[] {
+	const warnings: string[] = [];
+
+	if (!report.common.found) {
+		warnings.push(
+			`«Основные сведения» по адресу ${report.common.url} не прочитались: что сайт принадлежит образовательной организации, ничем не подтверждено`
 		);
 	}
 
-	// Сайт, названный человеком, сильнее догадки по домену почты: он смотрит на
-	// него прямо сейчас, а мы гадаем по выписке.
-	const fromInput = websiteHint === null ? null : normalizeWebsite(websiteHint);
-	const website = fromInput ?? siteFromEmails(entity.emails);
-	const sveden = website === null ? null : await fetchSveden(website);
-	const { draft, sources } = buildDraft(entity, sveden, {
-		value: website,
-		fromInput: fromInput !== null
+	if (!report.struct.found) {
+		warnings.push(
+			'Подраздел «Структура и органы управления» не прочитался: кандидатов в контакты нет'
+		);
+	}
+
+	if (!report.education.found) {
+		warnings.push('Перечень образовательных программ не прочитался');
+	} else if (report.education.truncated) {
+		warnings.push(
+			'Страница с программами больше допустимого размера и прочитана не целиком: список неполон'
+		);
+	}
+
+	return warnings;
+}
+
+function cacheKey(...parts: string[]): string {
+	return createHash('sha256').update(parts.join('\u0000'), 'utf8').digest('hex').slice(0, 32);
+}
+
+type RegistryAnswer = { entities: LegalEntity[]; fetchedAt: string };
+
+/**
+ * Поиск по реестру: реквизиты по названию или ИНН.
+ *
+ * Право — то же, что на правку организаций: паспорт существует ради
+ * заполнения карточки. Ответ из кэша квоту не тратит — тратит только настоящее
+ * обращение к поставщику.
+ */
+export async function lookupRegistry(ctx: ActorContext, raw: string): Promise<IssuedPassport> {
+	requirePermission(ctx, 'organizations.write');
+	const settings = await requireEnabled();
+
+	// Без ключа обращения не будет — и квоту на него тратить нечего.
+	if (!isDadataConfigured()) {
+		throw new DadataError('not_configured', null, DADATA_NOT_CONFIGURED);
+	}
+
+	const { kind, query } = lookupQueryKind(raw);
+
+	// Кэш общий для всех сотрудников: это открытые сведения реестра, а не
+	// выборка из справочника, и области доступа они не знают.
+	const answer = await cached<RegistryAnswer>(
+		ENRICHMENT_CACHE,
+		`registry:${cacheKey(kind, query.toLocaleLowerCase('ru'))}`,
+		async () => {
+			await consumeQuota(ctx, settings.dailyQuota);
+
+			return { entities: await findParties(query, kind), fetchedAt: new Date().toISOString() };
+		},
+		(stored) => stored as RegistryAnswer
+	);
+
+	if (answer.entities.length === 0) {
+		throw new NotFoundError(notFoundMessage(kind));
+	}
+
+	return issuePassport(ctx, 'live', registryPassport(query, answer.entities, answer.fetchedAt));
+}
+
+function notFoundMessage(kind: LookupQueryKind): string {
+	return kind === 'inn'
+		? 'Организация с таким ИНН в реестре не найдена'
+		: 'По этому названию в реестре ничего не нашлось';
+}
+
+/**
+ * Чтение раздела `/sveden` по сайту из карточки.
+ *
+ * Сайт называет форма — то, что сейчас стоит в поле «Сайт». Идти разрешено
+ * только внутри его домена (`withinSite`), и каждый адрес проверяется правилом
+ * исходящих адресов.
+ */
+export async function lookupSite(ctx: ActorContext, website: string): Promise<IssuedPassport> {
+	requirePermission(ctx, 'organizations.write');
+	const settings = await requireEnabled();
+	const origin = normalizeWebsite(website);
+
+	if (origin === null) {
+		throw new ValidationError('Адрес сайта в карточке не разбирается');
+	}
+
+	const report = await cached<SiteReport | null>(
+		ENRICHMENT_CACHE,
+		`site:${cacheKey(origin.toLowerCase())}`,
+		async () => {
+			await consumeQuota(ctx, settings.dailyQuota);
+
+			return fetchSiteReport(origin, new Date().toISOString());
+		},
+		(stored) => stored as SiteReport | null
+	);
+
+	if (report === null) {
+		throw new ValidationError('Адрес сайта в карточке не разбирается');
+	}
+
+	return issuePassport(ctx, 'live', sitePassport(report));
+}
+
+/** Потолок снимка: паспорт с полным перечнем программ весит сотни килобайт. */
+export const SNAPSHOT_MAX_BYTES = 2 * 1024 * 1024;
+
+/**
+ * Снимок паспорта из файла — тот же формат, что отдаёт поиск.
+ *
+ * Работает и при выключенных источниках: наружу он не ходит, а принятые из него
+ * поля проходят тот же дифф и то же подтверждение. Происхождение таких полей
+ * помечается снимком: источник и дату в нём назвал тот, кто его собирал.
+ */
+export async function importSnapshot(ctx: ActorContext, text: string): Promise<IssuedPassport> {
+	requirePermission(ctx, 'organizations.write');
+
+	let raw: unknown;
+
+	try {
+		raw = JSON.parse(text);
+	} catch {
+		throw new ValidationError('Файл не читается как JSON');
+	}
+
+	const parsed = organizationPassportSchema.safeParse(raw);
+
+	if (!parsed.success) {
+		throw new ValidationError(
+			'Файл не похож на снимок паспорта организации',
+			parsed.error.issues.slice(0, 5).map((issue) => `${issue.path.join('.')}: ${issue.message}`)
+		);
+	}
+
+	const misfits = PASSPORT_FIELDS.filter((field) => {
+		const value = parsed.data.fields[field];
+
+		return value !== undefined && !passportValueFits(field, value.value);
 	});
 
-	return {
-		kind,
-		entity,
-		others,
-		draft,
-		sources,
-		sveden,
-		warnings: draftWarnings(entity, others, draft, sveden)
-	};
+	if (misfits.length > 0) {
+		throw new ValidationError('В снимке есть значения, которых карточка не допускает', misfits);
+	}
+
+	return issuePassport(ctx, 'snapshot', parsed.data);
 }

@@ -38,6 +38,7 @@ import type {
 	UpdateProgramInput,
 	UpdateSiteInput
 } from '$lib/contracts/directory';
+import type { PassportProvenance } from '$lib/contracts/enrichment';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { invalidateDirectoryOptions } from '../cache/directory';
@@ -144,6 +145,42 @@ async function written<TResult>(result: Promise<TResult>): Promise<TResult> {
 }
 
 /**
+ * Поля карточки приняты из паспорта организации: событие с источником и датой
+ * каждого значения. Пишется в той же транзакции, что и сами поля, — принятое
+ * значение без записи о происхождении ничем не отличалось бы от набранного
+ * руками. Пустой список — ничего не принималось, и события нет.
+ */
+async function recordPassportProvenance(
+	ctx: ActorContext,
+	organizationId: string,
+	provenance: readonly PassportProvenance[],
+	executor: Tx
+): Promise<void> {
+	if (provenance.length === 0) {
+		return;
+	}
+
+	await recordAuditEvent(
+		ctx,
+		{
+			type: 'organizations.passport_applied',
+			outcome: 'success',
+			subject: { type: 'organization', id: organizationId },
+			details: {
+				changedFields: provenance.map((entry) => entry.field),
+				provenance: provenance.map(({ field, source, fetchedAt, via }) => ({
+					field,
+					source,
+					fetchedAt,
+					via
+				}))
+			}
+		},
+		executor
+	);
+}
+
+/**
  * Заведение организации. `tx` передаёт тот, кто уже открыл транзакцию и
  * отвечает за целостность операции целиком: заявка с сайта заводит организацию,
  * человека, его роль и взаимодействие — либо всё, либо ничего. Своей
@@ -152,7 +189,8 @@ async function written<TResult>(result: Promise<TResult>): Promise<TResult> {
 export async function createOrganization(
 	ctx: ActorContext,
 	input: CreateOrganizationInput,
-	tx?: Tx
+	tx?: Tx,
+	provenance: readonly PassportProvenance[] = []
 ): Promise<OrganizationView> {
 	await requirePermission(ctx, 'organizations.write', { type: 'organizations.created' });
 	await assertInnIsFree(ctx, input.inn, undefined, tx);
@@ -196,6 +234,7 @@ export async function createOrganization(
 			},
 			executor
 		);
+		await recordPassportProvenance(ctx, row.id, provenance, executor);
 
 		return toOrganizationView(row);
 	};
@@ -207,7 +246,8 @@ export async function createOrganization(
 
 export async function updateOrganization(
 	ctx: ActorContext,
-	input: UpdateOrganizationInput
+	input: UpdateOrganizationInput,
+	provenance: readonly PassportProvenance[] = []
 ): Promise<OrganizationView> {
 	await requirePermission(ctx, 'organizations.write', {
 		type: 'organizations.updated',
@@ -240,6 +280,7 @@ export async function updateOrganization(
 					},
 					tx
 				);
+				await recordPassportProvenance(ctx, id, provenance, tx);
 
 				return toOrganizationView(row);
 			})

@@ -214,6 +214,48 @@ export function readMicrodata(html: string): Microdata {
 	return { properties, types };
 }
 
+/**
+ * Микроданные каждого элемента-строки с одним из названных `itemprop`.
+ *
+ * Подразделы `/sveden/struct` и `/sveden/education` — таблицы: строка размечена
+ * `itemprop="structOrgUprav"` или `itemprop="eduOp"`, а ячейки внутри —
+ * `fio`, `post`, `eduCode`. Плоский `readMicrodata` смешал бы ячейки всех строк
+ * в одну кучу, и руководитель одной кафедры достался бы другой. Поэтому строка
+ * читается отдельно: её содержимое вырезается тем же счётом вложенности и
+ * разбирается как самостоятельная страница.
+ *
+ * `itemscope` у таких строк расставлен через раз, поэтому строка узнаётся по
+ * имени свойства, а не по признаку контейнера.
+ */
+export function readItems(html: string, names: readonly string[]): Microdata[] {
+	const source = withoutNoise(html);
+	const wanted = new Set(names.map((name) => name.toLowerCase()));
+	const items: Microdata[] = [];
+
+	for (const match of source.matchAll(TAG)) {
+		const tag = match[1].toLowerCase();
+
+		if (VOID_TAGS.has(tag)) {
+			continue;
+		}
+
+		const itemprop = attributes(match[2]).get('itemprop');
+
+		if (itemprop === undefined || !wanted.has(itemprop.toLowerCase())) {
+			continue;
+		}
+
+		items.push(readMicrodata(contentOf(source, tag, match.index + match[0].length)));
+	}
+
+	return items;
+}
+
+/** Все значения свойства; пустой список — свойства нет. */
+export function propertyValues(data: Microdata, name: string): string[] {
+	return data.properties.get(name.toLowerCase()) ?? [];
+}
+
 /** Первое значение свойства; `null` — свойства на странице нет. */
 export function property(data: Microdata, name: string): string | null {
 	return data.properties.get(name.toLowerCase())?.[0] ?? null;

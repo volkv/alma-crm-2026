@@ -29,7 +29,7 @@ describe('validateAuditDetails', () => {
 
 	it('отвергает любой ключ, который не является ни ссылкой, ни служебным полем', () => {
 		expect(validateAuditDetails({ comment: 'позвонили в вуз' })).toEqual([
-			'comment: в подробностях допустимы ссылки вида <что-то>Id, имена <что-то>Key, числа <что-то>Count, personIds и поля route, method, status, demo, mode, periodStart, periodEnd'
+			'comment: в подробностях допустимы ссылки вида <что-то>Id, имена <что-то>Key, числа <что-то>Count, personIds, provenance и поля route, method, status, demo, mode, periodStart, periodEnd'
 		]);
 	});
 
@@ -58,17 +58,32 @@ describe('validateAuditDetails', () => {
 		expect(validateAuditDetails({ demo: 'да' })).toEqual(['demo: ожидается значение типа boolean']);
 	});
 
-	it('оставляет списки запрещёнными везде, кроме `personIds`', () => {
+	it('оставляет списки запрещёнными везде, кроме `personIds` и `provenance`', () => {
 		// Произвольный массив рано или поздно окажется перечнем фамилий, а журнал
-		// неизменяем: исключение сделано ровно одно и проверяется по содержимому.
+		// неизменяем: исключений два, и оба проверяются по содержимому.
 		expect(
 			validateAuditDetails({ organizationIds: ['11111111-2222-4333-8444-555555555555'] })
 		).toEqual([
-			'organizationIds: в подробностях допустимы ссылки вида <что-то>Id, имена <что-то>Key, числа <что-то>Count, personIds и поля route, method, status, demo, mode, periodStart, periodEnd'
+			'organizationIds: в подробностях допустимы ссылки вида <что-то>Id, имена <что-то>Key, числа <что-то>Count, personIds, provenance и поля route, method, status, demo, mode, periodStart, periodEnd'
 		]);
 		expect(
 			validateAuditDetails({ organizationId: ['11111111-2222-4333-8444-555555555555'] })
 		).toEqual(['organizationId: идентификатор должен быть строкой']);
+	});
+
+	it('пускает в происхождение паспорта только коды и отметку времени', () => {
+		const entry = {
+			field: 'inn',
+			source: 'dadata',
+			fetchedAt: '2026-09-24T09:00:00.000Z',
+			via: 'live'
+		};
+
+		expect(validateAuditDetails({ provenance: [entry] })).toEqual([]);
+		expect(
+			validateAuditDetails({ provenance: [{ ...entry, source: 'Иванов Иван, ректор' }] })
+		).toHaveLength(1);
+		expect(validateAuditDetails({ provenance: [{ ...entry, note: 'x' }] })).toHaveLength(1);
 	});
 
 	it('требует строку в ссылке и список строк в изменённых полях', () => {

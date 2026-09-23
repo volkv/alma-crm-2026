@@ -1,5 +1,6 @@
 <script lang="ts">
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatDate } from '$lib/format';
 	import type { CardModel } from './model';
 	import QuietNote from './quiet-note.svelte';
@@ -9,7 +10,9 @@
 
 	/**
 	 * Верх карточки: четыре факта — с кем работаем, где стоим и сколько
-	 * осталось, кто отвечает, по какому договору, — и процесс полосой. Названия
+	 * осталось, кто отвечает и на каких условиях, — и процесс полосой. Условия
+	 * зависят от контрагента: вуз и юридическое лицо работают по договору,
+	 * физическое лицо — по оплате. Названия
 	 * стадий раскрываются столбиком по требованию, пройденные в нём свёрнуты в
 	 * строку. Если по записи давно тихо, это сказано здесь же словами.
 	 */
@@ -59,21 +62,30 @@
 				{/if}
 			</dd>
 		</div>
-		<div class="min-w-0">
-			<dt class="text-xs text-muted-foreground">Договор</dt>
-			<dd class="mt-0.5 text-sm">
-				{#if model.contract !== null}
-					<span class="font-medium tabular-nums">№ {model.contract.number}</span>
-					<span class="block text-xs text-muted-foreground">
-						{model.contract.status}{model.contract.validUntil
-							? `, до ${formatDate(model.contract.validUntil)}`
-							: ''}
-					</span>
-				{:else}
-					<span class="text-faint">не выбран</span>
-				{/if}
-			</dd>
-		</div>
+		{#if model.shape === 'person'}
+			<div class="min-w-0">
+				<dt class="text-xs text-muted-foreground">Оплата</dt>
+				<dd class="mt-0.5 text-sm">
+					<StatusBadge tone={model.payment.tone} dot>{model.payment.text}</StatusBadge>
+				</dd>
+			</div>
+		{:else}
+			<div class="min-w-0">
+				<dt class="text-xs text-muted-foreground">Договор</dt>
+				<dd class="mt-0.5 text-sm">
+					{#if model.contract !== null}
+						<span class="font-medium tabular-nums">№ {model.contract.number}</span>
+						<span class="block text-xs text-muted-foreground">
+							{model.contract.status}{model.contract.validUntil
+								? `, до ${formatDate(model.contract.validUntil)}`
+								: ''}
+						</span>
+					{:else}
+						<span class="text-faint">не выбран</span>
+					{/if}
+				</dd>
+			</div>
+		{/if}
 	</dl>
 
 	{#if model.stages.length > 0}

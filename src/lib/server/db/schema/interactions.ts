@@ -31,7 +31,13 @@ import {
 	uuid,
 	type AnyPgColumn
 } from 'drizzle-orm/pg-core';
-import type { DocumentMarkEvidence, DocumentStatusFact } from '$lib/contracts/documents';
+import {
+	DOCUMENT_TEMPLATE_KEYS,
+	type DocumentMarkEvidence,
+	type DocumentStatusFact,
+	type DocumentTemplateKey
+} from '$lib/contracts/documents';
+import { CARD_PANELS, type CardPanel } from '$lib/contracts/process-card';
 import type {
 	ChecklistItem,
 	ChecklistState,
@@ -156,6 +162,11 @@ export const workspaceMembers = pgTable(
 	]
 );
 
+/** Литерал массива строк для проверок по закрытому каталогу из контракта. */
+function textArray(values: readonly string[]) {
+	return sql.raw(`array[${values.map((value) => `'${value}'`).join(', ')}]::text[]`);
+}
+
 /**
  * Процесс: описание работы — стадии, переходы, нормативы, чек-листы, — живущее
  * само по себе.
@@ -170,6 +181,14 @@ export const workspaceMembers = pgTable(
  * процесс одним значением, читаемым под блокировкой процесса, иначе переход и
  * публикация разойдутся на гонке. Блокировать при этом пространство, а не
  * процесс, значило бы пропустить гонку у процесса, назначенного двум местам.
+ *
+ * Состав карточки — панели и шаблоны документов — тоже свойство процесса, а не
+ * редакции: это вид рабочего места, а не структура работы. Стадий он не
+ * касается, переносить по нему нечего, и правка применяется сразу, без
+ * черновика и публикации. Значения держит проверка по каталогу: неизвестная
+ * панель в строке — это панель, которую карточка молча не нарисует. Новый
+ * процесс получает весь каталог: карточка без панели, о которой администратор
+ * ещё не знает, выглядела бы поломкой, а лишнее он снимет галочкой.
  */
 export const workflows = pgTable(
 	'workflows',
@@ -181,9 +200,22 @@ export const workflows = pgTable(
 		activeRevisionId: uuid().references((): AnyPgColumn => processRevisions.id, {
 			onDelete: 'restrict'
 		}),
+		cardPanels: text().array().$type<CardPanel[]>().notNull().default(textArray(CARD_PANELS)),
+		documentTemplateKeys: text()
+			.array()
+			.$type<DocumentTemplateKey[]>()
+			.notNull()
+			.default(textArray(DOCUMENT_TEMPLATE_KEYS)),
 		...timestamps
 	},
-	(table) => [unique('workflows_key_key').on(table.key)]
+	(table) => [
+		unique('workflows_key_key').on(table.key),
+		check('workflows_card_panels_known', sql`${table.cardPanels} <@ ${textArray(CARD_PANELS)}`),
+		check(
+			'workflows_document_template_keys_known',
+			sql`${table.documentTemplateKeys} <@ ${textArray(DOCUMENT_TEMPLATE_KEYS)}`
+		)
+	]
 );
 
 /**

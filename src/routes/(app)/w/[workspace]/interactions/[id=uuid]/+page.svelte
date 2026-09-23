@@ -23,7 +23,7 @@
 	/**
 	 * Карточка взаимодействия — одной колонкой, сверху вниз: факты и процесс,
 	 * единственное главное действие с тем, что ему мешает, и лента всего, что
-	 * случилось. Контекст (сторона, договор, обучение, документы) стоит узкой
+	 * случилось. Контекст (сторона и панели, которые объявил процесс) стоит узкой
 	 * колонкой сбоку на рабочем экране, а на телефоне — между действием и
 	 * лентой, свёрнутым.
 	 *
@@ -42,7 +42,8 @@
 		comments: data.comments,
 		changes: data.changes,
 		counterparty: data.counterparty,
-		exchange: data.exchange
+		exchange: data.exchange,
+		card: data.card
 	});
 	const model = $derived(buildCard(source, new Date()));
 
@@ -125,7 +126,7 @@
 				aria-controls="card-context"
 				onclick={() => (contextOpen = !contextOpen)}
 			>
-				Контрагент, договор, документы
+				Контрагент и условия
 				<ChevronRightIcon
 					class="size-4 shrink-0 text-muted-foreground transition-transform {contextOpen
 						? 'rotate-90'
@@ -139,7 +140,7 @@
 			>
 				<ContextPanels
 					{source}
-					shape={model.shape}
+					{model}
 					supersessions={data.supersessions}
 					can={{
 						edit: can('edit'),
@@ -165,6 +166,11 @@
 	closing={data.closing}
 	canAttach={can('upload_document')}
 />
-<RecordDialogs interaction={data.interaction} users={data.users} contracts={data.contracts} />
+<RecordDialogs
+	interaction={data.interaction}
+	users={data.users}
+	contracts={data.contracts}
+	shape={model.shape}
+/>
 <DocumentDialogs interaction={data.interaction} supersessions={data.supersessions} />
 <LearningDialogs exchange={data.exchange} />

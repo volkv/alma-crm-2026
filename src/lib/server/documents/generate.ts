@@ -17,10 +17,12 @@ import type { DocumentView } from '$lib/contracts/documents';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getConfig } from '../config';
+import { getDb } from '../db';
 import { documents } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
+import { assertTemplateOffered } from '../stages/card';
 import { touchInteraction } from '../stages/commands';
 import { DocumentConversionError, hideServiceAddresses } from './errors';
 import { DOCX_MIME, PDF_MIME, sniffDocumentMime, type AllowedDocumentMime } from './mime';
@@ -220,6 +222,9 @@ export async function generateDocument(
 
 	if (interactionId !== null) {
 		await assertInteractionAccessible(ctx, interactionId);
+		// Какие документы собираются в деле, решает его процесс: соглашение с
+		// вузом в карточке обучения физического лица — ошибка, а не выбор.
+		await assertTemplateOffered(getDb(), interactionId, input.templateKey);
 	}
 
 	const { record, content } = await loadTemplate(ctx, input.templateKey);

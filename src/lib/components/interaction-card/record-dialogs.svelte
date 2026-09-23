@@ -21,6 +21,7 @@
 		type InteractionView
 	} from '$lib/contracts/interactions';
 	import { getCardCommands } from './commands.svelte';
+	import type { CounterpartyShape } from './model';
 
 	/**
 	 * Диалоги команд по записи: помехи, ответственный, план и договор.
@@ -31,9 +32,15 @@
 	let {
 		interaction,
 		users,
-		contracts
+		contracts,
+		shape
 	}: {
 		interaction: InteractionView;
+		/**
+		 * Вид контрагента: срок соглашения бывает только у вуза. У лица поля
+		 * соглашения в форме нет, а записанное значение едет как есть.
+		 */
+		shape: CounterpartyShape;
 		/** Кого можно назначить ответственным. */
 		users: readonly { id: string; name: string }[];
 		/** Договоры основной стороны: из них выбирают договор записи. */
@@ -267,26 +274,33 @@
 		</div>
 
 		<div class="grid gap-3 sm:grid-cols-2">
+			{#if shape === 'institution'}
+				<div class="flex flex-col gap-1.5">
+					<Label for="card-agreement-start">Соглашение: с</Label>
+					<DateField
+						id="card-agreement-start"
+						name="agreementPeriodStart"
+						max={plan.agreementPeriodEnd}
+						bind:value={plan.agreementPeriodStart}
+					/>
+				</div>
+				<div class="flex flex-col gap-1.5">
+					<Label for="card-agreement-end">Соглашение: по</Label>
+					<DateField
+						id="card-agreement-end"
+						name="agreementPeriodEnd"
+						min={plan.agreementPeriodStart}
+						bind:value={plan.agreementPeriodEnd}
+					/>
+				</div>
+			{:else}
+				<input type="hidden" name="agreementPeriodStart" value={plan.agreementPeriodStart} />
+				<input type="hidden" name="agreementPeriodEnd" value={plan.agreementPeriodEnd} />
+			{/if}
 			<div class="flex flex-col gap-1.5">
-				<Label for="card-agreement-start">Соглашение: с</Label>
-				<DateField
-					id="card-agreement-start"
-					name="agreementPeriodStart"
-					max={plan.agreementPeriodEnd}
-					bind:value={plan.agreementPeriodStart}
-				/>
-			</div>
-			<div class="flex flex-col gap-1.5">
-				<Label for="card-agreement-end">Соглашение: по</Label>
-				<DateField
-					id="card-agreement-end"
-					name="agreementPeriodEnd"
-					min={plan.agreementPeriodStart}
-					bind:value={plan.agreementPeriodEnd}
-				/>
-			</div>
-			<div class="flex flex-col gap-1.5">
-				<Label for="card-academic-start">Учебный период: с</Label>
+				<Label for="card-academic-start">
+					{shape === 'institution' ? 'Учебный период' : 'Обучение'}: с
+				</Label>
 				<DateField
 					id="card-academic-start"
 					name="academicPeriodStart"
@@ -295,7 +309,9 @@
 				/>
 			</div>
 			<div class="flex flex-col gap-1.5">
-				<Label for="card-academic-end">Учебный период: по</Label>
+				<Label for="card-academic-end">
+					{shape === 'institution' ? 'Учебный период' : 'Обучение'}: по
+				</Label>
 				<DateField
 					id="card-academic-end"
 					name="academicPeriodEnd"

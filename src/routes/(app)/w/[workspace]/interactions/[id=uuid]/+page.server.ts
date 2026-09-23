@@ -64,6 +64,7 @@ import {
 	setStageResult,
 	skipStage
 } from '$lib/server/stages/commands';
+import { readInteractionCard } from '$lib/server/stages/card';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import { responsibleOptions } from '../responsible';
 import type { Actions, PageServerLoad, RequestEvent } from './$types';
@@ -105,16 +106,18 @@ export const load: PageServerLoad = async (event) => {
 		// Сама основная сторона из справочника — вид контрагента, полное имя и
 		// реквизиты для панели контекста; без права на справочник карточка
 		// называет её так, как она записана в стороне взаимодействия.
+		// Состав карточки — панели и шаблоны — объявляет процесс записи, а вид
+		// шапки задаёт вид основной стороны.
 		const primary = interaction.parties.find((party) => party.isPrimary);
-		const [contracts, counterparty] =
-			primary === undefined
-				? [[], null]
-				: await Promise.all([
-						can(ctx, 'interactions.write')
-							? listOrganizationContracts(ctx, primary.organizationId)
-							: [],
-						can(ctx, 'organizations.read') ? getOrganization(ctx, primary.organizationId) : null
-					]);
+		const [contracts, counterparty, card] = await Promise.all([
+			primary !== undefined && can(ctx, 'interactions.write')
+				? listOrganizationContracts(ctx, primary.organizationId)
+				: [],
+			primary !== undefined && can(ctx, 'organizations.read')
+				? getOrganization(ctx, primary.organizationId)
+				: null,
+			readInteractionCard(interaction)
+		]);
 
 		return {
 			interaction,
@@ -127,7 +130,8 @@ export const load: PageServerLoad = async (event) => {
 			supersessions,
 			exchange,
 			contracts,
-			counterparty
+			counterparty,
+			card
 		};
 	} catch (cause) {
 		toPageError(cause);

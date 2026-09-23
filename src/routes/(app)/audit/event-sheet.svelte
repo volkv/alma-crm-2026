@@ -44,7 +44,15 @@
 	/** Значение подробности в том виде, в каком его можно прочитать. */
 	function detailValue(value: unknown): string {
 		if (Array.isArray(value)) {
-			return value.join(', ');
+			// Происхождение полей паспорта — список записей, а не строк: каждая
+			// читается «поле · источник · момент · способ».
+			return value
+				.map((item: unknown) =>
+					typeof item === 'object' && item !== null
+						? Object.values(item).map(String).join(' · ')
+						: String(item)
+				)
+				.join('; ');
 		}
 
 		if (typeof value === 'boolean') {

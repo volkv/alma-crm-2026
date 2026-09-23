@@ -182,9 +182,48 @@ function source(overrides: Partial<CardSource> = {}): CardSource {
 		changes: [],
 		counterparty: null,
 		exchange: NO_EXCHANGE,
+		card: {
+			panels: ['terms', 'contract', 'learning', 'documents'],
+			templates: ['agreement'],
+			counterpartyKind: 'educational_institution'
+		},
 		...overrides
 	};
 }
+
+describe('вид карточки', () => {
+	it('физическое лицо: панели из процесса, в шапке оплата из чек-листа стадии', () => {
+		const paid = entry({
+			snapshot: {
+				...entry().snapshot,
+				key: 'contract_payment',
+				name: 'Договор и оплата',
+				checklist: [{ key: 'payment_received', label: 'Оплата получена', required: true }]
+			},
+			checklistState: { payment_received: true },
+			leftAt: daysAgo(3)
+		});
+		const card = buildCard(
+			source({
+				status: status({ history: [paid] }),
+				card: {
+					panels: ['terms', 'payment', 'learners', 'learning', 'training_document', 'documents'],
+					templates: [],
+					counterpartyKind: 'individual'
+				}
+			}),
+			NOW
+		);
+
+		expect(card.shape).toBe('person');
+		expect(card.panels).not.toContain('contract');
+		expect(card.payment).toEqual({
+			tone: 'success',
+			text: 'Оплата получена',
+			stageName: 'Договор и оплата'
+		});
+	});
+});
 
 describe('условия перехода', () => {
 	it('собирает чек-лист, результат и итог обучения из снимка стадии', () => {

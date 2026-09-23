@@ -30,7 +30,19 @@
 	import StageTimeline from '$lib/components/stage-timeline.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatNumber, pluralize } from '$lib/format';
-	import { DOCUMENT_STATUS_FACTS, DOCUMENT_STATUS_FACT_LABELS } from '$lib/contracts/documents';
+	import {
+		DOCUMENT_STATUS_FACTS,
+		DOCUMENT_STATUS_FACT_LABELS,
+		DOCUMENT_TEMPLATE_KEYS,
+		DOCUMENT_TEMPLATE_LABELS,
+		type DocumentTemplateKey
+	} from '$lib/contracts/documents';
+	import {
+		CARD_PANELS,
+		CARD_PANEL_HINTS,
+		CARD_PANEL_LABELS,
+		type CardPanel
+	} from '$lib/contracts/process-card';
 	import {
 		STAGE_CATEGORIES,
 		STAGE_TRANSITION_KINDS,
@@ -228,6 +240,36 @@
 	 * не переезжая: переименование и правка параметров. Переезжающие сюда не
 	 * идут — их считает `preview.affected`.
 	 */
+	/**
+	 * Состав карточки в форме — до сохранения. Предпросмотр читает его же:
+	 * администратор видит карточку такой, какой она станет, а не какой была.
+	 */
+	let cardPanels = $state<CardPanel[]>(untrack(() => [...data.card.panels]));
+	let cardTemplates = $state<DocumentTemplateKey[]>(untrack(() => [...data.card.templates]));
+
+	// После сохранения форма показывает то, что записано, а не то, что набрали.
+	$effect(() => {
+		const saved = data.card;
+
+		untrack(() => {
+			cardPanels = [...saved.panels];
+			cardTemplates = [...saved.templates];
+		});
+	});
+
+	const cardDirty = $derived(
+		JSON.stringify(CARD_PANELS.filter((panel) => cardPanels.includes(panel))) !==
+			JSON.stringify(data.card.panels) ||
+			JSON.stringify(DOCUMENT_TEMPLATE_KEYS.filter((key) => cardTemplates.includes(key))) !==
+				JSON.stringify(data.card.templates)
+	);
+
+	function toggle<T>(list: T[], item: T, on: boolean): T[] {
+		return on
+			? [...list.filter((value) => value !== item), item]
+			: list.filter((value) => value !== item);
+	}
+
 	const affectedInPlace = $derived(
 		previewRows
 			.filter((row) => row.change === 'renamed' || row.change === 'changed')
@@ -428,6 +470,80 @@
 				</Alert.Description>
 			</Alert.Root>
 		{/if}
+	</Card.Content>
+</Card.Root>
+
+<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+<Card.Root data-tour="process-group-card">
+	<Card.Header>
+		<Card.Title>Карточка взаимодействия</Card.Title>
+		<Card.Description>
+			Какие панели стоят в карточке и какие документы в ней собираются по шаблону. Сторона и её
+			условия есть всегда и зависят от контрагента: у вуза — договор, продукты и лицензии, у
+			физического лица — программа, поток и оплата, у юридического — договор и слушатели. Изменение
+			действует сразу во всех пространствах процесса, без черновика: стадий оно не касается.
+		</Card.Description>
+	</Card.Header>
+	<Card.Content>
+		<form method="POST" action="?/card" class="grid gap-6 md:grid-cols-[minmax(0,1fr)_16rem]">
+			<div class="flex flex-col gap-4">
+				<fieldset class="flex flex-col gap-2">
+					<legend class="mb-2 text-sm font-medium">Панели</legend>
+					{#each CARD_PANELS as panel (panel)}
+						<Label class="flex items-start gap-2 font-normal">
+							<Checkbox
+								name="panels"
+								value={panel}
+								checked={cardPanels.includes(panel)}
+								onCheckedChange={(next) => (cardPanels = toggle(cardPanels, panel, next === true))}
+								class="mt-0.5"
+							/>
+							<span class="flex flex-col">
+								{CARD_PANEL_LABELS[panel]}
+								<span class="text-xs text-muted-foreground">{CARD_PANEL_HINTS[panel]}</span>
+							</span>
+						</Label>
+					{/each}
+				</fieldset>
+				<fieldset class="flex flex-col gap-2">
+					<legend class="mb-2 text-sm font-medium">Шаблоны документов</legend>
+					{#each DOCUMENT_TEMPLATE_KEYS as template (template)}
+						<Label class="flex items-center gap-2 font-normal">
+							<Checkbox
+								name="templates"
+								value={template}
+								checked={cardTemplates.includes(template)}
+								onCheckedChange={(next) =>
+									(cardTemplates = toggle(cardTemplates, template, next === true))}
+							/>
+							{DOCUMENT_TEMPLATE_LABELS[template]}
+						</Label>
+					{/each}
+				</fieldset>
+				<div>
+					<Button type="submit" size="sm" disabled={!cardDirty}>Сохранить состав карточки</Button>
+				</div>
+			</div>
+
+			<div class="flex flex-col gap-2 rounded-lg border border-border p-3" aria-live="polite">
+				<p class="text-xs font-semibold tracking-wide text-faint uppercase">Предпросмотр</p>
+				<ol class="flex list-inside list-decimal flex-col gap-1 text-sm">
+					<li>Сторона и условия</li>
+					{#each CARD_PANELS.filter((panel) => cardPanels.includes(panel)) as panel (panel)}
+						<li>{CARD_PANEL_LABELS[panel]}</li>
+					{/each}
+				</ol>
+				<p class="text-xs text-muted-foreground">
+					{#if cardTemplates.length === 0}
+						Документы по шаблону не собираются.
+					{:else}
+						По шаблону: {DOCUMENT_TEMPLATE_KEYS.filter((key) => cardTemplates.includes(key))
+							.map((key) => DOCUMENT_TEMPLATE_LABELS[key])
+							.join(', ')}.
+					{/if}
+				</p>
+			</div>
+		</form>
 	</Card.Content>
 </Card.Root>
 

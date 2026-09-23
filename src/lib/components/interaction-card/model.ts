@@ -4,7 +4,7 @@ import {
 	documentKindLabel,
 	type DocumentStatusFact
 } from '$lib/contracts/documents';
-import type { OrganizationView } from '$lib/contracts/directory';
+import type { OrganizationKind, OrganizationView } from '$lib/contracts/directory';
 import {
 	EXCHANGE_STATE_LABELS,
 	lmsEvidenceSchema,
@@ -29,6 +29,7 @@ import {
 	type StageProgressItem,
 	type StageTransitionKind
 } from '$lib/contracts/interactions';
+import type { ProcessCard } from '$lib/contracts/process-card';
 import { daysUntil, formatDate, formatDateTime, pluralize } from '$lib/format';
 
 /**
@@ -73,6 +74,12 @@ export type CardSource = {
 	/** Основная сторона из справочника: вид контрагента, реквизиты, регион. */
 	counterparty: OrganizationView | null;
 	exchange: CardExchange;
+	/**
+	 * Состав карточки из процесса записи и вид основной стороны. Вид читается
+	 * отдельно от справочника: реквизиты закрыты правом, а какую карточку
+	 * рисовать, нужно знать любому, кто запись видит.
+	 */
+	card: ProcessCard & { counterpartyKind: OrganizationKind };
 };
 
 /**
@@ -106,8 +113,25 @@ export type CardCommand =
 	| { kind: 'send-group' }
 	| { kind: 'complete-group'; groupId: string | null };
 
-/** Какой набор панелей нужен контрагенту: вуз с договором или обучение лица. */
-export type CounterpartyShape = 'institution' | 'learner';
+/**
+ * Вид контрагента, от которого зависят шапка и условия: вуз работает по
+ * договору с продуктами и лицензиями, физическое лицо учится само и само
+ * платит, юридическое лицо отправляет на обучение своих людей по договору.
+ * Какие ещё панели стоят в карточке, решает процесс, а не вид.
+ */
+export type CounterpartyShape = 'institution' | 'person' | 'company';
+
+/**
+ * Оплата словами. Отдельного поля оплаты у записи нет: её отмечают пунктом
+ * чек-листа `payment_received` на той стадии процесса, где он объявлен, и
+ * модель читает его оттуда.
+ */
+export type CardPayment = {
+	tone: 'neutral' | 'success' | 'warning';
+	text: string;
+	/** На какой стадии отмечается; `null` — такой отметки в пройденном нет. */
+	stageName: string | null;
+};
 
 export type TimingTone = 'danger' | 'warning' | 'neutral';
 
@@ -208,6 +232,9 @@ export type CardModel = {
 	workspaceName: string;
 	shape: CounterpartyShape;
 	counterparty: { name: string; kindLabel: string };
+	/** Панели процесса в порядке каталога; сторона стоит всегда и в набор не входит. */
+	panels: ProcessCard['panels'];
+	payment: CardPayment;
 	stage: { name: string; position: number; total: number } | null;
 	timing: CardTiming | null;
 	quiet: CardQuiet | null;
@@ -252,15 +279,39 @@ function primaryParty(interaction: InteractionView): InteractionPartyView | null
 	return interaction.parties.find((party) => party.isPrimary) ?? null;
 }
 
+/** Вид контрагента по виду основной стороны в справочнике. */
+function counterpartyShape(kind: OrganizationKind): CounterpartyShape {
+	if (kind === 'educational_institution') return 'institution';
+
+	return kind === 'individual' ? 'person' : 'company';
+}
+
+/** Ключ пункта чек-листа, которым процесс отмечает поступление оплаты. */
+export const PAYMENT_CHECKLIST_KEY = 'payment_received';
+
 /**
- * Набор панелей выбирается по роли основной стороны: учебное заведение — это
- * вуз с договором, площадками и группой студентов; всё остальное — лицо,
- * которое учится само и само платит.
+ * Оплата по записям стадий, новые первыми: ищется последняя стадия, в чек-листе
+ * которой объявлена отметка об оплате. Пока стадия открыта, отметка — условие
+ * перехода, и названа она у главного действия; здесь — только где её ставят.
  */
-function counterpartyShape(interaction: InteractionView): CounterpartyShape {
-	return primaryParty(interaction)?.partyRole === 'educational_institution'
-		? 'institution'
-		: 'learner';
+export function buildPayment(entries: readonly StageEntryView[]): CardPayment {
+	const entry = entries.find((candidate) =>
+		candidate.snapshot.checklist.some((item) => item.key === PAYMENT_CHECKLIST_KEY)
+	);
+
+	if (entry === undefined) {
+		return { tone: 'neutral', text: 'Не отмечена', stageName: null };
+	}
+
+	const stageName = entry.snapshot.name;
+
+	if (entry.checklistState[PAYMENT_CHECKLIST_KEY] === true) {
+		return { tone: 'success', text: 'Оплата получена', stageName };
+	}
+
+	return entry.leftAt === null
+		? { tone: 'neutral', text: 'Отмечается на текущей стадии', stageName }
+		: { tone: 'warning', text: 'Ждём оплату', stageName };
 }
 
 export function buildTiming(summary: InteractionSummaryView, now: Date): CardTiming | null {
@@ -978,12 +1029,15 @@ export function buildCard(source: CardSource, now: Date): CardModel {
 		title: interaction.title,
 		status: interaction.status,
 		workspaceName: interaction.workspaceName,
-		shape: counterpartyShape(interaction),
+		shape: counterpartyShape(source.card.counterpartyKind),
 		counterparty: {
 			name: source.counterparty?.shortName ?? primary?.organizationName ?? 'Контрагент не указан',
-			kindLabel:
-				source.counterparty === null ? '' : ORGANIZATION_KIND_LABELS[source.counterparty.kind]
+			kindLabel: ORGANIZATION_KIND_LABELS[source.card.counterpartyKind]
 		},
+		panels: source.card.panels,
+		payment: buildPayment(
+			status.current === null ? status.history : [status.current, ...status.history]
+		),
 		stage:
 			stage === null
 				? null

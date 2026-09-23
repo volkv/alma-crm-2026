@@ -11,6 +11,8 @@
 	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
 	import Header from '$lib/components/header.svelte';
 	import { createOrganizationSchema, type CreateOrganizationInput } from '$lib/contracts/directory';
+	import type { PassportAcceptance } from '$lib/contracts/enrichment';
+	import PassportPanel from '../../passport/passport-panel.svelte';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -28,6 +30,9 @@
 	);
 
 	const { enhance, submitting, message } = superform;
+
+	/** Поля, принятые из паспорта: уходят с формой, чтобы сервер записал их происхождение. */
+	let accepted = $state<PassportAcceptance>([]);
 </script>
 
 <svelte:head><title>{data.organization.shortName}: изменение — LCT CRM</title></svelte:head>
@@ -42,15 +47,19 @@
 	]}
 />
 
-<div class="p-4 sm:px-9 sm:py-6">
+<div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
+	<PassportPanel {superform} availability={data.passport} bind:accepted />
+
 	<form
 		data-tour="organization-edit-form"
 		method="POST"
+		action="?/save"
 		use:enhance
 		novalidate
 		class="flex max-w-3xl flex-col gap-4 rounded-lg border border-border bg-surface p-4 sm:p-6"
 	>
 		<FormAlert message={$message} />
+		<input type="hidden" name="passport" value={JSON.stringify(accepted)} />
 		<OrganizationFields {superform} />
 		<FormActions
 			submitting={$submitting}

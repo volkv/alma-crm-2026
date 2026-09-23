@@ -14,7 +14,11 @@
 import { readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import { eq, sql } from 'drizzle-orm';
-import type { DocumentTemplateVariable } from '$lib/contracts/documents';
+import {
+	DOCUMENT_TEMPLATE_LABELS,
+	type DocumentTemplateKey,
+	type DocumentTemplateVariable
+} from '$lib/contracts/documents';
 import type { ActorContext } from '../actor';
 import { getDb } from '../db';
 import { documentTemplates } from '../db/schema';
@@ -32,10 +36,6 @@ import {
 /** Каталог с файлами шаблонов; путь — от рабочего каталога процесса. */
 const TEMPLATE_SOURCE_DIR = 'templates';
 
-export const DOCUMENT_TEMPLATE_KEYS = ['agreement'] as const;
-
-export type DocumentTemplateKey = (typeof DOCUMENT_TEMPLATE_KEYS)[number];
-
 type BuiltInTemplate = {
 	name: string;
 	/** Имя файла в каталоге `templates/`. */
@@ -49,7 +49,7 @@ type BuiltInTemplate = {
 
 export const BUILT_IN_TEMPLATES: Record<DocumentTemplateKey, BuiltInTemplate> = {
 	agreement: {
-		name: 'Соглашение о сотрудничестве',
+		name: DOCUMENT_TEMPLATE_LABELS.agreement,
 		fileName: 'agreement.docx',
 		variables: [
 			{ key: 'city', label: 'Город подписания', required: true },

@@ -4,11 +4,14 @@ import { zod4 } from 'sveltekit-superforms/adapters';
 import { resolve } from '$app/paths';
 import { createOrganizationSchema } from '$lib/contracts/directory';
 import { actorFromEvent } from '$lib/server/actor';
+import { passportAvailability } from '$lib/server/enrichment/access';
+import { resolveAcceptance } from '$lib/server/enrichment/passports';
 import { findOrganizationByInn, getOrganization } from '$lib/server/directory/read';
 import { updateOrganization } from '$lib/server/directory/write';
 import { ConflictError, ValidationError } from '$lib/server/errors';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { requirePermission } from '$lib/server/rbac';
+import { passportActions, readAcceptance } from '../../passport/actions.server';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async (event) => {
@@ -20,7 +23,8 @@ export const load: PageServerLoad = async (event) => {
 
 		return {
 			organization,
-			form: await superValidate(organization, zod4(createOrganizationSchema), { errors: false })
+			form: await superValidate(organization, zod4(createOrganizationSchema), { errors: false }),
+			passport: await passportAvailability(ctx)
 		};
 	} catch (error) {
 		toPageError(error);
@@ -28,8 +32,16 @@ export const load: PageServerLoad = async (event) => {
 };
 
 export const actions: Actions = {
-	default: async (event) => {
-		const form = await superValidate(event.request, zod4(createOrganizationSchema));
+	...passportActions,
+
+	/**
+	 * Сохранение карточки. Вместе с реквизитами форма присылает отметки полей,
+	 * принятых из паспорта: их происхождение сверяется с выданным паспортом и
+	 * ложится в журнал той же транзакцией, что и сами поля.
+	 */
+	save: async (event) => {
+		const formData = await event.request.formData();
+		const form = await superValidate(formData, zod4(createOrganizationSchema));
 
 		if (!form.valid) {
 			return fail(400, { form });
@@ -38,8 +50,10 @@ export const actions: Actions = {
 		const ctx = actorFromEvent(event);
 
 		try {
+			const provenance = await resolveAcceptance(ctx, readAcceptance(formData), form.data);
+
 			// Какую запись правим, говорит адрес, а не скрытое поле формы.
-			await updateOrganization(ctx, { ...form.data, id: event.params.id });
+			await updateOrganization(ctx, { ...form.data, id: event.params.id }, provenance);
 		} catch (error) {
 			if (error instanceof ConflictError) {
 				const existing =

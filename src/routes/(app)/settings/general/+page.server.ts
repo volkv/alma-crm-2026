@@ -9,7 +9,12 @@ import { AppError, ForbiddenError } from '$lib/server/errors';
 import { errorIssues, toActionFailure, type ActionErrorPayload } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import { getSetting, setSetting } from '$lib/server/settings';
-import { demoScheduleSchema, sessionLimitsSchema, stuckWatchSchema } from './schema';
+import {
+	demoScheduleSchema,
+	enrichmentSchema,
+	sessionLimitsSchema,
+	stuckWatchSchema
+} from './schema';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -32,7 +37,8 @@ const FORM_IDS = {
 	banner: 'login-banner',
 	session: 'session-limits',
 	stuckWatch: 'stuck-watch',
-	demoSchedule: 'demo-reset-schedule'
+	demoSchedule: 'demo-reset-schedule',
+	enrichment: 'enrichment'
 } as const;
 
 export const load: PageServerLoad = async (event) => {
@@ -42,14 +48,15 @@ export const load: PageServerLoad = async (event) => {
 		error(403, 'Раздел доступен только с правом «Изменение настроек приложения»');
 	}
 
-	const [banner, idleMinutes, absoluteHours, thresholdDays, channels, demoSchedule] =
+	const [banner, idleMinutes, absoluteHours, thresholdDays, channels, demoSchedule, enrichment] =
 		await Promise.all([
 			getSetting('login_banner'),
 			getSetting('session_idle_minutes'),
 			getSetting('session_absolute_hours'),
 			getSetting('stuck_threshold_days'),
 			getSetting('notification_channels'),
-			getSetting('demo_reset_schedule')
+			getSetting('demo_reset_schedule'),
+			getSetting('enrichment')
 		]);
 
 	return {
@@ -65,6 +72,10 @@ export const load: PageServerLoad = async (event) => {
 		demoScheduleForm: await superValidate(demoSchedule, zod4(demoScheduleSchema), {
 			id: FORM_IDS.demoSchedule
 		}),
+		enrichmentForm: await superValidate(enrichment, zod4(enrichmentSchema), {
+			id: FORM_IDS.enrichment
+		}),
+		dadataConfigured: getConfig().DADATA_API_KEY !== null,
 		// Вне демонстрационного стенда действия сброса не существует вовсе, и
 		// карточка объясняет это вместо того, чтобы исчезнуть: пропавшая кнопка
 		// не отвечает на вопрос, куда она делась.
@@ -186,6 +197,28 @@ export const actions: Actions = {
 		}
 
 		return message(form, 'Расписание сброса сохранено');
+	},
+
+	/**
+	 * Внешние источники паспорта организации. Выключатель и квота — одно
+	 * правило, поэтому и ключ один.
+	 */
+	enrichment: async (event) => {
+		const form = await superValidate(event.request, zod4(enrichmentSchema), {
+			id: FORM_IDS.enrichment
+		});
+
+		if (!form.valid) {
+			return fail(400, { form });
+		}
+
+		try {
+			await setSetting(actorFromEvent(event), 'enrichment', form.data);
+		} catch (failure) {
+			return asFormError(form, failure);
+		}
+
+		return message(form, 'Настройка внешних источников сохранена');
 	},
 
 	/**

@@ -167,6 +167,20 @@ export const documentTemplateVariableSchema = z.object({
 export type DocumentTemplateVariable = z.output<typeof documentTemplateVariableSchema>;
 
 /**
+ * Шаблоны документов, которые система умеет собирать. Сами файлы и их теги
+ * описаны на сервере (`server/documents/templates.ts`); здесь — ключи и
+ * названия, потому что какие из них доступны в карточке, решает процесс, а
+ * выбирает их администратор в редакторе процесса.
+ */
+export const DOCUMENT_TEMPLATE_KEYS = ['agreement'] as const;
+
+export type DocumentTemplateKey = (typeof DOCUMENT_TEMPLATE_KEYS)[number];
+
+export const DOCUMENT_TEMPLATE_LABELS: Record<DocumentTemplateKey, string> = {
+	agreement: 'Соглашение о сотрудничестве'
+};
+
+/**
  * Метка вида, под которой генерация записывает свои файлы в `documents.kind`.
  * Отдельного столбца «откуда взялся файл» в схеме нет, и эта метка — всё, что
  * отличает собранный по шаблону документ от загруженного руками.
@@ -217,6 +231,7 @@ export const UPLOADED_DOCUMENT_KINDS = [
 	'act',
 	'report',
 	'letter',
+	'certificate',
 	'other'
 ] as const;
 
@@ -238,6 +253,7 @@ export const DOCUMENT_KIND_LABELS: Record<UploadedDocumentKind | SystemDocumentK
 	act: 'Акт',
 	report: 'Отчёт',
 	letter: 'Письмо',
+	certificate: 'Документ об обучении',
 	other: 'Другое',
 	generated: 'Собран по шаблону',
 	stage_attachment: 'Вложение к переходу'

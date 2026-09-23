@@ -12,6 +12,7 @@ import {
 } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import { PERMISSIONS, PERMISSION_KEYS } from '$lib/server/rbac/permissions';
+import { getProcessCard, updateProcessCard } from '$lib/server/stages/card';
 import {
 	createDraft,
 	discardDraft,
@@ -65,6 +66,9 @@ export const load: PageServerLoad = async (event) => {
 
 		return {
 			detail,
+			// Состав карточки процесса: панели и шаблоны. Живёт вне редакций и
+			// правится без черновика — стадий он не касается.
+			card: await getProcessCard(ctx, event.params.key),
 			// Заголовок и крошки принадлежат макету настроек, а какой именно
 			// процесс открыт, знает только эта страница: по «Настройки ›
 			// Настройки» было не понять, чей процесс правят.
@@ -132,6 +136,29 @@ function field(form: FormData, name: string): string {
 }
 
 export const actions: Actions = {
+	/**
+	 * Состав карточки: какие панели в ней стоят и какие шаблоны документов
+	 * доступны. Применяется сразу во всех пространствах процесса — это вид
+	 * рабочего места, а не структура работы, и переносить по нему нечего.
+	 */
+	card: async (event) => {
+		const data = await event.request.formData();
+
+		try {
+			await updateProcessCard(actorFromEvent(event), event.params.key, {
+				panels: data.getAll('panels'),
+				templates: data.getAll('templates')
+			});
+		} catch (failure) {
+			return toActionFailure(failure);
+		}
+
+		return {
+			ok: true,
+			message: 'Состав карточки сохранён: он уже действует во всех пространствах процесса'
+		};
+	},
+
 	createDraft: async (event) => {
 		try {
 			await createDraft(actorFromEvent(event), event.params.key);

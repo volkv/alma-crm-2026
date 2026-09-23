@@ -55,6 +55,11 @@ export const AUDIT_EVENT_TYPES = [
 	'organizations.deactivated',
 	'organizations.site_created',
 	'organizations.site_updated',
+	// Поля карточки приняты из паспорта организации — выписки ЕГРЮЛ, раздела
+	// `/sveden` сайта или снимка. Своим событием рядом с заведением и правкой:
+	// на вопрос «откуда в карточке этот ИНН» журнал отвечает источником и
+	// датой каждого принятого значения (`provenance` в подробностях).
+	'organizations.passport_applied',
 	// Ответственный за вуз: назначен, снят без замены, заменён другим. У замены
 	// в подробностях ещё и прежний ответственный: вопрос «а кто вёл до этого»
 	// задают сразу после вопроса «кто теперь ведёт». Работу замена не двигает —
@@ -155,6 +160,10 @@ export const AUDIT_EVENT_TYPES = [
 	// Процесс заводят отдельно от места: одно описание работы может обслуживать
 	// несколько пространств, и его появление — самостоятельное решение.
 	'workflows.created',
+	// Состав карточки процесса — панели и шаблоны документов. Меняет рабочее
+	// место всех пространств процесса сразу и без публикации, поэтому след
+	// в журнале — единственный ответ на «кто убрал оплату из карточки».
+	'workflows.card_configured',
 	'documents.uploaded',
 	'documents.generated',
 	'documents.downloaded',
@@ -241,6 +250,18 @@ export type AuditDetails = {
 	/** Границы периода выгрузки — календарные дни `2026-10-01`. */
 	periodStart?: string;
 	periodEnd?: string;
+	/**
+	 * Происхождение полей, принятых из паспорта организации: поле, источник,
+	 * момент ответа источника и способ получения. Второй и последний список в
+	 * подробностях — каждое его значение проверяется образцом, и свободному
+	 * тексту в нём места нет.
+	 */
+	provenance?: readonly {
+		field: string;
+		source: string;
+		fetchedAt: string;
+		via: string;
+	}[];
 	[key: `${string}Id`]: string | undefined;
 	[key: `${string}Key`]: string | undefined;
 	[key: `${string}Count`]: number | undefined;
@@ -277,11 +298,44 @@ const SHAPED_DETAIL_KEYS = new Map<string, RegExp>([
 const KEY_PATTERN = /^[a-z][a-z0-9_-]{0,63}$/;
 
 /**
- * Ключ со списком идентификаторов. Он один: списки в подробностях запрещены,
+ * Ключ со списком идентификаторов. Кроме него, список допустим только у
+ * происхождения полей паспорта (`provenance`, ниже). Остальные списки запрещены,
  * потому что произвольный массив рано или поздно окажется перечнем фамилий, а
  * этот содержит только ссылки на записи и заведён под след просмотра.
  */
 const ID_LIST_DETAIL_KEY = 'personIds';
+
+/** Ключ происхождения принятых полей паспорта организации. */
+const PROVENANCE_DETAIL_KEY = 'provenance';
+
+/**
+ * Образцы частей записи происхождения. Имя поля и источник — коды, момент —
+ * отметка времени ISO с поясом: ни одна из частей не вмещает фразы.
+ */
+const PROVENANCE_SHAPES: Record<string, RegExp> = {
+	field: /^[a-zA-Z]{1,32}$/,
+	source: /^[a-z]{1,16}$/,
+	fetchedAt: /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(\.\d+)?(Z|[+-]\d{2}:\d{2})$/,
+	via: /^[a-z]{1,16}$/
+};
+
+function isProvenanceEntry(item: unknown): boolean {
+	if (typeof item !== 'object' || item === null || Array.isArray(item)) {
+		return false;
+	}
+
+	const entries = Object.entries(item);
+
+	return (
+		entries.length === Object.keys(PROVENANCE_SHAPES).length &&
+		entries.every(
+			([key, value]) =>
+				PROVENANCE_SHAPES[key] !== undefined &&
+				typeof value === 'string' &&
+				PROVENANCE_SHAPES[key].test(value)
+		)
+	);
+}
 
 /** Идентификатор записи: только он и допустим внутри списка ссылок. */
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -330,6 +384,15 @@ export function validateAuditDetails(details: object): string[] {
 			continue;
 		}
 
+		if (key === PROVENANCE_DETAIL_KEY) {
+			if (!Array.isArray(value) || value.length > 32 || !value.every(isProvenanceEntry)) {
+				issues.push(
+					`${PROVENANCE_DETAIL_KEY}: ожидается список записей { field, source, fetchedAt, via }`
+				);
+			}
+			continue;
+		}
+
 		if (FORBIDDEN_DETAIL_KEYS.has(key)) {
 			issues.push(`${key}: персональные данные в журнал не записываются`);
 			continue;
@@ -371,7 +434,7 @@ export function validateAuditDetails(details: object): string[] {
 
 		if (!key.endsWith('Id')) {
 			issues.push(
-				`${key}: в подробностях допустимы ссылки вида <что-то>Id, имена <что-то>Key, числа <что-то>Count, ${ID_LIST_DETAIL_KEY} и поля ${[...REQUEST_DETAIL_KEYS.keys(), ...SHAPED_DETAIL_KEYS.keys()].join(', ')}`
+				`${key}: в подробностях допустимы ссылки вида <что-то>Id, имена <что-то>Key, числа <что-то>Count, ${ID_LIST_DETAIL_KEY}, ${PROVENANCE_DETAIL_KEY} и поля ${[...REQUEST_DETAIL_KEYS.keys(), ...SHAPED_DETAIL_KEYS.keys()].join(', ')}`
 			);
 			continue;
 		}

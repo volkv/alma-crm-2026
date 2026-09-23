@@ -8,26 +8,31 @@
 	import DocumentsPanel from './documents-panel.svelte';
 	import InstitutionPanel from './institution-panel.svelte';
 	import LearnerPanel from './learner-panel.svelte';
+	import LearnersPanel from './learners-panel.svelte';
 	import LearningPanel from './learning-panel.svelte';
-	import type { CardSource, CounterpartyShape } from './model';
+	import type { CardModel, CardSource } from './model';
+	import PaymentPanel from './payment-panel.svelte';
+	import TermsPanel from './terms-panel.svelte';
+	import TrainingDocumentPanel from './training-document-panel.svelte';
 
 	/**
-	 * Контекст карточки — набор панелей по виду контрагента. Вуз: учебное
-	 * заведение, заказчик и сроки соглашения; лицо: слушатель или компания,
-	 * программа, оплата. Общие для обоих — договор с позициями, потоки в
-	 * системе обучения и документы.
+	 * Контекст карточки. Сторона и её условия стоят всегда, и их вид задаёт
+	 * контрагент: вуз, физическое или юридическое лицо. Остальные панели
+	 * объявляет процесс записи (`CARD_PANELS`), и стоят они в порядке каталога:
+	 * так рабочее место коммерческого обучения — своё, а не вузовская карточка
+	 * с другими стадиями.
 	 *
 	 * Поток показывается там, где он уже есть или где его требует стадия: на
 	 * поиске контактов пустая панель «Система обучения» только отвлекала бы.
 	 */
 	let {
 		source,
-		shape,
+		model,
 		supersessions,
 		can
 	}: {
 		source: CardSource;
-		shape: CounterpartyShape;
+		model: CardModel;
 		supersessions: readonly DocumentSupersession[];
 		/** Что человеку можно в этой записи; недоступные кнопки панели не рисуют. */
 		can: { edit: boolean; upload: boolean; generate: boolean };
@@ -35,14 +40,13 @@
 
 	const commands = getCardCommands();
 	const active = $derived(source.interaction.status === 'active');
+	const shape = $derived(model.shape);
+	const has = (panel: CardModel['panels'][number]) => model.panels.includes(panel);
 
-	const entries = $derived(
-		source.status.current === null
-			? source.status.history
-			: [source.status.current, ...source.status.history]
-	);
 	const showLearning = $derived(
-		source.exchange.groups.length > 0 || source.status.current?.snapshot.requiresLmsData === true
+		has('learning') &&
+			(source.exchange.groups.length > 0 ||
+				source.status.current?.snapshot.requiresLmsData === true)
 	);
 
 	/**
@@ -59,6 +63,11 @@
 
 	const editPlan = $derived(can.edit ? () => commands.open({ kind: 'plan' }) : null);
 	const editContract = $derived(can.edit ? () => commands.open({ kind: 'contract' }) : null);
+	/**
+	 * Правка плана живёт у сроков; процесс без панели сроков ставит её к
+	 * стороне — название записи правят в любом процессе.
+	 */
+	const partyEditPlan = $derived(has('terms') ? null : editPlan);
 </script>
 
 <div class="flex min-w-0 flex-col gap-5" data-slot="context-panels">
@@ -66,14 +75,15 @@
 		<InstitutionPanel
 			interaction={source.interaction}
 			organization={source.counterparty}
-			onEditPlan={editPlan}
+			onEditPlan={partyEditPlan}
 		/>
 	{:else}
 		<LearnerPanel
 			interaction={source.interaction}
 			organization={source.counterparty}
-			{entries}
-			onEditPlan={editPlan}
+			{shape}
+			groups={source.exchange.groups}
+			onEditPlan={partyEditPlan}
 		/>
 	{/if}
 
@@ -93,7 +103,21 @@
 		</ContextSection>
 	{/if}
 
-	<ContractPanel contract={source.interaction.contract} onEdit={editContract} />
+	{#if has('terms')}
+		<TermsPanel interaction={source.interaction} {shape} onEditPlan={editPlan} />
+	{/if}
+
+	{#if has('contract')}
+		<ContractPanel contract={source.interaction.contract} onEdit={editContract} />
+	{/if}
+
+	{#if has('payment')}
+		<PaymentPanel payment={model.payment} />
+	{/if}
+
+	{#if has('learners')}
+		<LearnersPanel groups={source.exchange.groups} />
+	{/if}
 
 	{#if showLearning}
 		<LearningPanel
@@ -104,10 +128,17 @@
 		/>
 	{/if}
 
-	<DocumentsPanel
-		documents={source.interaction.documents}
-		{supersessions}
-		canUpload={can.upload}
-		canGenerate={can.generate}
-	/>
+	{#if has('training_document')}
+		<TrainingDocumentPanel documents={source.interaction.documents} canUpload={can.upload} />
+	{/if}
+
+	{#if has('documents')}
+		<DocumentsPanel
+			documents={source.interaction.documents}
+			{supersessions}
+			templates={source.card.templates}
+			canUpload={can.upload}
+			canGenerate={can.generate}
+		/>
+	{/if}
 </div>

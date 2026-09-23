@@ -15,7 +15,9 @@
 		documentKindLabel,
 		DOCUMENT_STATUS_FACTS,
 		DOCUMENT_STATUS_FACT_LABELS,
+		DOCUMENT_TEMPLATE_LABELS,
 		type DocumentStatusFact,
+		type DocumentTemplateKey,
 		type DocumentSupersession
 	} from '$lib/contracts/documents';
 	import type { InteractionDocumentView } from '$lib/contracts/interactions';
@@ -37,12 +39,15 @@
 	let {
 		documents,
 		supersessions,
+		templates,
 		canUpload,
 		canGenerate
 	}: {
 		documents: readonly InteractionDocumentView[];
 		/** Какие из этих файлов уже заменены новой редакцией и когда. */
 		supersessions: readonly DocumentSupersession[];
+		/** Шаблоны, которые объявил процесс записи; других карточка не собирает. */
+		templates: readonly DocumentTemplateKey[];
 		canUpload: boolean;
 		canGenerate: boolean;
 	} = $props();
@@ -207,7 +212,8 @@
 		</ul>
 	{/if}
 
-	{#if canGenerate}
+	<!-- Шаблон пока один — соглашение, и диалог сборки у него свой. -->
+	{#if canGenerate && templates.includes('agreement')}
 		<Button
 			size="sm"
 			variant="outline"
@@ -215,7 +221,7 @@
 			onclick={() => commands.open({ kind: 'generate' })}
 		>
 			<FileSignatureIcon aria-hidden="true" />
-			Соглашение по шаблону
+			{DOCUMENT_TEMPLATE_LABELS.agreement} по шаблону
 		</Button>
 	{/if}
 </ContextSection>

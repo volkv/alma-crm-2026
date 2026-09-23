@@ -48,6 +48,7 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'directory.contract_item_created': 'Позиция договора заведена',
 	'directory.contract_item_updated': 'Позиция договора изменена',
 	'organizations.site_updated': 'Площадка изменена',
+	'organizations.passport_applied': 'Реквизиты приняты из внешнего источника',
 	'people.created': 'Человек заведён',
 	'people.updated': 'Человек изменён',
 	'people.affiliation_created': 'Роль в организации заведена',
@@ -96,6 +97,7 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'workspaces.reordered': 'Порядок пространств изменён',
 	'workspaces.workflow_assigned': 'Пространству назначен процесс',
 	'workflows.created': 'Процесс заведён',
+	'workflows.card_configured': 'Состав карточки процесса изменён',
 	'documents.uploaded': 'Документ загружен',
 	'documents.generated': 'Документ сгенерирован',
 	'documents.downloaded': 'Документ скачан',
@@ -287,7 +289,8 @@ const DETAIL_LABELS: Record<string, string> = {
 	demo: 'Демонстрационный вход',
 	mode: 'Способ',
 	roleId: 'Роль',
-	ownerUserId: 'Владелец (id)'
+	ownerUserId: 'Владелец (id)',
+	provenance: 'Происхождение значений'
 };
 
 /** `apiKeyId` → `api_key`: ссылки в подробностях названы по типу записи. */

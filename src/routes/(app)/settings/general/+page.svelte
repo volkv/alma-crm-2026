@@ -19,7 +19,12 @@
 	import FormField from '$lib/components/form/form-field.svelte';
 	import { settingSchemas } from '$lib/contracts/settings';
 	import { NOTIFICATION_CHANNEL_LABELS } from '$lib/contracts/notifications';
-	import { demoScheduleSchema, sessionLimitsSchema, stuckWatchSchema } from './schema';
+	import {
+		demoScheduleSchema,
+		enrichmentSchema,
+		sessionLimitsSchema,
+		stuckWatchSchema
+	} from './schema';
 	import type { PageProps } from './$types';
 
 	let { data, form: actionResult }: PageProps = $props();
@@ -81,6 +86,16 @@
 	} = superForm(
 		untrack(() => data.demoScheduleForm),
 		{ validators: zod4Client(demoScheduleSchema), onUpdated: ({ form }) => notifySaved(form) }
+	);
+
+	const {
+		form: enrichmentData,
+		errors: enrichmentErrors,
+		enhance: enrichmentEnhance,
+		submitting: enrichmentSubmitting
+	} = superForm(
+		untrack(() => data.enrichmentForm),
+		{ validators: zod4Client(enrichmentSchema), onUpdated: ({ form }) => notifySaved(form) }
 	);
 
 	let resetConfirmOpen = $state(false);
@@ -285,6 +300,51 @@
 				</p>
 			</fieldset>
 			<FormActions submitting={$stuckSubmitting} submitLabel="Сохранить правило" />
+		</form>
+	</Card.Content>
+</Card.Root>
+
+<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+<Card.Root data-tour="general-enrichment">
+	<Card.Header>
+		<Card.Title>Внешние источники паспорта организации</Card.Title>
+		<Card.Description>
+			Поиск реквизитов в ЕГРЮЛ через Dadata и чтение раздела «Сведения об образовательной
+			организации» на сайте вуза из формы организации. Сервер ходит только на адрес Dadata и на
+			домен сайта из карточки; ничего не записывается без подтверждения сотрудника. Выключено —
+			карточку заполняют вручную или снимком JSON.
+		</Card.Description>
+	</Card.Header>
+	<Card.Content>
+		{@render formErrors($enrichmentErrors._errors)}
+		<form
+			method="POST"
+			action="?/enrichment"
+			use:enrichmentEnhance
+			novalidate
+			class="flex flex-col gap-4"
+		>
+			<Label class="flex items-center gap-2 font-normal">
+				<Checkbox name="enabled" bind:checked={$enrichmentData.enabled} />
+				Разрешить обращения к внешним источникам
+			</Label>
+			<div class="grid gap-4 sm:grid-cols-2">
+				{@render numberField({
+					name: 'dailyQuota',
+					label: 'Обращений на сотрудника в сутки',
+					description: 'От 1 до 1000; ответ из кэша квоту не тратит',
+					value: $enrichmentData.dailyQuota,
+					errors: $enrichmentErrors.dailyQuota,
+					onchange: (next) => ($enrichmentData.dailyQuota = next)
+				})}
+			</div>
+			{#if !data.dadataConfigured}
+				<p class="text-xs text-muted-foreground">
+					Ключ Dadata не задан (<code>DADATA_API_KEY</code>): при включённых источниках читается
+					только раздел «Сведения» на сайтах вузов.
+				</p>
+			{/if}
+			<FormActions submitting={$enrichmentSubmitting} submitLabel="Сохранить" />
 		</form>
 	</Card.Content>
 </Card.Root>

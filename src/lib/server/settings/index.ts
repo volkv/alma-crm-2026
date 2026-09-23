@@ -36,7 +36,10 @@ export const SETTING_DEFAULTS: { [TKey in SettingKey]: SettingValue<TKey> } = {
 	// стенде, где стирать есть что. Час — ночной, чтобы сброс не пришёлся на
 	// показ.
 	demo_reset_schedule: { enabled: false, hour: 3 },
-	ranking_weights: DEFAULT_RANKING_WEIGHTS
+	ranking_weights: DEFAULT_RANKING_WEIGHTS,
+	// Выключены: внешняя зависимость включается осознанно — тем, кто решил, что
+	// стенду можно ходить в Dadata и на сайты вузов.
+	enrichment: { enabled: false, dailyQuota: 50 }
 };
 
 export async function getSetting<TKey extends SettingKey>(key: TKey): Promise<SettingValue<TKey>> {
