@@ -39,6 +39,7 @@ import {
 import { ConflictError, ForbiddenError, NotFoundError } from '$lib/server/errors';
 import { decryptContacts } from '$lib/server/people/pii';
 import {
+	allWorkspaceIds,
 	insertOrganization,
 	insertUser,
 	scopedActor,
@@ -913,7 +914,8 @@ describe('менеджер, контакты и комментарий стро�
 		const lead = testActor({
 			roleId: 'lead',
 			userId: leadId,
-			scopeUserIds: [leadId, staff.veresova, staff.zotov]
+			scopeUserIds: [leadId, staff.veresova, staff.zotov],
+			workspaceIds: await allWorkspaceIds(database.db)
 		});
 
 		const record = await preview(lead, fixture('catalog-people.csv'), 'таблица.csv');

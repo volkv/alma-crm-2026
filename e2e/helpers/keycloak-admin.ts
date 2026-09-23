@@ -140,30 +140,3 @@ export async function ensureAccount(
 		]);
 	}
 }
-
-/**
- * Снимает все realm-роли CRM с учётной записи. Нужно сценарию «роль отозвали»:
- * следующий вход обязан отклониться, а наша запись — выключиться.
- */
-export async function revokeCrmRoles(admin: Admin, username: string): Promise<void> {
-	const userId = await findUserId(admin, username);
-
-	if (userId === null) {
-		throw new Error(`В каталоге нет учётной записи «${username}»`);
-	}
-
-	const assigned = (await (
-		await request(admin, 'GET', `/admin/realms/${REALM}/users/${userId}/role-mappings/realm`)
-	).json()) as { id: string; name: string }[];
-
-	const crmRoles = assigned.filter((role) => role.name.startsWith('crm-'));
-
-	if (crmRoles.length > 0) {
-		await request(
-			admin,
-			'DELETE',
-			`/admin/realms/${REALM}/users/${userId}/role-mappings/realm`,
-			crmRoles
-		);
-	}
-}

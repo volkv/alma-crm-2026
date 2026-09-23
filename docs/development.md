@@ -45,44 +45,53 @@
 
 ## Скрипты
 
-| Скрипт                      | Что делает                                                                                                                                                                   |
-| --------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm dev`                  | Dev-сервер Vite на http://localhost:5173 с HMR                                                                                                                               |
-| `pnpm build`                | Production-сборка в `build/` (adapter-node)                                                                                                                                  |
-| `pnpm preview`              | Просмотр production-сборки через Vite                                                                                                                                        |
-| `pnpm run check`            | `svelte-check` — типы в `.ts` и `.svelte`                                                                                                                                    |
-| `pnpm run lint`             | ESLint + проверка форматирования Prettier                                                                                                                                    |
-| `pnpm run format`           | Форматирование всего репозитория                                                                                                                                             |
-| `pnpm run test:unit`        | Модульные тесты (`tests/unit`), Vitest, без внешних сервисов                                                                                                                 |
-| `pnpm run test:integration` | Интеграционные тесты: PostgreSQL, Redis, MinIO и Keycloak — в testcontainers, `gotenberg` из compose; в системе нужны `pdftotext` (проверка PDF) и `soffice` (проверка книг) |
-| `pnpm run test:e2e`         | Поднимает `postgres`, `redis`, `gotenberg`, `minio`, `keycloak` и имитаторы `mock-cms`/`mock-lms`, заводит бакеты и гоняет Playwright по `e2e/`                              |
-| `pnpm run docs:pdf`         | Комплект документации в `dist/docs-pdf/`: PDF на каждый документ и общий файл; нужна служба `gotenberg`                                                                      |
-| `pnpm run db:generate`      | Генерирует SQL-миграцию по изменениям схемы в `drizzle/`                                                                                                                     |
-| `pnpm run db:migrate`       | Применяет миграции из `drizzle/` к базе из `DATABASE_URL` и приводит каталог прав к коду                                                                                     |
-| `pnpm run db:seed`          | Заливает демонстрационные данные; с `--if-demo` — только при `DEMO_MODE=true`                                                                                                |
-| `pnpm run mocks:cms`        | Имитатор сайта заказчика: приём заявок и приём снимков статуса                                                                                                               |
-| `pnpm run mocks:lms`        | Имитатор системы обучения: учебные группы и их результаты                                                                                                                    |
-| `pnpm run db:studio`        | Drizzle Studio — браузер по данным                                                                                                                                           |
-| `pnpm run check:audit`      | `pnpm audit --prod --audit-level=high` — уязвимости уровня high и выше в `dependencies`                                                                                      |
-| `pnpm run check:docker`     | `docker build .` — образ должен собираться                                                                                                                                   |
-| `pnpm run check:security`   | Сканеры контейнерами: semgrep по коду, Trivy по зависимостям и образу, SBOM в CycloneDX — см. [`security.md`](security.md)                                                   |
-| `pnpm run check:fast`       | Быстрый круг: lint → check → unit; без Docker и без сборки                                                                                                                   |
-| `pnpm run check:all`        | Полный гейт: audit → lint → check → unit → integration → build → e2e → образ                                                                                                 |
+| Скрипт                      | Что делает                                                                                                                                         |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `pnpm dev`                  | Dev-сервер Vite на http://localhost:5173 с HMR                                                                                                     |
+| `pnpm build`                | Production-сборка в `build/` (adapter-node)                                                                                                        |
+| `pnpm preview`              | Просмотр production-сборки через Vite                                                                                                              |
+| `pnpm run check`            | `svelte-check` — типы в `.ts` и `.svelte`                                                                                                          |
+| `pnpm run lint`             | ESLint + проверка форматирования Prettier                                                                                                          |
+| `pnpm run format`           | Форматирование всего репозитория                                                                                                                   |
+| `pnpm run test:unit`        | Модульные тесты (`tests/unit`), Vitest, без внешних сервисов                                                                                       |
+| `pnpm run test:integration` | Интеграционные тесты: PostgreSQL, Redis и MinIO — в testcontainers, `gotenberg` из compose; в системе нужны `pdftotext` и `pdfinfo` (проверка PDF) |
+| `pnpm run test:e2e`         | Поднимает `postgres`, `redis`, `gotenberg`, `minio`, `keycloak` и имитаторы `mock-cms`/`mock-lms`, заводит бакеты и гоняет Playwright по `e2e/`    |
+| `pnpm run docs:pdf`         | Комплект документации в `dist/docs-pdf/`: PDF на каждый документ и общий файл; нужна служба `gotenberg`                                            |
+| `pnpm run db:generate`      | Генерирует SQL-миграцию по изменениям схемы в `drizzle/`                                                                                           |
+| `pnpm run db:migrate`       | Применяет миграции из `drizzle/` к базе из `DATABASE_URL` и приводит каталог прав к коду                                                           |
+| `pnpm run db:seed`          | Заливает демонстрационные данные; с `--if-demo` — только при `DEMO_MODE=true`                                                                      |
+| `pnpm run mocks:cms`        | Имитатор сайта заказчика: приём заявок и приём снимков статуса                                                                                     |
+| `pnpm run mocks:lms`        | Имитатор системы обучения: учебные группы и их результаты                                                                                          |
+| `pnpm run db:studio`        | Drizzle Studio — браузер по данным                                                                                                                 |
+| `pnpm run check:audit`      | `pnpm audit --prod --audit-level=high` — уязвимости уровня high и выше в `dependencies`                                                            |
+| `pnpm run check:docker`     | `docker build .` — образ должен собираться                                                                                                         |
+| `pnpm run check:security`   | Сканеры контейнерами: semgrep по коду, Trivy по зависимостям и образу, SBOM в CycloneDX — см. [`security.md`](security.md)                         |
+| `pnpm run check:fast`       | Быстрый круг: lint → check → unit; без Docker и без сборки                                                                                         |
+| `pnpm run check:all`        | Полный гейт: audit → lint → check → unit → integration → e2e (со сборкой) → образ                                                                  |
 
 `check:fast` гоняем в цикле правки, `check:all` — перед тем, как считать работу законченной.
 
-`check:all` — это и есть CI: задача `check` в workflow не делает ничего сверх него, поэтому зелёный
-`check:all` у себя значит зелёную задачу `check`. Вторая задача CI — `security` — так же один в один
-повторяет `check:security`; почему сканеры вынесены отдельно, а не добавлены в `check:all`, написано
-в [`security.md`](security.md).
+`check:all` — это и есть CI: задачи `static`, `integration`, `e2e` и `docker` в workflow гоняют те же
+команды, только параллельно, и ничего сверх них не делают (см. «CI» ниже). Зелёный `check:all` у себя
+значит зелёный гейт кода. Задача `security` так же один в один повторяет `check:security`; почему
+сканеры вынесены отдельно, а не добавлены в `check:all`, написано в [`security.md`](security.md).
+
+Набор проверок нарочно небольшой: полный `check:all` рассчитан на десять минут и на машине, и в
+CI. Интеграционные тесты держат бизнес-инварианты — область доступа и роли, публикацию процесса и
+гонку перехода, отчёты на прошлую дату и согласованность снимка, приём заявки и идемпотентность
+обмена, подтверждение стадии из системы обучения, шифрование контактов, импорт каталога, журнал,
+сид. E2E — дымовой набор: вход, сквозной сценарий трёх ролей
+(`e2e/scenario.test.ts`: заявка с сайта → работа КАМа → правка процесса → LMS → отчёт), выгрузка
+и режимы отчёта, границы обмена, редактор процесса. Новая проверка добавляется, когда защищает
+инвариант, которого нет в этом списке, а не ради покрытия экрана.
 
 ESLint и Prettier запоминают разобранные файлы в `node_modules/.cache/`, Vitest — разобранные
 модули в `node_modules/.vitest-cache/`. Второй прогон подряд после этого стоит секунды вместо минут:
 перепроверяется только то, что изменилось. Слепки живут в `node_modules` нарочно — их обнуляет
-обычная переустановка зависимостей, а в CI, где рабочая копия чистая, каждый прогон и так полный.
-Стоит это одного случая: ESLint отмечает файл проверенным по его собственному содержимому, поэтому
-правка типа в соседнем файле замечается не сразу — на месте её поймает `pnpm run check`, а в CI
-полный прогон линтера.
+обычная переустановка зависимостей. CI сохраняет оба каталога между прогонами (`actions/cache` в
+задаче `static`), поэтому и там линтер перепроверяет только изменённое. Стоит это одного случая:
+ESLint отмечает файл проверенным по его собственному содержимому, поэтому правка типа в соседнем
+файле замечается не сразу — её ловит `pnpm run check`, который кэша не держит.
 
 **Что `check:audit` не покрывает.** Порог `--prod` оставляет в поле зрения только `dependencies`,
 а весь рантайм интерфейса (`@sveltejs/kit`, `bits-ui`, `chart.js`, `marked`, `sveltekit-superforms`)
@@ -797,9 +806,8 @@ pnpm exec vitest --project unit          # watch-режим
 ```
 
 **Интеграционные** (`tests/integration`) — поднимают настоящие PostgreSQL 17, Redis 8 и MinIO через
-testcontainers, применяют миграции из `drizzle/` и работают с реальными хранилищами; проверкам
-входа достаётся ещё и настоящий Keycloak с тем же `keycloak/realm-lct.json`
-(`tests/integration/helpers/keycloak.ts`).
+testcontainers, применяют миграции из `drizzle/` и работают с реальными хранилищами. Настоящий
+Keycloak с `keycloak/realm-lct.json` поднимает только e2e-прогон.
 
 Контейнеры поднимаются один раз на прогон — это делает `tests/integration/global-setup.ts`, — а
 файл тестов берёт у них своё: базу, снятую с образца `lct_template`, свою логическую базу Redis и
@@ -822,10 +830,8 @@ testcontainers, применяют миграции из `drizzle/` и рабо�
 просит на гигабайт-другой больше — на машине с WSL это разница между «идёт» и «встало».
 
 Хранилище файлов заводит `tests/integration/helpers/storage.ts`: свой бакет на файл и свой клиент,
-которым проверка смотрит на хранилище со стороны, а не глазами проверяемого кода. Своё хранилище на
-файл просит только проба живости (`startTestDatabase({ isolatedStorage: true })`): она гасит его
-посреди прогона, и общее унесло бы вместе с ним соседние файлы. Из compose остаётся один
-`gotenberg` — он тяжёлый, и поднимать его прогоном ради тестов документов стоит дороже, чем держать
+которым проверка смотрит на хранилище со стороны, а не глазами проверяемого кода. Из compose
+остаётся один `gotenberg` — он тяжёлый, и поднимать его прогоном ради выгрузки в PDF стоит дороже, чем держать
 один на машину. Нужен запущенный Docker; первый прогон тянет образы `postgres:17-alpine`,
 `redis:8-alpine` и `quay.io/minio/minio`.
 
@@ -955,15 +961,21 @@ PostgreSQL из compose (её заводит глобальный сетап, е
 
 ## CI
 
-`.github/workflows/ci.yml` — три параллельные задачи на каждый push и PR.
+`.github/workflows/ci.yml` — параллельные задачи на каждый push и PR; прогон идёт столько, сколько
+самая долгая из них.
 
-`check` ставит Node из `.nvmrc`, браузер Playwright, `poppler-utils` (`pdftotext`) и
-`libreoffice-calc` (`soffice`) — обе консольные программы нужны интеграционным проверкам документов
-и книг, — после чего гоняет
-`pnpm run check:all` — ровно то, что гоняют у себя перед сдачей работы. Отдельных задач под
-`docker build` и аудит зависимостей нет нарочно: проверка, которой нет в `check:all`, ловилась бы
-только после push. При падении выгружаются `playwright-report/` (отчёт) и `test-results/` (трассы,
-снимки экрана и видео упавших проверок).
+- `static` — `pnpm run check:audit` и `pnpm run check:fast` (lint → check → unit). Кэши ESLint,
+  Prettier и Vitest переживают прогон через `actions/cache`.
+- `integration` — `pnpm run test:integration --shard=N/2` двумя машинами: файлы идут по одному, и
+  набор делится между ними по файлам. Ставит `poppler-utils` (`pdftotext`, `pdfinfo`) для сверки
+  выгрузки отчёта в PDF.
+- `e2e` — `pnpm run test:e2e`; браузер Playwright кэшируется по lock-файлу, сборку делает сам прогон
+  (`webServer`). При падении выгружаются `playwright-report/` (отчёт) и `test-results/` (трассы,
+  снимки экрана и видео упавших проверок).
+- `docker` — `docker build .`, то же, что `check:docker`.
+
+Отдельной задачи со «всем сразу» нет: вместе эти задачи и есть `check:all`, и проверка, которой нет
+в нём, ловилась бы только после push.
 
 `security` собирает образ и гоняет `scripts/security-scan.sh` — то же самое, что
 `pnpm run check:security`. Node и зависимости проекта этой задаче не нужны: сканеры работают

@@ -16,10 +16,11 @@ import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getConfig } from '../config';
 import { getDb } from '../db';
-import { roles, users } from '../db/schema';
+import { roles, users, workspaces } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
+import { workspaceAccessCondition } from '../rbac/workspaces';
 import { revokeAllSessions } from './session';
 
 /** Почта — ключ связывания с каталогом, поэтому хранится и сравнивается в одном виде. */
@@ -402,14 +403,28 @@ export type UserLookupItem = {
  * Выключенные записи не показываются — назначить работу на уволенного нельзя.
  * Машинный субъект не показывается тоже: он не работает, от его имени ходят
  * ключи обмена, и поручить ему стадию значило бы поручить её никому.
+ *
+ * `workspaceKey` сужает список до тех, кто работает в пространстве: поручить
+ * запись сотруднику вне него значит поручить то, чего он не увидит. Отбор идёт
+ * в запросе, а не после него, — иначе потолок списка отрезал бы членов
+ * пространства раньше, чем до них дошла бы очередь.
  */
 export async function lookupUsers(
 	ctx: ActorContext,
-	input: { q?: string; roleIds?: readonly string[] } = {}
+	input: { q?: string; roleIds?: readonly string[]; workspaceKey?: string } = {}
 ): Promise<UserLookupItem[]> {
 	requirePermission(ctx, 'interactions.write');
 
 	const conditions = [eq(users.isActive, true), ne(users.roleId, 'service')];
+
+	if (input.workspaceKey !== undefined) {
+		conditions.push(
+			workspaceAccessCondition(
+				{ id: users.id, roleId: users.roleId },
+				sql`(select ${workspaces.id} from ${workspaces} where ${workspaces.key} = ${input.workspaceKey})`
+			)
+		);
+	}
 	const q = input.q?.trim() ?? '';
 
 	if (q !== '') {

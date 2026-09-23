@@ -10,6 +10,7 @@ import {
 import { interactionScopeFilter } from '$lib/server/interactions/access';
 import { scopeFilter } from '$lib/server/rbac';
 import {
+	allWorkspaceIds,
 	insertInteractionWithStage,
 	insertOrganization,
 	insertUser,
@@ -48,7 +49,11 @@ beforeEach(async () => {
 
 /** Сколько взаимодействий видит вызывающий по общему условию видимости. */
 async function visibleInteractionIds(userIds: readonly string[]): Promise<string[]> {
-	const ctx = testActor({ roleId: 'manager', scopeUserIds: userIds });
+	const ctx = testActor({
+		roleId: 'manager',
+		scopeUserIds: userIds,
+		workspaceIds: await allWorkspaceIds(database.db)
+	});
 
 	const rows = await database.db
 		.select({ id: interactions.id })
@@ -60,7 +65,11 @@ async function visibleInteractionIds(userIds: readonly string[]): Promise<string
 
 /** Сколько организаций видит вызывающий по условию области. */
 async function visibleOrganizationIds(userIds: readonly string[]): Promise<string[]> {
-	const ctx = testActor({ roleId: 'manager', scopeUserIds: userIds });
+	const ctx = testActor({
+		roleId: 'manager',
+		scopeUserIds: userIds,
+		workspaceIds: await allWorkspaceIds(database.db)
+	});
 
 	const rows = await database.db
 		.select({ id: organizations.id })

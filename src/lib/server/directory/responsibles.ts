@@ -43,7 +43,7 @@ import { withTransaction, type Tx } from '../db/transaction';
 /** Кто выполняет запрос: транзакция вызывающего или общий пул. */
 type Executor = Tx | ReturnType<typeof getDb>;
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
-import { requirePermission, scopeFilter } from '../rbac';
+import { requirePermission, scopeFilter, workspaceFilter } from '../rbac';
 import { setResponsible } from '../stages/commands';
 import { withUniqueConflicts } from './conflicts';
 
@@ -129,13 +129,19 @@ export type AssignResponsibleInput = {
  * Назначение по направлению уносит только работу этого направления, а
  * принадлежность к направлению у взаимодействия та же, что в отчётах: по
  * продуктам (`product_directions`) или по программам (`programs.direction_id`).
+ *
+ * **Только пространства того, кто назначает**: работу направления, в которое
+ * он не включён, он не видит и распоряжаться ею не может. Она остаётся за
+ * прежним владельцем — передать её может тот, кто в том пространстве работает.
  */
 async function openInteractionsOf(
+	ctx: ActorContext,
 	tx: Tx,
 	params: { organizationId: string; ownerUserId: string; directionId: string | null }
 ): Promise<string[]> {
 	const conditions = [
 		eq(interactions.status, 'active'),
+		workspaceFilter(ctx, interactions.workspaceId),
 		eq(interactions.ownerUserId, params.ownerUserId),
 		exists(
 			tx
@@ -346,7 +352,7 @@ export async function assignResponsible(
 		const candidates =
 			replaced === undefined || !input.transferInteractions
 				? []
-				: await openInteractionsOf(executing, {
+				: await openInteractionsOf(ctx, executing, {
 						organizationId: input.organizationId,
 						ownerUserId: replaced.userId,
 						directionId: input.directionId

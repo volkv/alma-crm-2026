@@ -22,7 +22,10 @@
  * причиной словами: эскалация, пропавшая молча, хуже эскалации, которая не
  * состоялась. Выключенная запись проверяется наравне с отсутствующей: адрес
  * уволенного остаётся в базе, и письмо о зависшей работе ушло бы наружу тому,
- * кому вход в систему уже закрыт.
+ * кому вход в систему уже закрыт. Руководитель, не включённый в пространство
+ * взаимодействия, — тот же случай «некому»: письмо рассказало бы ему о работе
+ * направления, которой он в системе не видит, — это утечка через почту, а не
+ * эскалация.
  *
  * Проход зовётся из `runIntegrationsCycle` под тем же замком в Redis
  * (`integrations/pump.ts`): приложение работает в нескольких процессах, а одно
@@ -49,6 +52,7 @@ import {
 	stageEntryStatus,
 	users
 } from '../db/schema';
+import { workspaceAccessCondition } from '../rbac/workspaces';
 import { getSetting } from '../settings';
 import { sendThroughChannel, type ChannelOutcome, type NotificationRecipient } from './channels';
 import { stuckNotificationMessage, type NotificationMessage } from './message';
@@ -89,6 +93,12 @@ export type StuckEntry = {
 	 * системе больше нет.
 	 */
 	recipientIsActive: boolean | null;
+	/**
+	 * Работает ли адресат в пространстве взаимодействия. Без этого письмо
+	 * уходит мимо границы доступа: взаимодействия на экране он не видит, а
+	 * название, вуз и стадия приходят ему в почту.
+	 */
+	recipientInWorkspace: boolean | null;
 };
 
 const owner = alias(users, 'owner_user');
@@ -148,7 +158,13 @@ async function readStuck(options: {
 				recipientUserId: manager.id,
 				recipientName: manager.fullName,
 				recipientEmail: manager.email,
-				recipientIsActive: manager.isActive
+				recipientIsActive: manager.isActive,
+				recipientInWorkspace: sql<
+					boolean | null
+				>`case when ${manager.id} is null then null else ${workspaceAccessCondition(
+					{ id: manager.id, roleId: manager.roleId },
+					interactions.workspaceId
+				)} end`
 			})
 			.from(stageEntries)
 			.innerJoin(interactions, eq(interactions.id, stageEntries.interactionId))
@@ -271,10 +287,11 @@ async function settle(
 /**
  * Кому слать — или почему слать некому.
  *
- * Оба исхода «некому» дают одно состояние доставки (`skipped`) и разные слова в
- * причине: незаполненная иерархия чинится назначением руководителя, а
- * выключенная запись — заменой его на действующего. Одинаковая фраза на два
- * разных дела заставила бы администратора искать вслепую.
+ * Все исходы «некому» дают одно состояние доставки (`skipped`) и разные слова в
+ * причине: незаполненная иерархия чинится назначением руководителя,
+ * выключенная запись — заменой его на действующего, а руководитель вне
+ * пространства — включением в него. Одинаковая фраза на разные дела заставила
+ * бы администратора искать вслепую.
  */
 function checkRecipient(
 	entry: StuckEntry
@@ -292,6 +309,14 @@ function checkRecipient(
 			ok: false,
 			error:
 				'Руководитель ответственного выключен: письмо ушло бы тому, кому доступ в систему уже закрыт. Назначьте действующего руководителя в разделе «Пользователи»'
+		};
+	}
+
+	if (entry.recipientInWorkspace !== true) {
+		return {
+			ok: false,
+			error:
+				'Руководитель ответственного не включён в пространство взаимодействия: письмо рассказало бы ему о работе, которой он не видит. Включите его в пространство в разделе «Настройки → Пространства»'
 		};
 	}
 

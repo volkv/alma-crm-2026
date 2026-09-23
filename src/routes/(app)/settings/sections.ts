@@ -17,6 +17,7 @@ import type { PermissionKey } from '$lib/server/rbac/permissions';
 export type SettingsHref =
 	| '/settings/profile'
 	| '/settings/users'
+	| '/settings/roles'
 	| '/settings/api-keys'
 	| '/settings/general'
 	| '/settings/workspaces'
@@ -49,6 +50,12 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 		href: '/settings/users',
 		label: 'Пользователи',
 		description: 'Кто работает в системе, с какой ролью и кому подчиняется',
+		permission: 'users.manage'
+	},
+	{
+		href: '/settings/roles',
+		label: 'Роли и права',
+		description: 'Что может каждая роль: матрица прав только для чтения',
 		permission: 'users.manage'
 	},
 	{

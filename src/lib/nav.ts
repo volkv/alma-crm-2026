@@ -14,6 +14,7 @@ import LayoutGridIcon from '@lucide/svelte/icons/layout-grid';
 import PackageIcon from '@lucide/svelte/icons/package';
 import PlugZapIcon from '@lucide/svelte/icons/plug-zap';
 import ScrollTextIcon from '@lucide/svelte/icons/scroll-text';
+import ShieldCheckIcon from '@lucide/svelte/icons/shield-check';
 import SlidersHorizontalIcon from '@lucide/svelte/icons/sliders-horizontal';
 import UserCogIcon from '@lucide/svelte/icons/user-cog';
 import UsersIcon from '@lucide/svelte/icons/users';
@@ -184,6 +185,16 @@ const STATIC_SECTIONS: readonly NavSection[] = [
 		href: '/settings/users',
 		label: 'Пользователи',
 		icon: UserCogIcon,
+		group: SETTINGS,
+		permission: 'users.manage'
+	},
+	{
+		// Право то же, что у «Пользователей»: страница о том же предмете, только
+		// матрица вместо списка сотрудников, и заводить под неё отдельное право
+		// незачем.
+		href: '/settings/roles',
+		label: 'Роли и права',
+		icon: ShieldCheckIcon,
 		group: SETTINGS,
 		permission: 'users.manage'
 	},

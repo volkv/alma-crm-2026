@@ -14,7 +14,9 @@
  * в четырёх модулях.
  */
 import { asc, eq } from 'drizzle-orm';
+import type { ActorContext } from '../actor';
 import { stages, workflows, workspaces } from '../db/schema';
+import { workspaceFilter } from '../rbac';
 import type { ReportExecutor } from './transaction';
 
 /** Стадия действующей редакции: ключ, актуальное название и место в порядке. */
@@ -36,14 +38,17 @@ export type ReportWorkspace = {
 };
 
 /**
- * Все пространства с их действующими стадиями, в порядке пространств.
+ * Пространства вызывающего с их действующими стадиями, в порядке пространств.
  *
- * Читаются все пространства, а не только те, что встретились в выборке: воронка
- * обязана показать и стадию, на которой сейчас никто не стоит, — ноль в ней
- * значит «никого», а отсутствие строки читается как «такой стадии нет».
+ * Читаются все его пространства, а не только те, что встретились в выборке:
+ * воронка обязана показать и стадию, на которой сейчас никто не стоит, — ноль
+ * в ней значит «никого», а отсутствие строки читается как «такой стадии нет».
+ * Чужие пространства в отчёт не попадают и нулями: их названия и стадии — уже
+ * сведения о направлении, в которое сотрудник не включён.
  */
 export async function readActiveWorkspaces(
-	db: ReportExecutor
+	db: ReportExecutor,
+	ctx: ActorContext
 ): Promise<Map<string, ReportWorkspace>> {
 	const rows = await db
 		.select({
@@ -59,6 +64,7 @@ export async function readActiveWorkspaces(
 		// назначенного процесса и её стадии.
 		.leftJoin(workflows, eq(workflows.id, workspaces.workflowId))
 		.leftJoin(stages, eq(stages.revisionId, workflows.activeRevisionId))
+		.where(workspaceFilter(ctx, workspaces.id))
 		.orderBy(asc(workspaces.position), asc(stages.position));
 
 	const found = new Map<string, ReportWorkspace & { stages: ReportStage[] }>();

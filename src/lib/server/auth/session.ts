@@ -19,6 +19,7 @@ import { getConfig } from '../config';
 import { getDb } from '../db';
 import { roles, users } from '../db/schema';
 import { demoSessionPermissions, loadRolePermissions } from '../rbac';
+import { hasFullScope, loadWorkspaceIds } from '../rbac/workspaces';
 import { getRedis } from '../redis';
 import { getSetting } from '../settings';
 
@@ -237,16 +238,27 @@ const MANAGER_CHAIN_DEPTH = 16;
  * приходит по любому вузу, а ответственного у ключа нет. Ширина эта безопасна
  * ровно потому, что ключ роли `service` не пускают никуда, кроме эндпоинтов
  * обмена (`apiHandler`, признак `service`), а входа у такой записи нет вовсе.
+ *
+ * Всем, кроме полной области, к людям добавляются пространства, в которые
+ * включён сам сотрудник (`workspace_members`). Набор читается здесь же, на
+ * каждом запросе, — поэтому исключение из пространства гасит доступ со
+ * следующего запроса, без повторного входа.
  */
 async function accessScopeFor(role: { id: string }, userId: string): Promise<AccessScope> {
-	if (role.id === 'admin' || role.id === 'service') {
+	if (hasFullScope(role.id)) {
 		return { kind: 'all' };
 	}
 
-	if (role.id !== 'lead') {
-		return { kind: 'delegated', userIds: new Set([userId]) };
-	}
+	const [userIds, workspaceIds] = await Promise.all([
+		role.id === 'lead' ? subordinatesOf(userId) : new Set([userId]),
+		loadWorkspaceIds(userId)
+	]);
 
+	return { kind: 'delegated', userIds, workspaceIds };
+}
+
+/** Сам руководитель и его подчинённые на любую глубину. */
+async function subordinatesOf(userId: string): Promise<ReadonlySet<string>> {
 	// `cycle` — встроенная защита PostgreSQL от повторного прохода по той же
 	// строке: без неё взаимная ссылка двух руководителей крутила бы запрос, пока
 	// он не упрётся в память.
@@ -262,7 +274,7 @@ async function accessScopeFor(role: { id: string }, userId: string): Promise<Acc
 		select distinct id from subordinates
 	`);
 
-	return { kind: 'delegated', userIds: new Set(rows.map((row) => row.id)) };
+	return new Set(rows.map((row) => row.id));
 }
 
 /**

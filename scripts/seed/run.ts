@@ -26,6 +26,7 @@ import { seedContracts } from './contracts';
 import { seedDirectory } from './directory';
 import { seedInteractions } from './interactions';
 import { seedLoad, type LoadSeedReport } from './load';
+import { seedLoadMembers } from './load-members';
 import { seedProcesses } from './process';
 import { seedStats } from './stats';
 import { seedUsers, type SeededUsers } from './users';
@@ -79,7 +80,12 @@ export async function seedAll(): Promise<SeedReport> {
  */
 export async function seedWithLoad(): Promise<{ seed: SeedReport; load: LoadSeedReport | null }> {
 	const seed = await seedAll();
-	const load = await getDb().transaction((tx) => seedLoad(tx));
+	const load = await getDb().transaction(async (tx) => {
+		const report = await seedLoad(tx);
+		await seedLoadMembers(tx);
+
+		return report;
+	});
 
 	return { seed, load };
 }
@@ -136,6 +142,7 @@ const REPORTED_TABLES: Record<string, PgTable> = {
 	products: schema.products,
 	directions: schema.directions,
 	organization_responsibles: schema.organizationResponsibles,
+	workspace_members: schema.workspaceMembers,
 	interactions: schema.interactions,
 	contracts: schema.contracts,
 	stage_entries: schema.stageEntries,

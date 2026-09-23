@@ -45,6 +45,7 @@ import { getInteraction } from '$lib/server/interactions/read';
 import type { PermissionKey } from '$lib/server/rbac/permissions';
 import { defaultRolePermissions } from '$lib/server/rbac/seed';
 import {
+	allWorkspaceIds,
 	insertInteractionWithStage,
 	insertOrganization,
 	insertUser,
@@ -277,7 +278,8 @@ describe('правила назначения', () => {
 		const lead = testActor({
 			roleId: 'lead',
 			userId: leadId,
-			scopeUserIds: [leadId, subordinate]
+			scopeUserIds: [leadId, subordinate],
+			workspaceIds: await allWorkspaceIds(database.db)
 		});
 
 		await assignResponsible(lead, {
@@ -309,7 +311,12 @@ describe('правила назначения', () => {
 		const leadId = await insertUser(database.db, { roleId: 'lead' });
 		const foreign = await insertOrganization(database.db, { shortName: 'Чужой вуз' });
 
-		const lead = testActor({ roleId: 'lead', userId: leadId, scopeUserIds: [leadId] });
+		const lead = testActor({
+			roleId: 'lead',
+			userId: leadId,
+			scopeUserIds: [leadId],
+			workspaceIds: await allWorkspaceIds(database.db)
+		});
 
 		// «Нет в области» и «нет вовсе» отвечаются одинаково: разный ответ выдал
 		// бы существование чужого вуза.
@@ -575,7 +582,12 @@ describe('снятие назначения', () => {
 
 		// Владелец записи её не терял: смена ответственного за вуз не обрывает
 		// незавершённую работу.
-		const ownerContext = testActor({ roleId: 'manager', userId: owner, scopeUserIds: [owner] });
+		const ownerContext = testActor({
+			roleId: 'manager',
+			userId: owner,
+			scopeUserIds: [owner],
+			workspaceIds: await allWorkspaceIds(database.db)
+		});
 
 		expect((await getInteraction(ownerContext, interactionId)).id).toBe(interactionId);
 	});

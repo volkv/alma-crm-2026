@@ -73,6 +73,7 @@ import { resolveIntakeWorkspace } from '../../stages/process';
 import { hashEmail, hashPhone, phoneColumns } from '../../people/pii';
 import { withPiiTrace } from '../../people/pii-trace';
 import { requirePermission } from '../../rbac';
+import { mayWorkIn } from '../../rbac/workspaces';
 import { addComment } from '../../stages/commands';
 import { getExchangeSettings } from '../settings';
 import { enqueueApplicationStatus } from './outbox';
@@ -1142,13 +1143,22 @@ async function findExisting(
 	tx: Tx,
 	source: string,
 	externalId: string
-): Promise<{ id: string; externalRevision: number | null; organizationId: string } | null> {
+): Promise<{
+	id: string;
+	externalRevision: number | null;
+	organizationId: string;
+	workspaceId: string;
+	workspaceName: string;
+} | null> {
 	const [row] = await tx
 		.select({
 			id: interactions.id,
-			externalRevision: interactions.externalRevision
+			externalRevision: interactions.externalRevision,
+			workspaceId: interactions.workspaceId,
+			workspaceName: workspaces.name
 		})
 		.from(interactions)
+		.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
 		.where(and(eq(interactions.externalSource, source), eq(interactions.externalId, externalId)))
 		.limit(1);
 
@@ -1163,7 +1173,9 @@ async function findExisting(
 	return {
 		id: row.id,
 		externalRevision: row.externalRevision,
-		organizationId: primary.organization_id
+		organizationId: primary.organization_id,
+		workspaceId: row.workspaceId,
+		workspaceName: row.workspaceName
 	};
 }
 
@@ -1316,12 +1328,29 @@ export async function receiveApplication(
 				// его область к ней применяется, его имя стоит в журнале. Настройка
 				// «Ответственный за входящие» работает только там, где ответственного
 				// ещё нет, — и тогда же он и назначается.
+				//
+				// Пространство — граница доступа: от имени сотрудника вне пространства
+				// заявку не провести, он не видит записи, которую ему заводят. Такой
+				// ответственный за вуз уступает сотруднику из настройки, а если вне
+				// пространства и тот — заявка отклоняется с причиной.
 				const organizationId =
 					existing?.organizationId ?? (await findApplicantOrganization(tx, message.data));
 				const responsible =
 					organizationId === null ? null : await currentResponsible(tx, organizationId);
+				const workspace =
+					existing === null
+						? await resolveIntakeWorkspace(tx, message.data.applicant.kind)
+						: { id: existing.workspaceId, name: existing.workspaceName };
 				const ownerUserId =
-					responsible ?? (await resolveIntakeOwner(tx, settings.cms.defaultOwnerUserId));
+					responsible !== null && (await mayWorkIn(tx, responsible, workspace.id))
+						? responsible
+						: await resolveIntakeOwner(tx, settings.cms.defaultOwnerUserId);
+
+				if (!(await mayWorkIn(tx, ownerUserId, workspace.id))) {
+					throw new ValidationError('Заявку некому вести в её пространстве', [
+						`Ни ответственный за вуз, ни сотрудник из настройки «Ответственный за входящие» не включены в пространство «${workspace.name}». Включите сотрудника в разделе «Настройки → Пространства» и повторите сообщение`
+					]);
+				}
 				const owner = await ownerActor(ctx, ownerUserId);
 
 				let outcome: ApplyOutcome;

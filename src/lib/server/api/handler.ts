@@ -14,7 +14,7 @@ import type { RequestEvent, RequestHandler } from '@sveltejs/kit';
 import { z } from 'zod';
 import type { ApiErrorBody, ApiErrorCode, ApiKeyExchangeSystem } from '$lib/contracts/api';
 import type { AuditOutcome } from '$lib/contracts/audit';
-import type { AccessScope, ActorContext } from '../actor';
+import { NO_ACCESS, type ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { AppError, statusForError, ValidationError } from '../errors';
 import { clientAddress } from '../http';
@@ -90,9 +90,6 @@ export type ApiRequest<TConfig extends ApiEndpointConfig> = {
 
 /** Методы, для которых повтор без идемпотентности создал бы вторую запись. */
 const IDEMPOTENT_METHODS = new Set(['POST', 'PUT', 'PATCH']);
-
-/** Область доступа того, кто ещё не представился: ничего. */
-const NO_ACCESS: AccessScope = { kind: 'delegated', userIds: new Set() };
 
 /**
  * Отказ, случившийся в транспорте: до сервиса запрос не дошёл, и предметной

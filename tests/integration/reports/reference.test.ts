@@ -28,6 +28,7 @@ import {
 	type ReferenceIds
 } from '../../fixtures/reports/reference';
 import {
+	allWorkspaceIds,
 	insertUser,
 	startTestDatabase,
 	testActor,
@@ -73,8 +74,12 @@ const admin = (): ActorContext => testActor();
  * область — это множество людей, и вопрос «что видит тот, кому делегированы
  * записи одного сотрудника» иначе не задать.
  */
-function delegatedActor(userIds: readonly string[]): ActorContext {
-	const scope = { kind: 'delegated' as const, userIds: new Set(userIds) };
+function delegatedActor(userIds: readonly string[], workspaceIds: readonly string[]): ActorContext {
+	const scope = {
+		kind: 'delegated' as const,
+		userIds: new Set(userIds),
+		workspaceIds: new Set(workspaceIds)
+	};
 	const base = testActor({ roleId: 'manager' });
 
 	return { ...base, scope, user: base.user === null ? null : { ...base.user, scope } };
@@ -363,7 +368,7 @@ describe('область доступа', () => {
 			userId: outsider
 		});
 
-		const limited = delegatedActor([outsider]);
+		const limited = delegatedActor([outsider], await allWorkspaceIds(database.db));
 		const view = await buildReport(limited, query({ mode: 'snapshot', ...QUARTER_PERIOD }));
 		const names = new Set(
 			view.rows.map((row) => {
@@ -384,7 +389,7 @@ describe('область доступа', () => {
 		});
 
 		const view = await buildReport(
-			delegatedActor([stranger]),
+			delegatedActor([stranger], await allWorkspaceIds(database.db)),
 			query({ mode: 'snapshot', ...QUARTER_PERIOD })
 		);
 
@@ -392,7 +397,7 @@ describe('область доступа', () => {
 	});
 
 	it('И6: строк в отчёте столько же, сколько в списке взаимодействий', async () => {
-		const ctx = delegatedActor([TEST_USER_IDS.admin]);
+		const ctx = delegatedActor([TEST_USER_IDS.admin], await allWorkspaceIds(database.db));
 		const period = { from: '2026-01-01', to: '2027-01-31' };
 
 		const view = await buildReport(ctx, query({ mode: 'snapshot', ...period, state: 'active' }));

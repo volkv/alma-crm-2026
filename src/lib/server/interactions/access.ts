@@ -14,14 +14,17 @@ import type { ActorContext } from '../actor';
 import { getDb } from '../db';
 import { interactionParties, interactions } from '../db/schema';
 import { NotFoundError } from '../errors';
-import { actorScopeFilter, scopeFilter } from '../rbac';
+import { actorScopeFilter, scopeFilter, workspaceFilter } from '../rbac';
 
 /**
  * Условие «это взаимодействие в области доступа». Коррелирует со столбцом
  * `interactions.id`, поэтому годится только для выборок из `interactions`.
  *
- * Видимость — это «или» из двух слагаемых:
+ * Видимость — это **пространство** и «или» из двух слагаемых области:
  *
+ * 0. **пространство записи** — одно из пространств вызывающего. Это граница, а
+ *    не слагаемое: вне своих пространств сотрудник не видит ничего, даже
+ *    записи своих подчинённых и свои собственные, если его исключили;
  * 1. **владелец записи** в области. Взаимодействие остаётся у своего ведущего и
  *    после того, как ответственность за вуз ушла другому: иначе смена
  *    ответственного обрывала бы незавершённую работу на полуслове;
@@ -38,7 +41,7 @@ export function interactionScopeFilter(ctx: ActorContext): SQL {
 		return sql`true`;
 	}
 
-	return sql`(${actorScopeFilter(ctx, interactions.ownerUserId)} or ${exists(
+	return sql`(${workspaceFilter(ctx, interactions.workspaceId)} and (${actorScopeFilter(ctx, interactions.ownerUserId)} or ${exists(
 		getDb()
 			.select({ one: sql`1` })
 			.from(interactionParties)
@@ -49,7 +52,7 @@ export function interactionScopeFilter(ctx: ActorContext): SQL {
 					scopeFilter(ctx, interactionParties.organizationId)
 				)
 			)
-	)})`;
+	)}))`;
 }
 
 /**

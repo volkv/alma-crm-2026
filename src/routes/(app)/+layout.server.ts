@@ -1,4 +1,6 @@
+import { actorFromEvent } from '$lib/server/actor';
 import { getConfig } from '$lib/server/config';
+import { canEnterWorkspace } from '$lib/server/rbac';
 import { getSetting } from '$lib/server/settings';
 import { listWorkspacesForNav } from '$lib/server/stages/process';
 import type { LayoutServerLoad } from './$types';
@@ -21,19 +23,26 @@ import type { LayoutServerLoad } from './$types';
  * панели, панель одинакова на каждой странице, и собирать её в каждом маршруте
  * значило бы получить четыре разных меню. Неавторизованному не отдаётся ничего:
  * до входа меню не рисуется вовсе.
+ *
+ * В меню — только пространства, в которые сотрудник включён (администратор
+ * видит все). Чужое пространство в меню не попадает даже заголовком: его
+ * название — уже сведения о направлении, а адрес его всё равно ответит 404
+ * (`w/[workspace]/+layout.server.ts`).
  */
-export const load: LayoutServerLoad = async ({ locals }) => {
+export const load: LayoutServerLoad = async (event) => {
+	const { locals } = event;
 	const demoMode = getConfig().DEMO_MODE;
 
 	const [schedule, workspaces] = await Promise.all([
 		demoMode ? getSetting('demo_reset_schedule') : null,
 		locals.user === null ? [] : listWorkspacesForNav()
 	]);
+	const ctx = actorFromEvent(event);
 
 	return {
 		user: locals.user,
 		demoMode,
 		demoResetHour: schedule !== null && schedule.enabled ? schedule.hour : null,
-		workspaces
+		workspaces: workspaces.filter((workspace) => canEnterWorkspace(ctx, workspace.id))
 	};
 };

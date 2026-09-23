@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import { asc, eq } from 'drizzle-orm';
 import { isRedirect } from '@sveltejs/kit';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import type { ActorContext } from '$lib/server/actor';
+import { NO_ACCESS, type ActorContext } from '$lib/server/actor';
 import { rateLimit } from '$lib/server/hooks/rate-limit';
 import { auditEvents, organizationResponsibles, users } from '$lib/server/db/schema';
 import { ConflictError, ForbiddenError, NotFoundError } from '$lib/server/errors';
@@ -29,6 +29,7 @@ import {
 import { DEFAULT_ROLES } from '$lib/server/rbac/permissions';
 import { getRedis } from '$lib/server/redis';
 import {
+	allWorkspaceIds,
 	insertOrganization,
 	startTestDatabase,
 	testActor,
@@ -98,7 +99,7 @@ function anonymous(ip: string): ActorContext {
 		apiKeyId: null,
 		ip,
 		userAgent: 'vitest',
-		scope: { kind: 'delegated', userIds: new Set() }
+		scope: NO_ACCESS
 	};
 }
 
@@ -395,7 +396,8 @@ describe('область доступа сессии', () => {
 		expect(admin?.scope).toEqual({ kind: 'all' });
 		expect(manager?.scope).toEqual({
 			kind: 'delegated',
-			userIds: new Set([TEST_USER_IDS.manager])
+			userIds: new Set([TEST_USER_IDS.manager]),
+			workspaceIds: new Set(await allWorkspaceIds(database.db))
 		});
 	});
 
@@ -419,7 +421,8 @@ describe('область доступа сессии', () => {
 
 		expect(lead?.scope).toEqual({
 			kind: 'delegated',
-			userIds: new Set([TEST_USER_IDS.lead, TEST_USER_IDS.manager, deep.id])
+			userIds: new Set([TEST_USER_IDS.lead, TEST_USER_IDS.manager, deep.id]),
+			workspaceIds: new Set(await allWorkspaceIds(database.db))
 		});
 	});
 
@@ -581,7 +584,8 @@ describe('управление учётными записями', () => {
 		const lead = await loadSessionUser(TEST_USER_IDS.lead);
 		expect(lead?.scope).toEqual({
 			kind: 'delegated',
-			userIds: new Set([TEST_USER_IDS.lead, account.id])
+			userIds: new Set([TEST_USER_IDS.lead, account.id]),
+			workspaceIds: new Set(await allWorkspaceIds(database.db))
 		});
 	});
 
@@ -668,7 +672,8 @@ describe('назначения и область', () => {
 
 		expect(manager?.scope).toEqual({
 			kind: 'delegated',
-			userIds: new Set([TEST_USER_IDS.manager])
+			userIds: new Set([TEST_USER_IDS.manager]),
+			workspaceIds: new Set(await allWorkspaceIds(database.db))
 		});
 
 		const rows = await database.db

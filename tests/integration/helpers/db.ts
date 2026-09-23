@@ -24,7 +24,7 @@
  * — иначе `$env/dynamic/private` останется слепком `.env`, снятым при запуске
  * Vitest, и сервисы пойдут не в контейнер, а в базу разработчика.
  */
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, eq, inArray, isNull, sql, type SQL } from 'drizzle-orm';
 import type { PostgresJsDatabase } from 'drizzle-orm/postgres-js';
 import { Redis } from 'ioredis';
 import postgres from 'postgres';
@@ -245,6 +245,10 @@ async function prepareTestDatabase(
 					roleId: role.id
 				}))
 			);
+
+			// Сотрудники — во всех пространствах, как их включила миграция членства
+			// на работающей установке. Тесты границы пространства исключают их сами.
+			await joinWorkspaces(tx, sql`true`);
 		});
 	};
 
@@ -313,6 +317,12 @@ export function testActor(options?: {
 	 * расставляет.
 	 */
 	scopeUserIds?: readonly string[];
+	/**
+	 * Пространства, в которые включён актёр с сужённой областью. Обязательны
+	 * вместе с `scopeUserIds`: область без пространств не видит ни одного
+	 * взаимодействия, и тест, забывший их назвать, проверял бы пустоту.
+	 */
+	workspaceIds?: readonly string[];
 }): ActorContext {
 	const roleId = options?.roleId ?? 'admin';
 	const permissions =
@@ -320,10 +330,18 @@ export function testActor(options?: {
 			? new Set<string>(options.permissions)
 			: defaultRolePermissions(roleId);
 
+	if (options?.scopeUserIds !== undefined && options.workspaceIds === undefined) {
+		throw new Error('testActor: у сужённой области должны быть названы пространства');
+	}
+
 	const scope: AccessScope =
 		options?.scopeUserIds === undefined
 			? { kind: 'all' }
-			: { kind: 'delegated', userIds: new Set(options.scopeUserIds) };
+			: {
+					kind: 'delegated',
+					userIds: new Set(options.scopeUserIds),
+					workspaceIds: new Set(options.workspaceIds)
+				};
 
 	return {
 		requestId: '00000000-0000-4000-8000-00000000fee1',
@@ -361,6 +379,12 @@ export async function scopedActor(
 		userId?: string;
 		permissions?: readonly PermissionKey[];
 		organizationIds: readonly string[];
+		/**
+		 * Пространства актёра. По умолчанию — все заведённые на момент вызова:
+		 * большинство тестов области проверяют назначения, а не пространства, и
+		 * граница пространства в них мешала бы, а не проверялась.
+		 */
+		workspaceIds?: readonly string[];
 	}
 ): Promise<ActorContext> {
 	const roleId = options.roleId ?? 'manager';
@@ -395,14 +419,56 @@ export async function scopedActor(
 		roleId,
 		userId,
 		permissions: options.permissions,
-		scopeUserIds: [userId]
+		scopeUserIds: [userId],
+		workspaceIds: options.workspaceIds ?? (await allWorkspaceIds(database))
 	});
 }
 
-/** Пользователь в базе: нужен всюду, где стоит внешний ключ на автора действия. */
+/** Все заведённые пространства — для актёров, которым граница пространства не мешает. */
+export async function allWorkspaceIds(
+	database: PostgresJsDatabase<typeof schema>
+): Promise<string[]> {
+	const rows = await database.select({ id: schema.workspaces.id }).from(schema.workspaces);
+
+	return rows.map((row) => row.id);
+}
+
+/**
+ * Включает сотрудников в пространства — состояние, в котором установка
+ * оказывается после миграции членства. Администраторам и машинному субъекту
+ * членство не нужно; повторное включение ничего не меняет. Условие —
+ * выражение над `u` (пользователь) и `w` (пространство).
+ */
+async function joinWorkspaces(
+	executor: Pick<PostgresJsDatabase<typeof schema>, 'execute'>,
+	where: SQL
+): Promise<void> {
+	await executor.execute(sql`
+		insert into workspace_members (workspace_id, user_id)
+		select w.id, u.id
+		from workspaces w
+		cross join users u
+		where u.role_id not in ('admin', 'service') and ${where}
+		on conflict do nothing
+	`);
+}
+
+/**
+ * Пользователь в базе: нужен всюду, где стоит внешний ключ на автора действия.
+ *
+ * Сотрудник заводится включённым во все пространства — как на установке после
+ * миграции членства. `workspaces: 'none'` — без членства: так заводят того, кто
+ * стоит вне пространства.
+ */
 export async function insertUser(
 	database: PostgresJsDatabase<typeof schema>,
-	options: { id?: string; email?: string; roleId?: string; fullName?: string } = {}
+	options: {
+		id?: string;
+		email?: string;
+		roleId?: string;
+		fullName?: string;
+		workspaces?: 'all' | 'none';
+	} = {}
 ): Promise<string> {
 	const [row] = await database
 		.insert(schema.users)
@@ -415,6 +481,10 @@ export async function insertUser(
 			roleId: options.roleId ?? 'admin'
 		})
 		.returning({ id: schema.users.id });
+
+	if ((options.workspaces ?? 'all') === 'all') {
+		await joinWorkspaces(database, sql`u.id = ${row.id}`);
+	}
 
 	return row.id;
 }
@@ -579,6 +649,13 @@ export async function insertInteractionWithStage(
 			ownerUserId: options.ownerUserId
 		})
 		.returning({ id: schema.interactions.id });
+
+	// Своё пространство на каждую запись — и в нём её владелец с руководителем:
+	// без членства запись не видна тому, кто её ведёт, а эскалация не уходит.
+	await joinWorkspaces(
+		database,
+		sql`w.id = ${workspace.id} and (u.id = ${options.ownerUserId} or u.id = (select manager_user_id from users where id = ${options.ownerUserId}))`
+	);
 
 	return {
 		interactionId: interaction.id,

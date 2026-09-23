@@ -24,7 +24,8 @@ import {
 	organizations,
 	people,
 	stageEntries,
-	users
+	users,
+	workspaceMembers
 } from '$lib/server/db/schema';
 import { runExchangeCycle } from '$lib/server/integrations/exchange/delivery';
 import { retryExchangeMessage } from '$lib/server/integrations/exchange/messages';
@@ -681,6 +682,24 @@ describe('приём заявки с сайта', () => {
 			externalId: 'site-2026-000123'
 		});
 		expect(refused.lastError).toContain('Ответственный за входящие заявки не настроен');
+	});
+
+	it('отказывает с причиной, когда вести заявку в её пространстве некому', async () => {
+		// Сотрудник из настройки приёма исключён из всех пространств, а
+		// ответственного за вуз у нового заявителя нет.
+		await database.db
+			.update(workspaceMembers)
+			.set({ validTo: sql`now()` })
+			.where(eq(workspaceMembers.userId, TEST_USER_IDS.manager));
+
+		const response = await intake(apiEvent({ body: envelope(B2B_DATA), key: apiKey }));
+
+		expect(response.status).toBe(400);
+		expect(await database.db.select({ id: interactions.id }).from(interactions)).toHaveLength(0);
+
+		const [refused] = await database.db.select().from(exchangeMessages);
+		expect(refused).toMatchObject({ state: 'failed' });
+		expect(refused.lastError).toContain('Заявку некому вести');
 	});
 
 	it('вне демонстрационного режима демонстрационная запись входящие не принимает', async () => {

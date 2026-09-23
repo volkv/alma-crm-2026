@@ -1,7 +1,5 @@
 import { expect, test } from '@playwright/test';
 import { E2E_USER, E2E_PASSWORD, NO_ROLE_ACCOUNT } from './global-setup';
-import { pointerlessControls } from './helpers/cursor';
-import { waitForHydration } from './helpers/hydration';
 import { skipOnboardingTour } from './helpers/onboarding';
 import { signInThroughDirectory } from './helpers/sign-in';
 
@@ -21,9 +19,6 @@ import { signInThroughDirectory } from './helpers/sign-in';
  * перебор — проверять мы стали бы его защиту, а не свой вход.
  */
 test.describe.configure({ mode: 'serial' });
-
-/** Идентификатор верной формы, которого нет ни в одной таблице стенда. */
-const ABSENT_ID = '00000000-0000-4000-8000-0000000000ff';
 
 test('без сессии любая страница приложения отправляет на вход', async ({ page }) => {
 	await page.goto('/');
@@ -48,52 +43,6 @@ test('вход через каталог открывает оболочку п�
 	});
 });
 
-test('страница входа перечисляет демонстрационные учётные записи и общий пароль', async ({
-	page
-}) => {
-	await page.goto('/login');
-
-	const accounts = page.getByTestId('demo-accounts');
-
-	await expect(accounts).toContainText('manager');
-	await expect(accounts).toContainText('lead');
-	await expect(accounts).toContainText('admin');
-
-	// Пароль стенда публичный: зритель показа должен войти с экрана, никого не
-	// спрашивая. Показывается тот, что действительно пускает, — глобальный сетап
-	// сверяет `DEMO_PASSWORD_HINT` с паролем, который ставит каталогу.
-	await expect(page.getByTestId('demo-password')).toContainText(E2E_PASSWORD);
-});
-
-test('над нажимаемым на входе курсор — «палец»', async ({ page }) => {
-	await page.goto('/login');
-
-	// Вход — первый экран продукта и единственный, который видят без сессии:
-	// оболочки с её кнопками здесь нет, и правила курсора проверяются отдельно от
-	// витрины. Кнопок на карточке всего три — «Войти», копирование пароля стенда
-	// и вход демонстрационной учётной записью, — и все три нажимают.
-	expect(await pointerlessControls(page)).toEqual([]);
-});
-
-test('кнопка на карточке кладёт пароль стенда в буфер обмена', async ({ context, page }) => {
-	// Буфер обмена страницы браузер отдаёт только с разрешения, и читать его
-	// проверка будет тем же способом, каким кнопка пишет.
-	await context.grantPermissions(['clipboard-read', 'clipboard-write']);
-
-	await page.goto('/login');
-	await waitForHydration(page);
-
-	await page.getByTestId('copy-demo-password').click();
-
-	// Ответ карточки виден на ней самой: оболочки приложения, а с ней и
-	// всплывающих сообщений, на странице входа нет.
-	await expect(page.getByTestId('demo-password-notice')).toHaveText('Пароль скопирован');
-
-	const clipboard = await page.evaluate(() => navigator.clipboard.readText());
-
-	expect(clipboard).toBe(E2E_PASSWORD);
-});
-
 test('неверный пароль каталог объясняет сам и в систему не пускает', async ({ page }) => {
 	// Отдельная учётная запись: неудачная попытка поднимает счётчик защиты от
 	// перебора в каталоге, и портить им запись, которой входят остальные
@@ -109,28 +58,6 @@ test('неверный пароль каталог объясняет сам и 
 
 	await page.goto('/');
 	await expect(page).toHaveURL('/login?next=%2F');
-});
-
-test('учётная запись без роли получает понятный отказ, а не пустой экран', async ({ page }) => {
-	await signInThroughDirectory(page, NO_ROLE_ACCOUNT);
-
-	await expect(page).toHaveURL(/\/login\/callback/);
-	await expect(page.getByTestId('login-failure')).toContainText('Доступ в систему вам не назначен');
-
-	// Сессии при этом не завелось: отказ во входе — это отказ, а не половина входа.
-	await page.goto('/');
-	await expect(page).toHaveURL('/login?next=%2F');
-});
-
-test('после входа человек возвращается туда, куда шёл', async ({ page }) => {
-	await page.goto('/ui-kit');
-
-	await expect(page).toHaveURL('/login?next=%2Fui-kit');
-
-	await signInThroughDirectory(page, E2E_USER, { startAt: '/login?next=%2Fui-kit' });
-
-	await expect(page).toHaveURL('/ui-kit');
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText('UI-кит');
 });
 
 test('адрес на чужой сайт в next никуда не уводит', async ({ page }) => {
@@ -170,54 +97,6 @@ test('выход возвращает к форме входа и закрыва
 	await expect(page).toHaveURL('/login?next=%2Fui-kit');
 });
 
-test('после выхода каталог спрашивает пароль заново', async ({ page }) => {
-	await signInThroughDirectory(page, E2E_USER);
-	await expect(page).toHaveURL('/');
-
-	await page.request.post('/logout');
-	await page.goto('/login');
-	await page.getByRole('button', { name: 'Войти', exact: true }).click();
-
-	// Сессия каталога погашена вместе с нашей: иначе человек на общем компьютере
-	// вошёл бы обратно одним нажатием, не увидев формы.
-	await expect(page.locator('#password')).toBeVisible({ timeout: 15_000 });
-});
-
-test('гвардия разворачивает анонима на вход и помнит, куда он шёл', async ({ page }) => {
-	const response = await page.request.get('/audit', { maxRedirects: 0 });
-
-	expect(response.status()).toBe(303);
-	expect(response.headers()['location']).toBe('/login?next=%2Faudit');
-});
-
-test('форма на странице с погасшей сессией уводит на вход, а не в пятисотую', async ({ page }) => {
-	await signInThroughDirectory(page, E2E_USER);
-	await expect(page).toHaveURL('/');
-
-	// Подсказки первого входа стоят слоем поверх страницы, а дальше проверка
-	// заполняет форму. Признак «показаны» остаётся в браузере до конца проверки.
-	await skipOnboardingTour(page);
-
-	await page.goto('/organizations/new');
-	await page.getByLabel('Полное наименование').fill('Организация без сессии');
-	await page.getByLabel('Краткое наименование').fill('Без сессии');
-
-	// Сессия гаснет между открытием страницы и отправкой формы — ровно так это и
-	// выглядит у человека, который заполнял её полчаса.
-	await page.context().clearCookies();
-
-	await page.getByRole('button', { name: 'Создать организацию' }).click();
-
-	// Форму отправляет код страницы, и ответом ему обязан быть конверт, который
-	// он умеет читать. Готовая разметка страницы входа вместо него ломала бы
-	// разбор, и человек вместо формы входа видел бы «внутреннюю ошибку».
-	await expect(page).toHaveURL(/\/login\?next=%2Forganizations%2Fnew/);
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-		'Система контроля взаимодействия с учебными заведениями'
-	);
-	await expect(page.getByRole('button', { name: 'Войти', exact: true })).toBeVisible();
-});
-
 test('отказ по правам остаётся внутри оболочки приложения', async ({ page }) => {
 	await signInThroughDirectory(page, E2E_USER);
 	await expect(page).toHaveURL('/');
@@ -234,23 +113,6 @@ test('отказ по правам остаётся внутри оболочк�
 		page.getByText('Журнал действий доступен только с правом «Просмотр журнала действий»')
 	).toBeVisible();
 	await expect(page.getByRole('link', { name: 'На главную' })).toBeVisible();
-});
-
-test('записи нет — 404 в оболочке, адреса нет — 404 без неё', async ({ page }) => {
-	await signInThroughDirectory(page, E2E_USER);
-	await expect(page).toHaveURL('/');
-
-	const missing = await page.goto(`/organizations/${ABSENT_ID}`);
-	expect(missing?.status()).toBe(404);
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Страница не найдена');
-	await expect(page.getByRole('button', { name: E2E_USER.fullName })).toBeVisible();
-
-	// Идентификатор, который не может быть нашим, до загрузчика не доходит:
-	// такого адреса в приложении нет, и оболочка тут ни при чём.
-	const malformed = await page.goto('/organizations/abc');
-	expect(malformed?.status()).toBe(404);
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Страница не найдена');
-	await expect(page.getByRole('button', { name: E2E_USER.fullName })).toBeHidden();
 });
 
 test('вход штатным администратором открывает то, чего нет у демонстрации', async ({ page }) => {

@@ -10,7 +10,7 @@ import {
 	rateLimitHeaders,
 	tighter
 } from '$lib/server/api/rate-limit';
-import type { AccessScope, ActorContext } from '$lib/server/actor';
+import { NO_ACCESS, type ActorContext } from '$lib/server/actor';
 import { recordAuditEvent } from '$lib/server/audit';
 import { contentDisposition, documentFileName } from '$lib/server/documents/filename';
 import { openStoredFile } from '$lib/server/documents/storage';
@@ -66,9 +66,6 @@ registerRoute({
 	// описывает, и документация читает тип отсюда.
 	responseContentType: 'application/octet-stream'
 });
-
-/** Область доступа того, кто ещё не представился: ничего. */
-const NO_ACCESS: AccessScope = { kind: 'delegated', userIds: new Set() };
 
 function errorResponse(
 	status: number,

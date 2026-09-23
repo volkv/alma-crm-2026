@@ -141,7 +141,7 @@ export async function recountFromRows(
 	query: ReportQuery
 ): Promise<{ totals: ReportTotals; charts: ReportCharts }> {
 	return readReportSnapshot(ctx, async ({ tx }) => {
-		const index = createStageIndex(await readActiveWorkspaces(tx));
+		const index = createStageIndex(await readActiveWorkspaces(tx, ctx));
 
 		return query.mode === 'movement'
 			? recountMovement(tx, ctx, query)
@@ -321,7 +321,7 @@ export async function reconcileModes(
 	// Два среза и движение — из одного снимка: сверка режимов, прочитанная в
 	// три разных момента, ловила бы не ошибку границ, а соседний переход.
 	const { index, startRows, endRows, events } = await readReportSnapshot(ctx, async ({ tx }) => ({
-		index: createStageIndex(await readActiveWorkspaces(tx)),
+		index: createStageIndex(await readActiveWorkspaces(tx, ctx)),
 		startRows: await readSnapshotRows(tx, ctx, { ...query, mode: 'snapshot', to: beforePeriod }),
 		endRows: await readSnapshotRows(tx, ctx, { ...query, mode: 'snapshot' }),
 		events: await readMovementRows(

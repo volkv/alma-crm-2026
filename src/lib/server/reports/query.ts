@@ -69,17 +69,18 @@ export function readReportQuery(url: URL, today: string = formatIsoDay()): Repor
  * числами выглядят как ошибка системы.
  *
  * Область — это множество людей, а не организаций (`docs/access-matrix.md`,
- * раздел 1), поэтому и описывается она людьми: список вузов, посчитанный на
- * момент сборки, к завтрашнему дню был бы уже другим.
+ * раздел 1), поэтому и описывается она людьми и пространствами: список вузов,
+ * посчитанный на момент сборки, к завтрашнему дню был бы уже другим.
  */
 export function describeScope(ctx: ActorContext): string {
 	if (ctx.scope.kind === 'all') {
 		return 'все взаимодействия';
 	}
 
-	const count = ctx.scope.userIds.size;
+	const people = ctx.scope.userIds.size;
+	const places = ctx.scope.workspaceIds.size;
 
-	return count === 0
+	return people === 0 || places === 0
 		? 'ничего: область доступа пуста'
-		: `вузы и взаимодействия ${pluralize(count, ['сотрудника', 'сотрудников', 'сотрудников'])}`;
+		: `вузы и взаимодействия ${pluralize(people, ['сотрудника', 'сотрудников', 'сотрудников'])} в ${pluralize(places, ['пространстве', 'пространствах', 'пространствах'])}`;
 }

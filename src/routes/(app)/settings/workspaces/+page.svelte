@@ -13,6 +13,7 @@
 	import * as Select from '$lib/components/ui/select/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import ConfirmDialog from '$lib/components/confirm-dialog.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
@@ -20,10 +21,12 @@
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
-	import { formatNumber } from '$lib/format';
+	import { formatDate, formatNumber } from '$lib/format';
 	import {
 		createWorkspaceSchema,
 		renameWorkspaceSchema,
+		type WorkspaceMemberView,
+		type WorkspaceMembership,
 		type WorkspaceSummary
 	} from '$lib/contracts/interactions';
 	import type { PageProps } from './$types';
@@ -37,12 +40,16 @@
 	 */
 	const NONE = '__none';
 
-	/** Назначение и порядок приходят обычным `fail`, а не через superforms. */
+	/**
+	 * Назначение, порядок и состав приходят обычным ответом действия, а не через
+	 * superforms. Успех помечен `ok`: отказ без претензий к полям (например,
+	 * «сотрудник уже в пространстве») — всё равно отказ, и выглядеть обязан так же.
+	 */
 	const rowMessage = $derived(
 		actionResult !== null && 'message' in actionResult ? actionResult.message : null
 	);
 	const rowFailed = $derived(
-		actionResult !== null && 'issues' in actionResult && (actionResult.issues?.length ?? 0) > 0
+		actionResult !== null && 'message' in actionResult && !('ok' in actionResult)
 	);
 
 	let createOpen = $state(false);
@@ -143,6 +150,57 @@
 		$renameData.name = workspace.name;
 		$renameData.description = workspace.description;
 		renameOpen = true;
+	}
+
+	/**
+	 * Исключение идёт одной скрытой формой на весь блок состава — тем же
+	 * приёмом, что и назначение процесса. Если за сотрудником числятся
+	 * незавершённые записи пространства, сначала спрашивается подтверждение:
+	 * исключённый перестаёт их видеть, и это должно быть решением, а не
+	 * случайностью. Команда без подтверждения откажет и сама.
+	 */
+	let removeForm = $state<HTMLFormElement | null>(null);
+	let removeKey = $state('');
+	let removeUserId = $state('');
+	let removeConfirmed = $state(false);
+	let confirmOpen = $state(false);
+	let confirmText = $state('');
+
+	async function submitRemove(workspace: WorkspaceMembership, member: WorkspaceMemberView) {
+		removeKey = workspace.key;
+		removeUserId = member.userId;
+		removeConfirmed = member.ownedActive > 0;
+
+		await tick();
+		removeForm?.requestSubmit();
+	}
+
+	let pendingRemoval = $state<{
+		workspace: WorkspaceMembership;
+		member: WorkspaceMemberView;
+	} | null>(null);
+
+	function askRemove(workspace: WorkspaceMembership, member: WorkspaceMemberView) {
+		if (member.ownedActive === 0) {
+			void submitRemove(workspace, member);
+			return;
+		}
+
+		pendingRemoval = { workspace, member };
+		confirmText = `${member.fullName} отвечает за незавершённые взаимодействия пространства «${workspace.name}»: ${formatNumber(member.ownedActive)}. После исключения он перестанет их видеть — записи останутся за ним, пока их не передадут другому ответственному.`;
+		confirmOpen = true;
+	}
+
+	/** Выбранный для включения сотрудник — по пространству. */
+	let addChoice = $state<Record<string, string>>({});
+
+	/** Кого ещё можно включить в пространство: действующие сотрудники не из состава. */
+	function candidatesFor(workspace: WorkspaceMembership) {
+		const inside = new Set(workspace.members.map((member) => member.userId));
+
+		return (data.memberships?.candidates ?? []).filter(
+			(candidate) => !inside.has(candidate.userId)
+		);
 	}
 
 	/** Процессы списком выбора: в подписи — число стадий, иначе выбор вслепую. */
@@ -325,6 +383,136 @@
 		{/if}
 	</Card.Content>
 </Card.Root>
+
+{#if data.memberships}
+	<Card.Root>
+		<Card.Header>
+			<Card.Title>Сотрудники пространств</Card.Title>
+			<Card.Description>
+				Сотрудник видит взаимодействия только тех пространств, в которые включён; внутри действует
+				его обычная область — свои вузы и работа подчинённых. Администратор видит все пространства
+				без включения. Справочники общие: организации и контакты видны независимо от пространства.
+			</Card.Description>
+		</Card.Header>
+		<Card.Content class="flex flex-col gap-6" data-tour="settings-workspace-members">
+			{#each data.memberships.workspaces as workspace (workspace.id)}
+				{@const candidates = candidatesFor(workspace)}
+				<section class="flex flex-col gap-3" aria-labelledby="members-{workspace.key}">
+					<h3 id="members-{workspace.key}" class="text-sm font-semibold">{workspace.name}</h3>
+
+					{#if workspace.members.length === 0}
+						<p class="text-sm text-muted-foreground">
+							В пространстве пока никого: его работу видит только администратор.
+						</p>
+					{:else}
+						<div class="overflow-x-auto">
+							<Table.Root>
+								<Table.Header>
+									<Table.Row class="hover:bg-transparent">
+										<Table.Head>Сотрудник</Table.Head>
+										<Table.Head class="w-40">Роль</Table.Head>
+										<Table.Head class="w-32">В пространстве с</Table.Head>
+										<Table.Head class="w-36 text-right">Отвечает за</Table.Head>
+										<Table.Head class="w-32"><span class="sr-only">Действия</span></Table.Head>
+									</Table.Row>
+								</Table.Header>
+								<Table.Body>
+									{#each workspace.members as member (member.userId)}
+										<Table.Row>
+											<Table.Cell class="font-medium whitespace-normal">
+												{member.fullName}
+												{#if !member.isActive}
+													<StatusBadge tone="neutral">Выключен</StatusBadge>
+												{/if}
+											</Table.Cell>
+											<Table.Cell>{member.roleName}</Table.Cell>
+											<Table.Cell>{formatDate(member.since)}</Table.Cell>
+											<Table.Cell class="text-right">
+												{formatNumber(member.ownedActive)}
+											</Table.Cell>
+											<Table.Cell class="text-right">
+												<Button
+													variant="outline"
+													size="sm"
+													aria-label="Исключить из пространства «{workspace.name}»: {member.fullName}"
+													onclick={() => askRemove(workspace, member)}
+												>
+													Исключить
+												</Button>
+											</Table.Cell>
+										</Table.Row>
+									{/each}
+								</Table.Body>
+							</Table.Root>
+						</div>
+					{/if}
+
+					{#if candidates.length > 0}
+						<form
+							method="POST"
+							action="?/addMember"
+							use:enhance
+							class="flex flex-wrap items-center gap-2"
+						>
+							<input type="hidden" name="key" value={workspace.key} />
+							<input type="hidden" name="userId" value={addChoice[workspace.key] ?? ''} />
+							<Select.Root
+								type="single"
+								value={addChoice[workspace.key] ?? ''}
+								onValueChange={(next) => (addChoice[workspace.key] = next)}
+							>
+								<Select.Trigger
+									class="w-72"
+									aria-label="Кого включить в пространство «{workspace.name}»"
+								>
+									{candidates.find((candidate) => candidate.userId === addChoice[workspace.key])
+										?.fullName ?? 'Выберите сотрудника'}
+								</Select.Trigger>
+								<Select.Content>
+									{#each candidates as candidate (candidate.userId)}
+										<Select.Item
+											value={candidate.userId}
+											label="{candidate.fullName} — {candidate.roleName}"
+										/>
+									{/each}
+								</Select.Content>
+							</Select.Root>
+							<Button
+								type="submit"
+								size="sm"
+								variant="outline"
+								disabled={(addChoice[workspace.key] ?? '') === ''}
+							>
+								<PlusIcon aria-hidden="true" />
+								Включить
+							</Button>
+						</form>
+					{/if}
+				</section>
+			{/each}
+		</Card.Content>
+	</Card.Root>
+
+	<form method="POST" action="?/removeMember" bind:this={removeForm} use:enhance class="hidden">
+		<input type="hidden" name="key" value={removeKey} />
+		<input type="hidden" name="userId" value={removeUserId} />
+		<input type="hidden" name="confirmOwned" value={removeConfirmed ? 'true' : 'false'} />
+	</form>
+
+	<ConfirmDialog
+		bind:open={confirmOpen}
+		title="Исключить сотрудника, у которого есть работа?"
+		description={confirmText}
+		confirmLabel="Исключить"
+		tone="danger"
+		onconfirm={async () => {
+			if (pendingRemoval !== null) {
+				await submitRemove(pendingRemoval.workspace, pendingRemoval.member);
+				pendingRemoval = null;
+			}
+		}}
+	/>
+{/if}
 
 <!-- Выбор в строке только называет значение; отправляет эта форма — действие
 	одно на все строки. -->

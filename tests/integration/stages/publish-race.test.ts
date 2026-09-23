@@ -33,7 +33,13 @@ import {
 } from '$lib/server/stages/process';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import type { ActorContext } from '$lib/server/actor';
-import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
+import {
+	allWorkspaceIds,
+	startTestDatabase,
+	testActor,
+	TEST_USER_IDS,
+	type TestDatabase
+} from '../helpers/db';
 import {
 	activeRevision,
 	advanceTo,
@@ -68,11 +74,12 @@ const admin = (): ActorContext => testActor({ roleId: 'admin' });
  * и на этом подзапросе команду можно задержать между началом транзакции и
  * блокировкой строки.
  */
-const manager = (): ActorContext =>
+const manager = async (): Promise<ActorContext> =>
 	testActor({
 		roleId: 'manager',
 		userId: TEST_USER_IDS.manager,
-		scopeUserIds: [TEST_USER_IDS.manager]
+		scopeUserIds: [TEST_USER_IDS.manager],
+		workspaceIds: await allWorkspaceIds(database.db)
 	});
 
 function sleep(ms: number): Promise<void> {
@@ -496,7 +503,7 @@ describe('закрытие взаимодействия, пока идёт пу�
 		const status = await getInteractionStatus(ctx, interactionId);
 
 		return {
-			ctx: manager(),
+			ctx: await manager(),
 			interactionId,
 			stageId: status.current?.stageId ?? '',
 			revision: status.revision

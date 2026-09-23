@@ -303,7 +303,7 @@ async function assembleInSnapshot(
 ): Promise<ReportPage> {
 	const origin = getConfig().ORIGIN.replace(/\/$/, '');
 	const asOf = snapshotMoment(query.to);
-	const index = createStageIndex(await readActiveWorkspaces(tx));
+	const index = createStageIndex(await readActiveWorkspaces(tx, ctx));
 	const columns = resolveColumns(query.mode, query.cols);
 
 	const meta = {

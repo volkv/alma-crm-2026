@@ -42,7 +42,7 @@ export const E2E_USER = {
 };
 
 /** Демонстрационный руководитель: он видит работу своих людей и назначает ответственных. */
-export const DEMO_LEAD = {
+const DEMO_LEAD = {
 	login: DEMO_LOGINS.lead,
 	email: DEMO_EMAILS.lead,
 	password: E2E_PASSWORD

@@ -91,6 +91,10 @@ const DEMO_DATA_TABLES = [
 	'consents',
 	'affiliations',
 	'organization_responsibles',
+	// Членство в пространствах: показ открывает раздел пользователей, и
+	// исключённый посетителем демонстрационный менеджер не должен остаться
+	// без своей доски до ручной правки. Эталонный состав заливает сид.
+	'workspace_members',
 	'directions',
 	'programs',
 	'program_versions',

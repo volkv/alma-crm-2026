@@ -171,6 +171,7 @@ export const ROLE_TOURS: Readonly<Record<string, readonly string[]>> = {
 		'settings-workspaces',
 		'settings-process',
 		'settings-users',
+		'settings-roles',
 		'settings-api-keys',
 		'settings-integrations',
 		'settings-general',

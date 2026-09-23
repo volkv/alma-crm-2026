@@ -893,6 +893,57 @@ export const reorderWorkspacesSchema = z.object({
 
 export type ReorderWorkspacesInput = z.output<typeof reorderWorkspacesSchema>;
 
+/** Сотрудник, включённый в пространство. */
+export type WorkspaceMemberView = {
+	userId: string;
+	fullName: string;
+	roleName: string;
+	isActive: boolean;
+	/** С какого момента он в пространстве. */
+	since: Date;
+	/**
+	 * За сколько незавершённых взаимодействий пространства он отвечает. Не ноль —
+	 * исключение спрашивает подтверждения: эти записи он перестанет видеть.
+	 */
+	ownedActive: number;
+};
+
+/** Пространство с его составом — строка настройки членства. */
+export type WorkspaceMembership = {
+	id: string;
+	key: string;
+	name: string;
+	members: WorkspaceMemberView[];
+};
+
+/** Кого можно включить: действующие сотрудники, которым членство что-то даёт. */
+export type WorkspaceMemberCandidate = {
+	userId: string;
+	fullName: string;
+	roleName: string;
+};
+
+/** Включить сотрудника в пространство. */
+export const addWorkspaceMemberSchema = z.object({
+	key: workspaceKeySchema,
+	userId: id('Не выбран сотрудник')
+});
+
+export type AddWorkspaceMemberInput = z.output<typeof addWorkspaceMemberSchema>;
+
+/**
+ * Исключить сотрудника из пространства. `confirmOwned` — согласие потерять
+ * из виду взаимодействия, за которые он отвечает: без него команда с такими
+ * записями отказывает и называет их число, а не исключает молча.
+ */
+export const removeWorkspaceMemberSchema = z.object({
+	key: workspaceKeySchema,
+	userId: id('Не выбран сотрудник'),
+	confirmOwned: z.boolean()
+});
+
+export type RemoveWorkspaceMemberInput = z.output<typeof removeWorkspaceMemberSchema>;
+
 /** Процесс целиком: что действует, что в черновике и что мешает его применить. */
 export type WorkflowDetail = {
 	workflow: WorkflowSummary;

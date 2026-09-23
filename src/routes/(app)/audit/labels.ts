@@ -25,6 +25,8 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'users.role_changed': 'Роль пользователя изменена',
 	'users.activated': 'Пользователь включён',
 	'users.deactivated': 'Пользователь выключен',
+	'users.workspace_granted': 'Сотрудник включён в пространство',
+	'users.workspace_revoked': 'Сотрудник исключён из пространства',
 	'users.viewed': 'Обращение к списку пользователей',
 	'settings.updated': 'Настройка изменена',
 	'settings.demo_reset': 'Демонстрационные данные сброшены',

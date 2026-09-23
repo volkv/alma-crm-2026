@@ -21,8 +21,9 @@
  * доступа руководителя, и адрес эскалации. Без неё роль «Руководитель» на
  * стенде показывала бы ровно то же, что роль «Менеджер».
  */
-import { inArray, sql } from 'drizzle-orm';
-import { users } from '$lib/server/db/schema';
+import { and, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
+import { users, workspaceMembers, workspaces } from '$lib/server/db/schema';
+import { B2B_WORKSPACE_KEY, B2C_WORKSPACE_KEY } from '$lib/server/stages/definitions';
 import type { Tx } from '$lib/server/db/transaction';
 import { seedId } from './ids';
 
@@ -34,7 +35,15 @@ type AccountSeed = {
 	/** Ключ учётной записи руководителя. */
 	managerKey?: string;
 	isDemo?: boolean;
+	/**
+	 * Пространства, в которые сотрудник включён. У администратора и машинного
+	 * субъекта их нет: их область — всё и без членства.
+	 */
+	workspaceKeys?: readonly string[];
 };
+
+/** Оба направления стенда: демонстрационные записи показывают оба. */
+const BOTH_WORKSPACES = [B2B_WORKSPACE_KEY, B2C_WORKSPACE_KEY] as const;
 
 /** Записи публичной демонстрации: по одной на роль человека. */
 const DEMO_ACCOUNTS: readonly AccountSeed[] = [
@@ -50,7 +59,8 @@ const DEMO_ACCOUNTS: readonly AccountSeed[] = [
 		email: 'lead@demo.lct-crm.local',
 		fullName: 'Руководитель Демо',
 		roleId: 'lead',
-		isDemo: true
+		isDemo: true,
+		workspaceKeys: BOTH_WORKSPACES
 	},
 	{
 		key: 'demo-manager',
@@ -58,7 +68,11 @@ const DEMO_ACCOUNTS: readonly AccountSeed[] = [
 		fullName: 'Менеджер Демо',
 		roleId: 'manager',
 		managerKey: 'demo-lead',
-		isDemo: true
+		isDemo: true,
+		// Все покупатели курсов на стенде за ним: без коммерческого обучения
+		// демонстрация не показала бы второе направление ни одной ролью, кроме
+		// администратора.
+		workspaceKeys: BOTH_WORKSPACES
 	}
 ];
 
@@ -69,14 +83,18 @@ const EMPLOYEES: readonly AccountSeed[] = [
 		email: 'a.veresova@example.org',
 		fullName: 'Вересова Анна Сергеевна',
 		roleId: 'manager',
-		managerKey: 'demo-lead'
+		managerKey: 'demo-lead',
+		// КАМы вузовского направления: коммерческого обучения они не видят —
+		// ровно то разделение, ради которого пространства стали границей.
+		workspaceKeys: [B2B_WORKSPACE_KEY]
 	},
 	{
 		key: 'zotov',
 		email: 'p.zotov@example.org',
 		fullName: 'Зотов Павел Игоревич',
 		roleId: 'manager',
-		managerKey: 'demo-lead'
+		managerKey: 'demo-lead',
+		workspaceKeys: [B2B_WORKSPACE_KEY]
 	}
 ];
 
@@ -169,6 +187,69 @@ async function restoreSeededAccounts(tx: Tx, accounts: readonly AccountSeed[]): 
 	}
 }
 
+/**
+ * Доводит членство эталонных учётных записей в пространствах до эталона:
+ * недостающее включает, лишнее закрывает.
+ *
+ * Лишнее закрывается, а не оставляется, по той же причине, по какой
+ * `restoreSeededAccounts` возвращает руководителя: раздел пользователей открыт
+ * показу, и КАМ вузовского направления, включённый посетителем в коммерческое
+ * обучение, иначе остался бы в нём навсегда. Членство сотрудников вне эталона
+ * сид не трогает — это не его записи.
+ *
+ * Учётные записи ищутся по почте, как и выше: строка с этой почтой могла
+ * появиться раньше сида, со своим идентификатором.
+ */
+async function restoreWorkspaceMembers(tx: Tx, accounts: readonly AccountSeed[]): Promise<void> {
+	const emails = accounts.map((account) => account.email.toLowerCase());
+	const [userRows, workspaceRows] = await Promise.all([
+		tx
+			.select({ id: users.id, email: users.email })
+			.from(users)
+			.where(inArray(sql`lower(${users.email})`, emails)),
+		tx.select({ id: workspaces.id, key: workspaces.key }).from(workspaces)
+	]);
+
+	const idByEmail = new Map(userRows.map((row) => [row.email.toLowerCase(), row.id]));
+	const workspaceIdByKey = new Map(workspaceRows.map((row) => [row.key, row.id]));
+
+	for (const account of accounts) {
+		const userId = idByEmail.get(account.email.toLowerCase());
+
+		if (userId === undefined) {
+			throw new Error(`Учётная запись «${account.key}» не заведена: членство ставить некому`);
+		}
+
+		const wanted = (account.workspaceKeys ?? []).map((key) => {
+			const workspaceId = workspaceIdByKey.get(key);
+
+			if (workspaceId === undefined) {
+				throw new Error(`Пространство «${key}» не заведено: его заводит миграция`);
+			}
+
+			return workspaceId;
+		});
+
+		await tx
+			.update(workspaceMembers)
+			.set({ validTo: sql`now()`, updatedAt: sql`now()` })
+			.where(
+				and(
+					eq(workspaceMembers.userId, userId),
+					isNull(workspaceMembers.validTo),
+					wanted.length === 0 ? undefined : notInArray(workspaceMembers.workspaceId, wanted)
+				)
+			);
+
+		if (wanted.length > 0) {
+			await tx
+				.insert(workspaceMembers)
+				.values(wanted.map((workspaceId) => ({ workspaceId, userId })))
+				.onConflictDoNothing();
+		}
+	}
+}
+
 export async function seedUsers(tx: Tx): Promise<SeededUsers> {
 	const accounts = [...DEMO_ACCOUNTS, ...EMPLOYEES, STAFF_ADMIN, SERVICE_ACCOUNT];
 
@@ -194,6 +275,7 @@ export async function seedUsers(tx: Tx): Promise<SeededUsers> {
 		.onConflictDoNothing();
 
 	await restoreSeededAccounts(tx, accounts);
+	await restoreWorkspaceMembers(tx, accounts);
 
 	return {
 		demo: Object.fromEntries(

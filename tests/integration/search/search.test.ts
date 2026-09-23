@@ -202,7 +202,14 @@ describe('область доступа в поиске', () => {
 			title: `${MARK} чужая работа`
 		});
 
-		const hits = await found(asUser(context), MARK, 'interaction');
+		// Каждая запись заводится в своём пространстве: актёр собирается заново,
+		// когда они уже есть, — иначе его не пустила бы граница пространства.
+		const viewer = await scopedActor(database.db, {
+			roleId: 'manager',
+			userId: asUser(context).id,
+			organizationIds: []
+		});
+		const hits = await found(asUser(viewer), MARK, 'interaction');
 
 		expect(hits.map((hit) => hit.id)).toEqual([own]);
 

@@ -38,6 +38,11 @@ export const HELP_USERS = {
 	page: 'users',
 	title: 'Пользователи и роли'
 } as const;
+export const HELP_ROLES = {
+	section: 'admin',
+	page: 'roles',
+	title: 'Роли и права'
+} as const;
 export const HELP_ACCESS = {
 	section: 'admin',
 	page: 'access',

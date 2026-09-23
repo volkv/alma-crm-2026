@@ -107,6 +107,56 @@ export const workspaces = pgTable(
 );
 
 /**
+ * Членство сотрудника в пространстве: граница, внутри которой действует его
+ * область доступа по назначениям и иерархии (`docs/access-matrix.md`, раздел 1).
+ *
+ * Строка — период, а не флаг, по образцу назначений ответственных
+ * (`organization_responsibles`): исключение закрывает период (`valid_to`), а не
+ * удаляет строку, поэтому на вопрос «кто видел работу направления в марте»
+ * база отвечает без журнала. Действующее членство — строка с пустым `valid_to`,
+ * и оно одно на пару «пространство × сотрудник»: это держит частичный
+ * уникальный индекс, а не проверка в приложении, которая гоночна.
+ *
+ * Администратору членство не нужно: его область — всё, и в пространства его не
+ * включают. Машинному субъекту обмена — тоже.
+ */
+export const workspaceMembers = pgTable(
+	'workspace_members',
+	{
+		id: uuid().primaryKey().defaultRandom(),
+		/**
+		 * `cascade`: членство без пространства ничего не значит, а история
+		 * доступа к удалённому направлению остаётся в журнале действий.
+		 */
+		workspaceId: uuid()
+			.notNull()
+			.references(() => workspaces.id, { onDelete: 'cascade' }),
+		userId: uuid()
+			.notNull()
+			.references(() => users.id, { onDelete: 'restrict' }),
+		validFrom: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		validTo: timestamp({ withTimezone: true }),
+		/** Кто включил; пусто у строк миграции и сида. */
+		grantedByUserId: uuid().references(() => users.id, { onDelete: 'set null' }),
+		...timestamps
+	},
+	(table) => [
+		uniqueIndex('workspace_members_active_key')
+			.on(table.workspaceId, table.userId)
+			.where(sql`${table.validTo} is null`),
+		// Область доступа читает действующие членства сотрудника на каждом
+		// запросе: индекс частичный, как и у назначений.
+		index('workspace_members_user_idx')
+			.on(table.userId)
+			.where(sql`${table.validTo} is null`),
+		check(
+			'workspace_members_period_ordered',
+			sql`${table.validTo} is null or ${table.validTo} > ${table.validFrom}`
+		)
+	]
+);
+
+/**
  * Процесс: описание работы — стадии, переходы, нормативы, чек-листы, — живущее
  * само по себе.
  *
@@ -752,7 +802,16 @@ export const workspacesRelations = relations(workspaces, ({ one, many }) => ({
 		references: [workflows.id]
 	}),
 	intakeRoutes: many(workspaceIntakeRoutes),
-	interactions: many(interactions)
+	interactions: many(interactions),
+	members: many(workspaceMembers)
+}));
+
+export const workspaceMembersRelations = relations(workspaceMembers, ({ one }) => ({
+	workspace: one(workspaces, {
+		fields: [workspaceMembers.workspaceId],
+		references: [workspaces.id]
+	}),
+	user: one(users, { fields: [workspaceMembers.userId], references: [users.id] })
 }));
 
 export const workflowsRelations = relations(workflows, ({ one, many }) => ({

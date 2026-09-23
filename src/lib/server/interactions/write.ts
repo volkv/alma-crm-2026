@@ -41,11 +41,13 @@ import {
 	organizations,
 	products,
 	sites,
-	users
+	users,
+	workspaces
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { NotFoundError, ValidationError } from '../errors';
-import { requirePermission, scopeFilter } from '../rbac';
+import { canEnterWorkspace, requirePermission, scopeFilter } from '../rbac';
+import { assertMayWorkIn } from '../rbac/workspaces';
 import { startInteractionIn } from '../stages/commands';
 import {
 	lockWorkflow,
@@ -400,14 +402,36 @@ export async function createInteractionIn(
 	return created.id;
 }
 
+/**
+ * Заведение взаимодействия сотрудником — из формы или из API.
+ *
+ * Здесь, а не в `createInteractionIn`, проходит граница пространства: завести
+ * запись можно только в своём пространстве (чужое неотличимо от
+ * несуществующего), и ответственным — только того, кто в нём работает: иначе
+ * запись уходит из виду у того, кому её поручили, в ту же секунду. Приём
+ * заявки извне зовёт `createInteractionIn` напрямую — у него пространство
+ * выбирает маршрут приёма, а не человек.
+ */
 export async function createInteraction(
 	ctx: ActorContext,
 	workspaceKey: string,
 	input: CreateInteractionDraft
 ): Promise<InteractionView> {
-	const interactionId = await withTransaction(ctx, (tx) =>
-		createInteractionIn(ctx, tx, workspaceKey, input)
-	);
+	requirePermission(ctx, 'interactions.write');
+
+	const interactionId = await withTransaction(ctx, async (tx) => {
+		const workspace = await readWorkspaceByKey(tx, workspaceKey);
+
+		if (!canEnterWorkspace(ctx, workspace.id)) {
+			throw new NotFoundError('Пространство не найдено');
+		}
+
+		const { ownerUserId } = parseCreate(input);
+		await assertOwnerExists(tx, ownerUserId);
+		await assertMayWorkIn(tx, ownerUserId, workspace);
+
+		return createInteractionIn(ctx, tx, workspaceKey, input);
+	});
 
 	return getInteraction(ctx, interactionId);
 }
@@ -499,6 +523,13 @@ export async function updateInteraction(
 		// командах, которые её делают, а не только в той, что названа «передать».
 		if (before.ownerUserId !== definition.ownerUserId) {
 			requirePermission(ctx, 'interactions.reassign');
+
+			const [workspace] = await tx
+				.select({ id: workspaces.id, name: workspaces.name })
+				.from(workspaces)
+				.where(eq(workspaces.id, before.workspaceId));
+
+			await assertMayWorkIn(tx, definition.ownerUserId, workspace);
 		}
 
 		const previousParties = await tx

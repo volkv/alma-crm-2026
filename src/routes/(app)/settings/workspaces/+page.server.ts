@@ -2,8 +2,10 @@ import { error, type ActionFailure } from '@sveltejs/kit';
 import { fail, message, setError, superValidate, type SuperValidated } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import {
+	addWorkspaceMemberSchema,
 	assignWorkspaceWorkflowSchema,
 	createWorkspaceSchema,
+	removeWorkspaceMemberSchema,
 	renameWorkspaceSchema,
 	reorderWorkspacesSchema
 } from '$lib/contracts/interactions';
@@ -11,6 +13,11 @@ import { actorFromEvent } from '$lib/server/actor';
 import { AppError, ForbiddenError } from '$lib/server/errors';
 import { errorIssues, toActionFailure, type ActionErrorPayload } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
+import {
+	addWorkspaceMember,
+	listWorkspaceMemberships,
+	removeWorkspaceMember
+} from '$lib/server/rbac/workspaces';
 import {
 	assignWorkspaceWorkflow,
 	createWorkspace,
@@ -34,6 +41,10 @@ import type { Actions, PageServerLoad } from './$types';
  * Правило смены процесса живёт в команде, а не здесь: адрес действия набирают и
  * руками, и форма, которая «не предлагает невозможного», — удобство, а не
  * защита.
+ *
+ * Здесь же состав пространств: кто в каком направлении работает. Это выдача
+ * доступа, поэтому у неё своё право — `users.manage`; без него блок состава не
+ * показывается, а команды откажут и так.
  */
 
 /** Формы страницы; идентификатор связывает форму на сервере с формой в браузере. */
@@ -51,14 +62,15 @@ export const load: PageServerLoad = async (event) => {
 
 	// Процессы нужны на этом экране целиком: из них выбирают и при заведении
 	// пространства, и при назначении процесса уже заведённому.
-	const [workspaces, workflows, createForm, renameForm] = await Promise.all([
+	const [workspaces, workflows, memberships, createForm, renameForm] = await Promise.all([
 		listWorkspaces(ctx),
 		listWorkflows(ctx),
+		can(ctx, 'users.manage') ? listWorkspaceMemberships(ctx) : null,
 		superValidate(zod4(createWorkspaceSchema), { id: FORM_IDS.create }),
 		superValidate(zod4(renameWorkspaceSchema), { id: FORM_IDS.rename })
 	]);
 
-	return { workspaces, workflows, createForm, renameForm };
+	return { workspaces, workflows, memberships, createForm, renameForm };
 };
 
 /**
@@ -155,6 +167,7 @@ export const actions: Actions = {
 		}
 
 		return {
+			ok: true,
 			message:
 				parsed.data.workflowKey === null
 					? 'Процесс снят: заводить взаимодействия в пространстве больше нечем'
@@ -183,6 +196,71 @@ export const actions: Actions = {
 			return toActionFailure(failure);
 		}
 
-		return { message: 'Порядок сохранён: в этом же порядке пространства стоят в меню', issues: [] };
+		return {
+			ok: true,
+			message: 'Порядок сохранён: в этом же порядке пространства стоят в меню',
+			issues: []
+		};
+	},
+
+	/** Включить сотрудника в пространство: он увидит работу направления со следующего запроса. */
+	addMember: async (event) => {
+		const body = await event.request.formData();
+		const parsed = addWorkspaceMemberSchema.safeParse({
+			key: body.get('key'),
+			userId: body.get('userId')
+		});
+
+		if (!parsed.success) {
+			return fail(400, {
+				message: parsed.error.issues.map((issue) => issue.message).join('. '),
+				issues: []
+			});
+		}
+
+		try {
+			await addWorkspaceMember(actorFromEvent(event), parsed.data);
+		} catch (failure) {
+			return toActionFailure(failure);
+		}
+
+		return { ok: true, message: 'Сотрудник включён в пространство', issues: [] };
+	},
+
+	/**
+	 * Исключить сотрудника. Подтверждение приходит полем формы: страница
+	 * спрашивает его, когда за сотрудником числятся незавершённые записи, а
+	 * команда без него откажет и назовёт их число — адрес действия набирают и
+	 * руками.
+	 */
+	removeMember: async (event) => {
+		const body = await event.request.formData();
+		const parsed = removeWorkspaceMemberSchema.safeParse({
+			key: body.get('key'),
+			userId: body.get('userId'),
+			confirmOwned: body.get('confirmOwned') === 'true'
+		});
+
+		if (!parsed.success) {
+			return fail(400, {
+				message: parsed.error.issues.map((issue) => issue.message).join('. '),
+				issues: []
+			});
+		}
+
+		try {
+			const { ownedActive } = await removeWorkspaceMember(actorFromEvent(event), parsed.data);
+
+			return {
+				ok: true,
+				message:
+					ownedActive === 0
+						? 'Сотрудник исключён из пространства'
+						: `Сотрудник исключён из пространства. Незавершённых взаимодействий за ним осталось: ${ownedActive} — передайте их другому ответственному`,
+				issues: []
+			};
+		} catch (failure) {
+			return toActionFailure(failure);
+		}
 	}
 };

@@ -42,13 +42,13 @@ export const E2E_EXCHANGE_KEYS = {
  * переменной окружения, и прогон не должен зависеть от того, что кто-то положил
  * в своё окружение или в `.env` каталога.
  */
-export const E2E_EXCHANGE_INSTANCES = {
+const E2E_EXCHANGE_INSTANCES = {
 	cms: 'itschool-site',
 	lms: 'moodle-itschool'
 } as const;
 
 /** Секрет подписи исходящих CRM: им же имитатор проверяет пришедшее. */
-export const E2E_EXCHANGE_SECRET = 'exchange-stand-secret-0123456789abcdef';
+const E2E_EXCHANGE_SECRET = 'exchange-stand-secret-0123456789abcdef';
 
 /**
  * Токен управления имитаторами: `__state`, `__scenario` и собственное тело

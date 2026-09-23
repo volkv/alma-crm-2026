@@ -1,5 +1,5 @@
 import { expect, test as base } from '@playwright/test';
-import { LEAD_STATE, MANAGER_STATE } from './global-setup';
+import { MANAGER_STATE } from './global-setup';
 
 /**
  * Тест, который начинается с уже вошедшего демонстрационного менеджера.
@@ -10,8 +10,5 @@ import { LEAD_STATE, MANAGER_STATE } from './global-setup';
  * только подставить сохранённое состояние браузера.
  */
 export const test = base.extend<object>({ storageState: MANAGER_STATE });
-
-/** То же самое, но вошёл руководитель: он видит работу своих людей. */
-export const leadTest = base.extend<object>({ storageState: LEAD_STATE });
 
 export { expect };

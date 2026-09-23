@@ -71,6 +71,7 @@ import {
 	stages,
 	stageTransitions
 } from '../db/schema';
+import { assertMayWorkIn } from '../rbac/workspaces';
 import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
 import { readDocumentMark } from '../documents/evidence';
@@ -1298,6 +1299,15 @@ export async function setResponsible(
 			if (interaction.ownerUserId === input.userId) {
 				continue;
 			}
+
+			// Новый владелец обязан работать в пространстве записи: иначе работа
+			// уходит к тому, кто её не видит.
+			const [workspace] = await executor
+				.select({ id: workspaces.id, name: workspaces.name })
+				.from(workspaces)
+				.where(eq(workspaces.id, interaction.workspaceId));
+
+			await assertMayWorkIn(executor, input.userId, workspace);
 
 			await executor
 				.update(interactions)

@@ -24,6 +24,7 @@ import { runNotificationCycle } from '$lib/server/notifications/watch';
 import { setSetting } from '$lib/server/settings';
 import { getRedis } from '$lib/server/redis';
 import {
+	allWorkspaceIds,
 	daysFrom,
 	failureCode,
 	insertInteractionWithStage,
@@ -691,7 +692,8 @@ describe('журнал доставок', () => {
 		const lead = testActor({
 			roleId: 'lead',
 			userId: mine.managerId!,
-			scopeUserIds: [mine.managerId!, mine.ownerId]
+			scopeUserIds: [mine.managerId!, mine.ownerId],
+			workspaceIds: await allWorkspaceIds(database.db)
 		});
 
 		const page = await listNotificationDeliveries(lead, {

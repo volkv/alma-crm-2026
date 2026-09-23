@@ -162,6 +162,13 @@
       "when": 1790191471452,
       "tag": "0023_learning_group_scope",
       "breakpoints": true
+    },
+    {
+      "idx": 24,
+      "version": "7",
+      "when": 1790193815807,
+      "tag": "0024_workspace_members",
+      "breakpoints": true
     }
   ]
 }

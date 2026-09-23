@@ -5,6 +5,11 @@
  * организации видно»). Оба вопроса решаются здесь и нигде больше: сервис
  * вызывает `requirePermission` и подмешивает `scopeFilter` в условие выборки.
  *
+ * Область — это два измерения сразу: **пространства**, в которые сотрудник
+ * включён (`workspaceFilter`), и **люди**, чьи вузы и чья работа ему видны
+ * (`scopeFilter`, `actorScopeFilter`). Взаимодействие видно, только если оно
+ * проходит оба (`interactionScopeFilter` в `../interactions/access`).
+ *
  * Отказ, о котором должен узнать администратор, записывается в журнал здесь же:
  * у `requirePermission` есть форма с описанием события, и другой формы «проверил
  * право и отметил отказ» в приложении нет.
@@ -252,9 +257,50 @@ export function actorScopeFilter(ctx: ActorContext, userId: PgColumn): SQL {
 }
 
 /**
+ * Условие «это пространство — одно из пространств вызывающего». Аргумент —
+ * столбец с идентификатором пространства: у взаимодействия это
+ * `workspace_id`, у самого пространства — `id`.
+ *
+ * Полный доступ — `true`: администратор видит все пространства без членства.
+ * Пустой набор — `false`. Набор считается при сборке пользователя, то есть на
+ * каждом запросе (`auth/session.ts`), поэтому исключение из пространства
+ * действует со следующего же запроса, без повторного входа.
+ */
+export function workspaceFilter(ctx: ActorContext, workspaceId: PgColumn): SQL {
+	if (ctx.scope.kind === 'all') {
+		return sql`true`;
+	}
+
+	const ids = [...ctx.scope.workspaceIds];
+	if (ids.length === 0) {
+		return sql`false`;
+	}
+
+	return sql`${workspaceId} = any(${sql.param(ids)}::uuid[])`;
+}
+
+/**
+ * Может ли вызывающий войти в пространство: то же правило, что у
+ * `workspaceFilter`, для одного уже известного идентификатора — адреса
+ * `/w/<ключ>/…` и меню.
+ */
+export function canEnterWorkspace(ctx: ActorContext, workspaceId: string): boolean {
+	return ctx.scope.kind === 'all' || ctx.scope.workspaceIds.has(workspaceId);
+}
+
+/**
  * Отпечаток области для ключей кэша. Две разные области обязаны получить два
- * разных ключа, иначе руководитель однажды прочитает сводку менеджера.
+ * разных ключа, иначе руководитель однажды прочитает сводку менеджера, а
+ * сотрудник, которого исключили из пространства, — то, что собрали, пока он в
+ * нём состоял. Поэтому в отпечаток входят оба измерения области.
  */
 export function scopeFingerprint(ctx: ActorContext): string {
-	return ctx.scope.kind === 'all' ? 'all' : [...ctx.scope.userIds].sort().join(',');
+	if (ctx.scope.kind === 'all') {
+		return 'all';
+	}
+
+	const people = [...ctx.scope.userIds].sort().join(',');
+	const places = [...ctx.scope.workspaceIds].sort().join(',');
+
+	return `users:${people}|workspaces:${places}`;
 }

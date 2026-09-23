@@ -67,7 +67,7 @@ import {
 import { NotFoundError } from '../errors';
 import { withPiiTrace } from '../people/pii-trace';
 import { toPersonView } from '../people/serialize';
-import { requirePermission } from '../rbac';
+import { requirePermission, workspaceFilter } from '../rbac';
 import { buildProgress, isStale } from '../stages/status';
 import { readActiveRevisionForWorkspace } from '../stages/process';
 import { assertInteractionVisible, interactionScopeFilter } from './access';
@@ -249,6 +249,9 @@ export async function chooseWorkspaceForWork(
 				interactionScopeFilter(ctx)
 			)
 		)
+		// Отводить можно только туда, куда сотрудник включён: чужое пространство
+		// без работы ответило бы ему 404, а не пустым списком.
+		.where(workspaceFilter(ctx, workspaces.id))
 		.groupBy(workspaces.id)
 		.orderBy(asc(workspaces.position));
 

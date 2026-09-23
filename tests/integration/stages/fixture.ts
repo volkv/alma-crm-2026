@@ -39,7 +39,6 @@ import {
 import {
 	assignWorkflow,
 	ensureWorkflow,
-	readActiveRevisionForWorkspace,
 	readWorkspaceByKey,
 	requireActiveRevisionForWorkspace
 } from '$lib/server/stages/process';
@@ -59,13 +58,6 @@ export async function activeRevision(
 	const workspace = await readWorkspaceByKey(database.db, workspaceKey);
 
 	return requireActiveRevisionForWorkspace(database.db, workspace.id);
-}
-
-/** Есть ли в пространстве действующая редакция вообще. */
-export async function hasProcess(database: TestDatabase, workspaceKey: string): Promise<boolean> {
-	const workspace = await readWorkspaceByKey(database.db, workspaceKey);
-
-	return (await readActiveRevisionForWorkspace(workspace.id)) !== null;
 }
 
 /**

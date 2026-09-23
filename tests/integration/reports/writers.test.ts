@@ -26,7 +26,7 @@ import {
 	type ReportQuery,
 	type ReportView
 } from '$lib/contracts/reports';
-import type { ActorContext } from '$lib/server/actor';
+import { NO_ACCESS, type ActorContext } from '$lib/server/actor';
 import { auditEvents } from '$lib/server/db/schema';
 import { checkExportInvariant } from '$lib/server/reports/invariants';
 import { buildReport } from '$lib/server/reports/rows';
@@ -384,7 +384,7 @@ describe('маршрут выгрузки', () => {
 		const event = pageEvent({
 			path: '/reports/export',
 			query: `?format=json&mode=snapshot&from=${QUARTER_PERIOD.from}&to=${QUARTER_PERIOD.to}`,
-			user: { ...scoped, scope: { kind: 'delegated', userIds: new Set<string>() } }
+			user: { ...scoped, scope: NO_ACCESS }
 		});
 
 		const response = await GET(event);
