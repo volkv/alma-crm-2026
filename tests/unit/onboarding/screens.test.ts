@@ -46,16 +46,11 @@ const REPO = fileURLToPath(new URL('../../../', import.meta.url));
 const APP_ROUTES = `${REPO}src/routes/(app)`;
 
 /**
- * Экраны, которых в реестре нет намеренно: витрина компонентов и макеты на
- * ней — не рабочие экраны, печатная версия справки и сама статья живут вне
+ * Экраны, которых в реестре нет намеренно: витрина компонентов — не рабочий
+ * экран, печатная версия справки и сама статья живут вне
  * подсказок (подсказка о статье справки была бы справкой о справке).
  */
-const WITHOUT_SCREEN = [
-	'/ui-kit',
-	'/ui-kit/card-[variant]',
-	'/help/print',
-	'/help/[section]/[page]'
-];
+const WITHOUT_SCREEN = ['/ui-kit', '/help/print', '/help/[section]/[page]'];
 
 /** Файлы по дереву каталога: путь целиком, вместе с корнем. */
 function filesUnder(directory: string): string[] {

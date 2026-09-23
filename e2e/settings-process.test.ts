@@ -295,7 +295,7 @@ async function checkManagerSeesMigration(browser: Browser): Promise<void> {
 		await expect(page.getByText(/Стадия перенесена при изменении процесса/)).toBeVisible();
 
 		// Работа продолжается: с целевой стадии есть куда идти дальше.
-		await expect(page.getByRole('button', { name: /^Перейти:/ })).toBeVisible();
+		await expect(page.getByRole('button', { name: /^Перейти к/ })).toBeVisible();
 	} finally {
 		await context.close();
 	}

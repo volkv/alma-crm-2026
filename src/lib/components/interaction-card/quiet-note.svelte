@@ -7,7 +7,7 @@
 	 * норма у стадии и что с этим сделать. Метка без объяснения заставляла
 	 * гадать, плохо это или просто давно.
 	 */
-	let { quiet, compact = false }: { quiet: CardQuiet; compact?: boolean } = $props();
+	let { quiet }: { quiet: CardQuiet } = $props();
 </script>
 
 <div
@@ -17,10 +17,6 @@
 	<BellOffIcon class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
 	<p class="min-w-0 text-sm">
 		<span class="font-medium">{quiet.text}.</span>
-		{#if !compact}
-			<span>{quiet.advice}</span>
-		{:else}
-			<span class="block text-xs">{quiet.advice}</span>
-		{/if}
+		<span>{quiet.advice}</span>
 	</p>
 </div>

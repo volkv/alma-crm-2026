@@ -540,18 +540,6 @@
 
 	<section class="flex flex-col gap-3">
 		<h2 class="text-sm font-semibold tracking-tight">Карточка записи</h2>
-		<p class="text-sm text-muted-foreground">
-			Макеты карточки взаимодействия на записях демонстрационного набора:
-			<a
-				class="rounded-sm text-primary focus-ring hover:underline"
-				href={resolve('/(app)/ui-kit/card-[variant]', { variant: 'a' })}>вариант A</a
-			>
-			и
-			<a
-				class="rounded-sm text-primary focus-ring hover:underline"
-				href={resolve('/(app)/ui-kit/card-[variant]', { variant: 'b' })}>вариант B</a
-			>.
-		</p>
 		<Card.Root>
 			<Card.Header>
 				<Card.Title>Санкт-Петербургский политехнический университет Петра Великого</Card.Title>

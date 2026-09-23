@@ -22,6 +22,7 @@
 					? 'h-2.5 ring-2 ring-primary-soft'
 					: 'h-1.5'}"
 				title="{stage.position}. {stage.name} — {STAGE_LOOKS[stage.state].label}"
+				aria-current={current ? 'step' : undefined}
 			>
 				<span class="sr-only"
 					>{stage.position}. {stage.name} — {STAGE_LOOKS[stage.state].label}</span

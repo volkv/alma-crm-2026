@@ -1,4 +1,6 @@
 <script lang="ts">
+	import PencilIcon from '@lucide/svelte/icons/pencil';
+	import { Button } from '$lib/components/ui/button/index.js';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type { OrganizationView } from '$lib/contracts/directory';
 	import type { InteractionView, StageEntryView } from '$lib/contracts/interactions';
@@ -18,12 +20,15 @@
 	let {
 		interaction,
 		organization,
-		entries
+		entries,
+		onEditPlan
 	}: {
 		interaction: InteractionView;
 		organization: OrganizationView | null;
 		/** Записи стадий, новые первыми: из них берётся отметка об оплате. */
 		entries: readonly StageEntryView[];
+		/** Открыть правку названия и сроков; `null` — права на правку нет. */
+		onEditPlan: (() => void) | null;
 	} = $props();
 
 	const PAYMENT_STAGE = 'contract_payment';
@@ -102,18 +107,20 @@
 		</dl>
 	</ContextSection>
 
-	{#if agreement !== null || academic !== null}
-		<ContextSection title="Сроки">
-			<dl class="grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-sm">
-				{#if agreement !== null}
-					<dt class="text-muted-foreground">Договор</dt>
-					<dd class="tabular-nums">{agreement}</dd>
-				{/if}
-				{#if academic !== null}
-					<dt class="text-muted-foreground">Обучение</dt>
-					<dd class="tabular-nums">{academic}</dd>
-				{/if}
-			</dl>
-		</ContextSection>
-	{/if}
+	<ContextSection title="Сроки">
+		{#snippet action()}
+			{#if onEditPlan !== null}
+				<Button size="xs" variant="outline" onclick={onEditPlan}>
+					<PencilIcon aria-hidden="true" />
+					Изменить план
+				</Button>
+			{/if}
+		{/snippet}
+		<dl class="grid grid-cols-[auto_minmax(0,1fr)] gap-x-3 gap-y-1 text-sm">
+			<dt class="text-muted-foreground">Договор</dt>
+			<dd class="tabular-nums">{agreement ?? '—'}</dd>
+			<dt class="text-muted-foreground">Обучение</dt>
+			<dd class="tabular-nums">{academic ?? '—'}</dd>
+		</dl>
+	</ContextSection>
 </div>

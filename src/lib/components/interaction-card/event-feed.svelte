@@ -5,11 +5,12 @@
 	import MessageSquareIcon from '@lucide/svelte/icons/message-square';
 	import OctagonAlertIcon from '@lucide/svelte/icons/octagon-alert';
 	import PencilLineIcon from '@lucide/svelte/icons/pencil-line';
+	import { enhance } from '$app/forms';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
+	import { actionEnhance } from '$lib/components/interactions/action-enhance';
 	import { formatDateTime } from '$lib/format';
 	import type { LucideIcon } from '$lib/icon';
-	import { mockAction } from './mock';
 	import type { CardEvent, CardEventKind } from './model';
 
 	/**
@@ -21,14 +22,17 @@
 	 */
 	let {
 		events,
-		id = 'card-feed',
+		canComment,
 		initial = 8
 	}: {
 		events: readonly CardEvent[];
-		id?: string;
+		/** Есть ли право писать комментарии: без него формы над лентой нет. */
+		canComment: boolean;
 		/** Сколько событий видно сразу; остальные — по кнопке. */
 		initial?: number;
 	} = $props();
+
+	const id = 'card-feed';
 
 	const KINDS: { key: CardEventKind | 'all'; label: string }[] = [
 		{ key: 'all', label: 'Все' },
@@ -72,29 +76,35 @@
 	const visible = $derived(expanded ? filtered : filtered.slice(0, initial));
 </script>
 
-<section class="flex flex-col gap-3" aria-labelledby="{id}-title" data-slot="event-feed">
+<!-- `data-tour` — метка подсказок: по ней тур находит ленту событий. -->
+<section
+	class="flex flex-col gap-3"
+	aria-labelledby="{id}-title"
+	data-slot="event-feed"
+	data-tour="interaction-feed"
+>
 	<h2 id="{id}-title" class="text-base font-semibold">События</h2>
 
-	<form
-		class="flex flex-col gap-2"
-		onsubmit={(event) => {
-			event.preventDefault();
-			mockAction('Отправить комментарий');
-		}}
-	>
-		<label for="{id}-comment" class="sr-only">Комментарий</label>
-		<Textarea
-			id="{id}-comment"
-			rows={2}
-			placeholder="Написать комментарий: что узнали, о чём договорились"
-			bind:value={draft}
-		/>
-		<div class="flex justify-end">
-			<Button type="submit" size="sm" variant={draft.trim() === '' ? 'outline' : 'default'}>
-				Отправить
-			</Button>
-		</div>
-	</form>
+	{#if canComment}
+		<form
+			method="POST"
+			action="?/comment"
+			use:enhance={actionEnhance({ onsuccess: () => (draft = '') })}
+			class="flex flex-col gap-2"
+		>
+			<label for="{id}-comment" class="sr-only">Текст комментария</label>
+			<Textarea
+				id="{id}-comment"
+				name="body"
+				rows={2}
+				placeholder="Написать комментарий: что узнали, о чём договорились"
+				bind:value={draft}
+			/>
+			<div class="flex justify-end">
+				<Button type="submit" size="sm" disabled={draft.trim() === ''}>Отправить</Button>
+			</div>
+		</form>
+	{/if}
 
 	<div class="flex flex-wrap gap-1.5" role="group" aria-label="Какие события показать">
 		{#each present as kind (kind.key)}
@@ -136,7 +146,9 @@
 					{/if}
 					<p class="mt-0.5 text-xs text-faint">
 						<time datetime={new Date(event.at).toISOString()}>{formatDateTime(event.at)}</time
-						>{event.author ? ` · ${event.author}` : ''}
+						>{event.author ? ` · ${event.author}` : ''}{event.duration
+							? ` · ${event.duration}`
+							: ''}
 					</p>
 				</div>
 			</li>

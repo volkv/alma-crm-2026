@@ -27,6 +27,7 @@ import { formatDate } from '$lib/format';
 import { NO_OPTION } from '$lib/components/directory/labels';
 import { actorFromEvent } from '$lib/server/actor';
 import { listOrganizationContracts } from '$lib/server/directory/contracts';
+import { getOrganization } from '$lib/server/directory/read';
 import { DocumentConversionError } from '$lib/server/documents/errors';
 import { generateDocument } from '$lib/server/documents/generate';
 import { listInteractionSupersessions } from '$lib/server/documents/read';
@@ -101,11 +102,19 @@ export const load: PageServerLoad = async (event) => {
 		// Договоры основной стороны: из них выбирают договор записи. Читаются
 		// только тому, кто может править, — остальным список не нужен, а
 		// карточка и без него называет договор, по которому идёт работа.
+		// Сама основная сторона из справочника — вид контрагента, полное имя и
+		// реквизиты для панели контекста; без права на справочник карточка
+		// называет её так, как она записана в стороне взаимодействия.
 		const primary = interaction.parties.find((party) => party.isPrimary);
-		const contracts =
-			primary === undefined || !can(ctx, 'interactions.write')
-				? []
-				: await listOrganizationContracts(ctx, primary.organizationId);
+		const [contracts, counterparty] =
+			primary === undefined
+				? [[], null]
+				: await Promise.all([
+						can(ctx, 'interactions.write')
+							? listOrganizationContracts(ctx, primary.organizationId)
+							: [],
+						can(ctx, 'organizations.read') ? getOrganization(ctx, primary.organizationId) : null
+					]);
 
 		return {
 			interaction,
@@ -117,7 +126,8 @@ export const load: PageServerLoad = async (event) => {
 			users,
 			supersessions,
 			exchange,
-			contracts
+			contracts,
+			counterparty
 		};
 	} catch (cause) {
 		toPageError(cause);

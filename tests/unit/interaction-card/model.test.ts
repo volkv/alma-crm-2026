@@ -136,6 +136,16 @@ function status(overrides: Partial<InteractionStatusView> = {}): InteractionStat
 	};
 }
 
+const NO_EXCHANGE: CardSource['exchange'] = {
+	groups: [],
+	nextStreamNumber: 1,
+	programs: [],
+	products: [],
+	canSend: true,
+	canComplete: true,
+	issue: null
+};
+
 function source(overrides: Partial<CardSource> = {}): CardSource {
 	return {
 		interaction: {
@@ -171,7 +181,7 @@ function source(overrides: Partial<CardSource> = {}): CardSource {
 		comments: [],
 		changes: [],
 		counterparty: null,
-		exchange: { groups: [], issue: null },
+		exchange: NO_EXCHANGE,
 		...overrides
 	};
 }
@@ -180,7 +190,7 @@ describe('условия перехода', () => {
 	it('собирает чек-лист, результат и итог обучения из снимка стадии', () => {
 		const requirements = buildRequirements(
 			entry({ checklistState: { schedule_published: true } }),
-			[]
+			NO_EXCHANGE
 		);
 
 		expect(requirements.map((item) => [item.key, item.done, item.required])).toEqual([
@@ -236,6 +246,42 @@ describe('условия перехода', () => {
 
 		if (card.action.kind !== 'forward') throw new Error('ожидался шаг вперёд');
 		expect(card.action.otherReasons).toEqual(['Недостаточно прав: требуется «stages.advance»']);
+	});
+});
+
+describe('меню «Ещё»', () => {
+	it('держит все команды, кроме главной: возврат, паузу, помеху, передачу, закрытие', () => {
+		const back: TransitionOptionView = {
+			...forward(true, []),
+			transition: { ...forward(true, []).transition, id: 'transition-back', kind: 'return' },
+			toStage: { ...forward(true, []).toStage, id: 'stage-prev', name: 'Подготовка' }
+		};
+		const card = buildCard(
+			source({
+				summary: summary({
+					canDo: {
+						transitions: [forward(true, []), back],
+						actions: ['pause', 'raise_blocker', 'set_responsible', 'set_result', 'confirm']
+					}
+				})
+			}),
+			NOW
+		);
+
+		expect(card.primary).toMatchObject({ kind: 'transition', transition: 'forward' });
+		expect(card.secondary.map((item) => item.command.kind)).toEqual([
+			'transition',
+			'pause',
+			'confirm',
+			'raise-blocker',
+			'assign',
+			'complete',
+			'cancel'
+		]);
+		expect(card.secondary[0].label).toBe('Вернуть на «Подготовка»');
+		// Результат стадия требует и он не записан — он стоит условием у главной
+		// кнопки, а не вторым входом в меню.
+		expect(card.secondary.some((item) => item.command.kind === 'result')).toBe(false);
 	});
 });
 

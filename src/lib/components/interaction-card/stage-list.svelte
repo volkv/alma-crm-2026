@@ -1,6 +1,5 @@
 <script lang="ts">
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
-	import type { Snippet } from 'svelte';
 	import type { StageDot } from './model';
 	import { isCurrentState, STAGE_LOOKS } from './stage-look';
 
@@ -8,26 +7,14 @@
 	 * Процесс столбиком: номер, название и состояние каждой стадии. Столбик не
 	 * прокручивается вбок ни на какой ширине — длинное название переносится.
 	 *
-	 * `collapseDone` сворачивает пройденные в одну строку: на двенадцатой стадии
+	 * Пройденные стадии свёрнуты в одну строку: на двенадцатой стадии
 	 * одиннадцать зелёных строк над текущей отодвигали её за край экрана.
-	 * `current` — то, что стоит под текущей стадией (в рабочем месте там живёт
-	 * главное действие).
 	 */
-	let {
-		stages,
-		collapseDone = false,
-		current
-	}: {
-		stages: readonly StageDot[];
-		collapseDone?: boolean;
-		current?: Snippet;
-	} = $props();
+	let { stages }: { stages: readonly StageDot[] } = $props();
 
 	const firstOpen = $derived(stages.findIndex((stage) => stage.state !== 'done'));
-	const passed = $derived(
-		collapseDone && firstOpen > 1 ? stages.slice(0, firstOpen) : ([] as StageDot[])
-	);
-	const rest = $derived(passed.length === 0 ? stages : stages.slice(passed.length));
+	const passed = $derived(firstOpen > 1 ? stages.slice(0, firstOpen) : ([] as StageDot[]));
+	const rest = $derived(stages.slice(passed.length));
 </script>
 
 {#snippet row(stage: StageDot)}
@@ -36,10 +23,15 @@
 	{@const here = isCurrentState(stage.state)}
 	<div class="flex items-start gap-2 py-1 {here ? '' : 'text-muted-foreground'}">
 		<Icon class="mt-0.5 size-4 shrink-0 {look.iconClass}" aria-hidden="true" />
-		<span class="min-w-0 text-sm {here ? 'font-medium text-foreground' : ''}">
-			<span class="tabular-nums">{stage.position}.</span>
-			{stage.name}
-			<span class="sr-only">— {look.label}</span>
+		<span class="flex min-w-0 flex-col text-sm {here ? 'font-medium text-foreground' : ''}">
+			<span class="break-words">
+				<span class="tabular-nums">{stage.position}.</span>
+				{stage.name}
+				<span class="sr-only">— {look.label}</span>
+			</span>
+			{#if stage.note}
+				<span class="text-xs font-normal text-muted-foreground">{stage.note}</span>
+			{/if}
 		</span>
 	</div>
 {/snippet}
@@ -66,11 +58,6 @@
 		</li>
 	{/if}
 	{#each rest as stage (stage.id)}
-		<li>
-			{@render row(stage)}
-			{#if current && isCurrentState(stage.state)}
-				<div class="pb-2 pl-6">{@render current()}</div>
-			{/if}
-		</li>
+		<li>{@render row(stage)}</li>
 	{/each}
 </ol>

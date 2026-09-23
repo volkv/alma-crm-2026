@@ -7,9 +7,9 @@
 		LEARNING_PURPOSE_LABELS,
 		type LearningGroupView
 	} from '$lib/contracts/exchange';
-	import { formatDate } from '$lib/format';
+	import { formatDate, formatDateTime } from '$lib/format';
+	import { getCardCommands } from './commands.svelte';
 	import ContextSection from './context-section.svelte';
-	import { mockAction } from './mock';
 
 	/**
 	 * Потоки в системе обучения — компактно: что заявлено, что пришло в ответ и
@@ -19,13 +19,26 @@
 	let {
 		groups,
 		issue,
-		id = 'card-learning'
+		canSend,
+		canComplete
 	}: {
 		groups: readonly LearningGroupView[];
 		/** Почему новый поток сейчас не заявить; `null` — можно. */
 		issue: string | null;
-		id?: string;
+		/** Есть ли право заявлять потоки. */
+		canSend: boolean;
+		/** Можно ли отметить обучение завершённым без итога из системы обучения. */
+		canComplete: boolean;
 	} = $props();
+
+	const commands = getCardCommands();
+	const id = 'card-learning';
+
+	/** Судьба заявки словами: пока результатов нет, важна именно она. */
+	const requestLabel = (group: LearningGroupView) =>
+		group.messageState === null
+			? 'заявка не отправлялась'
+			: `заявка: ${EXCHANGE_STATE_LABELS[group.messageState].toLowerCase()}`;
 
 	const TRAINING = {
 		completed: { label: 'Обучение завершено', tone: 'success' },
@@ -40,9 +53,9 @@
 			<Button
 				size="xs"
 				variant="outline"
-				disabled={issue !== null}
+				disabled={!canSend || issue !== null}
 				aria-describedby={issue === null ? undefined : `${id}-issue`}
-				onclick={() => mockAction('Заявить поток')}
+				onclick={() => commands.open({ kind: 'send-group' })}
 			>
 				<PlusIcon aria-hidden="true" />
 				Заявить поток
@@ -85,27 +98,51 @@
 								</div>
 							</dl>
 						{/if}
-						<p class="text-xs text-muted-foreground">
+						<p class="text-xs break-words text-muted-foreground">
 							{[
+								group.program === null
+									? 'программа не закреплена'
+									: `${group.program.code} — ${group.program.name}`,
+								group.products.length === 0
+									? null
+									: `продукты: ${group.products.map((product) => product.code).join(', ')}`,
 								group.purpose === null ? null : LEARNING_PURPOSE_LABELS[group.purpose],
 								group.plannedSeats === null ? null : `мест ${group.plannedSeats}`,
 								group.startsOn === null ? null : `с ${formatDate(group.startsOn)}`,
-								group.endsOn === null ? null : `по ${formatDate(group.endsOn)}`
+								group.endsOn === null ? null : `по ${formatDate(group.endsOn)}`,
+								group.finishedOn === null ? null : `окончание ${formatDate(group.finishedOn)}`,
+								group.lastResultAt === null
+									? requestLabel(group)
+									: `данные от ${formatDateTime(group.lastResultAt)}`
 							]
 								.filter((part) => part !== null)
 								.join(' · ')}
 						</p>
-						{#if group.messageState === 'failed' || group.messageState === 'retrying'}
-							<p class="text-xs text-danger-soft-foreground">
-								Заявка: {EXCHANGE_STATE_LABELS[group.messageState].toLowerCase()}{group.lastError
-									? ` — ${group.lastError}`
-									: ''}
+						{#if group.lastError !== null}
+							<p class="text-xs break-words text-danger-soft-foreground">{group.lastError}</p>
+						{/if}
+						{#if group.completionMark !== null}
+							<p class="text-xs break-words text-muted-foreground">
+								Завершение отметил {group.completionMark.byName ?? 'сотрудник'}
+								{formatDateTime(group.completionMark.at)}: «{group.completionMark.comment}»
 							</p>
 						{/if}
 						{#if !group.countsForStage}
 							<p class="text-xs text-warning-soft-foreground">
-								Программы потока нет в записи — стадию он не подтверждает.
+								{group.program === null
+									? 'Программа потока не закреплена — стадию он не подтверждает.'
+									: 'Программы потока больше нет в записи — стадию он не подтверждает.'}
 							</p>
+						{/if}
+						{#if canComplete && group.trainingState !== 'completed'}
+							<Button
+								size="xs"
+								variant="outline"
+								class="self-start"
+								onclick={() => commands.open({ kind: 'complete-group', groupId: group.id })}
+							>
+								Обучение завершено…
+							</Button>
 						{/if}
 					</li>
 				{/each}

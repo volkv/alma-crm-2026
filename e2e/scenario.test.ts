@@ -201,6 +201,19 @@ async function openLayer(trigger: Locator, layer: Locator): Promise<void> {
 	}).toPass({ timeout: 20_000 });
 }
 
+/** Текущая стадия на полосе процесса карточки: её подпись — «N. Название — текущая». */
+const CURRENT_STAGE = '[data-slot="stage-strip"] [aria-current="step"]';
+
+/**
+ * Событие ленты карточки «первая стадия пройдена»: в нём объяснение перехода
+ * и приложенные к нему файлы.
+ */
+function stageLeft(page: Page): Locator {
+	return page
+		.locator('[data-slot="event-feed"] li')
+		.filter({ hasText: `«1. ${STAGES[0].name}» — стадия пройдена` });
+}
+
 /** Конверт контракта обмена (`docs/exchange-contract.md`, раздел 1). */
 function envelope(eventType: string, system: string, data: unknown): Record<string, unknown> {
 	return {
@@ -499,7 +512,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		await waitForHydration(manager);
 		await expect(manager.getByRole('heading', { level: 1 })).toHaveText(MAIN_TITLE);
 
-		const advance = manager.getByRole('button', { name: `Перейти: ${STAGES[1].name}` });
+		const advance = manager.getByRole('button', { name: `Перейти к «${STAGES[1].name}»` });
 
 		await expect(advance).toBeEnabled();
 		await advance.click();
@@ -515,16 +528,13 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		});
 		await dialog.getByRole('button', { name: 'Подтвердить' }).click();
 
-		// Лента стадий показывает новую текущую стадию: переход состоялся, а не
+		// Полоса процесса показывает новую текущую стадию: переход состоялся, а не
 		// только закрылся диалог.
-		await expect(
-			manager.locator('[data-slot="stage-timeline"] [aria-current="step"]')
-		).toHaveAccessibleName(new RegExp(`${STAGES[1].name} — текущая`));
+		await expect(manager.locator(CURRENT_STAGE)).toContainText(`${STAGES[1].name} — текущая`);
 
-		// Объяснение и файл доехали до истории, а не остались в форме.
-		await manager.getByRole('tab', { name: 'История' }).click();
-		await expect(manager.getByText(`Причина: ${STEP_COMMENT}`)).toBeVisible();
-		await expect(manager.getByText(`Вложения: ${STEP_FILE}`)).toBeVisible();
+		// Объяснение и файл доехали до ленты событий, а не остались в форме.
+		await expect(stageLeft(manager)).toContainText(STEP_COMMENT);
+		await expect(stageLeft(manager)).toContainText(`Вложения: ${STEP_FILE}`);
 	});
 
 	test('3. Руководитель передаёт вуз КАМу, и доступ меняется сразу', async () => {
@@ -629,14 +639,13 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		// объясняет перенос словами.
 		await manager.goto(`/w/${GROUP_KEY}/interactions/${movedId}`);
 		await expect(manager.getByText(/Стадия перенесена при изменении процесса/)).toBeVisible();
-		await expect(manager.getByRole('button', { name: /^Перейти:/ })).toBeVisible();
+		await expect(manager.getByRole('button', { name: /^Перейти к/ })).toBeVisible();
 
 		// История второго шага пережила правку процесса целиком: и объяснение, и
 		// приложенный файл на месте.
 		await manager.goto(`/w/${GROUP_KEY}/interactions/${mainId}`);
-		await manager.getByRole('tab', { name: 'История' }).click();
-		await expect(manager.getByText(`Причина: ${STEP_COMMENT}`)).toBeVisible();
-		await expect(manager.getByText(`Вложения: ${STEP_FILE}`)).toBeVisible();
+		await expect(stageLeft(manager)).toContainText(STEP_COMMENT);
+		await expect(stageLeft(manager)).toContainText(`Вложения: ${STEP_FILE}`);
 	});
 
 	test('5. Заявка с сайта заводит взаимодействие, снимок статуса уходит обратно', async ({
@@ -750,27 +759,36 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		await waitForHydration(manager);
 
 		// Стадия требует итога обучения, и его ещё не получали: карточка говорит
-		// об этом словами, а не гасит кнопку молча.
+		// об этом условием у главной кнопки, а не гасит её молча, — и сразу
+		// предлагает заявить поток.
+		const action = manager.locator('[data-slot="card-action"]');
+
+		await expect(action).toContainText('Недоступно');
 		await expect(
-			manager.getByText('Стадии нужен итог обучения из системы обучения — его ещё не получали.')
+			action.getByText('Сначала заявите поток в систему обучения — итог придёт оттуда.')
 		).toBeVisible();
+
+		const dialog = manager.getByRole('dialog');
+
+		await openLayer(action.getByRole('button', { name: 'Заявить поток' }), dialog);
 
 		// Программа у взаимодействия одна — форма подставила её сама; для кого
 		// поток, выбирает сотрудник.
-		await expect(manager.getByTestId('learning-groups')).toContainText('VO-BAK-01');
+		await expect(dialog).toContainText('VO-BAK-01');
 
 		const purpose = manager.getByRole('option', { name: 'Обучение студентов' });
 
-		await openLayer(manager.getByLabel('Для кого обучение'), purpose);
+		await openLayer(dialog.getByLabel('Для кого обучение'), purpose);
 		await purpose.click();
 
-		await manager.getByLabel('Мест в потоке').fill('45');
+		await dialog.getByLabel('Мест в потоке').fill('45');
 		// Дату держит компонент: человек пишет `01.10.2026`, а форме уходит
 		// `2026-10-01` скрытым полем. Страница уже ожила (`waitForHydration`
 		// выше), иначе набранное осталось бы в разметке и в форму не попало.
-		await manager.getByLabel('Начало занятий').fill('01.10.2026');
-		await expect(manager.locator('input[name="startsOn"]')).toHaveValue('2026-10-01');
-		await manager.getByRole('button', { name: 'Отправить в LMS' }).click();
+		await dialog.getByLabel('Начало занятий').fill('01.10.2026');
+		await expect(dialog.locator('input[name="startsOn"]')).toHaveValue('2026-10-01');
+		await dialog.getByRole('button', { name: 'Отправить в LMS' }).click();
+		await expect(dialog).toBeHidden();
 
 		const requestExternalId = `crm-group-${mainId}-1`;
 
@@ -791,7 +809,9 @@ test.describe.serial('сквозной сценарий: от заявки до 
 
 		// Карточка показывает заведённый поток и его имя в чужой системе.
 		await manager.reload();
-		await expect(manager.getByText('Поток 1')).toBeVisible();
+		await expect(
+			manager.getByRole('complementary', { name: 'Контекст' }).getByText('Поток 1')
+		).toBeVisible();
 		await expect(manager.getByText(learningGroupId, { exact: false }).first()).toBeVisible();
 
 		// Результат группы: стадию он подтверждает, но никуда её не двигает —
@@ -811,20 +831,23 @@ test.describe.serial('сквозной сценарий: от заявки до 
 
 		// Числа приехали из чужой системы и стали частью работы по взаимодействию.
 		await manager.reload();
-		await expect(manager.getByText('завершили 38', { exact: false }).first()).toBeVisible();
+		await expect(
+			manager.locator('[data-slot="event-feed"]').getByText('завершили 38', { exact: false })
+		).toBeVisible();
 
 		// И стадия подтверждена именно ими: не отметкой ответственного, а
 		// записью в системе обучения — тем подключением, откуда пришёл результат.
-		const confirmation = manager.locator('p').filter({ hasText: 'записью в системе обучения' });
+		const confirmation = manager
+			.locator('[data-slot="card-action-done"] li')
+			.filter({ hasText: 'записью в системе обучения' });
 
 		await expect(confirmation).toContainText('Подтверждено');
 		await expect(confirmation).toContainText('lms:moodle-itschool');
 
 		// Двигать взаимодействие результат не стал: стадия та же, и шаг вперёд
 		// по-прежнему предлагается человеку.
-		await expect(
-			manager.locator('[data-slot="stage-timeline"] [aria-current="step"]')
-		).toHaveAccessibleName(new RegExp(`${RENAMED_NAME} — текущая`));
+		await expect(manager.locator(CURRENT_STAGE)).toContainText(`${RENAMED_NAME} — текущая`);
+		await expect(manager.getByRole('button', { name: /^Перейти к/ })).toBeVisible();
 
 		// Обе стороны обмена по этому потоку видны в журнале. Ключей два, и это
 		// не небрежность: заявку журнал помнит по нашему ключу потока, а результат

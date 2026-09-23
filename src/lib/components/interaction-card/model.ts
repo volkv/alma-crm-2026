@@ -5,24 +5,31 @@ import {
 	type DocumentStatusFact
 } from '$lib/contracts/documents';
 import type { OrganizationView } from '$lib/contracts/directory';
-import { EXCHANGE_STATE_LABELS, type LearningGroupView } from '$lib/contracts/exchange';
+import {
+	EXCHANGE_STATE_LABELS,
+	lmsEvidenceSchema,
+	type LearningGroupView
+} from '$lib/contracts/exchange';
 import {
 	blockerReasonLabel,
 	CONTRACT_STATUS_LABELS,
 	PAUSE_REASON_LABELS,
 	type BlockerView,
 	type CommentView,
+	type InteractionAction,
 	type InteractionChangeView,
 	type InteractionClosingView,
 	type InteractionPartyView,
 	type InteractionStatusView,
 	type InteractionSummaryView,
 	type InteractionView,
+	type StageConfirmation,
 	type StageEntryView,
 	type StageOutcome,
-	type StageProgressItem
+	type StageProgressItem,
+	type StageTransitionKind
 } from '$lib/contracts/interactions';
-import { daysUntil, formatDate, pluralize } from '$lib/format';
+import { daysUntil, formatDate, formatDateTime, pluralize } from '$lib/format';
 
 /**
  * Карточка взаимодействия как набор фактов, каждый из которых назван ровно в
@@ -36,6 +43,25 @@ import { daysUntil, formatDate, pluralize } from '$lib/format';
  * действия, всё случившееся — в ленте событий.
  */
 
+/** Программа или продукт взаимодействия в форме заявки на поток. */
+export type CardOffering = { id: string; code: string; name: string };
+
+/**
+ * Обмен с системой обучения в том виде, в каком его отдаёт загрузчик карточки:
+ * заведённые потоки, из чего собирается заявка на новый и можно ли её подать.
+ */
+export type CardExchange = {
+	groups: readonly LearningGroupView[];
+	nextStreamNumber: number;
+	programs: readonly CardOffering[];
+	products: readonly CardOffering[];
+	canSend: boolean;
+	/** Можно ли отметить обучение завершённым без итога из системы обучения. */
+	canComplete: boolean;
+	/** Почему новый поток сейчас не заявить; `null` — можно. */
+	issue: string | null;
+};
+
 /** Всё, из чего собирается карточка: ровно то, что читает загрузчик карточки. */
 export type CardSource = {
 	interaction: InteractionView;
@@ -46,9 +72,39 @@ export type CardSource = {
 	changes: readonly InteractionChangeView[];
 	/** Основная сторона из справочника: вид контрагента, реквизиты, регион. */
 	counterparty: OrganizationView | null;
-	/** Потоки в системе обучения и почему новый поток сейчас не заявить. */
-	exchange: { groups: readonly LearningGroupView[]; issue: string | null };
+	exchange: CardExchange;
 };
+
+/**
+ * Команда карточки, которую человек начинает кнопкой: почти каждая открывает
+ * свой диалог с формой. Модель называет команду, а какой диалог её спросит,
+ * решает раскладка, — так пункт меню, кнопка у условия и кнопка в панели
+ * контекста ведут в одну и ту же форму.
+ */
+export type CardCommand =
+	| {
+			kind: 'transition';
+			transition: StageTransitionKind;
+			toStageId: string;
+			name: string;
+			requiresReason: boolean;
+	  }
+	| { kind: 'pause' }
+	| { kind: 'result' }
+	| { kind: 'confirm' }
+	| { kind: 'raise-blocker' }
+	| { kind: 'resolve-blocker'; blockerId: string; description: string }
+	| { kind: 'assign' }
+	| { kind: 'complete' }
+	| { kind: 'cancel' }
+	| { kind: 'plan' }
+	| { kind: 'contract' }
+	| { kind: 'upload' }
+	| { kind: 'revision'; documentId: string }
+	| { kind: 'mark'; documentId: string | null; fact: DocumentStatusFact | null }
+	| { kind: 'generate' }
+	| { kind: 'send-group' }
+	| { kind: 'complete-group'; groupId: string | null };
 
 /** Какой набор панелей нужен контрагенту: вуз с договором или обучение лица. */
 export type CounterpartyShape = 'institution' | 'learner';
@@ -89,10 +145,16 @@ export type Requirement = {
 	required: boolean;
 	/** Чем закрывают условие: отметка в списке или отдельное действие. */
 	close: 'check' | 'action' | 'external';
+	/** Ключ пункта чек-листа, который отмечается формой; только у `check`. */
+	checklistKey: string | null;
 	/** Подпись кнопки для `action` и `external`. */
 	cta: string | null;
+	/** Что начинает кнопка; `null` — кнопки нет, условие закроется само. */
+	command: CardCommand | null;
 	/** Что сделать, коротко; `null` — подпись говорит сама за себя. */
 	hint: string | null;
+	/** Чем условие выполнено — у сделанного: результат, чем подтверждено. */
+	doneNote: string | null;
 };
 
 export type SecondaryAction = {
@@ -101,6 +163,7 @@ export type SecondaryAction = {
 	allowed: boolean;
 	reason: string | null;
 	tone: 'default' | 'danger';
+	command: CardCommand;
 };
 
 /**
@@ -133,6 +196,8 @@ export type CardEvent = {
 	title: string;
 	detail: string | null;
 	author: string | null;
+	/** Сколько запись простояла на стадии — у события «стадия закрыта». */
+	duration: string | null;
 	tone: 'neutral' | 'success' | 'warning' | 'danger';
 };
 
@@ -152,6 +217,8 @@ export type CardModel = {
 	contract: { number: string; status: string; validUntil: string | null } | null;
 	stages: StageDot[];
 	action: CardAction;
+	/** Что начинает главная кнопка; `null` — отправка без диалога или кнопки нет. */
+	primary: CardCommand | null;
 	secondary: SecondaryAction[];
 	events: CardEvent[];
 };
@@ -190,7 +257,7 @@ function primaryParty(interaction: InteractionView): InteractionPartyView | null
  * вуз с договором, площадками и группой студентов; всё остальное — лицо,
  * которое учится само и само платит.
  */
-export function counterpartyShape(interaction: InteractionView): CounterpartyShape {
+function counterpartyShape(interaction: InteractionView): CounterpartyShape {
 	return primaryParty(interaction)?.partyRole === 'educational_institution'
 		? 'institution'
 		: 'learner';
@@ -254,8 +321,54 @@ export function buildQuiet(status: InteractionStatusView, now: Date): CardQuiet 
 	};
 }
 
-/** Условия шага вперёд с текущей стадии — из её снимка и того, что уже сделано. */
-export function buildRequirements(entry: StageEntryView, groups: readonly LearningGroupView[]) {
+const CONFIRMATION_LABELS: Record<StageConfirmation['kind'], string> = {
+	file: 'приложенным файлом',
+	mark: 'отметкой ответственного',
+	lms_record: 'записью в системе обучения',
+	document_mark: 'отметкой по документу'
+};
+
+/** Чем подтверждена стадия, словами: способ, источник и когда. */
+function describeConfirmation(entry: StageEntryView): string | null {
+	const { confirmation } = entry;
+
+	if (confirmation === null) {
+		return null;
+	}
+
+	const how =
+		confirmation.kind === 'lms_record'
+			? `${CONFIRMATION_LABELS.lms_record} (${confirmation.source})`
+			: confirmation.kind === 'document_mark'
+				? `отметкой «${DOCUMENT_STATUS_FACT_LABELS[confirmation.mark]}» по документу`
+				: CONFIRMATION_LABELS[confirmation.kind];
+
+	return `Подтверждено ${how}${entry.confirmedAt === null ? '' : `, ${formatDateTime(entry.confirmedAt)}`}`;
+}
+
+/** Факт завершения обучения словами; `null` — обучение не завершено. */
+function describeLmsEvidence(entry: StageEntryView): string | null {
+	const evidence = lmsEvidenceSchema.safeParse(entry.lmsEvidence).data ?? null;
+
+	if (evidence === null) {
+		return null;
+	}
+
+	if (evidence.kind === 'result') {
+		return `Итог группы ${evidence.groupExternalId}: зачислено ${evidence.enrolled}, завершили ${evidence.completed}, отчислены ${evidence.expelled}${evidence.finishedOn === null ? '' : `, окончание ${formatDate(evidence.finishedOn)}`}`;
+	}
+
+	return `Отмечено сотрудником по потоку ${evidence.streamNumber} ${formatDateTime(evidence.markedAt)}: «${evidence.comment}»`;
+}
+
+/**
+ * Условия шага вперёд с текущей стадии — из её снимка и того, что уже сделано.
+ *
+ * Подтверждение попадает в список и там, где стадия его не требует, если оно
+ * уже есть: чем подтверждена стадия — факт о ней, и спрятать его только
+ * потому, что процесс его не просил, значило бы потерять.
+ */
+export function buildRequirements(entry: StageEntryView, exchange: CardExchange): Requirement[] {
 	const { snapshot } = entry;
 	const requirements: Requirement[] = snapshot.checklist.map((item) => ({
 		key: `checklist:${item.key}`,
@@ -263,24 +376,35 @@ export function buildRequirements(entry: StageEntryView, groups: readonly Learni
 		done: entry.checklistState[item.key] === true,
 		required: item.required,
 		close: 'check',
+		checklistKey: item.key,
 		cta: null,
-		hint: null
+		command: null,
+		hint: null,
+		doneNote: null
 	}));
 
 	if (snapshot.requiresResult) {
+		const done = entry.resultText !== null && entry.resultText.trim() !== '';
+
 		requirements.push({
 			key: 'result',
 			label: 'Записан результат стадии',
-			done: entry.resultText !== null && entry.resultText.trim() !== '',
+			done,
 			required: true,
 			close: 'action',
+			checklistKey: null,
 			cta: 'Записать результат',
-			hint: null
+			command: { kind: 'result' },
+			hint: null,
+			doneNote: done ? entry.resultText : null
 		});
 	}
 
 	if (snapshot.requiresLmsData) {
-		const counted = groups.filter((group) => group.countsForStage);
+		const counted = exchange.groups.filter((group) => group.countsForStage);
+		const unfinished = counted.filter((group) => group.trainingState !== 'completed');
+		const noStream = counted.length === 0;
+		const canMark = !noStream && exchange.canComplete && unfinished.length > 0;
 
 		requirements.push({
 			key: 'lms',
@@ -288,37 +412,51 @@ export function buildRequirements(entry: StageEntryView, groups: readonly Learni
 			done: entry.lmsEvidence !== null,
 			required: true,
 			close: 'external',
-			cta: 'Отметить завершение',
-			hint:
-				counted.length === 0
-					? 'Сначала заявите поток в систему обучения — итог придёт оттуда.'
-					: 'Итог придёт из системы обучения сам. Если данных не будет, отметьте завершение с объяснением.'
+			checklistKey: null,
+			cta: noStream ? 'Заявить поток' : canMark ? 'Отметить завершение' : null,
+			command: noStream
+				? { kind: 'send-group' }
+				: canMark
+					? { kind: 'complete-group', groupId: unfinished.length === 1 ? unfinished[0].id : null }
+					: null,
+			hint: noStream
+				? 'Сначала заявите поток в систему обучения — итог придёт оттуда.'
+				: 'Итог придёт из системы обучения сам. Если данных не будет, отметьте завершение с объяснением.',
+			doneNote: describeLmsEvidence(entry)
 		});
 	}
 
-	if (snapshot.requiresConfirmation) {
+	if (snapshot.requiresConfirmation || entry.confirmation !== null) {
 		requirements.push({
 			key: 'confirmation',
 			label: 'Стадия подтверждена',
 			done: entry.confirmation !== null,
-			required: true,
+			required: snapshot.requiresConfirmation,
 			close: 'action',
+			checklistKey: null,
 			cta: 'Подтвердить',
-			hint: 'Файлом, отметкой ответственного или записью системы обучения.'
+			command: { kind: 'confirm' },
+			hint: 'Файлом, отметкой ответственного или записью системы обучения.',
+			doneNote: describeConfirmation(entry)
 		});
 	}
 
 	const mark: DocumentStatusFact | null = snapshot.requiresDocumentMark;
 
 	if (mark !== null) {
+		const evidence = entry.documentMarkEvidence?.mark === mark ? entry.documentMarkEvidence : null;
+
 		requirements.push({
 			key: 'document-mark',
 			label: `Документ с отметкой «${DOCUMENT_STATUS_FACT_LABELS[mark]}»`,
-			done: entry.documentMarkEvidence?.mark === mark,
+			done: evidence !== null,
 			required: true,
 			close: 'action',
+			checklistKey: null,
 			cta: 'Отметить документ',
-			hint: null
+			command: { kind: 'mark', documentId: null, fact: mark },
+			hint: 'Стадию закрывает отметка по самому документу, а не отметка ответственного.',
+			doneNote: evidence === null ? null : `«${evidence.title}» от ${formatDate(evidence.markedAt)}`
 		});
 	}
 
@@ -346,7 +484,7 @@ function buildAction(source: CardSource): CardAction {
 		return { kind: 'none', label: 'Запись не стоит ни на одной стадии' };
 	}
 
-	const requirements = buildRequirements(entry, exchange.groups);
+	const requirements = buildRequirements(entry, exchange);
 	const blockers = summary.blocking.blockers.filter((blocker) => blocker.blocksTransition);
 	const softBlockers = summary.blocking.blockers.filter((blocker) => !blocker.blocksTransition);
 	const pause =
@@ -385,10 +523,7 @@ function buildAction(source: CardSource): CardAction {
 		};
 	}
 
-	const forward = summary.canDo.transitions.filter(
-		(option) => option.transition.kind === 'forward'
-	);
-	const chosen = forward.find((option) => option.allowed) ?? forward[0] ?? null;
+	const chosen = primaryForward(summary);
 
 	if (chosen !== null) {
 		return {
@@ -415,25 +550,78 @@ function buildAction(source: CardSource): CardAction {
 	};
 }
 
-function buildSecondary(source: CardSource): SecondaryAction[] {
-	const { summary, closing, interaction } = source;
+/**
+ * Шаг вперёд, который карточка ставит главной кнопкой: первый доступный, а
+ * если доступного нет — первый по процессу, чтобы было что объяснить.
+ */
+function primaryForward(summary: InteractionSummaryView) {
+	const forward = summary.canDo.transitions.filter(
+		(option) => option.transition.kind === 'forward'
+	);
 
-	if (interaction.status !== 'active') {
+	return forward.find((option) => option.allowed) ?? forward[0] ?? null;
+}
+
+/** Переход как команда: какой диалог его спросит и что в диалог передать. */
+function transitionCommand(option: InteractionSummaryView['canDo']['transitions'][number]) {
+	return {
+		kind: 'transition',
+		transition: option.transition.kind,
+		toStageId: option.toStage.id,
+		name: option.toStage.name,
+		requiresReason: option.transition.requiresReason
+	} as const satisfies CardCommand;
+}
+
+/**
+ * Команда главной кнопки. Снятие паузы — не диалог, а отправка формы, поэтому
+ * у него команды нет.
+ */
+function primaryCommand(source: CardSource, action: CardAction): CardCommand | null {
+	if (action.kind === 'forward') {
+		const chosen = primaryForward(source.summary);
+
+		return chosen === null ? null : transitionCommand(chosen);
+	}
+
+	return action.kind === 'complete' ? { kind: 'complete' } : null;
+}
+
+const TRANSITION_VERBS: Record<StageTransitionKind, string> = {
+	forward: 'Перейти к',
+	return: 'Вернуть на',
+	skip: 'Пропустить до'
+};
+
+/**
+ * Команды меню «Ещё»: всё, что можно сделать со стадией и записью, кроме
+ * главного действия. Недоступное остаётся в меню с причиной — пропавший пункт
+ * не объясняет ничего.
+ */
+function buildSecondary(source: CardSource, action: CardAction): SecondaryAction[] {
+	const { summary, closing, interaction, status } = source;
+	const entry = status.current;
+
+	if (interaction.status !== 'active' || entry === null) {
 		return [];
 	}
 
-	const can = (action: string) => summary.canDo.actions.includes(action as 'pause');
+	const can = (name: InteractionAction) => summary.canDo.actions.includes(name);
+	const primary = action.kind === 'forward' ? primaryForward(summary) : null;
+	const openRequirement = (key: string) =>
+		action.kind !== 'closed' &&
+		action.kind !== 'none' &&
+		action.requirements.some((item) => item.key === key && item.required && !item.done);
+
 	const result: SecondaryAction[] = summary.canDo.transitions
-		.filter((option) => option.transition.kind !== 'forward')
+		.filter((option) => option !== primary)
 		.map((option) => ({
 			key: option.transition.id,
-			label:
-				option.transition.kind === 'return'
-					? `Вернуть на «${option.toStage.name}»`
-					: `Пропустить до «${option.toStage.name}»`,
+			label: `${TRANSITION_VERBS[option.transition.kind]} «${option.toStage.name}»`,
 			allowed: option.allowed,
 			reason: option.allowed ? null : option.reasons.join('; '),
-			tone: 'default'
+			tone: 'default',
+			command: transitionCommand(option)
 		}));
 
 	if (can('pause')) {
@@ -442,7 +630,33 @@ function buildSecondary(source: CardSource): SecondaryAction[] {
 			label: 'Поставить на паузу',
 			allowed: true,
 			reason: null,
-			tone: 'default'
+			tone: 'default',
+			command: { kind: 'pause' }
+		});
+	}
+
+	// Результат и подтверждение, которых стадия не требует (или которые уже
+	// есть), живут в меню: условием перехода они не стоят, а записать или
+	// поправить их можно всегда.
+	if (!openRequirement('result')) {
+		result.push({
+			key: 'result',
+			label: entry.resultText === null ? 'Записать результат стадии' : 'Изменить результат стадии',
+			allowed: can('set_result'),
+			reason: can('set_result') ? null : 'Нет права записывать результат',
+			tone: 'default',
+			command: { kind: 'result' }
+		});
+	}
+
+	if (!openRequirement('confirmation')) {
+		result.push({
+			key: 'confirm',
+			label: entry.confirmation === null ? 'Подтвердить стадию' : 'Подтвердить стадию заново',
+			allowed: can('confirm'),
+			reason: can('confirm') ? null : 'Нет права подтверждать стадию',
+			tone: 'default',
+			command: { kind: 'confirm' }
 		});
 	}
 
@@ -451,7 +665,8 @@ function buildSecondary(source: CardSource): SecondaryAction[] {
 		label: 'Сообщить о помехе',
 		allowed: can('raise_blocker'),
 		reason: can('raise_blocker') ? null : 'Нет права поднимать помехи',
-		tone: 'default'
+		tone: 'default',
+		command: { kind: 'raise-blocker' }
 	});
 
 	result.push({
@@ -459,16 +674,18 @@ function buildSecondary(source: CardSource): SecondaryAction[] {
 		label: 'Передать другому сотруднику',
 		allowed: can('set_responsible'),
 		reason: can('set_responsible') ? null : 'Нет права менять ответственного',
-		tone: 'default'
+		tone: 'default',
+		command: { kind: 'assign' }
 	});
 
-	if (closing.complete.requiresForce) {
+	if (action.kind !== 'complete') {
 		result.push({
-			key: 'complete-early',
-			label: 'Завершить досрочно',
+			key: 'complete',
+			label: closing.complete.requiresForce ? 'Завершить досрочно' : 'Завершить взаимодействие',
 			allowed: closing.complete.allowed,
 			reason: closing.complete.allowed ? null : closing.complete.reasons.join('; '),
-			tone: 'default'
+			tone: 'default',
+			command: { kind: 'complete' }
 		});
 	}
 
@@ -477,7 +694,8 @@ function buildSecondary(source: CardSource): SecondaryAction[] {
 		label: 'Отменить взаимодействие',
 		allowed: closing.cancel.allowed,
 		reason: closing.cancel.allowed ? null : closing.cancel.reasons.join('; '),
-		tone: 'danger'
+		tone: 'danger',
+		command: { kind: 'cancel' }
 	});
 
 	return result;
@@ -488,6 +706,33 @@ function describeChange(label: string | null, value: unknown): string {
 	if (value === null || value === undefined) return '—';
 
 	return typeof value === 'string' ? value : JSON.stringify(value);
+}
+
+const HOUR_SECONDS = 60 * 60;
+
+/** Длительность словами: до суток — часами, дальше — днями. */
+function duration(seconds: number): string {
+	const rounded = Math.max(0, Math.round(seconds));
+
+	if (rounded < HOUR_SECONDS) {
+		return 'меньше часа';
+	}
+
+	if (rounded < 24 * HOUR_SECONDS) {
+		return pluralize(Math.round(rounded / HOUR_SECONDS), ['час', 'часа', 'часов']);
+	}
+
+	return pluralize(Math.round(rounded / (24 * HOUR_SECONDS)), DAYS);
+}
+
+/**
+ * Сколько запись простояла на стадии — вместе с паузой: «две недели, из них
+ * неделю ждали вуз» и «две недели тишины» — разные истории.
+ */
+function stageDuration(entry: StageEntryView): string {
+	const active = `в работе ${duration(entry.activeSeconds)}`;
+
+	return entry.pausedSeconds > 0 ? `${active}, на паузе ${duration(entry.pausedSeconds)}` : active;
 }
 
 const stageTitle = (entry: StageEntryView) => `${entry.snapshot.position}. ${entry.snapshot.name}`;
@@ -512,6 +757,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 				title: `Запись заведена на стадии «${stageTitle(entry)}»`,
 				detail: null,
 				author: null,
+				duration: null,
 				tone: 'neutral'
 			});
 		}
@@ -532,6 +778,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 				title: `«${stageTitle(entry)}» — ${OUTCOME_LABELS[entry.outcome]}`,
 				detail: detail.length === 0 ? null : detail.join(' · '),
 				author: entry.responsibleName,
+				duration: stageDuration(entry),
 				tone: entry.outcome === 'completed' ? 'success' : 'warning'
 			});
 		} else if (entry !== oldest) {
@@ -542,6 +789,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 				title: `Начата стадия «${stageTitle(entry)}»`,
 				detail: null,
 				author: null,
+				duration: null,
 				tone: 'neutral'
 			});
 		}
@@ -552,8 +800,9 @@ export function buildEvents(source: CardSource): CardEvent[] {
 				at: entry.confirmedAt,
 				kind: 'stage',
 				title: `«${stageTitle(entry)}» подтверждена`,
-				detail: CONFIRMATION_LABELS[entry.confirmation.kind],
+				detail: describeConfirmation(entry),
 				author: null,
+				duration: null,
 				tone: 'success'
 			});
 		}
@@ -568,6 +817,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 					.filter((part): part is string => part !== null)
 					.join(' · '),
 				author: null,
+				duration: null,
 				tone: 'neutral'
 			});
 
@@ -579,6 +829,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 					title: 'Пауза снята',
 					detail: null,
 					author: null,
+					duration: null,
 					tone: 'neutral'
 				});
 			}
@@ -593,6 +844,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 			title: 'Комментарий',
 			detail: comment.body,
 			author: comment.authorName,
+			duration: null,
 			tone: 'neutral'
 		});
 	}
@@ -605,6 +857,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 			title: `Добавлен документ «${document.title}»`,
 			detail: documentKindLabel(document.kind),
 			author: null,
+			duration: null,
 			tone: 'neutral'
 		});
 
@@ -623,6 +876,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 					title: `«${document.title}»: ${DOCUMENT_STATUS_FACT_LABELS[fact].toLowerCase()}`,
 					detail: note,
 					author: null,
+					duration: null,
 					tone: 'success'
 				});
 			}
@@ -637,6 +891,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 			title: `${FIELD_LABELS[change.field] ?? change.field}: ${describeChange(change.oldLabel, change.oldValue)} → ${describeChange(change.newLabel, change.newValue)}`,
 			detail: change.reason,
 			author: change.authorName,
+			duration: null,
 			tone: 'neutral'
 		});
 	}
@@ -649,6 +904,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 			title: `Помеха: ${blockerReasonLabel(blocker.reasonCode).toLowerCase()}`,
 			detail: blocker.description,
 			author: blocker.raisedByName,
+			duration: null,
 			tone: blocker.blocksTransition ? 'danger' : 'warning'
 		});
 
@@ -660,6 +916,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 				title: 'Помеха снята',
 				detail: blocker.resolution,
 				author: null,
+				duration: null,
 				tone: 'success'
 			});
 		}
@@ -676,6 +933,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 					? null
 					: `${EXCHANGE_STATE_LABELS[group.messageState]}${group.groupExternalId ? ` · группа ${group.groupExternalId}` : ''}`,
 			author: null,
+			duration: null,
 			tone: group.messageState === 'failed' ? 'danger' : 'neutral'
 		});
 
@@ -687,6 +945,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 				title: `Результат по потоку ${group.streamNumber} из системы обучения`,
 				detail: `зачислено ${group.enrolled}, завершили ${group.completed ?? 0}, отчислено ${group.expelled ?? 0}${group.finishedOn ? ` · окончание ${formatDate(group.finishedOn)}` : ''}`,
 				author: null,
+				duration: null,
 				tone: group.trainingState === 'completed' ? 'success' : 'neutral'
 			});
 		}
@@ -699,6 +958,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 				title: `Поток ${group.streamNumber}: обучение отмечено завершённым`,
 				detail: group.completionMark.comment,
 				author: group.completionMark.byName,
+				duration: null,
 				tone: 'success'
 			});
 		}
@@ -707,17 +967,11 @@ export function buildEvents(source: CardSource): CardEvent[] {
 	return events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
 }
 
-const CONFIRMATION_LABELS: Record<NonNullable<StageEntryView['confirmation']>['kind'], string> = {
-	file: 'приложенным файлом',
-	mark: 'отметкой ответственного',
-	lms_record: 'записью системы обучения',
-	document_mark: 'отметкой по документу'
-};
-
 export function buildCard(source: CardSource, now: Date): CardModel {
 	const { interaction, status, summary } = source;
 	const primary = primaryParty(interaction);
 	const stage = summary.happening.stage;
+	const action = buildAction(source);
 
 	return {
 		id: interaction.id,
@@ -753,8 +1007,9 @@ export function buildCard(source: CardSource, now: Date): CardModel {
 			state: item.state,
 			note: item.note
 		})),
-		action: buildAction(source),
-		secondary: buildSecondary(source),
+		action,
+		primary: primaryCommand(source, action),
+		secondary: buildSecondary(source, action),
 		events: buildEvents(source)
 	};
 }
