@@ -1,13 +1,17 @@
 /**
- * Страница отчёта на печать — сводка.
+ * Страница отчёта на печать — сводка или полный отчёт.
  *
  * Собирается из того же объекта, что и книга: числа в PDF и числа в XLSX
- * приезжают из одного места. Но отвечает она на другой вопрос: PDF читают
- * глазами, поэтому в нём условия выборки, итоги, числа обеих диаграмм таблицами
- * и начало таблицы строк — первые `REPORT_PDF_ROWS`, с пометкой, сколько их
- * всего и где взять полную. Прежнее поведение — отказ выше потолка — снято:
- * годовой отчёт не выгружался в PDF вовсе, а «нет файла» хуже, чем «файл со
- * сводкой и честной пометкой».
+ * приезжают из одного места. PDF читают глазами, поэтому в нём условия
+ * выборки, итоги и числа обеих диаграмм таблицами, а дальше — одно из двух:
+ *
+ * - **сводка** печатает начало таблицы строк — первые `REPORT_PDF_ROWS`, с
+ *   пометкой, сколько их всего и где взять полную;
+ * - **полный** печатает всю таблицу выборки, строка в строку с итогом.
+ *
+ * Какой это вид, файл говорит сам — в заголовке, в шапке условий и в подвале
+ * каждой страницы: распечатку сводки, принятую за полный отчёт, пересчитали бы
+ * по видимым строкам и получили бы неверные числа.
  *
  * Самой диаграммы в серверном PDF нет намеренно: её рисует браузер, и картинка,
  * приехавшая с клиента, означала бы проверку чужого файла ради изображения,
@@ -15,11 +19,13 @@
  */
 import {
 	REPORT_MODE_LABELS,
+	REPORT_PDF_LAYOUT_LABELS,
 	REPORT_PDF_ROWS,
 	type ReportBucket,
 	type ReportCell,
 	type ReportFunnelChart,
 	type ReportMovementChart,
+	type ReportPdfLayout,
 	type ReportView
 } from '$lib/contracts/reports';
 import { formatDate, formatDateTime } from '$lib/format';
@@ -141,51 +147,78 @@ const STYLE = `
 `;
 
 /**
- * Подвал печати: нумерацию страниц подставляет сам движок печати. Идентификатор
- * отчёта стоит на каждой странице: распечатку разбирают по листам, и лист без
- * шапки обязан называть сборку, из которой он взят.
+ * Сколько строк таблицы печатает одна часть полного PDF.
+ *
+ * Полный отчёт печатается частями и склеивается службой (`gotenberg.ts`):
+ * память Chromium растёт с объёмом вёрстки быстрее, чем линейно, и таблица на
+ * пять тысяч строк одним куском занимала в службе печати больше гигабайта
+ * при потолке контейнера на стенде в 768 МБ (замер — `docs/reports.md`, «PDF:
+ * сводка и полный отчёт»). Часть того же размера, что сводка, не требует от
+ * службы больше памяти, чем сводка, которая и так печатается.
  */
-export function reportFooterHtml(reportId: string): string {
+export const REPORT_PDF_PART_ROWS = REPORT_PDF_ROWS;
+
+/** Одна часть PDF: страница и её подвал. */
+type ReportPdfPart = { page: string; footer: string };
+
+/**
+ * Подвал печати: нумерацию страниц подставляет сам движок печати. Идентификатор
+ * отчёта и вид PDF стоят на каждой странице: распечатку разбирают по листам, и
+ * лист без шапки обязан называть сборку, из которой он взят. Нумерация идёт
+ * внутри части — сквозную движок не знает, — поэтому у многочастного файла
+ * подвал называет и часть.
+ */
+function footerHtml(
+	reportId: string,
+	layout: ReportPdfLayout,
+	part: number,
+	parts: number
+): string {
+	const partLabel = parts > 1 ? ` · часть ${part} из ${parts}, стр.` : '';
+
 	return `<!doctype html><html><head><meta charset="utf-8"><style>
 		body { font: 8px "DejaVu Sans", Arial, sans-serif; color: #4b5563; width: 100%; margin: 0 0.4in; }
 		.line { display: flex; justify-content: space-between; }
 	</style></head><body><div class="line">
-		<span>Отчёт по взаимодействиям · ${escapeHtml(reportId)}</span>
-		<span class="pageNumber"></span>/<span class="totalPages"></span>
+		<span>Отчёт по взаимодействиям · ${REPORT_PDF_LAYOUT_LABELS[layout].toLowerCase()} · ${escapeHtml(reportId)}</span>
+		<span>${partLabel} <span class="pageNumber"></span>/<span class="totalPages"></span></span>
 	</div></body></html>`;
 }
 
-export function reportHtml(view: ReportView): string {
-	const head = view.meta.columns
+/** Сколько строк таблицы печатает PDF этого вида. */
+function pdfRowCount(view: ReportView, layout: ReportPdfLayout): number {
+	return layout === 'full' ? view.rows.length : Math.min(view.rows.length, REPORT_PDF_ROWS);
+}
+
+/** Вид PDF словами — для заголовка и шапки условий. */
+function layoutNote(view: ReportView, layout: ReportPdfLayout): string {
+	const printed = pdfRowCount(view, layout);
+
+	if (layout === 'full') {
+		return `Полный отчёт — вся таблица выборки, строк: ${printed}`;
+	}
+
+	return printed < view.rows.length
+		? `Сводка — итоги и начало таблицы, строк: ${printed} из ${view.rows.length}`
+		: `Сводка — итоги и вся таблица выборки, строк: ${printed}`;
+}
+
+function rowsHtml(view: ReportView, rows: ReportView['rows']): string {
+	return rows
 		.map(
-			(column) => `<th>${escapeHtml(column.label)}<small>${escapeHtml(column.note)}</small></th>`
+			(row) =>
+				`<tr>${row.cells
+					.map(
+						(cell, position) =>
+							`<td${view.meta.columns[position].kind === 'number' ? ' class="number"' : ''}>${cellHtml(cell)}</td>`
+					)
+					.join('')}</tr>`
 		)
 		.join('');
+}
 
-	const printed = view.rows.slice(0, REPORT_PDF_ROWS);
-
-	const body =
-		printed.length === 0
-			? `<tr><td colspan="${view.meta.columns.length}" class="empty">Под фильтр не попало ни одной строки</td></tr>`
-			: printed
-					.map(
-						(row) =>
-							`<tr>${row.cells
-								.map(
-									(cell, position) =>
-										`<td${view.meta.columns[position].kind === 'number' ? ' class="number"' : ''}>${cellHtml(cell)}</td>`
-								)
-								.join('')}</tr>`
-					)
-					.join('');
-
-	// Пометка о сокращении стоит над таблицей, а не под ней: читающий обязан
-	// узнать, что строк больше, до того, как начнёт считать по видимым.
-	const cut =
-		printed.length < view.rows.length
-			? `<p class="cut">Показаны первые ${printed.length} строк из ${view.rows.length}; полная таблица — в выгрузках XLSX и JSON по той же ссылке.</p>`
-			: '';
-
+/** Шапка отчёта: заголовок, правило семантики, условия выборки и итоги. */
+function headerHtml(view: ReportView, layout: ReportPdfLayout): string {
 	const totals = [
 		{ label: 'Строк в отчёте', value: String(view.totals.rowCount) },
 		{ label: 'Взаимодействий', value: String(view.totals.interactionCount) },
@@ -200,6 +233,7 @@ export function reportHtml(view: ReportView): string {
 	const filters = [
 		{ label: 'Идентификатор отчёта', value: view.meta.reportId },
 		{ label: 'Отчёт собран', value: formatDateTime(view.meta.generatedAt) },
+		{ label: 'Вид PDF', value: layoutNote(view, layout) },
 		{ label: 'Режим', value: REPORT_MODE_LABELS[view.meta.mode] },
 		...view.meta.filters.filter((filter) => filter.label !== 'Режим'),
 		{ label: 'Область доступа', value: view.meta.scope },
@@ -208,20 +242,75 @@ export function reportHtml(view: ReportView): string {
 		.map((filter) => `<dt>${escapeHtml(filter.label)}</dt><dd>${escapeHtml(filter.value)}</dd>`)
 		.join('');
 
-	const summary = [
+	const printed = pdfRowCount(view, layout);
+
+	// Пометка о сокращении стоит над таблицей, а не под ней: читающий обязан
+	// узнать, что строк больше, до того, как начнёт считать по видимым.
+	const cut =
+		printed < view.rows.length
+			? `<p class="cut">Показаны первые ${printed} строк из ${view.rows.length}; вся таблица — в полном PDF и в выгрузках XLSX и JSON по той же ссылке.</p>`
+			: '';
+
+	return `<h1>Отчёт по взаимодействиям — ${REPORT_PDF_LAYOUT_LABELS[layout].toLowerCase()}</h1>
+	<p class="rule">${escapeHtml(view.meta.semantics)}</p>
+	<dl>${filters}</dl>
+	${cut}`;
+}
+
+/** Числа диаграмм таблицами — после таблицы строк, в последней части. */
+function chartsHtml(view: ReportView): string {
+	return [
 		funnelHtml(view.charts.funnel),
 		view.charts.movement === null ? '' : movementTable(view.charts.movement),
 		...view.charts.breakdowns.map((breakdown) => bucketList(breakdown.label, breakdown.points))
 	].join('');
+}
 
-	return `<!doctype html>
-<html lang="ru"><head><meta charset="utf-8"><title>Отчёт по взаимодействиям</title><style>${STYLE}</style></head>
+/**
+ * PDF отчёта частями. Сводка — всегда одна часть. Полный отчёт режется по
+ * `REPORT_PDF_PART_ROWS` строк: шапка с условиями — в первой части, числа
+ * диаграмм — в последней, заголовок таблицы — в каждой. Части склеиваются в
+ * этом же порядке, и строки в склеенном файле идут подряд, как в выборке.
+ */
+export function reportPdfParts(view: ReportView, layout: ReportPdfLayout): ReportPdfPart[] {
+	const head = view.meta.columns
+		.map(
+			(column) => `<th>${escapeHtml(column.label)}<small>${escapeHtml(column.note)}</small></th>`
+		)
+		.join('');
+
+	const printed = view.rows.slice(0, pdfRowCount(view, layout));
+	const chunks: ReportView['rows'][] = [];
+
+	for (let start = 0; start < printed.length; start += REPORT_PDF_PART_ROWS) {
+		chunks.push(printed.slice(start, start + REPORT_PDF_PART_ROWS));
+	}
+
+	if (chunks.length === 0) {
+		chunks.push([]);
+	}
+
+	const title = `Отчёт по взаимодействиям — ${REPORT_PDF_LAYOUT_LABELS[layout].toLowerCase()}`;
+
+	return chunks.map((rows, index) => {
+		const first = index === 0;
+		const last = index === chunks.length - 1;
+		const body =
+			rows.length === 0
+				? `<tr><td colspan="${view.meta.columns.length}" class="empty">Под фильтр не попало ни одной строки</td></tr>`
+				: rowsHtml(view, rows);
+
+		const page = `<!doctype html>
+<html lang="ru"><head><meta charset="utf-8"><title>${title}</title><style>${STYLE}</style></head>
 <body>
-	<h1>Отчёт по взаимодействиям</h1>
-	<p class="rule">${escapeHtml(view.meta.semantics)}</p>
-	<dl>${filters}</dl>
-	${cut}
+	${first ? headerHtml(view, layout) : ''}
 	<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>
-	${summary}
+	${last ? chartsHtml(view) : ''}
 </body></html>`;
+
+		return {
+			page,
+			footer: footerHtml(view.meta.reportId, layout, index + 1, chunks.length)
+		};
+	});
 }

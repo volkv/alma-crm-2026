@@ -11,12 +11,17 @@ import { writeXls, writeXlsx } from '$lib/server/spreadsheet/write';
 import { XLSX } from '$lib/server/spreadsheet/sheetjs';
 import { checkExportInvariant, checkReportInvariants } from '$lib/server/reports/invariants';
 import { reportFileName } from '$lib/server/reports/writers/filename';
-import { reportFooterHtml, reportHtml } from '$lib/server/reports/writers/html';
+import { reportPdfParts } from '$lib/server/reports/writers/html';
 import { reportJson } from '$lib/server/reports/writers/json';
 import { reportSheets } from '$lib/server/reports/writers/sheets';
 import { sampleReportView } from '../../fixtures/reports/view';
 
 const VIEW = sampleReportView();
+
+/** Страница сводки PDF: сводка всегда одна часть. */
+function reportHtml(view: typeof VIEW): string {
+	return reportPdfParts(view, 'summary')[0].page;
+}
 
 describe('листы книги', () => {
 	const sheets = reportSheets(VIEW);
@@ -212,6 +217,7 @@ describe('страница на печать', () => {
 		// строка шапки плюс `REPORT_PDF_ROWS` строк тела.
 		expect(html.split('</tr>').length - 1).toBe(REPORT_PDF_ROWS + 1);
 		expect(html).toContain(`Показаны первые ${REPORT_PDF_ROWS} строк из ${total}`);
+		expect(html).toContain('полном PDF');
 		expect(html).toContain('XLSX');
 	});
 
@@ -280,7 +286,7 @@ describe('каждый файл называет свою сборку', () => {
 		expect(html).toContain(`<dt>Идентификатор отчёта</dt><dd>${reportId}</dd>`);
 		expect(html).toMatch(/<dt>Отчёт собран<\/dt><dd>17\.09\.2026/);
 		expect(html).toContain('<dt>Период</dt><dd>01.10.2026 — 31.12.2026</dd>');
-		expect(reportFooterHtml(reportId)).toContain(reportId);
+		expect(reportPdfParts(VIEW, 'summary')[0].footer).toContain(reportId);
 	});
 
 	it('json: идентификатор, момент сборки, срез, период и фильтры', () => {
@@ -363,12 +369,12 @@ describe('инварианты', () => {
 	});
 
 	it('И5 ловит файл, в котором строк меньше, чем на экране', () => {
-		expect(checkExportInvariant(VIEW, { xlsx: 2, json: 1 })).toStrictEqual([
+		expect(checkExportInvariant(VIEW, { xlsx: 2, json: 1 }, 'summary')).toStrictEqual([
 			{ invariant: 'И5', message: 'в файле json строк 1, ожидалось 2' }
 		]);
 	});
 
-	it('И5 ждёт от PDF сводку: первые N строк, а не всю таблицу', () => {
+	it('И5 ждёт от сводки PDF первые N строк, а от полного — всю таблицу', () => {
 		const total = REPORT_PDF_ROWS + 10;
 		const many = sampleReportView({
 			rows: Array.from({ length: total }, (_, index) => ({
@@ -379,9 +385,13 @@ describe('инварианты', () => {
 			totals: { rowCount: total, interactionCount: total, paused: 0, overdue: 0 }
 		});
 
-		expect(checkExportInvariant(many, { pdf: REPORT_PDF_ROWS, xlsx: total })).toStrictEqual([]);
 		expect(
-			checkExportInvariant(many, { pdf: total }).map((issue) => issue.invariant)
+			checkExportInvariant(many, { pdf: REPORT_PDF_ROWS, xlsx: total }, 'summary')
+		).toStrictEqual([]);
+		expect(
+			checkExportInvariant(many, { pdf: total }, 'summary').map((issue) => issue.invariant)
 		).toStrictEqual(['И5']);
+		// Полный PDF обязан печатать всю выборку, а не сводку.
+		expect(checkExportInvariant(many, { pdf: total }, 'full')).toStrictEqual([]);
 	});
 });

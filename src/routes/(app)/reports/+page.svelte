@@ -25,8 +25,13 @@
 		REPORT_FORMAT_LABELS,
 		REPORT_MODES,
 		REPORT_MODE_LABELS,
+		REPORT_PDF_FULL_MAX_ROWS,
+		REPORT_PDF_LAYOUTS,
+		REPORT_PDF_LAYOUT_LABELS,
+		REPORT_PDF_ROWS,
 		type ReportFunnelWorkspace,
-		type ReportParam
+		type ReportParam,
+		type ReportPdfLayout
 	} from '$lib/contracts/reports';
 	import { formatDate, formatDateTime, formatNumber, pluralize } from '$lib/format';
 	import { cn } from '$lib/utils';
@@ -44,6 +49,21 @@
 	const last = $derived(Math.min(data.page * data.pageSize, data.totals.rowCount));
 
 	const droppedByList = $derived(unsupportedListFilters(page.url));
+
+	/**
+	 * Вид PDF: сводка (итоги и первые `REPORT_PDF_ROWS` строк) или полный отчёт
+	 * по всей выборке. Выше потолка полного PDF выбор закрыт — сервер ответил бы
+	 * отказом, а вся таблица есть в XLSX.
+	 */
+	let pdfLayout = $state<ReportPdfLayout>('summary');
+
+	const fullPdfTooLarge = $derived(data.totals.rowCount > REPORT_PDF_FULL_MAX_ROWS);
+	const effectivePdfLayout = $derived<ReportPdfLayout>(fullPdfTooLarge ? 'summary' : pdfLayout);
+
+	const pdfLayoutHints: Record<ReportPdfLayout, string> = {
+		summary: `Итоги, числа диаграмм и первые ${REPORT_PDF_ROWS} строк таблицы`,
+		full: `Итоги, числа диаграмм и вся таблица выборки — до ${formatNumber(REPORT_PDF_FULL_MAX_ROWS)} строк`
+	};
 
 	/** Пересказ воронки словами: `canvas` для чтения с экрана недоступен. */
 	function funnelSummary(workspace: ReportFunnelWorkspace): string {
@@ -131,15 +151,48 @@
 			полосы действий заголовка, — обёртка её повторяет. -->
 		<div class="flex flex-wrap items-center gap-2" data-tour="reports-export">
 			{#each REPORT_FORMATS as format (format)}
+				{#if format === 'pdf'}
+					<!-- Переключатель вида стоит вплотную к кнопке PDF: он меняет только
+						её ссылку, а не отчёт на экране. -->
+					<div
+						class="inline-flex items-center gap-1 rounded-lg bg-muted p-[3px]"
+						role="radiogroup"
+						aria-label="Вид PDF"
+					>
+						{#each REPORT_PDF_LAYOUTS as layout (layout)}
+							{@const disabled = layout === 'full' && fullPdfTooLarge}
+							<button
+								type="button"
+								role="radio"
+								aria-checked={effectivePdfLayout === layout}
+								{disabled}
+								title={disabled
+									? `В выборке больше ${formatNumber(REPORT_PDF_FULL_MAX_ROWS)} строк: вся таблица — в XLSX`
+									: pdfLayoutHints[layout]}
+								data-testid="report-pdf-layout-{layout}"
+								class={cn(
+									'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium whitespace-nowrap text-muted-foreground focus-ring hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50',
+									effectivePdfLayout === layout && 'bg-surface text-foreground shadow-xs'
+								)}
+								onclick={() => (pdfLayout = layout)}
+							>
+								{REPORT_PDF_LAYOUT_LABELS[layout]}
+							</button>
+						{/each}
+					</div>
+				{/if}
 				<Button
 					variant="outline"
 					size="sm"
-					href={exportHref(page.url, format)}
+					href={exportHref(page.url, format, effectivePdfLayout)}
 					data-sveltekit-reload
 					data-testid="report-export-{format}"
+					title={format === 'pdf' ? pdfLayoutHints[effectivePdfLayout] : undefined}
 				>
 					<DownloadIcon aria-hidden="true" />
-					{REPORT_FORMAT_LABELS[format]}
+					{format === 'pdf'
+						? `PDF · ${REPORT_PDF_LAYOUT_LABELS[effectivePdfLayout].toLowerCase()}`
+						: REPORT_FORMAT_LABELS[format]}
 				</Button>
 			{/each}
 		</div>

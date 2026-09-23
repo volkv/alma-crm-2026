@@ -86,6 +86,25 @@ export const REPORT_FORMAT_LABELS: Record<ReportFormat, string> = {
 	json: 'JSON'
 };
 
+/**
+ * Вид PDF. Сводка — условия, итоги, таблицы диаграмм и первые
+ * `REPORT_PDF_ROWS` строк; полный — то же плюс вся таблица выборки до
+ * `REPORT_PDF_FULL_MAX_ROWS` строк. Параметр адреса выгрузки `pdf`, а не
+ * фильтр отчёта: на выборку и числа он не влияет.
+ */
+export const REPORT_PDF_LAYOUTS = ['summary', 'full'] as const;
+
+export type ReportPdfLayout = (typeof REPORT_PDF_LAYOUTS)[number];
+
+export const REPORT_PDF_LAYOUT_LABELS: Record<ReportPdfLayout, string> = {
+	summary: 'Сводка',
+	full: 'Полный'
+};
+
+export function isReportPdfLayout(value: string): value is ReportPdfLayout {
+	return (REPORT_PDF_LAYOUTS as readonly string[]).includes(value);
+}
+
 export const REPORT_FORMAT_MIME: Record<ReportFormat, string> = {
 	xlsx: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
 	xls: 'application/vnd.ms-excel',
@@ -757,20 +776,26 @@ export const REPORT_PARTY_LABELS: Record<OrganizationKind, string> = {
 export const REPORT_MAX_ROWS = 50_000;
 
 /**
- * Сколько строк таблицы печатается в PDF.
+ * Сколько строк таблицы печатает сводка PDF.
  *
- * PDF отчёта — **сводка**: условия выборки, итоги, таблицы воронки и динамики и
- * начало таблицы строк. Выше этого числа файл не отказывает и не режет молча, а
- * печатает пометку «показаны первые N из M» и отсылает за полной таблицей в
- * XLSX или JSON.
- *
- * Пятьсот — это тринадцать альбомных страниц A4 при шрифте в десять пунктов:
- * столько ещё листают. Дальше растёт только время: разметку страниц Chromium
- * считает нелинейно, и на двух тысячах строк (прежний потолок, при котором
- * годовой отчёт не выгружался вовсе) сборка занимала минуты и упиралась в
- * потолок ожидания службы печати.
+ * Сводка — условия выборки, итоги, таблицы воронки и динамики и начало таблицы
+ * строк. Выше этого числа она не отказывает и не режет молча, а печатает
+ * пометку «показаны первые N из M» и отсылает за всей таблицей к полному PDF,
+ * XLSX или JSON. Пятьсот строк — полтора-два десятка альбомных страниц при обычном наборе колонок: столько
+ * ещё листают.
  */
 export const REPORT_PDF_ROWS = 500;
+
+/**
+ * Потолок полного PDF. Выше него полный PDF не собирается, а отвечает отказом
+ * с предложением XLSX. Держит его память службы печати, а не время: части
+ * печатаются по одной, но склейка читает все сразу, и на десяти тысячах строк
+ * широкого набора колонок служба занимала 784 МБ при потолке контейнера на
+ * стенде 768 МБ; на пяти тысячах — 461 МБ (замер — `docs/reports.md`, «PDF:
+ * сводка и полный отчёт»). Годовой отчёт стенда — около трёх тысяч строк.
+ * Сводка PDF и книги этим потолком не ограничены — у них свой, `REPORT_MAX_ROWS`.
+ */
+export const REPORT_PDF_FULL_MAX_ROWS = 5_000;
 
 /** Сколько строк таблицы показывает одна страница экрана. */
 export const REPORT_PAGE_SIZE = 50;

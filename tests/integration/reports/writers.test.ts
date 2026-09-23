@@ -20,6 +20,7 @@ import type { RequestEvent } from '@sveltejs/kit';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import {
 	REPORT_FORMATS,
+	REPORT_PDF_FULL_MAX_ROWS,
 	REPORT_PDF_ROWS,
 	reportQuerySchema,
 	type ReportCell,
@@ -31,6 +32,8 @@ import { auditEvents } from '$lib/server/db/schema';
 import { checkExportInvariant } from '$lib/server/reports/invariants';
 import { buildReport } from '$lib/server/reports/rows';
 import { renderReport } from '$lib/server/reports/writers';
+import { REPORT_PDF_PART_ROWS } from '$lib/server/reports/writers/html';
+import { ValidationError } from '$lib/server/errors';
 import { XLSX } from '$lib/server/spreadsheet/sheetjs';
 import {
 	QUARTER_PERIOD,
@@ -168,7 +171,7 @@ describe('четыре писателя одного отчёта', () => {
 		}
 
 		expect(view.rows.length).toBeGreaterThan(0);
-		expect(checkExportInvariant(view, counts)).toStrictEqual([]);
+		expect(checkExportInvariant(view, counts, 'summary')).toStrictEqual([]);
 
 		const pdf = files.find(([format]) => format === 'pdf')![1];
 		const text = await pdfText(pdf.body);
@@ -300,12 +303,70 @@ describe('четыре писателя одного отчёта', () => {
 		const text = await pdfText(file.body);
 
 		expect(text).toContain(`Показаны первые ${REPORT_PDF_ROWS} строк из ${total}`);
-		expect(checkExportInvariant(many, { pdf: REPORT_PDF_ROWS })).toStrictEqual([]);
+		expect(checkExportInvariant(many, { pdf: REPORT_PDF_ROWS }, 'summary')).toStrictEqual([]);
+	}, 120_000);
+
+	it('полный PDF печатает все строки выборки по порядку и называет свой вид', async () => {
+		// Три части: две полные и неполная третья — проверяется и склейка, и то,
+		// что на стыке частей не теряется и не повторяется ни одна строка.
+		const view = await buildReport(admin(), QUERY);
+		const total = REPORT_PDF_PART_ROWS * 2 + 37;
+		const linkColumn = view.meta.columns.findIndex((column) => column.kind === 'link');
+		const many: ReportView = {
+			...view,
+			rows: Array.from({ length: total }, (_, index) => {
+				const row = view.rows[index % view.rows.length];
+
+				return {
+					...row,
+					rowKey: `row-${index}`,
+					cells: row.cells.map((cell, position) =>
+						position === linkColumn
+							? {
+									kind: 'link' as const,
+									value: `Строка-${String(index).padStart(5, '0')}`,
+									url: null
+								}
+							: cell
+					)
+				};
+			}),
+			totals: { ...view.totals, rowCount: total, interactionCount: total }
+		};
+
+		const file = await renderReport(many, 'pdf', { pdfLayout: 'full' });
+
+		expect(file.body.subarray(0, 4).toString('latin1')).toBe('%PDF');
+		expect(file.fileName).toContain(', полный (собран');
+
+		const text = await pdfText(file.body);
+		const printed = [...text.matchAll(/Строка-(\d{5})/g)].map((match) => Number(match[1]));
+
+		expect(printed).toStrictEqual(Array.from({ length: total }, (_, index) => index));
+		expect(checkExportInvariant(many, { pdf: printed.length }, 'full')).toStrictEqual([]);
+		expect(text).toContain(`Полный отчёт — вся таблица выборки, строк: ${total}`);
+		expect(text).not.toContain('Показаны первые');
+		expect(text).toContain('часть 3 из 3');
+
+		// Выше потолка — отказ словами с предложением XLSX, до службы печати.
+		const huge: ReportView = {
+			...many,
+			rows: Array.from({ length: REPORT_PDF_FULL_MAX_ROWS + 1 }, (_, index) => ({
+				...many.rows[index % many.rows.length],
+				rowKey: `huge-${index}`
+			}))
+		};
+		const refusal = renderReport(huge, 'pdf', { pdfLayout: 'full' });
+
+		await expect(refusal).rejects.toBeInstanceOf(ValidationError);
+		await expect(refusal).rejects.toMatchObject({
+			issues: expect.arrayContaining([expect.stringContaining('XLSX')])
+		});
 	}, 120_000);
 
 	it('называет файл режимом, периодом и днём сборки', async () => {
 		const view = await buildReport(admin(), QUERY);
-		const file = await renderReport(view, 'xlsx', '2026-09-17');
+		const file = await renderReport(view, 'xlsx', { day: '2026-09-17' });
 
 		expect(file.fileName).toBe(
 			'Отчёт по взаимодействиям — срез на 31.12.2026 (собран 17.09.2026).xlsx'

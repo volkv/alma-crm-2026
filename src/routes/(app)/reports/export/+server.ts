@@ -1,5 +1,5 @@
 import { error } from '@sveltejs/kit';
-import { REPORT_FORMATS } from '$lib/contracts/reports';
+import { REPORT_FORMATS, REPORT_PDF_LAYOUTS, isReportPdfLayout } from '$lib/contracts/reports';
 import { actorFromEvent } from '$lib/server/actor';
 import { recordAuditEvent } from '$lib/server/audit';
 import { contentDisposition } from '$lib/server/documents/filename';
@@ -20,6 +20,10 @@ import type { RequestHandler } from './$types';
  *
  * Права проверяет сборщик отчёта (`interactions.read`): своего права у раздела
  * нет, и второе место, где решают, можно ли, однажды разошлось бы с первым.
+ *
+ * Для PDF параметр `pdf` выбирает вид: `summary` (по умолчанию — так выглядит
+ * кнопка) или `full`. Полный PDF собирается в этом же запросе из того же
+ * объекта отчёта, то есть из того же снимка базы, что и остальные форматы.
  */
 export const GET: RequestHandler = async (event) => {
 	const requested = event.url.searchParams.get('format') ?? '';
@@ -30,15 +34,21 @@ export const GET: RequestHandler = async (event) => {
 		error(400, `Неизвестный формат выгрузки: выберите ${REPORT_FORMATS.join(', ')}`);
 	}
 
+	const pdfLayout = event.url.searchParams.get('pdf') ?? 'summary';
+
+	if (!isReportPdfLayout(pdfLayout)) {
+		error(400, `Неизвестный вид PDF: выберите ${REPORT_PDF_LAYOUTS.join(', ')}`);
+	}
+
 	const ctx = actorFromEvent(event);
 
 	try {
 		const query = readReportQuery(event.url);
 		const view = await buildReport(ctx, query);
-		const file = await renderReport(view, requested);
+		const file = await renderReport(view, requested, { pdfLayout });
 
 		// В подробностях события — идентификатор отчёта, режим, границы периода,
-		// число строк и формат. Идентификатор стоит и в самом файле: по нему файл,
+		// число строк, формат и вид PDF. Идентификатор стоит и в самом файле: по нему файл,
 		// пришедший по почте, находит своё событие — кто, когда и что собрал.
 		// Фильтры не кладём: они содержат свободный текст, а журнал его не
 		// принимает.
@@ -51,7 +61,8 @@ export const GET: RequestHandler = async (event) => {
 				periodStart: query.from,
 				periodEnd: query.to,
 				rowCount: view.rows.length,
-				formatKey: requested
+				formatKey: requested,
+				...(requested === 'pdf' ? { pdfLayoutKey: pdfLayout } : {})
 			}
 		});
 

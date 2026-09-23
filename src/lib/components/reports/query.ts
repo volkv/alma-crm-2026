@@ -4,6 +4,7 @@ import {
 	REPORT_PARAMS,
 	type ReportFormat,
 	type ReportMode,
+	type ReportPdfLayout,
 	type ReportParam
 } from '$lib/contracts/reports';
 
@@ -150,9 +151,14 @@ const EXPORT_PATH = resolve('/reports/export');
 
 /**
  * Ссылка на выгрузку. В неё уходят только фильтры отчёта: страница таблицы и
- * прочее состояние экрана к содержимому файла отношения не имеют.
+ * прочее состояние экрана к содержимому файла отношения не имеют. У PDF в
+ * ссылке стоит и вид — сводка или полный отчёт.
  */
-export function exportHref(url: URL, format: ReportFormat): ResolvedPathname {
+export function exportHref(
+	url: URL,
+	format: ReportFormat,
+	pdfLayout: ReportPdfLayout = 'summary'
+): ResolvedPathname {
 	const params = new URLSearchParams();
 
 	for (const param of REPORT_PARAMS) {
@@ -164,6 +170,10 @@ export function exportHref(url: URL, format: ReportFormat): ResolvedPathname {
 	}
 
 	params.set('format', format);
+
+	if (format === 'pdf') {
+		params.set('pdf', pdfLayout);
+	}
 
 	return `${EXPORT_PATH}?${params.toString()}` as ResolvedPathname;
 }

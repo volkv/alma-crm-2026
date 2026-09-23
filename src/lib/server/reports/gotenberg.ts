@@ -9,14 +9,19 @@
  *
  * Ходит по сети, поэтому зовётся до и вне транзакции: держать блокировки всё
  * время, пока чужая служба собирает файл, нельзя.
+ *
+ * Два маршрута: печать HTML Chromium'ом и склейка готовых PDF (`pdfengines`) —
+ * ею полный отчёт собирается из частей.
  */
 import { getConfig } from '../config';
 import { DocumentConversionError, hideServiceAddresses } from '../documents/errors';
 import { PDF_MIME, sniffDocumentMime } from '../documents/mime';
 
 /**
- * Потолок ожидания. Chromium стартует быстрее LibreOffice, но таблица на две
- * тысячи строк — это полсотни страниц вёрстки.
+ * Потолок ожидания одного запроса. Печатается не больше `REPORT_PDF_ROWS`
+ * строк за раз (полный отчёт — частями, `writers/pdf.ts`): по замеру это
+ * секунда-две, склейка десятков частей — столько же. Минута — запас на
+ * холодную службу, а не на объём.
  */
 const RENDER_TIMEOUT_MS = 60_000;
 
@@ -34,30 +39,19 @@ const FOOTER_FILE_NAME = 'footer.html';
 const PAGE_WIDTH_INCHES = '8.27';
 const PAGE_HEIGHT_INCHES = '11.69';
 
-export async function renderPdf(page: string, footer: string): Promise<Buffer> {
+/** Адрес маршрута службы: `GOTENBERG_URL` бывает и со слешем на конце, и без. */
+function serviceEndpoint(serviceUrl: string, route: string): URL {
+	return new URL(route, serviceUrl.endsWith('/') ? serviceUrl : `${serviceUrl}/`);
+}
+
+/** Запрос к службе и проверка того, что она вернула именно PDF. */
+async function requestPdf(route: string, form: FormData): Promise<Buffer> {
 	const serviceUrl = getConfig().GOTENBERG_URL;
-	const endpoint = new URL(
-		'forms/chromium/convert/html',
-		serviceUrl.endsWith('/') ? serviceUrl : `${serviceUrl}/`
-	);
-
-	const form = new FormData();
-
-	form.append('files', new Blob([page], { type: 'text/html' }), PAGE_FILE_NAME);
-	form.append('files', new Blob([footer], { type: 'text/html' }), FOOTER_FILE_NAME);
-	form.append('landscape', 'true');
-	form.append('paperWidth', PAGE_WIDTH_INCHES);
-	form.append('paperHeight', PAGE_HEIGHT_INCHES);
-	form.append('marginTop', '0.4');
-	form.append('marginBottom', '0.5');
-	form.append('marginLeft', '0.4');
-	form.append('marginRight', '0.4');
-	form.append('printBackground', 'true');
 
 	let response: Response;
 
 	try {
-		response = await fetch(endpoint, {
+		response = await fetch(serviceEndpoint(serviceUrl, route), {
 			method: 'POST',
 			body: form,
 			signal: AbortSignal.timeout(RENDER_TIMEOUT_MS)
@@ -86,4 +80,40 @@ export async function renderPdf(page: string, footer: string): Promise<Buffer> {
 	}
 
 	return pdf;
+}
+
+export async function renderPdf(page: string, footer: string): Promise<Buffer> {
+	const form = new FormData();
+
+	form.append('files', new Blob([page], { type: 'text/html' }), PAGE_FILE_NAME);
+	form.append('files', new Blob([footer], { type: 'text/html' }), FOOTER_FILE_NAME);
+	form.append('landscape', 'true');
+	form.append('paperWidth', PAGE_WIDTH_INCHES);
+	form.append('paperHeight', PAGE_HEIGHT_INCHES);
+	form.append('marginTop', '0.4');
+	form.append('marginBottom', '0.5');
+	form.append('marginLeft', '0.4');
+	form.append('marginRight', '0.4');
+	form.append('printBackground', 'true');
+
+	return requestPdf('forms/chromium/convert/html', form);
+}
+
+/**
+ * Склейка частей в один файл. Служба склеивает файлы в алфавитном порядке их
+ * имён, поэтому номер части в имени дополнен нулями: `part-0010` обязан идти
+ * после `part-0009`, а не после `part-0001`.
+ */
+export async function mergePdfs(parts: readonly Buffer[]): Promise<Buffer> {
+	const form = new FormData();
+
+	parts.forEach((part, index) => {
+		form.append(
+			'files',
+			new Blob([new Uint8Array(part)], { type: PDF_MIME }),
+			`part-${String(index + 1).padStart(4, '0')}.pdf`
+		);
+	});
+
+	return requestPdf('forms/pdfengines/merge', form);
 }

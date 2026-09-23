@@ -15,6 +15,7 @@ import {
 	type ReportCharts,
 	type ReportEventKind,
 	type ReportFormat,
+	type ReportPdfLayout,
 	type ReportQuery,
 	type ReportTotals,
 	type ReportView
@@ -101,28 +102,42 @@ export function checkReportInvariants(view: ReportView): InvariantViolation[] {
 /**
  * Сколько строк обязано быть в файле этого формата.
  *
- * У книг и JSON — вся выборка. PDF — сводка: в нём первые `REPORT_PDF_ROWS`
- * строк и напечатано, сколько их всего, потому что полсотни страниц таблицы
- * никто не читает, а Chromium собирает их минутами.
+ * У книг, JSON и полного PDF — вся выборка. Сводка PDF — первые
+ * `REPORT_PDF_ROWS` строк и напечатано, сколько их всего.
  */
-export function expectedFileRows(view: ReportView, format: ReportFormat): number {
-	return format === 'pdf' ? Math.min(view.rows.length, REPORT_PDF_ROWS) : view.rows.length;
+export function expectedFileRows(
+	view: ReportView,
+	format: ReportFormat,
+	pdfLayout: ReportPdfLayout
+): number {
+	// Своё определение, а не число писателя: иначе проверка сверяла бы писателя
+	// с ним самим.
+	if (format === 'pdf' && pdfLayout === 'summary') {
+		return Math.min(view.rows.length, REPORT_PDF_ROWS);
+	}
+
+	return view.rows.length;
 }
 
 /**
  * И5: число строк таблицы и число строк в каждом из файлов совпадают, а у
- * сводки PDF — столько, сколько она обещает показать.
+ * сводки PDF — столько, сколько она обещает показать. Вид PDF называет
+ * вызывающий: одно и то же число строк верно для одного вида и неверно для
+ * другого.
  * Проверяется на готовых файлах — считает их тот, кто их прочитал.
  */
 export function checkExportInvariant(
 	view: ReportView,
-	rowsInFiles: Readonly<Partial<Record<ReportFormat, number>>>
+	rowsInFiles: Readonly<Partial<Record<ReportFormat, number>>>,
+	pdfLayout: ReportPdfLayout
 ): InvariantViolation[] {
 	return Object.entries(rowsInFiles)
-		.filter(([format, count]) => count !== expectedFileRows(view, format as ReportFormat))
+		.filter(
+			([format, count]) => count !== expectedFileRows(view, format as ReportFormat, pdfLayout)
+		)
 		.map(([format, count]) => ({
 			invariant: 'И5',
-			message: `в файле ${format} строк ${count}, ожидалось ${expectedFileRows(view, format as ReportFormat)}`
+			message: `в файле ${format} строк ${count}, ожидалось ${expectedFileRows(view, format as ReportFormat, pdfLayout)}`
 		}));
 }
 
