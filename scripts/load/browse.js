@@ -1,28 +1,36 @@
 /**
- * Сценарий «пятьдесят одновременных пользователей» (требование N6).
+ * Сценарий «пятьдесят одновременных пользователей» (требования N1 и N6).
  *
  * Один проход VU повторяет обычный рабочий круг сотрудника: открыть список
- * взаимодействий, открыть карточку, перевести её на следующую стадию с
- * комментарием, сменить фильтр отчёта. Между шагами — пауза: человек читает то,
- * что открыл, и без паузы сценарий мерил бы не пятьдесят пользователей, а
- * пятьдесят непрерывных потоков запросов.
+ * взаимодействий, открыть карточку, перевести запись на следующую стадию,
+ * оставить комментарий, сменить фильтр отчёта. Между шагами — пауза: человек
+ * читает то, что открыл, и без паузы сценарий мерил бы не пятьдесят
+ * пользователей, а пятьдесят непрерывных потоков запросов.
  *
- * Работают три роли сразу — КАМ, руководитель и администратор, — потому что
- * область доступа считается подзапросом на каждой выборке: у администратора он
- * вырождается в «всё», у КАМа перебирает три сотни действующих назначений, и
- * мерить только вторую или только первую значило бы мерить половину системы.
+ * Входит нагрузочная команда — двадцать КАМов и три руководителя
+ * (`scripts/seed/load.ts`); VU раздаются им по кругу, так что у одной записи
+ * два-три VU. Всё, что VU открывает и переводит, взято из области доступа его
+ * записи (`fixture.ts`): карточка чужого портфеля вернулась бы «не найдено», и
+ * прогон мерил бы отказ.
  *
- * Переход по процессу каждому VU достаётся своим куском списка карточек:
- * стадия — состояние, второй переход по той же карточке пошёл бы уже с другой
- * стадии и с другими правилами. Когда кусок кончается, шаг остаётся
- * комментарием — тоже отправка формы, тоже транзакция, но состояние не двигает.
+ * Переход — изменение состояния, поэтому каждому VU достаётся свой кусок
+ * свежего пула записей, заведённого под этот прогон (`fixture.ts --pool`): одну
+ * запись дважды не переводят, а пул рассчитан на весь прогон. Кончился пул —
+ * это ошибка сценария, а не повод тихо заменить переход чем-то другим: её
+ * считает `pool_exhausted`, и на ней стоит порог.
+ *
+ * Переход и комментарий отправляются так же, как их отправляет страница с
+ * `use:enhance`, и засчитываются, только если сервер ответил `success`
+ * (`actionSucceeded`): отказ формы приходит с HTTP 200, и по статусу его не
+ * отличить. Число принятых сервером изменений `run.sh` потом сверяет с базой.
  *
  * Запуск — `scripts/load/run.sh`; параметры приезжают переменными окружения.
  */
 import http from 'k6/http';
-import { sleep } from 'k6';
-import { ACCOUNTS, jar, signIn } from './session.js';
-import { kinds, record } from './metrics.js';
+import { fail, sleep } from 'k6';
+import { Counter } from 'k6/metrics';
+import { jar, signIn } from './session.js';
+import { actionSucceeded, applied, kinds, N1_MS, record, statusIs } from './metrics.js';
 
 const BASE_URL = __ENV.BASE_URL;
 const PASSWORD = __ENV.PASSWORD;
@@ -31,11 +39,34 @@ const DURATION = __ENV.DURATION || '3m';
 
 const fixture = JSON.parse(open(__ENV.FIXTURE));
 
-/** Сколько переходов достаётся одному VU: карточки делятся поровну. */
-const TRANSITIONS_PER_VU = Math.floor(fixture.advance.length / VUS);
+if (fixture.run === null) {
+	throw new Error('В фикстуре нет пула переходов: её собирают с --run и --pool (run.sh)');
+}
+
+/** Раздел взаимодействий пространства: с него начинается рабочий день. */
+const INTERACTIONS = `${BASE_URL}/w/${fixture.workspace}/interactions`;
+
+/** Сколько VU входят одной записью: по столько частей делится её пул. */
+const VUS_PER_ACCOUNT = Math.ceil(VUS / fixture.accounts.length);
 
 /** Период отчёта — учебный год: то, за что его действительно собирают. */
 const PERIOD = 'from=2026-09-01&to=2027-08-31';
+
+/**
+ * Фильтры отчёта, которые перебирает сценарий: срез и движение, срез по
+ * просроченным и по стадии, всё — в пространстве записи.
+ */
+const REPORT_FILTERS = [
+	`mode=snapshot&${PERIOD}&workspace=${fixture.workspace}`,
+	`mode=movement&${PERIOD}&workspace=${fixture.workspace}`,
+	`mode=snapshot&${PERIOD}&workspace=${fixture.workspace}&overdue=true`,
+	`mode=snapshot&${PERIOD}&workspace=${fixture.workspace}&stage=meeting`
+];
+
+const poolExhausted = new Counter('pool_exhausted');
+
+/** Порог N1 — на каждой операции рабочего круга, девяносто пятая доля. */
+const N1 = [`p(95)<${N1_MS}`];
 
 export const options = {
 	scenarios: {
@@ -46,121 +77,153 @@ export const options = {
 			gracefulStop: '30s'
 		}
 	},
-	// Порог требования N1 — на операциях, названных в ТЗ. Он не «средний по
-	// прогону»: секунда обещана человеку, который открыл экран, поэтому смотрим
-	// на девяносто пятую долю, а не на среднее.
+	// Секунда обещана человеку, который открыл экран, поэтому порог стоит на
+	// девяносто пятой доле, а не на среднем; максимум и доля ответов дольше
+	// секунды (`op_*_over_1s`) печатаются рядом.
 	thresholds: {
-		op_list: ['p(95)<1000'],
-		op_card: ['p(95)<1000'],
-		op_transition: ['p(95)<1000'],
-		op_report_filter: ['p(95)<1000'],
+		op_list: N1,
+		op_card: N1,
+		op_transition: N1,
+		op_comment: N1,
+		op_report_filter: N1,
 		ssr_failed: ['rate<0.01'],
 		action_failed: ['rate<0.01'],
-		api_failed: ['rate<0.01']
+		api_failed: ['rate<0.01'],
+		pool_exhausted: ['count<1']
 	},
 	summaryTrendStats: ['med', 'p(95)', 'max', 'avg', 'count']
 };
+
+/**
+ * Запись этого VU и его часть пула переходов. Считается в первом проходе, а не
+ * при загрузке модуля: модуль k6 загружает ещё и без VU (`__VU` — ноль), чтобы
+ * прочитать `options`.
+ */
+let account;
+let slot;
+let pool;
+
+function claim() {
+	account = fixture.accounts[(__VU - 1) % fixture.accounts.length];
+	slot = Math.floor((__VU - 1) / fixture.accounts.length);
+
+	const share = Math.floor(account.advance.length / VUS_PER_ACCOUNT);
+	pool = account.advance.slice(slot * share, (slot + 1) * share);
+}
 
 /** Вошёл ли этот VU и сколько переходов уже сделал. */
 let signedIn = false;
 let transitionsDone = 0;
 
 const HTML = { Accept: 'text/html,application/xhtml+xml' };
-const JSON_HEADERS = { Accept: 'application/json' };
 
-function formHeaders() {
-	return {
-		...HTML,
-		// Хук `csrf` отвергает форму, пришедшую с чужого адреса: браузер этот
-		// заголовок ставит сам, k6 — нет.
-		Origin: BASE_URL,
-		'Content-Type': 'application/x-www-form-urlencoded'
-	};
-}
+/** Заголовки отправки формы так, как их ставит `use:enhance`. */
+const ACTION_HEADERS = {
+	Accept: 'application/json',
+	// Хук `csrf` отвергает форму, пришедшую с чужого адреса: браузер этот
+	// заголовок ставит сам, k6 — нет.
+	Origin: BASE_URL,
+	'Content-Type': 'application/x-www-form-urlencoded',
+	'x-sveltekit-action': 'true'
+};
 
 export default function () {
 	if (!signedIn) {
+		claim();
 		// VU расходятся по времени: каталог считает подбором два входа одной
 		// записью внутри секунды и запирает её на минуту. Полсекунды на VU — это
-		// полторы секунды между входами одной и той же записи.
+		// одиннадцать с половиной секунд между входами одной и той же записи.
 		sleep((__VU - 1) * 0.5);
-		signIn(BASE_URL, ACCOUNTS[(__VU - 1) % ACCOUNTS.length], PASSWORD);
+		signIn(BASE_URL, account, PASSWORD, `/w/${fixture.workspace}/interactions`);
 		signedIn = true;
 	}
 
-	// Список: страница, с которой начинается рабочий день. Страница выборки
-	// сдвигается от прохода к проходу — читать одну и ту же первую страницу
-	// значило бы мерить попадание в кэш страниц PostgreSQL.
-	const page = 1 + (__ITER % 10);
-	const list = http.get(`${BASE_URL}/interactions?page=${page}&sortBy=dueAt&direction=asc`, {
+	// Список: страница выборки сдвигается от прохода к проходу — читать одну и
+	// ту же первую страницу значило бы мерить попадание в кэш страниц PostgreSQL.
+	// Страниц по двадцать пять строк в портфеле КАМа шесть, берём первые пять.
+	const page = 1 + (__ITER % 5);
+	const list = http.get(`${INTERACTIONS}?view=table&page=${page}&sort=dueAt`, {
 		jar,
 		headers: HTML,
+		redirects: 0,
 		tags: { step: 'list' }
 	});
-	record('list', 'ssr', list);
+	record('list', 'ssr', list, statusIs(200));
 	sleep(1);
 
-	const cardId = fixture.cards[((__VU - 1) * 97 + __ITER * 13) % fixture.cards.length];
-	const card = http.get(`${BASE_URL}/interactions/${cardId}`, {
+	const cardId = account.cards[(slot * 97 + __ITER * 13) % account.cards.length];
+	const card = http.get(`${INTERACTIONS}/${cardId}`, {
 		jar,
 		headers: HTML,
+		redirects: 0,
 		tags: { step: 'card' }
 	});
-	record('card', 'ssr', card);
-	sleep(1);
+	record('card', 'ssr', card, statusIs(200));
 
 	// Подсказка выбора организации: тот же сервер, но ответ — JSON, и упирается
 	// он в другое, чем страница. В долю ошибок он идёт своей строкой.
 	const lookup = http.get(
-		`${BASE_URL}/interactions/lookup?kind=organizations&q=${encodeURIComponent('универ')}`,
-		{
-			jar,
-			headers: JSON_HEADERS,
-			tags: { step: 'lookup' }
-		}
+		`${INTERACTIONS}/lookup?kind=organizations&q=${encodeURIComponent('универ')}`,
+		{ jar, headers: { Accept: 'application/json' }, redirects: 0, tags: { step: 'lookup' } }
 	);
 	kinds.api.duration.add(lookup.timings.duration);
 	kinds.api.failed.add(lookup.status !== 200);
+	sleep(1);
 
-	// Переход по процессу — с комментарием, как его и делают: чем закончилась
+	// Переход по процессу — с причиной, как его и делают: чем закончилась
 	// стадия, пишут в том же диалоге, которым её закрывают.
-	if (transitionsDone < TRANSITIONS_PER_VU) {
-		const target = fixture.advance[(__VU - 1) * TRANSITIONS_PER_VU + transitionsDone];
+	if (transitionsDone < pool.length) {
+		const target = pool[transitionsDone];
 		transitionsDone += 1;
 
 		const moved = http.post(
-			`${BASE_URL}/interactions/${target.id}?/advance`,
+			`${INTERACTIONS}/${target.id}?/advance`,
 			{
 				fromStageId: target.fromStageId,
 				toStageId: target.toStageId,
 				revision: String(fixture.revision),
-				reason: 'Нагрузочный прогон: стадия закрыта, идём дальше.'
+				reason: `Нагрузочный прогон [${fixture.run}]: стадия закрыта, идём дальше.`
 			},
-			{ headers: formHeaders(), jar, redirects: 0, tags: { step: 'transition' } }
+			{ headers: ACTION_HEADERS, jar, redirects: 0, tags: { step: 'transition' } }
 		);
 
-		record('transition', 'action', moved);
+		if (record('transition', 'action', moved, actionSucceeded)) {
+			applied.transition.add(1);
+		}
 	} else {
-		const commented = http.post(
-			`${BASE_URL}/interactions/${cardId}?/comment`,
-			{ body: 'Нагрузочный прогон: отметка о работе по записи.' },
-			{ headers: formHeaders(), jar, redirects: 0, tags: { step: 'comment' } }
-		);
+		poolExhausted.add(1);
+	}
 
-		record('transition', 'action', commented);
+	sleep(1);
+
+	const commented = http.post(
+		`${INTERACTIONS}/${cardId}?/comment`,
+		{ body: `Нагрузочный прогон [${fixture.run}]: отметка о работе по записи.` },
+		{ headers: ACTION_HEADERS, jar, redirects: 0, tags: { step: 'comment' } }
+	);
+
+	if (record('comment', 'action', commented, actionSucceeded)) {
+		applied.comment.add(1);
 	}
 
 	sleep(1);
 
 	// Смена фильтра отчёта: тот же отчёт с другим разрезом — именно так с ним и
 	// работают, а не открывают один раз.
-	const mode = __ITER % 2 === 0 ? 'slice' : 'movement';
-	const report = http.get(`${BASE_URL}/reports?mode=${mode}&${PERIOD}&page=1`, {
+	const filter = REPORT_FILTERS[(slot + __ITER) % REPORT_FILTERS.length];
+	const report = http.get(`${BASE_URL}/reports?${filter}&page=1`, {
 		jar,
 		headers: HTML,
+		redirects: 0,
 		tags: { step: 'report-filter' }
 	});
-	record('reportFilter', 'ssr', report);
+	record('reportFilter', 'ssr', report, statusIs(200));
 
 	sleep(1);
+}
+
+export function setup() {
+	if (fixture.accounts.some((entry) => entry.advance.length < VUS_PER_ACCOUNT)) {
+		fail(`пул переходов меньше ${VUS_PER_ACCOUNT} записей на сотрудника: соберите фикстуру заново`);
+	}
 }

@@ -20,8 +20,8 @@
  */
 import http from 'k6/http';
 import { sleep } from 'k6';
-import { ACCOUNTS, jar, signIn } from './session.js';
-import { kinds, record } from './metrics.js';
+import { jar, signIn } from './session.js';
+import { kinds, record, statusIs } from './metrics.js';
 
 const BASE_URL = __ENV.BASE_URL;
 const PASSWORD = __ENV.PASSWORD;
@@ -30,6 +30,8 @@ const DURATION = __ENV.REPORT_DURATION || '2m';
 
 /** Учебный год целиком: большой период, ради которого требование и написано. */
 const PERIOD = 'from=2026-09-01&to=2027-08-31';
+
+const fixture = JSON.parse(open(__ENV.FIXTURE));
 
 export const options = {
 	scenarios: {
@@ -57,35 +59,40 @@ const HTML = { Accept: 'text/html,application/xhtml+xml' };
 export default function () {
 	if (!signedIn) {
 		// VU расходятся по времени: каталог считает подбором два входа одной
-		// записью внутри секунды и запирает её на минуту. Полсекунды на VU — это
-		// полторы секунды между входами одной и той же записи.
+		// записью внутри секунды и запирает её на минуту. Отчёт просят записи
+		// нагрузочной команды — руководители и КАМы, каждый по своей области.
 		sleep((__VU - 1) * 0.5);
-		signIn(BASE_URL, ACCOUNTS[(__VU - 1) % ACCOUNTS.length], PASSWORD);
+		signIn(
+			BASE_URL,
+			fixture.accounts[(__VU - 1) % fixture.accounts.length],
+			PASSWORD,
+			`/w/${fixture.workspace}/interactions`
+		);
 		signedIn = true;
 	}
 
-	const mode = __VU % 2 === 0 ? 'movement' : 'slice';
+	const mode = __VU % 2 === 0 ? 'movement' : 'snapshot';
 
 	const screen = http.get(`${BASE_URL}/reports?mode=${mode}&${PERIOD}`, {
 		jar,
 		headers: HTML,
 		tags: { step: 'report-screen' }
 	});
-	record('reportFilter', 'ssr', screen);
+	record('reportFilter', 'ssr', screen, statusIs(200));
 
 	const xlsx = http.get(`${BASE_URL}/reports/export?format=xlsx&mode=${mode}&${PERIOD}`, {
 		jar,
 		headers: HTML,
 		tags: { step: 'report-xlsx' }
 	});
-	record('reportXlsx', 'ssr', xlsx);
+	record('reportXlsx', 'ssr', xlsx, statusIs(200));
 
 	const pdf = http.get(`${BASE_URL}/reports/export?format=pdf&mode=${mode}&${PERIOD}`, {
 		jar,
 		headers: HTML,
 		tags: { step: 'report-pdf' }
 	});
-	record('reportPdf', 'ssr', pdf);
+	record('reportPdf', 'ssr', pdf, statusIs(200));
 
 	// Тот же отчёт без сборки файла: разница с XLSX и PDF — это цена формата.
 	const asJson = http.get(`${BASE_URL}/reports/export?format=json&mode=${mode}&${PERIOD}`, {

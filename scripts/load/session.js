@@ -21,13 +21,6 @@
 import http from 'k6/http';
 import { fail, sleep } from 'k6';
 
-/** Учётные записи стенда: у каждой своя область доступа. */
-export const ACCOUNTS = [
-	{ login: 'manager', role: 'КАМ' },
-	{ login: 'lead', role: 'Руководитель' },
-	{ login: 'admin', role: 'Администратор' }
-];
-
 const HTML = { Accept: 'text/html,application/xhtml+xml' };
 
 /**
@@ -61,8 +54,9 @@ function formAction(body) {
  * Каталог защищается от частых входов: два входа одной записью подряд внутри
  * секунды он считает подбором и запирает запись на минуту
  * (`quickLoginCheckMilliSeconds` / `minimumQuickLoginWaitSeconds`). Прогон
- * входит тремя записями с полусотни VU, поэтому VU расходятся по времени сами
- * (`browse.js`), а на случай, когда запись всё-таки заперта, остаётся повтор.
+ * входит двумя десятками записей с полусотни VU, и одной записью входят два-три
+ * VU, поэтому VU расходятся по времени сами (`browse.js`), а на случай, когда
+ * запись всё-таки заперта, остаётся повтор.
  * Сдвигать настройки каталога ради нагрузочного прогона нельзя: мерить надо
  * систему, какая она есть.
  */
@@ -70,12 +64,13 @@ const SIGN_IN_ATTEMPTS = 4;
 const SIGN_IN_RETRY_SECONDS = 20;
 
 /**
- * Вход под указанной записью. Возвращает ничего: доказательством входа служит
- * кука в банке VU, а проверяет её вызывающий первым же запросом.
+ * Вход под указанной записью (`{ login }` из фикстуры прогона). Доказательство
+ * входа — закрытая страница `probePath`, открывшаяся без перенаправления; сессия
+ * остаётся кукой в банке VU.
  */
-export function signIn(baseUrl, account, password) {
+export function signIn(baseUrl, account, password, probePath) {
 	for (let attempt = 1; attempt <= SIGN_IN_ATTEMPTS; attempt += 1) {
-		if (attemptSignIn(baseUrl, account, password)) {
+		if (attemptSignIn(baseUrl, account, password, probePath)) {
 			return;
 		}
 
@@ -91,8 +86,8 @@ export function signIn(baseUrl, account, password) {
  * без сессии выглядел бы очень быстрым: страница входа отдаётся мгновенно, и
  * все числа оказались бы про неё.
  */
-function hasSession(baseUrl) {
-	const probe = http.get(`${baseUrl}/interactions?page=1`, {
+function hasSession(baseUrl, probePath) {
+	const probe = http.get(`${baseUrl}${probePath}`, {
 		headers: HTML,
 		redirects: 0,
 		jar,
@@ -103,7 +98,7 @@ function hasSession(baseUrl) {
 }
 
 /** Один заход. `false` — каталог снова показал форму входа. */
-function attemptSignIn(baseUrl, account, password) {
+function attemptSignIn(baseUrl, account, password, probePath) {
 	const started = http.post(`${baseUrl}/login`, null, {
 		headers: {
 			...HTML,
@@ -150,5 +145,5 @@ function attemptSignIn(baseUrl, account, password) {
 		return false;
 	}
 
-	return hasSession(baseUrl);
+	return hasSession(baseUrl, probePath);
 }

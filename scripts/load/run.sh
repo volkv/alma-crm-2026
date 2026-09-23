@@ -2,8 +2,8 @@
 #
 # Нагрузочный прогон целиком: стенд, набор, сценарии, отчёт, уборка.
 #
-#   scripts/load/run.sh up        поднять нагрузочный стенд и залить набор
-#   scripts/load/run.sh probe     короткая проба (5 VU, 30 с) — проверить сценарий
+#   scripts/load/run.sh up        поднять стенд, залить набор, завести команду в каталоге
+#   scripts/load/run.sh probe     дымовой прогон (5 VU, 1 мин) — проверить сценарий
 #   scripts/load/run.sh cache     замер кэша повторного открытия (F13)
 #   scripts/load/run.sh browse    сценарий «пятьдесят пользователей» (VUS, DURATION)
 #   scripts/load/run.sh reports   сценарий «десять одновременных отчётов»
@@ -54,10 +54,167 @@ if [[ -z "$PASSWORD" ]]; then
 	exit 2
 fi
 
+# Фикстура прогона: кто входит и что открывает (`fixture.ts`). С аргументами
+# `<ключ> <VU> <переходов на VU>` она ещё и заводит свежий пул переходов под
+# этот прогон — у каждой ступени лестницы свой.
 fixture() {
 	mkdir -p "$OUT"
-	"${COMPOSE[@]}" exec -T app node scripts/load/fixture.ts >"$OUT/fixture.json"
+	local flags=()
+	if [[ $# -gt 0 ]]; then
+		flags=(--run "$1" --vus "$2" --per-vu "$3")
+	fi
+	"${COMPOSE[@]}" exec -T app node scripts/load/fixture.ts "${flags[@]}" >"$OUT/fixture.json"
 	echo "фикстура: $OUT/fixture.json"
+}
+
+# Длительность в формате k6 (`90s`, `3m`, `1m30s`, `1h`) — в секунды.
+seconds() {
+	python3 - "$1" <<-'PYTHON'
+		import re, sys
+
+		parts = re.fullmatch(r'(?:(\d+)h)?(?:(\d+)m)?(?:(\d+)s)?', sys.argv[1])
+		if parts is None or not any(parts.groups()):
+		    sys.exit(f'длительность «{sys.argv[1]}» не в формате k6 (90s, 3m, 1m30s)')
+		hours, minutes, secs = (int(value or 0) for value in parts.groups())
+		print(hours * 3600 + minutes * 60 + secs)
+	PYTHON
+}
+
+# Учётные записи нагрузочной команды в каталоге. Сид заводит их в базе CRM, а
+# войти можно только записью каталога: она заводится здесь через его
+# административный API — с той же почтой (по ней запись каталога связывается с
+# записью CRM при первом входе), подтверждённой почтой, ролью realm и паролем
+# стенда. Повторный вызов записи не пересоздаёт: новая запись каталога — это
+# новый субъект, и CRM не связала бы её с уже связанной строкой.
+accounts() {
+	KEYCLOAK_URL="$(env_value OIDC_PUBLIC_URL)" \
+		KEYCLOAK_REALM="$(env_value OIDC_ISSUER_URL | sed 's|.*/realms/||')" \
+		KEYCLOAK_ADMIN="$(env_value KEYCLOAK_ADMIN)" \
+		KEYCLOAK_ADMIN_PASSWORD="$(env_value KEYCLOAK_ADMIN_PASSWORD)" \
+		PASSWORD="$PASSWORD" python3 - "$OUT/fixture.json" <<-'PYTHON'
+			import json, os, sys, time, urllib.error, urllib.parse, urllib.request
+
+			base = os.environ['KEYCLOAK_URL'].rstrip('/')
+			realm = os.environ['KEYCLOAK_REALM']
+			admin = f'{base}/admin/realms/{realm}'
+
+			# Каталог стоит на петле этой машины: прокси из окружения до него не
+			# дотянется и ответит своей ошибкой вместо ответа каталога.
+			urllib.request.install_opener(urllib.request.build_opener(urllib.request.ProxyHandler({})))
+
+			def call(method, url, body=None, token=None, form=False):
+			    headers = {}
+			    data = None
+			    if token is not None:
+			        headers['Authorization'] = f'Bearer {token}'
+			    if body is not None:
+			        if form:
+			            data = urllib.parse.urlencode(body).encode()
+			            headers['Content-Type'] = 'application/x-www-form-urlencoded'
+			        else:
+			            data = json.dumps(body).encode()
+			            headers['Content-Type'] = 'application/json'
+			    request = urllib.request.Request(url, data=data, headers=headers, method=method)
+			    with urllib.request.urlopen(request, timeout=30) as response:
+			        raw = response.read()
+			        return json.loads(raw) if raw else None
+
+			# Каталог поднимается дольше приложения: ждём, пока он начнёт выдавать
+			# токены, но не бесконечно.
+			for attempt in range(60):
+			    try:
+			        token = call('POST', f'{base}/realms/master/protocol/openid-connect/token', {
+			            'grant_type': 'password',
+			            'client_id': 'admin-cli',
+			            'username': os.environ['KEYCLOAK_ADMIN'],
+			            'password': os.environ['KEYCLOAK_ADMIN_PASSWORD'],
+			        }, form=True)['access_token']
+			        break
+			    except urllib.error.HTTPError:
+			        # Каталог ответил, но отказал — ждать тут нечего.
+			        raise
+			    except (urllib.error.URLError, ConnectionError) as error:
+			        last = error
+			        time.sleep(2)
+			else:
+			    sys.exit(f'каталог учётных записей не выдал токен администратора: {last}')
+
+			roles = {}
+			created = 0
+
+			team = json.load(open(sys.argv[1]))['accounts']
+
+			for account in team:
+			    found = call('GET', f"{admin}/users?exact=true&username={urllib.parse.quote(account['login'])}", token=token)
+			    if not found:
+			        call('POST', f'{admin}/users', {
+			            'username': account['login'],
+			            'email': account['email'],
+			            'firstName': account['firstName'],
+			            'lastName': account['lastName'],
+			            'enabled': True,
+			            'emailVerified': True,
+			            'requiredActions': [],
+			        }, token=token)
+			        found = call('GET', f"{admin}/users?exact=true&username={urllib.parse.quote(account['login'])}", token=token)
+			        created += 1
+			    user_id = found[0]['id']
+			    call('PUT', f'{admin}/users/{user_id}/reset-password', {
+			        'type': 'password', 'value': os.environ['PASSWORD'], 'temporary': False,
+			    }, token=token)
+			    role = account['realmRole']
+			    if role not in roles:
+			        roles[role] = call('GET', f'{admin}/roles/{urllib.parse.quote(role)}', token=token)
+			    call('POST', f'{admin}/users/{user_id}/role-mappings/realm', [roles[role]], token=token)
+
+			print(f'каталог: записей команды {len(team)}, заведено сейчас {created}')
+		PYTHON
+}
+
+# Сверка «сервер ответил success» с «в базе появилось». k6 считает принятые
+# сервером переходы и комментарии (`applied_*` в сводке), `fixture.ts --verify`
+# — строки, которые прогон с этим ключом оставил в базе. Расхождение значит, что
+# сценарий засчитал изменение, которого нет, и числа прогона недействительны.
+verify() {
+	local key="$1" summary="$2"
+	if [[ ! -f "$summary" ]]; then
+		echo "сверка: k6 не оставил сводки $summary — прогон не состоялся" >&2
+		return 1
+	fi
+	"${COMPOSE[@]}" exec -T app node scripts/load/fixture.ts --verify "$key" >"$OUT/verify.json"
+	python3 - "$summary" "$OUT/verify.json" <<-'PYTHON'
+		import json, sys
+
+		metrics = json.load(open(sys.argv[1]))['metrics']
+		stored = json.load(open(sys.argv[2]))
+
+		def applied(name):
+		    return int(metrics.get(f'applied_{name}', {}).get('count', 0))
+
+		failed = False
+		for name, column in (('transition', 'transitions'), ('comment', 'comments')):
+		    counted, found = applied(name), stored[column]
+		    verdict = 'сходится' if counted == found else 'РАСХОДИТСЯ'
+		    failed = failed or counted != found
+		    print(f'сверка {name}: k6 принял {counted}, в базе {found} — {verdict}')
+
+		sys.exit(1 if failed else 0)
+	PYTHON
+}
+
+# Сценарий «пятьдесят пользователей»: свежий пул переходов, прогон, сверка.
+# Проход VU длится не меньше четырёх секунд (четыре паузы по секунде), отсюда
+# потолок переходов на VU. Статус k6 (порог не выдержан — 99) возвращается
+# после сверки: числа несдавшего порог прогона тоже нужно проверить.
+browse() {
+	local vus="$1" duration="$2" key
+	key="$(date +%Y%m%d-%H%M%S)"
+	fixture "$key" "$vus" "$(($(seconds "$duration") / 4 + 1))"
+	reset_login_limit
+	local status=0
+	k6 browse.js -e VUS="$vus" -e DURATION="$duration" | tee "$OUT/browse.txt" || status=$?
+	verify "$key" "$OUT/browse.json" || status=$?
+	return "$status"
 }
 
 # Счётчик заходов с адреса живёт пятнадцать минут и общий на все VU: без сброса
@@ -123,11 +280,11 @@ up)
 	"${COMPOSE[@]}" up -d --build
 	"${COMPOSE[@]}" exec -T app node scripts/seed/index.ts --load
 	fixture
+	accounts
 	;;
 probe)
-	fixture
-	reset_login_limit
-	k6 browse.js -e VUS=5 -e DURATION=30s
+	browse "${VUS:-5}" "${DURATION:-1m}"
+	echo "результаты: $OUT"
 	;;
 cache)
 	fixture
@@ -135,9 +292,7 @@ cache)
 	k6 cache.js -e PAIRS="${PAIRS:-40}" -e REPORT_PAIRS="${REPORT_PAIRS:-3}" | tee "$OUT/cache.txt"
 	;;
 browse)
-	fixture
-	reset_login_limit
-	k6 browse.js -e VUS="${VUS:-50}" -e DURATION="${DURATION:-3m}" | tee "$OUT/browse.txt"
+	browse "${VUS:-50}" "${DURATION:-3m}"
 	echo "результаты: $OUT"
 	;;
 reports)
@@ -148,13 +303,13 @@ reports)
 	echo "результаты: $OUT"
 	;;
 full)
-	fixture
-	reset_login_limit
-	k6 browse.js -e VUS="${VUS:-50}" -e DURATION="${DURATION:-3m}" | tee "$OUT/browse.txt"
+	status=0
+	browse "${VUS:-50}" "${DURATION:-3m}" || status=$?
 	reset_login_limit
 	k6 reports.js -e REPORT_VUS="${REPORT_VUS:-10}" -e REPORT_DURATION="${REPORT_DURATION:-2m}" |
-		tee "$OUT/reports.txt"
+		tee "$OUT/reports.txt" || status=$?
 	echo "результаты: $OUT"
+	exit "$status"
 	;;
 breakdown)
 	breakdown "${2:?путь к сырым точкам прогона: <OUT>/browse-raw.json.gz}"

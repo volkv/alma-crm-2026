@@ -21,9 +21,16 @@
  *    проверки «первая организация набора уже заведена». Повторный запуск не
  *    делает ничего, прерванный — не оставляет половины;
  * 3. **невмешательство.** Набор ничего не переписывает: он добавляет свои
- *    строки рядом с демонстрационными, пользуясь их процессом, программами,
- *    продуктами и учётными записями. Демонстрационный сид и его тесты про этот
- *    набор не знают и знать не должны.
+ *    строки рядом с демонстрационными, пользуясь их процессом, программами и
+ *    продуктами. Демонстрационный сид и его тесты про этот набор не знают и
+ *    знать не должны.
+ *
+ * Работу ведёт своя команда — двадцать КАМов под тремя руководителями, как у
+ * заказчика (`LOAD_TEAM`). Каждый вуз закреплён за одним КАМом, и его
+ * взаимодействия ведёт он же; руководитель видит портфели своих подчинённых
+ * через иерархию. Так область доступа каждого входящего в прогон сотрудника
+ * считается на своём, правдоподобном по размеру портфеле, а не на одном
+ * портфеле из всех трёхсот вузов.
  *
  * Строки истории — записи стадий, комментарии, правки плана — заводятся прямой
  * вставкой, а не командами движка: движок открывает транзакцию на каждый шаг, и
@@ -31,7 +38,8 @@
  * пишет движок: слепок стадии снимается с действующей редакции тем же
  * `stageSnapshot`, которым его снимает переход.
  */
-import { count, eq, inArray } from 'drizzle-orm';
+import { randomUUID } from 'node:crypto';
+import { eq } from 'drizzle-orm';
 import type { ChecklistState, StageSnapshot } from '$lib/contracts/interactions';
 import {
 	affiliations,
@@ -86,12 +94,97 @@ const INTERACTIONS = LOAD_SEED_SIZES.organizations * LOAD_SEED_SIZES.interaction
 /** Сколько строк уезжает в базу одним запросом. */
 const CHUNK = 500;
 
+/** Сотрудник нагрузочной команды. */
+export type LoadAccount = {
+	key: string;
+	/** Имя входа в каталоге учётных записей. */
+	login: string;
+	/** Почта — ключ связывания записи каталога с записью CRM при первом входе. */
+	email: string;
+	firstName: string;
+	lastName: string;
+	roleId: 'manager' | 'lead';
+	/** Роль realm, которую каталог выдаёт этой записи. */
+	realmRole: 'crm-user' | 'crm-lead';
+	/** Ключ руководителя; у руководителей — `null`. */
+	managerKey: string | null;
+};
+
+/** Состав команды заказчика: двадцать КАМов, три руководителя. */
+const LOAD_TEAM_SIZES = { leads: 3, accountManagers: 20 } as const;
+
+const LEADS: readonly LoadAccount[] = Array.from({ length: LOAD_TEAM_SIZES.leads }, (_, index) => {
+	const login = `load-lead-${index + 1}`;
+
+	return {
+		key: login,
+		login,
+		email: `${login}@load.lct-crm.local`,
+		firstName: 'Руководитель',
+		lastName: `Нагрузочный ${index + 1}`,
+		roleId: 'lead',
+		realmRole: 'crm-lead',
+		managerKey: null
+	};
+});
+
+const ACCOUNT_MANAGERS: readonly LoadAccount[] = Array.from(
+	{ length: LOAD_TEAM_SIZES.accountManagers },
+	(_, index) => {
+		const number = String(index + 1).padStart(2, '0');
+		const login = `load-kam-${number}`;
+
+		return {
+			key: login,
+			login,
+			email: `${login}@load.lct-crm.local`,
+			firstName: `КАМ ${number}`,
+			lastName: 'Нагрузочный',
+			roleId: 'manager',
+			realmRole: 'crm-user',
+			// КАМы делятся между руководителями по кругу: семь, семь и шесть.
+			managerKey: LEADS[index % LEADS.length].key
+		};
+	}
+);
+
 /**
- * Учётные записи, между которыми раскладывается работа. Это те же сотрудники,
- * что и на демонстрационном стенде: нагрузочный набор не заводит своих людей,
- * иначе под ними некому было бы войти.
+ * Нагрузочная команда: сначала руководители — на них ссылаются КАМы, и
+ * вставка в этом порядке не упирается во внешний ключ.
  */
-const OWNER_KEYS = ['demo-manager', 'veresova', 'zotov'] as const;
+export const LOAD_TEAM: readonly LoadAccount[] = [...LEADS, ...ACCOUNT_MANAGERS];
+
+/** КАМ, за которым закреплён вуз набора с этим порядковым номером. */
+function accountManagerOf(organizationIndex: number): LoadAccount {
+	return ACCOUNT_MANAGERS[(organizationIndex - 1) % ACCOUNT_MANAGERS.length];
+}
+
+/**
+ * Ключи сотрудников, чью работу видит учётная запись: у КАМа — он сам, у
+ * руководителя — он сам и его КАМы. Это то же правило, что держит область
+ * доступа приложения (`accessScopeFor`), только посчитанное по составу команды.
+ */
+export function loadScopeKeys(account: LoadAccount): string[] {
+	return [
+		account.key,
+		...ACCOUNT_MANAGERS.filter((member) => member.managerKey === account.key).map(
+			(member) => member.key
+		)
+	];
+}
+
+/** Номера вузов набора, закреплённых за КАМами из списка. */
+function organizationsOf(keys: readonly string[]): number[] {
+	const result: number[] = [];
+
+	for (let index = 1; index <= LOAD_SEED_SIZES.organizations; index += 1) {
+		if (keys.includes(accountManagerOf(index).key)) {
+			result.push(index);
+		}
+	}
+
+	return result;
+}
 
 const DAY_MS = 24 * 60 * 60 * 1000;
 
@@ -171,6 +264,7 @@ async function insertAll<TValue extends Record<string, unknown>>(
 
 /** Итог заливки: по строке на таблицу, для отчёта скрипта. */
 export type LoadSeedReport = {
+	users: number;
 	organizations: number;
 	interactions: number;
 	stageEntries: number;
@@ -207,18 +301,6 @@ export async function seedLoad(tx: Tx): Promise<LoadSeedReport | null> {
 
 	const stageViews = [...revision.stages].sort((left, right) => left.position - right.position);
 
-	const ownerIds = OWNER_KEYS.map((key) => seedId('user', key));
-	const [ownersInPlace] = await tx
-		.select({ value: count() })
-		.from(users)
-		.where(inArray(users.id, ownerIds));
-
-	if (ownersInPlace.value !== ownerIds.length) {
-		throw new Error(
-			'Нагрузочный набор ведут сотрудники демонстрационного стенда: залейте сначала демонстрационный набор'
-		);
-	}
-
 	const programRows = await tx.select({ id: programs.id }).from(programs).orderBy(programs.code);
 	const productRows = await tx.select({ id: products.id }).from(products).orderBy(products.code);
 
@@ -229,6 +311,20 @@ export async function seedLoad(tx: Tx): Promise<LoadSeedReport | null> {
 	}
 
 	const now = Date.now();
+
+	// Команда заводится той же транзакцией, что и её портфели: без строки
+	// пользователя назначению ответственного не на кого ссылаться. Учётных
+	// записей каталога сид не заводит — это делает нагрузочный прогон
+	// (`scripts/load/run.sh up`); связывание идёт по почте при первом входе.
+	await tx.insert(users).values(
+		LOAD_TEAM.map((account) => ({
+			id: seedId('user', account.key),
+			email: account.email,
+			fullName: `${account.firstName} ${account.lastName}`,
+			roleId: account.roleId,
+			managerUserId: account.managerKey === null ? null : seedId('user', account.managerKey)
+		}))
+	);
 
 	const organizationRows = [];
 	const peopleRows = [];
@@ -277,13 +373,9 @@ export async function seedLoad(tx: Tx): Promise<LoadSeedReport | null> {
 		responsibleRows.push({
 			id: seedId('responsible', key),
 			organizationId,
-			// Все вузы набора ведёт один человек, а не трое по кругу. Набор
-			// существует, чтобы нагрузить **один** портфель: в области доступа
-			// КАМа тогда лежат все три сотни вузов, и подзапрос области считается
-			// на настоящем объёме. Правдоподобное распределение ответственности
-			// между людьми показывает демонстрационный набор, и его этот не
-			// трогает.
-			userId: seedId('user', 'demo-manager'),
+			// Вуз закреплён за одним КАМом команды: пятнадцать вузов на человека,
+			// как в портфеле КАМа у заказчика.
+			userId: seedId('user', accountManagerOf(index).key),
 			validFrom: new Date(now - 365 * DAY_MS)
 		});
 	}
@@ -307,7 +399,10 @@ export async function seedLoad(tx: Tx): Promise<LoadSeedReport | null> {
 		const organizationId = seedId('organization', organizationKey);
 		const key = `load-${index}`;
 		const interactionId = seedId('interaction', key);
-		const ownerUserId = ownerIds[organizationIndex % ownerIds.length];
+		// Взаимодействие ведёт тот, за кем закреплён вуз: иначе запись лежала бы
+		// в области доступа по стороне, а не по владельцу, и портфель КАМа
+		// выглядел бы не так, как у заказчика.
+		const ownerUserId = seedId('user', accountManagerOf(organizationIndex).key);
 
 		// Возраст записи разводит их по времени: отчёт за период обязан видеть и
 		// начатые год назад, и заведённые на прошлой неделе.
@@ -428,10 +523,155 @@ export async function seedLoad(tx: Tx): Promise<LoadSeedReport | null> {
 	await insertAll(changeRows, (chunk) => tx.insert(interactionChanges).values(chunk));
 
 	return {
+		users: LOAD_TEAM.length,
 		organizations: organizationRows.length,
 		interactions: interactionRows.length,
 		stageEntries: entryRows.length,
 		comments: commentRows.length,
 		changes: changeRows.length
 	};
+}
+
+/**
+ * Можно ли шагнуть вперёд со стадии, ничего не подтверждая: ни результата, ни
+ * подтверждения, ни данных системы обучения, ни отметки по документу. Чек-лист
+ * сюда не входит — его закрывает тот, кто заводит запись.
+ *
+ * Только такие стадии годятся под переход в нагрузочном прогоне. Со стадии
+ * подписания шаг вперёд ждёт утверждённого документа, а после неё — результата
+ * и подтверждения; переводить запись, которой по процессу переходить нельзя,
+ * значило бы мерить скорость отказа.
+ */
+function opensForward(snapshot: StageSnapshot): boolean {
+	return (
+		!snapshot.requiresResult &&
+		!snapshot.requiresConfirmation &&
+		!snapshot.requiresLmsData &&
+		snapshot.requiresDocumentMark === null &&
+		!snapshot.isFinal
+	);
+}
+
+/** Взаимодействие под один переход: где стоит и куда с этой стадии шаг вперёд. */
+export type TransitionTarget = {
+	id: string;
+	fromStageId: string;
+	toStageId: string;
+};
+
+/** Начало названия записей пула: по нему прогон находит свои записи при сверке. */
+export function transitionPoolPrefix(runKey: string): string {
+	return `Прогон ${runKey}: переход № `;
+}
+
+/**
+ * Свежие взаимодействия под переходы одного нагрузочного прогона.
+ *
+ * Переход — это изменение состояния: второй шаг по той же записи пошёл бы уже
+ * с другой стадии, а после нескольких шагов запись упёрлась бы в подписание,
+ * где шаг вперёд ждёт утверждённого документа. Поэтому у каждого прогона свой
+ * пул: по `perAccount` записей на каждого сотрудника команды, на стадиях, с
+ * которых шаг вперёд разрешён (`opensForward`), с закрытым чек-листом. Запись
+ * ведёт сам сотрудник, а вуз берётся из его области — у руководителя из
+ * портфелей его КАМов, — поэтому переход проходит все проверки области и прав,
+ * как у живого человека.
+ *
+ * Возвращает пул по имени входа сотрудника. Истории у записей пула нет: читают
+ * в прогоне заполненные карточки набора, а пул нужен только под переход.
+ */
+export async function seedTransitionPool(
+	tx: Tx,
+	input: { runKey: string; perAccount: number }
+): Promise<Record<string, TransitionTarget[]>> {
+	const workspace = await readWorkspaceByKey(tx, B2B_WORKSPACE_KEY);
+	const workflow = await readWorkflowForWorkspace(tx, workspace.id);
+	const revision = workflow === null ? null : await readActiveRevision(tx, workflow);
+
+	if (revision === null) {
+		throw new Error('У пространства «b2b» нет действующего процесса');
+	}
+
+	const forward = new Map<string, string>();
+
+	for (const transition of revision.transitions) {
+		if (transition.kind === 'forward' && !forward.has(transition.fromStageId)) {
+			forward.set(transition.fromStageId, transition.toStageId);
+		}
+	}
+
+	const open = [...revision.stages]
+		.sort((left, right) => left.position - right.position)
+		.flatMap((stage) => {
+			const toStageId = forward.get(stage.id);
+
+			return toStageId !== undefined && opensForward(stageSnapshot(stage))
+				? [{ stage, toStageId }]
+				: [];
+		});
+
+	if (open.length === 0) {
+		throw new Error('В действующем процессе нет стадии, с которой шаг вперёд ничего не требует');
+	}
+
+	const now = Date.now();
+	const interactionRows = [];
+	const partyRows = [];
+	const entryRows = [];
+	const pool: Record<string, TransitionTarget[]> = {};
+	let number = 0;
+
+	for (const account of LOAD_TEAM) {
+		const organizationIndexes = organizationsOf(loadScopeKeys(account));
+		const ownerUserId = seedId('user', account.key);
+		pool[account.login] = [];
+
+		for (let step = 0; step < input.perAccount; step += 1) {
+			number += 1;
+			const id = randomUUID();
+			const organizationKey = `load-${organizationIndexes[step % organizationIndexes.length]}`;
+			const { stage, toStageId } = open[step % open.length];
+			const snapshot = stageSnapshot(stage);
+			// Вошли на стадию в прошлом: уйти с неё раньше, чем на неё вошли, база
+			// не даст, а переход в прогоне случается через секунды после заливки.
+			const enteredAt = new Date(now - (1 + (step % 5)) * DAY_MS);
+
+			interactionRows.push({
+				id,
+				title: `${transitionPoolPrefix(input.runKey)}${number}`,
+				workspaceId: workspace.id,
+				status: 'active' as const,
+				agreementPeriodStart: '2026-09-01',
+				agreementPeriodEnd: '2027-08-31',
+				ownerUserId,
+				lastActivityAt: enteredAt,
+				createdAt: enteredAt,
+				updatedAt: enteredAt
+			});
+
+			partyRows.push({
+				interactionId: id,
+				organizationId: seedId('organization', organizationKey),
+				partyRole: 'educational_institution' as const,
+				isPrimary: true,
+				contactAffiliationId: seedId('affiliation', organizationKey)
+			});
+
+			entryRows.push({
+				interactionId: id,
+				stageId: stage.id,
+				stageSnapshot: snapshot,
+				enteredAt,
+				responsibleUserId: ownerUserId,
+				checklistState: closedChecklist(snapshot)
+			});
+
+			pool[account.login].push({ id, fromStageId: stage.id, toStageId });
+		}
+	}
+
+	await insertAll(interactionRows, (chunk) => tx.insert(interactions).values(chunk));
+	await insertAll(partyRows, (chunk) => tx.insert(interactionParties).values(chunk));
+	await insertAll(entryRows, (chunk) => tx.insert(stageEntries).values(chunk));
+
+	return pool;
 }

@@ -28,7 +28,7 @@
 import http from 'k6/http';
 import { sleep } from 'k6';
 import { Trend } from 'k6/metrics';
-import { ACCOUNTS, jar, signIn } from './session.js';
+import { jar, signIn } from './session.js';
 
 const BASE_URL = __ENV.BASE_URL;
 const PASSWORD = __ENV.PASSWORD;
@@ -46,6 +46,16 @@ const PERIOD = 'from=2026-09-01&to=2027-08-31';
 const REPORT_COLD_SECONDS = 65;
 
 const fixture = JSON.parse(open(__ENV.FIXTURE));
+
+/**
+ * Замер идёт под первым КАМом команды: его портфель — обычный рабочий объём,
+ * и обе карточки пары берутся из него.
+ */
+const account = fixture.accounts.find((entry) => entry.role === 'manager');
+
+if (account === undefined) {
+	throw new Error('В фикстуре нет ни одного КАМа');
+}
 
 const series = {
 	usual: {
@@ -87,11 +97,14 @@ function timing(response, name) {
 }
 
 function openCard(id) {
-	return http.get(`${BASE_URL}/interactions/${id}`, { jar, headers: HTML });
+	return http.get(`${BASE_URL}/w/${fixture.workspace}/interactions/${id}`, {
+		jar,
+		headers: HTML
+	});
 }
 
 function openReport() {
-	return http.get(`${BASE_URL}/reports?mode=slice&${PERIOD}`, { jar, headers: HTML });
+	return http.get(`${BASE_URL}/reports?mode=snapshot&${PERIOD}`, { jar, headers: HTML });
 }
 
 /** Пара «холодное открытие — повторное» по одному ответу каждая. */
@@ -104,7 +117,7 @@ function pair(kind, first, second) {
 
 export default function () {
 	if (!signedIn) {
-		signIn(BASE_URL, ACCOUNTS[0], PASSWORD);
+		signIn(BASE_URL, account, PASSWORD, `/w/${fixture.workspace}/interactions`);
 		signedIn = true;
 	}
 
@@ -121,7 +134,7 @@ export default function () {
 	}
 
 	for (const kind of ['usual', 'long']) {
-		const pool = kind === 'long' ? fixture.longest : fixture.cards;
+		const pool = kind === 'long' ? account.longest : account.cards;
 		const id = pool[(__ITER * 37) % pool.length];
 
 		const first = openCard(id);
