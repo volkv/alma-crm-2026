@@ -502,7 +502,9 @@ export function toApiLearningGroup(view: LearningGroupView): ApiLearningGroup {
 /** Пространство: рабочее место направления и процесс, по которому оно идёт. */
 export const apiWorkspaceSchema = z.object({
 	id: z.uuid(),
-	key: z.string().describe('Ключ пространства: `b2b` — учебные заведения, `b2c` — лица'),
+	key: z
+		.string()
+		.describe('Ключ пространства: `b2b` — работа с учебными заведениями, `b2c` — обучение'),
 	name: z.string(),
 	description: z.string().nullable(),
 	position: z.number().int(),

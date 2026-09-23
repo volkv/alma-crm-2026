@@ -37,7 +37,7 @@ registerRoute({
 		workspace: {
 			id: 'b7c8d9e0-f1a2-4b3c-8d4e-5f6a7b8c9d0e',
 			key: 'b2b',
-			name: 'Учебные заведения',
+			name: 'Работа с ВУЗ',
 			description: 'Работа с вузами и колледжами',
 			position: 1,
 			stageCount: 2,
@@ -46,7 +46,7 @@ registerRoute({
 		},
 		revision: {
 			version: 2,
-			name: 'Процесс работы с учебными заведениями',
+			name: 'Работа с ВУЗ',
 			note: null,
 			publishedAt: '2026-09-01T06:00:00.000Z',
 			stages: [

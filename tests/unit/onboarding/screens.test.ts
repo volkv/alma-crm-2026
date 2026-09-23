@@ -35,7 +35,7 @@ import { DEFAULT_ROLES } from '$lib/server/rbac/permissions';
 
 /** Пространства стенда: меню собирается из базы, и подсказки — по нему же. */
 const NAV_WORKSPACES: NavWorkspace[] = [
-	{ key: 'b2b', name: 'Учебные заведения', hasWorkflow: true },
+	{ key: 'b2b', name: 'Работа с ВУЗ', hasWorkflow: true },
 	{ key: 'b2c', name: 'Корпоративное обучение', hasWorkflow: true }
 ];
 

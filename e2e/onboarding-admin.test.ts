@@ -209,7 +209,7 @@ admin('подсказки редактора процесса открывают
 
 	// Адрес редактора несёт ключ группы, и придумать его тур не может: сюда
 	// приходят строкой списка — так же, как пришёл бы человек.
-	await page.getByRole('link', { name: 'Открыть процесс: Учебные заведения' }).click();
+	await page.getByRole('link', { name: 'Открыть процесс: Работа с ВУЗ' }).click();
 	await page.waitForURL('**/settings/workflows/b2b');
 	await waitForHydration(page);
 

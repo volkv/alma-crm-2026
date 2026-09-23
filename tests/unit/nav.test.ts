@@ -16,7 +16,7 @@ import { SETTINGS_SECTIONS } from '../../src/routes/(app)/settings/sections';
 
 /** Два пространства стенда: по ним же собирается меню в работе. */
 const WORKSPACES: NavWorkspace[] = [
-	{ key: 'b2b', name: 'Учебные заведения', hasWorkflow: true },
+	{ key: 'b2b', name: 'Работа с ВУЗ', hasWorkflow: true },
 	{ key: 'b2c', name: 'Корпоративное обучение', hasWorkflow: true }
 ];
 
@@ -103,7 +103,7 @@ describe('группы меню', () => {
 
 		expect(grouped).toEqual([
 			['Главное', ['Сводка', 'Отчёты', 'Документы']],
-			['Учебные заведения', ['Взаимодействия']],
+			['Работа с ВУЗ', ['Взаимодействия']],
 			['Корпоративное обучение', ['Взаимодействия']],
 			[
 				'Справочники',

@@ -190,7 +190,7 @@ test('адрес доски открывает одно и то же место,
 	// скопированная из адресной строки, у коллеги открывает ту же доску. Пока
 	// доска выбирала место сама, это было неправдой.
 	const address = `/w/${WORKSPACE}/interactions?view=board`;
-	const caption = /Процесс пространства «Учебные заведения»/;
+	const caption = /Процесс пространства «Работа с ВУЗ»/;
 
 	await page.goto(address);
 	await expect(page.getByText(caption)).toBeVisible();

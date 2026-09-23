@@ -1440,7 +1440,9 @@ export function toApiInteraction(view: InteractionListItem): ApiInteraction {
  * отдаёт только интерфейс, где маскирование делает `toPersonView`.
  */
 export const apiInteractionDetailSchema = apiInteractionSchema.extend({
-	workspaceKey: z.string().describe('Пространство: `b2b` — учебные заведения, `b2c` — лица'),
+	workspaceKey: z
+		.string()
+		.describe('Пространство: `b2b` — работа с учебными заведениями, `b2c` — обучение'),
 	workspaceName: z.string(),
 	processRevision: z
 		.number()

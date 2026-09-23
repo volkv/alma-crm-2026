@@ -295,7 +295,7 @@ staff('таблица стадий процесса держит ключевы�
 
 	// Группа стенда с самым длинным процессом: четырнадцать стадий работы с вузом.
 	await page.goto('/settings/workflows/b2b');
-	await expect(page.getByRole('heading', { level: 1 })).toContainText('Учебные заведения');
+	await expect(page.getByRole('heading', { level: 1 })).toContainText('Работа с ВУЗ');
 
 	for (const column of ['Ключ', 'Название', 'Норматив', 'Требует']) {
 		await expect(page.getByRole('columnheader', { name: column, exact: true })).toBeVisible();

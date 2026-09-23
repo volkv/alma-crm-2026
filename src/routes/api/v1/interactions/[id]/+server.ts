@@ -43,7 +43,7 @@ registerRoute({
 		openBlockers: 0,
 		lastActivityAt: '2026-09-18T12:30:00.000Z',
 		workspaceKey: 'b2b',
-		workspaceName: 'Учебные заведения',
+		workspaceName: 'Работа с ВУЗ',
 		processRevision: 2,
 		agreementPeriodStart: '2026-09-01',
 		agreementPeriodEnd: '2027-06-30',
