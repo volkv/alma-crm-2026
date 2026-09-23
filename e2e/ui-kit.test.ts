@@ -285,7 +285,9 @@ test('the search palette opens on its shortcut and offers the sections', async (
 	// this account may open — the same list the sidebar shows — so the shortcut
 	// leads somewhere before a single letter is typed.
 	await expect(palette.getByPlaceholder('Что ищем?')).toBeVisible();
-	await expect(palette.getByRole('option', { name: 'Взаимодействия' })).toBeVisible();
+	// «Сводка» is the one section without a permission of its own: every signed-in
+	// account sees it, whatever the workspaces are called.
+	await expect(palette.getByRole('option', { name: 'Сводка' })).toBeVisible();
 });
 
 test('collapsing the navigation outlives a reload', async ({ page }) => {
@@ -519,7 +521,7 @@ test('«палец» доходит и до слоёв поверх страни
 			await page.keyboard.press('ControlOrMeta+k');
 		}
 
-		await expect(palette.getByRole('option', { name: 'Взаимодействия' })).toBeVisible({
+		await expect(palette.getByRole('option', { name: 'Сводка' })).toBeVisible({
 			timeout: 2000
 		});
 	}).toPass({ timeout: 20_000 });

@@ -231,18 +231,22 @@ async function createReasonInteraction(): Promise<string> {
 				select id from users where email = ${E2E_USER.email} limit 1
 			`;
 
-			const [stage] = await tx<{ id: string; group_id: string }[]>`
-				select s.id, r.group_id
-				from stages s
-				join process_revisions r on r.id = s.revision_id
-				join workspaces g on g.id = r.group_id
+			// От места к стадии — через процесс: редакции держатся за него, а не за
+			// место, и мест у одного процесса может быть несколько. Редакция берётся
+			// действующая — та самая, которую опубликовал `seedWorkspace`: черновик
+			// рядом с ней дал бы вторую стадию на той же позиции.
+			const [stage] = await tx<{ id: string; workspace_id: string }[]>`
+				select s.id, g.id as workspace_id
+				from workspaces g
+				join workflows w on w.id = g.workflow_id
+				join stages s on s.revision_id = w.active_revision_id
 				where g.key = ${REASON_ROUTE.workspace} and s.position = 1
 			`;
 
 			const [interaction] = await tx<{ id: string }[]>`
 				insert into interactions ${tx({
 					title: `${MARK} Объяснение ${crypto.randomUUID().slice(0, 8)}`,
-					workspace_id: stage.group_id,
+					workspace_id: stage.workspace_id,
 					owner_user_id: owner.id
 				})}
 				returning id
@@ -296,18 +300,20 @@ async function createMarkInteraction(): Promise<string> {
 				select id from users where email = ${E2E_USER.email} limit 1
 			`;
 
-			const [stage] = await tx<{ id: string; group_id: string }[]>`
-				select s.id, r.group_id
-				from stages s
-				join process_revisions r on r.id = s.revision_id
-				join workspaces g on g.id = r.group_id
+			// Тот же путь, что и в проверке объяснения: место → процесс →
+			// действующая редакция → её первая стадия.
+			const [stage] = await tx<{ id: string; workspace_id: string }[]>`
+				select s.id, g.id as workspace_id
+				from workspaces g
+				join workflows w on w.id = g.workflow_id
+				join stages s on s.revision_id = w.active_revision_id
 				where g.key = ${MARK_ROUTE.workspace} and s.position = 1
 			`;
 
 			const [interaction] = await tx<{ id: string }[]>`
 				insert into interactions ${tx({
 					title: `${MARK_ROUTE.interactionTitle} ${crypto.randomUUID().slice(0, 8)}`,
-					workspace_id: stage.group_id,
+					workspace_id: stage.workspace_id,
 					owner_user_id: owner.id
 				})}
 				returning id

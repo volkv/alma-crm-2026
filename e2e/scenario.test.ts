@@ -163,7 +163,7 @@ test.setTimeout(180_000);
 type MockState = {
 	objects: {
 		applications?: { externalId: string; statuses: { data: Record<string, unknown> }[] }[];
-		workspaces?: { requestExternalId: string; groupExternalId: string }[];
+		groups?: { requestExternalId: string; groupExternalId: string }[];
 	};
 	journal: {
 		direction: string;
@@ -756,22 +756,22 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		await expect(manager.locator('input[name="startsOn"]')).toHaveValue('2026-10-01');
 		await manager.getByRole('button', { name: 'Отправить в LMS' }).click();
 
-		const requestExternalId = `crm-workspace-${mainId}-1`;
+		const requestExternalId = `crm-group-${mainId}-1`;
 
 		await expect(async () => {
 			const state = await mockState(request, LMS_URL);
 
 			expect(
-				state.objects.workspaces?.find((item) => item.requestExternalId === requestExternalId)
+				state.objects.groups?.find((item) => item.requestExternalId === requestExternalId)
 			).toBeDefined();
 		}).toPass({ timeout: 30_000, intervals: [1000] });
 
-		const workspace = (await mockState(request, LMS_URL)).objects.workspaces?.find(
+		const group = (await mockState(request, LMS_URL)).objects.groups?.find(
 			(item) => item.requestExternalId === requestExternalId
 		);
 
-		expect(workspace).toBeDefined();
-		learningGroupId = workspace!.groupExternalId;
+		expect(group).toBeDefined();
+		learningGroupId = group!.groupExternalId;
 
 		// Карточка показывает заведённый поток и его имя в чужой системе.
 		await manager.reload();
@@ -780,7 +780,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 
 		// Результат группы: стадию он подтверждает, но никуда её не двигает —
 		// переход остаётся решением сотрудника.
-		const result = await request.post('/api/v1/exchange/learning-workspaces/results', {
+		const result = await request.post('/api/v1/exchange/learning-groups/results', {
 			headers: { authorization: `Bearer ${lmsExchangeKey}`, 'content-type': 'application/json' },
 			data: envelope('learning_group.result', 'lms', {
 				groupExternalId: learningGroupId,

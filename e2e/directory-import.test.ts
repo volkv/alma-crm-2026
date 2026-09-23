@@ -150,7 +150,11 @@ test('руководитель проходит мастер импорта ка
 
 	// Карточка загрузки: применено, и числа те же, что были на предпросмотре.
 	await expect(page.getByRole('heading', { name: 'Загрузка каталога' })).toBeVisible();
-	await expect(page.locator('[data-slot="status-badge"]', { hasText: 'Применён' })).toBeVisible();
+	// Применение заводит записи справочника и пересобирает страницу загрузки:
+	// на занятой машине это заметно дольше отведённых по умолчанию пяти секунд.
+	await expect(page.locator('[data-slot="status-badge"]', { hasText: 'Применён' })).toBeVisible({
+		timeout: 30_000
+	});
 	await expect(page.locator('[data-slot="count-create"]')).toHaveText('2');
 	await expect(page.locator('[data-slot="count-error"]')).toHaveText('1');
 
@@ -175,9 +179,18 @@ test('руководитель проходит мастер импорта ка
 test('повтор того же файла ничего не меняет, а продлённая лицензия — обновляет', async ({
 	page
 }) => {
+	// Три разбора файла подряд — применение и два предпросмотра, — и каждый
+	// заново считает весь каталог. В отведённые Playwright полминуты проверка
+	// укладывается только на свободной машине.
+	test.setTimeout(120_000);
+
 	await uploadCatalog(page);
 	await page.getByRole('button', { name: 'Применить импорт' }).click();
-	await expect(page.locator('[data-slot="status-badge"]', { hasText: 'Применён' })).toBeVisible();
+	// Применение заводит записи справочника и пересобирает страницу загрузки:
+	// на занятой машине это заметно дольше отведённых по умолчанию пяти секунд.
+	await expect(page.locator('[data-slot="status-badge"]', { hasText: 'Применён' })).toBeVisible({
+		timeout: 30_000
+	});
 
 	await uploadCatalog(page);
 

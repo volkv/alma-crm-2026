@@ -193,27 +193,27 @@ admin('подсказки общих настроек обходят все че
 	]);
 });
 
-admin('подсказки процесса доводят от списка групп до входа в редактор', async ({ page }) => {
+admin('подсказки процесса доводят от списка процессов до входа в редактор', async ({ page }) => {
 	await openScreen(page, '/settings/workflows');
 
-	const tour = await startScreenTour(page, 'Процесс');
+	const tour = await startScreenTour(page, 'Процессы');
 
 	await walkScreenTour(page, tour, [
-		{ title: 'Процесс описан данными', target: 'workspaces' },
+		{ title: 'Процесс описан данными', target: 'workflows' },
 		{ title: 'Вход в редактор процесса', target: 'process-open' }
 	]);
 });
 
-admin('подсказки редактора процесса открываются на группе из списка', async ({ page }) => {
+admin('подсказки редактора процесса открываются на процессе из списка', async ({ page }) => {
 	await openScreen(page, '/settings/workflows');
 
-	// Адрес редактора несёт ключ группы, и придумать его тур не может: сюда
+	// Адрес редактора несёт ключ процесса, и придумать его тур не может: сюда
 	// приходят строкой списка — так же, как пришёл бы человек.
 	await page.getByRole('link', { name: 'Открыть процесс: Работа с ВУЗ' }).click();
 	await page.waitForURL('**/settings/workflows/b2b');
 	await waitForHydration(page);
 
-	const tour = await startScreenTour(page, 'Редактор процесса группы');
+	const tour = await startScreenTour(page, 'Редактор процесса пространства');
 
 	await walkScreenTour(page, tour, [
 		{ title: 'Черновик и применение', target: 'process-group-draft' },

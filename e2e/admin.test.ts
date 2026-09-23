@@ -205,25 +205,30 @@ test('журнал демонстрации открыт, а выгрузка о
 	await expect(address.first()).toBeVisible();
 });
 
-test('разделы, которые переживают демонстрацию, ей не принадлежат', async ({ page }) => {
+test('демонстрации закрыты адреса подключений, а не разделы целиком', async ({ page }) => {
 	await page.goto('/settings/profile');
 
-	// Меню настроек собирается из прав: чего нет в нём, того нет и по ссылке.
-	// Заведённая учётная запись и выпущенный ключ живут дольше сессии посетителя
-	// — эти два раздела демонстрации не принадлежат.
-	for (const section of ['Пользователи', 'Ключи доступа']) {
-		await expect(page.getByRole('link', { name: section })).toHaveCount(0);
+	// Учётные записи и ключи доступа демонстрации открыты: всё, что посетитель
+	// в них наменяет, возвращает суточный сброс, а спрятанный раздел читался бы
+	// как отсутствующий в продукте (`DEMO_DENIED_PERMISSIONS`).
+	for (const section of ['Пользователи', 'Ключи доступа', 'Общие']) {
+		await expect(page.getByRole('link', { name: section, exact: true })).toHaveCount(1);
 	}
 
-	for (const path of ['/settings/users', '/settings/api-keys']) {
+	for (const path of ['/settings/users', '/settings/api-keys', '/settings/general']) {
 		const response = await page.request.get(path);
-		expect(response.status()).toBe(403);
+		expect(response.status()).toBe(200);
 	}
 
-	// А настройки стенда — наоборот: их на стенде и показывают, включая баннер
-	// страницы входа и сроки жизни сессии.
-	await expect(page.getByRole('link', { name: 'Общие', exact: true })).toHaveCount(1);
-	expect((await page.request.get('/settings/general')).status()).toBe(200);
+	// Вычтено ровно одно право — адреса и секреты подключений: они живут в
+	// настройках стенда, которые сброс не чистит, и подменённый приёмник
+	// подписки пережил бы показ. Раздел при этом открыт: журнал обмена и
+	// состояние доставок демонстрация показывает.
+	await page.goto('/settings/integrations');
+
+	await expect(
+		page.getByText('Адреса, секреты и периодичность фоновой работы меняет тот, у кого есть право')
+	).toBeVisible();
 });
 
 staff('правка баннера видна на странице входа после выхода', async ({ page }) => {

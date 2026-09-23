@@ -99,6 +99,25 @@
 		short ? links : links.filter((link) => link.label.toLowerCase().includes(term.toLowerCase()))
 	);
 
+	/**
+	 * Названия разделов, которые встречаются не по одному разу.
+	 *
+	 * Пространств заказчик заводит сколько нужно, и пункт у каждого называется
+	 * одинаково — «Взаимодействия». В меню их различает заголовок секции, имя
+	 * пространства; палитра же меню разворачивает в один список, и без заголовка
+	 * человек видел бы подряд семь одинаковых строк, ни одна из которых не
+	 * говорит, куда ведёт.
+	 */
+	const ambiguous = $derived(
+		new Set(
+			links
+				.map((link) => link.label)
+				// Второе и последующие вхождения: название, встретившееся раньше, уже
+				// не единственное — значит, различать придётся оба.
+				.filter((label, index, labels) => labels.indexOf(label) !== index)
+		)
+	);
+
 	const groups = $derived([
 		...(sections.length === 0
 			? []
@@ -115,7 +134,9 @@
 			value: `section:${link.href}`,
 			href: link.href,
 			title: link.label,
-			subtitle: null,
+			// Заголовок секции — только там, где он что-то различает: у «Отчётов»
+			// или «Организаций» приписка «Главное» не сообщала бы ничего.
+			subtitle: ambiguous.has(link.label) ? link.group.label : null,
 			icon: link.icon
 		};
 	}

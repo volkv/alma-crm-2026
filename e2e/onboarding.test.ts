@@ -268,6 +268,12 @@ test('подсказка читается на телефоне и не двиг
 });
 
 adminTest('полный тур администратора доходит до настроек процесса', async ({ page }) => {
+	// Тур администратора — под сотню остановок с переходами между разделами, и
+	// дорога до «Процессов» в отведённые Playwright полминуты не укладывается.
+	// Ожидание внутри `advanceToScreen` рассчитано на три минуты, но проверку
+	// снимало умолчание раньше, чем оно успевало дойти до дела.
+	adminTest.setTimeout(240_000);
+
 	const tour = await firstVisit(page);
 
 	await tour.getByRole('button', { name: 'Начать тур' }).click();
@@ -283,9 +289,9 @@ adminTest('полный тур администратора доходит до 
 
 	// Настройки идут последними: сначала работа, потом правила, по которым она
 	// идёт. Дорогу туда тур проходит сам.
-	await advanceToScreen(tour, 'Процесс');
-	await expect(page).toHaveURL(/\/settings\/process$/);
-	await expect(tour.getByRole('heading', { level: 2 })).toHaveText('Процесс');
+	await advanceToScreen(tour, 'Процессы');
+	await expect(page).toHaveURL(/\/settings\/workflows$/);
+	await expect(tour.getByRole('heading', { level: 2 })).toHaveText('Процессы');
 
 	await tour.getByRole('button', { name: 'Закрыть подсказки' }).click();
 	await expect(tour).toBeHidden();

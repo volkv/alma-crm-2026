@@ -225,7 +225,10 @@ test('переключение режима меняет адрес и прав�
 
 	await page.getByTestId('report-mode-movement').click();
 
-	await expect(page).toHaveURL(/mode=movement/);
+	// Смена режима — обычный переход по ссылке, и загрузчик отчёта пересобирает
+	// выборку заново: под несколькими рабочими процессами ответ приходит не в
+	// отведённые по умолчанию пять секунд.
+	await expect(page).toHaveURL(/mode=movement/, { timeout: 30_000 });
 	await expect(page.getByText(MOVEMENT_RULE)).toBeVisible();
 
 	// Колонки движения появляются вместе с режимом: «Вид события» в срезе нет.
@@ -233,7 +236,7 @@ test('переключение режима меняет адрес и прав�
 
 	await page.getByTestId('report-mode-snapshot').click();
 
-	await expect(page).toHaveURL(/mode=snapshot/);
+	await expect(page).toHaveURL(/mode=snapshot/, { timeout: 30_000 });
 	await expect(page.getByText(SNAPSHOT_RULE)).toBeVisible();
 });
 
