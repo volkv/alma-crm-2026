@@ -9,11 +9,6 @@
  * ровно то, как ведёт себя S3 — отсутствующий объект, повторная запись, чтение
  * потоком, — и подделка проверяла бы подделку.
  *
- * Своё хранилище на файл всё же бывает нужно: проба живости гасит его посреди
- * прогона, и общее унесло бы вместе с ним соседние файлы. Такой файл просит
- * `startTestDatabase({ isolatedStorage: true })`, и тогда `stop()` гасит
- * контейнер, а не убирает бакет.
- *
  * Свой клиент, а не тот, которым ходит приложение: проверка должна смотреть на
  * хранилище со стороны, иначе сломанный код хранилища подтвердил бы сам себя.
  */
@@ -52,12 +47,7 @@ export type TestStorage = {
 	read: (key: string) => Promise<Buffer>;
 	/** Убирает объект: так проверяется поведение при пропавшем файле. */
 	remove: (key: string) => Promise<void>;
-	/**
-	 * Убирает за файлом тестов: свой бакет — или весь контейнер, если хранилище
-	 * у файла своё. Второй вызов ничего не делает: для файла со своим
-	 * хранилищем остановка — это ещё и способ показать коду недоступное
-	 * хранилище, поэтому её зовут и из теста, и из уборки за прогоном.
-	 */
+	/** Убирает бакет файла тестов. Второй вызов ничего не делает. */
 	stop: () => Promise<void>;
 };
 
@@ -84,18 +74,11 @@ export async function startStorageServer(): Promise<{
 	};
 }
 
-export async function startTestStorage(options?: {
-	/** Хранилище прогона. Не передано — файл поднимает своё и сам его гасит. */
-	server?: StorageServer;
+export async function startTestStorage({
+	server
+}: {
+	server: StorageServer;
 }): Promise<TestStorage> {
-	let own: Awaited<ReturnType<typeof startStorageServer>> | undefined;
-	let server = options?.server;
-
-	if (server === undefined) {
-		own = await startStorageServer();
-		server = own.server;
-	}
-
 	// Свой бакет на файл тестов: имя короткое и из разрешённых знаков —
 	// `S3_BUCKET` приложение проверяет регулярным выражением.
 	const bucket = `lct-test-${crypto.randomUUID().replaceAll('-', '').slice(0, 16)}`;
@@ -187,13 +170,9 @@ export async function startTestStorage(options?: {
 
 			stopped = true;
 
-			if (own === undefined) {
-				await dropBucket();
-			}
+			await dropBucket();
 
 			client.destroy();
-
-			await own?.stop();
 		}
 	};
 }

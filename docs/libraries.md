@@ -123,9 +123,7 @@ pnpm run check:security
 # security-report/sbom-image.cdx.json  — состав собранного образа
 ```
 
-Те же два файла выгружает CI: задача `security` в `.github/workflows/ci.yml` кладёт их в артефакт
-`security-reports` на любом исходе прогона. Как их читать и чем открывать — [`security.md`](security.md),
-раздел «Как читать SBOM».
+Как их читать и чем открывать — [`security.md`](security.md), раздел «Как читать SBOM».
 
 ## Лицензионная чистота
 

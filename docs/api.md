@@ -211,18 +211,18 @@ curl -sS -X POST "$BASE/v1/interactions" \
 
 **Организации и взаимодействия**
 
-| Метод и путь                              | Право                | Что делает                                                           |
-| ----------------------------------------- | -------------------- | -------------------------------------------------------------------- |
-| `GET /v1/organizations`                   | `organizations.read` | страница списка, фильтр `kind`, поиск `q`                            |
-| `GET /v1/organizations/{id}`              | `organizations.read` | карточка организации                                                 |
-| `GET /v1/organizations/{id}/interactions` | `interactions.read`  | взаимодействия, где организация — сторона; вуз вне области даёт ноль |
-| `GET /v1/contracts`                       | `organizations.read` | договоры с позициями; фильтры `organizationId`, `status`             |
-| `GET /v1/interactions`                    | `interactions.read`  | страница списка: состояние, стадия, просрочка, поиск                 |
-| `GET /v1/interactions/{id}`               | `interactions.read`  | карточка: стороны, программы, продукты, договор, лента стадий        |
-| `GET /v1/interactions/{id}/history`       | `interactions.read`  | записи о стадиях и предметные изменения плана одним ответом          |
-| `GET /v1/interactions/{id}/comments`      | `interactions.read`  | лента комментариев целиком                                           |
-| `POST /v1/interactions/{id}/comments`     | `interactions.write` | комментарий от имени владельца ключа; с `Idempotency-Key`            |
-| `POST /v1/interactions/{id}/transitions`  | `stages.transition`  | шаг вперёд, возврат или пропуск; с `Idempotency-Key`                 |
+| Метод и путь                              | Право                | Что делает                                                                                                             |
+| ----------------------------------------- | -------------------- | ---------------------------------------------------------------------------------------------------------------------- |
+| `GET /v1/organizations`                   | `organizations.read` | страница списка, фильтр `kind`, поиск `q`                                                                              |
+| `GET /v1/organizations/{id}`              | `organizations.read` | карточка организации                                                                                                   |
+| `GET /v1/organizations/{id}/interactions` | `interactions.read`  | взаимодействия, где организация — сторона; вуз вне области даёт ноль                                                   |
+| `GET /v1/contracts`                       | `organizations.read` | договоры с позициями; фильтры `organizationId`, `status`                                                               |
+| `GET /v1/interactions`                    | `interactions.read`  | страница списка: состояние, стадия, просрочка, поиск, вуз, направление, программа, продукт (`org`/`dir`/`prog`/`prod`) |
+| `GET /v1/interactions/{id}`               | `interactions.read`  | карточка: стороны, программы, продукты, договор, лента стадий                                                          |
+| `GET /v1/interactions/{id}/history`       | `interactions.read`  | записи о стадиях и предметные изменения плана одним ответом                                                            |
+| `GET /v1/interactions/{id}/comments`      | `interactions.read`  | лента комментариев целиком                                                                                             |
+| `POST /v1/interactions/{id}/comments`     | `interactions.write` | комментарий от имени владельца ключа; с `Idempotency-Key`                                                              |
+| `POST /v1/interactions/{id}/transitions`  | `stages.transition`  | шаг вперёд, возврат или пропуск; с `Idempotency-Key`                                                                   |
 
 **Справочники, документы, обучение**
 
@@ -457,9 +457,6 @@ await revokeApiKey(ctx, apiKeyId);
   есть описание, тег, право и схема ответа, примеры сходятся со схемами, документ собирается, а
   раздел «Обмен» — это ровно маршруты машинного субъекта. Базы этой проверке не нужно, поэтому
   она идёт на каждом прогоне.
-- `tests/integration/api/endpoints.test.ts` — эндпоинты чтения и обмена: успешный ответ, отказ
-  без ключа и без права на каждом из них, 404 на чужую запись и сужение выборки областью доступа
-  владельца ключа.
 
 Счётчики ограничителя стирает между проверками `reset()` из `tests/integration/helpers/db.ts` —
 вместе с таблицами: окно у них целая минута, и без этого тест видел бы то, что насчитал предыдущий.

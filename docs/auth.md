@@ -332,15 +332,14 @@ export const load = async (event) => {
 
 ## Проверки
 
-| Что                                                                                  | Чем                                              |
-| ------------------------------------------------------------------------------------ | ------------------------------------------------ |
-| Отображение ролей, JIT, связывание по почте, отказы                                  | `tests/integration/auth/auth.test.ts`            |
-| Подпись id-токена по ключам realm, публичное и внутреннее основание, сверка `issuer` | `tests/unit/auth/oidc-realm.test.ts`             |
-| Перенос адреса каталога на внутреннее основание                                      | `tests/unit/auth/oidc-endpoints.test.ts`         |
-| Realm отдаёт метаданные, роли и токены                                               | `tests/integration/auth/keycloak-helper.test.ts` |
-| Сессия, гвардия, снятие мёртвой cookie                                               | `tests/unit/hooks/session.test.ts`               |
-| Безопасный `next`                                                                    | `tests/unit/auth/redirect.test.ts`               |
-| Пароль стенда на карточке входа                                                      | `tests/unit/auth/demo-password.test.ts`          |
-| Политика пароля, лимиты и адреса возврата realm                                      | `tests/unit/auth/realm-config.test.ts`           |
-| Вход, выход, отказ без роли, истёкшая сессия и отправка формы                        | `e2e/auth.test.ts`                               |
-| Границы области и назначение ответственного                                          | `e2e/access.test.ts`                             |
+| Что                                                                                  | Чем                                                                                        |
+| ------------------------------------------------------------------------------------ | ------------------------------------------------------------------------------------------ |
+| Отображение ролей, JIT, связывание по почте, отказы                                  | `tests/integration/auth/auth.test.ts`                                                      |
+| Подпись id-токена по ключам realm, публичное и внутреннее основание, сверка `issuer` | `tests/unit/auth/oidc-realm.test.ts`                                                       |
+| Перенос адреса каталога на внутреннее основание                                      | `tests/unit/auth/oidc-endpoints.test.ts`                                                   |
+| Сессия, гвардия, снятие мёртвой cookie                                               | `tests/unit/hooks/session.test.ts`                                                         |
+| Безопасный `next`                                                                    | `tests/unit/auth/redirect.test.ts`                                                         |
+| Пароль стенда на карточке входа                                                      | `tests/unit/auth/demo-password.test.ts`                                                    |
+| Политика пароля, лимиты и адреса возврата realm                                      | `tests/unit/auth/realm-config.test.ts`                                                     |
+| Вход, выход, отказ без роли, истёкшая сессия и отправка формы                        | `e2e/auth.test.ts`                                                                         |
+| Границы области и назначение ответственного                                          | `tests/integration/rbac/scope.test.ts`, `tests/integration/directory/responsibles.test.ts` |

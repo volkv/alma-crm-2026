@@ -12,29 +12,18 @@
 import { moscowDay, moscowDayStart } from '$lib/contracts/calendar';
 import {
 	REPORT_PDF_ROWS,
-	type ReportCharts,
-	type ReportEventKind,
 	type ReportFormat,
 	type ReportPdfLayout,
 	type ReportQuery,
-	type ReportTotals,
 	type ReportView
 } from '$lib/contracts/reports';
 import type { ActorContext } from '../actor';
-import {
-	BREAKDOWN_VIEWS,
-	buildBreakdown,
-	buildFunnelFromCounts,
-	buildMovementChart
-} from './charts';
-import type { ReportAttributes, ReportSelection } from './conditions';
-import { movementEventKind, readMovementRows, type MovementRow } from './movement';
+import { movementEventKind, readMovementRows } from './movement';
 import { readSnapshotRows } from './snapshot';
-import { createStageIndex, readActiveWorkspaces, type StageIndex } from './stages';
-import { readReportSnapshot, type ReportExecutor } from './transaction';
+import { createStageIndex, readActiveWorkspaces } from './stages';
+import { readReportSnapshot } from './transaction';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
-const SECONDS_IN_DAY = 86_400;
 
 export type InvariantViolation = { invariant: string; message: string };
 
@@ -139,157 +128,6 @@ export function checkExportInvariant(
 			invariant: 'И5',
 			message: `в файле ${format} строк ${count}, ожидалось ${expectedFileRows(view, format as ReportFormat, pdfLayout)}`
 		}));
-}
-
-/**
- * Эталонный пересчёт: те же итоги, воронка, динамика и разрезы, посчитанные
- * перебором **полного** набора строк выгрузки.
- *
- * Это второе определение тех же чисел, и держат его здесь намеренно: продукт
- * считает их агрегатами в базе (`reports/aggregate.ts`), а тест сверяет два
- * ответа на эталонном наборе. Разойтись они могут только ошибкой, и поймать её
- * больше нечем: агрегат, сверенный сам с собой, доказывает лишь то, что он
- * повторяем.
- */
-export async function recountFromRows(
-	ctx: ActorContext,
-	query: ReportQuery
-): Promise<{ totals: ReportTotals; charts: ReportCharts }> {
-	return readReportSnapshot(ctx, async ({ tx }) => {
-		const index = createStageIndex(await readActiveWorkspaces(tx, ctx));
-
-		return query.mode === 'movement'
-			? recountMovement(tx, ctx, query)
-			: recountSnapshot(tx, ctx, query, index);
-	});
-}
-
-/** Разрезы по полному набору строк: те же подписи, что у агрегата. */
-function breakdownsFromRows(rows: readonly (ReportSelection & ReportAttributes)[]) {
-	const values = {
-		organizations: rows.map((row) => ({
-			ids: row.organizationId === null ? [] : [row.organizationId],
-			names: row.organizationName === null ? [] : [row.organizationName]
-		})),
-		directions: rows.map((row) => ({ ids: row.directionIds, names: row.directions })),
-		products: rows.map((row) => ({ ids: row.productIds, names: row.products })),
-		owners: rows.map((row) => ({
-			ids: [row.ownerUserId],
-			names: [row.ownerName ?? row.ownerUserId]
-		}))
-	};
-
-	return BREAKDOWN_VIEWS.map((view) =>
-		buildBreakdown(view.key, view.label, view.param, values[view.key])
-	);
-}
-
-async function recountSnapshot(
-	db: ReportExecutor,
-	ctx: ActorContext,
-	query: ReportQuery,
-	index: StageIndex
-): Promise<{ totals: ReportTotals; charts: ReportCharts }> {
-	const rows = await readSnapshotRows(db, ctx, query);
-	const stageCounts = new Map<string, number>();
-	const closed: Record<string, number> = {};
-	const stageNames = new Map<string, string | null>();
-	let paused = 0;
-	let overdue = 0;
-
-	for (const row of rows) {
-		if (row.entryId !== null && row.stageKey !== null) {
-			const bucketId = `${row.workspaceId}:${row.stageKey}`;
-
-			stageCounts.set(bucketId, (stageCounts.get(bucketId) ?? 0) + 1);
-
-			if (!stageNames.has(bucketId)) {
-				stageNames.set(bucketId, row.stageName);
-			}
-
-			if (row.pauseReason !== null) {
-				paused += 1;
-			}
-
-			if (
-				row.activeSeconds !== null &&
-				row.slaDays !== null &&
-				row.activeSeconds > row.slaDays * SECONDS_IN_DAY
-			) {
-				overdue += 1;
-			}
-		} else {
-			closed[row.status] = (closed[row.status] ?? 0) + 1;
-		}
-	}
-
-	return {
-		totals: {
-			rowCount: rows.length,
-			interactionCount: new Set(rows.map((row) => row.interactionId)).size,
-			paused,
-			overdue
-		},
-		charts: {
-			funnel: buildFunnelFromCounts(
-				index,
-				// Тот же порядок корзин, что у агрегата: стадии, которых нет в
-				// действующем процессе, приписываются в конец по мере встречи, и
-				// сравнивать два ответа можно только при одинаковом порядке.
-				[...stageCounts]
-					.map(([bucketId, value]) => ({
-						bucketId,
-						stageName: stageNames.get(bucketId) ?? null,
-						value
-					}))
-					.sort((left, right) => left.bucketId.localeCompare(right.bucketId)),
-				closed
-			),
-			movement: null,
-			breakdowns: breakdownsFromRows(rows)
-		}
-	};
-}
-
-async function recountMovement(
-	db: ReportExecutor,
-	ctx: ActorContext,
-	query: ReportQuery
-): Promise<{ totals: ReportTotals; charts: ReportCharts }> {
-	// Переносы читаются вместе со всеми: их надо отделить тем же разбором, что
-	// и в продукте, а не условием выборки.
-	const raw = await readMovementRows(db, ctx, query, { migrations: 'include' });
-	const events: { row: MovementRow; kind: ReportEventKind }[] = [];
-	let migrated = 0;
-
-	for (const row of raw) {
-		const kind = movementEventKind(row);
-
-		if (kind === 'migrated') {
-			migrated += 1;
-		} else {
-			events.push({ row, kind });
-		}
-	}
-
-	return {
-		totals: {
-			rowCount: events.length,
-			interactionCount: new Set(events.map(({ row }) => row.interactionId)).size,
-			paused: 0,
-			overdue: 0
-		},
-		charts: {
-			funnel: null,
-			movement: buildMovementChart(
-				query.from,
-				query.to,
-				events.map(({ row, kind }) => ({ kind, day: moscowDay(row.movedAt), count: 1 })),
-				migrated
-			),
-			breakdowns: breakdownsFromRows(events.map(({ row }) => row))
-		}
-	};
 }
 
 /** Строка сверки режимов по одной стадии или корзине закрытых. */

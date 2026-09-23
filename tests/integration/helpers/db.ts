@@ -90,15 +90,7 @@ async function withAdmin<TResult>(
 	}
 }
 
-export async function startTestDatabase(options?: {
-	/**
-	 * Своё хранилище файлов на этот файл тестов вместо общего.
-	 *
-	 * Нужно там, где проверка гасит хранилище посреди прогона: общее унесло бы
-	 * вместе с ним и соседние файлы. Цена — контейнер MinIO на такой файл.
-	 */
-	isolatedStorage?: boolean;
-}): Promise<TestDatabase> {
+export async function startTestDatabase(): Promise<TestDatabase> {
 	const stack = inject('integrationStack');
 
 	// Своя база на файл тестов, снятая с образца: миграции в нём применены один
@@ -108,12 +100,12 @@ export async function startTestDatabase(options?: {
 		admin.unsafe(`create database "${databaseName}" template "${stack.templateDatabase}"`)
 	);
 
-	const storage = await startTestStorage(
-		options?.isolatedStorage === true ? undefined : { server: stack.storage }
-	).catch(async (error: unknown) => {
-		await dropTestDatabase(stack, databaseName);
-		throw error;
-	});
+	const storage = await startTestStorage({ server: stack.storage }).catch(
+		async (error: unknown) => {
+			await dropTestDatabase(stack, databaseName);
+			throw error;
+		}
+	);
 
 	// Всё, что дальше, может отказать — справочные строки, сид, — а база и бакет
 	// к этому моменту уже заведены. Без этой уборки отказ уносил бы ссылку на них
