@@ -54,6 +54,11 @@ export type DiagnosticsReport = {
 	links: DiagnosticLink[];
 	/** Основные сценарии работают без интернета: ответили все обязательные связи. */
 	offlineReady: boolean;
+	/**
+	 * Узлы внутри сети, куда обмену разрешено ходить (`OUTBOUND_ALLOWED_HOSTS`):
+	 * имена, адреса и сети. Пустой — открыты только публичные адреса.
+	 */
+	outboundAllowList: readonly string[];
 };
 
 /**

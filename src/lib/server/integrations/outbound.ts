@@ -12,13 +12,19 @@
  * разрешается в адреса, и годятся они все или не годится ни один — частичного
  * ответа тут нет.
  *
+ * В закрытом контуре CMS и система обучения заказчика сами стоят в приватной
+ * сети. Для них есть список разрешённых узлов (`OUTBOUND_ALLOWED_HOSTS`,
+ * `allow-list.ts`): он открывает названные имена и сети, а не приватные сети
+ * целиком — каталог учётных записей и хранилище по соседству остаются закрыты.
+ *
  * Проверка идёт дважды: при сохранении адреса и в момент отправки. Один раз
  * мало — имя, сохранённое публичным, к моменту отправки указывает куда угодно
  * (перепривязка DNS), и вся защита свелась бы к одному запросу в прошлом.
  */
 import { lookup } from 'node:dns/promises';
-import { localAddressKind, outboundUrlIssue, STAND_MOCK_HOSTS } from '$lib/contracts/integrations';
+import { localAddressKind, outboundUrlIssue } from '$lib/contracts/integrations';
 import { getConfig } from '../config';
+import { allowsAddress, type OutboundAllowList } from './allow-list';
 
 /**
  * Почему по адресу не пошли. `temporary` отделяет «так нельзя» от «сейчас не
@@ -27,21 +33,6 @@ import { getConfig } from '../config';
  * другую.
  */
 export type OutboundIssue = { message: string; temporary: boolean };
-
-/**
- * Разрешает ли развёртывание ходить на петлю и в приватные сети.
- *
- * На машине разработчика и в прогоне имитаторы, приёмник подписки и система
- * обучения поднимаются рядом, на `127.0.0.1`, и без этого связку нечем
- * проверить. В производственном режиме всё наоборот, поэтому умолчание зависит
- * от режима: `production` — запрет, остальные — разрешение. Развёртывание
- * может сказать иначе, но только явно.
- */
-export function allowsLocalTargets(): boolean {
-	const config = getConfig();
-
-	return config.ALLOW_LOCAL_TARGETS ?? config.NODE_ENV !== 'production';
-}
 
 /** Все адреса имени; пустой список — имя не разрешилось. */
 async function resolveHost(host: string): Promise<string[]> {
@@ -57,12 +48,19 @@ async function resolveHost(host: string): Promise<string[]> {
 /**
  * Годится ли адрес как адресат исходящего запроса; `null` — годится.
  *
- * `allowLocal` передаётся, а не читается из настроек: правило должно
- * проверяться само по себе, без окружения целиком.
+ * Петля и приватные сети открыты только тем, что назвал список разрешённых
+ * узлов (`OUTBOUND_ALLOWED_HOSTS`): имя узла — если оно названо точно, адрес —
+ * если он входит в одну из сетей списка, причём у имени не из списка
+ * проверяется каждый адрес, в который оно разрешилось. `null` вместо списка —
+ * только публичные адреса: так ходят внешние источники, для которых сеть
+ * заказчика закрыта при любом списке.
+ *
+ * Список передаётся, а не читается из настроек: правило должно проверяться
+ * само по себе, без окружения целиком.
  */
 export async function outboundAddressIssue(
 	raw: string,
-	allowLocal: boolean
+	allowList: OutboundAllowList | null
 ): Promise<OutboundIssue | null> {
 	const shape = outboundUrlIssue(raw);
 
@@ -71,17 +69,12 @@ export async function outboundAddressIssue(
 	}
 
 	const host = new URL(raw).hostname;
-
-	// Имитаторы стенда разрешены поимённо: они и живут по адресу, который иначе
-	// был бы запрещён, — внутри сети `docker-compose.yml`.
-	if (STAND_MOCK_HOSTS.has(host)) {
-		return null;
-	}
-
 	const literal = localAddressKind(host);
 
 	if (literal !== null) {
-		return allowLocal ? null : refusal(host, literal);
+		return allowList !== null && allowsAddress(allowList, host)
+			? null
+			: refusal(host, literal, allowList);
 	}
 
 	// Имя узла — это ещё не адрес: за `metadata.internal` и за именем сервиса
@@ -93,15 +86,17 @@ export async function outboundAddressIssue(
 			return { message: `Имя «${host}» не разрешается в адрес`, temporary: true };
 		}
 
-		if (allowLocal) {
+		// Имя из списка названо поимённо тем, кто ставил установку: оно и живёт
+		// внутри сети заказчика, и его адреса — это адреса его DNS.
+		if (allowList !== null && allowList.hosts.has(host)) {
 			return null;
 		}
 
 		for (const address of addresses) {
 			const kind = localAddressKind(address);
 
-			if (kind !== null) {
-				return refusal(`${host} (${address})`, kind);
+			if (kind !== null && (allowList === null || !allowsAddress(allowList, address))) {
+				return refusal(`${host} (${address})`, kind, allowList);
 			}
 		}
 	}
@@ -109,19 +104,35 @@ export async function outboundAddressIssue(
 	return null;
 }
 
-function refusal(where: string, kind: string): OutboundIssue {
+function refusal(where: string, kind: string, allowList: OutboundAllowList | null): OutboundIssue {
 	return {
-		message: `Адрес «${where}» ведёт внутрь установки (${kind}): наружу система ходит только на публичные адреса`,
+		message:
+			allowList === null
+				? `Адрес «${where}» ведёт внутрь установки (${kind}): внешние источники запрашиваются только по публичным адресам`
+				: `Адрес «${where}» ведёт внутрь установки (${kind}) и не входит в список разрешённых узлов (OUTBOUND_ALLOWED_HOSTS)`,
 		temporary: false
 	};
 }
 
 /**
- * То же правило для места, где отказ — это отказ формы. Читает настройку
- * развёртывания само: вызывающему остаётся адрес.
+ * Правило для адресов связей внутри сети заказчика — подписок, обмена, системы
+ * обучения — там, где отказ — это отказ формы. Список разрешённых узлов берёт
+ * из настроек развёртывания само: вызывающему остаётся адрес.
  */
 export async function outboundTargetIssue(raw: string): Promise<string | null> {
-	const issue = await outboundAddressIssue(raw, allowsLocalTargets());
+	const issue = await outboundAddressIssue(raw, getConfig().OUTBOUND_ALLOWED_HOSTS);
+
+	return issue === null ? null : issue.message;
+}
+
+/**
+ * Правило для внешних источников (сайты вузов): только публичные адреса, какой
+ * бы список ни назвало развёртывание. Список открывает CMS и систему обучения,
+ * а адрес сайта берётся из карточки организации — его пишет не тот, кто ставил
+ * установку.
+ */
+export async function publicTargetIssue(raw: string): Promise<string | null> {
+	const issue = await outboundAddressIssue(raw, null);
 
 	return issue === null ? null : issue.message;
 }

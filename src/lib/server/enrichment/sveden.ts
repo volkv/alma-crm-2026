@@ -19,10 +19,11 @@
  * перенаправление на чужой домен — отказ, а не переход, а переход на `http`
  * внутри сайта повышается до `https` (`redirectTarget`). Каждый заход, включая
  * каждое перенаправление, ещё и проверяется правилом исходящих адресов
- * (`integrations/outbound.ts`): иначе первый же `Location` увёл бы запрос
- * внутрь сети развёртывания.
+ * (`integrations/outbound.ts`) в строгом виде — только публичные адреса, без
+ * списка разрешённых узлов: иначе первый же `Location` увёл бы запрос внутрь
+ * сети развёртывания или к CMS заказчика.
  */
-import { outboundTargetIssue } from '../integrations/outbound';
+import { publicTargetIssue } from '../integrations/outbound';
 import { firstProperty, property, propertyValues, readItems, readMicrodata } from './microdata';
 import {
 	CONTACT_CANDIDATES_MAX,
@@ -452,7 +453,7 @@ async function fetchPage(target: string, siteHost: string): Promise<Fetched | nu
 	for (let hop = 0; hop <= REDIRECT_MAX; hop += 1) {
 		// Проверяется каждый переход, а не только первый: `Location` — это новый
 		// адрес, и он ведёт куда угодно — на чужой сайт или внутрь сети.
-		if (!withinSite(siteHost, new URL(url).hostname) || (await outboundTargetIssue(url)) !== null) {
+		if (!withinSite(siteHost, new URL(url).hostname) || (await publicTargetIssue(url)) !== null) {
 			return null;
 		}
 

@@ -163,7 +163,10 @@ services:
       # `:?` with the colon: an installation that holds real people's contacts
       # has no business starting with an empty key.
       PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY:?set PII_ENCRYPTION_KEY in .env}
-      ALLOW_LOCAL_TARGETS: 'false'
+      # The CMS and LMS of the customer inside the closed network: host names,
+      # addresses or CIDR networks, comma-separated. Only they are open among
+      # loopback and private addresses; empty means public addresses only.
+      OUTBOUND_ALLOWED_HOSTS: ${OUTBOUND_ALLOWED_HOSTS?declare OUTBOUND_ALLOWED_HOSTS in .env}
     env_file:
       - .env
     volumes:

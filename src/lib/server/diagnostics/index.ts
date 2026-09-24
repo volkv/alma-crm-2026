@@ -397,7 +397,12 @@ export async function runDiagnostics(ctx: ActorContext): Promise<DiagnosticsRepo
 		)
 	];
 
-	return { checkedAt: new Date().toISOString(), links, offlineReady: isOfflineReady(links) };
+	return {
+		checkedAt: new Date().toISOString(),
+		links,
+		offlineReady: isOfflineReady(links),
+		outboundAllowList: config.OUTBOUND_ALLOWED_HOSTS.entries
+	};
 }
 
 export type ExternalCheck = {

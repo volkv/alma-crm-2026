@@ -149,16 +149,22 @@ describe('parseConfig', () => {
 		);
 	});
 
-	it('leaves local outgoing targets to the deployment and defaults by mode', () => {
-		// Умолчания нет: значение читают через `allowsLocalTargets()`, где режим и
-		// решает. Здесь проверяется, что переменная разбирается и не выдумывает
-		// себе значения.
-		expect(parseConfig(completeEnv).ALLOW_LOCAL_TARGETS).toBeUndefined();
-		expect(parseConfig({ ...completeEnv, ALLOW_LOCAL_TARGETS: 'true' }).ALLOW_LOCAL_TARGETS).toBe(
-			true
+	it('parses the outbound allow list and stops on a malformed entry', () => {
+		// Пусто — открыто только публичное; опечатка в списке останавливает запуск,
+		// а не молча закрывает обмен с CMS заказчика.
+		expect(parseConfig(completeEnv).OUTBOUND_ALLOWED_HOSTS.entries).toEqual([]);
+		expect(
+			parseConfig({ ...completeEnv, OUTBOUND_ALLOWED_HOSTS: ' CMS.corp.local, 10.20.0.0/24 ' })
+				.OUTBOUND_ALLOWED_HOSTS.entries
+		).toEqual(['cms.corp.local', '10.20.0.0/24']);
+		expect(() =>
+			parseConfig({ ...completeEnv, OUTBOUND_ALLOWED_HOSTS: '10.0.0.0/33' })
+		).toThrowError(/OUTBOUND_ALLOWED_HOSTS/);
+		expect(() => parseConfig({ ...completeEnv, OUTBOUND_ALLOWED_HOSTS: '0.0.0.0/0' })).toThrowError(
+			/OUTBOUND_ALLOWED_HOSTS/
 		);
-		expect(() => parseConfig({ ...completeEnv, ALLOW_LOCAL_TARGETS: 'yes' })).toThrowError(
-			/ALLOW_LOCAL_TARGETS/
+		expect(() => parseConfig({ ...completeEnv, OUTBOUND_ALLOWED_HOSTS: '*.corp' })).toThrowError(
+			/OUTBOUND_ALLOWED_HOSTS/
 		);
 	});
 

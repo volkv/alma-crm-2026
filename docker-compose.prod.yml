@@ -360,10 +360,13 @@ services:
       # значение остаётся решением развёртывания: ключей обмена тогда нет.
       EXCHANGE_API_KEY_CMS: ${EXCHANGE_API_KEY_CMS?declare EXCHANGE_API_KEY_CMS in .env}
       EXCHANGE_API_KEY_LMS: ${EXCHANGE_API_KEY_LMS?declare EXCHANGE_API_KEY_LMS in .env}
-      # Outgoing requests go to public addresses only: an address typed into the
-      # integrations screen must not be able to reach the account directory, the
-      # object storage or the cloud metadata service next door.
-      ALLOW_LOCAL_TARGETS: 'false'
+      # Hosts inside the network the server may reach on its own (names, addresses,
+      # CIDR networks, comma-separated): `mock-cms,mock-lms` on the stand, the CMS
+      # and LMS of the customer otherwise. Everything else on loopback and in
+      # private networks stays closed — the account directory, the object storage
+      # and the cloud metadata service next door included. `?` without the colon:
+      # it must be named in `.env`; empty means public addresses only.
+      OUTBOUND_ALLOWED_HOSTS: ${OUTBOUND_ALLOWED_HOSTS?declare OUTBOUND_ALLOWED_HOSTS in .env}
     env_file:
       - .env
     # Файлы фирменной гарнитуры Rostelecom Basis. В образе их нет и в

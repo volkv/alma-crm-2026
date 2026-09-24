@@ -384,12 +384,13 @@ services:
       # Nothing sits in front of the app in the local stack, so the client
       # address is the socket address and forwarding headers must not be trusted.
       TRUST_PROXY: 'false'
-      # Outgoing requests stay on public addresses even here: the imitators are
-      # reached by their compose names, which the rule allows by name, and
-      # everything else inside this network — Keycloak, MinIO, the database — is
-      # exactly what an address typed into the integrations screen must not be
-      # able to reach.
-      ALLOW_LOCAL_TARGETS: 'false'
+      # Hosts inside the network the server may reach on its own: the two
+      # imitators, by their compose names, and nothing else. Everything else
+      # inside this network — Keycloak, MinIO, the database — is exactly what an
+      # address typed into the integrations screen must not be able to reach.
+      # Pinned rather than read from `.env`: the developer's `.env` lists the
+      # loopback of the host, which inside this container is the app itself.
+      OUTBOUND_ALLOWED_HOSTS: 'mock-cms,mock-lms'
       # Object storage. Inside the compose network MinIO answers on its own
       # name; path style is the only addressing that works there, because
       # `bucket.minio` resolves nowhere.

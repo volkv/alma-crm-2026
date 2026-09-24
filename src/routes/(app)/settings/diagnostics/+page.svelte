@@ -154,6 +154,21 @@
 			</Table.Root>
 		</div>
 
+		<p class="text-xs text-muted-foreground" data-testid="outbound-allow-list">
+			Разрешённые узлы внутри сети (<code>OUTBOUND_ALLOWED_HOSTS</code>):
+			{#if data.report.outboundAllowList.length === 0}
+				список пуст — CMS, система обучения и приёмники подписок принимаются только по публичным
+				адресам.
+			{:else}
+				{#each data.report.outboundAllowList as entry, index (entry)}
+					<code class="break-all">{entry}</code>{index < data.report.outboundAllowList.length - 1
+						? ', '
+						: '.'}
+				{/each}
+				Адрес в приватной сети или на петле, не входящий в список, отклоняется.
+			{/if}
+		</p>
+
 		<div data-tour="diagnostics-external" class="flex flex-col gap-2 border-t border-border pt-4">
 			<InlineHint>
 				Внешние источники — Dadata и сайты вузов — включаются флагом «Внешние источники» в

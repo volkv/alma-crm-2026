@@ -155,6 +155,9 @@ async function prepareTestDatabase(
 	process.env.ORIGIN = 'http://localhost:5173';
 	process.env.DEMO_MODE = 'false';
 	process.env.TRUST_PROXY = 'false';
+	// Имитаторы и приёмники прогона слушают петлю, а она открыта исходящим
+	// запросам только по списку.
+	process.env.OUTBOUND_ALLOWED_HOSTS = 'localhost,127.0.0.0/8,::1/128';
 	// Ключ шифрования контактов людей: свой на прогон, потому что и база своя.
 	// Без него сервисы справочника не прочитали бы ни одного контакта.
 	process.env.PII_ENCRYPTION_KEY = 'KfAA/EWod3wd+ai6b1LHC62LWho5pPp1ajJnQNdbqUs=';
