@@ -12,7 +12,8 @@
 #   scripts/load/run.sh breakdown <файл>  разложить прогон по шагам сценария
 #   scripts/load/run.sh down      погасить стенд и снести его тома
 #
-# Стенд поднимается под своим именем проекта (`lct-load`) и на своих портах:
+# Стенд поднимается под своим именем проекта (`lct-load`, или `LOAD_PROJECT`
+# на машине, где это имя занято) и на своих портах:
 # см. `scripts/load/compose.load.yml`. Результаты k6 складываются в каталог,
 # заданный `OUT` (по умолчанию — временный), и туда же уезжает сводка JSON.
 #
@@ -22,7 +23,7 @@
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
-PROJECT=lct-load
+PROJECT="${LOAD_PROJECT:-lct-load}"
 ENV_FILE=scripts/load/load.env
 COMPOSE=(docker compose -p "$PROJECT" --env-file "$ENV_FILE"
 	-f docker-compose.yml -f docker-compose.prod.yml -f scripts/load/compose.load.yml)
@@ -298,7 +299,15 @@ up)
 	# миграций и демонстрационного сида (`--if-demo` в команде контейнера), а
 	# нагрузочный сид, запущенный рядом с ещё идущим первым, заливал бы тот же
 	# каталог прав наперегонки с ним.
-	"${COMPOSE[@]}" up -d --build --wait
+	#
+	# `LOAD_BUILD=0` — образ `<проект>-app` уже лежит на машине (собран в другом
+	# месте и привезён `docker save | docker load`): на общем сервере сборка
+	# отняла бы у соседей два гигабайта памяти ради того же образа.
+	if [[ "${LOAD_BUILD:-1}" == 0 ]]; then
+		"${COMPOSE[@]}" up -d --wait
+	else
+		"${COMPOSE[@]}" up -d --build --wait
+	fi
 	"${COMPOSE[@]}" exec -T app node scripts/seed/index.ts --load
 	fixture
 	accounts

@@ -97,13 +97,25 @@ function hasSession(baseUrl, probePath) {
 	return probe.status === 200;
 }
 
+/**
+ * Адрес, с которого «пришёл» этот VU, — как его допишет в `X-Forwarded-For`
+ * обратный прокси. Лимит начала входа считается на адрес
+ * (`auth/start-limit.ts`), а все VU идут с петли одной машины: без своего
+ * адреса у каждого сотня VU исчерпала бы лимит одного человека, и прогон мерил
+ * бы отказ входа. Стенд верит заголовку (`TRUST_PROXY` в `compose.load.yml`).
+ */
+function forwardedFor() {
+	return `10.${(__VU >> 16) & 255}.${(__VU >> 8) & 255}.${__VU & 255}`;
+}
+
 /** Один заход. `false` — каталог снова показал форму входа. */
 function attemptSignIn(baseUrl, account, password, probePath) {
 	const started = http.post(`${baseUrl}/login`, null, {
 		headers: {
 			...HTML,
 			Origin: baseUrl,
-			'Content-Type': 'application/x-www-form-urlencoded'
+			'Content-Type': 'application/x-www-form-urlencoded',
+			'X-Forwarded-For': forwardedFor()
 		},
 		redirects: 0,
 		jar,
