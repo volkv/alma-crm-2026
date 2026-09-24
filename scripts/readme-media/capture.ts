@@ -267,10 +267,6 @@ async function capture(context: BrowserContext, shot: Frame, set: FrameSet): Pro
 			await page.getByText(shot.waitFor).first().waitFor({ state: 'visible', timeout: 20_000 });
 		}
 
-		if (shot.tab !== undefined) {
-			await page.getByRole('tab', { name: shot.tab }).click();
-		}
-
 		// Анимации входа компонентов на снимке превращаются в полупрозрачные
 		// карточки: кадр снимается после того, как они закончились.
 		await page.waitForTimeout(600);

@@ -555,6 +555,29 @@ async function drawAttachment(): Promise<string> {
 }
 
 /**
+ * Открыть «Сделано на стадии», если оно есть и ещё закрыто.
+ *
+ * Отмеченный пункт чек-листа уезжает туда из списка того, что осталось
+ * сделать (`$lib/components/interaction-card/primary-action.svelte`), и без
+ * этого шага снять его же отметку было бы нечем — блок свёрнут `<details>`, и
+ * до раскрытия его пункты не видны браузеру. Раскрытие идёт один раз: клик по
+ * уже открытому блоку его закрыл бы.
+ */
+async function openDoneItems(page: Page): Promise<void> {
+	const details = page.locator('[data-slot="card-action-done"]');
+
+	if ((await details.count()) === 0) {
+		return;
+	}
+
+	const isOpen = await details.evaluate((element) => (element as HTMLDetailsElement).open);
+
+	if (!isOpen) {
+		await details.locator('summary').click();
+	}
+}
+
+/**
  * Привести пункт чек-листа к нужному состоянию.
  *
  * Именно привести, а не «нажать»: чек-лист принадлежит стадии и переживает
@@ -569,7 +592,9 @@ async function setChecklistItem(
 	done: boolean,
 	options: { shown?: boolean } = {}
 ): Promise<void> {
-	const toggle = page.getByRole('switch', { name: item });
+	await openDoneItems(page);
+
+	const toggle = page.getByRole('checkbox', { name: item });
 
 	await toggle.waitFor({ state: 'visible', timeout: WAIT });
 
@@ -734,9 +759,17 @@ async function groupKeys(page: Page): Promise<Set<string>> {
 	return new Set([...text.matchAll(/Поток\s+\d+\s+·\s+группа\s+(\S+)/gu)].map((found) => found[1]));
 }
 
-/** Перевести взаимодействие на соседнюю стадию: диалог перехода требует причины. */
-async function transition(page: Page, button: string, reason: string): Promise<void> {
-	await page.getByRole('button', { name: button }).click();
+/**
+ * Перевести взаимодействие на соседнюю стадию через меню «Ещё»: диалог
+ * перехода требует причины.
+ *
+ * Кнопка карточки одна, и это всегда «Перейти к «…»» — шаг вперёд; «Вернуть
+ * на «…»» и «Пропустить до «…»» команд там нет, они только в меню «Ещё»
+ * (`$lib/components/interaction-card/model.ts`, `primaryCommand`).
+ */
+async function transition(page: Page, label: string, reason: string): Promise<void> {
+	await page.getByRole('button', { name: 'Ещё' }).click();
+	await page.getByRole('menuitem', { name: label }).click();
 
 	const dialog = page.getByRole('dialog');
 
@@ -782,7 +815,10 @@ const SCENES: readonly Scene[] = [
 			await page.waitForURL(/\/interactions\/[0-9a-f-]{36}/u, { timeout: WAIT });
 			await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
 
-			await pointAt(page, page.getByText('Подтверждено отметкой документа').first());
+			// Подтверждение стоит в «Сделано на стадии»: пункт закрыт, поэтому
+			// свёрнут — раскрываем тем же движением, что и человек.
+			await press(page, page.locator('[data-slot="card-action-done"] summary'));
+			await pointAt(page, page.getByText('Подтверждено отметкой').first());
 			await beat(page, 1.4);
 		}
 	},
@@ -840,7 +876,10 @@ const SCENES: readonly Scene[] = [
 			await press(page, page.getByRole('link', { name: /Заявка с сайта/u }).first());
 			await page.waitForURL(/\/interactions\/[0-9a-f-]{36}/u, { timeout: WAIT });
 			await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
-			await page.getByText('Что происходит').first().waitFor({ state: 'visible', timeout: WAIT });
+			await page
+				.getByText('Все стадии процесса')
+				.first()
+				.waitFor({ state: 'visible', timeout: WAIT });
 
 			stand.interactionId = /\/interactions\/([0-9a-f-]{36})/u.exec(page.url())?.[1] ?? '';
 			stand.title = (await page.getByRole('heading', { level: 1 }).first().innerText()).trim();
@@ -856,15 +895,15 @@ const SCENES: readonly Scene[] = [
 	{
 		name: 'work',
 		role: 'manager',
-		caption: 'Работа КАМа: четыре вопроса, закрытый шаг с объяснением, переход с файлом',
+		caption: 'Работа КАМа: одна колонка, закрытый шаг с объяснением, переход с файлом',
 		narration: [
-			'Карточка отвечает на четыре вопроса: что происходит, что мешает, кто должен действовать и что можно сделать сейчас.',
+			'Карточка одной колонкой: факты и стадии сверху, дальше — что мешает шагу вперёд и что можно сделать прямо сейчас.',
 			'Шаг вперёд закрыт, и причина названа словами: два обязательных пункта стадии не закрыты.',
 			'Менеджер закрывает их — и переход становится доступен.',
 			'Переход просит объяснить, чем закончилась стадия: комментарий и файл остаются в истории, на той стадии, где их приложили.'
 		],
 		play: async (page, stand) => {
-			await visit(page, `/interactions/${stand.interactionId}`, 'Что мешает');
+			await visit(page, `/interactions/${stand.interactionId}`, 'Все стадии процесса');
 
 			const stage = await page.getByText(FIRST_STAGE).first().isVisible();
 
@@ -875,26 +914,24 @@ const SCENES: readonly Scene[] = [
 			await beat(page, 1.4);
 
 			// Недоступный шаг показывается до чек-листа: сначала видно, что кнопка
-			// закрыта и почему, и только потом — как это снимают.
-			await pointAt(page, page.getByRole('button', { name: `Перейти: ${RENAMED_STAGE.from}` }));
+			// закрыта и почему, и только потом — как это снимают. Чек-лист уже на
+			// экране — своей ссылки на него больше нет, пункты стоят прямо под
+			// кнопкой (`$lib/components/interaction-card/primary-action.svelte`).
+			await pointAt(page, page.getByRole('button', { name: `Перейти к «${RENAMED_STAGE.from}»` }));
 			await beat(page, 1.2);
-
-			await press(page, page.getByRole('link', { name: 'Открыть чек-лист стадии' }));
-			await beat(page, 0.8);
 
 			for (const item of FIRST_STAGE_CHECKLIST) {
 				await setChecklistItem(page, item, true, { shown: true });
 				await beat(page, 0.6);
 			}
 
-			await scroll(page, -900);
 			await page
-				.getByText('Ничего не мешает: шаг вперёд доступен.')
+				.getByText('Условия стадии выполнены')
 				.first()
 				.waitFor({ state: 'visible', timeout: WAIT });
 			await beat(page, 1.2);
 
-			await press(page, page.getByRole('button', { name: `Перейти: ${RENAMED_STAGE.from}` }));
+			await press(page, page.getByRole('button', { name: `Перейти к «${RENAMED_STAGE.from}»` }));
 
 			const dialog = page.getByRole('dialog');
 
@@ -910,7 +947,7 @@ const SCENES: readonly Scene[] = [
 				);
 			await beat(page, 0.5);
 
-			await dialog.locator('#transitionFiles').setInputFiles(await drawAttachment());
+			await dialog.locator('#card-transition-files').setInputFiles(await drawAttachment());
 			await beat(page, 0.6);
 
 			await press(page, dialog.getByRole('button', { name: 'Подтвердить' }));
@@ -924,7 +961,6 @@ const SCENES: readonly Scene[] = [
 
 			stand.moved = true;
 
-			await scroll(page, -900);
 			await beat(page, 1.4);
 		}
 	},
@@ -939,7 +975,7 @@ const SCENES: readonly Scene[] = [
 			'Применили ко всем — и работа продолжается там же, где стояла, уже под новым названием.'
 		],
 		play: async (page, stand) => {
-			await visit(page, '/settings/process/b2b', 'Процесс группы');
+			await visit(page, '/settings/process/b2b', 'Процесс');
 
 			await press(page, page.getByRole('button', { name: 'Черновик изменений' }));
 			await page
@@ -975,7 +1011,7 @@ const SCENES: readonly Scene[] = [
 			stand.renamed = true;
 			await beat(page, 1);
 
-			await visit(page, `/interactions/${stand.interactionId}`, 'Что происходит');
+			await visit(page, `/interactions/${stand.interactionId}`, 'Все стадии процесса');
 			await pointAt(page, page.getByText(RENAMED_STAGE.to).first());
 			await beat(page, 1.4);
 		}
@@ -1066,12 +1102,29 @@ const SCENES: readonly Scene[] = [
 
 			const before = await groupKeys(page);
 
-			await page.locator('#plannedSeats').fill('30');
-			await page.locator('#startsOn').fill('2026-10-01');
-			await page.locator('#endsOn').fill('2027-05-31');
+			// Заявка на поток — своим диалогом: кнопка на панели «Система обучения»
+			// открывает форму, а не держит её на карточке постоянно.
+			await press(page, page.getByRole('button', { name: 'Заявить поток' }));
+
+			const sendDialog = page.getByRole('dialog');
+
+			await sendDialog.waitFor({ state: 'visible', timeout: WAIT });
 			await beat(page, 0.6);
 
-			await press(page, page.getByRole('button', { name: 'Отправить в LMS' }));
+			await press(page, page.getByLabel('Для кого обучение'));
+			await press(page, page.getByRole('option', { name: 'Обучение студентов' }));
+			await beat(page, 0.4);
+
+			// Даты — не нативный `<input type="date">`, а поле в формате «12.09.2026»
+			// (`$lib/components/form/date-field.svelte`): значение отдаётся тем же
+			// текстом, каким его набирает человек.
+			await sendDialog.locator('#card-planned-seats').fill('30');
+			await sendDialog.locator('#card-starts-on').fill('01.10.2026');
+			await sendDialog.locator('#card-ends-on').fill('31.05.2027');
+			await beat(page, 0.6);
+
+			await press(page, sendDialog.getByRole('button', { name: 'Отправить в LMS' }));
+			await sendDialog.waitFor({ state: 'hidden', timeout: WAIT });
 
 			const group = await newGroup(page, before);
 
@@ -1089,11 +1142,14 @@ const SCENES: readonly Scene[] = [
 			await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
 			await scroll(page, 1100);
 			await page
-				.getByText(/зачислено \d+, завершили \d+/u)
+				.getByText('зачислено', { exact: true })
 				.first()
 				.waitFor({ state: 'visible', timeout: WAIT });
 			await beat(page, 1);
 
+			// Подтверждение стадии — тем же путём, что и в сцене `hook`: пункт
+			// «Сделано на стадии» свёрнут, пока его не раскрыли.
+			await press(page, page.locator('[data-slot="card-action-done"] summary'));
 			await pointAt(page, page.getByText('записью в системе обучения').first());
 			await beat(page, 1.4);
 		}
@@ -1105,7 +1161,7 @@ const SCENES: readonly Scene[] = [
 		narration: [
 			'Отчёт отвечает на два разных вопроса и не смешивает их: срез — где работа стоит на дату, движение — что случилось за период.',
 			'Клик по столбцу сужает тот же отчёт.',
-			'Выгрузка — та же ссылка с другим расширением: таблица и сводка собираются из одного готового отчёта, поэтому числа на экране и в файле совпадают.'
+			'Выгрузка — та же ссылка с другим расширением: PDF можно взять сводкой или целиком, а числа везде совпадают с тем, что на экране.'
 		],
 		play: async (page) => {
 			await visit(page, '/reports', 'Отчёты по взаимодействиям');
@@ -1128,25 +1184,39 @@ const SCENES: readonly Scene[] = [
 			await beat(page, 1.2);
 			await scroll(page, -420);
 
+			// PDF бывает сводкой или целиком: переключатель стоит вплотную к кнопке и
+			// меняет только её ссылку. «Целиком» выключен, когда в выборке больше
+			// строк, чем берёт полный PDF, — тогда сцена молча остаётся на «Сводке»,
+			// а не спотыкается о недоступную кнопку.
+			const fullLayout = page.getByTestId('report-pdf-layout-full');
+
+			if (await fullLayout.isEnabled()) {
+				await press(page, fullLayout);
+				await beat(page, 0.6);
+			}
+
 			const saved = new Map<string, string>();
 
-			for (const format of ['XLSX', 'PDF']) {
+			// Имя формата — то же, что в `data-testid="report-export-{format}"`
+			// (`src/routes/(app)/reports/+page.svelte`): подпись кнопки у PDF теперь
+			// несёт вид («PDF · целиком»), и по видимому тексту её не найти.
+			for (const format of ['xlsx', 'pdf'] as const) {
 				const download = page.waitForEvent('download', { timeout: WAIT });
 
-				await press(page, page.getByRole('link', { name: format, exact: true }).first());
+				await press(page, page.getByTestId(`report-export-${format}`));
 
 				const file = await download;
 				// Имя даём своё: у выгрузки его назначает заголовок ответа, и
 				// показывать в ролике надо не имя файла, а сам файл.
-				const target = path.join(WORK, `report.${format.toLowerCase()}`);
+				const target = path.join(WORK, `report.${format}`);
 
 				await file.saveAs(target);
 				saved.set(format, target);
-				console.log(`выгрузка ${format}: ${target}`);
+				console.log(`выгрузка ${format.toUpperCase()}: ${target}`);
 				await beat(page, 0.6);
 			}
 
-			const pdf = saved.get('PDF');
+			const pdf = saved.get('pdf');
 
 			if (pdf === undefined) {
 				throw new Error('Отчёт не отдал PDF: показывать нечего');
@@ -1389,11 +1459,9 @@ async function restore(browser: Browser, stand: Stand, storage: Map<Role, Sessio
 
 			await transition(
 				page,
-				`Вернуть: ${FIRST_STAGE}`,
+				`Вернуть на «${FIRST_STAGE}»`,
 				'Возврат стенда к исходному состоянию после записи показа.'
 			);
-
-			await page.getByRole('link', { name: 'Открыть чек-лист стадии' }).click();
 
 			// Чек-лист возвращается следом: стадия, на которую вернулись, иначе
 			// осталась бы закрытой, и следующий проход начался бы не с того, с чего

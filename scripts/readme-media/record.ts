@@ -98,12 +98,18 @@ const CLIPS: readonly Clip[] = [
 		role: 'manager',
 		caption: 'Обзор: сводка, доска, карточка, отчёты, справочники, данные, справка',
 		play: async (page) => {
-			await visit(page, '/', 'Требуют действия');
+			await visit(page, '/', 'Мой день');
 			await visit(page, '/interactions', 'Взаимодействия');
 			await visit(page, '/interactions?view=board', 'Взаимодействия');
-			await visit(page, `/interactions/${seedId('interaction', 'batse-kontrol')}`, 'Что мешает');
+			await visit(
+				page,
+				`/interactions/${seedId('interaction', 'batse-kontrol')}`,
+				'Все стадии процесса'
+			);
 
-			await page.getByRole('tab', { name: 'История' }).click();
+			// Вкладки «История» больше нет: карточка одной колонкой, и лента
+			// событий стоит ниже — до неё докручивают, а не переключают вкладку.
+			await page.mouse.wheel(0, 700);
 			await page.waitForTimeout(BEAT);
 
 			await visit(page, '/reports', 'Отчёты по взаимодействиям');

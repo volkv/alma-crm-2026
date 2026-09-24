@@ -25,6 +25,13 @@ const DEMO_INTERACTION = seedId('interaction', 'szpu-vo');
 /** Взаимодействие с длинной историей: на нём видно, что лента переходов не пуста. */
 const DEMO_HISTORY_INTERACTION = seedId('interaction', 'batse-kontrol');
 
+/**
+ * Вуз с настоящим сайтом: у СПбПУ (и ещё у четырёх вузов стенда) домен
+ * настоящий, а не вымышленный, поэтому раздел «Сведения с сайта» на нём
+ * действительно читается (`scripts/seed/directory.ts`).
+ */
+const DEMO_ORGANIZATION = seedId('organization', 'szpu');
+
 /** Кем открыт экран. Имя входа демонстрационной записи каталога. */
 export type ShotRole = 'manager' | 'lead' | 'admin' | 'anonymous';
 
@@ -50,13 +57,6 @@ export type Shot = {
 	 * корневой layout.
 	 */
 	standalone?: boolean;
-	/**
-	 * Вкладка карточки, которую надо открыть перед съёмкой.
-	 *
-	 * Вкладка — состояние страницы, а не адрес: открыть её ссылкой нельзя, и без
-	 * этого шага кадр «История» повторял бы кадр «Стадия».
-	 */
-	tab?: string;
 	/** Снять страницу целиком, а не только видимую часть окна. */
 	fullPage?: boolean;
 	/**
@@ -126,8 +126,8 @@ export const SHOTS: readonly Frame[] = [
 		name: 'home',
 		path: '/',
 		role: 'manager',
-		caption: 'Сводка: что требует внимания сегодня',
-		waitFor: 'Требуют действия'
+		caption: 'Сводка: «Мой день» по разделам, шесть чисел портфеля и полоса по группам стадий',
+		waitFor: 'Мой день'
 	},
 	{
 		name: 'interactions-board',
@@ -147,16 +147,24 @@ export const SHOTS: readonly Frame[] = [
 		name: 'interaction-card',
 		path: `/interactions/${DEMO_INTERACTION}`,
 		role: 'manager',
-		caption: 'Карточка: что происходит, что мешает, кто должен действовать, что могу сейчас',
-		waitFor: 'Что мешает'
+		caption: 'Карточка: факты и полоса стадий сверху, главное действие с условиями, контекст сбоку',
+		waitFor: 'Все стадии процесса'
 	},
 	{
 		name: 'interaction-history',
 		path: `/interactions/${DEMO_HISTORY_INTERACTION}`,
 		role: 'manager',
-		caption: 'История переходов с причинами и вложениями',
-		waitFor: 'Что происходит',
-		tab: 'История'
+		caption: 'Единая лента событий вместо вкладок: переходы, комментарии, документы и обмен подряд',
+		waitFor: 'Все стадии процесса',
+		fullPage: true
+	},
+	{
+		name: 'automation',
+		path: '/automation',
+		role: 'manager',
+		caption:
+			'Карта автоматизации: 14 шагов процесса, что делает система на каждом и где это увидеть',
+		waitFor: 'Карта автоматизации'
 	},
 	{
 		name: 'documents',
@@ -184,7 +192,8 @@ export const SHOTS: readonly Frame[] = [
 		name: 'reports',
 		path: '/reports',
 		role: 'manager',
-		caption: 'Отчёты: срез и движение, фильтры, диаграммы, четыре формата выгрузки',
+		caption:
+			'Отчёты: срез и движение, фильтры, диаграммы, четыре формата выгрузки, PDF — сводкой или целиком',
 		waitFor: 'Отчёты по взаимодействиям'
 	},
 	{
@@ -217,6 +226,20 @@ export const SHOTS: readonly Frame[] = [
 		waitFor: 'Внешние системы'
 	},
 	{
+		name: 'roles',
+		path: '/settings/roles',
+		role: 'admin',
+		caption: 'Роли и права: матрица «право × роль», прочитанная прямо из базы',
+		waitFor: 'Роли и права'
+	},
+	{
+		name: 'diagnostics',
+		path: '/settings/diagnostics',
+		role: 'admin',
+		caption: 'Самодиагностика: с чем система соединяется и отвечает ли это сейчас',
+		waitFor: 'Связи и зависимости'
+	},
+	{
 		name: 'help',
 		path: '/help',
 		role: 'manager',
@@ -231,11 +254,33 @@ export const SHOTS: readonly Frame[] = [
 		waitFor: 'Организации'
 	},
 	{
+		name: 'organization-card',
+		path: `/organizations/${DEMO_ORGANIZATION}`,
+		role: 'manager',
+		caption:
+			'Карточка вуза: факты и главное действие сверху, «Сведения с сайта» — кандидаты в контакты и подбор программ',
+		waitFor: 'Сведения с сайта вуза',
+		prepare: async (page) => {
+			await page.getByRole('button', { name: /Прочитать «Сведения» на сайте|Перечитать/ }).click();
+			await page
+				.getByText('Кандидаты в контакты')
+				.first()
+				.waitFor({ state: 'visible', timeout: 20_000 });
+		}
+	},
+	{
 		name: 'data-dashboard',
 		path: '/data/dashboard',
 		role: 'manager',
 		caption: 'Дашборд данных об обучении',
 		waitFor: 'Данные'
+	},
+	{
+		name: 'ranking',
+		path: '/data/ranking',
+		role: 'manager',
+		caption: 'Рейтинг программ и направлений по фактам самой системы за период',
+		waitFor: 'Рейтинг программ и направлений'
 	},
 	{
 		name: 'audit',

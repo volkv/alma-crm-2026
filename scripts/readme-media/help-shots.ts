@@ -84,8 +84,8 @@ export const HELP_SHOTS: readonly Frame[] = [
 		name: 'user/start-1',
 		path: '/',
 		role: 'manager',
-		caption: 'Сводка: шесть чисел, портфель по группам стадий и списки дел',
-		waitFor: 'Требуют действия'
+		caption: 'Сводка: «Мой день» по разделам, шесть чисел портфеля и полоса по группам стадий',
+		waitFor: 'Мой день'
 	},
 	{
 		name: 'user/start-2',
@@ -125,24 +125,40 @@ export const HELP_SHOTS: readonly Frame[] = [
 		name: 'user/interaction-1',
 		path: `/interactions/${DEMO_INTERACTION}`,
 		role: 'manager',
-		caption: 'Карточка: что происходит, что мешает, кто должен, что могу сейчас',
-		waitFor: 'Что мешает'
+		caption: 'Карточка: факты и полоса стадий сверху, главное действие с условиями, контекст сбоку',
+		waitFor: 'Все стадии процесса'
 	},
 	{
 		name: 'user/interaction-2',
 		path: `/interactions/${DEMO_HISTORY_INTERACTION}`,
 		role: 'manager',
-		caption: 'История переходов: исход, длительность, причины и вложения',
-		waitFor: 'Что происходит',
-		tab: 'История'
+		caption: 'Лента событий, отфильтрованная по стадиям: исход, длительность, причины и вложения',
+		waitFor: 'Все стадии процесса',
+		prepare: async (page) => {
+			// Вкладок «Стадия»/«История» больше нет: та же картина — фильтр ленты
+			// событий, сужающий её до переходов.
+			await page.getByRole('button', { name: /^Стадии/ }).click();
+			await scrollTo('События')(page);
+		}
 	},
 	{
 		name: 'user/interaction-3',
 		path: `/interactions/${DEMO_SIGNED_INTERACTION}`,
 		role: 'manager',
-		caption: 'Стадия подписания, подтверждённая отметкой по документу дела',
-		waitFor: 'Подтверждено отметкой документа',
-		prepare: scrollTo('Подтверждено отметкой документа')
+		caption: 'Стадия подписания, подтверждённая отметкой «Утверждён» по документу дела',
+		waitFor: 'Подтверждено отметкой',
+		prepare: async (page) => {
+			// Подтверждение — пункт «Сделано на стадии»: он не в чек-листе, что
+			// осталось сделать, а свёрнут отдельно, потому что уже закрыт. Текст
+			// несёт дату отметки, поэтому точного совпадения для него нет — в
+			// отличие от `scrollTo`, который ищет заголовок блока целиком.
+			await page.locator('[data-slot="card-action-done"] summary').click();
+
+			const target = page.getByText('Подтверждено отметкой').first();
+
+			await target.waitFor({ state: 'visible', timeout: 20_000 });
+			await target.scrollIntoViewIfNeeded();
+		}
 	},
 	{
 		name: 'user/documents-1',
@@ -190,7 +206,7 @@ export const HELP_SHOTS: readonly Frame[] = [
 		// Ждём подпись блока, а не его заголовок: слово «договоры» есть и в полосе
 		// демонстрационного режима, которая стоит на странице всегда.
 		waitFor: 'Обязательства с этим контрагентом',
-		prepare: scrollTo('Договоры')
+		prepare: scrollTo('Договоры и лицензии')
 	},
 	{
 		name: 'user/catalog-import-1',
@@ -260,6 +276,14 @@ export const HELP_SHOTS: readonly Frame[] = [
 		prepare: scrollTo('Система обучения')
 	},
 	{
+		name: 'user/automation-1',
+		path: '/automation',
+		role: 'manager',
+		caption:
+			'Карта автоматизации: шаг, что делает система, где это увидеть и число из журнала обмена',
+		waitFor: 'Карта автоматизации'
+	},
+	{
 		name: 'admin/process-1',
 		path: '/settings/process',
 		role: 'admin',
@@ -287,6 +311,13 @@ export const HELP_SHOTS: readonly Frame[] = [
 		role: 'admin',
 		caption: 'Меню, группа «Настройки»: каждый пункт за своим правом',
 		waitFor: 'Профиль'
+	},
+	{
+		name: 'admin/roles-1',
+		path: '/settings/roles',
+		role: 'admin',
+		caption: 'Матрица «право × роль»: разделы, отметки, пояснение о Keycloak',
+		waitFor: 'Роли и права'
 	},
 	{
 		name: 'admin/access-1',
