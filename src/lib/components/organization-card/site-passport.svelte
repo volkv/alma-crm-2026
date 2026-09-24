@@ -1,5 +1,6 @@
 <script lang="ts">
 	import CheckIcon from '@lucide/svelte/icons/check';
+	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import GlobeIcon from '@lucide/svelte/icons/globe';
 	import SparklesIcon from '@lucide/svelte/icons/sparkles';
 	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
@@ -24,6 +25,11 @@
 	 * Раздел «Сведения об образовательной организации» с сайта вуза — прямо на
 	 * его карточке. Шаги 1–2 работы с вузом: кого из руководителей завести
 	 * контактом и какие программы школы ему предлагать.
+	 *
+	 * Это подготовка, а не текущая работа, поэтому раздел стоит под
+	 * взаимодействиями и договорами и свёрнут: сверху — счётчики и первые
+	 * рекомендации программ школы, кандидаты в контакты и перечень программ
+	 * вуза — раскрытием.
 	 *
 	 * Чтение — то же действие, что в форме правки: та же квота и тот же кэш на
 	 * сутки, поэтому повторное нажатие в течение суток ничего не стоит. Если
@@ -64,6 +70,20 @@
 	let failure = $state<string | null>(null);
 	let pending = $state(false);
 	let adding = $state<string | null>(null);
+	let expanded = $state(false);
+
+	/** Рекомендаций программ школы, видных без раскрытия. */
+	const TOP_MATCHES = 3;
+
+	const matches = $derived(programMatch?.matches ?? []);
+	const shownMatches = $derived(expanded ? matches : matches.slice(0, TOP_MATCHES));
+	/** С сайта не взято ничего: ни кандидатов, ни программ. */
+	const emptyRead = $derived(
+		site !== null && site.contacts.length === 0 && site.programs.length === 0
+	);
+	const newCandidates = $derived(
+		site?.contacts.filter((candidate) => !isContact(candidate)).length ?? 0
+	);
 
 	const blocked = $derived.by((): string | null => {
 		if (reading === null) {
@@ -148,17 +168,25 @@
 
 <!-- `data-tour` — метка подсказок: по ней тур находит «Сведения» с сайта. -->
 <section
-	class="flex min-w-0 flex-col gap-4"
+	class="flex min-w-0 flex-col gap-3"
 	aria-labelledby="org-site-title"
 	data-tour="organization-site-passport"
 >
-	<div class="flex flex-wrap items-start justify-between gap-3">
+	<div class="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
 		<div class="min-w-0 flex-1 basis-64">
 			<h2 id="org-site-title" class="text-sm font-semibold">Сведения с сайта вуза</h2>
 			<p class="mt-1 text-xs text-muted-foreground">
-				Руководители подразделений и реализуемые программы из раздела «Сведения об образовательной
-				организации». Кандидата — в контакты одним щелчком; программы школы подобраны по кодам
-				направлений ФГОС, у каждой сказано почему.
+				{#if blocked !== null}
+					{blocked}
+				{:else if site !== null}
+					Сайт <span class="break-all">{site.website}</span>, прочитан {formatDateTime(
+						site.fetchedAt
+					)}.
+				{:else}
+					Руководители подразделений и программы из раздела «Сведения об образовательной
+					организации». Обращений к внешним источникам на сегодня: {reading?.remaining ?? 0}; ответ
+					живёт в кэше сутки.
+				{/if}
 			</p>
 		</div>
 		{#if blocked === null}
@@ -176,15 +204,6 @@
 		{/if}
 	</div>
 
-	{#if blocked !== null}
-		<p class="text-sm text-muted-foreground">{blocked}</p>
-	{:else if site === null && failure === null}
-		<p class="text-xs text-faint">
-			Обращений к внешним источникам на сегодня: {reading?.remaining ?? 0}. Ответ живёт в кэше сутки
-			— повторное чтение того же сайта квоту не тратит.
-		</p>
-	{/if}
-
 	{#if failure !== null}
 		<Alert.Root variant="destructive">
 			<TriangleAlertIcon aria-hidden="true" />
@@ -193,11 +212,26 @@
 	{/if}
 
 	{#if site !== null}
-		<p class="text-xs text-muted-foreground">
-			Сайт {site.website}, прочитан {formatDateTime(site.fetchedAt)}.
-		</p>
+		<ul class="flex flex-wrap gap-x-4 gap-y-1 text-sm" aria-label="Прочитано с сайта">
+			<li>
+				Кандидатов в контакты: <span class="font-semibold tabular-nums">{site.contacts.length}</span
+				>{#if site.contacts.length > 0}<span class="text-xs text-muted-foreground"
+						>&nbsp;· новых {newCandidates}</span
+					>{/if}
+			</li>
+			<li>
+				Программ вуза: <span class="font-semibold tabular-nums">{site.programs.length}</span>
+			</li>
+			{#if programMatch !== null}
+				<li>
+					Подходит программ школы: <span class="font-semibold tabular-nums">{matches.length}</span>
+				</li>
+			{/if}
+		</ul>
 
-		{#if warnings.length > 0}
+		<!-- Раздел прочитан, а взять из него нечего: почему — видно сразу, а не
+			за раскрытием, иначе нули выглядят ответом сайта. -->
+		{#if emptyRead && warnings.length > 0}
 			<Alert.Root>
 				<TriangleAlertIcon aria-hidden="true" />
 				<Alert.Title>Проверьте глазами</Alert.Title>
@@ -211,100 +245,9 @@
 			</Alert.Root>
 		{/if}
 
-		<!-- Кандидаты в контакты -->
-		<div class="flex min-w-0 flex-col gap-2">
-			<h3 class="text-xs font-semibold tracking-wide text-faint uppercase">
-				Кандидаты в контакты · {site.contacts.length}
-			</h3>
-			{#if site.contacts.length === 0}
-				<p class="text-sm text-muted-foreground">
-					В подразделе «Структура и органы управления» руководителей не нашлось.
-				</p>
-			{:else}
-				<p class="text-xs text-faint">
-					Источник: <span class="break-all">{site.struct.url}</span>, прочитан {formatDateTime(
-						site.fetchedAt
-					)}. Источник и дата запишутся в примечание человека.
-				</p>
-				<ul class="flex max-h-[28rem] flex-col divide-y divide-border overflow-y-auto pr-1">
-					{#each site.contacts as candidate (keyOf(candidate))}
-						{@const why = refusal(candidate)}
-						<li class="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5 py-2">
-							<div class="min-w-0 flex-1 basis-56 text-sm">
-								<p class="font-medium break-words">{candidate.name ?? '—'}</p>
-								{#if candidate.post}
-									<p class="break-words">{candidate.post}</p>
-								{/if}
-								<p class="text-xs break-words text-muted-foreground">{candidate.unit}</p>
-								{#if candidate.email}
-									<p class="text-xs break-all text-muted-foreground">{candidate.email}</p>
-								{/if}
-							</div>
-							{#if isContact(candidate)}
-								<StatusBadge tone="success">
-									<CheckIcon class="size-3" aria-hidden="true" />
-									В контактах
-								</StatusBadge>
-							{:else if why !== null}
-								<span class="text-xs text-faint">Вручную: {why}</span>
-							{:else if canAddContacts}
-								<form method="POST" action="?/addSiteContact" use:enhance={addCandidate(candidate)}>
-									<input type="hidden" name="unit" value={candidate.unit} />
-									<input type="hidden" name="name" value={candidate.name} />
-									<Button type="submit" variant="outline" size="sm" disabled={adding !== null}>
-										<UserPlusIcon aria-hidden="true" />
-										{adding === keyOf(candidate) ? 'Добавляем…' : 'Добавить в контакты'}
-									</Button>
-								</form>
-							{/if}
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		</div>
-
-		<!-- Программы вуза и подбор программ школы -->
-		<div class="grid min-w-0 gap-4 xl:grid-cols-2">
-			<div class="flex min-w-0 flex-col gap-2">
-				<h3 class="text-xs font-semibold tracking-wide text-faint uppercase">
-					Программы вуза · {site.programs.length}
-				</h3>
-				{#if site.programs.length === 0}
-					<p class="text-sm text-muted-foreground">Перечень программ на сайте не прочитался.</p>
-				{:else}
-					{#if programMatch !== null}
-						<ul class="flex flex-col gap-1 text-sm">
-							{#each programMatch.universityGroups as row (row.group.code)}
-								<li class="break-words">
-									<span class="tabular-nums">{row.group.code}</span>
-									{row.group.name ?? ''}
-									<span class="text-xs text-muted-foreground">
-										— {pluralize(row.count, ['программа', 'программы', 'программ'])}
-									</span>
-								</li>
-							{/each}
-						</ul>
-					{/if}
-					<details>
-						<summary class="cursor-pointer text-xs text-link hover:text-link-hover">
-							Весь перечень с кодами направлений
-						</summary>
-						<ul class="mt-2 flex max-h-72 flex-col gap-1 overflow-y-auto pr-1">
-							{#each site.programs as program, index (index)}
-								<li class="border-t border-border pt-1 text-sm first:border-0">
-									<span class="tabular-nums">{program.code}</span>
-									<span class="break-words">{program.name}</span>
-									<span class="block text-xs break-words text-faint">
-										{[program.level, program.profile].filter((part) => part !== null).join(' · ')}
-									</span>
-								</li>
-							{/each}
-						</ul>
-					</details>
-				{/if}
-			</div>
-
-			<div class="flex min-w-0 flex-col gap-2">
+		{#if !emptyRead}
+			<!-- Подбор программ школы виден сразу: это то, что вузу предлагать. -->
+			<div class="flex min-w-0 flex-col gap-1">
 				<h3 class="text-xs font-semibold tracking-wide text-faint uppercase">
 					Подходящие программы школы
 				</h3>
@@ -312,14 +255,14 @@
 					<p class="text-sm text-muted-foreground">
 						Каталог программ закрыт правами: подбор делает сотрудник с правом «Просмотр программ».
 					</p>
-				{:else if programMatch.matches.length === 0}
+				{:else if matches.length === 0}
 					<p class="text-sm text-muted-foreground">
 						Ни одна действующая программа школы не совпала с программами вуза по укрупнённой группе
 						направлений.
 					</p>
 				{:else}
 					<ol class="flex flex-col divide-y divide-border">
-						{#each programMatch.matches as match (match.programId)}
+						{#each shownMatches as match (match.programId)}
 							<li class="flex flex-col gap-1 py-2">
 								<div class="flex flex-wrap items-center gap-1.5">
 									<SparklesIcon class="size-3.5 shrink-0 text-link" aria-hidden="true" />
@@ -336,18 +279,160 @@
 						{/each}
 					</ol>
 				{/if}
-				{#if programMatch !== null && (programMatch.universityOutside > 0 || programMatch.schoolWithoutCode > 0)}
-					<p class="text-xs text-faint">
-						{#if programMatch.universityOutside > 0}
-							Программ вуза с кодом не по перечню ФГОС (научные специальности): {programMatch.universityOutside}
-							— в подборе не участвуют.
-						{/if}
-						{#if programMatch.schoolWithoutCode > 0}
-							Программ школы без кода направления: {programMatch.schoolWithoutCode} — им не с чем совпасть.
-						{/if}
-					</p>
-				{/if}
 			</div>
-		</div>
+
+			<Button
+				variant="link"
+				size="sm"
+				class="-ml-2.5 h-auto min-h-7 w-fit max-w-full text-left whitespace-normal"
+				aria-expanded={expanded}
+				aria-controls="org-site-details"
+				onclick={() => (expanded = !expanded)}
+			>
+				<ChevronDownIcon
+					class="transition-transform {expanded ? 'rotate-180' : ''}"
+					aria-hidden="true"
+				/>
+				{#if expanded}
+					Свернуть
+				{:else}
+					Кандидаты в контакты и программы вуза{matches.length > TOP_MATCHES
+						? ` · ещё ${pluralize(matches.length - TOP_MATCHES, ['рекомендация', 'рекомендации', 'рекомендаций'])}`
+						: ''}
+				{/if}
+			</Button>
+
+			{#if expanded}
+				<div id="org-site-details" class="flex min-w-0 flex-col gap-4">
+					{#if warnings.length > 0}
+						<Alert.Root>
+							<TriangleAlertIcon aria-hidden="true" />
+							<Alert.Title>Проверьте глазами</Alert.Title>
+							<Alert.Description>
+								<ul class="list-disc pl-4">
+									{#each warnings as warning (warning)}
+										<li>{warning}</li>
+									{/each}
+								</ul>
+							</Alert.Description>
+						</Alert.Root>
+					{/if}
+
+					<!-- Кандидаты в контакты -->
+					<div class="flex min-w-0 flex-col gap-2">
+						<h3 class="text-xs font-semibold tracking-wide text-faint uppercase">
+							Кандидаты в контакты · {site.contacts.length}
+						</h3>
+						{#if site.contacts.length === 0}
+							<p class="text-sm text-muted-foreground">
+								В подразделе «Структура и органы управления» руководителей не нашлось.
+							</p>
+						{:else}
+							<p class="text-xs text-faint">
+								Источник: <span class="break-all">{site.struct.url}</span>. Источник и дата
+								запишутся в примечание человека.
+							</p>
+							<ul class="flex flex-col divide-y divide-border">
+								{#each site.contacts as candidate (keyOf(candidate))}
+									{@const why = refusal(candidate)}
+									<li class="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5 py-2">
+										<div class="min-w-0 flex-1 basis-56 text-sm">
+											<p class="font-medium break-words">{candidate.name ?? '—'}</p>
+											{#if candidate.post}
+												<p class="break-words">{candidate.post}</p>
+											{/if}
+											<p class="text-xs break-words text-muted-foreground">{candidate.unit}</p>
+											{#if candidate.email}
+												<p class="text-xs break-all text-muted-foreground">{candidate.email}</p>
+											{/if}
+										</div>
+										{#if isContact(candidate)}
+											<StatusBadge tone="success">
+												<CheckIcon class="size-3" aria-hidden="true" />
+												В контактах
+											</StatusBadge>
+										{:else if why !== null}
+											<span class="text-xs text-faint">Вручную: {why}</span>
+										{:else if canAddContacts}
+											<form
+												method="POST"
+												action="?/addSiteContact"
+												use:enhance={addCandidate(candidate)}
+											>
+												<input type="hidden" name="unit" value={candidate.unit} />
+												<input type="hidden" name="name" value={candidate.name} />
+												<Button
+													type="submit"
+													variant="outline"
+													size="sm"
+													disabled={adding !== null}
+												>
+													<UserPlusIcon aria-hidden="true" />
+													{adding === keyOf(candidate) ? 'Добавляем…' : 'Добавить в контакты'}
+												</Button>
+											</form>
+										{/if}
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					</div>
+
+					<!-- Программы вуза по укрупнённым группам и весь перечень -->
+					<div class="flex min-w-0 flex-col gap-2">
+						<h3 class="text-xs font-semibold tracking-wide text-faint uppercase">
+							Программы вуза · {site.programs.length}
+						</h3>
+						{#if site.programs.length === 0}
+							<p class="text-sm text-muted-foreground">Перечень программ на сайте не прочитался.</p>
+						{:else}
+							{#if programMatch !== null}
+								<ul class="flex flex-col gap-1 text-sm">
+									{#each programMatch.universityGroups as row (row.group.code)}
+										<li class="break-words">
+											<span class="tabular-nums">{row.group.code}</span>
+											{row.group.name ?? ''}
+											<span class="text-xs text-muted-foreground">
+												— {pluralize(row.count, ['программа', 'программы', 'программ'])}
+											</span>
+										</li>
+									{/each}
+								</ul>
+							{/if}
+							<details>
+								<summary class="cursor-pointer text-xs text-link hover:text-link-hover">
+									Весь перечень с кодами направлений
+								</summary>
+								<ul class="mt-2 flex flex-col gap-1">
+									{#each site.programs as program, index (index)}
+										<li class="border-t border-border pt-1 text-sm first:border-0">
+											<span class="tabular-nums">{program.code}</span>
+											<span class="break-words">{program.name}</span>
+											<span class="block text-xs break-words text-faint">
+												{[program.level, program.profile]
+													.filter((part) => part !== null)
+													.join(' · ')}
+											</span>
+										</li>
+									{/each}
+								</ul>
+							</details>
+						{/if}
+						{#if programMatch !== null && (programMatch.universityOutside > 0 || programMatch.schoolWithoutCode > 0)}
+							<p class="text-xs text-faint">
+								{#if programMatch.universityOutside > 0}
+									Программ вуза с кодом не по перечню ФГОС (научные специальности): {programMatch.universityOutside}
+									— в подборе не участвуют.
+								{/if}
+								{#if programMatch.schoolWithoutCode > 0}
+									Программ школы без кода направления: {programMatch.schoolWithoutCode} — им не с чем
+									совпасть.
+								{/if}
+							</p>
+						{/if}
+					</div>
+				</div>
+			{/if}
+		{/if}
 	{/if}
 </section>

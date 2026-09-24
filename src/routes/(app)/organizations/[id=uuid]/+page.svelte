@@ -18,7 +18,7 @@
 	import RequisitesPanel from '$lib/components/organization-card/requisites-panel.svelte';
 	import SitePassport from '$lib/components/organization-card/site-passport.svelte';
 	import WorkPanel from '$lib/components/organization-card/work-panel.svelte';
-	import { partnerStatus } from '$lib/components/organization-card/model';
+	import { partnerStatus, personFullName } from '$lib/components/organization-card/model';
 	import ContextSection from '$lib/components/interaction-card/context-section.svelte';
 	import { normalizePersonName } from '$lib/contracts/organization-card';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
@@ -38,20 +38,14 @@
 
 	const siteNames = $derived(new Map(data.sites.map((site) => [site.id, site.name])));
 
+	const currentAffiliations = $derived(data.affiliations.filter((row) => row.validTo === null));
+
 	/** ФИО действующих контактов: по ним кандидат с сайта помечается «в контактах». */
 	const contactNames = $derived(
-		new Set(
-			data.affiliations
-				.filter((row) => row.validTo === null)
-				.map((row) =>
-					normalizePersonName(
-						[row.person.lastName, row.person.firstName, row.person.middleName]
-							.filter((part) => part !== null && part !== '')
-							.join(' ')
-					)
-				)
-		)
+		new Set(currentAffiliations.map((row) => normalizePersonName(personFullName(row))))
 	);
+
+	const primaryContact = $derived(currentAffiliations.find((row) => row.isPrimary) ?? null);
 
 	const partner = $derived(partnerStatus(data.contracts, data.today, data.licenseWarningDays));
 
@@ -168,7 +162,9 @@
 	}}
 />
 
-<Header title={data.organization.shortName} description={data.organization.legalName}>
+<!-- Полное наименование — в реквизитах: длинное юридическое имя в шапке
+	оттесняло бы то, по чему вуз узнают. -->
+<Header title={data.organization.shortName}>
 	{#snippet actions()}
 		{#if data.canWrite}
 			<Button
@@ -207,6 +203,8 @@
 		organization={data.organization}
 		responsibles={currentResponsibles}
 		{partner}
+		{primaryContact}
+		canReadPeople={data.canReadPeople}
 	/>
 
 	<!-- Три блока — действие, работа, контекст — стоят в разметке в том порядке,
@@ -248,6 +246,21 @@
 
 		<div class="flex min-w-0 flex-col gap-4 lg:col-start-1 lg:row-start-2">
 			<div class="min-w-0 rounded-xl border border-border bg-surface p-4">
+				<WorkPanel organizationId={data.organization.id} work={data.work} />
+			</div>
+
+			<ContractsPanel
+				contracts={data.contracts}
+				products={data.productOptions}
+				canWrite={data.canWrite}
+				canStartRenewal={data.canStartRenewal}
+				licenseWarningDays={data.licenseWarningDays}
+				today={data.today}
+			/>
+
+			<!-- «Сведения с сайта» — подготовка к работе, а не сама работа: под
+				взаимодействиями и договорами, свёрнутые до счётчиков. -->
+			<div class="min-w-0 rounded-xl border border-border bg-surface p-4">
 				<!-- Прочитанные «Сведения» живут в самом блоке: при переходе на карточку
 					другого вуза блок создаётся заново, чтобы не показать чужих кандидатов. -->
 				{#key data.organization.id}
@@ -260,19 +273,6 @@
 					/>
 				{/key}
 			</div>
-
-			<div class="min-w-0 rounded-xl border border-border bg-surface p-4">
-				<WorkPanel organizationId={data.organization.id} work={data.work} />
-			</div>
-
-			<ContractsPanel
-				contracts={data.contracts}
-				products={data.productOptions}
-				canWrite={data.canWrite}
-				canStartRenewal={data.canStartRenewal}
-				licenseWarningDays={data.licenseWarningDays}
-				today={data.today}
-			/>
 
 			<section
 				class="min-w-0 rounded-xl border border-border bg-surface"

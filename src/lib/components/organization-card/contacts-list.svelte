@@ -8,6 +8,7 @@
 	import { AFFILIATION_ROLE_LABELS } from '$lib/components/directory/labels';
 	import type { AffiliationView } from '$lib/contracts/directory';
 	import { formatDate } from '$lib/format';
+	import { personFullName } from './model';
 
 	/**
 	 * Контакты организации в колонке контекста: кто, кем работает, как с ним
@@ -34,12 +35,6 @@
 	const current = $derived(affiliations.filter((row) => row.validTo === null));
 	const past = $derived(affiliations.filter((row) => row.validTo !== null));
 	const masked = $derived(affiliations.some((row) => row.person.contactsMasked));
-
-	function fullName(row: AffiliationView) {
-		return [row.person.lastName, row.person.firstName, row.person.middleName]
-			.filter((part) => part !== null && part !== '')
-			.join(' ');
-	}
 </script>
 
 {#snippet person(row: AffiliationView)}
@@ -47,7 +42,7 @@
 		<div class="flex flex-wrap items-center gap-1.5">
 			<a
 				class="font-medium break-words underline-offset-2 focus-ring hover:underline"
-				href={resolve('/(app)/people/[id=uuid]', { id: row.person.id })}>{fullName(row)}</a
+				href={resolve('/(app)/people/[id=uuid]', { id: row.person.id })}>{personFullName(row)}</a
 			>
 			{#if row.isPrimary}
 				<StatusBadge tone="accent">основной</StatusBadge>

@@ -6,8 +6,8 @@
 	import { PASSPORT_FIELD_LABELS, PASSPORT_SOURCE_LABELS } from './model';
 
 	/**
-	 * Реквизиты, которых нет в шапке, и откуда они взялись. Происхождение —
-	 * из журнала: последняя приёмка полей из паспорта организации называет
+	 * Реквизиты организации — полное наименование, ИНН, КПП, ОГРН — и откуда
+	 * они взялись. Происхождение — из журнала: последняя приёмка полей из паспорта организации называет
 	 * поля, источник и дату ответа источника. Нет такой записи — реквизиты
 	 * набраны руками или пришли импортом, и это сказано прямо.
 	 */
@@ -68,8 +68,16 @@
 		</div>
 		<div class="flex flex-wrap gap-x-6 gap-y-2">
 			<div>
+				<dt class="text-xs text-muted-foreground">ИНН</dt>
+				<dd class="tabular-nums">{organization.inn ?? '—'}</dd>
+			</div>
+			<div>
 				<dt class="text-xs text-muted-foreground">КПП</dt>
 				<dd class="tabular-nums">{organization.kpp ?? '—'}</dd>
+			</div>
+			<div>
+				<dt class="text-xs text-muted-foreground">ОГРН</dt>
+				<dd class="tabular-nums">{organization.ogrn ?? '—'}</dd>
 			</div>
 			<div>
 				<dt class="text-xs text-muted-foreground">Обновлено</dt>

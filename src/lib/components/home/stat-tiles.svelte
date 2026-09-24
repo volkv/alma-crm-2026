@@ -83,23 +83,28 @@
 </script>
 
 {#snippet body(tile: Tile)}
-	<span class="text-xs text-muted-foreground">{tile.label}</span>
-	<span class={cn('mt-1 text-2xl leading-none font-semibold', toneClass(tile))}>
+	<span class="truncate text-xs text-muted-foreground">{tile.label}</span>
+	<span class={cn('mt-1 text-xl leading-none font-semibold tabular-nums', toneClass(tile))}>
 		{formatNumber(tile.value)}
 	</span>
-	<span class="mt-1 text-xs text-faint">{tile.hint}</span>
+	<span class="mt-1 truncate text-xs text-faint" title={tile.hint}>{tile.hint}</span>
 {/snippet}
 
-<div class="grid grid-cols-2 gap-3 sm:grid-cols-3 xl:grid-cols-6" data-slot="stat-tiles">
+<!-- Плитки — ячейки одной панели, а не шесть отдельных карточек: рядом со
+	«Моим днём» они вторичны и не должны спорить с ним рамками. -->
+<div
+	class="grid grid-cols-2 gap-px border-b border-border bg-border sm:grid-cols-3 xl:grid-cols-2"
+	data-slot="stat-tiles"
+>
 	{#each tiles as tile (tile.label)}
 		{#if tile.href === null}
-			<div class="flex flex-col rounded-lg border border-border bg-surface px-3 py-3">
+			<div class="flex min-w-0 flex-col bg-surface px-4 py-2.5">
 				{@render body(tile)}
 			</div>
 		{:else}
 			<a
 				href={tile.href}
-				class="flex flex-col rounded-lg border border-border bg-surface px-3 py-3 focus-ring transition-colors hover:border-border-strong hover:bg-surface-muted"
+				class="flex min-w-0 flex-col bg-surface px-4 py-2.5 focus-ring-inset transition-colors hover:bg-surface-muted"
 				aria-label="{tile.label}: {tile.value}. Открыть список"
 			>
 				{@render body(tile)}

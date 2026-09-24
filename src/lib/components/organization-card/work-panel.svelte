@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
 	import type { ResolvedPathname } from '$app/types';
+	import SlaChip from '$lib/components/sla-chip.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type { InteractionListItem } from '$lib/contracts/interactions';
 	import { formatDate, formatNumber } from '$lib/format';
@@ -9,6 +10,9 @@
 	 * Работа с организацией по пространствам сотрудника: в каждом — последние
 	 * взаимодействия и ссылка на весь список. Пространства, куда сотрудник не
 	 * включён, сюда не попадают: их работа ему не видна и в списке.
+	 *
+	 * Текущая работа стоит первой: у незавершённой записи видны стадия и срок,
+	 * завершённые и отменённые идут следом — это история, а не дела на сегодня.
 	 */
 	let {
 		organizationId,
@@ -21,6 +25,15 @@
 	} = $props();
 
 	const total = $derived(work?.reduce((sum, workspace) => sum + workspace.total, 0) ?? 0);
+
+	function isOpen(item: InteractionListItem): boolean {
+		return item.status !== 'completed' && item.status !== 'cancelled';
+	}
+
+	/** Незавершённые — первыми; внутри групп порядок списка сохраняется. */
+	function currentFirst(items: readonly InteractionListItem[]): InteractionListItem[] {
+		return [...items.filter(isOpen), ...items.filter((item) => !isOpen(item))];
+	}
 
 	/**
 	 * Список пространства с фильтром «основная сторона — эта организация»: там
@@ -75,18 +88,26 @@
 					<p class="text-sm text-faint">Записей нет</p>
 				{:else}
 					<ul class="flex flex-col divide-y divide-border">
-						{#each workspace.items as item (item.id)}
+						{#each currentFirst(workspace.items) as item (item.id)}
+							{@const open = isOpen(item)}
 							<li class="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 py-2">
 								<div class="min-w-0 flex-1 basis-56">
 									<a
-										class="text-sm font-medium break-words focus-ring hover:underline"
+										class="text-sm font-medium break-words text-link focus-ring hover:text-link-hover hover:underline"
 										href={resolve('/(app)/w/[workspace]/interactions/[id=uuid]', {
 											workspace: workspace.key,
 											id: item.id
 										})}>{item.title}</a
 									>
 									<p class="text-xs text-muted-foreground">
-										{item.stage?.name ?? 'без стадии'} · {item.ownerName}
+										{#if open}
+											<span class="font-medium text-foreground"
+												>{item.stage?.name ?? 'без стадии'}</span
+											>
+										{:else}
+											{item.stage?.name ?? 'без стадии'}
+										{/if}
+										· {item.ownerName}
 									</p>
 								</div>
 								<div class="flex shrink-0 flex-wrap items-center gap-1.5">
@@ -94,14 +115,19 @@
 										<StatusBadge tone="success">Завершено</StatusBadge>
 									{:else if item.status === 'cancelled'}
 										<StatusBadge tone="neutral">Отменено</StatusBadge>
-									{:else if item.isOverdue}
-										<StatusBadge tone="danger" dot>Просрочено</StatusBadge>
 									{:else if item.isPaused}
-										<StatusBadge tone="neutral">На паузе</StatusBadge>
+										<!-- На паузе часы стадии стоят: остаток срока соврал бы. -->
+										<StatusBadge tone="neutral" dot>На паузе</StatusBadge>
+									{:else if item.dueAt !== null}
+										<SlaChip deadline={item.dueAt} />
+									{:else}
+										<span class="text-xs text-faint">без срока</span>
 									{/if}
-									<span class="text-xs text-faint tabular-nums">
-										{formatDate(item.lastActivityAt)}
-									</span>
+									{#if !open}
+										<span class="text-xs text-faint tabular-nums">
+											{formatDate(item.lastActivityAt)}
+										</span>
+									{/if}
 								</div>
 							</li>
 						{/each}

@@ -4,6 +4,7 @@
 	import Header from '$lib/components/header.svelte';
 	import ActivityFeed from '$lib/components/home/activity-feed.svelte';
 	import HomeSection from '$lib/components/home/section.svelte';
+	import DayCounters from '$lib/components/home/day-counters.svelte';
 	import MyDay from '$lib/components/home/my-day.svelte';
 	import PortfolioBar from '$lib/components/home/portfolio-bar.svelte';
 	import StatTiles from '$lib/components/home/stat-tiles.svelte';
@@ -24,7 +25,10 @@
 	<title>Сводка — Альма CRM</title>
 </svelte:head>
 
-<Header title="Сводка" description="Что требует внимания сегодня, {today}">
+<Header
+	title="Сводка"
+	description="Что требует внимания сегодня, {today}. {MY_DAY_BASIS_LABELS[myDay.basis]}"
+>
 	{#snippet actions()}
 		<Button variant="outline" href={interactionsHref({ status: 'active', mine: true })}>
 			Мои взаимодействия
@@ -32,30 +36,36 @@
 	{/snippet}
 </Header>
 
-<div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
-	<!-- `data-tour` — метка подсказок: по ней тур находит блок, о котором
-		говорит его шаг (`$lib/onboarding/screens`). -->
-	<div data-tour="home-my-day">
-		<HomeSection
-			title="Мой день"
-			description="Что требует внимания сегодня. {MY_DAY_BASIS_LABELS[myDay.basis]}"
-		>
-			<MyDay sections={myDay.sections} />
-		</HomeSection>
+<!-- Первый экран ноутбука (1366×768) держит счётчики всех разделов «Моего
+	дня» и первые его карточки; портфель и лента стоят справа, вторым планом.
+	Уже ноутбука колонка справа уезжает под «Мой день».
+
+	`data-tour` — метка подсказок: по ней тур находит блок, о котором говорит
+	его шаг (`$lib/onboarding/screens`). -->
+<div class="grid gap-4 p-4 sm:px-9 sm:py-6 xl:grid-cols-[minmax(0,1fr)_20rem] xl:items-start">
+	<!-- Счётчики — во всю ширину: семь подписей в колонке рядом с портфелем
+		обрезались бы до первых букв. -->
+	<div class="xl:col-span-2" data-tour="home-my-day">
+		<h2 class="sr-only">Мой день</h2>
+		<DayCounters sections={myDay.sections} />
 	</div>
 
-	<StatTiles counters={overview.counters} />
+	<div class="min-w-0">
+		<MyDay sections={myDay.sections} />
+	</div>
 
-	<div data-tour="home-portfolio">
+	<div class="grid min-w-0 gap-4 lg:grid-cols-2 xl:grid-cols-1">
 		<HomeSection
-			title="Где стоит портфель"
+			title="Портфель"
 			description="Активные взаимодействия по группам стадий процесса"
+			data-tour="home-portfolio"
 		>
+			<StatTiles counters={overview.counters} />
 			<PortfolioBar distribution={overview.distribution} labels={STAGE_CATEGORY_LABELS} />
 		</HomeSection>
-	</div>
 
-	<HomeSection title="Недавняя активность" description="Последние события по взаимодействиям">
-		<ActivityFeed items={overview.activity} labels={AUDIT_EVENT_LABELS} />
-	</HomeSection>
+		<HomeSection title="Недавняя активность" description="Последние события по взаимодействиям">
+			<ActivityFeed items={overview.activity} labels={AUDIT_EVENT_LABELS} />
+		</HomeSection>
+	</div>
 </div>

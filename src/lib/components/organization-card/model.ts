@@ -5,7 +5,7 @@
  * в шаблоне.
  */
 import type { StatusTone } from '$lib/components/status-badge.svelte';
-import type { ContractView } from '$lib/contracts/directory';
+import type { AffiliationView, ContractView } from '$lib/contracts/directory';
 import type { FieldSource, PassportField } from '$lib/contracts/enrichment';
 import { licenseState } from '$lib/contracts/license';
 import { formatDate } from '$lib/format';
@@ -78,4 +78,11 @@ export function partnerStatus(
 	}
 
 	return { label: 'Договора нет', tone: 'neutral', detail: null };
+}
+
+/** ФИО человека из роли в организации: фамилия, имя, отчество без пустых частей. */
+export function personFullName(row: Pick<AffiliationView, 'person'>): string {
+	return [row.person.lastName, row.person.firstName, row.person.middleName]
+		.filter((part) => part !== null && part !== '')
+		.join(' ');
 }
