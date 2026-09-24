@@ -18,6 +18,7 @@ import {
 	type PersonView,
 	type SetRetentionInput
 } from '$lib/contracts/directory';
+import { EXCHANGE_EVENT_TYPES } from '$lib/contracts/exchange';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { invalidateDirectoryOptions } from '../cache/directory';
@@ -29,6 +30,7 @@ import {
 	interactionChanges,
 	interactionParties,
 	interactions,
+	learningGroupLearners,
 	notificationDeliveries,
 	organizations,
 	people
@@ -279,6 +281,37 @@ async function eraseExchangeContactFingerprint(tx: Tx, emailHash: string | null)
 }
 
 /**
+ * Человек в поимённых списках учебных групп.
+ *
+ * Связь с группой удаляется: «в потоке был кто-то обезличенный» — сведение,
+ * которое ни отчёту, ни процессу не нужно, а числа потока приходят из системы
+ * обучения и от списка не зависят.
+ *
+ * Список, переданный в систему обучения, лежит в журнале обмена замороженным
+ * конвертом — с ФИО и почтой открытым текстом. Такой конверт стирается совсем,
+ * как у заявки физлица: «обезличенного конверта» не бывает. Ищется он по
+ * нашему идентификатору человека в теле, а не по текущему составу группы:
+ * человека могли убрать из списка после передачи, а отправленное от этого не
+ * исчезло. Семя сообщения персональных данных не несёт и остаётся — сообщение,
+ * которое ещё не ушло, соберётся заново уже без этого человека.
+ */
+async function eraseLearnerTraces(tx: Tx, personId: string): Promise<void> {
+	await tx.delete(learningGroupLearners).where(eq(learningGroupLearners.personId, personId));
+
+	await tx
+		.update(exchangeMessages)
+		.set({ envelope: null })
+		.where(
+			and(
+				eq(exchangeMessages.direction, 'outbound'),
+				eq(exchangeMessages.eventType, EXCHANGE_EVENT_TYPES.learningGroupRequested),
+				sql`${exchangeMessages.payload} ->> 'includeLearners' = 'true'`,
+				sql`(${exchangeMessages.envelope})::jsonb #> '{data,learners}' @> jsonb_build_array(jsonb_build_object('personId', ${personId}::text))`
+			)
+		);
+}
+
+/**
  * Обезличивание состоялось: собранное раньше больше не показывать.
  *
  * Подбор контактов — выбирать контактом того, чьи данные уничтожены, незачем.
@@ -377,6 +410,7 @@ export async function anonymizePerson(ctx: ActorContext, personId: string): Prom
 
 			await eraseCounterpartyTraces(tx, personId);
 			await eraseExchangeContactFingerprint(tx, locked.emailHash);
+			await eraseLearnerTraces(tx, personId);
 
 			await recordAuditEvent(
 				ctx,

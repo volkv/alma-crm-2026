@@ -9,6 +9,7 @@ import type { OrganizationKind, OrganizationView } from '$lib/contracts/director
 import {
 	EXCHANGE_STATE_LABELS,
 	lmsEvidenceSchema,
+	type LearningGroupLearnerView,
 	type LearningGroupView
 } from '$lib/contracts/exchange';
 import {
@@ -60,8 +61,12 @@ export type CardExchange = {
 	canSend: boolean;
 	/** Можно ли отметить обучение завершённым без итога из системы обучения. */
 	canComplete: boolean;
+	/** Можно ли загружать и править поимённые списки слушателей. */
+	canManageRoster: boolean;
 	/** Почему новый поток сейчас не заявить; `null` — можно. */
 	issue: string | null;
+	/** Слушатели всех потоков; `null` — люди не видны, карточка показывает только числа. */
+	learners: readonly LearningGroupLearnerView[] | null;
 };
 
 /** Всё, из чего собирается карточка: ровно то, что читает загрузчик карточки. */
@@ -118,6 +123,7 @@ export type CardCommand =
 	  }
 	| { kind: 'send-group' }
 	| { kind: 'complete-group'; groupId: string | null }
+	| { kind: 'roster'; groupId: string }
 	| { kind: 'invite-meeting' };
 
 /**

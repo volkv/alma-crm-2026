@@ -1,5 +1,6 @@
 <script lang="ts">
 	import PlusIcon from '@lucide/svelte/icons/plus';
+	import UsersIcon from '@lucide/svelte/icons/users';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import {
@@ -33,6 +34,12 @@
 
 	const commands = getCardCommands();
 	const id = 'card-learning';
+
+	/** Поимённый список потока словами: сколько внесено и сколько из них уже в LMS. */
+	const learnersLabel = (group: LearningGroupView) =>
+		group.learnerCount === 0
+			? 'Поимённого списка нет'
+			: `Слушателей в списке: ${group.learnerCount}, передано в LMS: ${group.transferredCount}`;
 
 	/** Судьба заявки словами: пока результатов нет, важна именно она. */
 	const requestLabel = (group: LearningGroupView) =>
@@ -134,6 +141,17 @@
 									: 'Программы потока больше нет в записи — стадию он не подтверждает.'}
 							</p>
 						{/if}
+						<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+							<span class="text-xs text-muted-foreground">{learnersLabel(group)}</span>
+							<Button
+								size="xs"
+								variant="outline"
+								onclick={() => commands.open({ kind: 'roster', groupId: group.id })}
+							>
+								<UsersIcon aria-hidden="true" />
+								Слушатели…
+							</Button>
+						</div>
 						{#if canComplete && group.trainingState !== 'completed'}
 							<Button
 								size="xs"

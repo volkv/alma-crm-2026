@@ -67,6 +67,12 @@ type LearningGroup = {
 	startsOn: string | null;
 	endsOn: string | null;
 	requestedAt: string;
+	/**
+	 * Сколько слушателей в последнем присланном списке; `null` — списка не
+	 * присылали. Сам список имитатор не хранит: страница стенда открыта всем,
+	 * а ФИО и почта — персональные данные, пусть и выдуманные.
+	 */
+	learnerCount: number | null;
 	/** Отправленные результаты: промежуточные и итоговый, свежий — последний. */
 	results: { at: string; eventId: string; counters: GroupCounters }[];
 };
@@ -148,6 +154,23 @@ function parseCounters(value: unknown, plannedSeats: number | null): GroupCounte
 	return counters;
 }
 
+/** Число слушателей в заявке; `null` — поля `learners` нет (заявка о составе молчит). */
+function readLearnerCount(data: Record<string, unknown>): number | null {
+	return Array.isArray(data.learners) ? data.learners.length : null;
+}
+
+/**
+ * Конверт для журнала стенда: поимённый список заменён числом. Журнал виден
+ * на открытой странице имитатора, и ФИО с почтой там не место.
+ */
+function journalCopy(envelope: Envelope): Envelope {
+	const count = readLearnerCount(envelope.data);
+
+	return count === null
+		? envelope
+		: { ...envelope, data: { ...envelope.data, learners: `${count} (состав не хранится)` } };
+}
+
 function groupReply(
 	journal: Journal,
 	path: string,
@@ -163,7 +186,7 @@ function groupReply(
 		eventId: envelope?.eventId ?? null,
 		eventType: envelope?.eventType ?? null,
 		note: `${code}: ${message}`,
-		payload: envelope
+		payload: envelope === null ? null : journalCopy(envelope)
 	});
 
 	return problem(status, code, message);
@@ -245,25 +268,35 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 				}
 
 				const existing = groups.get(requestExternalId);
+				const learnerCount = readLearnerCount(envelope.data);
 
 				if (existing !== undefined) {
 					// Повторная заявка возвращает ту же группу, а не заводит вторую:
-					// это и есть защита от дубля на стороне LMS.
+					// это и есть защита от дубля на стороне LMS. Список слушателей в
+					// ней — снимок состава: он заменяет прежний, а не дописывается.
+					const rostered = learnerCount !== null;
+
+					if (rostered) {
+						existing.learnerCount = learnerCount;
+					}
+
 					journal.add({
 						direction: 'inbound',
 						summary: `POST ${path}`,
 						status: 200,
 						eventId: envelope.eventId,
 						eventType: envelope.eventType,
-						note: `повтор заявки: группа ${existing.groupExternalId} уже заведена`,
-						payload: envelope
+						note: rostered
+							? `состав группы ${existing.groupExternalId}: ${learnerCount} слушателей`
+							: `повтор заявки: группа ${existing.groupExternalId} уже заведена`,
+						payload: journalCopy(envelope)
 					});
 
 					return {
 						status: 200,
 						json: {
 							schemaVersion: SCHEMA_VERSION,
-							result: 'unchanged',
+							result: rostered ? 'updated' : 'unchanged',
 							data: {
 								externalId: existing.requestExternalId,
 								groupExternalId: existing.groupExternalId,
@@ -293,6 +326,7 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 					startsOn: readString(stream.startsOn),
 					endsOn: readString(stream.endsOn),
 					requestedAt: envelope.occurredAt,
+					learnerCount,
 					results: []
 				};
 
@@ -304,8 +338,8 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 					status: 201,
 					eventId: envelope.eventId,
 					eventType: envelope.eventType,
-					note: `заведена группа ${group.groupExternalId} на курсе ${course.idnumber}${group.purpose === null ? '' : ` (${group.purpose})`}`,
-					payload: envelope
+					note: `заведена группа ${group.groupExternalId} на курсе ${course.idnumber}${group.purpose === null ? '' : ` (${group.purpose})`}${learnerCount === null ? '' : `, слушателей: ${learnerCount}`}`,
+					payload: journalCopy(envelope)
 				});
 
 				return {

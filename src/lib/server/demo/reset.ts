@@ -131,7 +131,8 @@ export const DEMO_DATA_TABLES = [
 	'exchange_messages',
 	'learning_groups',
 	'learning_group_products',
-	'learning_group_results'
+	'learning_group_results',
+	'learning_group_learners'
 ] as const;
 
 /**

@@ -24,7 +24,12 @@ import {
 	markMomentFromDay,
 	STAGE_ATTACHMENT_DOCUMENT_KIND
 } from '$lib/contracts/documents';
-import { completeLearningGroupSchema, sendLearningGroupSchema } from '$lib/contracts/exchange';
+import {
+	completeLearningGroupSchema,
+	learningGroupRosterSchema,
+	removeLearnerSchema,
+	sendLearningGroupSchema
+} from '$lib/contracts/exchange';
 import { NO_OPTION } from '$lib/components/directory/labels';
 import { actorFromEvent } from '$lib/server/actor';
 import { listOrganizationContracts } from '$lib/server/directory/contracts';
@@ -41,6 +46,12 @@ import {
 	readInteractionExchange,
 	requestLearningGroup
 } from '$lib/server/integrations/exchange/groups';
+import {
+	importLearningGroupRoster,
+	previewLearningGroupRoster,
+	removeLearner,
+	sendLearningGroupRoster
+} from '$lib/server/integrations/exchange/roster';
 import {
 	getInteraction,
 	listComments,
@@ -236,6 +247,13 @@ async function run(action: () => Promise<unknown>) {
 
 		return toActionFailure(cause);
 	}
+}
+
+/** Файл списка слушателей из формы; `null` — файла не выбрали. */
+function rosterFile(data: FormData): File | null {
+	const file = data.get('file');
+
+	return file instanceof File && file.size > 0 ? file : null;
 }
 
 /** Значение поля формы как строка или `null` для пустого. */
@@ -582,6 +600,108 @@ export const actions: Actions = {
 		if (!parsed.ok) return parsed.failure;
 
 		return run(() => markLearningGroupCompleted(actorFromEvent(event), parsed.data));
+	},
+
+	/**
+	 * Предпросмотр списка слушателей: что станет с каждой строкой файла.
+	 * Ничего не пишет — подтверждение присылает тот же файл ещё раз.
+	 */
+	rosterPreview: async (event) => {
+		const data = await event.request.formData();
+		const parsed = parse(learningGroupRosterSchema, {
+			interactionId: event.params.id,
+			learningGroupId: data.get('learningGroupId')
+		});
+
+		if (!parsed.ok) return parsed.failure;
+
+		const file = rosterFile(data);
+
+		if (file === null) {
+			return fail(400, { message: 'Выберите файл со списком слушателей', issues: [] as string[] });
+		}
+
+		try {
+			return {
+				ok: true,
+				roster: await previewLearningGroupRoster(actorFromEvent(event), parsed.data, {
+					name: file.name,
+					bytes: new Uint8Array(await file.arrayBuffer())
+				})
+			};
+		} catch (cause) {
+			return toActionFailure(cause);
+		}
+	},
+
+	/**
+	 * Загрузка списка слушателей: тот же разбор и та же сверка, что в
+	 * предпросмотре, но с записью. Строки с претензиями не загружаются.
+	 */
+	rosterImport: async (event) => {
+		const data = await event.request.formData();
+		const parsed = parse(learningGroupRosterSchema, {
+			interactionId: event.params.id,
+			learningGroupId: data.get('learningGroupId')
+		});
+
+		if (!parsed.ok) return parsed.failure;
+
+		const file = rosterFile(data);
+
+		if (file === null) {
+			return fail(400, { message: 'Выберите файл со списком слушателей', issues: [] as string[] });
+		}
+
+		try {
+			return {
+				ok: true,
+				roster: await importLearningGroupRoster(actorFromEvent(event), parsed.data, {
+					name: file.name,
+					bytes: new Uint8Array(await file.arrayBuffer())
+				})
+			};
+		} catch (cause) {
+			return toActionFailure(cause);
+		}
+	},
+
+	/** Передача списка в систему обучения — действием сотрудника, как и заявка. */
+	rosterSend: async (event) => {
+		const data = await event.request.formData();
+		const parsed = parse(learningGroupRosterSchema, {
+			interactionId: event.params.id,
+			learningGroupId: data.get('learningGroupId')
+		});
+
+		if (!parsed.ok) return parsed.failure;
+
+		try {
+			const outcome = await sendLearningGroupRoster(actorFromEvent(event), parsed.data);
+
+			return outcome.delivered
+				? { ok: true }
+				: fail(502, {
+						message:
+							outcome.error ?? 'Система обучения не ответила: список остался в очереди повторов',
+						issues: [] as string[]
+					});
+		} catch (cause) {
+			return toActionFailure(cause);
+		}
+	},
+
+	rosterRemove: async (event) => {
+		const data = await event.request.formData();
+		const parsed = parse(removeLearnerSchema, {
+			interactionId: event.params.id,
+			learningGroupId: data.get('learningGroupId'),
+			personId: data.get('personId')
+		});
+
+		if (!parsed.ok) return parsed.failure;
+
+		return run(() => removeLearner(actorFromEvent(event), parsed.data));
 	},
 
 	/**

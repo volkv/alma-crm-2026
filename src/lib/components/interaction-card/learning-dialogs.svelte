@@ -1,7 +1,9 @@
 <script lang="ts">
 	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
+	import XIcon from '@lucide/svelte/icons/x';
+	import type { SubmitFunction } from '@sveltejs/kit';
 	import { untrack } from 'svelte';
-	import { enhance } from '$app/forms';
+	import { applyAction, enhance } from '$app/forms';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -10,13 +12,24 @@
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import DateField from '$lib/components/form/date-field.svelte';
+	import FileInput from '$lib/components/form/file-input.svelte';
 	import FormDialog from '$lib/components/form-dialog.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
-	import { actionEnhance } from '$lib/components/interactions/action-enhance';
+	import StatusBadge, { type StatusTone } from '$lib/components/status-badge.svelte';
 	import {
+		actionEnhance,
+		describeActionFailure
+	} from '$lib/components/interactions/action-enhance';
+	import {
+		LEARNER_STATUS_LABELS,
 		LEARNING_PURPOSE_LABELS,
 		LEARNING_PURPOSES,
-		type LearningPurpose
+		ROSTER_FILE_FORMATS_HINT,
+		ROSTER_ROW_ACTION_LABELS,
+		ROSTER_ROW_ACTIONS,
+		type LearningPurpose,
+		type RosterRowAction,
+		type RosterView
 	} from '$lib/contracts/exchange';
 	import { getCardCommands } from './commands.svelte';
 	import type { CardExchange, CardOffering } from './model';
@@ -42,6 +55,7 @@
 
 	const sendOpen = opened('send-group');
 	const completeOpen = opened('complete-group');
+	const rosterOpen = opened('roster');
 
 	const offeringLabel = (offering: CardOffering) => `${offering.code} — ${offering.name}`;
 
@@ -64,6 +78,11 @@
 	 * полей и гаснет вместе с причиной, закрывая ровно то, что надо исправить.
 	 */
 	let sendRefusal = $state<{ message: string; description?: string } | null>(null);
+	/** Предпросмотр или итог загрузки списка; `null` — файл ещё не проверяли. */
+	let roster = $state<RosterView | null>(null);
+	/** Показанный `roster` — итог загрузки, а не предпросмотр: загружать нечего. */
+	let rosterLoaded = $state(false);
+	let rosterRefusal = $state<{ message: string; description?: string } | null>(null);
 
 	$effect(() => {
 		const current = commands.current;
@@ -79,6 +98,9 @@
 			purpose = '';
 			chosenProducts = [];
 			sendRefusal = null;
+			roster = null;
+			rosterLoaded = false;
+			rosterRefusal = null;
 			completeComment = '';
 			completeGroupId =
 				current.kind === 'complete-group'
@@ -104,6 +126,62 @@
 	const completing = $derived(
 		exchange.groups.find((group) => group.id === completeGroupId) ?? null
 	);
+
+	/** Поток, чей список открыт. */
+	const rosterGroup = $derived.by(() => {
+		const current = commands.current;
+
+		return current?.kind === 'roster'
+			? (exchange.groups.find((group) => group.id === current.groupId) ?? null)
+			: null;
+	});
+	const rosterLearners = $derived(
+		exchange.learners === null || rosterGroup === null
+			? null
+			: exchange.learners.filter((learner) => learner.learningGroupId === rosterGroup.id)
+	);
+	/** Сколько строк файла загрузка возьмёт: новые люди и найденные в справочнике. */
+	const rosterLoadable = $derived(roster === null ? 0 : roster.counts.create + roster.counts.link);
+
+	const ROW_TONES: Record<RosterRowAction, StatusTone> = {
+		create: 'accent',
+		link: 'info',
+		present: 'neutral',
+		error: 'danger'
+	};
+
+	/**
+	 * Проверка и загрузка файла — одна форма с двумя кнопками: подтверждение
+	 * присылает тот же файл ещё раз, и сервер разбирает его тем же разбором, что
+	 * и предпросмотр. Поэтому форма после ответа не очищается: файл нужен
+	 * второй кнопке.
+	 */
+	const rosterEnhance: SubmitFunction = ({ action }) => {
+		const loading = action.search.includes('rosterImport');
+
+		rosterRefusal = null;
+
+		return async ({ result, update }) => {
+			if (result.type === 'failure') {
+				rosterRefusal = describeActionFailure(result.data);
+
+				return;
+			}
+
+			if (result.type === 'success') {
+				roster = (result.data?.roster as RosterView | undefined) ?? null;
+				rosterLoaded = loading;
+
+				if (loading) {
+					await update({ reset: false });
+				}
+
+				return;
+			}
+
+			await applyAction(result);
+		};
+	};
 
 	function toggleProduct(id: string, checked: boolean) {
 		chosenProducts = checked
@@ -301,6 +379,169 @@
 			<Button type="submit" form="card-complete-group-form" disabled={completing === null}>
 				Отметить обучение завершённым
 			</Button>
+		</div>
+	{/snippet}
+</FormDialog>
+
+<FormDialog
+	bind:open={rosterOpen.get, rosterOpen.set}
+	title={rosterGroup === null ? 'Слушатели потока' : `Слушатели потока ${rosterGroup.streamNumber}`}
+	description="Поимённый список группы: загружается файлом, передаётся в систему обучения кнопкой. Люди узнаются по почте — второй записи об одном человеке загрузка не заводит."
+	width="xl"
+>
+	<div class="flex flex-col gap-4">
+		{#if rosterRefusal !== null}
+			<Alert.Root variant="destructive">
+				<TriangleAlertIcon aria-hidden="true" />
+				<Alert.Title>{rosterRefusal.message}</Alert.Title>
+				{#if rosterRefusal.description}
+					<Alert.Description>{rosterRefusal.description}</Alert.Description>
+				{/if}
+			</Alert.Root>
+		{/if}
+
+		<section class="flex flex-col gap-2" aria-labelledby="card-roster-list-title">
+			<h3 id="card-roster-list-title" class="text-sm font-medium">
+				В списке: {rosterGroup?.learnerCount ?? 0}, передано в LMS: {rosterGroup?.transferredCount ??
+					0}
+			</h3>
+			{#if rosterLearners === null}
+				<p class="text-sm text-muted-foreground">
+					Имена слушателей видны тем, кому открыт справочник людей.
+				</p>
+			{:else if rosterLearners.length === 0}
+				<p class="text-sm text-muted-foreground">Список пуст: загрузите файл ниже.</p>
+			{:else}
+				<ul class="flex max-h-64 flex-col divide-y overflow-y-auto rounded-md border">
+					{#each rosterLearners as learner (learner.personId)}
+						<li class="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">
+							<span class="min-w-0 flex-1 break-words">
+								{learner.fullName}
+								<span class="block text-xs break-all text-muted-foreground">
+									{[learner.email, learner.phone].filter((part) => part !== null).join(' · ')}
+								</span>
+							</span>
+							<StatusBadge tone={learner.status === 'transferred' ? 'success' : 'warning'} dot>
+								{LEARNER_STATUS_LABELS[learner.status]}
+							</StatusBadge>
+							{#if exchange.canManageRoster}
+								<form
+									method="POST"
+									action="?/rosterRemove"
+									use:enhance={actionEnhance()}
+									class="contents"
+								>
+									<input type="hidden" name="learningGroupId" value={learner.learningGroupId} />
+									<input type="hidden" name="personId" value={learner.personId} />
+									<Button
+										type="submit"
+										size="icon-xs"
+										variant="ghost"
+										aria-label="Убрать {learner.fullName} из списка"
+										title="Убрать из списка"
+									>
+										<XIcon aria-hidden="true" />
+									</Button>
+								</form>
+							{/if}
+						</li>
+					{/each}
+				</ul>
+			{/if}
+		</section>
+
+		{#if exchange.canManageRoster && rosterGroup !== null}
+			<form
+				id="card-roster-form"
+				method="POST"
+				action="?/rosterPreview"
+				enctype="multipart/form-data"
+				use:enhance={rosterEnhance}
+				class="flex flex-col gap-3"
+			>
+				<input type="hidden" name="learningGroupId" value={rosterGroup.id} />
+				<FileInput
+					id="card-roster-file"
+					name="file"
+					label="Файл списка"
+					description="{ROSTER_FILE_FORMATS_HINT}; телефон — по желанию. Первая строка — названия колонок."
+					accept=".xls,.xlsx,.csv,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
+					required
+					onchoose={() => {
+						roster = null;
+						rosterLoaded = false;
+					}}
+				/>
+				<div class="flex flex-wrap gap-2">
+					<Button type="submit" variant="outline">Проверить файл</Button>
+					{#if roster !== null && !rosterLoaded && rosterLoadable > 0}
+						<Button type="submit" formaction="?/rosterImport">
+							Загрузить строк: {rosterLoadable}
+						</Button>
+					{/if}
+				</div>
+			</form>
+
+			{#if roster !== null}
+				<section class="flex flex-col gap-2" aria-labelledby="card-roster-preview-title">
+					<h3 id="card-roster-preview-title" class="text-sm font-medium">
+						{rosterLoaded ? 'Список загружен' : 'Что станет со строками файла'}
+					</h3>
+					{#each roster.fileIssues as issue (issue)}
+						<InlineHint tone="warning">{issue}</InlineHint>
+					{/each}
+					<p class="text-xs text-muted-foreground">
+						{ROSTER_ROW_ACTIONS.map(
+							(action) => `${ROSTER_ROW_ACTION_LABELS[action]}: ${roster?.counts[action] ?? 0}`
+						).join(' · ')}
+					</p>
+					{#if roster.rows.length > 0}
+						<ul class="flex max-h-72 flex-col divide-y overflow-y-auto rounded-md border">
+							{#each roster.rows as row (row.rowNo)}
+								<li class="flex flex-col gap-0.5 px-3 py-2 text-sm">
+									<div class="flex flex-wrap items-center gap-2">
+										<span class="text-xs text-muted-foreground tabular-nums"
+											>строка {row.rowNo}</span
+										>
+										<span class="min-w-0 flex-1 break-words">{row.fullName || '—'}</span>
+										<StatusBadge tone={ROW_TONES[row.action]}>
+											{ROSTER_ROW_ACTION_LABELS[row.action]}
+										</StatusBadge>
+									</div>
+									<span class="text-xs break-all text-muted-foreground">
+										{[row.email, row.phone].filter((part) => part !== null).join(' · ')}
+									</span>
+									{#each row.issues as issue (issue)}
+										<span class="text-xs text-danger-soft-foreground">{issue}</span>
+									{/each}
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</section>
+			{/if}
+		{/if}
+	</div>
+
+	{#snippet footer({ close })}
+		<div class="flex flex-wrap justify-end gap-2">
+			<Button type="button" variant="outline" onclick={close}>Закрыть</Button>
+			{#if rosterGroup !== null}
+				<form
+					method="POST"
+					action="?/rosterSend"
+					use:enhance={actionEnhance({ onfailure: (refusal) => (rosterRefusal = refusal) })}
+				>
+					<input type="hidden" name="learningGroupId" value={rosterGroup.id} />
+					<Button
+						type="submit"
+						disabled={!exchange.canSend || rosterGroup.learnerCount === 0}
+						title={exchange.canSend ? undefined : 'Нет права на отправку в систему обучения'}
+					>
+						Передать список в LMS
+					</Button>
+				</form>
+			{/if}
 		</div>
 	{/snippet}
 </FormDialog>

@@ -4,9 +4,9 @@
 	import ContextSection from './context-section.svelte';
 
 	/**
-	 * Слушатели по данным потоков: сколько мест заявлено и что пришло из
-	 * системы обучения. Своего списка слушателей у записи нет — люди живут в
-	 * системе обучения, и сюда приходят их числа, а не фамилии.
+	 * Слушатели по данным потоков: сколько мест заявлено, сколько человек в
+	 * поимённых списках и что пришло из системы обучения. Сами списки — в
+	 * строке потока панели «Система обучения»: там их загружают и передают.
 	 */
 	let { groups }: { groups: readonly LearningGroupView[] } = $props();
 
@@ -19,6 +19,10 @@
 
 	const rows = $derived([
 		{ label: 'Заявлено мест', value: total((group) => group.plannedSeats) },
+		{
+			label: 'В поимённых списках',
+			value: total((group) => (group.learnerCount === 0 ? null : group.learnerCount))
+		},
 		{ label: 'Зачислено', value: total((group) => group.enrolled) },
 		{ label: 'Окончили', value: total((group) => group.completed) },
 		{ label: 'Отчислены', value: total((group) => group.expelled) }

@@ -118,7 +118,7 @@ describe('конверт сообщения', () => {
 		expect(isSupportedSchemaVersion('2.7')).toBe(true);
 		expect(isSupportedSchemaVersion('1.1')).toBe(false);
 		expect(isSupportedSchemaVersion('3.0')).toBe(false);
-		expect(EXCHANGE_SCHEMA_VERSION).toBe('2.0');
+		expect(EXCHANGE_SCHEMA_VERSION).toBe('2.1');
 	});
 });
 

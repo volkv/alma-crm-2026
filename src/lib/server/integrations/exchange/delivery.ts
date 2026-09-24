@@ -14,15 +14,17 @@
  * сообщение сразу ждёт человека на экране «Внешние системы».
  */
 import { and, asc, eq, inArray, isNull, lte, or, sql } from 'drizzle-orm';
+import { z } from 'zod';
 import {
 	EXCHANGE_EVENT_TYPES,
 	EXCHANGE_SCHEMA_VERSION,
+	learningGroupLearnerEntrySchema,
 	learningGroupReplySchema
 } from '$lib/contracts/exchange';
 import type { ActorContext } from '../../actor';
 import { recordAuditEvent } from '../../audit';
 import { getDb } from '../../db';
-import { exchangeMessages, learningGroups } from '../../db/schema';
+import { exchangeMessages, learningGroupLearners, learningGroups } from '../../db/schema';
 import { withTransaction } from '../../db/transaction';
 import { retryDelaySeconds, signPayload } from '../delivery';
 import { outboundTargetIssue } from '../outbound';
@@ -256,8 +258,22 @@ async function buildEnvelope(row: MessageRow): Promise<string | null> {
 	return envelope;
 }
 
-/** Что система обучения ответила на заявку, разобранное схемой. */
-type GroupReply = { groupExternalId: string; streamNumber: number };
+/**
+ * Что система обучения ответила на заявку, разобранное схемой, и кого из
+ * слушателей заявка несла: `null` — списка в ней не было.
+ */
+type GroupReply = { groupExternalId: string; streamNumber: number; learnerIds: string[] | null };
+
+/** Список слушателей в нашем же конверте: разбирается только он, остальное тело не нужно. */
+const sentLearnersSchema = z.object({
+	data: z.object({ learners: z.array(learningGroupLearnerEntrySchema).optional() })
+});
+
+function sentLearnerIds(envelope: string): string[] | null {
+	const learners = sentLearnersSchema.parse(JSON.parse(envelope)).data.learners;
+
+	return learners === undefined ? null : learners.map((learner) => learner.personId);
+}
 
 /**
  * Разбор ответа системы обучения.
@@ -271,7 +287,11 @@ type GroupReply = { groupExternalId: string; streamNumber: number };
  * Поэтому 2xx с телом не по контракту — это отказ доставки, и отказ
  * окончательный: другим то же тело не станет.
  */
-function parseGroupReply(row: MessageRow, body: string): GroupReply | { issue: string } {
+function parseGroupReply(
+	row: MessageRow,
+	body: string,
+	envelope: string
+): GroupReply | { issue: string } {
 	const refuse = (what: string): { issue: string } => ({
 		issue: `Система обучения приняла заявку, но ${what}: связи с группой нет, и результат по ней прийти не сможет`
 	});
@@ -300,7 +320,11 @@ function parseGroupReply(row: MessageRow, body: string): GroupReply | { issue: s
 		return refuse('в семени заявки нет номера потока');
 	}
 
-	return { groupExternalId: reply.data.data.groupExternalId, streamNumber };
+	return {
+		groupExternalId: reply.data.data.groupExternalId,
+		streamNumber,
+		learnerIds: sentLearnerIds(envelope)
+	};
 }
 
 async function finish(
@@ -335,6 +359,32 @@ async function finish(
 							eq(learningGroups.streamNumber, reply.streamNumber)
 						)
 					);
+
+				// Слушатели, которых нёс принятый список, переданы — и только они:
+				// добавленный после сборки тела в систему обучения не уезжал.
+				if (reply.learnerIds !== null && reply.learnerIds.length > 0) {
+					await tx
+						.update(learningGroupLearners)
+						.set({ status: 'transferred', transferredAt: sql`now()` })
+						.where(
+							and(
+								eq(learningGroupLearners.status, 'listed'),
+								inArray(learningGroupLearners.personId, reply.learnerIds),
+								inArray(
+									learningGroupLearners.learningGroupId,
+									tx
+										.select({ id: learningGroups.id })
+										.from(learningGroups)
+										.where(
+											and(
+												eq(learningGroups.interactionId, row.interactionId),
+												eq(learningGroups.streamNumber, reply.streamNumber)
+											)
+										)
+								)
+							)
+						);
+				}
 			}
 
 			await recordAuditEvent(
@@ -448,7 +498,7 @@ export async function deliverMessage(
 	const attempt = await post(target.url, target.secret, row.id, envelope, target.timeoutMs);
 
 	if (attempt.ok && row.eventType === EXCHANGE_EVENT_TYPES.learningGroupRequested) {
-		const reply = parseGroupReply(row, attempt.body);
+		const reply = parseGroupReply(row, attempt.body, envelope);
 
 		if ('issue' in reply) {
 			const refused: Attempt = {

@@ -16,6 +16,7 @@ import {
 	isFinalLearningResult,
 	type CompleteLearningGroupInput,
 	type ExchangeMessageState,
+	type LearningGroupLearnerView,
 	type LearningGroupView,
 	type LearningTrainingState,
 	type LmsEvidence,
@@ -47,6 +48,7 @@ import { deliverMessage } from './delivery';
 import { countsForStage, finalResultFilter } from './evidence';
 import { groupRequestExternalId } from './payloads';
 import { enqueueOutbound } from './outbox';
+import { countGroupLearners, listInteractionLearners } from './roster';
 
 /**
  * Можно ли отправить группу прямо сейчас; `null` — можно.
@@ -350,7 +352,7 @@ export async function listLearningGroups(
 
 	const groupIds = rows.map((row) => row.id);
 
-	const [results, groupProducts] = await Promise.all([
+	const [results, groupProducts, learnerCounts] = await Promise.all([
 		db
 			.select({
 				learningGroupId: learningGroupResults.learningGroupId,
@@ -373,7 +375,8 @@ export async function listLearningGroups(
 			.from(learningGroupProducts)
 			.innerJoin(products, eq(products.id, learningGroupProducts.productId))
 			.where(inArray(learningGroupProducts.learningGroupId, groupIds))
-			.orderBy(asc(products.code))
+			.orderBy(asc(products.code)),
+		countGroupLearners(groupIds)
 	]);
 
 	const latest = new Map<string, (typeof results)[number]>();
@@ -469,7 +472,9 @@ export async function listLearningGroups(
 			purpose: row.purpose,
 			trainingState,
 			completionMark,
-			countsForStage: row.countsForStage
+			countsForStage: row.countsForStage,
+			learnerCount: learnerCounts.get(row.id)?.total ?? 0,
+			transferredCount: learnerCounts.get(row.id)?.transferred ?? 0
 		};
 	});
 }
@@ -495,8 +500,12 @@ export type InteractionExchangeView = {
 	canSend: boolean;
 	/** Может ли сотрудник отметить обучение завершённым. */
 	canComplete: boolean;
+	/** Может ли сотрудник загружать и править поимённые списки групп. */
+	canManageRoster: boolean;
 	/** Почему отправить нельзя; `null` — можно. */
 	issue: string | null;
+	/** Слушатели всех групп; `null` — люди вызывающему не видны, в карточке только числа. */
+	learners: LearningGroupLearnerView[] | null;
 };
 
 /**
@@ -510,7 +519,7 @@ export async function readInteractionExchange(
 ): Promise<InteractionExchangeView> {
 	requirePermission(ctx, 'interactions.read');
 
-	const [groups, settings, interaction, offerings] = await Promise.all([
+	const [groups, settings, interaction, offerings, learners] = await Promise.all([
 		listLearningGroups(ctx, interactionId),
 		getExchangeSettings(),
 		getDb()
@@ -518,7 +527,8 @@ export async function readInteractionExchange(
 			.from(interactions)
 			.where(and(eq(interactions.id, interactionId), interactionScopeFilter(ctx)))
 			.limit(1),
-		readOfferings(getDb(), interactionId)
+		readOfferings(getDb(), interactionId),
+		listInteractionLearners(ctx, interactionId)
 	]);
 
 	const [primary] = await getDb()
@@ -539,6 +549,8 @@ export async function readInteractionExchange(
 		products: offerings.products,
 		canSend: can(ctx, 'exchange.send'),
 		canComplete: can(ctx, 'stages.confirm'),
+		canManageRoster: can(ctx, 'people.write'),
+		learners,
 		issue: groupSendIssue({
 			hasOrganization: primary !== undefined,
 			hasProgram: offerings.programs.length > 0,

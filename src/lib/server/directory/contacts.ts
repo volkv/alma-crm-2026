@@ -133,6 +133,18 @@ function readName(words: readonly string[]): { name: ContactName; rest: string[]
 	};
 }
 
+/**
+ * ФИО из ячейки, где кроме имени ничего нет: «Иванова Мария Петровна»,
+ * «ПЕТРОВ Пётр». `null` — это не фамилия с именем: одно слово, цифры или хвост
+ * после отчества. Правило то же, что у ячейки контактов, — второго разбора
+ * имени в продукте нет.
+ */
+export function parsePersonName(value: string): ContactName | null {
+	const read = readName(value.trim().split(/\s+/));
+
+	return read === null || read.rest.length > 0 ? null : read.name;
+}
+
 /** Один человек из куска ячейки или `null`, если имени в нём не нашлось. */
 function parseOne(chunk: string): ParsedContact | null {
 	let rest = chunk;

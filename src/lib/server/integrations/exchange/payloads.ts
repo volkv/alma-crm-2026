@@ -15,7 +15,8 @@ import { and, asc, desc, eq, isNull } from 'drizzle-orm';
 import {
 	applicationStatusDataSchema,
 	learningGroupRequestedDataSchema,
-	type ApplicationStatus
+	type ApplicationStatus,
+	type LearningGroupLearnerEntry
 } from '$lib/contracts/exchange';
 import { getDb } from '../../db';
 import {
@@ -23,15 +24,18 @@ import {
 	contracts,
 	interactionParties,
 	interactions,
+	learningGroupLearners,
 	learningGroupProducts,
 	learningGroups,
 	organizations,
+	people,
 	products,
 	programs,
 	stageEntries,
 	stageEntryStatus,
 	users
 } from '../../db/schema';
+import { decryptContact } from '../../people/pii';
 
 /**
  * Состояние заявки для карточки на сайте.
@@ -149,6 +153,7 @@ export async function buildLearningGroupRequest(
 		plannedSeats?: unknown;
 		startsOn?: unknown;
 		endsOn?: unknown;
+		includeLearners?: unknown;
 	};
 
 	const interactionId = typeof seed.interactionId === 'string' ? seed.interactionId : null;
@@ -230,6 +235,8 @@ export async function buildLearningGroupRequest(
 					.where(eq(contracts.id, interaction.contractId))
 					.limit(1);
 
+	const learners = seed.includeLearners === true ? await readLearners(group.id) : undefined;
+
 	return learningGroupRequestedDataSchema.parse({
 		externalId: groupRequestExternalId(interactionId, streamNumber),
 		interactionId,
@@ -251,6 +258,44 @@ export async function buildLearningGroupRequest(
 		// Ссылки на файлы v1 не возит: получатель забирает их сам по ключу
 		// объекта (`GET /v1/exchange/files/{ключ}`), а какие именно документы
 		// нужны системе обучения, контракт заказчика ещё не называет.
-		documents: []
+		documents: [],
+		...(learners === undefined ? {} : { learners })
 	});
+}
+
+/**
+ * Поимённый список группы для заявки: ФИО и почта.
+ *
+ * Почта расшифровывается здесь, мимо сериализатора людей, и это сознательно:
+ * сериализатор отвечает на вопрос «что показать сотруднику», а список уходит
+ * не сотруднику, а системе обучения — по действию того, кому передача
+ * разрешена, и ровно в том составе, который называет контракт. Телефон не
+ * расшифровывается вовсе: он в заявку не входит. Человек без почты в список не
+ * попадает — войти в систему обучения ему нечем.
+ */
+async function readLearners(learningGroupId: string): Promise<LearningGroupLearnerEntry[]> {
+	// Строка человека целиком, а не колонка почты: шифртекст контактов называет
+	// только `people/pii.ts`, и расшифровывает его тоже он.
+	const rows = await getDb()
+		.select({ person: people })
+		.from(learningGroupLearners)
+		.innerJoin(people, eq(people.id, learningGroupLearners.personId))
+		.where(
+			and(eq(learningGroupLearners.learningGroupId, learningGroupId), isNull(people.anonymizedAt))
+		)
+		.orderBy(asc(people.lastName), asc(people.firstName), asc(people.id));
+
+	return rows.flatMap(({ person }) =>
+		person.email === null
+			? []
+			: [
+					{
+						personId: person.id,
+						lastName: person.lastName,
+						firstName: person.firstName,
+						middleName: person.middleName,
+						email: decryptContact(person.email)
+					}
+				]
+	);
 }

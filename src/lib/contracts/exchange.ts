@@ -20,9 +20,11 @@ import { EDUCATION_LEVELS } from './directory';
  * Версия схемы, на которой говорит контракт v1. `2.0` убрала из заявки на
  * учебную группу одиночное поле `product` — состав продуктов группы ездит
  * только списком `products`. Удаление поля несовместимо, поэтому сменился
- * `major`, и сообщения `1.x` получают отказ во всех направлениях.
+ * `major`, и сообщения `1.x` получают отказ во всех направлениях. `2.1`
+ * добавила в ту же заявку необязательный поимённый список слушателей
+ * `learners` — добавление необязательного поля совместимо, `major` прежний.
  */
-export const EXCHANGE_SCHEMA_VERSION = '2.0';
+export const EXCHANGE_SCHEMA_VERSION = '2.1';
 
 /** Чей это экземпляр: `crm` — наша система, остальные — чужие. */
 export const EXCHANGE_SYSTEMS = ['cms', 'lms', 'crm'] as const;
@@ -334,6 +336,23 @@ export const LEARNING_PURPOSE_LABELS: Record<LearningPurpose, string> = {
 
 const catalogRefSchema = z.object({ id: z.uuid(), code: z.string() });
 
+/**
+ * Слушатель в заявке на группу: ФИО и почта, по которой система обучения
+ * заводит или находит учётную запись. `personId` — наш устойчивый
+ * идентификатор человека: по нему получатель отличает однофамильцев, а мы
+ * находим отправленное, когда данные человека уничтожают. Телефон не едет:
+ * системе обучения он не нужен, а лишний контакт — лишние персональные данные.
+ */
+export const learningGroupLearnerEntrySchema = z.object({
+	personId: z.uuid(),
+	lastName: z.string(),
+	firstName: z.string(),
+	middleName: z.string().nullable(),
+	email: z.string()
+});
+
+export type LearningGroupLearnerEntry = z.output<typeof learningGroupLearnerEntrySchema>;
+
 export const learningGroupRequestedDataSchema = z.object({
 	externalId: z.string(),
 	interactionId: z.uuid(),
@@ -355,7 +374,13 @@ export const learningGroupRequestedDataSchema = z.object({
 		endsOn: z.string().nullable()
 	}),
 	responsible: z.object({ userId: z.uuid() }),
-	documents: z.array(exchangeAttachmentSchema)
+	documents: z.array(exchangeAttachmentSchema),
+	/**
+	 * Поимённый список слушателей группы (`2.1`) — полный снимок состава, а не
+	 * добавка. Поля нет — заявка о составе ничего не говорит, и получатель
+	 * прежний состав не трогает; пустой список — «слушателей нет».
+	 */
+	learners: z.array(learningGroupLearnerEntrySchema).optional()
 });
 
 /**
@@ -425,6 +450,92 @@ export const completeLearningGroupSchema = z.object({
 });
 
 export type CompleteLearningGroupInput = z.output<typeof completeLearningGroupSchema>;
+
+/* ------------------------------------------------------------------ */
+/* Поимённый список слушателей группы                                  */
+/* ------------------------------------------------------------------ */
+
+/**
+ * Где слушатель в группе: `listed` — внесён в список в CRM, `transferred` —
+ * система обучения приняла список, в котором он был.
+ */
+export const LEARNER_STATUSES = ['listed', 'transferred'] as const;
+
+export type LearnerStatus = (typeof LEARNER_STATUSES)[number];
+
+export const LEARNER_STATUS_LABELS: Record<LearnerStatus, string> = {
+	listed: 'Не передан в LMS',
+	transferred: 'Передан в LMS'
+};
+
+/** Сколько строк принимает один файл списка: поток — это десятки человек, не тысячи. */
+export const ROSTER_MAX_ROWS = 500;
+
+/** Форматы файла списка — те же, что читает общий разбор таблиц. */
+export const ROSTER_FILE_FORMATS_HINT = 'XLSX, XLS или CSV: колонки «ФИО», «Почта», «Телефон»';
+
+/** Группа, к которой относится действие со списком. */
+export const learningGroupRosterSchema = z.object({
+	interactionId: z.uuid({ error: 'Некорректный идентификатор взаимодействия' }),
+	learningGroupId: z.uuid({ error: 'Некорректный идентификатор учебной группы' })
+});
+
+export type LearningGroupRosterInput = z.output<typeof learningGroupRosterSchema>;
+
+export const removeLearnerSchema = learningGroupRosterSchema.extend({
+	personId: z.uuid({ error: 'Некорректный идентификатор человека' })
+});
+
+export type RemoveLearnerInput = z.output<typeof removeLearnerSchema>;
+
+/**
+ * Что станет со строкой файла: `create` — заведём человека, `link` — человек
+ * уже есть в справочнике (узнан по почте), `present` — он уже в этой группе,
+ * `error` — строка не загрузится.
+ */
+export const ROSTER_ROW_ACTIONS = ['create', 'link', 'present', 'error'] as const;
+
+export type RosterRowAction = (typeof ROSTER_ROW_ACTIONS)[number];
+
+export const ROSTER_ROW_ACTION_LABELS: Record<RosterRowAction, string> = {
+	create: 'Новый человек',
+	link: 'Уже в справочнике',
+	present: 'Уже в группе',
+	error: 'Ошибка'
+};
+
+/** Строка файла списка после разбора и сверки. */
+export type RosterRowView = {
+	/** Номер строки в файле — как его видит человек в таблице. */
+	rowNo: number;
+	fullName: string;
+	email: string | null;
+	phone: string | null;
+	action: RosterRowAction;
+	issues: string[];
+};
+
+/** Предпросмотр или итог загрузки списка. */
+export type RosterView = {
+	rows: RosterRowView[];
+	counts: Record<RosterRowAction, number>;
+	/** Претензии к файлу целиком: нет колонки почты, пустой лист. */
+	fileIssues: string[];
+};
+
+/** Слушатель группы в том виде, в каком его показывает карточка. */
+export type LearningGroupLearnerView = {
+	learningGroupId: string;
+	personId: string;
+	/** ФИО одной строкой; у обезличенного — пометка вместо имени. */
+	fullName: string;
+	/** Почта и телефон — через сериализатор людей: без права на ПДн замаскированы. */
+	email: string | null;
+	phone: string | null;
+	status: LearnerStatus;
+	addedAt: Date;
+	transferredAt: Date | null;
+};
 
 /* ------------------------------------------------------------------ */
 /* Направление 4: LMS → CRM, результат учебной группы                  */
@@ -638,6 +749,10 @@ export type LearningGroupView = {
 	 * взаимодействия убрали, стадию не подтверждает.
 	 */
 	countsForStage: boolean;
+	/** Сколько человек в поимённом списке группы. */
+	learnerCount: number;
+	/** Из них переданы в систему обучения. */
+	transferredCount: number;
 };
 
 export const LEARNING_TRAINING_STATES = ['awaiting', 'in_progress', 'completed'] as const;

@@ -143,7 +143,9 @@ const NO_EXCHANGE: CardSource['exchange'] = {
 	products: [],
 	canSend: true,
 	canComplete: true,
-	issue: null
+	canManageRoster: true,
+	issue: null,
+	learners: null
 };
 
 function source(overrides: Partial<CardSource> = {}): CardSource {

@@ -6,9 +6,9 @@
  * сотрудник, — «ушла ли группа в систему обучения и что ответили», — и
  * перезапуск она обязана переживать.
  *
- * Значения перечислений объявлены здесь, а не в контрактах: схем обмена
- * (`src/lib/contracts/exchange.ts`) ещё нет, их заводит задача обмена вместе с
- * конвертом сообщения — она же переносит словари туда, где им место.
+ * Словари значений (назначение обучения, состояние слушателя) берутся из
+ * контракта `src/lib/contracts/exchange.ts`; здесь объявлены только
+ * перечисления журнала, которые наружу не ездят.
  */
 import { relations, sql } from 'drizzle-orm';
 import {
@@ -27,9 +27,9 @@ import {
 	uniqueIndex,
 	uuid
 } from 'drizzle-orm/pg-core';
-import { LEARNING_PURPOSES } from '$lib/contracts/exchange';
+import { LEARNER_STATUSES, LEARNING_PURPOSES } from '$lib/contracts/exchange';
 import { users } from './auth';
-import { products, programs } from './directory';
+import { people, products, programs } from './directory';
 import { documents } from './documents';
 import { interactions } from './interactions';
 import { createdAt } from './shared';
@@ -54,6 +54,7 @@ export const EXCHANGE_MESSAGE_STATES = [
 export const exchangeDirectionEnum = pgEnum('exchange_direction', EXCHANGE_DIRECTIONS);
 export const exchangeMessageStateEnum = pgEnum('exchange_message_state', EXCHANGE_MESSAGE_STATES);
 export const learningPurposeEnum = pgEnum('learning_purpose', LEARNING_PURPOSES);
+export const learnerStatusEnum = pgEnum('learner_status', LEARNER_STATUSES);
 
 /**
  * Одно входящее или исходящее сообщение контракта обмена.
@@ -206,6 +207,45 @@ export const learningGroupProducts = pgTable(
 );
 
 /**
+ * Поимённый список слушателей группы: группа × человек.
+ *
+ * Человек — запись справочника `people`, а не строка с ФИО: те же люди бывают
+ * контактами вуза и заявителями с сайта, их контакты зашифрованы, а уничтожение
+ * персональных данных обязано находить все места, где человек назван. Строка
+ * связи сама персональных данных не несёт, и обезличивание её удаляет
+ * (`people/retention.ts`): «в группе был кто-то» — не то, что стоит хранить.
+ *
+ * Состояние — передан ли человек в систему обучения: список уходит туда
+ * действием сотрудника, и тот, кого добавили после отправки, виден как
+ * непереданный.
+ */
+export const learningGroupLearners = pgTable(
+	'learning_group_learners',
+	{
+		learningGroupId: uuid()
+			.notNull()
+			.references(() => learningGroups.id, { onDelete: 'cascade' }),
+		personId: uuid()
+			.notNull()
+			.references(() => people.id, { onDelete: 'cascade' }),
+		status: learnerStatusEnum().notNull().default('listed'),
+		addedBy: uuid().references(() => users.id, { onDelete: 'set null' }),
+		/** Когда система обучения приняла список с этим человеком. */
+		transferredAt: timestamp({ withTimezone: true }),
+		...createdAt
+	},
+	(table) => [
+		// Повторная загрузка того же файла не заводит второй связи.
+		primaryKey({ columns: [table.learningGroupId, table.personId] }),
+		index('learning_group_learners_person_idx').on(table.personId),
+		check(
+			'learning_group_learners_transfer_whole',
+			sql`(${table.status} = 'transferred') = (${table.transferredAt} is not null)`
+		)
+	]
+);
+
+/**
  * Результат потока за период: сколько зачислено, завершило и отчислено.
  *
  * История строками, а не перезаписью: подтверждённый снимок статистики
@@ -265,7 +305,16 @@ export const learningGroupsRelations = relations(learningGroups, ({ one, many })
 	}),
 	program: one(programs, { fields: [learningGroups.programId], references: [programs.id] }),
 	products: many(learningGroupProducts),
-	results: many(learningGroupResults)
+	results: many(learningGroupResults),
+	learners: many(learningGroupLearners)
+}));
+
+export const learningGroupLearnersRelations = relations(learningGroupLearners, ({ one }) => ({
+	group: one(learningGroups, {
+		fields: [learningGroupLearners.learningGroupId],
+		references: [learningGroups.id]
+	}),
+	person: one(people, { fields: [learningGroupLearners.personId], references: [people.id] })
 }));
 
 export const learningGroupProductsRelations = relations(learningGroupProducts, ({ one }) => ({

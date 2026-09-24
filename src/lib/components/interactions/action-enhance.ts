@@ -5,7 +5,8 @@ import { toast } from 'svelte-sonner';
 /** Отказ действия в том виде, в каком его складывает `toActionFailure`. */
 type ActionError = { message?: unknown; issues?: unknown };
 
-function describe(data: unknown): { message: string; description?: string } {
+/** Отказ действия словами: сообщение сервера и его претензии одной строкой. */
+export function describeActionFailure(data: unknown): { message: string; description?: string } {
 	const payload = (data ?? {}) as ActionError;
 	const message = typeof payload.message === 'string' ? payload.message : 'Действие не выполнено';
 	const issues = Array.isArray(payload.issues)
@@ -52,7 +53,7 @@ export function actionEnhance(
 
 		return async ({ result, update }) => {
 			if (result.type === 'failure') {
-				const refusal = describe(result.data);
+				const refusal = describeActionFailure(result.data);
 
 				if (options.onfailure) {
 					options.onfailure(refusal);
