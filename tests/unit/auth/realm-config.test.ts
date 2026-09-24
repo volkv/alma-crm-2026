@@ -11,9 +11,18 @@ import { describe, expect, it } from 'vitest';
  * закрыты проверкой, а не договорённостью.
  */
 
-const realm = JSON.parse(
-	readFileSync(new URL('../../../keycloak/realm-lct.json', import.meta.url), 'utf8')
-) as {
+type Execution = {
+	authenticator?: string;
+	authenticatorConfig?: string;
+	flowAlias?: string;
+	requirement: string;
+};
+
+function readJson(file: string): unknown {
+	return JSON.parse(readFileSync(new URL(`../../../keycloak/${file}`, import.meta.url), 'utf8'));
+}
+
+const realm = readJson('realm-lct.json') as {
 	passwordPolicy: string;
 	bruteForceProtected: boolean;
 	permanentLockout: boolean;
@@ -21,7 +30,17 @@ const realm = JSON.parse(
 	waitIncrementSeconds: number;
 	maxFailureWaitSeconds: number;
 	clients: { clientId: string; redirectUris: string[] }[];
-	users: { id?: string; username: string; credentials: { value: string }[] }[];
+	users?: unknown[];
+	groups: { name: string; path: string; attributes?: Record<string, string[]> }[];
+	browserFlow: string;
+	authenticationFlows: { alias: string; authenticationExecutions: Execution[] }[];
+	authenticatorConfig: { alias: string; config: Record<string, string> }[];
+};
+
+/** Демонстрационные записи — отдельным файлом: установка без демо его не монтирует. */
+const demo = readJson('demo-users.json') as {
+	realm: string;
+	users: { id?: string; username: string; groups?: string[]; credentials: { value: string }[] }[];
 };
 
 /** Значение подстановки `${VAR:умолчание}` — то, с чем realm поднимается локально. */
@@ -56,7 +75,7 @@ describe('realm каталога учётных записей', () => {
 	 * контейнера, то есть в чужой день и на чужой машине.
 	 */
 	it('у демонстрационных записей постоянные идентификаторы', () => {
-		const ids = realm.users.map((user) => {
+		const ids = demo.users.map((user) => {
 			expect(user.id, `у записи «${user.username}» нет id`).toMatch(
 				/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/
 			);
@@ -65,7 +84,7 @@ describe('realm каталога учётных записей', () => {
 		});
 
 		// Один и тот же id у двух записей импорт принял бы не целиком.
-		expect(new Set(ids).size).toBe(realm.users.length);
+		expect(new Set(ids).size).toBe(demo.users.length);
 	});
 
 	it('общий пароль демонстрации отвечает политике самого realm', () => {
@@ -78,7 +97,7 @@ describe('realm каталога учётных записей', () => {
 		// только в консоли.
 		expect(policy).toContain('notUsername');
 
-		for (const user of realm.users) {
+		for (const user of demo.users) {
 			const password = substitutionDefault(user.credentials[0].value);
 
 			expect(password.length).toBeGreaterThanOrEqual(length);
@@ -87,7 +106,7 @@ describe('realm каталога учётных записей', () => {
 
 		// Пароль у всех трёх один: карточка на странице входа показывает его
 		// одной строкой на три учётные записи.
-		const passwords = new Set(realm.users.map((user) => user.credentials[0].value));
+		const passwords = new Set(demo.users.map((user) => user.credentials[0].value));
 
 		expect(passwords.size).toBe(1);
 	});
@@ -120,5 +139,73 @@ describe('realm каталога учётных записей', () => {
 
 		expect(uris).toContain('http://localhost:5173/*');
 		expect(uris.some((uri) => uri.startsWith('${CRM_ORIGIN'))).toBe(true);
+	});
+
+	/**
+	 * Второй фактор обязателен штатным `crm-admin` и `crm-lead` и не нужен
+	 * демонстрационным записям стенда. Обе половины живут в файле realm и видны
+	 * только входом через поднятый каталог, поэтому разбираются здесь: снятое
+	 * условие по роли открыло бы вход администратору по одному паролю, а
+	 * пропавшее исключение группы `demo` закрыло бы показ всем зрителям.
+	 */
+	it('одноразовый код обязателен штатным crm-admin и crm-lead, группе demo — нет', () => {
+		const flows = new Map(realm.authenticationFlows.map((flow) => [flow.alias, flow]));
+		const configs = new Map(realm.authenticatorConfig.map((item) => [item.alias, item.config]));
+		const top = flows.get(realm.browserFlow);
+
+		expect(top, `поток входа «${realm.browserFlow}» не описан в realm`).toBeDefined();
+
+		/** Все исполнения потока вместе с вложенными, по ссылкам `flowAlias`. */
+		const branches = (alias: string): Execution[][] =>
+			(flows.get(alias)?.authenticationExecutions ?? []).flatMap((item) =>
+				item.flowAlias === undefined
+					? []
+					: [flows.get(item.flowAlias)?.authenticationExecutions ?? [], ...branches(item.flowAlias)]
+			);
+
+		const conditionOf = (branch: Execution[], authenticator: string) =>
+			branch
+				.filter(
+					(item) => item.authenticator === authenticator && item.authenticatorConfig !== undefined
+				)
+				.map((item) => configs.get(item.authenticatorConfig as string) ?? {});
+
+		for (const role of ['crm-admin', 'crm-lead']) {
+			const branch = branches(realm.browserFlow).find((items) =>
+				conditionOf(items, 'conditional-user-role').some(
+					(config) => config.condUserRole === role && config.negate !== 'true'
+				)
+			);
+
+			expect(branch, `нет ветки второго фактора для ${role}`).toBeDefined();
+			expect(
+				branch?.find((item) => item.authenticator === 'auth-otp-form')?.requirement,
+				`ветка ${role} не требует одноразового кода`
+			).toBe('REQUIRED');
+
+			// Исключение — только признак группы, и в этой ветке оно отрицается.
+			const exempt = conditionOf(branch ?? [], 'conditional-user-attribute');
+
+			expect(exempt).toContainEqual(
+				expect.objectContaining({
+					attribute_name: 'otp-exempt',
+					attribute_expected_value: 'true',
+					include_group_attributes: 'true',
+					not: 'true'
+				})
+			);
+		}
+
+		const group = realm.groups.find((item) => item.name === 'demo');
+
+		expect(group?.attributes?.['otp-exempt']).toEqual(['true']);
+		// В файле realm нет ни одной учётной записи: иначе установка без демо
+		// получила бы их вместе с realm.
+		expect(realm.users ?? []).toHaveLength(0);
+		expect(demo.realm).toBe('lct');
+
+		for (const user of demo.users) {
+			expect(user.groups, `«${user.username}» вне группы demo`).toContain('/demo');
+		}
 	});
 });

@@ -1,0 +1,187 @@
+# Installation at the customer: the production overlay without the demo stand.
+# Used together with the base file only, NOT on top of docker-compose.prod.yml:
+#
+#   docker compose -f docker-compose.yml -f docker-compose.production.yml up -d --build
+#
+# Why a separate file instead of a third layer. Compose substitutes variables in
+# every file before it merges them, so a third file cannot lift what
+# docker-compose.prod.yml demands: the password of the demo accounts and the
+# control token of the imitators. An installation without either must not be
+# asked for them.
+#
+# What it changes compared to docker-compose.prod.yml (the public stand):
+#   - no demo accounts: Keycloak imports the realm file alone, without
+#     `keycloak/demo-users.json`, so the only accounts are the ones the
+#     administrator creates, and every `crm-admin`/`crm-lead` among them gets
+#     the second factor (keycloak/README.md);
+#   - no demo mode: DEMO_MODE is pinned to false here, whatever `.env` says —
+#     the seed then fills nothing, the sign-in page names no accounts, and there
+#     is no «Демо: заявка с сайта» button;
+#   - no imitators of the CMS and LMS and no Mailpit: the services are removed,
+#     not hidden behind a profile, so no `--profile` brings them back;
+#   - no bucket of the end-to-end suite.
+# The rest is the same as on the stand: only the app and Keycloak are published,
+# both on loopback behind the reverse proxy; every secret is a required variable
+# without a default; every service restarts by itself and has a memory limit.
+#
+# Checklist of the installation: docs/deployment.md, «Промышленная установка».
+
+services:
+  postgres:
+    restart: unless-stopped
+    ports: !reset []
+    environment: !override
+      POSTGRES_USER: lct
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      POSTGRES_DB: lct
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  redis:
+    restart: unless-stopped
+    ports: !reset []
+    # `$$` is a dollar for the shell inside the container, not for Compose: the
+    # password stays in the variable and never reaches the process command line.
+    environment:
+      REDIS_PASSWORD: ${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}
+    command: !override
+      - sh
+      - -c
+      - exec redis-server --appendonly yes --requirepass "$$REDIS_PASSWORD"
+    healthcheck: !override
+      test: ['CMD-SHELL', 'redis-cli --no-auth-warning -a "$$REDIS_PASSWORD" ping | grep -q PONG']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+    deploy:
+      resources:
+        limits:
+          memory: 128M
+
+  gotenberg:
+    restart: unless-stopped
+    ports: !reset []
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  # Demo props of the stand. The installation sends mail through the customer's
+  # relay (SMTP_URL) and talks to the real CMS and LMS, so a mail trap and two
+  # imitators next to them would be a second source of letters and of
+  # applications.
+  mailpit: !reset null
+  mock-cms: !reset null
+  mock-lms: !reset null
+
+  minio:
+    restart: unless-stopped
+    ports: !reset []
+    environment: !override
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
+    deploy:
+      resources:
+        limits:
+          memory: 512M
+
+  minio-init:
+    command: !override
+      - mc alias set stack http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
+        mc mb --ignore-existing stack/lct-documents
+    environment: !override
+      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env}
+      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
+    deploy:
+      resources:
+        limits:
+          memory: 64M
+
+  keycloak:
+    restart: unless-stopped
+    # Production mode on PostgreSQL; `--import-realm` fires only on an empty
+    # database (docs/deployment.md, «Импорт realm»).
+    command: !override ['start', '--import-realm']
+    ports: !override
+      - '127.0.0.1:${KEYCLOAK_PORT:-8098}:8080'
+    # The realm file alone. The base file also mounts the demo accounts as the
+    # users file of the realm; here they must not exist at all.
+    volumes: !override
+      - ./keycloak/realm-lct.json:/opt/keycloak/data/import/lct-realm.json:ro
+    environment: !override
+      KC_BOOTSTRAP_ADMIN_USERNAME: ${KEYCLOAK_ADMIN:?set KEYCLOAK_ADMIN in .env}
+      KC_BOOTSTRAP_ADMIN_PASSWORD: ${KEYCLOAK_ADMIN_PASSWORD:?set KEYCLOAK_ADMIN_PASSWORD in .env}
+      KC_HEALTH_ENABLED: 'true'
+      KC_DB: postgres
+      KC_DB_URL: jdbc:postgresql://postgres:5432/keycloak
+      KC_DB_USERNAME: lct
+      KC_DB_PASSWORD: ${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}
+      KC_HOSTNAME: ${OIDC_PUBLIC_URL:?set OIDC_PUBLIC_URL in .env}
+      KC_HTTP_RELATIVE_PATH: /auth
+      KC_HTTP_MANAGEMENT_RELATIVE_PATH: /
+      KC_HTTP_ENABLED: 'true'
+      KC_PROXY_HEADERS: xforwarded
+      CRM_ORIGIN: ${ORIGIN:?set ORIGIN in .env}
+      OIDC_CLIENT_SECRET: ${OIDC_CLIENT_SECRET:?set OIDC_CLIENT_SECRET in .env}
+    depends_on:
+      postgres:
+        condition: service_healthy
+    deploy:
+      resources:
+        limits:
+          memory: 768M
+
+  app:
+    restart: unless-stopped
+    ports: !override
+      - '127.0.0.1:${APP_PORT:-8099}:3000'
+    # Same shape as the app of docker-compose.prod.yml (the comments there
+    # explain every line), minus the demo: DEMO_MODE is pinned instead of read
+    # from `.env`, and the variables of the demo scene are empty.
+    environment: !override
+      DATABASE_URL: postgres://lct:${POSTGRES_PASSWORD:?set POSTGRES_PASSWORD in .env}@postgres:5432/lct
+      REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379
+      OIDC_INTERNAL_URL: http://keycloak:8080/auth
+      DEMO_MODE: 'false'
+      DEMO_PASSWORD_HINT: ''
+      DEMO_CMS_TRIGGER_URL: ''
+      SMTP_URL: ${SMTP_URL:-}
+      SMTP_FROM: ${SMTP_FROM:-}
+      S3_ENDPOINT: http://minio:9000
+      S3_REGION: us-east-1
+      S3_BUCKET: lct-documents
+      S3_FORCE_PATH_STYLE: 'true'
+      BODY_SIZE_LIMIT: 27M
+      EXCHANGE_CMS_STATUS_URL: ${EXCHANGE_CMS_STATUS_URL:-}
+      EXCHANGE_LMS_GROUPS_URL: ${EXCHANGE_LMS_GROUPS_URL:-}
+      EXCHANGE_LMS_BASE_URL: ${EXCHANGE_LMS_BASE_URL:-}
+      EXCHANGE_CMS_INSTANCE: ${EXCHANGE_CMS_INSTANCE:-itschool-site}
+      EXCHANGE_LMS_INSTANCE: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
+      EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}
+      # `:?` with the colon: an installation that holds real people's contacts
+      # has no business starting with an empty key.
+      PII_ENCRYPTION_KEY: ${PII_ENCRYPTION_KEY:?set PII_ENCRYPTION_KEY in .env}
+      ALLOW_LOCAL_TARGETS: 'false'
+    env_file:
+      - .env
+    volumes:
+      - ${FONTS_DIR:-./static/fonts}:/app/build/client/fonts:ro
+    # The base file waits for Mailpit with `required: false`; the service is
+    # gone here, so the dependency goes too.
+    depends_on: !override
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+      gotenberg:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      minio-init:
+        condition: service_completed_successfully
+    deploy:
+      resources:
+        limits:
+          memory: 512M

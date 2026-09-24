@@ -1,0 +1,62 @@
+{
+	"realm": "lct",
+	"users": [
+		{
+			"id": "9d1f0c2a-0001-4000-8000-000000000001",
+			"username": "admin",
+			"email": "admin@demo.lct-crm.local",
+			"firstName": "Администратор",
+			"lastName": "Демо",
+			"enabled": true,
+			"emailVerified": true,
+			"requiredActions": [],
+			"credentials": [
+				{
+					"type": "password",
+					"temporary": false,
+					"value": "${KEYCLOAK_DEMO_PASSWORD:lct-demo-2026}"
+				}
+			],
+			"realmRoles": ["crm-admin"],
+			"groups": ["/demo"]
+		},
+		{
+			"id": "9d1f0c2a-0002-4000-8000-000000000002",
+			"username": "lead",
+			"email": "lead@demo.lct-crm.local",
+			"firstName": "Руководитель",
+			"lastName": "Демо",
+			"enabled": true,
+			"emailVerified": true,
+			"requiredActions": [],
+			"credentials": [
+				{
+					"type": "password",
+					"temporary": false,
+					"value": "${KEYCLOAK_DEMO_PASSWORD:lct-demo-2026}"
+				}
+			],
+			"realmRoles": ["crm-lead"],
+			"groups": ["/demo"]
+		},
+		{
+			"id": "9d1f0c2a-0003-4000-8000-000000000003",
+			"username": "manager",
+			"email": "manager@demo.lct-crm.local",
+			"firstName": "Менеджер",
+			"lastName": "Демо",
+			"enabled": true,
+			"emailVerified": true,
+			"requiredActions": [],
+			"credentials": [
+				{
+					"type": "password",
+					"temporary": false,
+					"value": "${KEYCLOAK_DEMO_PASSWORD:lct-demo-2026}"
+				}
+			],
+			"realmRoles": ["crm-user"],
+			"groups": ["/demo"]
+		}
+	]
+}

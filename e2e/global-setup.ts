@@ -9,6 +9,7 @@ import postgres from 'postgres';
 import { DEMO_EMAILS, DEMO_LOGINS, STAFF_ADMIN_EMAIL } from '../scripts/seed/users';
 import { ensureAccount, keycloakAdmin, type DirectoryAccount } from './helpers/keycloak-admin';
 import { skipOnboardingTour } from './helpers/onboarding';
+import { configureSecondFactor } from './helpers/second-factor';
 import { signInThroughDirectory } from './helpers/sign-in';
 
 /**
@@ -75,6 +76,14 @@ export const NO_ROLE_ACCOUNT = {
 };
 
 const authDirectory = fileURLToPath(new URL('../.playwright/auth/', import.meta.url));
+
+/**
+ * Секрет второго фактора штатного администратора. Роль `crm-admin` вне группы
+ * `demo` входит только с одноразовым кодом (`keycloak/README.md`, «Второй
+ * фактор»): сетап настраивает код первым входом, спеки входят с кодом из
+ * этого файла.
+ */
+export const STAFF_ADMIN_TOTP = path.join(authDirectory, 'staff-admin.totp.json');
 
 /** Сессия демонстрационного менеджера: под ней идут почти все проверки. */
 export const MANAGER_STATE = path.join(authDirectory, 'manager.json');
@@ -224,7 +233,8 @@ const DIRECTORY_ACCOUNTS: readonly DirectoryAccount[] = [
 async function storeSession(
 	baseURL: string,
 	file: string,
-	credentials: { login: string; password: string }
+	credentials: { login: string; password: string },
+	secondFactorFile?: string
 ): Promise<void> {
 	const browser = await chromium.launch();
 
@@ -233,6 +243,11 @@ async function storeSession(
 		const page = await context.newPage();
 
 		await signInThroughDirectory(page, credentials);
+
+		if (secondFactorFile !== undefined) {
+			await configureSecondFactor(page, secondFactorFile);
+		}
+
 		await page.waitForURL('/');
 
 		// Первый вход этой учётной записи начинается с приветствия подсказок, и
@@ -320,5 +335,5 @@ export default async function globalSetup(config: FullConfig): Promise<void> {
 		login: DEMO_LOGINS.admin,
 		password: E2E_PASSWORD
 	});
-	await storeSession(baseURL, STAFF_ADMIN_STATE, STAFF_ADMIN);
+	await storeSession(baseURL, STAFF_ADMIN_STATE, STAFF_ADMIN, STAFF_ADMIN_TOTP);
 }

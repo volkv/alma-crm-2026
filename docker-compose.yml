@@ -43,8 +43,10 @@ services:
       timeout: 5s
       retries: 20
 
-  # The account directory and the only way into the app: realm `lct`, three roles
-  # and three demo accounts are imported from `keycloak/realm-lct.json`. The app
+  # The account directory and the only way into the app: realm `lct` with three
+  # roles and the second factor for the privileged ones is imported from
+  # `keycloak/realm-lct.json`, the three demo accounts from
+  # `keycloak/demo-users.json`. The app
   # keeps no passwords of its own (docs/auth.md), so without this container
   # nobody signs in. How realm roles map onto ours: docs/access-matrix.md,
   # section 6.
@@ -93,8 +95,14 @@ services:
     # network Keycloak answers on 8080.
     ports:
       - '58080:8080'
+    # Two files under the names the directory import pairs by: `<realm>-realm.json`
+    # is the realm itself, `<realm>-users-0.json` the users imported into it. The
+    # demo accounts live in the second file so that an installation without them
+    # mounts only the first (docker-compose.production.yml); under any other name
+    # Keycloak imports the realm and silently skips the users file.
     volumes:
-      - ./keycloak/realm-lct.json:/opt/keycloak/data/import/realm-lct.json:ro
+      - ./keycloak/realm-lct.json:/opt/keycloak/data/import/lct-realm.json:ro
+      - ./keycloak/demo-users.json:/opt/keycloak/data/import/lct-users-0.json:ro
     healthcheck:
       # The image carries neither curl nor wget — only bash, so the request to
       # `/health/ready` on the management port goes through /dev/tcp.

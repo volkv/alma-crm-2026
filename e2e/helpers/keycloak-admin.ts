@@ -93,7 +93,7 @@ export type DirectoryAccount = {
 
 /**
  * Приводит учётную запись каталога к тому, что нужно прогону: заводит, если её
- * нет, включает, ставит известный пароль и выдаёт роль.
+ * нет, снимает код второго фактора, ставит известный пароль и выдаёт роль.
  *
  * Идемпотентно: второй прогон подряд встречает уже заведённую запись и просто
  * переписывает ей пароль — realm при этом не пересоздаётся.
@@ -122,6 +122,21 @@ export async function ensureAccount(
 		if (userId === null) {
 			throw new Error(`Keycloak завёл запись «${account.username}», но не отдал её обратно`);
 		}
+	}
+
+	// Код второго фактора прошлого прогона: его секрет остался в файле того
+	// прогона, а штатная запись без кода обязана пройти настройку заново —
+	// так прогон каждый раз проверяет и настройку, и вход с кодом.
+	const credentials = (await (
+		await request(admin, 'GET', `/admin/realms/${REALM}/users/${userId}/credentials`)
+	).json()) as { id: string; type: string }[];
+
+	for (const credential of credentials.filter((item) => item.type === 'otp')) {
+		await request(
+			admin,
+			'DELETE',
+			`/admin/realms/${REALM}/users/${userId}/credentials/${credential.id}`
+		);
 	}
 
 	await request(admin, 'PUT', `/admin/realms/${REALM}/users/${userId}/reset-password`, {

@@ -14,6 +14,12 @@
 	"defaultLocale": "ru",
 	"supportedLocales": ["ru", "en"],
 	"passwordPolicy": "length(12) and notUsername",
+	"otpPolicyType": "totp",
+	"otpPolicyAlgorithm": "HmacSHA1",
+	"otpPolicyDigits": 6,
+	"otpPolicyPeriod": 30,
+	"otpPolicyLookAheadWindow": 1,
+	"otpPolicyCodeReusable": false,
 	"bruteForceProtected": true,
 	"permanentLockout": false,
 	"failureFactor": 30,
@@ -78,60 +84,262 @@
 			]
 		}
 	],
-	"users": [
+	"groups": [
 		{
-			"id": "9d1f0c2a-0001-4000-8000-000000000001",
-			"username": "admin",
-			"email": "admin@demo.lct-crm.local",
-			"firstName": "Администратор",
-			"lastName": "Демо",
-			"enabled": true,
-			"emailVerified": true,
-			"requiredActions": [],
-			"credentials": [
+			"name": "demo",
+			"path": "/demo",
+			"attributes": {
+				"otp-exempt": ["true"]
+			}
+		}
+	],
+	"browserFlow": "browser-otp",
+	"authenticationFlows": [
+		{
+			"alias": "browser-otp",
+			"description": "Вход в браузере: пароль, затем второй фактор по роли",
+			"providerId": "basic-flow",
+			"topLevel": true,
+			"builtIn": false,
+			"authenticationExecutions": [
 				{
-					"type": "password",
-					"temporary": false,
-					"value": "${KEYCLOAK_DEMO_PASSWORD:lct-demo-2026}"
+					"authenticator": "auth-cookie",
+					"authenticatorFlow": false,
+					"requirement": "ALTERNATIVE",
+					"priority": 10,
+					"userSetupAllowed": false
+				},
+				{
+					"flowAlias": "browser-otp forms",
+					"authenticatorFlow": true,
+					"requirement": "ALTERNATIVE",
+					"priority": 20,
+					"userSetupAllowed": false
 				}
-			],
-			"realmRoles": ["crm-admin"]
+			]
 		},
 		{
-			"id": "9d1f0c2a-0002-4000-8000-000000000002",
-			"username": "lead",
-			"email": "lead@demo.lct-crm.local",
-			"firstName": "Руководитель",
-			"lastName": "Демо",
-			"enabled": true,
-			"emailVerified": true,
-			"requiredActions": [],
-			"credentials": [
+			"alias": "browser-otp forms",
+			"description": "Имя входа и пароль, затем одна из веток второго фактора",
+			"providerId": "basic-flow",
+			"topLevel": false,
+			"builtIn": false,
+			"authenticationExecutions": [
 				{
-					"type": "password",
-					"temporary": false,
-					"value": "${KEYCLOAK_DEMO_PASSWORD:lct-demo-2026}"
+					"authenticator": "auth-username-password-form",
+					"authenticatorFlow": false,
+					"requirement": "REQUIRED",
+					"priority": 10,
+					"userSetupAllowed": false
+				},
+				{
+					"flowAlias": "browser-otp crm-admin",
+					"authenticatorFlow": true,
+					"requirement": "CONDITIONAL",
+					"priority": 20,
+					"userSetupAllowed": false
+				},
+				{
+					"flowAlias": "browser-otp crm-lead",
+					"authenticatorFlow": true,
+					"requirement": "CONDITIONAL",
+					"priority": 30,
+					"userSetupAllowed": false
+				},
+				{
+					"flowAlias": "browser-otp configured",
+					"authenticatorFlow": true,
+					"requirement": "CONDITIONAL",
+					"priority": 40,
+					"userSetupAllowed": false
 				}
-			],
-			"realmRoles": ["crm-lead"]
+			]
 		},
 		{
-			"id": "9d1f0c2a-0003-4000-8000-000000000003",
-			"username": "manager",
-			"email": "manager@demo.lct-crm.local",
-			"firstName": "Менеджер",
-			"lastName": "Демо",
-			"enabled": true,
-			"emailVerified": true,
-			"requiredActions": [],
-			"credentials": [
+			"alias": "browser-otp crm-admin",
+			"description": "crm-admin вне группы demo: одноразовый код обязателен, не настроен — настройка при входе",
+			"providerId": "basic-flow",
+			"topLevel": false,
+			"builtIn": false,
+			"authenticationExecutions": [
 				{
-					"type": "password",
-					"temporary": false,
-					"value": "${KEYCLOAK_DEMO_PASSWORD:lct-demo-2026}"
+					"authenticator": "conditional-user-role",
+					"authenticatorConfig": "otp: role crm-admin",
+					"authenticatorFlow": false,
+					"requirement": "REQUIRED",
+					"priority": 10,
+					"userSetupAllowed": false
+				},
+				{
+					"authenticator": "conditional-user-attribute",
+					"authenticatorConfig": "otp: not exempt (crm-admin)",
+					"authenticatorFlow": false,
+					"requirement": "REQUIRED",
+					"priority": 20,
+					"userSetupAllowed": false
+				},
+				{
+					"authenticator": "auth-otp-form",
+					"authenticatorFlow": false,
+					"requirement": "REQUIRED",
+					"priority": 30,
+					"userSetupAllowed": false
 				}
-			],
-			"realmRoles": ["crm-user"]
+			]
+		},
+		{
+			"alias": "browser-otp crm-lead",
+			"description": "crm-lead без crm-admin вне группы demo: одноразовый код обязателен",
+			"providerId": "basic-flow",
+			"topLevel": false,
+			"builtIn": false,
+			"authenticationExecutions": [
+				{
+					"authenticator": "conditional-user-role",
+					"authenticatorConfig": "otp: role crm-lead",
+					"authenticatorFlow": false,
+					"requirement": "REQUIRED",
+					"priority": 10,
+					"userSetupAllowed": false
+				},
+				{
+					"authenticator": "conditional-user-role",
+					"authenticatorConfig": "otp: without crm-admin (crm-lead)",
+					"authenticatorFlow": false,
+					"requirement": "REQUIRED",
+					"priority": 20,
+					"userSetupAllowed": false
+				},
+				{
+					"authenticator": "conditional-user-attribute",
+					"authenticatorConfig": "otp: not exempt (crm-lead)",
+					"authenticatorFlow": false,
+					"requirement": "REQUIRED",
+					"priority": 30,
+					"userSetupAllowed": false
+				},
+				{
+					"authenticator": "auth-otp-form",
+					"authenticatorFlow": false,
+					"requirement": "REQUIRED",
+					"priority": 40,
+					"userSetupAllowed": false
+				}
+			]
+		},
+		{
+			"alias": "browser-otp configured",
+			"description": "Остальные вне группы demo: код, если человек настроил его сам",
+			"providerId": "basic-flow",
+			"topLevel": false,
+			"builtIn": false,
+			"authenticationExecutions": [
+				{
+					"authenticator": "conditional-user-configured",
+					"authenticatorFlow": false,
+					"requirement": "REQUIRED",
+					"priority": 10,
+					"userSetupAllowed": false
+				},
+				{
+					"authenticator": "conditional-user-role",
+					"authenticatorConfig": "otp: without crm-admin (configured)",
+					"authenticatorFlow": false,
+					"requirement": "REQUIRED",
+					"priority": 20,
+					"userSetupAllowed": false
+				},
+				{
+					"authenticator": "conditional-user-role",
+					"authenticatorConfig": "otp: without crm-lead (configured)",
+					"authenticatorFlow": false,
+					"requirement": "REQUIRED",
+					"priority": 30,
+					"userSetupAllowed": false
+				},
+				{
+					"authenticator": "conditional-user-attribute",
+					"authenticatorConfig": "otp: not exempt (configured)",
+					"authenticatorFlow": false,
+					"requirement": "REQUIRED",
+					"priority": 40,
+					"userSetupAllowed": false
+				},
+				{
+					"authenticator": "auth-otp-form",
+					"authenticatorFlow": false,
+					"requirement": "REQUIRED",
+					"priority": 50,
+					"userSetupAllowed": false
+				}
+			]
+		}
+	],
+	"authenticatorConfig": [
+		{
+			"alias": "otp: role crm-admin",
+			"config": {
+				"condUserRole": "crm-admin",
+				"negate": "false"
+			}
+		},
+		{
+			"alias": "otp: not exempt (crm-admin)",
+			"config": {
+				"attribute_name": "otp-exempt",
+				"attribute_expected_value": "true",
+				"include_group_attributes": "true",
+				"not": "true",
+				"regex": "false"
+			}
+		},
+		{
+			"alias": "otp: role crm-lead",
+			"config": {
+				"condUserRole": "crm-lead",
+				"negate": "false"
+			}
+		},
+		{
+			"alias": "otp: without crm-admin (crm-lead)",
+			"config": {
+				"condUserRole": "crm-admin",
+				"negate": "true"
+			}
+		},
+		{
+			"alias": "otp: not exempt (crm-lead)",
+			"config": {
+				"attribute_name": "otp-exempt",
+				"attribute_expected_value": "true",
+				"include_group_attributes": "true",
+				"not": "true",
+				"regex": "false"
+			}
+		},
+		{
+			"alias": "otp: without crm-admin (configured)",
+			"config": {
+				"condUserRole": "crm-admin",
+				"negate": "true"
+			}
+		},
+		{
+			"alias": "otp: without crm-lead (configured)",
+			"config": {
+				"condUserRole": "crm-lead",
+				"negate": "true"
+			}
+		},
+		{
+			"alias": "otp: not exempt (configured)",
+			"config": {
+				"attribute_name": "otp-exempt",
+				"attribute_expected_value": "true",
+				"include_group_attributes": "true",
+				"not": "true",
+				"regex": "false"
+			}
 		}
 	]
 }

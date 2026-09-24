@@ -1,6 +1,7 @@
 import { expect, test } from '@playwright/test';
-import { E2E_USER, E2E_PASSWORD, NO_ROLE_ACCOUNT } from './global-setup';
+import { E2E_USER, E2E_PASSWORD, NO_ROLE_ACCOUNT, STAFF_ADMIN_TOTP } from './global-setup';
 import { skipOnboardingTour } from './helpers/onboarding';
+import { enterSecondFactor } from './helpers/second-factor';
 import { signInThroughDirectory } from './helpers/sign-in';
 
 /**
@@ -120,6 +121,11 @@ test('вход штатным администратором открывает 
 		login: 'staff-admin',
 		password: E2E_PASSWORD
 	});
+
+	// Пароля штатной записи мало: каталог спрашивает одноразовый код, настроенный
+	// глобальным сетапом, и без него в приложение не возвращает.
+	await expect(page.locator('#otp')).toBeVisible();
+	await enterSecondFactor(page, STAFF_ADMIN_TOTP);
 
 	await expect(page).toHaveURL('/');
 
