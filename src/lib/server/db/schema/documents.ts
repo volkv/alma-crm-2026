@@ -22,7 +22,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import type { DocumentTemplateVariable } from '$lib/contracts/documents';
 import { users } from './auth';
-import { interactions, stageEntries } from './interactions';
+import { contractItems, interactions, stageEntries } from './interactions';
 import { createdAt, timestamps } from './shared';
 
 export const documentTemplates = pgTable('document_templates', {
@@ -116,6 +116,30 @@ export const stageEntryDocuments = pgTable(
 		...createdAt
 	},
 	(table) => [primaryKey({ columns: [table.stageEntryId, table.documentId] })]
+);
+
+/**
+ * Позиции договора, которые передаёт документ: акт передачи материалов и
+ * лицензий называет продукты, по которым он составлен.
+ *
+ * Связь стоит на редакции, как и отметки: подписывают конкретный файл, и
+ * отметка «Утверждён» на нём переводит в «передан» ровно эти позиции. Новая
+ * редакция (скан подписанного экземпляра) получает связи заменённой при
+ * загрузке — это тот же акт, а не другой документ. Удаление позиции снимает
+ * связь каскадом: передавать по акту больше нечего.
+ */
+export const documentContractItems = pgTable(
+	'document_contract_items',
+	{
+		documentId: uuid()
+			.notNull()
+			.references((): AnyPgColumn => documents.id, { onDelete: 'cascade' }),
+		contractItemId: uuid()
+			.notNull()
+			.references((): AnyPgColumn => contractItems.id, { onDelete: 'cascade' }),
+		...createdAt
+	},
+	(table) => [primaryKey({ columns: [table.documentId, table.contractItemId] })]
 );
 
 export const stageEntryDocumentsRelations = relations(stageEntryDocuments, ({ one }) => ({

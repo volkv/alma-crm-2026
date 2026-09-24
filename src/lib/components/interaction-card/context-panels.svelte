@@ -1,5 +1,5 @@
 <script lang="ts">
-	import type { DocumentSupersession } from '$lib/contracts/documents';
+	import { packageTemplates, type DocumentSupersession } from '$lib/contracts/documents';
 	import { PARTY_ROLE_LABELS } from '$lib/contracts/interactions';
 	import { getCardCommands } from './commands.svelte';
 	import ContactLine from './contact-line.svelte';
@@ -136,7 +136,8 @@
 		<DocumentsPanel
 			documents={source.interaction.documents}
 			{supersessions}
-			templates={source.card.templates}
+			templates={packageTemplates(source.card.templates, source.card.counterpartyKind)}
+			counterpartyKind={source.card.counterpartyKind}
 			canUpload={can.upload}
 			canGenerate={can.generate}
 		/>

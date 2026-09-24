@@ -36,7 +36,14 @@ import {
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
-import { documents, interactions, users } from '../db/schema';
+import {
+	contractItems,
+	documentContractItems,
+	documents,
+	interactions,
+	products,
+	users
+} from '../db/schema';
 import { NotFoundError } from '../errors';
 import { interactionScopeFilter, visibleInteractionFilter } from '../interactions/access';
 import { requirePermission } from '../rbac';
@@ -478,4 +485,31 @@ export async function readDocumentForDownload(
 		fileName: documentFileName(row.title, row.mime),
 		sizeBytes
 	};
+}
+
+/** Позиция договора, которую передаёт документ, и её нынешний статус передачи. */
+export type DocumentContractItemView = {
+	id: string;
+	productName: string;
+	transferStatus: string;
+};
+
+/**
+ * Позиции договора, которые передаёт редакция (акт передачи). Доступ к самому
+ * документу проверяет вызывающий: функция читает только связи.
+ */
+export async function listDocumentContractItems(
+	documentId: string
+): Promise<DocumentContractItemView[]> {
+	return getDb()
+		.select({
+			id: contractItems.id,
+			productName: products.name,
+			transferStatus: contractItems.transferStatus
+		})
+		.from(documentContractItems)
+		.innerJoin(contractItems, eq(contractItems.id, documentContractItems.contractItemId))
+		.innerJoin(products, eq(products.id, contractItems.productId))
+		.where(eq(documentContractItems.documentId, documentId))
+		.orderBy(asc(products.name));
 }

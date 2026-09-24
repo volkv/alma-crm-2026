@@ -18,18 +18,19 @@ import {
 	updateInteractionSchema
 } from '$lib/contracts/interactions';
 import {
+	DOCUMENT_TEMPLATE_LABELS,
+	generatePackageSchema,
 	markDocumentStatusSchema,
 	markMomentFromDay,
 	STAGE_ATTACHMENT_DOCUMENT_KIND
 } from '$lib/contracts/documents';
 import { completeLearningGroupSchema, sendLearningGroupSchema } from '$lib/contracts/exchange';
-import { formatDate } from '$lib/format';
 import { NO_OPTION } from '$lib/components/directory/labels';
 import { actorFromEvent } from '$lib/server/actor';
 import { listOrganizationContracts } from '$lib/server/directory/contracts';
 import { getOrganization } from '$lib/server/directory/read';
 import { DocumentConversionError } from '$lib/server/documents/errors';
-import { generateDocument } from '$lib/server/documents/generate';
+import { generateDocumentPackage } from '$lib/server/documents/package';
 import { listInteractionSupersessions } from '$lib/server/documents/read';
 import { markDocument } from '$lib/server/documents/status';
 import { uploadDocument, uploadDocumentRevision } from '$lib/server/documents/upload';
@@ -573,7 +574,52 @@ export const actions: Actions = {
 		return run(() => markLearningGroupCompleted(actorFromEvent(event), parsed.data));
 	},
 
-	generate: async (event) => generateAgreement(event),
+	/**
+	 * Пакет документов дела: выбранные шаблоны процесса, подходящие виду
+	 * контрагента. Отказ отдельного документа — его исход, а не отказ
+	 * действия: собранное остаётся, форма показывает, что заполнить. Отказ
+	 * всего пакета — только когда не собралось ничего.
+	 */
+	package: async (event) => {
+		const data = await event.request.formData();
+		const parsed = parse(generatePackageSchema, {
+			templates: data.getAll('templates'),
+			city: data.get('city') ?? '',
+			operatorSigner: data.get('operatorSigner') ?? '',
+			counterpartySigner: text(data, 'counterpartySigner')
+		});
+
+		if (!parsed.ok) return parsed.failure;
+
+		try {
+			const outcomes = await generateDocumentPackage(
+				actorFromEvent(event),
+				event.params.id,
+				parsed.data
+			);
+
+			if (outcomes.every((outcome) => outcome.status === 'refused')) {
+				return fail(400, {
+					message: 'Ни один документ пакета не собран',
+					issues: outcomes.flatMap((outcome) =>
+						outcome.status === 'refused'
+							? outcome.issues.map(
+									(issue) => `${DOCUMENT_TEMPLATE_LABELS[outcome.templateKey]}: ${issue}`
+								)
+							: []
+					)
+				});
+			}
+
+			return { ok: true, outcomes };
+		} catch (cause) {
+			if (cause instanceof DocumentConversionError) {
+				return fail(502, { message: cause.message, issues: [] as string[] });
+			}
+
+			return toActionFailure(cause);
+		}
+	},
 
 	update: async (event) => {
 		const ctx = actorFromEvent(event);
@@ -663,82 +709,3 @@ export const actions: Actions = {
 		return run(() => updateInteraction(ctx, parsed.data));
 	}
 };
-
-/**
- * Соглашение по шаблону. Тегов без значения в договоре не бывает, поэтому всё,
- * чего нет в карточке (город, подписанты), спрашивается формой, а не
- * подставляется пустой строкой.
- */
-async function generateAgreement(event: RequestEvent) {
-	const ctx = actorFromEvent(event);
-	const data = await event.request.formData();
-	const interaction = await getInteraction(ctx, event.params.id);
-
-	const institution = interaction.parties.find(
-		(party) => party.partyRole === 'educational_institution'
-	);
-
-	if (institution === undefined) {
-		return fail(400, {
-			message: 'Для соглашения нужен участник — учебное заведение',
-			issues: [] as string[]
-		});
-	}
-
-	const periodStart = interaction.agreementPeriodStart;
-	const periodEnd = interaction.agreementPeriodEnd;
-
-	if (periodStart === null || periodEnd === null) {
-		return fail(400, {
-			message: 'Укажите срок действия соглашения в плане взаимодействия',
-			issues: [] as string[]
-		});
-	}
-
-	const city = text(data, 'city');
-	const operatorName = text(data, 'operatorName');
-	const operatorSigner = text(data, 'operatorSigner');
-	const institutionSigner = text(data, 'institutionSigner');
-	const customerName = text(data, 'customerName');
-
-	const missing = [
-		['Город подписания', city],
-		['Оператор', operatorName],
-		['Подписант оператора', operatorSigner],
-		['Подписант учебного заведения', institutionSigner],
-		['Заказчик подготовки', customerName]
-	]
-		.filter(([, value]) => value === null)
-		.map(([label]) => String(label));
-
-	if (
-		city === null ||
-		operatorName === null ||
-		operatorSigner === null ||
-		institutionSigner === null ||
-		customerName === null
-	) {
-		return fail(400, { message: 'Заполните все поля соглашения', issues: missing });
-	}
-
-	return run(() =>
-		generateDocument(ctx, {
-			templateKey: 'agreement',
-			interactionId: interaction.id,
-			title: `Соглашение — ${interaction.title}`,
-			formats: ['docx', 'pdf'],
-			data: {
-				city,
-				date: formatDate(new Date()),
-				operatorName,
-				operatorSigner,
-				institutionName: institution.organizationName,
-				institutionSigner,
-				customerName,
-				periodStart: formatDate(periodStart),
-				periodEnd: formatDate(periodEnd),
-				programs: interaction.programs.map((program) => ({ name: program.name }))
-			}
-		})
-	);
-}

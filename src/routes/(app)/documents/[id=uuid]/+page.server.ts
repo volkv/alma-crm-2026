@@ -8,6 +8,7 @@ import {
 import { actorFromEvent } from '$lib/server/actor';
 import {
 	assertDocumentAccessible,
+	listDocumentContractItems,
 	listDocumentRevisions,
 	selectDocumentRow,
 	toDocumentView
@@ -40,17 +41,21 @@ export const load: PageServerLoad = async (event) => {
 		// Взаимодействие — ссылка с карточки, и звать за ней сервис стоит только
 		// тому, кому взаимодействия вообще видны: без права на них ссылка всё
 		// равно приведёт к отказу, а карточка документа не про это.
-		const [interaction, revisions] = await Promise.all([
+		const [interaction, revisions, contractItems] = await Promise.all([
 			row.interactionId !== null && can(ctx, 'interactions.read')
 				? getInteraction(ctx, row.interactionId)
 				: null,
-			listDocumentRevisions(ctx, row.id)
+			listDocumentRevisions(ctx, row.id),
+			// Позиции договора, которые передаёт эта редакция: отметка
+			// «Утверждён» переводит их в «передан».
+			listDocumentContractItems(row.id)
 		]);
 
 		return {
 			document: toDocumentView(row),
 			interaction: interaction === null ? null : { id: interaction.id, title: interaction.title },
 			revisions,
+			contractItems,
 			canWrite: can(ctx, 'documents.write'),
 			// Границы дня отметки считает сервер: часы браузера бывают какими
 			// угодно, а последнее слово всё равно за сервисом.

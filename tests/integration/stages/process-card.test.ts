@@ -45,14 +45,14 @@ describe('состав карточки процесса', () => {
 
 		expect(await getProcessCard(ctx, 'b2b')).toEqual({
 			panels: ['terms', 'contract', 'learning', 'documents'],
-			templates: ['agreement']
+			templates: ['agreement', 'sublicense', 'handover_act']
 		});
 
 		const card = await readInteractionCard(await getInteraction(ctx, interactionId));
 
 		expect(card).toEqual({
 			panels: ['terms', 'payment', 'learners', 'learning', 'training_document', 'documents'],
-			templates: [],
+			templates: ['offer', 'legal_entity_contract', 'services_act'],
 			counterpartyKind: 'legal_entity'
 		});
 

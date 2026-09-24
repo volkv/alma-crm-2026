@@ -20,6 +20,7 @@
 		type DocumentTemplateKey,
 		type DocumentSupersession
 	} from '$lib/contracts/documents';
+	import type { OrganizationKind } from '$lib/contracts/directory';
 	import type { InteractionDocumentView } from '$lib/contracts/interactions';
 	import { formatBytes, formatDate } from '$lib/format';
 	import { getCardCommands } from './commands.svelte';
@@ -40,14 +41,19 @@
 		documents,
 		supersessions,
 		templates,
+		counterpartyKind,
 		canUpload,
 		canGenerate
 	}: {
 		documents: readonly InteractionDocumentView[];
 		/** Какие из этих файлов уже заменены новой редакцией и когда. */
 		supersessions: readonly DocumentSupersession[];
-		/** Шаблоны, которые объявил процесс записи; других карточка не собирает. */
+		/**
+		 * Шаблоны пакета: объявлены процессом записи и подходят виду контрагента;
+		 * других карточка не собирает.
+		 */
 		templates: readonly DocumentTemplateKey[];
+		counterpartyKind: OrganizationKind;
 		canUpload: boolean;
 		canGenerate: boolean;
 	} = $props();
@@ -212,16 +218,21 @@
 		</ul>
 	{/if}
 
-	<!-- Шаблон пока один — соглашение, и диалог сборки у него свой. -->
-	{#if canGenerate && templates.includes('agreement')}
-		<Button
-			size="sm"
-			variant="outline"
-			class="self-start"
-			onclick={() => commands.open({ kind: 'generate' })}
-		>
-			<FileSignatureIcon aria-hidden="true" />
-			{DOCUMENT_TEMPLATE_LABELS.agreement} по шаблону
-		</Button>
+	{#if canGenerate && templates.length > 0}
+		<div class="flex flex-col gap-1">
+			<Button
+				size="sm"
+				variant="outline"
+				class="self-start"
+				onclick={() =>
+					commands.open({ kind: 'package', templates: [...templates], counterpartyKind })}
+			>
+				<FileSignatureIcon aria-hidden="true" />
+				Собрать пакет документов
+			</Button>
+			<p class="text-xs text-muted-foreground">
+				{templates.map((key) => DOCUMENT_TEMPLATE_LABELS[key]).join(', ')} — DOCX и PDF по данным карточек.
+			</p>
+		</div>
 	{/if}
 </ContextSection>

@@ -16,10 +16,11 @@ import {
 	type DocumentView,
 	type UploadDocumentInput
 } from '$lib/contracts/documents';
+import { eq } from 'drizzle-orm';
 import type { AuditDetails } from '$lib/contracts/audit';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
-import { documents } from '../db/schema';
+import { documentContractItems, documents } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { ConflictError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
@@ -173,6 +174,20 @@ async function writeDocument(
 			if (fields.supersedesId !== null) {
 				details.documentId = row.id;
 				details.supersededDocumentId = fields.supersedesId;
+
+				// Новая редакция акта — тот же акт: позиции, которые он передаёт,
+				// переходят на неё, иначе отметка на подписанном скане ничего бы
+				// не передала.
+				const inherited = await tx
+					.select({ contractItemId: documentContractItems.contractItemId })
+					.from(documentContractItems)
+					.where(eq(documentContractItems.documentId, fields.supersedesId));
+
+				if (inherited.length > 0) {
+					await tx
+						.insert(documentContractItems)
+						.values(inherited.map((link) => ({ documentId: row.id, ...link })));
+				}
 			}
 
 			await recordAuditEvent(

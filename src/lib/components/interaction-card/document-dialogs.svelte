@@ -1,11 +1,13 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import { enhance } from '$app/forms';
+	import { applyAction, enhance } from '$app/forms';
+	import type { SubmitFunction } from '@sveltejs/kit';
+	import { toast } from 'svelte-sonner';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
-	import ConfirmDialog from '$lib/components/confirm-dialog.svelte';
 	import DateField from '$lib/components/form/date-field.svelte';
 	import FileInput from '$lib/components/form/file-input.svelte';
 	import FormDialog from '$lib/components/form-dialog.svelte';
@@ -17,20 +19,23 @@
 		DOCUMENT_KIND_LABELS,
 		DOCUMENT_STATUS_FACTS,
 		DOCUMENT_STATUS_FACT_LABELS,
-		GENERATED_DOCUMENT_KIND,
+		DOCUMENT_TEMPLATE_LABELS,
 		UPLOADED_DOCUMENT_KINDS,
 		type DocumentStatusFact,
+		type DocumentTemplateKey,
+		type PackageOutcome,
 		type DocumentSupersession,
 		type MarkDayBounds
 	} from '$lib/contracts/documents';
 	import type { InteractionDocumentView, InteractionView } from '$lib/contracts/interactions';
+	import { pluralize } from '$lib/format';
 	import { getCardCommands } from './commands.svelte';
 
 	/**
-	 * Диалоги документов дела: загрузка, новая редакция, отметка и соглашение
-	 * по шаблону. Документ неизменяем: исправленный файл встаёт новой
-	 * редакцией, отметку снять нельзя, повторная сборка соглашения встаёт
-	 * рядом отдельной парой файлов.
+	 * Диалоги документов дела: загрузка, новая редакция, отметка и пакет
+	 * документов по шаблонам. Документ неизменяем: исправленный файл встаёт
+	 * новой редакцией, отметку снять нельзя, повторная сборка пакета встаёт
+	 * рядом отдельными файлами.
 	 */
 	let {
 		interaction,
@@ -52,7 +57,7 @@
 	const uploadOpen = opened('upload');
 	const revisionOpen = opened('revision');
 	const markOpen = opened('mark');
-	const generateOpen = opened('generate');
+	const packageOpen = opened('package');
 
 	const documents = $derived(interaction.documents);
 	const superseded = $derived(new Set(supersessions.map((item) => item.documentId)));
@@ -99,8 +104,14 @@
 	let markFact = $state<DocumentStatusFact>('agreed');
 	let markDay = $state('');
 	let markNote = $state('');
-	let generateForm = $state<HTMLFormElement | null>(null);
-	let confirmRepeat = $state(false);
+	let packageChosen = $state<DocumentTemplateKey[]>([]);
+	let packageCity = $state('');
+	let packageOperatorSigner = $state('');
+	let packageCounterpartySigner = $state('');
+	let packageOutcomes = $state<PackageOutcome[]>([]);
+	let packageRefusal = $state<{ message: string; description?: string } | null>(null);
+
+	const packageCommand = $derived(commands.current?.kind === 'package' ? commands.current : null);
 
 	const markDocument = $derived(
 		documents.find((document) => document.id === markDocumentId) ?? null
@@ -121,6 +132,12 @@
 			uploadChosen = [];
 			revisionChosen = [];
 			markNote = '';
+			packageOutcomes = [];
+			packageRefusal = null;
+
+			if (current.kind === 'package') {
+				packageChosen = [...current.templates];
+			}
 
 			if (current.kind === 'mark') {
 				const only = markCandidates.length === 1 ? markCandidates[0].id : '';
@@ -139,22 +156,61 @@
 		markDay = markBounds.max;
 	}
 
-	const customer = $derived(
-		interaction.parties.find((party) => party.partyRole === 'customer')?.organizationName ?? ''
-	);
-	const operator = $derived(
-		interaction.parties.find((party) => party.partyRole === 'operator')?.organizationName ?? ''
-	);
+	function togglePackage(template: DocumentTemplateKey, on: boolean) {
+		packageChosen = on
+			? [...packageChosen.filter((item) => item !== template), template]
+			: packageChosen.filter((item) => item !== template);
+	}
+
+	const outcomeOf = (template: DocumentTemplateKey) =>
+		packageOutcomes.find((outcome) => outcome.templateKey === template) ?? null;
+
 	/**
-	 * Шаблон соглашения подставляет срок из плана, и без него сборка отказывает.
-	 * Отказ после пяти заполненных полей — тупик, поэтому запрет виден заранее.
+	 * Сборка пакета отвечает по каждому документу. Всё собралось — диалог
+	 * закрывается; что-то отказало — диалог остаётся открытым и под каждым
+	 * документом пишет, что заполнить. Отказ целиком (не собралось ничего)
+	 * показывается в самой форме: исправлять его здесь же.
 	 */
-	const hasAgreementPeriod = $derived(
-		interaction.agreementPeriodStart !== null && interaction.agreementPeriodEnd !== null
-	);
-	const alreadyGenerated = $derived(
-		documents.some((document) => document.kind === GENERATED_DOCUMENT_KIND)
-	);
+	const packageSubmit: SubmitFunction = () => {
+		packageRefusal = null;
+
+		return async ({ result, update }) => {
+			if (result.type === 'failure') {
+				const data = (result.data ?? {}) as { message?: unknown; issues?: unknown };
+				const issues = Array.isArray(data.issues)
+					? data.issues.filter((issue): issue is string => typeof issue === 'string')
+					: [];
+
+				packageOutcomes = [];
+				packageRefusal = {
+					message: typeof data.message === 'string' ? data.message : 'Пакет не собран',
+					description: issues.length > 0 ? issues.join('; ') : undefined
+				};
+
+				return;
+			}
+
+			if (result.type === 'success') {
+				const outcomes = (result.data?.outcomes ?? []) as PackageOutcome[];
+				const generated = outcomes.filter((outcome) => outcome.status === 'generated').length;
+
+				await update({ reset: false });
+
+				if (generated === outcomes.length) {
+					commands.close();
+					toast.success(
+						`Пакет собран: ${pluralize(generated, ['документ', 'документа', 'документов'])}`
+					);
+				} else {
+					packageOutcomes = outcomes;
+				}
+
+				return;
+			}
+
+			await applyAction(result);
+		};
+	};
 </script>
 
 <FormDialog
@@ -306,6 +362,12 @@
 						{/each}
 					</Select.Content>
 				</Select.Root>
+				{#if markFact === 'approved'}
+					<p class="text-xs text-muted-foreground">
+						«Утверждён» — подписанный сторонами экземпляр. У акта передачи эта отметка ставит
+						позициям договора из акта статус «передан».
+					</p>
+				{/if}
 			</div>
 
 			<div class="flex flex-col gap-1.5">
@@ -351,73 +413,90 @@
 </FormDialog>
 
 <FormDialog
-	bind:open={generateOpen.get, generateOpen.set}
-	title="Соглашение по шаблону"
-	description="Соберётся сразу в DOCX и PDF. Пустых мест в договоре не бывает, поэтому все поля обязательны."
+	bind:open={packageOpen.get, packageOpen.set}
+	title="Пакет документов"
+	description="Каждый документ соберётся в DOCX и PDF. Реквизиты, позиции договора, программы и сроки берутся из карточек; здесь — только то, чего в справочнике нет. Собранные раньше файлы останутся: новая сборка встаёт рядом."
 	width="lg"
 >
-	{#if !hasAgreementPeriod}
-		<InlineHint tone="warning">
-			Сначала заполните срок соглашения: «Изменить план» в панели «Сроки».
-		</InlineHint>
-	{/if}
 	<form
-		id="card-generate-form"
+		id="card-package-form"
 		method="POST"
-		action="?/generate"
-		bind:this={generateForm}
-		use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
-		class="mt-3 flex flex-col gap-3"
+		action="?/package"
+		use:enhance={packageSubmit}
+		class="flex flex-col gap-3"
 	>
+		<fieldset class="flex flex-col gap-2">
+			<legend class="mb-1 text-sm font-medium">Документы</legend>
+			{#each packageCommand?.templates ?? [] as template (template)}
+				{@const outcome = outcomeOf(template)}
+				<Label class="flex items-start gap-2 font-normal">
+					<Checkbox
+						name="templates"
+						value={template}
+						checked={packageChosen.includes(template)}
+						onCheckedChange={(next) => togglePackage(template, next === true)}
+						class="mt-0.5"
+					/>
+					<span class="flex flex-col gap-0.5">
+						{DOCUMENT_TEMPLATE_LABELS[template]}
+						{#if outcome?.status === 'generated'}
+							<span class="text-xs text-success">Собран</span>
+						{:else if outcome?.status === 'refused'}
+							<span class="text-xs text-destructive">Не собран: {outcome.issues.join('; ')}</span>
+						{/if}
+					</span>
+				</Label>
+			{/each}
+		</fieldset>
+
+		{#if packageRefusal !== null}
+			<InlineHint tone="warning">
+				<span>
+					{packageRefusal.message}{packageRefusal.description === undefined
+						? ''
+						: `: ${packageRefusal.description}`}
+				</span>
+			</InlineHint>
+		{/if}
+
 		<div class="flex flex-col gap-1.5">
-			<Label for="card-city">Город подписания</Label>
-			<Input id="card-city" name="city" placeholder="Москва" />
+			<Label for="card-package-city">Город подписания</Label>
+			<Input id="card-package-city" name="city" placeholder="Москва" bind:value={packageCity} />
 		</div>
 		<div class="flex flex-col gap-1.5">
-			<Label for="card-operator-name">Оператор</Label>
-			<Input id="card-operator-name" name="operatorName" value={operator} />
-		</div>
-		<div class="flex flex-col gap-1.5">
-			<Label for="card-operator-signer">Подписант оператора (в родительном падеже)</Label>
+			<Label for="card-package-operator-signer">Подписант оператора (в родительном падеже)</Label>
 			<Input
-				id="card-operator-signer"
+				id="card-package-operator-signer"
 				name="operatorSigner"
 				placeholder="директора Иванова И. И."
+				bind:value={packageOperatorSigner}
 			/>
 		</div>
-		<div class="flex flex-col gap-1.5">
-			<Label for="card-institution-signer">Подписант учебного заведения</Label>
-			<Input
-				id="card-institution-signer"
-				name="institutionSigner"
-				placeholder="ректора Петрова П. П."
-			/>
-		</div>
-		<div class="flex flex-col gap-1.5">
-			<Label for="card-customer-name">Заказчик подготовки</Label>
-			<Input id="card-customer-name" name="customerName" value={customer} />
-		</div>
+		{#if packageCommand?.counterpartyKind !== 'individual'}
+			<div class="flex flex-col gap-1.5">
+				<Label for="card-package-counterparty-signer">
+					Подписант контрагента (в родительном падеже)
+				</Label>
+				<Input
+					id="card-package-counterparty-signer"
+					name="counterpartySigner"
+					placeholder={packageCommand?.counterpartyKind === 'educational_institution'
+						? 'ректора Петрова П. П.'
+						: 'генерального директора Сидорова С. С.'}
+					bind:value={packageCounterpartySigner}
+				/>
+			</div>
+		{/if}
 	</form>
 
 	{#snippet footer({ close })}
 		<div class="flex justify-end gap-2">
-			<Button type="button" variant="outline" onclick={close}>Отмена</Button>
-			<Button
-				type={alreadyGenerated ? 'button' : 'submit'}
-				form="card-generate-form"
-				disabled={!hasAgreementPeriod}
-				onclick={alreadyGenerated ? () => (confirmRepeat = true) : undefined}
-			>
-				Сгенерировать соглашение
+			<Button type="button" variant="outline" onclick={close}>
+				{packageOutcomes.length > 0 ? 'Закрыть' : 'Отмена'}
+			</Button>
+			<Button type="submit" form="card-package-form" disabled={packageChosen.length === 0}>
+				Собрать
 			</Button>
 		</div>
 	{/snippet}
 </FormDialog>
-
-<ConfirmDialog
-	bind:open={confirmRepeat}
-	title="Собрать соглашение ещё раз?"
-	description="По этому взаимодействию соглашение уже собрано. Старые файлы останутся: документ неизменяем, и новая сборка встанет рядом отдельной парой DOCX и PDF."
-	confirmLabel="Собрать ещё раз"
-	onconfirm={() => generateForm?.requestSubmit()}
-/>

@@ -9,6 +9,7 @@
 import { z } from 'zod';
 import { moscowDay, moscowDayStart } from './calendar';
 import { id, optionalId, optionalText, pageQuerySchema, requiredText, searchQuery } from './common';
+import type { OrganizationKind } from './directory';
 
 /**
  * Три факта по документу фиксируются отдельно: согласован, утверждён, вступил
@@ -172,13 +173,84 @@ export type DocumentTemplateVariable = z.output<typeof documentTemplateVariableS
  * названия, потому что какие из них доступны в карточке, решает процесс, а
  * выбирает их администратор в редакторе процесса.
  */
-export const DOCUMENT_TEMPLATE_KEYS = ['agreement'] as const;
+export const DOCUMENT_TEMPLATE_KEYS = [
+	'agreement',
+	'sublicense',
+	'handover_act',
+	'offer',
+	'legal_entity_contract',
+	'services_act'
+] as const;
 
 export type DocumentTemplateKey = (typeof DOCUMENT_TEMPLATE_KEYS)[number];
 
 export const DOCUMENT_TEMPLATE_LABELS: Record<DocumentTemplateKey, string> = {
-	agreement: 'Соглашение о сотрудничестве'
+	agreement: 'Соглашение о сотрудничестве',
+	sublicense: 'Сублицензионный договор',
+	handover_act: 'Акт передачи материалов и лицензий',
+	offer: 'Договор-оферта с физическим лицом',
+	legal_entity_contract: 'Договор с юридическим лицом',
+	services_act: 'Акт оказанных услуг'
 };
+
+/**
+ * С каким контрагентом шаблон вообще имеет смысл. Процесс объявляет набор
+ * шаблонов, а вид основной стороны его сужает: в одном процессе коммерческого
+ * обучения учатся и физические, и юридические лица, и оферта физлицу в деле
+ * компании — ошибка, а не выбор. Правило одно на панель и на сервер сборки.
+ */
+export const DOCUMENT_TEMPLATE_COUNTERPARTIES: Record<
+	DocumentTemplateKey,
+	readonly OrganizationKind[]
+> = {
+	agreement: ['educational_institution'],
+	sublicense: ['educational_institution'],
+	handover_act: ['educational_institution'],
+	offer: ['individual'],
+	legal_entity_contract: ['legal_entity'],
+	services_act: ['individual', 'legal_entity']
+};
+
+/** Шаблоны процесса, подходящие виду контрагента, в порядке каталога. */
+export function packageTemplates(
+	offered: readonly DocumentTemplateKey[],
+	counterpartyKind: OrganizationKind
+): DocumentTemplateKey[] {
+	return DOCUMENT_TEMPLATE_KEYS.filter(
+		(key) =>
+			offered.includes(key) && DOCUMENT_TEMPLATE_COUNTERPARTIES[key].includes(counterpartyKind)
+	);
+}
+
+/**
+ * Статус передачи, который позиция договора получает, когда подписан акт
+ * передачи по ней (отметка «Утверждён» на редакции акта). Словарь статусов
+ * свободный, но это значение пишет сам код, и отчёт «что передано» обязан
+ * находить его одной строкой.
+ */
+export const TRANSFERRED_STATUS = 'передан';
+
+/**
+ * Сборка пакета: что вводит человек. Всё остальное — реквизиты, позиции,
+ * сроки — берётся из карточек, а подписантов в справочнике нет: их называет
+ * форма. Подписант контрагента нужен не всегда: физическое лицо подписывает
+ * сам.
+ */
+export const generatePackageSchema = z.object({
+	templates: z
+		.array(z.enum(DOCUMENT_TEMPLATE_KEYS, { error: 'Такого шаблона документа нет' }))
+		.min(1, { error: 'Выберите хотя бы один документ пакета' }),
+	city: requiredText(100, 'Укажите город подписания'),
+	operatorSigner: requiredText(200, 'Укажите подписанта оператора'),
+	counterpartySigner: optionalText(200)
+});
+
+export type GeneratePackageInput = z.output<typeof generatePackageSchema>;
+
+/** Исход сборки по одному шаблону пакета. */
+export type PackageOutcome =
+	| { templateKey: DocumentTemplateKey; status: 'generated'; documentIds: string[] }
+	| { templateKey: DocumentTemplateKey; status: 'refused'; issues: string[] };
 
 /**
  * Метка вида, под которой генерация записывает свои файлы в `documents.kind`.

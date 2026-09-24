@@ -47,6 +47,55 @@ type BuiltInTemplate = {
 	variables: readonly DocumentTemplateVariable[];
 };
 
+/** Место и дата подписания — у каждого шаблона. */
+const SIGNING: readonly DocumentTemplateVariable[] = [
+	{ key: 'city', label: 'Город подписания', required: true },
+	{ key: 'date', label: 'Дата подписания', required: true }
+];
+
+/** Оператор: наименование, реквизиты одной строкой на строку, подписант. */
+const OPERATOR: readonly DocumentTemplateVariable[] = [
+	{ key: 'operatorName', label: 'Оператор: полное наименование', required: true },
+	{ key: 'operatorRequisites', label: 'Оператор: ИНН, КПП, ОГРН', required: true },
+	{ key: 'operatorSigner', label: 'Оператор: подписант в родительном падеже', required: true }
+];
+
+function institution(role: string): DocumentTemplateVariable[] {
+	return [
+		{ key: 'institutionName', label: `${role}: полное наименование`, required: true },
+		{ key: 'institutionRequisites', label: `${role}: ИНН, КПП, ОГРН`, required: true },
+		{
+			key: 'institutionSigner',
+			label: `${role}: подписант в родительном падеже`,
+			required: true
+		}
+	];
+}
+
+/** Заказчик коммерческого обучения — юридическое или физическое лицо. */
+const CUSTOMER: readonly DocumentTemplateVariable[] = [
+	{ key: 'customerName', label: 'Заказчик: полное наименование или ФИО', required: true },
+	{ key: 'customerRequisites', label: 'Заказчик: реквизиты', required: true },
+	{ key: 'customerSigner', label: 'Заказчик: подписант', required: true }
+];
+
+/** Что и когда изучают: программы и период обучения. */
+const STUDY: readonly DocumentTemplateVariable[] = [
+	{
+		key: 'programs',
+		label: 'Образовательные программы: список записей с полем name',
+		required: true
+	},
+	{ key: 'periodStart', label: 'Начало обучения', required: true },
+	{ key: 'periodEnd', label: 'Окончание обучения', required: true }
+];
+
+const CONTRACT_ITEMS: DocumentTemplateVariable = {
+	key: 'items',
+	label: 'Позиции договора: список записей с полями productName и licenseUntil',
+	required: true
+};
+
 export const BUILT_IN_TEMPLATES: Record<DocumentTemplateKey, BuiltInTemplate> = {
 	agreement: {
 		name: DOCUMENT_TEMPLATE_LABELS.agreement,
@@ -79,6 +128,50 @@ export const BUILT_IN_TEMPLATES: Record<DocumentTemplateKey, BuiltInTemplate> = 
 				required: true
 			}
 		]
+	},
+	sublicense: {
+		name: DOCUMENT_TEMPLATE_LABELS.sublicense,
+		fileName: 'sublicense.docx',
+		variables: [
+			...SIGNING,
+			{ key: 'contractNumber', label: 'Номер договора', required: true },
+			...OPERATOR,
+			...institution('Сублицензиат'),
+			CONTRACT_ITEMS
+		]
+	},
+	handover_act: {
+		name: DOCUMENT_TEMPLATE_LABELS.handover_act,
+		fileName: 'handover-act.docx',
+		variables: [
+			...SIGNING,
+			{ key: 'contractNumber', label: 'Номер договора', required: true },
+			{ key: 'contractSignedOn', label: 'Дата подписания договора', required: true },
+			...OPERATOR,
+			...institution('Сублицензиат'),
+			CONTRACT_ITEMS
+		]
+	},
+	offer: {
+		name: DOCUMENT_TEMPLATE_LABELS.offer,
+		fileName: 'offer.docx',
+		variables: [
+			...SIGNING,
+			...OPERATOR,
+			{ key: 'learnerName', label: 'Слушатель: фамилия, имя, отчество', required: true },
+			{ key: 'learnerSigner', label: 'Слушатель: фамилия и инициалы', required: true },
+			...STUDY
+		]
+	},
+	legal_entity_contract: {
+		name: DOCUMENT_TEMPLATE_LABELS.legal_entity_contract,
+		fileName: 'legal-entity-contract.docx',
+		variables: [...SIGNING, ...OPERATOR, ...CUSTOMER, ...STUDY]
+	},
+	services_act: {
+		name: DOCUMENT_TEMPLATE_LABELS.services_act,
+		fileName: 'services-act.docx',
+		variables: [...SIGNING, ...OPERATOR, ...CUSTOMER, ...STUDY]
 	}
 };
 

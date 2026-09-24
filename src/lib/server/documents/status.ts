@@ -7,19 +7,20 @@
  * поставить (`at`), переставить нельзя: отметка о согласовании, которую можно
  * переписать, ничего не доказывает.
  */
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { moscowDay } from '$lib/contracts/calendar';
 import {
 	markDayBounds,
 	markDayIssue,
+	TRANSFERRED_STATUS,
 	type DocumentStatusFact,
 	type DocumentView
 } from '$lib/contracts/documents';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
-import { documents } from '../db/schema';
-import { withTransaction } from '../db/transaction';
+import { contractItems, documentContractItems, documents } from '../db/schema';
+import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
 import { applyDocumentMark, touchInteraction } from '../stages/commands';
@@ -56,6 +57,29 @@ const FACTS: Record<DocumentStatusFact, FactDefinition> = {
 		values: (at, userId, note) => ({ inEffectAt: at, inEffectBy: userId, inEffectNote: note })
 	}
 };
+
+/**
+ * Подписанный акт передачи — это и есть факт передачи: позиции договора,
+ * которые называет редакция, получают статус «передан» той же транзакцией, что
+ * и отметка «Утверждён» (подписанный сторонами экземпляр). Возвращает, сколько
+ * позиций переведено. Позиция, уже помеченная «передан», не переписывается.
+ */
+async function markItemsTransferred(tx: Tx, documentId: string): Promise<number> {
+	const linked = tx
+		.select({ id: documentContractItems.contractItemId })
+		.from(documentContractItems)
+		.where(eq(documentContractItems.documentId, documentId));
+
+	const updated = await tx
+		.update(contractItems)
+		.set({ transferStatus: TRANSFERRED_STATUS, updatedAt: new Date() })
+		.where(
+			and(inArray(contractItems.id, linked), ne(contractItems.transferStatus, TRANSFERRED_STATUS))
+		)
+		.returning({ id: contractItems.id });
+
+	return updated.length;
+}
 
 /**
  * Ставит отметку по документу.
@@ -121,6 +145,8 @@ export async function markDocument(
 			await touchInteraction(tx, row.interactionId);
 		}
 
+		const transferredItemCount = fact === 'approved' ? await markItemsTransferred(tx, row.id) : 0;
+
 		await recordAuditEvent(
 			ctx,
 			{
@@ -134,6 +160,7 @@ export async function markDocument(
 				// только имена полей и ссылки на записи (`validateAuditDetails`).
 				details: {
 					changedFields: Object.keys(values),
+					...(transferredItemCount === 0 ? {} : { transferredItemCount }),
 					...(row.interactionId === null ? {} : { interactionId: row.interactionId })
 				}
 			},

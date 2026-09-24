@@ -172,6 +172,19 @@
 			</KeyValueRow>
 		</KeyValue>
 
+		{#if data.contractItems.length > 0}
+			<h3 class="mt-6 mb-2 text-xs text-muted-foreground">Передаёт позиции договора</h3>
+			<ul class="flex flex-col gap-1 text-sm">
+				{#each data.contractItems as item (item.id)}
+					<li>{item.productName} — {item.transferStatus}</li>
+				{/each}
+			</ul>
+			<p class="mt-1 text-xs text-muted-foreground">
+				Отметка «Утверждён» — подписанный сторонами экземпляр — ставит этим позициям статус
+				«передан».
+			</p>
+		{/if}
+
 		<h3 class="mt-6 mb-2 text-xs text-muted-foreground">Отметки</h3>
 		{#if facts.length === 0}
 			<p class="text-sm text-muted-foreground">

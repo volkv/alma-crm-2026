@@ -10,6 +10,7 @@
  * транзакция. Конвертация ходит по сети и может занять секунды — держать всё
  * это время открытую транзакцию значит держать блокировки из-за чужой службы.
  */
+import { and, eq, inArray } from 'drizzle-orm';
 import Docxtemplater from 'docxtemplater';
 import PizZip from 'pizzip';
 import type { AuditDetails } from '$lib/contracts/audit';
@@ -18,8 +19,8 @@ import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getConfig } from '../config';
 import { getDb } from '../db';
-import { documents } from '../db/schema';
-import { withTransaction } from '../db/transaction';
+import { documentContractItems, documents, interactionContractItems } from '../db/schema';
+import { withTransaction, type Tx } from '../db/transaction';
 import { ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
 import { assertTemplateOffered } from '../stages/card';
@@ -53,6 +54,11 @@ export type GenerateDocumentCommand = {
 	title: string;
 	/** Какие форматы нужны; на каждый создаётся своя запись документа. */
 	formats: readonly DocumentFormat[];
+	/**
+	 * Позиции договора, которые передаёт документ (акт передачи). Связь ложится
+	 * на каждую созданную запись; позиции обязаны быть выбраны взаимодействием.
+	 */
+	contractItemIds?: readonly string[];
 };
 
 /** Вид документа, который записывается в `documents.kind` для сгенерированных файлов. */
@@ -186,6 +192,37 @@ async function convertToPdf(docx: Buffer): Promise<Buffer> {
 }
 
 /**
+ * Позиции, которые документ передаёт, должны быть выбраны самим
+ * взаимодействием: акт по чужой позиции перевёл бы в «передан» продукт другого
+ * дела. Проверка в транзакции записи — выбор позиций правят параллельно.
+ */
+async function assertItemsChosen(
+	tx: Tx,
+	interactionId: string,
+	contractItemIds: readonly string[]
+): Promise<void> {
+	if (contractItemIds.length === 0) {
+		return;
+	}
+
+	const chosen = await tx
+		.select({ id: interactionContractItems.contractItemId })
+		.from(interactionContractItems)
+		.where(
+			and(
+				eq(interactionContractItems.interactionId, interactionId),
+				inArray(interactionContractItems.contractItemId, [...contractItemIds])
+			)
+		);
+
+	if (chosen.length !== contractItemIds.length) {
+		throw new ValidationError('Позиции договора не выбраны в этом взаимодействии', [
+			'Выберите позиции в панели «Договор» и соберите документ заново'
+		]);
+	}
+}
+
+/**
  * Создаёт документы по шаблону — по одному на каждый запрошенный формат.
  * Возвращает их в том же порядке, в каком перечислены форматы в
  * {@link DOCUMENT_FORMATS}.
@@ -219,6 +256,11 @@ export async function generateDocument(
 	}
 
 	const interactionId = input.interactionId ?? null;
+	const contractItemIds = [...new Set(input.contractItemIds ?? [])];
+
+	if (contractItemIds.length > 0 && interactionId === null) {
+		throw new ValidationError('Позиции договора передаёт только документ взаимодействия');
+	}
 
 	if (interactionId !== null) {
 		await assertInteractionAccessible(ctx, interactionId);
@@ -259,6 +301,7 @@ export async function generateDocument(
 			const views: DocumentView[] = [];
 
 			if (interactionId !== null) {
+				await assertItemsChosen(tx, interactionId, contractItemIds);
 				await touchInteraction(tx, interactionId);
 			}
 
@@ -278,6 +321,14 @@ export async function generateDocument(
 						uploadedBy: ctx.user?.id ?? null
 					})
 					.returning();
+
+				if (contractItemIds.length > 0) {
+					await tx
+						.insert(documentContractItems)
+						.values(
+							contractItemIds.map((contractItemId) => ({ documentId: row.id, contractItemId }))
+						);
+				}
 
 				// Ключ шаблона в журнал не положить: в подробностях события
 				// допустимы только ссылки на записи, поэтому пишется идентификатор.

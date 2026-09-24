@@ -2,7 +2,8 @@ import { ORGANIZATION_KIND_LABELS } from '$lib/components/directory/labels';
 import {
 	DOCUMENT_STATUS_FACT_LABELS,
 	documentKindLabel,
-	type DocumentStatusFact
+	type DocumentStatusFact,
+	type DocumentTemplateKey
 } from '$lib/contracts/documents';
 import type { OrganizationKind, OrganizationView } from '$lib/contracts/directory';
 import {
@@ -109,7 +110,12 @@ export type CardCommand =
 	| { kind: 'upload' }
 	| { kind: 'revision'; documentId: string }
 	| { kind: 'mark'; documentId: string | null; fact: DocumentStatusFact | null }
-	| { kind: 'generate' }
+	| {
+			kind: 'package';
+			/** Шаблоны пакета дела: объявлены процессом и подходят контрагенту. */
+			templates: DocumentTemplateKey[];
+			counterpartyKind: OrganizationKind;
+	  }
 	| { kind: 'send-group' }
 	| { kind: 'complete-group'; groupId: string | null };
 
