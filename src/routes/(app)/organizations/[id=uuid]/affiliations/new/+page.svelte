@@ -32,7 +32,7 @@
 	const { enhance, submitting, message } = superform;
 </script>
 
-<svelte:head><title>Новый контакт — LCT CRM</title></svelte:head>
+<svelte:head><title>Новый контакт — Альма CRM</title></svelte:head>
 
 <Header title="Новый контакт" description={data.organization.shortName} />
 

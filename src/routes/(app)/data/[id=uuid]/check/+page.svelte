@@ -41,7 +41,7 @@
 	}
 </script>
 
-<svelte:head><title>Проверка загрузки — LCT CRM</title></svelte:head>
+<svelte:head><title>Проверка загрузки — Альма CRM</title></svelte:head>
 
 <Header
 	title="Проверка загрузки"

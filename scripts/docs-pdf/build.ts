@@ -209,7 +209,7 @@ async function buildCover(
 	entries: readonly ContentsEntry[],
 	meta: { builtOn: string; commit: string; version: string }
 ): Promise<Buffer> {
-	const footer = footerHtml('Комплект документации LCT CRM');
+	const footer = footerHtml('Комплект документации Альма CRM');
 	const draft = await htmlToPdf({
 		html: coverPage({ ...meta, entries }),
 		footer,
@@ -303,7 +303,7 @@ async function main(): Promise<void> {
 		{
 			Title: 'Система контроля взаимодействия с учебными заведениями — комплект документации',
 			Author: 'Wine Coding Team',
-			Subject: `LCT CRM ${meta.version}, коммит ${meta.commit}, собран ${meta.builtOn}`
+			Subject: `Альма CRM ${meta.version}, коммит ${meta.commit}, собран ${meta.builtOn}`
 		}
 	);
 

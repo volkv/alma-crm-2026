@@ -19,7 +19,7 @@
 </script>
 
 <svelte:head>
-	<title>Справка — LCT CRM</title>
+	<title>Справка — Альма CRM</title>
 </svelte:head>
 
 <Header

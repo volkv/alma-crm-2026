@@ -24,7 +24,7 @@
 </script>
 
 <svelte:head>
-	<title>Справка целиком — LCT CRM</title>
+	<title>Справка целиком — Альма CRM</title>
 </svelte:head>
 
 <!-- `w-full` обязателен: с одними полями по краям колонка ужимается по

@@ -104,7 +104,7 @@
 </script>
 
 <svelte:head>
-	<title>Пользователи — LCT CRM</title>
+	<title>Пользователи — Альма CRM</title>
 </svelte:head>
 
 {#snippet stateCell({ user }: { user: UserView })}

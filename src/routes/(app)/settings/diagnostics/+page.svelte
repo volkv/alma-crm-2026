@@ -64,7 +64,7 @@
 </script>
 
 <svelte:head>
-	<title>Связи и зависимости — LCT CRM</title>
+	<title>Связи и зависимости — Альма CRM</title>
 </svelte:head>
 
 <Card.Root>

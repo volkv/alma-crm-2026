@@ -51,7 +51,7 @@
 	}
 </script>
 
-<svelte:head><title>Предпросмотр импорта каталога — LCT CRM</title></svelte:head>
+<svelte:head><title>Предпросмотр импорта каталога — Альма CRM</title></svelte:head>
 
 <Header
 	title="Предпросмотр импорта"

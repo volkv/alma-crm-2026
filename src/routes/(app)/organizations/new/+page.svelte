@@ -33,7 +33,7 @@
 	let accepted = $state<PassportAcceptance>([]);
 </script>
 
-<svelte:head><title>Новая организация — LCT CRM</title></svelte:head>
+<svelte:head><title>Новая организация — Альма CRM</title></svelte:head>
 
 <Header title="Новая организация" />
 

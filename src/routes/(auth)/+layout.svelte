@@ -23,12 +23,16 @@
 	></div>
 
 	<div class="relative flex w-full max-w-md flex-col items-center gap-5">
-		<div class="flex items-center gap-2.5">
-			<span
-				class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-xs font-semibold text-primary-foreground"
-				aria-hidden="true">CRM</span
+		<div class="flex flex-col items-center gap-1">
+			<div class="flex items-center gap-2.5">
+				<span
+					class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-xs font-semibold text-primary-foreground"
+					aria-hidden="true">CRM</span
+				>
+				<span class="text-base font-semibold tracking-tight">Альма CRM</span>
+			</div>
+			<span class="text-xs text-muted-foreground">от заявки вуза до подтверждённого результата</span
 			>
-			<span class="text-base font-semibold tracking-tight">LCT CRM</span>
 		</div>
 
 		<div class="w-full">

@@ -150,7 +150,7 @@
 	}
 </script>
 
-<svelte:head><title>{data.organization.shortName} — LCT CRM</title></svelte:head>
+<svelte:head><title>{data.organization.shortName} — Альма CRM</title></svelte:head>
 
 <Flash
 	messages={{

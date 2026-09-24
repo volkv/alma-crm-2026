@@ -144,7 +144,7 @@ describe('сборка документа OpenAPI', () => {
 
 	it('собирается в версии 3.1 с описанием сервера', () => {
 		expect(document.openapi).toBe('3.1.0');
-		expect(document.info.title).toBe('LCT CRM API');
+		expect(document.info.title).toBe('Альма CRM API');
 		expect(document.servers?.[0]?.url).toBe('https://crm.example.org/api');
 	});
 

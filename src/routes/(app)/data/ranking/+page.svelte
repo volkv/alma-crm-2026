@@ -94,7 +94,7 @@
 	);
 </script>
 
-<svelte:head><title>Рейтинг программ — LCT CRM</title></svelte:head>
+<svelte:head><title>Рейтинг программ — Альма CRM</title></svelte:head>
 
 <Header
 	title="Рейтинг программ и направлений"

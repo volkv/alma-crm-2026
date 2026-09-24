@@ -256,7 +256,7 @@
 {/snippet}
 
 <svelte:head>
-	<title>Взаимодействия — LCT CRM</title>
+	<title>Взаимодействия — Альма CRM</title>
 </svelte:head>
 
 <Header

@@ -204,7 +204,7 @@
 </script>
 
 <svelte:head>
-	<title>Новое взаимодействие — LCT CRM</title>
+	<title>Новое взаимодействие — Альма CRM</title>
 </svelte:head>
 
 <Header

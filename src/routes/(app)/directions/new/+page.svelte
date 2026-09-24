@@ -26,7 +26,7 @@
 	const { enhance, submitting, message } = superform;
 </script>
 
-<svelte:head><title>Новое направление — LCT CRM</title></svelte:head>
+<svelte:head><title>Новое направление — Альма CRM</title></svelte:head>
 
 <Header title="Новое направление" />
 

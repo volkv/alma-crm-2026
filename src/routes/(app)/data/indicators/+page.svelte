@@ -136,7 +136,7 @@
 	<span class="whitespace-nowrap">{formatDate(row.periodStart)} — {formatDate(row.periodEnd)}</span>
 {/snippet}
 
-<svelte:head><title>Показатели — LCT CRM</title></svelte:head>
+<svelte:head><title>Показатели — Альма CRM</title></svelte:head>
 
 <Header
 	title="Показатели"

@@ -67,7 +67,7 @@
 	</StatusBadge>
 {/snippet}
 
-<svelte:head><title>Продукты — LCT CRM</title></svelte:head>
+<svelte:head><title>Продукты — Альма CRM</title></svelte:head>
 
 <Header
 	title="Продукты"

@@ -61,7 +61,7 @@
 	}
 </script>
 
-<svelte:head><title>Процессы — LCT CRM</title></svelte:head>
+<svelte:head><title>Процессы — Альма CRM</title></svelte:head>
 
 <!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
 <Card.Root data-tour="workflows">

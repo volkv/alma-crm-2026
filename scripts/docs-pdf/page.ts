@@ -314,7 +314,7 @@ export function coverPage(options: {
 	<section class="cover">
 		<p class="cover-kicker">Комплект документации</p>
 		<h1 class="cover-title">Система контроля взаимодействия с учебными заведениями</h1>
-		<p class="cover-lead">LCT CRM — решение команды Wine Coding Team для хакатона «Лидеры цифровой трансформации 2026», задача ИТ Школы Ростелекома.</p>
+		<p class="cover-lead">Альма CRM — решение команды Wine Coding Team для хакатона «Лидеры цифровой трансформации 2026», задача ИТ Школы Ростелекома.</p>
 		<dl class="cover-meta">
 			<dt>Собран</dt><dd>${escapeHtml(options.builtOn)}</dd>
 			<dt>Коммит</dt><dd><code>${escapeHtml(options.commit)}</code></dd>
@@ -332,5 +332,5 @@ export function coverPage(options: {
 		<p class="note">«Лист» — номер страницы в этом файле; в подвале страницы стоит её номер внутри своего документа, потому что документы собраны по отдельности и лежат рядом отдельными файлами.</p>
 	</section>`;
 
-	return printPage({ title: 'Комплект документации LCT CRM', body });
+	return printPage({ title: 'Комплект документации Альма CRM', body });
 }

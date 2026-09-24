@@ -86,7 +86,7 @@
 	</StatusBadge>
 {/snippet}
 
-<svelte:head><title>Направления — LCT CRM</title></svelte:head>
+<svelte:head><title>Направления — Альма CRM</title></svelte:head>
 
 <Flash messages={{ archived: 'Направление отправлено в архив' }} />
 

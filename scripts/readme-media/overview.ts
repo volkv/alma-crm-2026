@@ -781,7 +781,7 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 			'Описание собрано из тех же схем, что проверяют запросы, поэтому разойтись с поведением не может.'
 		],
 		play: async (page) => {
-			await visit(page, '/api/docs', 'LCT CRM API', { standalone: true });
+			await visit(page, '/api/docs', 'Альма CRM API', { standalone: true });
 			await beat(page, 1);
 			await scroll(page, 700);
 			await beat(page, 1);

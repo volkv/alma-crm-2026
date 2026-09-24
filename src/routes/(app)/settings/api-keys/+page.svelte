@@ -154,7 +154,7 @@
 </script>
 
 <svelte:head>
-	<title>Ключи доступа — LCT CRM</title>
+	<title>Ключи доступа — Альма CRM</title>
 </svelte:head>
 
 {#snippet stateCell({ revokedAt }: { revokedAt: Date | null })}

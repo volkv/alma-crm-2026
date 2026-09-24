@@ -110,7 +110,7 @@
 </script>
 
 <svelte:head>
-	<title>Журнал действий — LCT CRM</title>
+	<title>Журнал действий — Альма CRM</title>
 </svelte:head>
 
 {#snippet outcomeCell({ outcome }: { outcome: AuditOutcome })}

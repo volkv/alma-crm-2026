@@ -169,7 +169,7 @@
 </script>
 
 <svelte:head>
-	<title>Интеграции — LCT CRM</title>
+	<title>Интеграции — Альма CRM</title>
 </svelte:head>
 
 {#if notice}

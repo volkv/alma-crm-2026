@@ -213,7 +213,7 @@
 </script>
 
 <svelte:head>
-	<title>UI-кит — LCT CRM</title>
+	<title>UI-кит — Альма CRM</title>
 </svelte:head>
 
 {#snippet nameCell({ name }: { name: string })}

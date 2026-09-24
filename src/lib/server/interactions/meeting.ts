@@ -14,7 +14,7 @@ import { createHash } from 'node:crypto';
 /** Предел строки контента по RFC 5545 (раздел 3.1) — октеты, не символы. */
 const FOLD_LIMIT_OCTETS = 75;
 
-const PRODID = '-//LCT CRM//Meeting Invite//RU';
+const PRODID = '-//Альма CRM//Meeting Invite//RU';
 
 /** Домен для `UID`: у продукта нет публичного каталога вида `@lct-crm.local`, но тот же вид уже носят демонстрационные почты сотрудников. */
 const UID_DOMAIN = 'lct-crm.local';

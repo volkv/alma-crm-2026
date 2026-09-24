@@ -215,7 +215,7 @@
 	</Button>
 {/snippet}
 
-<svelte:head><title>Документы — LCT CRM</title></svelte:head>
+<svelte:head><title>Документы — Альма CRM</title></svelte:head>
 
 <Header
 	title="Документы"

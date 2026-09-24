@@ -90,7 +90,7 @@
 	</Table.Head>
 {/snippet}
 
-<svelte:head><title>Дашборд данных — LCT CRM</title></svelte:head>
+<svelte:head><title>Дашборд данных — Альма CRM</title></svelte:head>
 
 <Header
 	title="Дашборд данных"

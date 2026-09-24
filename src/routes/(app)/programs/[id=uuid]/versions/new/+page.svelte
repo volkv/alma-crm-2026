@@ -32,7 +32,7 @@
 	const { enhance, submitting, message } = superform;
 </script>
 
-<svelte:head><title>Новая версия программы — LCT CRM</title></svelte:head>
+<svelte:head><title>Новая версия программы — Альма CRM</title></svelte:head>
 
 <Header title="Новая версия" description={data.program.name} />
 

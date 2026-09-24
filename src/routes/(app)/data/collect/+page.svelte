@@ -32,7 +32,7 @@
 	}
 </script>
 
-<svelte:head><title>Сборка из результатов групп — LCT CRM</title></svelte:head>
+<svelte:head><title>Сборка из результатов групп — Альма CRM</title></svelte:head>
 
 <Header
 	title="Сборка из результатов групп"

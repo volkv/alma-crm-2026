@@ -38,7 +38,7 @@
 	}
 </script>
 
-<svelte:head><title>{fullName} — LCT CRM</title></svelte:head>
+<svelte:head><title>{fullName} — Альма CRM</title></svelte:head>
 
 <Flash
 	messages={{

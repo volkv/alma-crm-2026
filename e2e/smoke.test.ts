@@ -5,7 +5,7 @@ import { expect, test } from './fixtures';
 test('the home page renders the daily overview', async ({ page }) => {
 	await page.goto('/');
 
-	await expect(page).toHaveTitle(/LCT CRM/);
+	await expect(page).toHaveTitle(/Альма CRM/);
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Сводка');
 });
 

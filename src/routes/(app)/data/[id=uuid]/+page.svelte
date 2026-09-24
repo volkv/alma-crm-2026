@@ -34,7 +34,7 @@
 	const issuesHref = (onlyIssues: boolean) => filterHref(page.url, 'issues', onlyIssues ? '1' : '');
 </script>
 
-<svelte:head><title>Снимок данных — LCT CRM</title></svelte:head>
+<svelte:head><title>Снимок данных — Альма CRM</title></svelte:head>
 
 <Header
 	title="Снимок данных: {STAT_SOURCE_LABELS[snapshot.source]}"

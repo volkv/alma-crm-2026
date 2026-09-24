@@ -1,4 +1,4 @@
-<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="LCT CRM — система контроля взаимодействия с учебными заведениями">
+<svg xmlns="http://www.w3.org/2000/svg" width="1200" height="300" viewBox="0 0 1200 300" role="img" aria-label="Альма CRM — система контроля взаимодействия с учебными заведениями">
   <defs>
     <linearGradient id="bg" x1="0" y1="0" x2="1" y2="1">
       <stop offset="0" stop-color="#0f172a"/>
@@ -53,7 +53,7 @@
 
   <!-- wordmark -->
   <g font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" fill="#ffffff">
-    <text x="212" y="118" font-size="64" font-weight="700" letter-spacing="-1.5">LCT CRM</text>
+    <text x="212" y="118" font-size="64" font-weight="700" letter-spacing="-1.5">Альма CRM</text>
     <text x="214" y="160" font-size="21" fill-opacity="0.82">Система контроля взаимодействия с учебными заведениями</text>
     <text x="214" y="192" font-size="15" fill="#93c5fd">воронка стадий · документы · данные об обучении · API</text>
   </g>

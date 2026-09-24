@@ -37,7 +37,7 @@
 	);
 </script>
 
-<svelte:head><title>Загрузка каталога — LCT CRM</title></svelte:head>
+<svelte:head><title>Загрузка каталога — Альма CRM</title></svelte:head>
 
 <Header title="Загрузка каталога" description="Что этот файл сделал со справочником — построчно.">
 	{#snippet actions()}

@@ -12,7 +12,7 @@
 </script>
 
 <svelte:head>
-	<title>Роли и права — LCT CRM</title>
+	<title>Роли и права — Альма CRM</title>
 </svelte:head>
 
 <Card.Root>

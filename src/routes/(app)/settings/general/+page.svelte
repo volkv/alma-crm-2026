@@ -118,7 +118,7 @@
 </script>
 
 <svelte:head>
-	<title>Общие настройки — LCT CRM</title>
+	<title>Общие настройки — Альма CRM</title>
 </svelte:head>
 
 {#if refusal}

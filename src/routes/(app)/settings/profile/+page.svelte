@@ -22,7 +22,7 @@
 </script>
 
 <svelte:head>
-	<title>Профиль — LCT CRM</title>
+	<title>Профиль — Альма CRM</title>
 </svelte:head>
 
 <Card.Root data-tour="settings-profile-account">

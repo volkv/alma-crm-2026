@@ -28,7 +28,7 @@
 	const { enhance, submitting, message } = superform;
 </script>
 
-<svelte:head><title>{data.product.code}: изменение — LCT CRM</title></svelte:head>
+<svelte:head><title>{data.product.code}: изменение — Альма CRM</title></svelte:head>
 
 <Header title="Изменение продукта" description={data.product.name} />
 

@@ -99,7 +99,7 @@
 </script>
 
 <svelte:head>
-	<title>{data.interaction.title} — LCT CRM</title>
+	<title>{data.interaction.title} — Альма CRM</title>
 </svelte:head>
 
 <Header title={data.interaction.title}>

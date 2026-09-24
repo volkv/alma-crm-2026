@@ -417,7 +417,7 @@ export const SHOTS: readonly Frame[] = [
 		path: '/api/docs',
 		role: 'manager',
 		caption: 'Swagger UI по OpenAPI 3.1, собранному из тех же схем',
-		waitFor: 'LCT CRM API',
+		waitFor: 'Альма CRM API',
 		standalone: true
 	},
 	{

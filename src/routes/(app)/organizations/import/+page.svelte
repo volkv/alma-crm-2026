@@ -39,7 +39,7 @@
 				: resolve('/(app)/organizations/import/[id=uuid]', { id: record.id });
 </script>
 
-<svelte:head><title>Импорт каталога — LCT CRM</title></svelte:head>
+<svelte:head><title>Импорт каталога — Альма CRM</title></svelte:head>
 
 <Header
 	title="Импорт каталога"

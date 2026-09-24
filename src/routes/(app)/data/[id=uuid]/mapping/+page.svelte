@@ -35,7 +35,7 @@
 	}));
 </script>
 
-<svelte:head><title>Сопоставление колонок — LCT CRM</title></svelte:head>
+<svelte:head><title>Сопоставление колонок — Альма CRM</title></svelte:head>
 
 <Header
 	title="Сопоставление колонок"

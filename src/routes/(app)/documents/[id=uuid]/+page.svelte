@@ -100,7 +100,7 @@
 	});
 </script>
 
-<svelte:head><title>{data.document.title} — LCT CRM</title></svelte:head>
+<svelte:head><title>{data.document.title} — Альма CRM</title></svelte:head>
 
 <Flash messages={{ revision_uploaded: 'Новая редакция загружена' }} />
 

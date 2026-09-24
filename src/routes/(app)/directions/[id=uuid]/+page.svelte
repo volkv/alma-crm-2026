@@ -49,7 +49,7 @@
 	);
 </script>
 
-<svelte:head><title>{data.direction.code} — LCT CRM</title></svelte:head>
+<svelte:head><title>{data.direction.code} — Альма CRM</title></svelte:head>
 
 <Flash
 	messages={{

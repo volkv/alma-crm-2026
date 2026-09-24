@@ -98,7 +98,7 @@
 	{/if}
 {/snippet}
 
-<svelte:head><title>Организации — LCT CRM</title></svelte:head>
+<svelte:head><title>Организации — Альма CRM</title></svelte:head>
 
 <Flash messages={{ archived: 'Организация переведена в архив' }} />
 

@@ -49,7 +49,7 @@
 	);
 </script>
 
-<svelte:head><title>Сопоставление колонок каталога — LCT CRM</title></svelte:head>
+<svelte:head><title>Сопоставление колонок каталога — Альма CRM</title></svelte:head>
 
 <Header
 	title="Сопоставление колонок"

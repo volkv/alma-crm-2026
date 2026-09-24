@@ -50,7 +50,7 @@
 </script>
 
 <svelte:head>
-	<title>Уведомления — LCT CRM</title>
+	<title>Уведомления — Альма CRM</title>
 </svelte:head>
 
 <Header

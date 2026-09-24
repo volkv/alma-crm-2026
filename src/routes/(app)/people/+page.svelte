@@ -88,7 +88,7 @@
 	{/if}
 {/snippet}
 
-<svelte:head><title>Контакты — LCT CRM</title></svelte:head>
+<svelte:head><title>Контакты — Альма CRM</title></svelte:head>
 
 <Header title="Контакты" description="Люди, с которыми идёт работа, и их роли в организациях.">
 	{#snippet actions()}

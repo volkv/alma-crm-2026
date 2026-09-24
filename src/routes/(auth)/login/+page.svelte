@@ -63,7 +63,7 @@
 </script>
 
 <svelte:head>
-	<title>Вход — LCT CRM</title>
+	<title>Вход — Альма CRM</title>
 </svelte:head>
 
 <Card.Root>

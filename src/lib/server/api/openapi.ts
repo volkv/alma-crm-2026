@@ -343,7 +343,7 @@ export function buildOpenApiDocument(): ReturnType<OpenApiGeneratorV31['generate
 	return new OpenApiGeneratorV31(registry.definitions).generateDocument({
 		openapi: '3.1.0',
 		info: {
-			title: 'LCT CRM API',
+			title: 'Альма CRM API',
 			version: '1',
 			description: DESCRIPTION
 		},

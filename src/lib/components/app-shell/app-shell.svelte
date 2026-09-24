@@ -137,7 +137,7 @@
 					aria-hidden="true">CRM</span
 				>
 				{#if !nav.collapsed}
-					<span class="truncate text-sm font-semibold tracking-tight">LCT CRM</span>
+					<span class="truncate text-sm font-semibold tracking-tight">Альма CRM</span>
 				{/if}
 			</a>
 			<!-- Слой кнопки задан меню целиком: `position: sticky` заводит свой

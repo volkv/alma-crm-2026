@@ -13,7 +13,7 @@
 </script>
 
 <svelte:head>
-	<title>{data.article.title} — Справка — LCT CRM</title>
+	<title>{data.article.title} — Справка — Альма CRM</title>
 </svelte:head>
 
 <Header title={data.article.title} description={data.article.summary} />

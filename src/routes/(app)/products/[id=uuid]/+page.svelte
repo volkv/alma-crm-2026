@@ -17,7 +17,7 @@
 	let { data }: PageProps = $props();
 </script>
 
-<svelte:head><title>{data.product.code} — LCT CRM</title></svelte:head>
+<svelte:head><title>{data.product.code} — Альма CRM</title></svelte:head>
 
 <Flash messages={{ created: 'Продукт создан', updated: 'Изменения сохранены' }} />
 

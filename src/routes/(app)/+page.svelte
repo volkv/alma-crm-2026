@@ -21,7 +21,7 @@
 </script>
 
 <svelte:head>
-	<title>Сводка — LCT CRM</title>
+	<title>Сводка — Альма CRM</title>
 </svelte:head>
 
 <Header title="Сводка" description="Что требует внимания сегодня, {today}">

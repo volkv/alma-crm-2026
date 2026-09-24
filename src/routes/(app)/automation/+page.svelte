@@ -28,7 +28,7 @@
 </script>
 
 <svelte:head>
-	<title>Карта автоматизации — LCT CRM</title>
+	<title>Карта автоматизации — Альма CRM</title>
 </svelte:head>
 
 <Header

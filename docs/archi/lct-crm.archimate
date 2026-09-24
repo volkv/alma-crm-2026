@@ -1,5 +1,5 @@
 <?xml version="1.0" encoding="UTF-8"?>
-<archimate:model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:archimate="http://www.archimatetool.com/archimate" name="LCT CRM — система контроля взаимодействия с учебными заведениями" id="id-lct-crm-model" version="5.0.0">
+<archimate:model xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance" xmlns:archimate="http://www.archimatetool.com/archimate" name="Альма CRM — система контроля взаимодействия с учебными заведениями" id="id-lct-crm-model" version="5.0.0">
   <folder name="Strategy" id="id-folder-strategy" type="strategy"/>
   <folder name="Business" id="id-folder-business" type="business">
     <element xsi:type="archimate:BusinessRole" name="КАМ (manager)" id="id-role-kam">
@@ -127,7 +127,7 @@
     </element>
   </folder>
   <folder name="Application" id="id-folder-application" type="application">
-    <element xsi:type="archimate:ApplicationComponent" name="LCT CRM — модульный монолит (SvelteKit 2, Node 24)" id="id-app-crm">
+    <element xsi:type="archimate:ApplicationComponent" name="Альма CRM — модульный монолит (SvelteKit 2, Node 24)" id="id-app-crm">
       <documentation>Страницы, формы и публичный API — одно приложение и одни сервисы: правило живёт в одном месте и не расходится между интерфейсом и API (`docs/architecture.md`).</documentation>
     </element>
     <element xsi:type="archimate:ApplicationComponent" name="Хуки запроса (src/hooks.server.ts)" id="id-app-hooks">
@@ -1169,5 +1169,5 @@
       <documentation>Стенд и развёртывание: что поднимает Compose, что видно снаружи, что закрыто сетью, какие артефакты едут в образ и как выглядит масштабирование, если оно понадобится.</documentation>
     </element>
   </folder>
-  <purpose>Модель архитектуры LCT CRM в нотации ArchiMate 3.2. Описывает проверенное устройство продукта на 2026-09-18: бизнес-роли и процесс работы с контрагентом, модули приложения и владельцев данных, стенд и развёртывание. Всё, что не проверено кодом или компоузом, подписано словами. Автор: Wine Coding Team.</purpose>
+  <purpose>Модель архитектуры Альма CRM в нотации ArchiMate 3.2. Описывает проверенное устройство продукта на 2026-09-18: бизнес-роли и процесс работы с контрагентом, модули приложения и владельцев данных, стенд и развёртывание. Всё, что не проверено кодом или компоузом, подписано словами. Автор: Wine Coding Team.</purpose>
 </archimate:model>

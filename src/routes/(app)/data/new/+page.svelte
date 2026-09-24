@@ -56,7 +56,7 @@
 	let submitting = $state(false);
 </script>
 
-<svelte:head><title>Загрузка данных — LCT CRM</title></svelte:head>
+<svelte:head><title>Загрузка данных — Альма CRM</title></svelte:head>
 
 <Header
 	title="Загрузка данных"

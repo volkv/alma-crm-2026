@@ -13,7 +13,7 @@
 </script>
 
 <svelte:head>
-	<title>Вход не выполнен — LCT CRM</title>
+	<title>Вход не выполнен — Альма CRM</title>
 </svelte:head>
 
 <Card.Root>

@@ -213,7 +213,7 @@
 </script>
 
 <svelte:head>
-	<title>Пространства — LCT CRM</title>
+	<title>Пространства — Альма CRM</title>
 </svelte:head>
 
 {#if rowMessage}

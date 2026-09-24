@@ -106,7 +106,7 @@
 			</Sheet.Trigger>
 			<Sheet.Content side="left" class="w-64 gap-0 p-0">
 				<Sheet.Header class="h-14 shrink-0 justify-center border-b border-border px-4">
-					<Sheet.Title class="text-sm font-semibold">LCT CRM</Sheet.Title>
+					<Sheet.Title class="text-sm font-semibold">Альма CRM</Sheet.Title>
 					<Sheet.Description class="sr-only">Разделы системы</Sheet.Description>
 				</Sheet.Header>
 				<div class="min-h-0 flex-1 overflow-y-auto">

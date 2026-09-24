@@ -100,7 +100,7 @@
 	</StatusBadge>
 {/snippet}
 
-<svelte:head><title>Программы — LCT CRM</title></svelte:head>
+<svelte:head><title>Программы — Альма CRM</title></svelte:head>
 
 <Header
 	title="Программы"
