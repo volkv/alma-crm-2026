@@ -17,7 +17,7 @@ import { getDb } from '../db';
 import { appSettings } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { ValidationError } from '../errors';
-import { requirePermission } from '../rbac';
+import { refuseDemoSession, requirePermission } from '../rbac';
 
 /** Значения, с которыми система работает, пока администратор не решил иначе. */
 export const SETTING_DEFAULTS: { [TKey in SettingKey]: SettingValue<TKey> } = {
@@ -47,6 +47,32 @@ export const SETTING_DEFAULTS: { [TKey in SettingKey]: SettingValue<TKey> } = {
 	// стенду можно ходить в Dadata и на сайты вузов.
 	enrichment: { enabled: false, dailyQuota: 50 }
 };
+
+/**
+ * Настройки, которые демонстрационная сессия не меняет, хотя `settings.write`
+ * у неё есть, — и почему.
+ *
+ * Остальное общее право демонстрации оставлено: порог зависания, каналы и
+ * сводка, сроки сессии и внешние источники — то, что эксперт на показе
+ * настраивает и сразу видит в работе, а ночной сброс возвращает их к эталону
+ * сида (`$lib/server/demo/reset`). Эти две — иного рода: их правка ломает стенд
+ * не для того, кто правит, а для всех следующих, и сброс их не возвращает — он
+ * их сохраняет, потому что задаёт их штатный администратор стенда.
+ */
+export const DEMO_LOCKED_SETTINGS = {
+	// Выключенное расписание выключает и сам сброс: стенд перестал бы
+	// возвращаться к эталону, и починить это изнутри показа было бы нечем.
+	demo_reset_schedule:
+		'Расписание сброса демонстрационного стенда меняет только его штатный администратор: без сброса стенд не вернётся к эталону для следующих посетителей',
+	// Баннер читает каждый, кто открыл стенд, ещё до входа — это единственный
+	// текст, который посетитель показывает всем остальным от имени продукта.
+	login_banner:
+		'Баннер страницы входа на демонстрационном стенде меняет только его штатный администратор: этот текст видит каждый, кто откроет стенд'
+} as const satisfies Partial<Record<SettingKey, string>>;
+
+function demoLockReason(key: SettingKey): string | undefined {
+	return (DEMO_LOCKED_SETTINGS as Partial<Record<SettingKey, string>>)[key];
+}
 
 export async function getSetting<TKey extends SettingKey>(key: TKey): Promise<SettingValue<TKey>> {
 	const [row] = await getDb()
@@ -81,6 +107,16 @@ export async function setSetting<TKey extends SettingKey>(
 	// работает вход и блокировка, и попытка их переписать без права стоит того,
 	// чтобы администратор о ней узнал.
 	await requirePermission(ctx, 'settings.write', { type: 'settings.updated' });
+
+	const lockReason = demoLockReason(key);
+
+	if (lockReason !== undefined) {
+		await refuseDemoSession(
+			ctx,
+			{ type: 'settings.updated', details: { changedFields: [key] } },
+			lockReason
+		);
+	}
 
 	const result = settingSchemas[key].safeParse(value);
 

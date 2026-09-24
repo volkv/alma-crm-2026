@@ -24,7 +24,12 @@
  *   залить эталоном уже нельзя — сид упрётся в стадию, которой нет. Поэтому
  *   редакции, стадии, переходы, правила переноса и реестр ключей всех
  *   пространств очищаются вместе с данными, а `ensureProcess` внутри сида
- *   заводит процесс заново;
+ *   заводит процесс заново. Имена эталонных пространств и состав карточки
+ *   эталонных процессов живут вне редакций и возвращаются к эталону отдельно;
+ * - **настройки делятся надвое.** То, что демонстрации открыто, стирается, и
+ *   эталон кладёт сид; то, что задал штатный администратор стенда (адреса
+ *   интеграций, расписание сброса, баннер входа), остаётся
+ *   (`PRESERVED_SETTING_KEYS`);
  * - **журнал действий не трогается вовсе.** Он append-only на уровне базы
  *   (UPDATE и DELETE запрещает триггер), и запись о том, что стенд сбросили,
  *   ложится в него же — рядом с тем, что было до сброса.
@@ -33,16 +38,21 @@
  * не демонстрационные, и кнопка, стирающая их «до эталона», там означала бы
  * потерю работы.
  */
-import { count, sql } from 'drizzle-orm';
+import { count, eq, notInArray, sql } from 'drizzle-orm';
+import type { DocumentTemplateKey } from '$lib/contracts/documents';
+import { INTEGRATION_SETTING_KEYS } from '$lib/contracts/integrations';
+import type { CardPanel } from '$lib/contracts/process-card';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getConfig } from '../config';
 import { getDb } from '../db';
 import {
+	appSettings,
 	documents,
 	interactions,
 	organizations,
 	workflows,
+	workspaces,
 	processRevisions,
 	processStageKeys
 } from '../db/schema';
@@ -51,6 +61,13 @@ import { removeStoredFiles } from '../documents/storage';
 import { ConflictError } from '../errors';
 import { requirePermission } from '../rbac';
 import { getRedis } from '../redis';
+import { DEMO_LOCKED_SETTINGS } from '../settings';
+import {
+	B2B_WORKFLOW_KEY,
+	B2B_WORKSPACE_KEY,
+	B2C_WORKFLOW_KEY,
+	B2C_WORKSPACE_KEY
+} from '../stages/definitions';
 import { invalidateStatsDashboard } from '../stats/dashboard';
 
 /**
@@ -139,6 +156,75 @@ export const DEMO_DATA_TABLES = [
 ] as const;
 
 /**
+ * Настройки, которые сброс сохраняет. Все остальные строки `app_settings`
+ * стираются, и эталон заводит сид (`scripts/seed/settings.ts`), а чего сид не
+ * заводит, то читается умолчанием (`SETTING_DEFAULTS`).
+ *
+ * Правило одно: сохраняется то, что демонстрационная сессия поменять не может, —
+ * значит, это задал штатный администратор стенда, и эталона у этого нет:
+ *
+ * - адреса, токены и периодичность интеграций (`integrations.*`) — настоящие
+ *   адреса стенда; демонстрации их право не выдаётся вовсе
+ *   (`DEMO_DENIED_PERMISSIONS`);
+ * - расписание сброса и баннер страницы входа — закрыты демонстрации поштучно
+ *   (`DEMO_LOCKED_SETTINGS`). Верни их сброс к умолчанию, первый же ночной
+ *   сброс выключил бы своё расписание.
+ *
+ * Всё прочее — порог зависания, каналы, сроки сессии, внешние источники —
+ * демонстрации открыто, и сброс обязан это вернуть: иначе выключенные
+ * посетителем напоминания так и остались бы выключенными для следующих.
+ */
+const PRESERVED_SETTING_KEYS: readonly string[] = [
+	...Object.values(INTEGRATION_SETTING_KEYS),
+	...Object.keys(DEMO_LOCKED_SETTINGS)
+];
+
+/**
+ * Состав карточки эталонных процессов — тот, что задали им миграции
+ * `drizzle/0025_process_card.sql` и `drizzle/0026_document_package.sql`.
+ *
+ * Состав — свойство процесса, а не редакции, поэтому пересборка редакций его не
+ * касается, а показ правит его редактором процесса. Процессы, заведённые
+ * посетителем, сброс не трогает: эталона у них нет.
+ */
+const REFERENCE_CARDS: readonly {
+	workflowKey: string;
+	cardPanels: CardPanel[];
+	documentTemplateKeys: DocumentTemplateKey[];
+}[] = [
+	{
+		workflowKey: B2B_WORKFLOW_KEY,
+		cardPanels: ['terms', 'contract', 'learning', 'documents'],
+		documentTemplateKeys: ['agreement', 'sublicense', 'handover_act']
+	},
+	{
+		workflowKey: B2C_WORKFLOW_KEY,
+		cardPanels: ['terms', 'payment', 'learners', 'learning', 'training_document', 'documents'],
+		documentTemplateKeys: ['offer', 'legal_entity_contract', 'services_act']
+	}
+];
+
+/**
+ * Имена и описания эталонных пространств — те, что задали им миграции
+ * `drizzle/0006_process_groups_backfill.sql` и
+ * `drizzle/0022_workspace_process_names.sql`. Имя видно в меню и заголовке
+ * доски, и переименованное посетителем пространство путало бы сценарий показа.
+ */
+const REFERENCE_WORKSPACES: readonly { key: string; name: string; description: string }[] = [
+	{
+		key: B2B_WORKSPACE_KEY,
+		name: 'Работа с ВУЗ',
+		description:
+			'Полный цикл работы с вузом: от поиска контактов до контроля исполнения обязательств.'
+	},
+	{
+		key: B2C_WORKSPACE_KEY,
+		name: 'Коммерческое обучение',
+		description: 'Обучение сотрудников заказчика и частных слушателей.'
+	}
+];
+
+/**
  * Ключ блокировки сброса и её срок.
  *
  * Блокировка нужна потому, что сброс — это не одна транзакция и быть ею не
@@ -211,6 +297,33 @@ async function clearDemoData(ctx: ActorContext): Promise<string[]> {
 		await tx.update(workflows).set({ activeRevisionId: null });
 		await tx.delete(processRevisions);
 		await tx.delete(processStageKeys);
+
+		// Вид рабочего места и имена мест — то, что показ правит в обход
+		// редакций, и что поэтому не уезжает вместе с ними.
+		const at = new Date();
+
+		for (const card of REFERENCE_CARDS) {
+			await tx
+				.update(workflows)
+				.set({
+					cardPanels: card.cardPanels,
+					documentTemplateKeys: card.documentTemplateKeys,
+					updatedAt: at
+				})
+				.where(eq(workflows.key, card.workflowKey));
+		}
+
+		for (const workspace of REFERENCE_WORKSPACES) {
+			await tx
+				.update(workspaces)
+				.set({ name: workspace.name, description: workspace.description, updatedAt: at })
+				.where(eq(workspaces.key, workspace.key));
+		}
+
+		// Настройки, которые правит показ, стираются, и эталон кладёт сид той же
+		// заливкой. Не перезапись поверх: строки, которых в эталоне нет, иначе
+		// пережили бы сброс.
+		await tx.delete(appSettings).where(notInArray(appSettings.key, [...PRESERVED_SETTING_KEYS]));
 
 		return files.map((file) => file.filePath);
 	});

@@ -1,9 +1,19 @@
-import { count, eq } from 'drizzle-orm';
+import { and, count, eq } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { afterAll, beforeAll, describe, expect, it, vi } from 'vitest';
-import { interactions, organizations } from '$lib/server/db/schema';
+import type { ActorContext } from '$lib/server/actor';
+import {
+	auditEvents,
+	interactions,
+	organizations,
+	users,
+	workflows,
+	workspaces
+} from '$lib/server/db/schema';
+import { ForbiddenError } from '$lib/server/errors';
 import { getRedis } from '$lib/server/redis';
 import { DIRECTORY_SEED_SIZES } from '../../../scripts/seed/directory';
+import { seedId } from '../../../scripts/seed/ids';
 import { INTERACTION_SEED_SIZES } from '../../../scripts/seed/interactions';
 import { seedAll } from '../../../scripts/seed/run';
 import { startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
@@ -22,6 +32,8 @@ vi.mock('$lib/server/config', async (importOriginal) => {
 });
 
 const { resetDemoData } = await import('$lib/server/demo/reset');
+const { deactivateUser } = await import('$lib/server/auth/users');
+const { getSetting, setSetting } = await import('$lib/server/settings');
 
 let database: TestDatabase;
 
@@ -62,5 +74,72 @@ describe('сброс демонстрационных данных', () => {
 			.where(eq(organizations.shortName, 'Переименовано на показе'));
 
 		expect(renamed.value).toBe(0);
+	}, 120_000);
+
+	it('возвращает то, что правит показ, и держит границу демонстрации', async () => {
+		const staff = testActor();
+		const base = testActor();
+		const visitor: ActorContext = { ...base, user: { ...base.user!, isDemo: true } };
+		const staffAdminId = seedId('user', 'staff-admin');
+
+		// Штатный администратор включил расписание — его сброс обязан сохранить.
+		await setSetting(staff, 'demo_reset_schedule', { enabled: true, hour: 4 });
+
+		// Посетитель правит то, что ему открыто.
+		await setSetting(visitor, 'stuck_threshold_days', 0);
+		await setSetting(visitor, 'enrichment', { enabled: false, dailyQuota: 5 });
+		await database.db
+			.update(workflows)
+			.set({ cardPanels: ['documents'], documentTemplateKeys: [] })
+			.where(eq(workflows.key, 'b2b'));
+		await database.db
+			.update(workspaces)
+			.set({ name: 'Переименовано на показе' })
+			.where(eq(workspaces.key, 'b2b'));
+
+		// И получает отказ там, где правка ломала бы стенд для следующих.
+		await expect(
+			setSetting(visitor, 'demo_reset_schedule', { enabled: false, hour: 3 })
+		).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(deactivateUser(visitor, staffAdminId)).rejects.toBeInstanceOf(ForbiddenError);
+
+		const [staffAdmin] = await database.db
+			.select({ isActive: users.isActive })
+			.from(users)
+			.where(eq(users.id, staffAdminId));
+		expect(staffAdmin.isActive).toBe(true);
+
+		const [denied] = await database.db
+			.select({ value: count() })
+			.from(auditEvents)
+			.where(
+				and(
+					eq(auditEvents.eventType, 'users.deactivated'),
+					eq(auditEvents.outcome, 'denied'),
+					eq(auditEvents.subjectId, staffAdminId)
+				)
+			);
+		expect(denied.value).toBe(1);
+
+		await resetDemoData(testActor());
+
+		await expect(getSetting('stuck_threshold_days')).resolves.toBe(7);
+		await expect(getSetting('enrichment')).resolves.toEqual({ enabled: true, dailyQuota: 200 });
+		await expect(getSetting('demo_reset_schedule')).resolves.toEqual({ enabled: true, hour: 4 });
+
+		const [card] = await database.db
+			.select({ panels: workflows.cardPanels, templates: workflows.documentTemplateKeys })
+			.from(workflows)
+			.where(eq(workflows.key, 'b2b'));
+		expect(card).toEqual({
+			panels: ['terms', 'contract', 'learning', 'documents'],
+			templates: ['agreement', 'sublicense', 'handover_act']
+		});
+
+		const [workspace] = await database.db
+			.select({ name: workspaces.name })
+			.from(workspaces)
+			.where(eq(workspaces.key, 'b2b'));
+		expect(workspace.name).toBe('Работа с ВУЗ');
 	}, 120_000);
 });

@@ -18,7 +18,7 @@ import { and, eq, isNull, sql, type SQL } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import type { AuditEventType } from '$lib/contracts/audit';
 import type { ActorContext } from '../actor';
-import { recordAuditEvent } from '../audit';
+import { recordAuditEvent, type AuditEventInput } from '../audit';
 import { getDb } from '../db';
 import { organizationResponsibles, rolePermissions } from '../db/schema';
 import { ForbiddenError } from '../errors';
@@ -135,6 +135,34 @@ export async function loadRolePermissions(roleId: string): Promise<ReadonlySet<P
 }
 
 /**
+ * Отказ демонстрационной сессии там, где её право действие разрешает, а
+ * граница стенда — нет: над записью или настройкой, которую посетитель не
+ * должен менять за следующих.
+ *
+ * Право здесь не вычитается целиком (`DEMO_DENIED_PERMISSIONS`), потому что
+ * под ним лежит и то, что показ обязан показывать: под `users.manage` —
+ * управление демонстрационными записями, под `settings.write` — порог
+ * зависания и каналы напоминаний. Отказ пишется в журнал так же, как отказ по
+ * праву, и приходит той же ошибкой — со своей фразой, потому что «недостаточно
+ * прав» администратору, у которого это право есть, ничего не объясняет.
+ *
+ * Не демонстрационной сессии функция не мешает ничем.
+ */
+export async function refuseDemoSession(
+	ctx: ActorContext,
+	event: Omit<AuditEventInput, 'outcome'>,
+	reason: string
+): Promise<void> {
+	if (ctx.user?.isDemo !== true) {
+		return;
+	}
+
+	await recordAuditEvent(ctx, { ...event, outcome: 'denied' });
+
+	throw new ForbiddenError(reason);
+}
+
+/**
  * Права, которых не получает публичная демонстрация, какой бы ролью ни вошли.
  *
  * Стенд показывают целиком: под демонстрационными записями проходится весь
@@ -148,9 +176,12 @@ export async function loadRolePermissions(roleId: string): Promise<ReadonlySet<P
  * эталона именно те строки, которые перечисленные права правят
  * (`$lib/server/demo/reset`):
  *
- * - `users.manage` — выключенная или перевешенная на другого руководителя
- *   учётная запись возвращается сидом (`scripts/seed/users.ts`), а
- *   демонстрационную выключить нельзя и так (`$lib/server/auth/users.ts`);
+ * - `users.manage` — демонстрационную запись выключить нельзя, а записи вне
+ *   демонстрации (штатный администратор, сотрудники, машинный субъект обмена)
+ *   демонстрационная сессия не выключает, не включает, не отвязывает и не
+ *   перевешивает вовсе (`refuseDemoSession` в `$lib/server/auth/users.ts`);
+ *   перевешенную демонстрационную запись возвращает сид
+ *   (`scripts/seed/users.ts`);
  * - `api_keys.manage` — выпущенный посетителем ключ уезжает вместе с таблицей
  *   `api_keys`, а два ключа обмена сид выпускает заново;
  * - `people.anonymize` — необратимо внутри показа, но `people` заливается
@@ -160,12 +191,11 @@ export async function loadRolePermissions(roleId: string): Promise<ReadonlySet<P
  * опасен сам по себе: куда система ходит, проверяет `outboundAddressIssue`
  * (`$lib/server/integrations/outbound.ts`), и проверяет дважды, при сохранении
  * и в момент отправки. Дело в том, что под этим правом лежат адреса и токены
- * подключений, а живут они в `app_settings` — таблице, которую сброс не чистит
- * и чистить не может: там же настройки самого стенда. Подменённый посетителем
- * приёмник подписки и адрес с токеном системы обучения остались бы подменены и
- * после показа, то есть это единственное здесь, чего сброс не отменяет.
- * Открыть право можно вместе со сбросом ключей интеграций до эталона — до тех
- * пор оно остаётся вычтенным.
+ * подключений, а эталона у них нет: их задаёт штатный администратор под
+ * настоящие адреса стенда, и сброс эти ключи `app_settings` сохраняет
+ * (`$lib/server/demo/reset`). Подменённый посетителем приёмник подписки и адрес
+ * с токеном системы обучения остались бы подменены и после показа, поэтому
+ * право остаётся вычтенным.
  *
  * Под оставшимся `integrations.manage` — то, что демонстрация показывает и что
  * кончается вместе с ней: журнал обмена, повтор и ручной разбор сообщения,

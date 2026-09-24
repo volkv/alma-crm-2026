@@ -19,7 +19,7 @@ import { getDb } from '../db';
 import { roles, users, workspaces } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
-import { requirePermission } from '../rbac';
+import { refuseDemoSession, requirePermission } from '../rbac';
 import { workspaceAccessCondition } from '../rbac/workspaces';
 import { revokeAllSessions } from './session';
 
@@ -62,6 +62,21 @@ async function readAccountState(userId: string): Promise<{ isActive: boolean; is
 }
 
 /**
+ * Почему демонстрационная сессия не трогает записи вне демонстрации.
+ *
+ * Раздел пользователей открыт показу, но записи в нём не равны: штатный
+ * администратор — единственный, кто правит адреса интеграций и расписание
+ * сброса; машинный субъект — владелец ключей обмена, и выключенный останавливает
+ * обмен до ночного сброса; сотрудники оператора — те, на кого на показе
+ * передают вуз. Посетитель, выключивший или перевесивший их, ломает стенд для
+ * всех, кто придёт после него, а не для себя. Демонстрационные записи
+ * посетителю по-прежнему открыты: на них управление учётными записями и
+ * показывают.
+ */
+const NON_DEMO_ACCOUNT_REASON =
+	'На демонстрационном стенде посетитель управляет только демонстрационными учётными записями: штатного администратора, сотрудников и машинного субъекта обмена меняет штатный администратор';
+
+/**
  * Выключает учётную запись и немедленно гасит её сессии: иначе уволенный
  * сотрудник доработал бы в системе до конца своего рабочего дня.
  *
@@ -81,6 +96,14 @@ export async function deactivateUser(ctx: ActorContext, userId: string): Promise
 	}
 
 	const account = await readAccountState(userId);
+
+	if (!account.isDemo) {
+		await refuseDemoSession(
+			ctx,
+			{ type: 'users.deactivated', subject: { type: 'user', id: userId } },
+			NON_DEMO_ACCOUNT_REASON
+		);
+	}
 
 	if (account.isDemo && getConfig().DEMO_MODE) {
 		throw new ConflictError(
@@ -124,6 +147,14 @@ export async function activateUser(ctx: ActorContext, userId: string): Promise<v
 
 	const account = await readAccountState(userId);
 
+	if (!account.isDemo) {
+		await refuseDemoSession(
+			ctx,
+			{ type: 'users.activated', subject: { type: 'user', id: userId } },
+			NON_DEMO_ACCOUNT_REASON
+		);
+	}
+
 	// Журнал — доказательство того, что произошло: записать включение того, что
 	// и так работает, значит положить в него событие, которого не было.
 	if (account.isActive) {
@@ -165,13 +196,21 @@ export async function unlinkFromDirectory(ctx: ActorContext, userId: string): Pr
 	});
 
 	const [account] = await getDb()
-		.select({ id: users.id, externalSubject: users.externalSubject })
+		.select({ id: users.id, externalSubject: users.externalSubject, isDemo: users.isDemo })
 		.from(users)
 		.where(eq(users.id, userId))
 		.limit(1);
 
 	if (account === undefined) {
 		throw new NotFoundError('Пользователь не найден');
+	}
+
+	if (!account.isDemo) {
+		await refuseDemoSession(
+			ctx,
+			{ type: 'users.updated', subject: { type: 'user', id: userId } },
+			NON_DEMO_ACCOUNT_REASON
+		);
 	}
 
 	// Журнал — доказательство того, что произошло: записать отвязку того, что и
@@ -228,13 +267,21 @@ export async function setUserManager(
 	const db = getDb();
 
 	const [account] = await db
-		.select({ id: users.id, managerUserId: users.managerUserId })
+		.select({ id: users.id, managerUserId: users.managerUserId, isDemo: users.isDemo })
 		.from(users)
 		.where(eq(users.id, input.userId))
 		.limit(1);
 
 	if (account === undefined) {
 		throw new NotFoundError('Пользователь не найден');
+	}
+
+	if (!account.isDemo) {
+		await refuseDemoSession(
+			ctx,
+			{ type: 'users.updated', subject: { type: 'user', id: input.userId } },
+			NON_DEMO_ACCOUNT_REASON
+		);
 	}
 
 	if (input.managerUserId !== null) {
