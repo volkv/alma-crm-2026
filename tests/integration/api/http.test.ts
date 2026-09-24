@@ -604,6 +604,7 @@ describe('описание API', () => {
 		const paths = document.paths as unknown as Record<string, Record<string, unknown>>;
 		expect(Object.keys(paths).sort()).toEqual([
 			'/v1/applications',
+			'/v1/contacts',
 			'/v1/contracts',
 			'/v1/directions',
 			'/v1/documents/{id}/marks',
@@ -619,12 +620,22 @@ describe('описание API', () => {
 			'/v1/interactions/{id}/transitions',
 			'/v1/organizations',
 			'/v1/organizations/{id}',
+			'/v1/organizations/{id}/contacts',
 			'/v1/organizations/{id}/interactions',
+			'/v1/organizations/{id}/responsibles',
+			'/v1/people',
+			'/v1/people/{id}',
 			'/v1/products',
+			'/v1/products/{id}',
 			'/v1/programs',
+			'/v1/programs/{id}',
 			'/v1/reports',
+			'/v1/workflows',
+			'/v1/workflows/{key}',
+			'/v1/workflows/{key}/publication',
 			'/v1/workspaces',
-			'/v1/workspaces/{key}'
+			'/v1/workspaces/{key}',
+			'/v1/workspaces/{key}/members'
 		]);
 		expect(paths['/v1/organizations'].get).toMatchObject({ security: [{ bearerAuth: [] }] });
 

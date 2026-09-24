@@ -149,6 +149,13 @@ describe('справочники через API', () => {
 		});
 		expect(readProgram.body).toMatchObject({ code: 'PRG-1', priority: 3, versions: [] });
 
+		const reprioritized = await call(program, 'PUT', {
+			key,
+			params: { id: String(createdProgram.body.id) },
+			body: { code: 'PRG-1', name: 'Программа', level: 'bachelor', priority: 1 }
+		});
+		expect(reprioritized.body).toMatchObject({ code: 'PRG-1', priority: 1 });
+
 		const createdProduct = await call(products, 'POST', {
 			key,
 			body: { code: 'PRD-1', name: 'Продукт' }

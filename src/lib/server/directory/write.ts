@@ -764,8 +764,6 @@ export async function updateProgram(
 		subject: { type: 'program', id: input.id }
 	});
 
-	await assertPersonVisible(ctx, input.id);
-
 	const { id, ...fields } = input;
 	const db = getDb();
 
@@ -1220,8 +1218,6 @@ export async function updateProduct(
 		type: 'products.updated',
 		subject: { type: 'product', id: input.id }
 	});
-
-	await assertPersonVisible(ctx, input.id);
 
 	const { id, ...fields } = input;
 	const db = getDb();
