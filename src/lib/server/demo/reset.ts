@@ -64,8 +64,13 @@ import { invalidateStatsDashboard } from '../stats/dashboard';
  * таблица, которой в списке нет. `CASCADE` здесь был бы прямо опасен — он молча
  * дотянулся бы до всего, что ссылается на данные, включая то, что сброс обязан
  * сохранить.
+ *
+ * Отказ PostgreSQL здесь случается только на стенде, в момент нажатия кнопки,
+ * поэтому ту же полноту заранее сверяет со схемой
+ * `tests/unit/demo/reset-tables.test.ts`: новая таблица, которая ссылается на
+ * данные показа, обязана попасть сюда.
  */
-const DEMO_DATA_TABLES = [
+export const DEMO_DATA_TABLES = [
 	// Взаимодействия и их история
 	'interactions',
 	'interaction_parties',
@@ -81,6 +86,7 @@ const DEMO_DATA_TABLES = [
 	// Документы
 	'documents',
 	'stage_entry_documents',
+	'document_contract_items',
 	// Договоры
 	'contracts',
 	'contract_items',
