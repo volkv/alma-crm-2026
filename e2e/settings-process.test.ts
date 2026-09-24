@@ -192,7 +192,8 @@ staff('черновик изменений применяется ко всем 
 	// что и остальные: это параметр процесса, а не код. Ставится на стадии, где
 	// никто не стоит, — проверяется поле формы, а не перенос записей.
 	const startRow = page.getByRole('row').filter({ hasText: 'start' });
-	await openLayer(startRow.getByRole('button', { name: 'Изменить' }), dialog);
+	// Строку открывает кнопка с названием стадии.
+	await openLayer(startRow.getByRole('button', { name: 'Начало', exact: true }), dialog);
 
 	const markField = dialog.getByRole('combobox', { name: 'Отметка по документу дела' });
 	const approved = page.getByRole('option', { name: 'Утверждён', exact: true });
@@ -207,7 +208,7 @@ staff('черновик изменений применяется ко всем 
 
 	// Переименование: ключ остаётся прежним, поэтому записи никуда не поедут.
 	const renamedRow = page.getByRole('row').filter({ hasText: RENAMED_KEY });
-	await openLayer(renamedRow.getByRole('button', { name: 'Изменить' }), dialog);
+	await openLayer(renamedRow.getByRole('button', { name: 'Середина', exact: true }), dialog);
 
 	// Ключ существующей стадии не правится: поля для него в диалоге нет вовсе.
 	await expect(dialog.getByLabel('Ключ')).toHaveCount(0);
@@ -219,7 +220,7 @@ staff('черновик изменений применяется ко всем 
 	// Удаление: диалог называет число тех, кто стоит на стадии сейчас, и куда
 	// они переедут. Цель по умолчанию — предыдущая сохранившаяся стадия.
 	const removedRow = page.getByRole('row').filter({ hasText: REMOVED_KEY });
-	await openLayer(removedRow.getByRole('button', { name: 'Удалить' }), dialog);
+	await openLayer(removedRow.getByRole('button', { name: /^Удалить стадию/ }), dialog);
 
 	await expect(dialog.getByText(/на этой стадии стоит незавершённых/i)).toBeVisible();
 	await dialog.getByRole('button', { name: 'Удалить стадию' }).click();

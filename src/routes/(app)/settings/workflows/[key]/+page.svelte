@@ -1,6 +1,7 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { superForm } from 'sveltekit-superforms';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { toast } from 'svelte-sonner';
@@ -8,10 +9,12 @@
 	import HistoryIcon from '@lucide/svelte/icons/history';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PlusIcon from '@lucide/svelte/icons/plus';
+	import Trash2Icon from '@lucide/svelte/icons/trash-2';
 	import UploadIcon from '@lucide/svelte/icons/upload';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
+	import * as Tabs from '$lib/components/ui/tabs/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
@@ -27,6 +30,9 @@
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import KeyValue from '$lib/components/key-value.svelte';
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
+	import ProcessCardForm from '$lib/components/process-editor/process-card-form.svelte';
+	import ProcessPreview from '$lib/components/process-editor/process-preview.svelte';
+	import StageRequirements from '$lib/components/process-editor/stage-requirements.svelte';
 	import StageTimeline from '$lib/components/stage-timeline.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatNumber, pluralize } from '$lib/format';
@@ -34,22 +40,14 @@
 		DOCUMENT_STATUS_FACTS,
 		DOCUMENT_STATUS_FACT_LABELS,
 		DOCUMENT_TEMPLATE_KEYS,
-		DOCUMENT_TEMPLATE_LABELS,
-		type DocumentTemplateKey
+		DOCUMENT_TEMPLATE_LABELS
 	} from '$lib/contracts/documents';
-	import {
-		CARD_PANELS,
-		CARD_PANEL_HINTS,
-		CARD_PANEL_LABELS,
-		type CardPanel
-	} from '$lib/contracts/process-card';
 	import { LEARNING_PURPOSES, LEARNING_PURPOSE_LABELS } from '$lib/contracts/exchange';
 	import {
 		STAGE_CATEGORIES,
 		STAGE_ENTER_NOTIFY_LABELS,
 		STAGE_ENTER_NOTIFY_TARGETS,
 		STAGE_TRANSITION_KINDS,
-		type StageChangeKind,
 		type StageTransitionKind,
 		type StageView
 	} from '$lib/contracts/interactions';
@@ -67,6 +65,33 @@
 	const editable = $derived(draft !== null);
 	const stageNames = $derived(new Map((shown?.stages ?? []).map((s) => [s.id, s.name])));
 	const stageKeys = $derived(new Map((shown?.stages ?? []).map((s) => [s.id, s.key])));
+	const permissionLabels = $derived(
+		new Map<string, string>(
+			data.permissions.map((permission) => [permission.key, permission.label])
+		)
+	);
+
+	/**
+	 * Разделы редактора. Цепочка стадий — то, ради чего экран открывают,
+	 * поэтому она первая и открыта по умолчанию; состав карточки правится
+	 * редко и черновика не касается; последствия черновика — отдельно, чтобы
+	 * их читали целиком, а не между двумя таблицами.
+	 */
+	const TABS = ['stages', 'card', 'changes'] as const;
+	type Tab = (typeof TABS)[number];
+
+	let tab = $state<Tab>('stages');
+
+	// Раздел помнит адрес: сохранение состава карточки — обычная отправка
+	// формы, и после неё экран открывается заново на том же разделе, а не на
+	// стадиях. Читается после гидрации: на сервере якоря адреса нет.
+	onMount(() => {
+		const hash = page.url.hash.slice(1);
+
+		if ((TABS as readonly string[]).includes(hash)) {
+			tab = hash as Tab;
+		}
+	});
 
 	/**
 	 * Что переход значит для процесса. Словарь местный: в карточке
@@ -77,15 +102,6 @@
 		forward: 'Шаг вперёд',
 		return: 'Возврат на доработку',
 		skip: 'Пропуск стадии'
-	};
-
-	/** Что стало со стадией в черновике — словами предпросмотра. */
-	const CHANGE_LABELS: Record<StageChangeKind, string> = {
-		kept: 'Без изменений',
-		renamed: 'Переименована',
-		changed: 'Параметры изменены',
-		added: 'Новая',
-		removed: 'Удалена'
 	};
 
 	/** Успех действия без формы; отказ приходит тем же путём, но без `ok`. */
@@ -152,7 +168,7 @@
 			name: stage?.name ?? '',
 			category: stage?.category ?? 'contact',
 			slaDays: stage?.slaDays ?? 7,
-			// Ноль в поле означает «стадия не протухает»: в базе это пусто, но
+			// Ноль в поле означает «срока без событий нет»: в базе это пусто, но
 			// пустое числовое поле не отличить от неверно введённого.
 			staleAfterDays: stage?.staleAfterDays ?? 0,
 			requiresResult: stage?.requiresResult ?? false,
@@ -241,36 +257,9 @@
 	 */
 	const appliedIn = $derived(detail.workspaces);
 
-	/** Строки предпросмотра, на которых что-то меняется; «без изменений» не показываем. */
-	const previewRows = $derived((data.preview?.rows ?? []).filter((row) => row.change !== 'kept'));
-
-	/**
-	 * Сколько незавершённых взаимодействий увидят изменение своей стадии, никуда
-	 * не переезжая: переименование и правка параметров. Переезжающие сюда не
-	 * идут — их считает `preview.affected`.
-	 */
-	/**
-	 * Состав карточки в форме — до сохранения. Предпросмотр читает его же:
-	 * администратор видит карточку такой, какой она станет, а не какой была.
-	 */
-	let cardPanels = $state<CardPanel[]>(untrack(() => [...data.card.panels]));
-	let cardTemplates = $state<DocumentTemplateKey[]>(untrack(() => [...data.card.templates]));
-
-	// После сохранения форма показывает то, что записано, а не то, что набрали.
-	$effect(() => {
-		const saved = data.card;
-
-		untrack(() => {
-			cardPanels = [...saved.panels];
-			cardTemplates = [...saved.templates];
-		});
-	});
-
-	const cardDirty = $derived(
-		JSON.stringify(CARD_PANELS.filter((panel) => cardPanels.includes(panel))) !==
-			JSON.stringify(data.card.panels) ||
-			JSON.stringify(DOCUMENT_TEMPLATE_KEYS.filter((key) => cardTemplates.includes(key))) !==
-				JSON.stringify(data.card.templates)
+	/** Сколько стадий черновик меняет относительно действующего процесса. */
+	const changedStages = $derived(
+		(data.preview?.rows ?? []).filter((row) => row.change !== 'kept').length
 	);
 
 	function toggle<T>(list: T[], item: T, on: boolean): T[] {
@@ -279,11 +268,7 @@
 			: list.filter((value) => value !== item);
 	}
 
-	const affectedInPlace = $derived(
-		previewRows
-			.filter((row) => row.change === 'renamed' || row.change === 'changed')
-			.reduce((total, row) => total + row.interactions, 0)
-	);
+	const days = (count: number) => pluralize(count, ['день', 'дня', 'дней']);
 </script>
 
 <svelte:head><title>{workflow.name} — процесс — Альма CRM</title></svelte:head>
@@ -360,17 +345,38 @@
 	</Alert.Root>
 {/if}
 
-<Card.Root>
-	<Card.Header>
+<!-- Панель состояния: что действует, есть ли черновик и что будет при его
+	применении. Стоит над разделами и видна из любого из них — решение
+	«применить ко всем» не должно зависеть от того, какой раздел открыт. -->
+<Card.Root class="gap-3 py-4">
+	<Card.Header class="px-4">
 		<!-- Название процесса стоит в заголовке страницы и в крошках, поэтому
-			карточка отвечает не «какой процесс», а «что с ним сейчас». -->
-		<Card.Title>Процесс</Card.Title>
+			панель отвечает не «какой процесс», а «что с ним сейчас». -->
+		<Card.Title class="flex flex-wrap items-center gap-2">
+			Процесс
+			{#if detail.active === null}
+				<StatusBadge tone="danger">Процесс не описан</StatusBadge>
+			{:else}
+				<StatusBadge tone="success">Действует</StatusBadge>
+			{/if}
+			{#if draft !== null}
+				<StatusBadge tone="warning">Черновик изменений</StatusBadge>
+			{/if}
+		</Card.Title>
 		<Card.Description>
-			Что действует сейчас, что готовится к применению и кого это изменение затронет.
+			{#if detail.active === null}
+				Стадий ещё нет: заведите черновик, опишите в нём стадии и примените его. Пока стадий нет,
+				завести взаимодействие в пространстве с этим процессом нельзя.
+			{:else if editable}
+				Правится черновик — копия действующего процесса. На работу он не влияет, пока его не
+				применят.
+			{:else}
+				Действующий процесс открыт только на чтение. Чтобы изменить его, заведите черновик.
+			{/if}
 		</Card.Description>
 		<Card.Action>
 			<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
-			<div data-tour="process-group-draft" class="flex flex-wrap items-center gap-2">
+			<div data-tour="process-group-draft" class="flex flex-wrap items-center justify-end gap-2">
 				<Button variant="ghost" size="sm" href={resolve('/(app)/settings/workflows')}>
 					<ArrowLeftIcon aria-hidden="true" />
 					К списку
@@ -406,65 +412,49 @@
 			</div>
 		</Card.Action>
 	</Card.Header>
-	<Card.Content class="flex flex-col gap-4">
-		<KeyValue>
-			<KeyValueRow label="Где применяется">
-				{#if appliedIn.length === 0}
-					<span class="text-muted-foreground">
-						Ни одному пространству не назначен: правка этого процесса пока ничью работу не меняет.
-						Назначение делается в разделе «Пространства».
-					</span>
-				{:else}
-					<span class="flex flex-wrap items-center gap-1">
+	<Card.Content class="flex flex-col gap-3 px-4">
+		<dl class="flex flex-wrap items-center gap-x-6 gap-y-2 text-sm">
+			<div class="flex flex-wrap items-center gap-1.5">
+				<dt class="text-muted-foreground">Где применяется:</dt>
+				<dd class="flex flex-wrap items-center gap-1">
+					{#if appliedIn.length === 0}
+						<span class="text-muted-foreground">
+							ни одному пространству не назначен — назначение в разделе «Пространства»
+						</span>
+					{:else}
 						{#each appliedIn as space (space.key)}
 							<StatusBadge tone="neutral">{space.name}</StatusBadge>
 						{/each}
-					</span>
-				{/if}
-			</KeyValueRow>
-			<KeyValueRow
-				label="Стадий в действующем процессе"
-				value={formatNumber(workflow.stageCount)}
-			/>
-			<KeyValueRow
-				label="Незавершённых взаимодействий"
-				value={formatNumber(workflow.activeInteractions)}
-			/>
-			<KeyValueRow label="Состояние">
-				<span class="flex flex-wrap items-center gap-1">
-					{#if detail.active === null}
-						<StatusBadge tone="danger">Процесс не описан</StatusBadge>
-					{:else}
-						<StatusBadge tone="success">Действует</StatusBadge>
 					{/if}
-					{#if draft !== null}
-						<StatusBadge tone="warning">Черновик изменений</StatusBadge>
-					{/if}
-				</span>
-			</KeyValueRow>
-		</KeyValue>
+				</dd>
+			</div>
+			<div class="flex items-center gap-1.5">
+				<dt class="text-muted-foreground">Стадий в действующем:</dt>
+				<dd class="font-medium">{formatNumber(workflow.stageCount)}</dd>
+			</div>
+			<div class="flex items-center gap-1.5">
+				<dt class="text-muted-foreground">Незавершённых взаимодействий:</dt>
+				<dd class="font-medium">{formatNumber(workflow.activeInteractions)}</dd>
+			</div>
+		</dl>
 
-		{#if detail.active === null}
-			<InlineHint tone="warning">
-				В процессе ещё нет ни одной стадии: заведите черновик, опишите в нём стадии и примените его.
-				Пока стадий нет, завести взаимодействие в пространстве с этим процессом нельзя — форма
-				откажет словами.
-			</InlineHint>
-		{:else if editable}
-			<InlineHint tone="info">
-				Черновик изменений — копия действующего процесса. Пока он не применён, на работу он не
-				влияет. «Применить ко всем» перенесёт на новую структуру все незавершённые взаимодействия
-				{appliedIn.length === 0
-					? 'тех пространств, которым процесс назначен,'
-					: 'всех пространств, перечисленных выше,'} одной операцией: стадии сопоставляются по ключу,
-				а тем, чья стадия исчезла, нужно правило переноса.
-			</InlineHint>
-		{:else}
-			<InlineHint tone="info">
-				Действующий процесс открыт только на чтение: по нему идут взаимодействия и с него сняты
-				слепки пройденных стадий. Чтобы изменить его, заведите черновик изменений — он создаётся
-				копией.
-			</InlineHint>
+		{#if editable && data.preview !== null}
+			<!-- Последствия черновика в одну строку: сколько переедет и сколько
+				стадий меняется. Полный разбор — в разделе «Изменения» и ещё раз
+				перед применением. -->
+			<div
+				class="flex flex-wrap items-center gap-x-4 gap-y-1 rounded-lg border border-border bg-surface-muted px-3 py-2 text-sm"
+			>
+				<span>
+					Изменённых стадий: <strong>{formatNumber(changedStages)}</strong>
+				</span>
+				<span>
+					Переедут на другую стадию: <strong>{formatNumber(data.preview.affected)}</strong>
+				</span>
+				<Button variant="link" size="sm" class="h-auto px-0" onclick={() => (tab = 'changes')}>
+					Что изменится
+				</Button>
+			</div>
 		{/if}
 
 		{#if editable && detail.issues.length > 0}
@@ -482,370 +472,335 @@
 	</Card.Content>
 </Card.Root>
 
-<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
-<Card.Root data-tour="process-group-card">
-	<Card.Header>
-		<Card.Title>Карточка взаимодействия</Card.Title>
-		<Card.Description>
-			Какие панели стоят в карточке и какие документы в ней собираются по шаблону. Сторона и её
-			условия есть всегда и зависят от контрагента: у вуза — договор, продукты и лицензии, у
-			физического лица — программа, поток и оплата, у юридического — договор и слушатели. Изменение
-			действует сразу во всех пространствах процесса, без черновика: стадий оно не касается.
-		</Card.Description>
-	</Card.Header>
-	<Card.Content>
-		<form method="POST" action="?/card" class="grid gap-6 md:grid-cols-[minmax(0,1fr)_16rem]">
-			<div class="flex flex-col gap-4">
-				<fieldset class="flex flex-col gap-2">
-					<legend class="mb-2 text-sm font-medium">Панели</legend>
-					{#each CARD_PANELS as panel (panel)}
-						<Label class="flex items-start gap-2 font-normal">
-							<Checkbox
-								name="panels"
-								value={panel}
-								checked={cardPanels.includes(panel)}
-								onCheckedChange={(next) => (cardPanels = toggle(cardPanels, panel, next === true))}
-								class="mt-0.5"
-							/>
-							<span class="flex flex-col">
-								{CARD_PANEL_LABELS[panel]}
-								<span class="text-xs text-muted-foreground">{CARD_PANEL_HINTS[panel]}</span>
-							</span>
-						</Label>
-					{/each}
-				</fieldset>
-				<fieldset class="flex flex-col gap-2">
-					<legend class="mb-2 text-sm font-medium">Шаблоны документов</legend>
-					{#each DOCUMENT_TEMPLATE_KEYS as template (template)}
-						<Label class="flex items-center gap-2 font-normal">
-							<Checkbox
-								name="templates"
-								value={template}
-								checked={cardTemplates.includes(template)}
-								onCheckedChange={(next) =>
-									(cardTemplates = toggle(cardTemplates, template, next === true))}
-							/>
-							{DOCUMENT_TEMPLATE_LABELS[template]}
-						</Label>
-					{/each}
-				</fieldset>
-				<div>
-					<Button type="submit" size="sm" disabled={!cardDirty}>Сохранить состав карточки</Button>
-				</div>
-			</div>
+<Tabs.Root bind:value={tab}>
+	<Tabs.List variant="line" aria-label="Разделы процесса">
+		<Tabs.Trigger value="stages">Стадии и переходы</Tabs.Trigger>
+		<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`):
+			раздел закрыт по умолчанию, поэтому подсказка указывает на его вкладку. -->
+		<Tabs.Trigger value="card" data-tour="process-group-card">Состав карточки</Tabs.Trigger>
+		<Tabs.Trigger value="changes">
+			Изменения
+			{#if editable}
+				<StatusBadge tone="warning">черновик</StatusBadge>
+			{/if}
+		</Tabs.Trigger>
+	</Tabs.List>
 
-			<div class="flex flex-col gap-2 rounded-lg border border-border p-3" aria-live="polite">
-				<p class="text-xs font-semibold tracking-wide text-faint uppercase">Предпросмотр</p>
-				<ol class="flex list-inside list-decimal flex-col gap-1 text-sm">
-					<li>Сторона и условия</li>
-					{#each CARD_PANELS.filter((panel) => cardPanels.includes(panel)) as panel (panel)}
-						<li>{CARD_PANEL_LABELS[panel]}</li>
-					{/each}
-				</ol>
-				<p class="text-xs text-muted-foreground">
-					{#if cardTemplates.length === 0}
-						Документы по шаблону не собираются.
-					{:else}
-						По шаблону: {DOCUMENT_TEMPLATE_KEYS.filter((key) => cardTemplates.includes(key))
-							.map((key) => DOCUMENT_TEMPLATE_LABELS[key])
-							.join(', ')}.
+	<Tabs.Content value="stages" class="flex flex-col gap-4 pt-2">
+		{#if shown === null}
+			<EmptyState
+				title="В процессе нет ни одной стадии"
+				description="Заведите черновик изменений и опишите в нём первую стадию."
+			/>
+		{:else}
+			<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+			<Card.Root data-tour="process-group-stages">
+				<Card.Header>
+					<Card.Title>Стадии</Card.Title>
+					<Card.Description>
+						{editable
+							? 'Строка открывает форму стадии. Порядок, норматив и требования к шагу вперёд правятся в черновике.'
+							: 'Порядок стадий, нормативы и что требуется на шаге вперёд.'}
+					</Card.Description>
+					{#if editable}
+						<Card.Action>
+							<Button size="sm" onclick={() => openStage(null)}>
+								<PlusIcon aria-hidden="true" />
+								Добавить стадию
+							</Button>
+						</Card.Action>
 					{/if}
-				</p>
-			</div>
-		</form>
-	</Card.Content>
-</Card.Root>
+				</Card.Header>
+				<Card.Content class="flex flex-col gap-4">
+					{#if shown.stages.length === 0}
+						<EmptyState
+							title="Стадий пока нет"
+							description="Добавьте первую стадию — без неё процесс нельзя применить."
+						/>
+					{:else}
+						<!-- Цепочка целиком и без состояния: так процесс выглядит в карточке
+							взаимодействия, пока стадии ещё никто не проходил. -->
+						<StageTimeline
+							stages={shown.stages.map((stage) => ({
+								id: stage.id,
+								label: stage.name,
+								state: 'pending' as const
+							}))}
+						/>
+						<div class="overflow-x-auto">
+							<Table.Root>
+								<Table.Header>
+									<Table.Row class="hover:bg-transparent">
+										<Table.Head class="w-10 text-right">№</Table.Head>
+										<Table.Head>Стадия</Table.Head>
+										<Table.Head class="w-24 text-right">Норматив</Table.Head>
+										<!-- «Без событий» и чек-лист уезжают строкой под название, пока окно
+											уже 1536: на экране в 1280–1366 точек стадия, её норматив и
+											требования к переходу обязаны помещаться без горизонтальной
+											прокрутки (`docs/design.md`, «Приоритет колонок»). -->
+										<Table.Head class="hidden w-28 text-right 2xl:table-cell"
+											>Без событий</Table.Head
+										>
+										<Table.Head>Требования и уведомление</Table.Head>
+										<Table.Head class="hidden 2xl:table-cell">Чек-лист</Table.Head>
+										{#if editable}
+											<Table.Head class="w-12"><span class="sr-only">Удаление</span></Table.Head>
+										{/if}
+									</Table.Row>
+								</Table.Header>
+								<Table.Body>
+									{#each shown.stages as stage (stage.id)}
+										<!-- В черновике строка открывает форму стадии. Нажатие ловит сама
+											строка, а кнопка с названием нужна клавиатуре: её нажатие
+											всплывает сюда же. -->
+										<Table.Row
+											class={editable ? 'cursor-pointer' : undefined}
+											onclick={editable ? () => openStage(stage) : undefined}
+										>
+											<Table.Cell class="text-right align-top text-muted-foreground">
+												{stage.position}
+											</Table.Cell>
+											<Table.Cell class="align-top whitespace-normal">
+												<span class="flex flex-wrap items-center gap-2">
+													{#if editable}
+														<button
+															type="button"
+															class="rounded-sm text-left font-medium text-link focus-ring hover:text-link-hover hover:underline"
+														>
+															{stage.name}
+														</button>
+													{:else}
+														<span class="font-medium">{stage.name}</span>
+													{/if}
+													{#if stage.isFinal}
+														<StatusBadge tone="accent">Финальная</StatusBadge>
+													{/if}
+												</span>
+												<!-- Смысловая группа и ключ — сведения для настройки, не для
+													чтения цепочки: мелко и после названия. Ключ — последним. -->
+												<span class="mt-0.5 block text-xs text-muted-foreground">
+													{STAGE_CATEGORY_LABELS[stage.category]}<span class="2xl:hidden"
+														>{stage.staleAfterDays === null
+															? ''
+															: ` · без событий ${days(stage.staleAfterDays)}`}{stage.checklist
+															.length === 0
+															? ''
+															: ` · чек-лист: ${pluralize(stage.checklist.length, ['пункт', 'пункта', 'пунктов'])}`}</span
+													>
+													· ключ <span class="font-mono text-faint">{stage.key}</span>
+												</span>
+											</Table.Cell>
+											<Table.Cell class="text-right align-top">{days(stage.slaDays)}</Table.Cell>
+											<Table.Cell class="hidden text-right align-top 2xl:table-cell">
+												{#if stage.staleAfterDays === null}
+													<span class="text-faint">—</span>
+												{:else}
+													{days(stage.staleAfterDays)}
+												{/if}
+											</Table.Cell>
+											<Table.Cell class="align-top whitespace-normal">
+												<StageRequirements {stage} />
+											</Table.Cell>
+											<Table.Cell class="hidden align-top whitespace-normal 2xl:table-cell">
+												{#if stage.checklist.length === 0}
+													<span class="text-faint">—</span>
+												{:else}
+													<ul class="flex flex-col gap-0.5">
+														{#each stage.checklist as item (item.key)}
+															<li class="text-xs">
+																{item.label}
+																{#if item.required}
+																	<span class="text-danger" title="Обязательный пункт">*</span>
+																{/if}
+															</li>
+														{/each}
+													</ul>
+												{/if}
+											</Table.Cell>
+											{#if editable}
+												<Table.Cell class="align-top">
+													<Button
+														variant="ghost"
+														size="icon-sm"
+														aria-label="Удалить стадию «{stage.name}»"
+														title="Удалить стадию"
+														onclick={(event: MouseEvent) => {
+															// Строка под кнопкой открывает форму стадии.
+															event.stopPropagation();
+															askRemove(stage);
+														}}
+													>
+														<Trash2Icon aria-hidden="true" />
+													</Button>
+												</Table.Cell>
+											{/if}
+										</Table.Row>
+									{/each}
+								</Table.Body>
+							</Table.Root>
+						</div>
+					{/if}
+				</Card.Content>
+			</Card.Root>
 
-{#if shown !== null}
-	<Card.Root>
-		<Card.Header>
-			<Card.Title>Цепочка стадий</Card.Title>
-			<Card.Description>
-				Так процесс выглядит в карточке взаимодействия. Здесь он показан целиком и без состояния:
-				стадии ещё никто не проходил.
-			</Card.Description>
-		</Card.Header>
-		<Card.Content>
-			{#if shown.stages.length === 0}
-				<EmptyState
-					title="В процессе нет ни одной стадии"
-					description="Добавьте первую стадию — без неё процесс нельзя применить."
-				/>
-			{:else}
-				<StageTimeline
-					stages={shown.stages.map((stage) => ({
-						id: stage.id,
-						label: stage.name,
-						state: 'pending' as const
-					}))}
-				/>
-			{/if}
-		</Card.Content>
-	</Card.Root>
+			<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+			<Card.Root data-tour="process-group-transitions">
+				<Card.Header>
+					<Card.Title>Переходы</Card.Title>
+					<Card.Description>
+						Ветвление — это несколько шагов вперёд с одной стадии; отдельной «развилки» в процессе
+						нет. Пара «откуда — куда» уникальна, поэтому пропуск описывается перешагиванием.
+					</Card.Description>
+					{#if editable}
+						<Card.Action>
+							<Button
+								size="sm"
+								onclick={() => openTransition(null)}
+								disabled={shown.stages.length < 2}
+							>
+								<PlusIcon aria-hidden="true" />
+								Добавить переход
+							</Button>
+						</Card.Action>
+					{/if}
+				</Card.Header>
+				<Card.Content>
+					{#if shown.transitions.length === 0}
+						<EmptyState
+							title="Переходов пока нет"
+							description="Пока с первой стадии некуда идти, процесс нельзя применить."
+						/>
+					{:else}
+						<div class="overflow-x-auto">
+							<Table.Root>
+								<Table.Header>
+									<Table.Row class="hover:bg-transparent">
+										<Table.Head>Откуда</Table.Head>
+										<Table.Head>Куда</Table.Head>
+										<Table.Head class="w-48">Вид</Table.Head>
+										<Table.Head>Требуемое право</Table.Head>
+										<Table.Head class="w-32">Причина</Table.Head>
+										{#if editable}
+											<Table.Head class="w-40"></Table.Head>
+										{/if}
+									</Table.Row>
+								</Table.Header>
+								<Table.Body>
+									{#each shown.transitions as transition (transition.id)}
+										<Table.Row>
+											<Table.Cell class="whitespace-normal">
+												{stageNames.get(transition.fromStageId) ?? '—'}
+											</Table.Cell>
+											<Table.Cell class="whitespace-normal">
+												{stageNames.get(transition.toStageId) ?? '—'}
+											</Table.Cell>
+											<Table.Cell class="whitespace-normal">
+												{TRANSITION_KIND_LABELS[transition.kind]}
+											</Table.Cell>
+											<Table.Cell class="whitespace-normal">
+												<!-- Код права, которого нет в каталоге, никому переход не
+													разрешает: тогда вместо названия виден сам код. -->
+												{permissionLabels.get(transition.requiredPermissionKey) ??
+													transition.requiredPermissionKey}
+											</Table.Cell>
+											<Table.Cell class="whitespace-normal">
+												{#if transition.requiresReason}
+													<StatusBadge tone="warning">Обязательна</StatusBadge>
+												{:else}
+													<span class="text-faint">не нужна</span>
+												{/if}
+											</Table.Cell>
+											{#if editable}
+												<Table.Cell class="whitespace-normal">
+													<span class="flex flex-wrap gap-1">
+														<Button
+															variant="outline"
+															size="sm"
+															onclick={() => openTransition(transition)}
+														>
+															Изменить
+														</Button>
+														<!-- Переход — это одна строка настройки, и возвращается он тем
+															же диалогом, которым заводился: подтверждать тут нечего. -->
+														<form method="POST" action="?/deleteTransition">
+															<input
+																type="hidden"
+																name="fromStageKey"
+																value={stageKeys.get(transition.fromStageId) ?? ''}
+															/>
+															<input
+																type="hidden"
+																name="toStageKey"
+																value={stageKeys.get(transition.toStageId) ?? ''}
+															/>
+															<Button type="submit" variant="outline" size="sm">Удалить</Button>
+														</form>
+													</span>
+												</Table.Cell>
+											{/if}
+										</Table.Row>
+									{/each}
+								</Table.Body>
+							</Table.Root>
+						</div>
+					{/if}
+				</Card.Content>
+			</Card.Root>
+		{/if}
+	</Tabs.Content>
 
-	<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
-	<Card.Root data-tour="process-group-stages">
-		<Card.Header>
-			<Card.Title>Стадии</Card.Title>
-			<Card.Description>
-				Ключ стадии живёт дольше её названия: по нему хранятся отметки чек-листа, слепки уже
-				пройденных стадий и сопоставление при изменении процесса. Переименование ключа не трогает.
-			</Card.Description>
-			{#if editable}
-				<Card.Action>
-					<Button size="sm" onclick={() => openStage(null)}>
-						<PlusIcon aria-hidden="true" />
-						Добавить стадию
-					</Button>
-				</Card.Action>
-			{/if}
-		</Card.Header>
-		<Card.Content>
-			{#if shown.stages.length === 0}
-				<EmptyState title="Стадий пока нет" />
-			{:else}
-				<div class="overflow-x-auto">
-					<Table.Root>
-						<Table.Header>
-							<Table.Row class="hover:bg-transparent">
-								<Table.Head class="w-12 text-right">№</Table.Head>
-								<Table.Head>Ключ</Table.Head>
-								<Table.Head>Название</Table.Head>
-								<!-- Группа, протухание и чек-лист уезжают под название и под
-									«Требует», пока окно уже 1536: на экране в 1280 точек таблице
-									остаётся меньше тысячи, и стадия, её норматив и требования к
-									переходу обязаны помещаться без горизонтальной прокрутки
-									(`docs/design.md`, «Приоритет колонок»). Значения не
-									пропадают — они возвращаются строкой под ключевой колонкой. -->
-								<Table.Head class="hidden 2xl:table-cell">Группа</Table.Head>
-								<Table.Head class="w-20 text-right">Норматив</Table.Head>
-								<Table.Head class="hidden w-24 text-right 2xl:table-cell">Протухание</Table.Head>
-								<Table.Head>Требует</Table.Head>
-								<Table.Head class="hidden 2xl:table-cell">Чек-лист</Table.Head>
-								{#if editable}
-									<Table.Head class="w-40"></Table.Head>
-								{/if}
-							</Table.Row>
-						</Table.Header>
-						<Table.Body>
-							{#each shown.stages as stage (stage.id)}
-								<Table.Row>
-									<Table.Cell class="text-right">{stage.position}</Table.Cell>
-									<Table.Cell class="text-muted-foreground">{stage.key}</Table.Cell>
-									<Table.Cell class="font-medium whitespace-normal">
-										{stage.name}
-										{#if stage.isFinal}
-											<StatusBadge tone="accent">Финальная</StatusBadge>
-										{/if}
-										<span class="block text-xs font-normal text-muted-foreground 2xl:hidden">
-											{STAGE_CATEGORY_LABELS[stage.category]}{stage.staleAfterDays === null
-												? ''
-												: ` · протухание ${pluralize(stage.staleAfterDays, ['день', 'дня', 'дней'])}`}
-										</span>
-									</Table.Cell>
-									<Table.Cell class="hidden whitespace-normal 2xl:table-cell">
-										{STAGE_CATEGORY_LABELS[stage.category]}
-									</Table.Cell>
-									<Table.Cell class="text-right whitespace-normal">
-										{pluralize(stage.slaDays, ['день', 'дня', 'дней'])}
-									</Table.Cell>
-									<Table.Cell class="hidden text-right whitespace-normal 2xl:table-cell">
-										{stage.staleAfterDays === null
-											? '—'
-											: pluralize(stage.staleAfterDays, ['день', 'дня', 'дней'])}
-									</Table.Cell>
-									<Table.Cell class="whitespace-normal">
-										<span class="flex flex-wrap gap-1">
-											{#if stage.requiresResult}
-												<StatusBadge tone="info">Результат</StatusBadge>
-											{/if}
-											{#if stage.requiresConfirmation}
-												<StatusBadge tone="info">Подтверждение</StatusBadge>
-											{/if}
-											{#if stage.requiresLmsData}
-												<StatusBadge tone="info">Данные обучения</StatusBadge>
-											{/if}
-											{#if stage.requiresDocumentMark !== null}
-												<StatusBadge tone="info">
-													Отметка «{DOCUMENT_STATUS_FACT_LABELS[stage.requiresDocumentMark]}»
-												</StatusBadge>
-											{/if}
-											{#if !stage.requiresResult && !stage.requiresConfirmation && !stage.requiresLmsData && stage.requiresDocumentMark === null}
-												<span class="text-faint">—</span>
-											{/if}
-										</span>
-										{#if stage.requiresDocumentTemplate !== null}
-											<span class="mt-0.5 block text-xs text-muted-foreground">
-												отметка на документе: {DOCUMENT_TEMPLATE_LABELS[
-													stage.requiresDocumentTemplate
-												].toLowerCase()}
-											</span>
-										{/if}
-										{#if stage.lmsGroupPurposes !== null}
-											<span class="mt-0.5 block text-xs text-muted-foreground">
-												засчитывает группы: {stage.lmsGroupPurposes
-													.map((purpose) => LEARNING_PURPOSE_LABELS[purpose].toLowerCase())
-													.join(', ')}
-											</span>
-										{/if}
-										{#if stage.onEnterNotify !== null}
-											<span class="mt-0.5 block text-xs text-muted-foreground">
-												при входе уведомляет: {STAGE_ENTER_NOTIFY_LABELS[
-													stage.onEnterNotify
-												].toLowerCase()}
-											</span>
-										{/if}
-										{#if stage.checklist.length > 0}
-											<span class="mt-0.5 block text-xs text-muted-foreground 2xl:hidden">
-												чек-лист: {pluralize(stage.checklist.length, [
-													'пункт',
-													'пункта',
-													'пунктов'
-												])}
-											</span>
-										{/if}
-									</Table.Cell>
-									<Table.Cell class="hidden whitespace-normal 2xl:table-cell">
-										{#if stage.checklist.length === 0}
-											<span class="text-faint">—</span>
-										{:else}
-											<ul class="flex flex-col gap-0.5">
-												{#each stage.checklist as item (item.key)}
-													<li class="text-xs">
-														{item.label}
-														{#if item.required}
-															<span class="text-danger" title="Обязательный пункт">*</span>
-														{/if}
-													</li>
-												{/each}
-											</ul>
-										{/if}
-									</Table.Cell>
-									{#if editable}
-										<Table.Cell class="whitespace-normal">
-											<span class="flex flex-wrap gap-1">
-												<Button variant="outline" size="sm" onclick={() => openStage(stage)}>
-													Изменить
-												</Button>
-												<Button variant="outline" size="sm" onclick={() => askRemove(stage)}>
-													Удалить
-												</Button>
-											</span>
-										</Table.Cell>
-									{/if}
-								</Table.Row>
-							{/each}
-						</Table.Body>
-					</Table.Root>
-				</div>
-			{/if}
-		</Card.Content>
-	</Card.Root>
+	<Tabs.Content value="card" class="pt-2">
+		<Card.Root>
+			<Card.Header>
+				<Card.Title>Карточка взаимодействия</Card.Title>
+				<Card.Description>
+					Какие панели стоят в карточке и какие документы в ней собираются по шаблону. Сторона и её
+					условия есть всегда и зависят от контрагента: у вуза — договор, продукты и лицензии, у
+					физического лица — программа, поток и оплата, у юридического — договор и слушатели.
+					Изменение действует сразу во всех пространствах процесса, без черновика: стадий оно не
+					касается.
+				</Card.Description>
+			</Card.Header>
+			<Card.Content>
+				<!-- Якорь в адресе действия возвращает на этот раздел после сохранения. -->
+				<ProcessCardForm card={data.card} action="?/card#card" />
+			</Card.Content>
+		</Card.Root>
+	</Tabs.Content>
 
-	<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
-	<Card.Root data-tour="process-group-transitions">
-		<Card.Header>
-			<Card.Title>Переходы</Card.Title>
-			<Card.Description>
-				Ветвление — это несколько шагов вперёд с одной стадии; отдельной «развилки» в процессе нет.
-				Пара «откуда — куда» уникальна, поэтому пропуск описывается перешагиванием. Право берётся из
-				каталога: код, которого в нём нет, не разрешает переход никому.
-			</Card.Description>
-			{#if editable}
-				<Card.Action>
-					<Button size="sm" onclick={() => openTransition(null)} disabled={shown.stages.length < 2}>
-						<PlusIcon aria-hidden="true" />
-						Добавить переход
-					</Button>
-				</Card.Action>
+	<Tabs.Content value="changes" class="pt-2">
+		<Card.Root>
+			<Card.Header>
+				<Card.Title>Черновик и применение</Card.Title>
+				<Card.Description>
+					{#if editable}
+						«Применить ко всем» перенесёт на новую структуру все незавершённые взаимодействия
+						{appliedIn.length === 0
+							? 'тех пространств, которым процесс назначен,'
+							: 'всех пространств, где он применяется,'} одной операцией: стадии сопоставляются по ключу,
+						а тем, чья стадия исчезла, нужно правило переноса. Числа ниже справочные: пока их читают,
+						работа идёт, и окончательные пишутся в журнал при применении.
+					{:else}
+						Черновика нет. Действующий процесс открыт только на чтение: по нему идут взаимодействия
+						и с него сняты слепки пройденных стадий. Черновик изменений создаётся копией кнопкой
+						вверху, а прошлые применения — в журнале «Изменения процесса».
+					{/if}
+				</Card.Description>
+			</Card.Header>
+			{#if editable && data.preview !== null}
+				<Card.Content>
+					<ProcessPreview preview={data.preview} />
+				</Card.Content>
 			{/if}
-		</Card.Header>
-		<Card.Content>
-			{#if shown.transitions.length === 0}
-				<EmptyState
-					title="Переходов пока нет"
-					description="Пока с первой стадии некуда идти, процесс нельзя применить."
-				/>
-			{:else}
-				<div class="overflow-x-auto">
-					<Table.Root>
-						<Table.Header>
-							<Table.Row class="hover:bg-transparent">
-								<Table.Head>Откуда</Table.Head>
-								<Table.Head>Куда</Table.Head>
-								<Table.Head class="w-48">Вид</Table.Head>
-								<Table.Head>Требуемое право</Table.Head>
-								<Table.Head class="w-32">Причина</Table.Head>
-								{#if editable}
-									<Table.Head class="w-40"></Table.Head>
-								{/if}
-							</Table.Row>
-						</Table.Header>
-						<Table.Body>
-							{#each shown.transitions as transition (transition.id)}
-								<Table.Row>
-									<Table.Cell class="whitespace-normal">
-										{stageNames.get(transition.fromStageId) ?? '—'}
-									</Table.Cell>
-									<Table.Cell class="whitespace-normal">
-										{stageNames.get(transition.toStageId) ?? '—'}
-									</Table.Cell>
-									<Table.Cell class="whitespace-normal">
-										{TRANSITION_KIND_LABELS[transition.kind]}
-									</Table.Cell>
-									<Table.Cell class="max-w-40 break-all whitespace-normal text-muted-foreground">
-										{transition.requiredPermissionKey}
-									</Table.Cell>
-									<Table.Cell class="whitespace-normal">
-										{#if transition.requiresReason}
-											<StatusBadge tone="warning">Обязательна</StatusBadge>
-										{:else}
-											<span class="text-faint">не нужна</span>
-										{/if}
-									</Table.Cell>
-									{#if editable}
-										<Table.Cell class="whitespace-normal">
-											<span class="flex flex-wrap gap-1">
-												<Button
-													variant="outline"
-													size="sm"
-													onclick={() => openTransition(transition)}
-												>
-													Изменить
-												</Button>
-												<!-- Переход — это одна строка настройки, и возвращается он тем
-													же диалогом, которым заводился: подтверждать тут нечего. -->
-												<form method="POST" action="?/deleteTransition">
-													<input
-														type="hidden"
-														name="fromStageKey"
-														value={stageKeys.get(transition.fromStageId) ?? ''}
-													/>
-													<input
-														type="hidden"
-														name="toStageKey"
-														value={stageKeys.get(transition.toStageId) ?? ''}
-													/>
-													<Button type="submit" variant="outline" size="sm">Удалить</Button>
-												</form>
-											</span>
-										</Table.Cell>
-									{/if}
-								</Table.Row>
-							{/each}
-						</Table.Body>
-					</Table.Root>
-				</div>
-			{/if}
-		</Card.Content>
-	</Card.Root>
-{/if}
+		</Card.Root>
+	</Tabs.Content>
+</Tabs.Root>
 
 <FormDialog
 	bind:open={stageOpen}
 	width="lg"
 	title={$stageData.originalKey === '' ? 'Новая стадия' : 'Стадия процесса'}
-	description="Позиция задаёт место в цепочке: номера расставятся по порядку сами. Ключ существующей стадии не меняется — смена ключа означала бы другую работу под прежним именем."
+	description="Название и норматив видят все, кто ведёт дела; позиция задаёт место в цепочке, номера расставятся по порядку сами."
 >
 	{#if $stageErrors._errors}
 		<Alert.Root variant="destructive" class="mb-4">
@@ -870,32 +825,6 @@
 	>
 		<input type="hidden" name="originalKey" value={$stageData.originalKey} />
 
-		{@render numberField({
-			name: 'position',
-			label: 'Позиция в процессе',
-			value: $stageData.position,
-			errors: $stageErrors.position,
-			onchange: (next) => ($stageData.position = next)
-		})}
-		{#if $stageData.originalKey === ''}
-			<FieldInput
-				name="key"
-				label="Ключ"
-				description="Латиницей, навсегда: по нему сопоставляются записи при изменении процесса."
-				required
-				bind:value={$stageData.key}
-				errors={$stageErrors.key}
-			/>
-		{:else}
-			<!-- Ключ существующей стадии не правится: смена ключа неотличима от
-				«удалили одну стадию и завели другую», а последствия у этих
-				действий разные. Поле не показываем вовсе — отключённое поле
-				выглядит как «сейчас нельзя», а здесь нельзя всегда. -->
-			<input type="hidden" name="key" value={$stageData.key} />
-			<KeyValue>
-				<KeyValueRow label="Ключ стадии" value={$stageData.key} />
-			</KeyValue>
-		{/if}
 		<FieldInput
 			name="name"
 			label="Название"
@@ -904,33 +833,45 @@
 			bind:value={$stageData.name}
 			errors={$stageErrors.name}
 		/>
-		<FieldSelect
-			name="category"
-			label="Смысловая группа"
-			required
-			options={STAGE_CATEGORIES.map((category) => ({
-				value: category,
-				label: STAGE_CATEGORY_LABELS[category]
-			}))}
-			bind:value={$stageData.category}
-			errors={$stageErrors.category}
-		/>
-		{@render numberField({
-			name: 'slaDays',
-			label: 'Норматив, дней',
-			description: 'Из него считается срок стадии.',
-			value: $stageData.slaDays,
-			errors: $stageErrors.slaDays,
-			onchange: (next) => ($stageData.slaDays = next)
-		})}
-		{@render numberField({
-			name: 'staleAfterDays',
-			label: 'Протухание, дней',
-			description: '0 — стадия не протухает. Считается от последнего события, а не от входа.',
-			value: $stageData.staleAfterDays,
-			errors: $stageErrors.staleAfterDays,
-			onchange: (next) => ($stageData.staleAfterDays = next)
-		})}
+		<div class="grid gap-4 sm:grid-cols-2">
+			{@render numberField({
+				name: 'slaDays',
+				label: 'Норматив, дней',
+				description: 'Из него считается срок стадии.',
+				value: $stageData.slaDays,
+				errors: $stageErrors.slaDays,
+				onchange: (next) => ($stageData.slaDays = next)
+			})}
+			{@render numberField({
+				name: 'staleAfterDays',
+				label: 'Без событий, дней',
+				description:
+					'Когда подсветить тишину по делу; 0 — не подсвечивать. Считается от последнего события.',
+				value: $stageData.staleAfterDays,
+				errors: $stageErrors.staleAfterDays,
+				onchange: (next) => ($stageData.staleAfterDays = next)
+			})}
+		</div>
+		<div class="grid gap-4 sm:grid-cols-2">
+			{@render numberField({
+				name: 'position',
+				label: 'Позиция в процессе',
+				value: $stageData.position,
+				errors: $stageErrors.position,
+				onchange: (next) => ($stageData.position = next)
+			})}
+			<FieldSelect
+				name="category"
+				label="Смысловая группа"
+				required
+				options={STAGE_CATEGORIES.map((category) => ({
+					value: category,
+					label: STAGE_CATEGORY_LABELS[category]
+				}))}
+				bind:value={$stageData.category}
+				errors={$stageErrors.category}
+			/>
+		</div>
 		<fieldset class="flex flex-col gap-2">
 			<legend class="text-sm font-medium">Что требуется на шаге вперёд</legend>
 			{@render checkboxField({
@@ -1048,6 +989,34 @@
 			bind:value={$stageData.checklist}
 			errors={$stageErrors.checklist}
 		/>
+
+		<!-- Ключ — техническое имя стадии: по нему хранятся отметки чек-листа,
+			слепки пройденных стадий и сопоставление при изменении процесса. Людям,
+			ведущим дела, он не виден, поэтому стоит последним. -->
+		<fieldset class="flex flex-col gap-2 border-t border-border pt-4">
+			<legend class="sr-only">Технические сведения</legend>
+			{#if $stageData.originalKey === ''}
+				<FieldInput
+					name="key"
+					label="Ключ"
+					description="Латиницей, навсегда: по нему сопоставляются записи при изменении процесса."
+					required
+					bind:value={$stageData.key}
+					errors={$stageErrors.key}
+				/>
+			{:else}
+				<!-- Ключ существующей стадии не правится: смена ключа неотличима от
+					«удалили одну стадию и завели другую», а последствия у этих
+					действий разные. Поле не показываем вовсе — отключённое поле
+					выглядит как «сейчас нельзя», а здесь нельзя всегда. -->
+				<input type="hidden" name="key" value={$stageData.key} />
+				<KeyValue>
+					<KeyValueRow label="Ключ стадии — не меняется">
+						<span class="font-mono text-muted-foreground">{$stageData.key}</span>
+					</KeyValueRow>
+				</KeyValue>
+			{/if}
+		</fieldset>
 	</form>
 
 	{#snippet footer({ close })}
@@ -1203,74 +1172,9 @@
 	title="Применить изменения ко всем?"
 	description="Изменение применится сразу ко всем незавершённым взаимодействиям всех пространств, которым назначен этот процесс. Записи сопоставляются по ключу стадии; переедут только те, чья стадия исчезла."
 >
-	<div class="flex flex-col gap-4">
-		{#if data.preview !== null}
-			<!-- Два числа, а не одно: «затронуто» на сервере считает только тех, кто
-			переезжает на другую стадию, а переименование и правка параметров
-			видны всем, кто стоит на изменённой стадии. Одно число рядом с
-			«На ней стоит: 3» читалось как ошибка. -->
-			<div class="flex flex-col gap-0.5 text-sm">
-				<p>
-					Переедут на другую стадию: <strong>{formatNumber(data.preview.affected)}</strong>
-				</p>
-				<p class="text-muted-foreground">
-					Увидят изменение своей стадии, оставаясь на ней:
-					<strong class="text-foreground">{formatNumber(affectedInPlace)}</strong>
-				</p>
-			</div>
-
-			{#if previewRows.length === 0}
-				<EmptyState
-					title="Структура не изменилась"
-					description="В черновике нет отличий от действующего процесса."
-				/>
-			{:else}
-				<!-- Карточки, а не таблица: строка диффа с перечнем изменённых
-				параметров растягивала таблицу до 1137 px внутри диалога шириной
-				624, и колонки «На ней стоит» и «Куда переедут» — те самые числа,
-				ради которых предпросмотр и открывают, — уезжали за край. -->
-				<ul class="flex flex-col gap-2">
-					{#each previewRows as row (row.stageKey)}
-						<li class="flex flex-col gap-1.5 rounded-md border border-border p-3">
-							<div class="flex flex-wrap items-center justify-between gap-2">
-								<span class="font-medium">{row.stageName}</span>
-								<StatusBadge tone={row.change === 'removed' ? 'warning' : 'info'}>
-									{CHANGE_LABELS[row.change]}
-								</StatusBadge>
-							</div>
-
-							{#if row.changes.length > 0}
-								<ul class="list-inside list-disc text-xs text-muted-foreground">
-									{#each row.changes as change (change)}
-										<li>{change}</li>
-									{/each}
-								</ul>
-							{/if}
-
-							<div class="flex flex-wrap gap-x-6 gap-y-1 text-xs">
-								<span class="text-muted-foreground">
-									На ней стоит:
-									{#if row.interactions === 0}
-										<span class="text-faint">никого нет</span>
-									{:else}
-										<strong class="text-foreground">{formatNumber(row.interactions)}</strong>
-									{/if}
-								</span>
-								{#if row.change === 'removed'}
-									<span class="text-muted-foreground">
-										Куда переедут:
-										<strong class="text-foreground">
-											{row.targetStageName ?? 'предыдущая сохранившаяся стадия'}
-										</strong>
-									</span>
-								{/if}
-							</div>
-						</li>
-					{/each}
-				</ul>
-			{/if}
-		{/if}
-	</div>
+	{#if data.preview !== null}
+		<ProcessPreview preview={data.preview} />
+	{/if}
 
 	<form id="publish-process-form" method="POST" action="?/publish"></form>
 

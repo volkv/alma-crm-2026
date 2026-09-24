@@ -77,7 +77,10 @@ describe('контакты в базе', () => {
 		expect(row.email).not.toContain('Ivanova');
 		expect(row.email).not.toContain('vuz.ru');
 		expect(row.phone).toContain('enc:v1:');
-		expect(row.phone).not.toContain('999');
+		// Номер целиком — как введён и одними цифрами: короткая подстрока вроде «999»
+		// случайно встречается в base64 шифртекста.
+		expect(row.phone).not.toContain(PHONE);
+		expect(row.phone).not.toContain(PHONE.replace(/\D/g, ''));
 
 		// А по ключу расшифровывается то же самое, и сервис отдаёт его как прежде.
 		expect(decryptContact(row.email as string)).toBe(EMAIL);
