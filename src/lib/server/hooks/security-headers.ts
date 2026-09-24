@@ -34,6 +34,14 @@ export const securityHeaders: Handle = async ({ event, resolve }) => {
 	response.headers.set('X-Content-Type-Options', 'nosniff');
 	response.headers.set('Referrer-Policy', 'strict-origin-when-cross-origin');
 	response.headers.set('Permissions-Policy', PERMISSIONS_POLICY);
+	// Isolation from other origins. COOP keeps a foreign window that opened or
+	// was opened by ours from holding a reference to it (sign-in goes through
+	// full-page redirects, there are no popups to keep). CORP stops a foreign
+	// page from pulling our responses in as images, scripts or media; nothing
+	// outside this origin embeds them, and server-to-server calls of the
+	// exchange API are not subject to it — it is enforced by browsers only.
+	response.headers.set('Cross-Origin-Opener-Policy', 'same-origin');
+	response.headers.set('Cross-Origin-Resource-Policy', 'same-origin');
 
 	// Sending HSTS over plain HTTP is meaningless, and on a local http:// origin
 	// it would pin the developer's browser to https for a year.

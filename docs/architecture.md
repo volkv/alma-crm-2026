@@ -34,15 +34,15 @@ input)`, не смотрит в `locals`, не читает заголовки �
 `sequence(requestId, serverTiming, securityHeaders, csrf, session, guard, rateLimit)`. Порядок
 значим: первый хук в списке — внешний, он видит и запрос, и уже готовый ответ.
 
-| Хук               | Файл (`src/lib/server/hooks/`) | Что делает                                                                              |
-| ----------------- | ------------------------------ | --------------------------------------------------------------------------------------- |
-| `requestId`       | `request-id.ts`                | `locals.requestId` = свежий UUID; ставит `x-request-id` на ответ                        |
-| `serverTiming`    | `server-timing.ts`             | `Server-Timing: db · app · total` на каждом ответе; замер покрывает всю цепочку         |
-| `securityHeaders` | `security-headers.ts`          | `nosniff`, `Referrer-Policy`, `Permissions-Policy`, HSTS на https, `no-store` вошедшему |
-| `csrf`            | `csrf.ts`                      | форменный POST/PUT/PATCH/DELETE только со своим `Origin`, иначе 403 по-русски           |
-| `session`         | `session.ts`                   | читает куку `lct_session`, продлевает запись в Redis, кладёт `locals.user`              |
-| `guard`           | `guard.ts`                     | всё под `(app)` требует сессии; без неё — на `/login?next=<куда шли>`                   |
-| `rateLimit`       | `rate-limit.ts`                | POST под `(auth)` считается по адресу (`withinStartLimit`, `auth/start-limit.ts`)       |
+| Хук               | Файл (`src/lib/server/hooks/`) | Что делает                                                                                                         |
+| ----------------- | ------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `requestId`       | `request-id.ts`                | `locals.requestId` = свежий UUID; ставит `x-request-id` на ответ                                                   |
+| `serverTiming`    | `server-timing.ts`             | `Server-Timing: db · app · total` на каждом ответе; замер покрывает всю цепочку                                    |
+| `securityHeaders` | `security-headers.ts`          | `nosniff`, `Referrer-Policy`, `Permissions-Policy`, COOP и CORP `same-origin`, HSTS на https, `no-store` вошедшему |
+| `csrf`            | `csrf.ts`                      | форменный POST/PUT/PATCH/DELETE только со своим `Origin`, иначе 403 по-русски                                      |
+| `session`         | `session.ts`                   | читает куку `lct_session`, продлевает запись в Redis, кладёт `locals.user`                                         |
+| `guard`           | `guard.ts`                     | всё под `(app)` требует сессии; без неё — на `/login?next=<куда шли>`                                              |
+| `rateLimit`       | `rate-limit.ts`                | POST под `(auth)` считается по адресу (`withinStartLimit`, `auth/start-limit.ts`)                                  |
 
 Четыре вещи, которые стоит знать сразу:
 

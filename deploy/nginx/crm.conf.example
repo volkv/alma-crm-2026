@@ -22,6 +22,23 @@ map $http_upgrade $crm_connection_upgrade {
     ''      close;
 }
 
+# Cross-origin isolation for what the app serves outside its own hooks: files
+# under /_app/immutable and static/ are answered by adapter-node before the
+# hooks run and come without these two headers. Every other app response
+# already carries them, and a second copy would not be harmless: two values
+# join into "same-origin, same-origin", which browsers do not recognise and
+# then act as if neither header was sent. So nginx adds each one only when the
+# upstream response has none; an empty value makes add_header send nothing.
+map $upstream_http_cross_origin_opener_policy $crm_coop {
+    ''      same-origin;
+    default '';
+}
+
+map $upstream_http_cross_origin_resource_policy $crm_corp {
+    ''      same-origin;
+    default '';
+}
+
 server {
     listen 80;
     server_name CRM_DOMAIN;
@@ -41,6 +58,8 @@ server {
     add_header X-Frame-Options "SAMEORIGIN" always;
     add_header X-Content-Type-Options "nosniff" always;
     add_header Referrer-Policy "strict-origin-when-cross-origin" always;
+    add_header Cross-Origin-Opener-Policy $crm_coop always;
+    add_header Cross-Origin-Resource-Policy $crm_corp always;
     # A demo instance must not end up in search results. Drop this line on a
     # deployment that is meant to be found.
     add_header X-Robots-Tag "noindex, nofollow" always;
