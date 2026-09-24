@@ -362,22 +362,30 @@ describe('сид', () => {
 		// на стенде не должна быть пустой у всех до единого.
 		await expect(countRows(interactionChanges)).resolves.toBe(INTERACTION_SEED_SIZES.handovers);
 		// Каждое соглашение собирается сразу в двух форматах: DOCX и PDF, к одному
-		// делу приложен скан и его вторая редакция, а у каждого дела, прошедшего
-		// подписание, лежит подписанный экземпляр с отметкой «Утверждён».
+		// делу приложен скан и его вторая редакция, у каждого дела, прошедшего
+		// подписание, лежит подписанный экземпляр с отметкой «Утверждён», а у
+		// прошедшего передачу материалов — подписанный акт передачи.
 		await expect(countRows(documents)).resolves.toBe(
 			INTERACTION_SEED_SIZES.documents * 2 +
 				INTERACTION_SEED_SIZES.scans +
-				INTERACTION_SEED_SIZES.signedAgreements
+				INTERACTION_SEED_SIZES.signedAgreements +
+				INTERACTION_SEED_SIZES.handoverActs
 		);
 
-		// Отметка «Утверждён» стоит ровно на них: стадия подписания без неё
-		// вперёд не отпускает, а лишних отметок набор не ставит.
+		// Отметка «Утверждён» стоит ровно на них: стадии подписания и передачи
+		// без неё вперёд не отпускают, а лишних отметок набор не ставит. Акт
+		// передачи узнаётся по шаблону — иначе передачу закрыло бы соглашение.
 		const approved = await database.db
-			.select({ id: documents.id })
+			.select({ templateKey: documents.templateKey })
 			.from(documents)
 			.where(isNotNull(documents.approvedAt));
 
-		expect(approved).toHaveLength(INTERACTION_SEED_SIZES.signedAgreements);
+		expect(approved).toHaveLength(
+			INTERACTION_SEED_SIZES.signedAgreements + INTERACTION_SEED_SIZES.handoverActs
+		);
+		expect(approved.filter((row) => row.templateKey === 'handover_act')).toHaveLength(
+			INTERACTION_SEED_SIZES.handoverActs
+		);
 
 		// Завершённое взаимодействие прошло маршрут целиком: по записи на каждую
 		// стадию, и все они закрыты.

@@ -155,6 +155,9 @@ export async function markDocument(
 			// котором система имеет право оказаться.
 			await applyDocumentMark(ctx, tx, {
 				interactionId: row.interactionId,
+				// Шаблон решает, та ли это бумага: «Утверждён» на соглашении не
+				// закрывает стадию, которая ждёт подписанного акта передачи.
+				templateKey: row.templateKey,
 				evidence: {
 					documentId: row.id,
 					title: row.title,

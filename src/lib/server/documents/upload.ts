@@ -13,6 +13,7 @@
  */
 import {
 	uploadDocumentSchema,
+	type DocumentTemplateKey,
 	type DocumentView,
 	type UploadDocumentInput
 } from '$lib/contracts/documents';
@@ -75,7 +76,9 @@ export async function uploadDocument(
 		await assertInteractionAccessible(ctx, parsed.interactionId);
 	}
 
-	return writeDocument(ctx, parsed, input.file);
+	// Загруженный руками файл не собран по шаблону: засчитать его отметку за
+	// подписанный акт передачи значило бы поверить названию, а не происхождению.
+	return writeDocument(ctx, parsed, input.file, null);
 }
 
 /**
@@ -108,7 +111,9 @@ export async function uploadDocumentRevision(
 		file: input.file
 	});
 
-	return writeDocument(ctx, parsed, input.file);
+	// Скан подписанного экземпляра — тот же документ: шаблон наследуется, иначе
+	// отметка на подписанном акте не закрыла бы стадию передачи.
+	return writeDocument(ctx, parsed, input.file, superseded.templateKey);
 }
 
 /** Проверка контрактом: та же схема, что и у формы в браузере. */
@@ -142,7 +147,8 @@ function parseUpload(input: {
 async function writeDocument(
 	ctx: ActorContext,
 	fields: UploadDocumentInput,
-	file: UploadedFile
+	file: UploadedFile,
+	templateKey: DocumentTemplateKey | null
 ): Promise<DocumentView> {
 	const staged = await stageBlob(file.bytes, fields.mime);
 
@@ -156,6 +162,7 @@ async function writeDocument(
 					interactionId: fields.interactionId,
 					supersedesId: fields.supersedesId,
 					kind: fields.kind,
+					templateKey,
 					title: fields.title,
 					filePath: staged.relativePath,
 					mime: staged.mime,

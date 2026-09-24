@@ -20,9 +20,12 @@ import {
 } from './common';
 import {
 	DOCUMENT_STATUS_FACTS,
+	DOCUMENT_TEMPLATE_KEYS,
 	type DocumentMarkEvidence,
-	type DocumentStatusFact
+	type DocumentStatusFact,
+	type DocumentTemplateKey
 } from './documents';
+import type { LearningPurpose } from './exchange';
 import type { PersonView } from './directory';
 
 /** Смысловая группа стадии; по ней раскрашивают ленту и считают сводки. */
@@ -190,6 +193,19 @@ export const checklistStateSchema = z.record(z.string(), z.boolean());
 export type ChecklistState = z.output<typeof checklistStateSchema>;
 
 /**
+ * Назначения учебных групп, которые стадия может потребовать. Каталог
+ * принадлежит обмену (`LEARNING_PURPOSES`), но импортировать его значения сюда
+ * нельзя: контракт обмена через справочник сам зависит от этого модуля, и круг
+ * импортов оставил бы одну из сторон неинициализированной. Тип ниже требует
+ * ровно те же ключи, что у каталога: разойтись им не даст компилятор.
+ */
+const STAGE_GROUP_PURPOSES = {
+	students: 'students',
+	teachers: 'teachers',
+	upskilling: 'upskilling'
+} as const satisfies { [Purpose in LearningPurpose]: Purpose };
+
+/**
  * Слепок стадии на момент входа в неё. Хранится в записи о стадии, потому что
  * процесс группы могут изменить, а сроки и чек-лист уже пройденной стадии
  * обязаны остаться такими, какими их видел исполнитель.
@@ -218,6 +234,18 @@ export const stageSnapshotSchema = z.object({
 	 * стадии.
 	 */
 	requiresDocumentMark: z.enum(DOCUMENT_STATUS_FACTS).nullable(),
+	/**
+	 * На документе какого шаблона ищется отметка; `null` — на любом документе
+	 * взаимодействия. Без сужения стадию передачи материалов закрыло бы
+	 * соглашение, утверждённое ещё на подписании.
+	 */
+	requiresDocumentTemplate: z.enum(DOCUMENT_TEMPLATE_KEYS).nullable(),
+	/**
+	 * Назначения учебных групп, итог которых подтверждает стадию; `null` —
+	 * любое назначение. Итог группы преподавателей не доказывает занятий со
+	 * студентами.
+	 */
+	lmsGroupPurposes: z.array(z.enum(STAGE_GROUP_PURPOSES)).min(1).nullable(),
 	/** С этой стадии процесс заканчивается: дальше не идут, а завершают. */
 	isFinal: z.boolean(),
 	checklist: z.array(checklistItemSchema)
@@ -667,36 +695,59 @@ export const cancelInteractionSchema = z.object({
  * коде), а идентификаторы появляются только в базе. Ключ стадии устойчив: по
  * нему записи сопоставляются с новой структурой при изменении процесса.
  */
-export const stageDefinitionSchema = z.object({
-	key: requiredText(100, 'У стадии должен быть ключ'),
-	name: requiredText(300, 'У стадии должно быть название'),
-	category: z.enum(STAGE_CATEGORIES, { error: 'Выберите смысловую группу стадии' }),
-	/** Норматив стадии в днях; из него считается срок в представлении статуса. */
-	slaDays: z
-		.number({ error: 'Норматив стадии — целое число дней' })
-		.int()
-		.min(0, { error: 'Норматив стадии не может быть отрицательным' })
-		.max(365, { error: 'Норматив стадии не длиннее года' }),
-	/** Через сколько дней без событий стадия считается протухшей. */
-	staleAfterDays: z
-		.number({ error: 'Срок протухания — целое число дней' })
-		.int()
-		.min(1, { error: 'Срок протухания — хотя бы один день' })
-		.max(365, { error: 'Срок протухания не длиннее года' })
-		.nullable()
-		.default(null),
-	requiresResult: z.boolean().default(false),
-	requiresConfirmation: z.boolean().default(false),
-	/** Стадию подтверждают фактом из системы обучения. */
-	requiresLmsData: z.boolean().default(false),
-	/** Отметка по документу дела, без которой со стадии не уходят. */
-	requiresDocumentMark: z.enum(DOCUMENT_STATUS_FACTS).nullable().default(null),
-	/** Кого уведомить при входе дела на стадию; `null` — никого. */
-	onEnterNotify: z.enum(STAGE_ENTER_NOTIFY_TARGETS).nullable().default(null),
-	/** С этой стадии процесс заканчивается: переходов вперёд с неё не требуют. */
-	isFinal: z.boolean().default(false),
-	checklist: z.array(checklistItemSchema).default([])
-});
+export const stageDefinitionSchema = z
+	.object({
+		key: requiredText(100, 'У стадии должен быть ключ'),
+		name: requiredText(300, 'У стадии должно быть название'),
+		category: z.enum(STAGE_CATEGORIES, { error: 'Выберите смысловую группу стадии' }),
+		/** Норматив стадии в днях; из него считается срок в представлении статуса. */
+		slaDays: z
+			.number({ error: 'Норматив стадии — целое число дней' })
+			.int()
+			.min(0, { error: 'Норматив стадии не может быть отрицательным' })
+			.max(365, { error: 'Норматив стадии не длиннее года' }),
+		/** Через сколько дней без событий стадия считается протухшей. */
+		staleAfterDays: z
+			.number({ error: 'Срок протухания — целое число дней' })
+			.int()
+			.min(1, { error: 'Срок протухания — хотя бы один день' })
+			.max(365, { error: 'Срок протухания не длиннее года' })
+			.nullable()
+			.default(null),
+		requiresResult: z.boolean().default(false),
+		requiresConfirmation: z.boolean().default(false),
+		/** Стадию подтверждают фактом из системы обучения. */
+		requiresLmsData: z.boolean().default(false),
+		/** Отметка по документу дела, без которой со стадии не уходят. */
+		requiresDocumentMark: z.enum(DOCUMENT_STATUS_FACTS).nullable().default(null),
+		/** Шаблон документа, на котором ищется отметка; `null` — любой документ. */
+		requiresDocumentTemplate: z
+			.enum(DOCUMENT_TEMPLATE_KEYS, { error: 'Такого шаблона документа нет' })
+			.nullable()
+			.default(null),
+		/** Назначения групп, итог которых подтверждает стадию; `null` — любые. */
+		lmsGroupPurposes: z
+			.array(z.enum(STAGE_GROUP_PURPOSES, { error: 'Такого назначения группы нет' }))
+			.min(1, { error: 'Выберите хотя бы одно назначение группы или снимите сужение' })
+			.nullable()
+			.default(null),
+		/** Кого уведомить при входе дела на стадию; `null` — никого. */
+		onEnterNotify: z.enum(STAGE_ENTER_NOTIFY_TARGETS).nullable().default(null),
+		/** С этой стадии процесс заканчивается: переходов вперёд с неё не требуют. */
+		isFinal: z.boolean().default(false),
+		checklist: z.array(checklistItemSchema).default([])
+	})
+	.refine(
+		(stage) => stage.requiresDocumentTemplate === null || stage.requiresDocumentMark !== null,
+		{
+			error: 'Шаблон документа задают вместе с требуемой отметкой',
+			path: ['requiresDocumentTemplate']
+		}
+	)
+	.refine((stage) => stage.lmsGroupPurposes === null || stage.requiresLmsData, {
+		error: 'Назначения групп задают у стадии, которую подтверждают данные обучения',
+		path: ['lmsGroupPurposes']
+	});
 
 export const stageTransitionDefinitionSchema = z.object({
 	fromStageKey: requiredText(100, 'Укажите стадию, с которой возможен переход'),
@@ -876,6 +927,10 @@ export type StageView = {
 	requiresLmsData: boolean;
 	/** Отметка по документу дела, которой подтверждается стадия; `null` — не нужна. */
 	requiresDocumentMark: DocumentStatusFact | null;
+	/** Шаблон документа, на котором ищется отметка; `null` — любой документ дела. */
+	requiresDocumentTemplate: DocumentTemplateKey | null;
+	/** Назначения учебных групп, итог которых подтверждает стадию; `null` — любые. */
+	lmsGroupPurposes: LearningPurpose[] | null;
 	/**
 	 * Кого уведомить при входе дела на стадию; `null` — никого. В слепок записи
 	 * не входит: это действие при входе, а не правило, по которому со стадии

@@ -18,6 +18,7 @@ import {
 	type ExchangeMessageState,
 	type LearningGroupLearnerView,
 	type LearningGroupView,
+	type LearningPurpose,
 	type LearningTrainingState,
 	type LmsEvidence,
 	type SendLearningGroupInput
@@ -36,6 +37,8 @@ import {
 	learningGroups,
 	products,
 	programs,
+	stageEntries,
+	stages,
 	users
 } from '../../db/schema';
 import { withTransaction, type Tx } from '../../db/transaction';
@@ -312,6 +315,41 @@ export async function requestLearningGroup(
 	};
 }
 
+/**
+ * Назначения групп, которые засчитывает процесс взаимодействия: объединение по
+ * стадиям с данными обучения той редакции, на стадии которой дело стоит (или
+ * стояло последним). `null` — сужения нет: хотя бы одна такая стадия берёт
+ * группу любого назначения, или таких стадий нет вовсе и остаётся правило
+ * программы.
+ */
+async function processGroupPurposes(
+	executor: ReturnType<typeof getDb>,
+	interactionId: string
+): Promise<LearningPurpose[] | null> {
+	const [latest] = await executor
+		.select({ revisionId: stages.revisionId })
+		.from(stageEntries)
+		.innerJoin(stages, eq(stages.id, stageEntries.stageId))
+		.where(eq(stageEntries.interactionId, interactionId))
+		.orderBy(desc(stageEntries.enteredAt), desc(stageEntries.id))
+		.limit(1);
+
+	if (latest === undefined) {
+		return null;
+	}
+
+	const rows = await executor
+		.select({ purposes: stages.lmsGroupPurposes })
+		.from(stages)
+		.where(and(eq(stages.revisionId, latest.revisionId), eq(stages.requiresLmsData, true)));
+
+	if (rows.length === 0 || rows.some((row) => row.purposes === null)) {
+		return null;
+	}
+
+	return [...new Set(rows.flatMap((row) => row.purposes ?? []))];
+}
+
 /** Учебные группы взаимодействия — то, что показывает карточка. */
 export async function listLearningGroups(
 	ctx: ActorContext,
@@ -320,6 +358,9 @@ export async function listLearningGroups(
 	requirePermission(ctx, 'interactions.read');
 
 	const db = getDb();
+	// Карточка отвечает тем же правилом, что и движок: группа, которую стадия
+	// не засчитает, не показывается засчитанной.
+	const purposes = await processGroupPurposes(db, interactionId);
 
 	const rows = await db
 		.select({
@@ -340,7 +381,7 @@ export async function listLearningGroups(
 			completionMarkedAt: learningGroups.completionMarkedAt,
 			completionComment: learningGroups.completionComment,
 			completionMarkedByName: users.fullName,
-			countsForStage: sql<boolean>`${countsForStage(db)}`
+			countsForStage: sql<boolean>`${countsForStage(db, purposes)}`
 		})
 		.from(learningGroups)
 		.innerJoin(interactions, eq(interactions.id, learningGroups.interactionId))

@@ -21,7 +21,12 @@
  *    пространствам, опубликовался бы дважды одновременно.
  */
 import { and, asc, count, eq, inArray, isNull, notInArray, sql } from 'drizzle-orm';
-import { DOCUMENT_STATUS_FACT_LABELS, type DocumentMarkEvidence } from '$lib/contracts/documents';
+import {
+	DOCUMENT_STATUS_FACT_LABELS,
+	DOCUMENT_TEMPLATE_LABELS,
+	type DocumentMarkEvidence
+} from '$lib/contracts/documents';
+import { LEARNING_PURPOSE_LABELS } from '$lib/contracts/exchange';
 import {
 	processDefinitionSchema,
 	STAGE_ENTER_NOTIFY_LABELS,
@@ -117,6 +122,8 @@ export function toStageView(row: typeof stages.$inferSelect): StageView {
 		requiresConfirmation: row.requiresConfirmation,
 		requiresLmsData: row.requiresLmsData,
 		requiresDocumentMark: row.requiresDocumentMark,
+		requiresDocumentTemplate: row.requiresDocumentTemplate,
+		lmsGroupPurposes: row.lmsGroupPurposes,
 		onEnterNotify: row.onEnterNotify,
 		isFinal: row.isFinal,
 		checklist: row.checklist
@@ -151,6 +158,8 @@ export function stageSnapshot(stage: {
 	requiresConfirmation: boolean;
 	requiresLmsData: boolean;
 	requiresDocumentMark: StageSnapshot['requiresDocumentMark'];
+	requiresDocumentTemplate: StageSnapshot['requiresDocumentTemplate'];
+	lmsGroupPurposes: StageSnapshot['lmsGroupPurposes'];
 	isFinal: boolean;
 	checklist: StageSnapshot['checklist'];
 }): StageSnapshot {
@@ -165,6 +174,8 @@ export function stageSnapshot(stage: {
 		requiresConfirmation: stage.requiresConfirmation,
 		requiresLmsData: stage.requiresLmsData,
 		requiresDocumentMark: stage.requiresDocumentMark,
+		requiresDocumentTemplate: stage.requiresDocumentTemplate,
+		lmsGroupPurposes: stage.lmsGroupPurposes,
 		isFinal: stage.isFinal,
 		checklist: stage.checklist
 	};
@@ -473,6 +484,8 @@ export function processDefinition(revision: ProcessRevisionView): ProcessDefinit
 				requiresConfirmation: stage.requiresConfirmation,
 				requiresLmsData: stage.requiresLmsData,
 				requiresDocumentMark: stage.requiresDocumentMark,
+				requiresDocumentTemplate: stage.requiresDocumentTemplate,
+				lmsGroupPurposes: stage.lmsGroupPurposes === null ? null : [...stage.lmsGroupPurposes],
 				onEnterNotify: stage.onEnterNotify,
 				isFinal: stage.isFinal,
 				checklist: stage.checklist.map((item) => ({ ...item }))
@@ -511,13 +524,20 @@ export function processDefinition(revision: ProcessRevisionView): ProcessDefinit
 async function documentMarkPatch(
 	tx: Tx,
 	interactionId: string,
-	requiredMark: StageSnapshot['requiresDocumentMark']
+	stage: Pick<StageSnapshot, 'requiresDocumentMark' | 'requiresDocumentTemplate'>
 ): Promise<{ documentMarkEvidence?: DocumentMarkEvidence | null }> {
-	if (requiredMark === null) {
+	if (stage.requiresDocumentMark === null) {
 		return {};
 	}
 
-	return { documentMarkEvidence: await readDocumentMark(tx, interactionId, requiredMark) };
+	return {
+		documentMarkEvidence: await readDocumentMark(
+			tx,
+			interactionId,
+			stage.requiresDocumentMark,
+			stage.requiresDocumentTemplate
+		)
+	};
 }
 
 /** Стадии и переходы одной редакции. Пишутся целиком: правится описание. */
@@ -541,6 +561,8 @@ async function writeRevisionContent(
 				requiresConfirmation: stage.requiresConfirmation,
 				requiresLmsData: stage.requiresLmsData,
 				requiresDocumentMark: stage.requiresDocumentMark,
+				requiresDocumentTemplate: stage.requiresDocumentTemplate,
+				lmsGroupPurposes: stage.lmsGroupPurposes,
 				onEnterNotify: stage.onEnterNotify,
 				isFinal: stage.isFinal,
 				checklist: stage.checklist
@@ -614,6 +636,8 @@ type ComparableStage = {
 	requiresConfirmation: boolean;
 	requiresLmsData: boolean;
 	requiresDocumentMark: StageSnapshot['requiresDocumentMark'];
+	requiresDocumentTemplate: StageSnapshot['requiresDocumentTemplate'];
+	lmsGroupPurposes: StageSnapshot['lmsGroupPurposes'];
 	/**
 	 * Снимок записи не пересобирает — в слепок это не входит, — но изменение
 	 * видно в предпросмотре: администратор обязан знать, кого система начнёт или
@@ -638,6 +662,11 @@ function checklistText(
 	items: readonly { key: string; label: string; required: boolean }[]
 ): string {
 	return items.map((item) => `${item.required ? '*' : ''}${item.key}:${item.label}`).join('|');
+}
+
+/** Назначения групп строкой для сравнения: порядок в списке смысла не несёт. */
+function purposesText(purposes: StageSnapshot['lmsGroupPurposes']): string {
+	return purposes === null ? '' : [...purposes].sort().join('|');
 }
 
 /** Чем стадия черновика отличается от одноимённой стадии действующей структуры. */
@@ -689,6 +718,24 @@ function stageDifferences(before: ComparableStage, after: ComparableStage): stri
 			after.requiresDocumentMark === null
 				? 'больше не требует отметки документа'
 				: `начинает требовать отметку документа «${DOCUMENT_STATUS_FACT_LABELS[after.requiresDocumentMark]}»`
+		);
+	}
+
+	if (before.requiresDocumentTemplate !== after.requiresDocumentTemplate) {
+		changes.push(
+			after.requiresDocumentTemplate === null
+				? 'засчитывает отметку на любом документе дела'
+				: `засчитывает отметку только на документе «${DOCUMENT_TEMPLATE_LABELS[after.requiresDocumentTemplate]}»`
+		);
+	}
+
+	if (purposesText(before.lmsGroupPurposes) !== purposesText(after.lmsGroupPurposes)) {
+		changes.push(
+			after.lmsGroupPurposes === null
+				? 'засчитывает итог группы любого назначения'
+				: `засчитывает итог только групп: ${after.lmsGroupPurposes
+						.map((purpose) => LEARNING_PURPOSE_LABELS[purpose].toLowerCase())
+						.join(', ')}`
 		);
 	}
 
@@ -2229,7 +2276,7 @@ export async function migrateEntries(
 					// публикацией, а документ дела давно отмечен: снимок отметки
 					// подтягивается сразу, иначе карточка объявила бы стадию
 					// неисполненной, хотя движок отпустил бы её вперёд.
-					...(await documentMarkPatch(tx, entry.interactionId, target.requiresDocumentMark)),
+					...(await documentMarkPatch(tx, entry.interactionId, target)),
 					updatedAt: input.at
 				})
 				.where(eq(stageEntries.id, entry.entryId));
@@ -2268,7 +2315,7 @@ export async function migrateEntries(
 				interactionId: entry.interactionId,
 				stageId: destination.id,
 				stageSnapshot: stageSnapshot(destination),
-				...(await documentMarkPatch(tx, entry.interactionId, destination.requiresDocumentMark)),
+				...(await documentMarkPatch(tx, entry.interactionId, destination)),
 				enteredAt: input.at,
 				responsibleUserId: entry.responsibleUserId,
 				waitingPartyId: entry.waitingPartyId,

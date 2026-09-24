@@ -95,6 +95,8 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresConfirmation: false,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -113,6 +115,8 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresConfirmation: false,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -131,6 +135,8 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresConfirmation: false,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -149,6 +155,8 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresConfirmation: false,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -167,6 +175,8 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresConfirmation: false,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -183,12 +193,15 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresResult: false,
 			requiresConfirmation: false,
 			requiresLmsData: false,
-			// Единственная стадия процесса, исполнение которой доказывает сам
-			// документ: соглашение либо утверждено, либо нет, и отметка
-			// ответственного «я подтверждаю» этого не заменяет. Отметка
+			// Исполнение стадии доказывает сам документ: соглашение либо
+			// утверждено, либо нет, и отметка ответственного «я подтверждаю» этого
+			// не заменяет. Шаблон не сужен: подписанный экземпляр соглашения
+			// обычно загружают сканом, а не собирают по шаблону. Отметка
 			// «Утверждён» (`approved`) — та, что означает подписанный сторонами
 			// экземпляр; «Введён в действие» наступает позже и по договору.
 			requiresDocumentMark: 'approved',
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			// Соглашение — поворотная точка работы с вузом: руководитель узнаёт,
 			// что дело дошло до подписания, не дожидаясь утренней сводки.
 			onEnterNotify: 'manager',
@@ -208,7 +221,14 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresResult: true,
 			requiresConfirmation: true,
 			requiresLmsData: false,
-			requiresDocumentMark: null,
+			// Факт передачи — подписанный акт, а не слово исполнителя: стадию
+			// закрывает отметка «Утверждён» на акте передачи, и той же отметкой
+			// позиции договора из акта получают статус «передан». Шаблон
+			// обязателен: без него стадию сразу при входе закрыло бы соглашение,
+			// утверждённое на подписании.
+			requiresDocumentMark: 'approved',
+			requiresDocumentTemplate: 'handover_act',
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -227,6 +247,8 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresConfirmation: true,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -245,6 +267,8 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresConfirmation: true,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -263,6 +287,8 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresConfirmation: true,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -285,6 +311,10 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			// исполнитель. Он же и подтверждает стадию — видом `lms_record`.
 			requiresLmsData: true,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			// Занятия ведут со студентами: итог потока преподавателей по той же
+			// программе — это обучение преподавателей, а не проведённые занятия.
+			lmsGroupPurposes: ['students'],
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -303,6 +333,8 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresConfirmation: false,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -320,6 +352,8 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresConfirmation: true,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -338,6 +372,8 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			requiresConfirmation: false,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			// Финальная стадия процесса: с неё взаимодействие завершают, а не идут
 			// дальше, и перехода вперёд с неё не требуется.
@@ -409,6 +445,8 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 			requiresConfirmation: false,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -426,6 +464,8 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 			requiresConfirmation: false,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -445,6 +485,8 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 			requiresConfirmation: true,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -466,6 +508,10 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 			// исполнения, а не подпись под ним.
 			requiresLmsData: true,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			// Слушатели коммерческого обучения — работающие взрослые: их поток
+			// заводится с назначением «Повышение квалификации».
+			lmsGroupPurposes: ['upskilling'],
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
@@ -483,6 +529,8 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 			requiresConfirmation: false,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			onEnterNotify: null,
 			isFinal: true,
 			checklist: [

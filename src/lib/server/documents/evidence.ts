@@ -14,7 +14,11 @@
  * поставленная **до** входа на стадию.
  */
 import { and, desc, eq, isNotNull } from 'drizzle-orm';
-import type { DocumentMarkEvidence, DocumentStatusFact } from '$lib/contracts/documents';
+import type {
+	DocumentMarkEvidence,
+	DocumentStatusFact,
+	DocumentTemplateKey
+} from '$lib/contracts/documents';
 import { getDb } from '../db';
 import { documents } from '../db/schema';
 import type { Tx } from '../db/transaction';
@@ -37,7 +41,9 @@ export const MARK_MOMENT_COLUMNS: Record<DocumentStatusFact, MarkMomentColumn> =
 
 /**
  * Самая свежая отметка нужного вида по документам взаимодействия; `null` — её
- * не ставили.
+ * не ставили. С ключом шаблона ищется только на документах этого шаблона
+ * (`documents.template_key`): утверждённое соглашение — не подписанный акт
+ * передачи, хотя отметка у них одна и та же.
  *
  * «Самая свежая» — по моменту самой отметки, а не по моменту записи: отметку
  * ставят задним числом, и порядок фактов задаёт названный день, а не очередь, в
@@ -48,14 +54,21 @@ export const MARK_MOMENT_COLUMNS: Record<DocumentStatusFact, MarkMomentColumn> =
 export async function readDocumentMark(
 	executor: Executor,
 	interactionId: string,
-	mark: DocumentStatusFact
+	mark: DocumentStatusFact,
+	templateKey: DocumentTemplateKey | null
 ): Promise<DocumentMarkEvidence | null> {
 	const moment = MARK_MOMENT_COLUMNS[mark];
 
 	const [row] = await executor
 		.select({ id: documents.id, title: documents.title, markedAt: moment })
 		.from(documents)
-		.where(and(eq(documents.interactionId, interactionId), isNotNull(moment)))
+		.where(
+			and(
+				eq(documents.interactionId, interactionId),
+				isNotNull(moment),
+				templateKey === null ? undefined : eq(documents.templateKey, templateKey)
+			)
+		)
 		.orderBy(desc(moment), desc(documents.id))
 		.limit(1);
 

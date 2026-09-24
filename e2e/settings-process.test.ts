@@ -142,6 +142,8 @@ async function seed(): Promise<void> {
 						requiresConfirmation: false,
 						requiresLmsData: false,
 						requiresDocumentMark: null,
+						requiresDocumentTemplate: null,
+						lmsGroupPurposes: null,
 						isFinal: false,
 						checklist: []
 					}

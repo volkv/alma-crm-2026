@@ -41,6 +41,8 @@ function entry(overrides: Partial<StageEntryView> = {}): StageEntryView {
 			requiresConfirmation: false,
 			requiresLmsData: true,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			isFinal: false,
 			checklist: [
 				{ key: 'schedule_published', label: 'Опубликовано расписание', required: true },

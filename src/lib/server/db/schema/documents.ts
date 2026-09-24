@@ -20,7 +20,11 @@ import {
 	uuid,
 	type AnyPgColumn
 } from 'drizzle-orm/pg-core';
-import type { DocumentTemplateVariable } from '$lib/contracts/documents';
+import {
+	DOCUMENT_TEMPLATE_KEYS,
+	type DocumentTemplateKey,
+	type DocumentTemplateVariable
+} from '$lib/contracts/documents';
 import { users } from './auth';
 import { contractItems, interactions, stageEntries } from './interactions';
 import { createdAt, timestamps } from './shared';
@@ -55,6 +59,13 @@ export const documents = pgTable(
 		supersedesId: uuid().references((): AnyPgColumn => documents.id, { onDelete: 'set null' }),
 		/** Вид документа: соглашение, приказ, акт, отчёт. */
 		kind: text().notNull(),
+		/**
+		 * Шаблон, по которому документ собран; пусто — загружен руками или
+		 * собран до того, как ключ начали записывать. Новая редакция наследует
+		 * ключ заменённой: скан подписанного акта — тот же акт. По ключу стадия
+		 * находит отметку на документе нужного вида (`stages.requires_document_template`).
+		 */
+		templateKey: text().$type<DocumentTemplateKey>(),
 		title: text().notNull(),
 		/** Ключ объекта с файлом в хранилище документов (`files/<uuid>`). */
 		filePath: text().notNull(),
@@ -87,6 +98,10 @@ export const documents = pgTable(
 		uniqueIndex('documents_supersedes_key')
 			.on(table.supersedesId)
 			.where(sql`${table.supersedesId} is not null`),
+		check(
+			'documents_template_key_known',
+			sql`${table.templateKey} is null or ${table.templateKey} in (${sql.raw(DOCUMENT_TEMPLATE_KEYS.map((key) => `'${key}'`).join(', '))})`
+		),
 		check(
 			'documents_supersedes_not_self',
 			sql`${table.supersedesId} is null or ${table.supersedesId} <> ${table.id}`

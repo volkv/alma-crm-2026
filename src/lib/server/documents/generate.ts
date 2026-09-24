@@ -240,6 +240,9 @@ export async function generateDocument(
 		]);
 	}
 
+	// Сужение типа проверкой выше не доживает до транзакции: ключ пишется в
+	// документ, и по нему стадия находит отметку на документе нужного шаблона.
+	const templateKey = input.templateKey;
 	const title = input.title.trim();
 
 	if (title === '') {
@@ -315,6 +318,7 @@ export async function generateDocument(
 					.values({
 						interactionId,
 						kind: GENERATED_KIND,
+						templateKey,
 						title,
 						filePath: blob.relativePath,
 						mime: blob.mime,

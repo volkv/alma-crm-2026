@@ -120,14 +120,22 @@ describe('процесс учебных заведений', () => {
 		expect(finals.map((stage) => stage.key)).toEqual(['execution_control']);
 	});
 
-	it('требует отметку «Утверждён» по документу ровно на стадии подписания', () => {
-		// Стадия, исполнение которой доказывает сам документ. Требовать отметку от
-		// стадий, на которых документ ещё не подписан, значит запереть процесс, а
-		// не проверить его.
+	it('требует отметку «Утверждён» на подписании и на акте передачи материалов', () => {
+		// Стадии, исполнение которых доказывает сам документ. Передачу материалов
+		// закрывает только акт передачи: иначе её закрыло бы соглашение,
+		// утверждённое ещё на подписании.
 		const requiring = route.stages.filter((stage) => stage.requiresDocumentMark !== null);
 
-		expect(requiring.map((stage) => stage.key)).toEqual(['signing']);
-		expect(requiring[0].requiresDocumentMark).toBe('approved');
+		expect(
+			requiring.map((stage) => [
+				stage.key,
+				stage.requiresDocumentMark,
+				stage.requiresDocumentTemplate
+			])
+		).toEqual([
+			['signing', 'approved', null],
+			['materials_handover', 'approved', 'handover_act']
+		]);
 	});
 
 	it('требует данных обучения ровно на стадии занятий', () => {

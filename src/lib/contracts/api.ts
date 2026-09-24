@@ -30,6 +30,7 @@ import {
 import {
 	DOCUMENT_KINDS,
 	DOCUMENT_STATUS_FACTS,
+	DOCUMENT_TEMPLATE_KEYS,
 	type DocumentListItem,
 	type DocumentView
 } from './documents';
@@ -679,7 +680,9 @@ export const apiLearningGroupSchema = z.object({
 		.describe('Отметка сотрудника «обучение завершено»'),
 	countsForStage: z
 		.boolean()
-		.describe('Засчитывается ли группа стадии: её программа входит в программы взаимодействия')
+		.describe(
+			'Засчитывается ли группа стадии: её программа входит в программы взаимодействия, а назначение — в назначения, которые допускает стадия с данными обучения'
+		)
 });
 
 export type ApiLearningGroup = z.output<typeof apiLearningGroupSchema>;
@@ -750,6 +753,18 @@ export const apiProcessStageSchema = z.object({
 		.enum(DOCUMENT_STATUS_FACTS)
 		.nullable()
 		.describe('Отметка по документу дела, которой подтверждается стадия; `null` — не требуется'),
+	requiresDocumentTemplate: z
+		.enum(DOCUMENT_TEMPLATE_KEYS)
+		.nullable()
+		.describe(
+			'Шаблон документа, на котором засчитывается отметка (`handover_act` — акт передачи); `null` — любой документ дела'
+		),
+	lmsGroupPurposes: z
+		.array(z.enum(LEARNING_PURPOSES))
+		.nullable()
+		.describe(
+			'Назначения учебных групп, итог которых подтверждает стадию (`students`, `teachers`, `upskilling`); `null` — любые'
+		),
 	onEnterNotify: z
 		.enum(STAGE_ENTER_NOTIFY_TARGETS)
 		.nullable()
@@ -803,6 +818,8 @@ export function toApiProcessRevision(revision: ProcessRevisionView): ApiProcessR
 			requiresConfirmation: stage.requiresConfirmation,
 			requiresLmsData: stage.requiresLmsData,
 			requiresDocumentMark: stage.requiresDocumentMark,
+			requiresDocumentTemplate: stage.requiresDocumentTemplate,
+			lmsGroupPurposes: stage.lmsGroupPurposes,
 			onEnterNotify: stage.onEnterNotify,
 			isFinal: stage.isFinal,
 			checklist: stage.checklist

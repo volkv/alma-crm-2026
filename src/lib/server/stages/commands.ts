@@ -55,9 +55,13 @@ import type { AuditEventType } from '$lib/contracts/audit';
 import {
 	DOCUMENT_STATUS_FACT_LABELS,
 	type DocumentMarkEvidence,
-	type DocumentStatusFact
+	type DocumentTemplateKey
 } from '$lib/contracts/documents';
-import { isTrainingCompleted, type LmsEvidence } from '$lib/contracts/exchange';
+import {
+	isTrainingCompleted,
+	LEARNING_PURPOSE_LABELS,
+	type LmsEvidence
+} from '$lib/contracts/exchange';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
@@ -284,8 +288,6 @@ async function readStageState(
 	tx: Tx,
 	entry: typeof stageEntries.$inferSelect
 ): Promise<StageState> {
-	const requiredMark = entry.stageSnapshot.requiresDocumentMark;
-
 	const [paused, blocking, evidence, mark] = await Promise.all([
 		hasOpenPause(tx, entry.id),
 		countBlockingBlockers(tx, entry.interactionId),
@@ -293,12 +295,14 @@ async function readStageState(
 		// присылает результат по своему расписанию, а не по нашему процессу
 		// (`docs/exchange-contract.md`, раздел 6). Снимок записи сильнее: он уже
 		// объяснил подтверждение именно этой стадии.
-		entry.lmsEvidence === null ? readLmsEvidence(tx, entry.interactionId) : null,
+		entry.lmsEvidence === null
+			? readLmsEvidence(tx, entry.interactionId, entry.stageSnapshot.lmsGroupPurposes)
+			: null,
 		// То же и с отметкой по документу. Снимок на записи есть почти всегда —
 		// его кладут и вход на стадию, и сама отметка, — а прочитать заново
 		// приходится там, где требование включили публикацией уже под открытой
 		// записью: документ отмечен, а снимка на ней нет.
-		readCurrentDocumentMark(tx, entry, requiredMark)
+		readCurrentDocumentMark(tx, entry)
 	]);
 
 	return {
@@ -321,18 +325,30 @@ async function readStageState(
  */
 async function readCurrentDocumentMark(
 	executor: Executor,
-	entry: { interactionId: string; documentMarkEvidence: DocumentMarkEvidence | null },
-	requiredMark: DocumentStatusFact | null
+	entry: {
+		interactionId: string;
+		stageSnapshot: StageSnapshot;
+		documentMarkEvidence: DocumentMarkEvidence | null;
+	}
 ): Promise<DocumentMarkEvidence | null> {
+	const requiredMark = entry.stageSnapshot.requiresDocumentMark;
+
 	if (requiredMark === null) {
 		return entry.documentMarkEvidence;
 	}
 
+	// Снимок на записи кладут только те, кто уже сверил шаблон: вход на стадию,
+	// сама отметка и публикация процесса.
 	if (entry.documentMarkEvidence?.mark === requiredMark) {
 		return entry.documentMarkEvidence;
 	}
 
-	return readDocumentMark(executor, entry.interactionId, requiredMark);
+	return readDocumentMark(
+		executor,
+		entry.interactionId,
+		requiredMark,
+		entry.stageSnapshot.requiresDocumentTemplate
+	);
 }
 
 /**
@@ -614,7 +630,12 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 		const targetMark =
 			target.requiresDocumentMark === null
 				? null
-				: await readDocumentMark(tx, input.interactionId, target.requiresDocumentMark);
+				: await readDocumentMark(
+						tx,
+						input.interactionId,
+						target.requiresDocumentMark,
+						target.requiresDocumentTemplate
+					);
 		const checklistState = { ...entry.checklistState, ...(input.checklistState ?? {}) };
 		const resultText =
 			input.resultText !== null && input.resultText !== undefined && input.resultText !== ''
@@ -1026,7 +1047,7 @@ async function lmsEntryPatch(
 		return {};
 	}
 
-	const evidence = await readLmsEvidence(tx, interactionId);
+	const evidence = await readLmsEvidence(tx, interactionId, snapshot.lmsGroupPurposes);
 
 	if (evidence === null) {
 		return {};
@@ -1084,7 +1105,7 @@ export async function applyLmsEvidence(
 		};
 	}
 
-	if (!(await groupCountsForStage(tx, input.interactionId, input.evidence.learningGroupId))) {
+	if (!(await groupCountsForStage(tx, input.interactionId, input.evidence.learningGroupId, null))) {
 		return {
 			confirmed: false,
 			note: 'Стадия не подтверждена: программа группы не входит в программы взаимодействия'
@@ -1111,6 +1132,20 @@ export async function applyLmsEvidence(
 		return {
 			confirmed: false,
 			note: `Стадия «${entry.stageSnapshot.name}» уже подтверждена итогом обучения: факт сохранён, подтверждение прежнее`
+		};
+	}
+
+	const purposes = entry.stageSnapshot.lmsGroupPurposes;
+
+	if (
+		purposes !== null &&
+		!(await groupCountsForStage(tx, input.interactionId, input.evidence.learningGroupId, purposes))
+	) {
+		return {
+			confirmed: false,
+			note: `Стадия «${entry.stageSnapshot.name}» не подтверждена: её подтверждает итог группы с назначением «${purposes
+				.map((purpose) => LEARNING_PURPOSE_LABELS[purpose])
+				.join('» или «')}», а у этой группы назначение другое`
 		};
 	}
 
@@ -1171,13 +1206,24 @@ export async function applyLmsEvidence(
 export async function applyDocumentMark(
 	ctx: ActorContext,
 	tx: Tx,
-	input: { interactionId: string; evidence: DocumentMarkEvidence }
+	input: {
+		interactionId: string;
+		/** Шаблон отмеченного документа; `null` — загружен руками. */
+		templateKey: DocumentTemplateKey | null;
+		evidence: DocumentMarkEvidence;
+	}
 ): Promise<void> {
 	await lockInteraction(ctx, tx, input.interactionId);
 
 	const entry = await readOpenEntryRow(tx, input.interactionId);
 
 	if (entry === null || entry.stageSnapshot.requiresDocumentMark !== input.evidence.mark) {
+		return;
+	}
+
+	const requiredTemplate = entry.stageSnapshot.requiresDocumentTemplate;
+
+	if (requiredTemplate !== null && requiredTemplate !== input.templateKey) {
 		return;
 	}
 
@@ -1627,11 +1673,8 @@ async function readClosingState(
 	const evidence =
 		entry === null || entry.lmsEvidence !== null
 			? null
-			: await readLmsEvidence(executor, interaction.id);
-	const mark =
-		entry === null
-			? null
-			: await readCurrentDocumentMark(executor, entry, entry.stageSnapshot.requiresDocumentMark);
+			: await readLmsEvidence(executor, interaction.id, entry.stageSnapshot.lmsGroupPurposes);
+	const mark = entry === null ? null : await readCurrentDocumentMark(executor, entry);
 
 	return {
 		status: row.status,

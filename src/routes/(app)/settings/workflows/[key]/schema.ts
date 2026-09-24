@@ -9,7 +9,8 @@
  */
 import { z } from 'zod';
 import { requiredText } from '$lib/contracts/common';
-import { DOCUMENT_STATUS_FACTS } from '$lib/contracts/documents';
+import { DOCUMENT_STATUS_FACTS, DOCUMENT_TEMPLATE_KEYS } from '$lib/contracts/documents';
+import { LEARNING_PURPOSES } from '$lib/contracts/exchange';
 import {
 	STAGE_CATEGORIES,
 	STAGE_ENTER_NOTIFY_TARGETS,
@@ -126,6 +127,10 @@ export const stageFormSchema = z
 		requiresLmsData: z.boolean().default(false),
 		/** Пусто — отметки не требуется; в базе это `null`. */
 		requiresDocumentMark: z.enum(['', ...DOCUMENT_STATUS_FACTS]).default(''),
+		/** Пусто — отметка засчитывается на любом документе дела; в базе это `null`. */
+		requiresDocumentTemplate: z.enum(['', ...DOCUMENT_TEMPLATE_KEYS]).default(''),
+		/** Ни одного — итог группы любого назначения; в базе это `null`. */
+		lmsGroupPurposes: z.array(z.enum(LEARNING_PURPOSES)).default([]),
 		/** Пусто — при входе никого не уведомлять; в базе это `null`. */
 		onEnterNotify: z.enum(['', ...STAGE_ENTER_NOTIFY_TARGETS]).default(''),
 		isFinal: z.boolean().default(false),
@@ -134,6 +139,22 @@ export const stageFormSchema = z
 	.superRefine((value, ctx) => {
 		for (const issue of parseChecklist(value.checklist).issues) {
 			ctx.addIssue({ code: 'custom', path: ['checklist'], message: issue });
+		}
+
+		if (value.requiresDocumentTemplate !== '' && value.requiresDocumentMark === '') {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['requiresDocumentTemplate'],
+				message: 'Шаблон документа задают вместе с требуемой отметкой'
+			});
+		}
+
+		if (value.lmsGroupPurposes.length > 0 && !value.requiresLmsData) {
+			ctx.addIssue({
+				code: 'custom',
+				path: ['lmsGroupPurposes'],
+				message: 'Назначения групп задают у стадии, которая требует данных обучения'
+			});
 		}
 	});
 

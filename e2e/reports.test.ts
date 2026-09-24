@@ -90,6 +90,8 @@ function snapshot(index: number): StageSnapshot {
 		requiresConfirmation: false,
 		requiresLmsData: false,
 		requiresDocumentMark: null,
+		requiresDocumentTemplate: null,
+		lmsGroupPurposes: null,
 		isFinal: index + 1 === STAGES.length,
 		checklist: []
 	};

@@ -481,15 +481,17 @@ describe('возврат и пропуск', () => {
 describe('подтверждение стадии', () => {
 	it('требуется там, где стадия его требует', async () => {
 		const fixture = await createFixture();
-		await advanceTo(fixture, 'materials_handover');
+		// Стадия без отметки по документу и без данных обучения: подтверждает её
+		// только отметка ответственного.
+		await advanceTo(fixture, 'implementation_support');
 		await closeRequiredChecklist(fixture.ctx, fixture.interactionId);
 
-		const fromStageId = stageId(fixture.revision, 'materials_handover');
+		const fromStageId = stageId(fixture.revision, 'implementation_support');
 		const command = {
 			interactionId: fixture.interactionId,
 			revision: fixture.revision.version,
 			fromStageId,
-			toStageId: stageId(fixture.revision, 'implementation_support'),
+			toStageId: stageId(fixture.revision, 'teacher_training'),
 			reason: null,
 			resultText: null,
 			checklistState: {}
@@ -503,7 +505,7 @@ describe('подтверждение стадии', () => {
 		await setStageResult(fixture.ctx, {
 			interactionId: fixture.interactionId,
 			stageEntryId: await openEntryId(fixture.ctx, fixture.interactionId),
-			resultText: 'Материалы и лицензии переданы'
+			resultText: 'Учебная среда развёрнута'
 		});
 
 		await expect(advanceStage(fixture.ctx, command)).rejects.toSatisfy(
@@ -526,7 +528,7 @@ describe('подтверждение стадии', () => {
 		await advanceStage(fixture.ctx, command);
 
 		const status = await getInteractionStatus(fixture.ctx, fixture.interactionId);
-		expect(status.current?.snapshot.key).toBe('implementation_support');
+		expect(status.current?.snapshot.key).toBe('teacher_training');
 	});
 
 	it('стадию занятий закрывает результат системы обучения, и он же её подтверждает', async () => {
@@ -611,13 +613,9 @@ describe('подтверждение стадии', () => {
 
 		// Согласование — не утверждение: отметка другого вида требование не
 		// закрывает.
-		await provideDocumentMark(
-			fixture.ctx,
-			database,
-			fixture.interactionId,
-			'agreed',
-			'Протокол разногласий'
-		);
+		await provideDocumentMark(fixture.ctx, database, fixture.interactionId, 'agreed', {
+			title: 'Протокол разногласий'
+		});
 
 		await expect(advanceStage(fixture.ctx, command)).rejects.toSatisfy(
 			(error: unknown) =>

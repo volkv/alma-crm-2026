@@ -45,6 +45,7 @@ import type {
 	StageEnterNotifyTarget,
 	StageSnapshot
 } from '$lib/contracts/interactions';
+import { LEARNING_PURPOSES, type LearningPurpose } from '$lib/contracts/exchange';
 import {
 	COMMENT_SOURCES,
 	CONTRACT_STATUSES,
@@ -367,6 +368,21 @@ export const stages = pgTable(
 		 */
 		requiresDocumentMark: text().$type<DocumentStatusFact>(),
 		/**
+		 * На документе какого шаблона ищется отметка (`documents.template_key`);
+		 * пусто — годится любой документ взаимодействия. Без сужения стадию
+		 * «Передача материалов» закрыло бы утверждённое ещё на подписании
+		 * соглашение: отметка при входе засчитывается и поставленная раньше.
+		 * Задаётся только вместе с самой отметкой.
+		 */
+		requiresDocumentTemplate: text().$type<DocumentTemplateKey>(),
+		/**
+		 * Назначения учебных групп, итог которых подтверждает стадию; пусто —
+		 * годится группа любого назначения. Группа преподавателей не доказывает,
+		 * что занятия со студентами прошли. Задаётся только вместе с
+		 * `requires_lms_data`.
+		 */
+		lmsGroupPurposes: text().array().$type<LearningPurpose[]>(),
+		/**
 		 * Кого уведомить, когда дело входит на стадию: `responsible` —
 		 * ответственного, `manager` — его руководителя. Пусто — никого.
 		 *
@@ -385,6 +401,14 @@ export const stages = pgTable(
 		check(
 			'stages_on_enter_notify_known',
 			sql`${table.onEnterNotify} is null or ${table.onEnterNotify} in ('responsible', 'manager')`
+		),
+		check(
+			'stages_requires_document_template_known',
+			sql`${table.requiresDocumentTemplate} is null or (${table.requiresDocumentMark} is not null and ${table.requiresDocumentTemplate} = any(${textArray(DOCUMENT_TEMPLATE_KEYS)}))`
+		),
+		check(
+			'stages_lms_group_purposes_known',
+			sql`${table.lmsGroupPurposes} is null or (${table.requiresLmsData} and cardinality(${table.lmsGroupPurposes}) > 0 and ${table.lmsGroupPurposes} <@ ${textArray(LEARNING_PURPOSES)})`
 		)
 	]
 );

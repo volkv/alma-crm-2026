@@ -53,6 +53,8 @@ function snapshot(overrides: Partial<StageSnapshot> = {}): StageSnapshot {
 		requiresConfirmation: false,
 		requiresLmsData: false,
 		requiresDocumentMark: null,
+		requiresDocumentTemplate: null,
+		lmsGroupPurposes: null,
 		isFinal: false,
 		checklist: [],
 		...overrides

@@ -62,6 +62,8 @@ registerRoute({
 					requiresConfirmation: false,
 					requiresLmsData: false,
 					requiresDocumentMark: null,
+					requiresDocumentTemplate: null,
+					lmsGroupPurposes: null,
 					onEnterNotify: null,
 					isFinal: false,
 					checklist: []
@@ -78,6 +80,8 @@ registerRoute({
 					requiresConfirmation: false,
 					requiresLmsData: false,
 					requiresDocumentMark: null,
+					requiresDocumentTemplate: null,
+					lmsGroupPurposes: null,
 					onEnterNotify: null,
 					isFinal: false,
 					checklist: [

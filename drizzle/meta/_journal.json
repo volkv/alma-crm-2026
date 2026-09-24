@@ -232,6 +232,13 @@
       "when": 1790261283128,
       "tag": "0033_stage_enter_notify",
       "breakpoints": true
+    },
+    {
+      "idx": 34,
+      "version": "7",
+      "when": 1790269594149,
+      "tag": "0034_stage_evidence_scope",
+      "breakpoints": true
     }
   ]
 }

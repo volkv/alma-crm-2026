@@ -8,8 +8,12 @@
  * значит однажды получить четыре разных «демонстрационных процесса».
  */
 import { eq } from 'drizzle-orm';
-import type { DocumentStatusFact } from '$lib/contracts/documents';
-import type { LmsEvidence } from '$lib/contracts/exchange';
+import {
+	DOCUMENT_TEMPLATE_LABELS,
+	type DocumentStatusFact,
+	type DocumentTemplateKey
+} from '$lib/contracts/documents';
+import type { LearningPurpose, LmsEvidence } from '$lib/contracts/exchange';
 import {
 	createInteractionSchema,
 	type ChecklistItem,
@@ -225,7 +229,8 @@ export async function provideLmsEvidence(
 		enrolled: 20,
 		completed: 18,
 		expelled: 1
-	}
+	},
+	purpose: LearningPurpose = 'students'
 ): Promise<Extract<LmsEvidence, { kind: 'result' }>> {
 	const groupExternalId = crypto.randomUUID().slice(0, 8);
 	const occurredAt = new Date();
@@ -249,7 +254,7 @@ export async function provideLmsEvidence(
 			plannedSeats: counters.enrolled,
 			lastResultAt: occurredAt,
 			programId,
-			purpose: 'students'
+			purpose
 		})
 		.returning({ id: learningGroups.id });
 
@@ -292,14 +297,21 @@ export async function provideDocumentMark(
 	database: TestDatabase,
 	interactionId: string,
 	mark: DocumentStatusFact,
-	title = 'Соглашение о сотрудничестве'
+	options: { title?: string; templateKey?: DocumentTemplateKey | null } = {}
 ): Promise<string> {
+	const templateKey = options.templateKey ?? null;
 	const [document] = await database.db
 		.insert(documents)
 		.values({
 			interactionId,
-			kind: 'agreement',
-			title,
+			// Документ по шаблону — собранный, остальные — загруженные руками.
+			kind: templateKey === null ? 'agreement' : 'generated',
+			templateKey,
+			title:
+				options.title ??
+				(templateKey === null
+					? 'Соглашение о сотрудничестве'
+					: DOCUMENT_TEMPLATE_LABELS[templateKey]),
 			filePath: `files/${crypto.randomUUID()}`,
 			mime: 'text/plain',
 			sizeBytes: 64,
@@ -353,7 +365,10 @@ export async function advanceTo(
 				ctx,
 				database,
 				interactionId,
-				current.snapshot.requiresDocumentMark
+				current.snapshot.requiresDocumentMark,
+				{
+					templateKey: current.snapshot.requiresDocumentTemplate
+				}
 			);
 		}
 
@@ -361,7 +376,13 @@ export async function advanceTo(
 			// Факт обучения подтверждает стадию сам — видом `lms_record`, и
 			// отметка ответственного поверх него стёрла бы то, чем стадия
 			// подтверждена на самом деле.
-			await provideLmsEvidence(ctx, database, interactionId);
+			await provideLmsEvidence(
+				ctx,
+				database,
+				interactionId,
+				undefined,
+				current.snapshot.lmsGroupPurposes?.[0] ?? 'students'
+			);
 		} else if (
 			current.snapshot.requiresConfirmation &&
 			current.snapshot.requiresDocumentMark === null
@@ -420,6 +441,8 @@ export function threeStageProcess(
 				requiresConfirmation: false,
 				requiresLmsData: false,
 				requiresDocumentMark: null,
+				requiresDocumentTemplate: null,
+				lmsGroupPurposes: null,
 				onEnterNotify: null,
 				isFinal: false,
 				checklist: options.checklist?.intake ?? []
@@ -434,6 +457,8 @@ export function threeStageProcess(
 				requiresConfirmation: false,
 				requiresLmsData: false,
 				requiresDocumentMark: null,
+				requiresDocumentTemplate: null,
+				lmsGroupPurposes: null,
 				onEnterNotify: null,
 				isFinal: false,
 				checklist: options.checklist?.offer ?? []
@@ -448,6 +473,8 @@ export function threeStageProcess(
 				requiresConfirmation: false,
 				requiresLmsData: false,
 				requiresDocumentMark: null,
+				requiresDocumentTemplate: null,
+				lmsGroupPurposes: null,
 				onEnterNotify: null,
 				isFinal: true,
 				checklist: options.checklist?.done ?? []
@@ -492,6 +519,8 @@ export function twoStageProcess(options: {
 				requiresConfirmation: false,
 				requiresLmsData: false,
 				requiresDocumentMark: null,
+				requiresDocumentTemplate: null,
+				lmsGroupPurposes: null,
 				onEnterNotify: null,
 				isFinal: false,
 				checklist: []
@@ -506,6 +535,8 @@ export function twoStageProcess(options: {
 				requiresConfirmation: false,
 				requiresLmsData: false,
 				requiresDocumentMark: null,
+				requiresDocumentTemplate: null,
+				lmsGroupPurposes: null,
 				onEnterNotify: null,
 				isFinal: true,
 				checklist: []

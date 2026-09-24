@@ -43,6 +43,7 @@
 		CARD_PANEL_LABELS,
 		type CardPanel
 	} from '$lib/contracts/process-card';
+	import { LEARNING_PURPOSES, LEARNING_PURPOSE_LABELS } from '$lib/contracts/exchange';
 	import {
 		STAGE_CATEGORIES,
 		STAGE_ENTER_NOTIFY_LABELS,
@@ -160,6 +161,10 @@
 			// Пустая строка — «отметки не требуется»: пустой выбор в списке не
 			// отличить от невыбранного.
 			requiresDocumentMark: stage?.requiresDocumentMark ?? '',
+			// Пустая строка — отметка на любом документе дела.
+			requiresDocumentTemplate: stage?.requiresDocumentTemplate ?? '',
+			// Ни одного назначения — итог группы любого назначения.
+			lmsGroupPurposes: [...(stage?.lmsGroupPurposes ?? [])],
 			// Пустая строка — «никого не уведомлять», по той же причине.
 			onEnterNotify: stage?.onEnterNotify ?? '',
 			isFinal: stage?.isFinal ?? false,
@@ -281,7 +286,7 @@
 	);
 </script>
 
-<svelte:head><title>{workflow.name} — процесс — LCT CRM</title></svelte:head>
+<svelte:head><title>{workflow.name} — процесс — Альма CRM</title></svelte:head>
 
 {#snippet numberField({
 	name,
@@ -669,6 +674,20 @@
 												<span class="text-faint">—</span>
 											{/if}
 										</span>
+										{#if stage.requiresDocumentTemplate !== null}
+											<span class="mt-0.5 block text-xs text-muted-foreground">
+												отметка на документе: {DOCUMENT_TEMPLATE_LABELS[
+													stage.requiresDocumentTemplate
+												].toLowerCase()}
+											</span>
+										{/if}
+										{#if stage.lmsGroupPurposes !== null}
+											<span class="mt-0.5 block text-xs text-muted-foreground">
+												засчитывает группы: {stage.lmsGroupPurposes
+													.map((purpose) => LEARNING_PURPOSE_LABELS[purpose].toLowerCase())
+													.join(', ')}
+											</span>
+										{/if}
 										{#if stage.onEnterNotify !== null}
 											<span class="mt-0.5 block text-xs text-muted-foreground">
 												при входе уведомляет: {STAGE_ENTER_NOTIFY_LABELS[
@@ -930,7 +949,14 @@
 				name: 'requiresLmsData',
 				label: 'Получены данные системы обучения по взаимодействию',
 				checked: $stageData.requiresLmsData,
-				onchange: (next) => ($stageData.requiresLmsData = next)
+				onchange: (next) => {
+					$stageData.requiresLmsData = next;
+					// Без данных обучения сужать нечего: отмеченные назначения
+					// ушли бы с формой и получили бы отказ.
+					if (!next) {
+						$stageData.lmsGroupPurposes = [];
+					}
+				}
 			})}
 			<FieldSelect
 				name="requiresDocumentMark"
@@ -946,6 +972,49 @@
 				bind:value={$stageData.requiresDocumentMark}
 				errors={$stageErrors.requiresDocumentMark}
 			/>
+			<FieldSelect
+				name="requiresDocumentTemplate"
+				label="На каком документе"
+				description="Отметка на документе другого шаблона стадию не закрывает. Отметку, поставленную до входа на стадию, система засчитывает: без шаблона стадию закроет и документ, утверждённый на прошлых стадиях."
+				options={[
+					{ value: '', label: 'Любой документ дела' },
+					...DOCUMENT_TEMPLATE_KEYS.map((template) => ({
+						value: template,
+						label: DOCUMENT_TEMPLATE_LABELS[template]
+					}))
+				]}
+				bind:value={$stageData.requiresDocumentTemplate}
+				errors={$stageErrors.requiresDocumentTemplate}
+			/>
+			{#if $stageData.requiresLmsData}
+				<fieldset class="flex flex-col gap-2">
+					<legend class="mb-1 text-sm">Итог каких групп засчитывается</legend>
+					{#each LEARNING_PURPOSES as purpose (purpose)}
+						<Label class="flex items-center gap-2 font-normal">
+							<Checkbox
+								name="lmsGroupPurposes"
+								value={purpose}
+								checked={$stageData.lmsGroupPurposes.includes(purpose)}
+								onCheckedChange={(next) =>
+									($stageData.lmsGroupPurposes = toggle(
+										$stageData.lmsGroupPurposes,
+										purpose,
+										next === true
+									))}
+							/>
+							{LEARNING_PURPOSE_LABELS[purpose]}
+						</Label>
+					{/each}
+					<span class="text-xs text-muted-foreground">
+						Ни одного не отмечено — засчитывается группа любого назначения.
+					</span>
+					{#if $stageErrors.lmsGroupPurposes?._errors}
+						<span class="text-xs text-danger"
+							>{$stageErrors.lmsGroupPurposes._errors.join('; ')}</span
+						>
+					{/if}
+				</fieldset>
+			{/if}
 		</fieldset>
 		<FieldSelect
 			name="onEnterNotify"

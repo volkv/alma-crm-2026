@@ -241,6 +241,8 @@ function stageSnapshot(index: number): string {
 		requiresConfirmation: stage.requiresConfirmation,
 		requiresLmsData: stage.requiresLmsData,
 		requiresDocumentMark: null,
+		requiresDocumentTemplate: null,
+		lmsGroupPurposes: null,
 		isFinal: stage.isFinal,
 		checklist: []
 	});

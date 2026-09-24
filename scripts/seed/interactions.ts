@@ -37,7 +37,7 @@ import {
 	type CreateInteractionInput,
 	type StageView
 } from '$lib/contracts/interactions';
-import type { DocumentStatusFact } from '$lib/contracts/documents';
+import type { DocumentStatusFact, DocumentTemplateKey } from '$lib/contracts/documents';
 import { externalSourceOf, type LearningPurpose, type LmsEvidence } from '$lib/contracts/exchange';
 import { formatDate } from '$lib/format';
 import type { ActorContext } from '$lib/server/actor';
@@ -55,6 +55,7 @@ import {
 	learningGroupProducts,
 	learningGroupResults,
 	learningGroups,
+	organizations,
 	programVersions,
 	stageEntries,
 	stagePauses,
@@ -176,6 +177,13 @@ type InteractionSeed = CounterpartySeed & {
 	academic?: readonly [string, string];
 	/** Поток в системе обучения: обязателен у всех, кто дошёл до занятий. */
 	learning?: LearningSeed;
+	/**
+	 * Потоки того же взаимодействия рядом с основным — вторым и следующими
+	 * номерами. Нужны там, где основной поток — не тот, что подтверждает стадию:
+	 * «Ведение занятий» засчитывает итог потока студентов, а поток
+	 * преподавателей по той же программе остаётся в карточке незасчитанным.
+	 */
+	extraStreams?: readonly LearningSeed[];
 	/** Закрыть обязательные пункты чек-листа текущей стадии. */
 	closeChecklist?: boolean;
 	pause?: PauseSeed;
@@ -667,7 +675,19 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 			enrolled: 24,
 			completed: 22,
 			expelled: 1
-		}
+		},
+		// Занятия со студентами шли отдельным потоком: итог потока
+		// преподавателей «Ведение занятий» не подтверждает.
+		extraStreams: [
+			{
+				groupExternalId: '70712',
+				purpose: 'students',
+				plannedSeats: 30,
+				enrolled: 28,
+				completed: 26,
+				expelled: 1
+			}
+		]
 	},
 	{
 		key: 'szpu-2025',
@@ -792,6 +812,18 @@ const INTERACTIONS: readonly InteractionSeed[] = [
 			completed: 24,
 			expelled: 1
 		},
+		// Занятия со студентами шли отдельным потоком: итог потока
+		// преподавателей «Ведение занятий» не подтверждает.
+		extraStreams: [
+			{
+				groupExternalId: '70717',
+				purpose: 'students',
+				plannedSeats: 28,
+				enrolled: 27,
+				completed: 25,
+				expelled: 2
+			}
+		],
 		completedWith: 'Повышение квалификации прошли 24 преподавателя, документы выданы.'
 	}
 ];
@@ -2018,6 +2050,18 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 			completed: 19,
 			expelled: 2
 		},
+		// Занятия со студентами шли отдельным потоком: итог потока
+		// преподавателей «Ведение занятий» не подтверждает.
+		extraStreams: [
+			{
+				groupExternalId: '70728',
+				purpose: 'students',
+				plannedSeats: 25,
+				enrolled: 24,
+				completed: 22,
+				expelled: 1
+			}
+		],
 		closeChecklist: true
 	},
 	{
@@ -2066,7 +2110,19 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 			enrolled: 33,
 			completed: 31,
 			expelled: 2
-		}
+		},
+		// Занятия со студентами шли отдельным потоком: итог потока
+		// преподавателей «Ведение занятий» не подтверждает.
+		extraStreams: [
+			{
+				groupExternalId: '70730',
+				purpose: 'students',
+				plannedSeats: 30,
+				enrolled: 29,
+				completed: 27,
+				expelled: 1
+			}
+		]
 	},
 	{
 		key: 'bit-execution_control-76',
@@ -2638,40 +2694,54 @@ export const INTERACTION_SEED_SIZES = {
 	 * такого документа стадия не отпускает вперёд — это не украшение набора, а
 	 * условие движения.
 	 */
-	signedAgreements: ALL_INTERACTIONS.filter(needsSignedAgreement).length,
+	signedAgreements: ALL_INTERACTIONS.filter((seed) => needsSignedDocument(seed, 'signing')).length,
+	/**
+	 * Подписанные акты передачи — по тому же правилу у стадии передачи
+	 * материалов: её закрывает отметка «Утверждён» на акте, собранном по
+	 * шаблону (один DOCX на дело).
+	 */
+	handoverActs: ALL_INTERACTIONS.filter((seed) => needsSignedDocument(seed, 'materials_handover'))
+		.length,
 	handovers: ALL_INTERACTIONS.filter((seed) => seed.handedTo !== undefined).length,
 	/**
 	 * Потоки обучения и их результаты: по одному на запись, дошедшую до стадии с
-	 * данными из системы обучения. Строка результата одна, сколько бы раз набор
+	 * данными из системы обучения, и по одному на каждый её дополнительный
+	 * поток. Строка результата на поток одна, сколько бы раз набор
 	 * ни звал подтверждение: её ключ — пара «поток и момент», а момент считается
 	 * от одной точки отсчёта на всю заливку.
 	 */
-	learningGroups: ALL_INTERACTIONS.filter((seed) => seed.learning !== undefined).length,
-	learningResults: ALL_INTERACTIONS.filter((seed) => seed.learning !== undefined).length
+	learningGroups: ALL_INTERACTIONS.reduce(streamCount, 0),
+	learningResults: ALL_INTERACTIONS.reduce(streamCount, 0)
 } as const;
 
+/** Потоков у дела: основной и дополнительные. */
+function streamCount(total: number, seed: InteractionSeed): number {
+	return seed.learning === undefined ? total : total + 1 + (seed.extraStreams?.length ?? 0);
+}
+
 /**
- * Появится ли у дела подписанный экземпляр соглашения.
+ * Появится ли у дела подписанный документ стадии с отметкой — экземпляр
+ * соглашения у подписания, акт у передачи материалов.
  *
  * Правило то же, по которому его кладёт заливка: шаг вперёд со стадии с
  * `requiresDocumentMark` без отметки не проходит, а дело, оставшееся на ней,
- * получает экземпляр только по явному признаку набора.
+ * получает документ только по явному признаку набора.
  */
-function needsSignedAgreement(seed: InteractionSeed): boolean {
-	const signing = B2B_PROCESS.stages.findIndex((stage) => stage.requiresDocumentMark !== null);
+function needsSignedDocument(seed: InteractionSeed, stageKey: string): boolean {
+	const required = B2B_PROCESS.stages.findIndex((stage) => stage.key === stageKey);
 	const position = B2B_PROCESS.stages.findIndex((stage) => stage.key === seed.stage);
 
-	if (signing === -1 || position === -1) {
+	if (required === -1 || position === -1) {
 		return false;
 	}
 
-	if (position > signing) {
+	if (position > required) {
 		return true;
 	}
 
-	// Дело, сходившее вперёд и вернувшееся, стадию подписания проходило — значит,
-	// экземпляр у него есть.
-	return position === signing && (seed.signedDocument === true || seed.returnedFrom !== undefined);
+	// Дело, сходившее вперёд и вернувшееся, эту стадию проходило — значит,
+	// документ у него есть.
+	return position === required && (seed.signedDocument === true || seed.returnedFrom !== undefined);
 }
 
 /**
@@ -3009,8 +3079,28 @@ async function recordLearningResult(
 		);
 	}
 
+	const streams = [learning, ...(seed.extraStreams ?? [])];
+
+	for (const [index, stream] of streams.entries()) {
+		await recordStream(service, seed, interactionId, instance, runStart, stream, index + 1);
+	}
+}
+
+/** Один поток обучения и его результат; первый поток — основной. */
+async function recordStream(
+	service: ActorContext,
+	seed: InteractionSeed,
+	interactionId: string,
+	instance: string,
+	runStart: Date,
+	learning: LearningSeed,
+	streamNumber: number
+): Promise<void> {
 	const [periodStart, periodEnd] = seed.academic ?? seed.agreement;
-	const learningGroupId = seedId('learning-group', seed.key);
+	const learningGroupId = seedId(
+		'learning-group',
+		streamNumber === 1 ? seed.key : `${seed.key}:${streamNumber}`
+	);
 	// Точных дат у набора нет, а порядок важен: поток заводят задолго до
 	// результата, а результат — последнее, что по взаимодействию случилось.
 	const requestedAt = daysBefore(runStart, seed.lastActivityDaysAgo + 30);
@@ -3037,7 +3127,7 @@ async function recordLearningResult(
 			.values({
 				id: learningGroupId,
 				interactionId,
-				streamNumber: 1,
+				streamNumber,
 				system: evidence.system,
 				instance: evidence.instance,
 				groupExternalId: evidence.groupExternalId,
@@ -3084,25 +3174,43 @@ async function recordLearningResult(
 }
 
 /**
- * Подписанный экземпляр соглашения и отметка на нём: факт, которым
- * подтверждается стадия подписания.
+ * Подписанный документ и отметка на нём: факт, которым подтверждается стадия с
+ * `requiresDocumentMark`. Какой документ — говорит шаблон стадии: без шаблона
+ * это экземпляр соглашения (стадия подписания), с шаблоном акта передачи —
+ * акт, собранный по шаблону (стадия передачи материалов).
  *
  * Подтверждение ставит движок — он зовётся из самой отметки (`markDocument`);
  * набор кладёт только документ и отметку, ровно как это сделал бы менеджер,
  * получивший подписанный экземпляр.
  *
  * Повторный вызов ничего не портит: отметка неизменяема, и там, где нужная уже
- * стоит, набор не заводит второй документ.
+ * стоит на документе нужного шаблона, набор не заводит второй документ.
  */
-async function recordSignedAgreement(
+async function recordSignedDocument(
 	ctx: ActorContext,
 	interactionId: string,
-	mark: DocumentStatusFact
+	stage: {
+		requiresDocumentMark: DocumentStatusFact;
+		requiresDocumentTemplate: DocumentTemplateKey | null;
+	}
 ): Promise<void> {
-	if ((await readDocumentMark(getDb(), interactionId, mark)) !== null) {
+	const mark = stage.requiresDocumentMark;
+	const templateKey = stage.requiresDocumentTemplate;
+
+	if ((await readDocumentMark(getDb(), interactionId, mark, templateKey)) !== null) {
 		return;
 	}
 
+	const documentId =
+		templateKey === null
+			? await uploadSignedAgreement(ctx, interactionId)
+			: await generateSignedDocument(ctx, interactionId, templateKey);
+
+	await markDocument(ctx, documentId, mark, undefined, 'Подписан обеими сторонами');
+}
+
+/** Скан подписанного соглашения, приложенный к делу. */
+async function uploadSignedAgreement(ctx: ActorContext, interactionId: string): Promise<string> {
 	const document = await uploadDocument(ctx, {
 		interactionId,
 		kind: 'agreement',
@@ -3115,7 +3223,78 @@ async function recordSignedAgreement(
 		}
 	});
 
-	await markDocument(ctx, document.id, mark, undefined, 'Подписан обеими сторонами');
+	return document.id;
+}
+
+/** Реквизиты организации одной строкой — так их печатает пакет документов. */
+async function organizationRequisites(organizationId: string): Promise<string> {
+	const [row] = await getDb()
+		.select({ inn: organizations.inn, kpp: organizations.kpp, ogrn: organizations.ogrn })
+		.from(organizations)
+		.where(eq(organizations.id, organizationId))
+		.limit(1);
+
+	if (row === undefined) {
+		throw new Error(`Организация ${organizationId} не заведена`);
+	}
+
+	return [
+		row.inn === null ? null : `ИНН ${row.inn}`,
+		row.kpp === null ? null : `КПП ${row.kpp}`,
+		row.ogrn === null ? null : `ОГРН ${row.ogrn}`
+	]
+		.filter((part): part is string => part !== null)
+		.join(', ');
+}
+
+/**
+ * Документ, собранный по шаблону стадии. Только DOCX: служба преобразования в
+ * PDF поднята не на каждой машине, а стадия без документа не отпускает вперёд.
+ * Позиций договора акт набора не передаёт: какие из них переданы, решает набор
+ * договоров, и отметка на акте не должна переписывать его статусы.
+ */
+async function generateSignedDocument(
+	ctx: ActorContext,
+	interactionId: string,
+	templateKey: DocumentTemplateKey
+): Promise<string> {
+	if (templateKey !== 'handover_act') {
+		throw new Error(`Набор не умеет собирать подписанный документ по шаблону «${templateKey}»`);
+	}
+
+	const view = await getInteraction(ctx, interactionId);
+	const institution = view.parties.find((party) => party.partyRole === 'educational_institution');
+	const operator = view.parties.find((party) => party.partyRole === 'operator');
+
+	if (institution === undefined || operator === undefined) {
+		throw new Error(`Взаимодействию «${view.title}» не хватает сторон для акта передачи`);
+	}
+
+	const [document] = await generateDocument(ctx, {
+		templateKey,
+		interactionId,
+		title: `Акт передачи материалов и лицензий — ${view.title}`,
+		formats: ['docx'],
+		data: {
+			city: 'Москва',
+			date: formatDate(new Date()),
+			contractNumber: view.contract?.number ?? 'б/н',
+			contractSignedOn: view.contract?.signedOn == null ? '' : formatDate(view.contract.signedOn),
+			operatorName: operator.organizationName,
+			operatorRequisites: await organizationRequisites(operator.organizationId),
+			operatorSigner: 'директора Орлова В. С.',
+			institutionName: institution.organizationName,
+			institutionRequisites: await organizationRequisites(institution.organizationId),
+			institutionSigner: 'ректора',
+			items: []
+		}
+	});
+
+	if (document === undefined) {
+		throw new Error(`Акт передачи для «${view.title}» не собран`);
+	}
+
+	return document.id;
 }
 
 /**
@@ -3166,15 +3345,19 @@ async function stepForward(
 	if (from.requiresDocumentMark !== null) {
 		// Стадию с отметкой по документу закрывает сам документ: движок ставит на
 		// неё подтверждение видом `document_mark`.
-		await recordSignedAgreement(ctx, interactionId, from.requiresDocumentMark);
+		await recordSignedDocument(ctx, interactionId, {
+			requiresDocumentMark: from.requiresDocumentMark,
+			requiresDocumentTemplate: from.requiresDocumentTemplate
+		});
 	}
 
 	if (from.requiresLmsData) {
 		// Стадию с данными обучения подтверждает сам факт: движок ставит на неё
 		// подтверждение видом `lms_record`. Отметка ответственного поверх него
-		// стёрла бы то, чем стадия подтверждена на самом деле.
+		// стёрла бы то, чем стадия подтверждена на самом деле. Стадию с отметкой
+		// по документу так же подтвердила сама отметка.
 		await provideLmsEvidence();
-	} else if (from.requiresConfirmation) {
+	} else if (from.requiresConfirmation && from.requiresDocumentMark === null) {
 		await confirmStage(ctx, {
 			interactionId,
 			stageEntryId: (await readOpenEntry(getDb(), interactionId)).id,
@@ -3675,10 +3858,13 @@ export async function seedInteractions(): Promise<void> {
 		// С отметкой по документу иначе: дело, стоящее на подписании, показывает
 		// либо подтверждённую стадию, либо требование, которое ещё не выполнено, —
 		// и стенду нужны оба состояния.
-		const markOnStage = stageByKey(stages, seed.stage).requiresDocumentMark;
+		const current = stageByKey(stages, seed.stage);
 
-		if (markOnStage !== null && seed.signedDocument === true) {
-			await recordSignedAgreement(ctx, id, markOnStage);
+		if (current.requiresDocumentMark !== null && seed.signedDocument === true) {
+			await recordSignedDocument(ctx, id, {
+				requiresDocumentMark: current.requiresDocumentMark,
+				requiresDocumentTemplate: current.requiresDocumentTemplate
+			});
 		}
 
 		if (seed.returnedFrom !== undefined) {

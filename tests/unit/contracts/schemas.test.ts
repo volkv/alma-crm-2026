@@ -241,6 +241,8 @@ const cases: Case[] = [
 			requiresConfirmation: false,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			isFinal: false,
 			checklist: []
 		},
@@ -255,6 +257,8 @@ const cases: Case[] = [
 			requiresConfirmation: false,
 			requiresLmsData: false,
 			requiresDocumentMark: null,
+			requiresDocumentTemplate: null,
+			lmsGroupPurposes: null,
 			isFinal: false,
 			checklist: []
 		}

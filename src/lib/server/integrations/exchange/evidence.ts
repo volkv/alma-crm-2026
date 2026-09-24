@@ -13,11 +13,13 @@
  * стадию (`docs/exchange-contract.md`, раздел 6).
  *
  * Здесь же живёт правило «нужной группы»: стадию подтверждает только группа
- * этого взаимодействия, чья закреплённая программа входит в его программы.
- * Второго места, где это правило записано, в продукте нет.
+ * этого взаимодействия, чья закреплённая программа входит в его программы, а
+ * назначение — в назначения, которые допускает стадия
+ * (`stages.lms_group_purposes`; пусто — любое). Второго места, где это правило
+ * записано, в продукте нет.
  */
-import { and, desc, eq, exists, gt, isNotNull, sql } from 'drizzle-orm';
-import type { LmsEvidence } from '$lib/contracts/exchange';
+import { and, desc, eq, exists, gt, inArray, isNotNull, sql, type SQL } from 'drizzle-orm';
+import type { LearningPurpose, LmsEvidence } from '$lib/contracts/exchange';
 import { getDb } from '../../db';
 import { interactionPrograms, learningGroupResults, learningGroups } from '../../db/schema';
 import type { Tx } from '../../db/transaction';
@@ -26,12 +28,21 @@ type Executor = Tx | ReturnType<typeof getDb>;
 
 /**
  * Группа засчитывается стадии: её программа входит в программы
- * взаимодействия. Группа без закреплённой программы (заведена до закрепления,
- * выбор не восстановить) не засчитывается — завершить обучение по ней можно
- * отметкой сотрудника, но только после того, как станет ясно, что обучалось.
+ * взаимодействия, а назначение — в назначения стадии. Группа без закреплённой
+ * программы (заведена до закрепления, выбор не восстановить) не
+ * засчитывается — завершить обучение по ней можно отметкой сотрудника, но
+ * только после того, как станет ясно, что обучалось. Группа без назначения не
+ * засчитывается стадии, которая назначения сужает: для кого шло обучение,
+ * неизвестно.
+ *
+ * `purposes` — назначения, которые допускает стадия; `null` — любые. Поток
+ * внутри взаимодействия любой: подтверждает итог любой подходящей группы.
  */
-export function countsForStage(executor: Executor) {
-	return exists(
+export function countsForStage(
+	executor: Executor,
+	purposes: readonly LearningPurpose[] | null
+): SQL {
+	const program = exists(
 		executor
 			.select({ one: sql`1` })
 			.from(interactionPrograms)
@@ -42,6 +53,10 @@ export function countsForStage(executor: Executor) {
 				)
 			)
 	);
+
+	return purposes === null
+		? program
+		: sql`(${program} and ${inArray(learningGroups.purpose, [...purposes])})`;
 }
 
 /**
@@ -55,12 +70,13 @@ export function finalResultFilter() {
 
 /**
  * Засчитывается ли группа стадии взаимодействия. Группа чужого взаимодействия —
- * нет, как бы её ни назвали.
+ * нет, как бы её ни назвали. `purposes` — назначения стадии; `null` — любые.
  */
 export async function groupCountsForStage(
 	executor: Executor,
 	interactionId: string,
-	learningGroupId: string
+	learningGroupId: string,
+	purposes: readonly LearningPurpose[] | null
 ): Promise<boolean> {
 	const [row] = await executor
 		.select({ id: learningGroups.id })
@@ -69,7 +85,7 @@ export async function groupCountsForStage(
 			and(
 				eq(learningGroups.id, learningGroupId),
 				eq(learningGroups.interactionId, interactionId),
-				countsForStage(executor)
+				countsForStage(executor, purposes)
 			)
 		)
 		.limit(1);
@@ -79,7 +95,8 @@ export async function groupCountsForStage(
 
 /**
  * Факт завершения обучения по взаимодействию; `null` — обучение не завершено ни
- * по одной засчитываемой группе.
+ * по одной засчитываемой группе. `purposes` — назначения, которые допускает
+ * стадия; `null` — любые.
  *
  * Засчитывается итоговый результат (завершили больше нуля и есть дата
  * окончания) или отметка сотрудника «обучение завершено». Промежуточный
@@ -89,7 +106,8 @@ export async function groupCountsForStage(
  */
 export async function readLmsEvidence(
 	executor: Executor,
-	interactionId: string
+	interactionId: string,
+	purposes: readonly LearningPurpose[] | null
 ): Promise<LmsEvidence | null> {
 	const [[result], [mark]] = await Promise.all([
 		executor
@@ -111,7 +129,7 @@ export async function readLmsEvidence(
 			.where(
 				and(
 					eq(learningGroups.interactionId, interactionId),
-					countsForStage(executor),
+					countsForStage(executor, purposes),
 					finalResultFilter()
 				)
 			)
@@ -130,7 +148,7 @@ export async function readLmsEvidence(
 			.where(
 				and(
 					eq(learningGroups.interactionId, interactionId),
-					countsForStage(executor),
+					countsForStage(executor, purposes),
 					isNotNull(learningGroups.completionMarkedAt)
 				)
 			)

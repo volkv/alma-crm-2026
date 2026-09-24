@@ -298,7 +298,9 @@ describe('что закрепляет группа', () => {
 			products: [{ id: product.id, code: product.code }],
 			purpose: 'teachers',
 			trainingState: 'awaiting',
-			countsForStage: true
+			// Программа та, но «Ведение занятий» засчитывает только поток
+			// студентов: итог потока преподавателей занятий не доказывает.
+			countsForStage: false
 		});
 
 		// В систему обучения ушло именно выбранное: и в конверте, и у получателя.

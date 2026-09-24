@@ -237,6 +237,10 @@ export const actions: Actions = {
 				// Пустая строка в форме означает «отметки не требуется»: пустой
 				// выбор в списке не отличить от невыбранного.
 				requiresDocumentMark: input.requiresDocumentMark === '' ? null : input.requiresDocumentMark,
+				requiresDocumentTemplate:
+					input.requiresDocumentTemplate === '' ? null : input.requiresDocumentTemplate,
+				// Ни одного отмеченного назначения — сужения нет, а не «никакое».
+				lmsGroupPurposes: input.lmsGroupPurposes.length === 0 ? null : input.lmsGroupPurposes,
 				onEnterNotify: input.onEnterNotify === '' ? null : input.onEnterNotify,
 				isFinal: input.isFinal,
 				checklist: parseChecklist(input.checklist).items
