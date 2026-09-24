@@ -45,6 +45,10 @@ export type CacheRegion = {
 
 const PREFIX = 'lct:cache:';
 
+function entryKey(region: CacheRegion, key: string): string {
+	return `${PREFIX}${region.name}:${key}`;
+}
+
 function epochKey(region: CacheRegion): string {
 	return `${PREFIX}${region.name}:epoch`;
 }
@@ -137,7 +141,7 @@ export async function cached<TValue>(
 	revive: (stored: unknown) => TValue
 ): Promise<TValue> {
 	const redis = getRedis();
-	const full = `${PREFIX}${region.name}:${key}`;
+	const full = entryKey(region, key);
 	const stored = await redis.get(full);
 
 	if (stored !== null) {
@@ -149,4 +153,22 @@ export async function cached<TValue>(
 	await redis.set(full, JSON.stringify(value), 'EX', region.ttlSeconds);
 
 	return value;
+}
+
+/**
+ * Только то, что уже собрано, — без сборки.
+ *
+ * Для экранов, которые показывают готовое, если оно есть, но не вправе сами
+ * запускать дорогую сборку (внешний запрос, списание квоты). Ключ строится так
+ * же, как у `cached`, поэтому находится ровно записанное ею. `undefined` —
+ * записи нет: JSON его не хранит, так что с сохранённым `null` он не спутается.
+ */
+export async function peekCached<TValue>(
+	region: CacheRegion,
+	key: string,
+	revive: (stored: unknown) => TValue
+): Promise<TValue | undefined> {
+	const stored = await getRedis().get(entryKey(region, key));
+
+	return stored === null ? undefined : revive(JSON.parse(stored));
 }

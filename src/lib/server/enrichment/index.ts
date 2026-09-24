@@ -32,10 +32,9 @@ import {
 	type SiteReport
 } from '$lib/contracts/enrichment';
 import type { ActorContext } from '../actor';
-import { cached, type CacheRegion } from '../cache/region';
+import { cached, peekCached, type CacheRegion } from '../cache/region';
 import { NotFoundError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
-import { getRedis } from '../redis';
 import { consumeQuota, requireEnabled } from './access';
 import { guessEducationLevel, guessKind } from './classify';
 import { DadataError, DADATA_NOT_CONFIGURED, findParties, isDadataConfigured } from './dadata';
@@ -315,8 +314,7 @@ function siteCacheKey(origin: string): string {
  * Карточка вуза показывает прочитанный раздел сразу, не заставляя нажимать
  * «Прочитать» ради того, что уже лежит в кэше. Право — то же, что на само
  * чтение; выключенные источники не мешают: наружу этот вызов не ходит. Ключ —
- * тот же, под которым отчёт кладёт `lookupSite` через `cached`, с тем же
- * префиксом области.
+ * тот же `siteCacheKey`, под которым отчёт кладёт `lookupSite` через `cached`.
  */
 export async function peekSiteReport(
 	ctx: ActorContext,
@@ -329,9 +327,13 @@ export async function peekSiteReport(
 		return null;
 	}
 
-	const stored = await getRedis().get(`lct:cache:${ENRICHMENT_CACHE.name}:${siteCacheKey(origin)}`);
+	const report = await peekCached<SiteReport | null>(
+		ENRICHMENT_CACHE,
+		siteCacheKey(origin),
+		(stored) => stored as SiteReport | null
+	);
 
-	return stored === null ? null : (JSON.parse(stored) as SiteReport | null);
+	return report ?? null;
 }
 
 /** Потолок снимка: паспорт с полным перечнем программ весит сотни килобайт. */
