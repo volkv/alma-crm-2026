@@ -45,6 +45,8 @@ import {
 	type Page
 } from '@playwright/test';
 
+import { DEMO_MANAGER_NAME, colleagueInCard, draftMention, sendComment } from './shots.ts';
+
 const run = promisify(execFile);
 
 /**
@@ -189,7 +191,10 @@ const STAND = {
  * именно на вузе, а не на владельце одной записи: смена владельца работу
  * передаёт, но из области прежнего ответственного запись не убирает.
  */
-const RESPONSIBLE = { from: 'Менеджер Демо', to: 'Вересова Анна Сергеевна' } as const;
+const RESPONSIBLE = { from: DEMO_MANAGER_NAME, to: 'Вересова Анна Сергеевна' } as const;
+
+/** Что руководитель пишет менеджеру в карточку заявки, пока тот работает. */
+const LEAD_NOTE = 'Заявку вижу: сверку программ ведём к пятнице.';
 
 /** Кем открыт экран; вход идёт демонстрационной записью каталога. */
 type Role = 'manager' | 'lead' | 'admin';
@@ -224,7 +229,21 @@ type Scene = {
 	narration: readonly string[];
 	/** Сцена начинается со входа в кадре: сессия ей не передаётся. */
 	signsIn?: boolean;
-	play: (page: Page, stand: Stand) => Promise<void>;
+	play: (page: Page, stand: Stand, crew: Crew) => Promise<void>;
+};
+
+/**
+ * Коллеги в сцене: вторая роль, которая работает с тем же делом в то же
+ * время, но в кадр не попадает.
+ *
+ * Живую карточку одной сессией не показать: «сейчас в карточке» и комментарий,
+ * пришедший без перезагрузки, — это след чужой работы. Коллега входит своей
+ * снятой заранее сессией, в своём браузере без записи, и уходит вместе с
+ * концом сцены.
+ */
+type Crew = {
+	/** Открыть адрес стенда от имени роли и дождаться, что страница ожила. */
+	join: (role: Role, address: string) => Promise<Page>;
 };
 
 /**
@@ -768,7 +787,7 @@ async function groupKeys(page: Page): Promise<Set<string>> {
  * (`$lib/components/interaction-card/model.ts`, `primaryCommand`).
  */
 async function transition(page: Page, label: string, reason: string): Promise<void> {
-	await page.getByRole('button', { name: 'Ещё' }).click();
+	await page.getByRole('button', { name: 'Ещё', exact: true }).click();
 	await page.getByRole('menuitem', { name: label }).click();
 
 	const dialog = page.getByRole('dialog');
@@ -899,15 +918,26 @@ const SCENES: readonly Scene[] = [
 	{
 		name: 'work',
 		role: 'manager',
-		caption: 'Работа КАМа: одна колонка, закрытый шаг с объяснением, переход с файлом',
+		caption:
+			'Работа КАМа: кто в деле, закрытый шаг с объяснением, переход с файлом, живой комментарий',
 		narration: [
-			'Карточка одной колонкой: факты и стадии сверху, дальше — что мешает шагу вперёд и что можно сделать прямо сейчас.',
+			'Карточка одной колонкой: факты и стадии сверху, над ними — кто сейчас в деле.',
 			'Шаг вперёд закрыт, и причина названа словами: два обязательных пункта стадии не закрыты.',
 			'Менеджер закрывает их — и переход становится доступен.',
-			'Переход просит объяснить, чем закончилась стадия: комментарий и файл остаются в истории, на той стадии, где их приложили.'
+			'Переход просит объяснить, чем закончилась стадия: комментарий и файл остаются в истории, на той стадии, где их приложили.',
+			'Руководитель в той же карточке: его комментарий с упоминанием приходит без перезагрузки.'
 		],
-		play: async (page, stand) => {
-			await visit(page, `/interactions/${stand.interactionId}`, 'Все стадии процесса');
+		play: async (page, stand, crew) => {
+			const address = `/interactions/${stand.interactionId}`;
+			// Руководитель открывает дело вместе с менеджером, а не до сцены: его
+			// аватарка появляется в кадре так же, как её увидел бы человек.
+			const [lead] = await Promise.all([
+				crew.join('lead', address),
+				visit(page, address, 'Все стадии процесса')
+			]);
+
+			await colleagueInCard(page);
+			await pointAt(page, page.locator('[data-slot="card-presence"]'));
 
 			const stage = await page.getByText(FIRST_STAGE).first().isVisible();
 
@@ -915,7 +945,7 @@ const SCENES: readonly Scene[] = [
 				throw new Error(`Заявка стоит не на стадии «${FIRST_STAGE}»: сцена работы не про неё`);
 			}
 
-			await beat(page, 1.4);
+			await beat(page, 0.8);
 
 			// Недоступный шаг показывается до чек-листа: сначала видно, что кнопка
 			// закрыта и почему, и только потом — как это снимают. Чек-лист уже на
@@ -924,10 +954,18 @@ const SCENES: readonly Scene[] = [
 			await pointAt(page, page.getByRole('button', { name: `Перейти к «${RENAMED_STAGE.from}»` }));
 			await beat(page, 1.2);
 
-			for (const item of FIRST_STAGE_CHECKLIST) {
-				await setChecklistItem(page, item, true, { shown: true });
-				await beat(page, 0.6);
-			}
+			// Комментарий руководитель набирает, пока менеджер закрывает пункты: в
+			// кадре незачем ждать, как печатают в соседнем окне. Отправляет — после
+			// перехода, когда менеджер уже смотрит на ленту.
+			await Promise.all([
+				draftMention(lead, DEMO_MANAGER_NAME, LEAD_NOTE),
+				(async () => {
+					for (const item of FIRST_STAGE_CHECKLIST) {
+						await setChecklistItem(page, item, true, { shown: true });
+						await beat(page, 0.6);
+					}
+				})()
+			]);
 
 			await page
 				.getByText('Условия стадии выполнены')
@@ -965,7 +1003,18 @@ const SCENES: readonly Scene[] = [
 
 			stand.moved = true;
 
-			await beat(page, 1.4);
+			await beat(page, 0.8);
+
+			const feed = page.locator('[data-slot="event-feed"]');
+
+			await pointAt(page, feed.getByRole('heading', { name: 'События' }));
+			await sendComment(lead, LEAD_NOTE);
+
+			const note = feed.getByText(LEAD_NOTE).first();
+
+			await note.waitFor({ state: 'visible', timeout: WAIT });
+			await pointAt(page, note);
+			await beat(page, 1.2);
 		}
 	},
 	{
@@ -975,7 +1024,7 @@ const SCENES: readonly Scene[] = [
 		narration: [
 			'Устройство процесса — настройка, а не код.',
 			'Администратор берёт черновик действующего процесса и переименовывает стадию.',
-			'До применения видно, кого изменение затронет: сколько записей переедет на другую стадию и сколько увидит правку, оставшись на своей.',
+			'До применения видно, кого изменение затронет: сколько записей переедет на другую стадию.',
 			'Применили ко всем — и работа продолжается там же, где стояла, уже под новым названием.'
 		],
 		play: async (page, stand) => {
@@ -1026,7 +1075,7 @@ const SCENES: readonly Scene[] = [
 		caption: 'Роли и передача: руководитель отдаёт вуз другому менеджеру',
 		signsIn: true,
 		narration: [
-			'Роль — не набор галочек в интерфейсе: вход идёт через общий каталог учётных записей, права приезжают вместе с ним.',
+			'Вход идёт через общий каталог учётных записей, и права приезжают вместе с ним.',
 			'Руководитель ведёт свою область и видит работу подчинённых.',
 			'Он отдаёт вуз другому менеджеру — вместе с вузом переезжают незакрытые взаимодействия и право их видеть.'
 		],
@@ -1165,7 +1214,7 @@ const SCENES: readonly Scene[] = [
 		narration: [
 			'Отчёт отвечает на два разных вопроса и не смешивает их: срез — где работа стоит на дату, движение — что случилось за период.',
 			'Клик по столбцу сужает тот же отчёт.',
-			'Выгрузка — та же ссылка с другим расширением: PDF можно взять сводкой или целиком, а числа везде совпадают с тем, что на экране.'
+			'Выгрузка — та же ссылка с другим расширением: PDF сводкой или целиком, и числа совпадают с экраном.'
 		],
 		play: async (page) => {
 			await visit(page, '/reports', 'Отчёты по взаимодействиям');
@@ -1395,11 +1444,34 @@ async function record(
 		throw new Error('Запись видео не включилась');
 	}
 
+	const colleagues: BrowserContext[] = [];
+	const crew: Crew = {
+		join: async (role, address) => {
+			const colleague = await browser.newContext({
+				viewport: FRAME,
+				locale: LOCALE,
+				storageState: session(storage, role)
+			});
+
+			colleagues.push(colleague);
+
+			const other = await colleague.newPage();
+
+			await other.goto(`${BASE_URL}${address}`, { waitUntil: 'load' });
+			await other.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
+
+			return other;
+		}
+	};
+
 	const startedAt = Date.now();
+	let acted: number;
 
 	try {
 		await page.mouse.move(FRAME.width / 2, FRAME.height / 2);
-		await scene.play(page, stand);
+		await scene.play(page, stand, crew);
+
+		acted = (Date.now() - startedAt) / 1000;
 
 		const left = readingSeconds(scene.narration) * 1000 - (Date.now() - startedAt);
 
@@ -1410,7 +1482,17 @@ async function record(
 		await context.close();
 
 		throw failure;
+	} finally {
+		for (const colleague of colleagues) {
+			await colleague.close();
+		}
 	}
+
+	// Действие и реплика печатаются рядом: сцена, которую держит действие, а не
+	// текст, — первая, где искать лишние секунды ролика.
+	console.log(
+		`${scene.name}: действие ${acted.toFixed(1)} с, реплика ${readingSeconds(scene.narration).toFixed(1)} с`
+	);
 
 	// Файл дописывается при закрытии контекста, а не страницы.
 	await context.close();

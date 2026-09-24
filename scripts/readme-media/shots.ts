@@ -32,8 +32,49 @@ const DEMO_HISTORY_INTERACTION = seedId('interaction', 'batse-kontrol');
  */
 const DEMO_ORGANIZATION = seedId('organization', 'szpu');
 
+/**
+ * Дело, в котором коллега упоминает менеджера перед кадром.
+ *
+ * Не то, что снимается: открытая карточка сама отмечает свои упоминания
+ * прочитанными, и колокольчик на её кадре остался бы пустым. И не те, что
+ * сняты на других кадрах: комментарий остаётся в ленте, и чужая лента на
+ * снимке менялась бы от каждой съёмки.
+ */
+const MENTION_INTERACTION = seedId('interaction', 'sruit-dpo');
+
 /** Кем открыт экран. Имя входа демонстрационной записи каталога. */
 export type ShotRole = 'manager' | 'lead' | 'admin' | 'anonymous';
+
+/**
+ * Второй сотрудник на кадре.
+ *
+ * Карточка дела показывает, кто сейчас в ней, а колокольчик — где человека
+ * упомянули. Ни то ни другое не снять одной сессией: оба — след чужой работы.
+ * Поэтому кадр может позвать коллегу: тот входит своей ролью, при нужде
+ * упоминает снимающего в другом деле и остаётся на том же адресе, что и кадр,
+ * пока снимок не сделан. Всё — через интерфейс, тем же путём, что и человек.
+ */
+export type Companion = {
+	role: Exclude<ShotRole, 'anonymous'>;
+	/** Упомянуть снимающего до съёмки: где, кого и каким текстом. */
+	mention?: { path: string; person: string; text: string };
+};
+
+/** Как в интерфейсе зовут демонстрационного менеджера — того, кого упоминают. */
+export const DEMO_MANAGER_NAME = 'Менеджер Демо';
+
+/** Руководитель заходит в карточку и упоминает менеджера в соседнем деле. */
+export const LEAD_WITH_MENTION: Companion = {
+	role: 'lead',
+	mention: {
+		path: `/interactions/${MENTION_INTERACTION}`,
+		person: DEMO_MANAGER_NAME,
+		text: 'Политех просит перенести встречу на следующую неделю — посмотрите, пожалуйста.'
+	}
+};
+
+/** Руководитель просто сидит в той же карточке. */
+export const LEAD_IN_CARD: Companion = { role: 'lead' };
 
 export type Shot = {
 	/** Имя файла без расширения. */
@@ -78,6 +119,8 @@ export type Shot = {
 	 * поля шире самой карточки.
 	 */
 	viewport?: { width: number; height: number };
+	/** Коллега, который нужен кадру, — см. `Companion`. */
+	companion?: Companion;
 };
 
 /** Окно съёмки: тот же размер, что у снимков, уже лежащих в `docs/media/`. */
@@ -111,6 +154,66 @@ export async function reachHomeIntro(page: Page): Promise<void> {
 	for (let step = 0; step < 12 && (await intro.count()) === 0; step += 1) {
 		await tour.getByRole('button', { name: 'Далее' }).click();
 	}
+}
+
+/**
+ * Набрать комментарий с упоминанием, не отправляя его.
+ *
+ * «@» и начало имени открывают подсказку из тех, кто видит дело; выбор в ней
+ * ставит в поле «@Имя», и только такое упоминание уходит адресату. Набранное
+ * руками «@Имя» без выбора осталось бы текстом. Подсказка знает людей, когда
+ * карточка получила состав от живого потока, — поэтому ждём саму строку
+ * подсказки, а не секунду.
+ */
+export async function draftMention(page: Page, person: string, text: string): Promise<void> {
+	const field = page.getByPlaceholder('«@» — позвать коллегу', { exact: false });
+
+	await field.click();
+	await field.pressSequentially(`@${person.slice(0, 3)}`, { delay: 40 });
+	await page.getByRole('option', { name: person, exact: true }).click();
+	await page.keyboard.type(text, { delay: 10 });
+	await page
+		.getByText(`Получат уведомление: ${person}`)
+		.waitFor({ state: 'visible', timeout: 20_000 });
+}
+
+/** Отправить набранный комментарий и дождаться его в ленте. */
+export async function sendComment(page: Page, text: string): Promise<void> {
+	await page.getByRole('button', { name: 'Отправить', exact: true }).click();
+	await page
+		.locator('[data-slot="event-feed"]')
+		.getByText(text, { exact: false })
+		.first()
+		.waitFor({ state: 'visible', timeout: 20_000 });
+}
+
+/**
+ * Дождаться, что коллега виден в карточке: в «Сейчас в карточке» две аватарки —
+ * своя и его. Состав приходит живым потоком уже после того, как страница
+ * ожила, и без ожидания кадр снимался бы с одной аватаркой.
+ */
+export async function colleagueInCard(page: Page): Promise<void> {
+	await page
+		.locator('[data-slot="card-presence"] [data-slot="avatar"]')
+		.nth(1)
+		.waitFor({ state: 'visible', timeout: 20_000 });
+}
+
+/** Дождаться числа на колокольчике: упоминание дошло до шапки. */
+export async function unreadMention(page: Page): Promise<void> {
+	await page
+		.getByRole('button', { name: /^Упоминания: \d/ })
+		.first()
+		.waitFor({ state: 'visible', timeout: 20_000 });
+}
+
+/** Колокольчик открыт: кто упомянул и в каком деле. */
+export async function openMentions(page: Page): Promise<void> {
+	await page
+		.getByRole('button', { name: /^Упоминания: / })
+		.first()
+		.click();
+	await page.getByText('упомянул(а) вас').first().waitFor({ state: 'visible', timeout: 20_000 });
 }
 
 export const SHOTS: readonly Frame[] = [
@@ -147,8 +250,28 @@ export const SHOTS: readonly Frame[] = [
 		name: 'interaction-card',
 		path: `/interactions/${DEMO_INTERACTION}`,
 		role: 'manager',
-		caption: 'Карточка: факты и полоса стадий сверху, главное действие с условиями, контекст сбоку',
-		waitFor: 'Все стадии процесса'
+		caption:
+			'Карточка: кто сейчас в деле и у кого доступ, факты и стадии, главное действие с условиями, колокольчик упоминаний',
+		waitFor: 'Все стадии процесса',
+		companion: LEAD_WITH_MENTION,
+		prepare: async (page) => {
+			await colleagueInCard(page);
+			await unreadMention(page);
+		}
+	},
+	{
+		name: 'mentions',
+		path: `/interactions/${DEMO_INTERACTION}`,
+		role: 'manager',
+		caption:
+			'Колокольчик в шапке: кто упомянул, в каком деле и когда — переход прямо к комментарию',
+		waitFor: 'Все стадии процесса',
+		companion: LEAD_WITH_MENTION,
+		prepare: async (page) => {
+			await colleagueInCard(page);
+			await unreadMention(page);
+			await openMentions(page);
+		}
 	},
 	{
 		name: 'interaction-history',

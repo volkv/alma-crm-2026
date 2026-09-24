@@ -15,7 +15,15 @@
  */
 import { seedId } from '../seed/ids.ts';
 import type { Frame } from './capture.ts';
-import { HOME_INTRO, reachHomeIntro } from './shots.ts';
+import {
+	HOME_INTRO,
+	LEAD_IN_CARD,
+	LEAD_WITH_MENTION,
+	colleagueInCard,
+	openMentions,
+	reachHomeIntro,
+	unreadMention
+} from './shots.ts';
 
 /** Взаимодействие, на котором показана карточка. Оно же снято для README. */
 const DEMO_INTERACTION = seedId('interaction', 'szpu-vo');
@@ -125,8 +133,40 @@ export const HELP_SHOTS: readonly Frame[] = [
 		name: 'user/interaction-1',
 		path: `/interactions/${DEMO_INTERACTION}`,
 		role: 'manager',
-		caption: 'Карточка: факты и полоса стадий сверху, главное действие с условиями, контекст сбоку',
-		waitFor: 'Все стадии процесса'
+		caption:
+			'Карточка: кто сейчас в деле, факты и полоса стадий, главное действие с условиями, контекст сбоку',
+		waitFor: 'Все стадии процесса',
+		companion: LEAD_WITH_MENTION,
+		prepare: async (page) => {
+			await colleagueInCard(page);
+			await unreadMention(page);
+		}
+	},
+	{
+		name: 'user/interaction-4',
+		path: `/interactions/${DEMO_INTERACTION}`,
+		role: 'manager',
+		caption: 'Кто работает с делом: сейчас в карточке и раскрытый список «Доступ к делу»',
+		waitFor: 'Все стадии процесса',
+		companion: LEAD_IN_CARD,
+		prepare: async (page) => {
+			await colleagueInCard(page);
+			await page.locator('[data-slot="card-access"]').click();
+			await page.getByText('У кого доступ к делу').waitFor({ state: 'visible', timeout: 20_000 });
+		}
+	},
+	{
+		name: 'user/interaction-5',
+		path: `/interactions/${DEMO_INTERACTION}`,
+		role: 'manager',
+		caption: 'Колокольчик упоминаний: кто упомянул, в каком деле, когда',
+		waitFor: 'Все стадии процесса',
+		companion: LEAD_WITH_MENTION,
+		prepare: async (page) => {
+			await colleagueInCard(page);
+			await unreadMention(page);
+			await openMentions(page);
+		}
 	},
 	{
 		name: 'user/interaction-2',

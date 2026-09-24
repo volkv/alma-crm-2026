@@ -29,7 +29,15 @@ import { mkdir, rename, stat } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
 import { chromium, type Browser, type BrowserContext, type Page } from '@playwright/test';
-import { SHOTS, VIEWPORT, type Shot, type ShotRole } from './shots.ts';
+import {
+	SHOTS,
+	VIEWPORT,
+	draftMention,
+	sendComment,
+	type Companion,
+	type Shot,
+	type ShotRole
+} from './shots.ts';
 import { HELP_SHOTS, HELP_VIEWPORT } from './help-shots.ts';
 
 const run = promisify(execFile);
@@ -228,10 +236,94 @@ async function shrink(file: string): Promise<void> {
 	await rename(packed, file);
 }
 
-async function capture(context: BrowserContext, shot: Frame, set: FrameSet): Promise<string> {
+/**
+ * Привести коллегу кадра: он упоминает снимающего, если кадру это нужно, и
+ * встаёт на тот же адрес. Возвращается его открытая страница — она держит
+ * присутствие, пока кадр не снят.
+ *
+ * Упоминание идёт раньше, чем кадр открывает страницу: колокольчик
+ * перечитывается на переходе, и упоминание, оставленное после, до шапки
+ * снимающего не дошло бы.
+ */
+async function bringCompanion(
+	context: BrowserContext,
+	companion: Companion,
+	address: string
+): Promise<Page> {
 	const page = await context.newPage();
 
 	try {
+		if (companion.mention !== undefined) {
+			const { path: where, person, text } = companion.mention;
+
+			await page.goto(`${BASE_URL}${where}`, { waitUntil: 'load' });
+			await hydrated(page);
+			await draftMention(page, person, text);
+			await sendComment(page, text);
+		}
+
+		await page.goto(`${BASE_URL}${address}`, { waitUntil: 'load' });
+		await hydrated(page);
+		// Своё присутствие коллега видит, когда поток карточки открыт: с этого
+		// момента его видят и другие.
+		await page
+			.locator('[data-slot="card-presence"]')
+			.waitFor({ state: 'visible', timeout: 20_000 });
+
+		return page;
+	} catch (failure) {
+		await page.close();
+
+		throw failure;
+	}
+}
+
+/**
+ * Прочитать упоминания, оставленные ради кадра.
+ *
+ * Стенд общий, и колокольчик демонстрационного менеджера видят все, кто им
+ * входит: непрочитанное число от съёмки росло бы с каждым прогоном. Отмечаются
+ * тем же путём, что и у человека, — открытием дела, где упомянули: карточка
+ * отмечает свои упоминания прочитанными. Чужие непрочитанные в других делах
+ * остаются нетронутыми.
+ */
+async function readMentions(page: Page, where: string): Promise<void> {
+	const marked = page.waitForResponse(
+		(response) =>
+			response.request().method() === 'POST' && new URL(response.url()).pathname === '/mentions',
+		{ timeout: 20_000 }
+	);
+
+	await page.goto(`${BASE_URL}${where}`, { waitUntil: 'load' });
+
+	const response = await marked;
+
+	if (!response.ok()) {
+		throw new Error(`Упоминания кадра не отмечены прочитанными: ответ ${response.status()}`);
+	}
+}
+
+async function capture(
+	context: BrowserContext,
+	shot: Frame,
+	set: FrameSet,
+	companionContext: BrowserContext | undefined
+): Promise<string> {
+	let companion: Page | null = null;
+
+	if (shot.companion !== undefined) {
+		if (companionContext === undefined) {
+			throw new Error(`Сессия коллеги «${shot.companion.role}» не открыта`);
+		}
+
+		companion = await bringCompanion(companionContext, shot.companion, shot.path);
+	}
+
+	let page: Page | null = null;
+
+	try {
+		page = await context.newPage();
+
 		if (shot.viewport !== undefined) {
 			await page.setViewportSize(shot.viewport);
 		}
@@ -282,9 +374,14 @@ async function capture(context: BrowserContext, shot: Frame, set: FrameSet): Pro
 			await shrink(file);
 		}
 
+		if (shot.companion?.mention !== undefined) {
+			await readMentions(page, shot.companion.mention.path);
+		}
+
 		return file;
 	} finally {
-		await page.close();
+		await page?.close();
+		await companion?.close();
 	}
 }
 
@@ -335,7 +432,10 @@ async function main(): Promise<void> {
 	const browser = await chromium.launch();
 	const contexts = await sessions(
 		browser,
-		new Set(selected.filter((shot) => !needsOwnSession(shot)).map((shot) => shot.role)),
+		new Set([
+			...selected.filter((shot) => !needsOwnSession(shot)).map((shot) => shot.role),
+			...selected.flatMap((shot) => (shot.companion === undefined ? [] : [shot.companion.role]))
+		]),
 		set.viewport
 	);
 
@@ -363,7 +463,9 @@ async function main(): Promise<void> {
 					throw new Error(`Сессия роли «${shot.role}» не открыта`);
 				}
 
-				const file = await capture(context, shot, set);
+				const companionContext =
+					shot.companion === undefined ? undefined : contexts.get(shot.companion.role);
+				const file = await capture(context, shot, set, companionContext);
 				const { size } = await stat(file);
 
 				console.log(`${shot.name}: ${file} — ${Math.round(size / 1024)} КиБ`);
