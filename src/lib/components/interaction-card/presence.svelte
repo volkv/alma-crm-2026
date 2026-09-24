@@ -22,7 +22,16 @@
 {#if here.length > 0}
 	<div class="flex min-w-0 items-center gap-2" data-slot="card-presence">
 		<span class="text-xs text-muted-foreground">Сейчас в карточке</span>
-		<Avatar.Group>
+		<!--
+			Без наложения: стандартное `-space-x-2` заезжает соседней аватаркой на
+			инициалы — у двухбуквенной подписи (имя и фамилия) край следующего
+			кружка перекрывает вторую букву предыдущего. Инициалы здесь — не
+			декор, а то, по чему узнают коллегу, и должны читаться целиком у
+			любого имени, не только у того, что оказалось на кадре. Кольцо фона
+			(`ring-background` у каждой аватарки) само даёт стеку границу между
+			кружками — сближать их ещё и внахлёст не нужно.
+		-->
+		<Avatar.Group class="space-x-0">
 			{#each here as person (person.userId)}
 				<Avatar.Root title={caption(person)}>
 					<Avatar.Fallback
