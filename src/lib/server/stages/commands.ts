@@ -79,6 +79,7 @@ import {
 import { assertMayWorkIn } from '../rbac/workspaces';
 import { withTransaction, type Tx } from '../db/transaction';
 import { publishAfterCommit } from '../live/publish';
+import { checkMentions, queueMentions } from '../mentions';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
 import { readDocumentMark } from '../documents/evidence';
 import { groupCountsForStage, readLmsEvidence } from '../integrations/exchange/evidence';
@@ -1410,9 +1411,36 @@ export async function addComment(
 	requirePermission(ctx, 'interactions.write');
 
 	const authorId = actingUserId(ctx);
+	const source = input.source ?? 'manual';
 
 	const write = async (executor: Tx): Promise<{ id: string }> => {
 		await lockInteraction(ctx, executor, input.interactionId);
+
+		// Повтор того же черновика: блокировка дела выстроила повторы в очередь,
+		// и второй видит записанный первым комментарий — возвращается он, без
+		// второй строки и второго письма упомянутым.
+		if (input.requestKey !== undefined) {
+			const [repeated] = await executor
+				.select({ id: comments.id })
+				.from(comments)
+				.where(
+					and(
+						eq(comments.requestKey, input.requestKey),
+						eq(comments.interactionId, input.interactionId),
+						eq(comments.authorId, authorId)
+					)
+				)
+				.limit(1);
+
+			if (repeated !== undefined) {
+				return repeated;
+			}
+		}
+
+		// Упоминания разбираются только в тексте сотрудника: заявитель с сайта
+		// не может никого позвать, даже если в его тексте похожая разметка.
+		const mentioned =
+			source === 'manual' ? await checkMentions(input.interactionId, input.body, authorId) : [];
 
 		const [comment] = await executor
 			.insert(comments)
@@ -1420,9 +1448,16 @@ export async function addComment(
 				interactionId: input.interactionId,
 				authorId,
 				body: input.body,
-				source: input.source ?? 'manual'
+				source,
+				requestKey: input.requestKey ?? null
 			})
 			.returning({ id: comments.id });
+
+		const mentionCount = await queueMentions(executor, {
+			commentId: comment.id,
+			interactionId: input.interactionId,
+			userIds: mentioned
+		});
 
 		await touchInteraction(executor, input.interactionId);
 		publishAfterCommit(executor, input.interactionId, {
@@ -1436,7 +1471,7 @@ export async function addComment(
 				type: 'interactions.commented',
 				outcome: 'success',
 				subject: { type: 'interaction', id: input.interactionId },
-				details: { commentId: comment.id }
+				details: { commentId: comment.id, mentionCount }
 			},
 			executor
 		);

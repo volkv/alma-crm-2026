@@ -83,6 +83,9 @@ export const DEMO_DATA_TABLES = [
 	'stage_pauses',
 	'blockers',
 	'comments',
+	// Упоминания в комментариях показа: уходят вместе с комментариями, иначе
+	// колокольчик звал бы в стёртые обсуждения.
+	'comment_mentions',
 	// Документы
 	'documents',
 	'stage_entry_documents',

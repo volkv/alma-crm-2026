@@ -8,6 +8,7 @@ export * from './directory-import';
 export * from './documents';
 export * from './exchange';
 export * from './interactions';
+export * from './mentions';
 export * from './notifications';
 export * from './settings';
 export * from './stats';

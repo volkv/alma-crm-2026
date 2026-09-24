@@ -6,6 +6,7 @@
 	import HelpMenu from '$lib/components/onboarding/help-menu.svelte';
 	import type { SessionUser } from '$lib/server/auth/types';
 	import AppNav from './app-nav.svelte';
+	import MentionBell from './mention-bell.svelte';
 	import ThemeToggle from './theme-toggle.svelte';
 	import UserMenu from './user-menu.svelte';
 	import { search } from './search.svelte';
@@ -65,6 +66,13 @@
 			</Button>
 			<span class="text-[10px] leading-none text-muted-foreground">Поиск</span>
 		</span>
+
+		{#if user}
+			<span class="flex w-16 flex-col items-center gap-0.5">
+				<MentionBell />
+				<span class="text-[10px] leading-none text-muted-foreground">Упоминания</span>
+			</span>
+		{/if}
 
 		<span class="flex w-16 flex-col items-center gap-0.5">
 			<HelpMenu />

@@ -14,7 +14,7 @@
  * одинаковых строк. Что повторов было несколько, видно по счётчику попыток и по
  * моменту последней отправки.
  *
- * Предметов три, и у строки заполнен ровно один (проверка
+ * Предметов четыре, и у строки заполнен ровно один (проверка
  * `notification_deliveries_subject_one_of`):
  * - запись стадии (`stage_entry_id` вместе со своим взаимодействием) — у
  *   напоминания о зависшем взаимодействии;
@@ -22,7 +22,9 @@
  *   `license_until`) — у уведомлений о лицензии. Срок входит в ключ: продлили
  *   лицензию — новый срок напоминает заново, а история прежнего остаётся;
  * - день утренней сводки (`digest_day`) вместе с получателем — у сводки «Мой
- *   день»: одна на сотрудника, день и канал.
+ *   день»: одна на сотрудника, день и канал;
+ * - упоминание в комментарии (`mention_id` вместе со своим взаимодействием) —
+ *   у письма «Вас упомянули в деле»: одно на упоминание и канал.
  */
 import { relations, sql } from 'drizzle-orm';
 import {
@@ -44,6 +46,7 @@ import {
 } from '$lib/contracts/notifications';
 import { users } from './auth';
 import { contractItems, interactions, stageEntries } from './interactions';
+import { commentMentions } from './mentions';
 import { timestamps } from './shared';
 
 export const notificationKindEnum = pgEnum('notification_kind', NOTIFICATION_KINDS);
@@ -77,6 +80,12 @@ export const notificationDeliveries = pgTable(
 		 * получателем. Завтра — новый день и новая строка.
 		 */
 		digestDay: date(),
+		/**
+		 * Упоминание, о котором письмо. Предмет дедупликации: одно письмо на
+		 * упоминание и канал, сколько бы раз цикл ни прошёл. Взаимодействие
+		 * заполнено рядом с ним — по нему журнал сужается областью читателя.
+		 */
+		mentionId: uuid().references(() => commentMentions.id, { onDelete: 'cascade' }),
 		/**
 		 * Кому уходит: руководитель ответственного за взаимодействие, ответственный
 		 * за вуз или его руководитель — по виду. Пусто — получателя нет, и это не
@@ -126,16 +135,21 @@ export const notificationDeliveries = pgTable(
 		uniqueIndex('notification_deliveries_digest_key')
 			.on(table.kind, table.recipientUserId, table.digestDay, table.channel)
 			.where(sql`${table.digestDay} is not null`),
+		// И для упоминания: одно письмо на упоминание по каналу.
+		uniqueIndex('notification_deliveries_mention_key')
+			.on(table.kind, table.mentionId, table.channel)
+			.where(sql`${table.mentionId} is not null`),
 		check(
 			'notification_deliveries_subject_one_of',
-			sql`(${table.stageEntryId} is not null and ${table.interactionId} is not null and ${table.contractItemId} is null and ${table.licenseUntil} is null and ${table.digestDay} is null) or (${table.stageEntryId} is null and ${table.interactionId} is null and ${table.contractItemId} is not null and ${table.licenseUntil} is not null and ${table.digestDay} is null) or (${table.stageEntryId} is null and ${table.interactionId} is null and ${table.contractItemId} is null and ${table.licenseUntil} is null and ${table.digestDay} is not null)`
+			sql`(${table.stageEntryId} is not null and ${table.interactionId} is not null and ${table.contractItemId} is null and ${table.licenseUntil} is null and ${table.digestDay} is null and ${table.mentionId} is null) or (${table.stageEntryId} is null and ${table.interactionId} is null and ${table.contractItemId} is not null and ${table.licenseUntil} is not null and ${table.digestDay} is null and ${table.mentionId} is null) or (${table.stageEntryId} is null and ${table.interactionId} is null and ${table.contractItemId} is null and ${table.licenseUntil} is null and ${table.digestDay} is not null and ${table.mentionId} is null) or (${table.stageEntryId} is null and ${table.interactionId} is not null and ${table.contractItemId} is null and ${table.licenseUntil} is null and ${table.digestDay} is null and ${table.mentionId} is not null)`
 		),
 		// Наблюдатель выбирает то, чему пришёл срок: строк в журнале со временем
 		// тысячи, а созревших единицы.
 		index('notification_deliveries_due_idx').on(table.nextNotifyAt),
 		index('notification_deliveries_status_idx').on(table.status, table.createdAt),
 		index('notification_deliveries_interaction_idx').on(table.interactionId, table.createdAt),
-		index('notification_deliveries_contract_item_idx').on(table.contractItemId)
+		index('notification_deliveries_contract_item_idx').on(table.contractItemId),
+		index('notification_deliveries_mention_idx').on(table.mentionId)
 	]
 );
 
@@ -151,6 +165,10 @@ export const notificationDeliveriesRelations = relations(notificationDeliveries,
 	contractItem: one(contractItems, {
 		fields: [notificationDeliveries.contractItemId],
 		references: [contractItems.id]
+	}),
+	mention: one(commentMentions, {
+		fields: [notificationDeliveries.mentionId],
+		references: [commentMentions.id]
 	}),
 	recipient: one(users, {
 		fields: [notificationDeliveries.recipientUserId],

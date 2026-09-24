@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { afterNavigate } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import PanelLeftCloseIcon from '@lucide/svelte/icons/panel-left-close';
@@ -16,6 +17,7 @@
 	import { createNavCollapse } from './nav-collapse.svelte';
 	import { createNavGroups, setNavGroups } from './nav-groups.svelte';
 	import { navLinks } from './nav-links';
+	import { mentions } from './mentions.svelte';
 	import { search } from './search.svelte';
 
 	/**
@@ -71,6 +73,14 @@
 	const links = $derived(
 		user === null ? [] : visibleSections(navLinks(workspaces), user.permissions)
 	);
+
+	// Колокольчик перечитывается на каждом переходе, и первый раз — при
+	// загрузке: `afterNavigate` срабатывает и на ней (`mentions.svelte.ts`).
+	afterNavigate(({ to }) => {
+		if (user !== null && to !== null) {
+			void mentions.refresh(to.url.pathname);
+		}
+	});
 
 	function onWindowKeydown(event: KeyboardEvent) {
 		if (event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)) {

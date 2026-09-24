@@ -44,6 +44,7 @@ import { actorScopeFilter, requirePermission } from '../rbac';
 import { getSetting } from '../settings';
 import { deliverDigest } from './digest';
 import { deliverLicenseNotice, readLicenseEntry } from './license-watch';
+import { deliverMentionNotice, readMentionDelivery } from './mention';
 import { deliverStuckNotice, readStuckEntry } from './watch';
 
 const recipient = alias(users, 'recipient_user');
@@ -180,11 +181,13 @@ export async function retryNotificationDelivery(
 	}
 
 	const status =
-		row.kind === 'daily_digest'
-			? await retryDigest(ctx, row.recipientUserId, row.digestDay, row.channel)
-			: isLicenseKind(row.kind)
-				? await retryLicense(ctx, row.kind, row.contractItemId, row.licenseUntil, row.channel)
-				: await retryStuck(ctx, row.stageEntryId, row.channel);
+		row.kind === 'mention'
+			? await retryMention(ctx, row.id)
+			: row.kind === 'daily_digest'
+				? await retryDigest(ctx, row.recipientUserId, row.digestDay, row.channel)
+				: isLicenseKind(row.kind)
+					? await retryLicense(ctx, row.kind, row.contractItemId, row.licenseUntil, row.channel)
+					: await retryStuck(ctx, row.stageEntryId, row.channel);
 
 	if (status === 'sent') {
 		return { ok: true, error: null };
@@ -311,6 +314,34 @@ async function retryDigest(
 			outcome: 'success',
 			subject: { type: 'user', id: recipientUserId },
 			details: { channelKey: channel, kindKey: 'daily_digest', sentCount: 1 }
+		});
+	}
+
+	return status;
+}
+
+/**
+ * Повтор письма об упоминании. Адресат проверяется заново, как и в цикле:
+ * потерял доступ к делу — письма нет, строка получает причину.
+ */
+async function retryMention(
+	ctx: ActorContext,
+	deliveryId: string
+): Promise<NotificationDeliveryStatus> {
+	const delivery = await readMentionDelivery(deliveryId);
+
+	if (delivery === null) {
+		throw new Error('Строка письма об упоминании без упоминания: проверка таблицы нарушена');
+	}
+
+	const status = await deliverMentionNotice(ctx, delivery);
+
+	if (status === 'sent') {
+		await recordAuditEvent(ctx, {
+			type: 'notifications.sent',
+			outcome: 'success',
+			subject: { type: 'interaction', id: delivery.interactionId },
+			details: { channelKey: delivery.channel, kindKey: 'mention', sentCount: 1 }
 		});
 	}
 

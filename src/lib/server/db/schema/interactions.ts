@@ -829,9 +829,19 @@ export const comments = pgTable(
 		 * сотрудника не трогает.
 		 */
 		source: commentSourceEnum().notNull().default('manual'),
+		/**
+		 * Ключ повтора формы: один на черновик. Повторная отправка того же
+		 * черновика находит эту строку и не пишет вторую — иначе двойной щелчок
+		 * дал бы два комментария и позвал бы упомянутых дважды. Пусто — у
+		 * комментариев из API (там свой `Idempotency-Key`) и из заявок.
+		 */
+		requestKey: uuid(),
 		...timestamps
 	},
-	(table) => [index('comments_interaction_idx').on(table.interactionId, table.createdAt)]
+	(table) => [
+		index('comments_interaction_idx').on(table.interactionId, table.createdAt),
+		uniqueIndex('comments_request_key').on(table.requestKey)
+	]
 );
 
 /**

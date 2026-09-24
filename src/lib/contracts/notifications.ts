@@ -22,7 +22,10 @@ import { pageQuerySchema } from './common';
  * - `license_expired` — лицензия кончилась, а продление так и не заведено
  *   вовремя; эскалация руководителю ответственного за вуз;
  * - `daily_digest` — утренняя сводка «Мой день»: одна на сотрудника, день и
- *   канал; уходит тому, у кого на сегодня есть что делать.
+ *   канал; уходит тому, у кого на сегодня есть что делать;
+ * - `mention` — сотрудника упомянули в комментарии к делу; одно на упоминание
+ *   и канал, уходит упомянутому. Письмо нейтральное: ни текста комментария,
+ *   ни названия дела в нём нет — только ссылка на карточку под входом.
  *
  * Вид входит в ключ дедупликации, поэтому второй вид по тому же предмету уедет
  * своей строкой, а не перезапишет первую.
@@ -31,7 +34,8 @@ export const NOTIFICATION_KINDS = [
 	'stage_stuck',
 	'license_expiring',
 	'license_expired',
-	'daily_digest'
+	'daily_digest',
+	'mention'
 ] as const;
 
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
@@ -49,7 +53,8 @@ export const NOTIFICATION_KIND_LABELS: Record<NotificationKind, string> = {
 	stage_stuck: 'Зависшее взаимодействие',
 	license_expiring: 'Истекает лицензия',
 	license_expired: 'Истекла лицензия',
-	daily_digest: 'Утренняя сводка'
+	daily_digest: 'Утренняя сводка',
+	mention: 'Упоминание в деле'
 };
 
 /**
@@ -81,7 +86,9 @@ export function isStubChannel(channel: NotificationChannel): boolean {
  * `queued` — строка заведена, отправка ещё не состоялась; `sent` — ушло;
  * `failed` — не ушло и ждёт человека или следующей попытки; `skipped` —
  * получатель не определён (у ответственного не указан руководитель), и письма
- * не будет, пока иерархию не поправят; `stub` — канал-заглушка.
+ * не будет, пока иерархию не поправят; у упоминания — адресат к моменту
+ * отправки больше не видит дело, и письмо о нём не уходит; `stub` —
+ * канал-заглушка.
  */
 export const NOTIFICATION_DELIVERY_STATUSES = [
 	'queued',

@@ -57,6 +57,7 @@ import { getSetting } from '../settings';
 import { sendThroughChannel, type ChannelOutcome, type NotificationRecipient } from './channels';
 import { runDailyDigest } from './digest';
 import { runLicenseWatch } from './license-watch';
+import { runMentionDelivery } from './mention';
 import { stuckNotificationMessage, type NotificationMessage } from './message';
 import { FAILURE_RETRY_MINUTES, nextNotifyAt } from './schedule';
 
@@ -458,6 +459,12 @@ export async function runNotificationCycle(ctx: ActorContext): Promise<Notificat
 	// держит правило «одна сводка на сотрудника, день и канал» и между
 	// процессами (`digest.ts`).
 	for (const status of await runDailyDigest(ctx, enabled, now)) {
+		count(report, status);
+	}
+
+	// Письма об упоминаниях: очередь ставит сам комментарий, проход её
+	// разбирает, перепроверив, что адресат всё ещё видит дело (`mention.ts`).
+	for (const status of await runMentionDelivery(ctx, enabled, now)) {
 		count(report, status);
 	}
 

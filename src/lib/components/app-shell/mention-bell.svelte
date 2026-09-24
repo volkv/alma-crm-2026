@@ -1,0 +1,110 @@
+<script lang="ts">
+	import { resolve } from '$app/paths';
+	import BellIcon from '@lucide/svelte/icons/bell';
+	import { Button } from '$lib/components/ui/button/index.js';
+	import * as Popover from '$lib/components/ui/popover/index.js';
+	import { formatDateTime, pluralize } from '$lib/format';
+	import { mentions } from './mentions.svelte';
+
+	/**
+	 * Колокольчик: где меня упомянули.
+	 *
+	 * Число — непрочитанные упоминания в делах, которые человек видит сейчас.
+	 * Строка ведёт в карточку, к самому комментарию, и сразу отмечается
+	 * прочитанной; открытая карточка отмечает прочитанными все свои упоминания.
+	 * Текста комментария здесь нет: что сказали — видно в ленте карточки, рядом
+	 * с тем, о чём говорили.
+	 */
+	let { class: className = '' }: { class?: string } = $props();
+
+	let open = $state(false);
+
+	const unread = $derived(mentions.unread);
+	const label = $derived(
+		unread === 0
+			? 'Упоминания: новых нет'
+			: `Упоминания: ${pluralize(unread, ['новое', 'новых', 'новых'])}`
+	);
+</script>
+
+<Popover.Root bind:open>
+	<Popover.Trigger>
+		{#snippet child({ props })}
+			<Button
+				{...props}
+				variant="ghost"
+				size="icon-sm"
+				class="relative text-muted-foreground {className}"
+				aria-label={label}
+				data-slot="mention-bell"
+			>
+				<BellIcon aria-hidden="true" />
+				{#if unread > 0}
+					<span
+						class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none font-semibold text-primary-foreground tabular-nums"
+						aria-hidden="true"
+					>
+						{unread > 99 ? '99+' : unread}
+					</span>
+				{/if}
+			</Button>
+		{/snippet}
+	</Popover.Trigger>
+	<Popover.Content align="end" class="w-80 gap-2 p-0">
+		<div class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
+			<p class="text-sm font-medium">Упоминания</p>
+			{#if unread > 0}
+				<Button variant="ghost" size="sm" onclick={() => void mentions.markAllRead()}>
+					Прочитать все
+				</Button>
+			{/if}
+		</div>
+		{#if mentions.failure !== null}
+			<p class="px-3 pb-2 text-sm text-danger" role="alert">{mentions.failure}</p>
+		{/if}
+		{#if mentions.inbox === null}
+			<p class="px-3 pb-3 text-sm text-muted-foreground">Загружаем…</p>
+		{:else if mentions.inbox.items.length === 0}
+			<p class="px-3 pb-3 text-sm text-muted-foreground">
+				Вас пока не упоминали. Коллеги зовут в обсуждение через «@» в комментарии к делу.
+			</p>
+		{:else}
+			<ul class="flex max-h-96 flex-col overflow-y-auto pb-1">
+				{#each mentions.inbox.items as item (item.id)}
+					<li>
+						<a
+							href="{resolve('/(app)/w/[workspace]/interactions/[id=uuid]', {
+								workspace: item.workspaceKey,
+								id: item.interactionId
+							})}#comment-{item.commentId}"
+							class="flex gap-2 px-3 py-2 text-sm focus-ring hover:bg-surface-muted"
+							onclick={() => {
+								open = false;
+
+								if (item.readAt === null) {
+									void mentions.markRead(item.id);
+								}
+							}}
+						>
+							<span
+								class="mt-1.5 size-2 shrink-0 rounded-full {item.readAt === null
+									? 'bg-primary'
+									: 'bg-transparent'}"
+								aria-hidden="true"
+							></span>
+							<span class="min-w-0 flex-1">
+								<span class="block">
+									<span class="font-medium">{item.authorName}</span> упомянул(а) вас
+								</span>
+								<span class="block truncate text-muted-foreground">{item.interactionTitle}</span>
+								<span class="block text-xs text-faint">
+									{formatDateTime(item.createdAt)}{item.readAt === null ? ' · новое' : ''}
+								</span>
+							</span>
+						</a>
+					</li>
+				{/each}
+			</ul>
+		{/if}
+	</Popover.Content>
+</Popover.Root>

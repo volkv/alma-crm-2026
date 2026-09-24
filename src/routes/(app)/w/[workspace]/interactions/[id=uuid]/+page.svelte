@@ -78,6 +78,14 @@
 		card: data.card
 	});
 	const model = $derived(buildCard(source, new Date()));
+	// Кого можно упомянуть: те, у кого доступ к делу, кроме самого себя. Список
+	// собирает сервер тем же правилом, что открывает карточку; при сохранении
+	// он всё равно проверяет каждого адресата сам.
+	const mentionable = $derived(
+		(live?.people ?? [])
+			.filter((person) => person.relation !== null && !person.you)
+			.map((person) => ({ userId: person.userId, name: person.name }))
+	);
 
 	const can = (action: InteractionAction) => data.summary.canDo.actions.includes(action);
 
@@ -207,7 +215,7 @@
 		<div
 			class="min-w-0 rounded-xl border border-border bg-surface p-4 lg:col-start-1 lg:row-start-2"
 		>
-			<EventFeed events={model.events} canComment={can('comment')} />
+			<EventFeed events={model.events} canComment={can('comment')} {mentionable} />
 		</div>
 	</div>
 </div>

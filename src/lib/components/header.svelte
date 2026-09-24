@@ -2,6 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import HelpMenu from '$lib/components/onboarding/help-menu.svelte';
 	import ThemeToggle from '$lib/components/app-shell/theme-toggle.svelte';
+	import MentionBell from '$lib/components/app-shell/mention-bell.svelte';
 
 	/**
 	 * Шапка страницы: что открыто, что с этим можно сделать и справка с темой
@@ -104,6 +105,9 @@
 				{#if actions}
 					<span class="mx-1 h-5 w-px bg-border" aria-hidden="true"></span>
 				{/if}
+				<!-- Колокольчик упоминаний — первым: это единственный значок ряда,
+					который говорит о чём-то новом для человека, а не о системе. -->
+				<MentionBell />
 				<HelpMenu />
 				<!-- Обёртка несёт метку тура: рамка обводит кнопку целиком. -->
 				<div data-tour="theme-toggle" class="flex shrink-0 items-center">

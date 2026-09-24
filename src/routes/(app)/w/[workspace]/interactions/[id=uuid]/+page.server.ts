@@ -426,7 +426,8 @@ export const actions: Actions = {
 		const data = await event.request.formData();
 		const parsed = parse(createCommentSchema, {
 			interactionId: event.params.id,
-			body: data.get('body')
+			body: data.get('body'),
+			requestKey: data.get('requestKey') ?? undefined
 		});
 
 		if (!parsed.ok) return parsed.failure;
