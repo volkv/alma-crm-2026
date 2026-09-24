@@ -146,7 +146,7 @@ export const HELP_SHOTS: readonly Frame[] = [
 		path: `/interactions/${DEMO_SIGNED_INTERACTION}`,
 		role: 'manager',
 		caption: 'Стадия подписания, подтверждённая отметкой «Утверждён» по документу дела',
-		waitFor: 'Подтверждено отметкой',
+		waitFor: 'Документ с отметкой «Утверждён»',
 		prepare: async (page) => {
 			// Подтверждение — пункт «Сделано на стадии»: он не в чек-листе, что
 			// осталось сделать, а свёрнут отдельно, потому что уже закрыт. Текст
@@ -154,7 +154,7 @@ export const HELP_SHOTS: readonly Frame[] = [
 			// отличие от `scrollTo`, который ищет заголовок блока целиком.
 			await page.locator('[data-slot="card-action-done"] summary').click();
 
-			const target = page.getByText('Подтверждено отметкой').first();
+			const target = page.getByText('Документ с отметкой «Утверждён»').first();
 
 			await target.waitFor({ state: 'visible', timeout: 20_000 });
 			await target.scrollIntoViewIfNeeded();
@@ -285,14 +285,14 @@ export const HELP_SHOTS: readonly Frame[] = [
 	},
 	{
 		name: 'admin/process-1',
-		path: '/settings/process',
+		path: '/settings/workflows',
 		role: 'admin',
 		caption: 'Группы процесса: действующая редакция, черновик, число записей',
 		waitFor: 'Процесс'
 	},
 	{
 		name: 'admin/process-2',
-		path: '/settings/process/b2b',
+		path: '/settings/workflows/b2b',
 		role: 'admin',
 		caption: 'Стадии действующей редакции и черновик изменений',
 		waitFor: 'Черновик изменений'
@@ -378,7 +378,14 @@ export const HELP_SHOTS: readonly Frame[] = [
 		// такой адрес принимает, а сервис отвечает «не найдено». Это самый
 		// дешёвый способ снять настоящую страницу отказа — с кодом обращения,
 		// который система выдала на этот самый запрос, а не подставленным в кадр.
-		path: '/interactions/00000000-0000-4000-8000-000000000000',
+		//
+		// Адрес — внутри пространства: короткий `/interactions/<id>` без
+		// пространства остался только перенаправлением на существующую запись
+		// (`(app)/interactions/[id=uuid]/+server.ts`) и на несуществующей отвечает
+		// не страницей приложения, а самым нижним запасным шаблоном фреймворка —
+		// без оболочки и без кода обращения. Кадр показывает настоящую страницу
+		// отказа, поэтому адрес идёт сразу с пространством.
+		path: '/w/b2b/interactions/00000000-0000-4000-8000-000000000000',
 		role: 'manager',
 		caption: 'Страница отказа: код ответа, фраза сервера и код обращения',
 		waitFor: 'Код обращения'

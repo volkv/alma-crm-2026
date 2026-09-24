@@ -205,14 +205,14 @@ export const SHOTS: readonly Frame[] = [
 	},
 	{
 		name: 'settings-process',
-		path: '/settings/process',
+		path: '/settings/workflows',
 		role: 'admin',
 		caption: 'Процесс: группы контрагентов и действующие редакции',
 		waitFor: 'Процесс'
 	},
 	{
 		name: 'settings-process-stages',
-		path: '/settings/process/b2b',
+		path: '/settings/workflows/b2b',
 		role: 'admin',
 		caption: 'Стадии действующего процесса и черновик изменений',
 		waitFor: 'Черновик изменений',
