@@ -816,9 +816,13 @@ const SCENES: readonly Scene[] = [
 			await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
 
 			// Подтверждение стоит в «Сделано на стадии»: пункт закрыт, поэтому
-			// свёрнут — раскрываем тем же движением, что и человек.
+			// свёрнут — раскрываем тем же движением, что и человек. Стадия
+			// «Подписание соглашения» требует отметки по документу
+			// (`requiresDocumentMark`, не общего `confirmation`), поэтому пункт
+			// подписан «Документ с отметкой «Утверждён»»
+			// (`src/lib/components/interaction-card/model.ts`), а не «Подтверждено…».
 			await press(page, page.locator('[data-slot="card-action-done"] summary'));
-			await pointAt(page, page.getByText('Подтверждено отметкой').first());
+			await pointAt(page, page.getByText('Документ с отметкой').first());
 			await beat(page, 1.4);
 		}
 	},
