@@ -8,6 +8,7 @@
 #   scripts/load/run.sh browse    сценарий «пятьдесят пользователей» (VUS, DURATION)
 #   scripts/load/run.sh reports   сценарий «десять одновременных отчётов»
 #   scripts/load/run.sh full      полный прогон обоих сценариев
+#   scripts/load/run.sh live      сценарий пользователей и открытые карточки (live.ts)
 #   scripts/load/run.sh breakdown <файл>  разложить прогон по шагам сценария
 #   scripts/load/run.sh down      погасить стенд и снести его тома
 #
@@ -324,6 +325,30 @@ full)
 	reset_login_limit
 	k6 reports.js -e REPORT_VUS="${REPORT_VUS:-10}" -e REPORT_DURATION="${REPORT_DURATION:-2m}" |
 		tee "$OUT/reports.txt" || status=$?
+	echo "результаты: $OUT"
+	exit "$status"
+	;;
+live)
+	# Сценарий пользователей, а рядом — открытые карточки: потоки живой карточки
+	# и комментарии в них (`live.ts`). k6 долгих ответов не держит, поэтому
+	# потоки открывает node на этой машине — ему нужен Node 24 и `pnpm install`.
+	# Потоки открываются раньше, чем входит первый VU, и живут дольше прогона.
+	fixture
+	FIXTURE="$OUT/fixture.json" OUT="$OUT" PASSWORD="$PASSWORD" BASE_URL="$BASE_URL" \
+		DURATION_S="$(($(seconds "${DURATION:-3m}") + 60))" NO_PROXY='*' \
+		node scripts/load/live.ts >"$OUT/live.txt" 2>&1 &
+	live=$!
+	until [[ -f "$OUT/live-ready" ]]; do
+		if ! kill -0 "$live" 2>/dev/null; then
+			cat "$OUT/live.txt" >&2
+			exit 1
+		fi
+		sleep 1
+	done
+	status=0
+	browse "${VUS:-50}" "${DURATION:-3m}" || status=$?
+	wait "$live" || status=$?
+	cat "$OUT/live.txt"
 	echo "результаты: $OUT"
 	exit "$status"
 	;;
