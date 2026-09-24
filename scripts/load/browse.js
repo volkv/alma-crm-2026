@@ -30,7 +30,15 @@ import http from 'k6/http';
 import { fail, sleep } from 'k6';
 import { Counter } from 'k6/metrics';
 import { jar, signIn } from './session.js';
-import { actionSucceeded, applied, kinds, N1_MS, record, statusIs } from './metrics.js';
+import {
+	actionSucceeded,
+	applied,
+	kinds,
+	N1_MS,
+	record,
+	serverTiming,
+	statusIs
+} from './metrics.js';
 
 const BASE_URL = __ENV.BASE_URL;
 const PASSWORD = __ENV.PASSWORD;
@@ -166,6 +174,7 @@ export default function () {
 		`${INTERACTIONS}/lookup?kind=organizations&q=${encodeURIComponent('универ')}`,
 		{ jar, headers: { Accept: 'application/json' }, redirects: 0, tags: { step: 'lookup' } }
 	);
+	serverTiming(lookup, 'lookup');
 	kinds.api.duration.add(lookup.timings.duration);
 	kinds.api.failed.add(lookup.status !== 200);
 	sleep(1);

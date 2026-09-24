@@ -242,36 +242,52 @@ k6() {
 		--summary-time-unit ms
 }
 
-# Сводка считает метрики сценария целиком, и на один вопрос она не отвечает:
-# шаг «переход по процессу» и шаг «комментарий» лежат в одной метрике, потому
-# что для требования это одна операция — отправка формы. Когда надо разделить
-# их (или разложить страницы на список, карточку и отчёт), берётся разбивка по
-# меткам запроса из сырых точек прогона.
+# Сводка считает метрики сценария целиком и по шагам не делит: входа и
+# подсказки выбора в ней нет отдельными метриками, а куда ушло время ответа —
+# в базу или в процесс приложения — она не знает вовсе. Разбивка берёт сырые
+# точки прогона: длительность запроса по метке шага и `Server-Timing` по метке
+# операции (`server_db`, `server_app` из `metrics.js`). Разница между временем
+# операции и `db + app` — очередь до начала обслуживания и сеть.
 breakdown() {
 	local raw="$1"
 	python3 - "$raw" <<-'PYTHON'
 		import gzip, json, sys
 		from collections import defaultdict
 
-		points = defaultdict(list)
+		steps = defaultdict(list)
+		server = {'server_db': defaultdict(list), 'server_app': defaultdict(list)}
 
 		with gzip.open(sys.argv[1], 'rt') as source:
 		    for line in source:
 		        event = json.loads(line)
-		        if event['type'] == 'Point' and event['metric'] == 'http_req_duration':
-		            tags = event['data']['tags']
-		            points[tags.get('step', '—')].append(event['data']['value'])
+		        if event['type'] != 'Point':
+		            continue
+		        tags = event['data']['tags']
+		        if event['metric'] == 'http_req_duration':
+		            steps[tags.get('step', '—')].append(event['data']['value'])
+		        elif event['metric'] in server:
+		            server[event['metric']][tags['op']].append(event['data']['value'])
 
 		def quantile(values, share):
+		    values.sort()
 		    return values[min(int(len(values) * share), len(values) - 1)]
 
 		print(f"{'шаг':<16}{'запросов':>10}{'p50, мс':>10}{'p95, мс':>10}{'max, мс':>10}")
-		for step, values in sorted(points.items()):
-		    values.sort()
+		for step, values in sorted(steps.items()):
 		    print(
 		        f'{step:<16}{len(values):>10}{quantile(values, 0.5):>10.0f}'
-		        f'{quantile(values, 0.95):>10.0f}{values[-1]:>10.0f}'
+		        f'{quantile(values, 0.95):>10.0f}{max(values):>10.0f}'
 		    )
+
+		if server['server_db']:
+		    print()
+		    print(f"{'операция':<16}{'db p50':>10}{'db p95':>10}{'app p50':>10}{'app p95':>10}  (Server-Timing, мс)")
+		    for op, db in sorted(server['server_db'].items()):
+		        app = server['server_app'][op]
+		        print(
+		            f'{op:<16}{quantile(db, 0.5):>10.0f}{quantile(db, 0.95):>10.0f}'
+		            f'{quantile(app, 0.5):>10.0f}{quantile(app, 0.95):>10.0f}'
+		        )
 	PYTHON
 }
 

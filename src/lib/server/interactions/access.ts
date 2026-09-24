@@ -41,18 +41,21 @@ export function interactionScopeFilter(ctx: ActorContext): SQL {
 		return sql`true`;
 	}
 
-	return sql`(${workspaceFilter(ctx, interactions.workspaceId)} and (${actorScopeFilter(ctx, interactions.ownerUserId)} or ${exists(
-		getDb()
-			.select({ one: sql`1` })
-			.from(interactionParties)
-			.where(
-				and(
-					eq(interactionParties.interactionId, interactions.id),
-					eq(interactionParties.isPrimary, true),
-					scopeFilter(ctx, interactionParties.organizationId)
-				)
+	// Взаимодействия, чья основная сторона в области, — один набор на запрос,
+	// а не подзапрос на строку: условие стоит за «или», и коррелированный
+	// подзапрос база повторяла бы на каждом взаимодействии пространства
+	// (`docs/performance.md`, замер 2026-09-24).
+	const byPrimaryParty = getDb()
+		.select({ id: interactionParties.interactionId })
+		.from(interactionParties)
+		.where(
+			and(
+				eq(interactionParties.isPrimary, true),
+				scopeFilter(ctx, interactionParties.organizationId)
 			)
-	)}))`;
+		);
+
+	return sql`(${workspaceFilter(ctx, interactions.workspaceId)} and (${actorScopeFilter(ctx, interactions.ownerUserId)} or ${interactions.id} in (${byPrimaryParty})))`;
 }
 
 /**

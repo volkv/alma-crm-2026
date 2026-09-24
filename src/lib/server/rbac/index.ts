@@ -211,29 +211,55 @@ export function invalidateRoleCache(): void {
  * ответственного обязана менять доступ немедленно, а не со следующего входа.
  * Отсюда и частичные индексы по `valid_to is null` в `docs/domain.md`.
  *
+ * Подзапрос **не коррелирует** со строкой (`in (…)`, а не `exists (…)`):
+ * PostgreSQL считает набор организаций один раз на запрос и дальше проверяет
+ * строки по хэшу. Коррелированный `exists` он перечитывал бы на каждой строке
+ * выборки, и под условием, стоящим за «или» (`interactionScopeFilter`), это
+ * был бы подзапрос на каждое взаимодействие пространства. В `where` обе формы
+ * отбирают одно и то же: пустой столбец не проходит ни ту, ни другую.
+ *
  * Организация-оператор и организации-вендоры под это условие не попадают
  * никогда: ответственного у них не бывает, и назначить его им нельзя.
  */
 export function scopeFilter(ctx: ActorContext, organizationId: PgColumn): SQL {
-	if (ctx.scope.kind === 'all') {
+	const organizations = scopeOrganizations(ctx);
+
+	if (organizations === 'all') {
 		return sql`true`;
+	}
+
+	if (organizations === 'none') {
+		return sql`false`;
+	}
+
+	return sql`${organizationId} in (${organizations})`;
+}
+
+/**
+ * Организации области одним подзапросом — то, на чём стоит `scopeFilter`, для
+ * условий, которым нужен сам набор, а не проверка одного столбца. При полном
+ * доступе — `'all'`, при пустой области — `'none'`: подзапросу там нечего
+ * выбирать, и вызывающий решает сам, что это значит для его условия.
+ */
+export function scopeOrganizations(ctx: ActorContext): SQL | 'all' | 'none' {
+	if (ctx.scope.kind === 'all') {
+		return 'all';
 	}
 
 	const ids = [...ctx.scope.userIds];
 	if (ids.length === 0) {
-		return sql`false`;
+		return 'none';
 	}
 
-	return sql`exists (${getDb()
-		.select({ one: sql`1` })
+	return sql`${getDb()
+		.select({ organizationId: organizationResponsibles.organizationId })
 		.from(organizationResponsibles)
 		.where(
 			and(
-				eq(organizationResponsibles.organizationId, organizationId),
 				sql`${organizationResponsibles.userId} = any(${sql.param(ids)}::uuid[])`,
 				isNull(organizationResponsibles.validTo)
 			)
-		)})`;
+		)}`;
 }
 
 /**

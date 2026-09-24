@@ -102,12 +102,27 @@ function measure<TSql extends postgres.Sql | postgres.TransactionSql>(sql: TSql)
 	return sql;
 }
 
+/**
+ * Параметры сеанса, с которыми открывается каждое соединение пула.
+ *
+ * `jit: off` — JIT-компиляция выражений PostgreSQL включается по оценке
+ * стоимости плана (`jit_above_cost`), а не по его настоящей цене. Запросы
+ * приложения выбирают десятки и сотни строк, но оценка у запросов с подзапросами
+ * области и у запросов отчёта перешагивает порог, и тогда на компиляцию уходит
+ * 20–70 мс на запрос, который без неё выполняется за 1–5 мс. Нагрузочный замер
+ * 2026-09-24 (`docs/performance.md`): у отчёта это была почти вся цена ответа.
+ * Выгода JIT — многосекундные аналитические запросы по миллионам строк, а их
+ * у приложения нет.
+ */
+const SESSION = { jit: 'off' } as const;
+
 function getClient(): postgres.Sql {
 	client ??= measure(
 		postgres(getConfig().DATABASE_URL, {
 			max: POOL_MAX,
 			// Fail a stuck connection attempt instead of hanging a request forever.
-			connect_timeout: 10
+			connect_timeout: 10,
+			connection: SESSION
 		})
 	);
 	return client;
