@@ -13,6 +13,12 @@ export type DataTableColumnMeta = {
 	align?: 'start' | 'end';
 	/** Name for the column-visibility menu, when the header is not plain text. */
 	title?: string;
+	/**
+	 * In a stacked list (`stacked` on the table, below 640 px) the cell shares
+	 * a line with its inline neighbours instead of taking one of its own —
+	 * for short values such as a stage or a deadline.
+	 */
+	stackInline?: boolean;
 };
 
 /**

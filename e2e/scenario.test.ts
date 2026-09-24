@@ -589,7 +589,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		// никуда не поедут — поедут только те, чью стадию удалили.
 		const renamed = admin.getByRole('row').filter({ hasText: STAGES[1].key });
 
-		await openLayer(renamed.getByRole('button', { name: 'Изменить' }), dialog);
+		await openLayer(renamed.getByRole('button', { name: STAGES[1].name, exact: true }), dialog);
 		await dialog.getByLabel('Название').fill(RENAMED_NAME);
 		await dialog.getByRole('button', { name: 'Сохранить стадию' }).click();
 		await expect(admin.getByText('Стадия сохранена')).toBeVisible();
@@ -597,7 +597,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		// Удаление: диалог называет число тех, кто стоит на стадии сейчас.
 		const removed = admin.getByRole('row').filter({ hasText: STAGES[2].key });
 
-		await openLayer(removed.getByRole('button', { name: 'Удалить' }), dialog);
+		await openLayer(removed.getByRole('button', { name: /^Удалить стадию/ }), dialog);
 		await expect(dialog.getByText(/на этой стадии стоит незавершённых/i)).toBeVisible();
 		await dialog.getByRole('button', { name: 'Удалить стадию' }).click();
 		await expect(admin.getByText('Стадия удалена из черновика')).toBeVisible();

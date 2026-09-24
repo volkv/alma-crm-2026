@@ -1,5 +1,5 @@
 <script lang="ts" generics="TData extends RowData">
-	import { untrack, type Snippet } from 'svelte';
+	import { tick, untrack, type Snippet } from 'svelte';
 	import type { HTMLAttributes } from 'svelte/elements';
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
@@ -57,6 +57,7 @@
 		emptyDescription,
 		emptyAction,
 		initialHiddenColumns = [],
+		stacked = false,
 		defaultSort,
 		onopen,
 		bulkActions,
@@ -82,12 +83,20 @@
 		 */
 		emptyAction?: Snippet;
 		/**
-		 * Columns that start hidden on a narrow screen — the ones a reader can
-		 * live without when the important ones would otherwise be cut off. The
-		 * menu overrides this: the choice is the reader's, the width only decides
-		 * where the list starts.
+		 * Columns a reader can live without, in the order they give way: while
+		 * the table is wider than its box, they are hidden one by one until the
+		 * rest fits. The menu overrides this: the choice is the reader's, the
+		 * width only decides where the list starts.
 		 */
 		initialHiddenColumns?: readonly string[];
+		/**
+		 * Below 640 px a row becomes a compact block — one line per cell, inline
+		 * cells (`meta.stackInline`) side by side — and the columns from
+		 * `initialHiddenColumns` start hidden. A table squeezed into a phone
+		 * shows a third of each row and has to be scrolled sideways to read one
+		 * record; a block shows the whole record at once.
+		 */
+		stacked?: boolean;
 		/**
 		 * Порядок, в котором сервер отдаёт список, пока в адресе не сказано
 		 * иного. Заголовок обязан называть его вслух: страница, отсортированная
@@ -107,13 +116,22 @@
 		 */
 	} & HTMLAttributes<HTMLDivElement> = $props();
 
-	/**
-	 * Ширина окна, ниже которой второстепенные колонки стартуют скрытыми:
-	 * подрезанная справа таблица врёт о данных сильнее, чем честно спрятанная
-	 * колонка. Это порог удобства, а не обещание, что выше него поместится всё:
-	 * сколько места нужно списку, решают его собственные колонки и данные в них.
+	/** Ширина окна, ниже которой список `stacked` складывает строки в блоки (Tailwind `sm`). */
+	const PHONE_VIEWPORT = 640;
+
+	/*
+	 * Раскладка блоком — те же строки и ячейки таблицы, переставленные стилями
+	 * ниже `sm`: одна разметка на обе ширины, поэтому клавиатура, выделение и
+	 * открытие записи работают одинаково.
 	 */
-	const WIDE_VIEWPORT = 1440;
+	const STACK_TABLE = 'max-sm:block';
+	const STACK_ROW =
+		'max-sm:relative max-sm:flex max-sm:h-auto max-sm:flex-wrap max-sm:items-center max-sm:gap-x-3 max-sm:gap-y-1.5 max-sm:px-3 max-sm:py-2.5';
+	const STACK_CELL =
+		'max-sm:block max-sm:min-w-0 max-sm:basis-full max-sm:p-0 max-sm:text-left max-sm:whitespace-normal';
+	/** Флажок выделения — в правом верхнем углу блока, с полем нажатия 44 px. */
+	const STACK_CHECKBOX =
+		'max-sm:absolute max-sm:top-0.5 max-sm:right-0.5 max-sm:flex max-sm:size-11 max-sm:items-center max-sm:justify-center max-sm:p-0';
 
 	const query = $derived(readTableQuery(page.url));
 	const selectable = $derived(Boolean(bulkActions));
@@ -133,20 +151,53 @@
 	let activeIndex = $state(-1);
 
 	/**
-	 * Ширину окна знает только браузер, поэтому стартовая видимость ставится
-	 * после гидратации и ровно один раз: дальше видимостью распоряжается
-	 * человек, и менять её за ним при повороте экрана нельзя.
+	 * Выбрал ли человек колонки сам в меню. С этого момента видимостью
+	 * распоряжается он, и прятать что-то за ним нельзя.
 	 */
-	let widthApplied = false;
+	let columnsChosen = false;
 
-	$effect(() => {
-		if (widthApplied || initialHiddenColumns.length === 0) return;
+	/**
+	 * Подрезанная справа таблица врёт о данных сильнее, чем честно спрятанная
+	 * колонка. Сколько места нужно списку, решают его колонки и данные в них, а
+	 * не ширина окна: одна и та же ширина вмещает список с короткими названиями
+	 * и не вмещает с длинными. Поэтому второстепенные колонки прячутся по одной,
+	 * пока таблица шире своей рамки, — и только прячутся: вернуть колонку при
+	 * расширении окна значило бы менять раскладку под рукой человека.
+	 */
+	async function fitColumns(container: HTMLElement) {
+		if (columnsChosen) return;
 
-		widthApplied = true;
+		if (stacked && window.innerWidth < PHONE_VIEWPORT) {
+			columnVisibility = {
+				...columnVisibility,
+				...Object.fromEntries(initialHiddenColumns.map((id) => [id, false]))
+			};
 
-		if (window.innerWidth < WIDE_VIEWPORT) {
-			columnVisibility = Object.fromEntries(initialHiddenColumns.map((id) => [id, false]));
+			return;
 		}
+
+		for (const id of initialHiddenColumns) {
+			if (container.scrollWidth <= container.clientWidth) return;
+			if (columnVisibility[id] === false) continue;
+
+			columnVisibility = { ...columnVisibility, [id]: false };
+			await tick();
+		}
+	}
+
+	// Ширину знает только браузер, поэтому подгонка идёт после отрисовки — и
+	// заново на каждой новой странице строк: пустая выборка помещается всегда,
+	// а следующая, с длинными названиями, уже нет.
+	$effect(() => {
+		if (rows.length === 0 || initialHiddenColumns.length === 0 || tableRoot === null) return;
+
+		const container = tableRoot.querySelector<HTMLElement>('[data-slot="table-container"]');
+
+		if (container === null) {
+			throw new Error('data-table: the table container is missing');
+		}
+
+		untrack(() => void fitColumns(container));
 	});
 
 	const table = createTable<DataTableFeatures, TData>({
@@ -184,7 +235,10 @@
 		onRowSelectionChange: (updater) => {
 			rowSelection = typeof updater === 'function' ? updater(rowSelection) : updater;
 		},
+		// Сюда приходят только переключения из меню «Колонки»: подгонка по
+		// ширине пишет состояние напрямую.
 		onColumnVisibilityChange: (updater) => {
+			columnsChosen = true;
 			columnVisibility = typeof updater === 'function' ? updater(columnVisibility) : updater;
 		}
 	});
@@ -299,7 +353,7 @@
 					value={query.search}
 					placeholder={searchPlaceholder}
 					aria-label={searchPlaceholder}
-					class="pl-8"
+					class="pl-8 max-sm:min-h-11"
 					oninput={onSearchInput}
 				/>
 			</div>
@@ -309,7 +363,7 @@
 			<DropdownMenu.Root>
 				<DropdownMenu.Trigger>
 					{#snippet child({ props })}
-						<Button {...props} variant="outline" size="sm">
+						<Button {...props} variant="outline" size="sm" class="max-sm:min-h-11">
 							<Columns3Icon aria-hidden="true" />
 							Колонки
 						</Button>
@@ -350,6 +404,7 @@
 				<Button
 					variant="ghost"
 					size="icon-sm"
+					class="max-sm:min-h-11 max-sm:min-w-11"
 					aria-label="Снять выделение"
 					onclick={() => (rowSelection = {})}
 				>
@@ -365,8 +420,10 @@
 				странице, одна на всё, и та же, что на карточках и отчётах. Своя полоса
 				внутри таблицы обрезала список по 70vh и заставляла крутить дважды —
 				сначала страницу до таблицы, потом таблицу внутри себя. -->
-			<Table.Root onkeydown={onTableKeydown}>
-				<Table.Header class="bg-surface-muted">
+			<Table.Root onkeydown={onTableKeydown} class={cn(stacked && STACK_TABLE)}>
+				<!-- В блоках заголовков нет: подписи колонок стоят над ячейками, которых
+					под ними больше нет, а порядок держит умолчание страницы. -->
+				<Table.Header class={cn('bg-surface-muted', stacked && 'max-sm:hidden')}>
 					{#each table.getHeaderGroups() as headerGroup (headerGroup.id)}
 						<Table.Row class="hover:bg-transparent">
 							{#if selectable}
@@ -419,18 +476,20 @@
 					{/each}
 				</Table.Header>
 
-				<Table.Body>
+				<Table.Body class={cn(stacked && STACK_TABLE)}>
 					{#if loading}
 						{#each skeletonRows as rowIndex (rowIndex)}
-							<Table.Row class="h-row hover:bg-transparent">
+							<Table.Row class={cn('h-row hover:bg-transparent', stacked && STACK_ROW)}>
 								{#each skeletonCells as cellIndex (cellIndex)}
-									<Table.Cell><Skeleton class="h-3.5 w-full max-w-40" /></Table.Cell>
+									<Table.Cell class={cn(stacked && STACK_CELL)}
+										><Skeleton class="h-3.5 w-full max-w-40" /></Table.Cell
+									>
 								{/each}
 							</Table.Row>
 						{/each}
 					{:else if table.getRowModel().rows.length === 0}
-						<Table.Row class="hover:bg-transparent">
-							<Table.Cell colspan={visibleColumnCount} class="p-0">
+						<Table.Row class={cn('hover:bg-transparent', stacked && STACK_TABLE)}>
+							<Table.Cell colspan={visibleColumnCount} class={cn('p-0', stacked && STACK_TABLE)}>
 								<EmptyState
 									title={emptyTitle}
 									description={emptyDescription}
@@ -444,7 +503,9 @@
 								data-row={index}
 								class={cn(
 									'h-row cursor-default focus-ring-inset focus-visible:bg-selection',
-									onopen && 'cursor-pointer'
+									onopen && 'cursor-pointer',
+									stacked && STACK_ROW,
+									stacked && selectable && 'max-sm:pr-12'
 								)}
 								tabindex={index === activeRow ? 0 : -1}
 								data-state={row.getIsSelected() ? 'selected' : undefined}
@@ -453,7 +514,10 @@
 							>
 								{#if selectable}
 									<!-- A click on the box must not reach the row, which would open the record. -->
-									<Table.Cell class="w-10 pr-0" onclick={(event) => event.stopPropagation()}>
+									<Table.Cell
+										class={cn('w-10 pr-0', stacked && STACK_CHECKBOX)}
+										onclick={(event) => event.stopPropagation()}
+									>
 										<Checkbox
 											checked={row.getIsSelected()}
 											onCheckedChange={(checked) => row.toggleSelected(checked)}
@@ -463,7 +527,11 @@
 								{/if}
 								{#each row.getVisibleCells() as cell (cell.id)}
 									<Table.Cell
-										class={cell.column.columnDef.meta?.align === 'end' ? 'text-right' : undefined}
+										class={cn(
+											cell.column.columnDef.meta?.align === 'end' && 'text-right',
+											stacked && STACK_CELL,
+											stacked && cell.column.columnDef.meta?.stackInline && 'max-sm:basis-auto'
+										)}
 									>
 										<FlexRender {cell} />
 									</Table.Cell>
@@ -495,7 +563,12 @@
 					value={String(query.size)}
 					onValueChange={(size) => void go({ size: Number(size), page: 1 })}
 				>
-					<Select.Trigger id="page-size" size="sm" aria-label="Строк на странице">
+					<Select.Trigger
+						id="page-size"
+						size="sm"
+						aria-label="Строк на странице"
+						class="max-sm:min-h-11"
+					>
 						{query.size}
 					</Select.Trigger>
 					<Select.Content>
@@ -510,6 +583,7 @@
 				<Button
 					variant="outline"
 					size="icon-sm"
+					class="max-sm:min-h-11 max-sm:min-w-11"
 					aria-label="Предыдущая страница"
 					disabled={query.page <= 1}
 					onclick={() => go({ page: query.page - 1 })}
@@ -520,6 +594,7 @@
 				<Button
 					variant="outline"
 					size="icon-sm"
+					class="max-sm:min-h-11 max-sm:min-w-11"
 					aria-label="Следующая страница"
 					disabled={query.page >= pageCount}
 					onclick={() => go({ page: query.page + 1 })}

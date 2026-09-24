@@ -2,14 +2,15 @@
 	import type { BoardCardState, BoardTransitionOption } from '$lib/contracts/interactions';
 
 	/**
-	 * Полоса слева повторяет цвет стадии на ленте (`StageTimeline`): одно и то же
-	 * состояние обязано выглядеть одинаково в списке, в карточке и на доске.
+	 * Полоса слева — только у карточки, на которую надо посмотреть: просроченной
+	 * и с помехой, цветом метки на ней. Обычная карточка полосы не несёт: когда
+	 * цветная полоса стоит на каждой, заметной не оказывается ни одна.
 	 */
 	const accents: Record<BoardCardState, string> = {
-		current: 'border-l-primary',
-		overdue: 'border-l-danger',
-		paused: 'border-l-border-strong',
-		blocked: 'border-l-warning'
+		current: '',
+		overdue: 'border-l-4 border-l-danger',
+		paused: 'border-l-4 border-l-border-strong',
+		blocked: 'border-l-4 border-l-warning'
 	};
 
 	/** Как состояние называется словами — теми же, что на ленте и в списке. */
@@ -93,7 +94,7 @@
 
 <li
 	class={cn(
-		'flex flex-col gap-2 rounded-lg border border-l-4 border-border bg-surface p-2.5 shadow-xs',
+		'flex flex-col gap-2 rounded-lg border border-border bg-surface p-2.5 shadow-xs',
 		accents[card.state],
 		draggable && 'cursor-grab active:cursor-grabbing',
 		dragging && 'opacity-50'

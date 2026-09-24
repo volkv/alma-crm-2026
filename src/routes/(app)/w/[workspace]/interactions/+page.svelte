@@ -2,6 +2,7 @@
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
 	import { toast } from 'svelte-sonner';
 	import FilterXIcon from '@lucide/svelte/icons/filter-x';
+	import ListFilterIcon from '@lucide/svelte/icons/list-filter';
 	import KanbanIcon from '@lucide/svelte/icons/kanban';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import TableIcon from '@lucide/svelte/icons/table';
@@ -22,7 +23,7 @@
 	import Header from '$lib/components/header.svelte';
 	import SlaChip from '$lib/components/sla-chip.svelte';
 	import StageTimeline from '$lib/components/stage-timeline.svelte';
-	import StatusBadge from '$lib/components/status-badge.svelte';
+	import StatusBadge, { type StatusTone } from '$lib/components/status-badge.svelte';
 	import Board from '$lib/components/interactions/board.svelte';
 	import ListFilter from '$lib/components/interactions/list-filter.svelte';
 	import { toTimelineStages } from '$lib/components/interactions/timeline';
@@ -108,14 +109,14 @@
 		{
 			id: 'stage',
 			header: 'Стадия',
-			meta: { title: 'Стадия' },
+			meta: { title: 'Стадия', stackInline: true },
 			enableSorting: false,
 			cell: ({ row }) => renderSnippet(stageCell, row.original)
 		},
 		{
 			accessorKey: 'dueAt',
 			header: 'Срок',
-			meta: { title: 'Срок' },
+			meta: { title: 'Срок', stackInline: true },
 			cell: ({ row }) => renderSnippet(slaCell, row.original)
 		},
 		{
@@ -133,14 +134,57 @@
 	];
 
 	/**
-	 * Колонки, с которых список начинается свёрнутым на ноутбуке.
+	 * Колонки, которые уступают место, когда список не помещается, — в том
+	 * порядке, в каком их не жалко. На телефоне их нет с самого начала: блок
+	 * записи — это название, вуз, стадия и срок.
 	 *
-	 * Компания-заказчик здесь потому, что взаимодействие ведут с учебным
+	 * Компания-заказчик первая потому, что взаимодействие ведут с учебным
 	 * заведением, а компания за ним у большинства строк одна и та же и в списке
-	 * ничего не различает. Ужатая до нечитаемости колонка срока стоит дороже: срок — то,
-	 * ради чего список открывают. Меню «Колонки» возвращает любую из них.
+	 * ничего не различает. Ужатая до нечитаемости колонка срока стоит дороже:
+	 * срок — то, ради чего список открывают. Меню «Колонки» возвращает любую.
 	 */
-	const HIDDEN_ON_LAPTOP = ['customerName', 'ownerName', 'lastActivityAt'];
+	const SECONDARY_COLUMNS = ['customerName', 'lastActivityAt', 'ownerName'];
+
+	/**
+	 * Почему на запись стоит посмотреть, кроме срока, — одной меткой. Помеха и
+	 * тишина вокруг записи — две стороны одного «застряло», и две плашки под
+	 * каждым вторым названием превращали список в пёструю ленту.
+	 */
+	function attentionOf(
+		row: InteractionListItem
+	): { tone: StatusTone; label: string; hint: string } | null {
+		const blocked = row.openBlockers > 0;
+
+		if (!blocked && !row.isStale) return null;
+
+		const hints = [
+			blocked ? `Открытых помех: ${row.openBlockers}` : null,
+			row.isStale ? 'давно не было событий' : null
+		].filter((hint) => hint !== null);
+
+		return {
+			tone: blocked ? 'warning' : 'neutral',
+			label: blocked ? `Помех: ${row.openBlockers}${row.isStale ? ' · тишина' : ''}` : 'Тишина',
+			hint: hints.join('; ')
+		};
+	}
+
+	/** Сколько отборов включено — число на кнопке «Фильтры» на телефоне. */
+	const activeFilters = $derived(
+		[
+			data.filters.status !== null,
+			data.filters.stageCategory !== null,
+			data.filters.overdue,
+			data.filters.mine,
+			data.filters.org.length > 0,
+			data.filters.dir.length > 0,
+			data.filters.prog.length > 0,
+			data.filters.prod.length > 0,
+			data.view === 'board' && data.search !== ''
+		].filter(Boolean).length
+	);
+
+	let filtersOpen = $state(false);
 
 	/** Ключ пространства стоит в адресе, и все ссылки раздела считаются от него. */
 	const workspace = $derived(data.workspace.key);
@@ -182,34 +226,33 @@
 </script>
 
 <!-- Наименование организации бывает длиной в строку устава, а колонки справа от
-	него важнее: ширина ограничена, целиком читается подсказкой. -->
+	него важнее: ширина ограничена, целиком читается подсказкой. В блоке на
+	телефоне ему отдана вся строка. -->
 {#snippet nameCell(value: string | null)}
 	{#if value === null}
 		<span class="text-faint">—</span>
 	{:else}
-		<span class="block max-w-48 truncate" title={value}>{value}</span>
+		<span
+			class="block max-w-48 truncate max-sm:max-w-none max-sm:text-xs max-sm:text-muted-foreground"
+			title={value}>{value}</span
+		>
 	{/if}
 {/snippet}
 
 {#snippet titleCell(row: InteractionListItem)}
 	<!-- Названия различаются хвостом («…по прикладной информатике» против
-		«…прикладная информатика»), поэтому колонке отдано место, которое всё
-		равно пустовало справа; что не поместилось — читается подсказкой. -->
-	<div class="flex max-w-80 min-w-0 flex-col gap-0.5">
-		<span class="truncate font-medium" title={row.title}>{row.title}</span>
-		<span class="flex flex-wrap items-center gap-1">
-			{#if row.status !== 'active'}
-				<StatusBadge tone={row.status === 'completed' ? 'success' : 'neutral'}>
-					{INTERACTION_STATUS_LABELS[row.status]}
-				</StatusBadge>
-			{/if}
-			{#if row.openBlockers > 0}
-				<StatusBadge tone="warning" dot>Помех: {row.openBlockers}</StatusBadge>
-			{/if}
-			{#if row.isStale}
-				<StatusBadge tone="neutral" dot title="Давно не было событий">Тишина</StatusBadge>
-			{/if}
-		</span>
+		«…прикладная информатика»), поэтому они переносятся на вторую строку, а
+		не обрезаются на первой; нижняя граница ширины не даёт таблице сжать
+		название в столбик раньше, чем уступят место второстепенные колонки. -->
+	<div
+		class="flex max-w-80 min-w-60 flex-col gap-1 whitespace-normal max-sm:max-w-none max-sm:min-w-0"
+	>
+		<span class="line-clamp-2 font-medium" title={row.title}>{row.title}</span>
+		{#if row.status !== 'active'}
+			<StatusBadge tone={row.status === 'completed' ? 'success' : 'neutral'} class="self-start">
+				{INTERACTION_STATUS_LABELS[row.status]}
+			</StatusBadge>
+		{/if}
 	</div>
 {/snippet}
 
@@ -220,7 +263,7 @@
 	{#if row.stage === null}
 		<span class="text-faint">не начато</span>
 	{:else}
-		<div class="flex max-w-40 min-w-0 flex-col gap-1">
+		<div class="flex max-w-40 min-w-0 flex-col gap-1 max-sm:w-36">
 			<span class="truncate text-xs text-muted-foreground" title={row.stage.name}>
 				{row.stage.name}
 			</span>
@@ -245,14 +288,25 @@
 	</Button>
 {/snippet}
 
+<!-- Срок и то, что ещё требует внимания, стоят вместе: всё, из-за чего за
+	запись берутся сейчас, читается в одной колонке, а под названием остаётся
+	только само название. -->
 {#snippet slaCell(row: InteractionListItem)}
-	{#if row.dueAt === null}
-		<span class="text-faint">—</span>
-	{:else if row.isPaused}
-		<StatusBadge tone="neutral" dot title="Часы стадии остановлены">на паузе</StatusBadge>
-	{:else}
-		<SlaChip deadline={row.dueAt} />
-	{/if}
+	{@const attention = attentionOf(row)}
+	<div class="flex flex-col items-start gap-1">
+		{#if row.dueAt === null}
+			<span class="text-faint">—</span>
+		{:else if row.isPaused}
+			<StatusBadge tone="neutral" dot title="Часы стадии остановлены">на паузе</StatusBadge>
+		{:else}
+			<SlaChip deadline={row.dueAt} />
+		{/if}
+		{#if attention !== null}
+			<StatusBadge tone={attention.tone} dot title={attention.hint}>
+				{attention.label}
+			</StatusBadge>
+		{/if}
+	</div>
 {/snippet}
 
 <svelte:head>
@@ -284,64 +338,90 @@
 {/snippet}
 
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
-	<div class="flex flex-wrap items-center gap-3" data-tour="interactions-filters">
-		<FilterSelect param="status" label="Статус" options={STATUS_OPTIONS} allLabel="Любой" />
-		<FilterSelect param="stage" label="Стадия" options={STAGE_OPTIONS} allLabel="Любая" />
-		<ListFilter
-			label="Вуз"
-			options={data.filterOptions.organizations}
-			selected={data.filters.org}
-			testId="interactions-filter-org"
-			ontoggle={(value) => toggleAttr('org', value)}
-		/>
-		<ListFilter
-			label="Направление"
-			options={data.filterOptions.directions}
-			selected={data.filters.dir}
-			testId="interactions-filter-dir"
-			ontoggle={(value) => toggleAttr('dir', value)}
-		/>
-		<ListFilter
-			label="Программа"
-			options={data.filterOptions.programs}
-			selected={data.filters.prog}
-			testId="interactions-filter-prog"
-			ontoggle={(value) => toggleAttr('prog', value)}
-		/>
-		<ListFilter
-			label="Продукт"
-			options={data.filterOptions.products}
-			selected={data.filters.prod}
-			testId="interactions-filter-prod"
-			ontoggle={(value) => toggleAttr('prod', value)}
-		/>
-
+	<!-- На телефоне отборы свёрнуты в панель за кнопкой «Фильтры»: восемь
+		контролов занимали весь первый экран, и до самого списка надо было
+		листать. С `sm` обёртка панели исчезает из раскладки (`contents`), и
+		отборы стоят в общем ряду, как стояли. Цели нажатия на телефоне — 44 px. -->
+	<div
+		class="flex flex-wrap items-center gap-3 max-sm:[&_a]:min-h-11 max-sm:[&_button]:min-h-11"
+		data-tour="interactions-filters"
+	>
 		<Button
-			variant={data.filters.overdue ? 'default' : 'outline'}
+			variant={activeFilters > 0 ? 'secondary' : 'outline'}
 			size="sm"
-			aria-pressed={data.filters.overdue}
-			onclick={() => go({ overdue: !data.filters.overdue })}
+			class="sm:hidden"
+			aria-expanded={filtersOpen}
+			aria-controls="interactions-filter-panel"
+			onclick={() => (filtersOpen = !filtersOpen)}
 		>
-			Просроченные
-		</Button>
-		<Button
-			variant={data.filters.mine ? 'default' : 'outline'}
-			size="sm"
-			aria-pressed={data.filters.mine}
-			onclick={() => go({ mine: !data.filters.mine })}
-		>
-			Мои
+			<ListFilterIcon aria-hidden="true" />
+			Фильтры{activeFilters > 0 ? ` (${activeFilters})` : ''}
 		</Button>
 
-		<!-- Поиск принадлежит таблице и живёт в её строке поиска; на доске такой
+		<div
+			id="interactions-filter-panel"
+			class="{filtersOpen
+				? 'flex'
+				: 'hidden'} order-last w-full flex-wrap items-center gap-3 sm:order-none sm:contents"
+		>
+			<FilterSelect param="status" label="Статус" options={STATUS_OPTIONS} allLabel="Любой" />
+			<FilterSelect param="stage" label="Стадия" options={STAGE_OPTIONS} allLabel="Любая" />
+			<ListFilter
+				label="Вуз"
+				options={data.filterOptions.organizations}
+				selected={data.filters.org}
+				testId="interactions-filter-org"
+				ontoggle={(value) => toggleAttr('org', value)}
+			/>
+			<ListFilter
+				label="Направление"
+				options={data.filterOptions.directions}
+				selected={data.filters.dir}
+				testId="interactions-filter-dir"
+				ontoggle={(value) => toggleAttr('dir', value)}
+			/>
+			<ListFilter
+				label="Программа"
+				options={data.filterOptions.programs}
+				selected={data.filters.prog}
+				testId="interactions-filter-prog"
+				ontoggle={(value) => toggleAttr('prog', value)}
+			/>
+			<ListFilter
+				label="Продукт"
+				options={data.filterOptions.products}
+				selected={data.filters.prod}
+				testId="interactions-filter-prod"
+				ontoggle={(value) => toggleAttr('prod', value)}
+			/>
+
+			<Button
+				variant={data.filters.overdue ? 'default' : 'outline'}
+				size="sm"
+				aria-pressed={data.filters.overdue}
+				onclick={() => go({ overdue: !data.filters.overdue })}
+			>
+				Просроченные
+			</Button>
+			<Button
+				variant={data.filters.mine ? 'default' : 'outline'}
+				size="sm"
+				aria-pressed={data.filters.mine}
+				onclick={() => go({ mine: !data.filters.mine })}
+			>
+				Мои
+			</Button>
+
+			<!-- Поиск принадлежит таблице и живёт в её строке поиска; на доске такой
 			строки нет, поэтому унаследованный из адреса запрос показан рядом с
 			фильтрами — иначе отобранный набор нечем было бы объяснить и снять. -->
-		{#if data.view === 'board' && data.search !== ''}
-			<span class="flex items-center gap-1 text-xs text-muted-foreground">
-				Поиск: «{data.search}»
-				<Button href={filterHref(page.url, 'q', '')} variant="ghost" size="xs">Сбросить</Button>
-			</span>
-		{/if}
+			{#if data.view === 'board' && data.search !== ''}
+				<span class="flex items-center gap-1 text-xs text-muted-foreground">
+					Поиск: «{data.search}»
+					<Button href={filterHref(page.url, 'q', '')} variant="ghost" size="xs">Сбросить</Button>
+				</span>
+			{/if}
+		</div>
 
 		<!-- Представление — часть адреса: ссылкой на список делятся вместе с тем,
 			каким его смотрели. -->
@@ -401,7 +481,8 @@
 				emptyTitle="Ничего не найдено"
 				emptyDescription="Под этот запрос и отбор не попало ни одной записи."
 				emptyAction={data.isFiltered ? resetFilters : undefined}
-				initialHiddenColumns={HIDDEN_ON_LAPTOP}
+				initialHiddenColumns={SECONDARY_COLUMNS}
+				stacked
 				defaultSort={{ columnId: 'dueAt', direction: 'asc' }}
 				bulkActions={data.canAssign ? assignAction : undefined}
 				onopen={open}

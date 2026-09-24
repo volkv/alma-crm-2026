@@ -1,13 +1,13 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { toast } from 'svelte-sonner';
+	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import RouteIcon from '@lucide/svelte/icons/route';
 	import { enhance } from '$app/forms';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FormDialog from '$lib/components/form-dialog.svelte';
-	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type {
 		BoardTransitionOption,
@@ -57,6 +57,34 @@
 	let pending = $state<{ card: InteractionBoardCard; option: BoardTransitionOption } | null>(null);
 	let reasonOpen = $state(false);
 	let moveForm = $state<HTMLFormElement | null>(null);
+
+	/** Полоса колонок — её прокручивают полосой стадий над ней. */
+	let columnsEl = $state<HTMLElement | null>(null);
+
+	/**
+	 * Переход к колонке из полосы стадий: колонок до четырнадцати, и дальние
+	 * без неё достаются только долгой прокруткой вбок. Фокус едет вместе с
+	 * прокруткой — с клавиатуры следующий `Tab` попадает в эту колонку, а не
+	 * обратно в начало доски.
+	 */
+	function goToColumn(stageId: string) {
+		const section = columnsEl?.querySelector<HTMLElement>(
+			`[data-stage-id="${CSS.escape(stageId)}"]`
+		);
+
+		if (section === null || section === undefined) {
+			throw new Error(`Board column ${stageId} is not rendered`);
+		}
+
+		const reduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
+
+		section.scrollIntoView({
+			behavior: reduced ? 'auto' : 'smooth',
+			block: 'nearest',
+			inline: 'start'
+		});
+		section.focus({ preventScroll: true });
+	}
 
 	/** Стадии, на которые эту карточку разрешает переносить процесс. */
 	const targets = $derived(new Set(dragged?.transitions.map((option) => option.toStageId) ?? []));
@@ -184,28 +212,78 @@
 		/>
 	</div>
 {:else}
-	<!-- Подпись, подсказка и сама доска — три отдельных куска, и разделяет их
+	<!-- Пояснение, полоса стадий и сама доска — отдельные куски, и разделяет их
 		этот контейнер: страница ставит доску в обычный блок, и без него они
-		слипались в сплошную стену текста над колонками. -->
+		слипались в сплошную стену над колонками. -->
 	<div class="flex flex-col gap-3">
-		<p class="text-sm text-muted-foreground">
-			Процесс пространства «{board.workspaceName}»: колонки — его действующие стадии.
-		</p>
+		<!-- Пояснение — одна строка: как переводить карточку, узнают один раз, и
+			абзац над колонками каждый день отнимал у доски место. -->
 		{#if canTransition}
-			<InlineHint>
-				Карточку можно перетащить в соседнюю колонку — или перевести её пунктом меню на самой
-				карточке. Переход выполняет движок: если стадия к нему не готова, карточка останется на
-				месте и скажет почему.
-			</InlineHint>
+			<details class="group text-sm text-muted-foreground">
+				<summary
+					class="flex w-fit cursor-pointer list-none items-center gap-1 rounded focus-ring hover:text-foreground [&::-webkit-details-marker]:hidden"
+				>
+					<span class="max-sm:hidden">Колонки — стадии процесса «{board.workspaceName}».</span>
+					Как перевести карточку
+					<ChevronDownIcon
+						class="size-4 shrink-0 transition-transform group-open:rotate-180"
+						aria-hidden="true"
+					/>
+				</summary>
+				<p class="mt-1 max-w-prose text-xs">
+					Перетащите карточку в другую колонку или выберите стадию в меню «⋮» на самой карточке —
+					меню работает и с клавиатуры. Переход выполняет движок: если стадия к нему не готова,
+					карточка останется на месте и скажет почему.
+				</p>
+			</details>
+		{:else}
+			<p class="text-sm text-muted-foreground">
+				Колонки — стадии процесса «{board.workspaceName}».
+			</p>
 		{/if}
 
-		<!-- Колонок четырнадцать, и на телефоне они не поместятся никогда: вбок
-			уезжает сама доска, а не документ вокруг неё. -->
-		<div class="flex gap-3 overflow-x-auto pb-2" data-slot="interactions-board">
+		<!-- Полоса стадий: весь процесс одной строкой со счётчиками, нажатие —
+			переход к колонке. Кнопки, а не ссылки: адрес от перехода не меняется. -->
+		<nav aria-label="Стадии доски" class="-mx-1 flex gap-1.5 overflow-x-auto px-1 py-0.5">
+			{#each board.columns as column (column.stageId)}
+				<button
+					type="button"
+					class="flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-xs focus-ring transition-colors hover:bg-surface-muted max-sm:min-h-11"
+					aria-label="{column.name}: {column.count}{column.overdue > 0
+						? `, просрочено ${column.overdue}`
+						: ''}"
+					onclick={() => goToColumn(column.stageId)}
+				>
+					<span class="max-w-40 truncate">{column.name}</span>
+					<span
+						class={cn(
+							'tabular-nums',
+							column.count === 0 ? 'text-faint' : 'font-medium text-muted-foreground'
+						)}>{column.count}</span
+					>
+					{#if column.overdue > 0}
+						<StatusBadge tone="danger" dot>{column.overdue}</StatusBadge>
+					{/if}
+				</button>
+			{/each}
+		</nav>
+
+		<!-- Колонок четырнадцать, и на экран они не поместятся никогда: вбок
+			уезжает сама доска, а не документ вокруг неё. С `sm` доска ещё и
+			ограничена по высоте экраном: так полоса прокрутки вбок всегда на виду,
+			а не под последней карточкой самой длинной колонки, и заголовки колонок
+			остаются над карточками при прокрутке вниз. -->
+		<div
+			bind:this={columnsEl}
+			class="flex gap-3 overflow-auto pb-2 sm:max-h-[max(24rem,calc(100dvh-19rem))]"
+			data-slot="interactions-board"
+		>
 			{#each board.columns as column (column.stageId)}
 				<section
+					data-stage-id={column.stageId}
+					tabindex="-1"
 					class={cn(
-						'flex w-72 shrink-0 flex-col gap-2 rounded-lg border p-2 transition-colors',
+						'flex w-72 shrink-0 flex-col gap-2 rounded-lg border p-2 focus-ring transition-colors',
 						hovered === column.stageId && targets.has(column.stageId)
 							? 'border-link bg-selection'
 							: hovered === column.stageId
@@ -221,9 +299,19 @@
 				>
 					<!-- `leading-5` равен высоте плашки со счётчиком: первая строка
 					названия и цифры справа тогда стоят на одной линии, а не расходятся
-					на пару пикселей, когда название переносится на две строки. -->
-					<header class="flex items-start justify-between gap-2">
-						<h2 class="min-w-0 text-sm leading-5 font-semibold" title={column.name}>
+					на пару пикселей, когда название переносится на две строки.
+
+					Высота у всех заголовков одна — две строки: короткое и длинное
+					название иначе сдвигали первые карточки соседних колонок на разную
+					высоту. Заголовок липнет к верху доски; фон он наследует от колонки,
+					чтобы подсветка броска не обрывалась под ним. -->
+					<header
+						class="sticky top-0 z-10 -mx-2 -mt-2 flex items-start justify-between gap-2 rounded-t-lg bg-inherit px-2 pt-2 pb-1"
+					>
+						<h2
+							class="line-clamp-2 min-h-10 min-w-0 text-sm leading-5 font-semibold"
+							title={column.name}
+						>
 							{column.name}
 						</h2>
 						<span class="flex shrink-0 items-center gap-1">

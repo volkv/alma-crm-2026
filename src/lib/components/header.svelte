@@ -63,7 +63,10 @@
 >
 	<div class="flex flex-wrap items-start justify-between gap-3">
 		<div class="min-w-0">
-			<h1 class="truncate text-xl font-semibold tracking-tight">{title}</h1>
+			<!-- Заголовок переносится, а не обрезается: название взаимодействия или
+				вуза бывает длиной в строку устава, и обрезанное многоточием оно
+				перестаёт отличаться от соседнего. -->
+			<h1 class="text-xl font-semibold tracking-tight text-pretty wrap-break-word">{title}</h1>
 			{#if description}
 				<!-- Сетка в одну строку вместо высоты: `grid-rows-[0fr]` схлопывает
 					пояснение любой длины без числа в стилях, а переход остаётся
@@ -75,8 +78,10 @@
 						? 'md:grid-rows-[0fr] md:opacity-0'
 						: ''}"
 				>
+					<!-- Пояснение — одна строка: его читают один раз, а шапка над списком
+						должна оставаться низкой. Целиком оно читается подсказкой. -->
 					<p class="overflow-hidden text-sm text-muted-foreground">
-						<span class="mt-1 block">{description}</span>
+						<span class="mt-1 block truncate" title={description}>{description}</span>
 					</p>
 				</div>
 			{/if}
