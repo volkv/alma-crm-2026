@@ -40,6 +40,7 @@ import { getDb } from '../../db';
 import {
 	affiliations,
 	consents,
+	exchangeMessages,
 	interactionParties,
 	interactions,
 	learningGroupLearners,
@@ -720,6 +721,16 @@ export async function removeLearner(ctx: ActorContext, input: RemoveLearnerInput
  * ключу и возвращает ту же группу, а необязательное поле — совместимое
  * добавление (`docs/exchange-contract.md`, раздел 5). Повтор той же передачи
  * дублей не даёт по той же причине: снимок заменяет состав, а не дописывает.
+ *
+ * Пустой список уходит, если состав этой группы уже передавали: так убранные
+ * из списка пропадают и у получателя. Первой передачей пустой список не
+ * уходит — получателю нечего заменять, а сотруднику нечего передавать.
+ *
+ * Новая передача гасит прежние, которые ещё ждут отправки или повтора: их
+ * состав устарел, и отложенный повтор затёр бы им новый. Состояние у них —
+ * `dismissed` с причиной словами, как у разобранных вручную; от гонки с
+ * попыткой, которая уже в пути, защищает правило получателя «список старше
+ * применённого не применяется» (раздел 2).
  */
 export async function sendLearningGroupRoster(
 	ctx: ActorContext,
@@ -756,17 +767,46 @@ export async function sendLearningGroupRoster(
 			.from(learningGroupLearners)
 			.where(eq(learningGroupLearners.learningGroupId, group.id));
 
+		const externalId = groupRequestExternalId(group.interactionId, group.streamNumber);
+		const rosterMessages = and(
+			eq(exchangeMessages.direction, 'outbound'),
+			eq(exchangeMessages.system, 'lms'),
+			eq(exchangeMessages.eventType, EXCHANGE_EVENT_TYPES.learningGroupRequested),
+			eq(exchangeMessages.externalId, externalId),
+			sql`${exchangeMessages.payload} ->> 'includeLearners' = 'true'`
+		);
+
 		if ((learners?.value ?? 0) === 0) {
-			throw new ValidationError('Список не передан', [
-				'В группе нет ни одного слушателя: сначала загрузите список'
-			]);
+			const [previous] = await tx
+				.select({ id: exchangeMessages.id })
+				.from(exchangeMessages)
+				.where(and(rosterMessages, eq(exchangeMessages.state, 'sent')))
+				.limit(1);
+
+			if (previous === undefined) {
+				throw new ValidationError('Список не передан', [
+					'В группе нет ни одного слушателя, и состав её ещё не передавали: сначала загрузите список'
+				]);
+			}
 		}
+
+		await tx
+			.update(exchangeMessages)
+			.set({
+				state: 'dismissed',
+				closedAt: sql`now()`,
+				nextAttemptAt: null,
+				lastError: sql`coalesce(${exchangeMessages.lastError} || ' — ', '') || 'заменено новой передачей состава'`
+			})
+			.where(
+				and(rosterMessages, inArray(exchangeMessages.state, ['pending', 'retrying', 'failed']))
+			);
 
 		const id = await enqueueOutbound(tx, {
 			system: 'lms',
 			instance: settings.lms.instance,
 			eventType: EXCHANGE_EVENT_TYPES.learningGroupRequested,
-			externalId: groupRequestExternalId(group.interactionId, group.streamNumber),
+			externalId,
 			interactionId: group.interactionId,
 			// Семя той же формы, что у первой заявки, плюс признак списка: тело
 			// собирается в момент отправки, и состав уедет тот, что будет тогда.

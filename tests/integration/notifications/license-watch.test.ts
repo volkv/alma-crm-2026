@@ -165,4 +165,23 @@ describe('наблюдатель сроков лицензий', () => {
 		const again = await startLicenseRenewal(testActor(), scene.itemId);
 		expect(again).toMatchObject({ id: created.id, reused: true });
 	});
+
+	it('два одновременных нажатия заводят одно продление', async () => {
+		await seedProcess(database, B2B_WORKSPACE_KEY, B2B_PROCESS);
+		const scene = await makeLicense(addDays(formatIsoDay(), 10));
+
+		const both = await Promise.all([
+			startLicenseRenewal(testActor(), scene.itemId),
+			startLicenseRenewal(testActor(), scene.itemId)
+		]);
+
+		expect(both[0].id).toBe(both[1].id);
+		expect(both.map((result) => result.reused).sort()).toEqual([false, true]);
+		expect(
+			await database.db
+				.select({ id: interactionContractItems.interactionId })
+				.from(interactionContractItems)
+				.where(eq(interactionContractItems.contractItemId, scene.itemId))
+		).toHaveLength(1);
+	});
 });

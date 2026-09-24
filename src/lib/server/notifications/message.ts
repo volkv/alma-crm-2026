@@ -18,6 +18,7 @@ import {
 	MY_DAY_BASIS_LABELS,
 	MY_DAY_SECTIONS,
 	myDayLetterTitle,
+	PERSONAL_INTERACTION_TITLE,
 	type MyDay,
 	type MyDayItem
 } from '$lib/contracts/my-day';
@@ -34,6 +35,11 @@ export type StuckNotificationFacts = {
 	interactionTitle: string;
 	/** Название основной стороны; `null` — сторон у взаимодействия ещё нет. */
 	organizationName: string | null;
+	/**
+	 * Основная сторона — физическое лицо. Тогда ни название взаимодействия, ни
+	 * название стороны в письмо не идут: это ФИО, а письмо уходит в чужой ящик.
+	 */
+	isPersonal: boolean;
 	/** Название стадии из слепка записи: маршрут могли переиздать. */
 	stageName: string;
 	/** Сколько дней запись стоит без учёта пауз. */
@@ -77,6 +83,9 @@ export function stuckNotificationMessage(
 	origin: string
 ): NotificationMessage {
 	const where = facts.organizationName === null ? '' : ` (${facts.organizationName})`;
+	const named = facts.isPersonal
+		? PERSONAL_INTERACTION_TITLE
+		: `Взаимодействие «${facts.interactionTitle}»${where}`;
 	const standing = facts.standingDays === 0 ? 'меньше суток' : days(facts.standingDays);
 	const rule =
 		facts.thresholdDays === 0
@@ -84,7 +93,7 @@ export function stuckNotificationMessage(
 			: `Система напоминает о взаимодействиях, которые стоят на одной стадии дольше ${days(facts.thresholdDays)}; время пауз в этот срок не входит.`;
 
 	const lines = [
-		`Взаимодействие «${facts.interactionTitle}»${where} остаётся на стадии «${facts.stageName}» ${standing}.`,
+		`${named} остаётся на стадии «${facts.stageName}» ${standing}.`,
 		rule,
 		'',
 		`Карточка: ${interactionUrl(origin, facts.interactionId)}`,
@@ -93,7 +102,9 @@ export function stuckNotificationMessage(
 	];
 
 	return {
-		subject: `${NOTIFICATION_KIND_LABELS.stage_stuck}: «${facts.interactionTitle}»`,
+		subject: facts.isPersonal
+			? `${NOTIFICATION_KIND_LABELS.stage_stuck}: ${PERSONAL_INTERACTION_TITLE.toLowerCase()}`
+			: `${NOTIFICATION_KIND_LABELS.stage_stuck}: «${facts.interactionTitle}»`,
 		text: lines.join('\n')
 	};
 }

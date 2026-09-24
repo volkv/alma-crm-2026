@@ -279,8 +279,9 @@ describe('следы человека после обезличивания', ()
 			body: 'Перезвонил, договорились о вечерней группе.'
 		});
 
-		// Записи стадий стоят дольше порога — наблюдатель уносит заголовок и
-		// название стороны в журнал доставок темой и телом.
+		// Записи стадий стоят дольше порога — наблюдатель пишет письма в журнал
+		// доставок. Сторона — физическое лицо, поэтому ни заголовка, ни
+		// названия стороны в теме и теле нет: сцена это и проверяет.
 		await database.db.update(stageEntries).set({ enteredAt: sql`now() - interval '30 days'` });
 
 		const report = await runNotificationCycle(systemActor(crypto.randomUUID()));
@@ -318,7 +319,7 @@ describe('следы человека после обезличивания', ()
 		};
 	}
 
-	it('сцена заявки до уничтожения держит ФИО и текст заявителя в шести таблицах', async () => {
+	it('сцена заявки до уничтожения держит ФИО и текст заявителя в пяти таблицах, но не в письмах', async () => {
 		await b2cScene();
 
 		// Не декорация: без этой проверки следующая ничего бы не доказывала —
@@ -327,8 +328,6 @@ describe('следы человека после обезличивания', ()
 			'comments.body',
 			'interaction_changes.old_value',
 			'interactions.title',
-			'notification_deliveries.body',
-			'notification_deliveries.subject',
 			'organizations.legal_name',
 			'organizations.short_name',
 			'people.last_name'

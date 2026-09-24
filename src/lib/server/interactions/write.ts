@@ -424,23 +424,37 @@ export async function createInteraction(
 	workspaceKey: string,
 	input: CreateInteractionDraft
 ): Promise<InteractionView> {
-	requirePermission(ctx, 'interactions.write');
-
-	const interactionId = await withTransaction(ctx, async (tx) => {
-		const workspace = await readWorkspaceByKey(tx, workspaceKey);
-
-		if (!canEnterWorkspace(ctx, workspace.id)) {
-			throw new NotFoundError('Пространство не найдено');
-		}
-
-		const { ownerUserId } = parseCreate(input);
-		await assertOwnerExists(tx, ownerUserId);
-		await assertMayWorkIn(tx, ownerUserId, workspace);
-
-		return createInteractionIn(ctx, tx, workspaceKey, input, editorOf(ctx));
-	});
+	const interactionId = await withTransaction(ctx, (tx) =>
+		createStaffInteractionIn(ctx, tx, workspaceKey, input)
+	);
 
 	return getInteraction(ctx, interactionId);
+}
+
+/**
+ * То же заведение сотрудником, в транзакции вызывающего: так его зовёт
+ * операция, которой проверка «такой записи ещё нет» и само заведение нужны
+ * под одной блокировкой (продление лицензии).
+ */
+export async function createStaffInteractionIn(
+	ctx: ActorContext,
+	tx: Tx,
+	workspaceKey: string,
+	input: CreateInteractionDraft
+): Promise<string> {
+	requirePermission(ctx, 'interactions.write');
+
+	const workspace = await readWorkspaceByKey(tx, workspaceKey);
+
+	if (!canEnterWorkspace(ctx, workspace.id)) {
+		throw new NotFoundError('Пространство не найдено');
+	}
+
+	const { ownerUserId } = parseCreate(input);
+	await assertOwnerExists(tx, ownerUserId);
+	await assertMayWorkIn(tx, ownerUserId, workspace);
+
+	return createInteractionIn(ctx, tx, workspaceKey, input, editorOf(ctx));
 }
 
 /** Что поменялось в плане: имя поля контракта и два значения. */

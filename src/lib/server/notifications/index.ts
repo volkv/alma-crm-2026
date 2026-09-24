@@ -8,7 +8,8 @@
  * уведомления о лицензиях — по организациям, которые он видит: у них предмет —
  * позиция договора, а договор живёт у организации; утренние сводки — по
  * получателям в его области (свои и подчинённых): у сводки предмет — сам
- * получатель.
+ * получатель, а её текст виден только ему и администратору
+ * (`digestLetterVisible`).
  * Повторять отправку — `notifications.manage`: повтор ходит на чужой почтовый
  * сервер, и это работа администратора, а не чтение сводки.
  */
@@ -133,14 +134,36 @@ export async function listNotificationDeliveries(
 		.offset((filter.page - 1) * filter.pageSize);
 
 	return {
-		items: rows.map(({ stageName, ...row }) => ({
-			...row,
-			stageName: stageName?.name ?? null
-		})),
+		items: rows.map(({ stageName, ...row }) => {
+			const letterVisible = row.digestDay === null || digestLetterVisible(ctx, row.recipientUserId);
+
+			return {
+				...row,
+				stageName: stageName?.name ?? null,
+				subject: letterVisible ? row.subject : null,
+				body: letterVisible ? row.body : null
+			};
+		}),
 		total,
 		page: filter.page,
 		pageSize: filter.pageSize
 	};
+}
+
+/**
+ * Видно ли вызывающему содержимое утренней сводки.
+ *
+ * Строку доставки руководитель видит по получателю — сводка подчинённого
+ * отвечает ему на «почему не пришло». Но саму сводку собирали в области
+ * получателя: в ней названия дел и организаций из всех его пространств, а
+ * руководитель может не состоять в части из них. Поэтому тему и тело читают
+ * только сам получатель и администратор с полным доступом; остальным
+ * достаются статус, дата и получатель. У прочих видов доставки предмет — одно
+ * дело или одна организация, которые вызывающий и так видит, и текст не
+ * говорит ничего сверх карточки.
+ */
+function digestLetterVisible(ctx: ActorContext, recipientUserId: string | null): boolean {
+	return ctx.scope.kind === 'all' || (ctx.user !== null && ctx.user.id === recipientUserId);
 }
 
 /**

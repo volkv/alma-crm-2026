@@ -19,6 +19,7 @@ import { requestLearningGroup } from '$lib/server/integrations/exchange/groups';
 import {
 	importLearningGroupRoster,
 	previewLearningGroupRoster,
+	removeLearner,
 	sendLearningGroupRoster
 } from '$lib/server/integrations/exchange/roster';
 import { setExchangeSettings } from '$lib/server/integrations/settings';
@@ -211,5 +212,84 @@ describe('поимённый список слушателей', () => {
 			.where(and(eq(exchangeMessages.id, sent.messageId)));
 
 		expect(erased.envelope).toBeNull();
+	});
+
+	it('пустой состав уходит после переданного, а ждущая старая передача гасится новой', async () => {
+		const { interactionId } = await createInteractionOn(testActor(), database);
+		const [program] = await database.db
+			.insert(programs)
+			.values({ code: 'P-EMPTY', name: 'Программа', level: 'bachelor', status: 'active' })
+			.returning({ id: programs.id });
+
+		await database.db.insert(interactionPrograms).values({ interactionId, programId: program.id });
+		const group = await requestLearningGroup(testActor(), {
+			interactionId,
+			streamNumber: 1,
+			plannedSeats: 30,
+			startsOn: null,
+			endsOn: null,
+			programId: null,
+			productIds: [],
+			purpose: 'students'
+		});
+		const input = { interactionId, learningGroupId: group.learningGroupId };
+
+		// Пока состав не передавали, пустой список уходить не должен.
+		await expect(sendLearningGroupRoster(testActor(), input)).rejects.toThrowError(
+			'Список не передан'
+		);
+
+		await importLearningGroupRoster(testActor(), input, file());
+		expect((await sendLearningGroupRoster(testActor(), input)).delivered).toBe(true);
+
+		// Старая передача того же состава ждёт повтора: её отложенный повтор
+		// затёр бы новый состав.
+		const [stale] = await database.db
+			.insert(exchangeMessages)
+			.values({
+				direction: 'outbound',
+				system: 'lms',
+				instance: 'moodle-itschool',
+				eventType: 'learning_group.requested',
+				eventId: crypto.randomUUID(),
+				externalId: `crm-group-${interactionId}-1`,
+				interactionId,
+				state: 'retrying',
+				attempt: 1,
+				nextAttemptAt: new Date(Date.now() + 3_600_000),
+				payload: { interactionId, streamNumber: 1, plannedSeats: 30, includeLearners: true }
+			})
+			.returning({ id: exchangeMessages.id });
+
+		for (const link of await database.db.select().from(learningGroupLearners)) {
+			await removeLearner(testActor(), { ...input, personId: link.personId });
+		}
+
+		const empty = await sendLearningGroupRoster(testActor(), input);
+
+		expect(empty.delivered).toBe(true);
+
+		const [sentEmpty] = await database.db
+			.select({ envelope: exchangeMessages.envelope })
+			.from(exchangeMessages)
+			.where(eq(exchangeMessages.id, empty.messageId));
+
+		expect(
+			(JSON.parse(sentEmpty.envelope!) as { data: { learners: unknown } }).data.learners
+		).toEqual([]);
+
+		const [dismissed] = await database.db
+			.select({ state: exchangeMessages.state, lastError: exchangeMessages.lastError })
+			.from(exchangeMessages)
+			.where(eq(exchangeMessages.id, stale.id));
+
+		expect(dismissed.state).toBe('dismissed');
+		expect(dismissed.lastError).toContain('заменено новой передачей состава');
+
+		const state = (await (await fetch(`${lms.url}/__state`)).json()) as {
+			objects: { groups: { learnerCount: number | null }[] };
+		};
+
+		expect(state.objects.groups[0].learnerCount).toBe(0);
 	});
 });

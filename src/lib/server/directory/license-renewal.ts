@@ -18,6 +18,7 @@ import { licenseState, renewalTitle } from '$lib/contracts/license';
 import { formatDate, formatIsoDay } from '$lib/format';
 import type { ActorContext } from '../actor';
 import { getDb } from '../db';
+import { withTransaction } from '../db/transaction';
 import {
 	contractItems,
 	contracts,
@@ -32,7 +33,7 @@ import {
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { visibleOrganizationFilter } from '../interactions/access';
 import { getInteraction } from '../interactions/read';
-import { createInteraction } from '../interactions/write';
+import { createStaffInteractionIn } from '../interactions/write';
 import { requirePermission } from '../rbac';
 import { getSetting } from '../settings';
 import { resolveIntakeWorkspace, type Executor } from '../stages/process';
@@ -100,7 +101,9 @@ export async function licenseResponsible(
  *
  * Повторное нажатие не заводит вторую запись: если по этой позиции уже идёт
  * продление того же срока (то же название, та же позиция, запись не закрыта),
- * возвращается оно.
+ * возвращается оно. Проверка и заведение идут одной транзакцией под
+ * блокировкой строки позиции: два нажатия подряд встают в очередь, и второе
+ * видит запись, которую завело первое.
  */
 export async function startLicenseRenewal(
 	ctx: ActorContext,
@@ -163,41 +166,51 @@ export async function startLicenseRenewal(
 		licenseUntilLabel: formatDate(item.licenseUntil)
 	});
 
-	const [existing] = await db
-		.select({ id: interactions.id })
-		.from(interactionContractItems)
-		.innerJoin(interactions, eq(interactions.id, interactionContractItems.interactionId))
-		.where(
-			and(
-				eq(interactionContractItems.contractItemId, item.itemId),
-				eq(interactions.title, title),
-				eq(interactions.status, 'active')
+	const { interactionId, reused } = await withTransaction(ctx, async (tx) => {
+		await tx
+			.select({ id: contractItems.id })
+			.from(contractItems)
+			.where(eq(contractItems.id, item.itemId))
+			.for('update');
+
+		const [existing] = await tx
+			.select({ id: interactions.id })
+			.from(interactionContractItems)
+			.innerJoin(interactions, eq(interactions.id, interactionContractItems.interactionId))
+			.where(
+				and(
+					eq(interactionContractItems.contractItemId, item.itemId),
+					eq(interactions.title, title),
+					eq(interactions.status, 'active')
+				)
 			)
-		)
-		.limit(1);
+			.limit(1);
 
-	if (existing !== undefined) {
-		return { ...(await getInteraction(ctx, existing.id)), reused: true };
-	}
+		if (existing !== undefined) {
+			return { interactionId: existing.id, reused: true };
+		}
 
-	const ownerUserId = await licenseResponsible(db, item.organizationId, item.productId);
+		const ownerUserId = await licenseResponsible(tx, item.organizationId, item.productId);
 
-	if (ownerUserId === null) {
-		throw new ValidationError('Продление некому вести', [
-			'У организации нет действующего ответственного по направлению продукта. Назначьте ответственного в блоке «Ответственные» этой карточки'
-		]);
-	}
+		if (ownerUserId === null) {
+			throw new ValidationError('Продление некому вести', [
+				'У организации нет действующего ответственного по направлению продукта. Назначьте ответственного в блоке «Ответственные» этой карточки'
+			]);
+		}
 
-	const workspace = await resolveIntakeWorkspace(db, item.organizationKind);
+		const workspace = await resolveIntakeWorkspace(tx, item.organizationKind);
 
-	const created = await createInteraction(ctx, workspace.key, {
-		title,
-		ownerUserId,
-		parties: [{ organizationId: item.organizationId, partyRole, isPrimary: true }],
-		productIds: [item.productId],
-		contractId: item.contractId,
-		contractItemIds: [item.itemId]
+		const created = await createStaffInteractionIn(ctx, tx, workspace.key, {
+			title,
+			ownerUserId,
+			parties: [{ organizationId: item.organizationId, partyRole, isPrimary: true }],
+			productIds: [item.productId],
+			contractId: item.contractId,
+			contractItemIds: [item.itemId]
+		});
+
+		return { interactionId: created, reused: false };
 	});
 
-	return { ...created, reused: false };
+	return { ...(await getInteraction(ctx, interactionId)), reused };
 }

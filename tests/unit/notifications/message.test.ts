@@ -19,6 +19,7 @@ const FACTS: StuckNotificationFacts = {
 	interactionId: '2f3a5a2e-0f3a-4a5e-9c3f-0c9a1e2b3c4d',
 	interactionTitle: 'СПбПУ: подготовка DevOps-инженеров, 2026/2027',
 	organizationName: 'СПбПУ',
+	isPersonal: false,
 	stageName: 'Поиск контакта',
 	standingDays: 21,
 	thresholdDays: 7
@@ -87,6 +88,23 @@ describe('письмо о зависшем взаимодействии', () => 
 
 		expect(message.text).not.toContain('()');
 		expect(message.text).toContain('«Поиск контакта»');
+	});
+
+	it('у физического лица не называет ни дело, ни сторону: это ФИО', () => {
+		const message = stuckNotificationMessage(
+			{
+				...FACTS,
+				interactionTitle: 'Заявка: Петрова Анна Сергеевна',
+				organizationName: 'Петрова Анна Сергеевна',
+				isPersonal: true
+			},
+			'https://crm.example.org'
+		);
+		const body = `${message.subject}\n${message.text}`;
+
+		expect(body).not.toContain('Петрова');
+		expect(message.text).toContain('Взаимодействие с физическим лицом остаётся на стадии');
+		expect(message.text).toContain(`/interactions/${FACTS.interactionId}`);
 	});
 });
 

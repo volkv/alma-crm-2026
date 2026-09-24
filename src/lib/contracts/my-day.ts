@@ -110,6 +110,12 @@ export const MY_DAY_BASIS_LABELS: Record<MyDayBasis, string> = {
 	all: 'Вся система: у вас полная область доступа'
 };
 
+/**
+ * Как письмо называет взаимодействие с физическим лицом: его название и
+ * название стороны — это ФИО, а письмо уходит в чужой почтовый ящик.
+ */
+export const PERSONAL_INTERACTION_TITLE = 'Взаимодействие с физическим лицом';
+
 /** Название строки для письма: у физического лица — без ФИО. */
 export function myDayLetterTitle(item: MyDayItem): string {
 	if (!item.isPersonal) {
@@ -122,5 +128,5 @@ export function myDayLetterTitle(item: MyDayItem): string {
 
 	return item.target.type === 'organization'
 		? `Лицензия физического лица: ${item.title}`
-		: 'Взаимодействие с физическим лицом';
+		: PERSONAL_INTERACTION_TITLE;
 }

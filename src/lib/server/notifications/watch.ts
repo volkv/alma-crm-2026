@@ -87,6 +87,11 @@ export type StuckEntry = {
 	interactionTitle: string;
 	stageName: string;
 	organizationName: string | null;
+	/**
+	 * Основная сторона — физическое лицо: её название — ФИО, и оно же обычно
+	 * стоит в названии заявки. Письмо тогда не называет ни то, ни другое.
+	 */
+	isPersonal: boolean;
 	activeSeconds: number;
 	recipientUserId: string | null;
 	recipientName: string | null;
@@ -158,6 +163,7 @@ async function readStuck(options: {
 				interactionTitle: interactions.title,
 				stageName: sql<string>`coalesce(${stageEntries.stageSnapshot} ->> 'name', 'стадия')`,
 				organizationName: organizations.shortName,
+				isPersonal: sql<boolean>`coalesce(${organizations.kind} = 'individual', false)`,
 				activeSeconds: stageEntryStatus.activeSeconds,
 				recipientUserId: manager.id,
 				recipientName: manager.fullName,
@@ -353,6 +359,7 @@ export async function deliverStuckNotice(
 			interactionId: entry.interactionId,
 			interactionTitle: entry.interactionTitle,
 			organizationName: entry.organizationName,
+			isPersonal: entry.isPersonal,
 			stageName: entry.stageName,
 			standingDays: Math.floor(entry.activeSeconds / SECONDS_PER_DAY),
 			thresholdDays

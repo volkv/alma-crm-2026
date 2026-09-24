@@ -24,6 +24,12 @@
  * период целиком, и частичная полная сборка при подтверждении вытеснила бы
  * картину остальных вузов. Это то же правило, что у загрузки файла: область
  * доступа применяется к показателям, а не к самим снимкам.
+ *
+ * **Имена групп.** Суммы по организации и программе идут без оглядки на
+ * пространства, а имена групп — нет: имя группы в системе обучения ведёт к
+ * конкретному делу, и предпросмотр показывает только имена групп тех дел,
+ * которые вызывающий видит. В сам снимок имена не пишутся: его строки читает
+ * потом любой, кому открыты снимки, и область у него своя.
  */
 import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
@@ -38,9 +44,17 @@ import { formatNumber, pluralize } from '$lib/format';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
-import { documents, organizations, programs, statRows, statSnapshots } from '../db/schema';
+import {
+	documents,
+	learningGroups,
+	organizations,
+	programs,
+	statRows,
+	statSnapshots
+} from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { ConflictError } from '../errors';
+import { visibleInteractionFilter } from '../interactions/access';
 import { requirePermission } from '../rbac';
 import { addNullable, readGroupFacts, type GroupFact } from './facts';
 import { toStatSnapshotView } from './read';
@@ -50,8 +64,15 @@ const GROUP_SNAPSHOT_SOURCE = 'lms';
 
 type Draft = Omit<GroupSnapshotRow, 'organizationName' | 'programCode' | 'programName'>;
 
-/** Группы периода в строки «организация × программа». Чистая функция. */
-export function groupRows(groups: readonly GroupFact[]): {
+/**
+ * Группы периода в строки «организация × программа». Чистая функция.
+ * `labelVisible` решает, попадёт ли имя группы в строку: считаются все группы,
+ * а называются только видимые вызывающему.
+ */
+export function groupRows(
+	groups: readonly GroupFact[],
+	labelVisible: (groupId: string) => boolean
+): {
 	rows: Draft[];
 	skipped: GroupSnapshotPreview['skipped'];
 } {
@@ -85,7 +106,10 @@ export function groupRows(groups: readonly GroupFact[]): {
 		row.withResult += group.hasResult ? 1 : 0;
 		row.enrolled = addNullable(row.enrolled, group.enrolled);
 		row.completed = addNullable(row.completed, group.completed);
-		row.groupLabels.push(group.label);
+		if (labelVisible(group.groupId)) {
+			row.groupLabels.push(group.label);
+		}
+
 		rows.set(key, row);
 	}
 
@@ -121,12 +145,41 @@ async function currentToReplace(period: GroupSnapshotPeriod): Promise<GroupSnaps
 		.map(({ coverage: _coverage, ...row }) => row);
 }
 
-async function collect(period: GroupSnapshotPeriod): Promise<GroupSnapshotPreview> {
+/** Какие из групп принадлежат делам, которые вызывающий видит. */
+async function visibleGroupIds(
+	ctx: ActorContext,
+	groups: readonly GroupFact[]
+): Promise<ReadonlySet<string>> {
+	if (groups.length === 0) {
+		return new Set();
+	}
+
+	const rows = await getDb()
+		.select({ id: learningGroups.id })
+		.from(learningGroups)
+		.where(
+			and(
+				inArray(
+					learningGroups.id,
+					groups.map((group) => group.groupId)
+				),
+				visibleInteractionFilter(ctx, learningGroups.interactionId)
+			)
+		);
+
+	return new Set(rows.map((row) => row.id));
+}
+
+async function collect(
+	ctx: ActorContext,
+	period: GroupSnapshotPeriod
+): Promise<GroupSnapshotPreview> {
 	const groups = await readGroupFacts(
 		{ start: period.periodStart, end: period.periodEnd },
 		sql`true`
 	);
-	const { rows, skipped } = groupRows(groups);
+	const visible = await visibleGroupIds(ctx, groups);
+	const { rows, skipped } = groupRows(groups, (groupId) => visible.has(groupId));
 
 	const organizationIds = [...new Set(rows.map((row) => row.organizationId))];
 	const programIds = [...new Set(rows.map((row) => row.programId))];
@@ -197,7 +250,7 @@ export async function previewGroupSnapshot(
 ): Promise<GroupSnapshotPreview> {
 	requirePermission(ctx, 'stats.import');
 
-	return collect(period);
+	return collect(ctx, period);
 }
 
 /**
@@ -210,7 +263,7 @@ export async function buildGroupSnapshot(
 ): Promise<StatSnapshotView> {
 	await requirePermission(ctx, 'stats.import', { type: 'stats.snapshot_created' });
 
-	const preview = await collect(period);
+	const preview = await collect(ctx, period);
 
 	if (preview.rows.length === 0) {
 		throw new ConflictError('Собирать нечего: за период нет учебных групп с программой и вузом');
@@ -247,12 +300,11 @@ export async function buildGroupSnapshot(
 				enrolled: row.enrolled,
 				parallelStreams: row.streams,
 				completed: row.completed,
-				// Происхождение строки — имена групп: по ним строку находят в
-				// системе обучения, как строку файла находят по номеру.
+				// Происхождение строки — без имён групп: строки снимка читает любой,
+				// кому открыты снимки, а имя группы ведёт к делу его пространства.
 				raw: {
 					Организация: row.organizationName,
 					Программа: `${row.programCode} · ${row.programName}`,
-					'Учебные группы': row.groupLabels.join(', '),
 					'Групп с результатом': String(row.withResult)
 				},
 				issues: [],

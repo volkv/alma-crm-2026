@@ -73,6 +73,12 @@ type LearningGroup = {
 	 * а ФИО и почта — персональные данные, пусть и выдуманные.
 	 */
 	learnerCount: number | null;
+	/**
+	 * `occurredAt` последнего применённого списка; `null` — списка не было.
+	 * Список старше применённого не применяется (`docs/exchange-contract.md`,
+	 * раздел 2): отложенный повтор старой передачи не затирает новую.
+	 */
+	rosterOccurredAt: string | null;
 	/** Отправленные результаты: промежуточные и итоговый, свежий — последний. */
 	results: { at: string; eventId: string; counters: GroupCounters }[];
 };
@@ -274,10 +280,15 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 					// Повторная заявка возвращает ту же группу, а не заводит вторую:
 					// это и есть защита от дубля на стороне LMS. Список слушателей в
 					// ней — снимок состава: он заменяет прежний, а не дописывается.
-					const rostered = learnerCount !== null;
+					const stale =
+						learnerCount !== null &&
+						existing.rosterOccurredAt !== null &&
+						Date.parse(envelope.occurredAt) < Date.parse(existing.rosterOccurredAt);
+					const rostered = learnerCount !== null && !stale;
 
 					if (rostered) {
 						existing.learnerCount = learnerCount;
+						existing.rosterOccurredAt = envelope.occurredAt;
 					}
 
 					journal.add({
@@ -286,9 +297,11 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 						status: 200,
 						eventId: envelope.eventId,
 						eventType: envelope.eventType,
-						note: rostered
-							? `состав группы ${existing.groupExternalId}: ${learnerCount} слушателей`
-							: `повтор заявки: группа ${existing.groupExternalId} уже заведена`,
+						note: stale
+							? `состав группы ${existing.groupExternalId} старее применённого: не применён`
+							: rostered
+								? `состав группы ${existing.groupExternalId}: ${learnerCount} слушателей`
+								: `повтор заявки: группа ${existing.groupExternalId} уже заведена`,
 						payload: journalCopy(envelope)
 					});
 
@@ -327,6 +340,7 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 					endsOn: readString(stream.endsOn),
 					requestedAt: envelope.occurredAt,
 					learnerCount,
+					rosterOccurredAt: learnerCount === null ? null : envelope.occurredAt,
 					results: []
 				};
 

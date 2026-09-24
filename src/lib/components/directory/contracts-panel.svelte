@@ -87,6 +87,13 @@
 
 	let open = $state<OpenForm | null>(null);
 
+	/**
+	 * Продление уже отправлено: кнопки блокируются до ответа, чтобы второе
+	 * нажатие не ушло следом. Страница после ответа загружается заново, и
+	 * отметка сбрасывается сама.
+	 */
+	let renewing = $state(false);
+
 	// Значения открытой формы: пока правку не сохранили, поля показывают
 	// введённое, а не то, что лежит в базе.
 	let number = $state('');
@@ -343,12 +350,18 @@
 										<Table.Cell>{item.transferStatus}</Table.Cell>
 										<Table.Cell class="text-right">
 											{#if canStartRenewal && (license === 'expiring' || license === 'expired')}
-												<form method="POST" action="?/startRenewal" class="inline">
+												<form
+													method="POST"
+													action="?/startRenewal"
+													class="inline"
+													onsubmit={() => (renewing = true)}
+												>
 													<input type="hidden" name="contractItemId" value={item.id} />
 													<Button
 														type="submit"
 														variant="outline"
 														size="sm"
+														disabled={renewing}
 														data-testid="start-renewal"
 													>
 														Запустить продление
