@@ -1,0 +1,45 @@
+# Стек для динамического сканирования (`pnpm run check:dast`), поверх
+# docker-compose.yml:
+#
+#   docker compose -p lct-dast -f docker-compose.yml -f scripts/dast/compose.dast.yml up -d --wait app
+#
+# Отличия от локального стека ровно два, и оба ради того, чтобы скан шёл рядом
+# с рабочим стеком разработчика, не мешая ему:
+#   - ни один сервис не публикует порт на хост. Сканер стоит в сети стека и
+#     ходит к приложению по имени контейнера, а занятые 3000, 55432, 58080 и
+#     прочие остаются за тем, кто их занял;
+#   - приложение и каталог называют себя именами сети (`app:3000`,
+#     `keycloak:8080`), а не опубликованными портами: вход сканера проходит
+#     весь путь Authorization Code + PKCE изнутри сети, и адреса возврата и
+#     `iss` должны совпасть с теми, по которым он ходит.
+# Всё остальное — тот же образ приложения из Dockerfile (NODE_ENV=production),
+# та же схема, тот же демонстрационный набор данных.
+
+services:
+  postgres:
+    ports: !reset []
+  redis:
+    ports: !reset []
+  gotenberg:
+    ports: !reset []
+  mailpit:
+    ports: !reset []
+  minio:
+    ports: !reset []
+  mock-cms:
+    ports: !reset []
+  mock-lms:
+    ports: !reset []
+
+  keycloak:
+    ports: !reset []
+    environment:
+      KC_HOSTNAME: http://keycloak:8080
+      CRM_ORIGIN: http://app:3000
+
+  app:
+    ports: !reset []
+    environment:
+      ORIGIN: http://app:3000
+      OIDC_ISSUER_URL: http://keycloak:8080/realms/lct
+      OIDC_PUBLIC_URL: http://keycloak:8080
