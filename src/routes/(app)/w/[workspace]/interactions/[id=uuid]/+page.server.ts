@@ -28,7 +28,7 @@ import { completeLearningGroupSchema, sendLearningGroupSchema } from '$lib/contr
 import { NO_OPTION } from '$lib/components/directory/labels';
 import { actorFromEvent } from '$lib/server/actor';
 import { listOrganizationContracts } from '$lib/server/directory/contracts';
-import { getOrganization } from '$lib/server/directory/read';
+import { getOrganization, listAffiliations } from '$lib/server/directory/read';
 import { DocumentConversionError } from '$lib/server/documents/errors';
 import { generateDocumentPackage } from '$lib/server/documents/package';
 import { listInteractionSupersessions } from '$lib/server/documents/read';
@@ -110,14 +110,22 @@ export const load: PageServerLoad = async (event) => {
 		// Состав карточки — панели и шаблоны — объявляет процесс записи, а вид
 		// шапки задаёт вид основной стороны.
 		const primary = interaction.parties.find((party) => party.isPrimary);
-		const [contracts, counterparty, card] = await Promise.all([
+		// Контакты стороны — для диалога приглашения на встречу (участники с
+		// почтой, галочками): та же область доступа, что у справочника людей, а не
+		// у карточки взаимодействия саму по себе. Без права список пуст, и диалог
+		// говорит почему, а не молчит.
+		const meetingContactsDenied = primary !== undefined && !can(ctx, 'people.read');
+		const [contracts, counterparty, card, meetingContacts] = await Promise.all([
 			primary !== undefined && can(ctx, 'interactions.write')
 				? listOrganizationContracts(ctx, primary.organizationId)
 				: [],
 			primary !== undefined && can(ctx, 'organizations.read')
 				? getOrganization(ctx, primary.organizationId)
 				: null,
-			readInteractionCard(interaction)
+			readInteractionCard(interaction),
+			primary !== undefined && can(ctx, 'people.read')
+				? listAffiliations(ctx, primary.organizationId)
+				: []
 		]);
 
 		return {
@@ -132,7 +140,9 @@ export const load: PageServerLoad = async (event) => {
 			exchange,
 			contracts,
 			counterparty,
-			card
+			card,
+			meetingContacts,
+			meetingContactsDenied
 		};
 	} catch (cause) {
 		toPageError(cause);

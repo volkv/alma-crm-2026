@@ -311,6 +311,7 @@ describe('меню «Ещё»', () => {
 		expect(card.secondary.map((item) => item.command.kind)).toEqual([
 			'transition',
 			'pause',
+			'invite-meeting',
 			'confirm',
 			'raise-blocker',
 			'assign',

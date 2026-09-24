@@ -117,7 +117,8 @@ export type CardCommand =
 			counterpartyKind: OrganizationKind;
 	  }
 	| { kind: 'send-group' }
-	| { kind: 'complete-group'; groupId: string | null };
+	| { kind: 'complete-group'; groupId: string | null }
+	| { kind: 'invite-meeting' };
 
 /**
  * Вид контрагента, от которого зависят шапка и условия: вуз работает по
@@ -296,6 +297,17 @@ function counterpartyShape(kind: OrganizationKind): CounterpartyShape {
 export const PAYMENT_CHECKLIST_KEY = 'payment_received';
 
 /**
+ * Ключ стадии «Встреча с представителями» в сиде базового процесса
+ * (`$lib/server/stages/definitions.ts`). На ней у пункта чек-листа «Встреча
+ * назначена» рядом появляется кнопка приглашения — на любой другой стадии
+ * команда доступна только из меню «Ещё».
+ */
+export const MEETING_STAGE_KEY = 'meeting';
+
+/** Пункт чек-листа стадии «Встреча с представителями», к которому привязана кнопка приглашения. */
+export const MEETING_SCHEDULED_CHECKLIST_KEY = 'meeting_scheduled';
+
+/**
  * Оплата по записям стадий, новые первыми: ищется последняя стадия, в чек-листе
  * которой объявлена отметка об оплате. Пока стадия открыта, отметка — условие
  * перехода, и названа она у главного действия; здесь — только где её ставят.
@@ -427,18 +439,29 @@ function describeLmsEvidence(entry: StageEntryView): string | null {
  */
 export function buildRequirements(entry: StageEntryView, exchange: CardExchange): Requirement[] {
 	const { snapshot } = entry;
-	const requirements: Requirement[] = snapshot.checklist.map((item) => ({
-		key: `checklist:${item.key}`,
-		label: item.label,
-		done: entry.checklistState[item.key] === true,
-		required: item.required,
-		close: 'check',
-		checklistKey: item.key,
-		cta: null,
-		command: null,
-		hint: null,
-		doneNote: null
-	}));
+	const requirements: Requirement[] = snapshot.checklist.map((item) => {
+		// На стадии встречи пункт «Встреча назначена» держит кнопку приглашения
+		// прямо у чек-листа: там она уместнее всего. На остальных стадиях та же
+		// команда стоит только в меню «Ещё» (`buildSecondary`) — встречи бывают и
+		// вне этой стадии.
+		const isMeetingChecklistItem =
+			snapshot.key === MEETING_STAGE_KEY && item.key === MEETING_SCHEDULED_CHECKLIST_KEY;
+
+		return {
+			key: `checklist:${item.key}`,
+			label: item.label,
+			done: entry.checklistState[item.key] === true,
+			required: item.required,
+			close: 'check',
+			checklistKey: item.key,
+			cta: isMeetingChecklistItem ? 'Пригласить на встречу' : null,
+			command: isMeetingChecklistItem ? { kind: 'invite-meeting' } : null,
+			hint: isMeetingChecklistItem
+				? 'Файл приглашения для календаря; отметьте пункт, когда встреча назначена.'
+				: null,
+			doneNote: null
+		};
+	});
 
 	if (snapshot.requiresResult) {
 		const done = entry.resultText !== null && entry.resultText.trim() !== '';
@@ -691,6 +714,19 @@ function buildSecondary(source: CardSource, action: CardAction): SecondaryAction
 			command: { kind: 'pause' }
 		});
 	}
+
+	// Встреча случается не только на стадии, названной в её честь: команда стоит
+	// в меню «Ещё» всегда, а на самой стадии встречи дублируется кнопкой у пункта
+	// чек-листа (см. `buildRequirements`). Право то же, что у правки записи
+	// (`edit`): приглашение — действие по карточке, а не просмотр.
+	result.push({
+		key: 'invite-meeting',
+		label: 'Пригласить на встречу',
+		allowed: can('edit'),
+		reason: can('edit') ? null : 'Нет права менять взаимодействие',
+		tone: 'default',
+		command: { kind: 'invite-meeting' }
+	});
 
 	// Результат и подтверждение, которых стадия не требует (или которые уже
 	// есть), живут в меню: условием перехода они не стоят, а записать или

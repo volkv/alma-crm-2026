@@ -84,6 +84,7 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'interactions.owner_changed': 'Владелец взаимодействия изменён',
 	'interactions.stage_migrated': 'Стадия перенесена при изменении процесса',
 	'interactions.commented': 'Добавлен комментарий',
+	'interactions.meeting_invited': 'Скачано приглашение на встречу',
 	'interactions.completed': 'Взаимодействие завершено',
 	'interactions.cancelled': 'Взаимодействие отменено',
 	'stages.process_published': 'Изменения процесса применены',

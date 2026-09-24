@@ -11,6 +11,7 @@
 	import DocumentDialogs from '$lib/components/interaction-card/document-dialogs.svelte';
 	import EventFeed from '$lib/components/interaction-card/event-feed.svelte';
 	import LearningDialogs from '$lib/components/interaction-card/learning-dialogs.svelte';
+	import MeetingDialogs from '$lib/components/interaction-card/meeting-dialogs.svelte';
 	import { buildCard, type CardSource } from '$lib/components/interaction-card/model';
 	import PrimaryAction from '$lib/components/interaction-card/primary-action.svelte';
 	import RecordDialogs from '$lib/components/interaction-card/record-dialogs.svelte';
@@ -174,3 +175,10 @@
 />
 <DocumentDialogs interaction={data.interaction} supersessions={data.supersessions} />
 <LearningDialogs exchange={data.exchange} />
+<MeetingDialogs
+	interaction={data.interaction}
+	entry={data.status.current}
+	contacts={data.meetingContacts}
+	contactsDenied={data.meetingContactsDenied}
+	workspaceKey={data.workspace.key}
+/>
