@@ -22,7 +22,8 @@ export type SettingsHref =
 	| '/settings/general'
 	| '/settings/workspaces'
 	| '/settings/workflows'
-	| '/settings/integrations';
+	| '/settings/integrations'
+	| '/settings/diagnostics';
 
 export type SettingsSection = {
 	href: SettingsHref;
@@ -80,6 +81,12 @@ export const SETTINGS_SECTIONS: readonly SettingsSection[] = [
 		href: '/settings/integrations',
 		label: 'Интеграции',
 		description: 'Вебхуки, обмен с системой обучения и приём заявок с сайта',
+		permission: 'integrations.manage'
+	},
+	{
+		href: '/settings/diagnostics',
+		label: 'Связи и зависимости',
+		description: 'С чем система соединяется, зачем и отвечает ли оно сейчас',
 		permission: 'integrations.manage'
 	},
 	{
