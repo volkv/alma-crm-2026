@@ -24,6 +24,10 @@ RUN pnpm run build
 FROM node:24-alpine AS runtime
 ENV NODE_ENV=production
 ENV PORT=3000
+# Молодое поколение кучи побольше: под пятьюдесятью пользователями сборка мусора
+# занимала пятую часть основного потока, с флагом p95 падает вдвое
+# (docs/performance.md, «Куда уходит время на пятидесяти»).
+ENV NODE_OPTIONS=--max-semi-space-size=32
 WORKDIR /app
 
 # Базовый образ пересобирают реже, чем Alpine выпускает исправления, поэтому

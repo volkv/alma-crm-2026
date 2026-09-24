@@ -12,6 +12,10 @@
 #   scripts/load/run.sh breakdown <файл>  разложить прогон по шагам сценария
 #   scripts/load/run.sh down      погасить стенд и снести его тома
 #
+# `APP_COPIES` — сколько копий приложения поднять (по умолчанию одна). Больше
+# одной — копии встают за прокси на том же адресе (`compose.copies.yml`), и
+# задавать значение надо одинаковым у `up`, прогонов и `down`.
+#
 # Стенд поднимается под своим именем проекта (`lct-load`, или `LOAD_PROJECT`
 # на машине, где это имя занято) и на своих портах:
 # см. `scripts/load/compose.load.yml`. Результаты k6 складываются в каталог,
@@ -25,8 +29,18 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/../.." && pwd)"
 PROJECT="${LOAD_PROJECT:-lct-load}"
 ENV_FILE=scripts/load/load.env
+COPIES="${APP_COPIES:-1}"
 COMPOSE=(docker compose -p "$PROJECT" --env-file "$ENV_FILE"
 	-f docker-compose.yml -f docker-compose.prod.yml -f scripts/load/compose.load.yml)
+
+if [[ ! "$COPIES" =~ ^[1-9][0-9]*$ ]]; then
+	echo "APP_COPIES — число копий приложения, от одной: «$COPIES»" >&2
+	exit 2
+fi
+
+if ((COPIES > 1)); then
+	COMPOSE+=(-f scripts/load/compose.copies.yml)
+fi
 
 cd "$ROOT"
 
@@ -287,6 +301,16 @@ reset_login_limit() {
 			xargs -r redis-cli --no-auth-warning -a "$REDIS_PASSWORD" del' >/dev/null
 }
 
+# Сценарий «десять одновременных отчётов»: окно входа, потом измеряемое окно
+# `REPORT_DURATION`. VU входят через полсекунды друг за другом (`reports.js`);
+# окно — это расписание плюс те же тридцать пять секунд на вход и повтор, что у
+# `browse`.
+report_run() {
+	local vus="${REPORT_VUS:-10}"
+	k6 reports.js -e REPORT_VUS="$vus" -e SIGN_IN_S="$(((vus - 1) / 2 + 35))" \
+		-e MEASURE_S="$(seconds "${REPORT_DURATION:-2m}")"
+}
+
 k6() {
 	local script="$1"
 	shift
@@ -367,6 +391,14 @@ up)
 	else
 		"${COMPOSE[@]}" up -d --build --wait
 	fi
+	# Остальные копии — после первой: миграции и сид в команде контейнера
+	# должна пройти одна копия, а не несколько наперегонки. Прокси раскрывает
+	# имя сервиса в адреса реплик на старте, поэтому после масштабирования он
+	# перезапускается.
+	if ((COPIES > 1)); then
+		"${COMPOSE[@]}" up -d --wait --no-recreate --scale app="$COPIES"
+		"${COMPOSE[@]}" restart lb
+	fi
 	"${COMPOSE[@]}" exec -T app node scripts/seed/index.ts --load
 	fixture
 	accounts
@@ -387,16 +419,14 @@ browse)
 reports)
 	fixture
 	reset_login_limit
-	k6 reports.js -e REPORT_VUS="${REPORT_VUS:-10}" -e REPORT_DURATION="${REPORT_DURATION:-2m}" |
-		tee "$OUT/reports.txt"
+	report_run | tee "$OUT/reports.txt"
 	echo "результаты: $OUT"
 	;;
 full)
 	status=0
 	browse "${VUS:-50}" "${DURATION:-3m}" || status=$?
 	reset_login_limit
-	k6 reports.js -e REPORT_VUS="${REPORT_VUS:-10}" -e REPORT_DURATION="${REPORT_DURATION:-2m}" |
-		tee "$OUT/reports.txt" || status=$?
+	report_run | tee "$OUT/reports.txt" || status=$?
 	echo "результаты: $OUT"
 	exit "$status"
 	;;
