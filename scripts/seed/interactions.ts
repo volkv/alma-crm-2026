@@ -38,7 +38,7 @@ import {
 	type StageView
 } from '$lib/contracts/interactions';
 import type { DocumentStatusFact } from '$lib/contracts/documents';
-import type { LearningPurpose, LmsEvidence } from '$lib/contracts/exchange';
+import { externalSourceOf, type LearningPurpose, type LmsEvidence } from '$lib/contracts/exchange';
 import { formatDate } from '$lib/format';
 import type { ActorContext } from '$lib/server/actor';
 import { recordAuditEvent } from '$lib/server/audit';
@@ -208,6 +208,16 @@ type InteractionSeed = CounterpartySeed & {
 	 * требует финальной стадии — дело останавливают там, где до него дошли.
 	 */
 	cancelledWith?: string;
+	/**
+	 * Дело пришло заявкой с сайта, а не заведено сотрудником: `externalSource` и
+	 * `externalId` ставятся в том же виде, что и настоящий приём заявки
+	 * (`externalSourceOf('cms', …)`, `integrations/exchange/intake.ts`). Без
+	 * этого поля у демонстрационных данных слагаемое «заявки с сайта» рейтинга
+	 * программ (`stats/facts.ts`, `readApplicationFacts`) остаётся пустым.
+	 * `revision` по умолчанию — `1`: заявка обработана с первого сообщения,
+	 * повторов не было.
+	 */
+	externalApplication?: { id: string; revision?: number };
 };
 
 /**
@@ -812,6 +822,7 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'pupi-contact_search-1',
+		externalApplication: { id: 'site-2026-000204' },
 		title: 'МФТИ: аналитику данных (low-code), первый контакт',
 		institution: 'pupi',
 		contact: 'ignatyeva',
@@ -828,6 +839,7 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'uguis-contact_search-2',
+		externalApplication: { id: 'site-2026-000202' },
 		title: 'ТПУ: web-разработку на «Аколе», первый контакт',
 		institution: 'uguis',
 		contact: 'koltsov',
@@ -1150,6 +1162,7 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'vkgtu-meeting-23',
+		externalApplication: { id: 'site-2026-000205' },
 		title: 'ЧГУ им. И. Н. Ульянова: распределённые реестры, встреча с подразделением',
 		institution: 'vkgtu',
 		contact: 'khabibullina',
@@ -1243,6 +1256,7 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'nkis-meeting-29',
+		externalApplication: { id: 'site-2026-000207' },
 		title: 'НКИС: SQL-разработчиков, встреча с подразделением',
 		institution: 'nkis',
 		contact: 'ilyin',
@@ -1472,6 +1486,7 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'paid-signing-44',
+		externalApplication: { id: 'site-2026-000203' },
 		title: 'НИУ «МЭИ»: мобильную разработку на «Авроре», подписание соглашения',
 		institution: 'paid',
 		contact: 'vikhrova',
@@ -1578,6 +1593,7 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'szpu-materials_handover-51',
+		externalApplication: { id: 'site-2026-000201' },
 		title: 'СПбПУ: DevOps-инженеров, передача материалов',
 		institution: 'szpu',
 		contact: 'guryev',
@@ -1686,6 +1702,7 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'sruit-teacher_training-58',
+		externalApplication: { id: 'site-2026-000206' },
 		title: 'Московский Политех: управление проектами, обучение преподавателей',
 		institution: 'sruit',
 		contact: 'shilov',
@@ -1747,6 +1764,7 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'ukct-program_update-62',
+		externalApplication: { id: 'site-2026-000208' },
 		title: 'УКЦТ: аналитику на Python, актуализация программы',
 		institution: 'ukct',
 		contact: 'ershova',
@@ -1831,6 +1849,7 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'school47-classes-67',
+		externalApplication: { id: 'site-2026-000209' },
 		title: 'Школа № 47 «Вектор»: промпт-инжиниринг, ведение занятий',
 		institution: 'school47',
 		contact: 'novikova',
@@ -2112,6 +2131,7 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 const B2B_EXTRA: readonly InteractionSeed[] = [
 	{
 		key: 'uguis-2025b',
+		externalApplication: { id: 'site-2026-000210' },
 		title: 'ТПУ: web-разработка на «Аколе», выпуск 2025/2026',
 		institution: 'uguis',
 		contact: 'lapina',
@@ -2138,6 +2158,7 @@ const B2B_EXTRA: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'vkgtu-2025-mag',
+		externalApplication: { id: 'site-2026-000211' },
 		title: 'ЧГУ им. И. Н. Ульянова: распределённые реестры, выпуск 2025/2026',
 		institution: 'vkgtu',
 		contact: 'fedotov',
@@ -2395,6 +2416,7 @@ const B2C_EXTRA: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'mayak-offer-2',
+		externalApplication: { id: 'site-2026-000213' },
 		title: 'Маяк-Телеком: управление проектами, предложение для руководителей смен',
 		counterparty: 'mayak',
 		contact: 'kudryashova',
@@ -2408,6 +2430,7 @@ const B2C_EXTRA: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'sorokin-zayavka-2',
+		externalApplication: { id: 'site-2026-000212' },
 		title: 'Сорокин А. П.: аналитика на Python, вторая заявка',
 		counterparty: 'individual-sorokin',
 		contact: 'sorokin',
@@ -2421,6 +2444,7 @@ const B2C_EXTRA: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'mayak-dogovor-2',
+		externalApplication: { id: 'site-2026-000214' },
 		title: 'Маяк-Телеком: промпт-инжиниринг, вторая группа сотрудников',
 		counterparty: 'mayak',
 		contact: 'kudryashova',
@@ -2459,6 +2483,7 @@ const B2C_EXTRA: readonly InteractionSeed[] = [
 	},
 	{
 		key: 'sorokin-vypusk',
+		externalApplication: { id: 'site-2026-000215' },
 		title: 'Сорокин А. П.: SQL-разработчик, выпуск 2026',
 		counterparty: 'individual-sorokin',
 		contact: 'sorokin',
@@ -2808,7 +2833,8 @@ function partiesOf(seed: InteractionSeed) {
 
 function toCreateInput(
 	seed: InteractionSeed,
-	versions: Map<string, string>
+	versions: Map<string, string>,
+	cmsInstance: string
 ): CreateInteractionInput {
 	const raw = {
 		title: seed.title,
@@ -2824,8 +2850,12 @@ function toCreateInput(
 			return { programId, programVersionId: versions.get(programId) ?? null };
 		}),
 		productIds: (seed.products ?? []).map((product) => seedId('product', product)),
-		externalSource: null,
-		externalId: null
+		// Экземпляр подключения — тот же, что у обмена: заявка, заведённая набором,
+		// не должна отличаться источником от той, что реально примет `POST
+		// /v1/applications` (`externalSourceOf`, `integrations/exchange/intake.ts`).
+		externalSource:
+			seed.externalApplication === undefined ? null : externalSourceOf('cms', cmsInstance),
+		externalId: seed.externalApplication?.id ?? null
 	};
 
 	const parsed = createInteractionSchema.safeParse(raw);
@@ -2856,7 +2886,8 @@ async function createSeededInteraction(
 	db: Database,
 	id: string,
 	input: CreateInteractionInput,
-	workspace: { id: string; key: string; revision: ProcessRevisionView }
+	workspace: { id: string; key: string; revision: ProcessRevisionView },
+	externalRevision: number | null
 ): Promise<boolean> {
 	return db.transaction(async (tx: Tx) => {
 		const created = await tx
@@ -2869,7 +2900,12 @@ async function createSeededInteraction(
 				agreementPeriodEnd: input.agreementPeriodEnd,
 				academicPeriodStart: input.academicPeriodStart,
 				academicPeriodEnd: input.academicPeriodEnd,
-				ownerUserId: input.ownerUserId
+				ownerUserId: input.ownerUserId,
+				// Как у настоящей заявки (`intake.ts`): источник и номер обращения
+				// остаются на деле, а ревизия — последняя применённая заявкой.
+				externalSource: input.externalSource,
+				externalId: input.externalId,
+				externalRevision
 			})
 			.onConflictDoNothing({ target: interactions.id })
 			.returning({ id: interactions.id });
@@ -3571,6 +3607,8 @@ export async function seedInteractions(): Promise<void> {
 	// Экземпляр подключения к системе обучения: поток набора заведён в том же,
 	// куда ходит обмен, — иначе результат оттуда встал бы рядом со своим.
 	const lmsInstance = (await getExchangeSettings()).lms.instance;
+	// Тот же экземпляр — источник дел, отмеченных заявкой с сайта.
+	const cmsInstance = (await getExchangeSettings()).cms.instance;
 
 	// Одна точка отсчёта на всю заливку: два вызова `new Date()` расходятся на
 	// миллисекунды, а смещения записей считаются друг относительно друга.
@@ -3600,13 +3638,17 @@ export async function seedInteractions(): Promise<void> {
 
 		const { workspace, plan } = process;
 		const stages = plan.stages;
-		const input = toCreateInput(seed, versions);
+		const input = toCreateInput(seed, versions, cmsInstance);
 
 		if (
-			!(await createSeededInteraction(ctx, db, id, input, {
-				...workspace,
-				revision: plan.revisionView
-			}))
+			!(await createSeededInteraction(
+				ctx,
+				db,
+				id,
+				input,
+				{ ...workspace, revision: plan.revisionView },
+				seed.externalApplication === undefined ? null : (seed.externalApplication.revision ?? 1)
+			))
 		) {
 			continue;
 		}
