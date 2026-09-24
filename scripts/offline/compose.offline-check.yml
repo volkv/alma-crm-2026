@@ -1,0 +1,73 @@
+# Проверка работы без интернета: третье наложение поверх `docker-compose.yml` и
+# `docker-compose.prod.yml` с профилем `stand`.
+#
+#   scripts/offline/offline-check.sh     # поднимает, проверяет и сносит стек сам
+#
+# Что меняется против стенда, и только это:
+#
+#   * сеть стека `default` объявлена `internal: true`. У такой сети Docker не
+#     заводит маршрута наружу: ни один сервис стека — приложение, каталог
+#     учётных записей, Gotenberg, хранилище, имитаторы — не достаёт ни до
+#     интернета, ни до хоста. Имена сервисов внутри сети разрешаются как обычно;
+#   * у сервисов нет опубликованных портов: публикация на внутренней сети не
+#     работает, и оставленный порт только создавал бы видимость доступа;
+#   * вход снаружи — один сервис `edge` (nginx), стоящий в двух сетях: во
+#     внутренней сети стека и в обычной сети `edge`, через которую
+#     публикуется порт на петле хоста. Это ровно роль обратного прокси
+#     заказчика: браузер сотрудника в закрытой сети видит его, а не сервисы.
+#     Сам `edge` в интернет может, но никуда, кроме приложения, каталога и
+#     имитаторов, запросы не передаёт (`nginx.offline-check.conf`);
+#   * приложение и каталог называют себя адресом `edge` на петле
+#     (`OFFLINE_PORT`), как на стенде называют себя доменом за прокси;
+#   * приложение читает не `.env` рабочего дерева, а файл, который скрипт
+#     проверки генерирует под прогон (`OFFLINE_ENV_FILE`), — со своими
+#     паролями, ключом шифрования контактов и ключами обмена.
+#
+# Имя проекта своё (`-p lct-offline`): свои контейнеры, сети и тома рядом с
+# рабочим стеком разработчика и чужими прогонами.
+
+services:
+  mailpit:
+    ports: !reset []
+
+  keycloak:
+    ports: !reset []
+
+  mock-cms:
+    ports: !reset []
+
+  mock-lms:
+    ports: !reset []
+
+  app:
+    ports: !reset []
+    env_file: !override
+      - ${OFFLINE_ENV_FILE:?scripts/offline/offline-check.sh sets OFFLINE_ENV_FILE}
+
+  edge:
+    image: nginx:alpine
+    restart: unless-stopped
+    networks: [default, edge]
+    ports:
+      - '127.0.0.1:${OFFLINE_PORT:-8190}:80'
+    volumes:
+      - ./scripts/offline/nginx.offline-check.conf:/etc/nginx/conf.d/default.conf:ro
+    depends_on:
+      app:
+        condition: service_healthy
+      keycloak:
+        condition: service_healthy
+      mock-cms:
+        condition: service_healthy
+      mock-lms:
+        condition: service_healthy
+    healthcheck:
+      test: ['CMD', 'wget', '-q', '-O', '/dev/null', 'http://127.0.0.1/api/health']
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+networks:
+  default:
+    internal: true
+  edge: {}
