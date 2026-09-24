@@ -834,7 +834,7 @@ gotenberg`; состав комплекта — `scripts/docs-pdf/documents.ts`)
       <img src="docs/media/team-logo.jpg" alt="Wine Coding Team" width="180">
     </td>
     <td valign="middle">
-      <b>Wine Coding Team</b> — призёры «Лидеров цифровой трансформации 2025».<br><br>
+      <b>Wine Coding Team</b><br><br>
       <b>Павел Волков</b> — капитан, разработка<br>
       <b>Роман Науменко</b> — разработка<br><br>
       Хакатон «Лидеры цифровой трансформации 2026» · направление «Бизнес» · задача от ИТ Школы Ростелекома (ООО «РТК ИТ»).
