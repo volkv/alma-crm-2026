@@ -283,7 +283,7 @@
 	data-slot="card-action"
 	data-tour="interaction-actions"
 >
-	<h2 id="{id}-title" class="text-base font-semibold">Следующий шаг</h2>
+	<h2 id="{id}-title" class="section-title">Следующий шаг</h2>
 
 	{#if action.kind === 'closed'}
 		<div class="flex items-start gap-2">

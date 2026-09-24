@@ -97,7 +97,7 @@
 	<ActionAlert />
 
 	<section class="rounded-lg border border-border bg-surface p-4 sm:p-6">
-		<h2 class="mb-4 text-sm font-semibold">Направление</h2>
+		<h2 class="mb-4 section-title">Направление</h2>
 		<KeyValue>
 			<KeyValueRow label="Код" value={data.direction.code} />
 			<KeyValueRow label="Порядок в списке" value={String(data.direction.position)} />
@@ -115,7 +115,7 @@
 
 	<section class="rounded-lg border border-border bg-surface" data-tour="direction-products">
 		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-			<h2 class="text-sm font-semibold">Продукты</h2>
+			<h2 class="section-title">Продукты</h2>
 			<span class="text-xs text-muted-foreground">
 				Связь многие ко многим: один продукт закрывает несколько направлений.
 			</span>
@@ -199,7 +199,7 @@
 
 	<section class="rounded-lg border border-border bg-surface" data-tour="direction-programs">
 		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-			<h2 class="text-sm font-semibold">Программы</h2>
+			<h2 class="section-title">Программы</h2>
 			<span class="text-xs text-muted-foreground">
 				У программы направление одно — оно задаётся на её карточке.
 			</span>

@@ -398,7 +398,7 @@
 			{#each data.memberships.workspaces as workspace (workspace.id)}
 				{@const candidates = candidatesFor(workspace)}
 				<section class="flex flex-col gap-3" aria-labelledby="members-{workspace.key}">
-					<h3 id="members-{workspace.key}" class="text-sm font-semibold">{workspace.name}</h3>
+					<h3 id="members-{workspace.key}" class="section-title">{workspace.name}</h3>
 
 					{#if workspace.members.length === 0}
 						<p class="text-sm text-muted-foreground">

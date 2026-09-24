@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { MY_DAY_SECTIONS, type MyDayItem, type MyDaySection } from '$lib/contracts/my-day';
@@ -14,6 +15,10 @@
 	 * строк раздела она одинакова, и повтор её в каждой строке превращал список
 	 * в стену одинакового текста. У строки остаётся своё — название, почему она
 	 * здесь и срок (`detail` сервера) и одна кнопка.
+	 *
+	 * Кнопка строки — «Открыть», а не глагол раздела («Сдвинуть», «Снять»):
+	 * она ведёт в карточку, где действие и выбирают, и глагол обещал бы то,
+	 * чего нажатие не делает.
 	 */
 	let { section }: { section: MyDaySection } = $props();
 
@@ -61,14 +66,14 @@
 <section
 	id={myDayAnchor(section.kind)}
 	tabindex="-1"
-	class="flex min-w-0 scroll-mt-24 flex-col rounded-lg border border-border bg-surface outline-none target:border-link"
+	class="flex min-w-0 scroll-mt-24 flex-col rounded-xl border border-border bg-surface outline-none target:border-link"
 	aria-labelledby="{myDayAnchor(section.kind)}-title"
 	data-slot="day-card"
 	data-kind={section.kind}
 >
 	<header class="flex items-start gap-2 border-b border-border px-4 py-2.5">
 		<div class="min-w-0 flex-1">
-			<h3 id="{myDayAnchor(section.kind)}-title" class="text-sm font-semibold">{meta.title}</h3>
+			<h3 id="{myDayAnchor(section.kind)}-title" class="section-title">{meta.title}</h3>
 			<p class="mt-0.5 text-xs text-muted-foreground">{meta.action}</p>
 		</div>
 		<StatusBadge tone={view.tone} class="mt-0.5">{formatNumber(section.total)}</StatusBadge>
@@ -98,9 +103,10 @@
 					size="xs"
 					href={href(item)}
 					class="shrink-0"
-					aria-label="{view.verb}: {item.title}"
+					aria-label="Открыть: {item.title}"
 				>
-					{view.verb}
+					Открыть
+					<ArrowRightIcon data-icon="inline-end" aria-hidden="true" />
 				</Button>
 			</li>
 		{/each}

@@ -4,6 +4,7 @@
 	import { resolve } from '$app/paths';
 	import CircleHelpIcon from '@lucide/svelte/icons/circle-help';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as SegmentedControl from '$lib/components/ui/segmented-control/index.js';
 	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
 	import Header from '$lib/components/header.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
@@ -24,10 +25,10 @@
 		REPORT_MODES,
 		REPORT_MODE_LABELS,
 		type ReportFunnelWorkspace,
+		type ReportMode,
 		type ReportParam
 	} from '$lib/contracts/reports';
 	import { formatDate, formatDateTime, formatNumber, pluralize } from '$lib/format';
-	import { cn } from '$lib/utils';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -50,6 +51,15 @@
 	 * компоненте: смена режима и фильтров его не сбрасывает.
 	 */
 	let methodOpen = $state(false);
+
+	function isReportMode(value: string): value is ReportMode {
+		return (REPORT_MODES as readonly string[]).includes(value);
+	}
+
+	function selectMode(mode: string) {
+		if (!isReportMode(mode)) throw new Error(`Неизвестный режим отчёта: ${mode}`);
+		void goto(modeHref(page.url, mode), { keepFocus: true, noScroll: true });
+	}
 
 	/**
 	 * Условия выборки для шапки выгруженной диаграммы: картинка в чужом
@@ -168,30 +178,23 @@
 	фильтр» стояли вплотную к правому краю. -->
 <div class="flex flex-col gap-3 p-4 sm:px-9 sm:py-6">
 	<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
-		<nav
-			class="-mx-1 overflow-x-auto px-1 py-0.5"
-			aria-label="Режим отчёта"
-			data-tour="reports-mode"
-		>
-			<div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-[3px]">
+		<!-- Режим живёт в адресе, но это выбор одного из двух на месте, а не
+			раздел: группа — радиогруппа, выбор переходит по адресу режима. -->
+		<div data-tour="reports-mode">
+			<SegmentedControl.Root
+				aria-label="Режим отчёта"
+				value={data.meta.mode}
+				onValueChange={selectMode}
+			>
 				{#each REPORT_MODES as mode (mode)}
-					<a
-						href={modeHref(page.url, mode)}
-						aria-current={data.meta.mode === mode ? 'page' : undefined}
-						data-testid="report-mode-{mode}"
-						class={cn(
-							'inline-flex items-center rounded-md px-3 py-1 text-sm font-medium whitespace-nowrap text-muted-foreground focus-ring hover:text-foreground',
-							data.meta.mode === mode && 'bg-surface text-foreground shadow-xs'
-						)}
-					>
+					<SegmentedControl.Item value={mode} data-testid="report-mode-{mode}">
 						{REPORT_MODE_LABELS[mode]}
-					</a>
+					</SegmentedControl.Item>
 				{/each}
-			</div>
-		</nav>
+			</SegmentedControl.Root>
+		</div>
 		<Button
 			variant="ghost"
-			size="sm"
 			aria-expanded={methodOpen}
 			aria-controls="report-method"
 			data-testid="report-method-toggle"

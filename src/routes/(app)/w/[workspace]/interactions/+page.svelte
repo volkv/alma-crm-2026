@@ -14,6 +14,7 @@
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as SegmentedControl from '$lib/components/ui/segmented-control/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
@@ -149,24 +150,33 @@
 	 * Почему на запись стоит посмотреть, кроме срока, — одной меткой. Помеха и
 	 * тишина вокруг записи — две стороны одного «застряло», и две плашки под
 	 * каждым вторым названием превращали список в пёструю ленту.
+	 *
+	 * Тишина — самый слабый из признаков: у просроченной записи или записи с
+	 * помехой она ничего не добавляет к уже красной или жёлтой метке, а на
+	 * каждой строке перестаёт различать строки. Поэтому своей меткой она
+	 * выходит только там, где больше ничего не горит, а рядом с помехой
+	 * остаётся в подсказке.
 	 */
 	function attentionOf(
 		row: InteractionListItem
 	): { tone: StatusTone; label: string; hint: string } | null {
 		const blocked = row.openBlockers > 0;
 
-		if (!blocked && !row.isStale) return null;
+		if (blocked) {
+			return {
+				tone: 'warning',
+				label: `Помех: ${row.openBlockers}`,
+				hint: [`Открытых помех: ${row.openBlockers}`, row.isStale ? 'давно не было событий' : null]
+					.filter((hint) => hint !== null)
+					.join('; ')
+			};
+		}
 
-		const hints = [
-			blocked ? `Открытых помех: ${row.openBlockers}` : null,
-			row.isStale ? 'давно не было событий' : null
-		].filter((hint) => hint !== null);
+		if (row.isStale && !row.isOverdue) {
+			return { tone: 'neutral', label: 'Тишина', hint: 'Давно не было событий' };
+		}
 
-		return {
-			tone: blocked ? 'warning' : 'neutral',
-			label: blocked ? `Помех: ${row.openBlockers}${row.isStale ? ' · тишина' : ''}` : 'Тишина',
-			hint: hints.join('; ')
-		};
+		return null;
 	}
 
 	/** Сколько отборов включено — число на кнопке «Фильтры» на телефоне. */
@@ -185,6 +195,9 @@
 	);
 
 	let filtersOpen = $state(false);
+
+	/** Таблица со своей строкой поиска — туда встаёт переключатель вида. */
+	const showsTable = $derived(data.view === 'table' && (data.total > 0 || data.isFiltered));
 
 	/** Ключ пространства стоит в адресе, и все ссылки раздела считаются от него. */
 	const workspace = $derived(data.workspace.key);
@@ -330,6 +343,22 @@
 	{/snippet}
 </Header>
 
+<!-- Представление — часть адреса: ссылкой на список делятся вместе с тем,
+	каким его смотрели. В таблице переключатель стоит в строке поиска рядом с
+	«Колонками»: над списком остаются две строки контролов, а не три. -->
+{#snippet viewSwitch()}
+	<SegmentedControl.LinkGroup aria-label="Представление">
+		<SegmentedControl.Link href={viewHref('table')} current={data.view === 'table'}>
+			<TableIcon aria-hidden="true" />
+			Таблица
+		</SegmentedControl.Link>
+		<SegmentedControl.Link href={viewHref('board')} current={data.view === 'board'}>
+			<KanbanIcon aria-hidden="true" />
+			Доска
+		</SegmentedControl.Link>
+	</SegmentedControl.LinkGroup>
+{/snippet}
+
 {#snippet resetFilters()}
 	<Button variant="outline" href={clearedFiltersHref(page.url, workspace)}>
 		<FilterXIcon aria-hidden="true" />
@@ -348,7 +377,6 @@
 	>
 		<Button
 			variant={activeFilters > 0 ? 'secondary' : 'outline'}
-			size="sm"
 			class="sm:hidden"
 			aria-expanded={filtersOpen}
 			aria-controls="interactions-filter-panel"
@@ -396,16 +424,14 @@
 			/>
 
 			<Button
-				variant={data.filters.overdue ? 'default' : 'outline'}
-				size="sm"
+				variant={data.filters.overdue ? 'selected' : 'outline'}
 				aria-pressed={data.filters.overdue}
 				onclick={() => go({ overdue: !data.filters.overdue })}
 			>
 				Просроченные
 			</Button>
 			<Button
-				variant={data.filters.mine ? 'default' : 'outline'}
-				size="sm"
+				variant={data.filters.mine ? 'selected' : 'outline'}
 				aria-pressed={data.filters.mine}
 				onclick={() => go({ mine: !data.filters.mine })}
 			>
@@ -423,28 +449,11 @@
 			{/if}
 		</div>
 
-		<!-- Представление — часть адреса: ссылкой на список делятся вместе с тем,
-			каким его смотрели. -->
-		<div class="ms-auto flex items-center gap-1" role="group" aria-label="Представление">
-			<Button
-				href={viewHref('table')}
-				variant={data.view === 'table' ? 'default' : 'outline'}
-				size="sm"
-				aria-current={data.view === 'table' ? 'page' : undefined}
-			>
-				<TableIcon aria-hidden="true" />
-				Таблица
-			</Button>
-			<Button
-				href={viewHref('board')}
-				variant={data.view === 'board' ? 'default' : 'outline'}
-				size="sm"
-				aria-current={data.view === 'board' ? 'page' : undefined}
-			>
-				<KanbanIcon aria-hidden="true" />
-				Доска
-			</Button>
-		</div>
+		<!-- Без таблицы (доска, пустой раздел) строки поиска нет, и переключатель
+			встаёт в конец строки отборов. -->
+		{#if !showsTable}
+			<div class="ms-auto">{@render viewSwitch()}</div>
+		{/if}
 	</div>
 
 	<!-- `data-tour` — метка подсказок: рамка встаёт вокруг списка целиком —
@@ -485,6 +494,7 @@
 				stacked
 				defaultSort={{ columnId: 'dueAt', direction: 'asc' }}
 				bulkActions={data.canAssign ? assignAction : undefined}
+				toolbar={viewSwitch}
 				onopen={open}
 			/>
 		{/if}

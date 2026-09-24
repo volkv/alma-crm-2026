@@ -255,7 +255,7 @@
 				<header class="flex flex-wrap items-start justify-between gap-2">
 					<div class="flex min-w-0 flex-col gap-1">
 						<div class="flex items-center gap-2">
-							<h2 class="text-sm font-medium">{subscription.name}</h2>
+							<h2 class="section-title">{subscription.name}</h2>
 							{#if subscription.enabled}
 								<StatusBadge tone={subscription.state === 'failed' ? 'danger' : 'success'}>
 									{WEBHOOK_STATE_LABELS[subscription.state]}

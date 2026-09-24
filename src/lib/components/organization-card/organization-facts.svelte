@@ -1,4 +1,6 @@
 <script lang="ts">
+	import MailIcon from '@lucide/svelte/icons/mail';
+	import PhoneIcon from '@lucide/svelte/icons/phone';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import {
 		EDUCATION_LEVEL_LABELS,
@@ -107,22 +109,40 @@
 					<span class="block text-xs break-words text-muted-foreground"
 						>{primaryContact.position}</span
 					>
+					<!-- Почта и телефон — данные, а не переход: основным цветом со
+						значком, как у контактного лица на карточке дела
+						(`interaction-card/contact-line.svelte`). -->
 					{#if primaryContact.person.email}
 						{#if primaryContact.person.contactsMasked}
-							<span class="block text-xs break-all text-muted-foreground"
-								>{primaryContact.person.email}</span
-							>
+							<span class="flex items-center gap-1.5 text-xs text-muted-foreground">
+								<MailIcon class="size-3.5 shrink-0" aria-hidden="true" />
+								<span class="break-all">{primaryContact.person.email}</span>
+							</span>
 						{:else}
 							<a
-								class="block text-xs break-all text-link focus-ring hover:text-link-hover hover:underline"
-								href="mailto:{primaryContact.person.email}">{primaryContact.person.email}</a
+								class="flex w-fit max-w-full items-center gap-1.5 rounded-sm text-xs text-foreground underline-offset-2 focus-ring hover:underline"
+								href="mailto:{primaryContact.person.email}"
 							>
+								<MailIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+								<span class="break-all">{primaryContact.person.email}</span>
+							</a>
 						{/if}
 					{/if}
 					{#if primaryContact.person.phone}
-						<span class="block text-xs text-muted-foreground tabular-nums"
-							>{primaryContact.person.phone}</span
-						>
+						{#if primaryContact.person.contactsMasked}
+							<span class="flex items-center gap-1.5 text-xs text-muted-foreground tabular-nums">
+								<PhoneIcon class="size-3.5 shrink-0" aria-hidden="true" />
+								{primaryContact.person.phone}
+							</span>
+						{:else}
+							<a
+								class="flex w-fit items-center gap-1.5 rounded-sm text-xs text-foreground tabular-nums underline-offset-2 focus-ring hover:underline"
+								href="tel:{primaryContact.person.phone}"
+							>
+								<PhoneIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
+								{primaryContact.person.phone}
+							</a>
+						{/if}
 					{/if}
 				{/if}
 			</dd>
@@ -130,7 +150,7 @@
 		<div class="min-w-0">
 			<dt class="text-xs text-muted-foreground">Статус партнёра</dt>
 			<dd class="mt-0.5 flex flex-col gap-0.5 text-sm">
-				<StatusBadge tone={partner.tone} dot>{partner.label}</StatusBadge>
+				<StatusBadge tone={partner.tone} dot wrap class="self-start">{partner.label}</StatusBadge>
 				{#if partner.detail}
 					<span class="text-xs break-words text-muted-foreground">{partner.detail}</span>
 				{/if}

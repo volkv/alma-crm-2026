@@ -114,7 +114,7 @@
 
 	{#if data.imports.length > 0}
 		<section class="flex flex-col gap-2" data-tour="organizations-import-history">
-			<h2 class="text-sm font-medium">Последние загрузки</h2>
+			<h2 class="section-title">Последние загрузки</h2>
 			<div class="overflow-x-auto rounded-lg border border-border bg-surface">
 				<Table.Root>
 					<Table.Header>

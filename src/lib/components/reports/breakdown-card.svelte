@@ -29,8 +29,8 @@
 	const total = $derived(breakdown.points.reduce((sum, point) => sum + point.value, 0));
 </script>
 
-<section class="rounded-lg border border-border bg-surface p-4 shadow-xs">
-	<h2 class="text-sm font-semibold">{breakdown.label}</h2>
+<section class="rounded-xl border border-border bg-surface p-4">
+	<h2 class="section-title">{breakdown.label}</h2>
 
 	{#if breakdown.points.length === 0}
 		<p class="mt-2 text-xs text-muted-foreground">В выборке нет ни одного значения.</p>

@@ -140,7 +140,7 @@
 	{/if}
 
 	<section class="rounded-lg border border-border bg-surface p-4 sm:p-6" data-tour="document-facts">
-		<h2 class="mb-4 text-sm font-semibold">Документ</h2>
+		<h2 class="mb-4 section-title">Документ</h2>
 		<KeyValue>
 			<KeyValueRow label="Откуда файл">
 				<StatusBadge tone={generated ? 'accent' : 'neutral'}>
@@ -267,7 +267,7 @@
 		<header
 			class="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3"
 		>
-			<h2 class="text-sm font-semibold">Редакции</h2>
+			<h2 class="section-title">Редакции</h2>
 			<span class="text-xs text-muted-foreground">
 				Файл неизменяем: исправленный документ встаёт новой редакцией, а прежняя остаётся
 				скачиваемой.

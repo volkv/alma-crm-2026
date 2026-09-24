@@ -78,7 +78,7 @@
 		class="rounded-lg border border-border bg-surface p-4 sm:p-6"
 		data-tour="person-contacts"
 	>
-		<h2 class="mb-4 text-sm font-semibold">Контактные данные</h2>
+		<h2 class="mb-4 section-title">Контактные данные</h2>
 		<KeyValue>
 			<KeyValueRow label="Почта" value={data.person.email} />
 			<KeyValueRow label="Телефон" value={data.person.phone} />
@@ -109,7 +109,7 @@
 
 	<section class="rounded-lg border border-border bg-surface" data-tour="person-affiliations">
 		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-			<h2 class="text-sm font-semibold">Роли в организациях</h2>
+			<h2 class="section-title">Роли в организациях</h2>
 			{#if data.canWrite}
 				<Button
 					variant="outline"

@@ -83,11 +83,13 @@
 </script>
 
 {#snippet body(tile: Tile)}
-	<span class="truncate text-xs text-muted-foreground">{tile.label}</span>
+	<span class="line-clamp-2 text-xs text-muted-foreground">{tile.label}</span>
 	<span class={cn('mt-1 text-xl leading-none font-semibold tabular-nums', toneClass(tile))}>
 		{formatNumber(tile.value)}
 	</span>
-	<span class="mt-1 truncate text-xs text-faint" title={tile.hint}>{tile.hint}</span>
+	<!-- Пояснение переносится, а не обрезается: «часы стадии останов…» не
+		объясняет, что посчитано. Две строки высотой у всех плиток — ряд ровный. -->
+	<span class="mt-1 line-clamp-2 min-h-8 text-xs text-faint">{tile.hint}</span>
 {/snippet}
 
 <!-- Плитки — ячейки одной панели, а не шесть отдельных карточек: рядом со

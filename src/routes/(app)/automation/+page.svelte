@@ -92,7 +92,7 @@
 		class="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4"
 		data-tour="automation-legend"
 	>
-		<h2 id="automation-legend" class="text-sm font-medium">Три вида автоматизации</h2>
+		<h2 id="automation-legend" class="section-title">Три вида автоматизации</h2>
 		<ul class="grid gap-3 sm:grid-cols-3">
 			{#each AUTOMATION_KINDS as kind (kind)}
 				<li class="flex flex-col gap-1">
@@ -117,7 +117,7 @@
 						class="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-surface-muted text-sm font-medium text-foreground tabular-nums"
 						aria-hidden="true">{step.number}</span
 					>
-					<h2 class="text-base font-medium break-words">
+					<h2 class="section-title break-words">
 						<span class="sr-only">Шаг {step.number}. </span>{step.name}
 					</h2>
 				</div>
@@ -135,7 +135,7 @@
 		class="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4"
 		data-tour="automation-cross"
 	>
-		<h2 id="automation-cross" class="text-base font-medium">На всём процессе</h2>
+		<h2 id="automation-cross" class="section-title">На всём процессе</h2>
 		<ul class="flex flex-col divide-y divide-border">
 			{#each data.crossCutting as item (item.title)}
 				{@render action(item)}

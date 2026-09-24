@@ -52,7 +52,7 @@
 	data-tour="organization-work"
 >
 	<div class="flex flex-wrap items-baseline justify-between gap-2">
-		<h2 id="org-work-title" class="text-sm font-semibold">Взаимодействия</h2>
+		<h2 id="org-work-title" class="section-title">Взаимодействия</h2>
 		{#if work !== null}
 			<span class="text-xs text-muted-foreground">всего {formatNumber(total)}</span>
 		{/if}
@@ -70,7 +70,7 @@
 		{#each work as workspace (workspace.key)}
 			<div class="flex min-w-0 flex-col gap-1.5">
 				<div class="flex flex-wrap items-center justify-between gap-2">
-					<h3 class="text-xs font-semibold tracking-wide text-faint uppercase">
+					<h3 class="section-overline">
 						{workspace.name}
 					</h3>
 					{#if workspace.total > 0}

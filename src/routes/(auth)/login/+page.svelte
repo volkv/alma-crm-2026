@@ -146,7 +146,7 @@
 					{#if demoPassword !== null}
 						<!-- Пароль стенда публичный: его знает всякий, кто открыл репозиторий,
 						     и прятать его от зрителя показа значило бы прятать от одного его. -->
-						<div class="flex flex-col gap-1">
+						<div class="relative">
 							<div
 								class="flex items-center justify-between gap-4 rounded-md bg-surface py-1.5 pr-1.5 pl-2.5"
 								data-testid="demo-password"
@@ -174,10 +174,12 @@
 									</Button>
 								</div>
 							</div>
-							<!-- Область объявлений стоит на странице до нажатия: контейнер,
-							     появившийся вместе с текстом, экранный диктор не прочитает. -->
+							<!-- Область объявлений стоит на странице до нажатия — контейнер,
+							     появившийся вместе с текстом, экранный диктор не прочитает — но
+							     занимает место только пока в ней есть текст: без сообщения она
+							     не тянет раскладку пустой полосой снизу блока. -->
 							<p
-								class="min-h-4 px-2.5 text-xs {copyState === 'failed'
+								class="absolute inset-x-2.5 top-full pt-1 text-xs {copyState === 'failed'
 									? 'text-danger-soft-foreground'
 									: 'text-muted-foreground'}"
 								aria-live="polite"

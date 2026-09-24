@@ -232,7 +232,7 @@
 >
 	<header class="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3">
 		<div class="min-w-0 flex-1 basis-64">
-			<h2 class="text-sm font-semibold">Договоры и лицензии</h2>
+			<h2 class="section-title">Договоры и лицензии</h2>
 			<p class="mt-1 text-xs text-muted-foreground">
 				Обязательства с этим контрагентом и коммерческие условия по каждому продукту. Взаимодействие
 				выбирает договор и нужные его позиции.

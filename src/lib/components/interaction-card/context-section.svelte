@@ -21,7 +21,7 @@
 
 <section class="flex min-w-0 flex-col gap-2" data-slot="context-section">
 	<div class="flex flex-wrap items-center justify-between gap-2">
-		<h3 class="text-xs font-semibold tracking-wide text-faint uppercase">{title}</h3>
+		<h3 class="section-overline">{title}</h3>
 		{@render action?.()}
 	</div>
 	{@render children()}

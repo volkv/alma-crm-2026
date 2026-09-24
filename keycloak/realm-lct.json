@@ -14,7 +14,7 @@
 	"editUsernameAllowed": false,
 	"internationalizationEnabled": true,
 	"defaultLocale": "ru",
-	"supportedLocales": ["ru", "en"],
+	"supportedLocales": ["ru"],
 	"passwordPolicy": "length(12) and notUsername",
 	"otpPolicyType": "totp",
 	"otpPolicyAlgorithm": "HmacSHA1",

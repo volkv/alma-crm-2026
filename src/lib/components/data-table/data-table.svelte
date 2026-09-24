@@ -61,6 +61,7 @@
 		defaultSort,
 		onopen,
 		bulkActions,
+		toolbar,
 		class: className,
 		...rest
 	}: {
@@ -108,6 +109,12 @@
 		onopen?: (row: TData) => void;
 		/** Actions over the selected rows; selection is off when this is absent. */
 		bulkActions?: Snippet<[{ ids: string[]; clear: () => void }]>;
+		/**
+		 * Контролы страницы, которым место в строке поиска перед «Колонками», —
+		 * например, переключатель вида: отдельной строкой над списком он отнимал
+		 * у таблицы высоту первого экрана.
+		 */
+		toolbar?: Snippet;
 		class?: string;
 		/**
 		 * Остальное уезжает на корневой элемент списка. Нужно это одному —
@@ -342,7 +349,10 @@
 <div class={cn('flex flex-col gap-3', className)} data-slot="data-table" {...rest}>
 	<div class="flex flex-wrap items-center gap-2">
 		{#if searchPlaceholder}
-			<div class="relative min-w-0 flex-1 sm:max-w-xs">
+			<!-- Поле не сжимается уже 12rem: контролам страницы (`toolbar`) рядом
+				с ним тесно на телефоне, и тогда уходят на следующую строку они, а
+				не поле превращается в значок. -->
+			<div class="relative min-w-48 flex-1 sm:max-w-xs">
 				<SearchIcon
 					class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
 					aria-hidden="true"
@@ -359,11 +369,12 @@
 			</div>
 		{/if}
 
-		<div class="ml-auto flex items-center gap-2">
+		<div class="ml-auto flex flex-wrap items-center gap-2">
+			{@render toolbar?.()}
 			<DropdownMenu.Root>
 				<DropdownMenu.Trigger>
 					{#snippet child({ props })}
-						<Button {...props} variant="outline" size="sm" class="max-sm:min-h-11">
+						<Button {...props} variant="outline" class="max-sm:min-h-11">
 							<Columns3Icon aria-hidden="true" />
 							Колонки
 						</Button>
@@ -414,7 +425,7 @@
 		</div>
 	{/if}
 
-	<div class="overflow-hidden rounded-lg border border-border bg-surface shadow-xs">
+	<div class="overflow-hidden rounded-xl border border-border bg-surface">
 		<div bind:this={tableRoot}>
 			<!-- Высоту списка задают строки, а не экран: полоса прокрутки принадлежит
 				странице, одна на всё, и та же, что на карточках и отчётах. Своя полоса

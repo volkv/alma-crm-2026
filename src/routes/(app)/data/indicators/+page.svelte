@@ -160,7 +160,7 @@
 	<SectionTabs />
 
 	{#if data.periods.length === 0}
-		<div class="rounded-lg border border-border bg-surface shadow-xs">
+		<div class="rounded-xl border border-border bg-surface">
 			<EmptyState
 				icon={ChartNoAxesColumnIcon}
 				title="Показателей пока нет"

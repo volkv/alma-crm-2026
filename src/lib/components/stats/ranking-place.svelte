@@ -28,7 +28,7 @@
 
 <section class="rounded-lg border border-border bg-surface p-4 sm:p-6" data-slot="ranking-place">
 	<header class="mb-3 flex flex-wrap items-baseline justify-between gap-2">
-		<h2 class="text-sm font-semibold">
+		<h2 class="section-title">
 			Рейтинг за {formatDate(period.start)} — {formatDate(period.end)}
 		</h2>
 		<Button variant="outline" size="sm" href={rankingHref}>Весь рейтинг</Button>

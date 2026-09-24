@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -26,11 +27,27 @@
 	]}
 />
 
-<!-- Оглавление слева отдельной колонкой, а на телефоне — над статьёй: читать
+<!-- Оглавление слева отдельной колонкой, а на планшете — над статьёй: читать
 	руководство по одной странице, не видя соседних, всё равно что читать
-	оглавление вместо книги. -->
+	оглавление вместо книги. На телефоне раскрытое оглавление занимало весь
+	первый экран, и до статьи надо было листать, — там оно свёрнуто в раскрытие.
+	Скрытая копия не попадает ни на экран, ни в дерево доступности. -->
 <div class="flex flex-col gap-6 p-4 sm:px-9 sm:py-6 lg:flex-row lg:gap-8">
-	<div class="lg:w-56 lg:shrink-0">
+	<details class="group rounded-xl border border-border bg-surface sm:hidden">
+		<summary
+			class="flex min-h-11 cursor-pointer list-none items-center justify-between gap-2 rounded-xl px-4 text-sm font-medium focus-ring [&::-webkit-details-marker]:hidden"
+		>
+			Статьи раздела
+			<ChevronDownIcon
+				class="size-4 text-muted-foreground transition-transform group-open:rotate-180"
+				aria-hidden="true"
+			/>
+		</summary>
+		<div class="border-t border-border p-2">
+			<HelpToc section={data.section} pages={data.pages} current={data.article.slug} />
+		</div>
+	</details>
+	<div class="max-sm:hidden lg:w-56 lg:shrink-0">
 		<HelpToc section={data.section} pages={data.pages} current={data.article.slug} />
 	</div>
 

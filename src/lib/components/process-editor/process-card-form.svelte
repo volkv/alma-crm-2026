@@ -101,7 +101,7 @@
 	</div>
 
 	<div class="flex flex-col gap-2 rounded-lg border border-border p-3" aria-live="polite">
-		<p class="text-xs font-semibold tracking-wide text-faint uppercase">Предпросмотр</p>
+		<p class="section-overline">Предпросмотр</p>
 		<ol class="flex list-inside list-decimal flex-col gap-1 text-sm">
 			<li>Сторона и условия</li>
 			{#each CARD_PANELS.filter((panel) => panels.includes(panel)) as panel (panel)}

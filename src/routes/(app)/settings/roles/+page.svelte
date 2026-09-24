@@ -50,7 +50,7 @@
 
 		<div
 			data-tour="roles-matrix"
-			class="overflow-x-auto rounded-lg border border-border bg-surface shadow-xs"
+			class="overflow-x-auto rounded-xl border border-border bg-surface"
 		>
 			<Table.Root>
 				<Table.Header>

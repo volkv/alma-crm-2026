@@ -73,7 +73,7 @@
 	<header
 		class="flex flex-wrap items-center justify-between gap-3 border-b border-border px-4 py-3"
 	>
-		<h2 class="flex items-center gap-2 text-sm font-semibold">
+		<h2 class="flex items-center gap-2 section-title">
 			<ShieldIcon class="size-4 text-muted-foreground" aria-hidden="true" />
 			Персональные данные
 		</h2>

@@ -129,7 +129,7 @@
 
 	{#if mappedColumns.length > 0}
 		<div class="rounded-lg border border-border bg-surface p-4">
-			<h2 class="text-sm font-medium">Сопоставление колонок</h2>
+			<h2 class="section-title">Сопоставление колонок</h2>
 			<ul class="mt-2 flex flex-wrap gap-x-4 gap-y-1 text-sm text-muted-foreground">
 				{#each mappedColumns as [column, field] (column)}
 					<li><span class="text-foreground">{column}</span> → {STAT_FIELD_LABELS[field]}</li>

@@ -60,7 +60,7 @@
 		class="rounded-lg border border-border bg-surface p-4 sm:p-6"
 		data-tour="program-summary"
 	>
-		<h2 class="mb-4 text-sm font-semibold">Программа</h2>
+		<h2 class="mb-4 section-title">Программа</h2>
 		<KeyValue>
 			<KeyValueRow label="Код" value={data.program.code} />
 			<KeyValueRow label="Уровень" value={PROGRAM_LEVEL_LABELS[data.program.level]} />
@@ -86,7 +86,7 @@
 
 	<section class="rounded-lg border border-border bg-surface" data-tour="program-versions">
 		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-			<h2 class="text-sm font-semibold">Версии</h2>
+			<h2 class="section-title">Версии</h2>
 		</header>
 
 		{#if data.versions.length === 0}

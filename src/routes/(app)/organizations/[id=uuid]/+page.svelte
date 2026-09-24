@@ -1,12 +1,13 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
+	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import LockIcon from '@lucide/svelte/icons/lock';
 	import ArchiveIcon from '@lucide/svelte/icons/archive';
 	import ArchiveRestoreIcon from '@lucide/svelte/icons/archive-restore';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import ActionAlert from '$lib/components/directory/action-alert.svelte';
@@ -32,6 +33,7 @@
 	import { formatDateTime } from '$lib/format';
 	import type { AffiliationView } from '$lib/contracts/directory';
 	import type { ResponsibleView } from '$lib/server/directory/responsibles';
+	import type { ResolvedPathname } from '$app/types';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -60,16 +62,17 @@
 	);
 
 	/** Форма нового взаимодействия с этим вузом, уже подставленным основной стороной. */
-	function startHref(workspace: string): string {
-		return `${resolve('/(app)/w/[workspace]/interactions/new', { workspace })}?organization=${data.organization.id}`;
+	function startHref(workspace: string): ResolvedPathname {
+		// Путь собран `resolve`; добавлена только строка запроса, а её типа в
+		// `ResolvedPathname` нет (тот же приём — `home/links.ts`).
+		return `${resolve('/(app)/w/[workspace]/interactions/new', { workspace })}?organization=${data.organization.id}` as ResolvedPathname;
 	}
 
-	/** Почему главное действие недоступно; `null` — доступно. */
+	/**
+	 * Почему главное действие недоступно тому, у кого на него есть право;
+	 * `null` — доступно. Без права кнопки нет вовсе, и объяснять нечего.
+	 */
 	const startBlocked = $derived.by((): string | null => {
-		if (!data.canStartInteraction) {
-			return 'Заводить взаимодействия может сотрудник с правом на их запись.';
-		}
-
 		if (!data.organization.isActive) {
 			return 'Организация в архиве: верните её, чтобы завести по ней работу.';
 		}
@@ -186,6 +189,52 @@
 				</Button>
 			{/if}
 		{/if}
+		<!-- Главное действие карточки — в шапке рядом с «Изменить»: основная
+			кнопка ведёт в пространство, где с вузом больше всего работы, другие
+			пространства — в меню соседней кнопки со стрелкой. Отдельная кнопка на
+			каждое пространство переносила ряд действий шапки на вторую строку. -->
+		{#if data.canStartInteraction && startBlocked === null}
+			{@const [main, ...others] = startTargets}
+			<div class="flex items-center gap-1" data-tour="organization-primary">
+				<Button href={startHref(main.key)} title="В пространстве «{main.name}»">
+					<PlusIcon aria-hidden="true" />
+					Завести взаимодействие
+				</Button>
+				{#if others.length > 0}
+					<DropdownMenu.Root>
+						<DropdownMenu.Trigger>
+							{#snippet child({ props })}
+								<Button
+									{...props}
+									variant="outline"
+									size="icon"
+									aria-label="Завести взаимодействие в другом пространстве"
+								>
+									<ChevronDownIcon aria-hidden="true" />
+								</Button>
+							{/snippet}
+						</DropdownMenu.Trigger>
+						<DropdownMenu.Content align="end" class="w-64">
+							<DropdownMenu.Group>
+								<DropdownMenu.GroupHeading>Завести в пространстве</DropdownMenu.GroupHeading>
+								<DropdownMenu.Item>
+									{#snippet child({ props })}
+										<a {...props} href={startHref(main.key)}>«{main.name}» — основное</a>
+									{/snippet}
+								</DropdownMenu.Item>
+								{#each others as workspace (workspace.key)}
+									<DropdownMenu.Item>
+										{#snippet child({ props })}
+											<a {...props} href={startHref(workspace.key)}>«{workspace.name}»</a>
+										{/snippet}
+									</DropdownMenu.Item>
+								{/each}
+							</DropdownMenu.Group>
+						</DropdownMenu.Content>
+					</DropdownMenu.Root>
+				{/if}
+			</div>
+		{/if}
 	{/snippet}
 </Header>
 
@@ -199,6 +248,12 @@
 <div class="flex min-w-0 flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	<ActionAlert />
 
+	<!-- Почему завести работу нельзя, хотя право есть: архив или пространство
+		без процесса. -->
+	{#if data.canStartInteraction && startBlocked !== null}
+		<InlineHint icon={LockIcon}>{startBlocked}</InlineHint>
+	{/if}
+
 	<OrganizationFacts
 		organization={data.organization}
 		responsibles={currentResponsibles}
@@ -207,44 +262,13 @@
 		canReadPeople={data.canReadPeople}
 	/>
 
-	<!-- Три блока — действие, работа, контекст — стоят в разметке в том порядке,
-		в каком их читают на телефоне. На рабочем экране контекст уходит в правую
-		колонку на всю высоту, как на карточке взаимодействия. -->
+	<!-- Два блока — работа и контекст — стоят в разметке в том порядке, в каком
+		их читают на телефоне. На рабочем экране контекст уходит в правую колонку,
+		как на карточке взаимодействия. -->
 	<div
-		class="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] lg:grid-rows-[auto_1fr] xl:grid-cols-[minmax(0,1fr)_20rem]"
+		class="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] xl:grid-cols-[minmax(0,1fr)_20rem]"
 	>
-		<section
-			class="flex min-w-0 flex-col gap-2 rounded-xl border border-border bg-surface p-4 shadow-xs lg:col-start-1 lg:row-start-1"
-			aria-label="Главное действие"
-			data-tour="organization-primary"
-		>
-			{#if startBlocked === null}
-				{@const [main, ...others] = startTargets}
-				<div class="flex flex-wrap items-center gap-2">
-					<Button
-						size="lg"
-						class="h-auto min-h-9 max-w-full py-1.5 text-left whitespace-normal"
-						href={startHref(main.key)}
-					>
-						<ArrowRightIcon aria-hidden="true" />
-						Завести взаимодействие
-					</Button>
-					{#each others as workspace (workspace.key)}
-						<Button variant="ghost" size="sm" href={startHref(workspace.key)}>
-							в «{workspace.name}»
-						</Button>
-					{/each}
-				</div>
-				<p class="text-xs text-muted-foreground">В пространстве «{main.name}».</p>
-			{:else}
-				<div class="flex items-start gap-2 text-sm text-muted-foreground">
-					<LockIcon class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
-					<p>{startBlocked}</p>
-				</div>
-			{/if}
-		</section>
-
-		<div class="flex min-w-0 flex-col gap-4 lg:col-start-1 lg:row-start-2">
+		<div class="flex min-w-0 flex-col gap-4 lg:col-start-1 lg:row-start-1">
 			<div class="min-w-0 rounded-xl border border-border bg-surface p-4">
 				<WorkPanel organizationId={data.organization.id} work={data.work} />
 			</div>
@@ -279,7 +303,7 @@
 				data-tour="organization-responsibles"
 			>
 				<header class="border-b border-border px-4 py-3">
-					<h2 class="text-sm font-semibold">Ответственные</h2>
+					<h2 class="section-title">Ответственные</h2>
 					<p class="mt-1 text-xs text-muted-foreground">
 						Кто ведёт вуз. От этого зависит, кто видит его карточку и взаимодействия по нему:
 						назначение действует немедленно, а снятое закрывается точной меткой времени и остаётся в
@@ -450,7 +474,7 @@
 		</div>
 
 		<aside
-			class="flex min-w-0 flex-col gap-5 rounded-xl border border-border bg-surface p-4 lg:col-start-2 lg:row-span-2 lg:row-start-1"
+			class="flex min-w-0 flex-col gap-5 rounded-xl border border-border bg-surface p-4 lg:col-start-2 lg:row-start-1"
 			aria-label="Контекст"
 		>
 			<RequisitesPanel organization={data.organization} passportApplied={data.passportApplied} />

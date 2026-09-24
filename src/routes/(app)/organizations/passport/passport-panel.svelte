@@ -276,7 +276,7 @@
 >
 	<div class="flex flex-wrap items-start justify-between gap-2">
 		<div>
-			<h2 class="text-base font-medium">Паспорт из официальных источников</h2>
+			<h2 class="section-title">Паспорт из официальных источников</h2>
 			<p class="text-sm text-muted-foreground">
 				Реквизиты из ЕГРЮЛ по ИНН или названию, наименования, руководители подразделений и программы
 				— из раздела «Сведения об образовательной организации» на сайте из карточки. Ничего не

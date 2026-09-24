@@ -9,6 +9,7 @@
 	import { enhance } from '$app/forms';
 	import { page } from '$app/state';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import * as SegmentedControl from '$lib/components/ui/segmented-control/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import { actionEnhance } from '$lib/components/interactions/action-enhance';
 	import { mentionToken, splitMentions } from '$lib/contracts/mentions';
@@ -271,6 +272,13 @@
 	);
 	const count = (key: CardEventKind | 'all') =>
 		key === 'all' ? events.length : events.filter((event) => event.kind === key).length;
+	function selectKind(key: string) {
+		const kind = KINDS.find((candidate) => candidate.key === key);
+		if (kind === undefined) throw new Error(`Неизвестный вид события: ${key}`);
+		filter = kind.key;
+		expanded = false;
+	}
+
 	const filtered = $derived(
 		filter === 'all' ? events : events.filter((event) => event.kind === filter)
 	);
@@ -286,7 +294,7 @@
 	data-slot="event-feed"
 	data-tour="interaction-feed"
 >
-	<h2 id="{id}-title" class="text-base font-semibold">События</h2>
+	<h2 id="{id}-title" class="section-title">События</h2>
 
 	{#if canComment}
 		<form
@@ -369,25 +377,19 @@
 		<p class="text-xs text-muted-foreground" data-slot="feed-typing">{typingLine}</p>
 	{/if}
 
-	<div class="flex flex-wrap gap-1.5" role="group" aria-label="Какие события показать">
+	<SegmentedControl.Root
+		size="sm"
+		aria-label="Какие события показать"
+		value={filter}
+		onValueChange={selectKind}
+	>
 		{#each present as kind (kind.key)}
-			<button
-				type="button"
-				aria-pressed={filter === kind.key}
-				class="inline-flex h-7 items-center gap-1 rounded-4xl border px-2.5 text-xs font-medium focus-ring {filter ===
-				kind.key
-					? 'border-selection-border bg-selection text-selection-foreground'
-					: 'border-border bg-surface text-muted-foreground hover:bg-surface-muted'}"
-				onclick={() => {
-					filter = kind.key;
-					expanded = false;
-				}}
-			>
+			<SegmentedControl.Item value={kind.key}>
 				{kind.label}
 				<span class="tabular-nums opacity-70">{count(kind.key)}</span>
-			</button>
+			</SegmentedControl.Item>
 		{/each}
-	</div>
+	</SegmentedControl.Root>
 
 	<ol class="flex flex-col">
 		{#each visible as event (event.id)}

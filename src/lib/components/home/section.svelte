@@ -34,7 +34,7 @@
 </script>
 
 <section
-	class={cn('flex min-w-0 flex-col rounded-lg border border-border bg-surface', className)}
+	class={cn('flex min-w-0 flex-col rounded-xl border border-border bg-surface', className)}
 	data-slot="home-section"
 	{...rest}
 >
@@ -42,7 +42,7 @@
 		class="flex flex-wrap items-center justify-between gap-2 border-b border-border px-4 py-3"
 	>
 		<div class="min-w-0">
-			<h2 class="text-sm font-semibold">{title}</h2>
+			<h2 class="section-title">{title}</h2>
 			{#if description}
 				<p class="mt-0.5 text-xs text-muted-foreground">{description}</p>
 			{/if}

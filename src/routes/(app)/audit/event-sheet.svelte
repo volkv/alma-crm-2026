@@ -105,7 +105,7 @@
 				</KeyValue>
 
 				<section class="flex flex-col gap-2">
-					<h3 class="text-xs font-medium text-muted-foreground">Подробности</h3>
+					<h3 class="section-overline">Подробности</h3>
 					{#if details.length === 0}
 						<p class="text-sm text-faint">Событие записано без подробностей</p>
 					{:else}

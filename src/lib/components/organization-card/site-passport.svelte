@@ -174,7 +174,7 @@
 >
 	<div class="flex flex-wrap items-start justify-between gap-x-3 gap-y-2">
 		<div class="min-w-0 flex-1 basis-64">
-			<h2 id="org-site-title" class="text-sm font-semibold">Сведения с сайта вуза</h2>
+			<h2 id="org-site-title" class="section-title">Сведения с сайта вуза</h2>
 			<p class="mt-1 text-xs text-muted-foreground">
 				{#if blocked !== null}
 					{blocked}
@@ -248,9 +248,7 @@
 		{#if !emptyRead}
 			<!-- Подбор программ школы виден сразу: это то, что вузу предлагать. -->
 			<div class="flex min-w-0 flex-col gap-1">
-				<h3 class="text-xs font-semibold tracking-wide text-faint uppercase">
-					Подходящие программы школы
-				</h3>
+				<h3 class="section-overline">Подходящие программы школы</h3>
 				{#if programMatch === null}
 					<p class="text-sm text-muted-foreground">
 						Каталог программ закрыт правами: подбор делает сотрудник с правом «Просмотр программ».
@@ -320,7 +318,7 @@
 
 					<!-- Кандидаты в контакты -->
 					<div class="flex min-w-0 flex-col gap-2">
-						<h3 class="text-xs font-semibold tracking-wide text-faint uppercase">
+						<h3 class="section-overline">
 							Кандидаты в контакты · {site.contacts.length}
 						</h3>
 						{#if site.contacts.length === 0}
@@ -380,7 +378,7 @@
 
 					<!-- Программы вуза по укрупнённым группам и весь перечень -->
 					<div class="flex min-w-0 flex-col gap-2">
-						<h3 class="text-xs font-semibold tracking-wide text-faint uppercase">
+						<h3 class="section-overline">
 							Программы вуза · {site.programs.length}
 						</h3>
 						{#if site.programs.length === 0}
