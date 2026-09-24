@@ -81,6 +81,10 @@
 					? ''
 					: `, лицензия до ${formatDate(delivery.licenseUntil)}`}
 			</span>
+		{:else if delivery.digestDay !== null}
+			<!-- Утренняя сводка: предмет — сам получатель и день; что в ней было,
+				раскрывает «Текст письма». -->
+			«Мой день» на {formatDate(delivery.digestDay)}
 		{:else}
 			—
 		{/if}

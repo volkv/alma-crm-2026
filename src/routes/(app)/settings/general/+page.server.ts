@@ -55,6 +55,7 @@ export const load: PageServerLoad = async (event) => {
 		thresholdDays,
 		licenseWarningDays,
 		channels,
+		digest,
 		demoSchedule,
 		enrichment
 	] = await Promise.all([
@@ -64,6 +65,7 @@ export const load: PageServerLoad = async (event) => {
 		getSetting('stuck_threshold_days'),
 		getSetting('license_warning_days'),
 		getSetting('notification_channels'),
+		getSetting('daily_digest'),
 		getSetting('demo_reset_schedule'),
 		getSetting('enrichment')
 	]);
@@ -76,7 +78,13 @@ export const load: PageServerLoad = async (event) => {
 			id: FORM_IDS.session
 		}),
 		stuckWatchForm: await superValidate(
-			{ thresholdDays, licenseWarningDays, ...channels },
+			{
+				thresholdDays,
+				licenseWarningDays,
+				digestEnabled: digest.enabled,
+				digestHour: digest.hour,
+				...channels
+			},
 			zod4(stuckWatchSchema),
 			{
 				id: FORM_IDS.stuckWatch
@@ -163,7 +171,7 @@ export const actions: Actions = {
 	},
 
 	/**
-	 * Пороги наблюдателей и каналы — одной кнопкой: правило и способ, которым о нём
+	 * Пороги наблюдателей, час сводки и каналы — одной кнопкой: правило и способ, которым о нём
 	 * сообщают, это одна настройка. Записываются они двумя ключами, потому что
 	 * читают их разные места: порог — выборка наблюдателя, каналы — его цикл.
 	 */
@@ -177,11 +185,12 @@ export const actions: Actions = {
 		}
 
 		const ctx = actorFromEvent(event);
-		const { thresholdDays, licenseWarningDays, ...channels } = form.data;
+		const { thresholdDays, licenseWarningDays, digestEnabled, digestHour, ...channels } = form.data;
 
 		try {
 			await setSetting(ctx, 'stuck_threshold_days', thresholdDays);
 			await setSetting(ctx, 'license_warning_days', licenseWarningDays);
+			await setSetting(ctx, 'daily_digest', { enabled: digestEnabled, hour: digestHour });
 			await setSetting(ctx, 'notification_channels', channels);
 		} catch (failure) {
 			return asFormError(form, failure);

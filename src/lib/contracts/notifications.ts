@@ -1,6 +1,6 @@
 /**
- * Уведомления наблюдателей — о зависших взаимодействиях и о сроках лицензий:
- * виды, каналы, состояния доставки и фильтр журнала.
+ * Уведомления наблюдателей — о зависших взаимодействиях и о сроках лицензий — и
+ * утренняя сводка сотруднику: виды, каналы, состояния доставки и фильтр журнала.
  *
  * Уведомление — это не событие журнала действий и не сообщение обмена. Журнал
  * действий отвечает на вопрос «кто и что сделал», обмен — «что уехало чужой
@@ -20,12 +20,19 @@ import { pageQuerySchema } from './common';
  * - `license_expiring` — лицензия по позиции договора кончается в пределах
  *   окна продления или уже кончилась; уходит ответственному за вуз;
  * - `license_expired` — лицензия кончилась, а продление так и не заведено
- *   вовремя; эскалация руководителю ответственного за вуз.
+ *   вовремя; эскалация руководителю ответственного за вуз;
+ * - `daily_digest` — утренняя сводка «Мой день»: одна на сотрудника, день и
+ *   канал; уходит тому, у кого на сегодня есть что делать.
  *
  * Вид входит в ключ дедупликации, поэтому второй вид по тому же предмету уедет
  * своей строкой, а не перезапишет первую.
  */
-export const NOTIFICATION_KINDS = ['stage_stuck', 'license_expiring', 'license_expired'] as const;
+export const NOTIFICATION_KINDS = [
+	'stage_stuck',
+	'license_expiring',
+	'license_expired',
+	'daily_digest'
+] as const;
 
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
@@ -41,7 +48,8 @@ export function isLicenseKind(kind: NotificationKind): kind is LicenseNotificati
 export const NOTIFICATION_KIND_LABELS: Record<NotificationKind, string> = {
 	stage_stuck: 'Зависшее взаимодействие',
 	license_expiring: 'Истекает лицензия',
-	license_expired: 'Истекла лицензия'
+	license_expired: 'Истекла лицензия',
+	daily_digest: 'Утренняя сводка'
 };
 
 /**
@@ -125,6 +133,8 @@ export type NotificationDeliveryView = {
 	productName: string | null;
 	/** Срок лицензии, о котором напомнили: `YYYY-MM-DD`. */
 	licenseUntil: string | null;
+	/** День утренней сводки, `YYYY-MM-DD`; у остальных видов пусто. */
+	digestDay: string | null;
 	recipientUserId: string | null;
 	recipientName: string | null;
 	channel: NotificationChannel;

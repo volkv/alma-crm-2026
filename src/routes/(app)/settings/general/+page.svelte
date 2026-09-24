@@ -251,14 +251,16 @@
 <!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
 <Card.Root data-tour="general-stuck">
 	<Card.Header>
-		<Card.Title>Напоминания: зависшие взаимодействия и сроки лицензий</Card.Title>
+		<Card.Title>Напоминания: зависшие взаимодействия, сроки лицензий и утренняя сводка</Card.Title>
 		<Card.Description>
 			Взаимодействие, которое стоит на одной стадии дольше порога, вызывает напоминание руководителю
 			ответственного. Время пауз в этот срок не входит: ждать ответа вуза и стоять — разные вещи.
 			Ноль означает «напоминать сразу»; повтор в любом случае не чаще раза в сутки, пока стадия не
 			сменится. Лицензия по позиции договора, срок которой кончается в пределах окна или уже прошёл,
 			вызывает напоминание ответственному за вуз (одно на позицию, пока срок не изменят), а истёкшая
-			— ещё и эскалацию его руководителю. Что и кому ушло, видно в разделе
+			— ещё и эскалацию его руководителю. Утренняя сводка «Мой день» раз в сутки напоминает каждому
+			сотруднику, что у него на сегодня: просрочки, близкие сроки, помехи, ожидание, лицензии и
+			новые заявки. Что и кому ушло, видно в разделе
 			<a class="underline underline-offset-4" href={resolve('/notifications')}>«Уведомления»</a>.
 		</Card.Description>
 	</Card.Header>
@@ -288,6 +290,26 @@
 					errors: $stuckErrors.licenseWarningDays,
 					onchange: (next) => ($stuckData.licenseWarningDays = next)
 				})}
+			</div>
+			<div class="flex flex-col gap-2">
+				<Label class="flex items-center gap-2 font-normal">
+					<Checkbox name="digestEnabled" bind:checked={$stuckData.digestEnabled} />
+					Присылать утреннюю сводку «Мой день»
+				</Label>
+				<div class="grid gap-4 sm:grid-cols-2">
+					{@render numberField({
+						name: 'digestHour',
+						label: 'Час сводки',
+						description: 'От 0 до 23, по Москве',
+						value: $stuckData.digestHour,
+						errors: $stuckErrors.digestHour,
+						onchange: (next) => ($stuckData.digestHour = next)
+					})}
+				</div>
+				<p class="text-xs text-muted-foreground">
+					Одна сводка на сотрудника, день и канал; у кого на сегодня дел нет, тому она не приходит.
+					Приложение, которое в этот час не работало, отправит сводку первым проходом после.
+				</p>
 			</div>
 			<fieldset class="flex flex-col gap-2">
 				<legend class="text-sm font-medium">Каналы</legend>

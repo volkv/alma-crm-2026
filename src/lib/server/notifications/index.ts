@@ -6,7 +6,9 @@
  * по тем взаимодействиям, которые он и так видит (`docs/access-matrix.md`,
  * раздел 1: у каждой записи есть взаимодействие, через которое она видна), а
  * уведомления о лицензиях — по организациям, которые он видит: у них предмет —
- * позиция договора, а договор живёт у организации.
+ * позиция договора, а договор живёт у организации; утренние сводки — по
+ * получателям в его области (свои и подчинённых): у сводки предмет — сам
+ * получатель.
  * Повторять отправку — `notifications.manage`: повтор ходит на чужой почтовый
  * сервер, и это работа администратора, а не чтение сводки.
  */
@@ -22,6 +24,7 @@ import {
 	type NotificationDeliveryView,
 	type NotificationQuery
 } from '$lib/contracts/notifications';
+import { formatIsoDay } from '$lib/format';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
@@ -37,8 +40,9 @@ import {
 } from '../db/schema';
 import { ConflictError, NotFoundError } from '../errors';
 import { visibleInteractionFilter, visibleOrganizationFilter } from '../interactions/access';
-import { requirePermission } from '../rbac';
+import { actorScopeFilter, requirePermission } from '../rbac';
 import { getSetting } from '../settings';
+import { deliverDigest } from './digest';
 import { deliverLicenseNotice, readLicenseEntry } from './license-watch';
 import { deliverStuckNotice, readStuckEntry } from './watch';
 
@@ -61,6 +65,10 @@ export async function listNotificationDeliveries(
 			and(
 				isNotNull(notificationDeliveries.contractItemId),
 				visibleOrganizationFilter(ctx, contracts.organizationId)
+			),
+			and(
+				isNotNull(notificationDeliveries.digestDay),
+				actorScopeFilter(ctx, notificationDeliveries.recipientUserId)
 			)
 		) as SQL
 	];
@@ -95,6 +103,7 @@ export async function listNotificationDeliveries(
 			organizationName: organizations.shortName,
 			productName: products.name,
 			licenseUntil: notificationDeliveries.licenseUntil,
+			digestDay: notificationDeliveries.digestDay,
 			recipientUserId: notificationDeliveries.recipientUserId,
 			recipientName: recipient.fullName,
 			channel: notificationDeliveries.channel,
@@ -153,6 +162,8 @@ export async function retryNotificationDelivery(
 			stageEntryId: notificationDeliveries.stageEntryId,
 			contractItemId: notificationDeliveries.contractItemId,
 			licenseUntil: notificationDeliveries.licenseUntil,
+			digestDay: notificationDeliveries.digestDay,
+			recipientUserId: notificationDeliveries.recipientUserId,
 			channel: notificationDeliveries.channel,
 			status: notificationDeliveries.status
 		})
@@ -168,9 +179,12 @@ export async function retryNotificationDelivery(
 		throw new ConflictError('Повторить можно только доставку, которая не отправлена');
 	}
 
-	const status = isLicenseKind(row.kind)
-		? await retryLicense(ctx, row.kind, row.contractItemId, row.licenseUntil, row.channel)
-		: await retryStuck(ctx, row.stageEntryId, row.channel);
+	const status =
+		row.kind === 'daily_digest'
+			? await retryDigest(ctx, row.recipientUserId, row.digestDay, row.channel)
+			: isLicenseKind(row.kind)
+				? await retryLicense(ctx, row.kind, row.contractItemId, row.licenseUntil, row.channel)
+				: await retryStuck(ctx, row.stageEntryId, row.channel);
 
 	if (status === 'sent') {
 		return { ok: true, error: null };
@@ -255,6 +269,48 @@ async function retryLicense(
 			outcome: 'success',
 			subject: { type: 'contract_item', id: contractItemId },
 			details: { organizationId: entry.organizationId, channelKey: channel, sentCount: 1 }
+		});
+	}
+
+	return status;
+}
+
+/**
+ * Повтор утренней сводки. Сводка собирается заново на сейчас и только за
+ * сегодня: вчерашний список дел сегодня уже неправда.
+ */
+async function retryDigest(
+	ctx: ActorContext,
+	recipientUserId: string | null,
+	digestDay: string | null,
+	channel: NotificationChannel
+): Promise<NotificationDeliveryStatus> {
+	if (digestDay === null) {
+		throw new Error('Строка утренней сводки без дня: проверка таблицы нарушена');
+	}
+
+	if (recipientUserId === null) {
+		throw new ConflictError('Получателя сводки больше нет: повторять некому');
+	}
+
+	if (digestDay !== formatIsoDay()) {
+		throw new ConflictError('Сводка за прошедший день: повторять нечего, строка осталась историей');
+	}
+
+	const [status] = await deliverDigest(ctx, recipientUserId, [channel]);
+
+	if (status === undefined) {
+		throw new ConflictError(
+			'У получателя больше нет дел на сегодня или его учётная запись выключена: сводке не о чем сказать'
+		);
+	}
+
+	if (status === 'sent') {
+		await recordAuditEvent(ctx, {
+			type: 'notifications.sent',
+			outcome: 'success',
+			subject: { type: 'user', id: recipientUserId },
+			details: { channelKey: channel, kindKey: 'daily_digest', sentCount: 1 }
 		});
 	}
 

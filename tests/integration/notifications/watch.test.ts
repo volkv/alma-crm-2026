@@ -334,6 +334,9 @@ beforeEach(async () => {
 	await database.reset();
 	smtp.messages.length = 0;
 	smtp.setFailing(false);
+	// Утренняя сводка идёт тем же проходом и зависит от часов прогона: здесь
+	// считаются только напоминания наблюдателя (сводка — `digest.test.ts`).
+	await setSetting(testActor(), 'daily_digest', { enabled: false, hour: 8 });
 });
 
 describe('наблюдатель зависших взаимодействий', () => {

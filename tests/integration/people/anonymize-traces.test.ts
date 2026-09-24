@@ -37,6 +37,7 @@ import {
 	B2C_PROCESS
 } from '$lib/server/stages/definitions';
 import { ensureWorkflow } from '$lib/server/stages/process';
+import { setSetting } from '$lib/server/settings';
 import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
 
 /**
@@ -86,6 +87,9 @@ afterAll(async () => {
 
 beforeEach(async () => {
 	await database.reset();
+	// Утренняя сводка идёт тем же проходом цикла и зависит от часов прогона:
+	// здесь считаются только напоминания о зависших.
+	await setSetting(testActor(), 'daily_digest', { enabled: false, hour: 8 });
 
 	await database.db.transaction(async (tx) => {
 		await ensureWorkflow(tx, B2B_WORKSPACE_KEY, B2B_PROCESS);

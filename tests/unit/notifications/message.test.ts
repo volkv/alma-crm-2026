@@ -7,7 +7,9 @@
  * дальше человек идёт в карточку, а карточка закрыта входом.
  */
 import { describe, expect, it } from 'vitest';
+import type { MyDay } from '$lib/contracts/my-day';
 import {
+	digestNotificationMessage,
 	interactionUrl,
 	stuckNotificationMessage,
 	type StuckNotificationFacts
@@ -85,5 +87,49 @@ describe('письмо о зависшем взаимодействии', () => 
 
 		expect(message.text).not.toContain('()');
 		expect(message.text).toContain('«Поиск контакта»');
+	});
+});
+
+describe('утренняя сводка', () => {
+	const DAY: MyDay = {
+		generatedAt: new Date('2026-09-24T05:00:00Z'),
+		basis: 'own',
+		sections: [
+			{
+				kind: 'overdue',
+				total: 2,
+				items: [
+					{
+						kind: 'overdue',
+						target: { type: 'interaction', id: FACTS.interactionId },
+						title: 'Заявка с сайта: Иванов Пётр — Управление проектами',
+						organizationName: 'Иванов Пётр Сергеевич',
+						isPersonal: true,
+						detail: 'стадия «Первичный контакт», срок прошёл 2 дня назад',
+						note: 'Иванов не отвечает на звонки'
+					},
+					{
+						kind: 'overdue',
+						target: { type: 'interaction', id: '0c9a1e2b-0f3a-4a5e-9c3f-2f3a5a2e3c4d' },
+						title: 'СПбПУ: подготовка DevOps-инженеров',
+						organizationName: 'СПбПУ',
+						isPersonal: false,
+						detail: 'стадия «Поиск контакта», срок прошёл сегодня',
+						note: 'Ждём ректора Петрову'
+					}
+				]
+			}
+		]
+	};
+
+	it('не несёт ни ФИО физического лица, ни свободного текста сотрудников', () => {
+		const message = digestNotificationMessage({ day: DAY, dayLabel: '24.09.2026' }, 'https://x');
+		const whole = `${message.subject}\n${message.text}`;
+
+		expect(whole).not.toMatch(/Иванов|Петров/);
+		expect(message.text).toContain('Взаимодействие с физическим лицом');
+		expect(message.text).toContain('«СПбПУ: подготовка DevOps-инженеров» (СПбПУ)');
+		expect(message.text).toContain(`https://x/interactions/${FACTS.interactionId}`);
+		expect(message.subject).toBe('Утренняя сводка на 24.09.2026: 2 дела');
 	});
 });

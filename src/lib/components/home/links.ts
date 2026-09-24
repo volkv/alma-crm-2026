@@ -50,3 +50,8 @@ export function interactionsHref(filter: InteractionsFilter): ResolvedPathname {
 export function interactionHref(id: string): ResolvedPathname {
 	return resolve('/(app)/interactions/[id=uuid]', { id });
 }
+
+/** Карточка организации: к ней ведёт строка о лицензии. */
+export function organizationHref(id: string): ResolvedPathname {
+	return resolve('/(app)/organizations/[id=uuid]', { id });
+}

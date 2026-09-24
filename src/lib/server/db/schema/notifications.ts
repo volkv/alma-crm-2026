@@ -14,13 +14,15 @@
  * одинаковых строк. Что повторов было несколько, видно по счётчику попыток и по
  * моменту последней отправки.
  *
- * Предметов два, и у строки заполнен ровно один (проверка
+ * Предметов три, и у строки заполнен ровно один (проверка
  * `notification_deliveries_subject_one_of`):
  * - запись стадии (`stage_entry_id` вместе со своим взаимодействием) — у
  *   напоминания о зависшем взаимодействии;
  * - позиция договора вместе со сроком лицензии (`contract_item_id`,
  *   `license_until`) — у уведомлений о лицензии. Срок входит в ключ: продлили
- *   лицензию — новый срок напоминает заново, а история прежнего остаётся.
+ *   лицензию — новый срок напоминает заново, а история прежнего остаётся;
+ * - день утренней сводки (`digest_day`) вместе с получателем — у сводки «Мой
+ *   день»: одна на сотрудника, день и канал.
  */
 import { relations, sql } from 'drizzle-orm';
 import {
@@ -71,6 +73,11 @@ export const notificationDeliveries = pgTable(
 		/** Срок лицензии, о котором напомнили: часть ключа дедупликации. */
 		licenseUntil: date(),
 		/**
+		 * День утренней сводки по Москве: часть ключа дедупликации вместе с
+		 * получателем. Завтра — новый день и новая строка.
+		 */
+		digestDay: date(),
+		/**
 		 * Кому уходит: руководитель ответственного за взаимодействие, ответственный
 		 * за вуз или его руководитель — по виду. Пусто — получателя нет, и это не
 		 * ошибка отправки, а незаполненное назначение или иерархия: строка со
@@ -115,9 +122,13 @@ export const notificationDeliveries = pgTable(
 		uniqueIndex('notification_deliveries_license_key')
 			.on(table.kind, table.contractItemId, table.licenseUntil, table.channel)
 			.where(sql`${table.contractItemId} is not null`),
+		// И для сводки: одна на получателя, день и канал.
+		uniqueIndex('notification_deliveries_digest_key')
+			.on(table.kind, table.recipientUserId, table.digestDay, table.channel)
+			.where(sql`${table.digestDay} is not null`),
 		check(
 			'notification_deliveries_subject_one_of',
-			sql`(${table.stageEntryId} is not null and ${table.interactionId} is not null and ${table.contractItemId} is null and ${table.licenseUntil} is null) or (${table.stageEntryId} is null and ${table.interactionId} is null and ${table.contractItemId} is not null and ${table.licenseUntil} is not null)`
+			sql`(${table.stageEntryId} is not null and ${table.interactionId} is not null and ${table.contractItemId} is null and ${table.licenseUntil} is null and ${table.digestDay} is null) or (${table.stageEntryId} is null and ${table.interactionId} is null and ${table.contractItemId} is not null and ${table.licenseUntil} is not null and ${table.digestDay} is null) or (${table.stageEntryId} is null and ${table.interactionId} is null and ${table.contractItemId} is null and ${table.licenseUntil} is null and ${table.digestDay} is not null)`
 		),
 		// Наблюдатель выбирает то, чему пришёл срок: строк в журнале со временем
 		// тысячи, а созревших единицы.

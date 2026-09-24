@@ -1,51 +1,26 @@
 /**
- * Сводка рабочего дня: что происходит с портфелем взаимодействий и с чего
- * начинать.
+ * Сводка портфеля на главной: сколько всего горит, где стоит портфель и что
+ * происходило в работе.
  *
- * Главная отвечает на четыре вопроса подряд — сколько всего горит, где стоит
- * портфель, что делать мне прямо сейчас и кого мы ждём, — и поэтому собирается
- * одним сервисом: четыре страницы, каждая со своим запросом, разошлись бы в
- * числах уже на второй неделе.
- *
- * Строки «требуют действия» берутся у `listInteractions`: стадия, срок, лента
- * маршрута и счётчик помех там уже собраны одним запросом, и второй такой же
- * запрос здесь означал бы два ответа на вопрос «где взаимодействие стоит».
- * Порядок внутри списка — правило этой страницы, а не списка, поэтому он
- * считается здесь.
+ * Плитки, полоса и лента собираются одним сервисом: три запроса, каждый со
+ * своим «сейчас», разошлись бы в числах уже на второй неделе. Что делать
+ * сегодня — список «Мой день» — считает `my-day.ts`: он же уходит утренней
+ * сводкой, и у списка дел должен быть один источник.
  */
-import { and, asc, count, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
+import { and, count, desc, eq, gte, inArray, isNull, lte, sql } from 'drizzle-orm';
 import { AUDIT_EVENT_TYPES, type AuditEventType } from '$lib/contracts/audit';
 import {
 	STAGE_CATEGORIES,
-	interactionListQuerySchema,
-	type InteractionListItem,
-	type InteractionListQuery,
 	type StageCategory,
 	type StageSnapshot
 } from '$lib/contracts/interactions';
-import { daysUntil } from '$lib/format';
 import type { ActorContext } from '../actor';
 import { getDb } from '../db';
-import {
-	auditEvents,
-	blockers,
-	interactionParties,
-	interactions,
-	organizations,
-	stageEntries,
-	stageEntryStatus,
-	stagePauses
-} from '../db/schema';
+import { auditEvents, blockers, interactions, stageEntries, stageEntryStatus } from '../db/schema';
 import { requirePermission } from '../rbac';
 import { isStale } from '../stages/status';
 import { interactionScopeFilter } from './access';
-import { listInteractions } from './read';
 
-/** За сколько дней до срока взаимодействие попадает в «скоро». */
-const DUE_SOON_DAYS = 3;
-/** Сколько строк помещается в «требуют действия»: это список на утро, а не отчёт. */
-const NEEDS_ACTION_LIMIT = 10;
-const WAITING_LIMIT = 5;
 const ACTIVITY_LIMIT = 10;
 /**
  * Сколько событий одного взаимодействия попадает в ленту.
@@ -58,14 +33,6 @@ const ACTIVITY_LIMIT = 10;
 const ACTIVITY_PER_INTERACTION = 2;
 /** Окно, за которое считаются завершённые взаимодействия. */
 const COMPLETED_WINDOW_DAYS = 30;
-/**
- * Сколько строк рассматривается при отборе «требуют действия». Порядок внутри
- * списка — правило приложения, а не колонка в базе, поэтому кандидаты берутся
- * страницей с ближайшими сроками: просроченные в неё попадают все, у них срок
- * уже в прошлом.
- */
-const CANDIDATE_PAGE_SIZE = 100;
-
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -105,29 +72,6 @@ export type OverviewDistribution = {
 	leading: StageCategory | null;
 };
 
-/** Что мешает взаимодействию двигаться — одна причина, самая важная. */
-export type OverviewImpediment =
-	| { kind: 'blocker'; text: string; blocksTransition: boolean }
-	| { kind: 'waiting'; party: string | null; text: string }
-	| { kind: 'silence'; since: Date };
-
-/** Строка списка «требуют действия»: сама запись и то, что её держит. */
-export type OverviewTask = {
-	interaction: InteractionListItem;
-	impediment: OverviewImpediment | null;
-};
-
-/** Взаимодействие, по которому ждут не нас. */
-export type OverviewWaiting = {
-	interactionId: string;
-	title: string;
-	/** Кого ждём: сторона взаимодействия, если она названа в паузе. */
-	party: string | null;
-	note: string;
-	nextAction: string | null;
-	since: Date;
-};
-
 /** Событие журнала в ленте главной. */
 export type OverviewActivity = {
 	id: string;
@@ -143,15 +87,6 @@ export type WorkOverview = {
 	generatedAt: Date;
 	counters: OverviewCounters;
 	distribution: OverviewDistribution;
-	needsAction: {
-		/**
-		 * `mine` — взаимодействия вызывающего; `all` — просроченные по всей
-		 * области доступа, когда своих у человека нет.
-		 */
-		basis: 'mine' | 'all';
-		tasks: OverviewTask[];
-	};
-	waiting: OverviewWaiting[];
 	activity: OverviewActivity[];
 };
 
@@ -260,196 +195,6 @@ async function countCompletedRecently(ctx: ActorContext, since: Date): Promise<n
 	return row?.value ?? 0;
 }
 
-function candidateQuery(changes: Partial<InteractionListQuery>): InteractionListQuery {
-	return interactionListQuerySchema.parse({
-		status: 'active',
-		// Ближайший срок первым: просроченные все попадают в страницу кандидатов,
-		// их срок уже в прошлом.
-		sort: 'dueAt',
-		pageSize: CANDIDATE_PAGE_SIZE,
-		...changes
-	});
-}
-
-/**
- * Насколько строка срочная: 0 — просрочено, 1 — стоит помеха, 2 — срок на
- * подходе, 3 — всё остальное. Порядок именно такой: просрочку уже не вернуть,
- * помеха не рассосётся сама, а срок «через три дня» ещё можно успеть.
- */
-function urgency(item: InteractionListItem, now: Date): number {
-	if (item.isOverdue) {
-		return 0;
-	}
-
-	if (item.openBlockers > 0) {
-		return 1;
-	}
-
-	if (item.dueAt !== null && !item.isPaused && daysUntil(item.dueAt, now) <= DUE_SOON_DAYS) {
-		return 2;
-	}
-
-	return 3;
-}
-
-function byUrgency(now: Date) {
-	return (left: InteractionListItem, right: InteractionListItem): number => {
-		const difference = urgency(left, now) - urgency(right, now);
-
-		if (difference !== 0) {
-			return difference;
-		}
-
-		// Внутри ступени — по сроку: у записи без срока торопиться не с чем.
-		if (left.dueAt === null || right.dueAt === null) {
-			return left.dueAt === right.dueAt ? 0 : left.dueAt === null ? 1 : -1;
-		}
-
-		return left.dueAt.getTime() - right.dueAt.getTime();
-	};
-}
-
-/**
- * Что держит каждое из показанных взаимодействий. Причина одна и самая
- * весомая: помеха, ожидание стороны, тишина. Готовность перехода сюда не
- * входит — её правила живут в `evaluateTransition`, и второго их изложения
- * быть не должно.
- */
-async function readImpediments(
-	interactionIds: string[],
-	items: InteractionListItem[]
-): Promise<Map<string, OverviewImpediment>> {
-	const result = new Map<string, OverviewImpediment>();
-
-	if (interactionIds.length === 0) {
-		return result;
-	}
-
-	const db = getDb();
-
-	const [blockerRows, pauseRows] = await Promise.all([
-		db
-			.select({
-				interactionId: blockers.interactionId,
-				description: blockers.description,
-				blocksTransition: blockers.blocksTransition
-			})
-			.from(blockers)
-			.where(and(inArray(blockers.interactionId, interactionIds), isNull(blockers.resolvedAt)))
-			// Запрещающая переход помеха важнее прочих, свежая — важнее старой.
-			.orderBy(desc(blockers.blocksTransition), desc(blockers.raisedAt)),
-		db
-			.select({
-				interactionId: stageEntries.interactionId,
-				note: stagePauses.note,
-				nextAction: stagePauses.nextAction,
-				party: organizations.shortName
-			})
-			.from(stagePauses)
-			.innerJoin(stageEntries, eq(stageEntries.id, stagePauses.stageEntryId))
-			.leftJoin(interactionParties, eq(interactionParties.id, stagePauses.waitingPartyId))
-			.leftJoin(organizations, eq(organizations.id, interactionParties.organizationId))
-			.where(
-				and(
-					inArray(stageEntries.interactionId, interactionIds),
-					isNull(stagePauses.endedAt),
-					isNull(stageEntries.leftAt)
-				)
-			)
-	]);
-
-	for (const row of blockerRows) {
-		if (!result.has(row.interactionId)) {
-			result.set(row.interactionId, {
-				kind: 'blocker',
-				text: row.description,
-				blocksTransition: row.blocksTransition
-			});
-		}
-	}
-
-	for (const row of pauseRows) {
-		if (!result.has(row.interactionId)) {
-			result.set(row.interactionId, {
-				kind: 'waiting',
-				party: row.party,
-				text: row.nextAction ?? row.note
-			});
-		}
-	}
-
-	for (const item of items) {
-		if (item.isStale && !result.has(item.id)) {
-			result.set(item.id, { kind: 'silence', since: item.lastActivityAt });
-		}
-	}
-
-	return result;
-}
-
-/**
- * Строки на утро. Своих взаимодействий нет — показываются просроченные по всей
- * области доступа: наблюдателю и новому сотруднику пустой список не говорит
- * ничего, а горящее по соседству — говорит.
- */
-async function readNeedsAction(
-	ctx: ActorContext,
-	now: Date
-): Promise<{ basis: 'mine' | 'all'; tasks: OverviewTask[] }> {
-	const userId = ctx.user?.id ?? null;
-
-	const mine =
-		userId === null ? null : await listInteractions(ctx, candidateQuery({ ownerUserId: userId }));
-
-	const basis: 'mine' | 'all' = mine !== null && mine.total > 0 ? 'mine' : 'all';
-	const page =
-		mine !== null && mine.total > 0
-			? mine
-			: await listInteractions(ctx, candidateQuery({ overdue: true }));
-
-	const items = [...page.items].sort(byUrgency(now)).slice(0, NEEDS_ACTION_LIMIT);
-	const impediments = await readImpediments(
-		items.map((item) => item.id),
-		items
-	);
-
-	return {
-		basis,
-		tasks: items.map((item) => ({
-			interaction: item,
-			impediment: impediments.get(item.id) ?? null
-		}))
-	};
-}
-
-/** Кого мы ждём: открытые паузы, дольше всех ожидающие — первыми. */
-async function readWaiting(ctx: ActorContext): Promise<OverviewWaiting[]> {
-	return getDb()
-		.select({
-			interactionId: interactions.id,
-			title: interactions.title,
-			party: organizations.shortName,
-			note: stagePauses.note,
-			nextAction: stagePauses.nextAction,
-			since: stagePauses.startedAt
-		})
-		.from(stagePauses)
-		.innerJoin(stageEntries, eq(stageEntries.id, stagePauses.stageEntryId))
-		.innerJoin(interactions, eq(interactions.id, stageEntries.interactionId))
-		.leftJoin(interactionParties, eq(interactionParties.id, stagePauses.waitingPartyId))
-		.leftJoin(organizations, eq(organizations.id, interactionParties.organizationId))
-		.where(
-			and(
-				isNull(stagePauses.endedAt),
-				isNull(stageEntries.leftAt),
-				eq(interactions.status, 'active'),
-				interactionScopeFilter(ctx)
-			)
-		)
-		.orderBy(asc(stagePauses.startedAt))
-		.limit(WAITING_LIMIT);
-}
-
 /**
  * Лента последних событий по взаимодействиям.
  *
@@ -517,19 +262,21 @@ async function readActivity(ctx: ActorContext): Promise<OverviewActivity[]> {
 	return rows.map((row) => ({ ...row, eventType: row.eventType as AuditEventType }));
 }
 
-export async function getWorkOverview(ctx: ActorContext): Promise<WorkOverview> {
+/**
+ * `now` — один момент времени на всю главную: числа в плитках, полосе и
+ * «Моём дне» обязаны сходиться между собой, а не каждое со своим «сейчас».
+ */
+export async function getWorkOverview(
+	ctx: ActorContext,
+	now: Date = new Date()
+): Promise<WorkOverview> {
 	requirePermission(ctx, 'interactions.read');
 
-	// Один момент времени на всю сводку: числа в плитках, полосе и списке
-	// обязаны сходиться между собой, а не каждое со своим «сейчас».
-	const now = new Date();
 	const completedSince = new Date(now.getTime() - COMPLETED_WINDOW_DAYS * DAY_MS);
 
-	const [portfolio, completedRecently, needsAction, waiting, activity] = await Promise.all([
+	const [portfolio, completedRecently, activity] = await Promise.all([
 		readPortfolio(ctx),
 		countCompletedRecently(ctx, completedSince),
-		readNeedsAction(ctx, now),
-		readWaiting(ctx),
 		readActivity(ctx)
 	]);
 
@@ -537,8 +284,6 @@ export async function getWorkOverview(ctx: ActorContext): Promise<WorkOverview> 
 		generatedAt: now,
 		counters: { ...countCounters(portfolio, now), completedRecently },
 		distribution: buildDistribution(portfolio),
-		needsAction,
-		waiting,
 		activity
 	};
 }

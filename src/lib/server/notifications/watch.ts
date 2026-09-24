@@ -55,6 +55,7 @@ import {
 import { workspaceAccessCondition } from '../rbac/workspaces';
 import { getSetting } from '../settings';
 import { sendThroughChannel, type ChannelOutcome, type NotificationRecipient } from './channels';
+import { runDailyDigest } from './digest';
 import { runLicenseWatch } from './license-watch';
 import { stuckNotificationMessage, type NotificationMessage } from './message';
 import { FAILURE_RETRY_MINUTES, nextNotifyAt } from './schedule';
@@ -419,7 +420,8 @@ function count(report: NotificationReport, status: NotificationDeliveryStatus): 
 
 /**
  * Проход наблюдателей по всем включённым каналам: сначала зависшие
- * взаимодействия, затем сроки лицензий (`license-watch.ts`). Отчёт у них общий.
+ * взаимодействия, затем сроки лицензий (`license-watch.ts`) и утренняя сводка
+ * (`digest.ts`). Отчёт у них общий.
  *
  * Своего замка не берёт — им распоряжается `runIntegrationsCycle`. Порог и
  * набор каналов читаются на каждый проход: правку настройки видно со следующего
@@ -449,6 +451,13 @@ export async function runNotificationCycle(ctx: ActorContext): Promise<Notificat
 	const enabled = NOTIFICATION_CHANNELS.filter((channel) => channels[channel]);
 
 	for (const status of await runLicenseWatch(ctx, enabled, now)) {
+		count(report, status);
+	}
+
+	// Утренняя сводка — тем же проходом: каналы у неё те же, а замок цикла
+	// держит правило «одна сводка на сотрудника, день и канал» и между
+	// процессами (`digest.ts`).
+	for (const status of await runDailyDigest(ctx, enabled, now)) {
 		count(report, status);
 	}
 

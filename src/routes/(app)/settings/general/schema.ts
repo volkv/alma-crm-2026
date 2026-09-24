@@ -15,8 +15,8 @@ export const sessionLimitsSchema = z.object({
 export type SessionLimitsInput = z.output<typeof sessionLimitsSchema>;
 
 /**
- * Наблюдатели — зависших взаимодействий и сроков лицензий: пороги и каналы
- * одной формой. Каналы у наблюдателей общие.
+ * Наблюдатели — зависших взаимодействий и сроков лицензий — и утренняя сводка:
+ * пороги, час сводки и каналы одной формой. Каналы у них общие.
  *
  * Вместе, а не по отдельности, потому что вместе они и задают правило: порог
  * без единого включённого канала — это правило, о срабатывании которого никто
@@ -30,6 +30,8 @@ export type SessionLimitsInput = z.output<typeof sessionLimitsSchema>;
 export const stuckWatchSchema = z.object({
 	thresholdDays: settingSchemas.stuck_threshold_days,
 	licenseWarningDays: settingSchemas.license_warning_days,
+	digestEnabled: z.boolean().default(false),
+	digestHour: settingSchemas.daily_digest.shape.hour,
 	email: z.boolean().default(false),
 	telegram: z.boolean().default(false),
 	max: z.boolean().default(false)

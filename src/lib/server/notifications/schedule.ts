@@ -5,6 +5,7 @@
  * отдельным модулем и не знает ни про базу, ни про каналы: чистые числа
  * проверяются числами.
  */
+import { MOSCOW_OFFSET_MS } from '$lib/contracts/calendar';
 import type { NotificationDeliveryStatus } from '$lib/contracts/notifications';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -98,4 +99,31 @@ export function licenseNextNotifyAt(
 	}
 
 	return null;
+}
+
+/**
+ * Пора ли слать утреннюю сводку: включена и московские часы дошли до часа
+ * сводки. Позже в тот же день — тоже пора: процесс, перезапущенный в девять,
+ * не должен оставить людей без сводки, а второй раз за день её не отправит
+ * ключ дедупликации (получатель × день × канал).
+ */
+export function digestIsDue(schedule: { enabled: boolean; hour: number }, now: Date): boolean {
+	if (!schedule.enabled) {
+		return false;
+	}
+
+	return new Date(now.getTime() + MOSCOW_OFFSET_MS).getUTCHours() >= schedule.hour;
+}
+
+/**
+ * Следующая попытка по сводке; `null` — больше не пробовать. Сводка одна на
+ * день: ушла (или изображена заглушкой) — и всё. Неудачная отправка
+ * повторяется, как у остальных видов, но только в тот же день — это отбирает
+ * сам цикл: вчерашняя сводка сегодня уже неправда.
+ */
+export function digestNextNotifyAt(
+	outcome: { status: NotificationDeliveryStatus; attempts: number },
+	now: Date
+): Date | null {
+	return outcome.status === 'failed' ? nextNotifyAt(outcome, MIN_REPEAT_DAYS, now) : null;
 }

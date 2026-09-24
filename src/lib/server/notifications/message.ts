@@ -1,7 +1,8 @@
 /**
  * Текст уведомления.
  *
- * Писем два вида: о зависшем взаимодействии и о сроке лицензии.
+ * Писем три вида: о зависшем взаимодействии, о сроке лицензии и утренняя
+ * сводка «Мой день».
  *
  * Письмо уходит наружу — в чужой почтовый ящик, откуда его не отозвать и где
  * его прочитает почтовый сервер получателя, — поэтому персональных данных в нём
@@ -13,7 +14,15 @@
  * Функция чистая и принимает адрес системы параметром: `ORIGIN` читает тот, кто
  * зовёт, а текст обязан проверяться без окружения целиком.
  */
+import {
+	MY_DAY_BASIS_LABELS,
+	MY_DAY_SECTIONS,
+	myDayLetterTitle,
+	type MyDay,
+	type MyDayItem
+} from '$lib/contracts/my-day';
 import { NOTIFICATION_KIND_LABELS } from '$lib/contracts/notifications';
+import { pluralForm } from '$lib/format';
 
 export type NotificationMessage = {
 	subject: string;
@@ -143,6 +152,61 @@ export function licenseNotificationMessage(
 
 	return {
 		subject: `${NOTIFICATION_KIND_LABELS[kind]}: «${facts.productName}», договор № ${facts.contractNumber}`,
+		text: lines.join('\n')
+	};
+}
+
+function myDayItemUrl(origin: string, item: MyDayItem): string {
+	return item.target.type === 'interaction'
+		? interactionUrl(origin, item.target.id)
+		: organizationUrl(origin, item.target.id);
+}
+
+/**
+ * Утренняя сводка: разделы «Моего дня» со строками, подсказкой к действию и
+ * ссылками.
+ *
+ * Обезличена так же, как письма наблюдателей, и строже их: у стороны —
+ * физического лица не называется ни она сама, ни взаимодействие (название
+ * заявки с сайта несёт ФИО заявителя), а свободный текст сотрудников — помехи
+ * и «кого ждём» — в письмо не попадает вовсе: имена там пишут чаще, чем
+ * где-либо.
+ */
+export function digestNotificationMessage(
+	facts: { day: MyDay; dayLabel: string },
+	origin: string
+): NotificationMessage {
+	const total = facts.day.sections.reduce((sum, section) => sum + section.total, 0);
+	const home = `${origin.replace(/\/+$/, '')}/`;
+	const lines = [
+		`Что требует внимания сегодня, ${facts.dayLabel}. ${MY_DAY_BASIS_LABELS[facts.day.basis]}.`
+	];
+
+	for (const section of facts.day.sections) {
+		const meta = MY_DAY_SECTIONS[section.kind];
+
+		lines.push('', `${meta.title} (${section.total})`, `Что сделать: ${meta.action}.`);
+
+		for (const item of section.items) {
+			lines.push(`— ${myDayLetterTitle(item)}: ${item.detail}.`, `  ${myDayItemUrl(origin, item)}`);
+		}
+
+		const rest = section.total - section.items.length;
+
+		if (rest > 0) {
+			lines.push(`…и ещё ${rest} — на главной.`);
+		}
+	}
+
+	lines.push(
+		'',
+		`Главная: ${home}`,
+		'',
+		'Сводку отправила система контроля взаимодействия с учебными заведениями. Отвечать на неё не нужно. Час сводки и её выключатель — в разделе «Настройки → Общие».'
+	);
+
+	return {
+		subject: `${NOTIFICATION_KIND_LABELS.daily_digest} на ${facts.dayLabel}: ${total} ${pluralForm(total, ['дело', 'дела', 'дел'])}`,
 		text: lines.join('\n')
 	};
 }
