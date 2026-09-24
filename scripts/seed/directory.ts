@@ -9,6 +9,11 @@
  * школы и компании-заказчики. Почта — на `example.org` и `example.com`,
  * телефоны — из диапазона `+7 900 000-00-NN`.
  *
+ * Исключение — сайты пяти вузов (СПбПУ, МФТИ, Московский Политех, МТУСИ,
+ * МИЭТ): у них настоящий адрес, потому что паспорт организации читается с
+ * раздела `/sveden` сайта, и на вымышленном домене показать его нечем. Люди и
+ * почта этих вузов остаются вымышленными.
+ *
  * ИНН заведомо синтетические: первые четыре цифры `0000`, то есть код налогового
  * органа, которого не существует. Контрольную сумму они при этом проходят —
  * иначе форма организации отвергла бы собственные демонстрационные данные. КПП
@@ -252,7 +257,7 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		kpp: '000001001',
 		ogrn: '1260000000017',
 		region: 'г. Санкт-Петербург',
-		website: 'https://spbpu.example.org',
+		website: 'https://www.spbstu.ru',
 		notes: 'Опорный партнёр: ответственность разделена по направлениям.'
 	},
 	{
@@ -266,7 +271,7 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		kpp: '000001002',
 		ogrn: '1260000000028',
 		region: 'Московская область',
-		website: 'https://mipt.example.org'
+		website: 'https://mipt.ru'
 	},
 	{
 		key: 'uguis',
@@ -343,7 +348,7 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		kpp: '000001008',
 		ogrn: '1260000000083',
 		region: 'г. Москва',
-		website: 'https://mospolytech.example.org'
+		website: 'https://mospolytech.ru'
 	},
 	{
 		key: 'bit',
@@ -356,7 +361,7 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		kpp: '000001009',
 		ogrn: '1260000000094',
 		region: 'г. Москва',
-		website: 'https://mtuci.example.org'
+		website: 'https://mtuci.ru'
 	},
 	{
 		key: 'puts',
@@ -382,7 +387,7 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		kpp: '000001011',
 		ogrn: '1260000000116',
 		region: 'г. Москва',
-		website: 'https://miet.example.org',
+		website: 'https://miet.ru',
 		isActive: false,
 		notes:
 			'Демонстрационная запись: партнёрство помечено неактивным, чтобы на стенде был виден фильтр по активности.'

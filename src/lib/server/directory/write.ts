@@ -60,6 +60,7 @@ import { withTransaction, type Tx } from '../db/transaction';
 /** Кто выполняет запрос: транзакция вызывающего или общий пул. */
 type Executor = Tx | ReturnType<typeof getDb>;
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
+import { assertPersonVisible } from '../people/access';
 import { contactColumns, decryptContacts } from '../people/pii';
 import { withPiiTrace } from '../people/pii-trace';
 import { toPersonView } from '../people/serialize';
@@ -502,6 +503,9 @@ export async function createPerson(
  * Изменение человека переписывает запись целиком, поэтому требует и права
  * видеть контакты: иначе тот, кому они показаны замаскированными, сохранил бы
  * в базу «i***@vuz.ru» вместо адреса и стёр бы настоящий.
+ *
+ * Граница области — здесь, а не в маршрутах: правка идёт по идентификатору,
+ * и форма, API и любой будущий вход иначе проверяли бы её каждый по-своему.
  */
 export async function updatePerson(
 	ctx: ActorContext,
@@ -515,6 +519,8 @@ export async function updatePerson(
 		type: 'people.updated',
 		subject: { type: 'person', id: input.id }
 	});
+
+	await assertPersonVisible(ctx, input.id);
 
 	const { id, ...fields } = input;
 	const db = getDb();
@@ -608,9 +614,12 @@ export async function createAffiliation(
 		subject: { type: 'organization', id: input.organizationId }
 	});
 
-	// Проверки идут тем же исполнителем, что и запись: организацию могли завести
-	// в этой же транзакции, и общий пул её ещё не видит.
+	// Проверки идут тем же исполнителем, что и запись: организацию и человека
+	// могли завести в этой же транзакции, и общий пул их ещё не видит. Человек
+	// проверяется наравне с организацией: иначе роль в своём вузе приписали бы
+	// сотруднику чужого, которого вызывающий не видит.
 	await getOrganization(ctx, input.organizationId, tx);
+	await assertPersonVisible(ctx, input.personId, tx);
 
 	if (input.siteId !== null) {
 		const site = await getSite(ctx, input.siteId, tx);
@@ -754,6 +763,8 @@ export async function updateProgram(
 		type: 'programs.updated',
 		subject: { type: 'program', id: input.id }
 	});
+
+	await assertPersonVisible(ctx, input.id);
 
 	const { id, ...fields } = input;
 	const db = getDb();
@@ -1209,6 +1220,8 @@ export async function updateProduct(
 		type: 'products.updated',
 		subject: { type: 'product', id: input.id }
 	});
+
+	await assertPersonVisible(ctx, input.id);
 
 	const { id, ...fields } = input;
 	const db = getDb();

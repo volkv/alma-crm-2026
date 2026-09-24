@@ -7,7 +7,6 @@ import { apiHandler, type ApiEndpointConfig } from '$lib/server/api/handler';
 import { registerRoute } from '$lib/server/api/openapi';
 import { getPerson } from '$lib/server/directory/read';
 import { updatePerson } from '$lib/server/directory/write';
-import { assertPersonVisible } from '$lib/server/people/access';
 
 const params = z.object({ id: id('Некорректный идентификатор человека') });
 
@@ -86,13 +85,6 @@ export const GET: RequestHandler = apiHandler(getPersonEndpoint, async (ctx, { p
 	toApiPerson(await getPerson(ctx, params.id))
 );
 
-export const PUT: RequestHandler = apiHandler(
-	updatePersonEndpoint,
-	async (ctx, { params, body }) => {
-		// Правка идёт по идентификатору, и граница области проверяется здесь же,
-		// до записи: чужой человек для ключа не существует, как и в чтении.
-		await assertPersonVisible(ctx, params.id);
-
-		return toApiPerson(await updatePerson(ctx, { ...body, id: params.id }));
-	}
+export const PUT: RequestHandler = apiHandler(updatePersonEndpoint, async (ctx, { params, body }) =>
+	toApiPerson(await updatePerson(ctx, { ...body, id: params.id }))
 );

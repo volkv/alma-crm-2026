@@ -10,6 +10,7 @@ import { and, eq, exists, notExists, sql, type SQL } from 'drizzle-orm';
 import type { ActorContext } from '../actor';
 import { getDb } from '../db';
 import { affiliations, people } from '../db/schema';
+import type { Tx } from '../db/transaction';
 import { NotFoundError } from '../errors';
 import { visibleOrganizationFilter } from '../interactions/access';
 import { scopeFilter } from '../rbac';
@@ -76,9 +77,15 @@ export function personVisible(ctx: ActorContext): SQL {
  * идентификатору человека, и без этой проверки менеджер записал бы согласие за
  * чужой вуз, ни разу не открыв его карточку. Человек вне области — «не
  * найден», как и везде: разный ответ выдал бы существование чужой записи.
+ *
+ * `tx` — когда человека завели в той же транзакции: общий пул его ещё не видит.
  */
-export async function assertPersonVisible(ctx: ActorContext, personId: string): Promise<void> {
-	const [row] = await getDb()
+export async function assertPersonVisible(
+	ctx: ActorContext,
+	personId: string,
+	tx?: Tx
+): Promise<void> {
+	const [row] = await (tx ?? getDb())
 		.select({ id: people.id })
 		.from(people)
 		.where(and(eq(people.id, personId), personVisible(ctx)))

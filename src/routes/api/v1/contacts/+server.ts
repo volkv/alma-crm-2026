@@ -4,7 +4,6 @@ import { createAffiliationSchema } from '$lib/contracts/directory';
 import { apiHandler, type ApiEndpointConfig } from '$lib/server/api/handler';
 import { registerRoute } from '$lib/server/api/openapi';
 import { createAffiliation } from '$lib/server/directory/write';
-import { assertPersonVisible } from '$lib/server/people/access';
 
 const createContactEndpoint = {
 	auth: 'key',
@@ -60,10 +59,6 @@ registerRoute({
 	}
 });
 
-export const POST: RequestHandler = apiHandler(createContactEndpoint, async (ctx, { body }) => {
-	// Организацию сервис проверяет сам, а человека — нет: без этой проверки
-	// ключ приписал бы роль в своём вузе человеку, которого не видит.
-	await assertPersonVisible(ctx, body.personId);
-
-	return toApiContact(await createAffiliation(ctx, body));
-});
+export const POST: RequestHandler = apiHandler(createContactEndpoint, async (ctx, { body }) =>
+	toApiContact(await createAffiliation(ctx, body))
+);

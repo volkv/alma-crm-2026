@@ -20,7 +20,7 @@ import { getDb } from '../db';
 import { consents, people, users } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { ConflictError, NotFoundError } from '../errors';
-import { assertPersonVisible } from './access';
+import { assertPersonVisible, personVisible } from './access';
 import { requirePermission } from '../rbac';
 
 /**
@@ -172,11 +172,16 @@ export async function withdrawConsent(
 		subject: { type: 'consent', id: input.id }
 	});
 
-	const [existing] = await getDb()
-		.select()
+	// Согласие ищется по своему идентификатору, а область — это люди: без
+	// условия видимости отзыв дотянулся бы до согласия человека чужого вуза.
+	// Чужое согласие — «не найдено», как и несуществующее.
+	const [found] = await getDb()
+		.select({ consent: consents })
 		.from(consents)
-		.where(eq(consents.id, input.id))
+		.innerJoin(people, eq(people.id, consents.personId))
+		.where(and(eq(consents.id, input.id), personVisible(ctx)))
 		.limit(1);
+	const existing = found?.consent;
 
 	if (existing === undefined) {
 		throw new NotFoundError('Согласие не найдено');

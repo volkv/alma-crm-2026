@@ -28,6 +28,7 @@ import { seedInteractions } from './interactions';
 import { seedLoad, type LoadSeedReport } from './load';
 import { seedLoadMembers } from './load-members';
 import { seedProcesses } from './process';
+import { seedSettings } from './settings';
 import { seedStats } from './stats';
 import { seedUsers, type SeededUsers } from './users';
 
@@ -58,6 +59,9 @@ export async function seedAll(): Promise<SeedReport> {
 		await seedStats(tx, { authorUserId: seededUsers.employees[0] });
 
 		await seedProcesses(tx);
+		// Паспорт организации на вузах с настоящими сайтами: без включённых
+		// внешних источников его на стенде не показать.
+		await seedSettings(tx);
 
 		return { users: seededUsers, exchangeKeys: keys };
 	});
