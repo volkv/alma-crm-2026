@@ -29,6 +29,7 @@ function stage(key: string, overrides: Partial<Stage> = {}): Stage {
 		requiresConfirmation: false,
 		requiresLmsData: false,
 		requiresDocumentMark: null,
+		onEnterNotify: null,
 		isFinal: false,
 		checklist: [],
 		...overrides

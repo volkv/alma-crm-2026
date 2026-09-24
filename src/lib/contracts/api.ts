@@ -45,6 +45,7 @@ import {
 	checklistItemSchema,
 	CONTRACT_STATUSES,
 	STAGE_CATEGORIES,
+	STAGE_ENTER_NOTIFY_TARGETS,
 	STAGE_OUTCOMES,
 	STAGE_TRANSITION_KINDS,
 	type CommentView,
@@ -749,6 +750,12 @@ export const apiProcessStageSchema = z.object({
 		.enum(DOCUMENT_STATUS_FACTS)
 		.nullable()
 		.describe('Отметка по документу дела, которой подтверждается стадия; `null` — не требуется'),
+	onEnterNotify: z
+		.enum(STAGE_ENTER_NOTIFY_TARGETS)
+		.nullable()
+		.describe(
+			'Кого система уведомляет, когда дело входит на стадию: ответственного или его руководителя; `null` — никого'
+		),
 	isFinal: z.boolean(),
 	checklist: z.array(checklistItemSchema)
 });
@@ -796,6 +803,7 @@ export function toApiProcessRevision(revision: ProcessRevisionView): ApiProcessR
 			requiresConfirmation: stage.requiresConfirmation,
 			requiresLmsData: stage.requiresLmsData,
 			requiresDocumentMark: stage.requiresDocumentMark,
+			onEnterNotify: stage.onEnterNotify,
 			isFinal: stage.isFinal,
 			checklist: stage.checklist
 		})),

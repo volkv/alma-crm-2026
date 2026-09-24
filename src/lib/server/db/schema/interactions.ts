@@ -42,6 +42,7 @@ import type {
 	ChecklistItem,
 	ChecklistState,
 	StageConfirmation,
+	StageEnterNotifyTarget,
 	StageSnapshot
 } from '$lib/contracts/interactions';
 import {
@@ -365,12 +366,26 @@ export const stages = pgTable(
 		 * параметр значением, а не разбором структуры.
 		 */
 		requiresDocumentMark: text().$type<DocumentStatusFact>(),
+		/**
+		 * Кого уведомить, когда дело входит на стадию: `responsible` —
+		 * ответственного, `manager` — его руководителя. Пусто — никого.
+		 *
+		 * В слепок записи не входит: слепок хранит правила, по которым со стадии
+		 * уходят, а это действие при входе, и совершается оно в момент входа.
+		 * Уведомление ставит команда движения (`stages/commands.ts`); перенос
+		 * записей публикацией процесса его не даёт.
+		 */
+		onEnterNotify: text().$type<StageEnterNotifyTarget>(),
 		checklist: jsonb().$type<ChecklistItem[]>().notNull().default([]),
 		...timestamps
 	},
 	(table) => [
 		unique('stages_revision_key_key').on(table.revisionId, table.key),
-		unique('stages_revision_position_key').on(table.revisionId, table.position)
+		unique('stages_revision_position_key').on(table.revisionId, table.position),
+		check(
+			'stages_on_enter_notify_known',
+			sql`${table.onEnterNotify} is null or ${table.onEnterNotify} in ('responsible', 'manager')`
+		)
 	]
 );
 

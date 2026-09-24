@@ -27,6 +27,7 @@ function stage(position: number, key: string, name: string): StageView {
 		requiresConfirmation: false,
 		requiresLmsData: false,
 		requiresDocumentMark: null,
+		onEnterNotify: null,
 		isFinal: false,
 		checklist: []
 	};

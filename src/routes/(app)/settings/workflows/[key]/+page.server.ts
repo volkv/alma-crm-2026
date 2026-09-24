@@ -237,6 +237,7 @@ export const actions: Actions = {
 				// Пустая строка в форме означает «отметки не требуется»: пустой
 				// выбор в списке не отличить от невыбранного.
 				requiresDocumentMark: input.requiresDocumentMark === '' ? null : input.requiresDocumentMark,
+				onEnterNotify: input.onEnterNotify === '' ? null : input.onEnterNotify,
 				isFinal: input.isFinal,
 				checklist: parseChecklist(input.checklist).items
 			});

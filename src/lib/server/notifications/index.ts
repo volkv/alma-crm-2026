@@ -45,6 +45,7 @@ import { getSetting } from '../settings';
 import { deliverDigest } from './digest';
 import { deliverLicenseNotice, readLicenseEntry } from './license-watch';
 import { deliverMentionNotice, readMentionDelivery } from './mention';
+import { deliverStageEnterNotice, readStageEnterDelivery } from './stage-enter';
 import { deliverStuckNotice, readStuckEntry } from './watch';
 
 const recipient = alias(users, 'recipient_user');
@@ -183,11 +184,13 @@ export async function retryNotificationDelivery(
 	const status =
 		row.kind === 'mention'
 			? await retryMention(ctx, row.id)
-			: row.kind === 'daily_digest'
-				? await retryDigest(ctx, row.recipientUserId, row.digestDay, row.channel)
-				: isLicenseKind(row.kind)
-					? await retryLicense(ctx, row.kind, row.contractItemId, row.licenseUntil, row.channel)
-					: await retryStuck(ctx, row.stageEntryId, row.channel);
+			: row.kind === 'stage_entered'
+				? await retryStageEnter(ctx, row.id)
+				: row.kind === 'daily_digest'
+					? await retryDigest(ctx, row.recipientUserId, row.digestDay, row.channel)
+					: isLicenseKind(row.kind)
+						? await retryLicense(ctx, row.kind, row.contractItemId, row.licenseUntil, row.channel)
+						: await retryStuck(ctx, row.stageEntryId, row.channel);
 
 	if (status === 'sent') {
 		return { ok: true, error: null };
@@ -342,6 +345,41 @@ async function retryMention(
 			outcome: 'success',
 			subject: { type: 'interaction', id: delivery.interactionId },
 			details: { channelKey: delivery.channel, kindKey: 'mention', sentCount: 1 }
+		});
+	}
+
+	return status;
+}
+
+/**
+ * Повтор уведомления о входе на стадию. Адресат проверяется заново, как и в
+ * цикле: потерял доступ к делу — письма нет, строка получает причину.
+ */
+async function retryStageEnter(
+	ctx: ActorContext,
+	deliveryId: string
+): Promise<NotificationDeliveryStatus> {
+	const delivery = await readStageEnterDelivery(deliveryId);
+
+	if (delivery === null) {
+		throw new Error(
+			'Строка уведомления о входе на стадию без записи стадии: проверка таблицы нарушена'
+		);
+	}
+
+	const status = await deliverStageEnterNotice(ctx, delivery);
+
+	if (status === 'sent') {
+		await recordAuditEvent(ctx, {
+			type: 'notifications.sent',
+			outcome: 'success',
+			subject: { type: 'interaction', id: delivery.interactionId },
+			details: {
+				stageEntryId: delivery.stageEntryId,
+				channelKey: delivery.channel,
+				kindKey: 'stage_entered',
+				sentCount: 1
+			}
 		});
 	}
 

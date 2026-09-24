@@ -25,6 +25,7 @@ const stage = {
 	requiresConfirmation: false,
 	requiresLmsData: false,
 	requiresDocumentMark: null,
+	onEnterNotify: null,
 	isFinal: false,
 	checklist: []
 };

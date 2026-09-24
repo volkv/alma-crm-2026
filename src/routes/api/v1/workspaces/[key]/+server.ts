@@ -62,6 +62,7 @@ registerRoute({
 					requiresConfirmation: false,
 					requiresLmsData: false,
 					requiresDocumentMark: null,
+					onEnterNotify: null,
 					isFinal: false,
 					checklist: []
 				},
@@ -77,6 +78,7 @@ registerRoute({
 					requiresConfirmation: false,
 					requiresLmsData: false,
 					requiresDocumentMark: null,
+					onEnterNotify: null,
 					isFinal: false,
 					checklist: [
 						{ key: 'brief', label: 'Отправлено коммерческое предложение', required: true }

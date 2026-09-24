@@ -420,6 +420,7 @@ export function threeStageProcess(
 				requiresConfirmation: false,
 				requiresLmsData: false,
 				requiresDocumentMark: null,
+				onEnterNotify: null,
 				isFinal: false,
 				checklist: options.checklist?.intake ?? []
 			},
@@ -433,6 +434,7 @@ export function threeStageProcess(
 				requiresConfirmation: false,
 				requiresLmsData: false,
 				requiresDocumentMark: null,
+				onEnterNotify: null,
 				isFinal: false,
 				checklist: options.checklist?.offer ?? []
 			},
@@ -446,6 +448,7 @@ export function threeStageProcess(
 				requiresConfirmation: false,
 				requiresLmsData: false,
 				requiresDocumentMark: null,
+				onEnterNotify: null,
 				isFinal: true,
 				checklist: options.checklist?.done ?? []
 			}
@@ -489,6 +492,7 @@ export function twoStageProcess(options: {
 				requiresConfirmation: false,
 				requiresLmsData: false,
 				requiresDocumentMark: null,
+				onEnterNotify: null,
 				isFinal: false,
 				checklist: []
 			},
@@ -502,6 +506,7 @@ export function twoStageProcess(options: {
 				requiresConfirmation: false,
 				requiresLmsData: false,
 				requiresDocumentMark: null,
+				onEnterNotify: null,
 				isFinal: true,
 				checklist: []
 			}

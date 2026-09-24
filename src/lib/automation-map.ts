@@ -189,6 +189,14 @@ export const AUTOMATION_STEPS: readonly AutomationStep[] = [
 				result: 'Без утверждённого документа переход отказывает и называет причину',
 				screen: 'documents',
 				status: 'ready'
+			},
+			{
+				kind: 'system',
+				title: 'Дело вошло на подписание — письмо руководителю ответственного',
+				result:
+					'Строка «Дело вошло на стадию» в журнале уведомлений; кого уведомлять при входе, задаёт у стадии редактор процесса',
+				screen: 'notifications',
+				status: 'ready'
 			}
 		]
 	},

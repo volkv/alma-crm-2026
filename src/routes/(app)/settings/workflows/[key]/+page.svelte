@@ -45,6 +45,8 @@
 	} from '$lib/contracts/process-card';
 	import {
 		STAGE_CATEGORIES,
+		STAGE_ENTER_NOTIFY_LABELS,
+		STAGE_ENTER_NOTIFY_TARGETS,
 		STAGE_TRANSITION_KINDS,
 		type StageChangeKind,
 		type StageTransitionKind,
@@ -158,6 +160,8 @@
 			// Пустая строка — «отметки не требуется»: пустой выбор в списке не
 			// отличить от невыбранного.
 			requiresDocumentMark: stage?.requiresDocumentMark ?? '',
+			// Пустая строка — «никого не уведомлять», по той же причине.
+			onEnterNotify: stage?.onEnterNotify ?? '',
 			isFinal: stage?.isFinal ?? false,
 			checklist: stage === null ? '' : formatChecklist(stage.checklist)
 		};
@@ -665,6 +669,13 @@
 												<span class="text-faint">—</span>
 											{/if}
 										</span>
+										{#if stage.onEnterNotify !== null}
+											<span class="mt-0.5 block text-xs text-muted-foreground">
+												при входе уведомляет: {STAGE_ENTER_NOTIFY_LABELS[
+													stage.onEnterNotify
+												].toLowerCase()}
+											</span>
+										{/if}
 										{#if stage.checklist.length > 0}
 											<span class="mt-0.5 block text-xs text-muted-foreground 2xl:hidden">
 												чек-лист: {pluralize(stage.checklist.length, [
@@ -936,6 +947,20 @@
 				errors={$stageErrors.requiresDocumentMark}
 			/>
 		</fieldset>
+		<FieldSelect
+			name="onEnterNotify"
+			label="При входе уведомить"
+			description="Письмо уходит, когда дело переходит на стадию или начинается с неё. Того, кто сам перевёл дело, система не уведомляет; перенос при публикации процесса уведомлений не даёт."
+			options={[
+				{ value: '', label: 'Никого' },
+				...STAGE_ENTER_NOTIFY_TARGETS.map((target) => ({
+					value: target,
+					label: STAGE_ENTER_NOTIFY_LABELS[target]
+				}))
+			]}
+			bind:value={$stageData.onEnterNotify}
+			errors={$stageErrors.onEnterNotify}
+		/>
 		<fieldset class="flex flex-col gap-2">
 			<legend class="text-sm font-medium">Место в процессе</legend>
 			{@render checkboxField({

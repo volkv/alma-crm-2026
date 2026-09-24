@@ -12,6 +12,7 @@ import { requiredText } from '$lib/contracts/common';
 import { DOCUMENT_STATUS_FACTS } from '$lib/contracts/documents';
 import {
 	STAGE_CATEGORIES,
+	STAGE_ENTER_NOTIFY_TARGETS,
 	STAGE_TRANSITION_KINDS,
 	type ChecklistItem
 } from '$lib/contracts/interactions';
@@ -125,6 +126,8 @@ export const stageFormSchema = z
 		requiresLmsData: z.boolean().default(false),
 		/** Пусто — отметки не требуется; в базе это `null`. */
 		requiresDocumentMark: z.enum(['', ...DOCUMENT_STATUS_FACTS]).default(''),
+		/** Пусто — при входе никого не уведомлять; в базе это `null`. */
+		onEnterNotify: z.enum(['', ...STAGE_ENTER_NOTIFY_TARGETS]).default(''),
 		isFinal: z.boolean().default(false),
 		checklist: z.string().max(4000, { error: 'Чек-лист не длиннее 4000 символов' }).default('')
 	})

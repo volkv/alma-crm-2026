@@ -60,6 +60,7 @@ import { runLicenseWatch } from './license-watch';
 import { runMentionDelivery } from './mention';
 import { stuckNotificationMessage, type NotificationMessage } from './message';
 import { FAILURE_RETRY_MINUTES, nextNotifyAt } from './schedule';
+import { runStageEnterDelivery } from './stage-enter';
 
 /** Сколько записей наблюдатель разбирает за один проход одного канала. */
 const BATCH = 50;
@@ -421,8 +422,9 @@ function count(report: NotificationReport, status: NotificationDeliveryStatus): 
 
 /**
  * Проход наблюдателей по всем включённым каналам: сначала зависшие
- * взаимодействия, затем сроки лицензий (`license-watch.ts`) и утренняя сводка
- * (`digest.ts`). Отчёт у них общий.
+ * взаимодействия, затем сроки лицензий (`license-watch.ts`), утренняя сводка
+ * (`digest.ts`), письма об упоминаниях (`mention.ts`) и о входе на стадию
+ * (`stage-enter.ts`). Отчёт у них общий.
  *
  * Своего замка не берёт — им распоряжается `runIntegrationsCycle`. Порог и
  * набор каналов читаются на каждый проход: правку настройки видно со следующего
@@ -465,6 +467,12 @@ export async function runNotificationCycle(ctx: ActorContext): Promise<Notificat
 	// Письма об упоминаниях: очередь ставит сам комментарий, проход её
 	// разбирает, перепроверив, что адресат всё ещё видит дело (`mention.ts`).
 	for (const status of await runMentionDelivery(ctx, enabled, now)) {
+		count(report, status);
+	}
+
+	// Уведомления о входе на стадию: очередь ставит команда движения, проход
+	// разбирает, перепроверив, что адресат всё ещё видит дело (`stage-enter.ts`).
+	for (const status of await runStageEnterDelivery(ctx, enabled, now)) {
 		count(report, status);
 	}
 

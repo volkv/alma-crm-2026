@@ -36,6 +36,21 @@ export const STAGE_CATEGORIES = [
 	'update',
 	'control'
 ] as const;
+/**
+ * Кого уведомить, когда дело входит на стадию: ответственного за дело или его
+ * руководителя. Настраивает администратор в редакторе процесса; `null` у стадии
+ * — не уведомлять никого. Публикация процесса, переносящая записи на новую
+ * структуру, уведомления не даёт: дело туда перенёс администратор, а не работа.
+ */
+export const STAGE_ENTER_NOTIFY_TARGETS = ['responsible', 'manager'] as const;
+
+export type StageEnterNotifyTarget = (typeof STAGE_ENTER_NOTIFY_TARGETS)[number];
+
+export const STAGE_ENTER_NOTIFY_LABELS: Record<StageEnterNotifyTarget, string> = {
+	responsible: 'Ответственного',
+	manager: 'Руководителя ответственного'
+};
+
 /** Куда ведёт переход: вперёд по маршруту, назад на доработку, мимо стадии. */
 export const STAGE_TRANSITION_KINDS = ['forward', 'return', 'skip'] as const;
 /** Состояние взаимодействия целиком. */
@@ -676,6 +691,8 @@ export const stageDefinitionSchema = z.object({
 	requiresLmsData: z.boolean().default(false),
 	/** Отметка по документу дела, без которой со стадии не уходят. */
 	requiresDocumentMark: z.enum(DOCUMENT_STATUS_FACTS).nullable().default(null),
+	/** Кого уведомить при входе дела на стадию; `null` — никого. */
+	onEnterNotify: z.enum(STAGE_ENTER_NOTIFY_TARGETS).nullable().default(null),
 	/** С этой стадии процесс заканчивается: переходов вперёд с неё не требуют. */
 	isFinal: z.boolean().default(false),
 	checklist: z.array(checklistItemSchema).default([])
@@ -859,6 +876,12 @@ export type StageView = {
 	requiresLmsData: boolean;
 	/** Отметка по документу дела, которой подтверждается стадия; `null` — не нужна. */
 	requiresDocumentMark: DocumentStatusFact | null;
+	/**
+	 * Кого уведомить при входе дела на стадию; `null` — никого. В слепок записи
+	 * не входит: это действие при входе, а не правило, по которому со стадии
+	 * уходят.
+	 */
+	onEnterNotify: StageEnterNotifyTarget | null;
 	isFinal: boolean;
 	checklist: ChecklistItem[];
 };

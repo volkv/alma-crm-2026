@@ -78,6 +78,7 @@ import {
 } from '../db/schema';
 import { assertMayWorkIn } from '../rbac/workspaces';
 import { withTransaction, type Tx } from '../db/transaction';
+import { queueStageEnterNotice } from '../notifications/stage-enter';
 import { publishAfterCommit } from '../live/publish';
 import { checkMentions, queueMentions } from '../mentions';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
@@ -407,6 +408,14 @@ export async function startInteractionIn(
 
 	await touchInteraction(tx, interaction.id);
 
+	await queueStageEnterNotice(ctx, tx, {
+		interactionId: interaction.id,
+		stageEntryId: entry.id,
+		stageName: stage.name,
+		target: stage.onEnterNotify,
+		ownerUserId: interaction.ownerUserId
+	});
+
 	await recordAuditEvent(
 		ctx,
 		{
@@ -652,6 +661,16 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 
 		await touchInteraction(tx, input.interactionId);
 		publishAfterCommit(tx, input.interactionId, { type: 'interaction.changed' });
+
+		// Уведомление при входе — той же транзакцией, что и сам вход: откатится
+		// переход, не останется и письма о нём.
+		await queueStageEnterNotice(ctx, tx, {
+			interactionId: input.interactionId,
+			stageEntryId: next.id,
+			stageName: target.name,
+			target: target.onEnterNotify,
+			ownerUserId: interaction.ownerUserId
+		});
 
 		await recordAuditEvent(
 			ctx,

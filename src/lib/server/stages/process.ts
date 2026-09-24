@@ -24,6 +24,7 @@ import { and, asc, count, eq, inArray, isNull, notInArray, sql } from 'drizzle-o
 import { DOCUMENT_STATUS_FACT_LABELS, type DocumentMarkEvidence } from '$lib/contracts/documents';
 import {
 	processDefinitionSchema,
+	STAGE_ENTER_NOTIFY_LABELS,
 	type AssignWorkspaceWorkflowInput,
 	type CreateWorkflowInput,
 	type CreateWorkspaceInput,
@@ -35,6 +36,7 @@ import {
 	type RenameWorkspaceInput,
 	type ReorderWorkspacesInput,
 	type StageChangeKind,
+	type StageEnterNotifyTarget,
 	type StageMigrationRuleView,
 	type StageSnapshot,
 	type StageTransitionView,
@@ -115,6 +117,7 @@ export function toStageView(row: typeof stages.$inferSelect): StageView {
 		requiresConfirmation: row.requiresConfirmation,
 		requiresLmsData: row.requiresLmsData,
 		requiresDocumentMark: row.requiresDocumentMark,
+		onEnterNotify: row.onEnterNotify,
 		isFinal: row.isFinal,
 		checklist: row.checklist
 	};
@@ -470,6 +473,7 @@ export function processDefinition(revision: ProcessRevisionView): ProcessDefinit
 				requiresConfirmation: stage.requiresConfirmation,
 				requiresLmsData: stage.requiresLmsData,
 				requiresDocumentMark: stage.requiresDocumentMark,
+				onEnterNotify: stage.onEnterNotify,
 				isFinal: stage.isFinal,
 				checklist: stage.checklist.map((item) => ({ ...item }))
 			})),
@@ -537,6 +541,7 @@ async function writeRevisionContent(
 				requiresConfirmation: stage.requiresConfirmation,
 				requiresLmsData: stage.requiresLmsData,
 				requiresDocumentMark: stage.requiresDocumentMark,
+				onEnterNotify: stage.onEnterNotify,
 				isFinal: stage.isFinal,
 				checklist: stage.checklist
 			}))
@@ -598,7 +603,7 @@ async function nextVersion(executor: Executor, workflowId: string): Promise<numb
  * Чистые правила: сопоставление ключей, цель переноса, проверка структуры.
  * ------------------------------------------------------------------------- */
 
-/** Параметры стадии, изменение которых пересобирает снимок открытой записи. */
+/** Параметры стадии, которые сравнивает предпросмотр публикации. */
 type ComparableStage = {
 	key: string;
 	name: string;
@@ -609,6 +614,12 @@ type ComparableStage = {
 	requiresConfirmation: boolean;
 	requiresLmsData: boolean;
 	requiresDocumentMark: StageSnapshot['requiresDocumentMark'];
+	/**
+	 * Снимок записи не пересобирает — в слепок это не входит, — но изменение
+	 * видно в предпросмотре: администратор обязан знать, кого система начнёт или
+	 * перестанет уведомлять.
+	 */
+	onEnterNotify: StageEnterNotifyTarget | null;
 	isFinal: boolean;
 	checklist: { key: string; label: string; required: boolean }[];
 };
@@ -678,6 +689,14 @@ function stageDifferences(before: ComparableStage, after: ComparableStage): stri
 			after.requiresDocumentMark === null
 				? 'больше не требует отметки документа'
 				: `начинает требовать отметку документа «${DOCUMENT_STATUS_FACT_LABELS[after.requiresDocumentMark]}»`
+		);
+	}
+
+	if (before.onEnterNotify !== after.onEnterNotify) {
+		changes.push(
+			after.onEnterNotify === null
+				? 'больше не уведомляет при входе'
+				: `при входе уведомляет: ${STAGE_ENTER_NOTIFY_LABELS[after.onEnterNotify].toLowerCase()}`
 		);
 	}
 
