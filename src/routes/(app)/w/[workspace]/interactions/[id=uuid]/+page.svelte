@@ -1,18 +1,22 @@
 <script lang="ts">
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import { resolve } from '$app/paths';
+	import { Button } from '$lib/components/ui/button/index.js';
 	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
 	import Header from '$lib/components/header.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
+	import AccessPeople from '$lib/components/interaction-card/access-people.svelte';
 	import CardFacts from '$lib/components/interaction-card/card-facts.svelte';
 	import { setCardCommands } from '$lib/components/interaction-card/commands.svelte';
 	import ContextPanels from '$lib/components/interaction-card/context-panels.svelte';
 	import DocumentDialogs from '$lib/components/interaction-card/document-dialogs.svelte';
 	import EventFeed from '$lib/components/interaction-card/event-feed.svelte';
 	import LearningDialogs from '$lib/components/interaction-card/learning-dialogs.svelte';
+	import { LiveCard } from '$lib/components/interaction-card/live.svelte';
 	import MeetingDialogs from '$lib/components/interaction-card/meeting-dialogs.svelte';
 	import { buildCard, type CardSource } from '$lib/components/interaction-card/model';
+	import Presence from '$lib/components/interaction-card/presence.svelte';
 	import PrimaryAction from '$lib/components/interaction-card/primary-action.svelte';
 	import RecordDialogs from '$lib/components/interaction-card/record-dialogs.svelte';
 	import StageDialogs from '$lib/components/interaction-card/stage-dialogs.svelte';
@@ -33,7 +37,34 @@
 	 */
 	let { data }: PageProps = $props();
 
-	setCardCommands();
+	const commands = setCardCommands();
+
+	/**
+	 * Живая карточка: поток на эту вкладку, пока она открыта. Изменение дела
+	 * у коллеги перечитывает карточку; если открыт диалог — только полоса
+	 * «Карточка изменилась», чтобы не сбить начатое.
+	 */
+	let live = $state<LiveCard | null>(null);
+
+	// Строки, а не `data`: перечитанная карточка приходит новым объектом, и
+	// поток по ней переоткрывался бы на каждое обновление. Производное от
+	// строки с тем же значением эффект не будит.
+	const interactionId = $derived(data.interaction.id);
+	const liveUrl = $derived(
+		resolve('/(app)/w/[workspace]/interactions/[id=uuid]/live', {
+			workspace: data.workspace.key,
+			id: data.interaction.id
+		})
+	);
+
+	$effect(() => {
+		const card = new LiveCard(liveUrl, interactionId, () => commands.current !== null);
+
+		live = card;
+		card.start();
+
+		return () => card.stop();
+	});
 
 	const source = $derived<CardSource>({
 		interaction: data.interaction,
@@ -93,6 +124,28 @@
 		</InlineHint>
 	{/if}
 
+	{#if live !== null && live.stale}
+		<InlineHint tone="info">
+			<span class="flex flex-1 flex-wrap items-center justify-between gap-2">
+				Карточка изменилась, пока вы работали в диалоге.
+				<Button size="sm" variant="outline" onclick={() => live?.refresh()}
+					>Обновить карточку</Button
+				>
+			</span>
+		</InlineHint>
+	{/if}
+
+	{#if live !== null && live.people.length > 0}
+		<div
+			class="flex flex-wrap items-center justify-between gap-2"
+			role="group"
+			aria-label="Кто работает с делом"
+		>
+			<Presence people={live.people} />
+			<AccessPeople people={live.people} />
+		</div>
+	{/if}
+
 	<CardFacts {model} />
 
 	<!-- Три блока — действие, контекст, лента — стоят в разметке в том порядке,
@@ -109,7 +162,6 @@
 				action={model.action}
 				primary={model.primary}
 				secondary={model.secondary}
-				currentStageId={data.status.current?.stageId ?? null}
 				canCheck={can('set_checklist')}
 				canResolve={can('resolve_blocker')}
 			/>

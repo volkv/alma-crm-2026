@@ -29,6 +29,12 @@ const dateTimeFormat = new Intl.DateTimeFormat('ru-RU', {
 	minute: '2-digit'
 });
 
+const timeFormat = new Intl.DateTimeFormat('ru-RU', {
+	timeZone: TIME_ZONE,
+	hour: '2-digit',
+	minute: '2-digit'
+});
+
 const monthDayFormat = new Intl.DateTimeFormat('ru-RU', {
 	timeZone: TIME_ZONE,
 	day: 'numeric',
@@ -69,6 +75,11 @@ export function formatDate(value: DateInput): string {
 /** `12.09.2026, 14:05` — for events, where the time of day matters. */
 export function formatDateTime(value: DateInput): string {
 	return dateTimeFormat.format(toDate(value));
+}
+
+/** `14:05` — the time of day alone, for an event of the same working session. */
+export function formatTime(value: DateInput): string {
+	return timeFormat.format(toDate(value));
 }
 
 /** `12 сентября` — for headings and timelines, where the year is already known. */

@@ -1,5 +1,7 @@
 <script lang="ts">
 	import PlusIcon from '@lucide/svelte/icons/plus';
+	import type { SubmitFunction } from '@sveltejs/kit';
+	import { enhance } from '$app/forms';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import EmptyState from '$lib/components/empty-state.svelte';
@@ -9,6 +11,9 @@
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { toLookupOptions } from '$lib/components/directory/labels';
+	import { describeActionFailure } from '$lib/components/interactions/action-enhance';
+	import { rebaseDraft } from '$lib/components/interactions/rebase-draft';
+	import StaleNotice from '$lib/components/interactions/stale-notice.svelte';
 	import type { ContractItemView, ContractView } from '$lib/contracts/directory';
 	import { CONTRACT_STATUS_LABELS, CONTRACT_STATUSES } from '$lib/contracts/interactions';
 	import { LICENSE_STATE_LABELS, licenseState } from '$lib/contracts/license';
@@ -30,6 +35,11 @@
 	 * У позиции, чья лицензия истекает в пределах окна продления или уже
 	 * истекла, стоит отметка и кнопка «Запустить продление»: она заводит
 	 * взаимодействие в пространстве контрагента с продуктом и договором позиции.
+	 *
+	 * Форма договора и форма позиции несут версию договора, замороженную при
+	 * открытии: версия у договора с позициями одна. Чужая правка после неё —
+	 * отказ 409 в самой форме, введённое остаётся, а «Обновить карточку»
+	 * перечитывает страницу без повторной отправки.
 	 */
 	let {
 		contracts,
@@ -87,22 +97,107 @@
 	let licenseSignedAt = $state('');
 	let licenseUntil = $state('');
 	let transferStatus = $state('');
+	/** Версия договора на момент открытия формы; у нового договора её нет. */
+	let editVersion = $state<number | null>(null);
+	/** Поля открытой формы, какими их открыли: от них считается, что тронуто. */
+	let base = $state<Record<string, string>>({});
+	let conflict = $state<string | null>(null);
+
+	function contractFields(contract: ContractView | null): Record<string, string> {
+		return {
+			number: contract?.number ?? '',
+			signedOn: contract?.signedOn ?? '',
+			validUntil: contract?.validUntil ?? '',
+			status: contract?.status ?? 'draft'
+		};
+	}
+
+	function itemFields(item: ContractItemView | null): Record<string, string> {
+		return {
+			productId: item?.productId ?? products[0]?.id ?? '',
+			licenseSignedAt: item?.licenseSignedAt ?? '',
+			licenseUntil: item?.licenseUntil ?? '',
+			transferStatus: item?.transferStatus ?? ''
+		};
+	}
+
+	function fillContract(values: Record<string, string>) {
+		number = values.number;
+		signedOn = values.signedOn;
+		validUntil = values.validUntil;
+		status = values.status;
+	}
+
+	function fillItem(values: Record<string, string>) {
+		productId = values.productId;
+		licenseSignedAt = values.licenseSignedAt;
+		licenseUntil = values.licenseUntil;
+		transferStatus = values.transferStatus;
+	}
 
 	function editContract(contract: ContractView | null) {
-		number = contract?.number ?? '';
-		signedOn = contract?.signedOn ?? '';
-		validUntil = contract?.validUntil ?? '';
-		status = contract?.status ?? 'draft';
+		base = contractFields(contract);
+		fillContract(base);
+		editVersion = contract?.editVersion ?? null;
+		conflict = null;
 		open = { kind: 'contract', contract };
 	}
 
 	function editItem(contractId: string, item: ContractItemView | null) {
-		productId = item?.productId ?? products[0]?.id ?? '';
-		licenseSignedAt = item?.licenseSignedAt ?? '';
-		licenseUntil = item?.licenseUntil ?? '';
-		transferStatus = item?.transferStatus ?? '';
+		base = itemFields(item);
+		fillItem(base);
+		editVersion = contracts.find((contract) => contract.id === contractId)?.editVersion ?? null;
+		conflict = null;
 		open = { kind: 'item', contractId, item };
 	}
+
+	/**
+	 * Страница перечитана после отказа: форма встаёт на свежую версию договора,
+	 * нетронутые поля берут свежие значения, тронутые остаются.
+	 */
+	function rebase() {
+		if (open === null) return;
+
+		const contractId = open.kind === 'contract' ? open.contract?.id : open.contractId;
+		const contract = contracts.find((candidate) => candidate.id === contractId) ?? null;
+
+		if (open.kind === 'contract') {
+			const fresh = contractFields(contract);
+			fillContract(rebaseDraft(base, { number, signedOn, validUntil, status }, fresh));
+			base = fresh;
+		} else {
+			const itemId = open.item?.id;
+			const fresh = itemFields(contract?.items.find((item) => item.id === itemId) ?? null);
+			fillItem(
+				rebaseDraft(base, { productId, licenseSignedAt, licenseUntil, transferStatus }, fresh)
+			);
+			base = fresh;
+		}
+
+		editVersion = contract?.editVersion ?? null;
+		conflict = null;
+	}
+
+	/**
+	 * Сохранение формы договора или позиции. 409 остаётся в форме с введённым;
+	 * остальные ответы — как у обычной отправки: отказ показывает карточка,
+	 * успех ведёт на неё же с отметкой о сохранении.
+	 */
+	const save: SubmitFunction = () => {
+		return async ({ result, update }) => {
+			if (result.type === 'failure' && result.status === 409) {
+				conflict = describeActionFailure(result.data).message;
+
+				return;
+			}
+
+			if (result.type === 'redirect') {
+				open = null;
+			}
+
+			await update();
+		};
+	};
 
 	const editingContract = $derived(open?.kind === 'contract' ? open : null);
 
@@ -148,11 +243,16 @@
 		<form
 			method="POST"
 			action="?/saveContract"
+			use:enhance={save}
 			class="flex flex-col gap-3 border-b border-border px-4 py-3"
 			data-testid="contract-form"
 		>
 			{#if editingContract.contract !== null}
 				<input type="hidden" name="id" value={editingContract.contract.id} />
+				<input type="hidden" name="editVersion" value={editVersion} />
+			{/if}
+			{#if conflict !== null}
+				<StaleNotice message={conflict} onrefreshed={rebase} />
 			{/if}
 
 			<p class="text-xs font-medium">
@@ -276,10 +376,15 @@
 						<form
 							method="POST"
 							action="?/saveContractItem"
+							use:enhance={save}
 							class="flex flex-col gap-3 rounded-md border border-border p-3"
 							data-testid="contract-item-form"
 						>
 							<input type="hidden" name="contractId" value={contract.id} />
+							<input type="hidden" name="editVersion" value={editVersion} />
+							{#if conflict !== null}
+								<StaleNotice message={conflict} onrefreshed={rebase} />
+							{/if}
 							{#if current !== null}
 								<input type="hidden" name="id" value={current.id} />
 								<!-- Продукт позиции не меняется: на пару «договор + продукт»

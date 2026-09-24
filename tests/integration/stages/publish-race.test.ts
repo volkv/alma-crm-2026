@@ -466,7 +466,8 @@ describe('закрытие взаимодействия, пока идёт пу�
 	async function prepareRemoval(): Promise<{
 		ctx: ActorContext;
 		interactionId: string;
-		stageId: string;
+		/** Запись стадии, открытая в карточке: публикация её перенесёт. */
+		stageEntryId: string;
 		/** Редакция, с которой отрисована карточка: публикация её сменит. */
 		revision: number;
 	}> {
@@ -505,7 +506,7 @@ describe('закрытие взаимодействия, пока идёт пу�
 		return {
 			ctx: await manager(),
 			interactionId,
-			stageId: status.current?.stageId ?? '',
+			stageEntryId: status.current?.id ?? '',
 			revision: status.revision
 		};
 	}
@@ -546,10 +547,10 @@ describe('закрытие взаимодействия, пока идёт пу�
 	it.each([
 		[
 			'пауза',
-			(ctx: ActorContext, interactionId: string, stageId: string) =>
+			(ctx: ActorContext, interactionId: string, stageEntryId: string) =>
 				pauseStage(ctx, {
 					interactionId,
-					fromStageId: stageId,
+					stageEntryId,
 					reason: 'waiting_counterparty' as const,
 					waitingPartyId: null,
 					nextAction: null,
@@ -558,38 +559,37 @@ describe('закрытие взаимодействия, пока идёт пу�
 		],
 		[
 			'снятие паузы',
-			(ctx: ActorContext, interactionId: string, stageId: string) =>
-				resumeStage(ctx, { interactionId, fromStageId: stageId, note: null })
+			(ctx: ActorContext, interactionId: string, stageEntryId: string) =>
+				resumeStage(ctx, { interactionId, stageEntryId, note: null })
 		],
 		[
 			'подтверждение стадии',
-			(ctx: ActorContext, interactionId: string, stageId: string) =>
+			(ctx: ActorContext, interactionId: string, stageEntryId: string) =>
 				confirmStage(ctx, {
 					interactionId,
-					fromStageId: stageId,
+					stageEntryId,
 					confirmation: { kind: 'mark' as const }
 				})
 		],
 		[
 			'результат стадии',
-			(ctx: ActorContext, interactionId: string) =>
-				setStageResult(ctx, { interactionId, resultText: 'Условия согласованы' })
+			(ctx: ActorContext, interactionId: string, stageEntryId: string) =>
+				setStageResult(ctx, { interactionId, stageEntryId, resultText: 'Условия согласованы' })
 		],
 		[
 			'отметка чек-листа',
-			(ctx: ActorContext, interactionId: string) =>
-				setChecklistItem(ctx, { interactionId, key: 'papers', done: true })
+			(ctx: ActorContext, interactionId: string, stageEntryId: string) =>
+				setChecklistItem(ctx, { interactionId, stageEntryId, key: 'papers', done: true })
 		]
 	])(
 		'отказывает команде «%s» теми же словами',
 		async (_name, command) => {
-			const { ctx, interactionId, stageId: from } = await prepareRemoval();
+			const { ctx, interactionId, stageEntryId } = await prepareRemoval();
 
-			const error = await underPublication(() => command(ctx, interactionId, from));
+			const error = await underPublication(() => command(ctx, interactionId, stageEntryId));
 
-			// Сверки `fromStageId` мало: она отвечает «взаимодействие уже на другой
-			// стадии», а произошло другое — процесс изменился, и карточку надо
-			// перечитать.
+			// Сверки записи стадии мало: она отвечает «стадия уже сменилась», а
+			// произошло другое — процесс изменился, и карточку надо перечитать.
 			expect(error).toBeInstanceOf(ConflictError);
 			expect(String((error as ConflictError).message)).toMatch(/Процесс изменился/);
 		},

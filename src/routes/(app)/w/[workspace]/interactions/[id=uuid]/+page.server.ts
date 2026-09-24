@@ -76,6 +76,7 @@ import {
 	setStageResult,
 	skipStage
 } from '$lib/server/stages/commands';
+import { interactionCardDependency } from '$lib/contracts/live';
 import { readInteractionCard } from '$lib/server/stages/card';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import { responsibleOptions } from '../responsible';
@@ -84,6 +85,10 @@ import type { Actions, PageServerLoad, RequestEvent } from './$types';
 export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 	const { id } = event.params;
+
+	// Живая карточка перечитывает себя по этому ключу, когда дело изменилось
+	// у кого-то другого (`interaction-card/live.svelte.ts`).
+	event.depends(interactionCardDependency(id));
 
 	try {
 		const [
@@ -347,6 +352,7 @@ export const actions: Actions = {
 		const data = await event.request.formData();
 		const parsed = parse(setChecklistItemSchema, {
 			interactionId: event.params.id,
+			stageEntryId: data.get('stageEntryId'),
 			key: data.get('key'),
 			done: data.get('done') === 'true'
 		});
@@ -360,6 +366,7 @@ export const actions: Actions = {
 		const data = await event.request.formData();
 		const parsed = parse(setStageResultSchema, {
 			interactionId: event.params.id,
+			stageEntryId: data.get('stageEntryId'),
 			resultText: data.get('resultText')
 		});
 
@@ -381,7 +388,7 @@ export const actions: Actions = {
 
 		const parsed = parse(confirmStageSchema, {
 			interactionId: event.params.id,
-			fromStageId: data.get('fromStageId'),
+			stageEntryId: data.get('stageEntryId'),
 			confirmation
 		});
 
@@ -394,6 +401,7 @@ export const actions: Actions = {
 		const data = await event.request.formData();
 		const parsed = parse(raiseBlockerSchema, {
 			interactionId: event.params.id,
+			stageEntryId: data.get('stageEntryId'),
 			reasonCode: data.get('reasonCode'),
 			description: data.get('description'),
 			blocksTransition: data.get('blocksTransition') === 'true',
@@ -757,9 +765,13 @@ export const actions: Actions = {
 		const current = await getInteraction(ctx, event.params.id);
 
 		// Стороны, программы и продукты правятся в своих местах карточки; форма
-		// плана меняет название и сроки, поэтому остальное едет как есть.
+		// плана меняет название и сроки, поэтому остальное едет как есть. Как
+		// есть — по чтению до блокировки, и устареть оно могло; поэтому версия
+		// берётся из формы, а не из этого чтения: подставить свежую значило бы
+		// отключить проверку, и чужая правка договора молча откатилась бы.
 		const parsed = parse(updateInteractionSchema, {
 			id: current.id,
+			editVersion: Number(data.get('editVersion')),
 			title: data.get('title'),
 			agreementPeriodStart: text(data, 'agreementPeriodStart'),
 			agreementPeriodEnd: text(data, 'agreementPeriodEnd'),
@@ -809,6 +821,7 @@ export const actions: Actions = {
 
 		const parsed = parse(updateInteractionSchema, {
 			id: current.id,
+			editVersion: Number(data.get('editVersion')),
 			title: current.title,
 			agreementPeriodStart: current.agreementPeriodStart,
 			agreementPeriodEnd: current.agreementPeriodEnd,

@@ -19,6 +19,29 @@ export function getRedis(): Redis {
 	return client;
 }
 
+/**
+ * Соединение-подписчик живых событий: одно на процесс.
+ *
+ * Отдельное от {@link getRedis}, и иначе нельзя: после `SUBSCRIBE` соединение
+ * Redis принимает только команды подписки, и общий клиент, на котором
+ * держатся сессии и кэш, перестал бы отвечать на `GET` первого же запроса.
+ * Одно на процесс, а не на вкладку: подписки всех открытых карточек процесса
+ * раздаёт `live/bus.ts`, и число соединений с Redis не растёт вместе с числом
+ * зрителей.
+ *
+ * Ограничения общего клиента ему не подходят. `commandTimeout` оборвал бы
+ * подписку, которая по смыслу ждёт бесконечно, а `maxRetriesPerRequest` здесь
+ * не о чем повторять. Переподключается ioredis сам и сам же возобновляет
+ * подписки (`autoResubscribe`); что за время разрыва события могли пропасть,
+ * шина сообщает подписчикам отдельно.
+ */
+export function createRedisSubscriber(): Redis {
+	return new Redis(getConfig().REDIS_URL, {
+		lazyConnect: true,
+		maxRetriesPerRequest: null
+	});
+}
+
 /** Cheapest possible round-trip to Redis, used by the health endpoint. */
 export async function pingRedis(): Promise<void> {
 	const reply = await getRedis().ping();

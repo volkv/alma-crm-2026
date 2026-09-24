@@ -23,6 +23,7 @@ import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { invalidateDirectoryOptions } from '../cache/directory';
 import { invalidateInteractionCards } from '../cache/interactions';
+import { publishEverythingChanged } from '../live/publish';
 import { getDb } from '../db';
 import {
 	comments,
@@ -37,6 +38,7 @@ import {
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, NotFoundError } from '../errors';
+import { nextEdit } from '../interactions/edit-version';
 import { assertPersonVisible } from './access';
 import { requirePermission } from '../rbac';
 import { toPersonView } from './serialize';
@@ -194,6 +196,9 @@ async function eraseCounterpartyTraces(tx: Tx, personId: string): Promise<void> 
 			.update(interactions)
 			.set({
 				title: sql`replace(replace(${interactions.title}, ${counterparty.legalName}, ${ANONYMIZED_PERSON_LAST_NAME}), ${counterparty.shortName}, ${ANONYMIZED_PERSON_LAST_NAME})`,
+				// Название — поле плана: открытая форма плана, отправленная после
+				// обезличивания, получит отказ, а не вернёт ФИО обратно.
+				...nextEdit(interactions.editVersion, { via: 'system' }),
 				updatedAt: sql`now()`
 			})
 			.where(inArray(interactions.id, titled));
@@ -321,13 +326,19 @@ async function eraseLearnerTraces(tx: Tx, personId: string): Promise<void> {
  * подделать активность. Без этой строки карточка до минуты отдавала бы из Redis
  * данные, объявленные уничтоженными.
  *
- * Обе отметки ставятся **после** фиксации транзакции: обесценить кэш до неё
+ * Открытые карточки — потому что они показывают то же самое и перечитаются
+ * только по сигналу.
+ *
+ * Все отметки ставятся **после** фиксации транзакции: обесценить кэш до неё
  * значит открыть окно, в котором чтение соберёт заново то же самое старое.
  */
 async function forgotten<TResult>(result: Promise<TResult>): Promise<TResult> {
 	const value = await result;
 
 	await Promise.all([invalidateDirectoryOptions(), invalidateInteractionCards()]);
+	// Открытые карточки перечитываются уже после сброса кэша — иначе они
+	// собрали бы заново то, что только что объявлено уничтоженным.
+	await publishEverythingChanged();
 
 	return value;
 }

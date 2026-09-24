@@ -66,6 +66,14 @@ export const PAUSE_REASONS = ['waiting_counterparty', 'waiting_internal', 'other
 export const COMMENT_SOURCES = ['manual', 'application_intake'] as const;
 
 /**
+ * Кто сдвинул версию правки записи: сотрудник, сайт заказчика (заявка
+ * дополнила состав) или система (обезличивание, ключ без пользователя). Нужен
+ * отказу «запись изменил …»: у правки из обмена автора-человека нет, и назвать
+ * её именем сотрудника, от чьего лица принята заявка, значило бы солгать.
+ */
+export const EDIT_SOURCES = ['user', 'site', 'system'] as const;
+
+/**
  * Причины помех.
  *
  * Справочник, а не свободная строка: вопрос «на чём чаще всего встаёт работа с
@@ -93,6 +101,7 @@ export type StageOutcome = (typeof STAGE_OUTCOMES)[number];
 export type ContractStatus = (typeof CONTRACT_STATUSES)[number];
 export type PauseReason = (typeof PAUSE_REASONS)[number];
 export type CommentSource = (typeof COMMENT_SOURCES)[number];
+export type EditSource = (typeof EDIT_SOURCES)[number];
 export type BlockerReason = (typeof BLOCKER_REASONS)[number];
 
 /**
@@ -358,8 +367,23 @@ export const createInteractionSchema = z
 		path: ['contractItemIds']
 	});
 
+/**
+ * Версия правки записи, с которой открыта форма.
+ *
+ * Обязательна: форма без версии — это форма, про которую нельзя сказать, не
+ * затрёт ли она чужую правку, и разрешать ей запись значило бы отключить
+ * защиту. Сверяет её команда под блокировкой строки (`docs/workflow.md`,
+ * «Одновременная работа»).
+ */
+export const editVersionField = z
+	.number({ error: 'Форма не знает версию записи: обновите карточку' })
+	.int({ error: 'Некорректная версия записи' })
+	.min(1, { error: 'Некорректная версия записи' });
+
 export const updateInteractionSchema = createInteractionSchema.extend({
 	id: id('Некорректный идентификатор взаимодействия'),
+	/** Версия записи, с которой открыта форма; чужая правка после неё — отказ. */
+	editVersion: editVersionField,
 	/**
 	 * Причина правки плана: попадает в предметную историю изменений, чтобы
 	 * сдвиг сроков не выглядел как случайность.
@@ -428,16 +452,6 @@ export const interactionListQuerySchema = z.object({
 	...pageQuerySchema.shape
 });
 
-/** Общая часть всех команд стадии: какое взаимодействие двигаем. */
-const stageCommandFields = {
-	interactionId: id('Некорректный идентификатор взаимодействия'),
-	/**
-	 * Стадия, с которой команда отдана. Сервер сверяет её с открытой записью и
-	 * отказывает, если кто-то успел сдвинуть взаимодействие раньше.
-	 */
-	fromStageId: id('Некорректный идентификатор стадии')
-};
-
 /**
  * Номер редакции процесса, с которой была отрисована карточка.
  *
@@ -451,9 +465,28 @@ const revisionField = z
 	.int({ error: 'Некорректный номер редакции процесса' })
 	.min(1, { error: 'Некорректный номер редакции процесса' });
 
+/**
+ * Команды, обращённые к текущей записи стадии, а не к переходу: пауза и её
+ * снятие, подтверждение, результат, отметка чек-листа, помеха.
+ *
+ * Запись стадии — та, что была открыта у человека в форме. Сверки стадии мало:
+ * при возврате на ту же стадию открывается новая запись с тем же `stageId`, и
+ * результат, набранный для прежней, лёг бы в новую. Другая открытая запись —
+ * отказ «стадия уже сменилась», до единой записи.
+ */
+const stageEntryFields = {
+	interactionId: id('Некорректный идентификатор взаимодействия'),
+	stageEntryId: id('Некорректный идентификатор записи стадии')
+};
+
 /** Переходы двигают процесс: у всех трёх видов общий набор полей. */
 const stageMoveFields = {
-	...stageCommandFields,
+	interactionId: id('Некорректный идентификатор взаимодействия'),
+	/**
+	 * Стадия, с которой команда отдана. Сервер сверяет её с открытой записью и
+	 * отказывает, если кто-то успел сдвинуть взаимодействие раньше.
+	 */
+	fromStageId: id('Некорректный идентификатор стадии'),
 	revision: revisionField
 };
 
@@ -484,7 +517,7 @@ export const skipStageSchema = z.object({
 });
 
 export const pauseStageSchema = z.object({
-	...stageCommandFields,
+	...stageEntryFields,
 	reason: z.enum(PAUSE_REASONS, { error: 'Выберите причину паузы' }),
 	/** Кого ждём — участник взаимодействия, а не произвольная организация. */
 	waitingPartyId: optionalId('Некорректный идентификатор участника'),
@@ -493,12 +526,12 @@ export const pauseStageSchema = z.object({
 });
 
 export const resumeStageSchema = z.object({
-	...stageCommandFields,
+	...stageEntryFields,
 	note: optionalText(1000)
 });
 
 export const confirmStageSchema = z.object({
-	...stageCommandFields,
+	...stageEntryFields,
 	/**
 	 * Отметку исполнителя (`mark`) сервер дополняет автором и временем сам:
 	 * клиент не может назначить, кто и когда подтвердил. Вида `document_mark`
@@ -518,7 +551,11 @@ export const confirmStageSchema = z.object({
 });
 
 export const raiseBlockerSchema = z.object({
-	interactionId: id('Некорректный идентификатор взаимодействия'),
+	/**
+	 * Помеха принадлежит взаимодействию, но ставится на запись стадии, которую
+	 * человек видел: без неё помеха о прежней стадии повисла бы на новой.
+	 */
+	...stageEntryFields,
 	/** Код причины из настраиваемого справочника; текст — в описании. */
 	reasonCode: requiredText(100, 'Выберите причину блокировки'),
 	description: requiredText(4000, 'Опишите, что мешает двигаться дальше'),
@@ -539,14 +576,14 @@ export const createCommentSchema = z.object({
 
 /** Отметка по одному пункту чек-листа текущей стадии. */
 export const setChecklistItemSchema = z.object({
-	interactionId: id('Некорректный идентификатор взаимодействия'),
+	...stageEntryFields,
 	key: requiredText(100, 'Укажите пункт чек-листа'),
 	done: z.boolean()
 });
 
 /** Результат текущей стадии — текстом, без перехода. */
 export const setStageResultSchema = z.object({
-	interactionId: id('Некорректный идентификатор взаимодействия'),
+	...stageEntryFields,
 	resultText: requiredText(4000, 'Опишите результат стадии')
 });
 
@@ -1242,6 +1279,11 @@ export type InteractionView = {
 	externalId: string | null;
 	createdAt: Date;
 	updatedAt: Date;
+	/**
+	 * Версия правки записи: форма плана и договора замораживает её при
+	 * открытии и отправляет вместе с полями.
+	 */
+	editVersion: number;
 	parties: InteractionPartyView[];
 	programs: InteractionProgramView[];
 	products: InteractionProductView[];

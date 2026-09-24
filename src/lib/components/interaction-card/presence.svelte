@@ -1,0 +1,46 @@
+<script lang="ts">
+	import * as Avatar from '$lib/components/ui/avatar/index.js';
+	import type { LivePerson } from '$lib/contracts/live';
+	import { initials } from '$lib/format';
+
+	/**
+	 * Кто сейчас в карточке: аватарка на учётную запись, а вкладки одной
+	 * учётки — числом на ней. Себя не прячем: демонстрационной учёткой
+	 * пользуются несколько человек разом, и «вы» узнаётся по своей вкладке.
+	 */
+	let { people }: { people: readonly LivePerson[] } = $props();
+
+	const here = $derived(people.filter((person) => person.online > 0));
+
+	function caption(person: LivePerson): string {
+		const tabs = person.online > 1 ? ` — вкладок: ${person.online}` : '';
+
+		return `${person.name}${person.you ? ' (вы)' : ''}${tabs}`;
+	}
+</script>
+
+{#if here.length > 0}
+	<div class="flex min-w-0 items-center gap-2" data-slot="card-presence">
+		<span class="text-xs text-muted-foreground">Сейчас в карточке</span>
+		<Avatar.Group>
+			{#each here as person (person.userId)}
+				<Avatar.Root title={caption(person)}>
+					<Avatar.Fallback
+						class="text-xs font-medium {person.you
+							? 'bg-primary-soft text-primary'
+							: 'bg-success-soft text-success-soft-foreground'}"
+					>
+						{initials(person.name)}
+					</Avatar.Fallback>
+					{#if person.online > 1}
+						<span
+							class="absolute -right-1 -bottom-1 z-10 rounded-full bg-surface px-1 text-[0.625rem] leading-4 font-medium tabular-nums ring-1 ring-border"
+							aria-hidden="true">{person.online}</span
+						>
+					{/if}
+				</Avatar.Root>
+			{/each}
+		</Avatar.Group>
+		<span class="sr-only">{here.map(caption).join(', ')}</span>
+	</div>
+{/if}

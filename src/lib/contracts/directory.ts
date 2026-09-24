@@ -19,7 +19,7 @@ import {
 	requiredText,
 	searchQuery
 } from './common';
-import { CONTRACT_STATUSES, type ContractStatus } from './interactions';
+import { CONTRACT_STATUSES, editVersionField, type ContractStatus } from './interactions';
 
 /**
  * Кем организация приходится процессу: вуз, юридическое или физическое лицо,
@@ -416,7 +416,12 @@ const contractFields = {
 	number: requiredText(200, 'Укажите номер договора'),
 	signedOn: optionalIsoDate('Дата подписания указана неверно'),
 	validUntil: optionalIsoDate('Дата окончания действия указана неверно'),
-	status: z.enum(CONTRACT_STATUSES, { error: 'Выберите состояние договора' }).default('draft')
+	status: z.enum(CONTRACT_STATUSES, { error: 'Выберите состояние договора' }).default('draft'),
+	/**
+	 * Версия договора, с которой открыта форма правки; у нового договора её нет.
+	 * Чужая правка договора или его позиций после неё — отказ, а не перезапись.
+	 */
+	editVersion: editVersionField.nullable()
 };
 
 function contractPeriodIsOrdered(value: {
@@ -426,10 +431,16 @@ function contractPeriodIsOrdered(value: {
 	return value.signedOn === null || value.validUntil === null || value.validUntil >= value.signedOn;
 }
 
-export const saveContractSchema = z.object(contractFields).refine(contractPeriodIsOrdered, {
-	error: 'Договор не может истечь раньше, чем подписан',
-	path: ['validUntil']
-});
+export const saveContractSchema = z
+	.object(contractFields)
+	.refine(contractPeriodIsOrdered, {
+		error: 'Договор не может истечь раньше, чем подписан',
+		path: ['validUntil']
+	})
+	.refine((value) => (value.id === null) === (value.editVersion === null), {
+		error: 'Форма не знает версию договора: обновите карточку',
+		path: ['editVersion']
+	});
 
 /**
  * Позиция договора: коммерческие условия по одному продукту.
@@ -446,7 +457,9 @@ const contractItemFields = {
 	productId: id('Выберите продукт'),
 	licenseSignedAt: optionalIsoDate('Дата подписания лицензии указана неверно'),
 	licenseUntil: optionalIsoDate('Срок действия лицензии указан неверно'),
-	transferStatus: requiredText(100, 'Укажите статус по передаче')
+	transferStatus: requiredText(100, 'Укажите статус по передаче'),
+	/** Версия договора позиции: версия одна на договор и все его позиции. */
+	editVersion: editVersionField
 };
 
 function licensePeriodIsOrdered(value: {
@@ -795,6 +808,8 @@ export type ContractView = {
 	validUntil: string | null;
 	status: ContractStatus;
 	items: ContractItemView[];
+	/** Версия договора с позициями: форма правки несёт её обратно. */
+	editVersion: number;
 	createdAt: Date;
 	updatedAt: Date;
 };

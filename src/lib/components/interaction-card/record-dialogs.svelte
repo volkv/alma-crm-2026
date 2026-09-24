@@ -13,21 +13,22 @@
 	import { NO_OPTION } from '$lib/components/directory/labels';
 	import { actionEnhance } from '$lib/components/interactions/action-enhance';
 	import type { ContractView } from '$lib/contracts/directory';
-	import {
-		blockerReasonLabel,
-		BLOCKER_REASONS,
-		BLOCKER_REASON_LABELS,
-		CONTRACT_STATUS_LABELS,
-		type InteractionView
-	} from '$lib/contracts/interactions';
+	import { CONTRACT_STATUS_LABELS, type InteractionView } from '$lib/contracts/interactions';
 	import { getCardCommands } from './commands.svelte';
+	import { rebaseDraft } from '$lib/components/interactions/rebase-draft';
 	import type { CounterpartyShape } from './model';
+	import StaleNotice from '$lib/components/interactions/stale-notice.svelte';
 
 	/**
-	 * Диалоги команд по записи: помехи, ответственный, план и договор.
+	 * Диалоги команд по записи: снятие помехи, ответственный, план и договор.
 	 *
 	 * Сдвиг сроков и смена договора — решения, поэтому у их форм есть поле
 	 * причины: она попадёт в ленту рядом с правкой, а не только в журнал.
+	 *
+	 * План и договор несут версию записи, с которой диалог открыли, — вместе с
+	 * полями, а не из живого `interaction`: карточка может перечитаться, пока
+	 * человек пишет, и свежая версия под старым черновиком молча затёрла бы
+	 * чужую правку. Отказ 409 оставляет введённое в диалоге.
 	 */
 	let {
 		interaction,
@@ -56,7 +57,6 @@
 		}
 	});
 
-	const raiseOpen = opened('raise-blocker');
 	const resolveOpen = opened('resolve-blocker');
 	const assignOpen = opened('assign');
 	const planOpen = opened('plan');
@@ -66,16 +66,20 @@
 		commands.current?.kind === 'resolve-blocker' ? commands.current : null
 	);
 
-	/** Причина выбирается из справочника: по ней потом считают, на чём встаём. */
-	let reasonCode = $state('');
-	let blockerDescription = $state('');
 	let resolution = $state('');
 	let ownerUserId = $state(untrack(() => interaction.ownerUserId));
 	let plan = $state(untrack(() => planOf(interaction)));
+	/** План, каким он был при открытии диалога: от него считается, что тронуто. */
+	let planBase = $state(untrack(() => planOf(interaction)));
 	let planReason = $state('');
 	let contractId = $state(untrack(() => interaction.contract?.id ?? NO_OPTION));
 	let selectedItemIds = $state<string[]>([]);
+	let contractBase = $state(untrack(() => contractOf(interaction)));
 	let contractReason = $state('');
+	/** Версия записи, с которой открыт диалог плана или договора. */
+	let editVersion = $state(untrack(() => interaction.editVersion));
+	/** Отказ «запись изменил другой»: показывается в диалоге, ввод остаётся. */
+	let conflict = $state<string | null>(null);
 
 	function planOf(source: InteractionView) {
 		return {
@@ -87,6 +91,14 @@
 		};
 	}
 
+	/** Договор записи в виде полей диалога. */
+	function contractOf(source: InteractionView) {
+		return {
+			contractId: source.contract?.id ?? NO_OPTION,
+			itemIds: (source.contract?.items ?? []).map((item) => item.id).sort()
+		};
+	}
+
 	// Форма открывается с тем, что лежит в записи сейчас, а не с тем, что
 	// набрали в прошлый раз и не отправили.
 	$effect(() => {
@@ -95,22 +107,52 @@
 		untrack(() => {
 			if (current === null) return;
 
-			reasonCode = '';
-			blockerDescription = '';
 			resolution = '';
 			ownerUserId = interaction.ownerUserId;
-			plan = planOf(interaction);
+			planBase = planOf(interaction);
+			plan = { ...planBase };
 			planReason = '';
-			contractId = interaction.contract?.id ?? NO_OPTION;
-			selectedItemIds = (interaction.contract?.items ?? []).map((item) => item.id);
+			contractBase = contractOf(interaction);
+			contractId = contractBase.contractId;
+			selectedItemIds = [...contractBase.itemIds];
 			contractReason = '';
+			editVersion = interaction.editVersion;
+			conflict = null;
 		});
+	});
+
+	/**
+	 * Карточка перечитана после отказа: форма встаёт на свежую версию, поля,
+	 * которых человек не трогал, берут свежие значения, тронутые остаются его.
+	 * Сохранять — снова его решение.
+	 */
+	function rebase() {
+		const freshPlan = planOf(interaction);
+		const freshContract = contractOf(interaction);
+		const draftContract = rebaseDraft(
+			contractBase,
+			{ contractId, itemIds: [...selectedItemIds].sort() },
+			freshContract
+		);
+
+		plan = rebaseDraft(planBase, plan, freshPlan);
+		planBase = freshPlan;
+		contractId = draftContract.contractId;
+		selectedItemIds = draftContract.itemIds;
+		contractBase = freshContract;
+		editVersion = interaction.editVersion;
+		conflict = null;
+	}
+
+	const recordCommand = actionEnhance({
+		onsuccess: () => commands.close(),
+		onconflict: (message) => (conflict = message)
 	});
 
 	const ownerName = $derived(users.find((user) => user.id === ownerUserId)?.name ?? 'Не выбран');
 
 	const planDirty = $derived(
-		JSON.stringify(plan) !== JSON.stringify(planOf(interaction)) || planReason.trim() !== ''
+		JSON.stringify(plan) !== JSON.stringify(planBase) || planReason.trim() !== ''
 	);
 
 	const chosenContract = $derived(contracts.find((contract) => contract.id === contractId) ?? null);
@@ -138,58 +180,6 @@
 			: selectedItemIds.filter((item) => item !== id);
 	}
 </script>
-
-<FormDialog
-	bind:open={raiseOpen.get, raiseOpen.set}
-	title="Сообщить о помехе"
-	description="Помеха с запретом не пустит запись на следующую стадию, пока её не снимут с объяснением."
-	dirty={blockerDescription.trim() !== ''}
->
-	<form
-		id="card-raise-blocker-form"
-		method="POST"
-		action="?/raiseBlocker"
-		use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
-		class="flex flex-col gap-3"
-	>
-		<div class="flex flex-col gap-1.5">
-			<Label for="card-blocker-reason">Причина</Label>
-			<Select.Root type="single" name="reasonCode" bind:value={reasonCode}>
-				<Select.Trigger id="card-blocker-reason" class="w-full">
-					{reasonCode === '' ? 'Выберите причину' : blockerReasonLabel(reasonCode)}
-				</Select.Trigger>
-				<Select.Content>
-					{#each BLOCKER_REASONS as reason (reason)}
-						<Select.Item value={reason} label={BLOCKER_REASON_LABELS[reason]} />
-					{/each}
-				</Select.Content>
-			</Select.Root>
-		</div>
-		<div class="flex flex-col gap-1.5">
-			<Label for="card-blocker-description">Что мешает</Label>
-			<Textarea
-				id="card-blocker-description"
-				name="description"
-				rows={3}
-				required
-				bind:value={blockerDescription}
-			/>
-		</div>
-		<Label class="flex items-center gap-2 font-normal">
-			<Checkbox name="blocksTransition" value="true" checked />
-			Запрещает переход на следующую стадию
-		</Label>
-	</form>
-
-	{#snippet footer({ close })}
-		<div class="flex justify-end gap-2">
-			<Button type="button" variant="outline" onclick={close}>Отмена</Button>
-			<Button type="submit" form="card-raise-blocker-form" disabled={reasonCode === ''}>
-				Сообщить
-			</Button>
-		</div>
-	{/snippet}
-</FormDialog>
 
 <FormDialog
 	bind:open={resolveOpen.get, resolveOpen.set}
@@ -265,9 +255,13 @@
 		id="card-plan-form"
 		method="POST"
 		action="?/update"
-		use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
+		use:enhance={recordCommand}
 		class="flex flex-col gap-3"
 	>
+		<input type="hidden" name="editVersion" value={editVersion} />
+		{#if conflict !== null}
+			<StaleNotice message={conflict} onrefreshed={rebase} />
+		{/if}
 		<div class="flex flex-col gap-1.5">
 			<Label for="card-plan-title">Название</Label>
 			<Input id="card-plan-title" name="title" required bind:value={plan.title} />
@@ -357,9 +351,13 @@
 			id="card-contract-form"
 			method="POST"
 			action="?/contract"
-			use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
+			use:enhance={recordCommand}
 			class="flex flex-col gap-3"
 		>
+			<input type="hidden" name="editVersion" value={editVersion} />
+			{#if conflict !== null}
+				<StaleNotice message={conflict} onrefreshed={rebase} />
+			{/if}
 			<div class="flex flex-col gap-1.5">
 				<Label for="card-contract">Договор контрагента</Label>
 				<Select.Root type="single" name="contractId" bind:value={contractId}>

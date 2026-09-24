@@ -39,7 +39,6 @@
 		action,
 		primary,
 		secondary,
-		currentStageId,
 		canCheck,
 		canResolve
 	}: {
@@ -47,8 +46,6 @@
 		/** Что начинает главная кнопка; у снятия паузы команды нет — это форма. */
 		primary: CardCommand | null;
 		secondary: readonly SecondaryAction[];
-		/** Стадия, с которой отдаются команды; сервер сверит её со своей. */
-		currentStageId: string | null;
 		/** Есть ли право отмечать пункты чек-листа. */
 		canCheck: boolean;
 		/** Есть ли право снимать помехи. */
@@ -118,6 +115,7 @@
 		bind:this={forms[item.key]}
 		class="contents"
 	>
+		<input type="hidden" name="stageEntryId" value={open?.stageEntryId} />
 		<input type="hidden" name="key" value={item.checklistKey} />
 		<input type="hidden" name="done" value={String(checked[item.key] === true)} />
 		<Checkbox
@@ -227,7 +225,7 @@
 			bind:this={resumeForm}
 			class="hidden"
 		>
-			<input type="hidden" name="fromStageId" value={currentStageId} />
+			<input type="hidden" name="stageEntryId" value={action.stageEntryId} />
 		</form>
 
 		<div class="flex flex-wrap items-center gap-2">

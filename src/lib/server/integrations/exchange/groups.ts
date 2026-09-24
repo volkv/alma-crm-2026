@@ -39,6 +39,7 @@ import {
 	users
 } from '../../db/schema';
 import { withTransaction, type Tx } from '../../db/transaction';
+import { publishAfterCommit } from '../../live/publish';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../errors';
 import { interactionScopeFilter } from '../../interactions/access';
 import { can, requirePermission } from '../../rbac';
@@ -189,6 +190,8 @@ export async function requestLearningGroup(
 		if (interaction === undefined) {
 			throw new NotFoundError('Взаимодействие не найдено');
 		}
+
+		publishAfterCommit(tx, interaction.id, { type: 'interaction.changed' });
 
 		const [primary] = await tx
 			.select({ id: interactionParties.id })
@@ -602,6 +605,9 @@ export async function markLearningGroupCompleted(
 			]);
 		}
 
+		// Группа — после взаимодействия: этот порядок общий для всех команд
+		// группы, и приём результата из системы обучения держит его же
+		// (`results.ts`). Обратный порядок у любой из них — взаимная блокировка.
 		const [group] = await tx
 			.select({
 				id: learningGroups.id,
@@ -672,6 +678,8 @@ export async function markLearningGroupCompleted(
 			markedByUserId: userId,
 			comment: input.comment
 		};
+
+		publishAfterCommit(tx, interaction.id, { type: 'interaction.changed' });
 
 		return applyLmsEvidence(ctx, tx, { interactionId: interaction.id, evidence });
 	});

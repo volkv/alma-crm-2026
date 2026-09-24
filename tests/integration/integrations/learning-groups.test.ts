@@ -10,6 +10,7 @@ import {
 	auditEvents,
 	exchangeMessages,
 	interactionProducts,
+	interactions,
 	interactionPrograms,
 	learningGroupProducts,
 	learningGroups,
@@ -715,4 +716,91 @@ describe('что подтверждает стадию', () => {
 		).toHaveLength(0);
 		expect(await database.db.select().from(learningGroupProducts)).toHaveLength(0);
 	});
+
+	/**
+	 * Ручная отметка держит взаимодействие и ждёт группу; приём итога, взявший
+	 * группу раньше взаимодействия, ждал бы взаимодействие — PostgreSQL нашёл бы
+	 * взаимную блокировку и уронил одну из команд. Порядок общий: взаимодействие,
+	 * затем группа.
+	 *
+	 * Порядок подстроен явно. Третья транзакция держит строку взаимодействия;
+	 * отметка встаёт за ней первой, итог — вторым. Когда держатель отпускает
+	 * строку, её получает отметка и идёт за группой: при обратном порядке у
+	 * приёма группа была бы уже его.
+	 */
+	it('ручная отметка и итог из системы обучения не встают во взаимную блокировку', async () => {
+		const { interactionId, group } = await atClasses();
+
+		let release: () => void = () => {};
+		const held = new Promise<void>((resolve) => (release = resolve));
+		let taken: () => void = () => {};
+		const locked = new Promise<void>((resolve) => (taken = resolve));
+
+		const holder = database.db.transaction(async (tx) => {
+			await tx
+				.select({ id: interactions.id })
+				.from(interactions)
+				.where(eq(interactions.id, interactionId))
+				.for('update');
+			taken();
+			await held;
+		});
+
+		await locked;
+
+		const mark = markLearningGroupCompleted(testActor(), {
+			interactionId,
+			learningGroupId: group.learningGroupId,
+			comment: 'Итоговая ведомость пришла бумагой'
+		});
+		await waitForLockWaiters(1);
+
+		const result = receiveLearningGroupResult(
+			serviceActor(),
+			resultMessage(group, {
+				occurredAt: '2027-05-21T06:00:00Z',
+				completed: 38,
+				finishedOn: '2027-05-20'
+			})
+		);
+		await waitForLockWaiters(2);
+
+		release();
+		await holder;
+
+		const [marked, received] = await Promise.allSettled([mark, result]);
+
+		// Оба исхода предметные: отметка подтвердила стадию, итог сохранён и
+		// второго подтверждения не дал.
+		expect(marked).toMatchObject({ status: 'fulfilled', value: { confirmed: true } });
+		expect(received).toMatchObject({
+			status: 'fulfilled',
+			value: { result: 'created', data: { stageConfirmed: false } }
+		});
+		expect(await confirmationsBy(group.learningGroupId)).toBe(1);
+	});
 });
+
+/** Сколько соединений базы этого файла ждут блокировку. */
+async function lockWaiters(): Promise<number> {
+	const [row] = await database.raw<{ waiting: number }[]>`
+		select count(*)::int as waiting
+		from pg_stat_activity
+		where datname = current_database() and wait_event_type = 'Lock'
+	`;
+
+	return row.waiting;
+}
+
+/** Ждёт, пока в очереди блокировок встанет `count` команд. */
+async function waitForLockWaiters(count: number): Promise<void> {
+	for (let attempt = 0; attempt < 200; attempt += 1) {
+		if ((await lockWaiters()) >= count) {
+			return;
+		}
+
+		await new Promise((resolve) => setTimeout(resolve, 25));
+	}
+
+	throw new Error(`В очереди блокировок так и не встало ${count} команд`);
+}

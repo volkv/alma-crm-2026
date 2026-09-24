@@ -175,6 +175,32 @@ export async function touchSession(sessionId: string): Promise<TouchedSession | 
 	return { userId: record.userId, renewFor: null };
 }
 
+/**
+ * Жива ли сессия — **без** продления. Возвращает её пользователя или `null`.
+ *
+ * Для долгих соединений, которые проверяют себя по таймеру: открытая и
+ * забытая вкладка не работа человека, и продлевать ею сессию значило бы
+ * держать вход открытым до предельного срока. Продлевает только настоящий
+ * запрос через {@link touchSession}.
+ */
+export async function peekSession(sessionId: string): Promise<{ userId: string } | null> {
+	const raw = await getRedis().get(sessionKey(sessionId));
+	const record = raw === null ? null : parseRecord(raw);
+
+	if (record === null) {
+		return null;
+	}
+
+	const { absoluteSeconds } = await lifetimes();
+	const expiresAt = Date.parse(record.createdAt) + absoluteSeconds * 1000;
+
+	if (!Number.isFinite(expiresAt) || Date.now() >= expiresAt) {
+		return null;
+	}
+
+	return { userId: record.userId };
+}
+
 /** Id-токен входа, которым открыта сессия; `null` — сессии уже нет. */
 export async function sessionIdToken(sessionId: string): Promise<string | null> {
 	const raw = await getRedis().get(sessionKey(sessionId));

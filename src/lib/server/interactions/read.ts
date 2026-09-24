@@ -908,6 +908,7 @@ async function buildInteractionBase(interactionId: string): Promise<InteractionB
 		externalId: row.interaction.externalId,
 		createdAt: row.interaction.createdAt,
 		updatedAt: row.interaction.updatedAt,
+		editVersion: row.interaction.editVersion,
 		programs: programList,
 		products: productList,
 		contract,

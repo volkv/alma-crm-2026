@@ -48,6 +48,7 @@ import {
 	people
 } from '../../db/schema';
 import { withTransaction, type Tx } from '../../db/transaction';
+import { publishAfterCommit } from '../../live/publish';
 import { contactFullName, parsePersonName, type ContactName } from '../../directory/contacts';
 import { createAffiliation, createPerson } from '../../directory/write';
 import { NotFoundError, ValidationError } from '../../errors';
@@ -247,7 +248,8 @@ type RosterGroup = {
 /**
  * Группа взаимодействия, видимого вызывающему, или `NotFoundError`. Под
  * транзакцией строка группы берётся под блокировку: две загрузки одного списка
- * одновременно иначе завели бы одного и того же нового человека дважды.
+ * одновременно иначе завели бы одного и того же нового человека дважды. Перед
+ * ней — строка взаимодействия.
  */
 async function readGroup(
 	ctx: ActorContext,
@@ -273,6 +275,17 @@ async function readGroup(
 				interactionScopeFilter(ctx)
 			)
 		);
+
+	if (lock) {
+		// Порядок блокировок общий для команд группы: взаимодействие, затем
+		// группа (`results.ts`, `groups.ts`). Одним запросом с соединением его не
+		// задать — строки блокируются в порядке плана.
+		await executor
+			.select({ id: interactions.id })
+			.from(interactions)
+			.where(and(eq(interactions.id, input.interactionId), interactionScopeFilter(ctx)))
+			.for('update');
+	}
 
 	const [group] = lock ? await query.for('update', { of: learningGroups }) : await query;
 
@@ -455,6 +468,7 @@ export async function importLearningGroupRoster(
 
 	const view = await withTransaction(ctx, async (tx) => {
 		const group = await readGroup(ctx, tx, input, true);
+		publishAfterCommit(tx, group.interactionId, { type: 'interaction.changed' });
 		const planned = await planRows(ctx, tx, group, parsed.rows);
 		const day = formatIsoDay();
 		const organization =
@@ -664,6 +678,7 @@ export async function removeLearner(ctx: ActorContext, input: RemoveLearnerInput
 
 	await withTransaction(ctx, async (tx) => {
 		const group = await readGroup(ctx, tx, input, true);
+		publishAfterCommit(tx, group.interactionId, { type: 'interaction.changed' });
 
 		const removed = await tx
 			.delete(learningGroupLearners)
@@ -722,6 +737,7 @@ export async function sendLearningGroupRoster(
 
 	const messageId = await withTransaction(ctx, async (tx) => {
 		const group = await readGroup(ctx, tx, input, true);
+		publishAfterCommit(tx, group.interactionId, { type: 'interaction.changed' });
 
 		const [interaction] = await tx
 			.select({ status: interactions.status })

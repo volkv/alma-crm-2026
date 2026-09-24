@@ -336,6 +336,7 @@ describe('область доступа при заведении', () => {
 			manager,
 			updateInteractionSchema.parse({
 				id: created.id,
+				editVersion: (await getInteraction(manager, created.id)).editVersion,
 				title: 'Состав дополняется по ходу',
 				ownerUserId: managerId,
 				reason: 'Добавили организацию-оператора',
@@ -375,6 +376,7 @@ describe('правка плана', () => {
 			ctx,
 			updateInteractionSchema.parse({
 				id: created.id,
+				editVersion: (await getInteraction(ctx, created.id)).editVersion,
 				title: 'Второе название',
 				ownerUserId: TEST_USER_IDS.admin,
 				agreementPeriodStart: '2026-10-01',
@@ -468,6 +470,7 @@ describe('правка плана', () => {
 		await expect(
 			updateInteraction(manager, {
 				id: created.id,
+				editVersion: current.editVersion,
 				title: current.title,
 				ownerUserId: TEST_USER_IDS.manager,
 				agreementPeriodStart: null,
@@ -878,6 +881,7 @@ describe('история правок: имена вместо идентифи�
 			ctx,
 			updateInteractionSchema.parse({
 				id: created.id,
+				editVersion: (await getInteraction(ctx, created.id)).editVersion,
 				title: 'История с именами',
 				ownerUserId: successor,
 				reason: 'Передали работу и дополнили состав',
@@ -929,6 +933,7 @@ describe('история правок: имена вместо идентифи�
 			ctx,
 			updateInteractionSchema.parse({
 				id: created.id,
+				editVersion: (await getInteraction(ctx, created.id)).editVersion,
 				title: 'История с удалённым продуктом',
 				ownerUserId: TEST_USER_IDS.admin,
 				reason: 'Продукт убрали из состава',

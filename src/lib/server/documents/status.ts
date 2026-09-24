@@ -21,7 +21,10 @@ import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { contractItems, documentContractItems, documents } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
+import { publishAfterCommit } from '../live/publish';
+import { bumpContractsOfItems } from '../directory/contracts';
 import { ConflictError, ValidationError } from '../errors';
+import { editorOf, type Editor } from '../interactions/edit-version';
 import { requirePermission } from '../rbac';
 import { applyDocumentMark, touchInteraction } from '../stages/commands';
 import { MARK_MOMENT_COLUMNS } from './evidence';
@@ -64,17 +67,35 @@ const FACTS: Record<DocumentStatusFact, FactDefinition> = {
  * и отметка «Утверждён» (подписанный сторонами экземпляр). Возвращает, сколько
  * позиций переведено. Позиция, уже помеченная «передан», не переписывается.
  */
-async function markItemsTransferred(tx: Tx, documentId: string): Promise<number> {
+async function markItemsTransferred(tx: Tx, documentId: string, editor: Editor): Promise<number> {
 	const linked = tx
 		.select({ id: documentContractItems.contractItemId })
 		.from(documentContractItems)
 		.where(eq(documentContractItems.documentId, documentId));
 
+	const pending = await tx
+		.select({ id: contractItems.id })
+		.from(contractItems)
+		.where(
+			and(inArray(contractItems.id, linked), ne(contractItems.transferStatus, TRANSFERRED_STATUS))
+		);
+
+	if (pending.length === 0) {
+		return 0;
+	}
+
+	const ids = pending.map((row) => row.id);
+
+	// Статус передачи — поле позиции: открытая форма договора после этого
+	// получит отказ, а не вернёт «ожидает передачи». Версия договора — раньше
+	// позиций, тем же порядком, что у формы договора.
+	await bumpContractsOfItems(tx, ids, editor);
+
 	const updated = await tx
 		.update(contractItems)
 		.set({ transferStatus: TRANSFERRED_STATUS, updatedAt: new Date() })
 		.where(
-			and(inArray(contractItems.id, linked), ne(contractItems.transferStatus, TRANSFERRED_STATUS))
+			and(inArray(contractItems.id, ids), ne(contractItems.transferStatus, TRANSFERRED_STATUS))
 		)
 		.returning({ id: contractItems.id });
 
@@ -143,9 +164,11 @@ export async function markDocument(
 			});
 
 			await touchInteraction(tx, row.interactionId);
+			publishAfterCommit(tx, row.interactionId, { type: 'interaction.changed' });
 		}
 
-		const transferredItemCount = fact === 'approved' ? await markItemsTransferred(tx, row.id) : 0;
+		const transferredItemCount =
+			fact === 'approved' ? await markItemsTransferred(tx, row.id, editorOf(ctx)) : 0;
 
 		await recordAuditEvent(
 			ctx,

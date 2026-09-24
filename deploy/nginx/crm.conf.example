@@ -102,6 +102,26 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
+    # Live interaction card: one server-sent-events stream per open card tab.
+    # The app already answers with `X-Accel-Buffering: no`; `proxy_buffering
+    # off` says the same here, so a stream is never held back in a buffer even
+    # if a middle proxy strips that header. The stream sends a ping comment
+    # every 25 s, well inside the 120 s read timeout, so a quiet card is not
+    # cut off. Everything else is the same as for the app block below.
+    location ~ ^/w/[^/]+/interactions/[0-9a-f-]+/live$ {
+        proxy_pass http://127.0.0.1:CRM_PORT;
+        proxy_http_version 1.1;
+        proxy_set_header Connection '';
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        # MANDATORY for the same reason as in the app block below.
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_buffering off;
+        proxy_cache off;
+        proxy_read_timeout 120s;
+    }
+
     # The app: everything that is not one of the blocks above. nginx drops
     # inherited add_header directives inside a location that declares its own,
     # so the security headers above would be silently lost for anything served

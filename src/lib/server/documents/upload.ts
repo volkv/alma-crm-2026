@@ -22,6 +22,7 @@ import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { documentContractItems, documents } from '../db/schema';
 import { withTransaction } from '../db/transaction';
+import { publishAfterCommit } from '../live/publish';
 import { ConflictError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
 import { touchInteraction } from '../stages/commands';
@@ -169,6 +170,7 @@ async function writeDocument(
 			if (fields.interactionId !== null) {
 				details.interactionId = fields.interactionId;
 				await touchInteraction(tx, fields.interactionId);
+				publishAfterCommit(tx, fields.interactionId, { type: 'interaction.changed' });
 			}
 
 			if (fields.supersedesId !== null) {

@@ -44,6 +44,13 @@ export function actionEnhance(
 		 * которая взяла отказ себе, обязана его показать.
 		 */
 		onfailure?: (refusal: { message: string; description?: string }) => void;
+		/**
+		 * Отказ 409 — запись изменил кто-то другой или стадия уже сменилась —
+		 * показать в самой форме, рядом с кнопкой «Обновить карточку», а не
+		 * тостом: введённое остаётся в полях, и решать, что с ним делать, человек
+		 * будет, глядя на форму. Остальные отказы идут обычным путём.
+		 */
+		onconflict?: (message: string) => void;
 	} = {}
 ): SubmitFunction {
 	return ({ cancel }) => {
@@ -55,7 +62,9 @@ export function actionEnhance(
 			if (result.type === 'failure') {
 				const refusal = describeActionFailure(result.data);
 
-				if (options.onfailure) {
+				if (result.status === 409 && options.onconflict) {
+					options.onconflict(refusal.message);
+				} else if (options.onfailure) {
 					options.onfailure(refusal);
 				} else {
 					toast.error(refusal.message, { description: refusal.description });

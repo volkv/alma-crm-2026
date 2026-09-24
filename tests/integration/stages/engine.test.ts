@@ -40,6 +40,7 @@ import {
 	B2C_WORKSPACE_KEY,
 	closeRequiredChecklist,
 	createInteractionOn,
+	openEntryId,
 	provideDocumentMark,
 	provideLmsEvidence,
 	seedProcess,
@@ -315,7 +316,7 @@ describe('пауза', () => {
 
 		await pauseStage(fixture.ctx, {
 			interactionId: fixture.interactionId,
-			fromStageId,
+			stageEntryId: await openEntryId(fixture.ctx, fixture.interactionId),
 			reason: 'waiting_counterparty',
 			waitingPartyId: null,
 			nextAction: 'Позвонить в приёмную',
@@ -349,7 +350,7 @@ describe('пауза', () => {
 		await expect(
 			pauseStage(fixture.ctx, {
 				interactionId: fixture.interactionId,
-				fromStageId,
+				stageEntryId: await openEntryId(fixture.ctx, fixture.interactionId),
 				reason: 'other',
 				waitingPartyId: null,
 				nextAction: null,
@@ -359,7 +360,7 @@ describe('пауза', () => {
 
 		await resumeStage(fixture.ctx, {
 			interactionId: fixture.interactionId,
-			fromStageId,
+			stageEntryId: await openEntryId(fixture.ctx, fixture.interactionId),
 			note: null
 		});
 		await advanceStage(fixture.ctx, command);
@@ -379,6 +380,7 @@ describe('помехи', () => {
 
 		const blocker = await raiseBlocker(fixture.ctx, {
 			interactionId: fixture.interactionId,
+			stageEntryId: await openEntryId(fixture.ctx, fixture.interactionId),
 			reasonCode: 'no-contact',
 			description: 'Координатор не отвечает',
 			blocksTransition: true,
@@ -500,6 +502,7 @@ describe('подтверждение стадии', () => {
 
 		await setStageResult(fixture.ctx, {
 			interactionId: fixture.interactionId,
+			stageEntryId: await openEntryId(fixture.ctx, fixture.interactionId),
 			resultText: 'Материалы и лицензии переданы'
 		});
 
@@ -509,7 +512,7 @@ describe('подтверждение стадии', () => {
 
 		await confirmStage(fixture.ctx, {
 			interactionId: fixture.interactionId,
-			fromStageId,
+			stageEntryId: await openEntryId(fixture.ctx, fixture.interactionId),
 			confirmation: { kind: 'mark' }
 		});
 
@@ -532,6 +535,7 @@ describe('подтверждение стадии', () => {
 		await closeRequiredChecklist(fixture.ctx, fixture.interactionId);
 		await setStageResult(fixture.ctx, {
 			interactionId: fixture.interactionId,
+			stageEntryId: await openEntryId(fixture.ctx, fixture.interactionId),
 			resultText: 'Занятия проведены по расписанию'
 		});
 
@@ -549,7 +553,7 @@ describe('подтверждение стадии', () => {
 		// системе, и подтверждает их её результат, а не подпись исполнителя.
 		await confirmStage(fixture.ctx, {
 			interactionId: fixture.interactionId,
-			fromStageId: command.fromStageId,
+			stageEntryId: await openEntryId(fixture.ctx, fixture.interactionId),
 			confirmation: { kind: 'mark' }
 		});
 
@@ -596,7 +600,7 @@ describe('подтверждение стадии', () => {
 		// это факт по документу, а не слово исполнителя.
 		await confirmStage(fixture.ctx, {
 			interactionId: fixture.interactionId,
-			fromStageId: command.fromStageId,
+			stageEntryId: await openEntryId(fixture.ctx, fixture.interactionId),
 			confirmation: { kind: 'mark' }
 		});
 
@@ -798,7 +802,7 @@ describe('закрытие взаимодействия', () => {
 
 		await pauseStage(fixture.ctx, {
 			interactionId: fixture.interactionId,
-			fromStageId,
+			stageEntryId: await openEntryId(fixture.ctx, fixture.interactionId),
 			reason: 'waiting_counterparty',
 			waitingPartyId: null,
 			nextAction: null,
@@ -846,11 +850,12 @@ describe('журнал действий', () => {
 		await closeRequiredChecklist(fixture.ctx, fixture.interactionId);
 		await setStageResult(fixture.ctx, {
 			interactionId: fixture.interactionId,
+			stageEntryId: await openEntryId(fixture.ctx, fixture.interactionId),
 			resultText: 'Контакт найден'
 		});
 		await pauseStage(fixture.ctx, {
 			interactionId: fixture.interactionId,
-			fromStageId,
+			stageEntryId: await openEntryId(fixture.ctx, fixture.interactionId),
 			reason: 'waiting_internal',
 			waitingPartyId: null,
 			nextAction: null,
@@ -858,7 +863,7 @@ describe('журнал действий', () => {
 		});
 		await resumeStage(fixture.ctx, {
 			interactionId: fixture.interactionId,
-			fromStageId,
+			stageEntryId: await openEntryId(fixture.ctx, fixture.interactionId),
 			note: null
 		});
 		await advanceStage(fixture.ctx, {

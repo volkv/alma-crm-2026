@@ -3,6 +3,7 @@
 	import { enhance } from '$app/forms';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
@@ -11,6 +12,9 @@
 	import FormDialog from '$lib/components/form-dialog.svelte';
 	import { actionEnhance } from '$lib/components/interactions/action-enhance';
 	import {
+		blockerReasonLabel,
+		BLOCKER_REASONS,
+		BLOCKER_REASON_LABELS,
 		PAUSE_REASONS,
 		PAUSE_REASON_LABELS,
 		type InteractionClosingView,
@@ -20,10 +24,11 @@
 		type StageTransitionKind
 	} from '$lib/contracts/interactions';
 	import { getCardCommands } from './commands.svelte';
+	import StaleNotice from '$lib/components/interactions/stale-notice.svelte';
 
 	/**
 	 * Диалоги команд по стадии и по записи целиком: переход, пауза, результат,
-	 * подтверждение, завершение и отмена. Открывает их общее состояние команд
+	 * подтверждение, помеха, завершение и отмена. Открывает их общее состояние команд
 	 * карточки — кнопка у условия, пункт меню «Ещё» и главная кнопка ведут в
 	 * один и тот же диалог.
 	 *
@@ -67,6 +72,7 @@
 	const pauseOpen = opened('pause');
 	const resultOpen = opened('result');
 	const confirmOpen = opened('confirm');
+	const raiseOpen = opened('raise-blocker');
 	const completeOpen = opened('complete');
 	const cancelOpen = opened('cancel');
 
@@ -106,6 +112,19 @@
 	let confirmKind = $state<ConfirmKind>('mark');
 	let confirmDocumentId = $state('');
 	let closingText = $state('');
+	/** Причина помехи выбирается из справочника: по ней потом считают, на чём встаём. */
+	let reasonCode = $state('');
+	let blockerDescription = $state('');
+
+	/**
+	 * Запись стадии, открытая, когда открыли диалог. Замораживается вместе с
+	 * полями: карточка может перечитаться, пока человек пишет, и живое `entry`
+	 * к моменту отправки указывало бы уже на новую стадию — набранный для
+	 * прежней результат лёг бы в неё молча. Сервер сверяет именно эту запись.
+	 */
+	let entryId = $state(untrack(() => entry?.id ?? null));
+	/** Отказ «стадия уже сменилась»: введённое остаётся, карточку перечитывают кнопкой. */
+	let conflict = $state<string | null>(null);
 
 	$effect(() => {
 		const current = commands.current;
@@ -113,6 +132,10 @@
 		untrack(() => {
 			if (current === null) return;
 
+			entryId = entry?.id ?? null;
+			conflict = null;
+			reasonCode = '';
+			blockerDescription = '';
 			reason = '';
 			reasonError = null;
 			attached = [];
@@ -164,7 +187,29 @@
 	const confirmBlocked = $derived(
 		confirmKind === 'file' && (documents.length === 0 || confirmDocumentId === '')
 	);
+
+	/** Отправка команды по записи стадии: успех закрывает диалог, 409 остаётся в нём. */
+	const entryCommand = actionEnhance({
+		onsuccess: () => commands.close(),
+		onconflict: (message) => (conflict = message)
+	});
+
+	/**
+	 * Карточка перечитана: форма переходит на открытую сейчас запись стадии.
+	 * Введённое остаётся — отправить его на новую стадию человек решает сам,
+	 * видя её название в заголовке диалога.
+	 */
+	function rebase() {
+		entryId = entry?.id ?? null;
+		conflict = null;
+	}
 </script>
+
+{#snippet staleNotice()}
+	{#if conflict !== null}
+		<StaleNotice message={conflict} onrefreshed={rebase} />
+	{/if}
+{/snippet}
 
 <FormDialog
 	bind:open={transitionOpen.get, transitionOpen.set}
@@ -238,10 +283,11 @@
 		id="card-pause-form"
 		method="POST"
 		action="?/pause"
-		use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
+		use:enhance={entryCommand}
 		class="flex flex-col gap-4"
 	>
-		<input type="hidden" name="fromStageId" value={stageId} />
+		<input type="hidden" name="stageEntryId" value={entryId} />
+		{@render staleNotice()}
 
 		<div class="flex flex-col gap-1.5 text-sm">
 			<Label for="card-pause-reason">Причина</Label>
@@ -305,9 +351,11 @@
 		id="card-result-form"
 		method="POST"
 		action="?/result"
-		use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
+		use:enhance={entryCommand}
 		class="flex flex-col gap-2"
 	>
+		<input type="hidden" name="stageEntryId" value={entryId} />
+		{@render staleNotice()}
 		<Label for="card-result-text">Результат стадии</Label>
 		<Textarea
 			id="card-result-text"
@@ -335,10 +383,11 @@
 		id="card-confirm-form"
 		method="POST"
 		action="?/confirm"
-		use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
+		use:enhance={entryCommand}
 		class="flex flex-col gap-3"
 	>
-		<input type="hidden" name="fromStageId" value={stageId} />
+		<input type="hidden" name="stageEntryId" value={entryId} />
+		{@render staleNotice()}
 
 		<div class="flex flex-col gap-1.5">
 			<Label for="card-confirm-kind">Чем подтверждаем</Label>
@@ -395,6 +444,60 @@
 			<Button type="button" variant="outline" onclick={close}>Отмена</Button>
 			<Button type="submit" form="card-confirm-form" disabled={confirmBlocked}>
 				Подтвердить стадию
+			</Button>
+		</div>
+	{/snippet}
+</FormDialog>
+
+<FormDialog
+	bind:open={raiseOpen.get, raiseOpen.set}
+	title="Сообщить о помехе"
+	description="Помеха с запретом не пустит запись на следующую стадию, пока её не снимут с объяснением."
+	dirty={blockerDescription.trim() !== ''}
+>
+	<form
+		id="card-raise-blocker-form"
+		method="POST"
+		action="?/raiseBlocker"
+		use:enhance={entryCommand}
+		class="flex flex-col gap-3"
+	>
+		<input type="hidden" name="stageEntryId" value={entryId} />
+		{@render staleNotice()}
+		<div class="flex flex-col gap-1.5">
+			<Label for="card-blocker-reason">Причина</Label>
+			<Select.Root type="single" name="reasonCode" bind:value={reasonCode}>
+				<Select.Trigger id="card-blocker-reason" class="w-full">
+					{reasonCode === '' ? 'Выберите причину' : blockerReasonLabel(reasonCode)}
+				</Select.Trigger>
+				<Select.Content>
+					{#each BLOCKER_REASONS as blockerReason (blockerReason)}
+						<Select.Item value={blockerReason} label={BLOCKER_REASON_LABELS[blockerReason]} />
+					{/each}
+				</Select.Content>
+			</Select.Root>
+		</div>
+		<div class="flex flex-col gap-1.5">
+			<Label for="card-blocker-description">Что мешает</Label>
+			<Textarea
+				id="card-blocker-description"
+				name="description"
+				rows={3}
+				required
+				bind:value={blockerDescription}
+			/>
+		</div>
+		<Label class="flex items-center gap-2 font-normal">
+			<Checkbox name="blocksTransition" value="true" checked />
+			Запрещает переход на следующую стадию
+		</Label>
+	</form>
+
+	{#snippet footer({ close })}
+		<div class="flex justify-end gap-2">
+			<Button type="button" variant="outline" onclick={close}>Отмена</Button>
+			<Button type="submit" form="card-raise-blocker-form" disabled={reasonCode === ''}>
+				Сообщить
 			</Button>
 		</div>
 	{/snippet}

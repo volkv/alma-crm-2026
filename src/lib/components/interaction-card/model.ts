@@ -213,6 +213,11 @@ export type CardAction =
 			kind: 'forward' | 'complete' | 'resume';
 			label: string;
 			allowed: boolean;
+			/**
+			 * Запись стадии, к которой относятся отметки чек-листа и снятие паузы:
+			 * сервер откажет, если к моменту отправки открыта уже другая.
+			 */
+			stageEntryId: string;
 			requirements: Requirement[];
 			blockers: BlockerView[];
 			/** Помехи, которые переходу не мешают, но открыты. */
@@ -601,6 +606,7 @@ function buildAction(source: CardSource): CardAction {
 			kind: 'resume',
 			label: 'Снять паузу',
 			allowed,
+			stageEntryId: entry.id,
 			requirements,
 			blockers,
 			softBlockers,
@@ -616,6 +622,7 @@ function buildAction(source: CardSource): CardAction {
 			kind: 'forward',
 			label: `Перейти к «${chosen.toStage.name}»`,
 			allowed: chosen.allowed,
+			stageEntryId: entry.id,
 			requirements,
 			blockers,
 			softBlockers,
@@ -628,6 +635,7 @@ function buildAction(source: CardSource): CardAction {
 		kind: 'complete',
 		label: 'Завершить взаимодействие',
 		allowed: closing.complete.allowed,
+		stageEntryId: entry.id,
 		requirements,
 		blockers,
 		softBlockers,

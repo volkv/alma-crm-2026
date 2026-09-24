@@ -47,6 +47,7 @@ import type {
 import {
 	COMMENT_SOURCES,
 	CONTRACT_STATUSES,
+	EDIT_SOURCES,
 	INTERACTION_STATUSES,
 	PARTY_ROLES,
 	PAUSE_REASONS,
@@ -75,6 +76,34 @@ export const stageOutcomeEnum = pgEnum('stage_outcome', STAGE_OUTCOMES);
 export const pauseReasonEnum = pgEnum('pause_reason', PAUSE_REASONS);
 export const contractStatusEnum = pgEnum('contract_status', CONTRACT_STATUSES);
 export const commentSourceEnum = pgEnum('comment_source', COMMENT_SOURCES);
+export const editSourceEnum = pgEnum('edit_source', EDIT_SOURCES);
+
+/**
+ * Версия правки записи и автор этой версии.
+ *
+ * Целое число, а не момент изменения: `updated_at` двигают и события, которые
+ * полей не трогают, а момент из PostgreSQL в `Date` теряет микросекунды —
+ * сравнение по нему даёт и ложные отказы, и ложные совпадения. Версию сдвигают
+ * только команды, которые переписывают защищённые поля
+ * (`docs/workflow.md`, «Одновременная работа»); автор и момент — той самой
+ * версии, чтобы отказ мог честно сказать, чью правку человек чуть не затёр.
+ */
+function editColumns() {
+	return {
+		editVersion: integer().notNull().default(1),
+		editedBy: uuid().references(() => users.id, { onDelete: 'restrict' }),
+		editedVia: editSourceEnum().notNull().default('system'),
+		editedAt: timestamp({ withTimezone: true }).notNull().defaultNow()
+	};
+}
+
+/** Автор-сотрудник есть ровно у правки сотрудника. */
+function editedByMatchesSource(
+	name: string,
+	table: { editedBy: AnyPgColumn; editedVia: AnyPgColumn }
+) {
+	return check(name, sql`(${table.editedVia} = 'user') = (${table.editedBy} is not null)`);
+}
 
 /**
  * Пространство: рабочее место направления. Своё меню, свои взаимодействия,
@@ -414,6 +443,8 @@ export const contracts = pgTable(
 		signedOn: date(),
 		validUntil: date(),
 		status: contractStatusEnum().notNull().default('draft'),
+		/** Одна версия на договор и все его позиции: их правят одним блоком карточки. */
+		...editColumns(),
 		...timestamps
 	},
 	(table) => [
@@ -422,7 +453,8 @@ export const contracts = pgTable(
 		check(
 			'contracts_period_ordered',
 			sql`${table.validUntil} is null or ${table.signedOn} is null or ${table.validUntil} >= ${table.signedOn}`
-		)
+		),
+		editedByMatchesSource('contracts_edited_by_source', table)
 	]
 );
 
@@ -496,10 +528,12 @@ export const interactions = pgTable(
 		 * а не про часы на стадии.
 		 */
 		lastActivityAt: timestamp({ withTimezone: true }).notNull().defaultNow(),
+		...editColumns(),
 		...externalRef,
 		...timestamps
 	},
 	(table) => [
+		editedByMatchesSource('interactions_edited_by_source', table),
 		index('interactions_status_idx').on(table.status),
 		index('interactions_workspace_status_idx').on(table.workspaceId, table.status),
 		index('interactions_contract_idx').on(table.contractId),

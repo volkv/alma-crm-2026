@@ -28,8 +28,14 @@ import {
 import type { ActorContext } from '../../actor';
 import { recordAuditEvent } from '../../audit';
 import { getDb } from '../../db';
-import { exchangeMessages, learningGroupResults, learningGroups } from '../../db/schema';
+import {
+	exchangeMessages,
+	interactions,
+	learningGroupResults,
+	learningGroups
+} from '../../db/schema';
 import { withTransaction } from '../../db/transaction';
+import { publishAfterCommit } from '../../live/publish';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../errors';
 import { requirePermission } from '../../rbac';
 import { applyLmsEvidence } from '../../stages/commands';
@@ -165,7 +171,18 @@ export async function receiveLearningGroupResult(
 			}
 
 			// Блокировка строки группы: два параллельных результата обязаны
-			// выстроиться в историю, а не оба счесть себя новее.
+			// выстроиться в историю, а не оба счесть себя новее. Перед ней —
+			// строка взаимодействия: порядок «взаимодействие, затем группа» общий
+			// для всех команд группы (`groups.ts`, `roster.ts`). Подтверждение
+			// стадии ниже всё равно возьмёт взаимодействие, и взятое после группы
+			// оно встало бы навстречу ручной отметке «обучение завершено», которая
+			// держит взаимодействие и ждёт группу, — взаимная блокировка.
+			await tx
+				.select({ id: interactions.id })
+				.from(interactions)
+				.where(eq(interactions.id, group.interactionId))
+				.for('update');
+
 			await tx
 				.select({ id: learningGroups.id })
 				.from(learningGroups)
@@ -245,6 +262,7 @@ export async function receiveLearningGroupResult(
 				interactionId: group.interactionId,
 				evidence
 			});
+			publishAfterCommit(tx, group.interactionId, { type: 'interaction.changed' });
 
 			const response: LearningGroupResultResponse = {
 				schemaVersion: EXCHANGE_SCHEMA_VERSION,

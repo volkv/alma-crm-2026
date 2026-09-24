@@ -45,6 +45,7 @@ import {
 	workspaces
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
+import { publishAfterCommit } from '../live/publish';
 import { NotFoundError, ValidationError } from '../errors';
 import { canEnterWorkspace, requirePermission, scopeFilter } from '../rbac';
 import { assertMayWorkIn } from '../rbac/workspaces';
@@ -56,6 +57,7 @@ import {
 	requireWorkflowForWorkspace
 } from '../stages/process';
 import { interactionScopeFilter } from './access';
+import { assertEditVersion, editorOf, firstEdit, nextEdit, type Editor } from './edit-version';
 import { getInteraction } from './read';
 
 /** Момент, который ставит база: часы приложения и базы могут расходиться. */
@@ -327,12 +329,16 @@ async function writeRelations(
  * Отдельной функцией по тому же образцу, что `startInteractionIn`: транзакцию
  * открывает тот, кто отвечает за операцию целиком, а заявка с сайта заводит
  * организацию, человека, его роль и взаимодействие одной операцией.
+ *
+ * Автора первой версии называет вызывающий: заявку принимают от имени
+ * ответственного за входящие, а запись завёл сайт.
  */
 export async function createInteractionIn(
 	ctx: ActorContext,
 	tx: Tx,
 	workspaceKey: string,
-	input: CreateInteractionDraft
+	input: CreateInteractionDraft,
+	editor: Editor
 ): Promise<string> {
 	requirePermission(ctx, 'interactions.write');
 
@@ -369,7 +375,8 @@ export async function createInteractionIn(
 			academicPeriodEnd: definition.academicPeriodEnd,
 			ownerUserId: definition.ownerUserId,
 			externalSource: definition.externalSource,
-			externalId: definition.externalId
+			externalId: definition.externalId,
+			...firstEdit(editor)
 		})
 		.returning({ id: interactions.id, workspaceId: interactions.workspaceId });
 
@@ -430,7 +437,7 @@ export async function createInteraction(
 		await assertOwnerExists(tx, ownerUserId);
 		await assertMayWorkIn(tx, ownerUserId, workspace);
 
-		return createInteractionIn(ctx, tx, workspaceKey, input);
+		return createInteractionIn(ctx, tx, workspaceKey, input, editorOf(ctx));
 	});
 
 	return getInteraction(ctx, interactionId);
@@ -506,6 +513,11 @@ export async function updateInteraction(
 		if (before === undefined) {
 			throw new NotFoundError('Взаимодействие не найдено');
 		}
+
+		// Версия — под блокировкой и до первой записи. Прочитанное транспортом
+		// до блокировки (стороны, договор, которые форма плана везёт как есть)
+		// могло устареть; совпавшая версия значит, что не устарело ничего.
+		await assertEditVersion(tx, before, definition.editVersion);
 
 		await assertPartiesAllowed(ctx, tx, definition.parties);
 		await assertContractAllowed(tx, definition);
@@ -635,6 +647,10 @@ export async function updateInteraction(
 				ownerUserId: definition.ownerUserId,
 				externalSource: definition.externalSource,
 				externalId: definition.externalId,
+				// Правка без изменений тоже сдвигает версию: стороны, их роли,
+				// контакты и площадки переписываются целиком, и доказывать, что
+				// ничего не поменялось, дороже, чем попросить соседа перечитать.
+				...nextEdit(interactions.editVersion, editorOf(ctx)),
 				lastActivityAt: now,
 				updatedAt: now
 			})
@@ -698,6 +714,8 @@ export async function updateInteraction(
 				tx
 			);
 		}
+
+		publishAfterCommit(tx, definition.id, { type: 'interaction.changed' });
 	});
 
 	return getInteraction(ctx, definition.id);

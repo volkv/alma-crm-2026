@@ -20,6 +20,11 @@
  * в запросе не несут — пауза и её снятие, отметка чек-листа, результат и
  * подтверждение, — сверяют его вокруг блокировки: публикация, прошедшая, пока
  * команда ждала, получает тот же отказ теми же словами.
+ *
+ * Эти же команды и помеха несут запись стадии, открытую у человека в форме
+ * (`stageEntryId`), и сверяют её с открытой под блокировкой: результат,
+ * набранный на прежней стадии, не ложится в новую, даже если это возврат на ту
+ * же самую стадию.
  */
 import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type {
@@ -73,12 +78,14 @@ import {
 } from '../db/schema';
 import { assertMayWorkIn } from '../rbac/workspaces';
 import { withTransaction, type Tx } from '../db/transaction';
+import { publishAfterCommit } from '../live/publish';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
 import { readDocumentMark } from '../documents/evidence';
 import { groupCountsForStage, readLmsEvidence } from '../integrations/exchange/evidence';
 import { enqueueApplicationStatus } from '../integrations/exchange/outbox';
 import { can, requirePermission } from '../rbac';
 import { interactionScopeFilter } from '../interactions/access';
+import { nextEdit } from '../interactions/edit-version';
 import { firstStage, requireActiveRevisionForWorkspace, stageSnapshot } from './process';
 import {
 	evaluateTransition,
@@ -204,6 +211,31 @@ async function readOpenEntryRow(
 		.limit(1);
 
 	return row ?? null;
+}
+
+/**
+ * Отказ команде, отданной по записи стадии, которой уже нет. Введённое остаётся
+ * в форме: теряется только нажатие кнопки.
+ */
+const STAGE_CHANGED = 'Стадия уже сменилась — обновите карточку, ваш ввод сохранён';
+
+/**
+ * Открытая запись стадии — ровно та, что была открыта у человека в форме.
+ * Читается под блокировкой строки взаимодействия: переход коллеги, прошедший
+ * раньше, уже закрыл прежнюю запись.
+ */
+async function requireExpectedEntry(
+	tx: Tx,
+	interactionId: string,
+	stageEntryId: string
+): Promise<typeof stageEntries.$inferSelect> {
+	const entry = await requireOpenEntry(tx, interactionId);
+
+	if (entry.id !== stageEntryId) {
+		throw new ConflictError(STAGE_CHANGED);
+	}
+
+	return entry;
 }
 
 /** Та же запись, но её отсутствие — отказ: команда обращена к текущей стадии. */
@@ -618,6 +650,7 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 			.returning({ id: stageEntries.id });
 
 		await touchInteraction(tx, input.interactionId);
+		publishAfterCommit(tx, input.interactionId, { type: 'interaction.changed' });
 
 		await recordAuditEvent(
 			ctx,
@@ -701,11 +734,7 @@ export async function pauseStage(ctx: ActorContext, input: PauseStageInput): Pro
 
 	await withTransaction(ctx, async (tx) => {
 		await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
-		const entry = await requireOpenEntry(tx, input.interactionId);
-
-		if (entry.stageId !== input.fromStageId) {
-			throw new ConflictError('Взаимодействие уже на другой стадии');
-		}
+		const entry = await requireExpectedEntry(tx, input.interactionId, input.stageEntryId);
 
 		if (await hasOpenPause(tx, entry.id)) {
 			throw new ConflictError('Стадия уже на паузе');
@@ -734,6 +763,7 @@ export async function pauseStage(ctx: ActorContext, input: PauseStageInput): Pro
 			.where(eq(stageEntries.id, entry.id));
 
 		await touchInteraction(tx, input.interactionId);
+		publishAfterCommit(tx, input.interactionId, { type: 'interaction.changed' });
 
 		await recordAuditEvent(
 			ctx,
@@ -755,11 +785,7 @@ export async function resumeStage(ctx: ActorContext, input: ResumeStageInput): P
 
 	await withTransaction(ctx, async (tx) => {
 		await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
-		const entry = await requireOpenEntry(tx, input.interactionId);
-
-		if (entry.stageId !== input.fromStageId) {
-			throw new ConflictError('Взаимодействие уже на другой стадии');
-		}
+		const entry = await requireExpectedEntry(tx, input.interactionId, input.stageEntryId);
 
 		const [pause] = await tx
 			.update(stagePauses)
@@ -777,6 +803,7 @@ export async function resumeStage(ctx: ActorContext, input: ResumeStageInput): P
 			.where(eq(stageEntries.id, entry.id));
 
 		await touchInteraction(tx, input.interactionId);
+		publishAfterCommit(tx, input.interactionId, { type: 'interaction.changed' });
 
 		await recordAuditEvent(
 			ctx,
@@ -802,7 +829,7 @@ export async function setChecklistItem(
 
 	await withTransaction(ctx, async (tx) => {
 		await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
-		const entry = await requireOpenEntry(tx, input.interactionId);
+		const entry = await requireExpectedEntry(tx, input.interactionId, input.stageEntryId);
 
 		// Пункт берётся из слепка стадии: чек-лист, который можно дополнить из
 		// браузера произвольным ключом, ничего не гарантирует.
@@ -819,6 +846,7 @@ export async function setChecklistItem(
 			.where(eq(stageEntries.id, entry.id));
 
 		await touchInteraction(tx, input.interactionId);
+		publishAfterCommit(tx, input.interactionId, { type: 'interaction.changed' });
 
 		await recordAuditEvent(
 			ctx,
@@ -838,7 +866,7 @@ export async function setStageResult(ctx: ActorContext, input: SetStageResultInp
 
 	await withTransaction(ctx, async (tx) => {
 		await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
-		const entry = await requireOpenEntry(tx, input.interactionId);
+		const entry = await requireExpectedEntry(tx, input.interactionId, input.stageEntryId);
 
 		await tx
 			.update(stageEntries)
@@ -846,6 +874,7 @@ export async function setStageResult(ctx: ActorContext, input: SetStageResultInp
 			.where(eq(stageEntries.id, entry.id));
 
 		await touchInteraction(tx, input.interactionId);
+		publishAfterCommit(tx, input.interactionId, { type: 'interaction.changed' });
 
 		await recordAuditEvent(
 			ctx,
@@ -874,11 +903,7 @@ export async function confirmStage(ctx: ActorContext, input: ConfirmStageInput):
 
 	await withTransaction(ctx, async (tx) => {
 		await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
-		const entry = await requireOpenEntry(tx, input.interactionId);
-
-		if (entry.stageId !== input.fromStageId) {
-			throw new ConflictError('Взаимодействие уже на другой стадии');
-		}
+		const entry = await requireExpectedEntry(tx, input.interactionId, input.stageEntryId);
 
 		let confirmation: StageConfirmation;
 		let documentId: string | null = null;
@@ -924,6 +949,7 @@ export async function confirmStage(ctx: ActorContext, input: ConfirmStageInput):
 			.where(eq(stageEntries.id, entry.id));
 
 		await touchInteraction(tx, input.interactionId);
+		publishAfterCommit(tx, input.interactionId, { type: 'interaction.changed' });
 
 		await recordAuditEvent(
 			ctx,
@@ -1183,14 +1209,15 @@ export async function raiseBlocker(
 	return withTransaction(ctx, async (tx) => {
 		// Помеха принадлежит взаимодействию, а не стадии: номер редакции здесь не
 		// сверяется — публикация, прошедшая рядом, поводом отказать не является.
+		// Запись стадии сверяется: помеха о прежней стадии на новой — ложь.
 		await lockInteraction(ctx, tx, input.interactionId);
-		const entry = await readOpenEntryRow(tx, input.interactionId);
+		const entry = await requireExpectedEntry(tx, input.interactionId, input.stageEntryId);
 
 		const [blocker] = await tx
 			.insert(blockers)
 			.values({
 				interactionId: input.interactionId,
-				stageEntryId: entry?.id ?? null,
+				stageEntryId: entry.id,
 				reasonCode: input.reasonCode,
 				description: input.description,
 				blocksTransition: input.blocksTransition,
@@ -1200,6 +1227,7 @@ export async function raiseBlocker(
 			.returning({ id: blockers.id });
 
 		await touchInteraction(tx, input.interactionId);
+		publishAfterCommit(tx, input.interactionId, { type: 'interaction.changed' });
 
 		await recordAuditEvent(
 			ctx,
@@ -1252,6 +1280,7 @@ export async function resolveBlocker(ctx: ActorContext, input: ResolveBlockerInp
 		}
 
 		await touchInteraction(tx, existing.interactionId);
+		publishAfterCommit(tx, existing.interactionId, { type: 'interaction.changed' });
 
 		await recordAuditEvent(
 			ctx,
@@ -1311,8 +1340,16 @@ export async function setResponsible(
 
 			await executor
 				.update(interactions)
-				.set({ ownerUserId: input.userId, lastActivityAt: now, updatedAt: now })
+				.set({
+					ownerUserId: input.userId,
+					// Ответственный — поле плана: открытая форма, отправленная после
+					// передачи, получит отказ, а не вернёт прежнего владельца.
+					...nextEdit(interactions.editVersion, { via: 'user', userId: authorId }),
+					lastActivityAt: now,
+					updatedAt: now
+				})
 				.where(eq(interactions.id, interactionId));
+			publishAfterCommit(executor, interactionId, { type: 'interaction.changed' });
 
 			const entry = await readOpenEntryRow(executor, interactionId);
 
@@ -1388,6 +1425,10 @@ export async function addComment(
 			.returning({ id: comments.id });
 
 		await touchInteraction(executor, input.interactionId);
+		publishAfterCommit(executor, input.interactionId, {
+			type: 'comment.added',
+			commentId: comment.id
+		});
 
 		await recordAuditEvent(
 			ctx,
@@ -1626,6 +1667,7 @@ export async function completeInteraction(
 			.update(interactions)
 			.set({ status: 'completed', lastActivityAt: now, updatedAt: now })
 			.where(eq(interactions.id, input.interactionId));
+		publishAfterCommit(tx, input.interactionId, { type: 'interaction.changed' });
 
 		await recordAuditEvent(
 			ctx,
@@ -1668,6 +1710,7 @@ export async function cancelInteraction(
 			.update(interactions)
 			.set({ status: 'cancelled', lastActivityAt: now, updatedAt: now })
 			.where(eq(interactions.id, input.interactionId));
+		publishAfterCommit(tx, input.interactionId, { type: 'interaction.changed' });
 
 		await recordAuditEvent(
 			ctx,

@@ -82,6 +82,9 @@ const interaction = {
 /** Номер редакции процесса несёт каждая команда перехода. */
 const stageCommand = { interactionId: ID, fromStageId: OTHER_ID, revision: 1 };
 
+/** Команды по текущей стадии несут запись стадии, открытую в форме. */
+const entryCommand = { interactionId: ID, stageEntryId: OTHER_ID };
+
 const cases: Case[] = [
 	{
 		name: 'organizationList',
@@ -288,8 +291,16 @@ const cases: Case[] = [
 	{
 		name: 'updateInteraction',
 		schema: updateInteractionSchema,
-		valid: { ...interaction, id: ID, reason: 'Сдвинули сроки по просьбе вуза' },
-		invalid: interaction
+		valid: { ...interaction, id: ID, editVersion: 3, reason: 'Сдвинули сроки по просьбе вуза' },
+		invalid: { ...interaction, editVersion: 3 }
+	},
+	{
+		// Форма без версии не знает, не затрёт ли она чужую правку: отказ, а не
+		// разрешение.
+		name: 'updateInteraction: версия обязательна',
+		schema: updateInteractionSchema,
+		valid: { ...interaction, id: ID, editVersion: 1 },
+		invalid: { ...interaction, id: ID }
 	},
 	{
 		name: 'interactionList',
@@ -318,27 +329,27 @@ const cases: Case[] = [
 	{
 		name: 'pauseStage',
 		schema: pauseStageSchema,
-		valid: { ...stageCommand, reason: 'waiting_counterparty', note: 'Ждём подписи ректора' },
-		invalid: { ...stageCommand, reason: 'holidays', note: 'Ждём' }
+		valid: { ...entryCommand, reason: 'waiting_counterparty', note: 'Ждём подписи ректора' },
+		invalid: { ...entryCommand, reason: 'holidays', note: 'Ждём' }
 	},
 	{
 		name: 'resumeStage',
 		schema: resumeStageSchema,
-		valid: { ...stageCommand, note: 'Документы получены' },
-		invalid: { ...stageCommand, interactionId: 'не идентификатор' }
+		valid: { ...entryCommand, note: 'Документы получены' },
+		invalid: { interactionId: ID, note: 'Документы получены' }
 	},
 	{
 		name: 'confirmStage',
 		schema: confirmStageSchema,
-		valid: { ...stageCommand, confirmation: { kind: 'mark' } },
+		valid: { ...entryCommand, confirmation: { kind: 'mark' } },
 		// Автора и время отметки проставляет сервер, а не вызывающий.
-		invalid: { ...stageCommand, confirmation: { kind: 'file' } }
+		invalid: { ...entryCommand, confirmation: { kind: 'file' } }
 	},
 	{
 		name: 'raiseBlocker',
 		schema: raiseBlockerSchema,
-		valid: { interactionId: ID, reasonCode: 'no-contact', description: 'Не отвечает координатор' },
-		invalid: { interactionId: ID, reasonCode: 'no-contact' }
+		valid: { ...entryCommand, reasonCode: 'no-contact', description: 'Не отвечает координатор' },
+		invalid: { ...entryCommand, reasonCode: 'no-contact' }
 	},
 	{
 		name: 'resolveBlocker',

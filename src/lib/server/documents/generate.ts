@@ -21,6 +21,7 @@ import { getConfig } from '../config';
 import { getDb } from '../db';
 import { documentContractItems, documents, interactionContractItems } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
+import { publishAfterCommit } from '../live/publish';
 import { ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
 import { assertTemplateOffered } from '../stages/card';
@@ -303,6 +304,7 @@ export async function generateDocument(
 			if (interactionId !== null) {
 				await assertItemsChosen(tx, interactionId, contractItemIds);
 				await touchInteraction(tx, interactionId);
+				publishAfterCommit(tx, interactionId, { type: 'interaction.changed' });
 			}
 
 			for (const blob of staged) {

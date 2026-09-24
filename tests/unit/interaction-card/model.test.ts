@@ -168,6 +168,7 @@ function source(overrides: Partial<CardSource> = {}): CardSource {
 			externalId: null,
 			createdAt: daysAgo(160),
 			updatedAt: daysAgo(2),
+			editVersion: 1,
 			parties: [],
 			programs: [],
 			products: [],

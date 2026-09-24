@@ -148,9 +148,28 @@ export async function closeRequiredChecklist(
 
 	for (const item of current.snapshot.checklist) {
 		if (item.required) {
-			await setChecklistItem(ctx, { interactionId, key: item.key, done: true });
+			await setChecklistItem(ctx, {
+				interactionId,
+				stageEntryId: current.id,
+				key: item.key,
+				done: true
+			});
 		}
 	}
+}
+
+/**
+ * Открытая запись стадии — её несут команды по текущей стадии, как форма
+ * карточки несёт запись, которая была открыта у человека.
+ */
+export async function openEntryId(ctx: ActorContext, interactionId: string): Promise<string> {
+	const status = await getInteractionStatus(ctx, interactionId);
+
+	if (status.current === null) {
+		throw new Error('Взаимодействие не стоит ни на одной стадии');
+	}
+
+	return status.current.id;
 }
 
 /**
@@ -324,6 +343,7 @@ export async function advanceTo(
 		if (current.snapshot.requiresResult) {
 			await setStageResult(ctx, {
 				interactionId,
+				stageEntryId: current.id,
 				resultText: `Результат стадии «${current.snapshot.name}»`
 			});
 		}
@@ -348,7 +368,7 @@ export async function advanceTo(
 		) {
 			await confirmStage(ctx, {
 				interactionId,
-				fromStageId: current.stageId,
+				stageEntryId: current.id,
 				confirmation: { kind: 'mark' }
 			});
 		}

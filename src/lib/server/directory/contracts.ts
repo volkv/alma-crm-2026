@@ -47,6 +47,13 @@ import { contractItems, contracts, products } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { NotFoundError, ValidationError } from '../errors';
 import { visibleOrganizationFilter } from '../interactions/access';
+import {
+	assertEditVersion,
+	editorOf,
+	firstEdit,
+	nextEdit,
+	type Editor
+} from '../interactions/edit-version';
 import { requirePermission, scopeFilter } from '../rbac';
 import { withUniqueConflicts } from './conflicts';
 import { getOrganization } from './read';
@@ -270,7 +277,8 @@ export async function insertContract(
 			number,
 			signedOn: next.signedOn,
 			validUntil: next.validUntil,
-			status
+			status,
+			...firstEdit(editorOf(ctx))
 		})
 		.returning({
 			id: contracts.id,
@@ -305,8 +313,53 @@ export async function updateContract(
 
 	await tx
 		.update(contracts)
-		.set({ ...next, updatedAt: sql`now()` })
+		.set({ ...next, ...nextEdit(contracts.editVersion, editorOf(ctx)), updatedAt: sql`now()` })
 		.where(eq(contracts.id, id));
+}
+
+/**
+ * Позиции договоров поменялись — сдвигается версия их договоров.
+ *
+ * Версия одна на договор с позициями: блок карточки правит их вместе, и
+ * открытая форма договора должна узнать о смене статуса передачи так же, как
+ * о смене сроков. Договоры блокируются по порядку идентификаторов и **до**
+ * позиций — тем же порядком, что у формы договора: иначе запись позиций и
+ * сохранение договора, отданные навстречу, ждали бы друг друга.
+ */
+export async function bumpContractsOfItems(
+	tx: Tx,
+	itemIds: readonly string[],
+	editor: Editor
+): Promise<void> {
+	if (itemIds.length === 0) {
+		return;
+	}
+
+	const owners = await tx
+		.selectDistinct({ contractId: contractItems.contractId })
+		.from(contractItems)
+		.where(inArray(contractItems.id, [...itemIds]));
+
+	await bumpContracts(
+		tx,
+		owners.map((row) => row.contractId),
+		editor
+	);
+}
+
+async function bumpContracts(
+	tx: Tx,
+	contractIds: readonly string[],
+	editor: Editor
+): Promise<void> {
+	const ids = [...new Set(contractIds)].sort();
+
+	for (const id of ids) {
+		await tx
+			.update(contracts)
+			.set({ ...nextEdit(contracts.editVersion, editor), updatedAt: sql`now()` })
+			.where(eq(contracts.id, id));
+	}
 }
 
 export async function insertContractItem(
@@ -317,6 +370,8 @@ export async function insertContractItem(
 	requirePermission(ctx, 'organizations.write');
 
 	const { next } = mergeContractItem(null, draft);
+
+	await bumpContracts(tx, [draft.contractId], editorOf(ctx));
 
 	const [row] = await tx
 		.insert(contractItems)
@@ -338,6 +393,8 @@ export async function updateContractItem(
 	next: ContractItemMerge['next']
 ): Promise<void> {
 	requirePermission(ctx, 'organizations.write');
+
+	await bumpContractsOfItems(tx, [id], editorOf(ctx));
 
 	await tx
 		.update(contractItems)
@@ -398,6 +455,7 @@ async function readContracts(where: SQL, limit?: number, offset?: number): Promi
 			signedOn: contracts.signedOn,
 			validUntil: contracts.validUntil,
 			status: contracts.status,
+			editVersion: contracts.editVersion,
 			createdAt: contracts.createdAt,
 			updatedAt: contracts.updatedAt
 		})
@@ -493,6 +551,38 @@ export async function listContracts(
 }
 
 /**
+ * Блокировка строки договора и сверка версии, с которой открыта форма. Отказ —
+ * до первой записи; `null` у правки существующего договора сюда не доходит —
+ * его отвергает схема команды.
+ */
+async function lockContractVersion(
+	tx: Tx,
+	contractId: string,
+	expected: number | null
+): Promise<void> {
+	if (expected === null) {
+		throw new ValidationError('Форма не знает версию договора', ['Обновите карточку']);
+	}
+
+	const [row] = await tx
+		.select({
+			editVersion: contracts.editVersion,
+			editedBy: contracts.editedBy,
+			editedVia: contracts.editedVia,
+			editedAt: contracts.editedAt
+		})
+		.from(contracts)
+		.where(eq(contracts.id, contractId))
+		.for('update');
+
+	if (row === undefined) {
+		throw new NotFoundError('Договор не найден');
+	}
+
+	await assertEditVersion(tx, row, expected);
+}
+
+/**
  * Договор контрагента: заводится или правится целиком.
  *
  * Команда одна на оба случая, потому что форма присылает запись целиком:
@@ -551,6 +641,8 @@ export async function saveContract(
 
 				return created.id;
 			}
+
+			await lockContractVersion(tx, input.id, input.editVersion);
 
 			await updateContract(ctx, tx, input.id, {
 				number: input.number,
@@ -623,6 +715,10 @@ export async function saveContractItem(
 
 	await withUniqueConflicts(() =>
 		withTransaction(ctx, async (tx) => {
+			// Позицию правят в блоке договора, и версия у них общая: новая позиция
+			// или правка старой после чужой правки договора — тот же отказ.
+			await lockContractVersion(tx, input.contractId, input.editVersion);
+
 			if (existing === null) {
 				const created = await insertContractItem(ctx, tx, {
 					contractId: input.contractId,

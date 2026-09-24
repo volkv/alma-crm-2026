@@ -66,8 +66,11 @@ import {
 	users
 } from '../../db/schema';
 import { withTransaction, type Tx } from '../../db/transaction';
+import { publishAfterCommit } from '../../live/publish';
+import { bumpContractsOfItems } from '../../directory/contracts';
 import { createAffiliation, createOrganization, createPerson } from '../../directory/write';
 import { AppError, ConflictError, ForbiddenError, ValidationError } from '../../errors';
+import { nextEdit } from '../../interactions/edit-version';
 import { createInteractionIn } from '../../interactions/write';
 import { resolveIntakeWorkspace } from '../../stages/process';
 import { hashEmail, hashPhone, phoneColumns } from '../../people/pii';
@@ -744,15 +747,16 @@ async function applyTransferStatus(
 		return false;
 	}
 
+	const itemIds = rows.map((row) => row.id);
+
+	// Статус передачи — поле позиции договора: сдвигается версия договора, и
+	// раньше позиций, в том же порядке, что у формы договора.
+	await bumpContractsOfItems(tx, itemIds, { via: 'site' });
+
 	await tx
 		.update(contractItems)
 		.set({ transferStatus, updatedAt: sql`now()` })
-		.where(
-			inArray(
-				contractItems.id,
-				rows.map((row) => row.id)
-			)
-		);
+		.where(inArray(contractItems.id, itemIds));
 
 	return true;
 }
@@ -967,27 +971,36 @@ async function updateExisting(
 			.where(eq(people.id, contact.personId));
 	}
 
+	// Открытые карточки дела увидят дополненный состав.
+	publishAfterCommit(tx, existing.id, { type: 'interaction.changed' });
+
 	const catalogue = await resolveCatalogue(tx, data);
 
-	if (catalogue.programIds.length > 0) {
-		await tx
-			.insert(interactionPrograms)
-			.values(
-				catalogue.programIds.map((programId) => ({
-					interactionId: existing.id,
-					programId,
-					programVersionId: null
-				}))
-			)
-			.onConflictDoNothing();
-	}
+	const addedPrograms =
+		catalogue.programIds.length === 0
+			? []
+			: await tx
+					.insert(interactionPrograms)
+					.values(
+						catalogue.programIds.map((programId) => ({
+							interactionId: existing.id,
+							programId,
+							programVersionId: null
+						}))
+					)
+					.onConflictDoNothing()
+					.returning({ programId: interactionPrograms.programId });
 
-	if (catalogue.productIds.length > 0) {
-		await tx
-			.insert(interactionProducts)
-			.values(catalogue.productIds.map((productId) => ({ interactionId: existing.id, productId })))
-			.onConflictDoNothing();
-	}
+	const addedProducts =
+		catalogue.productIds.length === 0
+			? []
+			: await tx
+					.insert(interactionProducts)
+					.values(
+						catalogue.productIds.map((productId) => ({ interactionId: existing.id, productId }))
+					)
+					.onConflictDoNothing()
+					.returning({ productId: interactionProducts.productId });
 
 	const transferStatusApplied = await applyTransferStatus(
 		tx,
@@ -996,9 +1009,24 @@ async function updateExisting(
 		data.transferStatus
 	);
 
+	// Состав дополнился — это правка защищённых полей, и открытая у сотрудника
+	// форма плана или договора, отправленная после неё, получит отказ, а не
+	// вернёт прежний состав. Повтор снимка, который ничего не добавил, версию не
+	// трогает: иначе каждое сообщение сайта отклоняло бы чужое сохранение.
+	const compositionChanged = addedPrograms.length > 0 || addedProducts.length > 0;
+
 	await tx
 		.update(interactions)
-		.set({ externalRevision: data.revision, updatedAt: sql`now()` })
+		.set({
+			externalRevision: data.revision,
+			updatedAt: sql`now()`,
+			...(compositionChanged
+				? {
+						...nextEdit(interactions.editVersion, { via: 'site' }),
+						lastActivityAt: sql`clock_timestamp()`
+					}
+				: {})
+		})
 		.where(eq(interactions.id, existing.id));
 
 	const comment = intakeComment(data, catalogue.unknown, transferStatusApplied);
@@ -1081,27 +1109,33 @@ async function createFromApplication(
 	// `createInteractionIn`.
 	const workspace = await resolveIntakeWorkspace(tx, data.applicant.kind);
 
-	const interactionId = await createInteractionIn(ctx, tx, workspace.key, {
-		title: interactionTitle(applicantName(data), data.interest),
-		agreementPeriodStart: null,
-		agreementPeriodEnd: null,
-		academicPeriodStart: null,
-		academicPeriodEnd: null,
-		ownerUserId,
-		parties: [
-			{
-				organizationId: counterparty.organizationId,
-				partyRole: PARTY_ROLE_BY_KIND[data.applicant.kind],
-				isPrimary: true,
-				contactAffiliationId: affiliationId,
-				siteIds: []
-			}
-		],
-		programs: catalogue.programIds.map((programId) => ({ programId, programVersionId: null })),
-		productIds: catalogue.productIds,
-		externalSource: source,
-		externalId: data.externalId
-	});
+	const interactionId = await createInteractionIn(
+		ctx,
+		tx,
+		workspace.key,
+		{
+			title: interactionTitle(applicantName(data), data.interest),
+			agreementPeriodStart: null,
+			agreementPeriodEnd: null,
+			academicPeriodStart: null,
+			academicPeriodEnd: null,
+			ownerUserId,
+			parties: [
+				{
+					organizationId: counterparty.organizationId,
+					partyRole: PARTY_ROLE_BY_KIND[data.applicant.kind],
+					isPrimary: true,
+					contactAffiliationId: affiliationId,
+					siteIds: []
+				}
+			],
+			programs: catalogue.programIds.map((programId) => ({ programId, programVersionId: null })),
+			productIds: catalogue.productIds,
+			externalSource: source,
+			externalId: data.externalId
+		},
+		{ via: 'site' }
+	);
 
 	await tx
 		.update(interactions)

@@ -172,6 +172,17 @@ function field(data: FormData, key: string): string | undefined {
 	return typeof value === 'string' && value.trim() !== '' ? value.trim() : undefined;
 }
 
+/**
+ * Версия записи из скрытого поля формы: число или `null`, если поля нет. Без
+ * версии правку существующего договора отвергает схема — отсутствие версии не
+ * разрешение перезаписать чужую правку.
+ */
+function editVersion(data: FormData): number | null {
+	const value = field(data, 'editVersion');
+
+	return value === undefined ? null : Number(value);
+}
+
 export const actions: Actions = {
 	archive: async (event) => {
 		try {
@@ -263,7 +274,8 @@ export const actions: Actions = {
 			number: field(data, 'number'),
 			signedOn: field(data, 'signedOn'),
 			validUntil: field(data, 'validUntil'),
-			status: field(data, 'status')
+			status: field(data, 'status'),
+			editVersion: editVersion(data)
 		});
 
 		if (!parsed.success) {
@@ -293,7 +305,8 @@ export const actions: Actions = {
 			productId: field(data, 'productId'),
 			licenseSignedAt: field(data, 'licenseSignedAt'),
 			licenseUntil: field(data, 'licenseUntil'),
-			transferStatus: field(data, 'transferStatus')
+			transferStatus: field(data, 'transferStatus'),
+			editVersion: editVersion(data)
 		});
 
 		if (!parsed.success) {

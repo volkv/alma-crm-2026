@@ -3132,10 +3132,12 @@ async function closeFinalStage(
 	interactionId: string,
 	stage: StageView
 ): Promise<void> {
+	const { id: stageEntryId } = await readOpenEntry(getDb(), interactionId);
+
 	if (!stage.requiresLmsData && stage.requiresConfirmation) {
 		await confirmStage(ctx, {
 			interactionId,
-			fromStageId: stage.id,
+			stageEntryId,
 			confirmation: { kind: 'mark' }
 		});
 	}
@@ -3147,7 +3149,7 @@ async function closeFinalStage(
 			throw new Error(`Для финальной стадии «${stage.key}» не описан результат`);
 		}
 
-		await setStageResult(ctx, { interactionId, resultText });
+		await setStageResult(ctx, { interactionId, stageEntryId, resultText });
 	}
 }
 
@@ -3175,7 +3177,7 @@ async function stepForward(
 	} else if (from.requiresConfirmation) {
 		await confirmStage(ctx, {
 			interactionId,
-			fromStageId: from.id,
+			stageEntryId: (await readOpenEntry(getDb(), interactionId)).id,
 			confirmation: { kind: 'mark' }
 		});
 	}
@@ -3379,7 +3381,12 @@ async function applyState(
 	if (seed.closeChecklist === true) {
 		for (const item of stage.checklist) {
 			if (item.required) {
-				await setChecklistItem(ctx, { interactionId, key: item.key, done: true });
+				await setChecklistItem(ctx, {
+					interactionId,
+					stageEntryId: entry.id,
+					key: item.key,
+					done: true
+				});
 			}
 		}
 	}
@@ -3387,6 +3394,7 @@ async function applyState(
 	if (seed.blocker !== undefined) {
 		await raiseBlocker(ctx, {
 			interactionId,
+			stageEntryId: entry.id,
 			reasonCode: seed.blocker.reasonCode,
 			description: seed.blocker.description,
 			blocksTransition: seed.blocker.blocksTransition,
@@ -3422,7 +3430,7 @@ async function applyState(
 	if (seed.pause !== undefined) {
 		await pauseStage(ctx, {
 			interactionId,
-			fromStageId: entry.stageId,
+			stageEntryId: entry.id,
 			reason: 'waiting_counterparty',
 			waitingPartyId: await readPrimaryPartyId(db, interactionId),
 			nextAction: seed.pause.nextAction,

@@ -293,6 +293,7 @@ describe('следы человека после обезличивания', ()
 			manager,
 			updateInteractionSchema.parse({
 				id: first.data.interactionId,
+				editVersion: 1,
 				title: 'Заявка на курс, физическое лицо',
 				ownerUserId: TEST_USER_IDS.manager,
 				reason: 'Название по правилам отдела',
