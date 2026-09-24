@@ -11,12 +11,18 @@
  *
  * На шаге вперёд задаётся шесть вопросов стадии: снята ли пауза, закрыты ли
  * обязательные пункты чек-листа, записан ли результат, есть ли подтверждение,
- * завершено ли обучение и стоит ли нужная отметка по документу дела. На
- * возврате и пропуске они не задаются намеренно: возврат — выход из тупика, и
- * требовать для него закрытый чек-лист значит запереть процесс там, где он
- * застрял.
+ * завершено ли обучение (и по группе ли нужного назначения, если стадия его
+ * сузила) и стоит ли нужная отметка по документу дела (и на документе ли
+ * нужного шаблона, если стадия его назвала). На возврате и пропуске они не
+ * задаются намеренно: возврат — выход из тупика, и требовать для него закрытый
+ * чек-лист значит запереть процесс там, где он застрял.
  */
-import { DOCUMENT_STATUS_FACT_LABELS, type DocumentMarkEvidence } from '$lib/contracts/documents';
+import {
+	DOCUMENT_STATUS_FACT_LABELS,
+	DOCUMENT_TEMPLATE_LABELS,
+	type DocumentMarkEvidence
+} from '$lib/contracts/documents';
+import { LEARNING_PURPOSE_LABELS } from '$lib/contracts/exchange';
 import type {
 	ChecklistState,
 	StageConfirmation,
@@ -69,8 +75,11 @@ export type TransitionVerdict = {
 const knownPermissions = new Set<string>(PERMISSION_KEYS);
 
 /**
- * Чего не хватает стадии с данными обучения. Одна фраза на продукт: её видят и
- * в отказе перехода, и в отказе завершения, и в карточке.
+ * Чего не хватает стадии с данными обучения. Общая часть фразы — её видят и в
+ * отказе перехода, и в отказе завершения, и в карточке. Отказ перехода
+ * приписывает к ней, чья группа считается, если стадия сузила назначение
+ * (`lmsGroupPurposes`); отказ завершения (`commands.ts`, `missingStageEvidence`)
+ * и карточка называют его отдельно от этой константы.
  */
 export const LMS_NOT_COMPLETED =
 	'Обучение не завершено: нет итогового результата из системы обучения (завершившие и дата окончания) или отметки «Обучение завершено»';
@@ -143,9 +152,19 @@ export function evaluateTransition(
 		// завершения — итоговый результат нужной группы или отметка сотрудника;
 		// промежуточный результат сюда не попадает никогда. Признак включают там,
 		// где обмен двусторонний; без него требование, которое нечем выполнить,
-		// заперло бы процесс.
+		// заперло бы процесс. Стадия вправе сузить, итог каких групп считается
+		// (`lmsGroupPurposes`); отказ называет назначение, чтобы не заставлять
+		// искать его в настройке процесса.
 		if (state.snapshot.requiresLmsData && state.lmsEvidence === null) {
-			reasons.push(LMS_NOT_COMPLETED);
+			const purposes = state.snapshot.lmsGroupPurposes;
+
+			reasons.push(
+				purposes === null
+					? LMS_NOT_COMPLETED
+					: `${LMS_NOT_COMPLETED}; засчитывается только группа с назначением ${purposes
+							.map((purpose) => `«${LEARNING_PURPOSE_LABELS[purpose]}»`)
+							.join(' или ')}`
+			);
 		}
 
 		// Шестой вопрос: отметка по документу дела. Её ставит не движок, а тот,
@@ -158,8 +177,14 @@ export function evaluateTransition(
 			const evidence = state.documentMarkEvidence;
 
 			if (evidence === null || evidence.mark !== requiredMark) {
+				const requiredTemplate = state.snapshot.requiresDocumentTemplate;
+				const document =
+					requiredTemplate === null
+						? 'документа'
+						: `документа «${DOCUMENT_TEMPLATE_LABELS[requiredTemplate]}»`;
+
 				reasons.push(
-					`По стадии нет документа с отметкой «${DOCUMENT_STATUS_FACT_LABELS[requiredMark]}»`
+					`По стадии нет ${document} с отметкой «${DOCUMENT_STATUS_FACT_LABELS[requiredMark]}»`
 				);
 			}
 		}

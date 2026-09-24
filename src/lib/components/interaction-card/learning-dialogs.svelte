@@ -535,7 +535,7 @@
 					<input type="hidden" name="learningGroupId" value={rosterGroup.id} />
 					<Button
 						type="submit"
-						disabled={!exchange.canSend || rosterGroup.learnerCount === 0}
+						disabled={!exchange.canSend}
 						title={exchange.canSend ? undefined : 'Нет права на отправку в систему обучения'}
 					>
 						Передать список в LMS

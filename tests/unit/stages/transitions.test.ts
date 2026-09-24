@@ -231,6 +231,16 @@ describe('evaluateTransition', () => {
 		).toEqual({ allowed: true, reasons: [] });
 	});
 
+	it('называет назначение группы, если стадия сузила, чей итог засчитывается', () => {
+		const requiring = state({
+			snapshot: snapshot({ requiresLmsData: true, lmsGroupPurposes: ['students'] })
+		});
+
+		expect(evaluateTransition(worker, requiring, transition()).reasons).toContain(
+			`${LMS_NOT_COMPLETED}; засчитывается только группа с назначением «Обучение студентов»`
+		);
+	});
+
 	it('требует отметку по документу там, где стадия её требует', () => {
 		const requiring = state({ snapshot: snapshot({ requiresDocumentMark: 'approved' }) });
 		const evidence = {
@@ -281,6 +291,19 @@ describe('evaluateTransition', () => {
 				reason: 'Вуз отозвал подписанный экземпляр'
 			})
 		).toEqual({ allowed: true, reasons: [] });
+	});
+
+	it('называет нужный шаблон документа, если стадия его сузила', () => {
+		const requiring = state({
+			snapshot: snapshot({
+				requiresDocumentMark: 'approved',
+				requiresDocumentTemplate: 'handover_act'
+			})
+		});
+
+		expect(evaluateTransition(worker, requiring, transition()).reasons).toContain(
+			'По стадии нет документа «Акт передачи материалов и лицензий» с отметкой «Утверждён»'
+		);
 	});
 
 	it('требует причину, когда команда уже собрана, и молчит про неё в сводке', () => {

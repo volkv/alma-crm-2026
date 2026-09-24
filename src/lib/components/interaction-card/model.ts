@@ -1,6 +1,7 @@
 import { ORGANIZATION_KIND_LABELS } from '$lib/components/directory/labels';
 import {
 	DOCUMENT_STATUS_FACT_LABELS,
+	DOCUMENT_TEMPLATE_LABELS,
 	documentKindLabel,
 	type DocumentStatusFact,
 	type DocumentTemplateKey
@@ -8,6 +9,7 @@ import {
 import type { OrganizationKind, OrganizationView } from '$lib/contracts/directory';
 import {
 	EXCHANGE_STATE_LABELS,
+	LEARNING_PURPOSE_LABELS,
 	lmsEvidenceSchema,
 	type LearningGroupLearnerView,
 	type LearningGroupView
@@ -496,6 +498,13 @@ export function buildRequirements(entry: StageEntryView, exchange: CardExchange)
 		const unfinished = counted.filter((group) => group.trainingState !== 'completed');
 		const noStream = counted.length === 0;
 		const canMark = !noStream && exchange.canComplete && unfinished.length > 0;
+		const purposes = snapshot.lmsGroupPurposes;
+		const purposeHint =
+			purposes === null
+				? ''
+				: ` Засчитывается только группа с назначением ${purposes
+						.map((purpose) => `«${LEARNING_PURPOSE_LABELS[purpose]}»`)
+						.join(' или ')}.`;
 
 		requirements.push({
 			key: 'lms',
@@ -511,8 +520,8 @@ export function buildRequirements(entry: StageEntryView, exchange: CardExchange)
 					? { kind: 'complete-group', groupId: unfinished.length === 1 ? unfinished[0].id : null }
 					: null,
 			hint: noStream
-				? 'Сначала заявите поток в систему обучения — итог придёт оттуда.'
-				: 'Итог придёт из системы обучения сам. Если данных не будет, отметьте завершение с объяснением.',
+				? `Сначала заявите поток в систему обучения — итог придёт оттуда.${purposeHint}`
+				: `Итог придёт из системы обучения сам. Если данных не будет, отметьте завершение с объяснением.${purposeHint}`,
 			doneNote: describeLmsEvidence(entry)
 		});
 	}
@@ -536,10 +545,14 @@ export function buildRequirements(entry: StageEntryView, exchange: CardExchange)
 
 	if (mark !== null) {
 		const evidence = entry.documentMarkEvidence?.mark === mark ? entry.documentMarkEvidence : null;
+		const template = snapshot.requiresDocumentTemplate;
 
 		requirements.push({
 			key: 'document-mark',
-			label: `Документ с отметкой «${DOCUMENT_STATUS_FACT_LABELS[mark]}»`,
+			label:
+				template === null
+					? `Документ с отметкой «${DOCUMENT_STATUS_FACT_LABELS[mark]}»`
+					: `«${DOCUMENT_TEMPLATE_LABELS[template]}» с отметкой «${DOCUMENT_STATUS_FACT_LABELS[mark]}»`,
 			done: evidence !== null,
 			required: true,
 			close: 'action',
