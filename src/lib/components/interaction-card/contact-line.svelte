@@ -7,6 +7,11 @@
 	 * Контактное лицо стороны: имя, должность и способы связи. Контакты
 	 * маскирует сервер по праву на персональные данные — здесь это сказано
 	 * словами, а не пустым местом.
+	 *
+	 * Почта и телефон — данные, которые читают и переписывают, поэтому они
+	 * набраны основным цветом со значком, а ссылкой их выдаёт подчёркивание
+	 * при наведении: фиолетовая пара строк спорила с настоящими ссылками
+	 * карточки.
 	 */
 	let { party }: { party: InteractionPartyView } = $props();
 
@@ -31,19 +36,19 @@
 		{:else}
 			{#if person.email}
 				<a
-					class="inline-flex w-fit max-w-full items-center gap-1.5 rounded-sm text-link focus-ring hover:text-link-hover hover:underline"
+					class="inline-flex w-fit max-w-full items-center gap-1.5 rounded-sm text-foreground underline-offset-2 focus-ring hover:underline"
 					href="mailto:{person.email}"
 				>
-					<MailIcon class="size-3.5 shrink-0" aria-hidden="true" />
+					<MailIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
 					<span class="truncate">{person.email}</span>
 				</a>
 			{/if}
 			{#if person.phone}
 				<a
-					class="inline-flex w-fit items-center gap-1.5 rounded-sm text-link focus-ring hover:text-link-hover hover:underline"
+					class="inline-flex w-fit items-center gap-1.5 rounded-sm text-foreground tabular-nums underline-offset-2 focus-ring hover:underline"
 					href="tel:{person.phone}"
 				>
-					<PhoneIcon class="size-3.5 shrink-0" aria-hidden="true" />
+					<PhoneIcon class="size-3.5 shrink-0 text-muted-foreground" aria-hidden="true" />
 					{person.phone}
 				</a>
 			{/if}

@@ -14,21 +14,27 @@ type StageLook = {
 	icon: LucideIcon;
 	/** Цвет значка в списке стадий. */
 	iconClass: string;
-	/** Отрезок полосы процесса. */
+	/**
+	 * Отрезок полосы процесса. Полоса говорит только «где мы»: пройденное —
+	 * тёмной нейтралью, текущая — цветом ссылки, впереди — светлой. Просрочка,
+	 * помеха и пауза названы словами рядом с полосой, а не цветом отрезка:
+	 * красный первый отрезок читался как «всё сломано» раньше, чем подпись.
+	 */
 	barClass: string;
 };
 
 /**
  * Как выглядит стадия в схеме процесса. Состояние считает сервер
- * (`buildProgress`); здесь только его вид: пройденные — зелёные, текущая —
- * акцентом, просроченная и заблокированная — красным, впереди — серым.
+ * (`buildProgress`); здесь только его вид. В списке стадий состояние несёт
+ * значок: пройденные — зелёные, текущая — цветом ссылки, просроченная и
+ * заблокированная — красным, впереди — серым. В полосе — только положение.
  */
 export const STAGE_LOOKS: Record<StageProgressState, StageLook> = {
 	done: {
 		label: 'пройдена',
 		icon: CircleCheckIcon,
 		iconClass: 'text-success',
-		barClass: 'bg-success'
+		barClass: 'bg-faint'
 	},
 	current: {
 		label: 'текущая',
@@ -40,19 +46,19 @@ export const STAGE_LOOKS: Record<StageProgressState, StageLook> = {
 		label: 'текущая, срок прошёл',
 		icon: CircleAlertIcon,
 		iconClass: 'text-danger',
-		barClass: 'bg-danger'
+		barClass: 'bg-link'
 	},
 	blocked: {
 		label: 'текущая, есть помеха',
 		icon: OctagonAlertIcon,
 		iconClass: 'text-danger',
-		barClass: 'bg-danger'
+		barClass: 'bg-link'
 	},
 	paused: {
 		label: 'текущая, на паузе',
 		icon: CirclePauseIcon,
 		iconClass: 'text-muted-foreground',
-		barClass: 'bg-border-strong'
+		barClass: 'bg-link'
 	},
 	skipped: {
 		label: 'пропущена',

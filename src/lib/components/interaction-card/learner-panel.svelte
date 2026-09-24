@@ -48,6 +48,14 @@
 </script>
 
 <div class="flex flex-col gap-5" data-slot="learner-panel">
+	<!-- У компании первым — контактное лицо, реквизиты под ним: к человеку
+		обращаются каждый день, к реквизитам — по случаю. -->
+	{#if shape === 'company' && learner !== null}
+		<ContextSection title="Контактное лицо">
+			<ContactLine party={learner} />
+		</ContextSection>
+	{/if}
+
 	<ContextSection title={shape === 'person' ? 'Слушатель' : 'Компания'}>
 		{#snippet action()}
 			{#if onEditPlan !== null}
@@ -67,7 +75,7 @@
 				</p>
 			</div>
 		{/if}
-		{#if learner !== null}
+		{#if shape === 'person' && learner !== null}
 			<ContactLine party={learner} />
 		{/if}
 	</ContextSection>

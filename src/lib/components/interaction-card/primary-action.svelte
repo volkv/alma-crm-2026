@@ -17,19 +17,21 @@
 	import { actionEnhance } from '$lib/components/interactions/action-enhance';
 	import { blockerReasonLabel, type BlockerView } from '$lib/contracts/interactions';
 	import { formatDate, pluralize } from '$lib/format';
-	import { cn } from '$lib/utils';
 	import { getCardCommands } from './commands.svelte';
 	import type { CardAction, CardCommand, Requirement, SecondaryAction } from './model';
+
+	type OpenAction = Extract<CardAction, { kind: 'forward' | 'complete' | 'resume' }>;
 
 	/**
 	 * Главное действие карточки и всё, что ему мешает, — в одном месте.
 	 *
-	 * Кнопка одна и выглядит кнопкой: доступна — заливкой, недоступна — своим
-	 * видом «заперто» и сразу под ней список того, что осталось сделать. Этот
-	 * список и есть чек-лист стадии: пункт отмечают прямо здесь, и нигде больше
-	 * на карточке он не повторяется. Остальные команды — в меню «Ещё»: они
-	 * нужны реже, и ряд из шести кнопок равного веса не говорил, какая из них
-	 * главная.
+	 * Блок читается сверху вниз: «Следующий шаг», сколько осталось, сами
+	 * условия и только потом кнопка. Доступная кнопка залита главным цветом и
+	 * стоит сразу под заголовком; недоступная — сплошная, в виде «отключено», и
+	 * рядом словами сказано, что её держит. Список условий и есть чек-лист
+	 * стадии: пункт отмечают прямо здесь, и нигде больше на карточке он не
+	 * повторяется. Остальные команды — в меню «Ещё»: они нужны реже, и ряд из
+	 * шести кнопок равного веса не говорил, какая из них главная.
 	 *
 	 * Отметка пункта отвечает сразу, не дожидаясь сервера: это самое частое
 	 * действие на стадии. Если сервер откажет, страница перечитает настоящее
@@ -55,7 +57,7 @@
 	const commands = getCardCommands();
 	const id = 'card-action';
 
-	const open = $derived(
+	const open = $derived<OpenAction | null>(
 		action.kind === 'forward' || action.kind === 'complete' || action.kind === 'resume'
 			? action
 			: null
@@ -80,7 +82,43 @@
 		open?.requirements.filter((item) => !item.required && !item.done) ?? []
 	);
 	const done = $derived(open?.requirements.filter((item) => item.done) ?? []);
-	const leftCount = $derived(missing.length + (open?.blockers.length ?? 0));
+
+	/**
+	 * Что держит главную кнопку — одной строкой над условиями. Снятие паузы
+	 * условиями стадии не держится: их показывают, но не считают.
+	 */
+	const left = $derived.by(() => {
+		if (open === null || open.allowed || open.kind === 'resume') return null;
+
+		const parts = [
+			open.blockers.length > 0
+				? `снять ${pluralize(open.blockers.length, ['помеху', 'помехи', 'помех'])}`
+				: null,
+			missing.length > 0
+				? `выполнить ${pluralize(missing.length, ['условие', 'условия', 'условий'])}`
+				: null
+		].filter((part) => part !== null);
+
+		return parts.length > 0
+			? `Осталось ${parts.join(' и ')}`
+			: open.kind === 'complete'
+				? 'Завершить пока нельзя'
+				: 'Перейти пока нельзя';
+	});
+	/** Почему кнопка отключена — короткой строкой рядом с ней. */
+	const why = $derived.by(() => {
+		if (open === null || open.allowed) return null;
+		if (open.kind === 'resume') return 'Недоступно — причина выше';
+		if (open.blockers.length > 0) return 'Недоступно, пока не снята помеха';
+		if (missing.length > 0) return 'Недоступно, пока не выполнены условия выше';
+
+		return 'Недоступно — причина выше';
+	});
+	/**
+	 * Доступную кнопку и снятие паузы ставят сразу под заголовок: их не держат
+	 * условия. Недоступный переход — после условий, которые его держат.
+	 */
+	const buttonFirst = $derived(open !== null && (open.allowed || open.kind === 'resume'));
 
 	async function toggle(item: Requirement, next: boolean) {
 		checked = { ...checked, [item.key]: next };
@@ -178,6 +216,65 @@
 	</li>
 {/snippet}
 
+{#snippet actionRow(item: OpenAction)}
+	<div class="flex flex-col gap-1.5">
+		<div class="flex flex-wrap items-center gap-2">
+			<Button
+				size="lg"
+				disabled={!item.allowed}
+				aria-describedby={item.allowed ? undefined : `${id}-why`}
+				class="h-auto min-h-9 max-w-full py-1.5 text-left whitespace-normal"
+				onclick={runPrimary}
+			>
+				{#if item.kind === 'resume'}
+					<PlayIcon aria-hidden="true" />
+				{:else if item.kind === 'complete'}
+					<CircleCheckBigIcon aria-hidden="true" />
+				{:else}
+					<ArrowRightIcon aria-hidden="true" />
+				{/if}
+				{item.label}
+			</Button>
+
+			{#if secondary.length > 0}
+				<DropdownMenu.Root>
+					<DropdownMenu.Trigger>
+						{#snippet child({ props })}
+							<Button {...props} size="lg" variant="outline">
+								Ещё
+								<ChevronDownIcon aria-hidden="true" />
+							</Button>
+						{/snippet}
+					</DropdownMenu.Trigger>
+					<DropdownMenu.Content align="start" class="w-72 max-w-[calc(100vw-2rem)]">
+						{#each secondary as entry (entry.key)}
+							<DropdownMenu.Item
+								disabled={!entry.allowed}
+								onSelect={() => commands.open(entry.command)}
+								class="flex-col items-start gap-0.5 {entry.tone === 'danger'
+									? 'text-destructive'
+									: ''}"
+							>
+								<span>{entry.label}</span>
+								{#if entry.reason}
+									<span class="text-xs whitespace-normal text-muted-foreground">{entry.reason}</span
+									>
+								{/if}
+							</DropdownMenu.Item>
+						{/each}
+					</DropdownMenu.Content>
+				</DropdownMenu.Root>
+			{/if}
+		</div>
+		{#if why !== null}
+			<p id="{id}-why" class="flex items-center gap-1.5 text-xs text-muted-foreground">
+				<LockIcon class="size-3.5 shrink-0" aria-hidden="true" />
+				{why}
+			</p>
+		{/if}
+	</div>
+{/snippet}
+
 <!-- `data-tour` — метка подсказок: по ней тур находит главное действие
 	(`$lib/onboarding/screens`). -->
 <section
@@ -186,7 +283,7 @@
 	data-slot="card-action"
 	data-tour="interaction-actions"
 >
-	<h2 id="{id}-title" class="sr-only">Что сделать дальше</h2>
+	<h2 id="{id}-title" class="text-base font-semibold">Следующий шаг</h2>
 
 	{#if action.kind === 'closed'}
 		<div class="flex items-start gap-2">
@@ -228,76 +325,19 @@
 			<input type="hidden" name="stageEntryId" value={action.stageEntryId} />
 		</form>
 
-		<div class="flex flex-wrap items-center gap-2">
-			<!-- Недоступная главная кнопка — не серая заливка с бледной подписью,
-				которая читается как «сломалось», а свой вид «заперто»: контур
-				нормальной яркости, замок и слово «Недоступно» под кнопкой вместе
-				с тем, что осталось сделать. Первичная заливка — только у того,
-				что можно нажать. -->
-			<Button
-				size="lg"
-				variant={action.allowed ? 'default' : 'outline'}
-				disabled={!action.allowed}
-				aria-describedby={action.allowed ? undefined : `${id}-why`}
-				class={cn(
-					'h-auto min-h-9 max-w-full py-1.5 text-left whitespace-normal',
-					!action.allowed && 'border-dashed disabled:border-border-strong disabled:text-foreground'
-				)}
-				onclick={runPrimary}
-			>
-				{#if !action.allowed}
-					<LockIcon aria-hidden="true" />
-				{:else if action.kind === 'resume'}
-					<PlayIcon aria-hidden="true" />
-				{:else if action.kind === 'complete'}
-					<CircleCheckBigIcon aria-hidden="true" />
-				{:else}
-					<ArrowRightIcon aria-hidden="true" />
-				{/if}
-				{action.label}
-			</Button>
-
-			{#if secondary.length > 0}
-				<DropdownMenu.Root>
-					<DropdownMenu.Trigger>
-						{#snippet child({ props })}
-							<Button {...props} size="lg" variant="outline">
-								Ещё
-								<ChevronDownIcon aria-hidden="true" />
-							</Button>
-						{/snippet}
-					</DropdownMenu.Trigger>
-					<DropdownMenu.Content align="start" class="w-72 max-w-[calc(100vw-2rem)]">
-						{#each secondary as item (item.key)}
-							<DropdownMenu.Item
-								disabled={!item.allowed}
-								onSelect={() => commands.open(item.command)}
-								class="flex-col items-start gap-0.5 {item.tone === 'danger'
-									? 'text-destructive'
-									: ''}"
-							>
-								<span>{item.label}</span>
-								{#if item.reason}
-									<span class="text-xs whitespace-normal text-muted-foreground">{item.reason}</span>
-								{/if}
-							</DropdownMenu.Item>
-						{/each}
-					</DropdownMenu.Content>
-				</DropdownMenu.Root>
-			{/if}
-		</div>
-
-		{#if !action.allowed}
-			<p id="{id}-why" class="text-sm font-medium">
-				{leftCount > 0
-					? `Недоступно: чтобы ${action.kind === 'complete' ? 'завершить' : 'перейти'}, осталось ${pluralize(leftCount, ['условие', 'условия', 'условий'])}`
-					: 'Недоступно:'}
-			</p>
-		{:else if missing.length === 0 && done.length > 0}
+		{#if action.allowed && action.kind !== 'resume' && missing.length === 0 && done.length > 0}
 			<p class="flex items-center gap-1.5 text-sm text-success-soft-foreground">
 				<CheckIcon class="size-4" aria-hidden="true" />
 				Условия стадии выполнены
 			</p>
+		{/if}
+
+		{#if buttonFirst}
+			{@render actionRow(action)}
+		{/if}
+
+		{#if left !== null}
+			<p class="text-sm font-medium" data-slot="card-action-left">{left}</p>
 		{/if}
 
 		{#if action.blockers.length > 0 || missing.length > 0 || action.otherReasons.length > 0}
@@ -312,6 +352,10 @@
 					<li class="py-2 text-sm text-muted-foreground">{reason}</li>
 				{/each}
 			</ul>
+		{/if}
+
+		{#if !buttonFirst}
+			{@render actionRow(action)}
 		{/if}
 
 		{#if optional.length > 0 || action.softBlockers.length > 0}

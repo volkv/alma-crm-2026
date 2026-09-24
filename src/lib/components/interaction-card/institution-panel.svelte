@@ -8,9 +8,11 @@
 	import OfferingList from './offering-list.svelte';
 
 	/**
-	 * Сторона и условия работы с учебным заведением: вуз и его площадки,
-	 * контактное лицо, заказчик подготовки, программы и продукты. Короткое имя
-	 * вуза стоит в шапке карточки — здесь полное и реквизиты. Договор с
+	 * Сторона и условия работы с учебным заведением: контактное лицо, вуз и его
+	 * площадки, заказчик подготовки, программы и продукты. Первым — человек, с
+	 * которым говорят: к нему обращаются каждый день, а к реквизитам — по
+	 * случаю. Короткое имя вуза стоит в шапке карточки — здесь полное и
+	 * реквизиты. Договор с
 	 * позициями и лицензиями и сроки — панели процесса, их набор объявляет он.
 	 */
 	let {
@@ -36,6 +38,12 @@
 </script>
 
 <div class="flex flex-col gap-5" data-slot="institution-panel">
+	{#if institution !== null}
+		<ContextSection title="Контактное лицо">
+			<ContactLine party={institution} />
+		</ContextSection>
+	{/if}
+
 	<ContextSection title="Учебное заведение">
 		{#snippet action()}
 			{#if onEditPlan !== null}
@@ -60,9 +68,6 @@
 				</p>
 			{/if}
 		</div>
-		{#if institution !== null}
-			<ContactLine party={institution} />
-		{/if}
 	</ContextSection>
 
 	{#if customer !== null}
