@@ -141,7 +141,7 @@ export const AUTOMATION_STEPS: readonly AutomationStep[] = [
 				result: 'Файл приглашения открывается в календаре, итог встречи ложится результатом стадии',
 				screen: 'interactions',
 				where: CARD,
-				status: 'in_progress'
+				status: 'ready'
 			},
 			{
 				kind: 'control',
@@ -356,11 +356,13 @@ export const AUTOMATION_STEPS: readonly AutomationStep[] = [
 				status: 'ready'
 			},
 			{
-				kind: 'assist',
-				title: 'Утренняя сводка: что зависло и что горит — письмом',
-				result: 'Письмо сотруднику по его области',
-				screen: 'notifications',
-				status: 'in_progress'
+				kind: 'system',
+				title:
+					'Утренняя сводка «Мой день» письмом: просрочки, сроки на сегодня и завтра, помехи, заявки и лицензии',
+				result: 'Письмо сотруднику раз в сутки в его области доступа; доставка видна в журнале',
+				screen: 'home',
+				where: 'Главная; доставка — «Уведомления»',
+				status: 'ready'
 			}
 		]
 	}

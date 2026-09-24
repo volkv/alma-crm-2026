@@ -12,6 +12,7 @@
  * договору с физическим лицом: и лицо, и его договор синтетические.
  */
 import { inArray, sql } from 'drizzle-orm';
+import { formatIsoDay } from '$lib/format';
 import { getDb } from '$lib/server/db';
 import type { ContractStatus } from '$lib/contracts/interactions';
 import {
@@ -21,6 +22,21 @@ import {
 	interactions
 } from '$lib/server/db/schema';
 import { seedId } from './ids';
+
+const DAY_MS = 24 * 60 * 60 * 1000;
+
+/**
+ * Демо-сроки лицензий у двух позиций разных вузов — относительно момента
+ * заливки, как остальные относительные даты сида (`daysBefore` в
+ * `scripts/seed/interactions.ts`): ночной сброс даёт те же тридцать дней
+ * вперёд и пять назад, а не застывшую дату, которая через месяц перестанет
+ * что-либо показывать наблюдателю сроков лицензий
+ * (`src/lib/server/notifications/license-watch.ts`). Одна позиция входит в
+ * окно продления (`license_expiring`), другая уже просрочена и эскалирует
+ * руководителю (`license_expired`).
+ */
+const LICENSE_EXPIRING_SOON = formatIsoDay(Date.now() + 30 * DAY_MS);
+const LICENSE_EXPIRED = formatIsoDay(Date.now() - 5 * DAY_MS);
 
 /**
  * Статус передачи продукта по позиции. Словарь свободный: каталога заказчика
@@ -68,7 +84,7 @@ const CONTRACTS: readonly ContractSeed[] = [
 				productKey: 'analytics',
 				transferStatus: 'передан',
 				licenseSignedAt: '2026-08-20',
-				licenseUntil: '2027-08-31'
+				licenseUntil: LICENSE_EXPIRING_SOON
 			},
 			{ productKey: 'cloud', transferStatus: 'ожидает передачи' }
 		]
@@ -85,7 +101,7 @@ const CONTRACTS: readonly ContractSeed[] = [
 				productKey: 'lms',
 				transferStatus: 'передан',
 				licenseSignedAt: '2026-09-01',
-				licenseUntil: '2027-06-30'
+				licenseUntil: LICENSE_EXPIRED
 			}
 		]
 	},
