@@ -31,9 +31,11 @@ import {
 	endAffiliation,
 	restoreOrganization
 } from '$lib/server/directory/write';
+import { startLicenseRenewal } from '$lib/server/directory/license-renewal';
 import { formatIsoDay } from '$lib/format';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
+import { getSetting } from '$lib/server/settings';
 import type { Actions, PageServerLoad } from './$types';
 
 /** Каталог продуктов для позиции договора: активные, одной страницей. */
@@ -62,7 +64,8 @@ export const load: PageServerLoad = async (event) => {
 			assignableUsers,
 			directionOptions,
 			contracts,
-			products
+			products,
+			licenseWarningDays
 		] = await Promise.all([
 			listSites(ctx, organization.id),
 			can(ctx, 'people.read') ? listAffiliations(ctx, organization.id) : Promise.resolve([]),
@@ -71,7 +74,8 @@ export const load: PageServerLoad = async (event) => {
 			canAssign ? listAssignableUsers(ctx) : Promise.resolve([]),
 			canAssign ? listDirectionOptions(ctx) : Promise.resolve([]),
 			listOrganizationContracts(ctx, organization.id),
-			canWrite ? listProducts(ctx, productPage) : Promise.resolve({ items: [] })
+			canWrite ? listProducts(ctx, productPage) : Promise.resolve({ items: [] }),
+			getSetting('license_warning_days')
 		]);
 
 		return {
@@ -96,6 +100,11 @@ export const load: PageServerLoad = async (event) => {
 			today: formatIsoDay(),
 			canReadPeople: can(ctx, 'people.read'),
 			canWrite,
+			// Окно продления лицензий — то же, по которому напоминает наблюдатель:
+			// письмо зовёт к кнопке, и кнопка обязана быть на экране.
+			licenseWarningDays,
+			// Продление — это заведение взаимодействия, и право то же.
+			canStartRenewal: can(ctx, 'interactions.write'),
 			canWritePeople: can(ctx, 'people.write')
 		};
 	} catch (error) {
@@ -258,6 +267,28 @@ export const actions: Actions = {
 			303,
 			`${resolve('/(app)/organizations/[id=uuid]', { id: event.params.id })}?done=contract_item_saved`
 		);
+	},
+
+	/**
+	 * Продление лицензии по позиции договора: заводит взаимодействие и ведёт на
+	 * его карточку — работа продолжается там.
+	 */
+	startRenewal: async (event) => {
+		const contractItemId = (await event.request.formData()).get('contractItemId');
+
+		if (typeof contractItemId !== 'string' || contractItemId === '') {
+			return fail(400, { message: 'Не указана позиция договора', issues: [] });
+		}
+
+		let interactionId: string;
+
+		try {
+			interactionId = (await startLicenseRenewal(actorFromEvent(event), contractItemId)).id;
+		} catch (error) {
+			return toActionFailure(error);
+		}
+
+		redirect(303, resolve('/(app)/interactions/[id=uuid]', { id: interactionId }));
 	},
 
 	endAffiliation: async (event) => {

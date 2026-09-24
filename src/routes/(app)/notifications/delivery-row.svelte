@@ -4,7 +4,7 @@
 	import * as Table from '$lib/components/ui/table/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import StatusBadge from '$lib/components/status-badge.svelte';
-	import { formatDateTime, pluralize } from '$lib/format';
+	import { formatDate, formatDateTime, pluralize } from '$lib/format';
 	import {
 		isStubChannel,
 		NOTIFICATION_CHANNEL_LABELS,
@@ -60,13 +60,27 @@
 	<Table.Cell class="whitespace-normal">{formatDateTime(delivery.updatedAt)}</Table.Cell>
 	<Table.Cell class="whitespace-normal">{NOTIFICATION_KIND_LABELS[delivery.kind]}</Table.Cell>
 	<Table.Cell class="max-w-56 whitespace-normal">
-		{#if delivery.interactionTitle !== null}
+		{#if delivery.interactionId !== null && delivery.interactionTitle !== null}
 			<a
 				class="underline underline-offset-4"
 				href={resolve('/(app)/interactions/[id=uuid]', { id: delivery.interactionId })}
 			>
 				{delivery.interactionTitle}
 			</a>
+		{:else if delivery.organizationId !== null}
+			<!-- Уведомление о лицензии: предмет — позиция договора, и ведёт ссылка на
+				карточку организации, где у позиции стоит «Запустить продление». -->
+			<a
+				class="underline underline-offset-4"
+				href={resolve('/(app)/organizations/[id=uuid]', { id: delivery.organizationId })}
+			>
+				{delivery.organizationName}
+			</a>
+			<span class="block text-xs text-muted-foreground">
+				{delivery.productName}{delivery.licenseUntil === null
+					? ''
+					: `, лицензия до ${formatDate(delivery.licenseUntil)}`}
+			</span>
 		{:else}
 			—
 		{/if}

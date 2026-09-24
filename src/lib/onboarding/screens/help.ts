@@ -67,5 +67,5 @@ export const HELP_SETTINGS = {
 export const HELP_NOTIFICATIONS = {
 	section: 'admin',
 	page: 'notifications',
-	title: 'Уведомления о зависших взаимодействиях'
+	title: 'Уведомления'
 } as const;

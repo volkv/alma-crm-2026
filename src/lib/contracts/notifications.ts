@@ -1,6 +1,6 @@
 /**
- * Уведомления о зависших взаимодействиях: виды, каналы, состояния доставки и
- * фильтр журнала.
+ * Уведомления наблюдателей — о зависших взаимодействиях и о сроках лицензий:
+ * виды, каналы, состояния доставки и фильтр журнала.
  *
  * Уведомление — это не событие журнала действий и не сообщение обмена. Журнал
  * действий отвечает на вопрос «кто и что сделал», обмен — «что уехало чужой
@@ -13,16 +13,35 @@ import { z } from 'zod';
 import { pageQuerySchema } from './common';
 
 /**
- * Виды уведомлений. Пока один: взаимодействие стоит на одной стадии дольше
- * порога. Вид входит в ключ дедупликации, поэтому второй вид по той же записи
- * стадии уедет своей строкой, а не перезапишет первую.
+ * Виды уведомлений.
+ *
+ * - `stage_stuck` — взаимодействие стоит на одной стадии дольше порога; уходит
+ *   руководителю ответственного за взаимодействие;
+ * - `license_expiring` — лицензия по позиции договора кончается в пределах
+ *   окна продления или уже кончилась; уходит ответственному за вуз;
+ * - `license_expired` — лицензия кончилась, а продление так и не заведено
+ *   вовремя; эскалация руководителю ответственного за вуз.
+ *
+ * Вид входит в ключ дедупликации, поэтому второй вид по тому же предмету уедет
+ * своей строкой, а не перезапишет первую.
  */
-export const NOTIFICATION_KINDS = ['stage_stuck'] as const;
+export const NOTIFICATION_KINDS = ['stage_stuck', 'license_expiring', 'license_expired'] as const;
 
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
 
+/** Виды, предмет которых — позиция договора, а не запись стадии. */
+export const LICENSE_NOTIFICATION_KINDS = ['license_expiring', 'license_expired'] as const;
+
+export type LicenseNotificationKind = (typeof LICENSE_NOTIFICATION_KINDS)[number];
+
+export function isLicenseKind(kind: NotificationKind): kind is LicenseNotificationKind {
+	return (LICENSE_NOTIFICATION_KINDS as readonly NotificationKind[]).includes(kind);
+}
+
 export const NOTIFICATION_KIND_LABELS: Record<NotificationKind, string> = {
-	stage_stuck: 'Зависшее взаимодействие'
+	stage_stuck: 'Зависшее взаимодействие',
+	license_expiring: 'Истекает лицензия',
+	license_expired: 'Истекла лицензия'
 };
 
 /**
@@ -93,11 +112,19 @@ export const notificationChannelsSchema = z.object({
 export type NotificationDeliveryView = {
 	id: string;
 	kind: NotificationKind;
-	interactionId: string;
+	/** Взаимодействие и запись стадии — у напоминания о зависшем; у лицензии пусто. */
+	interactionId: string | null;
 	interactionTitle: string | null;
-	stageEntryId: string;
+	stageEntryId: string | null;
 	/** Название стадии из слепка записи: маршрут могли переиздать. */
 	stageName: string | null;
+	/** Позиция договора, её организация и продукт — у уведомления о лицензии. */
+	contractItemId: string | null;
+	organizationId: string | null;
+	organizationName: string | null;
+	productName: string | null;
+	/** Срок лицензии, о котором напомнили: `YYYY-MM-DD`. */
+	licenseUntil: string | null;
 	recipientUserId: string | null;
 	recipientName: string | null;
 	channel: NotificationChannel;

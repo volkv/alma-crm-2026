@@ -16,7 +16,8 @@
  *   прямо на нём) — реализуемые программы с кодами направлений.
  *
  * Ходим только по сайту из карточки организации и только внутри его домена:
- * перенаправление на чужой домен — отказ, а не переход. Каждый заход, включая
+ * перенаправление на чужой домен — отказ, а не переход, а переход на `http`
+ * внутри сайта повышается до `https` (`redirectTarget`). Каждый заход, включая
  * каждое перенаправление, ещё и проверяется правилом исходящих адресов
  * (`integrations/outbound.ts`): иначе первый же `Location` увёл бы запрос
  * внутрь сети развёртывания.
@@ -143,6 +144,47 @@ export function withinSite(siteHost: string, targetHost: string): boolean {
 	const target = targetHost.toLowerCase().replace(/^www\./, '');
 
 	return target === base || target.endsWith(`.${base}`);
+}
+
+/**
+ * Куда вести заход после перенаправления; `null` — не идти.
+ *
+ * Вуз бывает настроен криво: Московский Политех отвечает на
+ * `https://mospolytech.ru/sveden/struct` адресом `http://mospolytech.ru/sveden/struct/`,
+ * а уже тот — обратно на `https`. Наружу по `http` сервер не ходит (правило
+ * исходящих адресов), поэтому переход на `http` **внутри сайта организации**
+ * повышается до `https` того же адреса: схема — не повод бросать раздел.
+ * Повышение делается только после проверки домена — чужой сайт остаётся отказом
+ * при любой схеме, — а итоговый адрес дальше проверяет то же правило исходящих
+ * адресов, что и первый заход.
+ *
+ * Перенаправление на тот же адрес, с которого пришли, — петля: идти по нему
+ * значит сжечь лимит переходов впустую.
+ */
+export function redirectTarget(siteHost: string, current: string, location: string): string | null {
+	let next: URL;
+
+	try {
+		next = new URL(location, current);
+	} catch {
+		return null;
+	}
+
+	if (next.protocol !== 'http:' && next.protocol !== 'https:') {
+		return null;
+	}
+
+	if (!withinSite(siteHost, next.hostname)) {
+		return null;
+	}
+
+	if (next.protocol === 'http:') {
+		next.protocol = 'https:';
+	}
+
+	const target = next.toString();
+
+	return target === current ? null : target;
 }
 
 /** Написания одного и того же свойства: разметку расставляли руками. */
@@ -435,11 +477,13 @@ async function fetchPage(target: string, siteHost: string): Promise<Fetched | nu
 				return null;
 			}
 
-			try {
-				url = new URL(location, url).toString();
-			} catch {
+			const next = redirectTarget(siteHost, url, location);
+
+			if (next === null) {
 				return null;
 			}
+
+			url = next;
 
 			continue;
 		}

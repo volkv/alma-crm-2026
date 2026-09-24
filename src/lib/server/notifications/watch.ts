@@ -55,6 +55,7 @@ import {
 import { workspaceAccessCondition } from '../rbac/workspaces';
 import { getSetting } from '../settings';
 import { sendThroughChannel, type ChannelOutcome, type NotificationRecipient } from './channels';
+import { runLicenseWatch } from './license-watch';
 import { stuckNotificationMessage, type NotificationMessage } from './message';
 import { FAILURE_RETRY_MINUTES, nextNotifyAt } from './schedule';
 
@@ -402,8 +403,23 @@ export async function deliverStuckNotice(
 	return outcome.status;
 }
 
+function count(report: NotificationReport, status: NotificationDeliveryStatus): void {
+	report.scanned += 1;
+
+	if (status === 'sent') {
+		report.sent += 1;
+	} else if (status === 'failed') {
+		report.failed += 1;
+	} else if (status === 'skipped') {
+		report.skipped += 1;
+	} else if (status === 'stub') {
+		report.stubbed += 1;
+	}
+}
+
 /**
- * Проход наблюдателя по всем включённым каналам.
+ * Проход наблюдателей по всем включённым каналам: сначала зависшие
+ * взаимодействия, затем сроки лицензий (`license-watch.ts`). Отчёт у них общий.
  *
  * Своего замка не берёт — им распоряжается `runIntegrationsCycle`. Порог и
  * набор каналов читаются на каждый проход: правку настройки видно со следующего
@@ -426,20 +442,14 @@ export async function runNotificationCycle(ctx: ActorContext): Promise<Notificat
 		const due = await readStuck({ channel, thresholdDays, dueOnly: true, limit: BATCH });
 
 		for (const entry of due) {
-			report.scanned += 1;
-
-			const status = await deliverStuckNotice(ctx, entry, channel, thresholdDays, now);
-
-			if (status === 'sent') {
-				report.sent += 1;
-			} else if (status === 'failed') {
-				report.failed += 1;
-			} else if (status === 'skipped') {
-				report.skipped += 1;
-			} else if (status === 'stub') {
-				report.stubbed += 1;
-			}
+			count(report, await deliverStuckNotice(ctx, entry, channel, thresholdDays, now));
 		}
+	}
+
+	const enabled = NOTIFICATION_CHANNELS.filter((channel) => channels[channel]);
+
+	for (const status of await runLicenseWatch(ctx, enabled, now)) {
+		count(report, status);
 	}
 
 	// Успехи сводятся в одну запись за проход: напоминания уходят пачками, и

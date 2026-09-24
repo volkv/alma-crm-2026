@@ -11,6 +11,7 @@
 	import { toLookupOptions } from '$lib/components/directory/labels';
 	import type { ContractItemView, ContractView } from '$lib/contracts/directory';
 	import { CONTRACT_STATUS_LABELS, CONTRACT_STATUSES } from '$lib/contracts/interactions';
+	import { LICENSE_STATE_LABELS, licenseState } from '$lib/contracts/license';
 	import { formatDate } from '$lib/format';
 
 	/**
@@ -25,17 +26,32 @@
 	 * Удаления нет и не будет: справочник не удаляет записи — на договор и его
 	 * позиции ссылаются взаимодействия. Договор, по которому больше не работают,
 	 * закрывают состоянием.
+	 *
+	 * У позиции, чья лицензия истекает в пределах окна продления или уже
+	 * истекла, стоит отметка и кнопка «Запустить продление»: она заводит
+	 * взаимодействие в пространстве контрагента с продуктом и договором позиции.
 	 */
 	let {
 		contracts,
 		products,
-		canWrite
+		canWrite,
+		canStartRenewal,
+		licenseWarningDays,
+		today
 	}: {
 		contracts: readonly ContractView[];
 		/** Каталог продуктов: из него выбирается продукт позиции. */
 		products: readonly { id: string; label: string }[];
 		canWrite: boolean;
+		/** Право заводить взаимодействия: продление — это оно. */
+		canStartRenewal: boolean;
+		/** Окно продления из настроек — то же, по которому напоминает система. */
+		licenseWarningDays: number;
+		/** Сегодняшний день по Москве, `YYYY-MM-DD`. */
+		today: string;
 	} = $props();
+
+	const LICENSE_TONES = { expiring: 'warning', expired: 'danger' } as const;
 
 	const STATUS_TONES = {
 		draft: 'warning',
@@ -210,11 +226,32 @@
 										<Table.Cell>
 											{item.licenseSignedAt === null ? '—' : formatDate(item.licenseSignedAt)}
 										</Table.Cell>
+										{@const license = licenseState(item.licenseUntil, today, licenseWarningDays)}
 										<Table.Cell>
-											{item.licenseUntil === null ? '—' : formatDate(item.licenseUntil)}
+											<div class="flex flex-wrap items-center gap-2">
+												{item.licenseUntil === null ? '—' : formatDate(item.licenseUntil)}
+												{#if license === 'expiring' || license === 'expired'}
+													<StatusBadge tone={LICENSE_TONES[license]}>
+														{LICENSE_STATE_LABELS[license]}
+													</StatusBadge>
+												{/if}
+											</div>
 										</Table.Cell>
 										<Table.Cell>{item.transferStatus}</Table.Cell>
 										<Table.Cell class="text-right">
+											{#if canStartRenewal && (license === 'expiring' || license === 'expired')}
+												<form method="POST" action="?/startRenewal" class="inline">
+													<input type="hidden" name="contractItemId" value={item.id} />
+													<Button
+														type="submit"
+														variant="outline"
+														size="sm"
+														data-testid="start-renewal"
+													>
+														Запустить продление
+													</Button>
+												</form>
+											{/if}
 											{#if canWrite}
 												<Button
 													variant="ghost"

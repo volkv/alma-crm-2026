@@ -28,6 +28,9 @@ export const SETTING_DEFAULTS: { [TKey in SettingKey]: SettingValue<TKey> } = {
 	session_idle_minutes: 30,
 	session_absolute_hours: 12,
 	stuck_threshold_days: 7,
+	// Два месяца: продление — это новый договор или допсоглашение, и за меньший
+	// срок вуз его не подпишет.
+	license_warning_days: 60,
 	// Заглушки выключены: канал, который ничего не отправляет, включают
 	// осознанно — чтобы посмотреть, как выглядит доставка, — а не получают в
 	// наследство от умолчания.

@@ -1,6 +1,8 @@
 /**
  * Текст уведомления.
  *
+ * Писем два вида: о зависшем взаимодействии и о сроке лицензии.
+ *
  * Письмо уходит наружу — в чужой почтовый ящик, откуда его не отозвать и где
  * его прочитает почтовый сервер получателя, — поэтому персональных данных в нём
  * ровно столько, сколько нужно, чтобы понять, о чём речь: название
@@ -83,6 +85,64 @@ export function stuckNotificationMessage(
 
 	return {
 		subject: `${NOTIFICATION_KIND_LABELS.stage_stuck}: «${facts.interactionTitle}»`,
+		text: lines.join('\n')
+	};
+}
+
+/** Ссылка на карточку организации от корня установки. */
+export function organizationUrl(origin: string, organizationId: string): string {
+	return `${origin.replace(/\/+$/, '')}/organizations/${organizationId}`;
+}
+
+export type LicenseNotificationFacts = {
+	organizationId: string;
+	/**
+	 * Название организации; `null` — называть её в письме нельзя (физическое
+	 * лицо: его название — это ФИО, и письмо унесло бы его наружу).
+	 */
+	organizationName: string | null;
+	productName: string;
+	contractNumber: string;
+	/** Срок лицензии словами, `31.12.2026`. */
+	licenseUntilLabel: string;
+	/** Сколько дней до конца срока; отрицательное — сколько дней как истёк. */
+	daysLeft: number;
+	/** `true` — письмо руководителю: продление не запущено, а срок уже прошёл. */
+	escalation: boolean;
+};
+
+/**
+ * Письмо о сроке лицензии. Тема называет продукт, тело — договор, срок и что
+ * делать: открыть карточку организации и запустить продление из блока
+ * договоров.
+ */
+export function licenseNotificationMessage(
+	facts: LicenseNotificationFacts,
+	origin: string
+): NotificationMessage {
+	const where = facts.organizationName === null ? '' : ` у «${facts.organizationName}»`;
+	const term =
+		facts.daysLeft < 0
+			? `истекла ${facts.licenseUntilLabel} (${days(-facts.daysLeft)} назад)`
+			: facts.daysLeft === 0
+				? `истекает сегодня, ${facts.licenseUntilLabel}`
+				: `истекает ${facts.licenseUntilLabel}, через ${days(facts.daysLeft)}`;
+	const action = facts.escalation
+		? 'Срок прошёл, а лицензия не продлена. Проверьте, запущено ли продление, у ответственного за организацию.'
+		: 'Запустите продление кнопкой «Запустить продление» в блоке «Договоры» на карточке организации: система заведёт взаимодействие с этим продуктом и договором.';
+	const kind = facts.daysLeft < 0 ? 'license_expired' : 'license_expiring';
+
+	const lines = [
+		`Лицензия на «${facts.productName}» по договору № ${facts.contractNumber}${where} ${term}.`,
+		action,
+		'',
+		`Карточка организации: ${organizationUrl(origin, facts.organizationId)}`,
+		'',
+		'Письмо отправила система контроля взаимодействия с учебными заведениями. Отвечать на него не нужно.'
+	];
+
+	return {
+		subject: `${NOTIFICATION_KIND_LABELS[kind]}: «${facts.productName}», договор № ${facts.contractNumber}`,
 		text: lines.join('\n')
 	};
 }

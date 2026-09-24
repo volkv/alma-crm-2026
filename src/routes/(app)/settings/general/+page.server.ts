@@ -48,16 +48,25 @@ export const load: PageServerLoad = async (event) => {
 		error(403, 'Раздел доступен только с правом «Изменение настроек приложения»');
 	}
 
-	const [banner, idleMinutes, absoluteHours, thresholdDays, channels, demoSchedule, enrichment] =
-		await Promise.all([
-			getSetting('login_banner'),
-			getSetting('session_idle_minutes'),
-			getSetting('session_absolute_hours'),
-			getSetting('stuck_threshold_days'),
-			getSetting('notification_channels'),
-			getSetting('demo_reset_schedule'),
-			getSetting('enrichment')
-		]);
+	const [
+		banner,
+		idleMinutes,
+		absoluteHours,
+		thresholdDays,
+		licenseWarningDays,
+		channels,
+		demoSchedule,
+		enrichment
+	] = await Promise.all([
+		getSetting('login_banner'),
+		getSetting('session_idle_minutes'),
+		getSetting('session_absolute_hours'),
+		getSetting('stuck_threshold_days'),
+		getSetting('license_warning_days'),
+		getSetting('notification_channels'),
+		getSetting('demo_reset_schedule'),
+		getSetting('enrichment')
+	]);
 
 	return {
 		bannerForm: await superValidate(banner, zod4(settingSchemas.login_banner), {
@@ -66,9 +75,13 @@ export const load: PageServerLoad = async (event) => {
 		sessionForm: await superValidate({ idleMinutes, absoluteHours }, zod4(sessionLimitsSchema), {
 			id: FORM_IDS.session
 		}),
-		stuckWatchForm: await superValidate({ thresholdDays, ...channels }, zod4(stuckWatchSchema), {
-			id: FORM_IDS.stuckWatch
-		}),
+		stuckWatchForm: await superValidate(
+			{ thresholdDays, licenseWarningDays, ...channels },
+			zod4(stuckWatchSchema),
+			{
+				id: FORM_IDS.stuckWatch
+			}
+		),
 		demoScheduleForm: await superValidate(demoSchedule, zod4(demoScheduleSchema), {
 			id: FORM_IDS.demoSchedule
 		}),
@@ -150,7 +163,7 @@ export const actions: Actions = {
 	},
 
 	/**
-	 * Порог зависания и каналы — одной кнопкой: правило и способ, которым о нём
+	 * Пороги наблюдателей и каналы — одной кнопкой: правило и способ, которым о нём
 	 * сообщают, это одна настройка. Записываются они двумя ключами, потому что
 	 * читают их разные места: порог — выборка наблюдателя, каналы — его цикл.
 	 */
@@ -164,10 +177,11 @@ export const actions: Actions = {
 		}
 
 		const ctx = actorFromEvent(event);
-		const { thresholdDays, ...channels } = form.data;
+		const { thresholdDays, licenseWarningDays, ...channels } = form.data;
 
 		try {
 			await setSetting(ctx, 'stuck_threshold_days', thresholdDays);
+			await setSetting(ctx, 'license_warning_days', licenseWarningDays);
 			await setSetting(ctx, 'notification_channels', channels);
 		} catch (failure) {
 			return asFormError(form, failure);

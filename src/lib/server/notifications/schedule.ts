@@ -72,3 +72,30 @@ export function nextNotifyAt(
 	// тоже повод напомнить ещё раз: её однажды заполнят.
 	return new Date(now.getTime() + repeatAfterMs(thresholdDays));
 }
+
+/**
+ * Момент следующей попытки по уведомлению о лицензии; `null` — больше не
+ * пробовать.
+ *
+ * Лицензия напоминает **один раз на срок**: ушло (или изображено заглушкой) —
+ * и всё, до тех пор пока срок не сменят; новый срок — новая строка журнала.
+ * Повтор каждым порогом, как у зависшей стадии, здесь был бы спамом: о сроке,
+ * который не движется, второе письмо ничего нового не говорит. Неудачная
+ * отправка повторяется по тому же правилу, что и у зависших. Получатель не
+ * определён — проверяется раз в сутки: назначат ответственного, и письмо
+ * уйдёт ему.
+ */
+export function licenseNextNotifyAt(
+	outcome: { status: NotificationDeliveryStatus; attempts: number },
+	now: Date
+): Date | null {
+	if (outcome.status === 'failed') {
+		return nextNotifyAt(outcome, MIN_REPEAT_DAYS, now);
+	}
+
+	if (outcome.status === 'skipped' || outcome.status === 'queued') {
+		return new Date(now.getTime() + MIN_REPEAT_DAYS * DAY_MS);
+	}
+
+	return null;
+}

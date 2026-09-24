@@ -251,12 +251,14 @@
 <!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
 <Card.Root data-tour="general-stuck">
 	<Card.Header>
-		<Card.Title>Напоминания о зависших взаимодействиях</Card.Title>
+		<Card.Title>Напоминания: зависшие взаимодействия и сроки лицензий</Card.Title>
 		<Card.Description>
 			Взаимодействие, которое стоит на одной стадии дольше порога, вызывает напоминание руководителю
 			ответственного. Время пауз в этот срок не входит: ждать ответа вуза и стоять — разные вещи.
 			Ноль означает «напоминать сразу»; повтор в любом случае не чаще раза в сутки, пока стадия не
-			сменится. Что и кому ушло, видно в разделе
+			сменится. Лицензия по позиции договора, срок которой кончается в пределах окна или уже прошёл,
+			вызывает напоминание ответственному за вуз (одно на позицию, пока срок не изменят), а истёкшая
+			— ещё и эскалацию его руководителю. Что и кому ушло, видно в разделе
 			<a class="underline underline-offset-4" href={resolve('/notifications')}>«Уведомления»</a>.
 		</Card.Description>
 	</Card.Header>
@@ -277,6 +279,14 @@
 					value: $stuckData.thresholdDays,
 					errors: $stuckErrors.thresholdDays,
 					onchange: (next) => ($stuckData.thresholdDays = next)
+				})}
+				{@render numberField({
+					name: 'licenseWarningDays',
+					label: 'Окно продления лицензии, дней',
+					description: 'От 0 до 365; 0 — только об истёкших',
+					value: $stuckData.licenseWarningDays,
+					errors: $stuckErrors.licenseWarningDays,
+					onchange: (next) => ($stuckData.licenseWarningDays = next)
 				})}
 			</div>
 			<fieldset class="flex flex-col gap-2">

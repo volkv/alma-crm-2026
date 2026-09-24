@@ -42,9 +42,10 @@ export const load: PageServerLoad = async (event) => {
 		);
 	}
 
-	const [deliveries, thresholdDays, channels] = await Promise.all([
+	const [deliveries, thresholdDays, licenseWarningDays, channels] = await Promise.all([
 		listNotificationDeliveries(ctx, parsed.data),
 		getSetting('stuck_threshold_days'),
+		getSetting('license_warning_days'),
 		getSetting('notification_channels')
 	]);
 
@@ -52,6 +53,7 @@ export const load: PageServerLoad = async (event) => {
 		deliveries,
 		filter: parsed.data,
 		thresholdDays,
+		licenseWarningDays,
 		channels,
 		canManage: can(ctx, 'notifications.manage')
 	};

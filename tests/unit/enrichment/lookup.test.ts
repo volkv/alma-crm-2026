@@ -7,6 +7,7 @@ import {
 	charsetOf,
 	normalizeWebsite,
 	readSvedenPage,
+	redirectTarget,
 	siteFromEmails,
 	withinSite
 } from '$lib/server/enrichment/sveden';
@@ -162,6 +163,18 @@ describe('поиск сайта', () => {
 		expect(withinSite('www.miet.ru', 'sveden.miet.ru')).toBe(true);
 		expect(withinSite('spbstu.ru', 'spbstu.ru.evil.example')).toBe(false);
 		expect(withinSite('spbstu.ru', 'notspbstu.ru')).toBe(false);
+	});
+
+	it('перенаправление на http внутри сайта повышается до https, чужой домен — отказ', () => {
+		const from = 'https://mospolytech.ru/sveden/struct';
+
+		expect(redirectTarget('mospolytech.ru', from, 'http://mospolytech.ru/sveden/struct/')).toBe(
+			'https://mospolytech.ru/sveden/struct/'
+		);
+		expect(redirectTarget('mospolytech.ru', from, 'http://evil.example/sveden/struct/')).toBeNull();
+		expect(
+			redirectTarget('mospolytech.ru', from, 'http://mospolytech.ru/sveden/struct')
+		).toBeNull();
 	});
 });
 

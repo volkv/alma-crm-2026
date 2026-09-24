@@ -8,14 +8,24 @@
  * переживать. Здесь же лежит и отметка следующего напоминания: потеряйся она с
  * очисткой Redis — и первый же проход цикла разослал бы всё заново.
  *
- * Строка одна на «вид × запись стадии × канал», а не на каждую отправку. Строка
+ * Строка одна на «вид × предмет × канал», а не на каждую отправку. Строка
  * на отправку превратила бы журнал в лог: напоминание повторяется, пока запись
  * стадии открыта, и за полгода стояния на одной стадии дало бы два десятка
  * одинаковых строк. Что повторов было несколько, видно по счётчику попыток и по
  * моменту последней отправки.
+ *
+ * Предметов два, и у строки заполнен ровно один (проверка
+ * `notification_deliveries_subject_one_of`):
+ * - запись стадии (`stage_entry_id` вместе со своим взаимодействием) — у
+ *   напоминания о зависшем взаимодействии;
+ * - позиция договора вместе со сроком лицензии (`contract_item_id`,
+ *   `license_until`) — у уведомлений о лицензии. Срок входит в ключ: продлили
+ *   лицензию — новый срок напоминает заново, а история прежнего остаётся.
  */
-import { relations } from 'drizzle-orm';
+import { relations, sql } from 'drizzle-orm';
 import {
+	check,
+	date,
 	index,
 	integer,
 	pgEnum,
@@ -31,7 +41,7 @@ import {
 	NOTIFICATION_KINDS
 } from '$lib/contracts/notifications';
 import { users } from './auth';
-import { interactions, stageEntries } from './interactions';
+import { contractItems, interactions, stageEntries } from './interactions';
 import { timestamps } from './shared';
 
 export const notificationKindEnum = pgEnum('notification_kind', NOTIFICATION_KINDS);
@@ -46,22 +56,25 @@ export const notificationDeliveries = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		kind: notificationKindEnum().notNull(),
-		interactionId: uuid()
-			.notNull()
-			.references(() => interactions.id, { onDelete: 'cascade' }),
+		interactionId: uuid().references(() => interactions.id, { onDelete: 'cascade' }),
 		/**
 		 * Запись стадии, о которой напоминают. Она же — предмет дедупликации:
 		 * закрылась запись, и напоминать больше не о чем, а строка остаётся
 		 * историей вместе со своей записью.
 		 */
-		stageEntryId: uuid()
-			.notNull()
-			.references(() => stageEntries.id, { onDelete: 'cascade' }),
+		stageEntryId: uuid().references(() => stageEntries.id, { onDelete: 'cascade' }),
 		/**
-		 * Кому уходит: руководитель ответственного за взаимодействие. Пусто —
-		 * руководитель не указан, и это не ошибка отправки, а незаполненная
-		 * иерархия: строка со статусом «получатель не определён» и есть сообщение
-		 * об этом.
+		 * Позиция договора, о лицензии которой напоминают. Удалили позицию —
+		 * напоминать не о чем, и строка уходит вместе с ней.
+		 */
+		contractItemId: uuid().references(() => contractItems.id, { onDelete: 'cascade' }),
+		/** Срок лицензии, о котором напомнили: часть ключа дедупликации. */
+		licenseUntil: date(),
+		/**
+		 * Кому уходит: руководитель ответственного за взаимодействие, ответственный
+		 * за вуз или его руководитель — по виду. Пусто — получателя нет, и это не
+		 * ошибка отправки, а незаполненное назначение или иерархия: строка со
+		 * статусом «получатель не определён» и есть сообщение об этом.
 		 */
 		recipientUserId: uuid().references(() => users.id, { onDelete: 'set null' }),
 		channel: notificationChannelEnum().notNull(),
@@ -98,11 +111,20 @@ export const notificationDeliveries = pgTable(
 			table.stageEntryId,
 			table.channel
 		),
+		// Тот же ключ для лицензий: одно уведомление на позицию и срок по каналу.
+		uniqueIndex('notification_deliveries_license_key')
+			.on(table.kind, table.contractItemId, table.licenseUntil, table.channel)
+			.where(sql`${table.contractItemId} is not null`),
+		check(
+			'notification_deliveries_subject_one_of',
+			sql`(${table.stageEntryId} is not null and ${table.interactionId} is not null and ${table.contractItemId} is null and ${table.licenseUntil} is null) or (${table.stageEntryId} is null and ${table.interactionId} is null and ${table.contractItemId} is not null and ${table.licenseUntil} is not null)`
+		),
 		// Наблюдатель выбирает то, чему пришёл срок: строк в журнале со временем
 		// тысячи, а созревших единицы.
 		index('notification_deliveries_due_idx').on(table.nextNotifyAt),
 		index('notification_deliveries_status_idx').on(table.status, table.createdAt),
-		index('notification_deliveries_interaction_idx').on(table.interactionId, table.createdAt)
+		index('notification_deliveries_interaction_idx').on(table.interactionId, table.createdAt),
+		index('notification_deliveries_contract_item_idx').on(table.contractItemId)
 	]
 );
 
@@ -114,6 +136,10 @@ export const notificationDeliveriesRelations = relations(notificationDeliveries,
 	stageEntry: one(stageEntries, {
 		fields: [notificationDeliveries.stageEntryId],
 		references: [stageEntries.id]
+	}),
+	contractItem: one(contractItems, {
+		fields: [notificationDeliveries.contractItemId],
+		references: [contractItems.id]
 	}),
 	recipient: one(users, {
 		fields: [notificationDeliveries.recipientUserId],

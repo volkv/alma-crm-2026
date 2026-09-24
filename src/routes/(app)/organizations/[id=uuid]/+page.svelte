@@ -439,6 +439,9 @@
 		contracts={data.contracts}
 		products={data.productOptions}
 		canWrite={data.canWrite}
+		canStartRenewal={data.canStartRenewal}
+		licenseWarningDays={data.licenseWarningDays}
+		today={data.today}
 	/>
 
 	<section class="rounded-lg border border-border bg-surface" data-tour="organization-contacts">
