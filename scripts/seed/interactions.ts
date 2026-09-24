@@ -47,6 +47,7 @@ import {
 	blockers,
 	comments,
 	interactionChanges,
+	interactionContractItems,
 	interactionParties,
 	interactionPartySites,
 	interactionProducts,
@@ -93,7 +94,9 @@ import {
 	B2C_PROCESS
 } from '$lib/server/stages/definitions';
 import { readWorkspaceByKey, requireActiveRevisionForWorkspace } from '$lib/server/stages/process';
+import { contractOf } from './contracts';
 import { seedId } from './ids';
+import { seedRoster } from './rosters';
 import { SERVICE_USER_EMAIL } from './users';
 
 /** Ключи учётных записей, на которых ведутся демонстрационные взаимодействия. */
@@ -2920,6 +2923,9 @@ function toCreateInput(
 			return { programId, programVersionId: versions.get(programId) ?? null };
 		}),
 		productIds: (seed.products ?? []).map((product) => seedId('product', product)),
+		// Договор выбирается при заведении, как в форме: к передаче материалов
+		// акту должно быть что передавать.
+		...(contractOf(seed.key, seed.products ?? []) ?? { contractId: null, contractItemIds: [] }),
 		// Экземпляр подключения — тот же, что у обмена: заявка, заведённая набором,
 		// не должна отличаться источником от той, что реально примет `POST
 		// /v1/applications` (`externalSourceOf`, `integrations/exchange/intake.ts`).
@@ -2971,6 +2977,7 @@ async function createSeededInteraction(
 				academicPeriodStart: input.academicPeriodStart,
 				academicPeriodEnd: input.academicPeriodEnd,
 				ownerUserId: input.ownerUserId,
+				contractId: input.contractId,
 				// Как у настоящей заявки (`intake.ts`): источник и номер обращения
 				// остаются на деле, а ревизия — последняя применённая заявкой.
 				externalSource: input.externalSource,
@@ -3017,6 +3024,21 @@ async function createSeededInteraction(
 			await tx
 				.insert(interactionProducts)
 				.values(input.productIds.map((productId) => ({ interactionId: id, productId })));
+		}
+
+		// Позиции договора — списком, как у формы (`writeRelations`,
+		// `src/lib/server/interactions/write.ts`): `contract_id` в строке связи
+		// держит составной внешний ключ принадлежности позиции договору.
+		const contractId = input.contractId;
+
+		if (contractId !== null && input.contractItemIds.length > 0) {
+			await tx.insert(interactionContractItems).values(
+				input.contractItemIds.map((contractItemId) => ({
+					interactionId: id,
+					contractItemId,
+					contractId
+				}))
+			);
 		}
 
 		await recordAuditEvent(
@@ -3250,8 +3272,13 @@ async function organizationRequisites(organizationId: string): Promise<string> {
 /**
  * Документ, собранный по шаблону стадии. Только DOCX: служба преобразования в
  * PDF поднята не на каждой машине, а стадия без документа не отпускает вперёд.
- * Позиций договора акт набора не передаёт: какие из них переданы, решает набор
- * договоров, и отметка на акте не должна переписывать его статусы.
+ *
+ * Акт передаёт позиции договора, выбранные делом, — как акт из пакета
+ * документов (`handover_act` в `src/lib/server/documents/package.ts`): отметка
+ * «Утверждён» на нём переводит их в «передан» (`markDocument`). У дела без
+ * договора акт собирается без позиций, и статусов он не касается. Правила
+ * пакета здесь те же: у каждой позиции есть срок лицензии, у договора — дата
+ * подписания; иначе это ошибка набора, а не пустая строка в акте.
  */
 async function generateSignedDocument(
 	ctx: ActorContext,
@@ -3270,23 +3297,37 @@ async function generateSignedDocument(
 		throw new Error(`Взаимодействию «${view.title}» не хватает сторон для акта передачи`);
 	}
 
+	const contract = view.contract;
+	const items = (contract?.items ?? []).map((item) => {
+		if (item.licenseUntil === null) {
+			throw new Error(`Позиции «${item.name}» дела «${view.title}» не задан срок лицензии`);
+		}
+
+		return { id: item.id, productName: item.name, licenseUntil: formatDate(item.licenseUntil) };
+	});
+
+	if (contract !== null && contract.signedOn === null) {
+		throw new Error(`Договору № ${contract.number} не задана дата подписания`);
+	}
+
 	const [document] = await generateDocument(ctx, {
 		templateKey,
 		interactionId,
 		title: `Акт передачи материалов и лицензий — ${view.title}`,
 		formats: ['docx'],
+		contractItemIds: items.map((item) => item.id),
 		data: {
 			city: 'Москва',
 			date: formatDate(new Date()),
-			contractNumber: view.contract?.number ?? 'б/н',
-			contractSignedOn: view.contract?.signedOn == null ? '' : formatDate(view.contract.signedOn),
+			contractNumber: contract?.number ?? 'б/н',
+			contractSignedOn: contract?.signedOn == null ? '' : formatDate(contract.signedOn),
 			operatorName: operator.organizationName,
 			operatorRequisites: await organizationRequisites(operator.organizationId),
 			operatorSigner: 'директора Орлова В. С.',
 			institutionName: institution.organizationName,
 			institutionRequisites: await organizationRequisites(institution.organizationId),
 			institutionSigner: 'ректора',
-			items: []
+			items: items.map(({ productName, licenseUntil }) => ({ productName, licenseUntil }))
 		}
 	});
 
@@ -3854,6 +3895,10 @@ export async function seedInteractions(): Promise<void> {
 		if (stageByKey(stages, seed.stage).requiresLmsData) {
 			await provideLmsEvidence();
 		}
+
+		// Поимённый список — когда поток уже заведён: слушателей грузят в
+		// группу, а группа появляется с заявкой в систему обучения.
+		await seedRoster(ctx, seed.key, id, daysBefore(runStart, seed.lastActivityDaysAgo));
 
 		// С отметкой по документу иначе: дело, стоящее на подписании, показывает
 		// либо подтверждённую стадию, либо требование, которое ещё не выполнено, —

@@ -12,11 +12,13 @@ import {
 	contractItems,
 	contracts,
 	directions,
+	documentContractItems,
 	documents,
 	interactionChanges,
 	interactionContractItems,
 	interactionParties,
 	interactions,
+	learningGroupLearners,
 	learningGroupResults,
 	learningGroups,
 	organizationResponsibles,
@@ -49,6 +51,7 @@ import { CONTRACT_SEED_SIZES } from '../../../scripts/seed/contracts';
 import { DIRECTORY_SEED_SIZES } from '../../../scripts/seed/directory';
 import { STATS_SEED_SIZES } from '../../../scripts/seed/stats';
 import { INTERACTION_SEED_SIZES } from '../../../scripts/seed/interactions';
+import { ROSTER_SEED_SIZES } from '../../../scripts/seed/rosters';
 import { main, seedAll, seedRolesOnly } from '../../../scripts/seed/run';
 import { seedId } from '../../../scripts/seed/ids';
 import { DEMO_EMAILS, SERVICE_USER_EMAIL, STAFF_ADMIN_EMAIL } from '../../../scripts/seed/users';
@@ -119,8 +122,13 @@ describe('сид', () => {
 
 		await expect(countRows(organizations)).resolves.toBe(DIRECTORY_SEED_SIZES.organizations);
 		await expect(countRows(sites)).resolves.toBe(DIRECTORY_SEED_SIZES.sites);
-		await expect(countRows(people)).resolves.toBe(DIRECTORY_SEED_SIZES.people);
-		await expect(countRows(affiliations)).resolves.toBe(DIRECTORY_SEED_SIZES.affiliations);
+		// Слушателей групп заводит загрузка их списков, а не справочник.
+		await expect(countRows(people)).resolves.toBe(
+			DIRECTORY_SEED_SIZES.people + ROSTER_SEED_SIZES.learners
+		);
+		await expect(countRows(affiliations)).resolves.toBe(
+			DIRECTORY_SEED_SIZES.affiliations + ROSTER_SEED_SIZES.affiliations
+		);
 		await expect(countRows(programs)).resolves.toBe(DIRECTORY_SEED_SIZES.programs);
 		await expect(countRows(programVersions)).resolves.toBe(DIRECTORY_SEED_SIZES.programVersions);
 		await expect(countRows(products)).resolves.toBe(DIRECTORY_SEED_SIZES.products);
@@ -318,6 +326,77 @@ describe('сид', () => {
 			.where(isNotNull(interactions.contractId));
 
 		expect(shared.length).toBeGreaterThan(new Set(shared.map((row) => row.contractId)).size);
+
+		// Позиции договоров с вузами передал акт: «передан» стоит ровно на тех,
+		// что названы в утверждённом акте передачи, и ни на одной другой.
+		const inActs = await database.db
+			.selectDistinct({ id: documentContractItems.contractItemId })
+			.from(documentContractItems)
+			.innerJoin(documents, eq(documents.id, documentContractItems.documentId))
+			.where(and(eq(documents.templateKey, 'handover_act'), isNotNull(documents.approvedAt)));
+		const institutionItems = await database.db
+			.select({ id: contractItems.id, transferStatus: contractItems.transferStatus })
+			.from(contractItems)
+			.innerJoin(contracts, eq(contracts.id, contractItems.contractId))
+			.innerJoin(organizations, eq(organizations.id, contracts.organizationId))
+			.where(eq(organizations.kind, 'educational_institution'));
+
+		expect(inActs.map((row) => row.id).sort()).toStrictEqual(
+			institutionItems
+				.filter((item) => item.transferStatus === 'передан')
+				.map((item) => item.id)
+				.sort()
+		);
+		expect(inActs.map((row) => row.id).sort()).toStrictEqual(
+			[
+				['szpu-2026', 'lms'],
+				['szpu-2026', 'analytics'],
+				['szpu-2026', 'cloud'],
+				['ukct-2026', 'lms'],
+				['vkgtu-2026', 'docs']
+			]
+				.map(([contract, product]) => seedId('contract-item', `${contract}:${product}`))
+				.sort()
+		);
+
+		// Акт с позициями — у каждого дела с договором, прошедшего передачу.
+		const actsWithItems = await database.db
+			.selectDistinct({ interactionId: documents.interactionId })
+			.from(documents)
+			.innerJoin(documentContractItems, eq(documentContractItems.documentId, documents.id));
+
+		expect(actsWithItems.map((row) => row.interactionId).sort()).toStrictEqual(
+			['szpu-vnedrenie', 'vkgtu-prepod', 'ukct-zanyatiya', 'szpu-2025']
+				.map((key) => seedId('interaction', key))
+				.sort()
+		);
+	});
+
+	it('заводит поимённые списки учебных групп, часть из них передана', async () => {
+		await runSeed();
+
+		const rows = await database.db
+			.select({
+				learningGroupId: learningGroupLearners.learningGroupId,
+				status: learningGroupLearners.status
+			})
+			.from(learningGroupLearners);
+
+		expect(rows).toHaveLength(ROSTER_SEED_SIZES.learners);
+		expect(new Set(rows.map((row) => row.learningGroupId)).size).toBe(ROSTER_SEED_SIZES.groups);
+		expect(rows.filter((row) => row.status === 'transferred')).toHaveLength(
+			ROSTER_SEED_SIZES.transferred
+		);
+
+		// Контакты слушателей лежат шифртекстом, как у остальных людей набора.
+		const [learner] = await database.db
+			.select({ email: people.email, emailHash: people.emailHash })
+			.from(learningGroupLearners)
+			.innerJoin(people, eq(people.id, learningGroupLearners.personId))
+			.limit(1);
+
+		expect(learner.emailHash).not.toBeNull();
+		expect(learner.email).not.toContain('@');
 	});
 
 	it('заводит взаимодействия на стадиях маршрута', async () => {
@@ -580,7 +659,10 @@ describe('сид', () => {
 
 		expect(organizationsAfter).toStrictEqual(organizationsBefore);
 		expect(peopleAfter).toStrictEqual(peopleBefore);
-		await expect(countRows(affiliations)).resolves.toBe(DIRECTORY_SEED_SIZES.affiliations);
+		await expect(countRows(affiliations)).resolves.toBe(
+			DIRECTORY_SEED_SIZES.affiliations + ROSTER_SEED_SIZES.affiliations
+		);
+		await expect(countRows(learningGroupLearners)).resolves.toBe(ROSTER_SEED_SIZES.learners);
 		await expect(countRows(programVersions)).resolves.toBe(DIRECTORY_SEED_SIZES.programVersions);
 		// По записи на роль от подготовки прогона плюс семь от сида: три
 		// демонстрационные, два сотрудника, администратор стенда и машинный
