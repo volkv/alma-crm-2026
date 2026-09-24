@@ -1,3 +1,4 @@
+import { spawn } from 'node:child_process';
 import { and, count, eq, inArray, isNotNull, isNull, ne, sql } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import type { RequestEvent } from '@sveltejs/kit';
@@ -42,7 +43,7 @@ import {
 import { hashApiKey } from '$lib/server/api/keys';
 import { exchangeSettingsDefault } from '$lib/server/integrations/settings';
 import { DEFAULT_ROLES, PERMISSION_KEYS, type PermissionKey } from '$lib/server/rbac/permissions';
-import { getRedis } from '$lib/server/redis';
+import { closeRedis } from '$lib/server/redis';
 import { B2B_PROCESS, B2C_PROCESS } from '$lib/server/stages/definitions';
 import { CONTRACT_SEED_SIZES } from '../../../scripts/seed/contracts';
 import { DIRECTORY_SEED_SIZES } from '../../../scripts/seed/directory';
@@ -104,7 +105,7 @@ beforeAll(async () => {
 afterAll(async () => {
 	// Обращение к маршруту API поднимает клиент Redis — там живут счётчики
 	// лимита частоты; без явного закрытия прогон держал бы открытый сокет.
-	await getRedis().quit();
+	await closeRedis();
 	await database.stop();
 });
 
@@ -976,4 +977,34 @@ describe('каталог прав', () => {
 		// Упасть разбор обязан до базы: каталог остался таким, каким был.
 		await expect(countRows(permissions)).resolves.toBe(PERMISSION_KEYS.length);
 	});
+});
+
+describe('запуск сида', () => {
+	/**
+	 * Код выхода процесса сида. Процесс, который не завершился за отведённое,
+	 * убивается, и проверка получает `null`: так выглядит зависший сид.
+	 */
+	function runSeedProcess(args: string[], timeoutMs: number): Promise<number | null> {
+		return new Promise((resolve, reject) => {
+			const child = spawn(process.execPath, ['scripts/seed/index.ts', ...args], {
+				env: { ...process.env, DEMO_MODE: 'true' },
+				stdio: ['ignore', 'ignore', 'inherit']
+			});
+			const timer = setTimeout(() => child.kill('SIGKILL'), timeoutMs);
+
+			child.on('error', reject);
+			child.on('exit', (code) => {
+				clearTimeout(timer);
+				resolve(code);
+			});
+		});
+	}
+
+	it('на пустой базе заливает стенд и завершает процесс сам', async () => {
+		// Команды движка после фиксации сообщают открытым карточкам через Redis:
+		// процесс, не закрывший это соединение, живёт вечно, и контейнер так и не
+		// доходит до запуска сервера.
+		await expect(runSeedProcess(['--if-demo'], 120_000)).resolves.toBe(0);
+		await expect(countRows(interactions)).resolves.toBeGreaterThan(0);
+	}, 150_000);
 });

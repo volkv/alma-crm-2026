@@ -14,11 +14,16 @@
  * Подключение — то же самое, что у приложения (`getDb()`): сид зовёт его
  * сервисы, и второй пул рядом означал бы вторую конфигурацию и вторую точку
  * отказа. Поэтому же вход закрывает его сам — открытые сокеты держат процесс
- * живым и после того, как работа сделана.
+ * живым и после того, как работа сделана. Закрывает не только базу: команды
+ * движка после фиксации сообщают открытым карточкам через Redis
+ * (`publishAfterCommit`), и сид на работающей установке так же обновляет их, —
+ * поэтому закрываются все соединения процесса разом (`closeConnections`).
  */
 import { count } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { closeDatabase, getDb } from '$lib/server/db';
+import { closeLiveBus } from '$lib/server/live/bus';
+import { closeRedis } from '$lib/server/redis';
 import * as schema from '$lib/server/db/schema';
 import { seedRolesAndPermissions } from '$lib/server/rbac/seed';
 import { exchangeKeyReport, seedApiKeys, type ExchangeKeySeedResult } from './api-keys';
@@ -170,6 +175,17 @@ async function countRows(tables: Record<string, PgTable>): Promise<string> {
 	return counts.join(', ');
 }
 
+/**
+ * Закрывает всё, что процесс мог открыть через код приложения: базу, общее
+ * соединение Redis и подписку живых событий. Забытое одно из них держит
+ * процесс живым — контейнер так и не доходил бы до запуска сервера.
+ */
+async function closeConnections(): Promise<void> {
+	await closeLiveBus();
+	await closeRedis();
+	await closeDatabase();
+}
+
 export async function main(argv: readonly string[]): Promise<void> {
 	const known = [IF_DEMO_FLAG, ROLES_ONLY_FLAG, LOAD_FLAG];
 	const unknown = argv.filter((argument) => !known.includes(argument));
@@ -197,7 +213,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 			);
 			console.log(`seed: готово, в базе ${await countRows(REPORTED_TABLES)}`);
 		} finally {
-			await closeDatabase();
+			await closeConnections();
 		}
 
 		return;
@@ -214,7 +230,7 @@ export async function main(argv: readonly string[]): Promise<void> {
 			await seedRolesOnly();
 			console.log(`seed: каталог прав приведён к коду, в базе ${await countRows(ROLE_TABLES)}`);
 		} finally {
-			await closeDatabase();
+			await closeConnections();
 		}
 
 		return;
@@ -234,6 +250,6 @@ export async function main(argv: readonly string[]): Promise<void> {
 
 		console.log(`seed: готово, в базе ${await countRows(REPORTED_TABLES)}`);
 	} finally {
-		await closeDatabase();
+		await closeConnections();
 	}
 }

@@ -294,7 +294,11 @@ breakdown() {
 
 case "${1:-full}" in
 up)
-	"${COMPOSE[@]}" up -d --build
+	# `--wait` — до здоровья приложения: здоровым оно становится только после
+	# миграций и демонстрационного сида (`--if-demo` в команде контейнера), а
+	# нагрузочный сид, запущенный рядом с ещё идущим первым, заливал бы тот же
+	# каталог прав наперегонки с ним.
+	"${COMPOSE[@]}" up -d --build --wait
 	"${COMPOSE[@]}" exec -T app node scripts/seed/index.ts --load
 	fixture
 	accounts

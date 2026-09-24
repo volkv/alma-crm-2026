@@ -42,6 +42,31 @@ export function createRedisSubscriber(): Redis {
 	});
 }
 
+/**
+ * Закрывает общее соединение, если оно было открыто.
+ *
+ * Приложению не нужна: его соединение живёт, пока жив процесс. Нужна скриптам,
+ * которые зовут команды приложения и должны завершиться сами, — открытый сокет
+ * Redis держит процесс Node живым и после того, как работа сделана.
+ */
+export async function closeRedis(): Promise<void> {
+	const open = client;
+	client = undefined;
+
+	if (open === undefined) {
+		return;
+	}
+
+	// Клиент создан, но ни одной команды не отправил (`lazyConnect`): сокета
+	// нет, а `QUIT` сначала открыл бы его ради того, чтобы закрыть.
+	if (open.status === 'wait') {
+		open.disconnect();
+		return;
+	}
+
+	await open.quit();
+}
+
 /** Cheapest possible round-trip to Redis, used by the health endpoint. */
 export async function pingRedis(): Promise<void> {
 	const reply = await getRedis().ping();
