@@ -56,7 +56,6 @@ import { getDb } from '../db';
 import {
 	affiliations,
 	directions,
-	interactionParties,
 	organizations,
 	people,
 	productDirections,
@@ -67,12 +66,12 @@ import {
 } from '../db/schema';
 import type { Tx } from '../db/transaction';
 import { NotFoundError } from '../errors';
-import { visibleInteractionFilter, visibleOrganizationFilter } from '../interactions/access';
+import { visibleOrganizationFilter } from '../interactions/access';
 import { personInScope, personVisible } from '../people/access';
 import { withPiiTrace } from '../people/pii-trace';
 import { retentionExpired } from '../people/retention';
 import { toPersonView } from '../people/serialize';
-import { can, requirePermission, scopeFilter } from '../rbac';
+import { requirePermission, scopeFilter } from '../rbac';
 
 /**
  * Кто выполняет выборку: транзакция вызывающего или общий пул. Чтение внутри
@@ -505,32 +504,6 @@ export async function getSite(
 	}
 
 	return row;
-}
-
-/** Сколько взаимодействий идёт с организацией; `null` — если раздел закрыт правами. */
-export async function countOrganizationInteractions(
-	ctx: ActorContext,
-	organizationId: string
-): Promise<number | null> {
-	if (!can(ctx, 'interactions.read')) {
-		return null;
-	}
-
-	// Считаются взаимодействия, а не строки сторон: организация может стоять в
-	// записи и вузом, и плательщиком сразу. Видимость — общая
-	// (`visibleInteractionFilter`), потому что своё условие здесь разошлось бы с
-	// тем, по которому собирается сам список взаимодействий.
-	const [row] = await getDb()
-		.select({ value: countDistinct(interactionParties.interactionId) })
-		.from(interactionParties)
-		.where(
-			and(
-				eq(interactionParties.organizationId, organizationId),
-				visibleInteractionFilter(ctx, interactionParties.interactionId)
-			)
-		);
-
-	return row?.value ?? 0;
 }
 
 /** ФИО одной строкой — по нему ищут человека в списке. */

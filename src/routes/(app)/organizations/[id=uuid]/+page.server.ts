@@ -13,7 +13,6 @@ import {
 	saveContractItem
 } from '$lib/server/directory/contracts';
 import {
-	countOrganizationInteractions,
 	getOrganization,
 	listAffiliations,
 	listProducts,
@@ -32,10 +31,19 @@ import {
 	restoreOrganization
 } from '$lib/server/directory/write';
 import { startLicenseRenewal } from '$lib/server/directory/license-renewal';
+import {
+	addSiteContact,
+	listOrganizationWork,
+	readPassportApplied
+} from '$lib/server/directory/organization-card';
+import { matchSchoolPrograms } from '$lib/server/directory/program-match';
+import { passportAvailability } from '$lib/server/enrichment/access';
+import { addSiteContactSchema } from '$lib/contracts/organization-card';
 import { formatIsoDay } from '$lib/format';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import { getSetting } from '$lib/server/settings';
+import { passportActions } from '../passport/actions.server';
 import type { Actions, PageServerLoad } from './$types';
 
 /** Каталог продуктов для позиции договора: активные, одной страницей. */
@@ -43,6 +51,7 @@ const productPage = catalogListQuerySchema.parse({ status: 'active', pageSize: 1
 
 export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
+	const { workspaces } = await event.parent();
 
 	try {
 		const organization = await getOrganization(ctx, event.params.id);
@@ -59,30 +68,35 @@ export const load: PageServerLoad = async (event) => {
 		const [
 			sites,
 			affiliations,
-			interactionCount,
 			responsibles,
 			assignableUsers,
 			directionOptions,
 			contracts,
 			products,
-			licenseWarningDays
+			licenseWarningDays,
+			work,
+			passportApplied,
+			availability
 		] = await Promise.all([
 			listSites(ctx, organization.id),
 			can(ctx, 'people.read') ? listAffiliations(ctx, organization.id) : Promise.resolve([]),
-			countOrganizationInteractions(ctx, organization.id),
 			listResponsibles(ctx, organization.id),
 			canAssign ? listAssignableUsers(ctx) : Promise.resolve([]),
 			canAssign ? listDirectionOptions(ctx) : Promise.resolve([]),
 			listOrganizationContracts(ctx, organization.id),
 			canWrite ? listProducts(ctx, productPage) : Promise.resolve({ items: [] }),
-			getSetting('license_warning_days')
+			getSetting('license_warning_days'),
+			listOrganizationWork(ctx, organization.id, workspaces),
+			readPassportApplied(organization.id),
+			// Чтение раздела «Сведения» — то же действие, что в форме правки, и
+			// право то же: без права на правку кнопки нет, и настройку незачем читать.
+			canWrite ? passportAvailability(ctx) : Promise.resolve(null)
 		]);
 
 		return {
 			organization,
 			sites,
 			affiliations,
-			interactionCount,
 			responsibles,
 			assignableUsers,
 			directionOptions,
@@ -105,7 +119,16 @@ export const load: PageServerLoad = async (event) => {
 			licenseWarningDays,
 			// Продление — это заведение взаимодействия, и право то же.
 			canStartRenewal: can(ctx, 'interactions.write'),
-			canWritePeople: can(ctx, 'people.write')
+			canWritePeople: can(ctx, 'people.write'),
+			canStartInteraction: can(ctx, 'interactions.write'),
+			work,
+			passportApplied,
+			// Раздел «Сведения» читается по сайту из карточки: без сайта и без
+			// включённых источников кнопки нет, а причина сказана словами.
+			siteReading:
+				availability === null
+					? null
+					: { enabled: availability.enabled, remaining: availability.remaining }
 		};
 	} catch (error) {
 		toPageError(error);
@@ -289,6 +312,59 @@ export const actions: Actions = {
 		}
 
 		redirect(303, resolve('/(app)/interactions/[id=uuid]', { id: interactionId }));
+	},
+
+	/**
+	 * Раздел «Сведения» на сайте из карточки — то самое действие, что стоит в
+	 * форме правки (`passportActions.passportSite`): та же квота, тот же кэш на
+	 * сутки. Карточка ничего из него не записывает в реквизиты — она показывает
+	 * кандидатов в контакты и подбирает программы школы под программы вуза.
+	 */
+	readSite: async (event) => {
+		const result = await passportActions.passportSite(event);
+
+		if (!('issued' in result)) {
+			return result;
+		}
+
+		const site = result.issued.passport.site;
+
+		try {
+			return {
+				site,
+				warnings: result.issued.passport.warnings,
+				programMatch:
+					site === null ? null : await matchSchoolPrograms(actorFromEvent(event), site.programs)
+			};
+		} catch (error) {
+			return toActionFailure(error);
+		}
+	},
+
+	/**
+	 * Кандидат из подраздела «Структура» — в контакты одним щелчком. Без
+	 * перехода: сотрудник разбирает список кандидатов и добавляет нескольких
+	 * подряд, а прочитанный раздел остаётся на экране.
+	 */
+	addSiteContact: async (event) => {
+		const parsed = addSiteContactSchema.safeParse(
+			Object.fromEntries(await event.request.formData())
+		);
+
+		if (!parsed.success) {
+			return fail(400, {
+				message: 'Контакт не добавлен',
+				issues: parsed.error.issues.map((issue) => issue.message)
+			});
+		}
+
+		try {
+			const added = await addSiteContact(actorFromEvent(event), event.params.id, parsed.data);
+
+			return { addedContact: `${added.person.lastName} ${added.person.firstName}` };
+		} catch (error) {
+			return toActionFailure(error);
+		}
 	},
 
 	endAffiliation: async (event) => {

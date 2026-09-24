@@ -1,5 +1,7 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
+	import LockIcon from '@lucide/svelte/icons/lock';
 	import ArchiveIcon from '@lucide/svelte/icons/archive';
 	import ArchiveRestoreIcon from '@lucide/svelte/icons/archive-restore';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
@@ -10,24 +12,24 @@
 	import ActionAlert from '$lib/components/directory/action-alert.svelte';
 	import ContractsPanel from '$lib/components/directory/contracts-panel.svelte';
 	import Flash from '$lib/components/directory/flash.svelte';
-	import {
-		AFFILIATION_ROLE_LABELS,
-		EDUCATION_LEVEL_LABELS,
-		ORGANIZATION_KIND_LABELS,
-		ORGANIZATION_KIND_TONES,
-		SITE_KIND_LABELS
-	} from '$lib/components/directory/labels';
+	import { SITE_KIND_LABELS } from '$lib/components/directory/labels';
+	import ContactsList from '$lib/components/organization-card/contacts-list.svelte';
+	import OrganizationFacts from '$lib/components/organization-card/organization-facts.svelte';
+	import RequisitesPanel from '$lib/components/organization-card/requisites-panel.svelte';
+	import SitePassport from '$lib/components/organization-card/site-passport.svelte';
+	import WorkPanel from '$lib/components/organization-card/work-panel.svelte';
+	import { partnerStatus } from '$lib/components/organization-card/model';
+	import ContextSection from '$lib/components/interaction-card/context-section.svelte';
+	import { normalizePersonName } from '$lib/contracts/organization-card';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import ConfirmDialog from '$lib/components/confirm-dialog.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
-	import KeyValue from '$lib/components/key-value.svelte';
-	import KeyValueRow from '$lib/components/key-value-row.svelte';
 	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
 	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
-	import { formatDate, formatDateTime, formatNumber } from '$lib/format';
+	import { formatDateTime } from '$lib/format';
 	import type { AffiliationView } from '$lib/contracts/directory';
 	import type { ResponsibleView } from '$lib/server/directory/responsibles';
 	import type { PageProps } from './$types';
@@ -35,7 +37,50 @@
 	let { data }: PageProps = $props();
 
 	const siteNames = $derived(new Map(data.sites.map((site) => [site.id, site.name])));
-	const masked = $derived(data.affiliations.some((row) => row.person.contactsMasked));
+
+	/** ФИО действующих контактов: по ним кандидат с сайта помечается «в контактах». */
+	const contactNames = $derived(
+		new Set(
+			data.affiliations
+				.filter((row) => row.validTo === null)
+				.map((row) =>
+					normalizePersonName(
+						[row.person.lastName, row.person.firstName, row.person.middleName]
+							.filter((part) => part !== null && part !== '')
+							.join(' ')
+					)
+				)
+		)
+	);
+
+	const partner = $derived(partnerStatus(data.contracts, data.today, data.licenseWarningDays));
+
+	/**
+	 * Куда заводить взаимодействие: пространства сотрудника с назначенным
+	 * процессом, первым — то, где с этой организацией уже больше всего работы.
+	 */
+	const startTargets = $derived(
+		(data.work ?? [])
+			.filter((workspace) => workspace.hasWorkflow)
+			.sort((left, right) => right.total - left.total)
+	);
+
+	/** Почему главное действие недоступно; `null` — доступно. */
+	const startBlocked = $derived.by((): string | null => {
+		if (!data.canStartInteraction) {
+			return 'Заводить взаимодействия может сотрудник с правом на их запись.';
+		}
+
+		if (!data.organization.isActive) {
+			return 'Организация в архиве: верните её, чтобы завести по ней работу.';
+		}
+
+		if (startTargets.length === 0) {
+			return 'Ни в одном вашем пространстве не назначен процесс — взаимодействию не с чего начать.';
+		}
+
+		return null;
+	});
 
 	let archiveForm = $state<HTMLFormElement | null>(null);
 	let archiveOpen = $state(false);
@@ -98,12 +143,6 @@
 		releasing = row;
 		releaseOpen = true;
 	}
-
-	function fullName(row: AffiliationView) {
-		return [row.person.lastName, row.person.firstName, row.person.middleName]
-			.filter((part) => part !== null && part !== '')
-			.join(' ');
-	}
 </script>
 
 <svelte:head><title>{data.organization.shortName} — LCT CRM</title></svelte:head>
@@ -156,380 +195,328 @@
 	]}
 />
 
-<div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
+<div class="flex min-w-0 flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	<ActionAlert />
 
-	<section class="rounded-lg border border-border bg-surface p-4 sm:p-6">
-		<h2 class="mb-4 text-sm font-semibold">Реквизиты</h2>
-		<KeyValue>
-			<KeyValueRow label="Вид">
-				<StatusBadge tone={ORGANIZATION_KIND_TONES[data.organization.kind]}>
-					{ORGANIZATION_KIND_LABELS[data.organization.kind]}
-				</StatusBadge>
-			</KeyValueRow>
-			<KeyValueRow
-				label="Уровень образования"
-				value={data.organization.educationLevel === null
-					? null
-					: EDUCATION_LEVEL_LABELS[data.organization.educationLevel]}
-			/>
-			<KeyValueRow label="ИНН" value={data.organization.inn} />
-			<KeyValueRow label="КПП" value={data.organization.kpp} />
-			<KeyValueRow label="ОГРН" value={data.organization.ogrn} />
-			<KeyValueRow label="Регион" value={data.organization.region} />
-			<KeyValueRow label="Сайт">
-				{#if data.organization.website}
-					<a
-						class="underline underline-offset-2 focus-ring"
-						href={data.organization.website}
-						rel="external noreferrer noopener"
-						target="_blank">{data.organization.website}</a
-					>
-				{:else}
-					<span class="text-faint">—</span>
-				{/if}
-			</KeyValueRow>
-			<KeyValueRow label="Состояние">
-				{#if data.organization.isActive}
-					<StatusBadge tone="success" dot>Активна</StatusBadge>
-				{:else}
-					<StatusBadge tone="neutral" dot>В архиве</StatusBadge>
-				{/if}
-			</KeyValueRow>
-			<KeyValueRow label="Взаимодействия">
-				{#if data.interactionCount === null}
-					<span class="text-faint">нет доступа</span>
-				{:else}
-					<a
-						class="underline underline-offset-2 focus-ring"
-						href={resolve(`/interactions?organization=${data.organization.id}`)}
-					>
-						{formatNumber(data.interactionCount)}
-					</a>
-				{/if}
-			</KeyValueRow>
-			<KeyValueRow label="Обновлено" value={formatDate(data.organization.updatedAt)} />
-		</KeyValue>
-
-		{#if data.organization.notes}
-			<p class="mt-4 text-sm whitespace-pre-line">{data.organization.notes}</p>
-		{/if}
-	</section>
-
-	<section class="rounded-lg border border-border bg-surface" data-tour="organization-responsibles">
-		<header class="border-b border-border px-4 py-3">
-			<h2 class="text-sm font-semibold">Ответственные</h2>
-			<p class="mt-1 text-xs text-muted-foreground">
-				Кто ведёт вуз. От этого зависит, кто видит его карточку и взаимодействия по нему: назначение
-				действует немедленно, а снятое закрывается точной меткой времени и остаётся в истории.
-			</p>
-		</header>
-
-		{#if currentResponsibles.length === 0}
-			<EmptyState
-				title="Ответственного нет"
-				description="Вуз не закреплён ни за кем: в списках менеджеров он не появится."
-			/>
-		{:else}
-			<Table.Root>
-				<Table.Header>
-					<Table.Row>
-						<Table.Head>Сотрудник</Table.Head>
-						<Table.Head>Направление</Table.Head>
-						<Table.Head>С</Table.Head>
-						<Table.Head>Назначил</Table.Head>
-						{#if data.canAssign}
-							<Table.Head class="text-right">Действия</Table.Head>
-						{/if}
-					</Table.Row>
-				</Table.Header>
-				<Table.Body>
-					{#each currentResponsibles as row (row.id)}
-						<Table.Row>
-							<Table.Cell>{row.userFullName}</Table.Cell>
-							<Table.Cell>
-								{#if row.directionName}
-									{row.directionName}
-								{:else}
-									<StatusBadge tone="neutral">весь вуз</StatusBadge>
-								{/if}
-							</Table.Cell>
-							<Table.Cell>{formatDateTime(row.validFrom)}</Table.Cell>
-							<Table.Cell>
-								{#if row.assignedByFullName}
-									{row.assignedByFullName}
-								{:else}
-									<span class="text-faint">—</span>
-								{/if}
-							</Table.Cell>
-							{#if data.canAssign}
-								<Table.Cell class="text-right">
-									<Button variant="outline" size="sm" onclick={() => askRelease(row)}>Снять</Button>
-								</Table.Cell>
-							{/if}
-						</Table.Row>
-					{/each}
-				</Table.Body>
-			</Table.Root>
-		{/if}
-
-		{#if data.canAssign}
-			<div class="border-t border-border px-4 py-3">
-				<form
-					method="POST"
-					action="?/assignResponsible"
-					class="flex flex-wrap items-end gap-3"
-					data-testid="assign-responsible"
-				>
-					<!-- Списки — наши, а форме нужны обычные поля: значение каждого
-					     уходит скрытым `input`. Сотрудника не сторожит `required`:
-					     нативную проверку браузер пишет по-английски, а отказ «Не
-					     выбран сотрудник» приходит с сервера и на русском. -->
-					<div class="flex flex-col gap-1 text-xs">
-						<Label for="assignUserId" class="text-xs font-medium">Сотрудник</Label>
-						<input type="hidden" name="userId" value={assignUser?.id ?? ''} />
-						<Select.Root type="single" bind:value={assignUserId}>
-							<Select.Trigger id="assignUserId" class="min-w-56 text-sm">
-								{assignUser?.fullName ?? '— выберите —'}
-							</Select.Trigger>
-							<Select.Content>
-								{#each data.assignableUsers as user (user.id)}
-									<Select.Item value={user.id} label={user.fullName} />
-								{/each}
-							</Select.Content>
-						</Select.Root>
-					</div>
-
-					<div class="flex flex-col gap-1 text-xs">
-						<Label for="assignDirectionId" class="text-xs font-medium">Направление</Label>
-						<input type="hidden" name="directionId" value={assignDirection?.id ?? ''} />
-						<Select.Root type="single" bind:value={assignDirectionId}>
-							<Select.Trigger id="assignDirectionId" class="min-w-56 text-sm">
-								{assignDirection?.name ?? WHOLE_ORGANIZATION_LABEL}
-							</Select.Trigger>
-							<Select.Content>
-								<!-- Общее назначение и назначения по направлениям на одном вузе
-								     не сосуществуют, поэтому лишний вариант из списка убран. -->
-								{#if !hasByDirection}
-									<Select.Item value={WHOLE_ORGANIZATION} label={WHOLE_ORGANIZATION_LABEL} />
-								{/if}
-								{#each data.directionOptions as direction (direction.id)}
-									<Select.Item value={direction.id} label={direction.name} disabled={hasGeneral} />
-								{/each}
-							</Select.Content>
-						</Select.Root>
-					</div>
-
-					{#if data.canTransfer}
-						<!-- Флажок ниже полей и выше кнопки: это условие отправки, а не
-						     ещё одно поле формы. Снятый браузер не присылает вовсе,
-						     поэтому сервер читает присутствие значения. -->
-						<Label class="flex w-full items-start gap-2 font-normal">
-							<Checkbox name="transferInteractions" value="true" checked class="mt-0.5" />
-							<span class="flex flex-col gap-0.5">
-								<span>Передать незавершённые взаимодействия новому ответственному</span>
-								<span class="text-xs text-muted-foreground">
-									Уйдут записи в работе, где этот вуз — основная сторона, а владелец — прежний
-									ответственный; при назначении по направлению — только записи этого направления.
-									Завершённые и отменённые остаются у тех, кто их вёл.
-								</span>
-							</span>
-						</Label>
-					{/if}
-
-					<Button type="submit" size="sm">Назначить</Button>
-				</form>
-
-				{#if hasGeneral}
-					<InlineHint class="mt-3">
-						За вуз целиком уже кто-то отвечает: чтобы разделить его по направлениям, сначала снимите
-						общее назначение.
-					</InlineHint>
-				{/if}
-			</div>
-		{/if}
-
-		{#if pastResponsibles.length > 0}
-			<details class="border-t border-border px-4 py-3">
-				<summary class="text-xs font-medium">
-					История назначений ({pastResponsibles.length})
-				</summary>
-				<Table.Root class="mt-3">
-					<Table.Header>
-						<Table.Row>
-							<Table.Head>Сотрудник</Table.Head>
-							<Table.Head>Направление</Table.Head>
-							<Table.Head>С</Table.Head>
-							<Table.Head>По</Table.Head>
-						</Table.Row>
-					</Table.Header>
-					<Table.Body>
-						{#each pastResponsibles as row (row.id)}
-							<Table.Row>
-								<Table.Cell>{row.userFullName}</Table.Cell>
-								<Table.Cell>{row.directionName ?? 'весь вуз'}</Table.Cell>
-								<Table.Cell>{formatDateTime(row.validFrom)}</Table.Cell>
-								<Table.Cell>{row.validTo === null ? '—' : formatDateTime(row.validTo)}</Table.Cell>
-							</Table.Row>
-						{/each}
-					</Table.Body>
-				</Table.Root>
-			</details>
-		{/if}
-	</section>
-
-	<section class="rounded-lg border border-border bg-surface" data-tour="organization-sites">
-		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-			<h2 class="text-sm font-semibold">Площадки</h2>
-			{#if data.canWrite}
-				<Button
-					variant="outline"
-					size="sm"
-					href={resolve('/(app)/organizations/[id=uuid]/sites/new', { id: data.organization.id })}
-				>
-					<PlusIcon aria-hidden="true" />
-					Добавить площадку
-				</Button>
-			{/if}
-		</header>
-
-		{#if data.sites.length === 0}
-			<EmptyState
-				title="Площадок пока нет"
-				description="Кампусы, филиалы и подразделения нужны, чтобы взаимодействие знало, где оно идёт."
-			/>
-		{:else}
-			<Table.Root>
-				<Table.Header>
-					<Table.Row class="hover:bg-transparent">
-						<Table.Head>Название</Table.Head>
-						<Table.Head>Вид</Table.Head>
-						<Table.Head>Адрес</Table.Head>
-						<Table.Head>Регион</Table.Head>
-						<Table.Head class="w-24"></Table.Head>
-					</Table.Row>
-				</Table.Header>
-				<Table.Body>
-					{#each data.sites as site (site.id)}
-						<Table.Row class="h-row">
-							<Table.Cell class="font-medium">{site.name}</Table.Cell>
-							<Table.Cell>{SITE_KIND_LABELS[site.kind]}</Table.Cell>
-							<Table.Cell>{site.address ?? '—'}</Table.Cell>
-							<Table.Cell>{site.region ?? '—'}</Table.Cell>
-							<Table.Cell class="text-right">
-								{#if data.canWrite}
-									<Button
-										variant="ghost"
-										size="sm"
-										href={resolve('/(app)/organizations/[id=uuid]/sites/[siteId=uuid]', {
-											id: data.organization.id,
-											siteId: site.id
-										})}>Изменить</Button
-									>
-								{/if}
-							</Table.Cell>
-						</Table.Row>
-					{/each}
-				</Table.Body>
-			</Table.Root>
-		{/if}
-	</section>
-
-	<ContractsPanel
-		contracts={data.contracts}
-		products={data.productOptions}
-		canWrite={data.canWrite}
-		canStartRenewal={data.canStartRenewal}
-		licenseWarningDays={data.licenseWarningDays}
-		today={data.today}
+	<OrganizationFacts
+		organization={data.organization}
+		responsibles={currentResponsibles}
+		{partner}
 	/>
 
-	<section class="rounded-lg border border-border bg-surface" data-tour="organization-contacts">
-		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-			<h2 class="text-sm font-semibold">Контакты</h2>
-			{#if data.canWritePeople}
-				<Button
-					variant="outline"
-					size="sm"
-					href={resolve('/(app)/organizations/[id=uuid]/affiliations/new', {
-						id: data.organization.id
-					})}
-				>
-					<PlusIcon aria-hidden="true" />
-					Добавить контакт
-				</Button>
-			{/if}
-		</header>
-
-		{#if !data.canReadPeople}
-			<EmptyState
-				title="Контакты закрыты правами"
-				description="Нужно право «Просмотр людей и их ролей в организациях»."
-			/>
-		{:else if data.affiliations.length === 0}
-			<EmptyState
-				title="Контактов пока нет"
-				description="Добавьте человека, с которым идёт переписка по процессу."
-			/>
-		{:else}
-			{#if masked}
-				<div class="px-4 pt-3">
-					<InlineHint tone="info">
-						Почта и телефон показаны закрытыми: полные контакты видны с правом «Просмотр контактов
-						людей без маскирования».
-					</InlineHint>
+	<!-- Три блока — действие, работа, контекст — стоят в разметке в том порядке,
+		в каком их читают на телефоне. На рабочем экране контекст уходит в правую
+		колонку на всю высоту, как на карточке взаимодействия. -->
+	<div
+		class="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] lg:grid-rows-[auto_1fr] xl:grid-cols-[minmax(0,1fr)_20rem]"
+	>
+		<section
+			class="flex min-w-0 flex-col gap-2 rounded-xl border border-border bg-surface p-4 shadow-xs lg:col-start-1 lg:row-start-1"
+			aria-label="Главное действие"
+			data-tour="organization-primary"
+		>
+			{#if startBlocked === null}
+				{@const [main, ...others] = startTargets}
+				<div class="flex flex-wrap items-center gap-2">
+					<Button
+						size="lg"
+						class="h-auto min-h-9 max-w-full py-1.5 text-left whitespace-normal"
+						href={resolve('/(app)/w/[workspace]/interactions/new', { workspace: main.key })}
+					>
+						<ArrowRightIcon aria-hidden="true" />
+						Завести взаимодействие
+					</Button>
+					{#each others as workspace (workspace.key)}
+						<Button
+							variant="ghost"
+							size="sm"
+							href={resolve('/(app)/w/[workspace]/interactions/new', {
+								workspace: workspace.key
+							})}
+						>
+							в «{workspace.name}»
+						</Button>
+					{/each}
+				</div>
+				<p class="text-xs text-muted-foreground">
+					В пространстве «{main.name}»; в форме выберите «{data.organization.shortName}» стороной
+					взаимодействия.
+				</p>
+			{:else}
+				<div class="flex items-start gap-2 text-sm text-muted-foreground">
+					<LockIcon class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
+					<p>{startBlocked}</p>
 				</div>
 			{/if}
-			<Table.Root>
-				<Table.Header>
-					<Table.Row class="hover:bg-transparent">
-						<Table.Head>Человек</Table.Head>
-						<Table.Head>Должность</Table.Head>
-						<Table.Head>Роль</Table.Head>
-						<Table.Head>Площадка</Table.Head>
-						<Table.Head>Период</Table.Head>
-						<Table.Head>Контакты</Table.Head>
-						<Table.Head class="w-28"></Table.Head>
-					</Table.Row>
-				</Table.Header>
-				<Table.Body>
-					{#each data.affiliations as row (row.id)}
-						<Table.Row class="h-row">
-							<Table.Cell class="font-medium">
-								<a
-									class="underline underline-offset-2 focus-ring"
-									href={resolve('/(app)/people/[id=uuid]', { id: row.person.id })}
-									>{fullName(row)}</a
-								>
-								{#if row.isPrimary}
-									<StatusBadge tone="accent" class="ml-2">основной</StatusBadge>
+		</section>
+
+		<div class="flex min-w-0 flex-col gap-4 lg:col-start-1 lg:row-start-2">
+			<div class="min-w-0 rounded-xl border border-border bg-surface p-4">
+				<!-- Прочитанные «Сведения» живут в самом блоке: при переходе на карточку
+					другого вуза блок создаётся заново, чтобы не показать чужих кандидатов. -->
+				{#key data.organization.id}
+					<SitePassport
+						website={data.organization.website}
+						reading={data.siteReading}
+						canAddContacts={data.canWritePeople}
+						{contactNames}
+					/>
+				{/key}
+			</div>
+
+			<div class="min-w-0 rounded-xl border border-border bg-surface p-4">
+				<WorkPanel organizationId={data.organization.id} work={data.work} />
+			</div>
+
+			<ContractsPanel
+				contracts={data.contracts}
+				products={data.productOptions}
+				canWrite={data.canWrite}
+				canStartRenewal={data.canStartRenewal}
+				licenseWarningDays={data.licenseWarningDays}
+				today={data.today}
+			/>
+
+			<section
+				class="min-w-0 rounded-xl border border-border bg-surface"
+				data-tour="organization-responsibles"
+			>
+				<header class="border-b border-border px-4 py-3">
+					<h2 class="text-sm font-semibold">Ответственные</h2>
+					<p class="mt-1 text-xs text-muted-foreground">
+						Кто ведёт вуз. От этого зависит, кто видит его карточку и взаимодействия по нему:
+						назначение действует немедленно, а снятое закрывается точной меткой времени и остаётся в
+						истории.
+					</p>
+				</header>
+
+				{#if currentResponsibles.length === 0}
+					<EmptyState
+						title="Ответственного нет"
+						description="Вуз не закреплён ни за кем: в списках менеджеров он не появится."
+					/>
+				{:else}
+					<Table.Root>
+						<Table.Header>
+							<Table.Row>
+								<Table.Head>Сотрудник</Table.Head>
+								<Table.Head>Направление</Table.Head>
+								<Table.Head>С</Table.Head>
+								<Table.Head>Назначил</Table.Head>
+								{#if data.canAssign}
+									<Table.Head class="text-right">Действия</Table.Head>
 								{/if}
-							</Table.Cell>
-							<Table.Cell>{row.position}</Table.Cell>
-							<Table.Cell>{AFFILIATION_ROLE_LABELS[row.roleKind]}</Table.Cell>
-							<Table.Cell
-								>{row.siteId === null ? '—' : (siteNames.get(row.siteId) ?? '—')}</Table.Cell
+							</Table.Row>
+						</Table.Header>
+						<Table.Body>
+							{#each currentResponsibles as row (row.id)}
+								<Table.Row>
+									<Table.Cell>{row.userFullName}</Table.Cell>
+									<Table.Cell>
+										{#if row.directionName}
+											{row.directionName}
+										{:else}
+											<StatusBadge tone="neutral">весь вуз</StatusBadge>
+										{/if}
+									</Table.Cell>
+									<Table.Cell>{formatDateTime(row.validFrom)}</Table.Cell>
+									<Table.Cell>
+										{#if row.assignedByFullName}
+											{row.assignedByFullName}
+										{:else}
+											<span class="text-faint">—</span>
+										{/if}
+									</Table.Cell>
+									{#if data.canAssign}
+										<Table.Cell class="text-right">
+											<Button variant="outline" size="sm" onclick={() => askRelease(row)}
+												>Снять</Button
+											>
+										</Table.Cell>
+									{/if}
+								</Table.Row>
+							{/each}
+						</Table.Body>
+					</Table.Root>
+				{/if}
+
+				{#if data.canAssign}
+					<div class="border-t border-border px-4 py-3">
+						<form
+							method="POST"
+							action="?/assignResponsible"
+							class="flex flex-wrap items-end gap-3"
+							data-testid="assign-responsible"
+						>
+							<!-- Списки — наши, а форме нужны обычные поля: значение каждого
+							     уходит скрытым `input`. Сотрудника не сторожит `required`:
+							     нативную проверку браузер пишет по-английски, а отказ «Не
+							     выбран сотрудник» приходит с сервера и на русском. -->
+							<div class="flex flex-col gap-1 text-xs">
+								<Label for="assignUserId" class="text-xs font-medium">Сотрудник</Label>
+								<input type="hidden" name="userId" value={assignUser?.id ?? ''} />
+								<Select.Root type="single" bind:value={assignUserId}>
+									<Select.Trigger id="assignUserId" class="min-w-56 text-sm">
+										{assignUser?.fullName ?? '— выберите —'}
+									</Select.Trigger>
+									<Select.Content>
+										{#each data.assignableUsers as user (user.id)}
+											<Select.Item value={user.id} label={user.fullName} />
+										{/each}
+									</Select.Content>
+								</Select.Root>
+							</div>
+
+							<div class="flex flex-col gap-1 text-xs">
+								<Label for="assignDirectionId" class="text-xs font-medium">Направление</Label>
+								<input type="hidden" name="directionId" value={assignDirection?.id ?? ''} />
+								<Select.Root type="single" bind:value={assignDirectionId}>
+									<Select.Trigger id="assignDirectionId" class="min-w-56 text-sm">
+										{assignDirection?.name ?? WHOLE_ORGANIZATION_LABEL}
+									</Select.Trigger>
+									<Select.Content>
+										<!-- Общее назначение и назначения по направлениям на одном вузе
+										     не сосуществуют, поэтому лишний вариант из списка убран. -->
+										{#if !hasByDirection}
+											<Select.Item value={WHOLE_ORGANIZATION} label={WHOLE_ORGANIZATION_LABEL} />
+										{/if}
+										{#each data.directionOptions as direction (direction.id)}
+											<Select.Item
+												value={direction.id}
+												label={direction.name}
+												disabled={hasGeneral}
+											/>
+										{/each}
+									</Select.Content>
+								</Select.Root>
+							</div>
+
+							{#if data.canTransfer}
+								<!-- Флажок ниже полей и выше кнопки: это условие отправки, а не
+								     ещё одно поле формы. Снятый браузер не присылает вовсе,
+								     поэтому сервер читает присутствие значения. -->
+								<Label class="flex w-full items-start gap-2 font-normal">
+									<Checkbox name="transferInteractions" value="true" checked class="mt-0.5" />
+									<span class="flex flex-col gap-0.5">
+										<span>Передать незавершённые взаимодействия новому ответственному</span>
+										<span class="text-xs text-muted-foreground">
+											Уйдут записи в работе, где этот вуз — основная сторона, а владелец — прежний
+											ответственный; при назначении по направлению — только записи этого
+											направления. Завершённые и отменённые остаются у тех, кто их вёл.
+										</span>
+									</span>
+								</Label>
+							{/if}
+
+							<Button type="submit" size="sm">Назначить</Button>
+						</form>
+
+						{#if hasGeneral}
+							<InlineHint class="mt-3">
+								За вуз целиком уже кто-то отвечает: чтобы разделить его по направлениям, сначала
+								снимите общее назначение.
+							</InlineHint>
+						{/if}
+					</div>
+				{/if}
+
+				{#if pastResponsibles.length > 0}
+					<details class="border-t border-border px-4 py-3">
+						<summary class="text-xs font-medium">
+							История назначений ({pastResponsibles.length})
+						</summary>
+						<Table.Root class="mt-3">
+							<Table.Header>
+								<Table.Row>
+									<Table.Head>Сотрудник</Table.Head>
+									<Table.Head>Направление</Table.Head>
+									<Table.Head>С</Table.Head>
+									<Table.Head>По</Table.Head>
+								</Table.Row>
+							</Table.Header>
+							<Table.Body>
+								{#each pastResponsibles as row (row.id)}
+									<Table.Row>
+										<Table.Cell>{row.userFullName}</Table.Cell>
+										<Table.Cell>{row.directionName ?? 'весь вуз'}</Table.Cell>
+										<Table.Cell>{formatDateTime(row.validFrom)}</Table.Cell>
+										<Table.Cell
+											>{row.validTo === null ? '—' : formatDateTime(row.validTo)}</Table.Cell
+										>
+									</Table.Row>
+								{/each}
+							</Table.Body>
+						</Table.Root>
+					</details>
+				{/if}
+			</section>
+		</div>
+
+		<aside
+			class="flex min-w-0 flex-col gap-5 rounded-xl border border-border bg-surface p-4 lg:col-start-2 lg:row-span-2 lg:row-start-1"
+			aria-label="Контекст"
+		>
+			<RequisitesPanel organization={data.organization} passportApplied={data.passportApplied} />
+
+			<ContactsList
+				organizationId={data.organization.id}
+				affiliations={data.affiliations}
+				{siteNames}
+				canRead={data.canReadPeople}
+				canWrite={data.canWritePeople}
+				onclose={askClose}
+			/>
+
+			<div data-tour="organization-sites">
+				<ContextSection title="Площадки">
+					{#snippet action()}
+						{#if data.canWrite}
+							<Button
+								variant="ghost"
+								size="sm"
+								href={resolve('/(app)/organizations/[id=uuid]/sites/new', {
+									id: data.organization.id
+								})}
 							>
-							<Table.Cell>
-								{formatDate(row.validFrom)} — {row.validTo === null
-									? 'по настоящее время'
-									: formatDate(row.validTo)}
-							</Table.Cell>
-							<Table.Cell class="text-xs">
-								<div>{row.person.email ?? '—'}</div>
-								<div class="text-muted-foreground">{row.person.phone ?? '—'}</div>
-							</Table.Cell>
-							<Table.Cell class="text-right">
-								{#if data.canWritePeople && row.validTo === null}
-									<Button variant="ghost" size="sm" onclick={() => askClose(row)}>Закрыть</Button>
-								{/if}
-							</Table.Cell>
-						</Table.Row>
-					{/each}
-				</Table.Body>
-			</Table.Root>
-		{/if}
-	</section>
+								<PlusIcon aria-hidden="true" />
+								Добавить
+							</Button>
+						{/if}
+					{/snippet}
+
+					{#if data.sites.length === 0}
+						<p class="text-sm text-muted-foreground">
+							Площадок нет. Кампусы, филиалы и подразделения нужны, чтобы взаимодействие знало, где
+							оно идёт.
+						</p>
+					{:else}
+						<ul class="flex flex-col divide-y divide-border">
+							{#each data.sites as site (site.id)}
+								<li class="flex flex-wrap items-start justify-between gap-2 py-2 text-sm">
+									<div class="min-w-0 flex-1">
+										<p class="font-medium break-words">{site.name}</p>
+										<p class="text-xs break-words text-muted-foreground">
+											{SITE_KIND_LABELS[site.kind]}{site.address ? ` · ${site.address}` : ''}
+										</p>
+									</div>
+									{#if data.canWrite}
+										<Button
+											variant="ghost"
+											size="sm"
+											href={resolve('/(app)/organizations/[id=uuid]/sites/[siteId=uuid]', {
+												id: data.organization.id,
+												siteId: site.id
+											})}>Изменить</Button
+										>
+									{/if}
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</ContextSection>
+			</div>
+		</aside>
+	</div>
 </div>
 
 <form method="POST" action="?/archive" bind:this={archiveForm} hidden></form>

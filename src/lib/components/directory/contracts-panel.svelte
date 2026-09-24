@@ -124,10 +124,13 @@
 
 <!-- `data-tour` — метка подсказок: по ней тур находит блок договоров на
 	карточке организации (`$lib/onboarding/screens`). -->
-<section class="rounded-lg border border-border bg-surface" data-tour="organization-contracts">
-	<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
-		<div>
-			<h2 class="text-sm font-semibold">Договоры</h2>
+<section
+	class="min-w-0 rounded-xl border border-border bg-surface"
+	data-tour="organization-contracts"
+>
+	<header class="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3">
+		<div class="min-w-0 flex-1 basis-64">
+			<h2 class="text-sm font-semibold">Договоры и лицензии</h2>
 			<p class="mt-1 text-xs text-muted-foreground">
 				Обязательства с этим контрагентом и коммерческие условия по каждому продукту. Взаимодействие
 				выбирает договор и нужные его позиции.
@@ -183,7 +186,7 @@
 				{@const itemForm = editingItemOf(contract.id)}
 				<article class="flex flex-col gap-3 px-4 py-3" data-testid="contract">
 					<div class="flex flex-wrap items-center justify-between gap-2">
-						<div class="flex flex-wrap items-center gap-2">
+						<div class="flex min-w-0 flex-wrap items-center gap-2">
 							<span class="text-sm font-medium">№ {contract.number}</span>
 							<StatusBadge tone={STATUS_TONES[contract.status]}>
 								{CONTRACT_STATUS_LABELS[contract.status]}
@@ -191,7 +194,7 @@
 							<span class="text-xs text-muted-foreground">{period(contract)}</span>
 						</div>
 						{#if canWrite}
-							<div class="flex gap-2">
+							<div class="flex flex-wrap gap-2">
 								<Button variant="ghost" size="sm" onclick={() => editContract(contract)}>
 									Изменить
 								</Button>
