@@ -1,4 +1,6 @@
 <script lang="ts">
+	import CheckIcon from '@lucide/svelte/icons/check';
+	import CopyIcon from '@lucide/svelte/icons/copy';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -37,6 +39,37 @@
 	// корневой макет кладёт тот же идентификатор в данные страницы, поэтому код
 	// обращения есть и там, и там.
 	const requestId = $derived(page.error?.requestId ?? page.data.requestId);
+	/**
+	 * Отказ сервера или ошибка загрузки — то, что нередко проходит само собой
+	 * (истёкший запрос, случайный сбой). 401/403/404/429 таким не бывают: тот же
+	 * адрес ответит тем же самым, и кнопка «Повторить» только обманула бы.
+	 */
+	const canRetry = $derived(status >= 500);
+
+	let copied = $state(false);
+	let copyFailed = $state(false);
+	let copyResetHandle: ReturnType<typeof setTimeout> | undefined;
+
+	async function copyRequestId(id: string): Promise<void> {
+		clearTimeout(copyResetHandle);
+
+		try {
+			await navigator.clipboard.writeText(id);
+			copied = true;
+			copyFailed = false;
+		} catch {
+			// Буфер обмена бывает недоступен (небезопасный контекст, запрет
+			// разрешения) — тогда молчать нельзя: человек ждёт код скопированным,
+			// а его никуда не положили. Код всё равно есть на экране текстом.
+			copied = false;
+			copyFailed = true;
+		}
+
+		copyResetHandle = setTimeout(() => {
+			copied = false;
+			copyFailed = false;
+		}, 2000);
+	}
 </script>
 
 <div
@@ -51,13 +84,36 @@
 			<p class="mx-auto max-w-md text-sm text-muted-foreground">{detail}</p>
 		{/if}
 		{#if requestId}
-			<p class="text-xs text-faint">
-				Код обращения: <span class="font-medium">{requestId}</span>
-			</p>
+			<div class="flex flex-col items-center gap-1">
+				<p class="flex items-center gap-1 text-xs text-faint">
+					Код обращения: <span class="font-medium">{requestId}</span>
+					<Button
+						variant="ghost"
+						size="icon-sm"
+						class="size-5 text-faint"
+						aria-label="Скопировать код обращения"
+						onclick={() => copyRequestId(requestId)}
+					>
+						{#if copied}
+							<CheckIcon aria-hidden="true" />
+						{:else}
+							<CopyIcon aria-hidden="true" />
+						{/if}
+					</Button>
+				</p>
+				{#if copyFailed}
+					<p class="text-xs text-danger-soft-foreground">
+						Не удалось скопировать — выделите код вручную.
+					</p>
+				{/if}
+			</div>
 		{/if}
 	</div>
 
 	<div class="flex flex-wrap items-center justify-center gap-2">
+		{#if canRetry}
+			<Button variant="outline" onclick={() => window.location.reload()}>Повторить</Button>
+		{/if}
 		<Button href={resolve('/(app)')} variant={status === 401 ? 'outline' : 'default'}>
 			На главную
 		</Button>

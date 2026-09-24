@@ -48,3 +48,21 @@ export function withoutParam(url: URL, param: string): ResolvedPathname {
 
 	return href(url, params);
 }
+
+/**
+ * Тот же список без отбора: перечисленные фильтры страницы сняты вместе с
+ * поиском и номером страницы `DataTable` (`q`, `page`) — как список
+ * отсортирован и каким размером показан, остаётся. Пустое состояние по
+ * фильтру предлагает снять его одним нажатием, а не собирать чистую ссылку
+ * руками (тот же приём, что у списка взаимодействий —
+ * `w/[workspace]/interactions/filters.ts`, `clearedFiltersHref`).
+ */
+export function clearedFiltersHref(url: URL, params: readonly string[]): ResolvedPathname {
+	const next = new URLSearchParams(url.searchParams);
+
+	for (const name of [...params, 'q', 'page']) {
+		next.delete(name);
+	}
+
+	return href(url, next);
+}

@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
+	import FilterXIcon from '@lucide/svelte/icons/filter-x';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import UploadIcon from '@lucide/svelte/icons/upload';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -16,6 +18,7 @@
 		ORGANIZATION_KIND_OPTIONS,
 		ORGANIZATION_KIND_TONES
 	} from '$lib/components/directory/labels';
+	import { clearedFiltersHref } from '$lib/components/directory/query';
 	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatNumber } from '$lib/format';
@@ -131,6 +134,13 @@
 	{/snippet}
 </Header>
 
+{#snippet resetFilters()}
+	<Button variant="outline" href={clearedFiltersHref(page.url, ['kind', 'level'])}>
+		<FilterXIcon aria-hidden="true" />
+		Сбросить фильтры
+	</Button>
+{/snippet}
+
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	<div class="flex flex-wrap items-center gap-3" data-tour="organizations-filters">
 		<FilterSelect param="kind" label="Вид" options={ORGANIZATION_KIND_OPTIONS} />
@@ -145,6 +155,7 @@
 		getRowId={(row) => row.organization.id}
 		searchPlaceholder="Поиск по названию, ИНН, региону"
 		emptyTitle={data.filtered ? 'Под фильтр ничего не подошло' : 'Организаций пока нет'}
+		emptyAction={data.filtered ? resetFilters : undefined}
 		emptyDescription={data.filtered
 			? 'Смягчите условия или очистите поиск.'
 			: 'Заведите первую организацию — с неё начинается взаимодействие.'}

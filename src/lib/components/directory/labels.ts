@@ -34,12 +34,17 @@ export const ORGANIZATION_KIND_LABELS: Record<OrganizationKind, string> = {
 	legal_entity: 'Юридическое лицо'
 };
 
+/**
+ * Вид организации — факт о контрагенте, а не о ходе работы: `accent` и `info`
+ * там означали бы состояние, которого у вида нет, и спорили с настоящими
+ * статусами («Активна», «В архиве») в той же строке. Тон везде нейтральный.
+ */
 export const ORGANIZATION_KIND_TONES: Record<OrganizationKind, StatusTone> = {
-	educational_institution: 'accent',
-	customer_company: 'info',
+	educational_institution: 'neutral',
+	customer_company: 'neutral',
 	operator: 'neutral',
-	individual: 'info',
-	legal_entity: 'info'
+	individual: 'neutral',
+	legal_entity: 'neutral'
 };
 
 export const EDUCATION_LEVEL_LABELS: Record<EducationLevel, string> = {

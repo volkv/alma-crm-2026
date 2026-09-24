@@ -1,14 +1,17 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
 	import DatabaseIcon from '@lucide/svelte/icons/database';
+	import FilterXIcon from '@lucide/svelte/icons/filter-x';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import UploadIcon from '@lucide/svelte/icons/upload';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
 	import FilterSelect from '$lib/components/directory/filter-select.svelte';
+	import { clearedFiltersHref } from '$lib/components/directory/query';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
@@ -206,6 +209,13 @@
 			</EmptyState>
 		</div>
 	{:else}
+		{#snippet resetFilters()}
+			<Button variant="outline" href={clearedFiltersHref(page.url, ['source', 'status'])}>
+				<FilterXIcon aria-hidden="true" />
+				Сбросить фильтры
+			</Button>
+		{/snippet}
+
 		<div class="flex flex-wrap items-center gap-3" data-tour="data-filters">
 			<FilterSelect param="source" label="Источник" options={SOURCE_OPTIONS} />
 			<FilterSelect param="status" label="Состояние" options={STATUS_OPTIONS} />
@@ -221,6 +231,7 @@
 			searchPlaceholder="Поиск по имени файла и примечанию"
 			emptyTitle="Под фильтр ничего не подошло"
 			emptyDescription="Смягчите условия или очистите поиск."
+			emptyAction={resetFilters}
 			onopen={open}
 		/>
 	{/if}

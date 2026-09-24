@@ -22,8 +22,8 @@ import { refuseDemoSession, requirePermission } from '../rbac';
 /** Значения, с которыми система работает, пока администратор не решил иначе. */
 export const SETTING_DEFAULTS: { [TKey in SettingKey]: SettingValue<TKey> } = {
 	login_banner: {
-		title: 'Система контроля взаимодействия с учебными заведениями',
-		text: 'Доступ только для сотрудников. Действия в системе записываются в журнал.'
+		title: 'Для сотрудников ИТ Школы',
+		text: 'Действия записываются в журнал.'
 	},
 	session_idle_minutes: 30,
 	session_absolute_hours: 12,

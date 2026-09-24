@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
+	import FilterXIcon from '@lucide/svelte/icons/filter-x';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
@@ -12,6 +14,7 @@
 		LIFECYCLE_STATUS_OPTIONS,
 		LIFECYCLE_STATUS_TONES
 	} from '$lib/components/directory/labels';
+	import { clearedFiltersHref } from '$lib/components/directory/query';
 	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type { ProductDetail } from '$lib/contracts/directory';
@@ -83,6 +86,13 @@
 	{/snippet}
 </Header>
 
+{#snippet resetFilters()}
+	<Button variant="outline" href={clearedFiltersHref(page.url, ['status'])}>
+		<FilterXIcon aria-hidden="true" />
+		Сбросить фильтры
+	</Button>
+{/snippet}
+
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	<div class="flex flex-wrap items-center gap-3" data-tour="products-filters">
 		<FilterSelect param="status" label="Состояние" options={LIFECYCLE_STATUS_OPTIONS} />
@@ -96,6 +106,7 @@
 		getRowId={(row) => row.product.id}
 		searchPlaceholder="Поиск по коду и названию"
 		emptyTitle={data.filtered ? 'Под фильтр ничего не подошло' : 'Продуктов пока нет'}
+		emptyAction={data.filtered ? resetFilters : undefined}
 		emptyDescription={data.filtered
 			? 'Смягчите условия или очистите поиск.'
 			: 'Заведите продукт — на него ссылаются взаимодействия.'}

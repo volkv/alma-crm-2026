@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
+	import FilterXIcon from '@lucide/svelte/icons/filter-x';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
@@ -14,6 +16,7 @@
 		PROGRAM_LEVEL_LABELS,
 		PROGRAM_LEVEL_OPTIONS
 	} from '$lib/components/directory/labels';
+	import { clearedFiltersHref } from '$lib/components/directory/query';
 	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type { ProgramListItem } from '$lib/contracts/directory';
@@ -116,6 +119,13 @@
 	{/snippet}
 </Header>
 
+{#snippet resetFilters()}
+	<Button variant="outline" href={clearedFiltersHref(page.url, ['level', 'status'])}>
+		<FilterXIcon aria-hidden="true" />
+		Сбросить фильтры
+	</Button>
+{/snippet}
+
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	<div class="flex flex-wrap items-center gap-3" data-tour="programs-filters">
 		<FilterSelect param="level" label="Уровень" options={PROGRAM_LEVEL_OPTIONS} />
@@ -131,6 +141,7 @@
 		defaultSort={{ columnId: 'priority', direction: 'asc' }}
 		searchPlaceholder="Поиск по коду, названию, направлению"
 		emptyTitle={data.filtered ? 'Под фильтр ничего не подошло' : 'Программ пока нет'}
+		emptyAction={data.filtered ? resetFilters : undefined}
 		emptyDescription={data.filtered
 			? 'Смягчите условия или очистите поиск.'
 			: 'Заведите программу — на неё ссылаются взаимодействия и отчёты.'}

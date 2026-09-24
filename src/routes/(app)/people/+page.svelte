@@ -1,13 +1,16 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
+	import FilterXIcon from '@lucide/svelte/icons/filter-x';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
 	import FilterSelect from '$lib/components/directory/filter-select.svelte';
 	import { toLookupOptions } from '$lib/components/directory/labels';
+	import { clearedFiltersHref } from '$lib/components/directory/query';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
@@ -101,6 +104,13 @@
 	{/snippet}
 </Header>
 
+{#snippet resetFilters()}
+	<Button variant="outline" href={clearedFiltersHref(page.url, ['organization', 'retention'])}>
+		<FilterXIcon aria-hidden="true" />
+		Сбросить фильтры
+	</Button>
+{/snippet}
+
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	<div class="flex flex-wrap items-center gap-3" data-tour="people-filters">
 		<FilterSelect
@@ -128,6 +138,7 @@
 		getRowId={(row) => row.person.id}
 		searchPlaceholder="Поиск по ФИО и организации"
 		emptyTitle={data.filtered ? 'Под фильтр никто не подошёл' : 'Людей пока нет'}
+		emptyAction={data.filtered ? resetFilters : undefined}
 		emptyDescription={data.filtered
 			? 'Смягчите условия или очистите поиск.'
 			: 'Заведите человека — дальше ему назначают роль в организации.'}

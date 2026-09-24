@@ -5,6 +5,7 @@
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import PanelLeftCloseIcon from '@lucide/svelte/icons/panel-left-close';
 	import PanelLeftOpenIcon from '@lucide/svelte/icons/panel-left-open';
+	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import { AlmaLogo, AlmaMark } from '$lib/components/brand';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Toaster } from '$lib/components/ui/sonner/index.js';
@@ -231,15 +232,33 @@
 				`children`, и разметкой полосу между ними не вписать. Шапка объявляет
 				себя первой, крошки — вторыми, всё остальное идёт следом в порядке
 				разметки (`$lib/components/header.svelte`). У страницы на старой
-				шапке порядка нет — полоса остаётся над ней, как была. -->
+				шапке порядка нет — полоса остаётся над ней, как была.
+
+				Полоса нейтральная, а не предупреждающая: демо-стенд — это факт о
+				среде, а не проблема с ней. Строка короткая — что это стенд и когда
+				сброс, — а объяснение про вымышленные данные раскрывается по
+				`<details>`: не мешает тем, кому оно не нужно, и доступно с
+				клавиатуры тем, кому нужно. -->
 			{#if demoMode}
 				<div class="shrink-0" data-demo-banner>
-					<p
-						class="bg-warning-soft px-3 py-1 text-center text-xs text-warning-soft-foreground sm:px-4"
-					>
-						Демо-режим: вузы и продукты названы настоящие, люди, договоры и цифры — вымышленные{#if demoResetHour !== null}.
-							Стенд общий, данные сбрасываются ежедневно в {resetTime}{/if}
-					</p>
+					<details class="group bg-surface-muted text-muted-foreground">
+						<summary
+							class="flex list-none items-center justify-center gap-1 px-3 py-1 text-center text-xs sm:px-4 [&::-webkit-details-marker]:hidden"
+						>
+							<span class="cursor-pointer hover:text-foreground">
+								Демо-стенд{#if demoResetHour !== null}
+									· данные сбрасываются в {resetTime}{/if}
+							</span>
+							<ChevronDownIcon
+								aria-hidden="true"
+								class="size-3 shrink-0 cursor-pointer transition-transform group-open:rotate-180"
+							/>
+						</summary>
+						<p class="border-t border-border px-3 pb-1.5 text-center text-xs sm:px-4">
+							Вузы и продукты названы настоящие, люди, договоры и цифры — вымышленные. Стенд общий,
+							наработанное на нём живёт до сброса.
+						</p>
+					</details>
 				</div>
 			{/if}
 

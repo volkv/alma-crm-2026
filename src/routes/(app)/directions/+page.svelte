@@ -1,7 +1,9 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
+	import FilterXIcon from '@lucide/svelte/icons/filter-x';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
@@ -13,6 +15,7 @@
 		DIRECTION_STATE_OPTIONS,
 		DIRECTION_STATE_TONES
 	} from '$lib/components/directory/labels';
+	import { clearedFiltersHref } from '$lib/components/directory/query';
 	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type { DirectionListItem } from '$lib/contracts/directory';
@@ -104,6 +107,13 @@
 	{/snippet}
 </Header>
 
+{#snippet resetFilters()}
+	<Button variant="outline" href={clearedFiltersHref(page.url, ['state'])}>
+		<FilterXIcon aria-hidden="true" />
+		Сбросить фильтры
+	</Button>
+{/snippet}
+
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	<div class="flex flex-wrap items-center gap-3" data-tour="directions-filters">
 		<FilterSelect param="state" label="Состояние" options={DIRECTION_STATE_OPTIONS} />
@@ -118,6 +128,7 @@
 		defaultSort={{ columnId: 'position', direction: 'asc' }}
 		searchPlaceholder="Поиск по коду и названию"
 		emptyTitle={data.filtered ? 'Под фильтр ничего не подошло' : 'Направлений пока нет'}
+		emptyAction={data.filtered ? resetFilters : undefined}
 		emptyDescription={data.filtered
 			? 'Смягчите условия или очистите поиск.'
 			: 'Заведите направление — по нему назначают ответственных и собирают отчёт.'}

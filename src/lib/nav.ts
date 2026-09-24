@@ -9,6 +9,7 @@ import FileTextIcon from '@lucide/svelte/icons/file-text';
 import GraduationCapIcon from '@lucide/svelte/icons/graduation-cap';
 import HandshakeIcon from '@lucide/svelte/icons/handshake';
 import KeyRoundIcon from '@lucide/svelte/icons/key-round';
+import LandmarkIcon from '@lucide/svelte/icons/landmark';
 import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
 import LayoutGridIcon from '@lucide/svelte/icons/layout-grid';
 import MapIcon from '@lucide/svelte/icons/map';
@@ -20,6 +21,7 @@ import ShieldCheckIcon from '@lucide/svelte/icons/shield-check';
 import SlidersHorizontalIcon from '@lucide/svelte/icons/sliders-horizontal';
 import UserCogIcon from '@lucide/svelte/icons/user-cog';
 import UsersIcon from '@lucide/svelte/icons/users';
+import WalletIcon from '@lucide/svelte/icons/wallet';
 import WebhookIcon from '@lucide/svelte/icons/webhook';
 import WorkflowIcon from '@lucide/svelte/icons/workflow';
 import type { PermissionKey } from '$lib/server/rbac/permissions';
@@ -291,6 +293,26 @@ const STATIC_SECTIONS: readonly NavSection[] = [
 ];
 
 /**
+ * Значок пункта «Взаимодействия» по ключу пространства. Подпись у пункта
+ * везде одна и та же — направление называет заголовок секции, — а рядом со
+ * значком одинаковые строки в двух соседних секциях меню было не отличить на
+ * глаз, не читая текст. `b2b` и `b2c` — ключи посевных направлений
+ * (`$lib/server/stages/definitions.ts`, `B2B_WORKSPACE_KEY`/`B2C_WORKSPACE_KEY`,
+ * сюда не импортируются: модуль общий с клиентом, серверный — нет); третье
+ * направление получает прежний общий значок, пока не заведут своего.
+ */
+function workspaceIcon(key: string): LucideIcon {
+	switch (key) {
+		case 'b2b':
+			return LandmarkIcon;
+		case 'b2c':
+			return WalletIcon;
+		default:
+			return HandshakeIcon;
+	}
+}
+
+/**
  * Секция пространства: одна на направление, и пока в ней один пункт.
  *
  * Заголовок — имя пространства, а не слово «Пространство»: человек ходит в
@@ -301,7 +323,7 @@ function workspaceSection(workspace: NavWorkspace): NavSection {
 	return {
 		href: `/w/${workspace.key}/interactions`,
 		label: 'Взаимодействия',
-		icon: HandshakeIcon,
+		icon: workspaceIcon(workspace.key),
 		group: { id: `workspace:${workspace.key}`, label: workspace.name },
 		permission: 'interactions.read'
 	};

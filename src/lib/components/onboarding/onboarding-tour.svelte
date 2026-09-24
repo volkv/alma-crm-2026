@@ -103,6 +103,15 @@
 		return window.matchMedia('(prefers-reduced-motion: reduce)').matches;
 	}
 
+	/** Ссылки и кнопки карточки в порядке разметки: и ловушке Tab, и начальному фокусу нужен один и тот же список. */
+	function focusables(): HTMLElement[] {
+		if (card === null) {
+			return [];
+		}
+
+		return [...card.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')];
+	}
+
 	function sameBox(left: Box | null, right: Box | null): boolean {
 		if (left === null || right === null) {
 			return left === right;
@@ -271,7 +280,12 @@
 		// движение мешает, тому шаг встаёт сразу.
 		const handle = requestAnimationFrame(() => {
 			element()?.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });
-			card?.focus();
+
+			// Фокус уходит на первую кнопку карточки, а не на саму карточку: контур
+			// вокруг всего диалога после программного фокуса читался как лишняя
+			// толстая рамка, а кнопка носит свой обычный контур фокуса. Карточка —
+			// запасной получатель на случай, если в ней вдруг нет ни одной кнопки.
+			(focusables()[0] ?? card)?.focus();
 		});
 
 		return () => cancelAnimationFrame(handle);
@@ -312,7 +326,7 @@
 
 		// Ловушка фокуса: страница под туром выключена слоем, и уводить в неё Tab
 		// значило бы отправлять клавиатуру туда, где ничего не нажимается.
-		const stops = [...card.querySelectorAll<HTMLElement>('a[href], button:not([disabled])')];
+		const stops = focusables();
 		const first = stops[0];
 		const last = stops[stops.length - 1];
 
@@ -412,7 +426,12 @@
 							{/snippet}
 						</DropdownMenu.Trigger>
 						<DropdownMenu.Content align="end" class="max-h-72 w-56 overflow-y-auto">
-							<DropdownMenu.Label>Экраны тура</DropdownMenu.Label>
+							<!-- Общий счёт по всему туру («шаг 7 из 64») стоит только здесь: строкой в
+								самой карточке он спорил со счётом по экрану через строку ниже — оба
+								назывались «шаг N из M» про разные вещи. -->
+							<DropdownMenu.Label>
+								Экраны тура · шаг {tour.index + 1} из {total}
+							</DropdownMenu.Label>
 							{#each tour.chapters as chapter (chapter.screenId)}
 								<DropdownMenu.Item onSelect={() => tour.goToScreen(chapter.screenId)}>
 									{chapter.title}
@@ -423,8 +442,7 @@
 				{/if}
 			</div>
 
-			<Progress value={tour.index + 1} max={total} />
-			<p class="text-xs text-faint">Шаг {tour.index + 1} из {total}</p>
+			<Progress value={tour.index + 1} max={total} aria-label="Прогресс по туру" />
 
 			<h2 id={TITLE_ID} class="text-sm font-semibold">{stop.title}</h2>
 			<p class="text-sm text-muted-foreground">{stop.body}</p>
