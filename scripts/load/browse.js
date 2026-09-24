@@ -24,9 +24,18 @@
  * (`actionSucceeded`): отказ формы приходит с HTTP 200, и по статусу его не
  * отличить. Число принятых сервером изменений `run.sh` потом сверяет с базой.
  *
+ * Прогон идёт в два окна. Первые `SIGN_IN_S` секунд VU только входят: вход
+ * идёт по очереди, и если мерить с первой секунды, в начале прогона работает
+ * горстка VU, а к концу короткого прогона вошли не все. Кто вошёл, ждёт конца
+ * окна входа, и только потом начинается измеряемое окно `MEASURE_S` — в нём
+ * работают все VU сразу. Сколько VU вошло и сколько опоздало к измеряемому
+ * окну, считают `signed_in` и `signed_in_late`, и на обоих стоит порог: прогон,
+ * в котором вошли не все, пятидесяти пользователей не мерил.
+ *
  * Запуск — `scripts/load/run.sh`; параметры приезжают переменными окружения.
  */
 import http from 'k6/http';
+import exec from 'k6/execution';
 import { fail, sleep } from 'k6';
 import { Counter } from 'k6/metrics';
 import { jar, signIn } from './session.js';
@@ -43,7 +52,17 @@ import {
 const BASE_URL = __ENV.BASE_URL;
 const PASSWORD = __ENV.PASSWORD;
 const VUS = Number(__ENV.VUS || 50);
-const DURATION = __ENV.DURATION || '3m';
+/**
+ * Окно входа, шаг расписания входа и измеряемое окно, секунды. Считает их
+ * `run.sh` (`sign_in_seconds`, `sign_in_spacing`, `DURATION`).
+ */
+const SIGN_IN_S = Number(__ENV.SIGN_IN_S);
+const SIGN_IN_SPACING_S = Number(__ENV.SIGN_IN_SPACING_S);
+const MEASURE_S = Number(__ENV.MEASURE_S);
+
+if (!(SIGN_IN_S > 0 && SIGN_IN_SPACING_S > 0 && MEASURE_S > 0)) {
+	throw new Error('SIGN_IN_S, SIGN_IN_SPACING_S и MEASURE_S задаёт run.sh');
+}
 
 const fixture = JSON.parse(open(__ENV.FIXTURE));
 
@@ -72,6 +91,8 @@ const REPORT_FILTERS = [
 ];
 
 const poolExhausted = new Counter('pool_exhausted');
+const signedInCount = new Counter('signed_in');
+const signedInLate = new Counter('signed_in_late');
 
 /** Порог N1 — на каждой операции рабочего круга, девяносто пятая доля. */
 const N1 = [`p(95)<${N1_MS}`];
@@ -81,7 +102,7 @@ export const options = {
 		browse: {
 			executor: 'constant-vus',
 			vus: VUS,
-			duration: DURATION,
+			duration: `${SIGN_IN_S + MEASURE_S}s`,
 			gracefulStop: '30s'
 		}
 	},
@@ -97,7 +118,9 @@ export const options = {
 		ssr_failed: ['rate<0.01'],
 		action_failed: ['rate<0.01'],
 		api_failed: ['rate<0.01'],
-		pool_exhausted: ['count<1']
+		pool_exhausted: ['count<1'],
+		signed_in: [`count>=${VUS}`],
+		signed_in_late: ['count<1']
 	},
 	summaryTrendStats: ['med', 'p(95)', 'max', 'avg', 'count']
 };
@@ -114,6 +137,9 @@ let pool;
 function claim() {
 	account = fixture.accounts[(__VU - 1) % fixture.accounts.length];
 	slot = Math.floor((__VU - 1) / fixture.accounts.length);
+	// Роль записи — меткой на всех точках VU: область руководителя в разы
+	// больше области КАМа, и разбивка (`run.sh breakdown`) делит по ней.
+	exec.vu.tags.role = account.realmRole;
 
 	const share = Math.floor(account.advance.length / VUS_PER_ACCOUNT);
 	pool = account.advance.slice(slot * share, (slot + 1) * share);
@@ -138,12 +164,27 @@ const ACTION_HEADERS = {
 export default function () {
 	if (!signedIn) {
 		claim();
-		// VU расходятся по времени: каталог считает подбором два входа одной
-		// записью внутри секунды и запирает её на минуту. Полсекунды на VU — это
-		// одиннадцать с половиной секунд между входами одной и той же записи.
-		sleep((__VU - 1) * 0.5);
+		// VU расходятся по времени: VU одной записи входят в разных шагах
+		// одноразового кода и не чаще раза в секунду, иначе каталог запер бы
+		// запись как подбираемую (`run.sh`, `sign_in_spacing`).
+		sleep((__VU - 1) * SIGN_IN_SPACING_S);
 		signIn(BASE_URL, account, PASSWORD, `/w/${fixture.workspace}/interactions`);
 		signedIn = true;
+		signedInCount.add(1);
+
+		// Ждём начала измеряемого окна. Опоздавший VU работает дальше, но
+		// считается в `signed_in_late`, и порог на нём прогон проваливает.
+		const windowStart = exec.scenario.startTime + SIGN_IN_S * 1000;
+		const wait = (windowStart - Date.now()) / 1000;
+
+		if (wait > 0) {
+			sleep(wait);
+			// Вошедшие стартуют не залпом, а вразброс по одному проходу (около
+			// пяти секунд), как расходились бы и без окна входа.
+			sleep(((__VU - 1) / VUS) * 5);
+		} else {
+			signedInLate.add(1);
+		}
 	}
 
 	// Список: страница выборки сдвигается от прохода к проходу — читать одну и

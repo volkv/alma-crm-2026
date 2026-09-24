@@ -5,7 +5,7 @@
 #   scripts/load/run.sh up        поднять стенд, залить набор, завести команду в каталоге
 #   scripts/load/run.sh probe     дымовой прогон (5 VU, 1 мин) — проверить сценарий
 #   scripts/load/run.sh cache     замер кэша повторного открытия (F13)
-#   scripts/load/run.sh browse    сценарий «пятьдесят пользователей» (VUS, DURATION)
+#   scripts/load/run.sh browse    сценарий «пятьдесят пользователей» (VUS, SIGN_IN, DURATION)
 #   scripts/load/run.sh reports   сценарий «десять одновременных отчётов»
 #   scripts/load/run.sh full      полный прогон обоих сценариев
 #   scripts/load/run.sh live      сценарий пользователей и открытые карточки (live.ts)
@@ -94,7 +94,7 @@ accounts() {
 		KEYCLOAK_ADMIN="$(env_value KEYCLOAK_ADMIN)" \
 		KEYCLOAK_ADMIN_PASSWORD="$(env_value KEYCLOAK_ADMIN_PASSWORD)" \
 		PASSWORD="$PASSWORD" python3 - "$OUT/fixture.json" <<-'PYTHON'
-			import json, os, sys, time, urllib.error, urllib.parse, urllib.request
+			import hashlib, hmac, json, os, sys, time, urllib.error, urllib.parse, urllib.request
 
 			base = os.environ['KEYCLOAK_URL'].rstrip('/')
 			realm = os.environ['KEYCLOAK_REALM']
@@ -146,9 +146,32 @@ accounts() {
 
 			team = json.load(open(sys.argv[1]))['accounts']
 
+			# Руководителю каталог требует одноразовый код (`keycloak/README.md`).
+			# Человек настраивает его на первом входе, сканируя секрет; нагрузочной
+			# записи секрет заводится здесь же, при её создании, а сценарий считает
+			# код по тому же секрету (`session.js`). Секрет выводится из пароля
+			# стенда и имени записи: так его знают обе стороны, и он нигде не
+			# хранится отдельно.
+			SECOND_FACTOR_ROLES = {'crm-lead', 'crm-admin'}
+			OTP_LABEL = 'load-run'
+
+			def otp_secret(login):
+			    return hmac.new(os.environ['PASSWORD'].encode(), f'load-otp:{login}'.encode(), hashlib.sha256).hexdigest()[:32]
+
 			for account in team:
+			    second_factor = account['realmRole'] in SECOND_FACTOR_ROLES
 			    found = call('GET', f"{admin}/users?exact=true&username={urllib.parse.quote(account['login'])}", token=token)
 			    if not found:
+			        credentials = []
+			        if second_factor:
+			            credentials.append({
+			                'type': 'otp',
+			                'userLabel': OTP_LABEL,
+			                'secretData': json.dumps({'value': otp_secret(account['login'])}),
+			                'credentialData': json.dumps({
+			                    'subType': 'totp', 'digits': 6, 'counter': 0, 'period': 30, 'algorithm': 'HmacSHA1',
+			                }),
+			            })
 			        call('POST', f'{admin}/users', {
 			            'username': account['login'],
 			            'email': account['email'],
@@ -157,10 +180,17 @@ accounts() {
 			            'enabled': True,
 			            'emailVerified': True,
 			            'requiredActions': [],
+			            'credentials': credentials,
 			        }, token=token)
 			        found = call('GET', f"{admin}/users?exact=true&username={urllib.parse.quote(account['login'])}", token=token)
 			        created += 1
 			    user_id = found[0]['id']
+			    if second_factor:
+			        # Добавить код уже заведённой записи административный API не даёт,
+			        # а без него сценарий встанет на странице настройки кода.
+			        stored = call('GET', f'{admin}/users/{user_id}/credentials', token=token)
+			        if not any(item['type'] == 'otp' and item.get('userLabel') == OTP_LABEL for item in stored):
+			            sys.exit(f"у «{account['login']}» в каталоге нет кода прогона: пересоздайте стенд (down, up)")
 			    call('PUT', f'{admin}/users/{user_id}/reset-password', {
 			        'type': 'password', 'value': os.environ['PASSWORD'], 'temporary': False,
 			    }, token=token)
@@ -205,18 +235,45 @@ verify() {
 }
 
 # Сценарий «пятьдесят пользователей»: свежий пул переходов, прогон, сверка.
-# Проход VU длится не меньше четырёх секунд (четыре паузы по секунде), отсюда
-# потолок переходов на VU. Статус k6 (порог не выдержан — 99) возвращается
-# после сверки: числа несдавшего порог прогона тоже нужно проверить.
+# `duration` — измеряемое окно; перед ним идёт окно входа (`sign_in_seconds`),
+# в котором VU только входят (`browse.js`). Проход VU длится
+# не меньше четырёх секунд (четыре паузы по секунде), отсюда потолок переходов
+# на VU. Статус k6 (порог не выдержан — 99) возвращается после сверки: числа
+# несдавшего порог прогона тоже нужно проверить.
 browse() {
-	local vus="$1" duration="$2" key
+	local vus="$1" duration="$2" key measure
+	measure="$(seconds "$duration")"
 	key="$(date +%Y%m%d-%H%M%S)"
-	fixture "$key" "$vus" "$(($(seconds "$duration") / 4 + 1))"
+	fixture "$key" "$vus" "$((measure / 4 + 1))"
 	reset_login_limit
 	local status=0
-	k6 browse.js -e VUS="$vus" -e DURATION="$duration" | tee "$OUT/browse.txt" || status=$?
+	k6 browse.js -e VUS="$vus" -e SIGN_IN_S="$(sign_in_seconds "$vus")" \
+		-e SIGN_IN_SPACING_S="$(sign_in_spacing)" -e MEASURE_S="$measure" |
+		tee "$OUT/browse.txt" || status=$?
 	verify "$key" "$OUT/browse.json" || status=$?
 	return "$status"
+}
+
+# Расписание входа. VU одной записи входят не чаще раза в 33 секунды (шаг кода — 30, три — запас на сам вход): так они
+# попадают в разные шаги одноразового кода (один код каталог дважды не
+# принимает) и не попадают под защиту каталога от частых входов. Записей в
+# команде 23, поэтому соседние VU расходятся на 33 / 23 ≈ 1,43 с.
+sign_in_spacing() {
+	python3 -c 'import json, sys; print(round(33 / len(json.load(open(sys.argv[1]))["accounts"]), 3))' \
+		"$OUT/fixture.json"
+}
+
+# Окно входа перед измеряемым окном, секунды: расписание всех VU, плюс
+# пятнадцать секунд на сам вход и двадцать на один повтор (`session.js`).
+# `SIGN_IN` задаёт его явно.
+sign_in_seconds() {
+	local vus="$1"
+	if [[ -n "${SIGN_IN:-}" ]]; then
+		seconds "$SIGN_IN"
+	else
+		python3 -c 'import math, sys; print(math.ceil((int(sys.argv[1]) - 1) * float(sys.argv[2])) + 35)' \
+			"$vus" "$(sign_in_spacing)"
+	fi
 }
 
 # Счётчик заходов с адреса живёт пятнадцать минут и общий на все VU: без сброса
@@ -265,25 +322,27 @@ breakdown() {
 		        if event['type'] != 'Point':
 		            continue
 		        tags = event['data']['tags']
+		        # Метка роли есть у прогонов `browse.js`: шаг делится по ней.
+		        role = f" {tags['role']}" if 'role' in tags else ''
 		        if event['metric'] == 'http_req_duration':
-		            steps[tags.get('step', '—')].append(event['data']['value'])
+		            steps[tags.get('step', '—') + role].append(event['data']['value'])
 		        elif event['metric'] in server:
-		            server[event['metric']][tags['op']].append(event['data']['value'])
+		            server[event['metric']][tags['op'] + role].append(event['data']['value'])
 
 		def quantile(values, share):
 		    values.sort()
 		    return values[min(int(len(values) * share), len(values) - 1)]
 
-		print(f"{'шаг':<16}{'запросов':>10}{'p50, мс':>10}{'p95, мс':>10}{'max, мс':>10}")
+		print(f"{'шаг':<24}{'запросов':>10}{'p50, мс':>10}{'p95, мс':>10}{'max, мс':>10}")
 		for step, values in sorted(steps.items()):
 		    print(
-		        f'{step:<16}{len(values):>10}{quantile(values, 0.5):>10.0f}'
+		        f'{step:<24}{len(values):>10}{quantile(values, 0.5):>10.0f}'
 		        f'{quantile(values, 0.95):>10.0f}{max(values):>10.0f}'
 		    )
 
 		if server['server_db']:
 		    print()
-		    print(f"{'операция':<16}{'db p50':>10}{'db p95':>10}{'app p50':>10}{'app p95':>10}  (Server-Timing, мс)")
+		    print(f"{'операция':<24}{'db p50':>10}{'db p95':>10}{'app p50':>10}{'app p95':>10}  (Server-Timing, мс)")
 		    for op, db in sorted(server['server_db'].items()):
 		        app = server['server_app'][op]
 		        print(
@@ -348,7 +407,7 @@ live)
 	# Потоки открываются раньше, чем входит первый VU, и живут дольше прогона.
 	fixture
 	FIXTURE="$OUT/fixture.json" OUT="$OUT" PASSWORD="$PASSWORD" BASE_URL="$BASE_URL" \
-		DURATION_S="$(($(seconds "${DURATION:-3m}") + 60))" NO_PROXY='*' \
+		DURATION_S="$(($(sign_in_seconds "${VUS:-50}") + $(seconds "${DURATION:-3m}") + 60))" NO_PROXY='*' \
 		node scripts/load/live.ts >"$OUT/live.txt" 2>&1 &
 	live=$!
 	until [[ -f "$OUT/live-ready" ]]; do

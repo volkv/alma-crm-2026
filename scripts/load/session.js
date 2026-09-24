@@ -12,13 +12,16 @@
  *   2. `GET` этого адреса — каталог показывает форму входа; из неё берётся
  *      адрес отправки (он одноразовый и несёт код сессии каталога);
  *   3. `POST` формы с именем и паролем — каталог отвечает возвратом на
- *      `/login/callback` с кодом;
+ *      `/login/callback` с кодом, а руководителю сначала показывает форму
+ *      одноразового кода: код считается по секрету, заведённому записи при
+ *      `run.sh up` (`secondFactorCode`), и отправляется той же формой;
  *   4. `GET` возврата — приложение меняет код на токены и ставит куку сессии.
  *
  * Куки держит банка k6: она своя у каждого VU и живёт всё время прогона,
  * поэтому вход происходит один раз на VU и в измеряемые операции не входит.
  */
 import http from 'k6/http';
+import crypto from 'k6/crypto';
 import { fail, sleep } from 'k6';
 
 const HTML = { Accept: 'text/html,application/xhtml+xml' };
@@ -46,6 +49,32 @@ function formAction(body) {
 		.replace(/&amp;/g, '&')
 		.replace(/&quot;/g, '"')
 		.replace(/&#39;/g, "'");
+}
+
+/**
+ * Одноразовый код записи на текущем шаге (RFC 6238: HMAC-SHA1, шесть цифр,
+ * шаг тридцать секунд — политика realm). Секрет выводится из пароля стенда и
+ * имени записи тем же правилом, каким `run.sh up` заводит его в каталоге;
+ * ключ HMAC — байты строки секрета, как у приложения, сканирующего QR-код.
+ *
+ * Один и тот же код каталог дважды не принимает (`otpPolicyCodeReusable`),
+ * поэтому VU одной записи входят в разных шагах — это держит расписание входа
+ * в `browse.js`.
+ */
+function secondFactorCode(login, password) {
+	const secret = crypto.hmac('sha256', password, `load-otp:${login}`, 'hex').slice(0, 32);
+	const step = Math.floor(Date.now() / 1000 / 30);
+	const counter = new Uint8Array(8);
+
+	for (let index = 7, rest = step; index >= 0; index -= 1, rest = Math.floor(rest / 256)) {
+		counter[index] = rest % 256;
+	}
+
+	const digest = crypto.hmac('sha1', secret, counter.buffer, 'hex');
+	const offset = parseInt(digest.slice(-1), 16);
+	const value = parseInt(digest.slice(offset * 2, offset * 2 + 8), 16) & 0x7fffffff;
+
+	return String(value % 1000000).padStart(6, '0');
 }
 
 /**
@@ -141,7 +170,7 @@ function attemptSignIn(baseUrl, account, password, probePath) {
 		fail(`каталог не показал форму входа: ${form.status}`);
 	}
 
-	const submitted = http.post(
+	let submitted = http.post(
 		formAction(form.body),
 		{ username: account.login, password, credentialId: '' },
 		{ headers: HTML, jar, tags: { step: 'signin' } }
@@ -149,6 +178,26 @@ function attemptSignIn(baseUrl, account, password, probePath) {
 
 	if (submitted.status !== 200) {
 		fail(`каталог не принял учётные данные: ${submitted.status}`);
+	}
+
+	// Страница настройки кода значит, что записи не завели секрет прогона, и
+	// повтор тут не поможет.
+	if (submitted.url.indexOf('required-action') !== -1) {
+		fail(
+			`каталог требует настроить код для «${account.login}»: пересоздайте стенд (run.sh down, up)`
+		);
+	}
+
+	if (/name="otp"/.test(submitted.body)) {
+		submitted = http.post(
+			formAction(submitted.body),
+			{ otp: secondFactorCode(account.login, password) },
+			{ headers: HTML, jar, tags: { step: 'signin' } }
+		);
+
+		if (submitted.status !== 200) {
+			fail(`каталог не принял одноразовый код: ${submitted.status}`);
+		}
 	}
 
 	// Путь `/login-actions/authenticate` в конечном адресе означает, что каталог
