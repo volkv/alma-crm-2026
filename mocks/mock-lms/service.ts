@@ -61,7 +61,7 @@ type LearningGroup = {
 	/** Что обучается: код программы и коды продуктов из заявки CRM. */
 	programCode: string | null;
 	productCodes: string[];
-	/** Для кого обучение: `students`, `teachers`, `upskilling`; `null` — заявка `1.0`. */
+	/** Для кого обучение: `students`, `teachers`, `upskilling`; `null` — группа, заведённая до закрепления выбора. */
 	purpose: string | null;
 	plannedSeats: number | null;
 	startsOn: string | null;
@@ -85,7 +85,7 @@ function nested(data: Record<string, unknown>, key: string): Record<string, unkn
 	return isRecord(value) ? value : {};
 }
 
-/** Коды продуктов заявки: список `products` появился в схеме `1.1`. */
+/** Коды продуктов заявки из списка `products`. */
 function readProductCodes(data: Record<string, unknown>): string[] {
 	return Array.isArray(data.products)
 		? data.products

@@ -238,9 +238,6 @@ export async function buildLearningGroupRequest(
 			group.programId === null || group.programCode === null
 				? null
 				: { id: group.programId, code: group.programCode },
-		// Поле `1.0` несёт продукт, только когда он у группы один: выбрать
-		// «главный» из нескольких значило бы соврать получателю старой версии.
-		product: groupProducts.length === 1 ? groupProducts[0] : null,
 		products: groupProducts,
 		purpose: group.purpose,
 		contract: contract === undefined ? null : { id: contract.id, number: contract.number },

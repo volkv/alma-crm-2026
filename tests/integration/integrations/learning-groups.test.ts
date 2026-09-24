@@ -5,7 +5,7 @@ vi.mock('$env/dynamic/private', () => ({ env: process.env }));
 
 import { and, eq, isNull, sql } from 'drizzle-orm';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
-import type { LearningGroupResultMessage } from '$lib/contracts/exchange';
+import { EXCHANGE_SCHEMA_VERSION, type LearningGroupResultMessage } from '$lib/contracts/exchange';
 import {
 	auditEvents,
 	exchangeMessages,
@@ -186,7 +186,7 @@ function resultMessage(
 	}
 ): LearningGroupResultMessage {
 	return {
-		schemaVersion: '1.0',
+		schemaVersion: EXCHANGE_SCHEMA_VERSION,
 		eventId: options.eventId ?? crypto.randomUUID(),
 		eventType: 'learning_group.result',
 		occurredAt: options.occurredAt,
@@ -310,10 +310,11 @@ describe('что закрепляет группа', () => {
 			data: Record<string, unknown>;
 		};
 
-		expect(sent.schemaVersion).toBe('1.1');
+		expect(sent.schemaVersion).toBe(EXCHANGE_SCHEMA_VERSION);
+		// Состав продуктов ездит только списком: одиночного поля в заявке нет.
+		expect(sent.data).not.toHaveProperty('product');
 		expect(sent.data).toMatchObject({
 			program: { id: chosen.id, code: chosen.code },
-			product: { id: product.id, code: product.code },
 			products: [{ id: product.id, code: product.code }],
 			purpose: 'teachers'
 		});
@@ -427,7 +428,6 @@ describe('что закрепляет группа', () => {
 		expect(message.state).toBe('sent');
 		expect(JSON.parse(message.envelope!).data).toMatchObject({
 			program: { id: offered[0].id },
-			product: null,
 			products: [],
 			purpose: 'upskilling'
 		});

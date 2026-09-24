@@ -1,7 +1,8 @@
 import type { RequestHandler } from './$types';
 import {
 	applicationIntakeResponseSchema,
-	applicationSubmittedSchema
+	applicationSubmittedSchema,
+	EXCHANGE_SCHEMA_VERSION
 } from '$lib/contracts/exchange';
 import { apiHandler, type ApiEndpointConfig } from '$lib/server/api/handler';
 import { registerRoute } from '$lib/server/api/openapi';
@@ -43,7 +44,7 @@ registerRoute({
 	tags: ['Обмен'],
 	config: applicationEndpoint,
 	bodyExample: {
-		schemaVersion: '1.0',
+		schemaVersion: EXCHANGE_SCHEMA_VERSION,
 		eventId: '0f1a2b3c-4d5e-4f60-8a1b-2c3d4e5f6a70',
 		eventType: 'application.submitted',
 		occurredAt: '2026-09-18T09:00:00+03:00',
@@ -77,7 +78,7 @@ registerRoute({
 		}
 	},
 	example: {
-		schemaVersion: '1.1',
+		schemaVersion: EXCHANGE_SCHEMA_VERSION,
 		result: 'created',
 		data: {
 			externalId: 'site-2026-000123',

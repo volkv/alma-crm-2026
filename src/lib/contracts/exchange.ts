@@ -17,11 +17,12 @@ import { optionalId, optionalIsoDate, optionalText, pageQuerySchema, requiredTex
 import { EDUCATION_LEVELS } from './directory';
 
 /**
- * Версия схемы, на которой говорит контракт v1. `1.1` добавила в заявку на
- * учебную группу закреплённые программу, продукты и назначение обучения —
- * необязательными полями, поэтому получатель `1.0` её читает как прежде.
+ * Версия схемы, на которой говорит контракт v1. `2.0` убрала из заявки на
+ * учебную группу одиночное поле `product` — состав продуктов группы ездит
+ * только списком `products`. Удаление поля несовместимо, поэтому сменился
+ * `major`, и сообщения `1.x` получают отказ во всех направлениях.
  */
-export const EXCHANGE_SCHEMA_VERSION = '1.1';
+export const EXCHANGE_SCHEMA_VERSION = '2.0';
 
 /** Чей это экземпляр: `crm` — наша система, остальные — чужие. */
 export const EXCHANGE_SYSTEMS = ['cms', 'lms', 'crm'] as const;
@@ -337,16 +338,14 @@ export const learningGroupRequestedDataSchema = z.object({
 	externalId: z.string(),
 	interactionId: z.uuid(),
 	organization: z.object({ id: z.uuid(), inn: z.string().nullable(), name: z.string() }),
-	/** Программа, закреплённая за группой. `null` — только у групп, заведённых до `1.1`. */
-	program: catalogRefSchema.nullable(),
 	/**
-	 * Поле `1.0`: единственный продукт группы. У группы с несколькими продуктами
-	 * здесь `null`, а полный состав — в `products`.
+	 * Программа, закреплённая за группой. `null` — только у групп, заведённых
+	 * до закрепления выбора (миграция `0023`).
 	 */
-	product: catalogRefSchema.nullable(),
-	/** С `1.1`: продукты группы — подмножество продуктов взаимодействия. */
+	program: catalogRefSchema.nullable(),
+	/** Продукты группы — подмножество продуктов взаимодействия. */
 	products: z.array(catalogRefSchema),
-	/** С `1.1`: для кого обучение. `null` — только у групп, заведённых до `1.1`. */
+	/** Для кого обучение. `null` — только у групп, заведённых до закрепления выбора. */
 	purpose: z.enum(LEARNING_PURPOSES).nullable(),
 	contract: z.object({ id: z.uuid(), number: z.string() }).nullable(),
 	stream: z.object({

@@ -1,5 +1,6 @@
 import type { RequestHandler } from './$types';
 import {
+	EXCHANGE_SCHEMA_VERSION,
 	learningGroupResultResponseSchema,
 	learningGroupResultSchema
 } from '$lib/contracts/exchange';
@@ -37,7 +38,7 @@ registerRoute({
 	tags: ['Обмен'],
 	config: resultEndpoint,
 	example: {
-		schemaVersion: '1.1',
+		schemaVersion: EXCHANGE_SCHEMA_VERSION,
 		result: 'created',
 		data: {
 			groupExternalId: 'LMS-2026-000412',

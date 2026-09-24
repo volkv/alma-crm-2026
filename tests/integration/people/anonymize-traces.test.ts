@@ -8,6 +8,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { ANONYMIZED_TEXT } from '$lib/contracts/directory';
 import {
 	applicationSubmittedSchema,
+	EXCHANGE_SCHEMA_VERSION,
 	type ApplicationSubmittedMessage
 } from '$lib/contracts/exchange';
 import { updateInteractionSchema } from '$lib/contracts/interactions';
@@ -118,7 +119,7 @@ const serviceActor = () => testActor({ roleId: 'service' });
  */
 function envelope(data: Record<string, unknown>): ApplicationSubmittedMessage {
 	return applicationSubmittedSchema.parse({
-		schemaVersion: '1.0',
+		schemaVersion: EXCHANGE_SCHEMA_VERSION,
 		eventId: crypto.randomUUID(),
 		eventType: 'application.submitted',
 		occurredAt: new Date().toISOString(),

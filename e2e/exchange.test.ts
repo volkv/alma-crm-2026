@@ -112,7 +112,7 @@ staff('заявка чужого экземпляра не принимаетс�
 			'content-type': 'application/json'
 		},
 		data: {
-			schemaVersion: '1.0',
+			schemaVersion: '2.0',
 			eventId: crypto.randomUUID(),
 			eventType: 'application.submitted',
 			occurredAt: new Date().toISOString(),

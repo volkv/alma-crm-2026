@@ -23,7 +23,7 @@ import {
 } from '$lib/contracts/exchange';
 
 const APPLICATION = {
-	schemaVersion: '1.0',
+	schemaVersion: '2.0',
 	eventId: '9f1c1f9e-2c7b-4c3a-9a41-6d0a1f5e2b33',
 	eventType: 'application.submitted',
 	occurredAt: '2026-09-16T09:41:07Z',
@@ -56,7 +56,7 @@ const APPLICATION = {
 };
 
 const RESULT = {
-	schemaVersion: '1.0',
+	schemaVersion: '2.0',
 	eventId: '7a8b9c0d-1e2f-4a3b-8c4d-5e6f7a8b9c0d',
 	eventType: 'learning_group.result',
 	occurredAt: '2027-05-21T06:00:00Z',
@@ -114,10 +114,11 @@ describe('конверт сообщения', () => {
 	});
 
 	it('считает совместимым тот же major и только его', () => {
-		expect(isSupportedSchemaVersion('1.0')).toBe(true);
-		expect(isSupportedSchemaVersion('1.7')).toBe(true);
-		expect(isSupportedSchemaVersion('2.0')).toBe(false);
-		expect(EXCHANGE_SCHEMA_VERSION).toBe('1.1');
+		expect(isSupportedSchemaVersion('2.0')).toBe(true);
+		expect(isSupportedSchemaVersion('2.7')).toBe(true);
+		expect(isSupportedSchemaVersion('1.1')).toBe(false);
+		expect(isSupportedSchemaVersion('3.0')).toBe(false);
+		expect(EXCHANGE_SCHEMA_VERSION).toBe('2.0');
 	});
 });
 

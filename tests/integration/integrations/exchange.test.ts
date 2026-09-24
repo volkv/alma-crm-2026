@@ -9,7 +9,7 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApiKey } from '$lib/server/api/keys';
-import { MAX_REVISION_STEP } from '$lib/contracts/exchange';
+import { EXCHANGE_SCHEMA_VERSION, MAX_REVISION_STEP } from '$lib/contracts/exchange';
 import {
 	affiliations,
 	auditEvents,
@@ -224,7 +224,7 @@ const serviceActor = () => testActor({ roleId: 'service' });
 
 function envelope(data: Record<string, unknown>, options: { eventId?: string } = {}) {
 	return {
-		schemaVersion: '1.0',
+		schemaVersion: EXCHANGE_SCHEMA_VERSION,
 		eventId: options.eventId ?? crypto.randomUUID(),
 		eventType: 'application.submitted',
 		occurredAt: new Date().toISOString(),
@@ -988,7 +988,7 @@ describe('учебная группа', () => {
 		expect(entry.stageSnapshot.requiresLmsData).toBe(true);
 
 		const result = await receiveLearningGroupResult(serviceActor(), {
-			schemaVersion: '1.0',
+			schemaVersion: EXCHANGE_SCHEMA_VERSION,
 			eventId: crypto.randomUUID(),
 			eventType: 'learning_group.result',
 			occurredAt: '2027-05-21T06:00:00Z',
@@ -1035,7 +1035,7 @@ describe('учебная группа', () => {
 
 		const send = (occurredAt: string, completed: number) =>
 			receiveLearningGroupResult(serviceActor(), {
-				schemaVersion: '1.0',
+				schemaVersion: EXCHANGE_SCHEMA_VERSION,
 				eventId: crypto.randomUUID(),
 				eventType: 'learning_group.result',
 				occurredAt,
@@ -1077,7 +1077,7 @@ describe('учебная группа', () => {
 	it('не принимает результат неизвестной группы', async () => {
 		await expect(
 			receiveLearningGroupResult(serviceActor(), {
-				schemaVersion: '1.0',
+				schemaVersion: EXCHANGE_SCHEMA_VERSION,
 				eventId: crypto.randomUUID(),
 				eventType: 'learning_group.result',
 				occurredAt: '2027-05-21T06:00:00Z',
@@ -1376,7 +1376,7 @@ describe('ответ системы обучения', () => {
 
 describe('ключ и подключение обмена', () => {
 	const resultMessage = () => ({
-		schemaVersion: '1.0',
+		schemaVersion: EXCHANGE_SCHEMA_VERSION,
 		eventId: crypto.randomUUID(),
 		eventType: 'learning_group.result',
 		occurredAt: new Date().toISOString(),
