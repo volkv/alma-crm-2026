@@ -215,7 +215,12 @@
 		<div
 			class="min-w-0 rounded-xl border border-border bg-surface p-4 lg:col-start-1 lg:row-start-2"
 		>
-			<EventFeed events={model.events} canComment={can('comment')} {mentionable} />
+			<EventFeed
+				events={model.events}
+				canComment={can('comment')}
+				{mentionable}
+				typers={live?.typers ?? []}
+			/>
 		</div>
 	</div>
 </div>

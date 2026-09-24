@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { enhance } from '$app/forms';
+	import { page } from '$app/state';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
@@ -15,6 +16,7 @@
 	import type { ContractView } from '$lib/contracts/directory';
 	import { CONTRACT_STATUS_LABELS, type InteractionView } from '$lib/contracts/interactions';
 	import { getCardCommands } from './commands.svelte';
+	import { cardLiveUrl, LiveActivity } from './live.svelte';
 	import { rebaseDraft } from '$lib/components/interactions/rebase-draft';
 	import type { CounterpartyShape } from './model';
 	import StaleNotice from '$lib/components/interactions/stale-notice.svelte';
@@ -29,6 +31,9 @@
 	 * полями, а не из живого `interaction`: карточка может перечитаться, пока
 	 * человек пишет, и свежая версия под старым черновиком молча затёрла бы
 	 * чужую правку. Отказ 409 оставляет введённое в диалоге.
+	 *
+	 * Пока открыт диалог плана или договора, коллеги в карточке видят у
+	 * аватарки пометку «редактирует» — чтобы не начинать ту же правку вдвоём.
 	 */
 	let {
 		interaction,
@@ -61,6 +66,27 @@
 	const assignOpen = opened('assign');
 	const planOpen = opened('plan');
 	const contractOpen = opened('contract');
+
+	const liveUrl = $derived(cardLiveUrl(page.params));
+	const editingFields = $derived(commands.is('plan') || commands.is('contract'));
+	/** Сигнал открытой формы правки; `null` — форма закрыта. */
+	let editing: LiveActivity | null = null;
+
+	$effect(() => {
+		if (!editingFields) {
+			return;
+		}
+
+		const activity = new LiveActivity(liveUrl, 'editing');
+
+		editing = activity;
+		activity.hold();
+
+		return () => {
+			activity.stop();
+			editing = null;
+		};
+	});
 
 	const resolving = $derived(
 		commands.current?.kind === 'resolve-blocker' ? commands.current : null
@@ -180,6 +206,8 @@
 			: selectedItemIds.filter((item) => item !== id);
 	}
 </script>
+
+<svelte:window onpagehide={() => editing?.stop()} />
 
 <FormDialog
 	bind:open={resolveOpen.get, resolveOpen.set}

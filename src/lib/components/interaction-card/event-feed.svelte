@@ -14,6 +14,7 @@
 	import { mentionToken, splitMentions } from '$lib/contracts/mentions';
 	import { formatDateTime } from '$lib/format';
 	import type { LucideIcon } from '$lib/icon';
+	import { cardLiveUrl, LiveActivity } from './live.svelte';
 	import type { CardEvent, CardEventKind } from './model';
 
 	/**
@@ -28,11 +29,16 @@
 	 * идентификатором (`$lib/contracts/mentions.ts`): имена совпадают, и
 	 * адресатом должен стать тот, кого выбрали, а не тёзка. Подсказке сервер не
 	 * верит — каждого адресата он проверяет сам.
+	 *
+	 * Пока поле не пусто и человек набирает, коллеги в карточке видят «Имя
+	 * печатает…» под формой; отправка, очистка поля, пауза в наборе и уход со
+	 * страницы это гасят.
 	 */
 	let {
 		events,
 		canComment,
 		mentionable = [],
+		typers = [],
 		initial = 8
 	}: {
 		events: readonly CardEvent[];
@@ -43,6 +49,8 @@
 		 * карточки; пока его нет, подсказка говорит, что список загружается.
 		 */
 		mentionable?: readonly { userId: string; name: string }[];
+		/** Кто из коллег сейчас набирает комментарий — имена, себя нет. */
+		typers?: readonly string[];
 		/** Сколько событий видно сразу; остальные — по кнопке. */
 		initial?: number;
 	} = $props();
@@ -92,6 +100,35 @@
 	onMount(() => {
 		hydrated = true;
 	});
+
+	const liveUrl = $derived(cardLiveUrl(page.params));
+	let typing: LiveActivity | null = null;
+
+	$effect(() => {
+		const activity = new LiveActivity(liveUrl, 'typing');
+
+		typing = activity;
+
+		return () => activity.stop();
+	});
+
+	function onInput(): void {
+		trackQuery();
+
+		if (draft.trim() === '') {
+			typing?.stop();
+		} else {
+			typing?.typed();
+		}
+	}
+
+	const typingLine = $derived(
+		typers.length === 0
+			? ''
+			: typers.length === 1
+				? `${typers[0]} печатает…`
+				: `${typers[0]} и ещё ${typers.length - 1} печатают…`
+	);
 
 	const MAX_SUGGESTIONS = 8;
 
@@ -240,6 +277,8 @@
 	const visible = $derived(expanded ? filtered : filtered.slice(0, initial));
 </script>
 
+<svelte:window onpagehide={() => typing?.stop()} />
+
 <!-- `data-tour` — метка подсказок: по ней тур находит ленту событий. -->
 <section
 	class="flex flex-col gap-3"
@@ -254,6 +293,7 @@
 			method="POST"
 			action="?/comment"
 			use:enhance={actionEnhance({ onsuccess: resetDraft })}
+			onsubmit={() => typing?.stop()}
 			class="flex flex-col gap-2"
 		>
 			<label for="{id}-comment" class="sr-only">Текст комментария</label>
@@ -276,7 +316,7 @@
 						: undefined}
 					bind:ref={textarea}
 					bind:value={draft}
-					oninput={trackQuery}
+					oninput={onInput}
 					onclick={trackQuery}
 					onkeydown={onKeydown}
 					onblur={() => (query = null)}
@@ -323,6 +363,10 @@
 				<Button type="submit" size="sm" disabled={draft.trim() === ''}>Отправить</Button>
 			</div>
 		</form>
+	{/if}
+
+	{#if typingLine !== ''}
+		<p class="text-xs text-muted-foreground" data-slot="feed-typing">{typingLine}</p>
 	{/if}
 
 	<div class="flex flex-wrap gap-1.5" role="group" aria-label="Какие события показать">

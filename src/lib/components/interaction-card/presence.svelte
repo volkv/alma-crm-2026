@@ -1,4 +1,5 @@
 <script lang="ts">
+	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import * as Avatar from '$lib/components/ui/avatar/index.js';
 	import type { LivePerson } from '$lib/contracts/live';
 	import { initials } from '$lib/format';
@@ -7,6 +8,7 @@
 	 * Кто сейчас в карточке: аватарка на учётную запись, а вкладки одной
 	 * учётки — числом на ней. Себя не прячем: демонстрационной учёткой
 	 * пользуются несколько человек разом, и «вы» узнаётся по своей вкладке.
+	 * Карандаш на аватарке — у человека открыта форма правки полей дела.
 	 */
 	let { people }: { people: readonly LivePerson[] } = $props();
 
@@ -15,7 +17,9 @@
 	function caption(person: LivePerson): string {
 		const tabs = person.online > 1 ? ` — вкладок: ${person.online}` : '';
 
-		return `${person.name}${person.you ? ' (вы)' : ''}${tabs}`;
+		const editing = person.editing ? ' — редактирует' : '';
+
+		return `${person.name}${person.you ? ' (вы)' : ''}${tabs}${editing}`;
 	}
 </script>
 
@@ -41,6 +45,13 @@
 					>
 						{initials(person.name)}
 					</Avatar.Fallback>
+					{#if person.editing}
+						<span
+							class="absolute -top-1 -right-1 z-10 flex size-4 items-center justify-center rounded-full bg-surface text-primary ring-1 ring-border"
+							aria-hidden="true"
+							data-slot="presence-editing"><PencilIcon class="size-2.5" /></span
+						>
+					{/if}
 					{#if person.online > 1}
 						<span
 							class="absolute -right-1 -bottom-1 z-10 rounded-full bg-surface px-1 text-[0.625rem] leading-4 font-medium tabular-nums ring-1 ring-border"

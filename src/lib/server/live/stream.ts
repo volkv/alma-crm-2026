@@ -12,18 +12,35 @@
  *   вкладка — не работа человека, и вход по бездействию гаснет в свой срок;
  * - **транзакций не держит**: каждая проверка — отдельные короткие запросы;
  * - **данных дела не несёт**: только вид события и идентификатор, состав
- *   людей — имена сотрудников из справочника пользователей;
+ *   людей — имена сотрудников из справочника пользователей, «печатает» —
+ *   идентификаторы учётных записей;
  * - **освобождает всё** при закрытии, с чьей бы стороны оно ни пришло:
  *   таймеры, подписку на шину, запись присутствия и место в лимитах.
  */
 import { randomUUID } from 'node:crypto';
 import { inArray } from 'drizzle-orm';
-import type { LiveMessage, LivePerson } from '$lib/contracts/live';
+import {
+	TYPING_REFRESH_MS,
+	type LiveActivitySignal,
+	type LiveMessage,
+	type LivePerson
+} from '$lib/contracts/live';
 import { loadSessionUser, peekSession } from '../auth/session';
+import type { SessionUser } from '../auth/types';
 import { getDb } from '../db';
 import { users } from '../db/schema';
 import { listenInteraction, publishLive, type LiveSignal } from './bus';
-import { markGone, markPresent, PRESENCE_REFRESH_MS, readPresence } from './presence';
+import {
+	markActive,
+	markGone,
+	markIdle,
+	markPresent,
+	PRESENCE_REFRESH_MS,
+	readActivity,
+	readPresence,
+	sessionMark,
+	type Activity
+} from './presence';
 import { forgetInteractionViewers, listInteractionViewers, userSeesInteraction } from './viewers';
 
 /** Как часто поток перепроверяет доступ и состав без внешнего повода. */
@@ -89,10 +106,14 @@ function encode(message: LiveMessage): string {
 
 /** Состав карточки глазами одной вкладки: «вы» — по вкладке, не по учётной записи. */
 async function buildRoster(interactionId: string, tabId: string): Promise<LivePerson[]> {
-	const [viewers, tabs] = await Promise.all([
+	const [viewers, tabs, activity] = await Promise.all([
 		listInteractionViewers(interactionId),
-		readPresence(interactionId)
+		readPresence(interactionId),
+		readActivity(interactionId)
 	]);
+	const editing = new Set(
+		activity.filter((entry) => entry.kind === 'editing').map((entry) => entry.userId)
+	);
 
 	const online = new Map<string, { count: number; you: boolean }>();
 
@@ -109,7 +130,8 @@ async function buildRoster(interactionId: string, tabId: string): Promise<LivePe
 		name: viewer.fullName,
 		relation: viewer.relation,
 		online: online.get(viewer.userId)?.count ?? 0,
-		you: online.get(viewer.userId)?.you ?? false
+		you: online.get(viewer.userId)?.you ?? false,
+		editing: editing.has(viewer.userId)
 	}));
 
 	// В карточке, но не в списке доступа: список помнится полминуты, а
@@ -132,12 +154,70 @@ async function buildRoster(interactionId: string, tabId: string): Promise<LivePe
 				name: row.fullName,
 				relation: null,
 				online: entry?.count ?? 0,
-				you: entry?.you ?? false
+				you: entry?.you ?? false,
+				editing: editing.has(row.id)
 			});
 		}
 	}
 
 	return people;
+}
+
+/**
+ * Кто набирает комментарий глазами одной вкладки: без своей сессии — себе
+ * «печатает» не показывается, а коллеге под той же учётной записью —
+ * показывается.
+ */
+function typersFor(activity: Activity[], ownSession: string): string[] {
+	const typers = activity
+		.filter((entry) => entry.kind === 'typing' && entry.session !== ownSession)
+		.map((entry) => entry.userId);
+
+	return [...new Set(typers)];
+}
+
+export type ActivityRequest = {
+	sessionId: string;
+	/** Пользователь запроса — собран из сессии, как на любом запросе. */
+	user: SessionUser;
+	interactionId: string;
+	workspaceKey: string;
+	signal: LiveActivitySignal;
+};
+
+/**
+ * Сигнал занятости от браузера: «набираю комментарий», «открыл форму
+ * правки» или «закончил». Доступ к делу проверяется тем же условием, что у
+ * потока; `false` — дела не видно, и сигнал не записан.
+ *
+ * Зрителей будит не каждый сигнал: «печатает» — не чаще раза в
+ * {@link TYPING_REFRESH_MS} с небольшим допуском (зритель гасит его сам, если
+ * подтверждений нет), форма правки — только при открытии и закрытии: её
+ * продление состава не меняет, а пропажу по сроку поток заметит на плановой
+ * перепроверке.
+ */
+export async function recordActivity(request: ActivityRequest): Promise<boolean> {
+	if (!(await userSeesInteraction(request.user, request.interactionId, request.workspaceKey))) {
+		return false;
+	}
+
+	const { kind, active } = request.signal;
+	const session = sessionMark(request.sessionId);
+	let wake: boolean;
+
+	if (active) {
+		const since = await markActive(request.interactionId, kind, session, request.user.id);
+
+		wake = since === null || (kind === 'typing' && since >= TYPING_REFRESH_MS - 500);
+	} else {
+		wake = await markIdle(request.interactionId, kind, session);
+	}
+
+	if (wake) {
+		await publishLive(request.interactionId, { type: 'activity', kind });
+	}
+
+	return true;
 }
 
 /**
@@ -164,6 +244,7 @@ export async function openInteractionStream(
 	total += 1;
 
 	const tabId = randomUUID();
+	const ownSession = sessionMark(request.sessionId);
 	const encoder = new TextEncoder();
 	const pending: LiveSignal[] = [];
 	const timers: ReturnType<typeof setTimeout>[] = [];
@@ -173,6 +254,7 @@ export async function openInteractionStream(
 	let batchTimer: ReturnType<typeof setTimeout> | undefined;
 	let unlisten: (() => void) | undefined;
 	let lastRoster = '';
+	let typingShown = false;
 	// Проверки и выдачи идут строго друг за другом: таймер перепроверки и пачка
 	// событий не должны писать в поток вперемешку.
 	let chain: Promise<void> = Promise.resolve();
@@ -231,6 +313,19 @@ export async function openInteractionStream(
 		}
 	};
 
+	/**
+	 * Кто набирает комментарий. Пустой список уходит один раз — погасить
+	 * показанное; непустой — каждый раз: он подтверждает, что набор идёт.
+	 */
+	const sendTyping = async (): Promise<void> => {
+		const userIds = typersFor(await readActivity(request.interactionId), ownSession);
+
+		if (userIds.length > 0 || typingShown) {
+			typingShown = userIds.length > 0;
+			write(encode({ event: 'typing', data: { userIds } }));
+		}
+	};
+
 	/** Поставить работу в очередь потока; сбой закрывает поток с записью в лог. */
 	const run = (work: () => Promise<void>): void => {
 		chain = chain
@@ -273,10 +368,17 @@ export async function openInteractionStream(
 			}
 
 			let rosterDue = false;
+			let typingDue = false;
 
 			for (const signal of batch) {
 				if (signal.type === 'presence') {
 					rosterDue = true;
+				} else if (signal.type === 'activity') {
+					if (signal.kind === 'typing') {
+						typingDue = true;
+					} else {
+						rosterDue = true;
+					}
 				} else if (signal.type === 'comment.added') {
 					write(encode({ event: 'comment.added', data: { commentId: signal.commentId } }));
 				} else if (signal.type === 'interaction.changed') {
@@ -291,6 +393,10 @@ export async function openInteractionStream(
 
 			if (rosterDue) {
 				await sendRoster(false);
+			}
+
+			if (typingDue) {
+				await sendTyping();
 			}
 		});
 	};
@@ -321,6 +427,7 @@ export async function openInteractionStream(
 		await markPresent(request.interactionId, tabId, first.userId);
 		write(encode({ event: 'hello', data: {} }));
 		await sendRoster(true);
+		await sendTyping();
 
 		await publishLive(request.interactionId, { type: 'presence' });
 

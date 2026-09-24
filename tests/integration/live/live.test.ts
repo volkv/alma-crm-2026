@@ -16,7 +16,7 @@ import { NotFoundError } from '$lib/server/errors';
 import { getInteraction } from '$lib/server/interactions/read';
 import { closeLiveBus, listenInteraction, publishLive } from '$lib/server/live/bus';
 import { publishAfterCommit } from '$lib/server/live/publish';
-import { openInteractionStream } from '$lib/server/live/stream';
+import { openInteractionStream, recordActivity } from '$lib/server/live/stream';
 import { listInteractionViewers } from '$lib/server/live/viewers';
 import { removeWorkspaceMember } from '$lib/server/rbac/workspaces';
 import {
@@ -128,8 +128,14 @@ function sseReader(response: Response) {
 	return { next, nextSignificant };
 }
 
-async function openFor(userId: string, interactionId: string, workspaceKey?: string) {
-	const sessionId = await createSession(userId, { ip: null, userAgent: 'vitest' });
+async function openFor(
+	userId: string,
+	interactionId: string,
+	workspaceKey?: string,
+	existingSession?: string
+) {
+	const sessionId =
+		existingSession ?? (await createSession(userId, { ip: null, userAgent: 'vitest' }));
 	const abort = new AbortController();
 	const opened = await openInteractionStream({
 		sessionId,
@@ -366,5 +372,55 @@ describe('кто видит дело', () => {
 		expect(expected).not.toContain(outsideLead);
 		expect(viewers.find((viewer) => viewer.userId === owner)?.relation).toBe('responsible');
 		expect(viewers.find((viewer) => viewer.userId === lead)?.relation).toBe('lead');
+	});
+});
+
+describe('кто печатает', () => {
+	it('доходит коллеге, не возвращается своей сессии и не принимается без доступа к делу', async () => {
+		const owner = await insertUser(database.db, { roleId: 'manager' });
+		const admin = await insertUser(database.db, { roleId: 'admin' });
+		const stranger = await insertUser(database.db, { roleId: 'manager' });
+		const { interactionId } = await insertInteractionWithStage(database.db, {
+			ownerUserId: owner
+		});
+		const workspaceKey = await workspaceKeyOf(interactionId);
+		const ownerSession = await createSession(owner, { ip: null, userAgent: 'vitest' });
+
+		const colleague = await openFor(admin, interactionId);
+		const self = await openFor(owner, interactionId, workspaceKey, ownerSession);
+		const colleagueStream = sseReader(colleague.opened as Response);
+		const selfStream = sseReader(self.opened as Response);
+
+		expect(await colleagueStream.next()).toMatchObject({ event: 'hello' });
+		expect(await selfStream.next()).toMatchObject({ event: 'hello' });
+
+		const signal = async (userId: string, sessionId: string) =>
+			recordActivity({
+				sessionId,
+				user: (await loadSessionUser(userId))!,
+				interactionId,
+				workspaceKey,
+				signal: { kind: 'typing', active: true }
+			});
+
+		expect(
+			await signal(stranger, await createSession(stranger, { ip: null, userAgent: 'vitest' }))
+		).toBe(false);
+		expect(await signal(owner, ownerSession)).toBe(true);
+
+		expect(await colleagueStream.nextSignificant()).toEqual({
+			event: 'typing',
+			data: { userIds: [owner] }
+		});
+
+		// Своей сессии «печатает» не приходит: следующим она видит комментарий.
+		await publishLive(interactionId, { type: 'comment.added', commentId: COMMENT_ID });
+		expect(await selfStream.nextSignificant()).toEqual({
+			event: 'comment.added',
+			data: { commentId: COMMENT_ID }
+		});
+
+		colleague.abort.abort();
+		self.abort.abort();
 	});
 });
