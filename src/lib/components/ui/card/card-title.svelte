@@ -13,7 +13,10 @@
 <div
 	bind:this={ref}
 	data-slot="card-title"
-	class={cn('text-base leading-normal font-medium group-data-[size=sm]/card:text-sm', className)}
+	class={cn(
+		'section-title group-data-[size=sm]/card:text-sm group-data-[size=sm]/card:leading-5',
+		className
+	)}
 	{...restProps}
 >
 	{@render children?.()}

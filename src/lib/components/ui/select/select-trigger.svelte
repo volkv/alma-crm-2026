@@ -25,6 +25,11 @@
 	 * закрытом состоянии в документе нет, и ссылка на несуществующий
 	 * идентификатор была бы хуже её отсутствия.
 	 */
+	/*
+	 * На телефоне у триггера обычного размера область нажатия дотянута до 44px
+	 * невидимым `::after`, как у `Button` (`button.svelte`, `TOUCH_TARGET`):
+	 * сам он остаётся 36px вровень с полями и кнопками строки.
+	 */
 	const popup = getSelectPopup();
 </script>
 
@@ -35,7 +40,7 @@
 	role="combobox"
 	aria-controls={popup.open ? popup.id : undefined}
 	class={cn(
-		"flex w-fit items-center justify-between gap-1.5 rounded-lg border border-input bg-transparent py-2 pr-2 pl-2.5 text-sm whitespace-nowrap transition-colors outline-none hover:bg-surface-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus-visible:outline-solid disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-muted disabled:text-faint aria-invalid:border-destructive data-placeholder:text-muted-foreground data-[size=default]:h-control data-[size=sm]:h-7 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-1.5 [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
+		"relative flex w-fit items-center justify-between gap-1.5 rounded-lg border border-input bg-transparent py-2 pr-2 pl-2.5 text-sm whitespace-nowrap transition-colors outline-none hover:bg-surface-muted focus-visible:outline-2 focus-visible:outline-offset-2 focus-visible:outline-ring focus-visible:outline-solid disabled:cursor-not-allowed disabled:border-border disabled:bg-surface-muted disabled:text-faint aria-invalid:border-destructive data-placeholder:text-muted-foreground data-[size=default]:h-control data-[size=sm]:h-8 *:data-[slot=select-value]:line-clamp-1 *:data-[slot=select-value]:flex *:data-[slot=select-value]:flex *:data-[slot=select-value]:items-center *:data-[slot=select-value]:gap-1.5 max-sm:data-[size=default]:after:absolute max-sm:data-[size=default]:after:inset-x-0 max-sm:data-[size=default]:after:inset-y-[min(0px,calc(50%-1.375rem))] [&_svg]:pointer-events-none [&_svg]:shrink-0 [&_svg:not([class*='size-'])]:size-4",
 		className
 	)}
 	{...restProps}

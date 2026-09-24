@@ -33,7 +33,7 @@
 	import ProcessCardForm from '$lib/components/process-editor/process-card-form.svelte';
 	import ProcessPreview from '$lib/components/process-editor/process-preview.svelte';
 	import StageRequirements from '$lib/components/process-editor/stage-requirements.svelte';
-	import StageTimeline from '$lib/components/stage-timeline.svelte';
+	import StageStrip from '$lib/components/interaction-card/stage-strip.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatNumber, pluralize } from '$lib/format';
 	import {
@@ -368,15 +368,16 @@
 				Стадий ещё нет: заведите черновик, опишите в нём стадии и примените его. Пока стадий нет,
 				завести взаимодействие в пространстве с этим процессом нельзя.
 			{:else if editable}
-				Правится черновик — копия действующего процесса. На работу он не влияет, пока его не
-				применят.
+				Стадии и переходы правятся в черновике — копии действующего процесса. На работу он не
+				влияет, пока его не применят.
 			{:else}
-				Действующий процесс открыт только на чтение. Чтобы изменить его, заведите черновик.
+				Стадии и переходы действующего процесса открыты только на чтение — чтобы изменить их,
+				заведите черновик. Состав карточки правится сразу, без черновика.
 			{/if}
 		</Card.Description>
 		<Card.Action>
 			<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
-			<div data-tour="process-group-draft" class="flex flex-wrap items-center justify-end gap-2">
+			<div data-tour="process-group-draft" class="flex flex-wrap items-center gap-2 sm:justify-end">
 				<Button variant="ghost" size="sm" href={resolve('/(app)/settings/workflows')}>
 					<ArrowLeftIcon aria-hidden="true" />
 					К списку
@@ -518,13 +519,17 @@
 							description="Добавьте первую стадию — без неё процесс нельзя применить."
 						/>
 					{:else}
-						<!-- Цепочка целиком и без состояния: так процесс выглядит в карточке
-							взаимодействия, пока стадии ещё никто не проходил. -->
-						<StageTimeline
-							stages={shown.stages.map((stage) => ({
+						<!-- Цепочка целиком и без состояния — та же полоса, что в карточке
+							взаимодействия, пока стадии ещё никто не проходил: отрезок на
+							стадию во всю ширину, без прокрутки. Названия с номерами — в
+							таблице ниже. -->
+						<StageStrip
+							stages={shown.stages.map((stage, index) => ({
 								id: stage.id,
-								label: stage.name,
-								state: 'pending' as const
+								position: index + 1,
+								name: stage.name,
+								state: 'pending' as const,
+								note: null
 							}))}
 						/>
 						<div class="overflow-x-auto">
@@ -756,12 +761,17 @@
 				<Card.Description>
 					Какие панели стоят в карточке и какие документы в ней собираются по шаблону. Сторона и её
 					условия есть всегда и зависят от контрагента: у вуза — договор, продукты и лицензии, у
-					физического лица — программа, поток и оплата, у юридического — договор и слушатели.
-					Изменение действует сразу во всех пространствах процесса, без черновика: стадий оно не
-					касается.
+					физического лица — программа, поток и оплата, у юридического — договор и слушатели. Стадий
+					эти настройки не касаются.
 				</Card.Description>
 			</Card.Header>
-			<Card.Content>
+			<Card.Content class="flex flex-col gap-4">
+				<!-- Панель состояния говорит о черновике стадий; здесь черновика нет,
+					и это сказано прямо над формой, а не в конце абзаца. -->
+				<InlineHint tone="info">
+					Настройки карточки сохраняются сразу, без черновика, и действуют во всех пространствах
+					процесса.
+				</InlineHint>
 				<!-- Якорь в адресе действия возвращает на этот раздел после сохранения. -->
 				<ProcessCardForm card={data.card} action="?/card#card" />
 			</Card.Content>
@@ -781,9 +791,9 @@
 						а тем, чья стадия исчезла, нужно правило переноса. Числа ниже справочные: пока их читают,
 						работа идёт, и окончательные пишутся в журнал при применении.
 					{:else}
-						Черновика нет. Действующий процесс открыт только на чтение: по нему идут взаимодействия
-						и с него сняты слепки пройденных стадий. Черновик изменений создаётся копией кнопкой
-						вверху, а прошлые применения — в журнале «Изменения процесса».
+						Черновика нет. Стадии и переходы действующего процесса открыты только на чтение: по ним
+						идут взаимодействия и с них сняты слепки пройденных стадий. Черновик изменений создаётся
+						копией кнопкой вверху, а прошлые применения — в журнале «Изменения процесса».
 					{/if}
 				</Card.Description>
 			</Card.Header>

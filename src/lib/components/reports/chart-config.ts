@@ -6,7 +6,7 @@
  * выгрузили. Всё остальное — толщина полос, подписи, шрифт — общее, поэтому
  * картинка в файле совпадает с той, что на экране.
  */
-import type { Chart, ChartConfiguration } from 'chart.js';
+import type { Chart, ChartConfiguration, Plugin } from 'chart.js';
 import type { ReportEventKind } from '$lib/contracts/reports';
 import { valueLabelsPlugin } from './value-labels';
 
@@ -115,9 +115,82 @@ const AXIS_HEIGHT = 28;
 /** Кегль делений, легенды и подписей — тот же, что у мелкого текста экрана. */
 const FONT_SIZE = 12;
 
-/** Высота холста горизонтальной диаграммы: от числа строк, а не одна на все. */
-export function horizontalHeight(rows: number): number {
-	return Math.max(rows, 1) * ROW_HEIGHT + AXIS_HEIGHT;
+/**
+ * Шаг строки в узкой раскладке: подпись стадии стоит над полосой, и строке
+ * нужна высота строки текста сверх полосы.
+ */
+const COMPACT_ROW_HEIGHT = 40;
+
+/** Зазор между подписью стадии и полосой под ней в узкой раскладке. */
+const COMPACT_LABEL_GAP = 3;
+
+/** Запас над первой строкой узкой раскладки: подпись первой полосы выше её строки. */
+const COMPACT_TOP_PADDING = 8;
+
+/**
+ * Высота холста горизонтальной диаграммы: от числа строк, а не одна на все.
+ * `compact` — узкая раскладка с подписями над полосами.
+ */
+export function horizontalHeight(rows: number, compact = false): number {
+	return compact
+		? Math.max(rows, 1) * COMPACT_ROW_HEIGHT + AXIS_HEIGHT + COMPACT_TOP_PADDING
+		: Math.max(rows, 1) * ROW_HEIGHT + AXIS_HEIGHT;
+}
+
+/**
+ * Текст, укороченный с конца до ширины: начало подписи несёт её смысл, и
+ * обрезать надо хвост, а не голову.
+ */
+function fitText(ctx: CanvasRenderingContext2D, text: string, width: number): string {
+	if (ctx.measureText(text).width <= width) {
+		return text;
+	}
+
+	let end = text.length;
+
+	while (end > 0 && ctx.measureText(`${text.slice(0, end).trimEnd()}…`).width > width) {
+		end -= 1;
+	}
+
+	return `${text.slice(0, end).trimEnd()}…`;
+}
+
+/**
+ * Подписи стадий над полосами — узкая раскладка горизонтальной диаграммы.
+ *
+ * Ось подписей слева Chart.js ограничивает половиной ширины холста, и на
+ * телефоне длинная стадия теряла начало за левым краем. Над полосой подписи
+ * достаётся вся ширина области рисования.
+ */
+function categoryLabelsPlugin(color: string, fontFamily: string): Plugin<'bar'> {
+	return {
+		id: 'reportCategoryLabels',
+		afterDatasetsDraw(chart) {
+			const { ctx, chartArea } = chart;
+			const labels = chart.data.labels ?? [];
+			const bars = chart.getDatasetMeta(0).data;
+
+			ctx.save();
+			ctx.fillStyle = color;
+			ctx.font = `${FONT_SIZE}px ${fontFamily}`;
+			ctx.textAlign = 'left';
+			ctx.textBaseline = 'bottom';
+
+			labels.forEach((label, index) => {
+				const bar = bars[index];
+
+				if (bar === undefined) {
+					return;
+				}
+
+				const top = bar.y - BAR_THICKNESS / 2 - COMPACT_LABEL_GAP;
+
+				ctx.fillText(fitText(ctx, String(label), chartArea.width), chartArea.left, top);
+			});
+
+			ctx.restore();
+		}
+	};
 }
 
 export type ChartSetup = {
@@ -129,11 +202,17 @@ export type ChartSetup = {
 	fontFamily: string;
 	/** Легенда у одиночной серии на экране лишняя, в файле — нет. */
 	legend: boolean;
+	/**
+	 * Узкая раскладка горизонтальной диаграммы: подписи над полосами вместо оси
+	 * слева. Только для экрана телефона — файл рисуется на широком листе.
+	 */
+	compact?: boolean;
 	onselect?: (index: number) => void;
 };
 
 export function chartConfiguration(setup: ChartSetup): ChartConfiguration<'bar', number[], string> {
 	const { horizontal, stacked, palette } = setup;
+	const compact = horizontal && setup.compact === true;
 	const font = { family: setup.fontFamily, size: FONT_SIZE };
 
 	// Куски стопки разделены линией цвета панели: без неё соседние серии
@@ -150,7 +229,8 @@ export function chartConfiguration(setup: ChartSetup): ChartConfiguration<'bar',
 				horizontal,
 				color: palette.label,
 				fontFamily: setup.fontFamily
-			})
+			}),
+			...(compact ? [categoryLabelsPlugin(palette.axis, setup.fontFamily)] : [])
 		],
 		data: {
 			labels: [...setup.labels],
@@ -178,7 +258,13 @@ export function chartConfiguration(setup: ChartSetup): ChartConfiguration<'bar',
 			animation: false,
 			// Место под подпись значения: без запаса число у самого длинного
 			// столбца обрезается краем холста.
-			layout: { padding: horizontal ? { right: 40 } : { top: 20 } },
+			layout: {
+				padding: compact
+					? { right: 40, top: COMPACT_TOP_PADDING }
+					: horizontal
+						? { right: 40 }
+						: { top: 20 }
+			},
 			plugins: {
 				legend: {
 					display: setup.legend,
@@ -196,8 +282,8 @@ export function chartConfiguration(setup: ChartSetup): ChartConfiguration<'bar',
 				},
 				y: {
 					stacked,
-					ticks: { precision: 0, color: palette.axis, font },
-					grid: { display: horizontal, color: palette.grid },
+					ticks: { display: !compact, precision: 0, color: palette.axis, font },
+					grid: { display: horizontal && !compact, color: palette.grid },
 					border: { color: palette.edge }
 				}
 			},

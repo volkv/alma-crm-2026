@@ -16,6 +16,11 @@
 	 * лицо работают по договору, физическое лицо — по оплате. Все стадии
 	 * раскрываются столбиком по требованию, пройденные в нём свёрнуты в строку.
 	 * Если по записи давно тихо, это сказано здесь же словами.
+	 *
+	 * На телефоне из трёх фактов на виду только контрагент, остальные два —
+	 * в раскрытии, следующую стадию называет кнопка перехода, а «тишину»
+	 * страница ставит под действием: до главного действия в первом экране
+	 * должны уместиться контрагент, стадия и срок.
 	 */
 	let { model }: { model: CardModel } = $props();
 
@@ -32,7 +37,49 @@
 			stage: model.stages.slice(here + 1).find((stage) => stage.state === 'pending') ?? null
 		};
 	});
+
+	const secondaryLabel = $derived(
+		model.shape === 'person' ? 'Ответственный и оплата' : 'Ответственный и договор'
+	);
 </script>
+
+{#snippet secondaryFacts(hide: string)}
+	<div class="min-w-0 {hide}">
+		<dt class="text-xs text-muted-foreground">Ответственный</dt>
+		<dd class="mt-0.5 text-sm font-medium break-words">
+			{model.responsible ?? 'не назначен'}
+			{#if model.waitingFor !== null}
+				<span class="block text-xs font-normal text-muted-foreground">
+					ход за стороной: {model.waitingFor}
+				</span>
+			{/if}
+		</dd>
+	</div>
+	{#if model.shape === 'person'}
+		<div class="min-w-0 {hide}">
+			<dt class="text-xs text-muted-foreground">Оплата</dt>
+			<dd class="mt-0.5 text-sm">
+				<StatusBadge tone={model.payment.tone} dot>{model.payment.text}</StatusBadge>
+			</dd>
+		</div>
+	{:else}
+		<div class="min-w-0 {hide}">
+			<dt class="text-xs text-muted-foreground">Договор</dt>
+			<dd class="mt-0.5 text-sm">
+				{#if model.contract !== null}
+					<span class="font-medium tabular-nums">№ {model.contract.number}</span>
+					<span class="block text-xs text-muted-foreground">
+						{model.contract.status}{model.contract.validUntil
+							? `, до ${formatDate(model.contract.validUntil)}`
+							: ''}
+					</span>
+				{:else}
+					<span class="text-faint">не выбран</span>
+				{/if}
+			</dd>
+		</div>
+	{/if}
+{/snippet}
 
 <!-- `data-tour` — метка подсказок: по ней тур находит факты и процесс. -->
 <section
@@ -50,41 +97,7 @@
 				{/if}
 			</dd>
 		</div>
-		<div class="min-w-0">
-			<dt class="text-xs text-muted-foreground">Ответственный</dt>
-			<dd class="mt-0.5 text-sm font-medium break-words">
-				{model.responsible ?? 'не назначен'}
-				{#if model.waitingFor !== null}
-					<span class="block text-xs font-normal text-muted-foreground">
-						ход за стороной: {model.waitingFor}
-					</span>
-				{/if}
-			</dd>
-		</div>
-		{#if model.shape === 'person'}
-			<div class="min-w-0">
-				<dt class="text-xs text-muted-foreground">Оплата</dt>
-				<dd class="mt-0.5 text-sm">
-					<StatusBadge tone={model.payment.tone} dot>{model.payment.text}</StatusBadge>
-				</dd>
-			</div>
-		{:else}
-			<div class="min-w-0">
-				<dt class="text-xs text-muted-foreground">Договор</dt>
-				<dd class="mt-0.5 text-sm">
-					{#if model.contract !== null}
-						<span class="font-medium tabular-nums">№ {model.contract.number}</span>
-						<span class="block text-xs text-muted-foreground">
-							{model.contract.status}{model.contract.validUntil
-								? `, до ${formatDate(model.contract.validUntil)}`
-								: ''}
-						</span>
-					{:else}
-						<span class="text-faint">не выбран</span>
-					{/if}
-				</dd>
-			</div>
-		{/if}
+		{@render secondaryFacts('max-sm:hidden')}
 	</dl>
 
 	{#if model.stages.length > 0}
@@ -102,8 +115,10 @@
 							{/if}
 						</dd>
 					</div>
+					<!-- На телефоне следующую стадию называет кнопка перехода в «Следующем
+						шаге», повтор здесь отодвигал бы её под док. -->
 					{#if next !== null}
-						<div class="min-w-0 sm:text-right">
+						<div class="min-w-0 max-sm:hidden sm:text-right">
 							<dt class="text-xs text-muted-foreground">Дальше</dt>
 							<dd class="mt-0.5 text-sm break-words">
 								{#if next.stage !== null}
@@ -135,7 +150,29 @@
 		</div>
 	{/if}
 
+	<!-- На телефоне ответственный и условия — по нажатию: до «Следующего шага»
+		в первом экране остаются контрагент, стадия и срок, а раскрытие стоит
+		последним, под процессом. -->
+	<details class="group sm:hidden" data-slot="card-facts-more">
+		<summary
+			class="flex w-fit list-none items-center gap-1 rounded-sm text-xs text-link focus-ring hover:text-link-hover hover:underline [&::-webkit-details-marker]:hidden"
+		>
+			<ChevronRightIcon
+				class="size-3.5 transition-transform group-open:rotate-90"
+				aria-hidden="true"
+			/>
+			{secondaryLabel}
+		</summary>
+		<dl class="mt-2 grid gap-y-3">
+			{@render secondaryFacts('')}
+		</dl>
+	</details>
+
+	<!-- На телефоне «тишина» стоит под «Следующим шагом» (страница карточки):
+		совет не должен отодвигать само действие из первого экрана. -->
 	{#if model.quiet !== null}
-		<QuietNote quiet={model.quiet} />
+		<div class="max-sm:hidden">
+			<QuietNote quiet={model.quiet} />
+		</div>
 	{/if}
 </section>

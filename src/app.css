@@ -536,14 +536,17 @@ html[data-theme='dark'] {
 
 	/*
 	 * Density. A CRM is read in rows, so the two heights that repeat thousands of
-	 * times are tokens: 36px for a table row (`--atmr-size-m` ДС), 32px for a
-	 * control (`--atmr-size-s-chip`). Остальная шкала отступов — модуль 4px,
+	 * times are tokens: 36px for a table row and 36px for a control — both
+	 * `--atmr-size-m` ДС. Контрол равен строке намеренно: кнопка и поле в строке
+	 * фильтров стоят вровень с полем поиска таблицы. Плотные ступени кнопки —
+	 * 32px (`sm`) и 28px (`xs`) — для строк таблиц и чипов фильтров, где
+	 * 36px раздувает строку. Остальная шкала отступов — модуль 4px,
 	 * он же `--atmr-spacing-1x`. Всё это в rem, а не в px: иначе плотность
 	 * перестанет расти вместе с кеглем, который человек выбрал в браузере.
 	 */
 	--spacing: 0.25rem;
 	--spacing-row: 2.25rem;
-	--spacing-control: 2rem;
+	--spacing-control: 2.25rem;
 
 	/*
 	 * Радиусы ДС один в один: xs, s, m (базовый — кнопки и поля), l. `4xl` —
@@ -623,6 +626,31 @@ html[data-theme='dark'] {
  * `focus-ring-inset` draws the same ring inside the box, for elements whose
  * container clips overflow (the collapsible navigation list, table rows).
  */
+/**
+ * Заголовок панели и надзаголовок — одни на весь продукт.
+ *
+ * `section-title` — название карточки или раздела страницы под `<h1>` шапки:
+ * 16/24, полужирный (у Rostelecom Basis это Bold — 600 в гарнитуре нет).
+ * `Card.Title` набран им же. `section-overline` — подпись над группой полей
+ * или колонкой внутри панели: 12/16, medium, приглушённый, без капители и
+ * разрядки — прописные в кириллице читаются хуже и спорят с заголовком.
+ */
+@utility section-title {
+	font-size: var(--text-base);
+	line-height: 1.5rem;
+	font-weight: var(--font-weight-semibold);
+	letter-spacing: normal;
+}
+
+@utility section-overline {
+	font-size: var(--text-xs);
+	line-height: 1rem;
+	font-weight: var(--font-weight-medium);
+	color: var(--color-muted-foreground);
+	text-transform: none;
+	letter-spacing: normal;
+}
+
 @utility focus-ring {
 	&:focus-visible {
 		outline: 2px solid var(--color-ring);

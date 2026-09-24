@@ -61,7 +61,14 @@
 		? 'md:sticky md:top-0 md:z-20'
 		: ''}"
 >
-	<div class="flex flex-wrap items-start justify-between gap-3">
+	<!-- С `md` — две устойчивые колонки: заголовок забирает остаток, действия и
+		системные значки всегда справа. На флексе с переносом ряд действий
+		перескакивал под заголовок, как только тот становился длиннее, — и шапка
+		соседних страниц стояла по-разному. На телефоне остаётся перенос: там
+		действиям справа места нет. -->
+	<div
+		class="flex flex-wrap items-start justify-between gap-3 md:grid md:grid-cols-[minmax(0,1fr)_auto]"
+	>
 		<div class="min-w-0">
 			<!-- Заголовок переносится, а не обрезается: название взаимодействия или
 				вуза бывает длиной в строку устава, и обрезанное многоточием оно
@@ -78,10 +85,14 @@
 						? 'md:grid-rows-[0fr] md:opacity-0'
 						: ''}"
 				>
-					<!-- Пояснение — одна строка: его читают один раз, а шапка над списком
-						должна оставаться низкой. Целиком оно читается подсказкой. -->
+					<!-- На широком экране пояснение — одна строка: его читают один раз, а
+						шапка над списком должна оставаться низкой; целиком оно читается
+						подсказкой. На телефоне подсказки наведением нет, а одна строка в
+						360px — три-четыре слова с многоточием, поэтому там две строки. -->
 					<p class="overflow-hidden text-sm text-muted-foreground">
-						<span class="mt-1 block truncate" title={description}>{description}</span>
+						<span class="mt-1 block max-md:line-clamp-2 md:truncate" title={description}
+							>{description}</span
+						>
 					</p>
 				</div>
 			{/if}
@@ -98,7 +109,11 @@
 
 			Без кнопок страницы на телефоне ряда нет вовсе: пустой, он всё равно
 			переносился на свою строку и добавлял под заголовок пустую полосу. -->
-		<div class="flex-wrap items-center gap-2 self-center {actions ? 'flex' : 'hidden md:flex'}">
+		<div
+			class="flex-wrap items-center gap-2 self-center md:max-w-[36rem] md:justify-end md:justify-self-end {actions
+				? 'flex'
+				: 'hidden md:flex'}"
+		>
 			{#if actions}
 				{@render actions()}
 			{/if}

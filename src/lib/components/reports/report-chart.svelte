@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { Chart as ChartInstance } from 'chart.js';
+	import { MediaQuery } from 'svelte/reactivity';
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { theme } from '$lib/theme.svelte';
@@ -86,7 +87,15 @@
 	 * стадий и из двенадцати не должны быть одной высоты с полосами разной
 	 * толщины.
 	 */
-	const height = $derived(horizontal ? horizontalHeight(labels.length) : 256);
+	/**
+	 * Телефон (уже Tailwind `sm`): подписи горизонтальных полос встают над
+	 * полосами. Слева им досталась бы половина узкого холста, и длинная стадия
+	 * теряла бы начало.
+	 */
+	const phone = new MediaQuery('max-width: 639.98px');
+	const compact = $derived(horizontal && phone.current);
+
+	const height = $derived(horizontal ? horizontalHeight(labels.length, compact) : 256);
 
 	/**
 	 * Цвета — из токенов темы. Тема приходит аргументом и в самой работе не
@@ -114,6 +123,7 @@
 			palette,
 			fontFamily: getComputedStyle(element).fontFamily,
 			legend: datasets.length > 1,
+			compact,
 			onselect
 		});
 
@@ -175,10 +185,12 @@
 			<h2 class="text-sm font-semibold">{title}</h2>
 			<p class="mt-0.5 text-xs text-muted-foreground">{note}</p>
 		</div>
+		<!-- На телефоне кнопки выгрузки крупнее: поле нажатия пальцем — 44 px. -->
 		<div class="flex shrink-0 gap-1.5">
 			<Button
 				variant="outline"
 				size="xs"
+				class="max-sm:h-11 max-sm:px-3 max-sm:text-sm"
 				disabled={saving}
 				onclick={() => void save('png')}
 				data-testid="chart-png"
@@ -189,6 +201,7 @@
 			<Button
 				variant="outline"
 				size="xs"
+				class="max-sm:h-11 max-sm:px-3 max-sm:text-sm"
 				disabled={saving}
 				onclick={() => void save('pdf')}
 				data-testid="chart-pdf"

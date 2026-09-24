@@ -75,20 +75,30 @@
 <div class="flex flex-col gap-2" data-slot="report-filters" data-tour="reports-filters">
 	<div class="flex flex-wrap items-center gap-2">
 		<!-- Подписи периода стоят в строку с полями, а не над ними: строка над
-		     фильтрами отнимала у результата высоту первого экрана. -->
-		<div class="flex items-center gap-2">
+		     фильтрами отнимала у результата высоту первого экрана. На телефоне
+		     два поля по 160 px с подписями в строку не помещаются — период
+		     встаёт сеткой в две строки, и поле тянется на остаток ширины. -->
+		<div
+			class="grid w-full grid-cols-[auto_1fr] items-center gap-2 sm:flex sm:w-auto"
+			data-testid="report-period"
+		>
 			<Label for="report-from" class="text-sm font-normal text-muted-foreground">Период с</Label>
 			<DateField
 				id="report-from"
-				class="w-40"
+				class="w-full sm:w-40"
 				value={query.from}
 				max={query.to}
 				onchange={(from) => void go({ from })}
 			/>
-			<Label for="report-to" class="text-sm font-normal text-muted-foreground">по</Label>
+			<Label
+				for="report-to"
+				class="justify-self-end text-sm font-normal text-muted-foreground sm:justify-self-auto"
+			>
+				по
+			</Label>
 			<DateField
 				id="report-to"
-				class="w-40"
+				class="w-full sm:w-40"
 				value={query.to}
 				min={query.from}
 				onchange={(to) => void go({ to })}

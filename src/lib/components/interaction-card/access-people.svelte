@@ -9,6 +9,11 @@
 	 * которому карточка открывается каждому: ответственный, руководители,
 	 * коллеги по пространству, которым дело видно, администраторы. Зелёная
 	 * точка — человек сейчас в карточке.
+	 *
+	 * Аватарки стоят встык, без наложения, как в «Сейчас в карточке»: край
+	 * соседнего кружка иначе срезает вторую букву инициалов. На телефоне
+	 * аватарок нет — строка присутствия и доступа должна уместиться в одну
+	 * строку, а список целиком открывается по нажатию.
 	 */
 	let { people }: { people: readonly LivePerson[] } = $props();
 
@@ -23,7 +28,7 @@
 			class="flex items-center gap-2 rounded-md px-1 py-0.5 text-xs text-muted-foreground focus-ring hover:bg-surface-muted"
 			data-slot="card-access"
 		>
-			<Avatar.Group>
+			<Avatar.Group class="space-x-0 max-sm:hidden">
 				{#each listed.slice(0, PREVIEW) as person (person.userId)}
 					<Avatar.Root>
 						<Avatar.Fallback class="text-xs font-medium">

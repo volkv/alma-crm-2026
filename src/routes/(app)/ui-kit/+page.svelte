@@ -5,6 +5,7 @@
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { toast } from 'svelte-sonner';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import TrashIcon from '@lucide/svelte/icons/trash-2';
 	import InfoIcon from '@lucide/svelte/icons/info';
@@ -13,6 +14,7 @@
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Tabs from '$lib/components/ui/tabs/index.js';
 	import * as Tooltip from '$lib/components/ui/tooltip/index.js';
+	import * as SegmentedControl from '$lib/components/ui/segmented-control/index.js';
 	import { Badge } from '$lib/components/ui/badge/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
@@ -238,6 +240,12 @@
 			active: 'bg-surface-pressed'
 		},
 		{
+			label: 'Выбранная',
+			variant: 'selected',
+			hover: 'bg-selection',
+			active: 'bg-selection'
+		},
+		{
 			label: 'Вторичная',
 			variant: 'secondary',
 			hover: 'bg-surface-pressed',
@@ -265,6 +273,14 @@
 	let switchOn = $state(true);
 	let checkboxOn = $state(true);
 	let selectedStage = $state<Stage | null>(null);
+
+	/** Витрина переключателей: вариант на месте, фильтры и вид из адреса. */
+	let kitMode = $state('slice');
+	let kitFeed = $state('all');
+	let kitMine = $state(true);
+	let kitOverdue = $state(false);
+	const kitView = $derived(page.url.searchParams.get('kit-view') === 'board' ? 'board' : 'table');
+	const kitViewHref = (view: 'table' | 'board') => `${resolve('/ui-kit')}?kit-view=${view}`;
 
 	function removeSelection(ids: string[]) {
 		toast.success(`Снято с публикации: ${formatNumber(ids.length)}`);
@@ -363,6 +379,10 @@
 							</li>
 						{/each}
 					</ul>
+					<div class="flex flex-col gap-1 border-t border-border pt-3">
+						<p class="section-overline">Надзаголовок — section-overline, 12/16</p>
+						<p class="section-title">Заголовок панели — section-title, 16/24</p>
+					</div>
 					<p class="text-sm text-muted-foreground">Приглушённый текст</p>
 					<p class="text-xs text-faint">Слабый текст</p>
 					<p class="text-sm">Цифры моноширинные: 1 234 567 890 · 0.00 · 12.09.2026</p>
@@ -373,13 +393,14 @@
 				<Card.Header>
 					<Card.Title>Плотность, радиусы и тени</Card.Title>
 					<Card.Description>
-						Высоты — размеры ДС (36px строка, 32px контрол), радиусы — её шкала, теней две ступени.
+						Высоты — размеры ДС (36px строка и контрол), радиусы — её шкала. Панель на холсте — край
+						без тени, тень — только у того, что висит поверх страницы.
 					</Card.Description>
 				</Card.Header>
 				<Card.Content class="gap-4">
 					<div class="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
 						<span class="flex h-control items-center rounded-md border border-border px-2"
-							>контрол 32px</span
+							>контрол 36px</span
 						>
 						<span class="flex h-row items-center rounded-md border border-border px-2"
 							>строка 36px</span
@@ -402,8 +423,8 @@
 						>
 					</div>
 					<div class="flex flex-wrap items-center gap-3 text-xs text-muted-foreground">
-						<span class="flex h-row items-center rounded-lg bg-surface px-3 shadow-xs"
-							>на холсте — shadow-xs</span
+						<span class="flex h-row items-center rounded-xl border border-border bg-surface px-3"
+							>панель — край, без тени</span
 						>
 						<span class="flex h-row items-center rounded-lg bg-surface px-3 shadow-md"
 							>поверх страницы — shadow-md</span
@@ -427,12 +448,79 @@
 					<Button variant="link">Ссылка</Button>
 				</div>
 				<div class="flex flex-wrap items-center gap-2">
-					<Button size="xs">xs</Button>
-					<Button size="sm">sm</Button>
-					<Button>default — 32px</Button>
-					<Button size="lg">lg</Button>
-					<Button size="icon" aria-label="Добавить"><PlusIcon aria-hidden="true" /></Button>
+					<Button size="xs">xs — 28px</Button>
+					<Button size="sm">sm — 32px</Button>
+					<Button>default — 36px</Button>
+					<Button size="lg">lg — 40px</Button>
+					<Button size="icon-xs" aria-label="Добавить, 28px"><PlusIcon aria-hidden="true" /></Button
+					>
+					<Button size="icon-sm" aria-label="Добавить, 32px"><PlusIcon aria-hidden="true" /></Button
+					>
+					<Button size="icon" aria-label="Добавить, 36px"><PlusIcon aria-hidden="true" /></Button>
 					<Button disabled>Отключена</Button>
+				</div>
+				<p class="text-xs text-muted-foreground">
+					На телефоне у default, lg и квадратной 36px область нажатия дотянута до 44px невидимым
+					краем — сама кнопка не растёт. sm и xs — для строк таблиц и чипов, их область не растёт.
+				</p>
+			</Card.Content>
+		</Card.Root>
+	</section>
+
+	<section class="flex flex-col gap-3">
+		<h2 class="text-sm font-semibold tracking-tight">Переключатели и фильтры</h2>
+		<InlineHint>
+			Выбранное — светлая фиолетовая подложка (<code class="font-mono text-xs"
+				>variant="selected"</code
+			>), не оранжевый: оранжевый остаётся главному действию страницы.
+		</InlineHint>
+		<Card.Root size="sm">
+			<Card.Content class="gap-4">
+				<div class="flex flex-col gap-2">
+					<p class="section-overline">Вариант на месте — SegmentedControl, стрелки меняют выбор</p>
+					<div class="flex flex-wrap items-center gap-4">
+						<SegmentedControl.Root bind:value={kitMode} aria-label="Режим отчёта">
+							<SegmentedControl.Item value="slice">Срез</SegmentedControl.Item>
+							<SegmentedControl.Item value="flow">Движение</SegmentedControl.Item>
+						</SegmentedControl.Root>
+						<SegmentedControl.Root
+							bind:value={kitFeed}
+							size="xs"
+							aria-label="Какие события показать"
+						>
+							<SegmentedControl.Item value="all">Все</SegmentedControl.Item>
+							<SegmentedControl.Item value="comments">Комментарии</SegmentedControl.Item>
+							<SegmentedControl.Item value="stages">Этапы</SegmentedControl.Item>
+						</SegmentedControl.Root>
+					</div>
+				</div>
+				<div class="flex flex-col gap-2">
+					<p class="section-overline">Вид из адреса — SegmentedControl.LinkGroup, aria-current</p>
+					<SegmentedControl.LinkGroup size="sm" aria-label="Вид списка">
+						<SegmentedControl.Link href={kitViewHref('table')} current={kitView === 'table'}
+							>Таблица</SegmentedControl.Link
+						>
+						<SegmentedControl.Link href={kitViewHref('board')} current={kitView === 'board'}
+							>Доска</SegmentedControl.Link
+						>
+					</SegmentedControl.LinkGroup>
+				</div>
+				<div class="flex flex-col gap-2">
+					<p class="section-overline">Независимый фильтр — Button, aria-pressed</p>
+					<div class="flex flex-wrap items-center gap-2">
+						<Button
+							size="sm"
+							variant={kitOverdue ? 'selected' : 'outline'}
+							aria-pressed={kitOverdue}
+							onclick={() => (kitOverdue = !kitOverdue)}>Просроченные</Button
+						>
+						<Button
+							size="sm"
+							variant={kitMine ? 'selected' : 'outline'}
+							aria-pressed={kitMine}
+							onclick={() => (kitMine = !kitMine)}>Мои</Button
+						>
+					</div>
 				</div>
 			</Card.Content>
 		</Card.Root>
@@ -616,6 +704,10 @@
 						<StatusBadge {tone} dot>{toneLabels[tone]}</StatusBadge>
 					{/each}
 				</div>
+				<div class="flex max-w-44 flex-col items-start gap-1">
+					<p class="section-overline">Длинный статус в узкой колонке — wrap</p>
+					<StatusBadge tone="warning" dot wrap>Партнёр, лицензии истекают</StatusBadge>
+				</div>
 				<div class="flex flex-wrap items-center gap-2">
 					<SlaChip deadline="2026-09-30T00:00:00Z" now={SHOWCASE_NOW} />
 					<SlaChip deadline="2026-09-14T00:00:00Z" now={SHOWCASE_NOW} />
@@ -768,6 +860,15 @@
 					<Tabs.Content value="full" class="pt-3">
 						<StageTimeline stages={SHOWCASE_ROUTE} now={SHOWCASE_NOW} />
 					</Tabs.Content>
+				</Tabs.Root>
+				<Tabs.Root value="stages">
+					<Tabs.List variant="line" aria-label="Разделы, ряд прокручивается на узком экране">
+						<Tabs.Trigger value="stages">Этапы</Tabs.Trigger>
+						<Tabs.Trigger value="transitions">Переходы</Tabs.Trigger>
+						<Tabs.Trigger value="fields">Поля карточки</Tabs.Trigger>
+						<Tabs.Trigger value="documents">Документы</Tabs.Trigger>
+						<Tabs.Trigger value="notifications">Уведомления</Tabs.Trigger>
+					</Tabs.List>
 				</Tabs.Root>
 			</Card.Content>
 		</Card.Root>

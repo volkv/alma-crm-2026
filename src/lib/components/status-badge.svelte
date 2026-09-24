@@ -11,9 +11,18 @@
 				warning: 'bg-warning-soft text-warning-soft-foreground',
 				danger: 'bg-danger-soft text-danger-soft-foreground',
 				info: 'bg-info-soft text-info-soft-foreground'
+			},
+			/*
+			 * Длинный статус («Партнёр, лицензии истекают») в узкой колонке: плашка
+			 * переносит текст и растёт в высоту, а не вылезает за карточку. Радиус
+			 * у двух строк — обычный: пилюля высотой в 36px читается как кнопка.
+			 */
+			wrap: {
+				true: 'h-auto min-h-5 shrink rounded-lg py-0.5 leading-4 whitespace-normal',
+				false: ''
 			}
 		},
-		defaultVariants: { tone: 'neutral' }
+		defaultVariants: { tone: 'neutral', wrap: false }
 	});
 
 	/** The meaning a status carries, not the colour it happens to get. */
@@ -35,6 +44,7 @@
 	let {
 		tone = 'neutral',
 		dot = false,
+		wrap = false,
 		title,
 		class: className,
 		children
@@ -42,6 +52,8 @@
 		tone?: StatusTone;
 		/** Adds a leading dot — useful when several badges sit in one column. */
 		dot?: boolean;
+		/** Переносить длинный текст на следующую строку вместо того, чтобы вылезать за край. */
+		wrap?: boolean;
 		/** Native tooltip, for the detail that does not fit in the badge. */
 		title?: string;
 		class?: string;
@@ -50,7 +62,7 @@
 </script>
 
 <span
-	class={cn(statusBadgeVariants({ tone }), className)}
+	class={cn(statusBadgeVariants({ tone, wrap }), className)}
 	data-slot="status-badge"
 	data-tone={tone}
 	{title}

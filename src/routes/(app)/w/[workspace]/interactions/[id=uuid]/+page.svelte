@@ -1,4 +1,5 @@
 <script lang="ts">
+	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import { resolve } from '$app/paths';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -18,6 +19,7 @@
 	import { buildCard, type CardSource } from '$lib/components/interaction-card/model';
 	import Presence from '$lib/components/interaction-card/presence.svelte';
 	import PrimaryAction from '$lib/components/interaction-card/primary-action.svelte';
+	import QuietNote from '$lib/components/interaction-card/quiet-note.svelte';
 	import RecordDialogs from '$lib/components/interaction-card/record-dialogs.svelte';
 	import StageDialogs from '$lib/components/interaction-card/stage-dialogs.svelte';
 	import type { InteractionAction } from '$lib/contracts/interactions';
@@ -87,6 +89,10 @@
 			.map((person) => ({ userId: person.userId, name: person.name }))
 	);
 
+	const listHref = $derived(
+		resolve('/(app)/w/[workspace]/interactions', { workspace: data.workspace.key })
+	);
+
 	const can = (action: InteractionAction) => data.summary.canDo.actions.includes(action);
 
 	/**
@@ -112,15 +118,24 @@
 	{/snippet}
 </Header>
 
-<Breadcrumbs
-	items={[
-		{
-			label: data.workspace.name,
-			href: resolve('/(app)/w/[workspace]/interactions', { workspace: data.workspace.key })
-		},
-		{ label: data.interaction.title }
-	]}
-/>
+<!-- Путь на телефоне — одна ссылка назад: название дела уже стоит в
+	заголовке, и повтор его в крошках отодвигал «Следующий шаг» под док.
+	Обёртка `contents` оставляет крошки прямым потомком оболочки, где их
+	ставит на место `-order-1`. -->
+<div class="contents max-sm:hidden">
+	<Breadcrumbs
+		items={[{ label: data.workspace.name, href: listHref }, { label: data.interaction.title }]}
+	/>
+</div>
+<div class="-order-1 border-b border-border bg-surface px-4 py-1.5 sm:hidden">
+	<a
+		href={listHref}
+		class="inline-flex items-center gap-1 rounded-sm text-xs text-link focus-ring hover:text-link-hover hover:underline"
+	>
+		<ArrowLeftIcon class="size-3.5" aria-hidden="true" />
+		Назад к списку
+	</a>
+</div>
 
 <div class="flex min-w-0 flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	{#if data.status.migratedFrom !== null}
@@ -174,6 +189,14 @@
 				canResolve={can('resolve_blocker')}
 			/>
 		</div>
+
+		{#if model.quiet !== null}
+			<!-- Телефонное место «тишины»: на широком экране она в фактах
+				(`CardFacts`), здесь — сразу под действием, которое она советует. -->
+			<div class="min-w-0 sm:hidden">
+				<QuietNote quiet={model.quiet} />
+			</div>
+		{/if}
 
 		<aside
 			class="min-w-0 rounded-xl border border-border bg-surface lg:col-start-2 lg:row-span-2 lg:row-start-1"
