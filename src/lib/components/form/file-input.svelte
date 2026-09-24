@@ -73,7 +73,7 @@
 	</Label>
 
 	<div
-		class="flex h-control items-center gap-2 rounded-md border border-input bg-background pr-2 pl-1 has-[input:focus-visible]:border-ring has-[input:focus-visible]:ring-3 has-[input:focus-visible]:ring-ring/50"
+		class="flex h-control items-center gap-2 rounded-lg border border-input bg-background pr-2 pl-1 has-[input:focus-visible]:outline-2 has-[input:focus-visible]:outline-offset-2 has-[input:focus-visible]:outline-ring has-[input:focus-visible]:outline-solid"
 	>
 		<!-- Подпись-кнопка и есть кнопка: `label for` открывает диалог выбора без
 			единой строки скрипта, поэтому контрол работает и до гидратации. Имя

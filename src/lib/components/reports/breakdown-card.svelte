@@ -41,7 +41,7 @@
 					class="flex items-center justify-between gap-3 border-b border-border py-1 last:border-0"
 				>
 					<a
-						class="min-w-0 truncate text-primary focus-ring"
+						class="min-w-0 truncate text-link focus-ring hover:text-link-hover"
 						href={toggledHref(page.url, param, point.key)}
 					>
 						{point.label}

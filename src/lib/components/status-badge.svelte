@@ -6,7 +6,7 @@
 		variants: {
 			tone: {
 				neutral: 'bg-surface-muted text-muted-foreground',
-				accent: 'bg-primary-soft text-primary',
+				accent: 'bg-selection text-selection-foreground',
 				success: 'bg-success-soft text-success-soft-foreground',
 				warning: 'bg-warning-soft text-warning-soft-foreground',
 				danger: 'bg-danger-soft text-danger-soft-foreground',

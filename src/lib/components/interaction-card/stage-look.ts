@@ -33,8 +33,8 @@ export const STAGE_LOOKS: Record<StageProgressState, StageLook> = {
 	current: {
 		label: 'текущая',
 		icon: CircleDotIcon,
-		iconClass: 'text-primary',
-		barClass: 'bg-primary'
+		iconClass: 'text-link',
+		barClass: 'bg-link'
 	},
 	overdue: {
 		label: 'текущая, срок прошёл',

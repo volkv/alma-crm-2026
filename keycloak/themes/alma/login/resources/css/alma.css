@@ -1,0 +1,123 @@
+/*
+ * Облик Альма CRM поверх keycloak.v2. Значения — те же, что у приложения:
+ * главное действие оранжевое с тёмной подписью, ссылки фиолетовые, нейтрали
+ * холодные. Глобальные переменные PatternFly переопределяются на корне, в
+ * том числе на тёмной теме: её значения PatternFly объявляет классом на том же
+ * элементе, и без второго селектора они перекрывали бы наши. Переменные кнопки
+ * PatternFly объявляет на самой кнопке — там их и приходится задавать.
+ */
+
+/*
+ * Шрифт интерфейса. На стенде каталог живёт под `/auth` того же домена, и
+ * файлы гарнитуры приложения доступны ему по тому же пути; где их нет, браузер
+ * берёт следующее семейство из списка.
+ */
+@font-face {
+	font-family: 'Rostelecom Basis';
+	font-weight: 400;
+	font-display: swap;
+	src: url('/fonts/RostelecomBasis-Regular.woff2') format('woff2');
+}
+
+@font-face {
+	font-family: 'Rostelecom Basis';
+	font-weight: 500;
+	font-display: swap;
+	src: url('/fonts/RostelecomBasis-Medium.woff2') format('woff2');
+}
+
+@font-face {
+	font-family: 'Rostelecom Basis';
+	font-weight: 700;
+	font-display: swap;
+	src: url('/fonts/RostelecomBasis-Bold.woff2') format('woff2');
+}
+
+:root {
+	--alma-canvas: #f9f9fa;
+	--alma-surface: #ffffff;
+	--alma-border: #e4e7ec;
+	--alma-text: #101828;
+	--alma-primary: #ff4f12;
+	--alma-primary-hover: #f2460c;
+	--alma-primary-text: #101828;
+	--alma-link: #7700ff;
+	--alma-font:
+		'Rostelecom Basis', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
+		'Helvetica Neue', Arial, sans-serif;
+}
+
+:root,
+:root.pf-v5-theme-dark {
+	--pf-v5-global--FontFamily--text: var(--alma-font);
+	--pf-v5-global--FontFamily--heading: var(--alma-font);
+	--pf-v5-global--primary-color--100: var(--alma-link);
+	--pf-v5-global--link--Color: var(--alma-link);
+	--pf-v5-global--link--Color--hover: var(--alma-link);
+}
+
+:root.pf-v5-theme-dark {
+	--alma-canvas: #0c111d;
+	--alma-surface: #161b26;
+	--alma-border: #333741;
+	--alma-text: #f5f5f6;
+	--alma-link: #a366ff;
+}
+
+.login-pf body {
+	background: var(--alma-canvas);
+	color: var(--alma-text);
+}
+
+/* Шапка: знак и название словом вместо стандартной надписи капителью. */
+#kc-header-wrapper {
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	gap: 12px;
+	font-size: 22px;
+	font-weight: 700;
+	letter-spacing: normal;
+	text-transform: none;
+	color: var(--alma-text) !important;
+}
+
+#kc-header-wrapper::before {
+	content: '';
+	flex-shrink: 0;
+	width: 40px;
+	height: 40px;
+	background: url('../img/alma-mark.svg') no-repeat center / contain;
+}
+
+/* Карточка: спокойная граница вместо синей полосы сверху. */
+.pf-v5-c-login__main {
+	background: var(--alma-surface);
+	border: 1px solid var(--alma-border);
+	border-radius: 12px;
+}
+
+.pf-v5-c-login__main-header {
+	border-top: 0;
+}
+
+.pf-v5-c-button {
+	--pf-v5-c-button--m-primary--BackgroundColor: var(--alma-primary);
+	--pf-v5-c-button--m-primary--hover--BackgroundColor: var(--alma-primary-hover);
+	--pf-v5-c-button--m-primary--focus--BackgroundColor: var(--alma-primary-hover);
+	--pf-v5-c-button--m-primary--active--BackgroundColor: var(--alma-primary-hover);
+	--pf-v5-c-button--m-primary--Color: var(--alma-primary-text);
+	--pf-v5-c-button--m-primary--hover--Color: var(--alma-primary-text);
+	--pf-v5-c-button--m-primary--focus--Color: var(--alma-primary-text);
+	--pf-v5-c-button--m-primary--active--Color: var(--alma-primary-text);
+}
+
+.pf-v5-c-button.pf-m-primary {
+	font-weight: 500;
+	border-radius: 8px;
+}
+
+/* Черта под полем в фокусе — цветом выделения, как у полей приложения. */
+.pf-v5-c-form-control {
+	--pf-v5-c-form-control--focus--after--BorderBottomColor: var(--alma-link);
+}

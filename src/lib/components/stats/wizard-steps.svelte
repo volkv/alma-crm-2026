@@ -45,7 +45,7 @@
 			<span
 				class="flex size-5 shrink-0 items-center justify-center rounded-full text-xs font-medium
 					{done ? 'bg-success-soft text-success-soft-foreground' : ''}
-					{active ? 'bg-primary text-primary-foreground' : ''}
+					{active ? 'bg-link text-link-foreground' : ''}
 					{!done && !active ? 'bg-surface-muted text-muted-foreground' : ''}"
 			>
 				{#if done}

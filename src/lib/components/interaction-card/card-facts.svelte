@@ -93,7 +93,7 @@
 			<StageStrip stages={model.stages} />
 			<details class="group">
 				<summary
-					class="flex w-fit list-none items-center gap-1 rounded-sm text-xs text-primary focus-ring hover:underline [&::-webkit-details-marker]:hidden"
+					class="flex w-fit list-none items-center gap-1 rounded-sm text-xs text-link focus-ring hover:text-link-hover hover:underline [&::-webkit-details-marker]:hidden"
 				>
 					<ChevronRightIcon
 						class="size-3.5 transition-transform group-open:rotate-90"

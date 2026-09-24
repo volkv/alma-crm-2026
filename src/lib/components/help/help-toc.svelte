@@ -29,7 +29,7 @@
 			class={cn(
 				'rounded-md px-2.5 py-1.5 text-sm focus-ring transition-colors',
 				active
-					? 'bg-primary-soft font-medium text-primary'
+					? 'bg-selection font-medium text-selection-foreground'
 					: 'text-muted-foreground hover:bg-surface-muted hover:text-foreground'
 			)}
 		>

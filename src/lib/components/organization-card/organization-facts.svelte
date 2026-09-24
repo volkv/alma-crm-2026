@@ -69,7 +69,7 @@
 				{/if}
 				{#if organization.website}
 					<a
-						class="block truncate text-xs text-primary underline-offset-2 focus-ring hover:underline"
+						class="block truncate text-xs text-link underline-offset-2 focus-ring hover:text-link-hover hover:underline"
 						href={organization.website}
 						rel="external noreferrer noopener"
 						target="_blank">{organization.website}</a

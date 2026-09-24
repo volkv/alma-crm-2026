@@ -131,7 +131,11 @@
 		{@const href = id === null ? null : subjectHref(type, id)}
 		{#if href}
 			<!-- Клик по ссылке не должен заодно открывать карточку события. -->
-			<a class="text-primary focus-ring" {href} onclick={(clicked) => clicked.stopPropagation()}>
+			<a
+				class="text-link focus-ring hover:text-link-hover"
+				{href}
+				onclick={(clicked) => clicked.stopPropagation()}
+			>
 				{subjectTypeLabel(type)}
 			</a>
 		{:else}

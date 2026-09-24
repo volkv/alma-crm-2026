@@ -341,7 +341,7 @@
 
 	{#if frame !== null && !centered}
 		<div
-			class="pointer-events-none fixed z-50 rounded-lg ring-2 ring-primary ring-offset-2 ring-offset-canvas"
+			class="pointer-events-none fixed z-50 rounded-lg ring-2 ring-link ring-offset-2 ring-offset-canvas"
 			data-testid="onboarding-frame"
 			style="top: {frame.top}px; left: {frame.left}px; width: {frame.width}px; height: {frame.height}px"
 			aria-hidden="true"

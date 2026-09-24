@@ -120,7 +120,7 @@
 					onclick={() => navGroups.toggle(group.id, holdsActive)}
 					class={cn(
 						'flex w-full items-center gap-2 rounded-md px-2.5 pt-1 pb-1.5 text-left text-xs font-semibold tracking-wide focus-ring transition-colors hover:bg-surface-muted',
-						!open && holdsActive ? 'text-primary' : 'text-foreground'
+						!open && holdsActive ? 'text-selection-foreground' : 'text-foreground'
 					)}
 				>
 					<span class="truncate">{group.label}</span>
@@ -158,10 +158,10 @@
 							aria-current={active ? 'page' : undefined}
 							onclick={onnavigate}
 							class={cn(
-								'flex h-control items-center gap-2.5 rounded-md px-2.5 text-sm focus-ring transition-colors',
+								'flex h-control items-center gap-2.5 rounded-md px-2.5 text-sm focus-ring-inset transition-colors',
 								collapsed && 'justify-center px-0',
 								active
-									? 'bg-primary-soft font-medium text-primary'
+									? 'bg-selection font-medium text-selection-foreground shadow-[inset_3px_0_0_var(--color-link)]'
 									: 'text-muted-foreground hover:bg-surface-muted hover:text-foreground'
 							)}
 						>

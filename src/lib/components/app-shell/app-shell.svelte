@@ -5,6 +5,7 @@
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import PanelLeftCloseIcon from '@lucide/svelte/icons/panel-left-close';
 	import PanelLeftOpenIcon from '@lucide/svelte/icons/panel-left-open';
+	import { AlmaLogo, AlmaMark } from '$lib/components/brand';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Toaster } from '$lib/components/ui/sonner/index.js';
 	import { visibleSections, type NavWorkspace } from '$lib/nav';
@@ -98,7 +99,7 @@
 		видна, пока не получит фокус, — тогда она встаёт в левом верхнем углу. -->
 	<a
 		href="#page-content"
-		class="sr-only rounded-md bg-surface px-3 py-2 text-sm font-medium shadow-md ring-1 focus-ring ring-border focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50"
+		class="sr-only rounded-md bg-surface px-3 py-2 text-sm font-medium shadow-md ring-1 ring-border focus-ring focus:not-sr-only focus:absolute focus:top-2 focus:left-2 focus:z-50"
 	>
 		К содержимому
 	</a>
@@ -132,12 +133,11 @@
 					? ''
 					: 'flex-1'}"
 			>
-				<span
-					class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary px-1 text-xs font-semibold text-primary-foreground"
-					aria-hidden="true">CRM</span
-				>
-				{#if !nav.collapsed}
-					<span class="truncate text-sm font-semibold tracking-tight">Альма CRM</span>
+				<!-- Свёрнутое меню оставляет один знак, и имя ссылки тогда несёт он. -->
+				{#if nav.collapsed}
+					<AlmaMark size={32} label="Альма CRM" />
+				{:else}
+					<AlmaLogo size={32} wordClass="text-sm" />
 				{/if}
 			</a>
 			<!-- Слой кнопки задан меню целиком: `position: sticky` заводит свой

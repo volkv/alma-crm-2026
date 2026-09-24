@@ -55,7 +55,7 @@
 			{#if item.where.href !== null}
 				<a
 					href={resolve(item.where.href as Pathname & '/')}
-					class="inline-flex items-center gap-1 rounded-sm text-primary focus-ring hover:underline"
+					class="inline-flex items-center gap-1 rounded-sm text-link focus-ring hover:text-link-hover hover:underline"
 				>
 					Где это: {item.where.label}
 					<ArrowRightIcon class="size-3.5" aria-hidden="true" />
@@ -114,7 +114,7 @@
 			<li class="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:flex-row">
 				<div class="flex shrink-0 items-baseline gap-2 sm:w-64">
 					<span
-						class="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-primary-soft text-sm font-medium text-primary tabular-nums"
+						class="inline-flex size-7 shrink-0 items-center justify-center rounded-full bg-surface-muted text-sm font-medium text-foreground tabular-nums"
 						aria-hidden="true">{step.number}</span
 					>
 					<h2 class="text-base font-medium break-words">

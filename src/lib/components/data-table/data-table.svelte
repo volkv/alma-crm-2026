@@ -340,9 +340,9 @@
 
 	{#if selectable && selectedIds.length > 0}
 		<div
-			class="flex flex-wrap items-center gap-2 rounded-md border border-primary-soft-border bg-primary-soft px-3 py-2"
+			class="flex flex-wrap items-center gap-2 rounded-md border border-selection-border bg-selection px-3 py-2"
 		>
-			<span class="text-sm font-medium text-primary"
+			<span class="text-sm font-medium text-selection-foreground"
 				>Выбрано: {formatNumber(selectedIds.length)}</span
 			>
 			<div class="ml-auto flex items-center gap-2">
@@ -443,7 +443,7 @@
 							<Table.Row
 								data-row={index}
 								class={cn(
-									'h-row cursor-default focus-visible:bg-primary-soft focus-visible:outline-none',
+									'h-row cursor-default focus-ring-inset focus-visible:bg-selection',
 									onopen && 'cursor-pointer'
 								)}
 								tabindex={index === activeRow ? 0 : -1}

@@ -62,7 +62,7 @@
 					</h3>
 					{#if workspace.total > 0}
 						<a
-							class="text-xs text-primary focus-ring hover:underline"
+							class="text-xs text-link focus-ring hover:text-link-hover hover:underline"
 							href={listHref(workspace.key)}
 						>
 							{workspace.total > workspace.items.length

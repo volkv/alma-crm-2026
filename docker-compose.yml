@@ -102,6 +102,7 @@ services:
     # Keycloak imports the realm and silently skips the users file.
     volumes:
       - ./keycloak/realm-lct.json:/opt/keycloak/data/import/lct-realm.json:ro
+      - ./keycloak/themes/alma:/opt/keycloak/themes/alma:ro
       - ./keycloak/demo-users.json:/opt/keycloak/data/import/lct-users-0.json:ro
     healthcheck:
       # The image carries neither curl nor wget — only bash, so the request to

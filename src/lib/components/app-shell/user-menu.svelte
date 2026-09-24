@@ -64,7 +64,7 @@
 	<!-- Значок крупнее малого (32 пк вместо 24), а буквы в нём прежние:
 		разница уходит в поля вокруг инициалов — в малом они липли к границе. -->
 	<Avatar.Root>
-		<Avatar.Fallback class="bg-primary-soft text-xs font-medium text-primary">
+		<Avatar.Fallback class="bg-selection text-xs font-medium text-selection-foreground">
 			{initials(user.fullName)}
 		</Avatar.Fallback>
 	</Avatar.Root>
@@ -98,7 +98,7 @@
 			</Dialog.Header>
 			<div class="flex items-center gap-3">
 				<Avatar.Root size="lg">
-					<Avatar.Fallback class="bg-primary-soft text-sm font-medium text-primary">
+					<Avatar.Fallback class="bg-selection text-sm font-medium text-selection-foreground">
 						{initials(user.fullName)}
 					</Avatar.Fallback>
 				</Avatar.Root>

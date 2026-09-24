@@ -117,7 +117,7 @@
 			{/if}
 			{#if past.length > 0}
 				<details>
-					<summary class="cursor-pointer text-xs text-primary">
+					<summary class="cursor-pointer text-xs text-link hover:text-link-hover">
 						Закрытые полномочия ({past.length})
 					</summary>
 					<ul class="flex flex-col divide-y divide-border">

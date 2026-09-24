@@ -207,11 +207,11 @@
 					class={cn(
 						'flex w-72 shrink-0 flex-col gap-2 rounded-lg border p-2 transition-colors',
 						hovered === column.stageId && targets.has(column.stageId)
-							? 'border-primary bg-primary-soft'
+							? 'border-link bg-selection'
 							: hovered === column.stageId
 								? 'border-border-strong bg-surface-muted'
 								: dragged !== null && targets.has(column.stageId)
-									? 'border-primary-soft-border bg-surface-muted'
+									? 'border-selection-border bg-surface-muted'
 									: 'border-border bg-surface-muted'
 					)}
 					aria-label="Стадия: {column.name}"

@@ -19,7 +19,7 @@
 			{@const current = isCurrentState(stage.state)}
 			<li
 				class="min-w-0 flex-1 rounded-full {STAGE_LOOKS[stage.state].barClass} {current
-					? 'h-2.5 ring-2 ring-primary-soft'
+					? 'h-2.5 ring-2 ring-selection'
 					: 'h-1.5'}"
 				title="{stage.position}. {stage.name} — {STAGE_LOOKS[stage.state].label}"
 				aria-current={current ? 'step' : undefined}

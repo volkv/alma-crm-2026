@@ -117,7 +117,7 @@
 									onclick={(event) => event.stopPropagation()}
 								>
 									<a
-										class="rounded-sm text-primary underline-offset-4 focus-ring hover:underline"
+										class="rounded-sm text-link underline-offset-4 focus-ring hover:text-link-hover hover:underline"
 										href={resolve('/(app)/settings/workflows/[key]', { key: workflow.key })}
 									>
 										{workflow.name}

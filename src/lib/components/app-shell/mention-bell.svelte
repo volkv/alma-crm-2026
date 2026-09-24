@@ -41,7 +41,7 @@
 				<BellIcon aria-hidden="true" />
 				{#if unread > 0}
 					<span
-						class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-primary px-1 text-[10px] leading-none font-semibold text-primary-foreground tabular-nums"
+						class="absolute -top-0.5 -right-0.5 flex h-4 min-w-4 items-center justify-center rounded-full bg-link px-1 text-[10px] leading-none font-semibold text-link-foreground tabular-nums"
 						aria-hidden="true"
 					>
 						{unread > 99 ? '99+' : unread}
@@ -88,7 +88,7 @@
 						>
 							<span
 								class="mt-1.5 size-2 shrink-0 rounded-full {item.readAt === null
-									? 'bg-primary'
+									? 'bg-link'
 									: 'bg-transparent'}"
 								aria-hidden="true"
 							></span>

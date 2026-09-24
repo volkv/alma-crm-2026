@@ -229,7 +229,7 @@
 		</form>
 
 		<div class="flex flex-wrap items-center gap-2">
-			<!-- Недоступная главная кнопка — не бледная заливка на `opacity-50`,
+			<!-- Недоступная главная кнопка — не серая заливка с бледной подписью,
 				которая читается как «сломалось», а свой вид «заперто»: контур
 				нормальной яркости, замок и слово «Недоступно» под кнопкой вместе
 				с тем, что осталось сделать. Первичная заливка — только у того,
@@ -241,8 +241,7 @@
 				aria-describedby={action.allowed ? undefined : `${id}-why`}
 				class={cn(
 					'h-auto min-h-9 max-w-full py-1.5 text-left whitespace-normal',
-					!action.allowed &&
-						'border-dashed border-border-strong bg-surface-muted text-foreground shadow-none disabled:opacity-100'
+					!action.allowed && 'border-dashed disabled:border-border-strong disabled:text-foreground'
 				)}
 				onclick={runPrimary}
 			>

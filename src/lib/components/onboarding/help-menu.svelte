@@ -59,9 +59,7 @@
 			>
 				<CircleQuestionMarkIcon aria-hidden="true" />
 				{#if unseen}
-					<span
-						class="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-primary"
-						aria-hidden="true"
+					<span class="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-link" aria-hidden="true"
 					></span>
 				{/if}
 			</Button>

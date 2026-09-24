@@ -69,10 +69,8 @@
 <Card.Root>
 	<Card.Header>
 		<!-- Заголовок страницы, а не карточки: на странице входа он единственный. -->
-		<h1 class="text-xl leading-snug font-semibold tracking-tight">{data.banner.title}</h1>
-		{#if data.banner.text}
-			<Card.Description>{data.banner.text}</Card.Description>
-		{/if}
+		<h1 class="text-xl leading-snug font-semibold tracking-tight">Вход в Альма CRM</h1>
+		<Card.Description>От заявки вуза до подтверждённого результата</Card.Description>
 	</Card.Header>
 
 	<Card.Content class="flex flex-col gap-4">
@@ -98,24 +96,31 @@
 				<Alert.Description>{data.rateLimited}</Alert.Description>
 			</Alert.Root>
 		{:else}
-			<p class="text-sm text-muted-foreground">
-				Вход идёт через общий каталог учётных записей: почту и пароль спрашивает он, а система
-				получает от него уже проверенную учётную запись и роль.
-			</p>
-
 			<!-- Единственное действие страницы, поэтому кнопка во всю ширину и на
-			     ступень крупнее обычной: у входа РТК ID она выглядит так же. -->
-			<form method="POST" action={loginAction}>
+			     ступень крупнее обычной. Строка под ней заранее объясняет, почему
+			     почту и пароль спросит другая страница. -->
+			<form method="POST" action={loginAction} class="flex flex-col gap-2">
 				<Button type="submit" size="lg" class="w-full">
 					<LogInIcon aria-hidden="true" />
 					Войти
 				</Button>
+				<p class="text-center text-xs text-muted-foreground">
+					Почту и пароль рабочей учётной записи спросит следующий шаг
+				</p>
 			</form>
 
+			<!-- Баннер задаёт администратор (`/settings/general`): кому система
+			     предназначена и что действия записываются. Это оговорка, а не
+			     заголовок, поэтому и набрана мелко. -->
+			<div class="flex flex-col gap-0.5 text-xs" data-testid="login-banner">
+				<p class="font-medium">{data.banner.title}</p>
+				{#if data.banner.text}
+					<p class="text-muted-foreground">{data.banner.text}</p>
+				{/if}
+			</div>
+
 			{#if data.demoAccounts.length > 0}
-				<div
-					class="flex flex-col gap-3 rounded-lg border border-primary-soft-border bg-primary-soft p-3"
-				>
+				<div class="flex flex-col gap-3 rounded-lg border border-border bg-surface-muted p-3">
 					<div class="flex flex-col gap-1">
 						<p class="text-sm font-medium">Демо-режим</p>
 						<p class="text-xs text-muted-foreground">
@@ -132,7 +137,9 @@
 								class="flex items-center justify-between gap-4 rounded-md bg-surface px-2.5 py-1.5"
 							>
 								<span class="text-sm">{account.roleName}</span>
-								<code class="font-mono text-xs text-muted-foreground">{account.login}</code>
+								<code class="font-sans text-xs text-muted-foreground tabular-nums"
+									>{account.login}</code
+								>
 							</li>
 						{/each}
 					</ul>
@@ -146,7 +153,9 @@
 							>
 								<span class="text-sm">Пароль</span>
 								<div class="flex items-center gap-1">
-									<code class="font-mono text-xs text-muted-foreground">{demoPassword}</code>
+									<code class="font-sans text-xs text-muted-foreground tabular-nums"
+										>{demoPassword}</code
+									>
 									<!-- Набирают пароль не здесь, а в чужой форме — в каталоге
 									     учётных записей, куда уводит «Войти»: перенабор по памяти
 									     посреди показа стоит дороже кнопки. -->

@@ -286,7 +286,7 @@
 						</ul>
 					{/if}
 					<details>
-						<summary class="cursor-pointer text-xs text-primary">
+						<summary class="cursor-pointer text-xs text-link hover:text-link-hover">
 							Весь перечень с кодами направлений
 						</summary>
 						<ul class="mt-2 flex max-h-72 flex-col gap-1 overflow-y-auto pr-1">
@@ -322,7 +322,7 @@
 						{#each programMatch.matches as match (match.programId)}
 							<li class="flex flex-col gap-1 py-2">
 								<div class="flex flex-wrap items-center gap-1.5">
-									<SparklesIcon class="size-3.5 shrink-0 text-primary" aria-hidden="true" />
+									<SparklesIcon class="size-3.5 shrink-0 text-link" aria-hidden="true" />
 									<span class="text-sm font-medium break-words">{match.programName}</span>
 									<StatusBadge tone={match.sameCodeCount > 0 ? 'success' : 'accent'}>
 										{match.directionCode}

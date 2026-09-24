@@ -92,7 +92,10 @@
 						{:else}
 							<span>{subjectTypeLabel(event.subjectType)}</span>
 							{#if link}
-								<a class="ml-1 inline-flex items-center gap-1 text-primary focus-ring" href={link}>
+								<a
+									class="ml-1 inline-flex items-center gap-1 text-link focus-ring hover:text-link-hover"
+									href={link}
+								>
 									Открыть карточку
 									<ExternalLinkIcon class="size-3" aria-hidden="true" />
 								</a>

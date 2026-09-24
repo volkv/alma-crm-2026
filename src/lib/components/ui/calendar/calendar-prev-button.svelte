@@ -23,7 +23,7 @@
 	bind:ref
 	class={cn(
 		buttonVariants({ variant }),
-		'size-(--cell-size) bg-transparent p-0 select-none disabled:opacity-50',
+		'size-(--cell-size) bg-transparent p-0 select-none disabled:bg-transparent',
 		'rtl:rotate-180',
 		className
 	)}

@@ -334,7 +334,7 @@
 								role="option"
 								aria-selected={index === highlighted}
 								class="cursor-pointer px-3 py-1.5 {index === highlighted
-									? 'bg-primary-soft text-primary'
+									? 'bg-selection text-selection-foreground'
 									: 'hover:bg-surface-muted'}"
 								onmousedown={(event) => {
 									// До `blur` поля: иначе подсказка закроется раньше выбора.
@@ -376,7 +376,7 @@
 				aria-pressed={filter === kind.key}
 				class="inline-flex h-7 items-center gap-1 rounded-4xl border px-2.5 text-xs font-medium focus-ring {filter ===
 				kind.key
-					? 'border-primary-soft-border bg-primary-soft text-primary'
+					? 'border-selection-border bg-selection text-selection-foreground'
 					: 'border-border bg-surface text-muted-foreground hover:bg-surface-muted'}"
 				onclick={() => {
 					filter = kind.key;
@@ -407,7 +407,7 @@
 							экран не выходит. -->
 						<p class="text-sm break-words whitespace-pre-line text-muted-foreground">
 							{#each splitMentions(event.detail) as segment, index (index)}{#if segment.kind === 'mention'}<span
-										class="rounded bg-primary-soft px-1 font-medium text-primary"
+										class="rounded bg-selection px-1 font-medium text-selection-foreground"
 										>@{segment.label}</span
 									>{:else}{segment.text}{/if}{/each}
 						</p>

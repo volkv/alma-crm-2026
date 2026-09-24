@@ -1,6 +1,8 @@
 {
 	"realm": "lct",
-	"displayName": "ЛЦТ CRM",
+	"displayName": "Альма CRM",
+	"displayNameHtml": "Альма CRM",
+	"loginTheme": "alma",
 	"enabled": true,
 	"sslRequired": "external",
 	"registrationAllowed": false,
@@ -39,7 +41,7 @@
 	"clients": [
 		{
 			"clientId": "lct-crm",
-			"name": "ЛЦТ CRM",
+			"name": "Альма CRM",
 			"description": "Веб-приложение CRM: Authorization Code + PKCE",
 			"enabled": true,
 			"protocol": "openid-connect",

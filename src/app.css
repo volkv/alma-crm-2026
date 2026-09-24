@@ -148,17 +148,28 @@ html:not([data-theme-preference]) [data-theme-icon='light'] {
 	--atmr-neutral-990: #101828; /* светлая: fg-default; тёмная: цвет теней */
 
 	/*
-	 * Акцент: оранжевая шкала ДС (base-accent #ff4f12). Продукт берёт не
-	 * вершину шкалы, а две ступени ниже, — почему, сказано у `--accent-base`.
+	 * Акцент: оранжевая шкала ДС (base-accent #ff4f12). Им красится только
+	 * главное действие — см. `--accent-base`.
 	 */
-	--atmr-accent-0: #fff;
 	--atmr-accent-50: #ffede7;
 	--atmr-accent-100: #ffd3c4;
 	--atmr-accent-200: #ffa789;
-	--atmr-accent-700: #b3370d;
-	--atmr-accent-800: #992f0b;
-	--atmr-accent-900: #802809;
-	--atmr-accent-950: #591c06;
+	--atmr-accent-400: #ff7241;
+	--atmr-accent-500: #ff4f12; /* base-accent */
+
+	/*
+	 * Фиолетовая шкала ДС. В оранжевой теме ДС это `status-01` (в фиолетовой
+	 * теме та же шкала — акцент). Продукт красит ею ссылки, выделение и кольцо
+	 * фокуса — как ЛК ИТ Школы, где оранжевый оставлен кнопке действия.
+	 */
+	--atmr-base-status-01: #7700ff;
+	--atmr-status-01-0: #fff;
+	--atmr-status-01-50: #f1e6ff;
+	--atmr-status-01-100: #ddbfff;
+	--atmr-status-01-200: #bb80ff;
+	--atmr-status-01-600: #6500d9;
+	--atmr-status-01-900: #3c0080;
+	--atmr-status-01-950: #2a0059;
 
 	/* Статусы: сплошной тон и мягкая подложка с читаемым текстом на ней. */
 	--atmr-success-50: #e6f7ec;
@@ -215,19 +226,37 @@ html:not([data-theme-preference]) [data-theme-icon='light'] {
 	--surface-overlay: var(--atmr-neutral-0);
 
 	/*
-	 * Один акцент на весь продукт. ДС ставит на кнопку `accent-500` (#ff4f12) с
-	 * белой подписью — это 3.3:1, ниже порога AA для текста в 14px, а `primary`
-	 * здесь ещё и текст ссылки на белом. Поэтому взяты две ступени той же
-	 * оранжевой шкалы ДС: `accent-700` даёт 6.1:1 и с белым на заливке, и как
-	 * текст на холсте, `accent-800` — 7.6:1 на наведении. Яркий фирменный
-	 * оранжевый остаётся в мягкой паре ниже.
+	 * Роли цвета. Три роли, три цвета, и ни одна не подменяет другую:
+	 *
+	 * - главное действие — фирменный оранжевый ДС `#ff4f12`. Подпись на нём
+	 *   тёмная: белая даёт 3.29:1 и порог AA не проходит, `neutral-990` —
+	 *   5.39:1. Наведение — `#f54b10`, продуктовое значение между ступенями
+	 *   500 и 600 ДС: 600 с тёмной подписью даёт 4.02:1. Нажатие — ступень
+	 *   400, светлее, а не темнее: с тёмной подписью темнее некуда;
+	 * - ссылка и «действие текстом» — фиолетовый ДС; им же кольцо фокуса;
+	 * - выбранное (пункт меню, строка, вкладка, фильтр) — светлая фиолетовая
+	 *   подложка с тёмно-фиолетовым текстом.
+	 *
+	 * Оранжевый текстом не бывает вовсе: на белом он 3.29:1.
 	 */
-	--accent-base: var(--atmr-accent-700);
-	--accent-strong: var(--atmr-accent-800);
-	/* Подпись на акцентной заливке: у ДС это `accent-on-accent`. */
-	--accent-on: var(--atmr-accent-0);
-	--accent-soft: var(--atmr-accent-50);
-	--accent-soft-border: var(--atmr-accent-100);
+	--accent-base: var(--atmr-accent-500);
+	--accent-strong: #f54b10;
+	--accent-pressed: var(--atmr-accent-400);
+	--accent-on: var(--atmr-neutral-990);
+	--link-base: var(--atmr-base-status-01);
+	--link-strong: var(--atmr-status-01-600);
+	/* Подпись на фиолетовой заливке: отмеченный флажок, выбранный день. */
+	--link-on: var(--atmr-status-01-0);
+	--selection-base: var(--atmr-status-01-50);
+	--selection-on: var(--atmr-status-01-600);
+	--selection-border: var(--atmr-status-01-100);
+
+	/*
+	 * Граница контрола: поле, список, флажок, вторичная кнопка. `neutral-400`,
+	 * а не `border-default` ДС (`neutral-200`, 2.00:1): WCAG 1.4.11 требует от
+	 * края элемента управления 3:1, эта ступень даёт 4.06:1 на белом.
+	 */
+	--control-border: var(--atmr-neutral-400);
 
 	/*
 	 * Статусные тона. Сплошной тон у `success` и `danger` — это ступень 700, а
@@ -307,17 +336,26 @@ html[data-theme='dark'] {
 	--surface-overlay: var(--atmr-neutral-900);
 
 	/*
-	 * Акцент. В светлой теме продукт отошёл от ДС и взял `accent-700` вместо
-	 * `accent-500`: фирменный оранжевый не давал 4.5:1 ни с белой подписью, ни
-	 * как текст ссылки. В тёмной отходить не пришлось — `accent-default` ДС
-	 * (`accent-200`) даёт 7.0:1 с подписью `accent-950` и 8.4:1 как текст на
-	 * панели. Наведение, как и у ДС, светлее обычного состояния, а не темнее.
+	 * Роли те же, что в светлой. Главное действие — `accent-default` тёмной
+	 * темы ДС (`accent-200`), наведение и нажатие, как у ДС, светлее: 100 и 50.
+	 * Подпись — тот же `neutral-990`, что и в светлой (9.41:1). Ссылка и
+	 * кольцо — ступень 200 фиолетовой шкалы, выделение — глубокая 950 с
+	 * текстом 200.
 	 */
 	--accent-base: var(--atmr-accent-200);
 	--accent-strong: var(--atmr-accent-100);
-	--accent-on: var(--atmr-accent-950);
-	--accent-soft: var(--atmr-accent-950);
-	--accent-soft-border: var(--atmr-accent-900);
+	--accent-pressed: var(--atmr-accent-50);
+	--accent-on: var(--atmr-neutral-990);
+
+	--link-base: var(--atmr-status-01-200);
+	--link-strong: var(--atmr-status-01-100);
+	--link-on: var(--atmr-neutral-990);
+	--selection-base: var(--atmr-status-01-950);
+	--selection-on: var(--atmr-status-01-200);
+	--selection-border: var(--atmr-status-01-900);
+
+	/* Та же ступень, что и в светлой: на `bg-surface1` тёмной темы 3.88:1. */
+	--control-border: var(--atmr-neutral-400);
 
 	/*
 	 * Статусы зеркалят светлую тему по шкале: мягкая подложка — ступень 950
@@ -368,10 +406,14 @@ html[data-theme='dark'] {
 	--text-2xl: 1.75rem; /* heading-h1 — 28/32, крупные числа сводок */
 	--text-2xl--line-height: 2rem;
 
-	/* Surfaces: the app backdrop, the panels on it, recessed areas inside panels. */
+	/*
+	 * Surfaces: the app backdrop, the panels on it, recessed areas inside panels,
+	 * and the press of a neutral control (one step past its hover).
+	 */
 	--color-canvas: var(--grey-50);
 	--color-surface: var(--grey-0);
 	--color-surface-muted: var(--grey-100);
+	--color-surface-pressed: var(--grey-200);
 
 	/* Text: primary, muted, faint. All three clear 4.5:1 on `surface`, both themes. */
 	--color-foreground: var(--grey-900);
@@ -383,14 +425,24 @@ html[data-theme='dark'] {
 	--color-border-strong: var(--grey-300);
 
 	/*
-	 * The accent. `primary` is the name the vendored primitives already use for
-	 * it, so the product uses that name too instead of inventing a second one.
+	 * The main action. `primary` is the name the vendored primitives already use
+	 * for it, so the product uses that name too instead of inventing a second
+	 * one. Only a fill: as text the brand orange does not reach 4.5:1.
 	 */
 	--color-primary: var(--accent-base);
 	--color-primary-hover: var(--accent-strong);
+	--color-primary-active: var(--accent-pressed);
 	--color-primary-foreground: var(--accent-on);
-	--color-primary-soft: var(--accent-soft);
-	--color-primary-soft-border: var(--accent-soft-border);
+
+	/* Links and text-only actions; `link-foreground` is text on a link fill. */
+	--color-link: var(--link-base);
+	--color-link-hover: var(--link-strong);
+	--color-link-foreground: var(--link-on);
+
+	/* What is chosen: the current menu item, a pressed filter, a mention. */
+	--color-selection: var(--selection-base);
+	--color-selection-foreground: var(--selection-on);
+	--color-selection-border: var(--selection-border);
 
 	/* Status, each with a soft background and the text colour that reads on it. */
 	--color-danger: var(--danger-base);
@@ -410,7 +462,8 @@ html[data-theme='dark'] {
 	 * Remaining names the vendored primitives are written against. They are
 	 * aliases onto the scale above, not a second palette: `background` and `card`
 	 * are the panel surface, `accent` is the neutral hover wash (not the brand
-	 * accent — that is `primary`), `input` is the stronger line.
+	 * accent — that is `primary`), `input` is the edge of a control, `ring` —
+	 * the keyboard focus, solid and in the link colour.
 	 */
 	--color-background: var(--grey-0);
 	--color-card: var(--grey-0);
@@ -423,8 +476,8 @@ html[data-theme='dark'] {
 	--color-accent: var(--grey-100);
 	--color-accent-foreground: var(--grey-900);
 	--color-destructive: var(--danger-base);
-	--color-input: var(--grey-300);
-	--color-ring: var(--accent-base);
+	--color-input: var(--control-border);
+	--color-ring: var(--link-base);
 
 	/*
 	 * Density. A CRM is read in rows, so the two heights that repeat thousands of
@@ -456,7 +509,7 @@ html[data-theme='dark'] {
 
 @layer base {
 	* {
-		@apply border-border outline-ring/50;
+		@apply border-border outline-ring;
 	}
 
 	html {
@@ -478,7 +531,7 @@ html[data-theme='dark'] {
 	}
 
 	::selection {
-		@apply bg-primary-soft text-foreground;
+		@apply bg-selection text-foreground;
 	}
 
 	/*
@@ -505,11 +558,26 @@ html[data-theme='dark'] {
 
 /**
  * The keyboard focus ring for the components we write ourselves; the vendored
- * primitives spell the same ring out in utilities.
+ * primitives spell the same ring out in utilities
+ * (`focus-visible:outline-2 focus-visible:outline-solid
+ * focus-visible:outline-offset-2 focus-visible:outline-ring`). Solid 2px with
+ * a 2px gap: the ring colour is opaque, so its contrast is the token's own —
+ * 6.50:1 on a light panel, 5.73:1 on a dark one — not whatever a
+ * half-transparent mix leaves on the surface under it.
+ *
+ * `focus-ring-inset` draws the same ring inside the box, for elements whose
+ * container clips overflow (the collapsible navigation list, table rows).
  */
 @utility focus-ring {
 	&:focus-visible {
-		outline: none;
-		box-shadow: 0 0 0 3px color-mix(in oklch, var(--color-ring) 45%, transparent);
+		outline: 2px solid var(--color-ring);
+		outline-offset: 2px;
+	}
+}
+
+@utility focus-ring-inset {
+	&:focus-visible {
+		outline: 2px solid var(--color-ring);
+		outline-offset: -2px;
 	}
 }

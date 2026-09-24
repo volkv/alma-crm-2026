@@ -1,6 +1,7 @@
 <script lang="ts">
 	import MenuIcon from '@lucide/svelte/icons/menu';
 	import SearchIcon from '@lucide/svelte/icons/search';
+	import { AlmaLogo } from '$lib/components/brand';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Sheet from '$lib/components/ui/sheet/index.js';
 	import HelpMenu from '$lib/components/onboarding/help-menu.svelte';
@@ -106,7 +107,7 @@
 			</Sheet.Trigger>
 			<Sheet.Content side="left" class="w-64 gap-0 p-0">
 				<Sheet.Header class="h-14 shrink-0 justify-center border-b border-border px-4">
-					<Sheet.Title class="text-sm font-semibold">Альма CRM</Sheet.Title>
+					<Sheet.Title><AlmaLogo size={28} wordClass="text-sm" /></Sheet.Title>
 					<Sheet.Description class="sr-only">Разделы системы</Sheet.Description>
 				</Sheet.Header>
 				<div class="min-h-0 flex-1 overflow-y-auto">

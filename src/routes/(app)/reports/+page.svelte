@@ -171,7 +171,7 @@
 									: pdfLayoutHints[layout]}
 								data-testid="report-pdf-layout-{layout}"
 								class={cn(
-									'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium whitespace-nowrap text-muted-foreground focus-ring hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50',
+									'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium whitespace-nowrap text-muted-foreground focus-ring hover:text-foreground disabled:cursor-not-allowed disabled:text-faint',
 									effectivePdfLayout === layout && 'bg-surface text-foreground shadow-xs'
 								)}
 								onclick={() => (pdfLayout = layout)}
@@ -378,7 +378,7 @@
 	{/if}
 
 	<div class="flex flex-col gap-1">
-		<a class="text-sm text-primary focus-ring" href={interactionsHref(page.url)}>
+		<a class="text-sm text-link focus-ring hover:text-link-hover" href={interactionsHref(page.url)}>
 			Открыть эти взаимодействия в списке
 		</a>
 		{#if droppedByList.length > 0}

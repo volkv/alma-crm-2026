@@ -40,14 +40,14 @@
 				<Avatar.Root title={caption(person)}>
 					<Avatar.Fallback
 						class="text-xs font-medium {person.you
-							? 'bg-primary-soft text-primary'
+							? 'bg-selection text-selection-foreground'
 							: 'bg-success-soft text-success-soft-foreground'}"
 					>
 						{initials(person.name)}
 					</Avatar.Fallback>
 					{#if person.editing}
 						<span
-							class="absolute -top-1 -right-1 z-10 flex size-4 items-center justify-center rounded-full bg-surface text-primary ring-1 ring-border"
+							class="absolute -top-1 -right-1 z-10 flex size-4 items-center justify-center rounded-full bg-surface text-link ring-1 ring-border"
 							aria-hidden="true"
 							data-slot="presence-editing"><PencilIcon class="size-2.5" /></span
 						>

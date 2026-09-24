@@ -60,10 +60,10 @@
 		current: {
 			title: 'текущая',
 			icon: CircleDotIcon,
-			node: 'border-primary bg-primary text-primary-foreground ring-4 ring-primary-soft',
+			node: 'border-link bg-link text-link-foreground ring-4 ring-selection',
 			rail: 'bg-border',
 			label: 'font-medium text-foreground',
-			bar: 'bg-primary'
+			bar: 'bg-link'
 		},
 		paused: {
 			title: 'на паузе',

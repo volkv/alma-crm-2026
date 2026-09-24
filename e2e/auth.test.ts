@@ -25,12 +25,11 @@ test('без сессии любая страница приложения от�
 	await page.goto('/');
 
 	await expect(page).toHaveURL('/login?next=%2F');
-	await expect(page.getByRole('heading', { level: 1 })).toHaveText(
-		'Система контроля взаимодействия с учебными заведениями'
+	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Вход в Альма CRM');
+	// Баннер администратора остаётся на странице — оговоркой под кнопкой.
+	await expect(page.getByTestId('login-banner')).toContainText(
+		'Доступ только для сотрудников. Действия в системе записываются в журнал.'
 	);
-	await expect(
-		page.getByText('Доступ только для сотрудников. Действия в системе записываются в журнал.')
-	).toBeVisible();
 });
 
 test('вход через каталог открывает оболочку приложения', async ({ page }) => {

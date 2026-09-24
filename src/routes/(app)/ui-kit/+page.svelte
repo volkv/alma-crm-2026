@@ -175,12 +175,29 @@
 			light: 'bg-surface3',
 			dark: 'bg-surface3'
 		},
-		{ token: 'bg-primary', label: 'primary — акцент', light: 'accent-700', dark: 'accent-200' },
 		{
-			token: 'bg-primary-soft',
-			label: 'primary-soft — мягкий акцент',
-			light: 'accent-50',
-			dark: 'accent-950'
+			token: 'bg-primary',
+			label: 'primary — главное действие',
+			light: 'accent-500',
+			dark: 'accent-200'
+		},
+		{
+			token: 'bg-link',
+			label: 'link, ring — ссылка и фокус',
+			light: 'status-01',
+			dark: 'status-01-200'
+		},
+		{
+			token: 'bg-selection',
+			label: 'selection — выбранное',
+			light: 'status-01-50',
+			dark: 'status-01-950'
+		},
+		{
+			token: 'bg-input',
+			label: 'input — край контрола',
+			light: 'neutral-400',
+			dark: 'neutral-400'
 		},
 		{ token: 'bg-success', label: 'success', light: 'success-700', dark: 'success-200' },
 		{ token: 'bg-warning', label: 'warning', light: 'warning-500', dark: 'warning-200' },
@@ -197,6 +214,48 @@
 		{ size: 'text-sm', source: 'body-s — 14/20', usage: 'основной текст' },
 		{ size: 'text-xs', source: 'description-l — 12/16', usage: 'подписи и сноски' }
 	];
+
+	/**
+	 * Витрина состояний. Наведение, фокус и нажатие — псевдоклассы, и
+	 * показать их неподвижно можно только тем же токеном, который примитив
+	 * включает на них сам; отключённое и ошибка — настоящие `disabled` и
+	 * `aria-invalid`.
+	 */
+	const FOCUS = 'outline-2 outline-solid outline-offset-2 outline-ring';
+	const FOCUS_INSET = 'outline-2 outline-solid -outline-offset-2 outline-ring';
+	const stateColumns = ['Обычное', 'Наведение', 'Фокус', 'Нажатие', 'Отключено', 'Ошибка'];
+	const buttonStates = [
+		{
+			label: 'Основная',
+			variant: 'default',
+			hover: 'bg-primary-hover',
+			active: 'bg-primary-active'
+		},
+		{
+			label: 'Контурная',
+			variant: 'outline',
+			hover: 'bg-surface-muted',
+			active: 'bg-surface-pressed'
+		},
+		{
+			label: 'Вторичная',
+			variant: 'secondary',
+			hover: 'bg-surface-pressed',
+			active: 'bg-surface-pressed'
+		},
+		{
+			label: 'Призрачная',
+			variant: 'ghost',
+			hover: 'bg-surface-muted',
+			active: 'bg-surface-pressed'
+		},
+		{
+			label: 'Ссылка',
+			variant: 'link',
+			hover: 'text-link-hover underline',
+			active: 'text-link-hover underline'
+		}
+	] as const;
 
 	let deleteOpen = $state(false);
 	/** Витрина диалога с формой: длинное тело, прибитая панель, вопрос при вводе. */
@@ -374,6 +433,121 @@
 					<Button size="lg">lg</Button>
 					<Button size="icon" aria-label="Добавить"><PlusIcon aria-hidden="true" /></Button>
 					<Button disabled>Отключена</Button>
+				</div>
+			</Card.Content>
+		</Card.Root>
+	</section>
+
+	<section class="flex flex-col gap-3">
+		<h2 class="text-sm font-semibold tracking-tight">Состояния</h2>
+		<InlineHint>
+			Оранжевый — только главное действие, с тёмной подписью. Ссылки, фокус и выбранное —
+			фиолетовые. Отключённое — нейтральная подложка и слабый текст, без прозрачности. Фокус —
+			сплошное кольцо 2px с отступом. Переключите тему, чтобы увидеть тёмную.
+		</InlineHint>
+		<Card.Root size="sm">
+			<Card.Content class="overflow-x-auto">
+				<table class="w-full min-w-[44rem] border-separate border-spacing-x-2 border-spacing-y-3">
+					<thead>
+						<tr>
+							<th class="w-28"><span class="sr-only">Элемент</span></th>
+							{#each stateColumns as column (column)}
+								<th class="text-left text-xs font-medium text-muted-foreground">{column}</th>
+							{/each}
+						</tr>
+					</thead>
+					<tbody>
+						{#each buttonStates as row (row.label)}
+							<tr data-testid="kit-state-{row.variant}">
+								<th class="text-left text-xs font-medium text-muted-foreground">{row.label}</th>
+								<td><Button variant={row.variant}>Кнопка</Button></td>
+								<td><Button variant={row.variant} class={row.hover}>Кнопка</Button></td>
+								<td><Button variant={row.variant} class={FOCUS}>Кнопка</Button></td>
+								<td><Button variant={row.variant} class={row.active}>Кнопка</Button></td>
+								<td><Button variant={row.variant} disabled>Кнопка</Button></td>
+								<td><span class="text-xs text-faint">—</span></td>
+							</tr>
+						{/each}
+						<tr>
+							<th class="text-left text-xs font-medium text-muted-foreground">Поле</th>
+							<td><Input aria-label="Поле, обычное" value="Текст" /></td>
+							<td><span class="text-xs text-faint">—</span></td>
+							<td><Input aria-label="Поле, фокус" value="Текст" class={FOCUS} /></td>
+							<td><span class="text-xs text-faint">—</span></td>
+							<td><Input aria-label="Поле, отключено" value="Текст" disabled /></td>
+							<td><Input aria-label="Поле, ошибка" value="Текст" aria-invalid="true" /></td>
+						</tr>
+						<tr>
+							<th class="text-left text-xs font-medium text-muted-foreground">Флажок</th>
+							<td>
+								<span class="flex gap-3"
+									><Checkbox aria-label="Флажок" /><Checkbox
+										aria-label="Флажок, отмечен"
+										checked
+									/></span
+								>
+							</td>
+							<td><span class="text-xs text-faint">—</span></td>
+							<td><Checkbox aria-label="Флажок, фокус" checked class={FOCUS} /></td>
+							<td><span class="text-xs text-faint">—</span></td>
+							<td>
+								<span class="flex gap-3"
+									><Checkbox aria-label="Флажок, отключён" disabled /><Checkbox
+										aria-label="Флажок, отключён и отмечен"
+										checked
+										disabled
+									/></span
+								>
+							</td>
+							<td><Checkbox aria-label="Флажок, ошибка" aria-invalid="true" /></td>
+						</tr>
+						<tr>
+							<th class="text-left text-xs font-medium text-muted-foreground">Переключатель</th>
+							<td>
+								<span class="flex gap-3"
+									><Switch aria-label="Переключатель" /><Switch
+										aria-label="Переключатель, включён"
+										checked
+									/></span
+								>
+							</td>
+							<td><span class="text-xs text-faint">—</span></td>
+							<td><Switch aria-label="Переключатель, фокус" checked class={FOCUS} /></td>
+							<td><span class="text-xs text-faint">—</span></td>
+							<td>
+								<span class="flex gap-3"
+									><Switch aria-label="Переключатель, отключён" disabled /><Switch
+										aria-label="Переключатель, отключён и включён"
+										checked
+										disabled
+									/></span
+								>
+							</td>
+							<td><span class="text-xs text-faint">—</span></td>
+						</tr>
+					</tbody>
+				</table>
+				<div class="flex flex-wrap items-center gap-3 px-2">
+					<span class="w-28 text-xs font-medium text-muted-foreground">Пункт меню</span>
+					<span class="flex h-control items-center rounded-md px-2.5 text-sm text-muted-foreground"
+						>Обычный</span
+					>
+					<span
+						class="flex h-control items-center rounded-md bg-surface-muted px-2.5 text-sm text-foreground"
+						>Наведение</span
+					>
+					<span
+						class="flex h-control items-center rounded-md px-2.5 text-sm text-muted-foreground {FOCUS_INSET}"
+						>Фокус</span
+					>
+					<span
+						class="flex h-control items-center rounded-md bg-selection px-2.5 text-sm font-medium text-selection-foreground shadow-[inset_3px_0_0_var(--color-link)]"
+						>Открыт сейчас</span
+					>
+					<a class="text-sm text-link focus-ring hover:text-link-hover" href={resolve('/ui-kit')}
+						>Ссылка</a
+					>
+					<StatusBadge tone="accent" dot>Выделенный статус</StatusBadge>
 				</div>
 			</Card.Content>
 		</Card.Root>

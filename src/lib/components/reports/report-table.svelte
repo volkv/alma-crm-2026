@@ -74,7 +74,7 @@
 									     живут вне приложения. На экране ссылка собирается маршрутом —
 									     так её проверяет сборка, а переход остаётся клиентским. -->
 									<a
-										class="text-primary focus-ring"
+										class="text-link focus-ring hover:text-link-hover"
 										href={resolve('/(app)/interactions/[id=uuid]', { id: row.interactionId })}
 									>
 										{cell.value}

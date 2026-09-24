@@ -31,7 +31,7 @@
 		{:else}
 			{#if person.email}
 				<a
-					class="inline-flex w-fit max-w-full items-center gap-1.5 rounded-sm text-primary focus-ring hover:underline"
+					class="inline-flex w-fit max-w-full items-center gap-1.5 rounded-sm text-link focus-ring hover:text-link-hover hover:underline"
 					href="mailto:{person.email}"
 				>
 					<MailIcon class="size-3.5 shrink-0" aria-hidden="true" />
@@ -40,7 +40,7 @@
 			{/if}
 			{#if person.phone}
 				<a
-					class="inline-flex w-fit items-center gap-1.5 rounded-sm text-primary focus-ring hover:underline"
+					class="inline-flex w-fit items-center gap-1.5 rounded-sm text-link focus-ring hover:text-link-hover hover:underline"
 					href="tel:{person.phone}"
 				>
 					<PhoneIcon class="size-3.5 shrink-0" aria-hidden="true" />

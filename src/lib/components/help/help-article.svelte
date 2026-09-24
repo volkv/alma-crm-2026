@@ -90,7 +90,7 @@
 	}
 
 	.help-prose :global(a) {
-		color: var(--color-primary);
+		color: var(--color-link);
 		text-decoration: underline;
 		text-underline-offset: 2px;
 	}
@@ -135,7 +135,7 @@
 	}
 
 	.help-prose :global(blockquote) {
-		border-left: 2px solid var(--color-primary-soft-border);
+		border-left: 2px solid var(--color-border-strong);
 		padding-left: 0.75rem;
 		color: var(--color-muted-foreground);
 	}

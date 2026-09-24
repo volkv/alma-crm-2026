@@ -1,39 +1,21 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
+	import { AlmaMark } from '$lib/components/brand';
 
 	/**
 	 * Страницы, на которые попадают без сессии. Оболочки приложения здесь нет и
 	 * быть не может: разделы, поиск и меню учётной записи существуют только для
 	 * того, кто уже вошёл.
 	 *
-	 * Раскладка — та же, что у входа РТК ID: знак продукта, под ним одна
-	 * карточка на спокойном холсте и ничего больше. Заголовок страницы живёт
-	 * внутри карточки, поэтому знак здесь — не заголовок, а подпись: иначе на
-	 * странице оказалось бы два `<h1>`.
+	 * Над карточкой — один знак. Название системы стоит в заголовке карточки,
+	 * и словесный логотип рядом с ним повторил бы его дважды подряд.
 	 */
 	let { children }: { children: Snippet } = $props();
 </script>
 
-<div class="relative flex min-h-screen flex-col items-center justify-center bg-canvas px-4 py-10">
-	<!-- Фирменный тёплый отсвет сверху: единственное место, где акцент работает
-	     заливкой во весь экран. Цвет — токен, не картинка. -->
-	<div
-		class="pointer-events-none absolute inset-x-0 top-0 h-56 bg-linear-to-b from-primary-soft to-transparent"
-		aria-hidden="true"
-	></div>
-
-	<div class="relative flex w-full max-w-md flex-col items-center gap-5">
-		<div class="flex flex-col items-center gap-1">
-			<div class="flex items-center gap-2.5">
-				<span
-					class="flex size-9 shrink-0 items-center justify-center rounded-lg bg-primary text-xs font-semibold text-primary-foreground"
-					aria-hidden="true">CRM</span
-				>
-				<span class="text-base font-semibold tracking-tight">Альма CRM</span>
-			</div>
-			<span class="text-xs text-muted-foreground">от заявки вуза до подтверждённого результата</span
-			>
-		</div>
+<div class="flex min-h-screen flex-col items-center justify-center bg-canvas px-4 py-10">
+	<div class="flex w-full max-w-md flex-col items-center gap-6">
+		<AlmaMark size={44} />
 
 		<div class="w-full">
 			{@render children()}

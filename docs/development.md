@@ -436,16 +436,16 @@ Tailwind 4 настраивается в CSS, `tailwind.config.js` нет. В `s
 семантическим именам. Утилиты порождает именно `@theme`:
 `--color-surface` даёт `bg-surface`, `text-surface`, `border-surface`.
 
-| Группа      | Имена                                                                                               |
-| ----------- | --------------------------------------------------------------------------------------------------- |
-| Поверхности | `canvas` (фон приложения), `surface` (панели, карточки), `surface-muted` (шапка таблицы, наведение) |
-| Текст       | `foreground`, `muted-foreground`, `faint` — все три дают ≥ 4.5:1 на `surface`                       |
-| Линии       | `border`, `border-strong`                                                                           |
-| Акцент      | `primary`, `primary-hover`, `primary-foreground`, `primary-soft`, `primary-soft-border`             |
-| Статусы     | `success`, `warning`, `danger`, `info` — у каждого `*-soft` и `*-soft-foreground`                   |
-| Плотность   | `h-row` (36px, строка таблицы), `h-control` (32px, контрол)                                         |
-| Радиусы     | `rounded-sm` / `rounded-md` / `rounded-lg`, `rounded-xl` для карточек, `rounded-4xl` — пилюля       |
-| Тени        | две ступени: `shadow-xs`/`shadow-sm` — на холсте, `shadow-md`/`shadow-lg` — поверх страницы         |
+| Группа      | Имена                                                                                                                                                                                                                              |
+| ----------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Поверхности | `canvas` (фон приложения), `surface` (панели, карточки), `surface-muted` (шапка таблицы, наведение), `surface-pressed` (нажатие)                                                                                                   |
+| Текст       | `foreground`, `muted-foreground`, `faint` — все три дают ≥ 4.5:1 на `surface`                                                                                                                                                      |
+| Линии       | `border`, `border-strong`, `input` (край контрола)                                                                                                                                                                                 |
+| Роли цвета  | главное действие `primary`, `primary-hover`, `primary-active`, `primary-foreground`; ссылка `link`, `link-hover`, `link-foreground`; выбранное `selection`, `selection-foreground`, `selection-border` (`design.md`, «Роли цвета») |
+| Статусы     | `success`, `warning`, `danger`, `info` — у каждого `*-soft` и `*-soft-foreground`                                                                                                                                                  |
+| Плотность   | `h-row` (36px, строка таблицы), `h-control` (32px, контрол)                                                                                                                                                                        |
+| Радиусы     | `rounded-sm` / `rounded-md` / `rounded-lg`, `rounded-xl` для карточек, `rounded-4xl` — пилюля                                                                                                                                      |
+| Тени        | две ступени: `shadow-xs`/`shadow-sm` — на холсте, `shadow-md`/`shadow-lg` — поверх страницы                                                                                                                                        |
 
 Правила, по которым это держится:
 
@@ -459,8 +459,10 @@ Tailwind 4 настраивается в CSS, `tailwind.config.js` нет. В `s
   20px (`text-xl`) — для `<h1>`. Шрифт — Inter Variable из `@fontsource-variable/inter`, лежит в
   сборке, в сеть за ним никто не ходит. Цифры везде моноширинные (`font-variant-numeric:
 tabular-nums`): колонки чисел и дат должны выравниваться сами.
-- **Фокус с клавиатуры виден всегда.** У примитивов это `focus-visible:ring-3 ring-ring/50`, у
-  наших компонентов — утилита `focus-ring` из `src/app.css`. Убирать `outline` без замены нельзя.
+- **Фокус с клавиатуры виден всегда.** Сплошное кольцо `ring` 2px с отступом: у примитивов это
+  `focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2
+focus-visible:outline-ring`, у наших компонентов — утилита `focus-ring` (или `focus-ring-inset`
+  внутри обрезающего контейнера) из `src/app.css`. Убирать `outline` без замены нельзя.
 - **Курсор «палец» — на всём, что нажимают.** Правило стоит в базовом слое `src/app.css`: теги
   `button` и `summary`, роли пунктов меню, списка выбора и палитры, вкладки, подпись с
   переключателем внутри. Вендоренные примитивы приходят с `cursor-default` на пунктах — его

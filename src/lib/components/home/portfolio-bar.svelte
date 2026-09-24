@@ -78,7 +78,7 @@
 		>
 			{#each segments as segment (segment.key)}
 				<span
-					class={cn('basis-0 rounded-4xl', segment.leading ? 'bg-primary' : 'bg-border-strong')}
+					class={cn('basis-0 rounded-4xl', segment.leading ? 'bg-link' : 'bg-border-strong')}
 					style:flex-grow={segment.count}
 				></span>
 			{/each}
@@ -90,7 +90,7 @@
 					<span
 						class={cn(
 							'size-2 shrink-0 rounded-full',
-							segment.leading ? 'bg-primary' : 'bg-border-strong'
+							segment.leading ? 'bg-link' : 'bg-border-strong'
 						)}
 						aria-hidden="true"
 					></span>
