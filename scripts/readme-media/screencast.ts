@@ -78,7 +78,7 @@ const FINAL_CARD = `
 	<ul>
 		<li><b class="accent">crm.volkv.com</b> — три роли: менеджер, руководитель, администратор</li>
 		<li><b class="accent">/help</b> — руководства внутри системы, <b class="accent">/api/docs</b> — описание программного интерфейса</li>
-		<li><b class="accent">github.com/volkv/lct-2026</b> — исходный код</li>
+		<li><b class="accent">github.com/volkv/alma-crm-2026</b> — исходный код</li>
 	</ul>
 	<p class="foot">Wine Coding Team</p>
 `;

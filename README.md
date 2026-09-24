@@ -533,7 +533,7 @@ docs/                  документация по подсистемам
 Нужны Docker 25+ с плагином Compose. Для разработки — Node.js 24 (`.nvmrc`) и pnpm 10 (`corepack enable`).
 
 ```bash
-git clone https://github.com/volkv/lct-2026.git && cd lct-2026
+git clone https://github.com/volkv/alma-crm-2026.git && cd alma-crm-2026
 docker compose up --build
 ```
 
@@ -681,7 +681,7 @@ Redis и MinIO поднимает testcontainers, Gotenberg берётся из 
 | End-to-end     | 23      | вход через каталог, сквозной сценарий тремя ролями, отчёт, границы обмена, редактор процесса          | Playwright              |
 
 Всего 1367 автоматических проверок. Полный локальный прогон `pnpm run check:all` 2026-09-24 на
-`f53a6ff` дал 933 unit, 411 integration и 23 e2e; lint чисто, svelte-check — 0 ошибок. Быстрый гейт
+`6c81ab3` дал 933 unit, 411 integration и 23 e2e; lint чисто, svelte-check — 0 ошибок. Быстрый гейт
 для разработки — `pnpm run check:fast`.
 
 **Сквозной сценарий** (`e2e/scenario.test.ts`) — один последовательный проход тремя ролями через
