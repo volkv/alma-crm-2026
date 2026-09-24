@@ -38,6 +38,8 @@ import {
 } from '$lib/server/directory/organization-card';
 import { matchSchoolPrograms } from '$lib/server/directory/program-match';
 import { passportAvailability } from '$lib/server/enrichment/access';
+import { peekSiteReport, siteWarnings } from '$lib/server/enrichment';
+import type { ActorContext } from '$lib/server/actor';
 import { addSiteContactSchema } from '$lib/contracts/organization-card';
 import { formatIsoDay } from '$lib/format';
 import { toActionFailure, toPageError } from '$lib/server/http';
@@ -45,6 +47,24 @@ import { can } from '$lib/server/rbac';
 import { getSetting } from '$lib/server/settings';
 import { passportActions } from '../passport/actions.server';
 import type { Actions, PageServerLoad } from './$types';
+
+/**
+ * Раздел «Сведения», если сайт этой организации уже читали в пределах суток:
+ * карточка показывает его сразу, без нажатия и без обращения к сайту.
+ */
+async function cachedSitePassport(ctx: ActorContext, website: string | null) {
+	const site = website === null ? null : await peekSiteReport(ctx, website);
+
+	if (site === null) {
+		return null;
+	}
+
+	return {
+		site,
+		warnings: siteWarnings(site),
+		programMatch: await matchSchoolPrograms(ctx, site.programs)
+	};
+}
 
 /** Каталог продуктов для позиции договора: активные, одной страницей. */
 const productPage = catalogListQuerySchema.parse({ status: 'active', pageSize: 100 });
@@ -76,7 +96,8 @@ export const load: PageServerLoad = async (event) => {
 			licenseWarningDays,
 			work,
 			passportApplied,
-			availability
+			availability,
+			sitePassport
 		] = await Promise.all([
 			listSites(ctx, organization.id),
 			can(ctx, 'people.read') ? listAffiliations(ctx, organization.id) : Promise.resolve([]),
@@ -90,7 +111,8 @@ export const load: PageServerLoad = async (event) => {
 			readPassportApplied(organization.id),
 			// Чтение раздела «Сведения» — то же действие, что в форме правки, и
 			// право то же: без права на правку кнопки нет, и настройку незачем читать.
-			canWrite ? passportAvailability(ctx) : Promise.resolve(null)
+			canWrite ? passportAvailability(ctx) : Promise.resolve(null),
+			canWrite ? cachedSitePassport(ctx, organization.website) : Promise.resolve(null)
 		]);
 
 		return {
@@ -128,7 +150,8 @@ export const load: PageServerLoad = async (event) => {
 			siteReading:
 				availability === null
 					? null
-					: { enabled: availability.enabled, remaining: availability.remaining }
+					: { enabled: availability.enabled, remaining: availability.remaining },
+			sitePassport
 		};
 	} catch (error) {
 		toPageError(error);

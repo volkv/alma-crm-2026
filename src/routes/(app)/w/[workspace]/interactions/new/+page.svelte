@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { untrack } from 'svelte';
+	import { onMount, untrack } from 'svelte';
 	import { superForm } from 'sveltekit-superforms';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { goto } from '$app/navigation';
@@ -54,7 +54,9 @@
 		}
 	);
 
-	let institution = $state<LookupOption | null>(null);
+	// Вуз из ссылки с карточки организации: подставлен сразу, со своими
+	// площадками, контактами и договорами, и меняется как выбранный вручную.
+	let institution = $state<LookupOption | null>(untrack(() => data.presetInstitution));
 	let customer = $state<LookupOption | null>(null);
 	let institutionSites = $state<LookupOption[]>([]);
 	let institutionContacts = $state<LookupOption[]>([]);
@@ -113,6 +115,14 @@
 			loadLookup<ContractView>('contracts', option.id)
 		]);
 	}
+
+	// Площадки, контакты и договоры подставленного вуза подтягиваются в браузере
+	// теми же подсказками, что и после ручного выбора.
+	onMount(() => {
+		if (institution !== null) {
+			void onInstitution(institution);
+		}
+	});
 
 	const contractOptions = $derived(
 		withEmptyOption(
@@ -214,6 +224,13 @@
 		data-tour="interaction-new-form"
 		class="flex max-w-3xl flex-col gap-4"
 	>
+		{#if data.presetRefused !== null}
+			<Alert.Root>
+				<Alert.Title>{data.presetRefused}</Alert.Title>
+				<Alert.Description>Выберите учебное заведение в форме.</Alert.Description>
+			</Alert.Root>
+		{/if}
+
 		{#if $formMessage}
 			<Alert.Root variant="destructive">
 				<Alert.Title>{$formMessage}</Alert.Title>

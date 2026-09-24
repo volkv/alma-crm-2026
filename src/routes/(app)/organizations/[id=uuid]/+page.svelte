@@ -65,6 +65,11 @@
 			.sort((left, right) => right.total - left.total)
 	);
 
+	/** Форма нового взаимодействия с этим вузом, уже подставленным основной стороной. */
+	function startHref(workspace: string): string {
+		return `${resolve('/(app)/w/[workspace]/interactions/new', { workspace })}?organization=${data.organization.id}`;
+	}
+
 	/** Почему главное действие недоступно; `null` — доступно. */
 	const startBlocked = $derived.by((): string | null => {
 		if (!data.canStartInteraction) {
@@ -221,27 +226,18 @@
 					<Button
 						size="lg"
 						class="h-auto min-h-9 max-w-full py-1.5 text-left whitespace-normal"
-						href={resolve('/(app)/w/[workspace]/interactions/new', { workspace: main.key })}
+						href={startHref(main.key)}
 					>
 						<ArrowRightIcon aria-hidden="true" />
 						Завести взаимодействие
 					</Button>
 					{#each others as workspace (workspace.key)}
-						<Button
-							variant="ghost"
-							size="sm"
-							href={resolve('/(app)/w/[workspace]/interactions/new', {
-								workspace: workspace.key
-							})}
-						>
+						<Button variant="ghost" size="sm" href={startHref(workspace.key)}>
 							в «{workspace.name}»
 						</Button>
 					{/each}
 				</div>
-				<p class="text-xs text-muted-foreground">
-					В пространстве «{main.name}»; в форме выберите «{data.organization.shortName}» стороной
-					взаимодействия.
-				</p>
+				<p class="text-xs text-muted-foreground">В пространстве «{main.name}».</p>
 			{:else}
 				<div class="flex items-start gap-2 text-sm text-muted-foreground">
 					<LockIcon class="mt-0.5 size-4 shrink-0" aria-hidden="true" />
@@ -258,6 +254,7 @@
 					<SitePassport
 						website={data.organization.website}
 						reading={data.siteReading}
+						initial={data.sitePassport}
 						canAddContacts={data.canWritePeople}
 						{contactNames}
 					/>

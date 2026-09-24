@@ -335,6 +335,31 @@ export async function listProducts(
 	};
 }
 
+/**
+ * Какую организацию можно выбрать стороной взаимодействия: действующую и в
+ * области доступа. Одно условие на поиск в форме и на подстановку по ссылке —
+ * иначе ссылка стала бы обходом того, чего человек не нашёл бы поиском.
+ */
+function pickableOrganization(ctx: ActorContext): SQL[] {
+	return [scopeFilter(ctx, organizations.id), eq(organizations.isActive, true)];
+}
+
+/** Организация для подстановки в форму взаимодействия; `null` — выбрать её нельзя. */
+export async function pickOrganization(
+	ctx: ActorContext,
+	id: string
+): Promise<LookupOption | null> {
+	requirePermission(ctx, 'organizations.read');
+
+	const [row] = await getDb()
+		.select({ id: organizations.id, label: organizations.shortName })
+		.from(organizations)
+		.where(and(eq(organizations.id, id), ...pickableOrganization(ctx)))
+		.limit(1);
+
+	return row ?? null;
+}
+
 /** Строки для выпадающего списка: коротко и с потолком по количеству. */
 export async function lookupOrganizations(
 	ctx: ActorContext,
@@ -342,7 +367,7 @@ export async function lookupOrganizations(
 ): Promise<LookupOption[]> {
 	requirePermission(ctx, 'organizations.read');
 
-	const conditions: SQL[] = [scopeFilter(ctx, organizations.id), eq(organizations.isActive, true)];
+	const conditions: SQL[] = pickableOrganization(ctx);
 
 	if (q !== null && q.trim() !== '') {
 		const pattern = `%${q.trim()}%`;

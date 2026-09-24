@@ -6,6 +6,7 @@
 	import UserPlusIcon from '@lucide/svelte/icons/user-plus';
 	import { toast } from 'svelte-sonner';
 	import type { SubmitFunction } from '@sveltejs/kit';
+	import { untrack } from 'svelte';
 	import { enhance } from '$app/forms';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -25,7 +26,9 @@
 	 * контактом и какие программы школы ему предлагать.
 	 *
 	 * Чтение — то же действие, что в форме правки: та же квота и тот же кэш на
-	 * сутки, поэтому повторное нажатие в течение суток ничего не стоит. В
+	 * сутки, поэтому повторное нажатие в течение суток ничего не стоит. Если
+	 * раздел уже читали в эти сутки, он приходит с загрузкой карточки (`initial`)
+	 * и виден сразу. В
 	 * реквизиты карточка отсюда ничего не пишет; контакт заводится только
 	 * нажатием «Добавить в контакты», и данные кандидата сервер берёт из своей
 	 * копии раздела, а не из формы.
@@ -33,20 +36,31 @@
 	let {
 		website,
 		reading,
+		initial,
 		canAddContacts,
 		contactNames
 	}: {
 		website: string | null;
 		/** `null` — у сотрудника нет права читать раздел (право правки карточки). */
 		reading: { enabled: boolean; remaining: number } | null;
+		/** Раздел из кэша суток; `null` — сегодня его не читали. */
+		initial: {
+			site: SiteReport;
+			warnings: string[];
+			programMatch: ProgramMatchResult | null;
+		} | null;
 		canAddContacts: boolean;
 		/** ФИО действующих контактов организации, приведённые к виду для сравнения. */
 		contactNames: ReadonlySet<string>;
 	} = $props();
 
-	let site = $state<SiteReport | null>(null);
-	let warnings = $state<string[]>([]);
-	let programMatch = $state<ProgramMatchResult | null>(null);
+	// Дальше блок живёт своим состоянием: «Перечитать» и добавление контактов
+	// не должны сбрасывать прочитанное обратно к тому, что пришло с загрузкой.
+	let site = $state<SiteReport | null>(untrack(() => initial?.site ?? null));
+	let warnings = $state<string[]>(untrack(() => initial?.warnings ?? []));
+	let programMatch = $state<ProgramMatchResult | null>(
+		untrack(() => initial?.programMatch ?? null)
+	);
 	let failure = $state<string | null>(null);
 	let pending = $state(false);
 	let adding = $state<string | null>(null);

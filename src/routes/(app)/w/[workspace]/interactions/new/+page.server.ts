@@ -1,10 +1,11 @@
 import { error, redirect } from '@sveltejs/kit';
 import { fail, message, superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
-import { catalogListQuerySchema } from '$lib/contracts/directory';
+import { id } from '$lib/contracts/common';
+import { catalogListQuerySchema, type LookupOption } from '$lib/contracts/directory';
 import { createInteractionSchema } from '$lib/contracts/interactions';
-import { actorFromEvent } from '$lib/server/actor';
-import { listProducts, listPrograms } from '$lib/server/directory/read';
+import { actorFromEvent, type ActorContext } from '$lib/server/actor';
+import { listProducts, listPrograms, pickOrganization } from '$lib/server/directory/read';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { createInteraction } from '$lib/server/interactions/write';
 import { requirePermission } from '$lib/server/rbac';
@@ -12,6 +13,38 @@ import { responsibleOptions } from '../responsible';
 import type { Actions, PageServerLoad } from './$types';
 
 const catalogPage = catalogListQuerySchema.parse({ status: 'active', pageSize: 100 });
+
+const organizationParam = id('Идентификатор организации в ссылке некорректен');
+
+/**
+ * Вуз из ссылки `?organization=<id>` — с карточки организации форма приходит
+ * уже с основной стороной. Подставляется только то, что человек нашёл бы и
+ * поиском в форме: действующая организация в его области доступа. Иначе
+ * форма открывается пустой и говорит, почему.
+ */
+async function presetInstitution(
+	ctx: ActorContext,
+	raw: string | null
+): Promise<{ option: LookupOption | null; refused: string | null }> {
+	if (raw === null) {
+		return { option: null, refused: null };
+	}
+
+	const parsed = organizationParam.safeParse(raw);
+
+	if (!parsed.success) {
+		return { option: null, refused: parsed.error.issues[0].message };
+	}
+
+	const option = await pickOrganization(ctx, parsed.data);
+
+	return option === null
+		? {
+				option: null,
+				refused: 'Организация из ссылки не найдена, в архиве или вне вашей области доступа'
+			}
+		: { option, refused: null };
+}
 
 export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
@@ -38,11 +71,12 @@ export const load: PageServerLoad = async (event) => {
 		);
 	}
 
-	const [programs, products, users, form] = await Promise.all([
+	const [programs, products, users, form, preset] = await Promise.all([
 		listPrograms(ctx, catalogPage),
 		listProducts(ctx, catalogPage),
 		responsibleOptions(event),
-		superValidate(zod4(createInteractionSchema))
+		superValidate(zod4(createInteractionSchema)),
+		presetInstitution(ctx, event.url.searchParams.get('organization'))
 	]);
 
 	// Ответственный по умолчанию подставляется сразу: в девяти случаях из десяти
@@ -53,7 +87,9 @@ export const load: PageServerLoad = async (event) => {
 		form,
 		programs: programs.items,
 		products: products.items,
-		users
+		users,
+		presetInstitution: preset.option,
+		presetRefused: preset.refused
 	};
 };
 
