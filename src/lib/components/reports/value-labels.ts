@@ -158,7 +158,7 @@ export function valueLabelsPlugin(options: ValueLabelsOptions): Plugin<'bar'> {
 
 			ctx.save();
 			ctx.fillStyle = options.color;
-			ctx.font = `600 11px ${options.fontFamily}`;
+			ctx.font = `600 12px ${options.fontFamily}`;
 
 			for (const point of points) {
 				ctx.textAlign = point.align;

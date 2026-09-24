@@ -871,6 +871,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 
 		/** Скачивает отчёт одного формата и возвращает файл целиком. */
 		async function download(format: string): Promise<{ name: string; body: Buffer }> {
+			await manager.getByTestId('report-export').click();
 			const [event] = await Promise.all([
 				manager.waitForEvent('download'),
 				manager.getByTestId(`report-export-${format}`).click()

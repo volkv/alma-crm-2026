@@ -1,16 +1,22 @@
 <script lang="ts">
-	import type { Chart as ChartInstance, ChartConfiguration } from 'chart.js';
+	import type { Chart as ChartInstance } from 'chart.js';
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import { theme, type Theme } from '$lib/theme.svelte';
-	import { downloadChartPdf, downloadChartPng } from './chart-file';
-	import { valueLabelsPlugin } from './value-labels';
+	import { theme } from '$lib/theme.svelte';
+	import {
+		chartConfiguration,
+		horizontalHeight,
+		loadChart,
+		screenPalette,
+		type ChartSeries
+	} from './chart-config';
+	import { downloadChartPdf, downloadChartPng, renderChartSheet } from './chart-file';
 
 	/**
 	 * Диаграмма отчёта.
 	 *
 	 * Chart.js подключается динамически и только на клиенте: библиотека рисует в
-	 * `canvas`, поэтому растр для PNG и PDF получается одним вызовом холста — без
+	 * `canvas`, поэтому растр для PNG и PDF получается вызовом холста — без
 	 * сериализации SVG, подстановки шрифтов и внешних стилей. Экземпляр создаётся
 	 * и уничтожается в `$effect`: при смене выборки диаграмма пересобирается, а
 	 * не наслаивается на прежнюю.
@@ -26,17 +32,20 @@
 		stacked = false,
 		title,
 		note,
+		context,
 		fileName,
 		summary,
 		onselect
 	}: {
 		labels: readonly string[];
-		/** Серия: подпись, значения по категориям и токен цвета из темы. */
-		datasets: readonly { label: string; values: readonly number[]; token: string }[];
+		/** Серия: ключ (он выбирает цвет), подпись и значения по категориям. */
+		datasets: readonly ChartSeries[];
 		horizontal?: boolean;
 		stacked?: boolean;
 		title: string;
 		note: string;
+		/** Условия выборки для шапки выгруженного файла: период, отбор, доступ. */
+		context: readonly string[];
 		/** Основа имени файла: расширение дописывают кнопки. */
 		fileName: string;
 		/** Пересказ чисел словами: `canvas` для чтения с экрана недоступен. */
@@ -46,12 +55,13 @@
 	} = $props();
 
 	/**
-	 * Столбцы списком под диаграммой.
+	 * Столбцы списком под диаграммой — для клавиатуры и чтения с экрана.
 	 *
 	 * Диаграмма нарисована на холсте: столбца в разметке нет, поэтому выбрать его
-	 * можно было только мышью — ни фокуса, ни `Enter`. Список даёт то же самое
-	 * действие кнопкой на каждый столбец, и он же называет числа рядом с
-	 * названиями, а не только внутри картинки.
+	 * можно было бы только мышью — ни фокуса, ни `Enter`. Список даёт то же самое
+	 * действие кнопкой на каждый столбец. Глазу он не нужен — подписи оси и числа
+	 * на холсте говорят то же самое, — поэтому скрыт и появляется, только когда
+	 * фокус попадает внутрь.
 	 */
 	const columnTotals = $derived(
 		labels.map((_, index) =>
@@ -70,41 +80,24 @@
 	type ChartCanvas = HTMLCanvasElement & { chart?: ChartInstance };
 
 	let canvas = $state<ChartCanvas | null>(null);
-	let chart = $state<ChartInstance | null>(null);
 
 	/**
-	 * Цвета диаграммы — из токенов темы: `#hex` в компоненте недопустим.
-	 *
-	 * Значения читаются из документа, а тема приходит аргументом и в самой работе
-	 * не участвует: смена темы меняет значения всех токенов разом, и без этой
+	 * Высота холста. Горизонтальные полосы — от числа строк: воронка из трёх
+	 * стадий и из двенадцати не должны быть одной высоты с полосами разной
+	 * толщины.
+	 */
+	const height = $derived(horizontal ? horizontalHeight(labels.length) : 256);
+
+	/**
+	 * Цвета — из токенов темы. Тема приходит аргументом и в самой работе не
+	 * участвует: смена темы меняет значения всех токенов разом, и без этой
 	 * зависимости тёмная диаграмма осталась бы со светлой сеткой и подписями.
 	 */
-	function readPalette(_theme: Theme, series: readonly { token: string }[]) {
-		const styles = getComputedStyle(document.documentElement);
-		const read = (token: string): string => {
-			const value = styles.getPropertyValue(token).trim();
+	const palette = $derived.by(() => {
+		void theme.resolved;
 
-			// Токена может не оказаться только если его переименовали в теме: пустой
-			// цвет Chart.js молча превратит в прозрачный, поэтому лучше видимый серый.
-			return value === '' ? '#94a3b8' : value;
-		};
-
-		return {
-			/** Подпись значения над столбцом. */
-			label: read('--color-foreground'),
-			/** Деления и легенда: текст второго плана. */
-			axis: read('--color-muted-foreground'),
-			/** Сетка — та же линия, что разделяет строки таблицы. */
-			grid: read('--color-border'),
-			/** Ось: край контрола, чуть заметнее сетки. */
-			edge: read('--color-border-strong'),
-			/** Подложка выгруженной картинки — панель, на которой лежит диаграмма. */
-			sheet: read('--color-surface'),
-			series: series.map((item) => read(item.token))
-		};
-	}
-
-	const palette = $derived(readPalette(theme.resolved, datasets));
+		return screenPalette(datasets);
+	});
 
 	$effect(() => {
 		const element = canvas;
@@ -113,108 +106,65 @@
 			return;
 		}
 
-		const configuration: ChartConfiguration<'bar', number[], string> = {
-			type: 'bar',
-			// Подписи значений рисует свой плагин — прямо на холсте, поэтому число
-			// над столбцом уезжает и в PNG, и в PDF диаграммы вместе с картинкой.
-			plugins: [
-				valueLabelsPlugin({
-					stacked,
-					horizontal,
-					color: palette.label,
-					fontFamily: getComputedStyle(element).fontFamily
-				})
-			],
-			data: {
-				labels: [...labels],
-				datasets: datasets.map((series, index) => ({
-					label: series.label,
-					data: [...series.values],
-					backgroundColor: palette.series[index],
-					borderWidth: 0,
-					borderRadius: 2,
-					maxBarThickness: 28
-				}))
-			},
-			options: {
-				indexAxis: horizontal ? 'y' : 'x',
-				responsive: true,
-				maintainAspectRatio: false,
-				// Умолчание Chart.js — серый `#666` на прозрачном: на тёмной панели
-				// его не видно. Цвет текста диаграммы задаётся темой, как и всё
-				// остальное на экране.
-				color: palette.axis,
-				// Двойная плотность: PNG диаграммы годится и для вставки в документ.
-				devicePixelRatio: 2,
-				animation: false,
-				// Место под подпись значения: без запаса число у самого длинного
-				// столбца обрезается краем холста.
-				layout: { padding: horizontal ? { right: 32 } : { top: 18 } },
-				plugins: {
-					legend: {
-						display: datasets.length > 1,
-						position: 'bottom',
-						labels: { color: palette.axis }
-					},
-					tooltip: { enabled: true }
-				},
-				scales: {
-					x: {
-						stacked,
-						ticks: { precision: 0, color: palette.axis },
-						grid: { display: !horizontal, color: palette.grid },
-						border: { color: palette.edge }
-					},
-					y: {
-						stacked,
-						ticks: { precision: 0, color: palette.axis },
-						grid: { display: horizontal, color: palette.grid },
-						border: { color: palette.edge }
-					}
-				},
-				onClick: (_event, elements) => {
-					if (elements.length > 0) {
-						onselect?.(elements[0].index);
-					}
-				}
-			}
-		};
+		const configuration = chartConfiguration({
+			labels,
+			datasets,
+			horizontal,
+			stacked,
+			palette,
+			fontFamily: getComputedStyle(element).fontFamily,
+			legend: datasets.length > 1,
+			onselect
+		});
 
 		let disposed = false;
 		let instance: ChartInstance | null = null;
 
 		void (async () => {
-			const { Chart, registerables } = await import('chart.js');
+			const Chart = await loadChart();
 
 			if (disposed) {
 				return;
 			}
 
-			Chart.register(...registerables);
 			instance = new Chart(element, configuration);
 			element.chart = instance;
-			chart = instance;
 		})();
 
 		return () => {
 			disposed = true;
 			instance?.destroy();
 			delete element.chart;
-			chart = null;
 		};
 	});
 
-	function save(kind: 'png' | 'pdf') {
-		const element = chart?.canvas ?? canvas;
+	let saving = $state(false);
 
-		if (element === null || element === undefined) {
+	async function save(kind: 'png' | 'pdf') {
+		if (canvas === null) {
 			return;
 		}
 
-		if (kind === 'png') {
-			downloadChartPng(element, `${fileName}.png`, palette.sheet);
-		} else {
-			downloadChartPdf(element, `${fileName}.pdf`, palette.sheet);
+		saving = true;
+
+		try {
+			const sheet = await renderChartSheet({
+				title,
+				context,
+				labels,
+				datasets,
+				horizontal,
+				stacked,
+				fontFamily: getComputedStyle(canvas).fontFamily
+			});
+
+			if (kind === 'png') {
+				downloadChartPng(sheet, `${fileName}.png`);
+			} else {
+				downloadChartPdf(sheet, `${fileName}.pdf`);
+			}
+		} finally {
+			saving = false;
 		}
 	}
 </script>
@@ -226,25 +176,40 @@
 			<p class="mt-0.5 text-xs text-muted-foreground">{note}</p>
 		</div>
 		<div class="flex shrink-0 gap-1.5">
-			<Button variant="outline" size="xs" onclick={() => save('png')} data-testid="chart-png">
+			<Button
+				variant="outline"
+				size="xs"
+				disabled={saving}
+				onclick={() => void save('png')}
+				data-testid="chart-png"
+			>
 				<DownloadIcon aria-hidden="true" />
 				PNG
 			</Button>
-			<Button variant="outline" size="xs" onclick={() => save('pdf')} data-testid="chart-pdf">
+			<Button
+				variant="outline"
+				size="xs"
+				disabled={saving}
+				onclick={() => void save('pdf')}
+				data-testid="chart-pdf"
+			>
 				<DownloadIcon aria-hidden="true" />
 				PDF
 			</Button>
 		</div>
 	</header>
 
-	<div class="h-72" role="img" aria-label="{title}. {summary}">
+	<div style:height="{height}px" role="img" aria-label="{title}. {summary}">
 		<canvas bind:this={canvas} data-testid="report-chart-canvas"></canvas>
 	</div>
 
 	{#if onselect}
 		<!-- Тот же переход, что и по клику на столбец: с клавиатуры до холста не
-			добраться, а отбор по стадии — не украшение диаграммы, а работа. -->
-		<div class="mt-3 flex flex-wrap items-center gap-1.5">
+			добраться, а отбор по стадии — не украшение диаграммы, а работа. Глазом
+			список виден, только пока фокус внутри него. -->
+		<div
+			class="sr-only flex-wrap items-center gap-1.5 focus-within:not-sr-only focus-within:mt-3 focus-within:flex"
+		>
 			<span class="text-xs text-muted-foreground">Отобрать по столбцу:</span>
 			{#each labels as label, index (label)}
 				<button

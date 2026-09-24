@@ -213,6 +213,10 @@ async function seed(): Promise<void> {
 
 test('отчёт выгружается книгой, и файл непустой', async ({ page }) => {
 	await page.goto('/reports');
+	await waitForHydration(page);
+
+	// Форматы собраны в меню одной кнопки «Выгрузить».
+	await page.getByTestId('report-export').click();
 
 	const [download] = await Promise.all([
 		page.waitForEvent('download'),
@@ -244,6 +248,9 @@ test('переключение режима пересчитывает итог�
 	// начало работы и уход с первой стадии. Обе строки опираются на одну запись
 	// о стадии, и различает их только имя строки.
 	await expect(page.getByTestId('report-row-count')).toHaveText('1');
+	// Правило подсчёта раскрывается по кнопке и остаётся раскрытым при смене
+	// режима: текст обязан смениться вместе с числами.
+	await page.getByTestId('report-method-toggle').click();
 	await expect(page.getByText(SNAPSHOT_RULE)).toBeVisible();
 
 	await page.getByTestId('report-mode-movement').click();

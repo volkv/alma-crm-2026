@@ -1,12 +1,17 @@
 /**
  * Диаграмма файлом: PNG и PDF собирает браузер, а не сервер.
  *
- * Картинка уже нарисована на экране, и отправлять её на сервер, чтобы получить
- * обратно тот же растр, значило бы принимать чужой файл: проверять подпись,
- * потолок размера и размеры холста — отдельную работу по безопасности, за
- * которой не стоит ни одно требование. Поэтому сервер картинок не принимает, а
- * таблица чисел в серверном PDF рисуется без диаграммы: числа и картинка не
- * должны приезжать из разных мест.
+ * Картинка уже умеет рисоваться на клиенте, и отправлять её на сервер, чтобы
+ * получить обратно тот же растр, значило бы принимать чужой файл: проверять
+ * подпись, потолок размера и размеры холста — отдельную работу по
+ * безопасности, за которой не стоит ни одно требование. Поэтому сервер
+ * картинок не принимает, а таблица чисел в серверном PDF рисуется без
+ * диаграммы: числа и картинка не должны приезжать из разных мест.
+ *
+ * Файл — не снимок экранного холста. Диаграмма без заголовка, периода и
+ * отбора, вставленная в документ, не говорит, что на ней: поэтому лист
+ * собирается заново — шапка с условиями выборки, та же диаграмма и легенда —
+ * и всегда светлым, в какой бы теме его ни выгрузили.
  *
  * PDF собирается здесь же, без библиотеки. Одностраничный документ с единственным
  * изображением — это семь объектов и таблица смещений; целая библиотека вёрстки
@@ -14,6 +19,190 @@
  * его PDF понимает потоком как есть (`DCTDecode`), тогда как PNG пришлось бы
  * распаковывать и пересобирать по частям вместе с каналом прозрачности.
  */
+import {
+	chartConfiguration,
+	horizontalHeight,
+	loadChart,
+	printPalette,
+	type ChartSeries
+} from './chart-config';
+
+/** Ширина области диаграммы на листе, в точках CSS. */
+const SHEET_CHART_WIDTH = 1120;
+
+/** Поля листа. */
+const SHEET_PADDING = 32;
+
+/** Плотность растра: картинку вставляют в документ и печатают. */
+const SHEET_SCALE = 2;
+
+/** Высота вертикальной диаграммы на листе вместе с легендой. */
+const SHEET_VERTICAL_HEIGHT = 400;
+
+/** Под легенду горизонтальной диаграммы. */
+const SHEET_LEGEND_HEIGHT = 36;
+
+const TITLE_SIZE = 18;
+const TITLE_LINE = 26;
+const CONTEXT_SIZE = 13;
+const CONTEXT_LINE = 20;
+const HEADER_GAP = 16;
+
+export type ChartSheetInput = {
+	title: string;
+	/** Строки шапки: период, отбор, область доступа, момент сборки. */
+	context: readonly string[];
+	labels: readonly string[];
+	datasets: readonly ChartSeries[];
+	horizontal: boolean;
+	stacked: boolean;
+	fontFamily: string;
+};
+
+/** Разбивка строки по словам под ширину листа. */
+function wrap(context: CanvasRenderingContext2D, text: string, width: number): string[] {
+	const lines: string[] = [];
+	let line = '';
+
+	for (const word of text.split(' ')) {
+		const next = line === '' ? word : `${line} ${word}`;
+
+		if (line !== '' && context.measureText(next).width > width) {
+			lines.push(line);
+			line = word;
+		} else {
+			line = next;
+		}
+	}
+
+	if (line !== '') {
+		lines.push(line);
+	}
+
+	return lines;
+}
+
+function context2d(canvas: HTMLCanvasElement): CanvasRenderingContext2D {
+	const context = canvas.getContext('2d');
+
+	if (context === null) {
+		throw new Error('Браузер не дал холст для сборки картинки');
+	}
+
+	return context;
+}
+
+/**
+ * Диаграмма на отдельном холсте в светлой палитре. Холст висит за краем окна:
+ * Chart.js меряет шрифты и размеры по документу, и вне документа он их не
+ * узнает. После съёмки растр копируется, а экземпляр и холст уничтожаются.
+ */
+async function renderChart(input: ChartSheetInput, height: number): Promise<HTMLCanvasElement> {
+	const Chart = await loadChart();
+	const host = document.createElement('div');
+	const canvas = document.createElement('canvas');
+
+	host.setAttribute('aria-hidden', 'true');
+	host.style.cssText = `position:fixed;left:-20000px;top:0;width:${SHEET_CHART_WIDTH}px;height:${height}px;pointer-events:none`;
+	canvas.style.cssText = `width:${SHEET_CHART_WIDTH}px;height:${height}px`;
+	canvas.width = SHEET_CHART_WIDTH;
+	canvas.height = height;
+	host.append(canvas);
+	document.body.append(host);
+
+	try {
+		const configuration = chartConfiguration({
+			labels: input.labels,
+			datasets: input.datasets,
+			horizontal: input.horizontal,
+			stacked: input.stacked,
+			palette: printPalette(input.datasets),
+			fontFamily: input.fontFamily,
+			legend: true
+		});
+
+		configuration.options = {
+			...configuration.options,
+			responsive: false,
+			devicePixelRatio: SHEET_SCALE
+		};
+
+		const chart = new Chart(canvas, configuration);
+
+		try {
+			// `destroy` стирает холст: растр переносится до него.
+			const copy = document.createElement('canvas');
+
+			copy.width = canvas.width;
+			copy.height = canvas.height;
+			context2d(copy).drawImage(canvas, 0, 0);
+
+			return copy;
+		} finally {
+			chart.destroy();
+		}
+	} finally {
+		host.remove();
+	}
+}
+
+/**
+ * Лист выгрузки: заголовок, условия выборки и диаграмма с легендой на белом.
+ * Одна и та же сборка идёт и в PNG, и в PDF.
+ */
+export async function renderChartSheet(input: ChartSheetInput): Promise<HTMLCanvasElement> {
+	const palette = printPalette(input.datasets);
+	const chartHeight = input.horizontal
+		? horizontalHeight(input.labels.length) + SHEET_LEGEND_HEIGHT
+		: SHEET_VERTICAL_HEIGHT;
+	const chart = await renderChart(input, chartHeight);
+
+	const sheet = document.createElement('canvas');
+	const context = context2d(sheet);
+
+	context.font = `400 ${CONTEXT_SIZE}px ${input.fontFamily}`;
+	const contextLines = input.context.flatMap((line) => wrap(context, line, SHEET_CHART_WIDTH));
+
+	context.font = `600 ${TITLE_SIZE}px ${input.fontFamily}`;
+	const titleLines = wrap(context, input.title, SHEET_CHART_WIDTH);
+
+	const headerHeight = titleLines.length * TITLE_LINE + contextLines.length * CONTEXT_LINE;
+	const width = SHEET_CHART_WIDTH + SHEET_PADDING * 2;
+	const height = SHEET_PADDING * 2 + headerHeight + HEADER_GAP + chartHeight;
+
+	sheet.width = width * SHEET_SCALE;
+	sheet.height = height * SHEET_SCALE;
+
+	// Размер холста сбрасывает всё состояние контекста: шрифт и масштаб
+	// ставятся после него.
+	context.scale(SHEET_SCALE, SHEET_SCALE);
+	context.fillStyle = palette.sheet;
+	context.fillRect(0, 0, width, height);
+	context.textBaseline = 'top';
+
+	let y = SHEET_PADDING;
+
+	context.fillStyle = palette.ink;
+	context.font = `600 ${TITLE_SIZE}px ${input.fontFamily}`;
+
+	for (const line of titleLines) {
+		context.fillText(line, SHEET_PADDING, y + (TITLE_LINE - TITLE_SIZE) / 2);
+		y += TITLE_LINE;
+	}
+
+	context.fillStyle = palette.axis;
+	context.font = `400 ${CONTEXT_SIZE}px ${input.fontFamily}`;
+
+	for (const line of contextLines) {
+		context.fillText(line, SHEET_PADDING, y + (CONTEXT_LINE - CONTEXT_SIZE) / 2);
+		y += CONTEXT_LINE;
+	}
+
+	y += HEADER_GAP;
+	context.drawImage(chart, SHEET_PADDING, y, SHEET_CHART_WIDTH, chartHeight);
+
+	return sheet;
+}
 
 /** Поля страницы в пунктах: узкая рамка, чтобы диаграмма не липла к краю. */
 const MARGIN_POINTS = 24;
@@ -24,35 +213,6 @@ const PAGE_HEIGHT_POINTS = 595;
 
 /** Качество JPEG: выше почти не видно, а вес растёт вдвое. */
 const JPEG_QUALITY = 0.92;
-
-/**
- * Холст диаграммы поверх листа. Сама диаграмма прозрачна, и без подложки PNG на
- * чужом фоне читался бы наоборот, а JPEG, не знающий прозрачности, залил бы её
- * чёрным.
- *
- * Цвет листа приходит снаружи — это цвет панели той темы, в которой диаграмму
- * нарисовали. Подписи и сетка на холсте тоже из темы, поэтому белый лист под
- * тёмной диаграммой дал бы светлый текст на белом: файл, который нельзя
- * прочитать ни на экране, ни на бумаге.
- */
-function onSheet(canvas: HTMLCanvasElement, background: string): HTMLCanvasElement {
-	const sheet = document.createElement('canvas');
-
-	sheet.width = canvas.width;
-	sheet.height = canvas.height;
-
-	const context = sheet.getContext('2d');
-
-	if (context === null) {
-		throw new Error('Браузер не дал холст для сборки картинки');
-	}
-
-	context.fillStyle = background;
-	context.fillRect(0, 0, sheet.width, sheet.height);
-	context.drawImage(canvas, 0, 0);
-
-	return sheet;
-}
 
 function download(blob: Blob, fileName: string): void {
 	const url = URL.createObjectURL(blob);
@@ -157,22 +317,11 @@ function pdfWithImage(jpeg: Uint8Array, width: number, height: number): Blob {
 	return new Blob(parts as BlobPart[], { type: 'application/pdf' });
 }
 
-export function downloadChartPng(
-	canvas: HTMLCanvasElement,
-	fileName: string,
-	background: string
-): void {
-	const sheet = onSheet(canvas, background);
-
+export function downloadChartPng(sheet: HTMLCanvasElement, fileName: string): void {
 	download(dataUrlToBlob(sheet.toDataURL('image/png'), 'image/png'), fileName);
 }
 
-export function downloadChartPdf(
-	canvas: HTMLCanvasElement,
-	fileName: string,
-	background: string
-): void {
-	const sheet = onSheet(canvas, background);
+export function downloadChartPdf(sheet: HTMLCanvasElement, fileName: string): void {
 	const jpeg = dataUrlToBytes(sheet.toDataURL('image/jpeg', JPEG_QUALITY));
 
 	download(pdfWithImage(jpeg, sheet.width, sheet.height), fileName);

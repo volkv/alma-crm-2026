@@ -2,17 +2,17 @@
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import DownloadIcon from '@lucide/svelte/icons/download';
+	import CircleHelpIcon from '@lucide/svelte/icons/circle-help';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
 	import Header from '$lib/components/header.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import BreakdownCard from '$lib/components/reports/breakdown-card.svelte';
+	import ExportMenu from '$lib/components/reports/export-menu.svelte';
 	import FilterBar from '$lib/components/reports/filter-bar.svelte';
 	import ReportChart from '$lib/components/reports/report-chart.svelte';
 	import ReportTable from '$lib/components/reports/report-table.svelte';
 	import {
-		exportHref,
 		interactionsHref,
 		modeHref,
 		movementDrilldownHref,
@@ -21,17 +21,10 @@
 		unsupportedListFilters
 	} from '$lib/components/reports/query';
 	import {
-		REPORT_FORMATS,
-		REPORT_FORMAT_LABELS,
 		REPORT_MODES,
 		REPORT_MODE_LABELS,
-		REPORT_PDF_FULL_MAX_ROWS,
-		REPORT_PDF_LAYOUTS,
-		REPORT_PDF_LAYOUT_LABELS,
-		REPORT_PDF_ROWS,
 		type ReportFunnelWorkspace,
-		type ReportParam,
-		type ReportPdfLayout
+		type ReportParam
 	} from '$lib/contracts/reports';
 	import { formatDate, formatDateTime, formatNumber, pluralize } from '$lib/format';
 	import { cn } from '$lib/utils';
@@ -51,19 +44,33 @@
 	const droppedByList = $derived(unsupportedListFilters(page.url));
 
 	/**
-	 * Вид PDF: сводка (итоги и первые `REPORT_PDF_ROWS` строк) или полный отчёт
-	 * по всей выборке. Выше потолка полного PDF выбор закрыт — сервер ответил бы
-	 * отказом, а вся таблица есть в XLSX.
+	 * Методология — по кнопке. Правило подсчёта и моменты фильтров стояли над
+	 * отбором тремя абзацами и отодвигали результат за первый экран; тот, кто
+	 * проверяет число, раскроет их, а тот, кто смотрит, — нет. Выбор живёт в
+	 * компоненте: смена режима и фильтров его не сбрасывает.
 	 */
-	let pdfLayout = $state<ReportPdfLayout>('summary');
+	let methodOpen = $state(false);
 
-	const fullPdfTooLarge = $derived(data.totals.rowCount > REPORT_PDF_FULL_MAX_ROWS);
-	const effectivePdfLayout = $derived<ReportPdfLayout>(fullPdfTooLarge ? 'summary' : pdfLayout);
+	/**
+	 * Условия выборки для шапки выгруженной диаграммы: картинка в чужом
+	 * документе должна сама говорить, за какой период и по какому отбору она.
+	 */
+	const chartContext = $derived.by(() => {
+		const base = data.meta.filters.filter(
+			(filter) => filter.label === 'Режим' || filter.label === 'Период'
+		);
+		const narrowing = data.meta.filters.filter(
+			(filter) => filter.label !== 'Режим' && filter.label !== 'Период'
+		);
 
-	const pdfLayoutHints: Record<ReportPdfLayout, string> = {
-		summary: `Итоги, числа диаграмм и первые ${REPORT_PDF_ROWS} строк таблицы`,
-		full: `Итоги, числа диаграмм и вся таблица выборки — до ${formatNumber(REPORT_PDF_FULL_MAX_ROWS)} строк`
-	};
+		return [
+			base.map((filter) => `${filter.label}: ${filter.value}`).join(' · '),
+			narrowing.length === 0
+				? 'Отбор: без фильтров'
+				: `Отбор: ${narrowing.map((filter) => `${filter.label} — ${filter.value}`).join('; ')}`,
+			`Область доступа: ${data.meta.scope}. Собран ${formatDateTime(data.meta.generatedAt)}, отчёт ${data.meta.reportId}`
+		];
+	});
 
 	/** Пересказ воронки словами: `canvas` для чтения с экрана недоступен. */
 	function funnelSummary(workspace: ReportFunnelWorkspace): string {
@@ -84,16 +91,6 @@
 					)
 					.join('; ')
 	);
-
-	/** Токены серий: шесть видов событий — шесть цветов темы. */
-	const SERIES_TOKENS = [
-		'--color-primary',
-		'--color-info',
-		'--color-warning',
-		'--color-danger',
-		'--color-success',
-		'--color-faint'
-	];
 
 	const breakdownParams: Record<string, ReportParam> = {
 		organizations: 'org',
@@ -141,61 +138,24 @@
 	}
 </script>
 
+{#snippet tile(label: string, value: number, hint: string, testId?: string)}
+	<div class="flex min-w-44 flex-1 flex-col rounded-lg border border-border bg-surface px-3 py-2">
+		<span class="text-xs text-muted-foreground">{label}</span>
+		<span class="mt-0.5 flex items-baseline gap-2">
+			<span class="text-2xl leading-tight font-semibold" data-testid={testId}>
+				{formatNumber(value)}
+			</span>
+			<span class="text-xs text-faint">{hint}</span>
+		</span>
+	</div>
+{/snippet}
+
 <Header
 	title="Отчёты по взаимодействиям"
 	description="Где работа стоит на дату и что за период произошло. Числа экрана, диаграмм и файлов — одни и те же."
 >
 	{#snippet actions()}
-		<!-- Кнопки выгрузки собраны в один блок: подсказка показывает пальцем на
-			выгрузку целиком, а не на первый из форматов. Раскладка та же, что у
-			полосы действий заголовка, — обёртка её повторяет. -->
-		<div class="flex flex-wrap items-center gap-2" data-tour="reports-export">
-			{#each REPORT_FORMATS as format (format)}
-				{#if format === 'pdf'}
-					<!-- Переключатель вида стоит вплотную к кнопке PDF: он меняет только
-						её ссылку, а не отчёт на экране. -->
-					<div
-						class="inline-flex items-center gap-1 rounded-lg bg-muted p-[3px]"
-						role="radiogroup"
-						aria-label="Вид PDF"
-					>
-						{#each REPORT_PDF_LAYOUTS as layout (layout)}
-							{@const disabled = layout === 'full' && fullPdfTooLarge}
-							<button
-								type="button"
-								role="radio"
-								aria-checked={effectivePdfLayout === layout}
-								{disabled}
-								title={disabled
-									? `В выборке больше ${formatNumber(REPORT_PDF_FULL_MAX_ROWS)} строк: вся таблица — в XLSX`
-									: pdfLayoutHints[layout]}
-								data-testid="report-pdf-layout-{layout}"
-								class={cn(
-									'inline-flex items-center rounded-md px-2 py-0.5 text-xs font-medium whitespace-nowrap text-muted-foreground focus-ring hover:text-foreground disabled:cursor-not-allowed disabled:text-faint',
-									effectivePdfLayout === layout && 'bg-surface text-foreground shadow-xs'
-								)}
-								onclick={() => (pdfLayout = layout)}
-							>
-								{REPORT_PDF_LAYOUT_LABELS[layout]}
-							</button>
-						{/each}
-					</div>
-				{/if}
-				<Button
-					variant="outline"
-					size="sm"
-					href={exportHref(page.url, format, effectivePdfLayout)}
-					data-sveltekit-reload
-					data-testid="report-export-{format}"
-					title={format === 'pdf' ? pdfLayoutHints[effectivePdfLayout] : undefined}
-				>
-					<DownloadIcon aria-hidden="true" />
-					{format === 'pdf'
-						? `PDF · ${REPORT_PDF_LAYOUT_LABELS[effectivePdfLayout].toLowerCase()}`
-						: REPORT_FORMAT_LABELS[format]}
-				</Button>
-			{/each}
-		</div>
+		<ExportMenu rowCount={data.totals.rowCount} />
 	{/snippet}
 </Header>
 
@@ -206,42 +166,63 @@
 <!-- Поля страницы такие же, как у остальных разделов: без них полоса вкладок
 	с отрицательным отступом выходила за край окна, а «Колонки» и «Сбросить
 	фильтр» стояли вплотную к правому краю. -->
-<div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
-	<nav class="-mx-1 overflow-x-auto px-1 py-0.5" aria-label="Режим отчёта" data-tour="reports-mode">
-		<div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-[3px]">
-			{#each REPORT_MODES as mode (mode)}
-				<a
-					href={modeHref(page.url, mode)}
-					aria-current={data.meta.mode === mode ? 'page' : undefined}
-					data-testid="report-mode-{mode}"
-					class={cn(
-						'inline-flex items-center rounded-md px-3 py-1 text-sm font-medium whitespace-nowrap text-muted-foreground focus-ring hover:text-foreground',
-						data.meta.mode === mode && 'bg-surface text-foreground shadow-xs'
-					)}
-				>
-					{REPORT_MODE_LABELS[mode]}
-				</a>
-			{/each}
+<div class="flex flex-col gap-3 p-4 sm:px-9 sm:py-6">
+	<div class="flex flex-wrap items-center gap-x-3 gap-y-2">
+		<nav
+			class="-mx-1 overflow-x-auto px-1 py-0.5"
+			aria-label="Режим отчёта"
+			data-tour="reports-mode"
+		>
+			<div class="inline-flex w-fit items-center gap-1 rounded-lg bg-muted p-[3px]">
+				{#each REPORT_MODES as mode (mode)}
+					<a
+						href={modeHref(page.url, mode)}
+						aria-current={data.meta.mode === mode ? 'page' : undefined}
+						data-testid="report-mode-{mode}"
+						class={cn(
+							'inline-flex items-center rounded-md px-3 py-1 text-sm font-medium whitespace-nowrap text-muted-foreground focus-ring hover:text-foreground',
+							data.meta.mode === mode && 'bg-surface text-foreground shadow-xs'
+						)}
+					>
+						{REPORT_MODE_LABELS[mode]}
+					</a>
+				{/each}
+			</div>
+		</nav>
+		<Button
+			variant="ghost"
+			size="sm"
+			aria-expanded={methodOpen}
+			aria-controls="report-method"
+			data-testid="report-method-toggle"
+			onclick={() => (methodOpen = !methodOpen)}
+		>
+			<CircleHelpIcon aria-hidden="true" />
+			Как считается
+		</Button>
+	</div>
+
+	{#if methodOpen}
+		<div id="report-method" class="flex flex-col gap-2">
+			<InlineHint tone="info">{data.meta.semantics}</InlineHint>
+
+			<!-- Какие фильтры смотрят на дату, а какие на сегодня: те же пометки стоят
+			     у колонок, и фильтр с колонкой одного смысла читают одно значение. -->
+			<p class="text-xs text-muted-foreground" data-testid="report-filter-moments">
+				{#if data.meta.mode === 'snapshot'}
+					Стадия, состояние, ответственный за вуз, просрочка и пауза — на {formatDate(
+						data.meta.period.end
+					)}. Просрочка считается по нормативу стадии, действовавшему в тот день: правка процесса её
+					задним числом не меняет.
+				{:else}
+					Состояние и ответственный за вуз — на {formatDate(data.meta.period.end)}, конец периода;
+					стадия — та, из которой или в которую перешли.
+				{/if}
+				Вуз, тип контрагента, направление, программа, продукт, ответственный и статус передачи — по текущим
+				значениям записи.
+			</p>
 		</div>
-	</nav>
-
-	<InlineHint tone="info">{data.meta.semantics}</InlineHint>
-
-	<!-- Какие фильтры смотрят на дату, а какие на сегодня: те же пометки стоят
-	     у колонок, и фильтр с колонкой одного смысла читают одно значение. -->
-	<p class="text-xs text-muted-foreground" data-testid="report-filter-moments">
-		{#if data.meta.mode === 'snapshot'}
-			Стадия, состояние, ответственный за вуз, просрочка и пауза — на {formatDate(
-				data.meta.period.end
-			)}. Просрочка считается по нормативу стадии, действовавшему в тот день: правка процесса её
-			задним числом не меняет.
-		{:else}
-			Состояние и ответственный за вуз — на {formatDate(data.meta.period.end)}, конец периода;
-			стадия — та, из которой или в которую перешли.
-		{/if}
-		Вуз, тип контрагента, направление, программа, продукт, ответственный и статус передачи — по текущим
-		значениям записи.
-	</p>
+	{/if}
 
 	<FilterBar
 		query={data.query}
@@ -252,48 +233,25 @@
 	/>
 
 	<!-- `data-tour` — метка подсказок (`$lib/onboarding/screens`). -->
-	<div class="grid grid-cols-2 gap-3 sm:grid-cols-4" data-tour="reports-totals">
-		<div class="flex flex-col rounded-lg border border-border bg-surface px-3 py-3">
-			<span class="text-xs text-muted-foreground">
-				{data.meta.mode === 'snapshot' ? 'Взаимодействий' : 'Событий'}
-			</span>
-			<span class="mt-1 text-2xl leading-none font-semibold" data-testid="report-row-count">
-				{formatNumber(data.totals.rowCount)}
-			</span>
-			<span class="mt-1 text-xs text-faint">строк в отчёте</span>
-		</div>
-		<div class="flex flex-col rounded-lg border border-border bg-surface px-3 py-3">
-			<span class="text-xs text-muted-foreground">Взаимодействий в выборке</span>
-			<span class="mt-1 text-2xl leading-none font-semibold">
-				{formatNumber(data.totals.interactionCount)}
-			</span>
-			<span class="mt-1 text-xs text-faint">
-				{data.meta.mode === 'snapshot' ? 'по одному на строку' : 'одно даёт несколько событий'}
-			</span>
-		</div>
+	<div class="flex flex-wrap gap-3" data-tour="reports-totals">
 		{#if data.meta.mode === 'snapshot'}
-			<div class="flex flex-col rounded-lg border border-border bg-surface px-3 py-3">
-				<span class="text-xs text-muted-foreground">На паузе</span>
-				<span class="mt-1 text-2xl leading-none font-semibold">
-					{formatNumber(data.totals.paused)}
-				</span>
-				<span class="mt-1 text-xs text-faint">часы норматива стоят</span>
-			</div>
-			<div class="flex flex-col rounded-lg border border-border bg-surface px-3 py-3">
-				<span class="text-xs text-muted-foreground">Просрочено</span>
-				<span class="mt-1 text-2xl leading-none font-semibold">
-					{formatNumber(data.totals.overdue)}
-				</span>
-				<span class="mt-1 text-xs text-faint">на момент среза</span>
-			</div>
+			<!-- В срезе строка и есть взаимодействие: второе «взаимодействий в
+			     выборке» повторило бы то же число. -->
+			{@render tile('Взаимодействий', data.totals.rowCount, 'строк в отчёте', 'report-row-count')}
+			{@render tile('На паузе', data.totals.paused, 'часы норматива стоят')}
+			{@render tile('Просрочено', data.totals.overdue, 'на момент среза')}
 		{:else}
-			<div class="flex flex-col rounded-lg border border-border bg-surface px-3 py-3">
-				<span class="text-xs text-muted-foreground">Перенос при изменении процесса</span>
-				<span class="mt-1 text-2xl leading-none font-semibold">
-					{formatNumber(data.charts.movement?.migrated ?? 0)}
-				</span>
-				<span class="mt-1 text-xs text-faint">переходом не считается</span>
-			</div>
+			{@render tile('Событий', data.totals.rowCount, 'строк в отчёте', 'report-row-count')}
+			{@render tile(
+				'Взаимодействий в выборке',
+				data.totals.interactionCount,
+				'одно даёт несколько событий'
+			)}
+			{@render tile(
+				'Перенос при изменении процесса',
+				data.charts.movement?.migrated ?? 0,
+				'переходом не считается'
+			)}
 		{/if}
 	</div>
 
@@ -312,11 +270,12 @@
 				labels={workspace.stages.map((bucket) => bucket.label)}
 				datasets={[
 					{
+						key: 'count',
 						label: 'Взаимодействий',
-						values: workspace.stages.map((bucket) => bucket.value),
-						token: '--color-primary'
+						values: workspace.stages.map((bucket) => bucket.value)
 					}
 				]}
+				context={chartContext}
 				horizontal
 				onselect={(index) => selectStage(workspace, index)}
 			/>
@@ -337,11 +296,8 @@
 			fileName="Отчёт по взаимодействиям — динамика"
 			summary={movementSummary}
 			labels={movement.buckets.map((bucket) => bucket.label)}
-			datasets={movement.series.map((series, index) => ({
-				label: series.label,
-				values: series.values,
-				token: SERIES_TOKENS[index % SERIES_TOKENS.length]
-			}))}
+			datasets={movement.series}
+			context={chartContext}
 			stacked
 			onselect={selectBucket}
 		/>

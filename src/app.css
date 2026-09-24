@@ -293,6 +293,53 @@ html:not([data-theme-preference]) [data-theme-icon='light'] {
 	 */
 	--foreground: var(--grey-900);
 	--secondary: var(--grey-100);
+
+	/*
+	 * ─── Диаграммы ──────────────────────────────────────────────────────────
+	 *
+	 * Цвет серии привязан к её смыслу, а не к месту в списке: «Возврат» синий
+	 * в любой выборке, даже когда соседних серий нет. Статусные тона сюда не
+	 * берутся — «Начато» цветом ошибки читалось бы как сбой, а «Пропуск»
+	 * `warning-500` на белом даёт 1.97:1, ниже порога 3:1 для графики.
+	 *
+	 * У каждой серии две ступени: `-light` для светлого листа, `-dark` для
+	 * тёмной панели. Светлые ступени дают на белом не меньше 5:1, тёмные на
+	 * `neutral-925` — не меньше 5.7:1. Ключ `--chart-<серия>` смотрит на ступень
+	 * своей темы; выгрузка PNG и PDF читает `-light` напрямую — файл уходит в
+	 * документ и на печать, где тёмного фона нет.
+	 *
+	 * Одиночная серия (распределение по стадиям) красится `forward`: это
+	 * фиолетовый ссылок, а полоса и есть ссылка — клик открывает её строки.
+	 */
+	--chart-forward-light: var(--atmr-base-status-01);
+	--chart-forward-dark: var(--atmr-status-01-200);
+	--chart-return-light: #4055e8;
+	--chart-return-dark: #a0aaf3;
+	--chart-skipped-light: var(--atmr-warning-800);
+	--chart-skipped-dark: var(--atmr-warning-200);
+	--chart-started-light: #116a76;
+	--chart-started-dark: #8cccd4;
+	--chart-completed-light: var(--atmr-success-700);
+	--chart-completed-dark: var(--atmr-success-200);
+	--chart-cancelled-light: var(--atmr-neutral-500);
+	--chart-cancelled-dark: var(--atmr-neutral-300);
+
+	--chart-forward: var(--chart-forward-light);
+	--chart-return: var(--chart-return-light);
+	--chart-skipped: var(--chart-skipped-light);
+	--chart-started: var(--chart-started-light);
+	--chart-completed: var(--chart-completed-light);
+	--chart-cancelled: var(--chart-cancelled-light);
+
+	/*
+	 * Лист выгруженной диаграммы: всегда светлый, в какой бы теме её ни
+	 * выгрузили. Те же ступени, что у светлой панели.
+	 */
+	--chart-print-sheet: var(--atmr-neutral-0);
+	--chart-print-ink: var(--atmr-neutral-990);
+	--chart-print-muted: var(--atmr-neutral-600);
+	--chart-print-grid: var(--atmr-neutral-50);
+	--chart-print-edge: var(--atmr-neutral-200);
 }
 
 /*
@@ -376,6 +423,14 @@ html[data-theme='dark'] {
 	--info-base: var(--atmr-info-200);
 	--info-soft: var(--atmr-info-950);
 	--info-soft-foreground: var(--atmr-info-200);
+
+	/* Диаграммы: те же серии, ступени для тёмной панели. */
+	--chart-forward: var(--chart-forward-dark);
+	--chart-return: var(--chart-return-dark);
+	--chart-skipped: var(--chart-skipped-dark);
+	--chart-started: var(--chart-started-dark);
+	--chart-completed: var(--chart-completed-dark);
+	--chart-cancelled: var(--chart-cancelled-dark);
 }
 
 @theme {
