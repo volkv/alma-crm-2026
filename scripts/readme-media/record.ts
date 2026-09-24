@@ -130,8 +130,8 @@ const CLIPS: readonly Clip[] = [
 			await page.mouse.wheel(0, 300);
 			await page.waitForTimeout(BEAT);
 
-			await visit(page, '/settings/process', 'Процесс');
-			await visit(page, '/settings/process/b2b', 'Черновик изменений');
+			await visit(page, '/settings/workflows', 'Процессы');
+			await visit(page, '/settings/workflows/b2b', 'Черновик изменений');
 			await page.mouse.wheel(0, 900);
 			await page.waitForTimeout(BEAT);
 			await page.mouse.wheel(0, 900);

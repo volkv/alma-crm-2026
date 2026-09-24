@@ -975,7 +975,7 @@ const SCENES: readonly Scene[] = [
 			'Применили ко всем — и работа продолжается там же, где стояла, уже под новым названием.'
 		],
 		play: async (page, stand) => {
-			await visit(page, '/settings/process/b2b', 'Процесс');
+			await visit(page, '/settings/workflows/b2b', 'Процесс');
 
 			await press(page, page.getByRole('button', { name: 'Черновик изменений' }));
 			await page
@@ -1476,7 +1476,7 @@ async function restore(browser: Browser, stand: Stand, storage: Map<Role, Sessio
 
 	if (stand.renamed) {
 		await withRole('admin', async (page) => {
-			await page.goto(`${BASE_URL}/settings/process/b2b`, { waitUntil: 'load' });
+			await page.goto(`${BASE_URL}/settings/workflows/b2b`, { waitUntil: 'load' });
 			await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });
 			await page.getByRole('button', { name: 'Черновик изменений' }).click();
 			await page
