@@ -44,7 +44,7 @@ Keycloak приложение говорит по сети своим клиен
 | `@aws-sdk/client-s3`             | 3.1134.0 | Apache-2.0      | S3-совместимое хранилище файлов документов (в поставке — MinIO)    |
 | `docxtemplater`                  | 3.69.3   | MIT             | сборка DOCX по шаблону из `templates/`                             |
 | `pizzip`                         | 3.2.0    | MIT или GPL-3.0 | zip-контейнер DOCX, которым пользуется `docxtemplater`             |
-| `exceljs`                        | 4.4.0    | MIT             | запись книг `.xlsx` для выгрузок                                   |
+| `exceljs`                        | 4.4.0    | MIT             | запись книг `.xlsx`: выгрузки, списки выбора в шаблоне LMS         |
 | `xlsx` (SheetJS)                 | 0.20.3   | Apache-2.0      | чтение загруженных книг и запись формата `.xls`                    |
 | `nodemailer`                     | 10.0.10  | MIT-0           | отправка уведомлений по SMTP                                       |
 | `@asteasolutions/zod-to-openapi` | 9.1.0    | MIT             | документ OpenAPI 3.1 из тех же схем Zod, что проверяют запросы     |

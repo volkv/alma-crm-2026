@@ -127,6 +127,7 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'exchange.group_completed': 'Обучение группы отмечено завершённым',
 	'exchange.roster_loaded': 'Список слушателей группы загружен',
 	'exchange.learner_removed': 'Слушатель убран из списка группы',
+	'exchange.roster_exported': 'Список слушателей выгружен для LMS',
 	'reports.exported': 'Отчёт по взаимодействиям выгружен',
 	'audit.exported': 'Журнал выгружен',
 	'api.request': 'Обращение к API',

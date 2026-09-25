@@ -52,9 +52,10 @@ import { withTransaction, type Tx } from '../../db/transaction';
 import { publishAfterCommit } from '../../live/publish';
 import { contactFullName, parsePersonName, type ContactName } from '../../directory/contacts';
 import { createAffiliation, createPerson } from '../../directory/write';
-import { NotFoundError, ValidationError } from '../../errors';
+import { ForbiddenError, NotFoundError, ValidationError } from '../../errors';
 import { interactionScopeFilter } from '../../interactions/access';
 import { personVisible } from '../../people/access';
+import { consentWithdrawn } from '../../people/consents';
 import { hashEmail, normalizeEmail } from '../../people/pii';
 import { withPiiTrace } from '../../people/pii-trace';
 import { toPersonView } from '../../people/serialize';
@@ -65,6 +66,7 @@ import { getExchangeSettings } from '../settings';
 import { deliverMessage } from './delivery';
 import { enqueueOutbound } from './outbox';
 import { groupRequestExternalId } from './payloads';
+import { buildLmsUserWorkbook, type LmsUserRow } from './roster-export';
 
 /* ------------------------------------------------------------ разбор файла */
 
@@ -642,6 +644,103 @@ export async function listInteractionLearners(
 	});
 }
 
+export type RosterExport = {
+	fileName: string;
+	body: Uint8Array<ArrayBuffer>;
+	/** Сколько слушателей в книге. */
+	rowCount: number;
+	/** Сколько не выгружено: согласие на обработку данных отозвано. */
+	skippedCount: number;
+};
+
+/** Имя файла выгрузки: поток и день по Москве, как у остальных выгрузок. */
+export function rosterExportFileName(streamNumber: number, day: string): string {
+	return `Загрузка пользователей — поток ${streamNumber} — ${day}.xlsx`;
+}
+
+/**
+ * Список потока книгой по шаблону загрузки пользователей в систему обучения.
+ *
+ * Книга несёт почту и телефон открытым текстом, поэтому право на персональные
+ * данные обязательно: маскированная выгрузка в систему обучения бесполезна, и
+ * отказ здесь честнее файла со звёздочками. Отказ пишется в журнал тем же
+ * событием, что и выгрузка.
+ *
+ * Люди с отозванным согласием в книгу не попадают: выгрузка выносит данные из
+ * системы, а основания их обрабатывать больше нет. Сколько их — в журнале
+ * числом, без имён.
+ *
+ * Контакты читаются сериализатором людей в области следа: кому раскрыли, у
+ * кого раскрыли — журнал запишет так же, как при просмотре списка.
+ */
+export async function exportLearningGroupRoster(
+	ctx: ActorContext,
+	input: LearningGroupRosterInput
+): Promise<RosterExport> {
+	const denial = {
+		type: 'exchange.roster_exported',
+		subject: { type: 'interaction', id: input.interactionId }
+	} as const;
+
+	await requirePermission(ctx, 'interactions.read', denial);
+	await requirePermission(ctx, 'people.read', denial);
+
+	if (!can(ctx, 'people.read_pii')) {
+		// Своим текстом, а не общим «требуется people.read_pii»: сотруднику надо
+		// понять, почему список на экране он видит, а выгрузить не может.
+		await recordAuditEvent(ctx, { ...denial, outcome: 'denied' });
+
+		throw new ForbiddenError(
+			'Выгрузка для LMS содержит почту и телефон слушателей открытым текстом: нужно право на просмотр персональных данных'
+		);
+	}
+
+	const db = getDb();
+	const group = await readGroup(ctx, db, input, false);
+
+	const { rows, skippedCount } = await withPiiTrace(ctx, async () => {
+		const learners = await db
+			.select({ person: people, withdrawn: consentWithdrawn })
+			.from(learningGroupLearners)
+			.innerJoin(people, eq(people.id, learningGroupLearners.personId))
+			.where(and(eq(learningGroupLearners.learningGroupId, group.id), isNull(people.anonymizedAt)))
+			.orderBy(asc(people.lastName), asc(people.firstName), asc(people.id));
+
+		const exported = learners.filter((learner) => !learner.withdrawn);
+
+		return {
+			rows: exported.map(({ person }): LmsUserRow => {
+				const view = toPersonView(ctx, person);
+
+				return {
+					lastName: view.lastName,
+					firstName: view.firstName,
+					middleName: view.middleName,
+					phone: view.phone,
+					email: view.email
+				};
+			}),
+			skippedCount: learners.length - exported.length
+		};
+	});
+
+	const body = await buildLmsUserWorkbook(rows);
+
+	await recordAuditEvent(ctx, {
+		type: 'exchange.roster_exported',
+		outcome: 'success',
+		subject: { type: 'interaction', id: group.interactionId },
+		details: { learningGroupId: group.id, rowCount: rows.length, skippedCount }
+	});
+
+	return {
+		fileName: rosterExportFileName(group.streamNumber, formatIsoDay()),
+		body,
+		rowCount: rows.length,
+		skippedCount
+	};
+}
+
 /** Сколько человек в списках групп и сколько из них передано. */
 export async function countGroupLearners(
 	groupIds: readonly string[]
@@ -667,6 +766,34 @@ export async function countGroupLearners(
 	}
 
 	return counts;
+}
+
+/**
+ * Сколько слушателей в каждой группе взаимодействия отозвали согласие: их не
+ * выгрузит файл и не передаст заявка, и диалог списка говорит об этом числом.
+ * Группа без таких людей в ответ не попадает.
+ */
+export async function countWithdrawnLearners(
+	ctx: ActorContext,
+	interactionId: string
+): Promise<Record<string, number>> {
+	const rows = await getDb()
+		.select({ learningGroupId: learningGroupLearners.learningGroupId, value: count() })
+		.from(learningGroupLearners)
+		.innerJoin(learningGroups, eq(learningGroups.id, learningGroupLearners.learningGroupId))
+		.innerJoin(interactions, eq(interactions.id, learningGroups.interactionId))
+		.innerJoin(people, eq(people.id, learningGroupLearners.personId))
+		.where(
+			and(
+				eq(learningGroups.interactionId, interactionId),
+				interactionScopeFilter(ctx),
+				isNull(people.anonymizedAt),
+				consentWithdrawn
+			)
+		)
+		.groupBy(learningGroupLearners.learningGroupId);
+
+	return Object.fromEntries(rows.map((row) => [row.learningGroupId, row.value]));
 }
 
 /**
@@ -762,10 +889,17 @@ export async function sendLearningGroupRoster(
 			]);
 		}
 
+		// Считаются так же, как соберётся тело (`payloads.ts`, `readLearners`):
+		// обезличенные и отозвавшие согласие в систему обучения не уходят, и
+		// сколько отозвавших осталось за бортом — число в журнале.
 		const [learners] = await tx
-			.select({ value: count() })
+			.select({
+				value: sql<number>`count(*) filter (where not ${consentWithdrawn})::int`,
+				withdrawn: sql<number>`count(*) filter (where ${consentWithdrawn})::int`
+			})
 			.from(learningGroupLearners)
-			.where(eq(learningGroupLearners.learningGroupId, group.id));
+			.innerJoin(people, eq(people.id, learningGroupLearners.personId))
+			.where(and(eq(learningGroupLearners.learningGroupId, group.id), isNull(people.anonymizedAt)));
 
 		const externalId = groupRequestExternalId(group.interactionId, group.streamNumber);
 		const rosterMessages = and(
@@ -785,7 +919,9 @@ export async function sendLearningGroupRoster(
 
 			if (previous === undefined) {
 				throw new ValidationError('Список не передан', [
-					'В группе нет ни одного слушателя, и состав её ещё не передавали: сначала загрузите список'
+					(learners?.withdrawn ?? 0) > 0
+						? 'В группе нет слушателей с действующим согласием на обработку данных, и состав её ещё не передавали'
+						: 'В группе нет ни одного слушателя, и состав её ещё не передавали: сначала загрузите список'
 				]);
 			}
 		}
@@ -829,7 +965,8 @@ export async function sendLearningGroupRoster(
 				details: {
 					exchangeMessageId: id,
 					learningGroupId: group.id,
-					learnerCount: learners?.value ?? 0
+					learnerCount: learners?.value ?? 0,
+					skippedCount: learners?.withdrawn ?? 0
 				}
 			},
 			tx

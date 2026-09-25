@@ -24,6 +24,19 @@ import { assertPersonVisible, personVisible } from './access';
 import { requirePermission } from '../rbac';
 
 /**
+ * Согласие отозвано и не дано заново: у человека есть отозванное основание
+ * обработки и нет ни одного действующего. Условие над строкой `people` — для
+ * выборок, которые выносят данные человека из системы (передача списка в
+ * систему обучения, выгрузка списка файлом): основания их обрабатывать больше
+ * нет. Человек без записей о согласии сюда не попадает — у него ничего не
+ * отзывали.
+ */
+export const consentWithdrawn = sql<boolean>`(
+	exists (select 1 from ${consents} where ${consents.personId} = ${people.id} and ${consents.withdrawnAt} is not null)
+	and not exists (select 1 from ${consents} where ${consents.personId} = ${people.id} and ${consents.withdrawnAt} is null)
+)`;
+
+/**
  * Автор фиксации и автор отзыва — это одна и та же таблица в двух ролях,
  * поэтому каждая роль входит в запрос под своим именем.
  */

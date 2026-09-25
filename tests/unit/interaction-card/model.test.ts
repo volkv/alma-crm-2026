@@ -146,6 +146,8 @@ const NO_EXCHANGE: CardSource['exchange'] = {
 	canSend: true,
 	canComplete: true,
 	canManageRoster: true,
+	canExportRoster: true,
+	withdrawnLearners: {},
 	issue: null,
 	learners: null
 };

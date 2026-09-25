@@ -1,9 +1,12 @@
 <script lang="ts">
+	import DownloadIcon from '@lucide/svelte/icons/download';
 	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 	import XIcon from '@lucide/svelte/icons/x';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { untrack } from 'svelte';
 	import { applyAction, enhance } from '$app/forms';
+	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -31,6 +34,7 @@
 		type RosterRowAction,
 		type RosterView
 	} from '$lib/contracts/exchange';
+	import { pluralForm, pluralize } from '$lib/format';
 	import { getCardCommands } from './commands.svelte';
 	import type { CardExchange, CardOffering } from './model';
 
@@ -139,6 +143,28 @@
 		exchange.learners === null || rosterGroup === null
 			? null
 			: exchange.learners.filter((learner) => learner.learningGroupId === rosterGroup.id)
+	);
+	/**
+	 * Книга потока по шаблону загрузки пользователей LMS. Адрес — от страницы
+	 * карточки, на которой диалог и живёт, как у живой карточки (`live.svelte.ts`).
+	 */
+	const rosterExportHref = $derived.by(() => {
+		const { workspace, id } = page.params;
+
+		if (workspace === undefined || id === undefined || rosterGroup === null) {
+			return null;
+		}
+
+		const path = resolve('/(app)/w/[workspace]/interactions/[id=uuid]/roster.xlsx', {
+			workspace,
+			id
+		});
+
+		return `${path}?group=${encodeURIComponent(rosterGroup.id)}`;
+	});
+	/** Сколько слушателей потока не попадут в выгрузку: отозвали согласие. */
+	const rosterWithdrawn = $derived(
+		rosterGroup === null ? 0 : (exchange.withdrawnLearners[rosterGroup.id] ?? 0)
 	);
 	/** Сколько строк файла загрузка возьмёт: новые люди и найденные в справочнике. */
 	const rosterLoadable = $derived(roster === null ? 0 : roster.counts.create + roster.counts.link);
@@ -412,6 +438,35 @@
 			{:else if rosterLearners.length === 0}
 				<p class="text-sm text-muted-foreground">Список пуст: загрузите файл ниже.</p>
 			{:else}
+				{#if exchange.canExportRoster && rosterExportHref !== null}
+					<div class="flex flex-col gap-2">
+						<div>
+							<Button
+								variant="outline"
+								size="sm"
+								href={rosterExportHref}
+								download
+								data-sveltekit-reload
+							>
+								<DownloadIcon aria-hidden="true" />
+								Выгрузить для LMS (xlsx)
+							</Button>
+						</div>
+						<InlineHint>
+							Заполнены фамилия, имя, отчество, телефон и email. СНИЛС, паспорт, пол, дата рождения,
+							адрес, ФИО в дательном падеже, образование и диплом CRM не собирает (минимизация
+							персональных данных) — дозаполните перед загрузкой в LMS. Заголовки совпадают с
+							шаблоном LMS.
+						</InlineHint>
+						{#if rosterWithdrawn > 0}
+							<InlineHint tone="warning">
+								{pluralize(rosterWithdrawn, ['человек', 'человека', 'человек'])}
+								{pluralForm(rosterWithdrawn, ['не выгружен', 'не выгружены', 'не выгружены'])}:
+								отозвано согласие.
+							</InlineHint>
+						{/if}
+					</div>
+				{/if}
 				<ul class="flex max-h-64 flex-col divide-y overflow-y-auto rounded-md border">
 					{#each rosterLearners as learner (learner.personId)}
 						<li class="flex flex-wrap items-center gap-x-3 gap-y-1 px-3 py-2 text-sm">

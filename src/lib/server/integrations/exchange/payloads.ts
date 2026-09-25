@@ -11,7 +11,7 @@
  * состав определяет контракт, а не то, кто нажал кнопку. Что именно уезжает,
  * решено раньше — постановкой сообщения в очередь под правами сотрудника.
  */
-import { and, asc, desc, eq, isNull } from 'drizzle-orm';
+import { and, asc, desc, eq, isNull, not } from 'drizzle-orm';
 import {
 	applicationStatusDataSchema,
 	learningGroupRequestedDataSchema,
@@ -35,6 +35,7 @@ import {
 	stageEntryStatus,
 	users
 } from '../../db/schema';
+import { consentWithdrawn } from '../../people/consents';
 import { decryptContact } from '../../people/pii';
 
 /**
@@ -271,7 +272,8 @@ export async function buildLearningGroupRequest(
  * не сотруднику, а системе обучения — по действию того, кому передача
  * разрешена, и ровно в том составе, который называет контракт. Телефон не
  * расшифровывается вовсе: он в заявку не входит. Человек без почты в список не
- * попадает — войти в систему обучения ему нечем.
+ * попадает — войти в систему обучения ему нечем. Обезличенный и отозвавший
+ * согласие — тоже: основания передавать его данные больше нет.
  */
 async function readLearners(learningGroupId: string): Promise<LearningGroupLearnerEntry[]> {
 	// Строка человека целиком, а не колонка почты: шифртекст контактов называет
@@ -281,7 +283,11 @@ async function readLearners(learningGroupId: string): Promise<LearningGroupLearn
 		.from(learningGroupLearners)
 		.innerJoin(people, eq(people.id, learningGroupLearners.personId))
 		.where(
-			and(eq(learningGroupLearners.learningGroupId, learningGroupId), isNull(people.anonymizedAt))
+			and(
+				eq(learningGroupLearners.learningGroupId, learningGroupId),
+				isNull(people.anonymizedAt),
+				not(consentWithdrawn)
+			)
 		)
 		.orderBy(asc(people.lastName), asc(people.firstName), asc(people.id));
 

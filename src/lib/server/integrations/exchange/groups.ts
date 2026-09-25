@@ -52,7 +52,7 @@ import { deliverMessage } from './delivery';
 import { countsForStage, finalResultFilter } from './evidence';
 import { groupRequestExternalId } from './payloads';
 import { enqueueOutbound } from './outbox';
-import { countGroupLearners, listInteractionLearners } from './roster';
+import { countGroupLearners, countWithdrawnLearners, listInteractionLearners } from './roster';
 
 /**
  * Можно ли отправить группу прямо сейчас; `null` — можно.
@@ -546,6 +546,14 @@ export type InteractionExchangeView = {
 	canComplete: boolean;
 	/** Может ли сотрудник загружать и править поимённые списки групп. */
 	canManageRoster: boolean;
+	/**
+	 * Может ли сотрудник выгрузить список потока файлом для системы обучения:
+	 * в файле контакты открытым текстом, поэтому нужно и право на людей, и
+	 * право на персональные данные.
+	 */
+	canExportRoster: boolean;
+	/** Сколько слушателей группы отозвали согласие и не выгрузятся: группа → число. */
+	withdrawnLearners: Record<string, number>;
 	/** Почему отправить нельзя; `null` — можно. */
 	issue: string | null;
 	/** Слушатели всех групп; `null` — люди вызывающему не видны, в карточке только числа. */
@@ -563,17 +571,21 @@ export async function readInteractionExchange(
 ): Promise<InteractionExchangeView> {
 	requirePermission(ctx, 'interactions.read');
 
-	const [groups, settings, interaction, offerings, learners] = await Promise.all([
-		listLearningGroups(ctx, interactionId),
-		getExchangeSettings(),
-		getDb()
-			.select({ status: interactions.status })
-			.from(interactions)
-			.where(and(eq(interactions.id, interactionId), interactionScopeFilter(ctx)))
-			.limit(1),
-		readOfferings(getDb(), interactionId),
-		listInteractionLearners(ctx, interactionId)
-	]);
+	const canExportRoster = can(ctx, 'people.read') && can(ctx, 'people.read_pii');
+	const [groups, settings, interaction, offerings, learners, withdrawnLearners] = await Promise.all(
+		[
+			listLearningGroups(ctx, interactionId),
+			getExchangeSettings(),
+			getDb()
+				.select({ status: interactions.status })
+				.from(interactions)
+				.where(and(eq(interactions.id, interactionId), interactionScopeFilter(ctx)))
+				.limit(1),
+			readOfferings(getDb(), interactionId),
+			listInteractionLearners(ctx, interactionId),
+			canExportRoster ? countWithdrawnLearners(ctx, interactionId) : {}
+		]
+	);
 
 	const [primary] = await getDb()
 		.select({ id: interactionParties.id })
@@ -594,6 +606,8 @@ export async function readInteractionExchange(
 		canSend: can(ctx, 'exchange.send'),
 		canComplete: can(ctx, 'stages.confirm'),
 		canManageRoster: can(ctx, 'people.write'),
+		canExportRoster,
+		withdrawnLearners,
 		learners,
 		issue: groupSendIssue({
 			hasOrganization: primary !== undefined,

@@ -4,9 +4,11 @@ import { vi } from 'vitest';
 vi.mock('$env/dynamic/private', () => ({ env: process.env }));
 
 import { and, eq } from 'drizzle-orm';
+import { formatIsoDay } from '$lib/format';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import {
 	affiliations,
+	auditEvents,
 	consents,
 	exchangeMessages,
 	interactionPrograms,
@@ -17,8 +19,10 @@ import {
 import { createPerson } from '$lib/server/directory/write';
 import { requestLearningGroup } from '$lib/server/integrations/exchange/groups';
 import {
+	exportLearningGroupRoster,
 	importLearningGroupRoster,
 	previewLearningGroupRoster,
+	readRosterFile,
 	removeLearner,
 	sendLearningGroupRoster
 } from '$lib/server/integrations/exchange/roster';
@@ -291,5 +295,65 @@ describe('поимённый список слушателей', () => {
 		};
 
 		expect(state.objects.groups[0].learnerCount).toBe(0);
+	});
+	it('отозвавший согласие не уходит ни в выгрузку для LMS, ни в передачу списка', async () => {
+		const { interactionId } = await createInteractionOn(testActor(), database);
+		const [program] = await database.db
+			.insert(programs)
+			.values({ code: 'P-CONSENT', name: 'Программа', level: 'bachelor', status: 'active' })
+			.returning({ id: programs.id });
+
+		await database.db.insert(interactionPrograms).values({ interactionId, programId: program.id });
+		const group = await requestLearningGroup(testActor(), {
+			interactionId,
+			streamNumber: 1,
+			plannedSeats: 30,
+			startsOn: null,
+			endsOn: null,
+			programId: null,
+			productIds: [],
+			purpose: 'students'
+		});
+		const input = { interactionId, learningGroupId: group.learningGroupId };
+
+		await importLearningGroupRoster(testActor(), input, file());
+
+		const [ivanov] = await database.db
+			.select({ id: people.id })
+			.from(people)
+			.where(eq(people.lastName, 'Иванов'));
+
+		await database.db
+			.update(consents)
+			.set({ withdrawnAt: formatIsoDay() })
+			.where(eq(consents.personId, ivanov.id));
+
+		const exported = await exportLearningGroupRoster(testActor(), input);
+		const book = readRosterFile(exported.fileName, exported.body);
+
+		expect(exported.skippedCount).toBe(1);
+		expect(book.rows.map((row) => row.email?.toLowerCase()).sort()).toEqual([
+			'petrova@vuz.example',
+			'sidorov@vuz.example'
+		]);
+
+		const [event] = await database.db
+			.select({ details: auditEvents.details })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'exchange.roster_exported'));
+
+		expect(event.details).toMatchObject({ rowCount: 2, skippedCount: 1 });
+
+		const sent = await sendLearningGroupRoster(testActor(), input);
+		const [message] = await database.db
+			.select({ envelope: exchangeMessages.envelope })
+			.from(exchangeMessages)
+			.where(eq(exchangeMessages.id, sent.messageId));
+		const envelope = JSON.parse(message.envelope!) as {
+			data: { learners: { personId: string }[] };
+		};
+
+		expect(envelope.data.learners).toHaveLength(2);
+		expect(envelope.data.learners.map((learner) => learner.personId)).not.toContain(ivanov.id);
 	});
 });
