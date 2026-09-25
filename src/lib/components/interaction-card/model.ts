@@ -149,7 +149,7 @@ export type CounterpartyShape = 'institution' | 'person' | 'company';
  * модель читает его оттуда.
  */
 export type CardPayment = {
-	tone: 'neutral' | 'success' | 'warning';
+	tone: 'neutral' | 'info' | 'success' | 'warning';
 	text: string;
 	/** На какой стадии отмечается; `null` — такой отметки в пройденном нет. */
 	stageName: string | null;
@@ -330,6 +330,9 @@ export const MEETING_SCHEDULED_CHECKLIST_KEY = 'meeting_scheduled';
  * Оплата по записям стадий, новые первыми: ищется последняя стадия, в чек-листе
  * которой объявлена отметка об оплате. Пока стадия открыта, отметка — условие
  * перехода, и названа она у главного действия; здесь — только где её ставят.
+ *
+ * Оплата с сайта уже загружена, а стадия с отметкой ещё впереди — это не «не
+ * отмечена»: деньги пришли, и отметку поставит вход на стадию по этому факту.
  */
 export function buildPayment(
 	entries: readonly StageEntryView[],
@@ -348,6 +351,18 @@ export function buildPayment(
 	);
 
 	if (entry === undefined) {
+		if (fact !== null) {
+			return {
+				tone: 'info',
+				text:
+					fact.stageName === null
+						? 'Оплачено на сайте'
+						: `Оплачено на сайте — отметится на стадии «${fact.stageName}»`,
+				stageName: null,
+				site
+			};
+		}
+
 		return { tone: 'neutral', text: 'Не отмечена', stageName: null, site };
 	}
 

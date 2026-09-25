@@ -83,6 +83,7 @@
 			organization={source.counterparty}
 			{shape}
 			groups={source.exchange.groups}
+			paidStreamNumber={source.paymentFact?.streamNumber ?? null}
 			onEditPlan={partyEditPlan}
 		/>
 	{/if}

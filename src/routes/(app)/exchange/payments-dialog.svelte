@@ -13,6 +13,7 @@
 	import {
 		PAYMENT_ROW_ACTION_LABELS,
 		PAYMENT_ROW_ACTIONS,
+		PAYMENT_ROW_RESULT_LABELS,
 		PAYMENTS_ASSUMPTION,
 		PAYMENTS_FILE_FORMATS_HINT,
 		type PaymentRowAction,
@@ -38,6 +39,11 @@
 		unchanged: 'neutral',
 		error: 'danger'
 	};
+
+	/** Подписи итогов: до загрузки — что станет с записью, после — что стало. */
+	const labels = $derived(
+		payments?.applied === true ? PAYMENT_ROW_RESULT_LABELS : PAYMENT_ROW_ACTION_LABELS
+	);
 
 	/** Сколько записей уйдёт в загрузку: новые и обновления. */
 	const loadable = $derived(
@@ -148,7 +154,7 @@
 				{/each}
 				<p class="text-xs text-muted-foreground">
 					{PAYMENT_ROW_ACTIONS.map(
-						(action) => `${PAYMENT_ROW_ACTION_LABELS[action]}: ${payments?.counts[action] ?? 0}`
+						(action) => `${labels[action]}: ${payments?.counts[action] ?? 0}`
 					).join(' · ')}
 				</p>
 				{#if payments.rows.length > 0}
@@ -159,7 +165,7 @@
 									<span class="text-xs text-muted-foreground tabular-nums">{row.place}</span>
 									<span class="min-w-0 flex-1 break-words">{row.fullName || '—'}</span>
 									<StatusBadge tone={ROW_TONES[row.action]}>
-										{PAYMENT_ROW_ACTION_LABELS[row.action]}
+										{labels[row.action]}
 									</StatusBadge>
 								</div>
 								{#if row.orderId !== null}

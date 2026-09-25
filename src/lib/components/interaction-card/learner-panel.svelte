@@ -22,6 +22,7 @@
 		organization,
 		shape,
 		groups,
+		paidStreamNumber,
 		onEditPlan
 	}: {
 		interaction: InteractionView;
@@ -29,6 +30,11 @@
 		shape: 'person' | 'company';
 		/** Потоки записи: из последнего берётся поток слушателя. */
 		groups: readonly LearningGroupView[];
+		/**
+		 * Поток из оплаты с сайта; `null` — оплату не загружали или данные
+		 * человека уничтожены. Показывается, пока группы в системе обучения нет.
+		 */
+		paidStreamNumber: number | null;
 		/**
 		 * Правка названия и сроков — здесь, только если в процессе нет панели
 		 * сроков, где ей место; `null` — не здесь или права на правку нет.
@@ -44,7 +50,23 @@
 			null
 		)
 	);
-	const day = (value: string | null) => (value === null ? '…' : formatDate(value));
+	/**
+	 * Поток словами — только известное: группа, заявленная без дат, остаётся
+	 * «Поток 1», а не «Поток 1: … — …».
+	 */
+	function streamLine(group: LearningGroupView): string {
+		const { startsOn, endsOn } = group;
+		const dates =
+			startsOn !== null && endsOn !== null
+				? `${formatDate(startsOn)} — ${formatDate(endsOn)}`
+				: startsOn !== null
+					? `с ${formatDate(startsOn)}`
+					: endsOn !== null
+						? `до ${formatDate(endsOn)}`
+						: null;
+
+		return dates === null ? `Поток ${group.streamNumber}` : `Поток ${group.streamNumber}: ${dates}`;
+	}
 </script>
 
 <div class="flex flex-col gap-5" data-slot="learner-panel">
@@ -84,10 +106,12 @@
 		<OfferingList {interaction} />
 		{#if shape === 'person'}
 			<p class="text-xs text-muted-foreground tabular-nums">
-				{#if stream === null}
+				{#if stream === null && paidStreamNumber !== null}
+					Поток {paidStreamNumber} — из оплаты с сайта, в систему обучения ещё не заявлен
+				{:else if stream === null}
 					Поток не заявлен
 				{:else}
-					Поток {stream.streamNumber}: {day(stream.startsOn)} — {day(stream.endsOn)}
+					{streamLine(stream)}
 				{/if}
 			</p>
 		{/if}

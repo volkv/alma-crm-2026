@@ -88,9 +88,17 @@ export const PAYMENT_ROW_ACTION_LABELS: Record<PaymentRowAction, string> = {
 	error: 'Ошибка'
 };
 
+/** Те же итоги после загрузки: что с записью стало, а не что станет. */
+export const PAYMENT_ROW_RESULT_LABELS: Record<PaymentRowAction, string> = {
+	create: 'Создано',
+	update: 'Обновлено',
+	unchanged: 'Без изменений',
+	error: 'Ошибка'
+};
+
 /** Запись файла после разбора и сверки. */
 export type PaymentRowView = {
-	/** Где запись в файле — словами: «элемент 3» у JSON, «строка 4» у таблицы. */
+	/** Где запись в файле — словами, с единицы: «запись 3» у JSON, «строка 4» у таблицы. */
 	place: string;
 	orderId: string | null;
 	fullName: string;
@@ -122,4 +130,10 @@ export type PaymentFactView = {
 	orderId: string;
 	streamNumber: number | null;
 	loadedAt: Date;
+	/**
+	 * Стадия процесса дела с пунктом «Оплата получена»: пока дело до неё не
+	 * дошло, карточка говорит, где оплата отметится. `null` — процесс такого
+	 * пункта не объявил.
+	 */
+	stageName: string | null;
 };

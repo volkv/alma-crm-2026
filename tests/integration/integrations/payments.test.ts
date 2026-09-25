@@ -137,6 +137,16 @@ async function interactionOf(externalId: string): Promise<string> {
 	return row.id;
 }
 
+/** Отметка «Назначен ответственный» на открытой записи стадии. */
+async function ownerAssignedMark(interactionId: string): Promise<boolean | undefined> {
+	const [entry] = await database.db
+		.select({ state: stageEntries.checklistState })
+		.from(stageEntries)
+		.where(and(eq(stageEntries.interactionId, interactionId), isNull(stageEntries.leftAt)));
+
+	return entry.state.owner_assigned;
+}
+
 /** Отметка об оплате на открытой записи стадии и ключ этой стадии. */
 async function openEntry(
 	interactionId: string
@@ -182,7 +192,7 @@ describe('загрузка оплат с сайта', () => {
 		// Пустой элемент, неизвестный курс и поток 0 — ошибки своих записей, а не
 		// файла: остальные три идут дальше.
 		expect(preview.counts).toEqual({ create: 2, update: 1, unchanged: 0, error: 3 });
-		expect(preview.rows[1]).toMatchObject({ place: 'элемент 1', action: 'error' });
+		expect(preview.rows[1]).toMatchObject({ place: 'запись 2', action: 'error' });
 		expect(preview.rows[3].issues.join(' ')).toContain('не найден в справочнике программ');
 
 		const before = await totals();
@@ -214,6 +224,8 @@ describe('загрузка оплат с сайта', () => {
 		// отметку ставит вход на стадию оплаты по сохранённому факту.
 		const fresh = await interactionOf(NEW_ORDER);
 		expect((await openEntry(fresh)).key).toBe('lead_intake');
+		// Ответственного назначила загрузка — пункт об этом отмечен ею же.
+		expect(await ownerAssignedMark(fresh)).toBe(true);
 
 		await advanceTo(testActor(), database, fresh, 'contract_payment');
 		expect(await openEntry(fresh)).toEqual({ key: 'contract_payment', paymentReceived: true });
@@ -223,5 +235,27 @@ describe('загрузка оплат с сайта', () => {
 
 		expect(repeated.counts).toEqual({ create: 0, update: 0, unchanged: 3, error: 3 });
 		expect(await totals()).toEqual(beforeRepeat);
+	});
+
+	it('без ответственного за входящие предпросмотр показывает ту же ошибку, что даст загрузка', async () => {
+		await setExchangeSettings(testActor(), {
+			cmsInstance: INSTANCE,
+			cmsStatusUrl: 'http://127.0.0.1:9/api/applications/{externalId}/status',
+			cmsSecret: 'stand-secret',
+			cmsDefaultOwnerUserId: null,
+			lmsInstance: 'moodle-itschool',
+			lmsGroupsUrl: '',
+			lmsSecret: null
+		});
+
+		const preview = await previewPayments(testActor(), FILE);
+		const loaded = await importPayments(testActor(), FILE);
+
+		// Некому вести ни одно новое дело: «создать» предпросмотр не обещает.
+		expect(preview.counts).toEqual({ create: 0, update: 0, unchanged: 0, error: 6 });
+		expect(preview.rows[0].issues[0]).toBe('Ответственный за входящие заявки не настроен');
+		expect(preview.rows.map(({ action, issues }) => ({ action, issues }))).toEqual(
+			loaded.rows.map(({ action, issues }) => ({ action, issues }))
+		);
 	});
 });

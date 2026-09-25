@@ -23,6 +23,7 @@ import {
 	organizationResponsibles,
 	organizations,
 	people,
+	stageEntries,
 	users,
 	workspaces
 } from '../../db/schema';
@@ -31,6 +32,7 @@ import { createAffiliation, createPerson } from '../../directory/write';
 import { ValidationError } from '../../errors';
 import { hashEmail, hashPhone } from '../../people/pii';
 import { mayWorkIn } from '../../rbac/workspaces';
+import { markChecklistItemIn } from '../../stages/commands';
 
 /** Код PostgreSQL «нарушена уникальность». */
 const UNIQUE_VIOLATION = '23505';
@@ -202,6 +204,38 @@ export async function chooseIntakeOwner(
 	}
 
 	return ownerUserId;
+}
+
+/** Пункт чек-листа, которым процесс отмечает, что у дела есть ответственный. */
+const OWNER_ASSIGNED_CHECKLIST_KEY = 'owner_assigned';
+
+/**
+ * Отметка «Назначен ответственный» у дела, которое входящее с сайта только что
+ * завело: ответственный назначен тем же входящим, и оставлять пункт сотруднику
+ * значило бы просить его подтвердить то, что система сделала сама. Отмечается в
+ * транзакции вызывающего и только там, где процесс объявил такой пункт на
+ * открытой стадии: у процесса без него отмечать нечего.
+ */
+export async function markOwnerAssigned(
+	ctx: ActorContext,
+	tx: Tx,
+	interactionId: string
+): Promise<void> {
+	const [entry] = await tx
+		.select({ snapshot: stageEntries.stageSnapshot, checklistState: stageEntries.checklistState })
+		.from(stageEntries)
+		.where(and(eq(stageEntries.interactionId, interactionId), isNull(stageEntries.leftAt)))
+		.limit(1);
+
+	if (
+		entry === undefined ||
+		entry.checklistState[OWNER_ASSIGNED_CHECKLIST_KEY] === true ||
+		!entry.snapshot.checklist.some((item) => item.key === OWNER_ASSIGNED_CHECKLIST_KEY)
+	) {
+		return;
+	}
+
+	await markChecklistItemIn(ctx, tx, interactionId, OWNER_ASSIGNED_CHECKLIST_KEY);
 }
 
 /**

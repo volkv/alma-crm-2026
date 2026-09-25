@@ -79,6 +79,7 @@ import {
 	findIndividual,
 	findOrCreateIndividual,
 	isUniqueViolation,
+	markOwnerAssigned,
 	ownerActor,
 	recordApplicationConsent
 } from './applicant';
@@ -222,7 +223,7 @@ function readJsonPayments(fileName: string, text: string): ParsedFile {
 	}
 
 	const rows = elements.map((element, index): RawRow => {
-		const place = `элемент ${index}`;
+		const place = `запись ${index + 1}`;
 
 		if (element === null || typeof element !== 'object' || Array.isArray(element)) {
 			return {
@@ -540,6 +541,68 @@ function stageNote(stage: PaymentStage, applied: boolean): string {
 	}
 }
 
+/* ------------------------------------------------------------ дело и ответственный */
+
+type ExistingInteraction = NonNullable<Awaited<ReturnType<typeof findExisting>>>;
+
+/** К какому делу придёт оплата и кто его ведёт. */
+type PaymentTarget = { ownerUserId: string } & (
+	| {
+			kind: 'new';
+			workspace: Awaited<ReturnType<typeof resolveIntakeWorkspace>>;
+			found: Awaited<ReturnType<typeof findIndividual>>;
+	  }
+	| { kind: 'existing'; existing: ExistingInteraction }
+);
+
+/**
+ * Дело по номеру заказа — найденное или то, что заведётся, — и сотрудник,
+ * который его поведёт. Один расчёт на предпросмотр и применение: предпросмотр,
+ * обещающий «создать» запись, которую применение отвергнет «некому вести»,
+ * обманывает администратора. Некому вести дело — `ValidationError` с причиной.
+ */
+async function resolvePaymentTarget(
+	tx: Tx,
+	source: string,
+	record: PaymentRecord,
+	configuredOwnerUserId: string | null
+): Promise<PaymentTarget> {
+	const existing = await findExisting(tx, source, record.orderId);
+
+	if (existing !== null) {
+		return {
+			kind: 'existing',
+			existing,
+			ownerUserId: await chooseIntakeOwner(tx, {
+				organizationId: existing.organizationId,
+				workspace: { id: existing.workspaceId, name: existing.workspaceName },
+				configuredOwnerUserId
+			})
+		};
+	}
+
+	// Нового дела ещё нет: оно заводится в пространстве, которое таблица
+	// соответствий отдаёт физлицам, — так же, как у заявки с сайта.
+	const workspace = await resolveIntakeWorkspace(tx, 'individual');
+	const found = await findIndividual(tx, record.email, record.phone);
+
+	return {
+		kind: 'new',
+		workspace,
+		found,
+		ownerUserId: await chooseIntakeOwner(tx, {
+			organizationId: found?.id ?? null,
+			workspace,
+			configuredOwnerUserId
+		})
+	};
+}
+
+/** Предметный отказ словами для записи: сообщение и его подробности. */
+function refusalIssues(error: AppError): string[] {
+	return [error.message, ...(error instanceof ValidationError ? error.issues : [])];
+}
+
 /* ------------------------------------------------------------ предпросмотр */
 
 /** Строка журнала обмена по этой оплате, если её уже загружали. */
@@ -608,9 +671,9 @@ function unchangedNote(
 
 /** Что станет с записью — тем же расчётом, что у применения, но без записи. */
 async function previewRow(
+	ctx: ActorContext,
 	tx: Tx,
-	instance: string,
-	source: string,
+	options: ImportOptions,
 	row: CheckedRow
 ): Promise<PaymentRowView> {
 	if (row.record === null || row.issues.length > 0) {
@@ -618,10 +681,25 @@ async function previewRow(
 	}
 
 	const record = row.record;
-	const message = await readPaymentMessage(tx, instance, record.orderId);
+	const message = await readPaymentMessage(tx, options.instance, record.orderId);
 
 	if (message?.state === 'processed') {
 		return rowView(row, 'unchanged', unchangedNote(message, record));
+	}
+
+	let target: PaymentTarget;
+
+	try {
+		target = await resolvePaymentTarget(tx, options.source, record, options.configuredOwnerUserId);
+		await ownerActor(ctx, target.ownerUserId);
+	} catch (error) {
+		// Те же отказы, что у применения, и тем же текстом: запись, которую
+		// некому вести, предпросмотр показывает ошибкой, а не «создать».
+		if (!(error instanceof AppError)) {
+			throw error;
+		}
+
+		return rowView(row, 'error', [], refusalIssues(error));
 	}
 
 	const notes: string[] =
@@ -630,18 +708,15 @@ async function previewRow(
 					`Прошлая загрузка не удалась (${message.lastError ?? 'без причины'}): запись загрузится снова`
 				]
 			: [];
-	const existing = await findExisting(tx, source, record.orderId);
 
-	if (existing !== null) {
-		notes.push(stageNote(await readPaymentStage(tx, existing.id), false));
+	if (target.kind === 'existing') {
+		notes.push(stageNote(await readPaymentStage(tx, target.existing.id), false));
 
 		return rowView(row, 'update', notes);
 	}
 
-	const person = await findIndividual(tx, record.email, record.phone);
-
 	notes.push(
-		person === null
+		target.found === null
 			? 'Физлицо будет заведено в справочнике'
 			: 'Физлицо уже есть в справочнике: второе не заводится'
 	);
@@ -667,6 +742,19 @@ function toPaymentsView(
 	return { rows, counts, fileIssues, applied };
 }
 
+/** Настройки обмена, от которых зависит итог записи: экземпляр сайта и ответственный. */
+type ImportOptions = { instance: string; source: string; configuredOwnerUserId: string | null };
+
+async function importOptions(): Promise<ImportOptions> {
+	const settings = await getExchangeSettings();
+
+	return {
+		instance: settings.cms.instance,
+		source: externalSourceOf('cms', settings.cms.instance),
+		configuredOwnerUserId: settings.cms.defaultOwnerUserId
+	};
+}
+
 /**
  * Предпросмотр загрузки: что станет с каждой записью. Ничего не пишет — чтение
  * идёт одной транзакцией, чтобы все записи сверялись с одним состоянием базы.
@@ -681,15 +769,14 @@ export async function previewPayments(
 	requirePermission(ctx, 'integrations.manage');
 
 	const parsed = readPaymentsFile(file.name, file.bytes);
-	const settings = await getExchangeSettings();
-	const source = externalSourceOf('cms', settings.cms.instance);
+	const options = await importOptions();
 
 	return getDb().transaction(async (tx) => {
 		const checked = await checkRows(tx, parsed);
 		const rows: PaymentRowView[] = [];
 
 		for (const row of checked) {
-			rows.push(await previewRow(tx, settings.cms.instance, source, row));
+			rows.push(await previewRow(ctx, tx, options, row));
 		}
 
 		return toPaymentsView(rows, parsed.fileIssues, false);
@@ -708,10 +795,7 @@ type Applied =
 async function applyInTransaction(
 	ctx: ActorContext,
 	tx: Tx,
-	options: {
-		instance: string;
-		source: string;
-		configuredOwnerUserId: string | null;
+	options: ImportOptions & {
 		row: ValidRow;
 		requestHash: string;
 		payload: Record<string, unknown>;
@@ -775,26 +859,13 @@ async function applyInTransaction(
 		email: record.email,
 		phone: record.phone
 	};
-	const existing = await findExisting(tx, options.source, record.orderId);
-	// Нового дела ещё нет: оно заводится в пространстве, которое таблица
-	// соответствий отдаёт физлицам, — так же, как у заявки с сайта.
-	const target =
-		existing === null
-			? {
-					kind: 'new' as const,
-					workspace: await resolveIntakeWorkspace(tx, 'individual'),
-					found: await findIndividual(tx, record.email, record.phone)
-				}
-			: { kind: 'existing' as const, existing };
-	const ownerUserId = await chooseIntakeOwner(tx, {
-		organizationId:
-			target.kind === 'new' ? (target.found?.id ?? null) : target.existing.organizationId,
-		workspace:
-			target.kind === 'new'
-				? target.workspace
-				: { id: target.existing.workspaceId, name: target.existing.workspaceName },
-		configuredOwnerUserId: options.configuredOwnerUserId
-	});
+	const target = await resolvePaymentTarget(
+		tx,
+		options.source,
+		record,
+		options.configuredOwnerUserId
+	);
+	const ownerUserId = target.ownerUserId;
 	const owner = await ownerActor(ctx, ownerUserId);
 
 	let interactionId: string;
@@ -849,6 +920,9 @@ async function applyInTransaction(
 			},
 			{ via: 'site' }
 		);
+
+		// Ответственного назначила сама загрузка — пункт об этом отмечается ею же.
+		await markOwnerAssigned(owner, tx, interactionId);
 	} else {
 		interactionId = target.existing.id;
 		organizationId = target.existing.organizationId;
@@ -980,7 +1054,7 @@ async function recordRefusal(
 
 async function applyRow(
 	ctx: ActorContext,
-	options: { instance: string; source: string; configuredOwnerUserId: string | null },
+	options: ImportOptions,
 	row: ValidRow
 ): Promise<PaymentRowView> {
 	const requestHash = recordHash(row.record);
@@ -1042,12 +1116,7 @@ async function applyRow(
 
 		await recordRefusal(options.instance, row, requestHash, payload, error.message);
 
-		return rowView(
-			row,
-			'error',
-			[],
-			[error.message, ...(error instanceof ValidationError ? error.issues : [])]
-		);
+		return rowView(row, 'error', [], refusalIssues(error));
 	}
 }
 
@@ -1071,12 +1140,7 @@ export async function importPayments(
 		);
 	}
 
-	const settings = await getExchangeSettings();
-	const options = {
-		instance: settings.cms.instance,
-		source: externalSourceOf('cms', settings.cms.instance),
-		configuredOwnerUserId: settings.cms.defaultOwnerUserId
-	};
+	const options = await importOptions();
 	const checked = await getDb().transaction((tx) => checkRows(tx, parsed));
 	const rows: PaymentRowView[] = [];
 
@@ -1147,5 +1211,17 @@ export async function readPaymentFact(
 		return null;
 	}
 
-	return { orderId: row.orderId, streamNumber: row.streamNumber, loadedAt: row.loadedAt };
+	// Стадия, на которой оплата отметится, — из действующей редакции, как у
+	// загрузки (`readPaymentStage`): пока дело до неё не дошло, карточка
+	// называет её рядом с фактом, а не пишет «не отмечена».
+	const stage = paymentStageOf(
+		await requireActiveRevisionForWorkspace(getDb(), interaction.workspaceId)
+	);
+
+	return {
+		orderId: row.orderId,
+		streamNumber: row.streamNumber,
+		loadedAt: row.loadedAt,
+		stageName: stage?.name ?? null
+	};
 }

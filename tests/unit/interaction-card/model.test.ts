@@ -10,6 +10,7 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildCard,
 	buildEvents,
+	buildPayment,
 	buildQuiet,
 	buildRequirements,
 	buildTiming,
@@ -239,7 +240,8 @@ describe('вид карточки', () => {
 				paymentFact: {
 					orderId: 'ORD-20260313051569-QWERTY',
 					streamNumber: 1,
-					loadedAt: new Date('2026-09-20T09:00:00Z')
+					loadedAt: new Date('2026-09-20T09:00:00Z'),
+					stageName: 'Договор и оплата'
 				}
 			}),
 			NOW
@@ -248,6 +250,22 @@ describe('вид карточки', () => {
 		expect(card.payment.site).toBe(
 			'Оплата с сайта: заявка ORD-20260313051569-QWERTY, поток 1, загружено 20.09.2026'
 		);
+	});
+
+	it('оплата с сайта до стадии оплаты — «оплачено на сайте», а не «не отмечена»', () => {
+		const payment = buildPayment([entry()], {
+			orderId: 'ORD-1',
+			streamNumber: 2,
+			loadedAt: new Date('2026-09-20T09:00:00Z'),
+			stageName: 'Договор и оплата'
+		});
+
+		expect(payment).toEqual({
+			tone: 'info',
+			text: 'Оплачено на сайте — отметится на стадии «Договор и оплата»',
+			stageName: null,
+			site: 'Оплата с сайта: заявка ORD-1, поток 2, загружено 20.09.2026'
+		});
 	});
 });
 
