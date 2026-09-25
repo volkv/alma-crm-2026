@@ -121,7 +121,11 @@ export function apiCollectionSchema<TItem extends z.ZodType>(item: TItem) {
 
 export const apiOrganizationSchema = z.object({
 	id: z.uuid(),
-	kind: z.enum(ORGANIZATION_KINDS).describe('Вуз, компания-заказчик или оператор'),
+	kind: z
+		.enum(ORGANIZATION_KINDS)
+		.describe(
+			'Вид: учебное заведение, компания-заказчик, оператор, физическое лицо, юридическое лицо или вендор (правообладатель ПО)'
+		),
 	educationLevel: z
 		.enum(EDUCATION_LEVELS)
 		.nullable()

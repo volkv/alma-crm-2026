@@ -101,7 +101,13 @@ import { discardStaged, promoteBlob, readStoredFile, stageBlob } from '../docume
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
 import { hashEmail, hashPhone } from '../people/pii';
 import { withPiiTrace } from '../people/pii-trace';
-import { actorScopeFilter, can, requirePermission, scopeFilter } from '../rbac';
+import {
+	actorScopeFilter,
+	can,
+	requirePermission,
+	scopeFilter,
+	type PermissionDenial
+} from '../rbac';
 import { suggestFieldMapping, type FieldSynonyms } from '../spreadsheet/mapping';
 // Чтение файла общее с импортом данных об обучении: формат по содержимому,
 // кодировка, разделитель, листы книги, две формы JSON и происхождение каждой
@@ -148,7 +154,8 @@ import {
 	createDirection,
 	createOrganization,
 	createPerson,
-	createProduct
+	createProduct,
+	ORGANIZATION_KINDS_WITHOUT_RESPONSIBLE
 } from './write';
 
 /** Идентификатор импорта приходит из адреса, то есть от кого угодно. */
@@ -546,6 +553,12 @@ export type CatalogActor = {
 	userId: string | null;
 	/** Есть ли право `responsibles.manage`: без него колонка менеджера — претензия. */
 	canAssignResponsible: boolean;
+	/**
+	 * Может ли вызывающий завести вендора: полный доступ, фоновая задача или
+	 * сид — то же правило, что у `createOrganization`. Без этого новый вендор из
+	 * колонки — претензия строки, а не отказ всей загрузки на подтверждении.
+	 */
+	canCreateVendor: boolean;
 };
 
 /**
@@ -576,6 +589,11 @@ export type CatalogState = {
 	userByName: Map<string, UserEntry[]>;
 	/** Действующие назначения по организациям. */
 	responsibles: Map<string, ResponsibleEntry>;
+	/**
+	 * Организации, у которых ответственного не бывает (оператор, вендоры):
+	 * колонка менеджера на них — претензия, а не назначение.
+	 */
+	withoutResponsible: Set<string>;
 	/** Контакты организаций: `${organizationId} ${ключ}` — почта, телефон или ФИО. */
 	organizationContacts: Set<string>;
 	actor: CatalogActor;
@@ -627,7 +645,7 @@ export function userNameKeys(fullName: string): string[] {
 
 /** Пустой снимок. Вызывающий без прав и без учётной записи — безопасное умолчание. */
 export function emptyCatalogState(
-	actor: CatalogActor = { userId: null, canAssignResponsible: false }
+	actor: CatalogActor = { userId: null, canAssignResponsible: false, canCreateVendor: false }
 ): CatalogState {
 	return {
 		organizationByInn: new Map(),
@@ -642,6 +660,7 @@ export function emptyCatalogState(
 		contractItems: new Map(),
 		userByName: new Map(),
 		responsibles: new Map(),
+		withoutResponsible: new Set(),
 		organizationContacts: new Set(),
 		actor
 	};
@@ -784,7 +803,8 @@ export async function loadCatalogState(
 ): Promise<CatalogState> {
 	const state = emptyCatalogState({
 		userId: ctx.user?.id ?? null,
-		canAssignResponsible: can(ctx, 'responsibles.manage')
+		canAssignResponsible: can(ctx, 'responsibles.manage'),
+		canCreateVendor: ctx.scope.kind === 'all' || ctx.user === null
 	});
 
 	const [
@@ -802,6 +822,7 @@ export async function loadCatalogState(
 		executor
 			.select({
 				id: organizations.id,
+				kind: organizations.kind,
 				inn: organizations.inn,
 				shortName: organizations.shortName,
 				legalName: organizations.legalName,
@@ -886,6 +907,10 @@ export async function loadCatalogState(
 			},
 			[row.shortName, row.legalName]
 		);
+
+		if (ORGANIZATION_KINDS_WITHOUT_RESPONSIBLE.includes(row.kind)) {
+			state.withoutResponsible.add(row.id);
+		}
 	}
 
 	for (const row of userRows) {
@@ -1344,6 +1369,12 @@ function planManager(
 		);
 	}
 
+	if (organization !== null && state.withoutResponsible.has(organization.id)) {
+		return issue(
+			`У «${organization.name}» ответственного не бывает: это оператор или вендор, и в чью-либо область он не попадает`
+		);
+	}
+
 	const keys = userNameKeys(managerName);
 	const found = keys.map((key) => state.userByName.get(key)).find((entry) => entry !== undefined);
 
@@ -1670,6 +1701,11 @@ async function applyCatalogRow(
 
 		if (found.message !== null) {
 			issues.push({ field: 'vendor', message: found.message });
+		} else if (found.entry === null && !state.actor.canCreateVendor) {
+			issues.push({
+				field: 'vendor',
+				message: `Вендора «${vendorName}» в справочнике нет, а заводит вендоров администратор: вендоры вне области доступа у всех, кроме него`
+			});
 		} else {
 			vendor = found.entry;
 		}
@@ -1775,8 +1811,11 @@ async function applyCatalogRow(
 	if (vendorName !== null && vendor === null) {
 		const id = await writer.organization({ name: vendorName, inn: null, kind: 'vendor' });
 
-		vendor = { id, inn: null, name: vendorName, inScope: true, notes: null };
+		// Сюда доходит только тот, кто вендора заводить может (`canCreateVendor`):
+		// у полного доступа вендор в области.
+		vendor = { id, inn: null, name: vendorName, inScope: state.actor.canCreateVendor, notes: null };
 		registerOrganization(state, vendor, [vendorName]);
+		state.withoutResponsible.add(id);
 		creations.push({ target: 'vendor', subject: vendorName });
 	}
 
@@ -2103,6 +2142,8 @@ export async function createCatalogImport(
 		throw invalid('Загрузка не прошла проверку', parsed.error);
 	}
 
+	await assertImportKindAllowed(ctx, parsed.data.kind, { type: 'directory.import_created' });
+
 	// Файл разбирается до записи в хранилище: принять и сохранить то, в чём нет
 	// ни одной строки, значит отложить отказ на шаг вперёд.
 	const table = readStatTable(input.file.name, input.file.bytes, CATALOG_PREVIEW_PARSE_LIMIT);
@@ -2156,6 +2197,32 @@ export async function createCatalogImport(
 	}
 }
 
+/**
+ * Загрузка вендоров — только полному доступу.
+ *
+ * Вендоры вне области у всех, кроме администратора: ответственного у них не
+ * бывает (`ORGANIZATION_KINDS_WITHOUT_RESPONSIBLE`). Руководитель, загрузивший
+ * файл вендоров, завёл бы компании, которых сам тут же не увидел бы, а роли
+ * людей в уже заведённых вендорах ему не записать вовсе. Поэтому вид закрыт
+ * целиком и явно, а не отвечает построчными отказами. Каталог — без изменений.
+ * Отказ пишется в журнал, как и любой отказ по правам.
+ */
+async function assertImportKindAllowed(
+	ctx: ActorContext,
+	kind: DirectoryImportKind,
+	denial: PermissionDenial
+): Promise<void> {
+	if (kind !== 'vendors' || ctx.scope.kind === 'all') {
+		return;
+	}
+
+	await recordAuditEvent(ctx, { ...denial, outcome: 'denied' });
+
+	throw new ForbiddenError(
+		'Вендоров загружает администратор: вендоры вне области доступа у всех, кроме него'
+	);
+}
+
 /** Строка загрузки без ссылки на саму загрузку: её ставит запись. */
 type StoredRowValues = Omit<typeof directoryImportRows.$inferInsert, 'importId'>;
 
@@ -2200,6 +2267,10 @@ export async function applyCatalogMapping(
 
 	const row = await selectImportRow(ctx, importId);
 	assertEditable(row.status);
+	await assertImportKindAllowed(ctx, row.kind, {
+		type: 'directory.import_created',
+		subject: { type: 'directory_import', id: importId }
+	});
 
 	const table = await readImportTable(row);
 	const prepared =
@@ -2305,7 +2376,7 @@ async function prepareVendorRows(
 	checkMapping('vendors', table, parsed.data);
 
 	const sourceRows = buildVendorRows(table, parsed.data);
-	const results = await applyVendorRows(await loadVendorState(ctx), dryVendorWriter(), sourceRows);
+	const results = await applyVendorRows(await loadVendorState(), dryVendorWriter(), sourceRows);
 
 	return {
 		mapping: parsed.data,
@@ -2379,7 +2450,7 @@ async function confirmVendorRows(
 	mapping: ImportMapping
 ): Promise<CatalogRowResult[]> {
 	return applyVendorRows(
-		await loadVendorState(ctx, tx),
+		await loadVendorState(tx),
 		databaseVendorWriter(ctx, tx),
 		pending.map((item) => vendorRowFromStored(item, mapping))
 	);
@@ -2408,7 +2479,11 @@ export async function confirmCatalogImport(
 		subject: { type: 'directory_import', id: importId }
 	});
 
-	await selectImportRow(ctx, importId);
+	const selected = await selectImportRow(ctx, importId);
+	await assertImportKindAllowed(ctx, selected.kind, {
+		type: 'directory.import_confirmed',
+		subject: { type: 'directory_import', id: importId }
+	});
 
 	return invalidated(
 		withTransaction(ctx, async (tx) => {

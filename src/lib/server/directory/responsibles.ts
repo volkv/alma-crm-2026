@@ -46,6 +46,7 @@ import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '.
 import { requirePermission, scopeFilter, workspaceFilter } from '../rbac';
 import { setResponsible } from '../stages/commands';
 import { withUniqueConflicts } from './conflicts';
+import { ORGANIZATION_KINDS_WITHOUT_RESPONSIBLE } from './write';
 
 /** Назначение в том виде, в каком его показывает карточка вуза. */
 export type ResponsibleView = {
@@ -493,13 +494,13 @@ async function assertOrganizationAssignable(
 		throw new NotFoundError('Организация не найдена');
 	}
 
-	// Организация-оператор стоит стороной почти в каждом взаимодействии:
-	// назначить на неё ответственного значило бы отдать ему все записи продукта
-	// разом. Вендоры отдельным видом не заведены — им просто никогда не
-	// назначают ответственного, и в область они не попадают именно поэтому.
-	if (row.kind === 'operator') {
+	// Правило и причины — у `ORGANIZATION_KINDS_WITHOUT_RESPONSIBLE`: оператор
+	// стоит стороной почти везде, вендор — правообладатель из общего
+	// справочника продуктов. В область они не попадают именно потому, что
+	// ответственного у них нет.
+	if (ORGANIZATION_KINDS_WITHOUT_RESPONSIBLE.includes(row.kind)) {
 		throw new ValidationError('Ответственный не назначен', [
-			'У организации-оператора ответственного не бывает: она сторона почти каждой записи'
+			'У оператора и вендора ответственного не бывает: их не ведёт никто, кроме администратора'
 		]);
 	}
 }

@@ -88,7 +88,7 @@ function table(...rows: string[][]): StatTable {
 }
 
 /** Кто загружает файл: руководитель с правом назначать ответственных. */
-const ACTOR = { userId: 'usr-lead', canAssignResponsible: true };
+const ACTOR = { userId: 'usr-lead', canAssignResponsible: true, canCreateVendor: false };
 
 /** Справочник, в котором уже есть вуз, продукт, договор и его позиция. */
 function filledState(): CatalogState {
@@ -125,7 +125,8 @@ const KNOWN = ['СЗПУ', '7802450127', '', 'Платформа «Ориент�
 
 describe('строка каталога', () => {
 	it('заводит вуз, вендора, продукт, направление, договор и позицию', async () => {
-		const results = await plan(emptyCatalogState(), [
+		const admin = { userId: 'usr-admin', canAssignResponsible: true, canCreateVendor: true };
+		const results = await plan(emptyCatalogState(admin), [
 			'ТГУИ',
 			'7714111750',
 			'ТехноСфера Софт',
@@ -489,7 +490,13 @@ describe('менеджер строки', () => {
 	});
 
 	it('без права назначать ответственных колонка менеджера — претензия', async () => {
-		const state = withStaff(emptyCatalogState({ userId: 'usr-lead', canAssignResponsible: false }));
+		const state = withStaff(
+			emptyCatalogState({
+				userId: 'usr-lead',
+				canAssignResponsible: false,
+				canCreateVendor: false
+			})
+		);
 		registerOrganization(
 			state,
 			{ id: 'org-szpu', inn: '7802450127', name: 'СЗПУ', inScope: true, notes: null },

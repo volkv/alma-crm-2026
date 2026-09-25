@@ -62,12 +62,12 @@ function state(): VendorState {
 
 	registerCompany(
 		snapshot,
-		{ id: 'op', name: 'АО «Оператор Обучения»', inn: null, kind: 'operator', inScope: true },
+		{ id: 'op', name: 'АО «Оператор Обучения»', inn: null, kind: 'operator' },
 		['АО «Оператор Обучения»']
 	);
 	registerCompany(
 		snapshot,
-		{ id: 'ladoga', name: 'Ладога Датасистемс', inn: null, kind: 'vendor', inScope: true },
+		{ id: 'ladoga', name: 'Ладога Датасистемс', inn: null, kind: 'vendor' },
 		['Ладога Датасистемс']
 	);
 	registerVendorProduct(

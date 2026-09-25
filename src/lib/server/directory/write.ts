@@ -25,6 +25,7 @@ import type {
 	CreateSiteInput,
 	EndAffiliationInput,
 	LinkProductDirectionInput,
+	OrganizationKind,
 	OrganizationView,
 	PersonView,
 	ProductView,
@@ -60,12 +61,12 @@ import { withTransaction, type Tx } from '../db/transaction';
 
 /** Кто выполняет запрос: транзакция вызывающего или общий пул. */
 type Executor = Tx | ReturnType<typeof getDb>;
-import { ConflictError, NotFoundError, ValidationError } from '../errors';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
 import { assertPersonVisible } from '../people/access';
 import { contactColumns, decryptContacts } from '../people/pii';
 import { withPiiTrace } from '../people/pii-trace';
 import { toPersonView } from '../people/serialize';
-import { requirePermission, scopeFilter } from '../rbac';
+import { requirePermission, scopeFilter, type PermissionDenial } from '../rbac';
 import { withUniqueConflicts } from './conflicts';
 import {
 	findOrganizationByInn,
@@ -183,6 +184,46 @@ async function recordPassportProvenance(
 }
 
 /**
+ * Виды организаций, у которых ответственного не бывает, и поэтому в область
+ * доступа они не попадают ни у кого, кроме полного доступа.
+ *
+ * Оператор стоит стороной почти в каждом взаимодействии: назначение на него
+ * отдало бы одному человеку все записи продукта разом. Вендор —
+ * правообладатель продукта в общем справочнике, а не предмет чьей-то работы:
+ * стороной он не бывает, а его деловые контакты по продуктам видны всем
+ * сотрудникам и без области (`docs/access-matrix.md`, раздел 1).
+ */
+export const ORGANIZATION_KINDS_WITHOUT_RESPONSIBLE: readonly OrganizationKind[] = [
+	'operator',
+	'vendor'
+];
+
+/**
+ * Вендора заводит и назначает видом только полный доступ.
+ *
+ * Вендор вне области у всех, кроме администратора: заведённый руководителем,
+ * он тут же пропал бы у него из виду, а смена вида своей организации на
+ * вендора увела бы её из области вместе со всей работой по ней. Отказ пишется
+ * в журнал, как любой отказ по правам. Фоновые задачи и сиды (`ctx.user`
+ * пуст) не ограничены: им не из чего пропадать.
+ */
+async function assertVendorKindAllowed(
+	ctx: ActorContext,
+	kind: OrganizationKind,
+	denial: PermissionDenial
+): Promise<void> {
+	if (kind !== 'vendor' || ctx.scope.kind === 'all' || ctx.user === null) {
+		return;
+	}
+
+	await recordAuditEvent(ctx, { ...denial, outcome: 'denied' });
+
+	throw new ForbiddenError(
+		'Вендора заводит администратор: вендоры вне области доступа у всех, кроме него'
+	);
+}
+
+/**
  * Заведение организации. `tx` передаёт тот, кто уже открыл транзакцию и
  * отвечает за целостность операции целиком: заявка с сайта заводит организацию,
  * человека, его роль и взаимодействие — либо всё, либо ничего. Своей
@@ -195,6 +236,7 @@ export async function createOrganization(
 	provenance: readonly PassportProvenance[] = []
 ): Promise<OrganizationView> {
 	await requirePermission(ctx, 'organizations.write', { type: 'organizations.created' });
+	await assertVendorKindAllowed(ctx, input.kind, { type: 'organizations.created' });
 	await assertInnIsFree(ctx, input.inn, undefined, tx);
 
 	const write = async (executor: Tx): Promise<OrganizationView> => {
@@ -204,11 +246,10 @@ export async function createOrganization(
 		// и тут же потерял её из виду — область считается по действующим
 		// назначениям, и у новой организации их нет ни одного.
 		//
-		// Организация-оператор из этого правила выведена: она стоит стороной
-		// почти в каждом взаимодействии, и назначение на неё отдало бы автору все
-		// записи продукта разом. Фоновые задачи и сиды тоже: у них нет человека,
-		// которому эта организация принадлежала бы.
-		if (ctx.user !== null && row.kind !== 'operator') {
+		// Оператор и вендоры из этого правила выведены: ответственного у них не
+		// бывает вовсе (`ORGANIZATION_KINDS_WITHOUT_RESPONSIBLE`). Фоновые задачи и
+		// сиды тоже: у них нет человека, которому эта организация принадлежала бы.
+		if (ctx.user !== null && !ORGANIZATION_KINDS_WITHOUT_RESPONSIBLE.includes(row.kind)) {
 			await executor.insert(organizationResponsibles).values({
 				organizationId: row.id,
 				userId: ctx.user.id,
@@ -246,6 +287,40 @@ export async function createOrganization(
 	);
 }
 
+/**
+ * Смена вида на тот, у которого ответственного не бывает, при действующих
+ * назначениях. Молча закрыть их нельзя — это отобрать вуз у людей, не открыв
+ * его карточку, а оставить — значит держать оператора или вендора в чьей-то
+ * области. Сначала снимают ответственных, потом меняют вид.
+ */
+async function assertKindKeepsResponsibles(
+	executor: Tx,
+	organizationId: string,
+	from: OrganizationKind,
+	to: OrganizationKind
+): Promise<void> {
+	if (from === to || !ORGANIZATION_KINDS_WITHOUT_RESPONSIBLE.includes(to)) {
+		return;
+	}
+
+	const [current] = await executor
+		.select({ id: organizationResponsibles.id })
+		.from(organizationResponsibles)
+		.where(
+			and(
+				eq(organizationResponsibles.organizationId, organizationId),
+				isNull(organizationResponsibles.validTo)
+			)
+		)
+		.limit(1);
+
+	if (current !== undefined) {
+		throw new ConflictError(
+			'У оператора и вендора ответственного не бывает: снимите ответственных на карточке организации, прежде чем менять её вид'
+		);
+	}
+}
+
 export async function updateOrganization(
 	ctx: ActorContext,
 	input: UpdateOrganizationInput,
@@ -261,11 +336,20 @@ export async function updateOrganization(
 	const before = await getOrganization(ctx, input.id);
 	const { id, ...fields } = input;
 
+	if (fields.kind !== before.kind) {
+		await assertVendorKindAllowed(ctx, fields.kind, {
+			type: 'organizations.updated',
+			subject: { type: 'organization', id }
+		});
+	}
+
 	await assertInnIsFree(ctx, fields.inn, id);
 
 	return written(
 		withUniqueConflicts(() =>
 			withTransaction(ctx, async (tx) => {
+				await assertKindKeepsResponsibles(tx, id, before.kind, fields.kind);
+
 				const [row] = await tx
 					.update(organizations)
 					.set({ ...fields, updatedAt: sql`now()` })

@@ -86,7 +86,8 @@
 			</p>
 		{:else if data.contacts.length === 0}
 			<p class="text-sm text-muted-foreground">
-				Контактов по продукту нет. Их заводит импорт вендоров на странице «Импорт каталога».
+				Контактов по продукту нет. Их заводит администратор загрузкой вендоров на странице «Импорт
+				каталога».
 			</p>
 		{:else}
 			{#if masked}
@@ -98,11 +99,15 @@
 			<ul class="flex flex-col divide-y divide-border">
 				{#each data.contacts as row (row.person.id)}
 					<li class="flex flex-col gap-0.5 py-2 text-sm">
-						<a
-							class="w-fit font-medium break-words underline-offset-2 focus-ring hover:underline"
-							href={resolve('/(app)/people/[id=uuid]', { id: row.person.id })}
-							>{personFullName(row)}</a
-						>
+						{#if row.openable}
+							<a
+								class="w-fit font-medium break-words underline-offset-2 focus-ring hover:underline"
+								href={resolve('/(app)/people/[id=uuid]', { id: row.person.id })}
+								>{personFullName(row)}</a
+							>
+						{:else}
+							<p class="font-medium break-words">{personFullName(row)}</p>
+						{/if}
 						{#if row.position !== null}
 							<p class="break-words">{row.position}</p>
 						{/if}

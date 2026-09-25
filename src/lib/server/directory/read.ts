@@ -953,11 +953,15 @@ export async function getProduct(ctx: ActorContext, id: string): Promise<Product
 /**
  * Контакты вендора по продукту для карточки продукта.
  *
- * Продукт — общий справочник, а люди — нет: человек виден по тем же правилам,
- * что и везде (`personVisible`), поэтому карточка продукта не открывает
- * контакты компании тому, кому их не показывает карточка самой компании.
- * Почта и телефон маскируются сериализатором, чтение оставляет след просмотра.
- * Роль берётся у правообладателя продукта, действующая — первой.
+ * Видны всем, у кого есть `people.read`, без области доступа: это деловые
+ * контакты правообладателя по общему справочнику продуктов, и КАМу они нужны
+ * при передаче лицензий — а сами вендоры в область не попадают ни у кого,
+ * кроме полного доступа. Поэтому человек отбирается связью `product_contacts`,
+ * а не общим правилом видимости людей (`personVisible`) — по нему считается
+ * только признак `openable`: откроется ли вызывающему карточка человека. Почта и телефон
+ * по-прежнему маскируются без `people.read_pii` (сериализатор), чтение
+ * оставляет след просмотра. Роль берётся у правообладателя продукта,
+ * действующая — первой.
  */
 export async function listProductContacts(
 	ctx: ActorContext,
@@ -967,7 +971,11 @@ export async function listProductContacts(
 
 	return withPiiTrace(ctx, async () => {
 		const rows = await getDb()
-			.select({ person: people, affiliation: affiliations })
+			.select({
+				person: people,
+				affiliation: affiliations,
+				openable: sql<boolean>`${personVisible(ctx)}`
+			})
 			.from(productContacts)
 			.innerJoin(products, eq(products.id, productContacts.productId))
 			.innerJoin(people, eq(people.id, productContacts.personId))
@@ -978,7 +986,7 @@ export async function listProductContacts(
 					eq(affiliations.organizationId, products.vendorOrganizationId)
 				)
 			)
-			.where(and(eq(productContacts.productId, productId), personVisible(ctx)))
+			.where(eq(productContacts.productId, productId))
 			.orderBy(
 				asc(people.lastName),
 				asc(people.firstName),
@@ -988,7 +996,7 @@ export async function listProductContacts(
 
 		const byPerson = new Map<string, ProductContactView>();
 
-		for (const { person, affiliation } of rows) {
+		for (const { person, affiliation, openable } of rows) {
 			if (byPerson.has(person.id)) {
 				continue;
 			}
@@ -997,7 +1005,8 @@ export async function listProductContacts(
 				person: toPersonView(ctx, person),
 				position: affiliation?.position ?? null,
 				roleKind: affiliation?.roleKind ?? null,
-				channel: affiliation?.channel ?? null
+				channel: affiliation?.channel ?? null,
+				openable
 			});
 		}
 

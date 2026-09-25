@@ -24,7 +24,9 @@ export const load: PageServerLoad = async (event) => {
 		return {
 			organization,
 			form: await superValidate(organization, zod4(createOrganizationSchema), { errors: false }),
-			passport: await passportAvailability(ctx)
+			passport: await passportAvailability(ctx),
+			// Сменить вид на вендора может только полный доступ (`updateOrganization`).
+			allowVendor: ctx.scope.kind === 'all'
 		};
 	} catch (error) {
 		toPageError(error);

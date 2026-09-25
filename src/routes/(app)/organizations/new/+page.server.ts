@@ -15,8 +15,10 @@ import { passportActions, readAcceptance } from '../passport/actions.server';
 import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async (event) => {
+	const ctx = actorFromEvent(event);
+
 	try {
-		requirePermission(actorFromEvent(event), 'organizations.write');
+		requirePermission(ctx, 'organizations.write');
 	} catch (error) {
 		toPageError(error);
 	}
@@ -28,7 +30,9 @@ export const load: PageServerLoad = async (event) => {
 			zod4(createOrganizationSchema),
 			{ errors: false }
 		),
-		passport: await passportAvailability(actorFromEvent(event))
+		passport: await passportAvailability(ctx),
+		// Вендора заводит только полный доступ (`createOrganization` откажет и так).
+		allowVendor: ctx.scope.kind === 'all'
 	};
 };
 

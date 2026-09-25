@@ -57,7 +57,7 @@
 	>
 		<FormAlert message={$message} />
 		<input type="hidden" name="passport" value={JSON.stringify(accepted)} />
-		<OrganizationFields {superform} />
+		<OrganizationFields {superform} allowVendor={data.allowVendor} />
 		<FormActions
 			submitting={$submitting}
 			submitLabel="Создать организацию"

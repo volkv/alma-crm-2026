@@ -34,7 +34,6 @@ import type { ActorContext } from '../actor';
 import { getDb } from '../db';
 import { affiliations, organizations, people, productContacts, products } from '../db/schema';
 import type { Tx } from '../db/transaction';
-import { scopeFilter } from '../rbac';
 import { suggestFieldMapping, type FieldSynonyms } from '../spreadsheet/mapping';
 import { normalizeName } from '../stats/lookup';
 import { describeRowOrigin, type StatTable } from '../stats/parse';
@@ -326,7 +325,6 @@ export type CompanyEntry = {
 	name: string;
 	inn: string | null;
 	kind: OrganizationKind;
-	inScope: boolean;
 };
 
 export type VendorProductEntry = {
@@ -444,18 +442,16 @@ export function registerProductContact(
 }
 
 /**
- * Снимает справочник. Организации читаются по всей базе, а не по области: ИНН
- * уникален по всей базе, и загрузка, не увидевшая чужую компанию, завела бы её
- * второй. Область отмечена признаком `inScope`: роль человека в компании вне
- * области заводить и править нельзя — это та же граница, что у карточки.
+ * Снимает справочник целиком, без области: загрузка вендоров открыта только
+ * полному доступу (`import.ts`), и ИНН уникален по всей базе — загрузка, не
+ * увидевшая чужую компанию, завела бы её второй.
  */
 export async function loadVendorState(
-	ctx: ActorContext,
 	executor: Tx | ReturnType<typeof getDb> = getDb()
 ): Promise<VendorState> {
 	const state = emptyVendorState();
 
-	const [organizationRows, scopedRows, productRows, linkRows, contactRows] = await Promise.all([
+	const [organizationRows, productRows, linkRows, contactRows] = await Promise.all([
 		executor
 			.select({
 				id: organizations.id,
@@ -465,10 +461,6 @@ export async function loadVendorState(
 				legalName: organizations.legalName
 			})
 			.from(organizations),
-		executor
-			.select({ id: organizations.id })
-			.from(organizations)
-			.where(scopeFilter(ctx, organizations.id)),
 		executor
 			.select({
 				id: products.id,
@@ -503,20 +495,11 @@ export async function loadVendorState(
 			.where(inArray(organizations.kind, [...COMPANY_KINDS]))
 	]);
 
-	const scoped = new Set(scopedRows.map((row) => row.id));
-
 	for (const row of organizationRows) {
-		registerCompany(
-			state,
-			{
-				id: row.id,
-				name: row.shortName,
-				inn: row.inn,
-				kind: row.kind,
-				inScope: scoped.has(row.id)
-			},
-			[row.shortName, row.legalName]
-		);
+		registerCompany(state, { id: row.id, name: row.shortName, inn: row.inn, kind: row.kind }, [
+			row.shortName,
+			row.legalName
+		]);
 	}
 
 	for (const row of productRows) {
@@ -901,20 +884,6 @@ function planContact(
 		return null;
 	}
 
-	const writesRole = people.length === 0 || (channel !== null && channel !== people[0].channel);
-
-	// Роль человека в компании вне области заводить и править нельзя: это та же
-	// граница, что у карточки организации. Связь с продуктом при этом не роль —
-	// её загрузка ставит и уже заведённому человеку чужой компании.
-	if (company !== null && !company.inScope && writesRole) {
-		issues.push({
-			field: 'contactName',
-			message: `Компания «${company.name}» ведётся вне вашей области доступа — её контакт заведёт или поправит только тот, кому она видна`
-		});
-
-		return null;
-	}
-
 	if (people.length === 1) {
 		return { kind: 'known', entry: people[0], channel };
 	}
@@ -960,7 +929,7 @@ async function applyVendorRow(
 		const inn = row.values.companyInn;
 		const id = await writer.organization({ name, inn });
 
-		company = { id, name, inn, kind: 'vendor', inScope: true };
+		company = { id, name, inn, kind: 'vendor' };
 		registerCompany(state, company, [name]);
 		creations.push({ target: 'vendor', subject: name });
 	}

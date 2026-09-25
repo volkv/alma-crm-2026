@@ -19,7 +19,6 @@
 		CATALOG_FILE_FORMATS_HINT,
 		CATALOG_IMPORT_STATUS_LABELS,
 		CATALOG_WIZARD_STEPS,
-		DIRECTORY_IMPORT_KINDS,
 		DIRECTORY_IMPORT_KIND_HINTS,
 		DIRECTORY_IMPORT_KIND_LABELS
 	} from '$lib/contracts/directory-import';
@@ -49,7 +48,9 @@
 
 <Header
 	title="Импорт каталога"
-	description="Шаг 1 из 3: что описывает файл и сам файл — каталог вузов или вендоров с контактами по продуктам."
+	description={data.kinds.includes('vendors')
+		? 'Шаг 1 из 3: что описывает файл и сам файл — каталог вузов или вендоров с контактами по продуктам.'
+		: 'Шаг 1 из 3: что описывает файл и сам файл — каталог вузов.'}
 />
 
 <Breadcrumbs
@@ -96,7 +97,7 @@
 		<fieldset class="flex flex-col gap-2" data-tour="organizations-import-kind">
 			<legend class="mb-2 text-sm font-medium">Что описывает файл</legend>
 			<RadioGroup.Root name="kind" bind:value={kind}>
-				{#each DIRECTORY_IMPORT_KINDS as option (option)}
+				{#each data.kinds as option (option)}
 					<div class="flex items-start gap-3">
 						<RadioGroup.Item value={option} id="kind-{option}" class="mt-0.5" />
 						<div class="flex flex-col gap-0.5">
@@ -128,11 +129,17 @@
 
 	<p class="max-w-3xl text-sm text-muted-foreground">
 		Каталог заводит недостающие организации, продукты и направления и ведёт договоры, лицензии и
-		статусы передачи. Файл вендоров заводит компании-правообладатели и их продукты, а людей из файла
-		— контактами вендора по этим продуктам. Уже заведённые вузы, компании и продукты импорт не
-		переписывает, а пустая ячейка ничего не стирает — поэтому повторная загрузка того же файла
-		отвечает «без изменений». Ничего не записывается, пока вы не подтвердите предпросмотр на третьем
-		шаге.
+		статусы передачи.
+		{#if data.kinds.includes('vendors')}
+			Файл вендоров заводит компании-правообладатели и их продукты, а людей из файла — контактами
+			вендора по этим продуктам.
+		{:else}
+			Вендоров и контакты по продуктам загружает администратор: вендоры вне области доступа у всех,
+			кроме него.
+		{/if}
+		Уже заведённые вузы, компании и продукты импорт не переписывает, а пустая ячейка ничего не стирает
+		— поэтому повторная загрузка того же файла отвечает «без изменений». Ничего не записывается, пока
+		вы не подтвердите предпросмотр на третьем шаге.
 	</p>
 
 	{#if data.imports.length > 0}

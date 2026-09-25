@@ -114,7 +114,8 @@ async function buildFilterOptions(ctx: ActorContext): Promise<ReportFilterOption
 			value: workspace.key,
 			label: workspace.name
 		})),
-		parties: ORGANIZATION_KINDS.map((kind) => ({
+		// Вендор стороной взаимодействия не бывает: фильтр по нему всегда пуст.
+		parties: ORGANIZATION_KINDS.filter((kind) => kind !== 'vendor').map((kind) => ({
 			value: kind,
 			label: REPORT_PARTY_LABELS[kind]
 		})),

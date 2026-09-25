@@ -16,7 +16,24 @@
 	 * форму не входит: какую запись правим, говорит адрес страницы, и подменить
 	 * его скрытым полем нельзя.
 	 */
-	let { superform }: { superform: SuperForm<CreateOrganizationInput> } = $props();
+	let {
+		superform,
+		allowVendor
+	}: {
+		superform: SuperForm<CreateOrganizationInput>;
+		/**
+		 * Предлагать ли вид «Вендор»: заводит вендоров только полный доступ —
+		 * остальным сервис откажет, и вариант, который не примут, форма не
+		 * показывает.
+		 */
+		allowVendor: boolean;
+	} = $props();
+
+	const kindOptions = $derived(
+		allowVendor
+			? ORGANIZATION_FORM_KIND_OPTIONS
+			: ORGANIZATION_FORM_KIND_OPTIONS.filter((option) => option.value !== 'vendor')
+	);
 
 	// Набор сторов у формы один на всё её время жизни: берём его один раз.
 	const { form, errors } = untrack(() => superform);
@@ -42,7 +59,7 @@
 		name="kind"
 		label="Вид организации"
 		required
-		options={ORGANIZATION_FORM_KIND_OPTIONS}
+		options={kindOptions}
 		errors={$errors.kind}
 		bind:value={() => $form.kind, (next) => ($form.kind = next as OrganizationKind)}
 	/>

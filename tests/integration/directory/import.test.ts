@@ -11,6 +11,7 @@ import { readFileSync } from 'node:fs';
 import { and, count, eq, isNull } from 'drizzle-orm';
 import type { PgTable } from 'drizzle-orm/pg-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { createOrganizationSchema, organizationListQuerySchema } from '$lib/contracts/directory';
 import type { CatalogImportView } from '$lib/contracts/directory-import';
 import {
 	affiliations,
@@ -38,8 +39,11 @@ import {
 	rejectCatalogImport,
 	suggestCatalogMapping
 } from '$lib/server/directory/import';
+import { listOrganizations, listProductContacts } from '$lib/server/directory/read';
+import { assignResponsible } from '$lib/server/directory/responsibles';
 import { suggestVendorMapping } from '$lib/server/directory/vendor-import';
-import { ConflictError, ForbiddenError, NotFoundError } from '$lib/server/errors';
+import { createOrganization } from '$lib/server/directory/write';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '$lib/server/errors';
 import { decryptContacts } from '$lib/server/people/pii';
 import {
 	allWorkspaceIds,
@@ -548,6 +552,12 @@ describe('видимость загрузки каталога', () => {
 		importId: string;
 	}> {
 		const catalog = await seedCatalog();
+
+		// Вендоров файла заранее завёл администратор: руководитель новых не заводит.
+		for (const shortName of ['ТехноСфера Софт', 'Ладога Датасистемс', 'Полярный код']) {
+			await insertOrganization(database.db, { shortName, kind: 'vendor' });
+		}
+
 		const author = await scopedActor(database.db, {
 			roleId: 'lead',
 			organizationIds: [catalog.szpu, catalog.pupi]
@@ -1111,5 +1121,88 @@ describe('импорт вендоров', () => {
 			affiliations: 3,
 			productContacts: 4
 		});
+	});
+
+	it('загружает только администратор: вендор без ответственного, вне области руководителя, а контакты видны всем', async () => {
+		const university = await insertOrganization(database.db, { shortName: 'Свой вуз' });
+		const lead = await scopedActor(database.db, { roleId: 'lead', organizationIds: [university] });
+
+		await expect(
+			createCatalogImport(lead, {
+				kind: 'vendors',
+				file: { name: 'vendors-sample.csv', bytes: fixture('vendors-sample.csv') }
+			})
+		).rejects.toBeInstanceOf(ForbiddenError);
+
+		const [denied] = await database.db
+			.select({ outcome: auditEvents.outcome })
+			.from(auditEvents)
+			.where(eq(auditEvents.eventType, 'directory.import_created'));
+
+		expect(denied.outcome).toBe('denied');
+
+		const admin = testActor();
+		await confirmCatalogImport(admin, (await vendorPreview(admin, 'vendors-sample.csv')).id);
+
+		const vendors = await database.db
+			.select({ id: organizations.id })
+			.from(organizations)
+			.where(eq(organizations.kind, 'vendor'));
+		const assigned = await database.db
+			.select({ organizationId: organizationResponsibles.organizationId })
+			.from(organizationResponsibles);
+
+		// Оператора в базе нет, поэтому и его строка заводит вендора: компаний три.
+		expect(vendors).toHaveLength(3);
+		expect(assigned.map((row) => row.organizationId)).toEqual([university]);
+
+		const visible = await listOrganizations(lead, organizationListQuerySchema.parse({}));
+
+		expect(visible.items.map((item) => item.id)).toEqual([university]);
+
+		// Формой вендора руководитель тоже не заведёт, а назначить вендору
+		// ответственного нельзя и администратору.
+		const vendorForm = createOrganizationSchema.parse({
+			kind: 'vendor',
+			legalName: 'ООО «Новый Вендор»',
+			shortName: 'Новый Вендор'
+		});
+
+		await expect(createOrganization(lead, vendorForm)).rejects.toBeInstanceOf(ForbiddenError);
+		await expect(
+			assignResponsible(admin, {
+				organizationId: vendors[0].id,
+				userId: admin.user?.id as string,
+				directionId: null,
+				transferInteractions: false
+			})
+		).rejects.toBeInstanceOf(ValidationError);
+
+		// Менеджер без вендора в области видит контакт по продукту; почта и
+		// телефон — по его праву на контакты без маскирования.
+		const [flow] = await database.db
+			.select({ id: products.id })
+			.from(products)
+			.where(eq(products.name, 'Ладога.Поток'));
+		const manager = await scopedActor(database.db, { roleId: 'manager', organizationIds: [] });
+		const [contact] = await listProductContacts(manager, flow.id);
+
+		expect(contact.person).toMatchObject({
+			lastName: 'Сизов',
+			phone: '79001112244',
+			contactsMasked: false
+		});
+
+		const withoutPii = testActor({
+			roleId: 'manager',
+			permissions: ['people.read'],
+			scopeUserIds: [],
+			workspaceIds: []
+		});
+		const [masked] = await listProductContacts(withoutPii, flow.id);
+
+		expect(masked.person.lastName).toBe('Сизов');
+		expect(masked.person.contactsMasked).toBe(true);
+		expect(masked.person.phone).not.toBe('79001112244');
 	});
 });

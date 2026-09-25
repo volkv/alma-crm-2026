@@ -1,6 +1,6 @@
 import { fail, redirect } from '@sveltejs/kit';
 import { resolve } from '$app/paths';
-import { CATALOG_FILE_FORMATS_HINT } from '$lib/contracts/directory-import';
+import { CATALOG_FILE_FORMATS_HINT, DIRECTORY_IMPORT_KINDS } from '$lib/contracts/directory-import';
 import { actorFromEvent } from '$lib/server/actor';
 import { createCatalogImport, listCatalogImports } from '$lib/server/directory/import';
 import { toActionFailure, toPageError } from '$lib/server/http';
@@ -17,7 +17,13 @@ export const load: PageServerLoad = async (event) => {
 		// пятисотой: отказ по правам — это ответ, а не сбой.
 		requirePermission(ctx, 'directory.import');
 
-		return { imports: await listCatalogImports(ctx) };
+		// Вендоров загружает только полный доступ (`createCatalogImport`
+		// откажет и так): вариант, который сервис не примет, форма не предлагает.
+		const kinds = DIRECTORY_IMPORT_KINDS.filter(
+			(kind) => kind !== 'vendors' || ctx.scope.kind === 'all'
+		);
+
+		return { imports: await listCatalogImports(ctx), kinds };
 	} catch (error) {
 		toPageError(error);
 	}

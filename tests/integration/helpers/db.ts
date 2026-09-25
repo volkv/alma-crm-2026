@@ -491,7 +491,7 @@ export async function insertOrganization(
 		shortName?: string;
 		inn?: string | null;
 		/** Вид контрагента: от него зависит группа процесса взаимодействия. */
-		kind?: 'educational_institution' | 'legal_entity' | 'customer_company' | 'operator';
+		kind?: 'educational_institution' | 'legal_entity' | 'customer_company' | 'operator' | 'vendor';
 	} = {}
 ): Promise<string> {
 	const kind = options.kind ?? 'educational_institution';
