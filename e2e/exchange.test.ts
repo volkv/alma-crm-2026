@@ -78,8 +78,6 @@ staff('открытый триггер имитатора не принимае�
 	// сообщение своим ключом обмена: прими он готовое тело от кого угодно — и
 	// заявку в CRM заводил бы посетитель сайта, минуя и форму, и контракт.
 	// Снаружи ему называют только набор и ключ заявки стенда.
-	const before = await mockState(request, CMS_URL);
-
 	const forged = await request.post(`${CMS_URL}/__send-application`, {
 		data: {
 			form: 'b2b',
@@ -93,16 +91,26 @@ staff('открытый триггер имитатора не принимае�
 
 	expect(forged.status()).toBe(403);
 
+	// Ключ этой попытки не знает никто, кроме этого прогона: имитатор общий на
+	// весь файл (`docs/development.md`, «Параллельные прогоны»), и соседний тест
+	// параллельно заводит свою заявку под ключом набора — общий счёт карточек
+	// растёт под его рукой, а не под этой. Признак чужой заявки — её собственный
+	// ключ, не общее число карточек у имитатора.
+	const strangeExternalId = `${externalId}-forged`;
+
 	const strangeKey = await request.post(`${CMS_URL}/__send-application`, {
-		data: { form: 'b2b', externalId: `${externalId}-forged` }
+		data: { form: 'b2b', externalId: strangeExternalId }
 	});
 
 	expect(strangeKey.status()).toBe(400);
 
-	// Ни одной новой карточки у имитатора: до отправки в CRM дело не дошло.
 	const after = await mockState(request, CMS_URL);
+	const strangeCard = after.objects.applications?.find(
+		(item) => item.externalId === strangeExternalId
+	);
 
-	expect(after.objects.applications?.length ?? 0).toBe(before.objects.applications?.length ?? 0);
+	// До отправки в CRM дело не дошло: карточки с этим ключом у имитатора нет.
+	expect(strangeCard).toBeUndefined();
 });
 
 staff('заявка чужого экземпляра не принимается', async ({ request }) => {
