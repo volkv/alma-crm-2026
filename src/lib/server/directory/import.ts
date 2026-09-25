@@ -36,17 +36,23 @@
  * «без изменений». Примечание при этом **дописывается**: затереть чужую
  * заметку загрузкой файла — это то же переписывание карточки, от которого
  * импорт отказывается везде.
+ *
+ * Второй вид загрузки — вендоры с контактами по продуктам — идёт тем же
+ * мастером и теми же сервисами загрузки (создание, сопоставление,
+ * подтверждение, отказ, чтение), а правила его строки живут в
+ * `vendor-import.ts`.
  */
 import { and, count, desc, eq, exists, isNotNull, isNull, ne, sql, type SQL } from 'drizzle-orm';
 import { id as idSchema, type PageResult } from '$lib/contracts/common';
 import {
 	CATALOG_FIELDS,
 	CATALOG_PREVIEW_PARSE_LIMIT,
-	CATALOG_REQUIRED_FIELDS,
 	CATALOG_FIELD_LABELS,
+	IMPORT_FIELDS_BY_KIND,
 	catalogImportCounts,
 	catalogMappingSchema,
 	createCatalogImportSchema,
+	vendorMappingSchema,
 	rejectCatalogImportSchema,
 	catalogRowAction,
 	type CatalogCreation,
@@ -58,7 +64,10 @@ import {
 	type CatalogRowAction,
 	type CatalogRowChange,
 	type CatalogRowIssue,
-	type CatalogRowValues
+	type CatalogRowValues,
+	type DirectoryImportKind,
+	type ImportField,
+	type ImportMapping
 } from '$lib/contracts/directory-import';
 import {
 	affiliationPositionSchema,
@@ -124,6 +133,16 @@ import {
 	type ParsedContact
 } from './contacts';
 import { assignResponsible } from './responsibles';
+import {
+	applyVendorRows,
+	buildVendorRows,
+	databaseVendorWriter,
+	dryVendorWriter,
+	loadVendorState,
+	suggestVendorMapping,
+	vendorRowFromStored,
+	vendorStoredValues
+} from './vendor-import';
 import {
 	createAffiliation,
 	createDirection,
@@ -224,11 +243,11 @@ export function suggestCatalogMapping(headers: readonly string[]): CatalogMappin
 	return suggestFieldMapping(headers, CATALOG_FIELDS, SYNONYMS);
 }
 
-/** Поля, без которых строку не к чему отнести. */
-function missingRequiredFields(mapping: CatalogMapping): CatalogField[] {
-	const assigned = new Set(Object.values(mapping));
+/** Поля вида загрузки, без которых строку не к чему отнести. */
+function missingRequiredFields(kind: DirectoryImportKind, mapping: ImportMapping): ImportField[] {
+	const assigned = new Set<string>(Object.values(mapping));
 
-	return CATALOG_REQUIRED_FIELDS.filter((field) => !assigned.has(field));
+	return IMPORT_FIELDS_BY_KIND[kind].required.filter((field) => !assigned.has(field));
 }
 
 /* ------------------------------------------------------------------ разбор */
@@ -380,15 +399,18 @@ export type CatalogSourceRow = {
 	issues: CatalogRowIssue[];
 };
 
-function columnOf(mapping: CatalogMapping, field: CatalogField): string | null {
+function columnOf(mapping: ImportMapping, field: ImportField): string | null {
 	return Object.entries(mapping).find(([, mapped]) => mapped === field)?.[0] ?? null;
 }
 
-/** Значение поля как текст; `null` — колонки нет или ячейка пуста. */
-function textOf(
+/**
+ * Значение поля как текст; `null` — колонки нет или ячейка пуста. Одно правило
+ * на оба вида загрузки: сопоставление любого вида — «колонка → поле».
+ */
+export function textOf(
 	raw: Record<string, string>,
-	mapping: CatalogMapping,
-	field: CatalogField
+	mapping: ImportMapping,
+	field: ImportField
 ): string | null {
 	const column = columnOf(mapping, field);
 
@@ -430,10 +452,7 @@ function dateOf(
 }
 
 /** Колонки без своей колонки строки: и разбор, и подтверждение читают их так. */
-export function extraFromRaw(
-	raw: Record<string, string>,
-	mapping: CatalogMapping
-): CatalogRowExtra {
+export function extraFromRaw(raw: Record<string, string>, mapping: ImportMapping): CatalogRowExtra {
 	return {
 		managerName: textOf(raw, mapping, 'manager'),
 		contactsText: textOf(raw, mapping, 'contacts'),
@@ -692,7 +711,11 @@ export function registerResponsible(
  * номера. Поэтому ключ снимка и ключ из файла собирает одна функция:
  * разойтись двум спискам ключей достаточно одной правки нормализации.
  */
-function keysOf(name: ContactName, emailHash: string | null, phoneHash: string | null): string[] {
+export function storedContactKeys(
+	name: ContactName,
+	emailHash: string | null,
+	phoneHash: string | null
+): string[] {
 	const keys = [`фио ${normalizeName(contactFullName(name))}`];
 
 	if (emailHash !== null) {
@@ -708,7 +731,7 @@ function keysOf(name: ContactName, emailHash: string | null, phoneHash: string |
 
 /** Ключи контакта, названного в файле: он приходит открытым текстом. */
 export function contactKeys(contact: ContactIdentity): string[] {
-	return keysOf(
+	return storedContactKeys(
 		contact,
 		contact.email === null ? null : hashEmail(contact.email),
 		contact.phone === null ? null : hashPhone(contact.phone)
@@ -732,7 +755,7 @@ function registerStoredContact(
 	organizationId: string,
 	row: ContactName & { emailHash: string | null; phoneHash: string | null }
 ): void {
-	for (const key of keysOf(row, row.emailHash, row.phoneHash)) {
+	for (const key of storedContactKeys(row, row.emailHash, row.phoneHash)) {
 		state.organizationContacts.add(contactKey(organizationId, key));
 	}
 }
@@ -939,7 +962,7 @@ export type CatalogWriter = {
 	organization(input: {
 		name: string;
 		inn: string | null;
-		kind: 'educational_institution' | 'customer_company';
+		kind: 'educational_institution' | 'vendor';
 	}): Promise<string>;
 	product(input: {
 		code: string;
@@ -989,65 +1012,160 @@ export function dryWriter(): CatalogWriter {
 }
 
 /**
- * Основание обработки контактов из рабочей таблицы школы.
+ * Основание обработки контактов, которые заводит загрузка файла.
  *
- * Согласия субъекта у такой записи нет и быть не может: человека в файл вписала
- * не система, а сотрудник вуза, и подписи под текстом никто не собирал. Данные
- * представителя контрагента обрабатываются ради договора, который эта же строка
- * и описывает, — поэтому основание «исполнение договора», а версия текста —
- * день загрузки, как и у остальных записей без подписанного текста
- * (`docs/directory.md`, «Допущения S4.1a»).
+ * Согласия субъекта у такой записи нет и быть не может: человека в файл вписал
+ * не он сам, и подписи под текстом никто не собирал. Данные представителя
+ * контрагента обрабатываются ради договора с ним: у контакта вуза — договора,
+ * который описывает та же строка каталога, у контакта вендора — договора с
+ * правообладателем о продуктах, по которым этот человек и указан. Поэтому
+ * основание «исполнение договора», а версия текста — день загрузки, как и у
+ * остальных записей без подписанного текста (`docs/directory.md`, «Допущения
+ * S4.1a» и «Импорт вендоров»).
  */
 const IMPORT_CONSENT_BASIS = 'contract';
+
+/**
+ * Организация, которую заводит строка файла: из реквизитов у загрузки есть
+ * только название и ИНН. Через сервис справочника — с его правом, проверкой
+ * ИНН, ответственным по умолчанию и событием журнала.
+ */
+export async function insertImportedOrganization(
+	ctx: ActorContext,
+	tx: Tx,
+	input: { name: string; inn: string | null; kind: 'educational_institution' | 'vendor' }
+): Promise<string> {
+	const created = await createOrganization(
+		ctx,
+		{
+			kind: input.kind,
+			// Уровень образования обязателен ровно у учебного заведения — это
+			// проверяет схема. Файл о нём не говорит, поэтому новый вуз заводится
+			// высшим учебным заведением, а уточняют уровень на карточке.
+			educationLevel: input.kind === 'educational_institution' ? 'vo' : null,
+			legalName: input.name,
+			shortName: input.name,
+			inn: input.inn,
+			kpp: null,
+			ogrn: null,
+			region: null,
+			website: null,
+			notes: null,
+			isActive: true,
+			externalSource: null,
+			externalId: null
+		},
+		tx
+	);
+
+	return created.id;
+}
+
+/** Продукт, которого в справочнике не нашлось. */
+export async function insertImportedProduct(
+	ctx: ActorContext,
+	tx: Tx,
+	input: { code: string; name: string; vendorOrganizationId: string | null }
+): Promise<string> {
+	const created = await createProduct(
+		ctx,
+		{
+			code: input.code,
+			name: input.name,
+			vendorOrganizationId: input.vendorOrganizationId,
+			description: null,
+			// Продукт, заведённый загрузкой, — черновик: его завела строка чужой
+			// таблицы, а не решение о том, что его предлагают вузам.
+			status: 'draft',
+			externalSource: null,
+			externalId: null
+		},
+		tx
+	);
+
+	return created.id;
+}
+
+/**
+ * Человек из файла вместе с ролью в организации и основанием обработки.
+ * Возвращает обе записи: загрузке вендоров они нужны, чтобы связать человека
+ * с продуктами и потом узнать его роль.
+ */
+export async function insertImportedContact(
+	ctx: ActorContext,
+	tx: Tx,
+	input: { organizationId: string; contact: ParsedContact; channel: string | null }
+): Promise<{ personId: string; affiliationId: string }> {
+	const { organizationId, contact } = input;
+	// Один день на полномочия и на основание обработки: они начинаются одной
+	// записью, и разойтись на границе суток им незачем.
+	const day = formatIsoDay();
+	const person = await createPerson(
+		ctx,
+		{
+			lastName: contact.lastName,
+			firstName: contact.firstName,
+			middleName: contact.middleName,
+			email: contact.email,
+			phone: contact.phone,
+			notes: null
+		},
+		tx
+	);
+
+	const affiliation = await createAffiliation(
+		ctx,
+		{
+			personId: person.id,
+			organizationId,
+			siteId: null,
+			position: contact.position,
+			// Кем человек работает, файл не говорит, а роль — это закрытый список;
+			// «другое» здесь честнее, чем выбранная за него должность.
+			roleKind: 'other',
+			// Основным контактом человека отмечает тот, кто с ним работает:
+			// загрузка файла не знает, кому звонят первым.
+			isPrimary: false,
+			validFrom: day,
+			validTo: null,
+			channel: input.channel
+		},
+		tx
+	);
+
+	// Своей вставкой, как и у заявки с сайта (`exchange/intake.ts`):
+	// `recordConsent` — путь карточки, он сам открывает транзакцию и проверяет
+	// видимость человека, которого в общем пуле ещё нет.
+	const [record] = await tx
+		.insert(consents)
+		.values({
+			personId: person.id,
+			basis: IMPORT_CONSENT_BASIS,
+			textVersion: day,
+			givenAt: day,
+			recordedBy: ctx.user?.id ?? null
+		})
+		.returning({ id: consents.id });
+
+	await recordAuditEvent(
+		ctx,
+		{
+			type: 'people.consent_recorded',
+			outcome: 'success',
+			subject: { type: 'consent', id: record.id },
+			details: { personId: person.id }
+		},
+		tx
+	);
+
+	return { personId: person.id, affiliationId: affiliation.id };
+}
 
 /** Исполнитель подтверждения: пишет через сервисы владельцев записей. */
 function databaseWriter(ctx: ActorContext, tx: Tx): CatalogWriter {
 	return {
-		organization: async (input) => {
-			const created = await createOrganization(
-				ctx,
-				{
-					kind: input.kind,
-					// Уровень образования обязателен ровно у учебного заведения — это
-					// проверяет схема. Файл каталога о нём не говорит, поэтому новый вуз
-					// заводится высшим учебным заведением, а уточняют уровень на карточке.
-					educationLevel: input.kind === 'educational_institution' ? 'vo' : null,
-					legalName: input.name,
-					shortName: input.name,
-					inn: input.inn,
-					kpp: null,
-					ogrn: null,
-					region: null,
-					website: null,
-					notes: null,
-					isActive: true,
-					externalSource: null,
-					externalId: null
-				},
-				tx
-			);
-
-			return created.id;
-		},
-		product: async (input) => {
-			const created = await createProduct(
-				ctx,
-				{
-					code: input.code,
-					name: input.name,
-					vendorOrganizationId: input.vendorOrganizationId,
-					description: null,
-					// Продукт, заведённый импортом, — черновик: его завела строка чужой
-					// таблицы, а не решение о том, что его предлагают вузам.
-					status: 'draft',
-					externalSource: null,
-					externalId: null
-				},
-				tx
-			);
-
-			return created.id;
-		},
+		organization: async (input) => insertImportedOrganization(ctx, tx, input),
+		product: async (input) => insertImportedProduct(ctx, tx, input),
 		direction: async (input) => (await createDirection(ctx, input, tx)).id,
 		linkProductDirection: async (productId, directionId) => {
 			await tx.insert(productDirections).values({ productId, directionId });
@@ -1062,66 +1180,7 @@ function databaseWriter(ctx: ActorContext, tx: Tx): CatalogWriter {
 		assignResponsible: async (input) =>
 			assignResponsible(ctx, { ...input, directionId: null, transferInteractions: false }, tx),
 		contact: async ({ organizationId, contact }) => {
-			// Один день на полномочия и на основание обработки: они начинаются
-			// одной записью, и разойтись на границе суток им незачем.
-			const day = formatIsoDay();
-			const person = await createPerson(
-				ctx,
-				{
-					lastName: contact.lastName,
-					firstName: contact.firstName,
-					middleName: contact.middleName,
-					email: contact.email,
-					phone: contact.phone,
-					notes: null
-				},
-				tx
-			);
-
-			await createAffiliation(
-				ctx,
-				{
-					personId: person.id,
-					organizationId,
-					siteId: null,
-					position: contact.position,
-					// Кем человек работает, файл не говорит, а роль — это закрытый
-					// список; «другое» здесь честнее, чем выбранная за него должность.
-					roleKind: 'other',
-					// Основным контактом человека отмечает тот, кто с ним работает:
-					// загрузка файла не знает, кому звонят первым.
-					isPrimary: false,
-					validFrom: day,
-					validTo: null,
-					channel: null
-				},
-				tx
-			);
-
-			// Своей вставкой, как и у заявки с сайта (`exchange/intake.ts`):
-			// `recordConsent` — путь карточки, он сам открывает транзакцию и
-			// проверяет видимость человека, которого в общем пуле ещё нет.
-			const [record] = await tx
-				.insert(consents)
-				.values({
-					personId: person.id,
-					basis: IMPORT_CONSENT_BASIS,
-					textVersion: day,
-					givenAt: day,
-					recordedBy: ctx.user?.id ?? null
-				})
-				.returning({ id: consents.id });
-
-			await recordAuditEvent(
-				ctx,
-				{
-					type: 'people.consent_recorded',
-					outcome: 'success',
-					subject: { type: 'consent', id: record.id },
-					details: { personId: person.id }
-				},
-				tx
-			);
+			await insertImportedContact(ctx, tx, { organizationId, contact, channel: null });
 		},
 		organizationNotes: async ({ organizationId, notes }) => {
 			requirePermission(ctx, 'organizations.write');
@@ -1230,7 +1289,7 @@ function markConflictingDuplicates(rows: readonly CatalogSourceRow[]): void {
 }
 
 /** Единственная запись по ключу или объяснение, почему её нет. */
-function pickOne<TEntry>(
+export function pickOne<TEntry>(
 	found: TEntry[] | undefined,
 	value: string
 ): { entry: TEntry | null; message: string | null } {
@@ -1714,7 +1773,7 @@ async function applyCatalogRow(
 	}
 
 	if (vendorName !== null && vendor === null) {
-		const id = await writer.organization({ name: vendorName, inn: null, kind: 'customer_company' });
+		const id = await writer.organization({ name: vendorName, inn: null, kind: 'vendor' });
 
 		vendor = { id, inn: null, name: vendorName, inScope: true, notes: null };
 		registerOrganization(state, vendor, [vendorName]);
@@ -1899,6 +1958,7 @@ function assertEditable(status: string): void {
 function toCatalogImportView(row: typeof directoryImports.$inferSelect): CatalogImportView {
 	return {
 		id: row.id,
+		kind: row.kind,
 		status: row.status,
 		fileDocumentId: row.fileDocumentId,
 		mapping: row.mapping,
@@ -2019,6 +2079,11 @@ async function readImportTable(
 }
 
 export type CreateCatalogImportCommand = {
+	/**
+	 * Что описывает файл; без указания — каталог вузов. Текстом, а не видом:
+	 * из формы приходит что угодно, и проверяет значение схема команды.
+	 */
+	kind?: string;
 	note?: string | null;
 	file: { name: string; bytes: Uint8Array };
 };
@@ -2029,7 +2094,10 @@ export async function createCatalogImport(
 ): Promise<CatalogImportView> {
 	await requirePermission(ctx, 'directory.import', { type: 'directory.import_created' });
 
-	const parsed = createCatalogImportSchema.safeParse({ note: input.note ?? null });
+	const parsed = createCatalogImportSchema.safeParse({
+		kind: input.kind ?? 'catalog',
+		note: input.note ?? null
+	});
 
 	if (!parsed.success) {
 		throw invalid('Загрузка не прошла проверку', parsed.error);
@@ -2061,6 +2129,7 @@ export async function createCatalogImport(
 			const [row] = await tx
 				.insert(directoryImports)
 				.values({
+					kind: parsed.data.kind,
 					status: 'uploading',
 					fileDocumentId: file.id,
 					note: parsed.data.note,
@@ -2087,9 +2156,10 @@ export async function createCatalogImport(
 	}
 }
 
-function toRowValues(
-	source: CatalogSourceRow
-): Omit<typeof directoryImportRows.$inferInsert, 'importId'> {
+/** Строка загрузки без ссылки на саму загрузку: её ставит запись. */
+type StoredRowValues = Omit<typeof directoryImportRows.$inferInsert, 'importId'>;
+
+function toRowValues(source: CatalogSourceRow): StoredRowValues {
 	return {
 		rowNo: source.rowNo,
 		origin: source.origin,
@@ -2121,7 +2191,7 @@ function toRowValues(
 export async function applyCatalogMapping(
 	ctx: ActorContext,
 	importId: string,
-	mapping: CatalogMapping
+	mapping: Record<string, string>
 ): Promise<CatalogImportView> {
 	await requirePermission(ctx, 'directory.import', {
 		type: 'directory.import_created',
@@ -2131,46 +2201,17 @@ export async function applyCatalogMapping(
 	const row = await selectImportRow(ctx, importId);
 	assertEditable(row.status);
 
-	const parsed = catalogMappingSchema.safeParse(mapping);
-
-	if (!parsed.success) {
-		throw invalid('Сопоставление колонок не прошло проверку', parsed.error);
-	}
-
 	const table = await readImportTable(row);
-	const unknown = Object.keys(parsed.data).filter((column) => !table.headers.includes(column));
-
-	if (unknown.length > 0) {
-		throw new ValidationError('В файле нет таких колонок', [
-			`Сопоставлены колонки, которых нет в шапке: ${unknown.join(', ')}`
-		]);
-	}
-
-	const missing = missingRequiredFields(parsed.data);
-
-	if (missing.length > 0) {
-		throw new ValidationError('Сопоставлены не все обязательные поля', [
-			`Без этих полей строку не к чему отнести: ${missing
-				.map((field) => CATALOG_FIELD_LABELS[field])
-				.join(', ')}`
-		]);
-	}
-
-	const sourceRows = buildCatalogRows(table, parsed.data);
-	const results = await applyCatalogRows(await loadCatalogState(ctx), dryWriter(), sourceRows);
-	const counts = catalogImportCounts(results);
+	const prepared =
+		row.kind === 'catalog'
+			? await prepareCatalogRows(ctx, table, mapping)
+			: await prepareVendorRows(ctx, table, mapping);
+	const counts = catalogImportCounts(prepared.rows);
 
 	return withTransaction(ctx, async (tx) => {
 		await tx.delete(directoryImportRows).where(eq(directoryImportRows.importId, row.id));
 
-		const values = sourceRows.map((source, index) => ({
-			...toRowValues(source),
-			importId: row.id,
-			action: results[index].action,
-			issues: results[index].issues,
-			creations: results[index].creations,
-			changes: results[index].changes
-		}));
+		const values = prepared.rows.map((item) => ({ ...item, importId: row.id }));
 
 		for (let from = 0; from < values.length; from += INSERT_CHUNK) {
 			await tx.insert(directoryImportRows).values(values.slice(from, from + INSERT_CHUNK));
@@ -2178,12 +2219,103 @@ export async function applyCatalogMapping(
 
 		const [updated] = await tx
 			.update(directoryImports)
-			.set({ mapping: parsed.data, status: 'mapped', ...counts, updatedAt: new Date() })
+			.set({ mapping: prepared.mapping, status: 'mapped', ...counts, updatedAt: new Date() })
 			.where(eq(directoryImports.id, row.id))
 			.returning();
 
 		return toCatalogImportView(updated);
 	});
+}
+
+/** Сопоставление прошло проверку, а строки посчитаны предпросмотром. */
+type PreparedRows = {
+	mapping: ImportMapping;
+	rows: (StoredRowValues & { action: CatalogRowAction })[];
+};
+
+/**
+ * Сопоставление против шапки файла и обязательных полей вида. Общая часть обоих
+ * видов: колонку, которой нет в шапке, и строку, которую не к чему отнести,
+ * отвергают до предпросмотра.
+ */
+function checkMapping(kind: DirectoryImportKind, table: StatTable, mapping: ImportMapping): void {
+	const unknown = Object.keys(mapping).filter((column) => !table.headers.includes(column));
+
+	if (unknown.length > 0) {
+		throw new ValidationError('В файле нет таких колонок', [
+			`Сопоставлены колонки, которых нет в шапке: ${unknown.join(', ')}`
+		]);
+	}
+
+	const missing = missingRequiredFields(kind, mapping);
+
+	if (missing.length > 0) {
+		const labels = IMPORT_FIELDS_BY_KIND[kind].labels;
+
+		throw new ValidationError('Сопоставлены не все обязательные поля', [
+			`Без этих полей строку не к чему отнести: ${missing.map((field) => labels[field]).join(', ')}`
+		]);
+	}
+}
+
+function withResults<TSource>(
+	sources: readonly TSource[],
+	results: readonly CatalogRowResult[],
+	stored: (source: TSource) => StoredRowValues
+): PreparedRows['rows'] {
+	return sources.map((source, index) => ({
+		...stored(source),
+		action: results[index].action,
+		issues: results[index].issues,
+		creations: results[index].creations,
+		changes: results[index].changes
+	}));
+}
+
+async function prepareCatalogRows(
+	ctx: ActorContext,
+	table: StatTable,
+	mapping: Record<string, string>
+): Promise<PreparedRows> {
+	const parsed = catalogMappingSchema.safeParse(mapping);
+
+	if (!parsed.success) {
+		throw invalid('Сопоставление колонок не прошло проверку', parsed.error);
+	}
+
+	checkMapping('catalog', table, parsed.data);
+
+	const sourceRows = buildCatalogRows(table, parsed.data);
+	const results = await applyCatalogRows(await loadCatalogState(ctx), dryWriter(), sourceRows);
+
+	return { mapping: parsed.data, rows: withResults(sourceRows, results, toRowValues) };
+}
+
+async function prepareVendorRows(
+	ctx: ActorContext,
+	table: StatTable,
+	mapping: Record<string, string>
+): Promise<PreparedRows> {
+	const parsed = vendorMappingSchema.safeParse(mapping);
+
+	if (!parsed.success) {
+		throw invalid('Сопоставление колонок не прошло проверку', parsed.error);
+	}
+
+	checkMapping('vendors', table, parsed.data);
+
+	const sourceRows = buildVendorRows(table, parsed.data);
+	const results = await applyVendorRows(await loadVendorState(ctx), dryVendorWriter(), sourceRows);
+
+	return {
+		mapping: parsed.data,
+		rows: withResults(sourceRows, results, (source) => ({
+			rowNo: source.rowNo,
+			origin: source.origin,
+			raw: source.raw,
+			...vendorStoredValues(source)
+		}))
+	};
 }
 
 /**
@@ -2200,6 +2332,57 @@ async function invalidated<TResult>(result: Promise<TResult>): Promise<TResult> 
 	await invalidateDirectoryOptions();
 
 	return value;
+}
+
+type StoredRow = typeof directoryImportRows.$inferSelect;
+
+/** Строки каталога заново по свежему снимку, внутри транзакции подтверждения. */
+async function confirmCatalogRows(
+	ctx: ActorContext,
+	tx: Tx,
+	pending: readonly StoredRow[],
+	mapping: ImportMapping
+): Promise<CatalogRowResult[]> {
+	const sourceRows: CatalogSourceRow[] = pending.map((item) => ({
+		rowNo: item.rowNo,
+		origin: item.origin,
+		raw: item.raw,
+		// Менеджер, контакты и комментарий читаются из сохранённой строки файла
+		// по сохранённому сопоставлению: своих колонок у них нет, а файл между
+		// предпросмотром и подтверждением не перечитывается.
+		extra: extraFromRaw(item.raw, mapping),
+		issues: [],
+		values: {
+			organizationName: item.organizationName,
+			organizationInn: item.organizationInn,
+			vendorName: item.vendorName,
+			productName: item.productName,
+			productCode: item.productCode,
+			directionName: item.directionName,
+			contractNumber: item.contractNumber,
+			contractSignedOn: item.contractSignedOn,
+			contractValidUntil: item.contractValidUntil,
+			licenseSignedAt: item.licenseSignedAt,
+			licenseUntil: item.licenseUntil,
+			transferStatus: item.transferStatus
+		}
+	}));
+
+	return applyCatalogRows(await loadCatalogState(ctx, tx), databaseWriter(ctx, tx), sourceRows);
+}
+
+/** Строки вендоров заново по свежему снимку, внутри транзакции подтверждения. */
+async function confirmVendorRows(
+	ctx: ActorContext,
+	tx: Tx,
+	pending: readonly StoredRow[],
+	mapping: ImportMapping
+): Promise<CatalogRowResult[]> {
+	return applyVendorRows(
+		await loadVendorState(ctx, tx),
+		databaseVendorWriter(ctx, tx),
+		pending.map((item) => vendorRowFromStored(item, mapping))
+	);
 }
 
 /**
@@ -2258,38 +2441,16 @@ export async function confirmCatalogImport(
 			}
 
 			const pending = stored.filter((item) => item.action !== 'error');
-			const sourceRows: CatalogSourceRow[] = pending.map((item) => ({
-				rowNo: item.rowNo,
-				origin: item.origin,
-				raw: item.raw,
-				// Менеджер, контакты и комментарий читаются из сохранённой строки
-				// файла по сохранённому сопоставлению: своих колонок у них нет, а
-				// файл между предпросмотром и подтверждением не перечитывается.
-				extra: extraFromRaw(item.raw, row.mapping),
-				issues: [],
-				values: {
-					organizationName: item.organizationName,
-					organizationInn: item.organizationInn,
-					vendorName: item.vendorName,
-					productName: item.productName,
-					productCode: item.productCode,
-					directionName: item.directionName,
-					contractNumber: item.contractNumber,
-					contractSignedOn: item.contractSignedOn,
-					contractValidUntil: item.contractValidUntil,
-					licenseSignedAt: item.licenseSignedAt,
-					licenseUntil: item.licenseUntil,
-					transferStatus: item.transferStatus
-				}
-			}));
 
 			// Область сбора следа просмотра: заведение контакта возвращает его
 			// карточку, и каждый такой возврат — обращение к персональным данным.
 			// Одна область на всю загрузку вместо события на каждого человека.
-			const state = await loadCatalogState(ctx, tx);
 			const results = await withPiiTrace(
 				ctx,
-				() => applyCatalogRows(state, databaseWriter(ctx, tx), sourceRows),
+				() =>
+					row.kind === 'catalog'
+						? confirmCatalogRows(ctx, tx, pending, row.mapping)
+						: confirmVendorRows(ctx, tx, pending, row.mapping),
 				tx
 			);
 
@@ -2406,9 +2567,9 @@ export type CatalogImportPreview = {
 	/** Первые строки файла: колонка → значение. */
 	sample: Record<string, string>[];
 	/** Предложенное сопоставление: колонка → поле. */
-	advice: CatalogMapping;
+	advice: ImportMapping;
 	/** Уже применённое сопоставление; пусто, пока шаг не проходили. */
-	mapping: CatalogMapping;
+	mapping: ImportMapping;
 	totalRows: number;
 	warnings: string[];
 };
@@ -2506,7 +2667,10 @@ export async function getCatalogImportPreview(
 				table.headers.map((header, column) => [header, source.cells[column] ?? ''])
 			)
 		),
-		advice: suggestCatalogMapping(table.headers),
+		advice:
+			row.kind === 'catalog'
+				? suggestCatalogMapping(table.headers)
+				: suggestVendorMapping(table.headers),
 		mapping: row.mapping,
 		totalRows: table.totalRows,
 		warnings: table.warnings

@@ -8,7 +8,8 @@
  * договором, «строка с ошибкой ничего не записала») выполняются на живой схеме.
  */
 import { readFileSync } from 'node:fs';
-import { and, eq, isNull } from 'drizzle-orm';
+import { and, count, eq, isNull } from 'drizzle-orm';
+import type { PgTable } from 'drizzle-orm/pg-core';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { CatalogImportView } from '$lib/contracts/directory-import';
 import {
@@ -22,6 +23,7 @@ import {
 	organizationResponsibles,
 	organizations,
 	people,
+	productContacts,
 	productDirections,
 	products
 } from '$lib/server/db/schema';
@@ -36,6 +38,7 @@ import {
 	rejectCatalogImport,
 	suggestCatalogMapping
 } from '$lib/server/directory/import';
+import { suggestVendorMapping } from '$lib/server/directory/vendor-import';
 import { ConflictError, ForbiddenError, NotFoundError } from '$lib/server/errors';
 import { decryptContacts } from '$lib/server/people/pii';
 import {
@@ -296,13 +299,13 @@ describe('применение импорта каталога', () => {
 		);
 		expect(organizationNames).not.toContain('ЮТИМ');
 
-		// Вендор заведён компанией-заказчиком: основной стороной процесса он не бывает.
+		// Вендор заведён своим видом — правообладатель ПО, а не плательщик рядом с вузом.
 		const [vendor] = await database.db
 			.select({ kind: organizations.kind })
 			.from(organizations)
 			.where(eq(organizations.shortName, 'ТехноСфера Софт'));
 
-		expect(vendor.kind).toBe('customer_company');
+		expect(vendor.kind).toBe('vendor');
 
 		// Продукт без кода в файле получил код из своего названия.
 		const [polygon] = await database.db
@@ -952,5 +955,161 @@ describe('менеджер, контакты и комментарий стро�
 
 		expect(messages.some((message) => message.includes('вне вашей области доступа'))).toBe(true);
 		expect(await generalResponsible(catalog.szpu)).not.toBeNull();
+	});
+});
+
+describe('импорт вендоров', () => {
+	const OPERATOR = 'АО «Оператор Обучения»';
+
+	/** Тот же мастер, другой вид загрузки: файл, предложенное сопоставление, разбор. */
+	async function vendorPreview(
+		ctx: ReturnType<typeof testActor>,
+		name: string
+	): Promise<CatalogImportView> {
+		const created = await createCatalogImport(ctx, {
+			kind: 'vendors',
+			file: { name, bytes: fixture(name) }
+		});
+		const shown = await getCatalogImportPreview(ctx, created.id);
+
+		return applyCatalogMapping(ctx, created.id, suggestVendorMapping(shown.headers));
+	}
+
+	/** Сколько записей в таблицах, которые трогает загрузка вендоров. */
+	async function sizes(): Promise<Record<string, number>> {
+		const of = async (table: PgTable) =>
+			(await database.db.select({ value: count() }).from(table))[0].value;
+
+		return {
+			organizations: await of(organizations),
+			products: await of(products),
+			people: await of(people),
+			affiliations: await of(affiliations),
+			productContacts: await of(productContacts)
+		};
+	}
+
+	it('раскладывает файл по справочнику, а повторная загрузка ничего не меняет', async () => {
+		const operator = await insertOrganization(database.db, {
+			shortName: OPERATOR,
+			kind: 'operator'
+		});
+		const ctx = testActor();
+
+		// Три формата одного файла дают одни и те же числа.
+		for (const name of ['vendors-sample.csv', 'vendors-sample.json']) {
+			expect(COUNTS(await vendorPreview(ctx, name))).toEqual({
+				rowCount: 4,
+				createCount: 4,
+				updateCount: 0,
+				unchangedCount: 0,
+				errorCount: 0
+			});
+		}
+
+		const record = await vendorPreview(ctx, 'vendors-sample.xlsx');
+
+		expect(record.kind).toBe('vendors');
+		expect(COUNTS(record)).toEqual({
+			rowCount: 4,
+			createCount: 4,
+			updateCount: 0,
+			unchangedCount: 0,
+			errorCount: 0
+		});
+
+		await confirmCatalogImport(ctx, record.id);
+
+		const kinds = await database.db
+			.select({ id: organizations.id, name: organizations.shortName, kind: organizations.kind })
+			.from(organizations);
+		const kindOf = new Map(kinds.map((row) => [row.name, row.kind]));
+		const idOf = new Map(kinds.map((row) => [row.name, row.id]));
+
+		// Оператор найден и остался оператором; ненайденные компании — вендоры.
+		expect(kindOf.get(OPERATOR)).toBe('operator');
+		expect(idOf.get(OPERATOR)).toBe(operator);
+		expect(kindOf.get('ООО «Ладога Датасистемс»')).toBe('vendor');
+		expect(kindOf.get('ООО «Полярный Софт»')).toBe('vendor');
+		expect(kinds).toHaveLength(3);
+
+		const productRows = await database.db
+			.select({ id: products.id, name: products.name, vendor: products.vendorOrganizationId })
+			.from(products);
+		const vendorOf = new Map(productRows.map((row) => [row.name, row.vendor]));
+		const ladoga = idOf.get('ООО «Ладога Датасистемс»');
+
+		expect(Object.fromEntries(vendorOf)).toEqual({
+			'Ладога.Хранилище': ladoga,
+			'Ладога.Витрина': ladoga,
+			'Ладога.Поток': ladoga,
+			'Учебный стенд': operator,
+			'Полярный Редактор': idOf.get('ООО «Полярный Софт»')
+		});
+
+		const contacts = await database.db
+			.select({
+				person: people,
+				channel: affiliations.channel,
+				organizationId: affiliations.organizationId
+			})
+			.from(affiliations)
+			.innerJoin(people, eq(people.id, affiliations.personId));
+		const byName = new Map(
+			contacts.map((row) => [
+				row.person.lastName,
+				{ ...row, contacts: decryptContacts(row.person) }
+			])
+		);
+
+		expect(byName.get('Орлова')?.channel).toBe('Почта, Чат в ТГ');
+		expect(byName.get('Сизов')?.channel).toBe('Телефон');
+		// Телефон числом из книги лёг телефоном, а не записью числа.
+		expect(byName.get('Сизов')?.contacts.phone).toBe('79001112244');
+		expect(byName.get('Кравец')).toMatchObject({ channel: 'Почта', organizationId: operator });
+
+		const links = await database.db
+			.select({ product: products.name, person: people.lastName })
+			.from(productContacts)
+			.innerJoin(products, eq(products.id, productContacts.productId))
+			.innerJoin(people, eq(people.id, productContacts.personId));
+
+		expect(links.map((link) => `${link.product} · ${link.person}`).sort()).toEqual([
+			'Ладога.Витрина · Орлова',
+			'Ладога.Поток · Сизов',
+			'Ладога.Хранилище · Орлова',
+			'Учебный стенд · Кравец'
+		]);
+
+		// Строки загрузки ссылаются на компанию: по ней загрузку видит тот, чья она.
+		const rows = await listCatalogImportRows(ctx, record.id, {
+			action: null,
+			page: 1,
+			pageSize: 10
+		});
+
+		expect(rows.items.every((row) => row.organizationId !== null)).toBe(true);
+
+		const before = await sizes();
+		const repeat = await vendorPreview(ctx, 'vendors-sample.xlsx');
+
+		expect(COUNTS(repeat)).toEqual({
+			rowCount: 4,
+			createCount: 0,
+			updateCount: 0,
+			unchangedCount: 4,
+			errorCount: 0
+		});
+
+		await confirmCatalogImport(ctx, repeat.id);
+
+		expect(await sizes()).toEqual(before);
+		expect(before).toEqual({
+			organizations: 3,
+			products: 5,
+			people: 3,
+			affiliations: 3,
+			productContacts: 4
+		});
 	});
 });

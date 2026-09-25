@@ -40,6 +40,7 @@ import type {
 	PersonAffiliationView,
 	PersonListItem,
 	PersonView,
+	ProductContactView,
 	ProductDetail,
 	ProductDirectoryQuery,
 	ProductView,
@@ -58,6 +59,7 @@ import {
 	directions,
 	organizations,
 	people,
+	productContacts,
 	productDirections,
 	products,
 	programs,
@@ -946,6 +948,61 @@ export async function getProduct(ctx: ActorContext, id: string): Promise<Product
 				? null
 				: { id: product.vendorOrganizationId, label: vendorName }
 	};
+}
+
+/**
+ * Контакты вендора по продукту для карточки продукта.
+ *
+ * Продукт — общий справочник, а люди — нет: человек виден по тем же правилам,
+ * что и везде (`personVisible`), поэтому карточка продукта не открывает
+ * контакты компании тому, кому их не показывает карточка самой компании.
+ * Почта и телефон маскируются сериализатором, чтение оставляет след просмотра.
+ * Роль берётся у правообладателя продукта, действующая — первой.
+ */
+export async function listProductContacts(
+	ctx: ActorContext,
+	productId: string
+): Promise<ProductContactView[]> {
+	requirePermission(ctx, 'people.read');
+
+	return withPiiTrace(ctx, async () => {
+		const rows = await getDb()
+			.select({ person: people, affiliation: affiliations })
+			.from(productContacts)
+			.innerJoin(products, eq(products.id, productContacts.productId))
+			.innerJoin(people, eq(people.id, productContacts.personId))
+			.leftJoin(
+				affiliations,
+				and(
+					eq(affiliations.personId, productContacts.personId),
+					eq(affiliations.organizationId, products.vendorOrganizationId)
+				)
+			)
+			.where(and(eq(productContacts.productId, productId), personVisible(ctx)))
+			.orderBy(
+				asc(people.lastName),
+				asc(people.firstName),
+				sql`${affiliations.validTo} is not null`,
+				desc(affiliations.validFrom)
+			);
+
+		const byPerson = new Map<string, ProductContactView>();
+
+		for (const { person, affiliation } of rows) {
+			if (byPerson.has(person.id)) {
+				continue;
+			}
+
+			byPerson.set(person.id, {
+				person: toPersonView(ctx, person),
+				position: affiliation?.position ?? null,
+				roleKind: affiliation?.roleKind ?? null,
+				channel: affiliation?.channel ?? null
+			});
+		}
+
+		return [...byPerson.values()];
+	});
 }
 
 export function toDirectionView(row: typeof directions.$inferSelect): DirectionView {

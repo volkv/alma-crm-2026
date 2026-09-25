@@ -131,6 +131,7 @@
 
 	<RowsTable
 		rows={data.rows}
+		kind={data.record.kind}
 		emptyTitle="Строк нет"
 		emptyDescription={data.action === null
 			? 'В файле не нашлось ни одной строки данных.'

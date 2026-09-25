@@ -11,7 +11,7 @@
  * уникальность проверяет база, а сервис переводит её нарушение в понятную
  * фразу — иначе гонка двух вкладок покажет человеку код PostgreSQL.
  */
-import { and, eq, max, ne, sql } from 'drizzle-orm';
+import { and, eq, isNull, max, ne, sql } from 'drizzle-orm';
 import type {
 	AffiliationView,
 	CreateAffiliationInput,
@@ -49,6 +49,7 @@ import {
 	organizationResponsibles,
 	organizations,
 	people,
+	productContacts,
 	productDirections,
 	products,
 	programVersions,
@@ -1257,5 +1258,118 @@ export async function updateProduct(
 				return toProductView(row);
 			})
 		)
+	);
+}
+
+/**
+ * Правообладатель продукту, у которого его не было. Узкая команда загрузки
+ * вендоров: форма продукта присылает запись целиком (`updateProduct`), а файл
+ * знает только «этот продукт — этой компании» и чужого вендора не заменяет —
+ * это решает вызывающий до записи.
+ */
+export async function setProductVendor(
+	ctx: ActorContext,
+	input: { productId: string; vendorOrganizationId: string },
+	tx: Tx
+): Promise<void> {
+	await requirePermission(ctx, 'products.write', {
+		type: 'products.updated',
+		subject: { type: 'product', id: input.productId }
+	});
+	await assertVendorExists(tx, input.vendorOrganizationId);
+
+	const updated = await tx
+		.update(products)
+		.set({ vendorOrganizationId: input.vendorOrganizationId, updatedAt: sql`now()` })
+		.where(and(eq(products.id, input.productId), isNull(products.vendorOrganizationId)))
+		.returning({ id: products.id });
+
+	if (updated.length === 0) {
+		throw new ConflictError('У продукта уже есть правообладатель: загрузка его не заменяет');
+	}
+
+	await recordAuditEvent(
+		ctx,
+		{
+			type: 'products.updated',
+			outcome: 'success',
+			subject: { type: 'product', id: input.productId },
+			details: { changedFields: ['vendorOrganizationId'] }
+		},
+		tx
+	);
+}
+
+/**
+ * Контакт вендора по продукту. Человек в связь попадает только
+ * идентификатором: ФИО и контакты живут в `people`. Право — на продукт: кому
+ * писать про продукт, это часть его карточки.
+ */
+export async function linkProductContact(
+	ctx: ActorContext,
+	input: { productId: string; personId: string },
+	tx: Tx
+): Promise<void> {
+	await requirePermission(ctx, 'products.write', {
+		type: 'products.updated',
+		subject: { type: 'product', id: input.productId }
+	});
+	await assertProductExists(tx, input.productId);
+
+	await tx.insert(productContacts).values(input);
+
+	await recordAuditEvent(
+		ctx,
+		{
+			type: 'products.updated',
+			outcome: 'success',
+			subject: { type: 'product', id: input.productId },
+			details: { personId: input.personId, changedFields: ['contacts'] }
+		},
+		tx
+	);
+}
+
+/**
+ * Способ связи в роли человека. Отдельной командой, потому что загрузка
+ * вендоров меняет в уже заведённой роли только его: остальное — должность,
+ * полномочия, основной контакт — ведёт карточка организации. Роль вне области
+ * доступа — «не найдена», как и у закрытия полномочий.
+ */
+export async function setAffiliationChannel(
+	ctx: ActorContext,
+	input: { affiliationId: string; channel: string },
+	tx: Tx
+): Promise<void> {
+	await requirePermission(ctx, 'people.write', {
+		type: 'people.affiliation_updated',
+		subject: { type: 'affiliation', id: input.affiliationId }
+	});
+
+	const [row] = await tx
+		.update(affiliations)
+		.set({ channel: input.channel, updatedAt: sql`now()` })
+		.where(
+			and(eq(affiliations.id, input.affiliationId), scopeFilter(ctx, affiliations.organizationId))
+		)
+		.returning({ personId: affiliations.personId, organizationId: affiliations.organizationId });
+
+	if (row === undefined) {
+		throw new NotFoundError('Роль не найдена');
+	}
+
+	await recordAuditEvent(
+		ctx,
+		{
+			type: 'people.affiliation_updated',
+			outcome: 'success',
+			subject: { type: 'affiliation', id: input.affiliationId },
+			details: {
+				personId: row.personId,
+				organizationId: row.organizationId,
+				changedFields: ['channel']
+			}
+		},
+		tx
 	);
 }

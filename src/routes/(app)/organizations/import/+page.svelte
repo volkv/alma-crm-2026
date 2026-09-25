@@ -5,6 +5,8 @@
 	import type { ResolvedPathname } from '$app/types';
 	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 	import * as Alert from '$lib/components/ui/alert/index.js';
+	import { Label } from '$lib/components/ui/label/index.js';
+	import * as RadioGroup from '$lib/components/ui/radio-group/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FileInput from '$lib/components/form/file-input.svelte';
@@ -16,7 +18,10 @@
 	import {
 		CATALOG_FILE_FORMATS_HINT,
 		CATALOG_IMPORT_STATUS_LABELS,
-		CATALOG_WIZARD_STEPS
+		CATALOG_WIZARD_STEPS,
+		DIRECTORY_IMPORT_KINDS,
+		DIRECTORY_IMPORT_KIND_HINTS,
+		DIRECTORY_IMPORT_KIND_LABELS
 	} from '$lib/contracts/directory-import';
 	import { formatDateTime, formatNumber } from '$lib/format';
 	import type { PageProps } from './$types';
@@ -25,9 +30,10 @@
 
 	// Отказ возвращает то, что человек уже ввёл: набирать примечание заново
 	// из-за неподходящего файла — это наказание за попытку.
-	const initial = untrack(() => form?.values ?? { note: '' });
+	const initial = untrack(() => form?.values ?? { note: '', kind: 'catalog' });
 
 	let note = $state(initial.note);
+	let kind = $state(initial.kind === '' ? 'catalog' : initial.kind);
 	let submitting = $state(false);
 
 	/** Незавершённую загрузку можно открыть и довести: у шага есть свой адрес. */
@@ -43,7 +49,7 @@
 
 <Header
 	title="Импорт каталога"
-	description="Шаг 1 из 3: файл со строками «вуз — вендор — ПО — договор — лицензия — статус передачи»."
+	description="Шаг 1 из 3: что описывает файл и сам файл — каталог вузов или вендоров с контактами по продуктам."
 />
 
 <Breadcrumbs
@@ -87,9 +93,24 @@
 			};
 		}}
 	>
+		<fieldset class="flex flex-col gap-2" data-tour="organizations-import-kind">
+			<legend class="mb-2 text-sm font-medium">Что описывает файл</legend>
+			<RadioGroup.Root name="kind" bind:value={kind}>
+				{#each DIRECTORY_IMPORT_KINDS as option (option)}
+					<div class="flex items-start gap-3">
+						<RadioGroup.Item value={option} id="kind-{option}" class="mt-0.5" />
+						<div class="flex flex-col gap-0.5">
+							<Label for="kind-{option}">{DIRECTORY_IMPORT_KIND_LABELS[option]}</Label>
+							<p class="text-xs text-muted-foreground">{DIRECTORY_IMPORT_KIND_HINTS[option]}</p>
+						</div>
+					</div>
+				{/each}
+			</RadioGroup.Root>
+		</fieldset>
+
 		<FileInput
 			id="file"
-			label="Файл каталога"
+			label="Файл"
 			description="{CATALOG_FILE_FORMATS_HINT} — до 25 МиБ. В таблице первая строка — названия колонок; в JSON — массив записей или объект со списком строк."
 			accept=".xls,.xlsx,.csv,.json,text/csv,application/json,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 			required
@@ -106,10 +127,12 @@
 	</form>
 
 	<p class="max-w-3xl text-sm text-muted-foreground">
-		Импорт заводит недостающие организации, продукты и направления и ведёт договоры, лицензии и
-		статусы передачи. Уже заведённые вузы и продукты он не переписывает, а пустая ячейка ничего не
-		стирает — поэтому повторная загрузка того же файла отвечает «без изменений». Ничего не
-		записывается, пока вы не подтвердите предпросмотр на третьем шаге.
+		Каталог заводит недостающие организации, продукты и направления и ведёт договоры, лицензии и
+		статусы передачи. Файл вендоров заводит компании-правообладатели и их продукты, а людей из файла
+		— контактами вендора по этим продуктам. Уже заведённые вузы, компании и продукты импорт не
+		переписывает, а пустая ячейка ничего не стирает — поэтому повторная загрузка того же файла
+		отвечает «без изменений». Ничего не записывается, пока вы не подтвердите предпросмотр на третьем
+		шаге.
 	</p>
 
 	{#if data.imports.length > 0}
@@ -120,6 +143,7 @@
 					<Table.Header>
 						<Table.Row>
 							<Table.Head>Файл</Table.Head>
+							<Table.Head>Вид</Table.Head>
 							<Table.Head>Состояние</Table.Head>
 							<Table.Head class="text-right">Строк</Table.Head>
 							<Table.Head class="text-right">С ошибками</Table.Head>
@@ -133,6 +157,9 @@
 									<a class="underline-offset-2 hover:underline" href={stepHref(record)}>
 										{record.fileName ?? 'Файл каталога'}
 									</a>
+								</Table.Cell>
+								<Table.Cell class="text-muted-foreground">
+									{DIRECTORY_IMPORT_KIND_LABELS[record.kind]}
 								</Table.Cell>
 								<Table.Cell>
 									<StatusBadge

@@ -8,7 +8,8 @@
 		CATALOG_ROW_ACTION_LABELS,
 		CATALOG_TARGET_LABELS,
 		type CatalogImportRowView,
-		type CatalogRowAction
+		type CatalogRowAction,
+		type DirectoryImportKind
 	} from '$lib/contracts/directory-import';
 
 	/**
@@ -17,14 +18,21 @@
 	 * Действие стоит в той же строке, что и данные, и рядом с ним — «что именно»:
 	 * «Обновить» без названия поля и прежнего значения подтверждать нельзя, а
 	 * список изменений отдельно от строк заставил бы сверять номера руками.
+	 *
+	 * Колонки данных — по виду загрузки: у каталога это вуз, продукт, договор и
+	 * лицензия, у вендоров — компания и продукты. Контакт вендора в таблице не
+	 * показывается: ФИО и телефоны видны по правилам людей, а не по видимости
+	 * загрузки, — что с ним будет, говорит колонка «Что будет».
 	 */
 	let {
 		rows,
+		kind,
 		done = false,
 		emptyTitle = 'Строк нет',
 		emptyDescription
 	}: {
 		rows: readonly CatalogImportRowView[];
+		kind: DirectoryImportKind;
 		/** Импорт уже применён: действия называются в прошедшем времени. */
 		done?: boolean;
 		emptyTitle?: string;
@@ -54,11 +62,16 @@
 			<Table.Header>
 				<Table.Row>
 					<Table.Head class="w-12 text-right">№</Table.Head>
-					<Table.Head>Учебное заведение</Table.Head>
-					<Table.Head>Продукт</Table.Head>
-					<Table.Head>Договор</Table.Head>
-					<Table.Head>Лицензия</Table.Head>
-					<Table.Head>Статус передачи</Table.Head>
+					{#if kind === 'catalog'}
+						<Table.Head>Учебное заведение</Table.Head>
+						<Table.Head>Продукт</Table.Head>
+						<Table.Head>Договор</Table.Head>
+						<Table.Head>Лицензия</Table.Head>
+						<Table.Head>Статус передачи</Table.Head>
+					{:else}
+						<Table.Head>Компания</Table.Head>
+						<Table.Head>Продукты</Table.Head>
+					{/if}
 					<Table.Head>Что будет</Table.Head>
 				</Table.Row>
 			</Table.Header>
@@ -75,9 +88,11 @@
 						<Table.Cell class="max-w-64 truncate" title={row.productName ?? undefined}>
 							{dash(row.productName)}
 						</Table.Cell>
-						<Table.Cell class="whitespace-nowrap">{dash(row.contractNumber)}</Table.Cell>
-						<Table.Cell class="whitespace-nowrap">{dash(row.licenseUntil)}</Table.Cell>
-						<Table.Cell>{dash(row.transferStatus)}</Table.Cell>
+						{#if kind === 'catalog'}
+							<Table.Cell class="whitespace-nowrap">{dash(row.contractNumber)}</Table.Cell>
+							<Table.Cell class="whitespace-nowrap">{dash(row.licenseUntil)}</Table.Cell>
+							<Table.Cell>{dash(row.transferStatus)}</Table.Cell>
+						{/if}
 						<Table.Cell>
 							<div class="flex flex-col gap-1">
 								<StatusBadge tone={TONES[row.action]} dot={row.action !== 'error'}>

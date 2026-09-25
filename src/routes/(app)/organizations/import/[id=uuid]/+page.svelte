@@ -12,6 +12,7 @@
 		CATALOG_IMPORT_STATUS_LABELS,
 		CATALOG_ROW_ACTIONS,
 		CATALOG_ROW_ACTION_DONE_LABELS,
+		DIRECTORY_IMPORT_KIND_LABELS,
 		type CatalogRowAction
 	} from '$lib/contracts/directory-import';
 	import { formatDateTime, formatNumber, pluralize } from '$lib/format';
@@ -70,6 +71,7 @@
 
 	<KeyValue>
 		<KeyValueRow label="Файл" value={data.record.fileName} />
+		<KeyValueRow label="Вид загрузки" value={DIRECTORY_IMPORT_KIND_LABELS[data.record.kind]} />
 		<KeyValueRow label="Загрузил" value={data.record.authorName} />
 		<KeyValueRow label="Загружено" value={formatDateTime(data.record.createdAt)} />
 		<KeyValueRow label="Применено" value={confirmedAt} />
@@ -116,6 +118,7 @@
 
 	<RowsTable
 		rows={data.rows}
+		kind={data.record.kind}
 		{done}
 		emptyTitle="Строк нет"
 		emptyDescription="Под этот фильтр не подошла ни одна строка."

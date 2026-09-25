@@ -31,7 +31,8 @@ export const ORGANIZATION_KIND_LABELS: Record<OrganizationKind, string> = {
 	customer_company: 'Компания-заказчик',
 	operator: 'Оператор',
 	individual: 'Физическое лицо',
-	legal_entity: 'Юридическое лицо'
+	legal_entity: 'Юридическое лицо',
+	vendor: 'Вендор (правообладатель ПО)'
 };
 
 /**
@@ -44,7 +45,8 @@ export const ORGANIZATION_KIND_TONES: Record<OrganizationKind, StatusTone> = {
 	customer_company: 'neutral',
 	operator: 'neutral',
 	individual: 'neutral',
-	legal_entity: 'neutral'
+	legal_entity: 'neutral',
+	vendor: 'neutral'
 };
 
 export const EDUCATION_LEVEL_LABELS: Record<EducationLevel, string> = {

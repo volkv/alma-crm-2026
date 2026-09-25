@@ -126,6 +126,8 @@ export const DEMO_DATA_TABLES = [
 	'program_versions',
 	'products',
 	'product_directions',
+	// Контакты вендора по продуктам: ссылаются и на продукты, и на людей.
+	'product_contacts',
 	// Данные об обучении
 	'stat_snapshots',
 	'stat_rows',

@@ -23,10 +23,13 @@ import { CONTRACT_STATUSES, editVersionField, type ContractStatus } from './inte
 
 /**
  * Кем организация приходится процессу: вуз, юридическое или физическое лицо,
- * компания-заказчик, оператор.
+ * компания-заказчик, оператор, вендор.
  *
  * Первые три бывают основной стороной взаимодействия, и по ним считается группа
  * процесса; компания-заказчик и оператор стоят рядом, но процесс не задают.
+ * Вендор — правообладатель ПО (на него ссылается `products.vendor_organization_id`):
+ * стороной взаимодействия он не бывает вовсе, пространства и маршрута приёма у
+ * него нет.
  * Физическое лицо — организация вида `individual` с обязательной ссылкой на
  * человека: отдельного контура персональных данных для него не заводится.
  * Порядок значений менять нельзя — он же порядок значений перечисления в базе.
@@ -36,7 +39,8 @@ export const ORGANIZATION_KINDS = [
 	'customer_company',
 	'operator',
 	'individual',
-	'legal_entity'
+	'legal_entity',
+	'vendor'
 ] as const;
 
 /**
@@ -48,7 +52,8 @@ export const ORGANIZATION_FORM_KINDS = [
 	'educational_institution',
 	'customer_company',
 	'operator',
-	'legal_entity'
+	'legal_entity',
+	'vendor'
 ] as const;
 /** Уровень образования: высшее, среднее профессиональное, школа. */
 export const EDUCATION_LEVELS = ['vo', 'spo', 'school'] as const;
@@ -768,6 +773,18 @@ export type ProgramDetail = {
 export type ProductDetail = {
 	product: ProductView;
 	vendor: LookupOption | null;
+};
+
+/**
+ * Контакт вендора по продукту: человек и его роль у правообладателя — кем он
+ * там работает и как с ним договорились общаться. Роли нет (`null`), если
+ * вендора у продукта сменили, а человек остался связан с прежним.
+ */
+export type ProductContactView = {
+	person: PersonView;
+	position: string | null;
+	roleKind: AffiliationRoleKind | null;
+	channel: string | null;
 };
 
 /** Строка списка организаций: сама организация и число её площадок. */

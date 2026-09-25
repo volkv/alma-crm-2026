@@ -402,6 +402,32 @@ export const productDirections = pgTable(
 	]
 );
 
+/**
+ * Контакты вендора по продукту: кому писать про этот продукт.
+ *
+ * Связь, а не колонки продукта: у компании несколько продуктов и разные люди по
+ * ним, а у продукта бывает несколько контактов. ФИО, почта и телефон лежат
+ * только в `people` — в едином контуре персональных данных, с шифрованием,
+ * маскированием и обезличиванием; роль и способ связи — в аффилиации человека к
+ * вендору. Уходит продукт или человек — уходит и связь.
+ */
+export const productContacts = pgTable(
+	'product_contacts',
+	{
+		productId: uuid()
+			.notNull()
+			.references(() => products.id, { onDelete: 'cascade' }),
+		personId: uuid()
+			.notNull()
+			.references(() => people.id, { onDelete: 'cascade' }),
+		...createdAt
+	},
+	(table) => [
+		primaryKey({ columns: [table.productId, table.personId] }),
+		index('product_contacts_person_idx').on(table.personId)
+	]
+);
+
 export const organizationsRelations = relations(organizations, ({ many, one }) => ({
 	sites: many(sites),
 	affiliations: many(affiliations),
@@ -419,7 +445,8 @@ export const sitesRelations = relations(sites, ({ one }) => ({
 
 export const peopleRelations = relations(people, ({ many }) => ({
 	affiliations: many(affiliations),
-	consents: many(consents)
+	consents: many(consents),
+	products: many(productContacts)
 }));
 
 export const consentsRelations = relations(consents, ({ one }) => ({
@@ -480,5 +507,11 @@ export const productsRelations = relations(products, ({ one, many }) => ({
 		fields: [products.vendorOrganizationId],
 		references: [organizations.id]
 	}),
-	directions: many(productDirections)
+	directions: many(productDirections),
+	contacts: many(productContacts)
+}));
+
+export const productContactsRelations = relations(productContacts, ({ one }) => ({
+	product: one(products, { fields: [productContacts.productId], references: [products.id] }),
+	person: one(people, { fields: [productContacts.personId], references: [people.id] })
 }));

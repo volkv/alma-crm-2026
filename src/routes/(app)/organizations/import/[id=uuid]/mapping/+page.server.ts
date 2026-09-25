@@ -1,11 +1,6 @@
 import { redirect } from '@sveltejs/kit';
 import { resolve } from '$app/paths';
-import {
-	CATALOG_FIELDS,
-	CATALOG_FIELD_NONE,
-	type CatalogField,
-	type CatalogMapping
-} from '$lib/contracts/directory-import';
+import { CATALOG_FIELD_NONE } from '$lib/contracts/directory-import';
 import { actorFromEvent } from '$lib/server/actor';
 import {
 	applyCatalogMapping,
@@ -37,12 +32,14 @@ export const load: PageServerLoad = async (event) => {
 /**
  * Сопоставление из формы. Названия колонок приходят из файла, то есть это
  * произвольный текст: имена полей формы из него не собрать, поэтому колонка и
- * поле едут парой списков одинаковой длины и сопоставляются по порядку.
+ * поле едут парой списков одинаковой длины и сопоставляются по порядку. Какие
+ * поля допустимы, решает вид загрузки, — это проверяет схема сервиса: поле
+ * чужого вида отвечает отказом, а не пропадает молча.
  */
-function readMapping(data: FormData): CatalogMapping {
+function readMapping(data: FormData): Record<string, string> {
 	const columns = data.getAll('column');
 	const fields = data.getAll('field');
-	const mapping: CatalogMapping = {};
+	const mapping: Record<string, string> = {};
 
 	columns.forEach((column, index) => {
 		const field = fields[index];
@@ -55,9 +52,7 @@ function readMapping(data: FormData): CatalogMapping {
 			return;
 		}
 
-		if ((CATALOG_FIELDS as readonly string[]).includes(field)) {
-			mapping[column] = field as CatalogField;
-		}
+		mapping[column] = field;
 	});
 
 	return mapping;

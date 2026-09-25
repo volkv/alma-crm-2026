@@ -27,12 +27,16 @@ export const actions: Actions = {
 	default: async (event) => {
 		const data = await event.request.formData();
 		const note = data.get('note');
-		const values = { note: typeof note === 'string' ? note.trim() : '' };
+		const kind = data.get('kind');
+		const values = {
+			note: typeof note === 'string' ? note.trim() : '',
+			kind: typeof kind === 'string' ? kind : ''
+		};
 		const file = data.get('file');
 
 		if (!(file instanceof File) || file.size === 0) {
 			return fail(400, {
-				message: 'Выберите файл каталога',
+				message: 'Выберите файл',
 				issues: [CATALOG_FILE_FORMATS_HINT],
 				values
 			});
@@ -42,6 +46,7 @@ export const actions: Actions = {
 
 		try {
 			const created = await createCatalogImport(actorFromEvent(event), {
+				kind: values.kind,
 				note: values.note === '' ? null : values.note,
 				file: { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) }
 			});

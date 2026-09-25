@@ -385,16 +385,18 @@ exists (
 
 ### Каталоги: направления, продукты, программы
 
-| Действие                    | Право                              | Роли            | Область | Канал                                                                           |
-| --------------------------- | ---------------------------------- | --------------- | ------- | ------------------------------------------------------------------------------- |
-| Справочник направлений      | `directions.read`                  | все             | всё     | `/directions` список и карточка, подсказки, `GET /v1/directions`                |
-| Правка направлений          | `directions.write`                 | `lead`, `admin` | всё     | `/directions/new`, `/[id]/edit`, архив и возврат, связь продукта с направлением |
-| Продукты, программы, версии | `products.read`, `programs.read`   | все             | всё     | `/products`, `/programs`                                                        |
-| Правка продуктов и программ | `products.write`, `programs.write` | `lead`, `admin` | всё     | `/products/new`, `/programs/new`, `/[id]/edit`                                  |
-| Загрузка каталога из файла  | `directory.import`                 | `lead`, `admin` | own     | `/organizations/import/*`                                                       |
-| Строки файла загрузки       | `directory.import`                 | `lead`, `admin` | автор   | предпросмотр и `raw` строки загрузки                                            |
-| Назначение из колонки файла | `responsibles.manage`              | `lead`, `admin` | own     | подтверждение импорта каталога                                                  |
-| Контакт из колонки файла    | `people.write`                     | `lead`, `admin` | own     | подтверждение импорта каталога                                                  |
+| Действие                     | Право                              | Роли            | Область | Канал                                                                                     |
+| ---------------------------- | ---------------------------------- | --------------- | ------- | ----------------------------------------------------------------------------------------- |
+| Справочник направлений       | `directions.read`                  | все             | всё     | `/directions` список и карточка, подсказки, `GET /v1/directions`                          |
+| Правка направлений           | `directions.write`                 | `lead`, `admin` | всё     | `/directions/new`, `/[id]/edit`, архив и возврат, связь продукта с направлением           |
+| Продукты, программы, версии  | `products.read`, `programs.read`   | все             | всё     | `/products`, `/programs`                                                                  |
+| Правка продуктов и программ  | `products.write`, `programs.write` | `lead`, `admin` | всё     | `/products/new`, `/programs/new`, `/[id]/edit`                                            |
+| Загрузка каталога из файла   | `directory.import`                 | `lead`, `admin` | own     | `/organizations/import/*`                                                                 |
+| Строки файла загрузки        | `directory.import`                 | `lead`, `admin` | автор   | предпросмотр и `raw` строки загрузки                                                      |
+| Назначение из колонки файла  | `responsibles.manage`              | `lead`, `admin` | own     | подтверждение импорта каталога                                                            |
+| Контакт из колонки файла     | `people.write`                     | `lead`, `admin` | own     | подтверждение импорта каталога                                                            |
+| Контакт вендора из файла     | `people.write`, `products.write`   | `lead`, `admin` | own     | подтверждение импорта вендоров: роль в компании — по области, связь с продуктом — без неё |
+| Контакты вендора по продукту | `people.read`                      | все             | own     | `/products/[id]`: человек — по `personVisible`, почта и телефон — по `people.read_pii`    |
 
 Каталоги — общие для всех, поэтому область к ним не применяется, а право на изменение уходит от КАМа
 к руководителю: переименование продукта меняет картину у всех сразу. Это сужение против текущего
@@ -436,6 +438,7 @@ exists (
 | Завершить, отменить                    | `interactions.write`    | все             | own     | actions `complete`, `cancel`                                                                                                                 |
 | Выбрать договор и его позиции          | `interactions.write`    | все             | own     | action `contract` в панели «Договор и позиции» карточки; сам договор ведут в карточке контрагента                                            |
 | Отправить группу в систему обучения    | `exchange.send`         | все             | own     | кнопка карточки (`docs/exchange-contract.md`, §5)                                                                                            |
+| Выгрузить список потока для LMS (xlsx) | `people.read_pii`       | все             | own     | `GET …/interactions/[id]/roster.xlsx?group=`; ещё `interactions.read`, `people.read`; журнал `exchange.roster_exported`                      |
 
 **Пространство правом не заведует, но заведение в нём ограничивает.** Место записи приходит ключом
 из адреса формы, а не из вида основной стороны, и отдельного права на пространство нет: право одно,
@@ -587,6 +590,7 @@ exists (
 | ------------------------------------------------- | ------------------------------- | ------------------- | ---------------------- | ----------------------------------------------------------------- |
 | Журнал обмена, экран «Внешние системы»            | `integrations.manage`           | `admin`             | всё                    | `/exchange` load                                                  |
 | Повтор сообщения, пометка «разобрано вручную»     | `integrations.manage`           | `admin`             | всё                    | `/exchange` actions `retry`, `dismiss`                            |
+| Загрузка оплат с сайта: предпросмотр и загрузка   | `integrations.manage`           | `admin`             | всё                    | `/exchange` actions `paymentsPreview`, `paymentsImport`           |
 | Раздел интеграций, пробное событие, синхронизация | `integrations.manage`           | `admin`             | всё                    | `/settings/integrations` load, actions `delivery`, `test`, `sync` |
 | Внешние адреса и секреты подписки и обмена        | `integrations.manage_endpoints` | `admin`             | всё                    | actions `webhook`, `lms`, `forgetToken`, `exchange`               |
 | Приём заявки с сайта                              | `exchange.intake`               | ключ роли `service` | `all` на этом маршруте | `POST /api/v1/applications`                                       |
@@ -608,6 +612,13 @@ exists (
 заявка приходит и тут же пропадает из виду у того, кому её поручили. Настройка не задана — берётся
 демонстрационный менеджер стенда, если он есть; нет и его — заявка отвергается `validation` с
 указанием, что настроить. Подробности — `docs/exchange-contract.md`, §3.
+
+**Загрузка оплат с сайта идёт по тем же правилам, что приём заявки.** Файл загружает администратор
+(`integrations.manage`), а дела, физлиц и отметки оплаты заводит тот же сотрудник, что ведёт заявку:
+действующий ответственный за контрагента или сотрудник из настройки приёма, — и его правами
+(`people.write`, `interactions.write`, `stages.transition`) они проверяются
+(`exchange/applicant.ts`, `exchange/payments.ts`). В журнал действий `exchange.message_received`
+пишется от имени загрузившего. Подробности — `docs/exchange-contract.md`, «Загрузка оплат с сайта».
 
 **Сопоставление контрагента идёт по всей базе, без области доступа:** CMS не знает, кто ведёт вуз, а
 вторая организация с тем же ИНН — это не решение, а поломка справочника. Это единственное место, где
@@ -682,6 +693,7 @@ exists (
 | `/people`, `/people/[id]`                                      | `scopeFilter` по аффилиациям в `directory/read.ts`; человек без видимой аффилиации не попадает в список и отдаёт 404                                                                                                                                                                                                                                                                                   |
 | `/w/[workspace]/interactions`, доска, сводка                   | `interactionScopeFilter` (`interactions/access.ts`): пространство записи — моё, **и** владелец — я или мой подчинённый **или** основная сторона в области. Чужое пространство — 404 в загрузчике ветки `/w/[workspace]`, в меню его нет                                                                                                                                                                |
 | `/w/[workspace]/interactions/[id]` и form actions карточки     | `assertInteractionVisible` в сервисах (`stages/commands.ts`, `interactions/*`)                                                                                                                                                                                                                                                                                                                         |
+| `GET /w/[workspace]/interactions/[id]/roster.xlsx`             | `readGroup` под `interactionScopeFilter` (`exchange/roster.ts`), чужая группа — 404; контакты через `toPersonView` в `withPiiTrace`; отозвавшие согласие и обезличенные не выгружаются                                                                                                                                                                                                                 |
 | `/interactions`, `/interactions/[id]` — прежние адреса         | обработчики-перенаправления: список уводит туда, где у человека есть работа (`chooseWorkspaceForWork`), карточка — в своё пространство. Видимость проверяется **до** перехода: иначе перенаправление назвало бы место чужой записи раньше отказа                                                                                                                                                       |
 | `/documents`, `/documents/[id]`, скачивание                    | `documents/read.ts` зовёт тот же `interactionScopeFilter`; выдачу файла проверяет `readDocumentForDownload` → `assertInteractionAccessible`                                                                                                                                                                                                                                                            |
 | `GET /w/[workspace]/interactions/lookup`, подсказки вузов      | `lookupOrganizations` (`directory/read.ts`) под тем же `scopeFilter`; теста на подсказку нет                                                                                                                                                                                                                                                                                                           |

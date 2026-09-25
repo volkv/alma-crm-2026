@@ -1,5 +1,8 @@
 /**
- * Импорт каталога «вуз × продукт × договор × лицензия × статус передачи».
+ * Импорт справочника файлом. Видов загрузки два: каталог «вуз × продукт ×
+ * договор × лицензия × статус передачи» и вендоры с контактами по продуктам.
+ * Мастер, предпросмотр, построчные ошибки и подтверждение у них общие, а поля
+ * строки и правила её применения — свои.
  *
  * Рабочая таблица оператора — это одна строка на пару «учебное заведение и
  * поставленное ему ПО»: вендор, продукт, номер договора, подписание лицензии,
@@ -19,6 +22,28 @@
  */
 import { z } from 'zod';
 import { optionalText } from './common';
+
+/**
+ * Что описывает файл. От вида зависят поля строки, синонимы колонок и правила
+ * применения; всё остальное — шаги мастера, предпросмотр, ошибки по строкам,
+ * исходный файл, подтверждение и отказ — общее.
+ */
+export const DIRECTORY_IMPORT_KINDS = ['catalog', 'vendors'] as const;
+
+export type DirectoryImportKind = (typeof DIRECTORY_IMPORT_KINDS)[number];
+
+export const DIRECTORY_IMPORT_KIND_LABELS: Record<DirectoryImportKind, string> = {
+	catalog: 'Каталог вузов (вуз × продукт × договор)',
+	vendors: 'Вендоры и контакты по продуктам'
+};
+
+/** Что за файл ждёт каждый вид — одной фразой под выбором на первом шаге. */
+export const DIRECTORY_IMPORT_KIND_HINTS: Record<DirectoryImportKind, string> = {
+	catalog:
+		'Строка — пара «учебное заведение и поставленное ему ПО»: вендор, продукт, договор, лицензия, статус передачи',
+	vendors:
+		'Строка — компания-правообладатель, её продукты и контакт по ним: ФИО, телефон, почта, способ связи'
+};
 
 /**
  * Поля строки каталога — то, во что сопоставляются колонки файла.
@@ -78,7 +103,7 @@ export const CATALOG_FIELD_LABELS: Record<CatalogField, string> = {
 export const CATALOG_FIELD_HINTS: Record<CatalogField, string> = {
 	organization: 'Вуз ищется по ИНН, а без него — по названию; ненайденный заводится карточкой',
 	organizationInn: 'Ключ сверки; ИНН проверяется контрольной суммой',
-	vendor: 'Правообладатель ПО; ненайденный заводится компанией-заказчиком',
+	vendor: 'Правообладатель ПО; ненайденный заводится организацией вида «Вендор»',
 	product: 'Продукт ищется по коду, а без него — по названию; новый заводится черновиком',
 	productCode: 'Артикул каталога; без него код собирается из названия продукта',
 	direction: 'ИТ-направление продукта; связь добавляется и уже заведённому продукту',
@@ -100,6 +125,75 @@ export const CATALOG_FIELD_HINTS: Record<CatalogField, string> = {
 export const CATALOG_REQUIRED_FIELDS: readonly CatalogField[] = ['organization', 'product'];
 
 /**
+ * Поля строки файла вендоров. Контакт разложен на части так же, как его
+ * присылают: ФИО, телефон и почта отдельными колонками, а способ связи — списком
+ * через запятую («Почта, Чат в ТГ»).
+ */
+export const VENDOR_FIELDS = [
+	'company',
+	'companyInn',
+	'products',
+	'contactName',
+	'contactPhone',
+	'contactEmail',
+	'contactChannel'
+] as const;
+
+export type VendorField = (typeof VENDOR_FIELDS)[number];
+
+export const VENDOR_FIELD_LABELS: Record<VendorField, string> = {
+	company: 'Компания',
+	companyInn: 'ИНН компании',
+	products: 'Продукты',
+	contactName: 'ФИО контакта',
+	contactPhone: 'Телефон контакта',
+	contactEmail: 'Почта контакта',
+	contactChannel: 'Способ связи'
+};
+
+export const VENDOR_FIELD_HINTS: Record<VendorField, string> = {
+	company:
+		'Ищется по ИНН, а без него — по названию среди вендоров, оператора и компаний; ненайденная заводится вендором',
+	companyInn: 'Ключ сверки компании; ИНН проверяется контрольной суммой',
+	products:
+		'Один или несколько продуктов: «А», «Б» или через запятую; новый заводится черновиком этого вендора',
+	contactName: 'Фамилия, имя и, если есть, отчество; без ФИО телефон и почту не к кому отнести',
+	contactPhone: 'Телефон контакта в любом написании: +7 (900) 111-22-33 или одними цифрами',
+	contactEmail: 'Рабочая почта контакта',
+	contactChannel: 'Список через запятую: «Почта, Чат в ТГ»; повторы и лишние пробелы убираются'
+};
+
+/** Без компании строку не к чему отнести: продукты и контакт принадлежат ей. */
+export const VENDOR_REQUIRED_FIELDS: readonly VendorField[] = ['company'];
+
+/** Поле строки любого вида загрузки: то, во что сопоставляется колонка файла. */
+export type ImportField = CatalogField | VendorField;
+
+/** Поля, подписи, допущения и обязательные поля вида загрузки — одним словарём. */
+export const IMPORT_FIELDS_BY_KIND: Record<
+	DirectoryImportKind,
+	{
+		fields: readonly ImportField[];
+		labels: Readonly<Record<string, string>>;
+		hints: Readonly<Record<string, string>>;
+		required: readonly ImportField[];
+	}
+> = {
+	catalog: {
+		fields: CATALOG_FIELDS,
+		labels: CATALOG_FIELD_LABELS,
+		hints: CATALOG_FIELD_HINTS,
+		required: CATALOG_REQUIRED_FIELDS
+	},
+	vendors: {
+		fields: VENDOR_FIELDS,
+		labels: VENDOR_FIELD_LABELS,
+		hints: VENDOR_FIELD_HINTS,
+		required: VENDOR_REQUIRED_FIELDS
+	}
+};
+
+/**
  * «Колонку не берём» в форме сопоставления. Пустая строка означала бы «ничего
  * не выбрано» и была бы неотличима от пустоты, поэтому у отказа собственное
  * значение — и его же разбирает сервер.
@@ -118,6 +212,24 @@ export const catalogMappingSchema = z
 
 export type CatalogMapping = z.output<typeof catalogMappingSchema>;
 
+export const vendorMappingSchema = z
+	.record(z.string(), z.enum(VENDOR_FIELDS))
+	.refine((mapping) => new Set(Object.values(mapping)).size === Object.values(mapping).length, {
+		error: 'Одно поле назначено сразу нескольким колонкам'
+	});
+
+export type VendorMapping = z.output<typeof vendorMappingSchema>;
+
+/** Сопоставление загрузки любого вида: поля в нём — только поля её вида. */
+export type ImportMapping = CatalogMapping | VendorMapping;
+
+/** Схема сопоставления для вида загрузки. */
+export function importMappingSchema(
+	kind: DirectoryImportKind
+): typeof catalogMappingSchema | typeof vendorMappingSchema {
+	return kind === 'catalog' ? catalogMappingSchema : vendorMappingSchema;
+}
+
 /** Сколько строк файла разбирается ради превью на шаге сопоставления. */
 export const CATALOG_PREVIEW_PARSE_LIMIT = 200;
 
@@ -130,7 +242,7 @@ export const CATALOG_PREVIEW_ROWS = 5;
  * полоска шагов и заголовки страниц брали их из одного места.
  */
 export const CATALOG_WIZARD_STEPS = [
-	{ number: 1, label: 'Файл каталога' },
+	{ number: 1, label: 'Файл и вид загрузки' },
 	{ number: 2, label: 'Сопоставление колонок' },
 	{ number: 3, label: 'Предпросмотр и применение' }
 ] as const;
@@ -194,7 +306,8 @@ export const CATALOG_TARGETS = [
 	'contract',
 	'contractItem',
 	'responsible',
-	'contact'
+	'contact',
+	'vendorContact'
 ] as const;
 
 export type CatalogTarget = (typeof CATALOG_TARGETS)[number];
@@ -207,13 +320,14 @@ export const CATALOG_TARGET_LABELS: Record<CatalogTarget, string> = {
 	contract: 'Договор',
 	contractItem: 'Позиция договора',
 	responsible: 'Ответственный за вуз',
-	contact: 'Контакт вуза'
+	contact: 'Контакт вуза',
+	vendorContact: 'Контакт вендора'
 };
 
 /** Претензия к строке: к какому полю и в чём дело. */
 export type CatalogRowIssue = {
 	/** `null` — претензия к строке целиком (дубль, противоречие). */
-	field: CatalogField | null;
+	field: ImportField | null;
 	message: string;
 };
 
@@ -299,9 +413,10 @@ export type CatalogImportCounts = {
 /** Импорт каталога в том виде, в каком его отдают наружу. */
 export type CatalogImportView = CatalogImportCounts & {
 	id: string;
+	kind: DirectoryImportKind;
 	status: CatalogImportStatus;
 	fileDocumentId: string | null;
-	mapping: CatalogMapping;
+	mapping: ImportMapping;
 	note: string | null;
 	createdBy: string | null;
 	createdAt: Date;
@@ -318,6 +433,7 @@ export type CatalogImportListItem = CatalogImportView & {
 };
 
 export const createCatalogImportSchema = z.object({
+	kind: z.enum(DIRECTORY_IMPORT_KINDS, { error: 'Выберите, что описывает файл' }),
 	note: optionalText(1000)
 });
 

@@ -10,12 +10,11 @@
 	import MappingTable from '$lib/components/stats/mapping-table.svelte';
 	import WizardSteps from '$lib/components/stats/wizard-steps.svelte';
 	import {
-		CATALOG_FIELDS,
-		CATALOG_FIELD_HINTS,
-		CATALOG_FIELD_LABELS,
 		CATALOG_FIELD_NONE,
 		CATALOG_PREVIEW_ROWS,
-		CATALOG_WIZARD_STEPS
+		CATALOG_WIZARD_STEPS,
+		DIRECTORY_IMPORT_KIND_LABELS,
+		IMPORT_FIELDS_BY_KIND
 	} from '$lib/contracts/directory-import';
 	import { describeStatFile } from '$lib/contracts/stats';
 	import { formatNumber, pluralize } from '$lib/format';
@@ -26,15 +25,20 @@
 	let submitting = $state(false);
 
 	/**
-	 * Поля строки каталога для общей таблицы сопоставления. Вместе с допущением:
-	 * колонка ложится на поле не буквально, и «срок — это 31 декабря названного
-	 * года» человек обязан прочитать здесь, а не узнать из предпросмотра.
+	 * Поля строки для общей таблицы сопоставления — свои у каждого вида загрузки.
+	 * Вместе с допущением: колонка ложится на поле не буквально, и «срок — это
+	 * 31 декабря названного года» человек обязан прочитать здесь, а не узнать из
+	 * предпросмотра.
 	 */
-	const FIELD_OPTIONS = CATALOG_FIELDS.map((field) => ({
-		value: field,
-		label: CATALOG_FIELD_LABELS[field],
-		hint: CATALOG_FIELD_HINTS[field]
-	}));
+	const fieldOptions = $derived.by(() => {
+		const spec = IMPORT_FIELDS_BY_KIND[data.record.kind];
+
+		return spec.fields.map((field) => ({
+			value: field,
+			label: spec.labels[field],
+			hint: spec.hints[field]
+		}));
+	});
 
 	/**
 	 * Предложение по колонке в том виде, в каком его показывает таблица: пары
@@ -68,6 +72,7 @@
 	<WizardSteps current={2} steps={CATALOG_WIZARD_STEPS} />
 
 	<div class="flex flex-wrap gap-x-6 gap-y-1 text-sm text-muted-foreground">
+		<span>{DIRECTORY_IMPORT_KIND_LABELS[data.record.kind]}</span>
 		<span>В файле: {pluralize(data.preview.totalRows, ['строка', 'строки', 'строк'])}</span>
 		<span>Колонок: {formatNumber(data.preview.headers.length)}</span>
 	</div>
@@ -115,17 +120,26 @@
 			{advice}
 			mapping={data.preview.mapping}
 			sample={data.preview.sample}
-			fields={FIELD_OPTIONS}
+			fields={fieldOptions}
 			noneValue={CATALOG_FIELD_NONE}
 			previewRows={CATALOG_PREVIEW_ROWS}
 		/>
 
-		<p class="text-sm text-muted-foreground">
-			Учебное заведение и продукт сопоставить обязательно: без них строку не к чему отнести. Что
-			означает каждое поле, написано под выбранным значением. Три колонки рабочей таблицы ложатся не
-			на справочник, а на записи вокруг него: менеджер — на ответственного за вуз, контакты — на
-			людей вуза с основанием обработки, комментарий — на примечание карточки.
-		</p>
+		{#if data.record.kind === 'catalog'}
+			<p class="text-sm text-muted-foreground">
+				Учебное заведение и продукт сопоставить обязательно: без них строку не к чему отнести. Что
+				означает каждое поле, написано под выбранным значением. Три колонки рабочей таблицы ложатся
+				не на справочник, а на записи вокруг него: менеджер — на ответственного за вуз, контакты —
+				на людей вуза с основанием обработки, комментарий — на примечание карточки.
+			</p>
+		{:else}
+			<p class="text-sm text-muted-foreground">
+				Компанию сопоставить обязательно: продукты и контакт принадлежат ей. Что означает каждое
+				поле, написано под выбранным значением. ФИО, телефон, почта и способ связи ложатся на
+				человека с ролью в компании и основанием обработки, а сам человек — контактом вендора по
+				каждому продукту строки.
+			</p>
+		{/if}
 
 		<FormActions {submitting} submitLabel="Дальше: предпросмотр" />
 	</form>

@@ -764,7 +764,8 @@ export const REPORT_PARTY_LABELS: Record<OrganizationKind, string> = {
 	customer_company: 'Компания-заказчик',
 	operator: 'Оператор',
 	individual: 'Физическое лицо',
-	legal_entity: 'Юридическое лицо'
+	legal_entity: 'Юридическое лицо',
+	vendor: 'Вендор (правообладатель ПО)'
 };
 
 /**
