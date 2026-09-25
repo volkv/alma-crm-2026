@@ -44,9 +44,12 @@
 	   панели, WCAG 1.4.11 для края контрола. */
 	--alma-control-border: #797e8b;
 	--alma-text: #101828;
-	--alma-primary: #ff4f12;
-	--alma-primary-hover: #f54b10;
-	--alma-primary-text: #101828;
+	/* Главное действие — как `--accent-*` приложения: белая полужирная подпись
+	   на `#e8470f` (WCAG 2 3.93:1, APCA Lc 71), наведение и нажатие темнее. */
+	--alma-primary: #e8470f;
+	--alma-primary-hover: #d9430f;
+	--alma-primary-active: #cc400e;
+	--alma-primary-text: #ffffff;
 	--alma-link: #7700ff;
 	--alma-font:
 		'Rostelecom Basis', 'Inter', ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto,
@@ -69,6 +72,8 @@
 	--alma-text: #e8e8ee;
 	--alma-primary: #ffa789;
 	--alma-primary-hover: #ffd3c4;
+	--alma-primary-active: #ffede7;
+	--alma-primary-text: #101828;
 	--alma-link: #bb80ff;
 }
 
@@ -128,7 +133,7 @@
 	--pf-v5-c-button--m-primary--BackgroundColor: var(--alma-primary);
 	--pf-v5-c-button--m-primary--hover--BackgroundColor: var(--alma-primary-hover);
 	--pf-v5-c-button--m-primary--focus--BackgroundColor: var(--alma-primary-hover);
-	--pf-v5-c-button--m-primary--active--BackgroundColor: var(--alma-primary-hover);
+	--pf-v5-c-button--m-primary--active--BackgroundColor: var(--alma-primary-active);
 	--pf-v5-c-button--m-primary--Color: var(--alma-primary-text);
 	--pf-v5-c-button--m-primary--hover--Color: var(--alma-primary-text);
 	--pf-v5-c-button--m-primary--focus--Color: var(--alma-primary-text);
@@ -136,7 +141,7 @@
 }
 
 .pf-v5-c-button.pf-m-primary {
-	font-weight: 500;
+	font-weight: 600;
 	border-radius: 8px;
 }
 
@@ -173,6 +178,35 @@
 .pf-v5-c-form-control > :is(input, select, textarea):focus-visible {
 	outline: 2px solid var(--alma-link);
 	outline-offset: 2px;
+}
+
+/*
+ * Поле пароля и кнопка «показать пароль» — один контрол: общая рамка того же
+ * цвета, что у поля, скругление только по внешним углам. У keycloak.v2
+ * кнопка — прямоугольник с бледной рамкой и толстой нижней чертой в
+ * наведении и фокусе, приставленный к скруглённому полю. Рамку кнопки рисует
+ * её `::after`; ровная толщина задаётся на всех сторонах и во всех
+ * состояниях, левая сторона ложится на правую сторону поля (отступ −1px
+ * группы), поэтому шов остаётся одной линией. В тёмной теме PatternFly
+ * добавляет между элементами группы ещё и собственный разделитель — он
+ * погашен.
+ */
+.login-pf .pf-v5-c-input-group__item:has(+ .pf-v5-c-input-group__item) .pf-v5-c-form-control {
+	border-start-end-radius: 0;
+	border-end-end-radius: 0;
+}
+
+.login-pf .pf-v5-c-input-group > * + * {
+	border-inline-start: 0;
+}
+
+.login-pf .pf-v5-c-input-group .pf-v5-c-button.pf-m-control {
+	border-radius: 0 8px 8px 0;
+}
+
+.login-pf .pf-v5-c-input-group .pf-v5-c-button.pf-m-control::after {
+	border: 1px solid var(--alma-control-border);
+	border-radius: inherit;
 }
 
 /* На узком экране страница не даёт полю карточки прижаться к краю экрана. */

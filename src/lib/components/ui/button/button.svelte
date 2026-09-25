@@ -20,8 +20,13 @@
 		base: "relative focus-visible:outline-2 focus-visible:outline-solid focus-visible:outline-offset-2 focus-visible:outline-ring aria-invalid:border-destructive rounded-lg border border-transparent bg-clip-padding text-sm font-medium active:not-aria-[haspopup]:translate-y-px [&_svg:not([class*='size-'])]:size-4 group/button inline-flex shrink-0 items-center justify-center whitespace-nowrap transition-colors outline-none select-none cursor-pointer disabled:pointer-events-none disabled:text-faint aria-disabled:cursor-not-allowed aria-disabled:text-faint [&_svg]:pointer-events-none [&_svg]:shrink-0",
 		variants: {
 			variant: {
+				/*
+				 * Главное действие: белая подпись на оранжевом держит контраст
+				 * полужирным начертанием (WCAG 2 — 3.93:1 при пороге 3:1 для
+				 * полужирного, APCA — Lc 71), поэтому вес выше, чем у остальных.
+				 */
 				default:
-					'bg-primary text-primary-foreground hover:bg-primary-hover active:bg-primary-active disabled:bg-surface-muted aria-disabled:bg-surface-muted',
+					'bg-primary font-semibold text-primary-foreground hover:bg-primary-hover active:bg-primary-active disabled:bg-surface-muted aria-disabled:bg-surface-muted',
 				outline:
 					'border-input bg-surface hover:bg-surface-muted hover:text-foreground active:bg-surface-pressed aria-expanded:bg-surface-muted aria-expanded:text-foreground disabled:border-border disabled:bg-surface-muted',
 				secondary:
