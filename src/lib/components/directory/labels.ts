@@ -69,7 +69,8 @@ export const AFFILIATION_ROLE_LABELS: Record<AffiliationRoleKind, string> = {
 	head_of_department: 'Заведующий кафедрой',
 	teacher: 'Преподаватель',
 	coordinator: 'Координатор',
-	other: 'Другое'
+	other: 'Другое',
+	vendor_contact: 'Контакт вендора'
 };
 
 export const PROGRAM_LEVEL_LABELS: Record<ProgramLevel, string> = {

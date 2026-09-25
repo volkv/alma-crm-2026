@@ -213,6 +213,22 @@ export function normalizePhone(phone: string): string | null {
 	return digits.length === 11 && digits.startsWith('8') ? `7${digits.slice(1)}` : digits;
 }
 
+/**
+ * Телефон в том виде, в каком его хранит карточка: российский номер из 11 цифр
+ * (с ведущей 7 или 8) — `+7 (999) 023-43-65`, всё остальное — как пришло, чтобы
+ * не потерять добавочный номер или иностранный код. На ключ сравнения не
+ * влияет: {@link hashPhone} считает по цифрам.
+ */
+export function formatPhone(phone: string): string {
+	const digits = normalizePhone(phone);
+
+	if (digits === null || digits.length !== 11 || !digits.startsWith('7')) {
+		return phone;
+	}
+
+	return `+7 (${digits.slice(1, 4)}) ${digits.slice(4, 7)}-${digits.slice(7, 9)}-${digits.slice(9)}`;
+}
+
 /** HMAC-SHA256 по нормализованному значению; вид значения входит в подпись. */
 function mac(kind: string, normalized: string): string {
 	return createHmac('sha256', keys().mac).update(`${kind}:${normalized}`, 'utf8').digest('hex');

@@ -54,7 +54,10 @@
 <Breadcrumbs
 	items={[
 		{ label: 'Организации', href: resolve('/(app)/organizations') },
-		{ label: 'Импорт каталога', href: resolve('/(app)/organizations/import') },
+		{
+			label: `Импорт ${DIRECTORY_IMPORT_KIND_SUBJECTS[data.record.kind]}`,
+			href: resolve('/(app)/organizations/import')
+		},
 		{ label: title }
 	]}
 />
@@ -122,7 +125,7 @@
 	<RowsTable
 		rows={data.rows}
 		kind={data.record.kind}
-		{done}
+		status={data.record.status}
 		emptyTitle="Строк нет"
 		emptyDescription="Под этот фильтр не подошла ни одна строка."
 	/>

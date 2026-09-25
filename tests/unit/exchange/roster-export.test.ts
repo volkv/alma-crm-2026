@@ -139,6 +139,11 @@ describe('buildLmsUserWorkbook', () => {
 		}
 
 		expect(users.getCell('L1').dataValidation).toBeUndefined();
+
+		// Ширины колонок — как в шаблоне; у L своей ширины нет и там.
+		expect(users.getColumn('I').width).toBe(19.57);
+		expect(users.getColumn('W').width).toBe(37.14);
+		expect(users.getColumn('L').width).toBeUndefined();
 	});
 
 	it('пишет по одному правилу проверки данных на колонку, без перекрытий', async () => {

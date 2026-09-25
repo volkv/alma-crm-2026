@@ -22,7 +22,7 @@ import {
 import { receiveApplication } from '$lib/server/integrations/exchange/intake';
 import { importPayments, previewPayments } from '$lib/server/integrations/exchange/payments';
 import { setExchangeSettings } from '$lib/server/integrations/settings';
-import { hashEmail } from '$lib/server/people/pii';
+import { decryptContact, hashEmail } from '$lib/server/people/pii';
 import { getRedis } from '$lib/server/redis';
 import {
 	B2B_WORKSPACE_KEY,
@@ -209,6 +209,15 @@ describe('загрузка оплат с сайта', () => {
 			.from(people)
 			.where(eq(people.emailHash, hashEmail('e.petrova@example.test') as string));
 		expect(petrova.value).toBe(1);
+
+		// Телефон из файла `7 (900) 000-00-02` сохранён в виде карточки.
+		const [sokolov] = await database.db
+			.select({ phone: people.phone })
+			.from(people)
+			.where(eq(people.emailHash, hashEmail('a.sokolov@example.test') as string));
+		expect(sokolov.phone === null ? null : decryptContact(sokolov.phone)).toBe(
+			'+7 (900) 000-00-02'
+		);
 
 		const after = await totals();
 		// Два новых дела и два новых человека, строка журнала на каждую

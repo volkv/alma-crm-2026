@@ -27,6 +27,9 @@
 
 	let { data, form }: PageProps = $props();
 
+	const subject = $derived(DIRECTORY_IMPORT_KIND_SUBJECTS[data.record.kind]);
+	const title = $derived(`Предпросмотр импорта ${subject}`);
+
 	let submitting = $state(false);
 
 	const applicable = $derived(data.record.createCount + data.record.updateCount);
@@ -53,19 +56,19 @@
 </script>
 
 <svelte:head>
-	<title>Предпросмотр импорта {DIRECTORY_IMPORT_KIND_SUBJECTS[data.record.kind]} — Альма CRM</title>
+	<title>{title} — Альма CRM</title>
 </svelte:head>
 
 <Header
-	title="Предпросмотр импорта"
+	{title}
 	description="Шаг 3 из 3: что импорт сделает с каждой строкой. Пока вы не подтвердили, в справочнике ничего не изменилось."
 />
 
 <Breadcrumbs
 	items={[
 		{ label: 'Организации', href: resolve('/(app)/organizations') },
-		{ label: 'Импорт каталога', href: resolve('/(app)/organizations/import') },
-		{ label: 'Предпросмотр импорта' }
+		{ label: `Импорт ${subject}`, href: resolve('/(app)/organizations/import') },
+		{ label: title }
 	]}
 />
 
@@ -135,6 +138,7 @@
 	<RowsTable
 		rows={data.rows}
 		kind={data.record.kind}
+		status={data.record.status}
 		emptyTitle="Строк нет"
 		emptyDescription={data.action === null
 			? 'В файле не нашлось ни одной строки данных.'

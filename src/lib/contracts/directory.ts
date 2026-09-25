@@ -59,7 +59,11 @@ export const ORGANIZATION_FORM_KINDS = [
 export const EDUCATION_LEVELS = ['vo', 'spo', 'school'] as const;
 /** Чем является площадка организации. */
 export const SITE_KINDS = ['campus', 'branch', 'department', 'other'] as const;
-/** Роль человека в организации — от ректора до координатора. */
+/**
+ * Роль человека в организации — от ректора до координатора. `vendor_contact` —
+ * человек вендора, который отвечает за его продукты; его заводит загрузка
+ * вендоров.
+ */
 export const AFFILIATION_ROLE_KINDS = [
 	'rector',
 	'vice_rector',
@@ -67,7 +71,8 @@ export const AFFILIATION_ROLE_KINDS = [
 	'head_of_department',
 	'teacher',
 	'coordinator',
-	'other'
+	'other',
+	'vendor_contact'
 ] as const;
 /** Уровень образовательной программы. */
 export const PROGRAM_LEVELS = ['bachelor', 'master', 'specialist', 'spo', 'school', 'dpo'] as const;

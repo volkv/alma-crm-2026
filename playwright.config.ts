@@ -23,12 +23,14 @@ const origin = `http://localhost:${port}`;
  * счётчик попыток входа сбросился бы посреди проверки лимита.
  *
  * База PostgreSQL заводится глобальным сетапом в том же сервере из
- * `docker-compose.yml`; логических баз у Redis шестнадцать, поэтому номер — это
- * остаток от деления порта. Прогоны на соседних портах не пересекаются, а порты,
- * отличающиеся ровно на 16, делят счётчики — берите соседний.
+ * `docker-compose.yml`. Логическая база Redis — из диапазона 10–14, отдельного
+ * от разработки: её `REDIS_URL` без номера — это база 0, а глобальный сетап
+ * очищает базу прогона целиком. На пяти портах realm (4173–4177) номера
+ * `10 + порт % 5` все разные; порты, отличающиеся на 5, делили бы базу, но в
+ * realm таких нет.
  */
 const databaseUrl = `postgres://lct:lct@localhost:55432/lct_e2e_${port}`;
-const redisUrl = `redis://localhost:56379/${port % 16}`;
+const redisUrl = `redis://localhost:56379/${10 + (port % 5)}`;
 
 /**
  * The end-to-end suite runs against a production build backed by the PostgreSQL

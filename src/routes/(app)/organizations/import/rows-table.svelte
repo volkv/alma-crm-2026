@@ -8,6 +8,7 @@
 		CATALOG_ROW_ACTION_LABELS,
 		CATALOG_TARGET_LABELS,
 		type CatalogImportRowView,
+		type CatalogImportStatus,
 		type CatalogRowAction,
 		type DirectoryImportKind
 	} from '$lib/contracts/directory-import';
@@ -23,19 +24,19 @@
 	 * лицензия, у вендоров — компания, продукты и контакт. Контакт (ФИО и способ
 	 * связи) взят из строки файла и приходит по тому же правилу, что сама строка
 	 * файла: автору загрузки и полному доступу. Остальным колонки контакта нет —
-	 * что с ним будет, говорит колонка «Что будет».
+	 * что с ним будет или стало, говорит колонка действия.
 	 */
 	let {
 		rows,
 		kind,
-		done = false,
+		status,
 		emptyTitle = 'Строк нет',
 		emptyDescription
 	}: {
 		rows: readonly CatalogImportRowView[];
 		kind: DirectoryImportKind;
-		/** Импорт уже применён: действия называются в прошедшем времени. */
-		done?: boolean;
+		/** Статус загрузки: применённая называет действия в прошедшем времени. */
+		status: CatalogImportStatus;
 		emptyTitle?: string;
 		emptyDescription?: string;
 	} = $props();
@@ -46,6 +47,13 @@
 		unchanged: 'neutral',
 		error: 'danger'
 	};
+
+	const done = $derived(status === 'confirmed');
+
+	// Отклонённая загрузка ничего не сделала: колонка показывает, что она предлагала.
+	const actionHead = $derived(
+		done ? 'Что сделано' : status === 'rejected' ? 'Что предлагалось' : 'Что будет'
+	);
 
 	const label = (action: CatalogRowAction): string =>
 		(done ? CATALOG_ROW_ACTION_DONE_LABELS : CATALOG_ROW_ACTION_LABELS)[action];
@@ -80,7 +88,7 @@
 							<Table.Head>Контакт</Table.Head>
 						{/if}
 					{/if}
-					<Table.Head>Что будет</Table.Head>
+					<Table.Head>{actionHead}</Table.Head>
 				</Table.Row>
 			</Table.Header>
 			<Table.Body>

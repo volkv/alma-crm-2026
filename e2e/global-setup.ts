@@ -13,7 +13,7 @@ import { configureSecondFactor } from './helpers/second-factor';
 import { signInThroughDirectory } from './helpers/sign-in';
 
 /**
- * Готовит прогон: заводит его базу, применяет миграции, заливает те же
+ * Готовит прогон: заводит его базу заново, применяет миграции, заливает те же
  * начальные данные, что и стенд, приводит каталог учётных записей к тому, чем
  * прогон входит, и один раз входит за каждую роль, которая нужна тестам.
  *
@@ -126,14 +126,22 @@ function serverEnvironment(config: FullConfig): ServerEnv {
 }
 
 /**
- * Заводит базу прогона, если её ещё нет.
+ * Заводит базу прогона заново: каждый прогон начинается с чистых данных сида.
+ * Прошлый прогон оставляет в базе всё, что заводили проверки, а сид на
+ * непустой базе заливку пропускает — второй прогон подряд шёл бы по грязи.
  *
  * База у каждого порта своя (см. `playwright.config.ts`), поэтому её нельзя ни
  * взять из `docker-compose.yml`, ни завести руками перед прогоном: имя знает
- * только конфигурация. `CREATE DATABASE` идёт через служебную базу `postgres` —
- * подключиться к той, которой ещё нет, нельзя.
+ * только конфигурация; соседние прогоны на других портах её не касаются.
+ * `DROP`/`CREATE DATABASE` идут через служебную базу `postgres` — к удаляемой
+ * базе подключаться нельзя.
+ *
+ * `WITH (FORCE)` — потому что приложение уже запущено: Playwright поднимает
+ * `webServer` до глобального сетапа, и фоновый цикл приложения держит
+ * соединения с базой. Их обрывает сервер PostgreSQL, пул приложения
+ * переподключается к новой базе с тем же именем при следующем запросе.
  */
-async function ensureDatabase(url: string): Promise<void> {
+async function recreateDatabase(url: string): Promise<void> {
 	const target = new URL(url);
 	const name = decodeURIComponent(target.pathname.slice(1));
 
@@ -147,15 +155,10 @@ async function ensureDatabase(url: string): Promise<void> {
 	const sql = postgres(maintenance.toString(), { max: 1, connect_timeout: 10 });
 
 	try {
-		const existing = await sql<{ one: number }[]>`
-			select 1 as one from pg_database where datname = ${name}
-		`;
-
-		if (existing.length === 0) {
-			// Имя собирает конфигурация из номера порта, снаружи оно не приходит;
-			// кавычки — чтобы оно осталось именем, а не разъехалось по регистру.
-			await sql.unsafe(`create database "${name}"`);
-		}
+		// Имя собирает конфигурация из номера порта, снаружи оно не приходит;
+		// кавычки — чтобы оно осталось именем, а не разъехалось по регистру.
+		await sql.unsafe(`drop database if exists "${name}" with (force)`);
+		await sql.unsafe(`create database "${name}"`);
 	} finally {
 		await sql.end();
 	}
@@ -163,10 +166,7 @@ async function ensureDatabase(url: string): Promise<void> {
 
 /**
  * Миграции тем же входом, что и на стенде: не мигратором в этом процессе, а
- * `scripts/migrate.ts` — он, кроме самих миграций, приводит каталог прав к коду
- * и переводит уже лежащие контакты людей в зашифрованный вид. База прогона
- * переживает прогон, поэтому строки, записанные до этой правки, обязаны
- * прочитаться — а сделать это может только приложение с ключом.
+ * `scripts/migrate.ts` — он, кроме самих миграций, приводит каталог прав к коду.
  */
 async function migrateDatabase(env: ServerEnv): Promise<void> {
 	const { stdout } = await run(process.execPath, ['scripts/migrate.ts'], {
@@ -266,49 +266,20 @@ async function storeSession(
 export default async function globalSetup(config: FullConfig): Promise<void> {
 	const env = serverEnvironment(config);
 
-	await ensureDatabase(env.DATABASE_URL);
+	await recreateDatabase(env.DATABASE_URL);
+	await migrateDatabase(env);
+	await seedDatabase(env);
 
-	const sql = postgres(env.DATABASE_URL, { max: 1, connect_timeout: 10 });
-
-	try {
-		await migrateDatabase(env);
-		await seedDatabase(env);
-
-		// Демонстрационная запись роли, оставшаяся от прошлых прогонов или от
-		// общей с разработкой базы, перехватила бы связывание по почте: почта
-		// уникальна, и вошедший достался бы не той строке. Прогон идёт по данным
-		// сида — остальные демонстрационные записи в нём не участвуют.
-		await sql`
-			update users set is_active = false, deactivated_at = now()
-			where is_demo = true and email <> all(${Object.values(DEMO_EMAILS)})
-		`;
-
-		// Связь с каталогом сбрасывается перед каждым прогоном.
-		//
-		// Контейнер каталога держит realm в памяти — тома у него нет, — поэтому
-		// пересозданный контейнер импортирует realm заново, и `sub` у тех же
-		// людей становится другим. База прогона при этом переживает прогон: в
-		// ней остаётся `external_subject` прежнего экземпляра, вход по новому
-		// субъекту запись не узнаёт, а связаться по почте не может — связывание
-		// принимает только запись без субъекта. Это то же самое, что на стенде
-		// делает администратор кнопкой «Отвязать»: продуктовое правило остаётся
-		// нетронутым, а прогон приводит свою базу в соответствие со своим
-		// каталогом — обоими он и распоряжается.
-		await sql`update users set external_subject = null where external_subject is not null`;
-	} finally {
-		await sql.end();
-	}
-
-	// Счётчик заходов с адреса общий на весь прогон: без сброса второй прогон
-	// подряд упёрся бы в предел, рассчитанный на живого человека.
+	// Логическая база Redis у прогона своя (номер — от порта), и всё в ней —
+	// сессии, кэши, счётчики заходов с адреса, замки фонового цикла — выведено
+	// из прошлой базы PostgreSQL, которой больше нет. Без очистки сессия
+	// прошлого прогона ссылалась бы на несуществующего пользователя, кэш —
+	// на удалённые записи, а счётчик заходов упёрся бы в предел, рассчитанный
+	// на живого человека.
 	const redis = new Redis(env.REDIS_URL);
 
 	try {
-		const keys = await redis.keys('login_ip:*');
-
-		if (keys.length > 0) {
-			await redis.del(...keys);
-		}
+		await redis.flushdb();
 	} finally {
 		await redis.quit();
 	}

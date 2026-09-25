@@ -68,7 +68,7 @@ import { AppError, ConflictError, ForbiddenError, ValidationError } from '../../
 import { nextEdit } from '../../interactions/edit-version';
 import { createInteractionIn } from '../../interactions/write';
 import { resolveIntakeWorkspace } from '../../stages/process';
-import { hashEmail, phoneColumns } from '../../people/pii';
+import { formatPhone, hashEmail, phoneColumns } from '../../people/pii';
 import { withPiiTrace } from '../../people/pii-trace';
 import { requirePermission } from '../../rbac';
 import { addComment } from '../../stages/commands';
@@ -203,6 +203,11 @@ function individualApplicant(data: ApplicationSubmittedData): ApplicantPerson {
 		email: data.contact.email,
 		phone: data.contact.phone
 	};
+}
+
+/** Телефон контактного лица в виде карточки: так его и сохраняют, и показывают. */
+function contactPhone(data: ApplicationSubmittedData): string | null {
+	return data.contact.phone === null ? null : formatPhone(data.contact.phone);
 }
 
 /** Имя контрагента: ФИО физлица или название организации из заявки. */
@@ -385,7 +390,7 @@ async function addContact(
 			firstName: data.contact.firstName,
 			middleName: data.contact.middleName,
 			email: data.contact.email,
-			phone: data.contact.phone,
+			phone: contactPhone(data),
 			notes: null
 		},
 		tx
@@ -662,7 +667,7 @@ async function updateExisting(
 				lastName: data.contact.lastName,
 				firstName: data.contact.firstName,
 				middleName: data.contact.middleName,
-				...phoneColumns(data.contact.phone),
+				...phoneColumns(contactPhone(data)),
 				updatedAt: sql`now()`
 			})
 			.where(eq(people.id, contact.personId));

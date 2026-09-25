@@ -587,7 +587,8 @@ export function databaseVendorWriter(ctx: ActorContext, tx: Tx): VendorWriter {
 		product: async (input) => insertImportedProduct(ctx, tx, input),
 		setProductVendor: async (productId, vendorOrganizationId) =>
 			setProductVendor(ctx, { productId, vendorOrganizationId }, tx),
-		contact: async (input) => insertImportedContact(ctx, tx, input),
+		contact: async (input) =>
+			insertImportedContact(ctx, tx, { ...input, roleKind: 'vendor_contact' }),
 		updateChannel: async (affiliationId, channel) =>
 			setAffiliationChannel(ctx, { affiliationId, channel }, tx),
 		linkProductContact: async (productId, personId) =>

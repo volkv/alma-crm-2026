@@ -49,6 +49,7 @@
 		head_of_department: 0,
 		coordinator: 1,
 		teacher: 1,
+		vendor_contact: 1,
 		other: 2
 	};
 

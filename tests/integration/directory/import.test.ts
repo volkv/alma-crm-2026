@@ -1061,6 +1061,7 @@ describe('импорт вендоров', () => {
 			.select({
 				person: people,
 				channel: affiliations.channel,
+				roleKind: affiliations.roleKind,
 				organizationId: affiliations.organizationId
 			})
 			.from(affiliations)
@@ -1074,9 +1075,11 @@ describe('импорт вендоров', () => {
 
 		expect(byName.get('Орлова')?.channel).toBe('Почта, Чат в ТГ');
 		expect(byName.get('Сизов')?.channel).toBe('Телефон');
-		// Телефон числом из книги лёг телефоном, а не записью числа.
-		expect(byName.get('Сизов')?.contacts.phone).toBe('79001112244');
+		// Телефон числом из книги лёг телефоном в едином виде, а не записью числа.
+		expect(byName.get('Сизов')?.contacts.phone).toBe('+7 (900) 111-22-44');
 		expect(byName.get('Кравец')).toMatchObject({ channel: 'Почта', organizationId: operator });
+		// Роль человека из файла вендоров — «контакт вендора», а не «другое».
+		expect(contacts.every((row) => row.roleKind === 'vendor_contact')).toBe(true);
 
 		const links = await database.db
 			.select({ product: products.name, person: people.lastName })
@@ -1253,7 +1256,7 @@ describe('импорт вендоров', () => {
 
 		expect(contact.person).toMatchObject({
 			lastName: 'Сизов',
-			phone: '79001112244',
+			phone: '+7 (900) 111-22-44',
 			contactsMasked: false
 		});
 
@@ -1267,6 +1270,6 @@ describe('импорт вендоров', () => {
 
 		expect(masked.person.lastName).toBe('Сизов');
 		expect(masked.person.contactsMasked).toBe(true);
-		expect(masked.person.phone).not.toBe('79001112244');
+		expect(masked.person.phone).not.toBe('+7 (900) 111-22-44');
 	});
 });

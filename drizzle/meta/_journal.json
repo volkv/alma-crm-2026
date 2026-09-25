@@ -246,6 +246,13 @@
       "when": 1790364697771,
       "tag": "0035_vendor_import",
       "breakpoints": true
+    },
+    {
+      "idx": 36,
+      "version": "7",
+      "when": 1790373131343,
+      "tag": "0036_affiliation_vendor_contact",
+      "breakpoints": true
     }
   ]
 }

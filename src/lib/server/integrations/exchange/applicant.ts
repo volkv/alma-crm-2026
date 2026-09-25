@@ -30,7 +30,7 @@ import {
 import type { Tx } from '../../db/transaction';
 import { createAffiliation, createPerson } from '../../directory/write';
 import { ValidationError } from '../../errors';
-import { hashEmail, hashPhone } from '../../people/pii';
+import { formatPhone, hashEmail, hashPhone } from '../../people/pii';
 import { mayWorkIn } from '../../rbac/workspaces';
 import { markChecklistItemIn } from '../../stages/commands';
 
@@ -305,7 +305,7 @@ async function createIndividual(
 			firstName: person.firstName,
 			middleName: person.middleName,
 			email: person.email,
-			phone: person.phone,
+			phone: person.phone === null ? null : formatPhone(person.phone),
 			notes: null
 		},
 		tx

@@ -23,6 +23,9 @@
 
 	let { data, form }: PageProps = $props();
 
+	const subject = $derived(DIRECTORY_IMPORT_KIND_SUBJECTS[data.record.kind]);
+	const title = $derived(`Сопоставление колонок ${subject}`);
+
 	let submitting = $state(false);
 
 	/**
@@ -55,20 +58,19 @@
 </script>
 
 <svelte:head>
-	<title>Сопоставление колонок {DIRECTORY_IMPORT_KIND_SUBJECTS[data.record.kind]} — Альма CRM</title
-	>
+	<title>{title} — Альма CRM</title>
 </svelte:head>
 
 <Header
-	title="Сопоставление колонок"
+	{title}
 	description="Шаг 2 из 3: какая колонка файла что означает. Предложение помечено значком — меняйте его там, где система ошиблась."
 />
 
 <Breadcrumbs
 	items={[
 		{ label: 'Организации', href: resolve('/(app)/organizations') },
-		{ label: 'Импорт каталога', href: resolve('/(app)/organizations/import') },
-		{ label: 'Сопоставление колонок' }
+		{ label: `Импорт ${subject}`, href: resolve('/(app)/organizations/import') },
+		{ label: title }
 	]}
 />
 

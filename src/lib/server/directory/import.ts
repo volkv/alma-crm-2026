@@ -72,7 +72,8 @@ import {
 import {
 	affiliationPositionSchema,
 	createPersonSchema,
-	organizationNotesSchema
+	organizationNotesSchema,
+	type AffiliationRoleKind
 } from '$lib/contracts/directory';
 import { formatIsoDay } from '$lib/format';
 import { isValidInn } from '$lib/validation/inn';
@@ -99,7 +100,7 @@ import { getDb } from '../db';
 import { withTransaction, type Tx } from '../db/transaction';
 import { discardStaged, promoteBlob, readStoredFile, stageBlob } from '../documents/storage';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
-import { hashEmail, hashPhone } from '../people/pii';
+import { formatPhone, hashEmail, hashPhone } from '../people/pii';
 import { withPiiTrace } from '../people/pii-trace';
 import {
 	actorScopeFilter,
@@ -1151,11 +1152,21 @@ export async function insertImportedProduct(
  * Человек из файла вместе с ролью в организации и основанием обработки.
  * Возвращает обе записи: загрузке вендоров они нужны, чтобы связать человека
  * с продуктами и потом узнать его роль.
+ *
+ * Роль задаёт вид загрузки: у контакта вуза из каталога — «другое» (кем человек
+ * работает, файл не говорит, а роль — это закрытый список, и «другое» честнее,
+ * чем выбранная за него должность), у человека из файла вендоров — «контакт
+ * вендора».
  */
 export async function insertImportedContact(
 	ctx: ActorContext,
 	tx: Tx,
-	input: { organizationId: string; contact: ParsedContact; channel: string | null }
+	input: {
+		organizationId: string;
+		contact: ParsedContact;
+		channel: string | null;
+		roleKind: Extract<AffiliationRoleKind, 'other' | 'vendor_contact'>;
+	}
 ): Promise<{ personId: string; affiliationId: string }> {
 	const { organizationId, contact } = input;
 	// Один день на полномочия и на основание обработки: они начинаются одной
@@ -1168,7 +1179,7 @@ export async function insertImportedContact(
 			firstName: contact.firstName,
 			middleName: contact.middleName,
 			email: contact.email,
-			phone: contact.phone,
+			phone: contact.phone === null ? null : formatPhone(contact.phone),
 			notes: null
 		},
 		tx
@@ -1181,9 +1192,7 @@ export async function insertImportedContact(
 			organizationId,
 			siteId: null,
 			position: contact.position,
-			// Кем человек работает, файл не говорит, а роль — это закрытый список;
-			// «другое» здесь честнее, чем выбранная за него должность.
-			roleKind: 'other',
+			roleKind: input.roleKind,
 			// Основным контактом человека отмечает тот, кто с ним работает:
 			// загрузка файла не знает, кому звонят первым.
 			isPrimary: false,
@@ -1241,7 +1250,12 @@ function databaseWriter(ctx: ActorContext, tx: Tx): CatalogWriter {
 		assignResponsible: async (input) =>
 			assignResponsible(ctx, { ...input, directionId: null, transferInteractions: false }, tx),
 		contact: async ({ organizationId, contact }) => {
-			await insertImportedContact(ctx, tx, { organizationId, contact, channel: null });
+			await insertImportedContact(ctx, tx, {
+				organizationId,
+				contact,
+				channel: null,
+				roleKind: 'other'
+			});
 		},
 		organizationNotes: async ({ organizationId, notes }) => {
 			requirePermission(ctx, 'organizations.write');

@@ -109,6 +109,44 @@ const VALIDATION_MIN_LAST_ROW = 1001;
  */
 const CENTERED_HEADER_COLUMNS = 6;
 
+/**
+ * Ширины колонок A–AD по порядку, снятые с шаблона: у каждой своя.
+ * У L (пол) ширина в шаблоне не задана — колонка берёт ширину листа по
+ * умолчанию, и здесь её тоже нет.
+ */
+const COLUMN_WIDTHS: readonly (number | null)[] = [
+	23.86,
+	24.86,
+	24.0,
+	22.14,
+	20.71,
+	14.71,
+	14.57,
+	15.86,
+	19.57,
+	20.43,
+	18.43,
+	null,
+	15.29,
+	18.14,
+	29.14,
+	17.71,
+	16.29,
+	20.29,
+	19.0,
+	23.0,
+	27.0,
+	26.14,
+	37.14,
+	21.43,
+	29.57,
+	29.0,
+	15.29,
+	14.86,
+	31.0,
+	22.0
+];
+
 /** Слушатель в строке книги: ровно то, что CRM о нём знает. */
 export type LmsUserRow = {
 	lastName: string;
@@ -155,8 +193,10 @@ export async function buildLmsUserWorkbook(
 		}
 	});
 
-	users.columns.forEach((column) => {
-		column.width = 20;
+	COLUMN_WIDTHS.forEach((width, index) => {
+		if (width !== null) {
+			users.getColumn(index + 1).width = width;
+		}
 	});
 
 	for (const row of rows) {
