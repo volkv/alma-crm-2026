@@ -30,6 +30,7 @@ import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type {
 	AdvanceStageInput,
 	CancelInteractionInput,
+	ChecklistState,
 	CommentSource,
 	CompleteInteractionInput,
 	ConfirmStageInput,
@@ -62,6 +63,7 @@ import {
 	LEARNING_PURPOSE_LABELS,
 	type LmsEvidence
 } from '$lib/contracts/exchange';
+import { PAYMENT_CHECKLIST_KEY } from '$lib/contracts/payments';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
@@ -89,6 +91,7 @@ import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '.
 import { readDocumentMark } from '../documents/evidence';
 import { groupCountsForStage, readLmsEvidence } from '../integrations/exchange/evidence';
 import { enqueueApplicationStatus } from '../integrations/exchange/outbox';
+import { hasPaymentFact } from '../integrations/exchange/payments';
 import { can, requirePermission } from '../rbac';
 import { interactionScopeFilter } from '../interactions/access';
 import { nextEdit } from '../interactions/edit-version';
@@ -676,7 +679,8 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 				enteredAt: left.leftAt ?? now,
 				responsibleUserId: entry.responsibleUserId ?? interaction.ownerUserId,
 				documentMarkEvidence: targetMark,
-				...(await lmsEntryPatch(tx, input.interactionId, stageSnapshot(target)))
+				...(await lmsEntryPatch(tx, input.interactionId, stageSnapshot(target))),
+				...(await paymentEntryPatch(tx, input.interactionId, stageSnapshot(target)))
 			})
 			.returning({ id: stageEntries.id });
 
@@ -861,45 +865,84 @@ export async function resumeStage(ctx: ActorContext, input: ResumeStageInput): P
 	});
 }
 
+/**
+ * Отметка по пункту чек-листа открытой записи стадии — на транзакции вызывающего.
+ *
+ * `stageEntryId` — запись, которая была открыта у человека в форме: отметка,
+ * поставленная на прежней стадии, в новую не ложится. Без него отметка
+ * ложится на ту запись, что открыта сейчас, — так её ставит факт, пришедший
+ * из обмена, у которого формы нет.
+ */
+async function writeChecklistItem(
+	ctx: ActorContext,
+	tx: Tx,
+	input: { interactionId: string; key: string; done: boolean; stageEntryId: string | null }
+): Promise<void> {
+	requirePermission(ctx, 'stages.transition');
+
+	await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
+	const entry =
+		input.stageEntryId === null
+			? await requireOpenEntry(tx, input.interactionId)
+			: await requireExpectedEntry(tx, input.interactionId, input.stageEntryId);
+
+	// Пункт берётся из слепка стадии: чек-лист, который можно дополнить из
+	// браузера произвольным ключом, ничего не гарантирует.
+	if (!entry.stageSnapshot.checklist.some((item) => item.key === input.key)) {
+		throw new ValidationError('В чек-листе стадии нет такого пункта', [input.key]);
+	}
+
+	await tx
+		.update(stageEntries)
+		.set({
+			checklistState: { ...entry.checklistState, [input.key]: input.done },
+			updatedAt: now
+		})
+		.where(eq(stageEntries.id, entry.id));
+
+	await touchInteraction(tx, input.interactionId);
+	publishAfterCommit(tx, input.interactionId, { type: 'interaction.changed' });
+
+	await recordAuditEvent(
+		ctx,
+		{
+			type: 'interactions.checklist_changed',
+			outcome: 'success',
+			subject: { type: 'interaction', id: input.interactionId },
+			details: { stageEntryId: entry.id }
+		},
+		tx
+	);
+}
+
 /** Отметка по пункту чек-листа текущей стадии. */
 export async function setChecklistItem(
 	ctx: ActorContext,
 	input: SetChecklistItemInput
 ): Promise<void> {
-	requirePermission(ctx, 'stages.transition');
+	await withTransaction(ctx, (tx) =>
+		writeChecklistItem(ctx, tx, {
+			interactionId: input.interactionId,
+			key: input.key,
+			done: input.done,
+			stageEntryId: input.stageEntryId
+		})
+	);
+}
 
-	await withTransaction(ctx, async (tx) => {
-		await lockInteractionOnSameRevision(ctx, tx, input.interactionId);
-		const entry = await requireExpectedEntry(tx, input.interactionId, input.stageEntryId);
-
-		// Пункт берётся из слепка стадии: чек-лист, который можно дополнить из
-		// браузера произвольным ключом, ничего не гарантирует.
-		if (!entry.stageSnapshot.checklist.some((item) => item.key === input.key)) {
-			throw new ValidationError('В чек-листе стадии нет такого пункта', [input.key]);
-		}
-
-		await tx
-			.update(stageEntries)
-			.set({
-				checklistState: { ...entry.checklistState, [input.key]: input.done },
-				updatedAt: now
-			})
-			.where(eq(stageEntries.id, entry.id));
-
-		await touchInteraction(tx, input.interactionId);
-		publishAfterCommit(tx, input.interactionId, { type: 'interaction.changed' });
-
-		await recordAuditEvent(
-			ctx,
-			{
-				type: 'interactions.checklist_changed',
-				outcome: 'success',
-				subject: { type: 'interaction', id: input.interactionId },
-				details: { stageEntryId: entry.id }
-			},
-			tx
-		);
-	});
+/**
+ * Отметить пункт чек-листа открытой стадии в транзакции вызывающего: факт,
+ * пришедший не из формы карточки (оплата с сайта), и отметка о нём обязаны
+ * случиться вместе или не случиться вовсе. Пункта нет в чек-листе открытой
+ * стадии — отказ, как у отметки из карточки.
+ */
+export async function markChecklistItemIn(
+	ctx: ActorContext,
+	tx: Tx,
+	interactionId: string,
+	key: string
+): Promise<void> {
+	await writeChecklistItem(ctx, tx, { interactionId, key, done: true, stageEntryId: null });
 }
 
 export async function setStageResult(ctx: ActorContext, input: SetStageResultInput): Promise<void> {
@@ -1064,6 +1107,29 @@ async function lmsEntryPatch(
 		confirmedAt: now,
 		...(evidence.kind === 'manual' ? { confirmedBy: evidence.markedByUserId } : {})
 	};
+}
+
+/**
+ * Отметка об оплате для записи, на которую взаимодействие входит.
+ *
+ * Оплата с сайта приходит тогда, когда её загрузили, а не когда дело дошло до
+ * стадии договора: загрузка стадию не двигает (стадию меняет только человек) и
+ * хранит сам факт. Засчитывается он при входе — пункт `payment_received`
+ * новой записи уже отмечен, если в её чек-листе такой пункт есть, а факт оплаты
+ * по делу сохранён.
+ */
+async function paymentEntryPatch(
+	tx: Tx,
+	interactionId: string,
+	snapshot: StageSnapshot
+): Promise<{ checklistState?: ChecklistState }> {
+	if (!snapshot.checklist.some((item) => item.key === PAYMENT_CHECKLIST_KEY)) {
+		return {};
+	}
+
+	return (await hasPaymentFact(tx, interactionId))
+		? { checklistState: { [PAYMENT_CHECKLIST_KEY]: true } }
+		: {};
 }
 
 /**

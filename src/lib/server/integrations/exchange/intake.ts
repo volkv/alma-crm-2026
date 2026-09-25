@@ -28,7 +28,7 @@
  * том числе от двух одновременных доставок.
  */
 import { createHash } from 'node:crypto';
-import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
+import { and, eq, inArray, sql } from 'drizzle-orm';
 import {
 	APPLICATION_STATUSES,
 	EXCHANGE_SCHEMA_VERSION,
@@ -45,25 +45,20 @@ import type { PartyRole } from '$lib/contracts/interactions';
 import { formatIsoDay } from '$lib/format';
 import type { ActorContext } from '../../actor';
 import { recordAuditEvent } from '../../audit';
-import { loadSessionUser } from '../../auth/session';
-import { getConfig } from '../../config';
 import { getDb } from '../../db';
 import {
 	affiliations,
-	consents,
 	contractItems,
 	exchangeMessages,
 	interactionContractItems,
 	interactionProducts,
 	interactionPrograms,
 	interactions,
-	organizationResponsibles,
 	organizations,
 	people,
 	workspaces,
 	products,
-	programs,
-	users
+	programs
 } from '../../db/schema';
 import { withTransaction, type Tx } from '../../db/transaction';
 import { publishAfterCommit } from '../../live/publish';
@@ -73,16 +68,25 @@ import { AppError, ConflictError, ForbiddenError, ValidationError } from '../../
 import { nextEdit } from '../../interactions/edit-version';
 import { createInteractionIn } from '../../interactions/write';
 import { resolveIntakeWorkspace } from '../../stages/process';
-import { hashEmail, hashPhone, phoneColumns } from '../../people/pii';
+import { hashEmail, phoneColumns } from '../../people/pii';
 import { withPiiTrace } from '../../people/pii-trace';
 import { requirePermission } from '../../rbac';
-import { mayWorkIn } from '../../rbac/workspaces';
 import { addComment } from '../../stages/commands';
 import { getExchangeSettings } from '../settings';
+import {
+	applicantPersonName,
+	chooseIntakeOwner,
+	ensureOwnAffiliation,
+	ensureResponsible,
+	findExisting,
+	findIndividual,
+	findOrCreateIndividual,
+	isUniqueViolation,
+	ownerActor,
+	recordApplicationConsent,
+	type ApplicantPerson
+} from './applicant';
 import { enqueueApplicationStatus } from './outbox';
-
-/** Код PostgreSQL «нарушена уникальность». */
-const UNIQUE_VIOLATION = '23505';
 
 /** Должность контактного лица, когда сайт её не спросил. */
 const DEFAULT_POSITION = 'Контактное лицо (заявка с сайта)';
@@ -95,20 +99,6 @@ const PARTY_ROLE_BY_KIND: Record<string, PartyRole> = {
 	legal_entity: 'customer',
 	educational_institution: 'educational_institution'
 };
-
-function isUniqueViolation(error: unknown): boolean {
-	let current: unknown = error;
-
-	while (current instanceof Error) {
-		if ((current as { code?: unknown }).code === UNIQUE_VIOLATION) {
-			return true;
-		}
-
-		current = current.cause;
-	}
-
-	return false;
-}
 
 /** Отпечаток запроса: по нему настоящий повтор отличается от другого тела. */
 export function hashMessage(message: unknown): string {
@@ -194,17 +184,31 @@ function interactionTitle(name: string, interest: string | null): string {
 	return (interest === null ? base : `${base} — ${interest}`).slice(0, 300);
 }
 
-/** Имя контрагента-физлица: ФИО из заявки, отдельной копии не появляется. */
-function applicantName(data: ApplicationSubmittedData): string {
+/**
+ * Заявитель-физлицо в том виде, в каком его знает общий приём физлиц: ФИО из
+ * заявителя, контакты из контактного лица — у физлица это он сам.
+ */
+function individualApplicant(data: ApplicationSubmittedData): ApplicantPerson {
 	const applicant = data.applicant;
 
-	if (applicant.kind === 'individual') {
-		return [applicant.lastName, applicant.firstName, applicant.middleName]
-			.filter((part) => part !== null && part !== '')
-			.join(' ');
+	if (applicant.kind !== 'individual') {
+		throw new ValidationError('Заявитель — не физическое лицо', []);
 	}
 
-	return applicant.name;
+	return {
+		lastName: applicant.lastName,
+		firstName: applicant.firstName,
+		middleName: applicant.middleName,
+		email: data.contact.email,
+		phone: data.contact.phone
+	};
+}
+
+/** Имя контрагента: ФИО физлица или название организации из заявки. */
+function applicantName(data: ApplicationSubmittedData): string {
+	return data.applicant.kind === 'individual'
+		? applicantPersonName(individualApplicant(data))
+		: data.applicant.name;
 }
 
 /**
@@ -255,78 +259,6 @@ function intakeComment(
 	return lines.join('\n\n').slice(0, 4000);
 }
 
-/**
- * Сотрудник, который принимает входящие заявки.
- *
- * Настройка не задана — на демонстрационном стенде берём демонстрационного
- * менеджера, если он в системе есть: стенд обязан принимать заявку сразу после
- * сида, не требуя похода в настройки. Нет и его — заявка отвергается с
- * указанием, что настроить: тихо назначить робота хуже, чем отказать.
- */
-async function resolveIntakeOwner(tx: Tx, configured: string | null): Promise<string> {
-	if (configured !== null) {
-		const [row] = await tx
-			.select({ id: users.id, roleId: users.roleId })
-			.from(users)
-			.where(and(eq(users.id, configured), eq(users.isActive, true)))
-			.limit(1);
-
-		if (row === undefined) {
-			throw new ValidationError('Ответственный за входящие заявки недоступен', [
-				'Настройка «Ответственный за входящие» указывает на выключенного или несуществующего сотрудника'
-			]);
-		}
-
-		if (row.roleId === 'service') {
-			throw new ValidationError('Ответственный за входящие заявки указан неверно', [
-				'Машинный субъект не ведёт заявки: выберите живого сотрудника'
-			]);
-		}
-
-		return row.id;
-	}
-
-	// Право взять демонстрационную запись даёт режим установки, а не наличие
-	// такой записи в базе: у заказчика сид не запускают, и сегодня отказ выходит
-	// внятным только поэтому. Правило должно читаться из кода, а не из порядка
-	// развёртывания.
-	const [demo] = getConfig().DEMO_MODE
-		? await tx
-				.select({ id: users.id })
-				.from(users)
-				.where(and(eq(users.isDemo, true), eq(users.isActive, true), eq(users.roleId, 'manager')))
-				.orderBy(users.email)
-				.limit(1)
-		: [];
-
-	if (demo === undefined) {
-		throw new ValidationError('Ответственный за входящие заявки не настроен', [
-			'Укажите сотрудника в разделе «Настройки → Интеграции», поле «Ответственный за входящие заявки»'
-		]);
-	}
-
-	return demo.id;
-}
-
-/**
- * Действующее лицо доменных операций: сотрудник, принимающий входящие.
- *
- * Ключ, запрос и адрес остаются теми же — меняется только тот, от чьего имени
- * заводятся записи. Так в журнале видно и живого ответственного, и ключ, которым
- * заявку принесли, а права и область считаются по обычным правилам.
- */
-async function ownerActor(ctx: ActorContext, ownerUserId: string): Promise<ActorContext> {
-	const owner = await loadSessionUser(ownerUserId);
-
-	if (owner === null) {
-		throw new ValidationError('Ответственный за входящие заявки недоступен', [
-			'Учётная запись ответственного выключена: заявку некому вести'
-		]);
-	}
-
-	return { ...ctx, user: owner, scope: owner.scope };
-}
-
 type Counterparty = {
 	organizationId: string;
 	personId: string | null;
@@ -362,186 +294,6 @@ async function findOrganization(
 	}
 
 	return null;
-}
-
-/**
- * Контрагент-физлицо: по ключу сравнения почты, затем по ключу телефона.
- *
- * Не по самим контактам: в базе они лежат шифртекстом, и у одного и того же
- * адреса он каждый раз новый. Нормализацию (регистр почты, вид записи номера)
- * знает `people/pii.ts`, и она здесь одна на обе стороны сравнения.
- */
-async function findIndividual(
-	tx: Tx,
-	email: string,
-	phone: string | null
-): Promise<{ id: string; personId: string | null } | null> {
-	const emailKey = hashEmail(email);
-
-	if (emailKey !== null) {
-		const [byEmail] = await tx
-			.select({ id: organizations.id, personId: organizations.personId })
-			.from(organizations)
-			.innerJoin(people, eq(people.id, organizations.personId))
-			.where(and(eq(organizations.kind, 'individual'), eq(people.emailHash, emailKey)))
-			.limit(1);
-
-		if (byEmail !== undefined) {
-			return byEmail;
-		}
-	}
-
-	const phoneKey = phone === null ? null : hashPhone(phone);
-
-	if (phoneKey === null) {
-		return null;
-	}
-
-	const [byPhone] = await tx
-		.select({ id: organizations.id, personId: organizations.personId })
-		.from(organizations)
-		.innerJoin(people, eq(people.id, organizations.personId))
-		.where(and(eq(organizations.kind, 'individual'), eq(people.phoneHash, phoneKey)))
-		.limit(1);
-
-	return byPhone ?? null;
-}
-
-/**
- * Контрагент-физлицо заводится здесь, а не сервисом справочника: форма
- * справочника такого контрагента не заводит вовсе (`ORGANIZATION_FORM_KINDS`), а
- * `createOrganization` не принимает `person_id` — связь организации с человеком
- * появляется только вместе с заявкой. ФИО, контакты и согласие ложатся в
- * `people`, где работают маскирование, срок хранения и обезличивание; копии ФИО
- * в полях организации не появляется — название и есть ФИО.
- *
- * Роль этого человека в его собственной организации заводится вместе с
- * контактным лицом заявки ({@link addContact}): контактное лицо здесь — он сам,
- * и второй записи `people` о том же человеке не появляется.
- */
-async function createIndividual(
-	ctx: ActorContext,
-	tx: Tx,
-	data: ApplicationSubmittedData
-): Promise<{ organizationId: string; personId: string }> {
-	const applicant = data.applicant;
-
-	if (applicant.kind !== 'individual') {
-		throw new ValidationError('Заявитель — не физическое лицо', []);
-	}
-
-	const person = await createPerson(
-		ctx,
-		{
-			lastName: applicant.lastName,
-			firstName: applicant.firstName,
-			middleName: applicant.middleName,
-			email: data.contact.email,
-			phone: data.contact.phone,
-			notes: null
-		},
-		tx
-	);
-
-	const name = applicantName(data);
-	const [organization] = await tx
-		.insert(organizations)
-		.values({
-			kind: 'individual',
-			educationLevel: null,
-			legalName: name,
-			shortName: name.slice(0, 200),
-			personId: person.id,
-			isActive: true
-		})
-		.returning({ id: organizations.id });
-
-	await recordAuditEvent(
-		ctx,
-		{
-			type: 'organizations.created',
-			outcome: 'success',
-			subject: { type: 'organization', id: organization.id },
-			details: { personId: person.id }
-		},
-		tx
-	);
-
-	return { organizationId: organization.id, personId: person.id };
-}
-
-/**
- * Действующее назначение сотрудника на контрагента; нет — создаётся.
- *
- * Не `assignResponsible`: тот открывает свою транзакцию и требует
- * `responsibles.manage` — права, которого у принимающего сотрудника нет и не
- * должно быть. Здесь другой случай: назначение не раздают, а достраивают до
- * того, что уже решено настройкой, и только когда действующего назначения нет
- * ни одного. Прежних назначений эта строка не трогает.
- */
-async function ensureResponsible(
-	ctx: ActorContext,
-	tx: Tx,
-	organizationId: string,
-	userId: string
-): Promise<void> {
-	const existing = await tx
-		.select({ id: organizationResponsibles.id, userId: organizationResponsibles.userId })
-		.from(organizationResponsibles)
-		.where(
-			and(
-				eq(organizationResponsibles.organizationId, organizationId),
-				sql`${organizationResponsibles.validTo} is null`
-			)
-		);
-
-	if (existing.length > 0) {
-		return;
-	}
-
-	await tx.insert(organizationResponsibles).values({ organizationId, userId });
-
-	await recordAuditEvent(
-		ctx,
-		{
-			type: 'directory.responsible_assigned',
-			outcome: 'success',
-			subject: { type: 'organization', id: organizationId },
-			details: { organizationId, userId }
-		},
-		tx
-	);
-}
-
-/**
- * Действующий ответственный за контрагента; `null` — его нет.
- *
- * Именно от его имени и ведётся заявка по знакомому вузу. Иначе выходит
- * бессмыслица: заявка приходит по вузу, который ведёт один КАМ, а применяет её
- * сотрудник из настройки — со своей областью доступа, в которую этот вуз не
- * входит. Ни найти организацию, ни завести взаимодействие он не может, и
- * заявка отвергается «организация не найдена», хотя организация есть.
- *
- * Машинный субъект ответственным не бывает (`ne(users.roleId, 'service')`), а
- * выключенная запись заявку вести не может — оба случая равны «ответственного
- * нет», и тогда работает сотрудник из настройки.
- */
-async function currentResponsible(tx: Tx, organizationId: string): Promise<string | null> {
-	const [row] = await tx
-		.select({ userId: organizationResponsibles.userId })
-		.from(organizationResponsibles)
-		.innerJoin(users, eq(users.id, organizationResponsibles.userId))
-		.where(
-			and(
-				eq(organizationResponsibles.organizationId, organizationId),
-				sql`${organizationResponsibles.validTo} is null`,
-				eq(users.isActive, true),
-				ne(users.roleId, 'service')
-			)
-		)
-		.limit(1);
-
-	return row?.userId ?? null;
 }
 
 /**
@@ -610,42 +362,33 @@ async function addContact(
 	data: ApplicationSubmittedData,
 	isPrimary: boolean
 ): Promise<{ personId: string; affiliationId: string }> {
+	const position = data.contact.position ?? DEFAULT_POSITION;
+
 	if (counterpartyPersonId !== null) {
 		// Заявитель нашёлся по телефону, а адрес почты в заявке новый: роль в
 		// своей организации у него уже есть, и второй такой же не нужно.
-		const [role] = await tx
-			.select({ id: affiliations.id })
-			.from(affiliations)
-			.where(
-				and(
-					eq(affiliations.personId, counterpartyPersonId),
-					eq(affiliations.organizationId, organizationId),
-					isNull(affiliations.validTo)
-				)
-			)
-			.limit(1);
+		const affiliationId = await ensureOwnAffiliation(ctx, tx, {
+			organizationId,
+			personId: counterpartyPersonId,
+			position,
+			isPrimary
+		});
 
-		if (role !== undefined) {
-			return { personId: counterpartyPersonId, affiliationId: role.id };
-		}
+		return { personId: counterpartyPersonId, affiliationId };
 	}
 
-	const personId =
-		counterpartyPersonId ??
-		(
-			await createPerson(
-				ctx,
-				{
-					lastName: data.contact.lastName,
-					firstName: data.contact.firstName,
-					middleName: data.contact.middleName,
-					email: data.contact.email,
-					phone: data.contact.phone,
-					notes: null
-				},
-				tx
-			)
-		).id;
+	const { id: personId } = await createPerson(
+		ctx,
+		{
+			lastName: data.contact.lastName,
+			firstName: data.contact.firstName,
+			middleName: data.contact.middleName,
+			email: data.contact.email,
+			phone: data.contact.phone,
+			notes: null
+		},
+		tx
+	);
 
 	const affiliation = await createAffiliation(
 		ctx,
@@ -653,7 +396,7 @@ async function addContact(
 			personId,
 			organizationId,
 			siteId: null,
-			position: data.contact.position ?? DEFAULT_POSITION,
+			position,
 			roleKind: 'other',
 			isPrimary,
 			validFrom: formatIsoDay(),
@@ -761,44 +504,13 @@ async function applyTransferStatus(
 	return true;
 }
 
-/** Согласие физлица: запись, а не галочка, — у неё есть версия текста и дата. */
-async function recordApplicationConsent(
-	ctx: ActorContext,
-	tx: Tx,
-	personId: string,
-	consent: { given: boolean; at: string; policyVersion: string }
-): Promise<void> {
-	const existing = await tx
-		.select({ id: consents.id })
-		.from(consents)
-		.where(and(eq(consents.personId, personId), eq(consents.textVersion, consent.policyVersion)))
-		.limit(1);
-
-	if (existing.length > 0) {
-		return;
-	}
-
-	const [row] = await tx
-		.insert(consents)
-		.values({
-			personId,
-			basis: 'consent',
-			textVersion: consent.policyVersion,
-			givenAt: consent.at.slice(0, 10),
-			recordedBy: ctx.user?.id ?? null
-		})
-		.returning({ id: consents.id });
-
-	await recordAuditEvent(
-		ctx,
-		{
-			type: 'people.consent_recorded',
-			outcome: 'success',
-			subject: { type: 'consent', id: row.id },
-			details: { personId }
-		},
-		tx
-	);
+/** Согласие из заявки как основание обработки: версия текста и день согласия. */
+function applicationConsent(consent: { at: string; policyVersion: string }) {
+	return {
+		basis: 'consent' as const,
+		textVersion: consent.policyVersion,
+		givenAt: consent.at.slice(0, 10)
+	};
 }
 
 /** Контрагент заявки: найден или заведён. */
@@ -816,25 +528,9 @@ async function resolveCounterparty(
 			]);
 		}
 
-		const found = await findIndividual(tx, data.contact.email.toLowerCase(), data.contact.phone);
+		const individual = await findOrCreateIndividual(ctx, tx, individualApplicant(data));
 
-		if (found !== null) {
-			return {
-				organizationId: found.id,
-				personId: found.personId,
-				needsReview: false,
-				created: false
-			};
-		}
-
-		const created = await createIndividual(ctx, tx, data);
-
-		return {
-			organizationId: created.organizationId,
-			personId: created.personId,
-			needsReview: false,
-			created: true
-		};
+		return { ...individual, needsReview: false };
 	}
 
 	const found = await findOrganization(tx, applicant.inn, applicant.ogrn);
@@ -1042,7 +738,7 @@ async function updateExisting(
 	}
 
 	if (personId !== null && data.consent !== null && data.consent.given) {
-		await recordApplicationConsent(ctx, tx, personId, data.consent);
+		await recordApplicationConsent(ctx, tx, personId, applicationConsent(data.consent));
 	}
 
 	const [workspace] = await tx
@@ -1159,7 +855,12 @@ async function createFromApplication(
 	}
 
 	if (counterparty.personId !== null && data.consent !== null && data.consent.given) {
-		await recordApplicationConsent(ctx, tx, counterparty.personId, data.consent);
+		await recordApplicationConsent(
+			ctx,
+			tx,
+			counterparty.personId,
+			applicationConsent(data.consent)
+		);
 	}
 
 	return {
@@ -1169,47 +870,6 @@ async function createFromApplication(
 		contactPersonId,
 		processGroup: PROCESS_GROUP_BY_APPLICANT[data.applicant.kind],
 		needsReview: counterparty.needsReview
-	};
-}
-
-/** Взаимодействие, которым уже стала заявка с этим ключом. */
-async function findExisting(
-	tx: Tx,
-	source: string,
-	externalId: string
-): Promise<{
-	id: string;
-	externalRevision: number | null;
-	organizationId: string;
-	workspaceId: string;
-	workspaceName: string;
-} | null> {
-	const [row] = await tx
-		.select({
-			id: interactions.id,
-			externalRevision: interactions.externalRevision,
-			workspaceId: interactions.workspaceId,
-			workspaceName: workspaces.name
-		})
-		.from(interactions)
-		.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
-		.where(and(eq(interactions.externalSource, source), eq(interactions.externalId, externalId)))
-		.limit(1);
-
-	if (row === undefined) {
-		return null;
-	}
-
-	const [primary] = await tx.execute<{ organization_id: string }>(
-		sql`select organization_id from interaction_parties where interaction_id = ${row.id} and is_primary limit 1`
-	);
-
-	return {
-		id: row.id,
-		externalRevision: row.externalRevision,
-		organizationId: primary.organization_id,
-		workspaceId: row.workspaceId,
-		workspaceName: row.workspaceName
 	};
 }
 
@@ -1357,34 +1017,19 @@ export async function receiveApplication(
 
 				const existing = await findExisting(tx, source, message.data.externalId);
 
-				// От чьего имени ведём заявку. У знакомого вуза уже есть действующий
-				// ответственный — заявка по нему и ведётся от его имени: он её видит,
-				// его область к ней применяется, его имя стоит в журнале. Настройка
-				// «Ответственный за входящие» работает только там, где ответственного
-				// ещё нет, — и тогда же он и назначается.
-				//
-				// Пространство — граница доступа: от имени сотрудника вне пространства
-				// заявку не провести, он не видит записи, которую ему заводят. Такой
-				// ответственный за вуз уступает сотруднику из настройки, а если вне
-				// пространства и тот — заявка отклоняется с причиной.
-				const organizationId =
-					existing?.organizationId ?? (await findApplicantOrganization(tx, message.data));
-				const responsible =
-					organizationId === null ? null : await currentResponsible(tx, organizationId);
+				// От чьего имени ведём заявку: ответственный за знакомого контрагента
+				// или сотрудник из настройки — правило общее с загрузкой оплат
+				// (`chooseIntakeOwner`).
 				const workspace =
 					existing === null
 						? await resolveIntakeWorkspace(tx, message.data.applicant.kind)
 						: { id: existing.workspaceId, name: existing.workspaceName };
-				const ownerUserId =
-					responsible !== null && (await mayWorkIn(tx, responsible, workspace.id))
-						? responsible
-						: await resolveIntakeOwner(tx, settings.cms.defaultOwnerUserId);
-
-				if (!(await mayWorkIn(tx, ownerUserId, workspace.id))) {
-					throw new ValidationError('Заявку некому вести в её пространстве', [
-						`Ни ответственный за вуз, ни сотрудник из настройки «Ответственный за входящие» не включены в пространство «${workspace.name}». Включите сотрудника в разделе «Настройки → Пространства» и повторите сообщение`
-					]);
-				}
+				const ownerUserId = await chooseIntakeOwner(tx, {
+					organizationId:
+						existing?.organizationId ?? (await findApplicantOrganization(tx, message.data)),
+					workspace,
+					configuredOwnerUserId: settings.cms.defaultOwnerUserId
+				});
 				const owner = await ownerActor(ctx, ownerUserId);
 
 				let outcome: ApplyOutcome;

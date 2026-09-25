@@ -77,6 +77,7 @@
 		changes: data.changes,
 		counterparty: data.counterparty,
 		exchange: data.exchange,
+		paymentFact: data.paymentFact,
 		card: data.card
 	});
 	const model = $derived(buildCard(source, new Date()));

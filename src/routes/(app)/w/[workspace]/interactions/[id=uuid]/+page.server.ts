@@ -52,6 +52,7 @@ import {
 	removeLearner,
 	sendLearningGroupRoster
 } from '$lib/server/integrations/exchange/roster';
+import { readPaymentFact } from '$lib/server/integrations/exchange/payments';
 import {
 	getInteraction,
 	listComments,
@@ -131,7 +132,9 @@ export const load: PageServerLoad = async (event) => {
 		// у карточки взаимодействия саму по себе. Без права список пуст, и диалог
 		// говорит почему, а не молчит.
 		const meetingContactsDenied = primary !== undefined && !can(ctx, 'people.read');
-		const [contracts, counterparty, card, meetingContacts] = await Promise.all([
+		// Факт оплаты с сайта читается по уже прочитанному взаимодействию: его
+		// область доступа проверил `getInteraction`.
+		const [contracts, counterparty, card, meetingContacts, paymentFact] = await Promise.all([
 			primary !== undefined && can(ctx, 'interactions.write')
 				? listOrganizationContracts(ctx, primary.organizationId)
 				: [],
@@ -141,7 +144,8 @@ export const load: PageServerLoad = async (event) => {
 			readInteractionCard(interaction),
 			primary !== undefined && can(ctx, 'people.read')
 				? listAffiliations(ctx, primary.organizationId)
-				: []
+				: [],
+			readPaymentFact(interaction)
 		]);
 
 		return {
@@ -158,7 +162,8 @@ export const load: PageServerLoad = async (event) => {
 			counterparty,
 			card,
 			meetingContacts,
-			meetingContactsDenied
+			meetingContactsDenied,
+			paymentFact
 		};
 	} catch (cause) {
 		toPageError(cause);

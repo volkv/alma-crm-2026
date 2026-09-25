@@ -31,12 +31,17 @@ export const EXCHANGE_SYSTEMS = ['cms', 'lms', 'crm'] as const;
 
 export type ExchangeSystem = (typeof EXCHANGE_SYSTEMS)[number];
 
-/** Коды событий обмена: по одному на направление. */
+/**
+ * Коды событий обмена: по одному на направление и `payment.confirmed` —
+ * запись файла оплат с сайта, загруженного администратором
+ * (`docs/exchange-contract.md`, «Загрузка оплат с сайта»).
+ */
 export const EXCHANGE_EVENT_TYPES = {
 	applicationSubmitted: 'application.submitted',
 	applicationStatus: 'application.status',
 	learningGroupRequested: 'learning_group.requested',
-	learningGroupResult: 'learning_group.result'
+	learningGroupResult: 'learning_group.result',
+	paymentConfirmed: 'payment.confirmed'
 } as const;
 
 /**

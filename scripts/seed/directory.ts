@@ -100,6 +100,10 @@ const PROGRAM_DIRECTIONS: Record<string, string> = {
 	'spo-01': 'analytics',
 	'spo-02': 'analytics',
 	'school-01': 'prompt',
+	'school-02': 'analytics',
+	'school-03': 'development',
+	'school-04': 'project',
+	'school-05': 'development',
 	'dpo-01': 'project'
 };
 
@@ -1626,6 +1630,45 @@ const PROGRAMS: readonly ProgramSeed[] = [
 		priority: 4,
 		status: 'active',
 		versions: [{ summary: 'Первая редакция программы.', effectiveFrom: '2023-09-01' }]
+	},
+	// Коммерческие курсы школы, которые продаёт сайт: их названия приходят в
+	// выгрузке оплат колонкой «Курс» и сверяются со справочником по названию.
+	// Коды и редакции — демонстрационные, как и у остальных программ набора.
+	{
+		key: 'school-02',
+		code: 'SCH-02',
+		name: 'Анализ данных без программирования',
+		level: 'school',
+		priority: 4,
+		status: 'active',
+		versions: [{ summary: 'Первая редакция программы.', effectiveFrom: '2025-09-01' }]
+	},
+	{
+		key: 'school-03',
+		code: 'SCH-03',
+		name: 'Инженер-тестировщик',
+		level: 'school',
+		priority: 4,
+		status: 'active',
+		versions: [{ summary: 'Первая редакция программы.', effectiveFrom: '2025-09-01' }]
+	},
+	{
+		key: 'school-04',
+		code: 'SCH-04',
+		name: 'Управление ИТ-проектами на базе программного продукта ПАО «Ростелеком»',
+		level: 'school',
+		priority: 4,
+		status: 'active',
+		versions: [{ summary: 'Первая редакция программы.', effectiveFrom: '2025-09-01' }]
+	},
+	{
+		key: 'school-05',
+		code: 'SCH-05',
+		name: 'Python-разработчик с использованием инструментов ИИ',
+		level: 'school',
+		priority: 4,
+		status: 'active',
+		versions: [{ summary: 'Первая редакция программы.', effectiveFrom: '2025-09-01' }]
 	},
 	{
 		key: 'dpo-01',

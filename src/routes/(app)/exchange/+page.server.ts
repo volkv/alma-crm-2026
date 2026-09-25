@@ -13,8 +13,9 @@ import {
 	listExchangeMessages,
 	retryExchangeMessage
 } from '$lib/server/integrations/exchange/messages';
+import { importPayments, previewPayments } from '$lib/server/integrations/exchange/payments';
 import { can } from '$lib/server/rbac';
-import type { Actions, PageServerLoad } from './$types';
+import type { Actions, PageServerLoad, RequestEvent } from './$types';
 
 /**
  * Внешние системы: журнал обмена в обе стороны.
@@ -60,7 +61,64 @@ export const load: PageServerLoad = async (event) => {
 	};
 };
 
+/** Файл выгрузки оплат из формы; `null` — файла не выбрали. */
+async function paymentsFile(
+	event: RequestEvent
+): Promise<{ name: string; bytes: Uint8Array } | null> {
+	const file = (await event.request.formData()).get('file');
+
+	return file instanceof File && file.size > 0
+		? { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) }
+		: null;
+}
+
+const NO_PAYMENTS_FILE = {
+	message: 'Выберите файл выгрузки оплат с сайта',
+	issues: [] as string[],
+	ok: false
+};
+
 export const actions: Actions = {
+	/**
+	 * Предпросмотр загрузки оплат: что станет с каждой записью файла. Ничего не
+	 * пишет — подтверждение присылает тот же файл ещё раз.
+	 */
+	paymentsPreview: async (event) => {
+		const file = await paymentsFile(event);
+
+		if (file === null) {
+			return fail(400, NO_PAYMENTS_FILE);
+		}
+
+		try {
+			const payments = await previewPayments(actorFromEvent(event), file);
+
+			return { message: 'Файл проверен', issues: [] as string[], ok: true, payments };
+		} catch (failure) {
+			return toActionFailure(failure);
+		}
+	},
+
+	/**
+	 * Загрузка оплат: тот же разбор и та же сверка, что в предпросмотре, но с
+	 * записью. Каждая запись — своя транзакция: ошибка одной не роняет файл.
+	 */
+	paymentsImport: async (event) => {
+		const file = await paymentsFile(event);
+
+		if (file === null) {
+			return fail(400, NO_PAYMENTS_FILE);
+		}
+
+		try {
+			const payments = await importPayments(actorFromEvent(event), file);
+
+			return { message: 'Оплаты загружены', issues: [] as string[], ok: true, payments };
+		} catch (failure) {
+			return toActionFailure(failure);
+		}
+	},
+
 	/**
 	 * Сцена «заявка с сайта» с этого же экрана: приложение просит имитатор CMS
 	 * подать заявку, и дальше всё идёт обычным путём — приём по контракту,

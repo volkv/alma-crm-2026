@@ -10,6 +10,7 @@
 	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
 	import Header from '$lib/components/header.svelte';
 	import { formatNumber } from '$lib/format';
+	import PaymentsDialog from './payments-dialog.svelte';
 	import type { PageProps } from './$types';
 
 	/**
@@ -98,6 +99,10 @@
 			</span>
 		</form>
 	{/if}
+
+	<!-- Загрузка оплат с сайта — не принадлежность стенда: выгрузку оплат
+		присылает сайт заказчика, а загружает её администратор. -->
+	<PaymentsDialog />
 
 	<FilterBar filter={data.filter} />
 

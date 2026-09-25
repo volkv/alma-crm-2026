@@ -187,6 +187,7 @@ function source(overrides: Partial<CardSource> = {}): CardSource {
 		changes: [],
 		counterparty: null,
 		exchange: NO_EXCHANGE,
+		paymentFact: null,
 		card: {
 			panels: ['terms', 'contract', 'learning', 'documents'],
 			templates: ['agreement'],
@@ -225,8 +226,26 @@ describe('вид карточки', () => {
 		expect(card.payment).toEqual({
 			tone: 'success',
 			text: 'Оплата получена',
-			stageName: 'Договор и оплата'
+			stageName: 'Договор и оплата',
+			site: null
 		});
+	});
+
+	it('оплата, загруженная выгрузкой сайта, называет заявку, поток и день загрузки', () => {
+		const card = buildCard(
+			source({
+				paymentFact: {
+					orderId: 'ORD-20260313051569-QWERTY',
+					streamNumber: 1,
+					loadedAt: new Date('2026-09-20T09:00:00Z')
+				}
+			}),
+			NOW
+		);
+
+		expect(card.payment.site).toBe(
+			'Оплата с сайта: заявка ORD-20260313051569-QWERTY, поток 1, загружено 20.09.2026'
+		);
 	});
 });
 

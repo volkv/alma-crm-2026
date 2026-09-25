@@ -7,7 +7,8 @@
 	 * Стоимость и оплата. Оплата — факт процесса, а не поле записи: её отмечают
 	 * пунктом чек-листа «Оплата получена» на стадии, где процесс его объявил, и
 	 * панель читает его оттуда. Стоимости в записи нет вовсе — строка говорит
-	 * об этом, а не прячется.
+	 * об этом, а не прячется. Оплата, загруженная выгрузкой сайта, называет
+	 * себя отдельной строкой: номер заявки, поток и день загрузки.
 	 */
 	let { payment }: { payment: CardPayment } = $props();
 </script>
@@ -19,6 +20,9 @@
 		<dt class="text-muted-foreground">Оплата</dt>
 		<dd><StatusBadge tone={payment.tone} dot>{payment.text}</StatusBadge></dd>
 	</dl>
+	{#if payment.site !== null}
+		<p class="text-xs text-muted-foreground">{payment.site}</p>
+	{/if}
 	{#if payment.stageName !== null}
 		<p class="text-xs text-muted-foreground">
 			Отметка — в чек-листе стадии «{payment.stageName}».

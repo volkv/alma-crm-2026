@@ -33,6 +33,7 @@ import {
 	type StageProgressItem,
 	type StageTransitionKind
 } from '$lib/contracts/interactions';
+import { PAYMENT_CHECKLIST_KEY, type PaymentFactView } from '$lib/contracts/payments';
 import type { ProcessCard } from '$lib/contracts/process-card';
 import { daysUntil, formatDate, formatDateTime, pluralize } from '$lib/format';
 
@@ -82,6 +83,8 @@ export type CardSource = {
 	/** Основная сторона из справочника: вид контрагента, реквизиты, регион. */
 	counterparty: OrganizationView | null;
 	exchange: CardExchange;
+	/** Факт оплаты с сайта из загруженной выгрузки; `null` — его нет. */
+	paymentFact: PaymentFactView | null;
 	/**
 	 * Состав карточки из процесса записи и вид основной стороны. Вид читается
 	 * отдельно от справочника: реквизиты закрыты правом, а какую карточку
@@ -146,6 +149,8 @@ export type CardPayment = {
 	text: string;
 	/** На какой стадии отмечается; `null` — такой отметки в пройденном нет. */
 	stageName: string | null;
+	/** Откуда оплата: строка о загруженной оплате с сайта; `null` — её не загружали. */
+	site: string | null;
 };
 
 export type TimingTone = 'danger' | 'warning' | 'neutral';
@@ -306,9 +311,6 @@ function counterpartyShape(kind: OrganizationKind): CounterpartyShape {
 	return kind === 'individual' ? 'person' : 'company';
 }
 
-/** Ключ пункта чек-листа, которым процесс отмечает поступление оплаты. */
-export const PAYMENT_CHECKLIST_KEY = 'payment_received';
-
 /**
  * Ключ стадии «Встреча с представителями» в сиде базового процесса
  * (`$lib/server/stages/definitions.ts`). На ней у пункта чек-листа «Встреча
@@ -325,24 +327,35 @@ export const MEETING_SCHEDULED_CHECKLIST_KEY = 'meeting_scheduled';
  * которой объявлена отметка об оплате. Пока стадия открыта, отметка — условие
  * перехода, и названа она у главного действия; здесь — только где её ставят.
  */
-export function buildPayment(entries: readonly StageEntryView[]): CardPayment {
+export function buildPayment(
+	entries: readonly StageEntryView[],
+	fact: PaymentFactView | null
+): CardPayment {
+	const site =
+		fact === null
+			? null
+			: [
+					`Оплата с сайта: заявка ${fact.orderId}`,
+					...(fact.streamNumber === null ? [] : [`поток ${fact.streamNumber}`]),
+					`загружено ${formatDate(fact.loadedAt)}`
+				].join(', ');
 	const entry = entries.find((candidate) =>
 		candidate.snapshot.checklist.some((item) => item.key === PAYMENT_CHECKLIST_KEY)
 	);
 
 	if (entry === undefined) {
-		return { tone: 'neutral', text: 'Не отмечена', stageName: null };
+		return { tone: 'neutral', text: 'Не отмечена', stageName: null, site };
 	}
 
 	const stageName = entry.snapshot.name;
 
 	if (entry.checklistState[PAYMENT_CHECKLIST_KEY] === true) {
-		return { tone: 'success', text: 'Оплата получена', stageName };
+		return { tone: 'success', text: 'Оплата получена', stageName, site };
 	}
 
 	return entry.leftAt === null
-		? { tone: 'neutral', text: 'Отмечается на текущей стадии', stageName }
-		: { tone: 'warning', text: 'Ждём оплату', stageName };
+		? { tone: 'neutral', text: 'Отмечается на текущей стадии', stageName, site }
+		: { tone: 'warning', text: 'Ждём оплату', stageName, site };
 }
 
 export function buildTiming(summary: InteractionSummaryView, now: Date): CardTiming | null {
@@ -1105,7 +1118,8 @@ export function buildCard(source: CardSource, now: Date): CardModel {
 		},
 		panels: source.card.panels,
 		payment: buildPayment(
-			status.current === null ? status.history : [status.current, ...status.history]
+			status.current === null ? status.history : [status.current, ...status.history],
+			source.paymentFact
 		),
 		stage:
 			stage === null
