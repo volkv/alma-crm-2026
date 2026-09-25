@@ -13,6 +13,7 @@
 		CATALOG_ROW_ACTIONS,
 		CATALOG_ROW_ACTION_DONE_LABELS,
 		DIRECTORY_IMPORT_KIND_LABELS,
+		DIRECTORY_IMPORT_KIND_SUBJECTS,
 		type CatalogRowAction
 	} from '$lib/contracts/directory-import';
 	import { formatDateTime, formatNumber, pluralize } from '$lib/format';
@@ -22,6 +23,8 @@
 	let { data }: PageProps = $props();
 
 	const done = $derived(data.record.status === 'confirmed');
+
+	const title = $derived(`Загрузка ${DIRECTORY_IMPORT_KIND_SUBJECTS[data.record.kind]}`);
 
 	const COUNT_OF: Record<CatalogRowAction, (record: typeof data.record) => number> = {
 		create: (record) => record.createCount,
@@ -38,9 +41,9 @@
 	);
 </script>
 
-<svelte:head><title>Загрузка каталога — Альма CRM</title></svelte:head>
+<svelte:head><title>{title} — Альма CRM</title></svelte:head>
 
-<Header title="Загрузка каталога" description="Что этот файл сделал со справочником — построчно.">
+<Header {title} description="Что этот файл сделал со справочником — построчно.">
 	{#snippet actions()}
 		<Button variant="outline" href={resolve('/(app)/organizations/import')}>
 			Загрузить ещё файл
@@ -52,7 +55,7 @@
 	items={[
 		{ label: 'Организации', href: resolve('/(app)/organizations') },
 		{ label: 'Импорт каталога', href: resolve('/(app)/organizations/import') },
-		{ label: 'Загрузка каталога' }
+		{ label: title }
 	]}
 />
 

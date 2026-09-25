@@ -20,9 +20,10 @@
 	 * список изменений отдельно от строк заставил бы сверять номера руками.
 	 *
 	 * Колонки данных — по виду загрузки: у каталога это вуз, продукт, договор и
-	 * лицензия, у вендоров — компания и продукты. Контакт вендора в таблице не
-	 * показывается: ФИО и телефоны видны по правилам людей, а не по видимости
-	 * загрузки, — что с ним будет, говорит колонка «Что будет».
+	 * лицензия, у вендоров — компания, продукты и контакт. Контакт (ФИО и способ
+	 * связи) взят из строки файла и приходит по тому же правилу, что сама строка
+	 * файла: автору загрузки и полному доступу. Остальным колонки контакта нет —
+	 * что с ним будет, говорит колонка «Что будет».
 	 */
 	let {
 		rows,
@@ -50,6 +51,10 @@
 		(done ? CATALOG_ROW_ACTION_DONE_LABELS : CATALOG_ROW_ACTION_LABELS)[action];
 
 	const dash = (value: string | null): string => value ?? '—';
+
+	const showContact = $derived(
+		kind === 'vendors' && rows.some((row) => row.vendorContact !== null)
+	);
 </script>
 
 {#if rows.length === 0}
@@ -71,6 +76,9 @@
 					{:else}
 						<Table.Head>Компания</Table.Head>
 						<Table.Head>Продукты</Table.Head>
+						{#if showContact}
+							<Table.Head>Контакт</Table.Head>
+						{/if}
 					{/if}
 					<Table.Head>Что будет</Table.Head>
 				</Table.Row>
@@ -92,6 +100,15 @@
 							<Table.Cell class="whitespace-nowrap">{dash(row.contractNumber)}</Table.Cell>
 							<Table.Cell class="whitespace-nowrap">{dash(row.licenseUntil)}</Table.Cell>
 							<Table.Cell>{dash(row.transferStatus)}</Table.Cell>
+						{:else if showContact}
+							<Table.Cell>
+								{dash(row.vendorContact?.name ?? null)}
+								{#if row.vendorContact?.channel}
+									<span class="block text-xs text-muted-foreground">
+										{row.vendorContact.channel}
+									</span>
+								{/if}
+							</Table.Cell>
 						{/if}
 						<Table.Cell>
 							<div class="flex flex-col gap-1">

@@ -18,6 +18,7 @@
 		CATALOG_ROW_ACTIONS,
 		CATALOG_ROW_ACTION_LABELS,
 		CATALOG_WIZARD_STEPS,
+		DIRECTORY_IMPORT_KIND_SUBJECTS,
 		type CatalogRowAction
 	} from '$lib/contracts/directory-import';
 	import { formatNumber, pluralize } from '$lib/format';
@@ -51,7 +52,9 @@
 	}
 </script>
 
-<svelte:head><title>Предпросмотр импорта каталога — Альма CRM</title></svelte:head>
+<svelte:head>
+	<title>Предпросмотр импорта {DIRECTORY_IMPORT_KIND_SUBJECTS[data.record.kind]} — Альма CRM</title>
+</svelte:head>
 
 <Header
 	title="Предпросмотр импорта"

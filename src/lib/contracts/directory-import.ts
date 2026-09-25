@@ -37,6 +37,12 @@ export const DIRECTORY_IMPORT_KIND_LABELS: Record<DirectoryImportKind, string> =
 	vendors: 'Вендоры и контакты по продуктам'
 };
 
+/** Что загружают, в родительном падеже: «Загрузка вендоров», «Предпросмотр импорта каталога». */
+export const DIRECTORY_IMPORT_KIND_SUBJECTS: Record<DirectoryImportKind, string> = {
+	catalog: 'каталога',
+	vendors: 'вендоров'
+};
+
 /** Что за файл ждёт каждый вид — одной фразой под выбором на первом шаге. */
 export const DIRECTORY_IMPORT_KIND_HINTS: Record<DirectoryImportKind, string> = {
 	catalog:
@@ -399,6 +405,18 @@ export type CatalogImportRowView = CatalogRowValues & {
 	 * переносит (`docs/access-matrix.md`, раздел 3).
 	 */
 	raw: Record<string, string> | null;
+	/**
+	 * Контакт строки вендоров — ФИО и способ связи, прочитанные из строки файла
+	 * по сохранённому сопоставлению. Правило то же, что у `raw`: `null` — строки
+	 * файла этому человеку не показывают, либо это загрузка каталога.
+	 */
+	vendorContact: VendorRowContactView | null;
+};
+
+/** ФИО и способ связи контакта вендора, как их назвал файл. */
+export type VendorRowContactView = {
+	name: string | null;
+	channel: string | null;
 };
 
 /** Счётчики импорта: они же уходят числами в журнал действий. */

@@ -1123,6 +1123,70 @@ describe('импорт вендоров', () => {
 		});
 	});
 
+	it('узнаёт оператора по полному названию: «АО «…»» в файле — «Акционерное общество «…»» в карточке', async () => {
+		const operator = await insertOrganization(database.db, {
+			shortName: 'Школа оператора',
+			kind: 'operator'
+		});
+
+		await database.db
+			.update(organizations)
+			.set({ legalName: 'Акционерное общество «Оператор Обучения»' })
+			.where(eq(organizations.id, operator));
+
+		const [stand] = await database.db
+			.insert(products)
+			.values({
+				code: 'STAND',
+				name: 'Учебный стенд',
+				status: 'active',
+				vendorOrganizationId: operator
+			})
+			.returning({ id: products.id });
+		const ctx = testActor();
+		const record = await vendorPreview(ctx, 'vendors-sample.csv');
+		const rows = await listCatalogImportRows(ctx, record.id, {
+			action: null,
+			page: 1,
+			pageSize: 10
+		});
+		const operatorRow = rows.items.find((row) => row.organizationName === OPERATOR);
+
+		// Компания найдена, продукт её же — заводится только контакт и его связь.
+		expect(record.errorCount).toBe(0);
+		expect(operatorRow).toMatchObject({
+			action: 'create',
+			vendorContact: { name: 'Кравец Нина Олеговна', channel: 'Почта, почта' }
+		});
+		expect(operatorRow?.creations.map((creation) => creation.target)).toEqual(['vendorContact']);
+
+		await confirmCatalogImport(ctx, record.id);
+
+		// Ссылки на записи проставляет подтверждение.
+		const applied = await listCatalogImportRows(ctx, record.id, {
+			action: null,
+			page: 1,
+			pageSize: 10
+		});
+
+		expect(applied.items.find((row) => row.organizationName === OPERATOR)).toMatchObject({
+			organizationId: operator,
+			productId: stand.id
+		});
+
+		const operators = await database.db
+			.select({ id: organizations.id })
+			.from(organizations)
+			.where(eq(organizations.kind, 'operator'));
+		const [product] = await database.db
+			.select({ vendor: products.vendorOrganizationId })
+			.from(products)
+			.where(eq(products.id, stand.id));
+
+		expect(operators).toEqual([{ id: operator }]);
+		expect(product.vendor).toBe(operator);
+	});
+
 	it('загружает только администратор: вендор без ответственного, вне области руководителя, а контакты видны всем', async () => {
 		const university = await insertOrganization(database.db, { shortName: 'Свой вуз' });
 		const lead = await scopedActor(database.db, { roleId: 'lead', organizationIds: [university] });

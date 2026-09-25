@@ -43,6 +43,16 @@ export const load: PageServerLoad = async (event) => {
 			})
 		]);
 
+		// Решённая загрузка — уже не предпросмотр: «Создать» над применёнными
+		// строками (скажем, после «Назад» в браузере) звучало бы как обещание.
+		// Итог в прошедшем времени живёт на карточке загрузки. Переадресация
+		// не `AppError`, и `toPageError` пропускает её как есть.
+		if (record.status === 'confirmed' || record.status === 'rejected') {
+			const target = resolve('/(app)/organizations/import/[id=uuid]', { id: event.params.id });
+
+			redirect(303, action === null ? target : `${target}?action=${action}`);
+		}
+
 		return { record, rows: rows.items, shown: rows.items.length, total: rows.total, action };
 	} catch (error) {
 		toPageError(error);

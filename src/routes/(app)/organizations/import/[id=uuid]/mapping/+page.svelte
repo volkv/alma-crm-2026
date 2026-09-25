@@ -14,6 +14,7 @@
 		CATALOG_PREVIEW_ROWS,
 		CATALOG_WIZARD_STEPS,
 		DIRECTORY_IMPORT_KIND_LABELS,
+		DIRECTORY_IMPORT_KIND_SUBJECTS,
 		IMPORT_FIELDS_BY_KIND
 	} from '$lib/contracts/directory-import';
 	import { describeStatFile } from '$lib/contracts/stats';
@@ -53,7 +54,10 @@
 	);
 </script>
 
-<svelte:head><title>Сопоставление колонок каталога — Альма CRM</title></svelte:head>
+<svelte:head>
+	<title>Сопоставление колонок {DIRECTORY_IMPORT_KIND_SUBJECTS[data.record.kind]} — Альма CRM</title
+	>
+</svelte:head>
 
 <Header
 	title="Сопоставление колонок"

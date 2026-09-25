@@ -146,6 +146,7 @@ import {
 	dryVendorWriter,
 	loadVendorState,
 	suggestVendorMapping,
+	vendorContactFromRaw,
 	vendorRowFromStored,
 	vendorStoredValues
 } from './vendor-import';
@@ -625,6 +626,41 @@ const productDirectionKey = (productId: string, directionId: string): string =>
 const contactKey = (organizationId: string, key: string): string => `${organizationId} ${key}`;
 
 /**
+ * Правовые формы полностью → сокращение. Длинные идут раньше коротких:
+ * «публичное акционерное общество» содержит «акционерное общество».
+ */
+const LEGAL_FORMS: readonly (readonly [string, string])[] = [
+	['общество с ограниченной ответственностью', 'ооо'],
+	['публичное акционерное общество', 'пао'],
+	['непубличное акционерное общество', 'нао'],
+	['закрытое акционерное общество', 'зао'],
+	['открытое акционерное общество', 'оао'],
+	['акционерное общество', 'ао'],
+	['индивидуальный предприниматель', 'ип']
+];
+
+/**
+ * Название организации в сравнимом виде. Сверх `normalizeName` (регистр, «ё»,
+ * кавычки любого вида) правовая форма приводится к сокращению: в файле пишут
+ * «ООО «РТК ИТ»», а в полном названии карточки — «Общество с ограниченной
+ * ответственностью «РТК ИТ»», и это одна организация. Сама форма из ключа не
+ * выпадает: ООО и АО с одним названием — разные юридические лица.
+ *
+ * Правило только для организаций справочника: продукты, направления и люди
+ * сравниваются по `normalizeName`, и «общество» в названии продукта — не
+ * правовая форма.
+ */
+export function organizationNameKey(value: string): string {
+	let key = ` ${normalizeName(value)} `;
+
+	for (const [full, short] of LEGAL_FORMS) {
+		key = key.replaceAll(` ${full} `, ` ${short} `);
+	}
+
+	return key.trim();
+}
+
+/**
  * Ключи, под которыми сотрудник узнаётся по колонке менеджера: полное ФИО и
  * «фамилия и инициалы». Второй ключ нужен потому, что в рабочей таблице пишут
  * и «Вересова Анна Сергеевна», и «Вересова А.С.», и это один человек — а вот
@@ -677,7 +713,7 @@ export function registerOrganization(
 	}
 
 	for (const name of names) {
-		pushKeyed(state.organizationByName, normalizeName(name), entry);
+		pushKeyed(state.organizationByName, organizationNameKey(name), entry);
 	}
 }
 
@@ -1247,7 +1283,7 @@ export type CatalogRowResult = {
 /** Ключ, по которому строка считается тем же самым, что и другая строка файла. */
 function rowKey(values: CatalogRowValues): string {
 	return [
-		values.organizationInn ?? normalizeName(values.organizationName ?? ''),
+		values.organizationInn ?? organizationNameKey(values.organizationName ?? ''),
 		values.productCode === null
 			? normalizeName(values.productName ?? '')
 			: normalizeName(values.productCode),
@@ -1605,7 +1641,7 @@ async function applyCatalogRow(
 
 	if (organization === null && organizationName !== null && clean()) {
 		const byName = pickOne(
-			state.organizationByName.get(normalizeName(organizationName)),
+			state.organizationByName.get(organizationNameKey(organizationName)),
 			organizationName
 		);
 
@@ -1697,7 +1733,10 @@ async function applyCatalogRow(
 	const vendorName = product === null ? values.vendorName : null;
 
 	if (vendorName !== null) {
-		const found = pickOne(state.organizationByName.get(normalizeName(vendorName)), vendorName);
+		const found = pickOne(
+			state.organizationByName.get(organizationNameKey(vendorName)),
+			vendorName
+		);
 
 		if (found.message !== null) {
 			issues.push({ field: 'vendor', message: found.message });
@@ -2754,8 +2793,12 @@ export async function getCatalogImportPreview(
 
 function toImportRowView(
 	row: typeof directoryImportRows.$inferSelect,
+	record: typeof directoryImports.$inferSelect,
 	withRaw: boolean
 ): CatalogImportRowView {
+	const contact =
+		withRaw && record.kind === 'vendors' ? vendorContactFromRaw(row.raw, record.mapping) : null;
+
 	return {
 		id: row.id,
 		rowNo: row.rowNo,
@@ -2780,7 +2823,8 @@ function toImportRowView(
 		productId: row.productId,
 		contractId: row.contractId,
 		contractItemId: row.contractItemId,
-		raw: withRaw ? row.raw : null
+		raw: withRaw ? row.raw : null,
+		vendorContact: contact === null ? null : { name: contact.name, channel: contact.channel }
 	};
 }
 
@@ -2788,7 +2832,8 @@ function toImportRowView(
  * Строки импорта: страница предпросмотра и карточки результата.
  *
  * Разобранные значения строки видит каждый, кому видна сама загрузка; строка
- * файла как есть (`raw`) — только тот, кто файл принёс (`canReadImportRaw`).
+ * файла как есть (`raw`) и контакт вендора из неё (ФИО и способ связи) — только
+ * тот, кто файл принёс, и полный доступ (`canReadImportRaw`).
  */
 export async function listCatalogImportRows(
 	ctx: ActorContext,
@@ -2822,7 +2867,7 @@ export async function listCatalogImportRows(
 	]);
 
 	return {
-		items: items.map((item) => toImportRowView(item, withRaw)),
+		items: items.map((item) => toImportRowView(item, record, withRaw)),
 		total: total?.value ?? 0,
 		page: options.page,
 		pageSize: options.pageSize

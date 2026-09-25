@@ -116,7 +116,8 @@ const PRODUCT_DIRECTIONS: readonly { productKey: string; directionKeys: readonly
 	{ productKey: 'cloud', directionKeys: ['mobile'] },
 	{ productKey: 'security', directionKeys: ['ledger'] },
 	{ productKey: 'assistant', directionKeys: ['analytics'] },
-	{ productKey: 'archive', directionKeys: ['analytics'] }
+	{ productKey: 'archive', directionKeys: ['analytics'] },
+	{ productKey: 'warehouse', directionKeys: ['analytics'] }
 ];
 
 type ResponsibleSeed = {
@@ -248,6 +249,14 @@ const RESPONSIBLES: readonly ResponsibleSeed[] = [
 ];
 
 type OrganizationSeed = { key: string } & z.input<typeof createOrganizationSchema>;
+
+/**
+ * Вендоры продуктов оператора — как их называет таблица «Вендоры и контакты по
+ * продуктам» заказчика: загрузка этой таблицы на демо-стенде узнаёт компании и
+ * продукты и заводит только контакты. Ответственных у вендоров не бывает.
+ */
+const VENDOR_NOTE =
+	'Вендор продуктов, которые оператор передаёт вузам. Название публичное; реквизиты вымышлены.';
 
 const ORGANIZATIONS: readonly OrganizationSeed[] = [
 	{
@@ -587,7 +596,55 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		region: 'г. Москва',
 		website: 'https://itschool.example.org',
 		notes:
-			'Демонстрационные данные. Названия вузов и продуктов — публичные, реально существующие; люди, контакты, реквизиты, договоры, сроки и числа вымышлены целиком, колледжи, школы и компании-заказчики тоже. Оператор ведёт от своего имени весь процесс.'
+			'Демонстрационные данные. Названия вузов, продуктов и их вендоров — публичные, реально существующие; люди, контакты, реквизиты, договоры, сроки и числа вымышлены целиком, колледжи, школы и компании-заказчики тоже. Оператор ведёт от своего имени весь процесс.'
+	},
+	{
+		key: 'vendor-basis',
+		kind: 'vendor',
+		legalName: 'Общество с ограниченной ответственностью «Базис»',
+		shortName: 'Базис',
+		inn: '0000000272',
+		kpp: '000001027',
+		ogrn: '1260000000227',
+		region: 'г. Москва',
+		website: 'https://basis.example.org',
+		notes: VENDOR_NOTE
+	},
+	{
+		key: 'vendor-tdata',
+		kind: 'vendor',
+		legalName: 'Общество с ограниченной ответственностью «ТДата»',
+		shortName: 'ТДата',
+		inn: '0000000280',
+		kpp: '000001028',
+		ogrn: '1260000000228',
+		region: 'г. Москва',
+		website: 'https://tdata.example.org',
+		notes: VENDOR_NOTE
+	},
+	{
+		key: 'vendor-rostelecom',
+		kind: 'vendor',
+		legalName: 'Публичное акционерное общество «Ростелеком»',
+		shortName: 'Ростелеком',
+		inn: '0000000297',
+		kpp: '000001029',
+		ogrn: '1260000000229',
+		region: 'г. Москва',
+		website: 'https://rostelecom.example.org',
+		notes: VENDOR_NOTE
+	},
+	{
+		key: 'vendor-rtk-it-plus',
+		kind: 'vendor',
+		legalName: 'Общество с ограниченной ответственностью «РТК ИТ Плюс»',
+		shortName: 'РТК ИТ Плюс',
+		inn: '0000000307',
+		kpp: '000001030',
+		ogrn: '1260000000230',
+		region: 'г. Москва',
+		website: 'https://rtk-it-plus.example.org',
+		notes: VENDOR_NOTE
 	}
 ];
 
@@ -1689,16 +1746,16 @@ type ProductSeed = { key: string; vendorKey: string } & Omit<
 const PRODUCTS: readonly ProductSeed[] = [
 	{
 		key: 'lms',
-		vendorKey: 'operator',
+		vendorKey: 'vendor-basis',
 		code: 'RT-DEVOPS',
-		name: 'Базис',
+		name: 'Базис Dynamix',
 		description:
 			'Платформа виртуализации и DevOps: на ней идёт программа подготовки DevOps-инженеров.',
 		status: 'active'
 	},
 	{
 		key: 'analytics',
-		vendorKey: 'operator',
+		vendorKey: 'vendor-rostelecom',
 		code: 'RT-DATAVISION',
 		name: 'RT.DataVision',
 		description:
@@ -1707,15 +1764,15 @@ const PRODUCTS: readonly ProductSeed[] = [
 	},
 	{
 		key: 'lab',
-		vendorKey: 'operator',
+		vendorKey: 'vendor-rtk-it-plus',
 		code: 'RT-AKOLA',
-		name: 'Акола',
+		name: 'AKOLA',
 		description: 'No-code платформа для сборки веб-приложений и порталов.',
 		status: 'active'
 	},
 	{
 		key: 'docs',
-		vendorKey: 'operator',
+		vendorKey: 'vendor-rtk-it-plus',
 		code: 'RT-YAGA',
 		name: 'Яга',
 		description: 'Система управления проектами и задачами команд.',
@@ -1734,7 +1791,7 @@ const PRODUCTS: readonly ProductSeed[] = [
 		key: 'security',
 		vendorKey: 'operator',
 		code: 'RT-WEB3GATE',
-		name: 'WEB3Gate',
+		name: 'Web3Gate',
 		description:
 			'Платформа распределённого реестра: смарт-контракты и работа с цифровыми активами.',
 		status: 'active'
@@ -1747,13 +1804,22 @@ const PRODUCTS: readonly ProductSeed[] = [
 		description: 'Единая точка доступа к языковым моделям для прикладных сервисов.',
 		status: 'draft'
 	},
+	// Архивный продукт нужен фильтру «В архиве» каталога; статус демонстрационный.
 	{
 		key: 'archive',
-		vendorKey: 'operator',
+		vendorKey: 'vendor-tdata',
 		code: 'RT-DATALAKE',
-		name: 'RT.Data Lake',
+		name: 'RT.DataLake',
 		description: 'Озеро данных: хранение и подготовка больших наборов под аналитику.',
 		status: 'archived'
+	},
+	{
+		key: 'warehouse',
+		vendorKey: 'vendor-tdata',
+		code: 'RT-WAREHOUSE',
+		name: 'RT.Warehouse',
+		description: 'Корпоративное хранилище данных: витрины и отчётность поверх озера данных.',
+		status: 'active'
 	}
 ];
 

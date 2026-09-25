@@ -176,6 +176,38 @@ describe('решения по строке вендоров', () => {
 		expect(results[2].issues[0].message).toContain('не похоже на ФИО');
 	});
 
+	it('узнаёт компанию по полному названию с правовой формой, а ненайденную называет в претензии', async () => {
+		const snapshot = state();
+
+		registerCompany(snapshot, { id: 'rtk', name: 'ИТ Школа', inn: null, kind: 'operator' }, [
+			'ИТ Школа',
+			'Общество с ограниченной ответственностью «РТК ИТ»'
+		]);
+		registerVendorProduct(snapshot, { id: 'p-gate', name: 'Web3Gate', vendorId: 'rtk' }, 'GATE');
+
+		const results = await applyVendorRows(
+			snapshot,
+			dryVendorWriter(),
+			buildVendorRows(
+				table(
+					['ООО «РТК ИТ»', '«Web3Gate»', '', '', '', ''],
+					['ООО «Полярный Софт»', '«Ладога.Поток»', '', '', '', '']
+				),
+				MAPPING
+			)
+		);
+
+		expect(results[0]).toMatchObject({ action: 'unchanged', organizationId: 'rtk', issues: [] });
+		expect(results[1].action).toBe('error');
+		expect(results[1].issues).toEqual([
+			{
+				field: 'company',
+				message:
+					'Компания «ООО «Полярный Софт»» не найдена в справочнике, а продукт «Ладога.Поток» уже у вендора «Ладога Датасистемс» — проверьте название компании в файле или заведите компанию в справочнике'
+			}
+		]);
+	});
+
 	it('узнаёт заведённого человека и меняет только способ связи', async () => {
 		const snapshot = state();
 		const identity = {

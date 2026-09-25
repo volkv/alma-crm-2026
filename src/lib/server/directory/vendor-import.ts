@@ -44,6 +44,7 @@ import {
 	insertImportedContact,
 	insertImportedOrganization,
 	insertImportedProduct,
+	organizationNameKey,
 	pickOne,
 	storedContactKeys,
 	textOf,
@@ -406,7 +407,7 @@ export function registerCompany(
 
 	if (COMPANY_KINDS.includes(entry.kind)) {
 		for (const name of names) {
-			pushKeyed(state.companyByName, normalizeName(name), entry);
+			pushKeyed(state.companyByName, organizationNameKey(name), entry);
 		}
 	}
 }
@@ -602,7 +603,7 @@ function fileContactKey(row: VendorSourceRow): string | null {
 		return null;
 	}
 
-	const company = row.values.companyInn ?? normalizeName(row.values.companyName ?? '');
+	const company = row.values.companyInn ?? organizationNameKey(row.values.companyName ?? '');
 
 	return `${company}|${normalizeName(row.contact.name)}`;
 }
@@ -724,7 +725,7 @@ function planCompany(
 		return null;
 	}
 
-	const byName = pickOne(state.companyByName.get(normalizeName(companyName)), companyName);
+	const byName = pickOne(state.companyByName.get(organizationNameKey(companyName)), companyName);
 
 	if (byName.message !== null) {
 		issues.push({ field: 'company', message: byName.message });
@@ -751,10 +752,15 @@ function planCompany(
 	return byName.entry;
 }
 
-/** Продукты строки и что с каждым будет. */
+/**
+ * Продукты строки и что с каждым будет. `newCompany` — название компании,
+ * которой в справочнике не нашлось и которую строка заведёт: если её продукт
+ * уже у другого вендора, дело почти всегда в названии компании, а не в продукте.
+ */
 function planProducts(
 	state: VendorState,
 	company: CompanyEntry | null,
+	newCompany: string | null,
 	productsText: string | null,
 	issues: CatalogRowIssue[]
 ): ProductPlan[] {
@@ -788,12 +794,19 @@ function planProducts(
 		} else {
 			// Чужого правообладателя загрузка не заменяет: смена вендора у продукта
 			// меняет смысл всех договоров по нему и решается на его карточке.
-			issues.push({
-				field: 'products',
-				message: `Продукт «${entry.name}» уже принадлежит вендору «${
-					state.organizationNames.get(entry.vendorId) ?? 'без названия'
-				}»`
-			});
+			const owner = state.organizationNames.get(entry.vendorId) ?? 'без названия';
+
+			issues.push(
+				newCompany === null
+					? {
+							field: 'products',
+							message: `Продукт «${entry.name}» уже принадлежит вендору «${owner}»`
+						}
+					: {
+							field: 'company',
+							message: `Компания «${newCompany}» не найдена в справочнике, а продукт «${entry.name}» уже у вендора «${owner}» — проверьте название компании в файле или заведите компанию в справочнике`
+						}
+			);
 		}
 	}
 
@@ -904,8 +917,12 @@ async function applyVendorRow(
 	const creations: CatalogCreation[] = [];
 	const changes: CatalogRowChange[] = [];
 
+	const issuesBeforeCompany = issues.length;
 	let company = planCompany(state, row.values, issues);
-	const productPlans = planProducts(state, company, row.values.productsText, issues);
+	// Компания не нашлась, и претензии к ней нет — значит, строка её заведёт.
+	const newCompany =
+		company === null && issues.length === issuesBeforeCompany ? row.values.companyName : null;
+	const productPlans = planProducts(state, company, newCompany, row.values.productsText, issues);
 	const contactPlan = planContact(state, company, row.contact, issues);
 
 	// Дальше идут записи, и до них доходит только строка без единой претензии.
