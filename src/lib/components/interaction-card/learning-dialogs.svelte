@@ -36,7 +36,7 @@
 	} from '$lib/contracts/exchange';
 	import { pluralForm, pluralize } from '$lib/format';
 	import { getCardCommands } from './commands.svelte';
-	import type { CardExchange, CardOffering } from './model';
+	import { purposeCountingStages, type CardExchange, type CardOffering } from './model';
 
 	/**
 	 * Диалоги системы обучения: заявка на поток и отметка «обучение завершено».
@@ -62,6 +62,38 @@
 	const rosterOpen = opened('roster');
 
 	const offeringLabel = (offering: CardOffering) => `${offering.code} — ${offering.name}`;
+
+	/**
+	 * Назначения потока и стадии, которые засчитают его итог. Выбрать можно
+	 * любое: поток преподавателей в процессе работы с вузом законен, даже если
+	 * стадию с данными обучения подтверждает только поток студентов. Но
+	 * засчитываемые помечены, а единственное засчитываемое подставлено сразу —
+	 * иначе поток легко завести так, что стадию он не подтвердит никогда.
+	 */
+	const purposeOptions = $derived(
+		LEARNING_PURPOSES.map((value) => {
+			const stages = purposeCountingStages(exchange.learningStages, value);
+			const mark =
+				stages === null || stages.length === 0
+					? ''
+					: ` — засчитывает ${stages.length === 1 ? 'стадия' : 'стадии'} ${stages.map((name) => `«${name}»`).join(', ')}`;
+
+			return {
+				value,
+				label: `${LEARNING_PURPOSE_LABELS[value]}${mark}`,
+				counts: stages === null || stages.length > 0
+			};
+		})
+	);
+	/** Назначение, которое форма подставляет сама; `''` — выбирает сотрудник. */
+	const defaultPurpose = $derived.by(() => {
+		const counted = purposeOptions.filter((option) => option.counts);
+
+		return counted.length === 1 ? counted[0].value : '';
+	});
+	const purposeCounts = $derived(
+		purposeOptions.find((option) => option.value === purpose)?.counts ?? true
+	);
 
 	/** Потоки, которые ещё можно отметить завершёнными. */
 	const unfinished = $derived(
@@ -99,7 +131,7 @@
 			startsOn = '';
 			endsOn = '';
 			programId = '';
-			purpose = '';
+			purpose = defaultPurpose;
 			chosenProducts = [];
 			sendRefusal = null;
 			roster = null;
@@ -220,7 +252,7 @@
 	bind:open={sendOpen.get, sendOpen.set}
 	title="Заявить поток в систему обучения"
 	description="Поток закрепляет программу, продукты и то, для кого обучение. Стадию подтвердит его итог: завершившие и дата окончания."
-	dirty={purpose !== '' || startsOn !== '' || endsOn !== ''}
+	dirty={purpose !== defaultPurpose || startsOn !== '' || endsOn !== ''}
 	width="lg"
 >
 	<div class="flex flex-col gap-3">
@@ -280,12 +312,17 @@
 						{purpose === '' ? 'Выберите' : LEARNING_PURPOSE_LABELS[purpose as LearningPurpose]}
 					</Select.Trigger>
 					<Select.Content>
-						{#each LEARNING_PURPOSES as value (value)}
-							<Select.Item {value} label={LEARNING_PURPOSE_LABELS[value]} />
+						{#each purposeOptions as option (option.value)}
+							<Select.Item value={option.value} label={option.label} />
 						{/each}
 					</Select.Content>
 				</Select.Root>
 				<input type="hidden" name="purpose" value={purpose} />
+				{#if !purposeCounts}
+					<InlineHint tone="warning">
+						Стадию такой поток не подтвердит: итог засчитывается только у назначений с пометкой.
+					</InlineHint>
+				{/if}
 			</div>
 			{#if exchange.products.length > 0}
 				<fieldset class="flex flex-col gap-1.5 sm:col-span-2">
@@ -519,7 +556,7 @@
 					id="card-roster-file"
 					name="file"
 					label="Файл списка"
-					description="{ROSTER_FILE_FORMATS_HINT}; телефон — по желанию. Первая строка — названия колонок."
+					description="{ROSTER_FILE_FORMATS_HINT}; вместо «ФИО» подойдут отдельные «Фамилия», «Имя», «Отчество». Телефон — по желанию, первая строка — названия колонок. Книга, выгруженная кнопкой «Выгрузить для LMS», загружается обратно как есть."
 					accept=".xls,.xlsx,.csv,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 					required
 					onchoose={() => {

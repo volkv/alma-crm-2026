@@ -12,7 +12,8 @@ import {
 	LEARNING_PURPOSE_LABELS,
 	lmsEvidenceSchema,
 	type LearningGroupLearnerView,
-	type LearningGroupView
+	type LearningGroupView,
+	type LearningPurpose
 } from '$lib/contracts/exchange';
 import {
 	blockerReasonLabel,
@@ -53,6 +54,15 @@ import { daysUntil, formatDate, formatDateTime, pluralize } from '$lib/format';
 export type CardOffering = { id: string; code: string; name: string };
 
 /**
+ * Стадия процесса, которой нужны данные обучения, и назначения групп, которые
+ * она засчитывает; `purposes: null` — любые.
+ */
+export type CardLearningStage = {
+	name: string;
+	purposes: readonly LearningPurpose[] | null;
+};
+
+/**
  * Обмен с системой обучения в том виде, в каком его отдаёт загрузчик карточки:
  * заведённые потоки, из чего собирается заявка на новый и можно ли её подать.
  */
@@ -72,11 +82,80 @@ export type CardExchange = {
 	withdrawnLearners: Readonly<Record<string, number>>;
 	/** Почему новый поток сейчас не заявить; `null` — можно. */
 	issue: string | null;
+	/**
+	 * Стадии процесса, которым нужны данные обучения, в порядке маршрута. По ним
+	 * форма заявки помечает назначения, а карточка объясняет, почему поток
+	 * стадию не подтверждает. Пусто — таких стадий нет.
+	 */
+	learningStages: readonly CardLearningStage[];
 	/** Слушатели всех потоков; `null` — люди не видны, карточка показывает только числа. */
 	learners: readonly LearningGroupLearnerView[] | null;
 };
 
 /** Всё, из чего собирается карточка: ровно то, что читает загрузчик карточки. */
+/** Названия стадий через запятую, каждое в кавычках. */
+const stageNames = (stages: readonly CardLearningStage[]) =>
+	stages.map((stage) => `«${stage.name}»`).join(', ');
+
+/**
+ * Какие стадии засчитают поток этого назначения. Назначения сравниваются только
+ * там, где процесс их сужает: если ни одна стадия назначений не называет,
+ * засчитывает любое, и помечать нечего — `null`.
+ */
+export function purposeCountingStages(
+	stages: readonly CardLearningStage[],
+	purpose: LearningPurpose
+): string[] | null {
+	if (!stages.some((stage) => stage.purposes !== null)) {
+		return null;
+	}
+
+	return stages
+		.filter((stage) => stage.purposes === null || stage.purposes.includes(purpose))
+		.map((stage) => stage.name);
+}
+
+/**
+ * Почему поток не подтверждает стадию — по фактической причине, в порядке
+ * правила нужной группы (`evidence.ts`): сначала программа, потом назначение.
+ */
+export function describeUncountedGroup(
+	group: Pick<LearningGroupView, 'program' | 'purpose'>,
+	exchange: Pick<CardExchange, 'programs' | 'learningStages'>
+): string {
+	if (group.program === null) {
+		return 'Программа потока не закреплена — стадию он не подтверждает.';
+	}
+
+	const programId = group.program.id;
+
+	if (!exchange.programs.some((program) => program.id === programId)) {
+		return 'Программы потока больше нет в записи — стадию он не подтверждает.';
+	}
+
+	const purpose = group.purpose;
+	const refusing = exchange.learningStages.filter(
+		(stage) => stage.purposes !== null && (purpose === null || !stage.purposes.includes(purpose))
+	);
+
+	if (refusing.length === 0) {
+		// Программа на месте, назначение засчитывается: значит, данные карточки
+		// прочитаны не одновременно — причину назвать нечем.
+		return 'Стадию поток не подтверждает.';
+	}
+
+	const allowed = [...new Set(refusing.flatMap((stage) => stage.purposes ?? []))]
+		.map((value) => `«${LEARNING_PURPOSE_LABELS[value]}»`)
+		.join(' или ');
+
+	const one = refusing.length === 1;
+	const subject = `${one ? 'стадия' : 'стадии'} ${stageNames(refusing)}`;
+
+	return purpose === null
+		? `Назначение потока не указано, а ${subject} ${one ? 'засчитывает' : 'засчитывают'} только ${allowed} — стадию он не подтверждает.`
+		: `Назначение потока «${LEARNING_PURPOSE_LABELS[purpose]}» ${subject} не ${one ? 'засчитывает' : 'засчитывают'}: ${one ? 'она принимает' : 'они принимают'} только ${allowed}.`;
+}
+
 export type CardSource = {
 	interaction: InteractionView;
 	status: InteractionStatusView;

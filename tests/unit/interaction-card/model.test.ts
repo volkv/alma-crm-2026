@@ -14,6 +14,8 @@ import {
 	buildQuiet,
 	buildRequirements,
 	buildTiming,
+	describeUncountedGroup,
+	purposeCountingStages,
 	type CardSource
 } from '$lib/components/interaction-card/model';
 import type {
@@ -150,6 +152,7 @@ const NO_EXCHANGE: CardSource['exchange'] = {
 	canExportRoster: true,
 	withdrawnLearners: {},
 	issue: null,
+	learningStages: [],
 	learners: null
 };
 
@@ -449,5 +452,34 @@ describe('лента событий', () => {
 			'Результат: Программа согласована'
 		);
 		expect(new Set(events.map((event) => event.id)).size).toBe(events.length);
+	});
+});
+
+describe('назначение потока и стадии с данными обучения', () => {
+	const PROGRAM = { id: 'p1', code: 'DPO-01', name: 'DevOps' };
+	const B2B = [{ name: 'Ведение занятий', purposes: ['students'] as const }];
+
+	it('помечает засчитываемые назначения, только когда процесс их сужает', () => {
+		expect(purposeCountingStages(B2B, 'students')).toStrictEqual(['Ведение занятий']);
+		expect(purposeCountingStages(B2B, 'teachers')).toStrictEqual([]);
+		expect(purposeCountingStages([{ name: 'Обучение', purposes: null }], 'teachers')).toBeNull();
+		expect(purposeCountingStages([], 'teachers')).toBeNull();
+	});
+
+	it('называет настоящую причину, по которой поток стадию не подтверждает', () => {
+		const exchange = { programs: [PROGRAM], learningStages: B2B };
+
+		expect(describeUncountedGroup({ program: PROGRAM, purpose: 'teachers' }, exchange)).toBe(
+			'Назначение потока «Обучение преподавателей» стадия «Ведение занятий» не засчитывает: она принимает только «Обучение студентов».'
+		);
+		expect(
+			describeUncountedGroup(
+				{ program: PROGRAM, purpose: 'students' },
+				{ ...exchange, programs: [] }
+			)
+		).toBe('Программы потока больше нет в записи — стадию он не подтверждает.');
+		expect(describeUncountedGroup({ program: null, purpose: 'students' }, exchange)).toBe(
+			'Программа потока не закреплена — стадию он не подтверждает.'
+		);
 	});
 });

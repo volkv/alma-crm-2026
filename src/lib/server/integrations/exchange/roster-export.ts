@@ -20,6 +20,22 @@ import ExcelJS from 'exceljs';
 import { normalizePhone } from '../../people/pii';
 import { spreadsheetText } from '../../spreadsheet';
 
+/**
+ * Проверки данных листа по диапазону. У ExcelJS это поле есть с первых версий
+ * (`Worksheet.dataValidations`, тот же объект он читает и пишет в модели
+ * листа), но в объявлениях типов его нет. Поячеечный путь — `cell.dataValidation`
+ * — не годится: при записи ExcelJS склеивает одинаковые ячейки в диапазоны,
+ * перебирая адреса строками («L10» раньше «L2»), и в файл попадают два
+ * перекрытых правила на колонку вместо одного.
+ */
+declare module 'exceljs' {
+	interface Worksheet {
+		readonly dataValidations: {
+			add(address: string, validation: DataValidation): DataValidation;
+		};
+	}
+}
+
 /** Шапка листа загрузки: колонки A–AD шаблона, байт в байт. */
 export const LMS_USER_TEMPLATE_HEADERS = [
 	'Фамилия',
@@ -87,8 +103,11 @@ const LIST_COLUMNS = [
  */
 const VALIDATION_MIN_LAST_ROW = 1001;
 
-/** Сколько первых колонок шаблона выделены: в оригинале шапка A–F жирная, по центру. */
-const EMPHASIZED_HEADER_COLUMNS = 6;
+/**
+ * Сколько первых колонок шапки выровнены по центру. В оригинале жирная вся
+ * шапка A–AD, а по центру — только A–F: ФИО, телефон, почта и СНИЛС.
+ */
+const CENTERED_HEADER_COLUMNS = 6;
 
 /** Слушатель в строке книги: ровно то, что CRM о нём знает. */
 export type LmsUserRow = {
@@ -128,12 +147,13 @@ export async function buildLmsUserWorkbook(
 
 	const header = users.addRow([...LMS_USER_TEMPLATE_HEADERS]);
 
-	for (let column = 1; column <= EMPHASIZED_HEADER_COLUMNS; column += 1) {
-		const cell = header.getCell(column);
-
+	header.eachCell((cell, column) => {
 		cell.font = { bold: true };
-		cell.alignment = { horizontal: 'center' };
-	}
+
+		if (column <= CENTERED_HEADER_COLUMNS) {
+			cell.alignment = { horizontal: 'center' };
+		}
+	});
 
 	users.columns.forEach((column) => {
 		column.width = 20;
@@ -163,13 +183,11 @@ export async function buildLmsUserWorkbook(
 	const lastRow = Math.max(VALIDATION_MIN_LAST_ROW, rows.length + 1);
 
 	for (const { column, range } of LIST_COLUMNS) {
-		for (let row = 2; row <= lastRow; row += 1) {
-			users.getCell(`${column}${row}`).dataValidation = {
-				type: 'list',
-				allowBlank: true,
-				formulae: [range]
-			};
-		}
+		users.dataValidations.add(`${column}2:${column}${lastRow}`, {
+			type: 'list',
+			allowBlank: true,
+			formulae: [range]
+		});
 	}
 
 	// `writeBuffer` объявлен через собственный `Buffer extends ArrayBuffer`

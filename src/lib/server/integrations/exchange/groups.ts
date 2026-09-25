@@ -316,16 +316,20 @@ export async function requestLearningGroup(
 }
 
 /**
- * Назначения групп, которые засчитывает процесс взаимодействия: объединение по
- * стадиям с данными обучения той редакции, на стадии которой дело стоит (или
- * стояло последним). `null` — сужения нет: хотя бы одна такая стадия берёт
- * группу любого назначения, или таких стадий нет вовсе и остаётся правило
- * программы.
+ * Стадия процесса, которой нужны данные обучения, и назначения групп, которые
+ * она засчитывает; `purposes: null` — любые.
  */
-async function processGroupPurposes(
+export type LearningStageRule = { name: string; purposes: LearningPurpose[] | null };
+
+/**
+ * Стадии с данными обучения той редакции процесса, на стадии которой дело
+ * стоит (или стояло последним), в порядке маршрута. Пусто — таких стадий нет
+ * или дело ещё ни на одной стадии не было.
+ */
+async function readLearningStages(
 	executor: ReturnType<typeof getDb>,
 	interactionId: string
-): Promise<LearningPurpose[] | null> {
+): Promise<LearningStageRule[]> {
 	const [latest] = await executor
 		.select({ revisionId: stages.revisionId })
 		.from(stageEntries)
@@ -335,32 +339,44 @@ async function processGroupPurposes(
 		.limit(1);
 
 	if (latest === undefined) {
-		return null;
+		return [];
 	}
 
-	const rows = await executor
-		.select({ purposes: stages.lmsGroupPurposes })
+	return executor
+		.select({ name: stages.name, purposes: stages.lmsGroupPurposes })
 		.from(stages)
-		.where(and(eq(stages.revisionId, latest.revisionId), eq(stages.requiresLmsData, true)));
+		.where(and(eq(stages.revisionId, latest.revisionId), eq(stages.requiresLmsData, true)))
+		.orderBy(asc(stages.position));
+}
 
-	if (rows.length === 0 || rows.some((row) => row.purposes === null)) {
+/**
+ * Назначения групп, которые засчитывает процесс: объединение по стадиям с
+ * данными обучения. `null` — сужения нет: хотя бы одна такая стадия берёт
+ * группу любого назначения, или таких стадий нет вовсе и остаётся правило
+ * программы.
+ */
+function processGroupPurposes(rules: readonly LearningStageRule[]): LearningPurpose[] | null {
+	if (rules.length === 0 || rules.some((rule) => rule.purposes === null)) {
 		return null;
 	}
 
-	return [...new Set(rows.flatMap((row) => row.purposes ?? []))];
+	return [...new Set(rules.flatMap((rule) => rule.purposes ?? []))];
 }
 
 /** Учебные группы взаимодействия — то, что показывает карточка. */
 export async function listLearningGroups(
 	ctx: ActorContext,
-	interactionId: string
+	interactionId: string,
+	learningStages?: readonly LearningStageRule[]
 ): Promise<LearningGroupView[]> {
 	requirePermission(ctx, 'interactions.read');
 
 	const db = getDb();
 	// Карточка отвечает тем же правилом, что и движок: группа, которую стадия
 	// не засчитает, не показывается засчитанной.
-	const purposes = await processGroupPurposes(db, interactionId);
+	const purposes = processGroupPurposes(
+		learningStages ?? (await readLearningStages(db, interactionId))
+	);
 
 	const rows = await db
 		.select({
@@ -556,6 +572,12 @@ export type InteractionExchangeView = {
 	withdrawnLearners: Record<string, number>;
 	/** Почему отправить нельзя; `null` — можно. */
 	issue: string | null;
+	/**
+	 * Стадии процесса, которым нужны данные обучения, и назначения, которые они
+	 * засчитывают. По ним форма заявки помечает назначения, а карточка
+	 * объясняет, почему поток стадию не подтверждает. Пусто — таких стадий нет.
+	 */
+	learningStages: LearningStageRule[];
 	/** Слушатели всех групп; `null` — люди вызывающему не видны, в карточке только числа. */
 	learners: LearningGroupLearnerView[] | null;
 };
@@ -572,9 +594,10 @@ export async function readInteractionExchange(
 	requirePermission(ctx, 'interactions.read');
 
 	const canExportRoster = can(ctx, 'people.read') && can(ctx, 'people.read_pii');
+	const learningStages = await readLearningStages(getDb(), interactionId);
 	const [groups, settings, interaction, offerings, learners, withdrawnLearners] = await Promise.all(
 		[
-			listLearningGroups(ctx, interactionId),
+			listLearningGroups(ctx, interactionId, learningStages),
 			getExchangeSettings(),
 			getDb()
 				.select({ status: interactions.status })
@@ -609,6 +632,7 @@ export async function readInteractionExchange(
 		canExportRoster,
 		withdrawnLearners,
 		learners,
+		learningStages,
 		issue: groupSendIssue({
 			hasOrganization: primary !== undefined,
 			hasProgram: offerings.programs.length > 0,

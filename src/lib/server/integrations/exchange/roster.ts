@@ -61,12 +61,18 @@ import { withPiiTrace } from '../../people/pii-trace';
 import { toPersonView } from '../../people/serialize';
 import { can, requirePermission } from '../../rbac';
 import { suggestFieldMapping, type FieldSynonyms } from '../../spreadsheet/mapping';
+import type { SpreadsheetSheet } from '../../spreadsheet/read';
 import { readStatTable } from '../../stats/parse';
 import { getExchangeSettings } from '../settings';
 import { deliverMessage } from './delivery';
 import { enqueueOutbound } from './outbox';
 import { groupRequestExternalId } from './payloads';
-import { buildLmsUserWorkbook, type LmsUserRow } from './roster-export';
+import {
+	buildLmsUserWorkbook,
+	LMS_USER_TEMPLATE_EDUCATION,
+	LMS_USER_TEMPLATE_GENDERS,
+	type LmsUserRow
+} from './roster-export';
 
 /* ------------------------------------------------------------ разбор файла */
 
@@ -113,6 +119,27 @@ type ParsedRow = {
 
 type ParsedFile = { rows: ParsedRow[]; fileIssues: string[] };
 
+/** Значения справочного листа шаблона загрузки пользователей LMS. */
+const TEMPLATE_LIST_VALUES: ReadonlySet<string> = new Set([
+	...LMS_USER_TEMPLATE_GENDERS,
+	...LMS_USER_TEMPLATE_EDUCATION
+]);
+
+/**
+ * Лист — справочник шаблона LMS (пол, уровни образования), а не слушатели:
+ * все его непустые ячейки — значения выпадающих списков шаблона. Такой лист
+ * есть и в книге, которую выгружает сама CRM, и молча пропускается.
+ */
+function isTemplateListSheet(sheet: SpreadsheetSheet): boolean {
+	return sheet.rows.every((cells) =>
+		cells.every(
+			(cell) =>
+				cell === null ||
+				(typeof cell === 'string' && (cell.trim() === '' || TEMPLATE_LIST_VALUES.has(cell.trim())))
+		)
+	);
+}
+
 function cellOf(cells: readonly string[], column: number | undefined): string {
 	return column === undefined ? '' : (cells[column] ?? '').trim();
 }
@@ -139,7 +166,9 @@ function columnsOf(headers: readonly string[]): Partial<Record<RosterField, numb
  * первой.
  */
 export function readRosterFile(fileName: string, bytes: Uint8Array): ParsedFile {
-	const table = readStatTable(fileName, bytes, ROSTER_MAX_ROWS);
+	const table = readStatTable(fileName, bytes, ROSTER_MAX_ROWS, {
+		isAuxiliarySheet: isTemplateListSheet
+	});
 	const columns = columnsOf(table.headers);
 	const fileIssues: string[] = [...table.warnings];
 

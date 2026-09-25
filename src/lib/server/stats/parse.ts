@@ -20,6 +20,7 @@ import {
 	MAX_STAT_JSON_DEPTH,
 	type StatFileSummary
 } from '$lib/contracts/stats';
+import { pluralize } from '$lib/format';
 import { ValidationError } from '../errors';
 import { decodeText } from '../spreadsheet/encoding';
 import { readSpreadsheet, type SpreadsheetCell, type SpreadsheetSheet } from '../spreadsheet/read';
@@ -181,15 +182,32 @@ function sheetRows(sheet: SpreadsheetSheet, fromText: boolean): StatTableRow[] {
 	}));
 }
 
-function readSheetTable(fileName: string, bytes: Uint8Array, limit: number): StatTable {
+/** Что вызывающий знает о файле сверх общего разбора. */
+export type StatTableOptions = {
+	/**
+	 * Служебный ли лист книги — например, справочник значений для выпадающих
+	 * списков, который шаблон кладёт вторым листом. Такой лист не данные, и
+	 * предупреждать, что он не прочитан, — значит пугать человека его же
+	 * шаблоном. Без признака служебных листов нет: о каждом лишнем сказано.
+	 */
+	isAuxiliarySheet?: (sheet: SpreadsheetSheet) => boolean;
+};
+
+function readSheetTable(
+	fileName: string,
+	bytes: Uint8Array,
+	limit: number,
+	options: StatTableOptions
+): StatTable {
 	const { info, sheets } = readSpreadsheet(bytes, fileName);
 	// `readSpreadsheet` отказывает книге без листов, поэтому лист здесь есть.
 	const sheet = sheets[0];
 	const warnings: string[] = [];
+	const unread = sheets.slice(1).filter((other) => !(options.isAuxiliarySheet?.(other) ?? false));
 
-	if (sheets.length > 1) {
+	if (unread.length > 0) {
 		warnings.push(
-			`В файле ${sheets.length} листов — прочитан первый, «${sheet.name}». Остальные не загружаются.`
+			`В файле ${pluralize(sheets.length, ['лист', 'листа', 'листов'])} — прочитан первый, «${sheet.name}». Остальные не загружаются.`
 		);
 	}
 
@@ -434,11 +452,12 @@ function readJsonTable(fileName: string, bytes: Uint8Array, limit: number): Stat
 export function readStatTable(
 	fileName: string,
 	bytes: Uint8Array,
-	limit = MAX_STAT_FILE_ROWS
+	limit = MAX_STAT_FILE_ROWS,
+	options: StatTableOptions = {}
 ): StatTable {
 	return looksLikeJson(bytes)
 		? readJsonTable(fileName, bytes, limit)
-		: readSheetTable(fileName, bytes, limit);
+		: readSheetTable(fileName, bytes, limit, options);
 }
 
 /**

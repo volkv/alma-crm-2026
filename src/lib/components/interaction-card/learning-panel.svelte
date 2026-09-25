@@ -11,6 +11,7 @@
 	import { formatDate, formatDateTime } from '$lib/format';
 	import { getCardCommands } from './commands.svelte';
 	import ContextSection from './context-section.svelte';
+	import { describeUncountedGroup, type CardExchange } from './model';
 
 	/**
 	 * Потоки в системе обучения — компактно: что заявлено, что пришло в ответ и
@@ -19,11 +20,17 @@
 	 */
 	let {
 		groups,
+		programs,
+		learningStages,
 		issue,
 		canSend,
 		canComplete
 	}: {
 		groups: readonly LearningGroupView[];
+		/** Программы записи: по ним видно, что программу потока из записи убрали. */
+		programs: CardExchange['programs'];
+		/** Стадии с данными обучения: по ним видно, что стадия не берёт назначение потока. */
+		learningStages: CardExchange['learningStages'];
 		/** Почему новый поток сейчас не заявить; `null` — можно. */
 		issue: string | null;
 		/** Есть ли право заявлять потоки. */
@@ -135,10 +142,8 @@
 							</p>
 						{/if}
 						{#if !group.countsForStage}
-							<p class="text-xs text-warning-soft-foreground">
-								{group.program === null
-									? 'Программа потока не закреплена — стадию он не подтверждает.'
-									: 'Программы потока больше нет в записи — стадию он не подтверждает.'}
+							<p class="text-xs break-words text-warning-soft-foreground">
+								{describeUncountedGroup(group, { programs, learningStages })}
 							</p>
 						{/if}
 						<div class="flex flex-wrap items-center gap-x-2 gap-y-1">

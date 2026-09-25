@@ -123,6 +123,8 @@
 	{#if showLearning}
 		<LearningPanel
 			groups={source.exchange.groups}
+			programs={source.exchange.programs}
+			learningStages={source.exchange.learningStages}
 			issue={source.exchange.issue}
 			canSend={source.exchange.canSend}
 			canComplete={source.exchange.canComplete && active}
