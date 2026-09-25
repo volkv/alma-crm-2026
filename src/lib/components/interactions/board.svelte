@@ -86,6 +86,44 @@
 		section.focus({ preventScroll: true });
 	}
 
+	/**
+	 * Полоса стадий крутится вбок без своей полосы прокрутки — третья полоса на
+	 * экране рядом с доской и страницей только путала. Что за краем есть ещё
+	 * стадии, говорит затухание этого края; гаснет оно, когда край достигнут.
+	 */
+	let stagesEl = $state<HTMLElement | null>(null);
+	let stagesMore = $state({ start: false, end: false });
+
+	function measureStages() {
+		if (stagesEl === null) {
+			return;
+		}
+
+		const { scrollLeft, scrollWidth, clientWidth } = stagesEl;
+
+		stagesMore = {
+			start: scrollLeft > 1,
+			end: scrollLeft + clientWidth < scrollWidth - 1
+		};
+	}
+
+	$effect(() => {
+		if (stagesEl === null) {
+			return;
+		}
+
+		const observer = new ResizeObserver(measureStages);
+
+		observer.observe(stagesEl);
+
+		return () => observer.disconnect();
+	});
+
+	/** Затухание края полосы стадий: маска, а не накладка, — фон под ней любой. */
+	const stagesMask = $derived(
+		`linear-gradient(to right, transparent 0, #000 ${stagesMore.start ? '2rem' : '0px'}, #000 calc(100% - ${stagesMore.end ? '2rem' : '0px'}), transparent 100%)`
+	);
+
 	/** Стадии, на которые эту карточку разрешает переносить процесс. */
 	const targets = $derived(new Set(dragged?.transitions.map((option) => option.toStageId) ?? []));
 
@@ -214,68 +252,89 @@
 {:else}
 	<!-- Пояснение, полоса стадий и сама доска — отдельные куски, и разделяет их
 		этот контейнер: страница ставит доску в обычный блок, и без него они
-		слипались в сплошную стену над колонками. -->
-	<div class="flex flex-col gap-3">
-		<!-- Пояснение — одна строка: как переводить карточку, узнают один раз, и
-			абзац над колонками каждый день отнимал у доски место. -->
-		{#if canTransition}
-			<details class="group text-sm text-muted-foreground">
-				<summary
-					class="flex w-fit cursor-pointer list-none items-center gap-1 rounded focus-ring hover:text-foreground [&::-webkit-details-marker]:hidden"
-				>
-					<span class="max-sm:hidden">Колонки — стадии процесса «{board.workspaceName}».</span>
-					Как перевести карточку
-					<ChevronDownIcon
-						class="size-4 shrink-0 transition-transform group-open:rotate-180"
-						aria-hidden="true"
-					/>
-				</summary>
-				<p class="mt-1 max-w-prose text-xs">
-					Перетащите карточку в другую колонку или выберите стадию в меню «⋮» на самой карточке —
-					меню работает и с клавиатуры. Переход выполняет движок: если стадия к нему не готова,
-					карточка останется на месте и скажет почему.
-				</p>
-			</details>
-		{:else}
-			<p class="text-sm text-muted-foreground">
-				Колонки — стадии процесса «{board.workspaceName}».
-			</p>
-		{/if}
-
-		<!-- Полоса стадий: весь процесс одной строкой со счётчиками, нажатие —
-			переход к колонке. Кнопки, а не ссылки: адрес от перехода не меняется. -->
-		<nav aria-label="Стадии доски" class="-mx-1 flex gap-1.5 overflow-x-auto px-1 py-0.5">
-			{#each board.columns as column (column.stageId)}
-				<button
-					type="button"
-					class="flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-xs focus-ring transition-colors hover:bg-surface-muted max-sm:min-h-11"
-					aria-label="{column.name}: {column.count}{column.overdue > 0
-						? `, просрочено ${column.overdue}`
-						: ''}"
-					onclick={() => goToColumn(column.stageId)}
-				>
-					<span class="max-w-40 truncate">{column.name}</span>
-					<span
-						class={cn(
-							'tabular-nums',
-							column.count === 0 ? 'text-faint' : 'font-medium text-muted-foreground'
-						)}>{column.count}</span
+		слипались в сплошную стену над колонками. С `sm` он забирает у страницы
+		остаток высоты экрана и отдаёт его колонкам. -->
+	<div class="flex flex-col gap-3 sm:min-h-0 sm:flex-1 sm:gap-2">
+		<!-- С `sm` полоса стадий и пояснение стоят одной строкой: над колонками
+			остаётся один ряд, а не два. Раскрытое пояснение ложится поверх доски, а
+			не сдвигает её — иначе от одного щелчка доска уезжала вниз за край
+			экрана. На телефоне пояснение стоит над полосой, как раньше. -->
+		<div class="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
+			<!-- Пояснение — одна строка: как переводить карточку, узнают один раз, и
+				абзац над колонками каждый день отнимал у доски место. -->
+			{#if canTransition}
+				<details class="group relative text-sm text-muted-foreground sm:order-last sm:shrink-0">
+					<summary
+						class="flex w-fit cursor-pointer list-none items-center gap-1 rounded focus-ring hover:text-foreground sm:text-xs [&::-webkit-details-marker]:hidden"
 					>
-					{#if column.overdue > 0}
-						<StatusBadge tone="danger" dot>{column.overdue}</StatusBadge>
-					{/if}
-				</button>
-			{/each}
-		</nav>
+						Как перевести карточку
+						<ChevronDownIcon
+							class="size-4 shrink-0 transition-transform group-open:rotate-180"
+							aria-hidden="true"
+						/>
+					</summary>
+					<p
+						class="mt-1 max-w-prose text-xs sm:absolute sm:top-full sm:right-0 sm:z-30 sm:w-80 sm:rounded-md sm:border sm:border-border sm:bg-surface sm:p-3 sm:text-foreground sm:shadow-md"
+					>
+						Колонки — стадии процесса «{board.workspaceName}». Перетащите карточку в другую колонку
+						или выберите стадию в меню «⋮» на самой карточке — меню работает и с клавиатуры. Переход
+						выполняет движок: если стадия к нему не готова, карточка останется на месте и скажет
+						почему.
+					</p>
+				</details>
+			{:else}
+				<p
+					class="text-sm text-muted-foreground sm:order-last sm:max-w-64 sm:shrink-0 sm:truncate sm:text-xs"
+					title="Колонки — стадии процесса «{board.workspaceName}»"
+				>
+					Колонки — стадии процесса «{board.workspaceName}».
+				</p>
+			{/if}
+
+			<!-- Полоса стадий: весь процесс одной строкой со счётчиками, нажатие —
+				переход к колонке. Кнопки, а не ссылки: адрес от перехода не меняется. -->
+			<nav
+				bind:this={stagesEl}
+				aria-label="Стадии доски"
+				class="-mx-1 flex min-w-0 [scrollbar-width:none] gap-1.5 overflow-x-auto px-1 py-0.5 sm:flex-1 [&::-webkit-scrollbar]:hidden"
+				style:mask-image={stagesMask}
+				onscroll={measureStages}
+			>
+				{#each board.columns as column (column.stageId)}
+					<button
+						type="button"
+						class="flex h-8 shrink-0 items-center gap-1.5 rounded-md border border-border bg-surface px-2 text-xs focus-ring transition-colors hover:bg-surface-muted max-sm:min-h-11"
+						aria-label="{column.name}: {column.count}{column.overdue > 0
+							? `, просрочено ${column.overdue}`
+							: ''}"
+						onclick={() => goToColumn(column.stageId)}
+					>
+						<span class="max-w-40 truncate">{column.name}</span>
+						<span
+							class={cn(
+								'tabular-nums',
+								column.count === 0 ? 'text-faint' : 'font-medium text-muted-foreground'
+							)}>{column.count}</span
+						>
+						{#if column.overdue > 0}
+							<StatusBadge tone="danger" dot>{column.overdue}</StatusBadge>
+						{/if}
+					</button>
+				{/each}
+			</nav>
+		</div>
 
 		<!-- Колонок четырнадцать, и на экран они не поместятся никогда: вбок
-			уезжает сама доска, а не документ вокруг неё. С `sm` доска ещё и
-			ограничена по высоте экраном: так полоса прокрутки вбок всегда на виду,
-			а не под последней карточкой самой длинной колонки, и заголовки колонок
-			остаются над карточками при прокрутке вниз. -->
+			уезжает сама доска, а не документ вокруг неё. С `sm` доска занимает
+			ровно остаток экрана под отборами (`flex-1 min-h-0` по всей цепочке от
+			оболочки): полоса прокрутки вбок стоит у нижнего края экрана, а не под
+			последней карточкой самой длинной колонки, и заголовки колонок остаются
+			над карточками при прокрутке вниз. Полоса окрашена заметнее обычной —
+			это главный способ добраться до дальних стадий мышью. На совсем низком
+			экране доска не ужимается ниже 18rem — тогда докручивается страница. -->
 		<div
 			bind:this={columnsEl}
-			class="flex gap-3 overflow-auto pb-2 sm:max-h-[max(24rem,calc(100dvh-19rem))]"
+			class="flex [scrollbar-color:var(--color-border-strong)_transparent] gap-3 overflow-auto pb-2 sm:min-h-72 sm:flex-1"
 			data-slot="interactions-board"
 		>
 			{#each board.columns as column (column.stageId)}
@@ -334,8 +393,9 @@
 						</p>
 					{:else}
 						<!-- Высота колонки — по карточкам в ней: вертикально крутится
-						страница, одна полоса на всё, как в списке. Своя полоса внутри
-						колонки прятала карточки за краем в четырнадцати местах сразу. -->
+						вся доска (на телефоне — страница), одна полоса на все колонки.
+						Своя полоса внутри колонки прятала карточки за краем в
+						четырнадцати местах сразу. -->
 						<ul class="flex flex-col gap-2">
 							{#each column.cards as card (card.id)}
 								<BoardCard

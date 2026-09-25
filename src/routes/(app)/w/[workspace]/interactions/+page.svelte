@@ -37,6 +37,7 @@
 		type InteractionViewMode
 	} from '$lib/contracts/interactions';
 	import { formatDateTime } from '$lib/format';
+	import { cn } from '$lib/utils';
 	import {
 		clearedFiltersHref,
 		filtersHref,
@@ -345,18 +346,36 @@
 
 <!-- Представление — часть адреса: ссылкой на список делятся вместе с тем,
 	каким его смотрели. В таблице переключатель стоит в строке поиска рядом с
-	«Колонками»: над списком остаются две строки контролов, а не три. -->
-{#snippet viewSwitch()}
+	«Колонками»: над списком остаются две строки контролов, а не три.
+
+	В строке отборов (`compact`) на ноутбучной ширине остаются одни значки:
+	с подписями переключатель не влезал в ряд и один занимал вторую строку, а
+	её высоту на доске отнимали у колонок. Подпись тогда остаётся читалке и
+	подсказке под курсором. -->
+{#snippet viewSwitch(compact: boolean)}
+	{@const label = compact ? 'sm:max-2xl:sr-only' : undefined}
 	<SegmentedControl.LinkGroup aria-label="Представление">
-		<SegmentedControl.Link href={viewHref('table')} current={data.view === 'table'}>
+		<SegmentedControl.Link
+			href={viewHref('table')}
+			current={data.view === 'table'}
+			title={compact ? 'Таблица' : undefined}
+		>
 			<TableIcon aria-hidden="true" />
-			Таблица
+			<span class={label}>Таблица</span>
 		</SegmentedControl.Link>
-		<SegmentedControl.Link href={viewHref('board')} current={data.view === 'board'}>
+		<SegmentedControl.Link
+			href={viewHref('board')}
+			current={data.view === 'board'}
+			title={compact ? 'Доска' : undefined}
+		>
 			<KanbanIcon aria-hidden="true" />
-			Доска
+			<span class={label}>Доска</span>
 		</SegmentedControl.Link>
 	</SegmentedControl.LinkGroup>
+{/snippet}
+
+{#snippet tableViewSwitch()}
+	{@render viewSwitch(false)}
 {/snippet}
 
 {#snippet resetFilters()}
@@ -366,13 +385,26 @@
 	</Button>
 {/snippet}
 
-<div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
+<!-- Доска с `sm` занимает остаток экрана под отборами: оболочка ограничивает
+	страницу ростом экрана, а эта колонка и обёртка списка передают остаток
+	доске (`board.svelte`). Таблица растёт по строкам, как раньше. -->
+<div
+	class={cn(
+		'flex flex-col gap-4 p-4 sm:px-9 sm:py-6',
+		data.view === 'board' && 'sm:min-h-0 sm:flex-1 sm:gap-3 sm:py-4'
+	)}
+>
 	<!-- На телефоне отборы свёрнуты в панель за кнопкой «Фильтры»: восемь
 		контролов занимали весь первый экран, и до самого списка надо было
 		листать. С `sm` обёртка панели исчезает из раскладки (`contents`), и
 		отборы стоят в общем ряду, как стояли. Цели нажатия на телефоне — 44 px. -->
+	<!-- На доске промежутки ряда уже: так отборы и переключатель вида стоят
+		одной строкой с ноутбучной ширины, и строка не отнимает высоту у колонок. -->
 	<div
-		class="flex flex-wrap items-center gap-3 max-sm:[&_a]:min-h-11 max-sm:[&_button]:min-h-11"
+		class={cn(
+			'flex flex-wrap items-center gap-3 max-sm:[&_a]:min-h-11 max-sm:[&_button]:min-h-11',
+			data.view === 'board' && 'sm:gap-x-2'
+		)}
 		data-tour="interactions-filters"
 	>
 		<Button
@@ -452,13 +484,16 @@
 		<!-- Без таблицы (доска, пустой раздел) строки поиска нет, и переключатель
 			встаёт в конец строки отборов. -->
 		{#if !showsTable}
-			<div class="ms-auto">{@render viewSwitch()}</div>
+			<div class="ms-auto">{@render viewSwitch(true)}</div>
 		{/if}
 	</div>
 
 	<!-- `data-tour` — метка подсказок: рамка встаёт вокруг списка целиком —
 		и таблицы, и доски (`$lib/onboarding/screens`). -->
-	<div data-tour="interactions-list" class="min-w-0">
+	<div
+		data-tour="interactions-list"
+		class={cn('min-w-0', data.view === 'board' && 'sm:flex sm:min-h-0 sm:flex-1 sm:flex-col')}
+	>
 		{#if data.view === 'board'}
 			<Board board={data.board} canTransition={data.canTransition} isFiltered={data.isFiltered} />
 		{:else if data.total === 0 && !data.isFiltered}
@@ -494,7 +529,7 @@
 				stacked
 				defaultSort={{ columnId: 'dueAt', direction: 'asc' }}
 				bulkActions={data.canAssign ? assignAction : undefined}
-				toolbar={viewSwitch}
+				toolbar={tableViewSwitch}
 				onopen={open}
 			/>
 		{/if}
