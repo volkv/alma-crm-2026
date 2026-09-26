@@ -1,8 +1,9 @@
 /**
  * Действия паспорта организации — общие для формы создания и формы правки.
  *
- * Три входа: поиск по реестру, чтение раздела `/sveden` по сайту из карточки и
- * загрузка снимка JSON. Ни один из них ничего не пишет в справочник: ответ —
+ * Три входа: поиск по реестру (подсказками по мере набора или кнопкой),
+ * чтение раздела `/sveden` по сайту из карточки и загрузка снимка JSON. Ни один
+ * из них ничего не пишет в справочник: ответ —
  * паспорт под номером, который форма показывает диффом. Записывает принятые
  * поля обычное сохранение формы — по отметкам, которые форма присылает вместе
  * с реквизитами (`readAcceptance`).
@@ -22,7 +23,8 @@ import {
 	importSnapshot,
 	lookupRegistry,
 	lookupSite,
-	SNAPSHOT_MAX_BYTES
+	SNAPSHOT_MAX_BYTES,
+	suggestRegistry
 } from '$lib/server/enrichment';
 import { ValidationError } from '$lib/server/errors';
 import { toActionFailure } from '$lib/server/http';
@@ -72,6 +74,26 @@ export const passportActions = {
 		}
 
 		return run(() => lookupRegistry(actorFromEvent(event), parsed.data.query));
+	},
+
+	/**
+	 * Подсказки реестра по мере набора: каждая строка — готовый паспорт, и
+	 * выбранная из списка показывается диффом без второго запроса.
+	 */
+	passportSuggest: async (event: RequestEvent) => {
+		const parsed = registryLookupSchema.safeParse({
+			query: (await event.request.formData()).get('query') ?? ''
+		});
+
+		if (!parsed.success) {
+			return fail(400, { message: firstIssue(parsed.error.issues), issues: [] });
+		}
+
+		try {
+			return { suggestions: await suggestRegistry(actorFromEvent(event), parsed.data.query) };
+		} catch (error) {
+			return asPassportFailure(error);
+		}
 	},
 
 	passportSite: async (event: RequestEvent) => {

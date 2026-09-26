@@ -13,7 +13,7 @@ import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it, vi } 
 import { auditEvents, organizations } from '$lib/server/db/schema';
 import { getOrganization } from '$lib/server/directory/read';
 import { updateOrganization } from '$lib/server/directory/write';
-import { lookupRegistry } from '$lib/server/enrichment';
+import { lookupRegistry, suggestRegistry } from '$lib/server/enrichment';
 import { resolveAcceptance } from '$lib/server/enrichment/passports';
 import { setSetting } from '$lib/server/settings';
 import { insertOrganization, startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
@@ -133,5 +133,28 @@ describe('паспорт организации', () => {
 		});
 		const fetchedAt = issued.passport.fields.inn?.fetchedAt;
 		expect(event.details).toMatchObject({ provenance: [{ fetchedAt }, { fetchedAt }] });
+	});
+
+	it('подсказки по мере набора: паспорт на каждую строку, по ответу из кэша', async () => {
+		const admin = testActor();
+
+		await setSetting(admin, 'enrichment', { enabled: true, dailyQuota: 5 });
+
+		const suggestions = await suggestRegistry(admin, 'такой-то политех');
+
+		expect(suggestions).toHaveLength(1);
+		expect(suggestions[0].passport.others).toEqual([]);
+		expect(suggestions[0].passport.fields.inn?.value).toBe(INN);
+
+		// Выбранная подсказка принимается так же, как паспорт поиска.
+		expect(
+			await resolveAcceptance(admin, [{ token: suggestions[0].token, field: 'inn' }], {
+				inn: INN
+			} as never)
+		).toEqual([expect.objectContaining({ field: 'inn', source: 'dadata' })]);
+
+		// Та же строка ещё раз — из кэша, без второго обращения к поставщику.
+		await suggestRegistry(admin, 'Такой-то политех');
+		expect(fetch).toHaveBeenCalledTimes(1);
 	});
 });

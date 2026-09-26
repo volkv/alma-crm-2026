@@ -277,7 +277,7 @@ async function partnerCard(page: Page): Promise<void> {
 	await pointAt(page, query);
 	await query.fill('');
 	await query.pressSequentially(PARTNER.inn, { delay: 60 });
-	await press(page, page.getByRole('button', { name: 'Найти в ЕГРЮЛ' }));
+	await press(page, page.getByRole('button', { name: 'Проверить в ЕГРЮЛ' }));
 	await page
 		.getByRole('button', { name: /Перенести отмеченное в форму/u })
 		.waitFor({ state: 'visible', timeout: WAIT });

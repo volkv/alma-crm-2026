@@ -276,6 +276,24 @@ export async function lookupRegistry(ctx: ActorContext, raw: string): Promise<Is
 	return issuePassport(ctx, 'live', registryPassport(query, answer.entities, answer.fetchedAt));
 }
 
+/**
+ * Подсказки реестра по мере набора — для выпадающего списка панели паспорта.
+ *
+ * Каждая строка ответа — свой паспорт под своим номером: сотрудник выбирает
+ * головной вуз или филиал из списка, и выбранное показывается диффом сразу,
+ * без второго обращения к поставщику. Пустой ответ — пустой список, а не
+ * отказ: подсказка, которой нечего предложить, ошибкой не является.
+ */
+export async function suggestRegistry(ctx: ActorContext, raw: string): Promise<IssuedPassport[]> {
+	const { query, entities, fetchedAt } = await queryRegistry(ctx, raw);
+
+	return Promise.all(
+		entities.map((entity) =>
+			issuePassport(ctx, 'live', registryPassport(query, [entity], fetchedAt))
+		)
+	);
+}
+
 function notFoundMessage(kind: LookupQueryKind): string {
 	return kind === 'inn'
 		? 'Организация с таким ИНН в реестре не найдена'

@@ -5,9 +5,10 @@
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import FileJsonIcon from '@lucide/svelte/icons/file-json';
 	import GlobeIcon from '@lucide/svelte/icons/globe';
+	import LoaderIcon from '@lucide/svelte/icons/loader-2';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
-	import { enhance } from '$app/forms';
+	import { deserialize, enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -92,6 +93,122 @@
 
 	const website = $derived($form.website ?? '');
 	const live = $derived(availability.enabled);
+	const registryLive = $derived(live && availability.registryConfigured);
+
+	/**
+	 * Подсказки реестра по мере набора. Каждое новое обращение стоит единицы
+	 * квоты, поэтому реестр спрашивается от трёх символов и с паузой после
+	 * последней буквы, а ответ на прежнюю строку не перетирает подсказки к новой.
+	 * Строку поиска, подставленную из карточки при открытии, никто не набирал —
+	 * по ней подсказки не спрашиваются.
+	 */
+	const SUGGEST_MIN_QUERY = 3;
+	const SUGGEST_DELAY_MS = 600;
+
+	let suggestions = $state<IssuedPassport[] | null>(null);
+	let suggestOpen = $state(false);
+	let suggestLoading = $state(false);
+	let suggestError = $state<string | null>(null);
+	let suggestTimer: ReturnType<typeof setTimeout> | undefined;
+	let suggestGeneration = 0;
+
+	$effect(() => () => clearTimeout(suggestTimer));
+
+	function closeSuggestions() {
+		suggestGeneration += 1;
+		clearTimeout(suggestTimer);
+		suggestOpen = false;
+		suggestLoading = false;
+	}
+
+	function onQueryInput(event: Event & { currentTarget: HTMLInputElement }) {
+		// Значение берётся из события: порядок, в котором `bind:value` и этот
+		// обработчик увидят ввод, не гарантирован.
+		query = event.currentTarget.value;
+		closeSuggestions();
+		suggestions = null;
+		suggestError = null;
+
+		if (!registryLive || query.trim().length < SUGGEST_MIN_QUERY) {
+			return;
+		}
+
+		const current = suggestGeneration;
+		const text = query;
+
+		suggestOpen = true;
+		suggestTimer = setTimeout(() => void suggest(text, current), SUGGEST_DELAY_MS);
+	}
+
+	/**
+	 * Действие формы вызывается напрямую: подсказка не отправка, и
+	 * `use:enhance` с его сбросом формы и обновлением страницы ей не нужен.
+	 */
+	async function suggest(text: string, current: number) {
+		suggestLoading = true;
+
+		try {
+			const body = new FormData();
+			body.set('query', text);
+
+			const response = await fetch('?/passportSuggest', {
+				method: 'POST',
+				body,
+				headers: { 'x-sveltekit-action': 'true' }
+			});
+			const result = deserialize(await response.text());
+
+			if (current !== suggestGeneration) {
+				return;
+			}
+
+			if (result.type === 'success' && Array.isArray(result.data?.suggestions)) {
+				suggestions = result.data.suggestions as IssuedPassport[];
+			} else if (result.type === 'failure') {
+				suggestions = [];
+				suggestError = String(result.data?.message ?? 'Справочник организаций не ответил');
+			} else {
+				suggestions = [];
+				suggestError = 'Справочник организаций не ответил';
+			}
+		} catch {
+			if (current === suggestGeneration) {
+				suggestions = [];
+				suggestError = 'Справочник организаций не ответил';
+			}
+		} finally {
+			if (current === suggestGeneration) {
+				suggestLoading = false;
+			}
+		}
+	}
+
+	/** Выбранная подсказка — уже выданный паспорт: показываем его диффом. */
+	function chooseSuggestion(next: IssuedPassport) {
+		closeSuggestions();
+		issued = next;
+		selected = defaultSelection(next);
+		failure = null;
+	}
+
+	/** Реквизиты подсказки одной строкой: по ним отличают головной вуз от филиала. */
+	function suggestionDetails(next: IssuedPassport): string {
+		const entity = next.passport.entity;
+
+		if (entity === null) {
+			return '';
+		}
+
+		return [
+			entity.inn === null ? null : `ИНН ${entity.inn}`,
+			entity.kpp === null ? null : `КПП ${entity.kpp}`,
+			entity.region,
+			entity.isBranch ? 'филиал' : null,
+			entity.status === 'active' ? null : STATUS_LABELS[entity.status].toLocaleLowerCase('ru')
+		]
+			.filter((part) => part !== null)
+			.join(' · ');
+	}
 
 	/** Текущее значение поля карточки — строкой, как его сравнивает дифф. */
 	function currentValue(field: PassportField): string | null {
@@ -181,6 +298,11 @@
 		return () => {
 			pending = kind;
 			failure = null;
+
+			// Явная проверка заменяет подсказки: список к этой строке больше не нужен.
+			if (kind === 'registry') {
+				closeSuggestions();
+			}
 
 			return async ({ result, formElement }) => {
 				pending = null;
@@ -311,30 +433,93 @@
 	{/if}
 
 	<div class="flex flex-col gap-3">
+		<!-- Enter в строке поиска — та же проверка, что и кнопка ниже: она стоит
+			 вне формы и ссылается на неё атрибутом `form`. -->
 		<form
+			id="passport-registry-form"
 			method="POST"
 			action="?/passportRegistry"
 			use:enhance={submitter('registry')}
-			class="flex flex-col gap-2 sm:flex-row"
+			class="flex flex-col gap-1.5"
 		>
-			<Input
-				name="query"
-				aria-label="ИНН или название организации"
-				placeholder="ИНН или название"
-				bind:value={query}
-				disabled={!live || !availability.registryConfigured}
-			/>
-			<Button
-				type="submit"
-				variant="outline"
-				disabled={!live || !availability.registryConfigured || pending !== null}
-			>
-				<SearchIcon aria-hidden="true" />
-				{pending === 'registry' ? 'Ищем…' : 'Найти в ЕГРЮЛ'}
-			</Button>
+			<div class="relative">
+				<SearchIcon
+					class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+					aria-hidden="true"
+				/>
+				<Input
+					name="query"
+					class="pl-8"
+					autocomplete="off"
+					aria-label="ИНН или название организации"
+					aria-expanded={suggestOpen}
+					aria-controls="passport-registry-suggestions"
+					placeholder="Начните вводить ИНН или название"
+					bind:value={query}
+					oninput={onQueryInput}
+					onkeydown={(event) => {
+						if (event.key === 'Escape') {
+							closeSuggestions();
+						}
+					}}
+					disabled={!registryLive}
+				/>
+			</div>
+
+			{#if suggestOpen}
+				<div
+					id="passport-registry-suggestions"
+					class="rounded-md border border-border bg-surface shadow-sm"
+					aria-live="polite"
+				>
+					{#if suggestLoading || suggestions === null}
+						<p class="flex items-center gap-1.5 px-3 py-2 text-xs text-muted-foreground">
+							<LoaderIcon class="size-3.5 animate-spin" aria-hidden="true" />
+							Ищем в ЕГРЮЛ…
+						</p>
+					{:else if suggestError !== null}
+						<p class="px-3 py-2 text-xs text-destructive" role="alert">{suggestError}</p>
+					{:else if suggestions.length === 0}
+						<p class="px-3 py-2 text-xs text-muted-foreground">
+							В ЕГРЮЛ по этому запросу ничего не нашлось
+						</p>
+					{:else}
+						<ul class="max-h-72 overflow-y-auto py-1">
+							{#each suggestions as suggestion (suggestion.token)}
+								<li>
+									<button
+										type="button"
+										class="flex w-full flex-col gap-0.5 px-3 py-2 text-left focus-ring hover:bg-surface-muted"
+										onclick={() => chooseSuggestion(suggestion)}
+									>
+										<span class="text-sm">
+											{suggestion.passport.entity?.shortName ??
+												suggestion.passport.fields.shortName?.value}
+										</span>
+										<span class="text-xs text-muted-foreground tabular-nums">
+											{suggestionDetails(suggestion)}
+										</span>
+									</button>
+								</li>
+							{/each}
+						</ul>
+					{/if}
+				</div>
+			{/if}
 		</form>
 
 		<div class="flex flex-wrap gap-2">
+			<Button
+				type="submit"
+				form="passport-registry-form"
+				variant="outline"
+				disabled={!registryLive || pending !== null}
+				title="Найти по строке поиска без выбора из подсказок"
+			>
+				<SearchIcon aria-hidden="true" />
+				{pending === 'registry' ? 'Проверяем…' : 'Проверить в ЕГРЮЛ'}
+			</Button>
+
 			<form method="POST" action="?/passportSite" use:enhance={submitter('site')}>
 				<input type="hidden" name="website" value={website} />
 				<Button
