@@ -50,6 +50,28 @@ export async function issuePassport(
 	return { token, via, passport };
 }
 
+const STALE_PASSPORT =
+	'Сведения из источника устарели: найдите организацию заново или сохраните без них';
+
+/**
+ * Выданный паспорт по номеру — только тому сотруднику, которому он выдан.
+ * Чужой паспорт неотличим от истёкшего: номер не должен рассказывать, что за
+ * ним лежит у другого сотрудника.
+ */
+export async function readIssuedPassport(
+	ctx: ActorContext,
+	token: string
+): Promise<{ via: PassportVia; passport: OrganizationPassport }> {
+	const raw = ctx.user === null ? null : await getRedis().get(passportKey(token));
+	const parsed = raw === null ? null : (JSON.parse(raw) as StoredPassport);
+
+	if (parsed === null || parsed.userId !== ctx.user?.id) {
+		throw new ValidationError(STALE_PASSPORT);
+	}
+
+	return { via: parsed.via, passport: parsed.passport };
+}
+
 /** Значения полей карточки в том виде, в каком их сохраняет форма. */
 export type AcceptedValues = Record<PassportField, string | null>;
 
@@ -96,9 +118,7 @@ export async function resolveAcceptance(
 		// Чужой паспорт неотличим от истёкшего: номер не должен рассказывать,
 		// что за ним лежит у другого сотрудника.
 		if (parsed === null || parsed.userId !== ctx.user?.id) {
-			throw new ValidationError(
-				'Сведения из источника устарели: найдите организацию заново или сохраните без них'
-			);
+			throw new ValidationError(STALE_PASSPORT);
 		}
 
 		passports.set(token, parsed);

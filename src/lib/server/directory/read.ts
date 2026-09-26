@@ -362,6 +362,53 @@ export async function pickOrganization(
 	return row ?? null;
 }
 
+/**
+ * Какие ИНН уже заняты в справочнике и можно ли занявшую организацию выбрать.
+ *
+ * В ответе — только занятые ИНН: `LookupOption` — организацию можно выбрать
+ * (действует и в области доступа), `null` — она есть, но выбрать её нельзя.
+ * Второе приходится называть: ИНН уникален по всей базе, и завести такую
+ * организацию заново не выйдет всё равно — об этом же скажет и сохранение
+ * (`assertInnIsFree`).
+ */
+export async function matchOrganizationsByInn(
+	ctx: ActorContext,
+	inns: readonly string[]
+): Promise<Map<string, LookupOption | null>> {
+	requirePermission(ctx, 'organizations.read');
+
+	const matches = new Map<string, LookupOption | null>();
+
+	if (inns.length === 0) {
+		return matches;
+	}
+
+	const [taken, pickable] = await Promise.all([
+		getDb()
+			.select({ inn: organizations.inn })
+			.from(organizations)
+			.where(inArray(organizations.inn, [...inns])),
+		getDb()
+			.select({ inn: organizations.inn, id: organizations.id, label: organizations.shortName })
+			.from(organizations)
+			.where(and(inArray(organizations.inn, [...inns]), ...pickableOrganization(ctx)))
+	]);
+
+	for (const row of taken) {
+		if (row.inn !== null) {
+			matches.set(row.inn, null);
+		}
+	}
+
+	for (const row of pickable) {
+		if (row.inn !== null) {
+			matches.set(row.inn, { id: row.id, label: row.label });
+		}
+	}
+
+	return matches;
+}
+
 /** Строки для выпадающего списка: коротко и с потолком по количеству. */
 export async function lookupOrganizations(
 	ctx: ActorContext,

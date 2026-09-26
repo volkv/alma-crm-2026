@@ -223,16 +223,22 @@ function cacheKey(...parts: string[]): string {
 	return createHash('sha256').update(parts.join('\u0000'), 'utf8').digest('hex').slice(0, 32);
 }
 
-type RegistryAnswer = { entities: LegalEntity[]; fetchedAt: string };
+export type RegistryAnswer = {
+	kind: LookupQueryKind;
+	query: string;
+	entities: LegalEntity[];
+	fetchedAt: string;
+};
 
 /**
- * Поиск по реестру: реквизиты по названию или ИНН.
+ * Ответ реестра по строке поиска — общий шаг панели паспорта и подбора
+ * организации в форме взаимодействия.
  *
- * Право — то же, что на правку организаций: паспорт существует ради
- * заполнения карточки. Ответ из кэша квоту не тратит — тратит только настоящее
- * обращение к поставщику.
+ * Право — то же, что на правку организаций: ответ существует ради заполнения
+ * карточки. Ответ из кэша квоту не тратит — тратит только настоящее обращение
+ * к поставщику. Пустой список — не отказ: что с ним делать, решает вызывающий.
  */
-export async function lookupRegistry(ctx: ActorContext, raw: string): Promise<IssuedPassport> {
+export async function queryRegistry(ctx: ActorContext, raw: string): Promise<RegistryAnswer> {
 	requirePermission(ctx, 'organizations.write');
 	const settings = await requireEnabled();
 
@@ -245,7 +251,7 @@ export async function lookupRegistry(ctx: ActorContext, raw: string): Promise<Is
 
 	// Кэш общий для всех сотрудников: это открытые сведения реестра, а не
 	// выборка из справочника, и области доступа они не знают.
-	const answer = await cached<RegistryAnswer>(
+	const answer = await cached<Pick<RegistryAnswer, 'entities' | 'fetchedAt'>>(
 		ENRICHMENT_CACHE,
 		`registry:${cacheKey(kind, query.toLocaleLowerCase('ru'))}`,
 		async () => {
@@ -253,8 +259,15 @@ export async function lookupRegistry(ctx: ActorContext, raw: string): Promise<Is
 
 			return { entities: await findParties(query, kind), fetchedAt: new Date().toISOString() };
 		},
-		(stored) => stored as RegistryAnswer
+		(stored) => stored as Pick<RegistryAnswer, 'entities' | 'fetchedAt'>
 	);
+
+	return { kind, query, ...answer };
+}
+
+/** Поиск по реестру для панели паспорта: реквизиты по названию или ИНН. */
+export async function lookupRegistry(ctx: ActorContext, raw: string): Promise<IssuedPassport> {
+	const { kind, query, ...answer } = await queryRegistry(ctx, raw);
 
 	if (answer.entities.length === 0) {
 		throw new NotFoundError(notFoundMessage(kind));

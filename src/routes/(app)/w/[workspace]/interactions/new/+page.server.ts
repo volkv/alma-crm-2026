@@ -6,15 +6,31 @@ import { catalogListQuerySchema, type LookupOption } from '$lib/contracts/direct
 import { createInteractionSchema } from '$lib/contracts/interactions';
 import { actorFromEvent, type ActorContext } from '$lib/server/actor';
 import { listProducts, listPrograms, pickOrganization } from '$lib/server/directory/read';
+import { passportAvailability } from '$lib/server/enrichment/access';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { createInteraction } from '$lib/server/interactions/write';
-import { requirePermission } from '$lib/server/rbac';
+import { can, requirePermission } from '$lib/server/rbac';
 import { responsibleOptions } from '../responsible';
 import type { Actions, PageServerLoad } from './$types';
 
 const catalogPage = catalogListQuerySchema.parse({ status: 'active', pageSize: 100 });
 
 const organizationParam = id('Идентификатор организации в ссылке некорректен');
+
+/**
+ * Можно ли из полей сторон искать в ЕГРЮЛ и заводить найденное. Нужны право
+ * заводить организации, включённые внешние источники и ключ Dadata; нет
+ * чего-то одного — поля ищут только по справочнику, как раньше.
+ */
+async function registryAvailable(ctx: ActorContext): Promise<boolean> {
+	if (!can(ctx, 'organizations.write')) {
+		return false;
+	}
+
+	const availability = await passportAvailability(ctx);
+
+	return availability.enabled && availability.registryConfigured;
+}
 
 /**
  * Вуз из ссылки `?organization=<id>` — с карточки организации форма приходит
@@ -71,12 +87,13 @@ export const load: PageServerLoad = async (event) => {
 		);
 	}
 
-	const [programs, products, users, form, preset] = await Promise.all([
+	const [programs, products, users, form, preset, registry] = await Promise.all([
 		listPrograms(ctx, catalogPage),
 		listProducts(ctx, catalogPage),
 		responsibleOptions(event),
 		superValidate(zod4(createInteractionSchema)),
-		presetInstitution(ctx, event.url.searchParams.get('organization'))
+		presetInstitution(ctx, event.url.searchParams.get('organization')),
+		registryAvailable(ctx)
 	]);
 
 	// Ответственный по умолчанию подставляется сразу: в девяти случаях из десяти
@@ -89,7 +106,8 @@ export const load: PageServerLoad = async (event) => {
 		products: products.items,
 		users,
 		presetInstitution: preset.option,
-		presetRefused: preset.refused
+		presetRefused: preset.refused,
+		registryAvailable: registry
 	};
 };
 

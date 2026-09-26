@@ -258,6 +258,7 @@
 							{describedBy}
 							{invalid}
 							{lookupPath}
+							registryRole={data.registryAvailable ? 'educational_institution' : null}
 							value={institution?.id ?? null}
 							label={institution?.label ?? null}
 							onselect={(option) => {
@@ -304,6 +305,7 @@
 							{invalid}
 							{lookupPath}
 							placeholder="Компания, для которой готовят специалистов"
+							registryRole={data.registryAvailable ? 'customer' : null}
 							value={customer?.id ?? null}
 							label={customer?.label ?? null}
 							onselect={(option) => (customer = option)}

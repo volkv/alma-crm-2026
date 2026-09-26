@@ -20,7 +20,13 @@
 import { z } from 'zod';
 import { isValidInn } from '$lib/validation/inn';
 import { requiredText } from './common';
-import { EDUCATION_LEVELS, ORGANIZATION_KINDS } from './directory';
+import {
+	EDUCATION_LEVELS,
+	ORGANIZATION_KINDS,
+	type EducationLevel,
+	type OrganizationKind
+} from './directory';
+import type { PartyRole } from './interactions';
 
 /** Потолок строки поиска: длиннее любого названия вуза вместе с формой. */
 export const LOOKUP_QUERY_MAX = 300;
@@ -319,4 +325,60 @@ export type PassportAvailability = {
 	/** Сколько обращений к источникам осталось сотруднику на сегодня. */
 	remaining: number;
 	dailyQuota: number;
+};
+
+/**
+ * Подбор стороны взаимодействия из реестра.
+ *
+ * Поле формы взаимодействия ищет организацию сначала в справочнике, а не нашло
+ * — в ЕГРЮЛ. Выбранная строка реестра становится организацией справочника
+ * сразу, без формы карточки: вид задаёт поле, в котором её выбрали, реквизиты
+ * — выписка, уровень образования и сайт — догадка.
+ */
+export const REGISTRY_PICK_ROLES = [
+	'educational_institution',
+	'customer'
+] as const satisfies readonly PartyRole[];
+
+export type RegistryPickRole = (typeof REGISTRY_PICK_ROLES)[number];
+
+/** Вид заводимой организации по полю, в котором её выбрали. */
+export const REGISTRY_PICK_KINDS = {
+	educational_institution: 'educational_institution',
+	customer: 'customer_company'
+} as const satisfies Record<RegistryPickRole, OrganizationKind>;
+
+export const registryPickQuerySchema = z.object({
+	q: requiredText(LOOKUP_QUERY_MAX, 'Введите название организации или её ИНН'),
+	role: z.enum(REGISTRY_PICK_ROLES, { error: 'Неизвестное поле формы' })
+});
+
+/** Заведение организации из строки реестра — по номеру выданного паспорта. */
+export const registryPickSchema = z.object({
+	token: z.uuid({ error: 'Строка реестра устарела: повторите поиск' }),
+	role: z.enum(REGISTRY_PICK_ROLES, { error: 'Неизвестное поле формы' })
+});
+
+/** Строка реестра в выпадающем списке поля. */
+export type RegistryCandidate = {
+	/**
+	 * Номер выданного паспорта, по которому организацию заведут; `null` —
+	 * заводить нечего: она уже в справочнике или выбрать её нельзя.
+	 */
+	token: string | null;
+	legalName: string;
+	shortName: string;
+	inn: string;
+	kpp: string | null;
+	region: string | null;
+	status: LegalStatus;
+	isBranch: boolean;
+	/** Уровень, который получит вуз; `null` — не угадан, останется пустым. */
+	educationLevel: EducationLevel | null;
+	/** По ОКВЭД и названию похожа на учебное заведение. */
+	looksEducational: boolean;
+	/** Та же организация (по ИНН) уже в справочнике и доступна — выбирается она. */
+	existing: { id: string; label: string } | null;
+	/** Почему строку выбрать нельзя; `null` — можно. */
+	unavailable: string | null;
 };
