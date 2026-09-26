@@ -30,7 +30,7 @@
 	description="Что требует внимания сегодня, {today}. {MY_DAY_BASIS_LABELS[myDay.basis]}"
 >
 	{#snippet actions()}
-		<Button variant="outline" href={interactionsHref({ status: 'active', mine: true })}>
+		<Button variant="outline" href={interactionsHref({ status: 'active', owner: data.user?.id })}>
 			Мои взаимодействия
 		</Button>
 	{/snippet}

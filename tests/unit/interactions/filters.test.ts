@@ -69,3 +69,18 @@ describe('сборка ссылки', () => {
 		expect(cleared).not.toContain('status=');
 	});
 });
+
+describe('фильтр по ответственным', () => {
+	it('читает ответственных из адреса и снимает их общим сбросом', () => {
+		expect(readFilters(url(`?owner=${ORG},${OTHER_ORG}`)).owner).toStrictEqual([ORG, OTHER_ORG]);
+		expect(clearedFiltersHref(url(`?owner=${ORG}`), 'b2b')).not.toContain('owner=');
+	});
+
+	it('добавляет и снимает ответственного, сбрасывая номер страницы', () => {
+		const added = toggledFilterHref(url('?page=3'), 'b2b', 'owner', ORG);
+
+		expect(added).toContain(`owner=${ORG}`);
+		expect(added).not.toContain('page=');
+		expect(toggledFilterHref(url(`?owner=${ORG}`), 'b2b', 'owner', ORG)).not.toContain('owner=');
+	});
+});

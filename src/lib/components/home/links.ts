@@ -15,7 +15,8 @@ export type InteractionsFilter = {
 	status?: InteractionStatus;
 	stageCategory?: StageCategory;
 	overdue?: boolean;
-	mine?: boolean;
+	/** Ответственный: «мои» — это отбор по себе, как аватаркой над списком. */
+	owner?: string;
 };
 
 const LIST_PATH = resolve('/interactions');
@@ -35,8 +36,8 @@ export function interactionsHref(filter: InteractionsFilter): ResolvedPathname {
 		params.set('overdue', 'true');
 	}
 
-	if (filter.mine === true) {
-		params.set('mine', 'true');
+	if (filter.owner !== undefined) {
+		params.set('owner', filter.owner);
 	}
 
 	const query = params.toString();

@@ -65,13 +65,14 @@ export type InteractionBoardQuery = {
 	status: InteractionStatus | null;
 	stageCategory: StageCategory | null;
 	overdue: boolean;
-	ownerUserId: string | null;
 	q: string | null;
 	/** Вуз, направление, программа, продукт — как в списке (`interactions/read.ts`). */
 	org: readonly string[];
 	dir: readonly string[];
 	prog: readonly string[];
 	prod: readonly string[];
+	/** Ответственные — любой из выбранных. */
+	owner: readonly string[];
 };
 
 /**
@@ -92,10 +93,6 @@ function boardConditions(
 
 	if (query.status !== null) {
 		conditions.push(eq(interactions.status, query.status));
-	}
-
-	if (query.ownerUserId !== null) {
-		conditions.push(eq(interactions.ownerUserId, query.ownerUserId));
 	}
 
 	if (query.stageCategory !== null) {

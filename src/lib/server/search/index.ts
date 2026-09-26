@@ -61,6 +61,7 @@ const READERS: Record<SearchKind, GroupReader> = {
 			dir: [],
 			prog: [],
 			prod: [],
+			owner: [],
 			sort: '-lastActivityAt',
 			q: query,
 			...PAGE

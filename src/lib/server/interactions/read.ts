@@ -84,10 +84,12 @@ export type InteractionAttributeQuery = {
 	dir: readonly string[];
 	prog: readonly string[];
 	prod: readonly string[];
+	/** Ответственные: любой из выбранных. */
+	owner: readonly string[];
 };
 
 /**
- * Условия по вузу, направлению, программе и продукту.
+ * Условия по вузу, направлению, программе, продукту и ответственному.
  *
  * Общие для списка (`listConditions`) и доски (`interactions/board.ts`
  * `boardConditions`): набор один, и это тот же набор, что фильтрует отчёт
@@ -101,6 +103,10 @@ export type InteractionAttributeQuery = {
 export function interactionAttributeConditions(query: InteractionAttributeQuery): SQL[] {
 	const db = getDb();
 	const conditions: SQL[] = [];
+
+	if (query.owner.length > 0) {
+		conditions.push(inArray(interactions.ownerUserId, query.owner));
+	}
 
 	if (query.org.length > 0) {
 		conditions.push(
@@ -501,43 +507,50 @@ export async function readInteractionFilterOptions(
 	const db = getDb();
 	const scope = and(interactionScopeFilter(ctx), eq(interactions.workspaceId, workspaceId));
 
-	const [organizationRows, programRows, productRows, programDirectionRows] = await Promise.all([
-		db
-			.selectDistinct({ value: organizations.id, label: organizations.shortName })
-			.from(interactions)
-			.innerJoin(
-				interactionParties,
-				and(
-					eq(interactionParties.interactionId, interactions.id),
-					eq(interactionParties.isPrimary, true)
+	const [organizationRows, programRows, productRows, programDirectionRows, ownerRows] =
+		await Promise.all([
+			db
+				.selectDistinct({ value: organizations.id, label: organizations.shortName })
+				.from(interactions)
+				.innerJoin(
+					interactionParties,
+					and(
+						eq(interactionParties.interactionId, interactions.id),
+						eq(interactionParties.isPrimary, true)
+					)
 				)
-			)
-			.innerJoin(organizations, eq(organizations.id, interactionParties.organizationId))
-			.where(scope)
-			.orderBy(asc(organizations.shortName)),
-		db
-			.selectDistinct({ value: programs.id, label: programs.name })
-			.from(interactions)
-			.innerJoin(interactionPrograms, eq(interactionPrograms.interactionId, interactions.id))
-			.innerJoin(programs, eq(programs.id, interactionPrograms.programId))
-			.where(scope)
-			.orderBy(asc(programs.name)),
-		db
-			.selectDistinct({ value: products.id, label: products.name })
-			.from(interactions)
-			.innerJoin(interactionProducts, eq(interactionProducts.interactionId, interactions.id))
-			.innerJoin(products, eq(products.id, interactionProducts.productId))
-			.where(scope)
-			.orderBy(asc(products.name)),
-		db
-			.selectDistinct({ value: programs.directionId })
-			.from(interactions)
-			.innerJoin(interactionPrograms, eq(interactionPrograms.interactionId, interactions.id))
-			.innerJoin(programs, eq(programs.id, interactionPrograms.programId))
-			.where(and(scope, isNotNull(programs.directionId)))
-		// Продукты уже отобраны выше — направления продукта читаются по ним, а не
-		// вторым проходом по взаимодействиям.
-	]);
+				.innerJoin(organizations, eq(organizations.id, interactionParties.organizationId))
+				.where(scope)
+				.orderBy(asc(organizations.shortName)),
+			db
+				.selectDistinct({ value: programs.id, label: programs.name })
+				.from(interactions)
+				.innerJoin(interactionPrograms, eq(interactionPrograms.interactionId, interactions.id))
+				.innerJoin(programs, eq(programs.id, interactionPrograms.programId))
+				.where(scope)
+				.orderBy(asc(programs.name)),
+			db
+				.selectDistinct({ value: products.id, label: products.name })
+				.from(interactions)
+				.innerJoin(interactionProducts, eq(interactionProducts.interactionId, interactions.id))
+				.innerJoin(products, eq(products.id, interactionProducts.productId))
+				.where(scope)
+				.orderBy(asc(products.name)),
+			db
+				.selectDistinct({ value: programs.directionId })
+				.from(interactions)
+				.innerJoin(interactionPrograms, eq(interactionPrograms.interactionId, interactions.id))
+				.innerJoin(programs, eq(programs.id, interactionPrograms.programId))
+				.where(and(scope, isNotNull(programs.directionId))),
+			// Продукты уже отобраны выше — направления продукта читаются по ним, а не
+			// вторым проходом по взаимодействиям.
+			db
+				.selectDistinct({ value: users.id, label: users.fullName })
+				.from(interactions)
+				.innerJoin(users, eq(users.id, interactions.ownerUserId))
+				.where(scope)
+				.orderBy(asc(users.fullName))
+		]);
 
 	const productDirectionRows =
 		productRows.length === 0
@@ -572,7 +585,8 @@ export async function readInteractionFilterOptions(
 		organizations: organizationRows,
 		directions: directionRows,
 		programs: programRows,
-		products: productRows
+		products: productRows,
+		owners: ownerRows
 	};
 }
 

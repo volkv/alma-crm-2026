@@ -561,6 +561,36 @@ describe('список и область доступа', () => {
 		expect(overdue.total).toBe(0);
 	});
 
+	it('фильтрует по ответственным — любой из выбранных', async () => {
+		const ctx = admin();
+		await demoProcess();
+		const organizationId = await insertOrganization(database.db, { shortName: 'Политех' });
+
+		for (const ownerUserId of [TEST_USER_IDS.admin, TEST_USER_IDS.manager, TEST_USER_IDS.lead]) {
+			await createInteraction(
+				ctx,
+				B2B_WORKSPACE_KEY,
+				createInteractionSchema.parse({
+					title: `Взаимодействие ${ownerUserId}`,
+					ownerUserId,
+					parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
+				})
+			);
+		}
+
+		const one = await listInteractions(
+			ctx,
+			interactionListQuerySchema.parse({ owner: TEST_USER_IDS.manager })
+		);
+		const two = await listInteractions(
+			ctx,
+			interactionListQuerySchema.parse({ owner: `${TEST_USER_IDS.manager},${TEST_USER_IDS.lead}` })
+		);
+
+		expect(one.items.map((item) => item.ownerUserId)).toStrictEqual([TEST_USER_IDS.manager]);
+		expect(two.total).toBe(2);
+	});
+
 	it('фильтрует по направлению — объединение направлений продуктов и программ', async () => {
 		const ctx = admin();
 		await demoProcess();

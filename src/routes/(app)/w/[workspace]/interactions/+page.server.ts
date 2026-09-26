@@ -72,7 +72,6 @@ export const load: PageServerLoad = async (event) => {
 	const table = readTableQuery(event.url);
 	const filters = readFilters(event.url);
 	const view = readView(event);
-	const ownerUserId = filters.mine ? (event.locals.user?.id ?? null) : null;
 	// Пространство приходит из адреса: его разобрал и проверил загрузчик ветки
 	// (`/w/[workspace]/+layout.server.ts`), и незнакомый ключ до сюда не доходит.
 	const { workspace } = await event.parent();
@@ -84,11 +83,11 @@ export const load: PageServerLoad = async (event) => {
 		filters.status !== null ||
 		filters.stageCategory !== null ||
 		filters.overdue ||
-		filters.mine ||
 		filters.org.length > 0 ||
 		filters.dir.length > 0 ||
 		filters.prog.length > 0 ||
-		filters.prod.length > 0;
+		filters.prod.length > 0 ||
+		filters.owner.length > 0;
 
 	const common = {
 		filters,
@@ -107,12 +106,12 @@ export const load: PageServerLoad = async (event) => {
 				status: filters.status,
 				stageCategory: filters.stageCategory,
 				overdue: filters.overdue,
-				ownerUserId,
 				q: table.search === '' ? null : table.search,
 				org: filters.org,
 				dir: filters.dir,
 				prog: filters.prog,
-				prod: filters.prod
+				prod: filters.prod,
+				owner: filters.owner
 			}),
 			readInteractionFilterOptions(ctx, workspace.id)
 		]);
@@ -125,11 +124,11 @@ export const load: PageServerLoad = async (event) => {
 		workspace: workspace.key,
 		stageCategory: filters.stageCategory,
 		overdue: filters.overdue,
-		ownerUserId,
 		org: filters.org,
 		dir: filters.dir,
 		prog: filters.prog,
 		prod: filters.prod,
+		owner: filters.owner,
 		sort: toSort(table.sortBy, table.sortDirection),
 		q: table.search,
 		page: table.page,

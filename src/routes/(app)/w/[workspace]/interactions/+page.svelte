@@ -27,6 +27,8 @@
 	import StatusBadge, { type StatusTone } from '$lib/components/status-badge.svelte';
 	import Board from '$lib/components/interactions/board.svelte';
 	import ListFilter from '$lib/components/interactions/list-filter.svelte';
+	import ListSearch from '$lib/components/interactions/list-search.svelte';
+	import OwnerFilter from '$lib/components/interactions/owner-filter.svelte';
 	import { toTimelineStages } from '$lib/components/interactions/timeline';
 	import { filterHref } from '$lib/components/directory/query';
 	import {
@@ -186,11 +188,11 @@
 			data.filters.status !== null,
 			data.filters.stageCategory !== null,
 			data.filters.overdue,
-			data.filters.mine,
 			data.filters.org.length > 0,
 			data.filters.dir.length > 0,
 			data.filters.prog.length > 0,
 			data.filters.prod.length > 0,
+			data.filters.owner.length > 0,
 			data.view === 'board' && data.search !== ''
 		].filter(Boolean).length
 	);
@@ -212,7 +214,10 @@
 		return goto(filtersHref(page.url, workspace, changes), { keepFocus: true, noScroll: true });
 	}
 
-	/** Добавляет или снимает одно значение многозначного фильтра: вуз, направление, программа, продукт. */
+	/**
+	 * Добавляет или снимает одно значение многозначного фильтра: вуз, направление,
+	 * программа, продукт, ответственный.
+	 */
 	function toggleAttr(param: ListAttributeParam, value: string) {
 		void goto(toggledFilterHref(page.url, workspace, param, value), {
 			keepFocus: true,
@@ -462,22 +467,23 @@
 			>
 				Просроченные
 			</Button>
-			<Button
-				variant={data.filters.mine ? 'selected' : 'outline'}
-				aria-pressed={data.filters.mine}
-				onclick={() => go({ mine: !data.filters.mine })}
-			>
-				Мои
-			</Button>
+			<OwnerFilter
+				options={data.filterOptions.owners}
+				selected={data.filters.owner}
+				currentUser={data.user ?? null}
+				ontoggle={(value) => toggleAttr('owner', value)}
+			/>
 
-			<!-- Поиск принадлежит таблице и живёт в её строке поиска; на доске такой
-			строки нет, поэтому унаследованный из адреса запрос показан рядом с
-			фильтрами — иначе отобранный набор нечем было бы объяснить и снять. -->
-			{#if data.view === 'board' && data.search !== ''}
-				<span class="flex items-center gap-1 text-xs text-muted-foreground">
-					Поиск: «{data.search}»
-					<Button href={filterHref(page.url, 'q', '')} variant="ghost" size="xs">Сбросить</Button>
-				</span>
+			<!-- Поиск принадлежит таблице и живёт в её строке поиска; у доски такой
+				строки нет, и её поиск стоит здесь, среди отборов, — по тому же
+				параметру адреса, так что при смене вида запрос сохраняется. -->
+			{#if data.view === 'board'}
+				<ListSearch
+					value={data.search}
+					placeholder="Поиск по названию и организации"
+					onsearch={(value) =>
+						void goto(filterHref(page.url, 'q', value), { keepFocus: true, noScroll: true })}
+				/>
 			{/if}
 		</div>
 

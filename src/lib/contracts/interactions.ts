@@ -490,6 +490,11 @@ export const interactionListQuerySchema = z.object({
 	dir: multiUuid,
 	prog: multiUuid,
 	prod: multiUuid,
+	/**
+	 * Ответственные — несколько сразу, как аватарки над доской. С `ownerUserId`
+	 * складывается через «и»: оба условия сужают один и тот же набор.
+	 */
+	owner: multiUuid,
 	sort: z.enum(INTERACTION_SORTS).default('-lastActivityAt'),
 	q: searchQuery,
 	...pageQuerySchema.shape
@@ -888,6 +893,8 @@ export type InteractionFilterOptions = {
 	directions: InteractionFilterOption[];
 	programs: InteractionFilterOption[];
 	products: InteractionFilterOption[];
+	/** Ответственные, у которых в пространстве есть хотя бы одно взаимодействие. */
+	owners: InteractionFilterOption[];
 };
 export type AdvanceStageInput = z.output<typeof advanceStageSchema>;
 export type ReturnStageInput = z.output<typeof returnStageSchema>;

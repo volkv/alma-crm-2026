@@ -20,21 +20,24 @@ export type InteractionFilters = {
 	status: InteractionStatus | null;
 	stageCategory: StageCategory | null;
 	overdue: boolean;
-	/** Только те, где ответственный — текущий пользователь. */
-	mine: boolean;
 	/** Вуз — основная сторона взаимодействия. */
 	org: string[];
 	/** Направление — объединение направлений продуктов и программ, как в отчёте. */
 	dir: string[];
 	prog: string[];
 	prod: string[];
+	/** Ответственные — аватарки над списком; любой из выбранных. */
+	owner: string[];
 };
 
 const STATUS_VALUES = new Set(['active', 'completed', 'cancelled']);
 const CATEGORY_VALUES = new Set<string>(STAGE_CATEGORIES);
 
-/** Многозначный параметр списка: имена и смысл значений — как у отчёта (`org`, `dir`, `prog`, `prod`). */
-export const LIST_ATTRIBUTE_PARAMS = ['org', 'dir', 'prog', 'prod'] as const;
+/**
+ * Многозначный параметр списка: имена и смысл значений — как у отчёта (`org`,
+ * `dir`, `prog`, `prod`). `owner` — ответственные; у отчёта такого фильтра нет.
+ */
+export const LIST_ATTRIBUTE_PARAMS = ['org', 'dir', 'prog', 'prod', 'owner'] as const;
 export type ListAttributeParam = (typeof LIST_ATTRIBUTE_PARAMS)[number];
 
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -64,11 +67,11 @@ export function readFilters(url: URL): InteractionFilters {
 				? (stageCategory as StageCategory)
 				: null,
 		overdue: url.searchParams.get('overdue') === 'true',
-		mine: url.searchParams.get('mine') === 'true',
 		org: readIds(url, 'org'),
 		dir: readIds(url, 'dir'),
 		prog: readIds(url, 'prog'),
-		prod: readIds(url, 'prod')
+		prod: readIds(url, 'prod'),
+		owner: readIds(url, 'owner')
 	};
 }
 
@@ -107,11 +110,11 @@ export function filtersHref(
 	apply('status', next.status);
 	apply('stage', next.stageCategory);
 	apply('overdue', next.overdue ? 'true' : null);
-	apply('mine', next.mine ? 'true' : null);
 	applyIds('org', next.org);
 	applyIds('dir', next.dir);
 	applyIds('prog', next.prog);
 	applyIds('prod', next.prod);
+	applyIds('owner', next.owner);
 	params.delete('page');
 
 	const query = params.toString();
@@ -152,15 +155,7 @@ export function toggledFilterHref(
 export function clearedFiltersHref(url: URL, workspace: string): ResolvedPathname {
 	const params = new URLSearchParams(url.searchParams);
 
-	for (const name of [
-		'status',
-		'stage',
-		'overdue',
-		'mine',
-		'q',
-		'page',
-		...LIST_ATTRIBUTE_PARAMS
-	]) {
+	for (const name of ['status', 'stage', 'overdue', 'q', 'page', ...LIST_ATTRIBUTE_PARAMS]) {
 		params.delete(name);
 	}
 
