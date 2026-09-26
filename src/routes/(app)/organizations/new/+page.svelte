@@ -13,6 +13,7 @@
 	import { createOrganizationSchema, type CreateOrganizationInput } from '$lib/contracts/directory';
 	import type { PassportAcceptance } from '$lib/contracts/enrichment';
 	import PassportPanel from '../passport/passport-panel.svelte';
+	import RegistryStart from './registry-start.svelte';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -45,23 +46,37 @@
 />
 
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
-	<PassportPanel {superform} availability={data.passport} bind:accepted />
+	{#if data.mode === 'registry'}
+		<RegistryStart allowVendor={data.allowVendor} />
+	{:else}
+		{#if data.registry}
+			<p class="text-sm text-muted-foreground">
+				Заполните карточку вручную или
+				<a
+					class="underline underline-offset-2 hover:text-foreground"
+					href={resolve('/organizations/new')}>вернитесь к поиску в ЕГРЮЛ</a
+				>.
+			</p>
+		{/if}
 
-	<form
-		data-tour="organization-new-form"
-		method="POST"
-		action="?/save"
-		use:enhance
-		novalidate
-		class="flex max-w-3xl flex-col gap-4 rounded-lg border border-border bg-surface p-4 sm:p-6"
-	>
-		<FormAlert message={$message} />
-		<input type="hidden" name="passport" value={JSON.stringify(accepted)} />
-		<OrganizationFields {superform} allowVendor={data.allowVendor} />
-		<FormActions
-			submitting={$submitting}
-			submitLabel="Создать организацию"
-			oncancel={() => goto(resolve('/organizations'))}
-		/>
-	</form>
+		<PassportPanel {superform} availability={data.passport} bind:accepted />
+
+		<form
+			data-tour="organization-new-form"
+			method="POST"
+			action="?/save"
+			use:enhance
+			novalidate
+			class="flex max-w-3xl flex-col gap-4 rounded-lg border border-border bg-surface p-4 sm:p-6"
+		>
+			<FormAlert message={$message} />
+			<input type="hidden" name="passport" value={JSON.stringify(accepted)} />
+			<OrganizationFields {superform} allowVendor={data.allowVendor} />
+			<FormActions
+				submitting={$submitting}
+				submitLabel="Создать организацию"
+				oncancel={() => goto(resolve('/organizations'))}
+			/>
+		</form>
+	{/if}
 </div>

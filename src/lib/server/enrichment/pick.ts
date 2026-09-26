@@ -14,16 +14,18 @@
  * своей копии: подменить ИНН или название браузером нельзя, а второго
  * обращения к поставщику — и второго списания квоты — не нужно.
  */
-import {
-	REGISTRY_PICK_KINDS,
-	type FieldSource,
-	type LegalEntity,
-	type PassportField,
-	type PassportProvenance,
-	type RegistryCandidate,
-	type RegistryPickRole
+import type {
+	FieldSource,
+	LegalEntity,
+	PassportField,
+	PassportProvenance,
+	RegistryCandidate
 } from '$lib/contracts/enrichment';
-import { createOrganizationSchema, type LookupOption } from '$lib/contracts/directory';
+import {
+	createOrganizationSchema,
+	type LookupOption,
+	type OrganizationFormKind
+} from '$lib/contracts/directory';
 import type { ActorContext } from '../actor';
 import { matchOrganizationsByInn } from '../directory/read';
 import { createOrganization } from '../directory/write';
@@ -40,7 +42,8 @@ const TAKEN =
 const LIQUIDATED = 'По ЕГРЮЛ организация ликвидирована';
 
 /**
- * Строки реестра по строке поиска — для выпадающего списка поля.
+ * Строки реестра по строке поиска — для выпадающего списка поля формы
+ * взаимодействия и страницы новой организации.
  *
  * Каждая строка сверяется со справочником по ИНН: организация, которая уже
  * есть и доступна, выбирается как есть, а не заводится второй раз. Строка без
@@ -49,8 +52,7 @@ const LIQUIDATED = 'По ЕГРЮЛ организация ликвидиров�
  */
 export async function searchRegistryCandidates(
 	ctx: ActorContext,
-	raw: string,
-	role: RegistryPickRole
+	raw: string
 ): Promise<RegistryCandidate[]> {
 	const answer = await queryRegistry(ctx, raw);
 	const entities = answer.entities.filter(
@@ -88,10 +90,7 @@ export async function searchRegistryCandidates(
 				region: entity.region,
 				status: entity.status,
 				isBranch: entity.isBranch,
-				educationLevel:
-					role === 'educational_institution'
-						? guessEducationLevel(entity.legalName, entity.okved)
-						: null,
+				educationLevel: guessEducationLevel(entity.legalName, entity.okved),
 				looksEducational: guessKind(entity.legalName, entity.okved) === 'educational_institution',
 				existing: match ?? null,
 				unavailable
@@ -101,16 +100,18 @@ export async function searchRegistryCandidates(
 }
 
 /**
- * Организация справочника из строки реестра, выбранной в поле формы.
+ * Организация справочника из выбранной строки реестра.
  *
- * Повторный выбор той же строки — двойной щелчок, соседняя вкладка — не
- * заводит вторую: организация с этим ИНН уже есть, и выбирается она.
+ * Вид называет вызывающий: поле формы взаимодействия, в котором строку
+ * выбрали, или сотрудник на странице новой организации. Повторный выбор той
+ * же строки — двойной щелчок, соседняя вкладка — не заводит вторую:
+ * организация с этим ИНН уже есть, и отдаётся она (`created: false`).
  */
 export async function createFromRegistry(
 	ctx: ActorContext,
 	token: string,
-	role: RegistryPickRole
-): Promise<LookupOption> {
+	kind: OrganizationFormKind
+): Promise<LookupOption & { created: boolean }> {
 	requirePermission(ctx, 'organizations.write');
 
 	const { via, passport } = await readIssuedPassport(ctx, token);
@@ -131,10 +132,9 @@ export async function createFromRegistry(
 	}
 
 	if (match !== undefined) {
-		return match;
+		return { ...match, created: false };
 	}
 
-	const kind = REGISTRY_PICK_KINDS[role];
 	const parsed = createOrganizationSchema.safeParse({
 		kind,
 		educationLevel:
@@ -183,5 +183,5 @@ export async function createFromRegistry(
 
 	const created = await createOrganization(ctx, input, undefined, provenance);
 
-	return { id: created.id, label: created.shortName };
+	return { id: created.id, label: created.shortName, created: true };
 }

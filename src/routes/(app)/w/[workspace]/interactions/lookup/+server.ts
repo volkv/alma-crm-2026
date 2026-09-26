@@ -1,7 +1,11 @@
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import { id } from '$lib/contracts/common';
-import { registryPickQuerySchema, registryPickSchema } from '$lib/contracts/enrichment';
+import {
+	REGISTRY_PICK_KINDS,
+	registryPickQuerySchema,
+	registryPickSchema
+} from '$lib/contracts/enrichment';
 import { actorFromEvent } from '$lib/server/actor';
 import { listOrganizationContracts } from '$lib/server/directory/contracts';
 import { listAffiliations, listSites, lookupOrganizations } from '$lib/server/directory/read';
@@ -46,8 +50,7 @@ export const GET: RequestHandler = async (event) => {
 	const query = lookupQuerySchema.safeParse({
 		kind: event.url.searchParams.get('kind'),
 		organizationId: event.url.searchParams.get('organizationId') ?? undefined,
-		q: event.url.searchParams.get('q') ?? undefined,
-		role: event.url.searchParams.get('role') ?? undefined
+		q: event.url.searchParams.get('q') ?? undefined
 	});
 
 	if (!query.success) {
@@ -63,9 +66,7 @@ export const GET: RequestHandler = async (event) => {
 		}
 
 		if (query.data.kind === 'registry') {
-			return json({
-				items: await searchRegistryCandidates(ctx, query.data.q, query.data.role)
-			});
+			return json({ items: await searchRegistryCandidates(ctx, query.data.q) });
 		}
 
 		// Договоры приезжают целиком, с позициями: форма выбирает договор и
@@ -118,9 +119,13 @@ export const POST: RequestHandler = async (event) => {
 	}
 
 	try {
-		return json({
-			item: await createFromRegistry(actorFromEvent(event), parsed.data.token, parsed.data.role)
-		});
+		const { created: _created, ...item } = await createFromRegistry(
+			actorFromEvent(event),
+			parsed.data.token,
+			REGISTRY_PICK_KINDS[parsed.data.role]
+		);
+
+		return json({ item });
 	} catch (error) {
 		return failure(error);
 	}

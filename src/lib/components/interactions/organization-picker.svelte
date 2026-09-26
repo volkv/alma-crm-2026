@@ -138,9 +138,7 @@
 		registryError = null;
 
 		try {
-			const response = await fetch(
-				`${lookupPath}?kind=registry&role=${registryRole}&q=${encodeURIComponent(text)}`
-			);
+			const response = await fetch(`${lookupPath}?kind=registry&q=${encodeURIComponent(text)}`);
 			const body: { items?: RegistryCandidate[]; error?: string } = await response
 				.json()
 				.catch(() => ({}));

@@ -86,6 +86,7 @@ export const LIFECYCLE_STATUSES = ['draft', 'active', 'archived'] as const;
 export const CONSENT_BASES = ['consent', 'contract', 'legal'] as const;
 
 export type OrganizationKind = (typeof ORGANIZATION_KINDS)[number];
+export type OrganizationFormKind = (typeof ORGANIZATION_FORM_KINDS)[number];
 export type EducationLevel = (typeof EDUCATION_LEVELS)[number];
 export type SiteKind = (typeof SITE_KINDS)[number];
 export type AffiliationRoleKind = (typeof AFFILIATION_ROLE_KINDS)[number];

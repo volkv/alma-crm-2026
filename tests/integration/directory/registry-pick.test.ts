@@ -95,7 +95,7 @@ describe('сторона взаимодействия из ЕГРЮЛ', () => {
 			.set({ isActive: false })
 			.where(eq(organizations.id, archivedId));
 
-		const candidates = await searchRegistryCandidates(admin, 'такой-то', 'educational_institution');
+		const candidates = await searchRegistryCandidates(admin, 'такой-то');
 		const byInn = new Map(candidates.map((candidate) => [candidate.inn, candidate]));
 
 		// Уже заведённая выбирается как есть, заводить её нечем.
@@ -164,7 +164,8 @@ describe('сторона взаимодействия из ЕГРЮЛ', () => {
 			university?.token as string,
 			'educational_institution'
 		);
-		expect(again.id).toBe(created.id);
+		expect(again).toMatchObject({ id: created.id, created: false });
+		expect(created.created).toBe(true);
 
 		// Реестр спрашивали один раз: заведение идёт по копии сервера.
 		expect(fetchMock).toHaveBeenCalledTimes(1);
@@ -174,12 +175,12 @@ describe('сторона взаимодействия из ЕГРЮЛ', () => {
 		const admin = testActor();
 		await setSetting(admin, 'enrichment', { enabled: true, dailyQuota: 5 });
 
-		const candidates = await searchRegistryCandidates(admin, 'такой-то', 'customer');
+		const candidates = await searchRegistryCandidates(admin, 'такой-то');
 		const company = candidates.find((candidate) => candidate.inn === COMPANY_INN);
 
 		expect(company?.educationLevel).toBeNull();
 
-		const created = await createFromRegistry(admin, company?.token as string, 'customer');
+		const created = await createFromRegistry(admin, company?.token as string, 'customer_company');
 		const [row] = await database.db
 			.select()
 			.from(organizations)
@@ -192,11 +193,11 @@ describe('сторона взаимодействия из ЕГРЮЛ', () => {
 		const admin = testActor();
 		await setSetting(admin, 'enrichment', { enabled: true, dailyQuota: 5 });
 
-		const candidates = await searchRegistryCandidates(admin, 'такой-то', 'customer');
+		const candidates = await searchRegistryCandidates(admin, 'такой-то');
 		const token = candidates.find((candidate) => candidate.inn === COMPANY_INN)?.token as string;
 		const stranger = testActor({ userId: '00000000-0000-4000-8000-0000000000aa' });
 
-		await expect(createFromRegistry(stranger, token, 'customer')).rejects.toBeInstanceOf(
+		await expect(createFromRegistry(stranger, token, 'customer_company')).rejects.toBeInstanceOf(
 			ValidationError
 		);
 	});

@@ -22,6 +22,7 @@ import { isValidInn } from '$lib/validation/inn';
 import { requiredText } from './common';
 import {
 	EDUCATION_LEVELS,
+	ORGANIZATION_FORM_KINDS,
 	ORGANIZATION_KINDS,
 	type EducationLevel,
 	type OrganizationKind
@@ -349,14 +350,24 @@ export const REGISTRY_PICK_KINDS = {
 } as const satisfies Record<RegistryPickRole, OrganizationKind>;
 
 export const registryPickQuerySchema = z.object({
-	q: requiredText(LOOKUP_QUERY_MAX, 'Введите название организации или её ИНН'),
+	q: requiredText(LOOKUP_QUERY_MAX, 'Введите название организации или её ИНН')
+});
+
+const registryToken = z.uuid({ error: 'Строка реестра устарела: повторите поиск' });
+
+/** Заведение стороны взаимодействия из строки реестра: вид — по полю формы. */
+export const registryPickSchema = z.object({
+	token: registryToken,
 	role: z.enum(REGISTRY_PICK_ROLES, { error: 'Неизвестное поле формы' })
 });
 
-/** Заведение организации из строки реестра — по номеру выданного паспорта. */
-export const registryPickSchema = z.object({
-	token: z.uuid({ error: 'Строка реестра устарела: повторите поиск' }),
-	role: z.enum(REGISTRY_PICK_ROLES, { error: 'Неизвестное поле формы' })
+/**
+ * Заведение организации из строки реестра на странице новой организации: вид
+ * угадан по ОКВЭД и названию или выбран сотрудником.
+ */
+export const registryCreateSchema = z.object({
+	token: registryToken,
+	kind: z.enum(ORGANIZATION_FORM_KINDS, { error: 'Выберите вид организации' })
 });
 
 /** Строка реестра в выпадающем списке поля. */
@@ -373,7 +384,10 @@ export type RegistryCandidate = {
 	region: string | null;
 	status: LegalStatus;
 	isBranch: boolean;
-	/** Уровень, который получит вуз; `null` — не угадан, останется пустым. */
+	/**
+	 * Уровень, который получит организация, если её заведут учебным заведением;
+	 * `null` — не угадан, останется пустым.
+	 */
 	educationLevel: EducationLevel | null;
 	/** По ОКВЭД и названию похожа на учебное заведение. */
 	looksEducational: boolean;
