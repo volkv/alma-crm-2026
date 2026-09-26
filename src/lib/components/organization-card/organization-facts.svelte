@@ -53,6 +53,10 @@
 					<span class="block w-full text-xs text-faint">
 						{EDUCATION_LEVEL_LABELS[organization.educationLevel]}
 					</span>
+				{:else if organization.kind === 'educational_institution'}
+					<!-- Вуз, заведённый из ЕГРЮЛ, уровня может не знать: пустое место
+						 здесь напоминает уточнить его правкой карточки. -->
+					<span class="block w-full text-xs text-faint">уровень образования не указан</span>
 				{/if}
 			</dd>
 		</div>

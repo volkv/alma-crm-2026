@@ -128,7 +128,10 @@ export const organizationNotesSchema = optionalText(4000);
 
 const organizationFields = {
 	kind: z.enum(ORGANIZATION_KINDS, { error: 'Выберите тип организации' }),
-	/** Заполнен ровно у учебных заведений — это же правило проверяет база. */
+	/**
+	 * Бывает только у учебных заведений — это же правило проверяет база. У вуза
+	 * необязателен: его заводят и из ЕГРЮЛ, где уровня нет, и уточняют позже.
+	 */
 	educationLevel: z
 		.enum(EDUCATION_LEVELS, { error: 'Выберите уровень образования' })
 		.nullable()
@@ -152,11 +155,11 @@ function educationLevelMatchesKind(value: {
 	kind: OrganizationKind;
 	educationLevel: EducationLevel | null;
 }): boolean {
-	return (value.educationLevel !== null) === (value.kind === 'educational_institution');
+	return value.educationLevel === null || value.kind === 'educational_institution';
 }
 
 const educationLevelError = {
-	error: 'Уровень образования заполняют только у учебных заведений и обязательно у них',
+	error: 'Уровень образования заполняют только у учебных заведений',
 	path: ['educationLevel']
 };
 

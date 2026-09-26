@@ -78,7 +78,11 @@ export const organizations = pgTable(
 	{
 		id: uuid().primaryKey().defaultRandom(),
 		kind: organizationKindEnum().notNull(),
-		/** Заполнен ровно у учебных заведений — это же проверяет CHECK ниже. */
+		/**
+		 * Бывает только у учебных заведений — это же проверяет CHECK ниже. У вуза
+		 * может быть пустым: заведённый из ЕГРЮЛ вуз своего уровня не называет, и
+		 * выдумывать его ради обязательности хуже, чем уточнить позже.
+		 */
 		educationLevel: educationLevelEnum(),
 		/**
 		 * Человек, которым является этот контрагент. Заполнен ровно у вида
@@ -115,7 +119,7 @@ export const organizations = pgTable(
 		externalRefUnique('organizations_external_ref_key', table),
 		check(
 			'organizations_education_level_matches_kind',
-			sql`(${table.educationLevel} is not null) = (${table.kind} = 'educational_institution')`
+			sql`${table.educationLevel} is null or ${table.kind} = 'educational_institution'`
 		),
 		// Физлицо без человека — контрагент без имени; человек у вуза — лишняя
 		// связь, по которой обезличивание однажды дошло бы до организации.

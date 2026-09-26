@@ -112,6 +112,12 @@ const cases: Case[] = [
 		invalid: { ...organization, kind: 'customer_company' }
 	},
 	{
+		name: 'createOrganization: уровень у вуза необязателен',
+		schema: createOrganizationSchema,
+		valid: { ...organization, educationLevel: null },
+		invalid: { ...organization, kind: 'operator' }
+	},
+	{
 		name: 'createOrganization: контрольная сумма ИНН',
 		schema: createOrganizationSchema,
 		valid: { ...organization, inn: null },

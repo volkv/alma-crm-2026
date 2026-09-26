@@ -40,7 +40,12 @@
 
 	const isSchool = $derived($form.kind === 'educational_institution');
 
-	// Уровень образования заполняют ровно у учебных заведений — это проверяет и
+	// У вуза уровень необязателен: заведённый из ЕГРЮЛ его не знает, и форма
+	// позволяет как оставить его пустым, так и вернуть к пустому. Пустое значение
+	// скрытое поле отправляет пустой строкой, и схема читает её как «не указан».
+	const educationLevelOptions = [{ value: '', label: 'Не указан' }, ...EDUCATION_LEVEL_OPTIONS];
+
+	// Уровень образования бывает только у учебных заведений — это проверяет и
 	// схема, и CHECK в базе. Поэтому при смене вида поле не просто прячется:
 	// иначе в форме остался бы уровень, которого по правилу быть не должно.
 	$effect(() => {
@@ -68,8 +73,7 @@
 		<FieldSelect
 			name="educationLevel"
 			label="Уровень образования"
-			required
-			options={EDUCATION_LEVEL_OPTIONS}
+			options={educationLevelOptions}
 			errors={$errors.educationLevel}
 			bind:value={
 				() => $form.educationLevel ?? '',
