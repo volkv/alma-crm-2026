@@ -1,7 +1,7 @@
 <script lang="ts">
-	import { resolve } from '$app/paths';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import FilterSelect from '$lib/components/directory/filter-select.svelte';
+	import { page } from '$app/state';
+	import { clearedFiltersHref } from '$lib/components/directory/query';
+	import FilterBar, { singleParamFilter } from '$lib/components/filters/filter-bar.svelte';
 	import {
 		NOTIFICATION_CHANNELS,
 		NOTIFICATION_CHANNEL_LABELS,
@@ -10,11 +10,10 @@
 	} from '$lib/contracts/notifications';
 
 	/**
-	 * Фильтры журнала доставок.
-	 *
-	 * Списки — те же `FilterSelect`, что над остальными списками продукта: выбор
-	 * переписывает строку запроса, и отфильтрованный вид переживает «назад» и
-	 * отправку коллеге.
+	 * Фильтры журнала доставок — тот же ряд отборов, что над остальными
+	 * списками продукта (`filters/filter-bar.svelte`): выбор переписывает строку
+	 * запроса, и отфильтрованный вид переживает «назад» и отправку коллеге.
+	 * Поиска у журнала нет.
 	 */
 	const STATUS_OPTIONS = NOTIFICATION_DELIVERY_STATUSES.map((status) => ({
 		value: status,
@@ -25,13 +24,31 @@
 		value: channel,
 		label: NOTIFICATION_CHANNEL_LABELS[channel]
 	}));
+
+	const FILTER_PARAMS = ['status', 'channel'] as const;
+
+	const filters = $derived([
+		singleParamFilter(page.url, {
+			param: 'status',
+			label: 'Состояние',
+			options: STATUS_OPTIONS,
+			testId: 'notifications-filter-status'
+		}),
+		singleParamFilter(page.url, {
+			param: 'channel',
+			label: 'Канал',
+			options: CHANNEL_OPTIONS,
+			testId: 'notifications-filter-channel'
+		})
+	]);
+
+	const filtered = $derived(FILTER_PARAMS.some((param) => page.url.searchParams.has(param)));
 </script>
 
 <!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
-<div data-tour="notifications-filters" class="flex flex-wrap items-center gap-3">
-	<FilterSelect param="status" label="Состояние" options={STATUS_OPTIONS} allLabel="Любое" />
-	<FilterSelect param="channel" label="Канал" options={CHANNEL_OPTIONS} allLabel="Любой" />
-	<!-- Сброс — ссылка на тот же раздел без параметров: адрес без параметра и
-		есть «без фильтра», и двух способов сказать это в ссылке быть не должно. -->
-	<Button variant="outline" href={resolve('/notifications')}>Сбросить</Button>
-</div>
+<FilterBar
+	data-tour="notifications-filters"
+	testId="notifications"
+	{filters}
+	clearHref={filtered ? clearedFiltersHref(page.url, FILTER_PARAMS) : null}
+/>

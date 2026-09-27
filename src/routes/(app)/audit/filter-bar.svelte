@@ -1,12 +1,11 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
-	import FilterXIcon from '@lucide/svelte/icons/filter-x';
-	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
-	import { Label } from '$lib/components/ui/label/index.js';
-	import DateField from '$lib/components/form/date-field.svelte';
-	import { AUDIT_OUTCOMES, AUDIT_SOURCES } from '$lib/contracts/audit';
+	import type { SvelteTable } from '@tanstack/svelte-table';
+	import ColumnsMenu from '$lib/components/data-table/columns-menu.svelte';
+	import type { DataTableFeatures } from '$lib/components/data-table/features';
+	import FilterBar, { searchParam } from '$lib/components/filters/filter-bar.svelte';
+	import type { StripFilter } from '$lib/components/filters/filter-strip.svelte';
+	import { AUDIT_OUTCOMES, AUDIT_SOURCES, type AuditEventView } from '$lib/contracts/audit';
 	import {
 		AUDIT_EVENT_GROUPS,
 		AUDIT_EVENT_LABELS,
@@ -18,206 +17,155 @@
 	import { auditHref, clearedAuditHref, hasAuditFilter, type AuditFilterParam } from './filters';
 
 	/**
-	 * Панель фильтров журнала. Ничего не хранит: всё, что выбрано, стоит в
+	 * Панель фильтров журнала — тот же ряд отборов, что над остальными списками
+	 * (`filters/filter-bar.svelte`). Ничего не хранит: всё, что выбрано, стоит в
 	 * адресе страницы — поэтому выборка остаётся ссылкой, переживает «назад» и
-	 * той же ссылкой уезжает в выгрузку.
+	 * той же ссылкой уезжает в выгрузку. Адрес у журнала свой (`filters.ts`:
+	 * многозначные параметры повторяются, а не склеиваются через запятую),
+	 * поэтому фильтры собраны здесь, а не общими обёртками.
 	 */
 	let {
 		url,
-		actors
+		actors,
+		table
 	}: {
 		url: URL;
 		/** Кого предлагать в фильтре по действующему лицу; пусто — выбора нет. */
 		actors: readonly { id: string; fullName: string }[];
+		table: SvelteTable<DataTableFeatures, AuditEventView> | null;
 	} = $props();
-
-	const selected = $derived({
-		from: url.searchParams.get('from') ?? '',
-		to: url.searchParams.get('to') ?? '',
-		type: url.searchParams.getAll('type'),
-		outcome: url.searchParams.getAll('outcome'),
-		source: url.searchParams.getAll('source'),
-		actor: url.searchParams.get('actor') ?? '',
-		subjectType: url.searchParams.get('subjectType') ?? '',
-		subject: url.searchParams.get('subject') ?? ''
-	});
 
 	function go(changes: Parameters<typeof auditHref>[1]) {
 		return goto(auditHref(url, changes), { keepFocus: true, noScroll: true });
 	}
 
-	/** Флажок в множественном фильтре: был выбран — убираем, не был — добавляем. */
-	function toggle(param: AuditFilterParam, value: string, checked: boolean) {
+	/** Пункт множественного фильтра: был выбран — убираем, не был — добавляем. */
+	function toggle(param: AuditFilterParam, value: string) {
 		const current = url.searchParams.getAll(param);
-		const next = checked ? [...current, value] : current.filter((item) => item !== value);
+		const next = current.includes(value)
+			? current.filter((item) => item !== value)
+			: [...current, value];
 
 		return go({ [param]: next });
 	}
 
-	/** «Событие» без выбора и «Событие: 3» с ним — число видно, не открывая меню. */
-	function countLabel(label: string, values: readonly string[]): string {
-		return values.length === 0 ? label : `${label}: ${values.length}`;
+	/** Одиночный фильтр: повторное нажатие снимает, другой пункт заменяет. */
+	function pick(param: AuditFilterParam, value: string) {
+		return go({ [param]: url.searchParams.get(param) === value ? null : value });
 	}
 
-	const actorName = $derived(actors.find((actor) => actor.id === selected.actor)?.fullName);
+	const EVENT_OPTIONS = AUDIT_EVENT_GROUPS.flatMap((group) =>
+		group.types.map((type) => ({
+			value: type,
+			label: AUDIT_EVENT_LABELS[type],
+			group: group.label
+		}))
+	);
+	const OUTCOME_OPTIONS = AUDIT_OUTCOMES.map((outcome) => ({
+		value: outcome,
+		label: AUDIT_OUTCOME_LABELS[outcome]
+	}));
+	const SOURCE_OPTIONS = AUDIT_SOURCES.map((source) => ({
+		value: source,
+		label: AUDIT_SOURCE_LABELS[source]
+	}));
+	const SUBJECT_OPTIONS = SUBJECT_TYPES.map((type) => ({
+		value: type,
+		label: subjectTypeLabel(type)
+	}));
+
+	const filters = $derived.by((): StripFilter[] => {
+		const subject = url.searchParams.get('subject') ?? '';
+		const single = (param: AuditFilterParam) => {
+			const value = url.searchParams.get(param);
+			return value === null ? [] : [value];
+		};
+
+		return [
+			{
+				kind: 'period',
+				key: 'period',
+				label: 'Период',
+				from: url.searchParams.get('from') ?? '',
+				to: url.searchParams.get('to') ?? '',
+				clearable: true,
+				testId: 'audit-filter-period',
+				onchange: ({ from, to }) => void go({ from, to })
+			},
+			{
+				kind: 'list',
+				key: 'type',
+				label: 'Событие',
+				options: EVENT_OPTIONS,
+				selected: url.searchParams.getAll('type'),
+				testId: 'audit-filter-type',
+				ontoggle: (value) => void toggle('type', value)
+			},
+			{
+				kind: 'list',
+				key: 'outcome',
+				label: 'Результат',
+				options: OUTCOME_OPTIONS,
+				selected: url.searchParams.getAll('outcome'),
+				testId: 'audit-filter-outcome',
+				ontoggle: (value) => void toggle('outcome', value)
+			},
+			{
+				kind: 'list',
+				key: 'source',
+				label: 'Источник',
+				options: SOURCE_OPTIONS,
+				selected: url.searchParams.getAll('source'),
+				testId: 'audit-filter-source',
+				ontoggle: (value) => void toggle('source', value)
+			},
+			{
+				kind: 'list',
+				key: 'actor',
+				label: 'Кто действовал',
+				options: actors.map((actor) => ({ value: actor.id, label: actor.fullName })),
+				selected: single('actor'),
+				single: true,
+				testId: 'audit-filter-actor',
+				ontoggle: (value) => void pick('actor', value)
+			},
+			{
+				kind: 'list',
+				key: 'subjectType',
+				label: 'Над чем',
+				options: SUBJECT_OPTIONS,
+				selected: single('subjectType'),
+				single: true,
+				testId: 'audit-filter-subject-type',
+				ontoggle: (value) => void pick('subjectType', value)
+			},
+			// Одна запись приходит ссылкой из карточки объекта; включить её из ряда
+			// нельзя, только снять.
+			...(subject === ''
+				? []
+				: [
+						{
+							kind: 'toggle',
+							key: 'subject',
+							label: `Одна запись: ${subject.slice(0, 8)}`,
+							active: true,
+							testId: 'audit-filter-subject',
+							ontoggle: () => void go({ subject: null })
+						} satisfies StripFilter
+					])
+		];
+	});
 </script>
 
 <!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
-<div data-tour="audit-filters" class="flex flex-wrap items-end gap-3">
-	<div class="flex flex-col gap-1.5">
-		<Label for="audit-from" class="text-xs text-muted-foreground">Период с</Label>
-		<DateField
-			id="audit-from"
-			class="w-48"
-			value={selected.from}
-			max={selected.to || undefined}
-			onchange={(from) => void go({ from })}
-		/>
-	</div>
-
-	<div class="flex flex-col gap-1.5">
-		<Label for="audit-to" class="text-xs text-muted-foreground">по</Label>
-		<DateField
-			id="audit-to"
-			class="w-48"
-			value={selected.to}
-			min={selected.from || undefined}
-			onchange={(to) => void go({ to })}
-		/>
-	</div>
-
-	<DropdownMenu.Root>
-		<DropdownMenu.Trigger>
-			{#snippet child({ props })}
-				<Button {...props} variant="outline" size="sm">
-					{countLabel('Событие', selected.type)}
-					<ChevronDownIcon aria-hidden="true" />
-				</Button>
-			{/snippet}
-		</DropdownMenu.Trigger>
-		<DropdownMenu.Content align="start" class="max-h-96 w-72 overflow-y-auto">
-			{#each AUDIT_EVENT_GROUPS as group, index (group.prefix)}
-				{#if index > 0}
-					<DropdownMenu.Separator />
-				{/if}
-				<!-- Заголовок обязан стоять внутри группы: без неё bits-ui не находит
-					контекст и всё содержимое меню не отрисовывается вовсе. -->
-				<DropdownMenu.Group>
-					<DropdownMenu.GroupHeading>{group.label}</DropdownMenu.GroupHeading>
-					{#each group.types as type (type)}
-						<DropdownMenu.CheckboxItem
-							checked={selected.type.includes(type)}
-							onCheckedChange={(checked) => toggle('type', type, checked)}
-							closeOnSelect={false}
-						>
-							{AUDIT_EVENT_LABELS[type]}
-						</DropdownMenu.CheckboxItem>
-					{/each}
-				</DropdownMenu.Group>
-			{/each}
-		</DropdownMenu.Content>
-	</DropdownMenu.Root>
-
-	<DropdownMenu.Root>
-		<DropdownMenu.Trigger>
-			{#snippet child({ props })}
-				<Button {...props} variant="outline" size="sm">
-					{countLabel('Результат', selected.outcome)}
-					<ChevronDownIcon aria-hidden="true" />
-				</Button>
-			{/snippet}
-		</DropdownMenu.Trigger>
-		<DropdownMenu.Content align="start" class="w-44">
-			{#each AUDIT_OUTCOMES as outcome (outcome)}
-				<DropdownMenu.CheckboxItem
-					checked={selected.outcome.includes(outcome)}
-					onCheckedChange={(checked) => toggle('outcome', outcome, checked)}
-					closeOnSelect={false}
-				>
-					{AUDIT_OUTCOME_LABELS[outcome]}
-				</DropdownMenu.CheckboxItem>
-			{/each}
-		</DropdownMenu.Content>
-	</DropdownMenu.Root>
-
-	<DropdownMenu.Root>
-		<DropdownMenu.Trigger>
-			{#snippet child({ props })}
-				<Button {...props} variant="outline" size="sm">
-					{countLabel('Источник', selected.source)}
-					<ChevronDownIcon aria-hidden="true" />
-				</Button>
-			{/snippet}
-		</DropdownMenu.Trigger>
-		<DropdownMenu.Content align="start" class="w-44">
-			{#each AUDIT_SOURCES as source (source)}
-				<DropdownMenu.CheckboxItem
-					checked={selected.source.includes(source)}
-					onCheckedChange={(checked) => toggle('source', source, checked)}
-					closeOnSelect={false}
-				>
-					{AUDIT_SOURCE_LABELS[source]}
-				</DropdownMenu.CheckboxItem>
-			{/each}
-		</DropdownMenu.Content>
-	</DropdownMenu.Root>
-
-	{#if actors.length > 0}
-		<DropdownMenu.Root>
-			<DropdownMenu.Trigger>
-				{#snippet child({ props })}
-					<Button {...props} variant="outline" size="sm" class="max-w-56">
-						<span class="truncate">{actorName ?? 'Кто действовал'}</span>
-						<ChevronDownIcon aria-hidden="true" />
-					</Button>
-				{/snippet}
-			</DropdownMenu.Trigger>
-			<DropdownMenu.Content align="start" class="max-h-96 w-64 overflow-y-auto">
-				<DropdownMenu.RadioGroup
-					value={selected.actor}
-					onValueChange={(value) => void go({ actor: value })}
-				>
-					<DropdownMenu.RadioItem value="">Кто угодно</DropdownMenu.RadioItem>
-					<DropdownMenu.Separator />
-					{#each actors as actor (actor.id)}
-						<DropdownMenu.RadioItem value={actor.id}>{actor.fullName}</DropdownMenu.RadioItem>
-					{/each}
-				</DropdownMenu.RadioGroup>
-			</DropdownMenu.Content>
-		</DropdownMenu.Root>
-	{/if}
-
-	<DropdownMenu.Root>
-		<DropdownMenu.Trigger>
-			{#snippet child({ props })}
-				<Button {...props} variant="outline" size="sm">
-					{selected.subjectType === '' ? 'Над чем' : subjectTypeLabel(selected.subjectType)}
-					<ChevronDownIcon aria-hidden="true" />
-				</Button>
-			{/snippet}
-		</DropdownMenu.Trigger>
-		<DropdownMenu.Content align="start" class="w-56">
-			<DropdownMenu.RadioGroup
-				value={selected.subjectType}
-				onValueChange={(value) => void go({ subjectType: value })}
-			>
-				<DropdownMenu.RadioItem value="">Над чем угодно</DropdownMenu.RadioItem>
-				<DropdownMenu.Separator />
-				{#each SUBJECT_TYPES as type (type)}
-					<DropdownMenu.RadioItem value={type}>{subjectTypeLabel(type)}</DropdownMenu.RadioItem>
-				{/each}
-			</DropdownMenu.RadioGroup>
-		</DropdownMenu.Content>
-	</DropdownMenu.Root>
-
-	{#if selected.subject !== ''}
-		<Button variant="outline" size="sm" onclick={() => go({ subject: null })}>
-			Одна запись: {selected.subject.slice(0, 8)}
-			<FilterXIcon aria-hidden="true" />
-		</Button>
-	{/if}
-
-	{#if hasAuditFilter(url)}
-		<Button variant="ghost" size="sm" href={clearedAuditHref(url)}>Сбросить фильтр</Button>
-	{/if}
-</div>
+<FilterBar
+	data-tour="audit-filters"
+	testId="audit"
+	search={searchParam(url, 'Поиск по человеку и типу события')}
+	{filters}
+	clearHref={hasAuditFilter(url) ? clearedAuditHref(url) : null}
+>
+	{#snippet end()}
+		<ColumnsMenu {table} labelClass="max-2xl:sr-only" title="Колонки" />
+	{/snippet}
+</FilterBar>

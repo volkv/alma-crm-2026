@@ -31,8 +31,6 @@ export const load: PageServerLoad = async (event) => {
 		return {
 			rows: result.items,
 			total: result.total,
-			filters: { kind: query.kind, level: query.educationLevel },
-			search: table.search,
 			filtered: query.kind.length > 0 || query.educationLevel.length > 0 || query.q !== null,
 			canWrite: can(ctx, 'organizations.write'),
 			canImport: can(ctx, 'directory.import')

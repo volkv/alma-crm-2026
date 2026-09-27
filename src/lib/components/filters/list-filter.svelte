@@ -27,6 +27,7 @@
 		options,
 		selected,
 		single = false,
+		showValue = false,
 		testId,
 		ontoggle
 	}: {
@@ -34,6 +35,7 @@
 		options: readonly FilterOption[];
 		selected: readonly string[];
 		single?: boolean;
+		showValue?: boolean;
 		testId?: string;
 		ontoggle: (value: string) => void;
 	} = $props();
@@ -44,6 +46,27 @@
 			.map((option) => option.label)
 			.join(', ')
 	);
+
+	/**
+	 * Варианты по группам в порядке первого появления; без групп — одна группа
+	 * под подписью фильтра.
+	 */
+	const groups = $derived.by(() => {
+		const result: { heading: string; options: FilterOption[] }[] = [];
+
+		for (const option of options) {
+			const heading = option.group ?? label;
+			const last = result.at(-1);
+
+			if (last !== undefined && last.heading === heading) {
+				last.options.push(option);
+			} else {
+				result.push({ heading, options: [option] });
+			}
+		}
+
+		return result;
+	});
 </script>
 
 {#if options.length > 0}
@@ -52,30 +75,44 @@
 			{#snippet child({ props })}
 				<Button
 					{...props}
-					variant={selected.length > 0 ? 'selected' : 'outline'}
+					variant={selected.length > 0 && !showValue ? 'selected' : 'outline'}
 					data-testid={testId}
 					data-active={selected.length > 0 ? 'true' : undefined}
 					title={hint === '' ? undefined : `${label}: ${hint}`}
 				>
-					{label}
-					<FilterCount count={selected.length} />
+					{#if showValue && hint !== ''}
+						<!-- Обязательный выбор показывает значение: «Период: …» без него
+							ничего не говорит. Длинное значение усекается, а не
+							растягивает строку. -->
+						<span class="max-w-64 truncate">{label}: {hint}</span>
+					{:else}
+						{label}
+						<FilterCount count={selected.length} />
+					{/if}
 					<ChevronDownIcon aria-hidden="true" />
 				</Button>
 			{/snippet}
 		</DropdownMenu.Trigger>
 		<DropdownMenu.Content align="start" class="max-h-96 w-72 overflow-y-auto">
-			<DropdownMenu.Group>
-				<DropdownMenu.GroupHeading>{label}</DropdownMenu.GroupHeading>
-				{#each options as option (option.value)}
-					<DropdownMenu.CheckboxItem
-						checked={selected.includes(option.value)}
-						onCheckedChange={() => ontoggle(option.value)}
-						closeOnSelect={single}
-					>
-						{option.label}
-					</DropdownMenu.CheckboxItem>
-				{/each}
-			</DropdownMenu.Group>
+			{#each groups as group, index (group.heading)}
+				{#if index > 0}
+					<DropdownMenu.Separator />
+				{/if}
+				<!-- Заголовок обязан стоять внутри группы: без неё bits-ui не находит
+					контекст и меню не отрисовывается. -->
+				<DropdownMenu.Group>
+					<DropdownMenu.GroupHeading>{group.heading}</DropdownMenu.GroupHeading>
+					{#each group.options as option (option.value)}
+						<DropdownMenu.CheckboxItem
+							checked={selected.includes(option.value)}
+							onCheckedChange={() => ontoggle(option.value)}
+							closeOnSelect={single}
+						>
+							{option.label}
+						</DropdownMenu.CheckboxItem>
+					{/each}
+				</DropdownMenu.Group>
+			{/each}
 		</DropdownMenu.Content>
 	</DropdownMenu.Root>
 {/if}

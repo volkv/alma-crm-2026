@@ -1,8 +1,12 @@
 <script lang="ts" module>
-	/** Вариант фильтра-списка: значение для адреса и подпись. */
-	export type FilterOption = { value: string; label: string };
+	/**
+	 * Вариант фильтра-списка: значение для адреса и подпись. `group` — заголовок
+	 * раздела в меню (события журнала по модулям); варианты одной группы стоят
+	 * подряд.
+	 */
+	export type FilterOption = { value: string; label: string; group?: string };
 
-	/** Фильтр ленты: дропдаун со списком значений или переключатель. */
+	/** Фильтр ленты: дропдаун со списком значений, переключатель или период. */
 	export type StripFilter =
 		| {
 				kind: 'list';
@@ -11,8 +15,22 @@
 				options: readonly FilterOption[];
 				selected: readonly string[];
 				single?: boolean;
+				/** Выбор обязателен (отчётный период): на кнопке значение, а не счётчик. */
+				showValue?: boolean;
 				testId?: string;
 				ontoggle: (value: string) => void;
+		  }
+		| {
+				kind: 'period';
+				key: string;
+				label: string;
+				/** Даты как `2026-09-12`; пустая строка — границы нет. */
+				from: string;
+				to: string;
+				/** Период без границ допустим — у кнопки есть сброс. */
+				clearable?: boolean;
+				testId?: string;
+				onchange: (range: { from: string; to: string }) => void;
 		  }
 		| {
 				kind: 'toggle';
@@ -31,6 +49,7 @@
 	import { cn } from '$lib/utils.js';
 	import FilterCount from './filter-count.svelte';
 	import ListFilter from './list-filter.svelte';
+	import PeriodFilter from './period-filter.svelte';
 
 	/**
 	 * Фильтры над списком одной строкой, которая не переносится: что не
@@ -89,7 +108,7 @@
 	// Список без вариантов не рисует кнопки (`list-filter.svelte`), и в ленте
 	// ему нечего занимать.
 	const items = $derived(
-		filters.filter((filter) => filter.kind === 'toggle' || filter.options.length > 0)
+		filters.filter((filter) => filter.kind !== 'list' || filter.options.length > 0)
 	);
 
 	let strip = $state<HTMLDivElement | null>(null);
@@ -103,9 +122,16 @@
 	const count = $derived(shown === null ? items.length : Math.min(shown, items.length));
 	const visible = $derived(items.slice(0, count));
 	const hidden = $derived(items.slice(count));
+	// Обязательный период (отчёт) — условие выборки, а не сужение: в число
+	// включённых он не входит и свою кнопку не красит (`period-filter.svelte`).
 	const hiddenActive = $derived(
-		hidden.filter((item) => (item.kind === 'toggle' ? item.active : item.selected.length > 0))
-			.length
+		hidden.filter((item) =>
+			item.kind === 'toggle'
+				? item.active
+				: item.kind === 'period'
+					? item.clearable === true && (item.from !== '' || item.to !== '')
+					: item.selected.length > 0
+		).length
 	);
 	// Раздвинули окно, и всё поместилось — панели показывать нечего.
 	const panelOpen = $derived(open && hidden.length > 0);
@@ -180,8 +206,18 @@
 			options={item.options}
 			selected={item.selected}
 			single={item.single}
+			showValue={item.showValue}
 			{testId}
 			ontoggle={item.ontoggle}
+		/>
+	{:else if item.kind === 'period'}
+		<PeriodFilter
+			label={item.label}
+			from={item.from}
+			to={item.to}
+			clearable={item.clearable}
+			{testId}
+			onchange={item.onchange}
 		/>
 	{:else}
 		<Button

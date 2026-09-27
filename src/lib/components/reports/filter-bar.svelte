@@ -1,13 +1,10 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import FilterXIcon from '@lucide/svelte/icons/filter-x';
-	import ListFilterIcon from '@lucide/svelte/icons/list-filter';
-	import { Button } from '$lib/components/ui/button/index.js';
-	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
-	import { Label } from '$lib/components/ui/label/index.js';
-	import DateField from '$lib/components/form/date-field.svelte';
+	import FilterBar from '$lib/components/filters/filter-bar.svelte';
+	import type { StripFilter } from '$lib/components/filters/filter-strip.svelte';
 	import type {
+		FilterOption,
 		ReportColumnDefinition,
 		ReportColumnKey,
 		ReportFilterOptions,
@@ -15,13 +12,18 @@
 		ReportQuery
 	} from '$lib/contracts/reports';
 	import ColumnPicker from './column-picker.svelte';
-	import MultiFilter from './multi-filter.svelte';
-	import { clearedHref, reportHref, selectedValues } from './query';
+	import { clearedHref, reportHref, selectedValues, toggledHref } from './query';
 
 	/**
-	 * Панель фильтров отчёта. Каждый контрол пишет в адрес и ничего не помнит
-	 * сам: экран — это ссылка, и открытая по ней таблица обязана совпасть с
-	 * файлом, выгруженным с того же адреса.
+	 * Панель фильтров отчёта — тот же ряд отборов, что над списками
+	 * (`filters/filter-bar.svelte`). Каждый контрол пишет в адрес и ничего не
+	 * помнит сам: экран — это ссылка, и открытая по ней таблица обязана
+	 * совпасть с файлом, выгруженным с того же адреса.
+	 *
+	 * Порядок — по частоте: период и три отбора, которыми отчёт сужают чаще
+	 * всего (вуз, пространство, направление), дальше остальные. Что не
+	 * поместилось по ширине, уходит под воронку со счётчиком включённых —
+	 * свёрнутый фильтр не сужает выборку молча.
 	 */
 	let {
 		query,
@@ -37,130 +39,78 @@
 		isFiltered: boolean;
 	} = $props();
 
-	/**
-	 * Фильтры за кнопкой «Все фильтры». На виду — период и три отбора, которыми
-	 * отчёт сужают чаще всего: вуз, пространство и направление. Остальные
-	 * восемь отборов и две отметки в одном ряду отодвигали результат за край
-	 * экрана.
-	 */
-	const MORE_PARAMS: readonly ReportParam[] = [
-		'party',
-		'prog',
-		'prod',
-		'owner',
-		'assignee',
-		'stage',
-		'state',
-		'transfer'
-	];
-
-	/**
-	 * Сколько отборов действует за кнопкой: свёрнутый фильтр не должен сужать
-	 * выборку молча, поэтому число стоит на самой кнопке.
-	 */
-	const hiddenActive = $derived(
-		MORE_PARAMS.filter((param) => selectedValues(page.url, param).length > 0).length +
-			(query.mode === 'snapshot' && query.overdue ? 1 : 0) +
-			(query.mode === 'snapshot' && query.paused ? 1 : 0)
-	);
-
-	let moreOpen = $state(false);
-
 	function go(changes: Parameters<typeof reportHref>[1]) {
 		return goto(reportHref(page.url, changes), { keepFocus: true, noScroll: true });
 	}
+
+	function list(param: ReportParam, label: string, values: readonly FilterOption[]): StripFilter {
+		return {
+			kind: 'list',
+			key: param,
+			label,
+			options: values,
+			selected: selectedValues(page.url, param),
+			testId: `report-filter-${param}`,
+			ontoggle: (value) =>
+				void goto(toggledHref(page.url, param, value), { keepFocus: true, noScroll: true })
+		};
+	}
+
+	const filters = $derived<StripFilter[]>([
+		{
+			kind: 'period',
+			key: 'period',
+			label: 'Период',
+			from: query.from,
+			to: query.to,
+			testId: 'report-period',
+			onchange: ({ from, to }) => void go({ from, to })
+		},
+		list('org', 'Вуз', options.organizations),
+		list('workspace', 'Пространство', options.workspaces),
+		list('dir', 'Направление', options.directions),
+		list('party', 'Тип контрагента', options.parties),
+		list('prog', 'Программа', options.programs),
+		list('prod', 'Продукт', options.products),
+		list('owner', 'Ответственный', options.owners),
+		list('assignee', 'Ответственный за вуз', options.owners),
+		list('stage', 'Стадия', options.stages),
+		list('state', 'Состояние', options.states),
+		list('transfer', 'Статус передачи', options.transferStatuses),
+		// Обе отметки считаются на момент среза, а не «сейчас»: в движении
+		// спрашивать не о чем — там строка это событие, а не стояние.
+		...(query.mode === 'snapshot'
+			? ([
+					{
+						kind: 'toggle',
+						key: 'overdue',
+						label: 'Просроченные',
+						active: query.overdue,
+						testId: 'report-filter-overdue',
+						ontoggle: () => void go({ overdue: query.overdue ? null : 'true' })
+					},
+					{
+						kind: 'toggle',
+						key: 'paused',
+						label: 'На паузе',
+						active: query.paused,
+						testId: 'report-filter-paused',
+						ontoggle: () => void go({ paused: query.paused ? null : 'true' })
+					}
+				] satisfies StripFilter[])
+			: [])
+	]);
 </script>
 
 <!-- `data-tour` — метка подсказок (`$lib/onboarding/screens`). -->
-<div class="flex flex-col gap-2" data-slot="report-filters" data-tour="reports-filters">
-	<div class="flex flex-wrap items-center gap-2">
-		<!-- Подписи периода стоят в строку с полями, а не над ними: строка над
-		     фильтрами отнимала у результата высоту первого экрана. На телефоне
-		     два поля по 160 px с подписями в строку не помещаются — период
-		     встаёт сеткой в две строки, и поле тянется на остаток ширины. -->
-		<div
-			class="grid w-full grid-cols-[auto_1fr] items-center gap-2 sm:flex sm:w-auto"
-			data-testid="report-period"
-		>
-			<Label for="report-from" class="text-sm font-normal text-muted-foreground">Период с</Label>
-			<DateField
-				id="report-from"
-				class="w-full sm:w-40"
-				value={query.from}
-				max={query.to}
-				onchange={(from) => void go({ from })}
-			/>
-			<Label
-				for="report-to"
-				class="justify-self-end text-sm font-normal text-muted-foreground sm:justify-self-auto"
-			>
-				по
-			</Label>
-			<DateField
-				id="report-to"
-				class="w-full sm:w-40"
-				value={query.to}
-				min={query.from}
-				onchange={(to) => void go({ to })}
-			/>
-		</div>
-
-		<MultiFilter param="org" label="Вуз" options={options.organizations} />
-		<MultiFilter param="workspace" label="Пространство" options={options.workspaces} />
-		<MultiFilter param="dir" label="Направление" options={options.directions} />
-
-		<Button
-			variant="ghost"
-			size="sm"
-			aria-expanded={moreOpen}
-			aria-controls="report-filters-more"
-			data-testid="report-filters-more"
-			onclick={() => (moreOpen = !moreOpen)}
-		>
-			<ListFilterIcon aria-hidden="true" />
-			Все фильтры{hiddenActive > 0 ? ` (${hiddenActive})` : ''}
-		</Button>
-
-		<div class="ml-auto flex flex-wrap items-center gap-2">
-			<ColumnPicker {available} selected={selectedColumns} />
-			{#if isFiltered}
-				<Button variant="ghost" size="sm" href={clearedHref(page.url)}>
-					<FilterXIcon aria-hidden="true" />
-					Сбросить фильтр
-				</Button>
-			{/if}
-		</div>
-	</div>
-
-	{#if moreOpen}
-		<div id="report-filters-more" class="flex flex-wrap items-center gap-2">
-			<MultiFilter param="party" label="Тип контрагента" options={options.parties} />
-			<MultiFilter param="prog" label="Программа" options={options.programs} />
-			<MultiFilter param="prod" label="Продукт" options={options.products} />
-			<MultiFilter param="owner" label="Ответственный" options={options.owners} />
-			<MultiFilter param="assignee" label="Ответственный за вуз" options={options.owners} />
-			<MultiFilter param="stage" label="Стадия" options={options.stages} />
-			<MultiFilter param="state" label="Состояние" options={options.states} />
-			<MultiFilter param="transfer" label="Статус передачи" options={options.transferStatuses} />
-
-			{#if query.mode === 'snapshot'}
-				<!-- Обе отметки считаются на момент среза, а не «сейчас»: в движении
-				     спрашивать не о чем — там строка это событие, а не стояние. -->
-				<Label class="flex items-center gap-2 text-sm font-normal">
-					<Checkbox
-						checked={query.overdue}
-						onCheckedChange={(checked) => void go({ overdue: checked === true ? 'true' : null })}
-					/>
-					Только просроченные
-				</Label>
-				<Label class="flex items-center gap-2 text-sm font-normal">
-					<Checkbox
-						checked={query.paused}
-						onCheckedChange={(checked) => void go({ paused: checked === true ? 'true' : null })}
-					/>
-					Только на паузе
-				</Label>
-			{/if}
-		</div>
-	{/if}
-</div>
+<FilterBar
+	data-slot="report-filters"
+	data-tour="reports-filters"
+	testId="report"
+	{filters}
+	clearHref={isFiltered ? clearedHref(page.url) : null}
+>
+	{#snippet end()}
+		<ColumnPicker {available} selected={selectedColumns} />
+	{/snippet}
+</FilterBar>

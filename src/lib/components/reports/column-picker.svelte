@@ -40,9 +40,16 @@
 <DropdownMenu.Root>
 	<DropdownMenu.Trigger>
 		{#snippet child({ props })}
-			<Button {...props} variant="outline" size="sm" data-testid="report-columns">
+			<!-- Та же кнопка, что у меню «Колонки» над списками
+				(`data-table/columns-menu.svelte`): уже `2xl` остаётся значок. -->
+			<Button
+				{...props}
+				variant="outline"
+				data-testid="report-columns"
+				title="Колонки: {selected.length}"
+			>
 				<Columns3Icon aria-hidden="true" />
-				Колонки: {selected.length}
+				<span class="max-2xl:sr-only">Колонки: {selected.length}</span>
 			</Button>
 		{/snippet}
 	</DropdownMenu.Trigger>

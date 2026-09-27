@@ -2,13 +2,18 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
+	import { renderSnippet, type ColumnDef, type SvelteTable } from '@tanstack/svelte-table';
 	import FilterXIcon from '@lucide/svelte/icons/filter-x';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import ColumnsMenu from '$lib/components/data-table/columns-menu.svelte';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
-	import FilterSelect from '$lib/components/directory/filter-select.svelte';
+	import FilterBar, {
+		searchParam,
+		singleParamFilter
+	} from '$lib/components/filters/filter-bar.svelte';
+	import type { StripFilter } from '$lib/components/filters/filter-strip.svelte';
 	import { toLookupOptions } from '$lib/components/directory/labels';
 	import { clearedFiltersHref } from '$lib/components/directory/query';
 	import InlineHint from '$lib/components/inline-hint.svelte';
@@ -62,6 +67,29 @@
 	function open(row: PersonListItem) {
 		return goto(resolve('/(app)/people/[id=uuid]', { id: row.person.id }));
 	}
+
+	const FILTER_PARAMS = ['organization', 'retention'] as const;
+
+	let tableApi = $state<SvelteTable<DataTableFeatures, PersonListItem> | null>(null);
+
+	const filters = $derived<StripFilter[]>([
+		singleParamFilter(page.url, {
+			param: 'organization',
+			label: 'Организация',
+			options: toLookupOptions(data.organizations),
+			testId: 'people-filter-organization'
+		}),
+		...(data.managesPii
+			? [
+					singleParamFilter(page.url, {
+						param: 'retention',
+						label: 'Срок хранения',
+						options: RETENTION_OPTIONS,
+						testId: 'people-filter-retention'
+					})
+				]
+			: [])
+	]);
 </script>
 
 {#snippet nameCell(row: PersonListItem)}
@@ -105,23 +133,26 @@
 </Header>
 
 {#snippet resetFilters()}
-	<Button variant="outline" href={clearedFiltersHref(page.url, ['organization', 'retention'])}>
+	<Button variant="outline" href={clearedFiltersHref(page.url, FILTER_PARAMS)}>
 		<FilterXIcon aria-hidden="true" />
 		Сбросить фильтры
 	</Button>
 {/snippet}
 
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
-	<div class="flex flex-wrap items-center gap-3" data-tour="people-filters">
-		<FilterSelect
-			param="organization"
-			label="Организация"
-			options={toLookupOptions(data.organizations)}
-		/>
-		{#if data.managesPii}
-			<FilterSelect param="retention" label="Срок хранения" options={RETENTION_OPTIONS} />
-		{/if}
-	</div>
+	<!-- Ряд отборов, общий для списков (`filter-bar.svelte`): поиск первым,
+		«Колонки» в конце — свои у таблицы выключены. -->
+	<FilterBar
+		data-tour="people-filters"
+		testId="people"
+		search={searchParam(page.url, 'Поиск по ФИО и организации')}
+		{filters}
+		clearHref={data.filtered ? clearedFiltersHref(page.url, FILTER_PARAMS) : null}
+	>
+		{#snippet end()}
+			<ColumnsMenu table={tableApi} labelClass="max-2xl:sr-only" title="Колонки" />
+		{/snippet}
+	</FilterBar>
 
 	{#if masked}
 		<InlineHint tone="info">
@@ -136,7 +167,8 @@
 		rows={data.rows}
 		total={data.total}
 		getRowId={(row) => row.person.id}
-		searchPlaceholder="Поиск по ФИО и организации"
+		columnsMenu={false}
+		ontable={(table) => (tableApi = table)}
 		emptyTitle={data.filtered ? 'Под фильтр никто не подошёл' : 'Людей пока нет'}
 		emptyAction={data.filtered ? resetFilters : undefined}
 		emptyDescription={data.filtered

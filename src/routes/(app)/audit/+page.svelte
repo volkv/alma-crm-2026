@@ -1,7 +1,7 @@
 <script lang="ts">
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
-	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
+	import { renderSnippet, type ColumnDef, type SvelteTable } from '@tanstack/svelte-table';
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
@@ -107,6 +107,8 @@
 		selected = event;
 		sheetOpen = true;
 	}
+
+	let tableApi = $state<SvelteTable<DataTableFeatures, AuditEventView> | null>(null);
 </script>
 
 <svelte:head>
@@ -186,7 +188,7 @@
 <Breadcrumbs items={[{ label: 'Главное', href: resolve('/') }, { label: 'Журнал действий' }]} />
 
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
-	<FilterBar url={page.url} actors={data.actors} />
+	<FilterBar url={page.url} actors={data.actors} table={tableApi} />
 
 	{#if data.exportDenied}
 		<InlineHint tone="warning">
@@ -211,7 +213,8 @@
 			rows={data.events.items}
 			total={data.events.total}
 			getRowId={(event) => event.id}
-			searchPlaceholder="Поиск по человеку и типу события"
+			columnsMenu={false}
+			ontable={(table) => (tableApi = table)}
 			emptyTitle="Под фильтр не попало ни одного события"
 			emptyDescription="Проверьте период и условия: журнал пишется только о том, что уже произошло."
 			onopen={openEvent}

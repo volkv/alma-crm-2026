@@ -2,13 +2,18 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
+	import { renderSnippet, type ColumnDef, type SvelteTable } from '@tanstack/svelte-table';
 	import FilterXIcon from '@lucide/svelte/icons/filter-x';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import ColumnsMenu from '$lib/components/data-table/columns-menu.svelte';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
-	import FilterSelect from '$lib/components/directory/filter-select.svelte';
+	import FilterBar, {
+		searchParam,
+		singleParamFilter
+	} from '$lib/components/filters/filter-bar.svelte';
+	import type { StripFilter } from '$lib/components/filters/filter-strip.svelte';
 	import Flash from '$lib/components/directory/flash.svelte';
 	import {
 		DIRECTION_STATE_LABELS,
@@ -75,6 +80,19 @@
 	function open(row: DirectionListItem) {
 		return goto(resolve('/(app)/directions/[id=uuid]', { id: row.direction.id }));
 	}
+
+	const FILTER_PARAMS = ['state'] as const;
+
+	let tableApi = $state<SvelteTable<DataTableFeatures, DirectionListItem> | null>(null);
+
+	const filters = $derived<StripFilter[]>([
+		singleParamFilter(page.url, {
+			param: 'state',
+			label: 'Состояние',
+			options: DIRECTION_STATE_OPTIONS,
+			testId: 'directions-filter-state'
+		})
+	]);
 </script>
 
 {#snippet nameCell(row: DirectionListItem)}
@@ -108,16 +126,26 @@
 </Header>
 
 {#snippet resetFilters()}
-	<Button variant="outline" href={clearedFiltersHref(page.url, ['state'])}>
+	<Button variant="outline" href={clearedFiltersHref(page.url, FILTER_PARAMS)}>
 		<FilterXIcon aria-hidden="true" />
 		Сбросить фильтры
 	</Button>
 {/snippet}
 
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
-	<div class="flex flex-wrap items-center gap-3" data-tour="directions-filters">
-		<FilterSelect param="state" label="Состояние" options={DIRECTION_STATE_OPTIONS} />
-	</div>
+	<!-- Ряд отборов, общий для списков (`filter-bar.svelte`): поиск первым,
+		«Колонки» в конце — свои у таблицы выключены. -->
+	<FilterBar
+		data-tour="directions-filters"
+		testId="directions"
+		search={searchParam(page.url, 'Поиск по коду и названию')}
+		{filters}
+		clearHref={data.filtered ? clearedFiltersHref(page.url, FILTER_PARAMS) : null}
+	>
+		{#snippet end()}
+			<ColumnsMenu table={tableApi} labelClass="max-2xl:sr-only" title="Колонки" />
+		{/snippet}
+	</FilterBar>
 
 	<DataTable
 		data-tour="directions-table"
@@ -126,7 +154,8 @@
 		total={data.total}
 		getRowId={(row) => row.direction.id}
 		defaultSort={{ columnId: 'position', direction: 'asc' }}
-		searchPlaceholder="Поиск по коду и названию"
+		columnsMenu={false}
+		ontable={(table) => (tableApi = table)}
 		emptyTitle={data.filtered ? 'Под фильтр ничего не подошло' : 'Направлений пока нет'}
 		emptyAction={data.filtered ? resetFilters : undefined}
 		emptyDescription={data.filtered

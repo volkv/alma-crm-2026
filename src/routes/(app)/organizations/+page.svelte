@@ -18,12 +18,11 @@
 		ORGANIZATION_KIND_OPTIONS,
 		ORGANIZATION_KIND_TONES
 	} from '$lib/components/directory/labels';
-	import {
-		clearedFiltersHref,
-		filterHref,
-		toggledFilterHref
-	} from '$lib/components/directory/query';
-	import FilterBar from '$lib/components/filters/filter-bar.svelte';
+	import { clearedFiltersHref } from '$lib/components/directory/query';
+	import FilterBar, {
+		multiParamFilter,
+		searchParam
+	} from '$lib/components/filters/filter-bar.svelte';
 	import type { StripFilter } from '$lib/components/filters/filter-strip.svelte';
 	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
@@ -83,29 +82,19 @@
 
 	let tableApi = $state<SvelteTable<DataTableFeatures, OrganizationRow> | null>(null);
 
-	function toggle(param: (typeof FILTER_PARAMS)[number], value: string) {
-		void goto(toggledFilterHref(page.url, param, value), { keepFocus: true, noScroll: true });
-	}
-
 	const filters = $derived<StripFilter[]>([
-		{
-			kind: 'list',
-			key: 'kind',
+		multiParamFilter(page.url, {
+			param: 'kind',
 			label: 'Тип',
 			options: ORGANIZATION_KIND_OPTIONS,
-			selected: data.filters.kind,
-			testId: 'organizations-filter-kind',
-			ontoggle: (value) => toggle('kind', value)
-		},
-		{
-			kind: 'list',
-			key: 'level',
+			testId: 'organizations-filter-kind'
+		}),
+		multiParamFilter(page.url, {
+			param: 'level',
 			label: 'Уровень',
 			options: EDUCATION_LEVEL_OPTIONS,
-			selected: data.filters.level,
-			testId: 'organizations-filter-level',
-			ontoggle: (value) => toggle('level', value)
-		}
+			testId: 'organizations-filter-level'
+		})
 	]);
 
 	function open(row: OrganizationRow) {
@@ -189,12 +178,7 @@
 	<FilterBar
 		data-tour="organizations-filters"
 		testId="organizations"
-		search={{
-			value: data.search,
-			placeholder: 'Поиск по названию, ИНН, региону',
-			onsearch: (value) =>
-				void goto(filterHref(page.url, 'q', value), { keepFocus: true, noScroll: true })
-		}}
+		search={searchParam(page.url, 'Поиск по названию, ИНН, региону')}
 		{filters}
 		clearHref={data.filtered ? clearedFiltersHref(page.url, FILTER_PARAMS) : null}
 	>

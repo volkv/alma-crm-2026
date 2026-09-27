@@ -1,13 +1,21 @@
 <script lang="ts">
+	import { page } from '$app/state';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
-	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
+	import { renderSnippet, type ColumnDef, type SvelteTable } from '@tanstack/svelte-table';
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import ColumnsMenu from '$lib/components/data-table/columns-menu.svelte';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
-	import FilterSelect from '$lib/components/directory/filter-select.svelte';
+	import FilterBar, {
+		searchParam,
+		singleParamFilter,
+		toggleParamFilter
+	} from '$lib/components/filters/filter-bar.svelte';
+	import type { StripFilter } from '$lib/components/filters/filter-strip.svelte';
+	import { clearedFiltersHref } from '$lib/components/directory/query';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
@@ -22,7 +30,7 @@
 		DOCUMENT_STATUS_FACT_LABELS,
 		type DocumentListItem
 	} from '$lib/contracts/documents';
-	import { formatBytes, formatDate, formatDateTime, formatNumber } from '$lib/format';
+	import { formatBytes, formatDate, formatDateTime } from '$lib/format';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -43,8 +51,6 @@
 	 * это выбор, а не снятый фильтр: отсутствие параметра в адресе означает
 	 * «только действующие».
 	 */
-	const REVISION_OPTIONS: readonly FieldOption[] = [{ value: 'all', label: 'Все редакции' }];
-
 	const FACT_OPTIONS: readonly FieldOption[] = [
 		...DOCUMENT_STATUS_FACTS.map((fact) => ({
 			value: fact,
@@ -125,6 +131,38 @@
 			cell: ({ row }) => renderSnippet(downloadCell, row.original)
 		}
 	];
+
+	const FILTER_PARAMS = ['kind', 'format', 'fact', 'revisions'] as const;
+
+	let tableApi = $state<SvelteTable<DataTableFeatures, DocumentListItem> | null>(null);
+
+	const filters = $derived<StripFilter[]>([
+		singleParamFilter(page.url, {
+			param: 'kind',
+			label: 'Вид',
+			options: KIND_OPTIONS,
+			testId: 'documents-filter-kind'
+		}),
+		singleParamFilter(page.url, {
+			param: 'format',
+			label: 'Формат',
+			options: FORMAT_OPTIONS,
+			testId: 'documents-filter-format'
+		}),
+		singleParamFilter(page.url, {
+			param: 'fact',
+			label: 'Отметки',
+			options: FACT_OPTIONS,
+			testId: 'documents-filter-fact'
+		}),
+		// Без параметра список показывает только действующие редакции.
+		toggleParamFilter(page.url, {
+			param: 'revisions',
+			label: 'Все редакции',
+			value: 'all',
+			testId: 'documents-filter-revisions'
+		})
+	]);
 </script>
 
 {#snippet titleCell(row: DocumentListItem)}
@@ -236,18 +274,19 @@
 			</EmptyState>
 		</div>
 	{:else}
-		<div class="flex flex-wrap items-center gap-3" data-tour="documents-filters">
-			<FilterSelect param="kind" label="Вид" options={KIND_OPTIONS} />
-			<FilterSelect param="format" label="Формат" options={FORMAT_OPTIONS} />
-			<FilterSelect param="fact" label="Отметки" options={FACT_OPTIONS} allLabel="Любые" />
-			<FilterSelect
-				param="revisions"
-				label="Редакции"
-				options={REVISION_OPTIONS}
-				allLabel="Только действующие"
-			/>
-			<span class="text-sm text-muted-foreground">Всего: {formatNumber(data.total)}</span>
-		</div>
+		<!-- Ряд отборов, общий для списков (`filter-bar.svelte`): поиск первым,
+			«Колонки» в конце — свои у таблицы выключены. -->
+		<FilterBar
+			data-tour="documents-filters"
+			testId="documents"
+			search={searchParam(page.url, 'Поиск по названию и взаимодействию')}
+			{filters}
+			clearHref={data.filtered ? clearedFiltersHref(page.url, FILTER_PARAMS) : null}
+		>
+			{#snippet end()}
+				<ColumnsMenu table={tableApi} labelClass="max-2xl:sr-only" title="Колонки" />
+			{/snippet}
+		</FilterBar>
 
 		<DataTable
 			data-tour="documents-table"
@@ -255,7 +294,8 @@
 			rows={data.rows}
 			total={data.total}
 			getRowId={(row) => row.id}
-			searchPlaceholder="Поиск по названию и взаимодействию"
+			columnsMenu={false}
+			ontable={(table) => (tableApi = table)}
 			emptyTitle="Под фильтр ничего не подошло"
 			emptyDescription="Смягчите условия или очистите поиск."
 			onopen={(row) => goto(resolve('/(app)/documents/[id=uuid]', { id: row.id }))}

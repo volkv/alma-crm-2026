@@ -104,7 +104,7 @@
 		присылает сайт заказчика, а загружает её администратор. -->
 	<PaymentsDialog />
 
-	<FilterBar filter={data.filter} />
+	<FilterBar />
 
 	<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
 	<div data-tour="exchange-journal" class="flex min-w-0 flex-col gap-4">

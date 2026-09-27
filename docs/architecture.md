@@ -593,9 +593,9 @@ flowchart LR
   обработчиками-перенаправлениями (`+server.ts` без страницы) — ради разосланных ссылок и закладок.
 - `src/lib/components/ui/**` — примитивы shadcn-svelte/bits-ui, завендоренные в репозиторий;
   `src/lib/components/<раздел>/**` — составные компоненты продукта (`interactions/`, `directory/`,
-  `stats/`, `home/`, `form/`, `data-table/`).
+  `stats/`, `home/`, `form/`, `data-table/`, `filters/` — общий ряд отборов над списками).
 - **Контролы:** у каждой задачи ввода ровно один контрол, и он наш, а не браузерный —
-  `FieldSelect`/`FilterSelect`, `FieldDate`/`DateField`, `FileInput`, `FieldInput`, `FieldTextarea`.
+  `FieldSelect`/`FilterBar`, `FieldDate`/`DateField`, `FileInput`, `FieldInput`, `FieldTextarea`.
   Нативных `<select>`, `<input type="date">` и `<input type="file">` в разметке быть не должно;
   проверка на весь продукт и причина — в [`development.md`](development.md), раздел «Один контрол на
   задачу».

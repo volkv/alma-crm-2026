@@ -1,12 +1,16 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
-	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
+	import { page } from '$app/state';
+	import { renderSnippet, type ColumnDef, type SvelteTable } from '@tanstack/svelte-table';
 	import ChartNoAxesColumnIcon from '@lucide/svelte/icons/chart-no-axes-column';
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import ColumnsMenu from '$lib/components/data-table/columns-menu.svelte';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
-	import FilterSelect from '$lib/components/directory/filter-select.svelte';
+	import { clearedFiltersHref } from '$lib/components/directory/query';
+	import FilterBar, { singleParamFilter } from '$lib/components/filters/filter-bar.svelte';
+	import type { StripFilter } from '$lib/components/filters/filter-strip.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
 	import Header from '$lib/components/header.svelte';
@@ -40,6 +44,31 @@
 			label: organization.label
 		}))
 	);
+
+	const FILTER_PARAMS = ['period', 'programId', 'organizationId'] as const;
+
+	let tableApi = $state<SvelteTable<DataTableFeatures, StatIndicatorRow> | null>(null);
+
+	const filters = $derived<StripFilter[]>([
+		singleParamFilter(page.url, {
+			param: 'period',
+			label: 'Период',
+			options: PERIOD_OPTIONS,
+			testId: 'data-indicators-filter-period'
+		}),
+		singleParamFilter(page.url, {
+			param: 'programId',
+			label: 'Программа',
+			options: PROGRAM_OPTIONS,
+			testId: 'data-indicators-filter-program'
+		}),
+		singleParamFilter(page.url, {
+			param: 'organizationId',
+			label: 'Организация',
+			options: ORGANIZATION_OPTIONS,
+			testId: 'data-indicators-filter-organization'
+		})
+	]);
 
 	const columns: ColumnDef<DataTableFeatures, StatIndicatorRow>[] = [
 		{
@@ -172,11 +201,20 @@
 			</EmptyState>
 		</div>
 	{:else}
-		<div class="flex flex-wrap items-center gap-3" data-tour="data-indicators-filters">
-			<FilterSelect param="period" label="Период" options={PERIOD_OPTIONS} allLabel="Все периоды" />
-			<FilterSelect param="programId" label="Программа" options={PROGRAM_OPTIONS} />
-			<FilterSelect param="organizationId" label="Организация" options={ORGANIZATION_OPTIONS} />
-		</div>
+		<!-- Ряд отборов, общий для списков (`filter-bar.svelte`). Поиска у
+			показателей нет; «Колонки» — в конце ряда. -->
+		<FilterBar
+			data-tour="data-indicators-filters"
+			testId="data-indicators"
+			{filters}
+			clearHref={data.filtered || data.selected !== null
+				? clearedFiltersHref(page.url, FILTER_PARAMS)
+				: null}
+		>
+			{#snippet end()}
+				<ColumnsMenu table={tableApi} labelClass="max-2xl:sr-only" title="Колонки" />
+			{/snippet}
+		</FilterBar>
 
 		{#if data.selected === null}
 			<p class="text-sm text-muted-foreground">
@@ -195,6 +233,8 @@
 			emptyTitle="Под фильтр ничего не подошло"
 			emptyDescription="Снимите фильтр или выберите другой период."
 			initialHiddenColumns={['coveragePlan', 'coverageFact', 'snapshotCount']}
+			columnsMenu={false}
+			ontable={(table) => (tableApi = table)}
 		/>
 	{/if}
 </div>

@@ -2,13 +2,18 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
+	import { renderSnippet, type ColumnDef, type SvelteTable } from '@tanstack/svelte-table';
 	import FilterXIcon from '@lucide/svelte/icons/filter-x';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import ColumnsMenu from '$lib/components/data-table/columns-menu.svelte';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
-	import FilterSelect from '$lib/components/directory/filter-select.svelte';
+	import FilterBar, {
+		searchParam,
+		singleParamFilter
+	} from '$lib/components/filters/filter-bar.svelte';
+	import type { StripFilter } from '$lib/components/filters/filter-strip.svelte';
 	import {
 		LIFECYCLE_STATUS_LABELS,
 		LIFECYCLE_STATUS_OPTIONS,
@@ -83,6 +88,25 @@
 	function open(row: ProgramListItem) {
 		return goto(resolve('/(app)/programs/[id=uuid]', { id: row.program.id }));
 	}
+
+	const FILTER_PARAMS = ['level', 'status'] as const;
+
+	let tableApi = $state<SvelteTable<DataTableFeatures, ProgramListItem> | null>(null);
+
+	const filters = $derived<StripFilter[]>([
+		singleParamFilter(page.url, {
+			param: 'level',
+			label: 'Уровень',
+			options: PROGRAM_LEVEL_OPTIONS,
+			testId: 'programs-filter-level'
+		}),
+		singleParamFilter(page.url, {
+			param: 'status',
+			label: 'Состояние',
+			options: LIFECYCLE_STATUS_OPTIONS,
+			testId: 'programs-filter-status'
+		})
+	]);
 </script>
 
 {#snippet priorityCell(row: ProgramListItem)}
@@ -120,17 +144,26 @@
 </Header>
 
 {#snippet resetFilters()}
-	<Button variant="outline" href={clearedFiltersHref(page.url, ['level', 'status'])}>
+	<Button variant="outline" href={clearedFiltersHref(page.url, FILTER_PARAMS)}>
 		<FilterXIcon aria-hidden="true" />
 		Сбросить фильтры
 	</Button>
 {/snippet}
 
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
-	<div class="flex flex-wrap items-center gap-3" data-tour="programs-filters">
-		<FilterSelect param="level" label="Уровень" options={PROGRAM_LEVEL_OPTIONS} />
-		<FilterSelect param="status" label="Состояние" options={LIFECYCLE_STATUS_OPTIONS} />
-	</div>
+	<!-- Ряд отборов, общий для списков (`filter-bar.svelte`): поиск первым,
+		«Колонки» в конце — свои у таблицы выключены. -->
+	<FilterBar
+		data-tour="programs-filters"
+		testId="programs"
+		search={searchParam(page.url, 'Поиск по коду, названию, направлению')}
+		{filters}
+		clearHref={data.filtered ? clearedFiltersHref(page.url, FILTER_PARAMS) : null}
+	>
+		{#snippet end()}
+			<ColumnsMenu table={tableApi} labelClass="max-2xl:sr-only" title="Колонки" />
+		{/snippet}
+	</FilterBar>
 
 	<DataTable
 		data-tour="programs-table"
@@ -139,7 +172,8 @@
 		total={data.total}
 		getRowId={(row) => row.program.id}
 		defaultSort={{ columnId: 'priority', direction: 'asc' }}
-		searchPlaceholder="Поиск по коду, названию, направлению"
+		columnsMenu={false}
+		ontable={(table) => (tableApi = table)}
 		emptyTitle={data.filtered ? 'Под фильтр ничего не подошло' : 'Программ пока нет'}
 		emptyAction={data.filtered ? resetFilters : undefined}
 		emptyDescription={data.filtered

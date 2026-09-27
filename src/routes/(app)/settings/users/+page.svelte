@@ -1,13 +1,15 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
+	import { renderSnippet, type ColumnDef, type SvelteTable } from '@tanstack/svelte-table';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import ConfirmDialog from '$lib/components/confirm-dialog.svelte';
+	import ColumnsMenu from '$lib/components/data-table/columns-menu.svelte';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
 	import { readTableQuery } from '$lib/components/data-table/query';
+	import FilterBar, { searchParam } from '$lib/components/filters/filter-bar.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatDateTime } from '$lib/format';
@@ -101,6 +103,8 @@
 		pending = user;
 		confirmOpen = true;
 	}
+
+	let tableApi = $state<SvelteTable<DataTableFeatures, UserView> | null>(null);
 </script>
 
 <svelte:head>
@@ -189,13 +193,26 @@
 		<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`).
 			Обёртка без оформления: у списка своя разметка, а `min-w-0` оставляет ей
 			право сжиматься в колонке. -->
-		<div data-tour="users-list" class="min-w-0">
+		<div data-tour="users-list" class="flex min-w-0 flex-col gap-3">
+			<!-- Тот же ряд отборов, что над остальными списками (`filter-bar.svelte`):
+				фильтров у пользователей нет, есть поиск и «Колонки». -->
+			<FilterBar
+				testId="users"
+				search={searchParam(page.url, 'Поиск по почте и имени')}
+				filters={[]}
+				clearHref={null}
+			>
+				{#snippet end()}
+					<ColumnsMenu table={tableApi} labelClass="max-2xl:sr-only" title="Колонки" />
+				{/snippet}
+			</FilterBar>
 			<DataTable
 				{columns}
 				rows={data.users.items}
 				total={data.users.total}
 				getRowId={(user) => user.id}
-				searchPlaceholder="Поиск по почте и имени"
+				columnsMenu={false}
+				ontable={(table) => (tableApi = table)}
 				emptyTitle={search === '' ? 'Пользователей пока нет' : 'Ничего не найдено'}
 				emptyDescription={search === ''
 					? undefined

@@ -29,6 +29,8 @@
 	import FormDialog from '$lib/components/form-dialog.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import ErrorState from '$lib/components/error-state.svelte';
+	import FilterBar from '$lib/components/filters/filter-bar.svelte';
+	import type { StripFilter } from '$lib/components/filters/filter-strip.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import KeyValue from '$lib/components/key-value.svelte';
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
@@ -282,6 +284,52 @@
 	const kitView = $derived(page.url.searchParams.get('kit-view') === 'board' ? 'board' : 'table');
 	const kitViewHref = (view: 'table' | 'board') => `${resolve('/ui-kit')}?kit-view=${view}`;
 
+	/** Витрина ряда отборов: то же, что над списками, но в памяти, а не в адресе. */
+	let kitKinds = $state<string[]>(['educational_institution']);
+	let kitStatus = $state<string | null>(null);
+	let kitPeriod = $state({ from: '2026-09-01', to: '' });
+	const kitFilters = $derived<StripFilter[]>([
+		{
+			kind: 'list',
+			key: 'kind',
+			label: 'Тип',
+			options: Object.entries(ORGANIZATION_KINDS).map(([value, label]) => ({ value, label })),
+			selected: kitKinds,
+			ontoggle: (value) =>
+				(kitKinds = kitKinds.includes(value)
+					? kitKinds.filter((item) => item !== value)
+					: [...kitKinds, value])
+		},
+		{
+			kind: 'list',
+			key: 'status',
+			label: 'Состояние',
+			options: [
+				{ value: 'active', label: 'Активна' },
+				{ value: 'archived', label: 'В архиве' }
+			],
+			selected: kitStatus === null ? [] : [kitStatus],
+			single: true,
+			ontoggle: (value) => (kitStatus = kitStatus === value ? null : value)
+		},
+		{
+			kind: 'period',
+			key: 'period',
+			label: 'Период',
+			from: kitPeriod.from,
+			to: kitPeriod.to,
+			clearable: true,
+			onchange: (range) => (kitPeriod = range)
+		},
+		{
+			kind: 'toggle',
+			key: 'overdue',
+			label: 'Просроченные',
+			active: kitOverdue,
+			ontoggle: () => (kitOverdue = !kitOverdue)
+		}
+	]);
+
 	function removeSelection(ids: string[]) {
 		toast.success(`Снято с публикации: ${formatNumber(ids.length)}`);
 	}
@@ -504,6 +552,17 @@
 							>Доска</SegmentedControl.Link
 						>
 					</SegmentedControl.LinkGroup>
+				</div>
+				<div class="flex flex-col gap-2">
+					<p class="section-overline">
+						Ряд отборов над списком — FilterBar: поиск, фильтры, сброс, «Колонки»
+					</p>
+					<FilterBar
+						testId="kit"
+						search={{ value: '', placeholder: 'Поиск по названию', onsearch: () => {} }}
+						filters={kitFilters}
+						clearHref={resolve('/ui-kit')}
+					/>
 				</div>
 				<div class="flex flex-col gap-2">
 					<p class="section-overline">Независимый фильтр — Button, aria-pressed</p>

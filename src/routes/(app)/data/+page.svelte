@@ -2,15 +2,20 @@
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
+	import { renderSnippet, type ColumnDef, type SvelteTable } from '@tanstack/svelte-table';
 	import DatabaseIcon from '@lucide/svelte/icons/database';
 	import FilterXIcon from '@lucide/svelte/icons/filter-x';
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import UploadIcon from '@lucide/svelte/icons/upload';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import ColumnsMenu from '$lib/components/data-table/columns-menu.svelte';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
-	import FilterSelect from '$lib/components/directory/filter-select.svelte';
+	import FilterBar, {
+		searchParam,
+		singleParamFilter
+	} from '$lib/components/filters/filter-bar.svelte';
+	import type { StripFilter } from '$lib/components/filters/filter-strip.svelte';
 	import { clearedFiltersHref } from '$lib/components/directory/query';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import Header from '$lib/components/header.svelte';
@@ -117,6 +122,25 @@
 	function open(row: StatSnapshotListItem) {
 		return goto(resolve('/(app)/data/[id=uuid]', { id: row.id }));
 	}
+
+	const FILTER_PARAMS = ['source', 'status'] as const;
+
+	let tableApi = $state<SvelteTable<DataTableFeatures, StatSnapshotListItem> | null>(null);
+
+	const filters = $derived<StripFilter[]>([
+		singleParamFilter(page.url, {
+			param: 'source',
+			label: 'Источник',
+			options: SOURCE_OPTIONS,
+			testId: 'data-filter-source'
+		}),
+		singleParamFilter(page.url, {
+			param: 'status',
+			label: 'Состояние',
+			options: STATUS_OPTIONS,
+			testId: 'data-filter-status'
+		})
+	]);
 </script>
 
 {#snippet sourceCell(row: StatSnapshotListItem)}
@@ -210,17 +234,25 @@
 		</div>
 	{:else}
 		{#snippet resetFilters()}
-			<Button variant="outline" href={clearedFiltersHref(page.url, ['source', 'status'])}>
+			<Button variant="outline" href={clearedFiltersHref(page.url, FILTER_PARAMS)}>
 				<FilterXIcon aria-hidden="true" />
 				Сбросить фильтры
 			</Button>
 		{/snippet}
 
-		<div class="flex flex-wrap items-center gap-3" data-tour="data-filters">
-			<FilterSelect param="source" label="Источник" options={SOURCE_OPTIONS} />
-			<FilterSelect param="status" label="Состояние" options={STATUS_OPTIONS} />
-			<span class="text-sm text-muted-foreground">Всего: {formatNumber(data.total)}</span>
-		</div>
+		<!-- Ряд отборов, общий для списков (`filter-bar.svelte`): поиск первым,
+			«Колонки» в конце — свои у таблицы выключены. -->
+		<FilterBar
+			data-tour="data-filters"
+			testId="data"
+			search={searchParam(page.url, 'Поиск по имени файла и примечанию')}
+			{filters}
+			clearHref={data.filtered ? clearedFiltersHref(page.url, FILTER_PARAMS) : null}
+		>
+			{#snippet end()}
+				<ColumnsMenu table={tableApi} labelClass="max-2xl:sr-only" title="Колонки" />
+			{/snippet}
+		</FilterBar>
 
 		<DataTable
 			data-tour="data-table"
@@ -228,7 +260,8 @@
 			rows={data.rows}
 			total={data.total}
 			getRowId={(row) => row.id}
-			searchPlaceholder="Поиск по имени файла и примечанию"
+			columnsMenu={false}
+			ontable={(table) => (tableApi = table)}
 			emptyTitle="Под фильтр ничего не подошло"
 			emptyDescription="Смягчите условия или очистите поиск."
 			emptyAction={resetFilters}
