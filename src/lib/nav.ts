@@ -24,6 +24,7 @@ import WalletIcon from '@lucide/svelte/icons/wallet';
 import WebhookIcon from '@lucide/svelte/icons/webhook';
 import WorkflowIcon from '@lucide/svelte/icons/workflow';
 import type { PermissionKey } from '$lib/server/rbac/permissions';
+import { moduleNavSections } from '$lib/platform/sections-registry';
 
 /**
  * A heading of the sidebar. A heading is not a link: it only says what kind of
@@ -58,6 +59,11 @@ export type NavWorkspace = {
 	 * оставлять его гадать, завелось ли. Что внутри пусто, объясняет доска.
 	 */
 	hasWorkflow: boolean;
+	/**
+	 * Действующие модули пространства: по ним в секцию встают пункты страниц
+	 * модулей. Нет поля — пунктов модулей нет.
+	 */
+	modules?: readonly string[];
 };
 
 export type NavSection = {
@@ -292,8 +298,9 @@ function workspaceIcon(key: string): LucideIcon {
 
 /**
  * Пункты секции пространства: одна секция на направление, пункты — то, что в
- * нём делают. Сюда же встанут пункты модулей пространства: секция — список, а
- * не единственная ссылка.
+ * нём делают. За пунктами ядра идут страницы действующих модулей пространства
+ * (`moduleNavSections`): модуль, который в пространстве не действует, пункта
+ * не даёт, а право у пункта — то, что объявил манифест модуля.
  *
  * Заголовок — имя пространства, а не слово «Пространство»: человек ходит в
  * «Работу с ВУЗ», а не в «пространство номер один».
@@ -322,7 +329,14 @@ function workspaceSections(workspace: NavWorkspace): NavSection[] {
 			icon: BarChart3Icon,
 			group,
 			permission: 'interactions.read'
-		}
+		},
+		...moduleNavSections(workspace).map((section): NavSection => ({
+			href: section.href,
+			label: section.label,
+			icon: section.icon,
+			group,
+			permission: section.permission
+		}))
 	];
 }
 

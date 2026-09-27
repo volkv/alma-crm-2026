@@ -163,6 +163,26 @@ describe('группы меню', () => {
 		expect(sectionFor(links, '/w/b2b/interactions/new')?.href).toBe('/w/b2b/interactions');
 	});
 
+	it('ставят страницу модуля в секцию пространства, где модуль действует, и только там', () => {
+		// «Обучение» действует в b2b и не действует в b2c: пункт его страницы
+		// есть только у первого, с правом из манифеста модуля.
+		const workspaces: NavWorkspace[] = [
+			{ ...WORKSPACES[0], modules: ['contracts', 'learning'] },
+			{ ...WORKSPACES[1], modules: ['payment'] }
+		];
+		const streams = navSections(workspaces).filter((section) => section.href.includes('/m/'));
+
+		expect(
+			streams.map((section) => [section.href, section.label, section.group.id, section.permission])
+		).toEqual([
+			['/w/b2b/m/learning/streams', 'Потоки и слушатели', 'workspace:b2b', 'interactions.read']
+		]);
+		// Подсветка — по префиксу адреса, как у остальных пунктов.
+		expect(sectionFor(navLinks(workspaces), '/w/b2b/m/learning/streams')?.href).toBe(
+			'/w/b2b/m/learning/streams'
+		);
+	});
+
 	it('показывают пространство без процесса: оно заведено, и это видно', () => {
 		const grouped = groupedSections(
 			navSections([{ key: 'new', name: 'Новое направление', hasWorkflow: false }])

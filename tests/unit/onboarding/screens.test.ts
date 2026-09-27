@@ -49,8 +49,15 @@ const APP_ROUTES = `${REPO}src/routes/(app)`;
  * Экраны, которых в реестре нет намеренно: витрина компонентов — не рабочий
  * экран, печатная версия справки и сама статья живут вне
  * подсказок (подсказка о статье справки была бы справкой о справке).
+ * Диспетчер страниц модулей — тоже: страницы модулей описывает сам модуль, а
+ * ядро не знает, что на них.
  */
-const WITHOUT_SCREEN = ['/ui-kit', '/help/print', '/help/[section]/[page]'];
+const WITHOUT_SCREEN = [
+	'/ui-kit',
+	'/help/print',
+	'/help/[section]/[page]',
+	'/w/[workspace]/m/[module]/[...path]'
+];
 
 /** Файлы по дереву каталога: путь целиком, вместе с корнем. */
 function filesUnder(directory: string): string[] {
