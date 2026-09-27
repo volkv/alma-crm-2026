@@ -21,6 +21,7 @@
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
+	import WorkspaceModules from '$lib/components/workspace-settings/workspace-modules.svelte';
 	import { formatDate, formatNumber } from '$lib/format';
 	import {
 		createWorkspaceSchema,
@@ -381,6 +382,21 @@
 				</Table.Root>
 			</div>
 		{/if}
+	</Card.Content>
+</Card.Root>
+
+<Card.Root>
+	<Card.Header>
+		<Card.Title>Модули пространств</Card.Title>
+		<Card.Description>
+			Модуль добавляет пространству панели карточки, факты в шапке, действия и пункты меню.
+			Действует он там, где подключён или где его требует стадия процесса. Выключение прячет панели
+			и действия модуля, но не стирает записанного в них: подключите модуль снова — и данные
+			вернутся на место.
+		</Card.Description>
+	</Card.Header>
+	<Card.Content>
+		<WorkspaceModules modules={data.modules} />
 	</Card.Content>
 </Card.Root>
 

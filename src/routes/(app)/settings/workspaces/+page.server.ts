@@ -9,9 +9,13 @@ import {
 	renameWorkspaceSchema,
 	reorderWorkspacesSchema
 } from '$lib/contracts/interactions';
+import { setWorkspaceModuleSchema } from '$lib/contracts/modules';
+import { moduleByKey } from '$lib/platform/registry';
 import { actorFromEvent } from '$lib/server/actor';
+import { getDb } from '$lib/server/db';
 import { AppError, ForbiddenError } from '$lib/server/errors';
 import { errorIssues, toActionFailure, type ActionErrorPayload } from '$lib/server/http';
+import { listWorkspaceModules, setWorkspaceModule } from '$lib/server/platform/workspace-modules';
 import { can } from '$lib/server/rbac';
 import {
 	addWorkspaceMember,
@@ -23,6 +27,7 @@ import {
 	createWorkspace,
 	listWorkflows,
 	listWorkspaces,
+	readWorkspaceByKey,
 	renameWorkspace,
 	reorderWorkspaces
 } from '$lib/server/stages/process';
@@ -45,6 +50,11 @@ import type { Actions, PageServerLoad } from './$types';
  * Здесь же состав пространств: кто в каком направлении работает. Это выдача
  * доступа, поэтому у неё своё право — `users.manage`; без него блок состава не
  * показывается, а команды откажут и так.
+ *
+ * И модули пространств: что из установленного подключено к каждому
+ * направлению. Модуль, который нужен стадии процесса, действует и без
+ * включения, и выключить его нельзя. Правило живёт в сервисе модулей, а
+ * переключатель в форме лишь показывает его заблокированным.
  */
 
 /** Формы страницы; идентификатор связывает форму на сервере с формой в браузере. */
@@ -62,15 +72,16 @@ export const load: PageServerLoad = async (event) => {
 
 	// Процессы нужны на этом экране целиком: из них выбирают и при заведении
 	// пространства, и при назначении процесса уже заведённому.
-	const [workspaces, workflows, memberships, createForm, renameForm] = await Promise.all([
+	const [workspaces, workflows, modules, memberships, createForm, renameForm] = await Promise.all([
 		listWorkspaces(ctx),
 		listWorkflows(ctx),
+		listWorkspaceModules(ctx),
 		can(ctx, 'users.manage') ? listWorkspaceMemberships(ctx) : null,
 		superValidate(zod4(createWorkspaceSchema), { id: FORM_IDS.create }),
 		superValidate(zod4(renameWorkspaceSchema), { id: FORM_IDS.rename })
 	]);
 
-	return { workspaces, workflows, memberships, createForm, renameForm };
+	return { workspaces, workflows, modules, memberships, createForm, renameForm };
 };
 
 /**
@@ -174,6 +185,57 @@ export const actions: Actions = {
 					: 'Процесс назначен пространству',
 			issues: []
 		};
+	},
+
+	/**
+	 * Включение и выключение модуля пространства. Формы у действия нет —
+	 * переключатель в строке модуля отправляет себя сам, — поэтому ответ тот же,
+	 * что у назначения процесса. Выключение не стирает данных: панели модуля
+	 * перестают показываться, а записанное в них возвращается вместе с модулем.
+	 */
+	module: async (event) => {
+		const body = await event.request.formData();
+		const parsed = setWorkspaceModuleSchema.safeParse({
+			workspaceKey: body.get('workspaceKey'),
+			moduleKey: body.get('moduleKey'),
+			enabled: body.get('enabled')
+		});
+
+		if (!parsed.success) {
+			return fail(400, {
+				message: parsed.error.issues.map((issue) => issue.message).join('. '),
+				issues: []
+			});
+		}
+
+		const { workspaceKey, moduleKey, enabled } = parsed.data;
+
+		try {
+			const { changed } = await setWorkspaceModule(actorFromEvent(event), parsed.data);
+			const workspace = await readWorkspaceByKey(getDb(), workspaceKey);
+			const label = `Модуль «${moduleByKey(moduleKey)?.label ?? moduleKey}»`;
+			const where = `пространства «${workspace.name}»`;
+
+			// Повтор ничего не меняет и в журнал не пишется, но и отказом не
+			// считается: второй щелчок по уже сделанному — не ошибка человека.
+			if (!changed) {
+				return {
+					ok: true,
+					message: `${label} уже ${enabled ? 'подключён' : 'отключён'}: у ${where} ничего не изменилось`,
+					issues: []
+				};
+			}
+
+			return {
+				ok: true,
+				message: enabled
+					? `${label} подключён: его панели и действия появятся в карточках ${where}`
+					: `${label} отключён: его панели и действия скрыты в карточках ${where}. Записанные данные сохранены и вернутся, если модуль подключить снова`,
+				issues: []
+			};
+		} catch (failure) {
+			return toActionFailure(failure);
+		}
 	},
 
 	/**
