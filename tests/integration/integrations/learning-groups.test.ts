@@ -643,9 +643,21 @@ describe('что подтверждает стадию', () => {
 			resultMessage(group, { occurredAt: '2027-01-10T06:00:00Z', completed: 0, finishedOn: null })
 		);
 
+		// По плану поток идёт до 31.05.2027: без явного «досрочно» отметка не
+		// ставится — плановая дата конца ещё впереди.
+		await expect(
+			markLearningGroupCompleted(testActor(), {
+				interactionId,
+				learningGroupId: group.learningGroupId,
+				early: false,
+				comment: 'Итоговая ведомость пришла бумагой'
+			})
+		).rejects.toMatchObject({ code: 'validation' });
+
 		const outcome = await markLearningGroupCompleted(testActor(), {
 			interactionId,
 			learningGroupId: group.learningGroupId,
+			early: true,
 			comment: 'Итоговая ведомость пришла бумагой: 38 из 45 завершили'
 		});
 
@@ -680,6 +692,7 @@ describe('что подтверждает стадию', () => {
 			markLearningGroupCompleted(testActor(), {
 				interactionId,
 				learningGroupId: group.learningGroupId,
+				early: true,
 				comment: 'Ещё раз'
 			})
 		).rejects.toMatchObject({ code: 'conflict' });
@@ -704,6 +717,7 @@ describe('что подтверждает стадию', () => {
 			markLearningGroupCompleted(testActor(), {
 				interactionId,
 				learningGroupId: group.learningGroupId,
+				early: true,
 				comment: 'Обучение закончилось'
 			})
 		).rejects.toMatchObject({ code: 'conflict' });
@@ -712,6 +726,7 @@ describe('что подтверждает стадию', () => {
 			markLearningGroupCompleted(testActor({ permissions: ['interactions.read'] }), {
 				interactionId,
 				learningGroupId: group.learningGroupId,
+				early: true,
 				comment: 'Обучение закончилось'
 			})
 		).rejects.toMatchObject({ code: 'forbidden' });
@@ -759,6 +774,7 @@ describe('что подтверждает стадию', () => {
 		const mark = markLearningGroupCompleted(testActor(), {
 			interactionId,
 			learningGroupId: group.learningGroupId,
+			early: true,
 			comment: 'Итоговая ведомость пришла бумагой'
 		});
 		await waitForLockWaiters(1);

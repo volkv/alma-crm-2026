@@ -23,8 +23,11 @@ import { EDUCATION_LEVELS } from './directory';
  * `major`, и сообщения `1.x` получают отказ во всех направлениях. `2.1`
  * добавила в ту же заявку необязательный поимённый список слушателей
  * `learners` — добавление необязательного поля совместимо, `major` прежний.
+ * `3.0` убрала из снимка статуса заявки поле `lastComment`: комментарии
+ * сотрудников — внутренняя работа, и на сайт они не уходят. Удаление поля
+ * снова несовместимо — сменился `major`.
  */
-export const EXCHANGE_SCHEMA_VERSION = '2.1';
+export const EXCHANGE_SCHEMA_VERSION = '3.0';
 
 /** Чей это экземпляр: `crm` — наша система, остальные — чужие. */
 export const EXCHANGE_SYSTEMS = ['cms', 'lms', 'crm'] as const;
@@ -75,6 +78,29 @@ export function parseExternalSource(
 	return (EXCHANGE_SYSTEMS as readonly string[]).includes(system)
 		? { system: system as ExchangeSystem, instance }
 		: null;
+}
+
+/** Пометка дела с сайта, программу заявки которого справочник не опознал. */
+export const SITE_PROGRAM_UNRECOGNIZED_NOTICE =
+	'Программа с сайта не распознана — проверьте и выберите программу';
+
+/**
+ * Нужна ли делу пометка «программа с сайта не распознана».
+ *
+ * Признак не хранится отдельно, а выводится из самого дела: дело пришло с
+ * сайта, а программы у него нет. Приём заявки ставит программу только по коду,
+ * который нашёлся в справочнике, — первой попавшейся «по умолчанию» он не
+ * подставляет, поэтому пустой состав у дела с сайта и значит «код не опознан
+ * или не прислан». Пометка уходит сама, как только сотрудник выберет программу.
+ */
+export function siteProgramUnrecognized(interaction: {
+	externalSource: string | null;
+	programs: readonly unknown[];
+}): boolean {
+	return (
+		parseExternalSource(interaction.externalSource)?.system === 'cms' &&
+		interaction.programs.length === 0
+	);
 }
 
 /** Имя объекта у отправителя: устойчивое и неизменное. */
@@ -316,7 +342,6 @@ export const applicationStatusDataSchema = z.object({
 	stage: z.object({ key: z.string(), name: z.string(), position: z.number().int() }).nullable(),
 	responsible: z.object({ userId: z.uuid(), name: z.string() }).nullable(),
 	dueAt: z.string().nullable(),
-	lastComment: z.string().nullable(),
 	updatedAt: z.string()
 });
 
@@ -451,7 +476,14 @@ export const completeLearningGroupSchema = z.object({
 	comment: requiredText(
 		1000,
 		'Объясните, почему обучение считается завершённым без итога из системы обучения'
-	)
+	),
+	/**
+	 * Поток по плану ещё идёт, а обучение закончилось раньше. Без этого
+	 * подтверждения отметка по потоку с концом в будущем не ставится: плановая
+	 * дата окончания — не факт, и случайная отметка закрыла бы стадию за месяцы
+	 * до конца занятий.
+	 */
+	early: z.boolean().default(false)
 });
 
 export type CompleteLearningGroupInput = z.output<typeof completeLearningGroupSchema>;

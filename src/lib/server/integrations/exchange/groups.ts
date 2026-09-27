@@ -23,6 +23,7 @@ import {
 	type LmsEvidence,
 	type SendLearningGroupInput
 } from '$lib/contracts/exchange';
+import { formatDate, formatIsoDay } from '$lib/format';
 import type { ActorContext } from '../../actor';
 import { recordAuditEvent } from '../../audit';
 import { getDb } from '../../db';
@@ -691,6 +692,7 @@ export async function markLearningGroupCompleted(
 				id: learningGroups.id,
 				streamNumber: learningGroups.streamNumber,
 				groupExternalId: learningGroups.groupExternalId,
+				endsOn: learningGroups.endsOn,
 				completionMarkedAt: learningGroups.completionMarkedAt
 			})
 			.from(learningGroups)
@@ -720,6 +722,16 @@ export async function markLearningGroupCompleted(
 			throw new ConflictError(
 				`Обучение по потоку ${group.streamNumber} уже завершено итогом из системы обучения: отметка не нужна`
 			);
+		}
+
+		// Плановый конец потока ещё впереди: отметка без подтверждения «досрочно»
+		// закрыла бы стадию за месяцы до конца занятий — по ошибке в строке
+		// потока, а не по факту. Досрочное завершение бывает, и тогда сотрудник
+		// говорит об этом явно; комментарий объясняет почему.
+		if (group.endsOn !== null && group.endsOn > formatIsoDay() && !input.early) {
+			throw new ValidationError('Отметка не поставлена', [
+				`По плану поток ${group.streamNumber} заканчивается ${formatDate(group.endsOn)}: если обучение закончилось раньше, подтвердите досрочное завершение`
+			]);
 		}
 
 		const [marked] = await tx

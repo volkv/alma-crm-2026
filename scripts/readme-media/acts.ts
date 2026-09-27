@@ -438,7 +438,12 @@ export async function traceNumber(page: Page): Promise<void> {
  * открыт.
  */
 export async function submitApplication(page: Page, stand: Stand): Promise<void> {
-	await press(page, page.getByRole('button', { name: 'Демо: заявка с сайта' }));
+	await press(
+		page,
+		page
+			.getByRole('group', { name: 'Демо: заявка с сайта' })
+			.getByRole('button', { name: 'Вуз (b2b)' })
+	);
 
 	const sent = page.getByText(/Имитатор CMS подал заявку/u).first();
 

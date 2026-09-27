@@ -10,7 +10,7 @@
 import { randomUUID } from 'node:crypto';
 
 /** Версия схемы, на которой говорит контракт v1. */
-export const SCHEMA_VERSION = '2.1';
+export const SCHEMA_VERSION = '3.0';
 
 /** Чей это экземпляр. `crm` — наша система, остальные — чужие. */
 export type SourceSystem = 'cms' | 'lms' | 'crm';

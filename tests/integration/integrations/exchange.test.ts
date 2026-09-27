@@ -19,6 +19,8 @@ import {
 	consents,
 	documents,
 	exchangeMessages,
+	interactionChanges,
+	interactionPrograms,
 	interactions,
 	learningGroupResults,
 	learningGroups,
@@ -26,6 +28,7 @@ import {
 	organizationResponsibles,
 	organizations,
 	people,
+	programs,
 	stageEntries,
 	users,
 	workspaceMembers
@@ -40,7 +43,7 @@ import { setExchangeSettings } from '$lib/server/integrations/settings';
 import { decryptContacts } from '$lib/server/people/pii';
 import { withTransaction } from '$lib/server/db/transaction';
 import { getRedis } from '$lib/server/redis';
-import { advanceStage } from '$lib/server/stages/commands';
+import { addComment, advanceStage } from '$lib/server/stages/commands';
 import {
 	B2B_WORKSPACE_KEY,
 	B2B_PROCESS,
@@ -601,16 +604,97 @@ describe('приём заявки с сайта', () => {
 		expect(intakeComments).toHaveLength(1);
 		expect(await statuses()).toHaveLength(1);
 
-		// Изменение, видное заявителю, снимок ставит — а следующее, пока тот ещё
-		// ждёт отправки, второго не ставит: ждущий унесёт состояние после обоих.
+		// Новый комментарий заявителя ложится в ленту дела, но снимка не ставит:
+		// комментариев в снимке нет, а состояние, стадия и срок те же.
 		await intake(
 			apiEvent({ body: envelope({ ...B2B_DATA, revision: 3, comment: 'Ждём звонка.' }), key })
 		);
+
+		expect(await statuses()).toHaveLength(1);
+	});
+
+	it('повтор заявки не возвращает программу, которую убрал сотрудник, а новая программа ложится в историю', async () => {
+		const key = apiKey;
+		const [first, second] = await database.db
+			.insert(programs)
+			.values([
+				{ code: 'VO-BAK-01', name: 'DevOps-инженер', level: 'bachelor', status: 'active' },
+				{ code: 'VO-BAK-02', name: 'Веб-разработка', level: 'bachelor', status: 'active' }
+			])
+			.returning({ id: programs.id });
+
+		const created = await intake(
+			apiEvent({ body: envelope({ ...B2B_DATA, programCodes: ['VO-BAK-01'] }), key })
+		);
+		const { data } = (await created.json()) as { data: { interactionId: string } };
+		const programsOf = async () =>
+			(
+				await database.db
+					.select({ programId: interactionPrograms.programId })
+					.from(interactionPrograms)
+					.where(eq(interactionPrograms.interactionId, data.interactionId))
+			).map((row) => row.programId);
+
+		expect(await programsOf()).toEqual([first.id]);
+
+		// Сотрудник убрал программу из дела.
+		await database.db
+			.delete(interactionPrograms)
+			.where(eq(interactionPrograms.interactionId, data.interactionId));
+
+		// Сайт присылает ту же заявку новой ревизией: программа не возвращается.
 		await intake(
-			apiEvent({ body: envelope({ ...B2B_DATA, revision: 4, comment: 'Звонка не было.' }), key })
+			apiEvent({
+				body: envelope({ ...B2B_DATA, revision: 2, programCodes: ['VO-BAK-01'] }),
+				key
+			})
 		);
 
-		expect((await statuses()).map((row) => row.state).sort()).toEqual(['pending', 'sent']);
+		expect(await programsOf()).toEqual([]);
+		expect(await database.db.select().from(interactionChanges)).toHaveLength(0);
+
+		// Заявитель добавил программу: она ложится в дело, и правка видна в
+		// истории с причиной — ревизией заявки.
+		await intake(
+			apiEvent({
+				body: envelope({ ...B2B_DATA, revision: 3, programCodes: ['VO-BAK-01', 'VO-BAK-02'] }),
+				key
+			})
+		);
+
+		expect(await programsOf()).toEqual([second.id]);
+
+		const history = await database.db
+			.select({
+				field: interactionChanges.field,
+				newValue: interactionChanges.newValue,
+				reason: interactionChanges.reason
+			})
+			.from(interactionChanges)
+			.where(eq(interactionChanges.interactionId, data.interactionId));
+
+		expect(history).toEqual([
+			{
+				field: 'programs',
+				newValue: [{ programId: second.id, programVersionId: null }],
+				reason: 'Изменилась заявка с сайта (ревизия 3)'
+			}
+		]);
+	});
+
+	it('дело без опознанной программы помечается в комментарии приёма', async () => {
+		const created = await intake(
+			apiEvent({ body: envelope({ ...B2C_DATA, programCodes: ['SITE-PROM-DEV'] }), key: apiKey })
+		);
+		const { data } = (await created.json()) as { data: { interactionId: string } };
+
+		const [row] = await database.db
+			.select({ body: comments.body })
+			.from(comments)
+			.where(eq(comments.interactionId, data.interactionId));
+
+		expect(row.body).toContain('Коды справочника не опознаны: SITE-PROM-DEV');
+		expect(row.body).toContain('Программа с сайта не распознана');
 	});
 
 	it('не применяет сообщение с ревизией не больше применённой', async () => {
@@ -880,6 +964,33 @@ describe('снимок статуса заявки', () => {
 			.where(eq(exchangeMessages.direction, 'outbound'));
 
 		expect(message).toMatchObject({ state: 'sent', responseStatus: 200 });
+	});
+
+	it('не несёт комментариев сотрудников: внутренняя работа на сайт не уходит', async () => {
+		const interactionId = await acceptApplication();
+
+		await addComment(testActor(), {
+			interactionId,
+			body: 'Внутреннее: оплата картой отца, телефон +7 900 111-22-33'
+		});
+		// Снимок после приёма ещё ждёт отправки, и тело его собирается при
+		// отправке — уже после комментария.
+		await runExchangeCycle(testActor());
+
+		const bodies = await database.db
+			.select({ envelope: exchangeMessages.envelope })
+			.from(exchangeMessages)
+			.where(eq(exchangeMessages.direction, 'outbound'));
+
+		expect(bodies.length).toBeGreaterThan(0);
+
+		for (const { envelope: sent } of bodies) {
+			expect(sent).not.toBeNull();
+			expect(sent).not.toContain('оплата картой');
+			expect((JSON.parse(sent!) as { data: Record<string, unknown> }).data).not.toHaveProperty(
+				'lastComment'
+			);
+		}
 	});
 
 	it('появляется в той же транзакции, что и переход по стадии', async () => {

@@ -174,7 +174,7 @@ describe('поимённый список слушателей', () => {
 			data: { externalId: string; learners: { personId: string; email: string }[] };
 		};
 
-		expect(envelope.schemaVersion).toBe('2.1');
+		expect(envelope.schemaVersion).toBe('3.0');
 		expect(envelope.data.externalId).toBe(`crm-group-${interactionId}-1`);
 		expect(envelope.data.learners.map((learner) => learner.email).sort()).toEqual([
 			'ivanov@vuz.example',

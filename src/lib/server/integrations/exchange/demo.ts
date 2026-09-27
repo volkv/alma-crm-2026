@@ -28,8 +28,10 @@ import { getExchangeSettings } from '../settings';
  */
 const TIMEOUT_MS = 15_000;
 
-/** Набор формы, который жмёт кнопка: заявка вуза, а не физического лица. */
-const FORM = 'b2b';
+/** Наборы формы имитатора: заявка вуза (`b2b`) или физического лица (`b2c`). */
+export const DEMO_APPLICATION_FORMS = ['b2b', 'b2c'] as const;
+
+export type DemoApplicationForm = (typeof DEMO_APPLICATION_FORMS)[number];
 
 /** Что ответил имитатор: ключ поданной заявки и чем её приняла CRM. */
 export type DemoApplicationResult = {
@@ -50,6 +52,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /**
  * Просит имитатор CMS подать заявку с сайта и возвращает то, что он ответил.
  *
+ * Каждое нажатие — новая заявка с новым ключом (`fresh`): кнопка показывает, как
+ * заявка становится делом, и повтор одной и той же заявки набора приходил бы в
+ * CRM изменением уже заведённого дела, а не новым.
+ *
  * Отказ — это `ValidationError` с объяснением, **чья** это поломка: имитатор
  * недоступен, имитатор отказал, или имитатор ответил, но сам не достучался до
  * CRM (частый случай на стенде, где приложение живёт не там, куда смотрит
@@ -57,7 +63,10 @@ function isRecord(value: unknown): value is Record<string, unknown> {
  * не так» ему не поможет. Молча проглотить отказ нельзя тем более — журнал
  * обмена остался бы пустым, а кнопка выглядела бы нажатой.
  */
-export async function sendDemoApplication(ctx: ActorContext): Promise<DemoApplicationResult> {
+export async function sendDemoApplication(
+	ctx: ActorContext,
+	form: DemoApplicationForm
+): Promise<DemoApplicationResult> {
 	requirePermission(ctx, 'integrations.manage');
 
 	const config = getConfig();
@@ -90,7 +99,7 @@ export async function sendDemoApplication(ctx: ActorContext): Promise<DemoApplic
 		response = await fetch(url, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json; charset=utf-8', accept: 'application/json' },
-			body: JSON.stringify({ form: FORM }),
+			body: JSON.stringify({ form, fresh: true }),
 			redirect: 'manual',
 			signal: AbortSignal.timeout(TIMEOUT_MS)
 		});

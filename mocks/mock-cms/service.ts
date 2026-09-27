@@ -15,8 +15,11 @@ import {
 	applicationTemplate,
 	applicationWithApplicant,
 	isApplicationForm,
+	isApplicationProgram,
 	templateExternalId,
+	withUnknownProgram,
 	APPLICATION_FORMS,
+	APPLICATION_PROGRAMS,
 	type ApplicationForm
 } from './applications.ts';
 import { renderApplicationSpotlight } from './spotlight.ts';
@@ -40,7 +43,16 @@ import { checkSignature } from '../shared/signature.ts';
 export const CRM_APPLICATIONS_PATH = '/api/v1/applications';
 
 /** Поля триггера заявки: всё остальное — опечатка или чужая договорённость. */
-const TRIGGER_FIELDS = ['form', 'externalId', 'applicant', 'revision', 'eventId', 'data'] as const;
+const TRIGGER_FIELDS = [
+	'form',
+	'externalId',
+	'fresh',
+	'applicant',
+	'program',
+	'revision',
+	'eventId',
+	'data'
+] as const;
 
 /**
  * Поля триггера, которыми распоряжается только управление имитатором.
@@ -65,7 +77,8 @@ const CONTROL_ONLY_FIELDS = ['revision', 'eventId', 'data'] as const;
 const OPEN_EXTERNAL_ID = /^site-2026-\d{6}$/;
 
 /**
- * Ключ новой заявки, когда в форме назвали своего заявителя, а ключа не дали.
+ * Ключ новой заявки, когда в форме назвали своего заявителя, а ключа не дали,
+ * или новую заявку попросили явно (`fresh`: кнопка «Демо: заявка с сайта»).
  *
  * Ключ набора означал бы изменение заявки набора — под чужим именем. Номер
  * случайный из верхней половины нумерации стенда: сид занимает нижние номера
@@ -406,6 +419,38 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 					);
 				}
 
+				if (body.fresh !== undefined && body.fresh !== true) {
+					return refuse(400, 'validation', 'fresh: ожидается true — новая заявка с новым ключом');
+				}
+
+				const fresh = body.fresh === true;
+
+				if (fresh && body.externalId !== undefined) {
+					return refuse(
+						400,
+						'validation',
+						'fresh и externalId вместе не задаются: новая заявка получает новый ключ'
+					);
+				}
+
+				if (body.program !== undefined && !isApplicationProgram(body.program)) {
+					return refuse(
+						400,
+						'validation',
+						`program: ожидается ${APPLICATION_PROGRAMS.join(' или ')}`
+					);
+				}
+
+				if (body.program !== undefined && body.data !== undefined) {
+					return refuse(
+						400,
+						'validation',
+						'program и data вместе не задаются: data — всё тело заявки'
+					);
+				}
+
+				const unknownProgram = body.program === 'нет в каталоге CRM';
+
 				if (body.eventId !== undefined && typeof body.eventId !== 'string') {
 					return refuse(400, 'validation', 'eventId: ожидается строка');
 				}
@@ -443,7 +488,7 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 					const externalId =
 						typeof body.externalId === 'string' && body.externalId !== ''
 							? body.externalId
-							: applicant !== null
+							: applicant !== null || fresh
 								? freshExternalId(applications)
 								: templateExternalId(form);
 					const previous = applications.get(externalId);
@@ -454,12 +499,13 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 					// Заявитель повторной отправки — тот же, что в первой: иначе
 					// изменение заявки молча вернуло бы ей заявителя набора.
 					const named = applicant ?? previous?.applicant ?? null;
-					const data =
+					const collected =
 						body.data !== undefined
 							? { externalId, revision, ...(body.data as Record<string, unknown>) }
 							: named !== null
 								? applicationWithApplicant(form, externalId, revision, named)
 								: applicationTemplate(form, externalId, revision);
+					const data = unknownProgram ? withUnknownProgram(collected) : collected;
 
 					envelope = buildEnvelope({
 						eventType: 'application.submitted',
@@ -552,6 +598,12 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 						fields: [
 							{ name: 'form', label: 'Набор', options: APPLICATION_FORMS },
 							{
+								name: 'program',
+								label: 'Программа',
+								options: APPLICATION_PROGRAMS,
+								hint: '«нет в каталоге CRM» — сайт называет программу, код которой CRM не знает: дело придёт с пометкой «программа не распознана»'
+							},
+							{
 								name: 'applicant',
 								label: 'Заявитель',
 								hint: 'b2b — название организации, b2c — фамилия и имя. Пусто — заявитель набора; названный заявитель получает новый ключ заявки'
@@ -567,8 +619,8 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 				],
 				objects: () => ({ applications: [...applications.values()] }),
 				// Страница открыта наружу, `__state` — за токеном, и снимки статуса
-				// из CRM видны только во втором: в их телах есть имя ответственного и
-				// последний комментарий по взаимодействию (`docs/security.md`).
+				// из CRM видны только во втором: в их телах есть имя ответственного
+				// (`docs/security.md`).
 				// Зрителю сцены нужно другое — дошло ли, чем ответили и в каком
 				// состоянии заявка.
 				pageObjects: () => ({

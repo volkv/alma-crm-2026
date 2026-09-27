@@ -19,12 +19,6 @@ const CMS_URL = 'http://localhost:58081';
 /** Ключ заявки: свой на прогон, иначе вторая заявка обновила бы первую. */
 const externalId = `e2e-${Date.now().toString(36)}`;
 
-/**
- * Ключ заявки, которую подаёт кнопка стенда: своего ключа у неё нет — имитатор
- * берёт ключ заявки набора (`mocks/mock-cms/applications.ts`).
- */
-const demoExternalId = 'site-2026-000123';
-
 type MockState = {
 	objects: {
 		applications?: {
@@ -50,27 +44,35 @@ async function mockState(request: APIRequestContext, service: string): Promise<M
 	return (await response.json()) as MockState;
 }
 
-staff('кнопка стенда подаёт заявку тем же триггером имитатора', async ({ page, request }) => {
+staff('кнопка стенда подаёт новую заявку тем же триггером имитатора', async ({ page, request }) => {
 	// Демонстрационная кнопка не своя дорога в обход контракта: она жмёт тот же
-	// `POST /__send-application`, и заявка приезжает в CRM от имитатора. Ревизия
-	// заявки набора считается от того, что имитатор помнит: контейнер стенда
-	// переживает прогон, и карточка могла остаться от предыдущего.
-	const before = await mockState(request, CMS_URL);
-	const revisionBefore =
-		before.objects.applications?.find((item) => item.externalId === demoExternalId)?.revision ?? 0;
-
+	// `POST /__send-application`, и заявка приезжает в CRM от имитатора. Каждое
+	// нажатие — новая заявка с новым ключом, а не новая ревизия заявки набора.
 	await page.goto('/exchange');
-	await page.getByRole('button', { name: 'Демо: заявка с сайта' }).click();
+	await page
+		.getByRole('group', { name: 'Демо: заявка с сайта' })
+		.getByRole('button', { name: 'Вуз (b2b)' })
+		.click();
 
-	await expect(page.getByText(`Имитатор CMS подал заявку ${demoExternalId}`)).toBeVisible();
+	const sent = page.getByText(/Имитатор CMS подал заявку/u).first();
+
+	await expect(sent).toBeVisible();
+
+	const key = /заявку\s+(\S+?):/u.exec(await sent.innerText());
+
+	expect(key).not.toBeNull();
+
+	const demoExternalId = key?.[1] ?? '';
+
+	expect(demoExternalId).not.toBe('site-2026-000123');
 
 	const after = await mockState(request, CMS_URL);
 	const card = after.objects.applications?.find((item) => item.externalId === demoExternalId);
 
-	// Заявку завела форма имитатора, а не снимок статуса из CRM, и это новая
-	// ревизия: кнопку нажали именно сейчас.
+	// Заявку завела форма имитатора, а не снимок статуса из CRM, и это первая
+	// ревизия новой заявки.
 	expect(card?.origin).toBe('form');
-	expect(card?.revision ?? 0).toBeGreaterThan(revisionBefore);
+	expect(card?.revision).toBe(1);
 });
 
 staff('открытый триггер имитатора не принимает чужой заявки', async ({ request }) => {
@@ -120,7 +122,7 @@ staff('заявка чужого экземпляра не принимаетс�
 			'content-type': 'application/json'
 		},
 		data: {
-			schemaVersion: '2.0',
+			schemaVersion: '3.0',
 			eventId: crypto.randomUUID(),
 			eventType: 'application.submitted',
 			occurredAt: new Date().toISOString(),

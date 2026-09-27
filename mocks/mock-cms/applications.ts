@@ -59,7 +59,7 @@ const TEMPLATES: Record<ApplicationForm, ApplicationTemplate> = {
 				email: 'vetrov@example.org',
 				phone: '+7 900 000-00-22'
 			},
-			interest: 'Повышение квалификации по промышленной разработке',
+			interest: 'Повышение квалификации: управление проектами',
 			programCodes: ['DPO-01'],
 			productCodes: [],
 			comment: 'Хочу учиться вечером.',
@@ -70,6 +70,30 @@ const TEMPLATES: Record<ApplicationForm, ApplicationTemplate> = {
 		}
 	}
 };
+
+/**
+ * Какую программу называет заявка: ту, что в наборе, или такую, которой нет в
+ * справочнике CRM, — сайт знает программу, а CRM её код не опознаёт. Второе
+ * показывает, как CRM помечает дело, программу которого надо выбрать руками.
+ */
+export const APPLICATION_PROGRAMS = ['из набора', 'нет в каталоге CRM'] as const;
+
+export type ApplicationProgram = (typeof APPLICATION_PROGRAMS)[number];
+
+export function isApplicationProgram(value: unknown): value is ApplicationProgram {
+	return (APPLICATION_PROGRAMS as readonly unknown[]).includes(value);
+}
+
+/** Код программы сайта, которого в справочнике CRM нет. */
+const UNKNOWN_PROGRAM = {
+	interest: 'Повышение квалификации по промышленной разработке',
+	programCodes: ['SITE-PROM-DEV']
+};
+
+/** Тело заявки с программой, которой нет в справочнике CRM. */
+export function withUnknownProgram(data: Record<string, unknown>): Record<string, unknown> {
+	return { ...data, ...structuredClone(UNKNOWN_PROGRAM) };
+}
 
 /** Тело заявки набора с подставленными ключом и ревизией. */
 export function applicationTemplate(

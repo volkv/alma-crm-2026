@@ -11,7 +11,7 @@
  * состав определяет контракт, а не то, кто нажал кнопку. Что именно уезжает,
  * решено раньше — постановкой сообщения в очередь под правами сотрудника.
  */
-import { and, asc, desc, eq, isNull, not } from 'drizzle-orm';
+import { and, asc, eq, isNull, not } from 'drizzle-orm';
 import {
 	applicationStatusDataSchema,
 	learningGroupRequestedDataSchema,
@@ -20,7 +20,6 @@ import {
 } from '$lib/contracts/exchange';
 import { getDb } from '../../db';
 import {
-	comments,
 	contracts,
 	interactionParties,
 	interactions,
@@ -100,7 +99,14 @@ export async function currentApplicationStatus(
 	});
 }
 
-/** Тело `application.status`; `null` — взаимодействия больше нет. */
+/**
+ * Тело `application.status`; `null` — взаимодействия больше нет.
+ *
+ * Свободного текста сотрудников в снимке нет: комментарии по делу — внутренняя
+ * работа, в них бывают и чужие персональные данные («оплата картой отца»), и
+ * заявителю они не адресованы. Наружу уходит то, что заявитель должен знать по
+ * контракту: состояние, стадия, ответственный и срок.
+ */
 export async function buildApplicationStatus(
 	interactionId: string | null,
 	externalId: string | null
@@ -140,13 +146,6 @@ export async function buildApplicationStatus(
 		.where(and(eq(stageEntries.interactionId, interactionId), isNull(stageEntries.leftAt)))
 		.limit(1);
 
-	const [comment] = await db
-		.select({ body: comments.body })
-		.from(comments)
-		.where(eq(comments.interactionId, interactionId))
-		.orderBy(desc(comments.createdAt))
-		.limit(1);
-
 	return applicationStatusDataSchema.parse({
 		externalId,
 		interactionId: interaction.id,
@@ -165,10 +164,6 @@ export async function buildApplicationStatus(
 					},
 		responsible: { userId: interaction.ownerUserId, name: interaction.ownerName },
 		dueAt: entry?.dueAt.toISOString() ?? null,
-		// Комментарий уезжает обрезанным: карточка заявки показывает строку, а не
-		// переписку, и высылать наружу четыре тысячи знаков внутренней работы
-		// незачем.
-		lastComment: comment === undefined ? null : comment.body.slice(0, 500),
 		updatedAt: interaction.updatedAt.toISOString()
 	});
 }

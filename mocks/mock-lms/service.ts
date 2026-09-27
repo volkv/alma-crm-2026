@@ -13,11 +13,12 @@
  */
 import { courseForProgram, stableGroupId } from './groups.ts';
 import { moodleRest, moodleToken, readParams } from './moodle.ts';
+import { renderResultSpotlight, type SentResult } from './spotlight.ts';
 import { controlRoutes } from '../shared/control.ts';
 import { crmIssue, postToCrm, type CrmTarget } from '../shared/crm.ts';
 import { buildEnvelope, parseEnvelope, SCHEMA_VERSION, type Envelope } from '../shared/envelope.ts';
 import {
-	backToStatePage,
+	formProblem,
 	parseTriggerBody,
 	problem,
 	startMockService,
@@ -50,6 +51,13 @@ export type MockLmsOptions = {
 
 export type GroupCounters = { enrolled: number; completed: number; expelled: number };
 
+/** Выбор формы стенда: чем считать отправляемый результат. */
+const RESULT_FINISHES = ['по дате потока', 'завершили сегодня', 'ещё учатся'] as const;
+
+function isResultFinish(value: unknown): value is (typeof RESULT_FINISHES)[number] {
+	return (RESULT_FINISHES as readonly unknown[]).includes(value);
+}
+
 /** Учебная группа, какой её помнит система обучения. */
 type LearningGroup = {
 	/** Ключ заявки CRM: `crm-group-<взаимодействие>-<поток>`. */
@@ -80,7 +88,7 @@ type LearningGroup = {
 	 */
 	rosterOccurredAt: string | null;
 	/** Отправленные результаты: промежуточные и итоговый, свежий — последний. */
-	results: { at: string; eventId: string; counters: GroupCounters }[];
+	results: SentResult[];
 };
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -107,23 +115,24 @@ function readProductCodes(data: Record<string, unknown>): string[] {
 }
 
 /**
- * Счётчики по умолчанию: восемь из десяти доучились, один отчислен. Числа
- * выведены из числа мест, а не из генератора случайных чисел — стенд обязан
- * выглядеть одинаково при каждом запуске.
+ * Счётчики по умолчанию — из переданного CRM списка слушателей: сколько людей
+ * в списке, столько и зачислено. Списка не присылали — число мест потока. Итог
+ * (есть дата окончания) — все зачисленные доучились; промежуточный — ещё
+ * учатся все. Ничего случайного: числа имитатора обязаны сходиться с тем, что
+ * CRM ему передала, а стенд — выглядеть одинаково при каждом запуске.
  */
-function defaultCounters(plannedSeats: number | null): GroupCounters {
-	const enrolled = plannedSeats ?? 30;
+function defaultCounters(
+	group: Pick<LearningGroup, 'learnerCount' | 'plannedSeats'>,
+	finished: boolean
+): GroupCounters {
+	const enrolled = group.learnerCount ?? group.plannedSeats ?? 30;
 
-	return {
-		enrolled,
-		completed: Math.floor(enrolled * 0.8),
-		expelled: Math.floor(enrolled * 0.1)
-	};
+	return { enrolled, completed: finished ? enrolled : 0, expelled: 0 };
 }
 
-function parseCounters(value: unknown, plannedSeats: number | null): GroupCounters | string {
+function parseCounters(value: unknown, base: GroupCounters): GroupCounters | string {
 	if (value === undefined) {
-		return defaultCounters(plannedSeats);
+		return base;
 	}
 
 	if (!isRecord(value)) {
@@ -138,7 +147,6 @@ function parseCounters(value: unknown, plannedSeats: number | null): GroupCounte
 		return `counters: неизвестные поля ${unknownFields.join(', ')}`;
 	}
 
-	const base = defaultCounters(plannedSeats);
 	const counters: GroupCounters = {
 		enrolled: value.enrolled === undefined ? base.enrolled : Number(value.enrolled),
 		completed: value.completed === undefined ? base.completed : Number(value.completed),
@@ -404,23 +412,29 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 					return problem(400, 'validation', parsedBody.message);
 				}
 
+				// Кнопка со страницы состояния получает отказ страницей со ссылкой
+				// назад, а не JSON: нажавший смотрит в браузер, а не в тело ответа.
+				const refuse = (status: number, code: string, message: string): MockReply =>
+					parsedBody.fromForm ? formProblem(status, message) : problem(status, code, message);
+
 				const body = parsedBody.body;
 				const allowed = [
 					'groupExternalId',
 					'requestExternalId',
 					'counters',
 					'finishedOn',
+					'finish',
 					'period',
 					'eventId'
 				];
 				const unknownFields = Object.keys(body).filter((name) => !allowed.includes(name));
 
 				if (unknownFields.length > 0) {
-					return problem(400, 'validation', `Неизвестные поля: ${unknownFields.join(', ')}`);
+					return refuse(400, 'validation', `Неизвестные поля: ${unknownFields.join(', ')}`);
 				}
 
 				if (body.eventId !== undefined && typeof body.eventId !== 'string') {
-					return problem(400, 'validation', 'eventId: ожидается строка');
+					return refuse(400, 'validation', 'eventId: ожидается строка');
 				}
 
 				const requestExternalId = readString(body.requestExternalId);
@@ -433,23 +447,49 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 							: null;
 
 				if (group === null) {
-					return problem(
+					return refuse(
 						404,
 						'not_found',
 						'Такой группы в системе обучения нет: назовите groupExternalId или requestExternalId заведённой группы'
 					);
 				}
 
-				const counters = parseCounters(body.counters, group.plannedSeats);
+				if (body.finish !== undefined && !isResultFinish(body.finish)) {
+					return refuse(400, 'validation', `finish: ожидается ${RESULT_FINISHES.join(', ')}`);
+				}
+
+				if (body.finish !== undefined && body.finishedOn !== undefined) {
+					return refuse(
+						400,
+						'validation',
+						'finish и finishedOn вместе не задаются: finishedOn — сама дата окончания'
+					);
+				}
+
+				// Дата окончания по умолчанию — конец потока, но только если он уже
+				// наступил: плановая дата в будущем — не факт окончания, и CRM такой
+				// результат отвергает. Поток, который ещё идёт, шлёт результат без
+				// даты окончания — промежуточный. «Завершили сегодня» — досрочный
+				// итог: так на стенде показывают конец потока, чей план ещё впереди.
+				const today = new Date().toISOString().slice(0, 10);
+				const finishedOn =
+					body.finish === 'завершили сегодня'
+						? today
+						: body.finish === 'ещё учатся'
+							? null
+							: (readString(body.finishedOn) ??
+								(group.endsOn !== null && group.endsOn <= today ? group.endsOn : null));
+
+				const counters = parseCounters(body.counters, defaultCounters(group, finishedOn !== null));
 
 				if (typeof counters === 'string') {
-					return problem(400, 'validation', counters);
+					return refuse(400, 'validation', counters);
 				}
 
 				const issue = crmIssue(crm);
 
 				if (issue !== null) {
-					return problem(503, 'not_configured', issue);
+					return refuse(503, 'not_configured', issue);
 				}
 
 				const repeatOf = typeof body.eventId === 'string' ? (sent.get(body.eventId) ?? null) : null;
@@ -462,14 +502,6 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 					envelope = repeatOf;
 				} else {
 					const period = nested(body, 'period');
-					// Дата окончания по умолчанию — конец потока, но только если он уже
-					// наступил: плановая дата в будущем — не факт окончания, и CRM такой
-					// результат отвергает. Поток, который ещё идёт, шлёт результат без
-					// даты окончания — промежуточный.
-					const today = new Date().toISOString().slice(0, 10);
-					const finishedOn =
-						readString(body.finishedOn) ??
-						(group.endsOn !== null && group.endsOn <= today ? group.endsOn : null);
 
 					envelope = buildEnvelope({
 						eventType: 'learning_group.result',
@@ -495,7 +527,11 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 				group.results.push({
 					at: envelope.occurredAt,
 					eventId: envelope.eventId,
-					counters: envelope.data.counters as GroupCounters
+					finishedOn: readString(envelope.data.finishedOn),
+					counters: envelope.data.counters as GroupCounters,
+					crmStatus: call.status,
+					crmReply: call.body,
+					crmError: call.error
 				});
 
 				journal.add({
@@ -512,10 +548,13 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 					payload: envelope
 				});
 
-				// Кнопка со страницы состояния возвращает на неё же: нажавший смотрит
-				// в журнал стенда, а не в тело ответа.
+				// Кнопка со страницы состояния ведёт на карточку отправленного
+				// результата на той же странице: что ушло и чем ответила CRM.
 				return parsedBody.fromForm
-					? backToStatePage()
+					? {
+							status: 303,
+							headers: { location: `./?result=${encodeURIComponent(envelope.eventId)}` }
+						}
 					: {
 							status: 200,
 							json: {
@@ -562,12 +601,37 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 								name: 'groupExternalId',
 								label: 'Ключ группы',
 								hint: 'вместо ключа заявки: любой из двух, чтобы назвать группу'
+							},
+							{
+								name: 'finish',
+								label: 'Обучение завершено',
+								options: RESULT_FINISHES,
+								hint: '«по дате потока» — итог, если конец потока наступил, иначе промежуточный результат; «завершили сегодня» — итог с сегодняшней датой, в том числе для потока, чей план ещё впереди. Числа — из переданного списка слушателей: сколько передано, столько зачислено'
 							}
 						],
 						submit: 'Отправить результат в CRM'
 					}
 				],
 				objects: () => ({ groups: [...groups.values()] }),
+				// Карточка отправленного результата над формой: после отправки кнопка
+				// ведёт сюда с ключом события в строке запроса.
+				spotlight: (query) => {
+					const eventId = query.get('result');
+
+					if (eventId === null) {
+						return null;
+					}
+
+					for (const group of groups.values()) {
+						const result = group.results.find((item) => item.eventId === eventId);
+
+						if (result !== undefined) {
+							return renderResultSpotlight(eventId, group.groupExternalId, result);
+						}
+					}
+
+					return renderResultSpotlight(eventId, null, null);
+				},
 				forget,
 				// Ни ключа, ни секрета, ни токена веб-сервиса: страница стенда
 				// открыта. Видно только, настроен ли обмен.

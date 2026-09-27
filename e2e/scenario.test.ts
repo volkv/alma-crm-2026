@@ -217,7 +217,7 @@ function stageLeft(page: Page): Locator {
 /** Конверт контракта обмена (`docs/exchange-contract.md`, раздел 1). */
 function envelope(eventType: string, system: string, data: unknown): Record<string, unknown> {
 	return {
-		schemaVersion: '2.0',
+		schemaVersion: '3.0',
 		eventId: crypto.randomUUID(),
 		eventType,
 		occurredAt: new Date().toISOString(),

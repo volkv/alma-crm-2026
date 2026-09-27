@@ -84,8 +84,9 @@
 	{#if data.demoApplication}
 		<!--
 			Стенд: сцена обмена начинается на сайте, а не в CRM. Кнопка просит
-			имитатор CMS подать заявку — дальше всё идёт обычным путём, и то же
-			самое делает кнопка на странице самого имитатора.
+			имитатор CMS подать новую заявку вуза или физического лица — дальше всё
+			идёт обычным путём, и то же самое делает кнопка на странице самого
+			имитатора.
 		-->
 		<form
 			data-tour="exchange-demo"
@@ -94,10 +95,14 @@
 			use:enhance
 			class="flex flex-wrap items-center gap-3 rounded-lg border border-border bg-surface p-4"
 		>
-			<Button type="submit" variant="outline">Демо: заявка с сайта</Button>
+			<span id="exchange-demo-title" class="text-sm font-medium">Демо: заявка с сайта</span>
+			<div role="group" aria-labelledby="exchange-demo-title" class="flex flex-wrap gap-2">
+				<Button type="submit" name="form" value="b2b" variant="outline">Вуз (b2b)</Button>
+				<Button type="submit" name="form" value="b2c" variant="outline">Физлицо (b2c)</Button>
+			</div>
 			<span class="text-sm text-muted-foreground">
 				Имитатор CMS подаст заявку так же, как её подал бы посетитель сайта: она приедет по
-				контракту обмена и станет взаимодействием.
+				контракту обмена и станет взаимодействием. Каждое нажатие — новая заявка с новым ключом.
 			</span>
 		</form>
 	{/if}

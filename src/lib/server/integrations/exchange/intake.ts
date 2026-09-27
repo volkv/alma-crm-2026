@@ -33,6 +33,7 @@ import {
 	EXCHANGE_SCHEMA_VERSION,
 	MAX_REVISION_STEP,
 	PROCESS_GROUP_BY_APPLICANT,
+	SITE_PROGRAM_UNRECOGNIZED_NOTICE,
 	externalSourceOf,
 	isSupportedSchemaVersion,
 	type ApplicationIntakeResponse,
@@ -50,6 +51,7 @@ import {
 	comments,
 	contractItems,
 	exchangeMessages,
+	interactionChanges,
 	interactionContractItems,
 	interactionProducts,
 	interactionPrograms,
@@ -232,6 +234,7 @@ function applicantName(data: ApplicationSubmittedData): string {
 function intakeComment(
 	data: ApplicationSubmittedData,
 	unknownCodes: readonly string[],
+	programMissing: boolean,
 	transferStatusApplied: boolean
 ): string {
 	const lines: string[] = [];
@@ -246,6 +249,13 @@ function intakeComment(
 
 	if (unknownCodes.length > 0) {
 		lines.push(`Коды справочника не опознаны: ${unknownCodes.join(', ')}`);
+	}
+
+	// Программу приём ставит только по опознанному коду и первой попавшейся не
+	// подставляет: дело без программы помечается, и сотрудник выбирает её сам
+	// (`siteProgramUnrecognized`, `$lib/contracts/exchange`).
+	if (programMissing) {
+		lines.push(`${SITE_PROGRAM_UNRECOGNIZED_NOTICE}.`);
 	}
 
 	// Статус по передаче ложится на позицию договора, а у новой заявки договора
@@ -434,7 +444,7 @@ async function addContact(
 /** Коды справочника → идентификаторы; неопознанные возвращаются отдельно. */
 async function resolveCatalogue(
 	tx: Tx,
-	data: ApplicationSubmittedData
+	data: Pick<ApplicationSubmittedData, 'programCodes' | 'productCodes'>
 ): Promise<{ programIds: string[]; productIds: string[]; unknown: string[] }> {
 	const unknown: string[] = [];
 	const programIds: string[] = [];
@@ -601,12 +611,6 @@ type ApplyOutcome = {
 	contactPersonId: string | null;
 	processGroup: string;
 	needsReview: boolean;
-	/**
-	 * Изменилось ли то, что сайт видит в снимке статуса. Новая ревизия с тем же
-	 * текстом меняет контакты и состав, но не снимок — и второй такой же снимок
-	 * на сайт не уходит.
-	 */
-	snapshotChanged: boolean;
 };
 
 /**
@@ -636,6 +640,89 @@ function assertRevisionStep(applied: number | null, revision: number): void {
 			`data.revision: ${revision} обгоняет применённую (${applied ?? 0}) на ${step} — ревизия растёт с каждым изменением заявки, и шаг вперёд больше ${MAX_REVISION_STEP} означает чужой счётчик, а не ${step} правок`
 		]);
 	}
+}
+
+/** Что из заявки ложится в поля дела — в том виде, в каком это помнит журнал обмена. */
+type AppliedApplication = {
+	programCodes: readonly string[];
+	productCodes: readonly string[];
+	transferStatus: string | null;
+};
+
+function stringList(value: unknown): string[] | null {
+	return Array.isArray(value) && value.every((item) => typeof item === 'string') ? value : null;
+}
+
+/**
+ * Прошлая применённая ревизия заявки по делу — из журнала обмена, куда приём
+ * кладёт коды справочника и статус передачи каждой ревизии (`journalPayload`).
+ *
+ * Сравнивать новую ревизию надо с ней, а не с текущим делом: дело после приёма
+ * правит сотрудник, и отличие дела от заявки — это чаще всего его решение, а не
+ * новость с сайта. `null` — прошлой ревизии не знаем: тела в журнале нет (его
+ * стёрло обезличивание) или дело заводили не заявкой.
+ */
+async function appliedApplication(
+	tx: Tx,
+	interactionId: string
+): Promise<AppliedApplication | null> {
+	const [row] = await tx
+		.select({ payload: exchangeMessages.payload })
+		.from(exchangeMessages)
+		.where(
+			and(
+				eq(exchangeMessages.direction, 'inbound'),
+				eq(exchangeMessages.system, 'cms'),
+				eq(exchangeMessages.eventType, 'application.submitted'),
+				eq(exchangeMessages.state, 'processed'),
+				eq(exchangeMessages.interactionId, interactionId)
+			)
+		)
+		.orderBy(desc(sql`(${exchangeMessages.payload} #>> '{data,revision}')::bigint`))
+		.limit(1);
+
+	const data = (row?.payload as { data?: Record<string, unknown> } | null | undefined)?.data;
+
+	if (data === undefined) {
+		return null;
+	}
+
+	const programCodes = stringList(data.programCodes);
+	const productCodes = stringList(data.productCodes);
+
+	if (programCodes === null || productCodes === null) {
+		return null;
+	}
+
+	return {
+		programCodes,
+		productCodes,
+		transferStatus: typeof data.transferStatus === 'string' ? data.transferStatus : null
+	};
+}
+
+/** Состав дела до правки — для записи в историю, тем же видом, что пишет форма. */
+async function readComposition(
+	tx: Tx,
+	interactionId: string
+): Promise<{
+	programs: { programId: string; programVersionId: string | null }[];
+	productIds: string[];
+}> {
+	const programRows = await tx
+		.select({
+			programId: interactionPrograms.programId,
+			programVersionId: interactionPrograms.programVersionId
+		})
+		.from(interactionPrograms)
+		.where(eq(interactionPrograms.interactionId, interactionId));
+
+	const productRows = await tx
+		.select({ productId: interactionProducts.productId })
+		.from(interactionProducts)
+		.where(eq(interactionProducts.interactionId, interactionId));
+
+	return { programs: programRows, productIds: productRows.map((row) => row.productId) };
 }
 
 /** Обновление существующего взаимодействия: CMS — хозяин данных заявителя. */
@@ -700,13 +787,25 @@ async function updateExisting(
 
 	const catalogue = await resolveCatalogue(tx, data);
 
+	// Поля дела ревизия меняет только тем, что изменилось в самой заявке с
+	// прошлой ревизии. Повтор заявки без изменений ничего не добавляет: иначе
+	// программа, которую сотрудник убрал из дела с причиной, возвращалась бы
+	// каждым сообщением сайта. Прошлой ревизии не знаем — ревизия применяется
+	// целиком, как первая.
+	const applied = await appliedApplication(tx, existing.id);
+	const fresh = await resolveCatalogue(tx, {
+		programCodes: data.programCodes.filter((code) => !applied?.programCodes.includes(code)),
+		productCodes: data.productCodes.filter((code) => !applied?.productCodes.includes(code))
+	});
+	const before = await readComposition(tx, existing.id);
+
 	const addedPrograms =
-		catalogue.programIds.length === 0
+		fresh.programIds.length === 0
 			? []
 			: await tx
 					.insert(interactionPrograms)
 					.values(
-						catalogue.programIds.map((programId) => ({
+						fresh.programIds.map((programId) => ({
 							interactionId: existing.id,
 							programId,
 							programVersionId: null
@@ -716,22 +815,20 @@ async function updateExisting(
 					.returning({ programId: interactionPrograms.programId });
 
 	const addedProducts =
-		catalogue.productIds.length === 0
+		fresh.productIds.length === 0
 			? []
 			: await tx
 					.insert(interactionProducts)
-					.values(
-						catalogue.productIds.map((productId) => ({ interactionId: existing.id, productId }))
-					)
+					.values(fresh.productIds.map((productId) => ({ interactionId: existing.id, productId })))
 					.onConflictDoNothing()
 					.returning({ productId: interactionProducts.productId });
 
-	const transferStatusApplied = await applyTransferStatus(
-		tx,
-		existing.id,
-		catalogue.productIds,
-		data.transferStatus
-	);
+	// Статус передачи — тем же правилом: сотрудник мог поправить позицию
+	// договора, и тот же статус из повтора заявки её не откатывает.
+	const transferStatusApplied =
+		applied !== null && applied.transferStatus === data.transferStatus
+			? false
+			: await applyTransferStatus(tx, existing.id, catalogue.productIds, data.transferStatus);
 
 	// Состав дополнился — это правка защищённых полей, и открытая у сотрудника
 	// форма плана или договора, отправленная после неё, получит отказ, а не
@@ -753,7 +850,56 @@ async function updateExisting(
 		})
 		.where(eq(interactions.id, existing.id));
 
-	const comment = intakeComment(data, catalogue.unknown, transferStatusApplied);
+	// Правка дела заявкой видна в его истории так же, как правка сотрудника:
+	// что было, что стало и почему. Автор записи — тот, от чьего имени ведётся
+	// приём (`interaction_changes.author_id` обязателен), причина называет сайт.
+	if (compositionChanged) {
+		const author = ctx.user;
+
+		if (author === null) {
+			throw new Error('Приём заявки действует без сотрудника: ответственный не выбран');
+		}
+
+		const reason = `Изменилась заявка с сайта (ревизия ${data.revision})`;
+		const changes: { field: string; oldValue: unknown; newValue: unknown }[] = [];
+
+		if (addedPrograms.length > 0) {
+			changes.push({
+				field: 'programs',
+				oldValue: before.programs,
+				newValue: [
+					...before.programs,
+					...addedPrograms.map(({ programId }) => ({ programId, programVersionId: null }))
+				]
+			});
+		}
+
+		if (addedProducts.length > 0) {
+			changes.push({
+				field: 'products',
+				oldValue: before.productIds,
+				newValue: [...before.productIds, ...addedProducts.map(({ productId }) => productId)]
+			});
+		}
+
+		await tx.insert(interactionChanges).values(
+			changes.map((change) => ({
+				interactionId: existing.id,
+				authorId: author.id,
+				field: change.field,
+				oldValue: change.oldValue,
+				newValue: change.newValue,
+				reason
+			}))
+		);
+	}
+
+	const comment = intakeComment(
+		data,
+		catalogue.unknown,
+		before.programs.length + addedPrograms.length === 0,
+		transferStatusApplied
+	);
 
 	// Комментарий приписывается, а не затирает прежний: повтор ничего не
 	// удаляет. Но и не повторяется: новая ревизия заявки с тем же текстом —
@@ -789,8 +935,7 @@ async function updateExisting(
 		// прежним именем: внешний контракт меняют отдельно от внутренней
 		// перестройки, чтобы не складывать два независимых риска.
 		processGroup: workspace.key,
-		needsReview: false,
-		snapshotChanged: commentAdded
+		needsReview: false
 	};
 }
 
@@ -881,7 +1026,12 @@ async function createFromApplication(
 		data.transferStatus
 	);
 
-	const comment = intakeComment(data, catalogue.unknown, transferStatusApplied);
+	const comment = intakeComment(
+		data,
+		catalogue.unknown,
+		catalogue.programIds.length === 0,
+		transferStatusApplied
+	);
 
 	if (comment !== '') {
 		await addComment(ctx, { interactionId, body: comment, source: 'application_intake' }, tx);
@@ -910,8 +1060,7 @@ async function createFromApplication(
 		organizationId: counterparty.organizationId,
 		contactPersonId,
 		processGroup: PROCESS_GROUP_BY_APPLICANT[data.applicant.kind],
-		needsReview: counterparty.needsReview,
-		snapshotChanged: true
+		needsReview: counterparty.needsReview
 	};
 }
 
@@ -1090,8 +1239,7 @@ export async function receiveApplication(
 							organizationId: existing.organizationId,
 							contactPersonId: null,
 							processGroup: message.data.form,
-							needsReview: false,
-							snapshotChanged: false
+							needsReview: false
 						};
 					} else {
 						outcome = updated;
@@ -1124,11 +1272,11 @@ export async function receiveApplication(
 					})
 					.where(eq(exchangeMessages.id, row.id));
 
-				if (state === 'processed' && outcome.snapshotChanged) {
-					// Снимок статуса уходит на сайт после приёма — в этой же
-					// транзакции, а отправляется после коммита (outbox). Ревизия,
-					// не изменившая снимка, его не шлёт: сайт получил бы то же,
-					// что уже знает.
+				if (outcome.result === 'created') {
+					// Снимок статуса уходит на сайт после заведения дела — в этой же
+					// транзакции, а отправляется после коммита (outbox). Новая
+					// ревизия его не шлёт: состояние, стадию, ответственного и срок
+					// она не меняет, и сайт получил бы то, что уже знает.
 					await enqueueApplicationStatus(tx, outcome.interactionId);
 				}
 

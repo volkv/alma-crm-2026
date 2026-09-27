@@ -8,10 +8,12 @@ import { actorFromEvent } from '$lib/server/actor';
 import { getConfig } from '$lib/server/config';
 import { toActionFailure } from '$lib/server/http';
 import {
+	DEMO_APPLICATION_FORMS,
 	DEMO_MOCK_SYSTEMS,
 	readDemoMocks,
 	sendDemoApplication,
 	setDemoMockAvailability,
+	type DemoApplicationForm,
 	type DemoMockSystem
 } from '$lib/server/integrations/exchange/demo';
 import {
@@ -142,8 +144,18 @@ export const actions: Actions = {
 	 * взаимодействие, снимок статуса обратно. Право то же, что на раздел.
 	 */
 	demoApplication: async (event) => {
+		const form = (await event.request.formData()).get('form');
+
+		if (!DEMO_APPLICATION_FORMS.includes(form as DemoApplicationForm)) {
+			return fail(400, {
+				message: 'Не указано, чью заявку подать: вуза (b2b) или физического лица (b2c)',
+				issues: [] as string[],
+				ok: false
+			});
+		}
+
 		try {
-			const sent = await sendDemoApplication(actorFromEvent(event));
+			const sent = await sendDemoApplication(actorFromEvent(event), form as DemoApplicationForm);
 			const outcome =
 				sent.result === null ? '' : `, итог — ${DEMO_RESULT_LABELS[sent.result] ?? sent.result}`;
 
