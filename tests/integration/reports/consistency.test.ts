@@ -12,6 +12,7 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vites
 import type { z } from 'zod';
 import { reportQuerySchema, type ReportQuery, type ReportView } from '$lib/contracts/reports';
 import type { ActorContext } from '$lib/server/actor';
+import { B2B_WORKSPACE_KEY } from '$lib/server/stages/definitions';
 import { organizationResponsibles } from '$lib/server/db/schema';
 import { checkReportInvariants } from '$lib/server/reports/invariants';
 import { buildReport } from '$lib/server/reports/rows';
@@ -89,8 +90,14 @@ beforeEach(async () => {
 
 const admin = (): ActorContext => testActor();
 
-function query(input: z.input<typeof reportQuerySchema>): ReportQuery {
-	return reportQuerySchema.parse(input);
+/**
+ * Запрос отчёта. Отчёт строится внутри пространства, и эталонный набор живёт в
+ * B2B — оно и подставляется, если тест не назвал другое.
+ */
+function query(
+	input: Omit<z.input<typeof reportQuerySchema>, 'workspace'> & { workspace?: string }
+): ReportQuery {
+	return reportQuerySchema.parse({ workspace: B2B_WORKSPACE_KEY, ...input });
 }
 
 /** Значение колонки по её ключу: колонки идут в порядке каталога, а не запроса. */

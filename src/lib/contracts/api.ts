@@ -1047,6 +1047,9 @@ export const apiReportSchema = z.object({
 			.describe('Момент снимка базы, из которого прочитаны и итоги, и строки'),
 		asOf: z.iso.datetime().describe('Момент среза `T`, на который посчитан отчёт'),
 		mode: z.enum(REPORT_MODES),
+		workspace: z
+			.object({ key: z.string(), name: z.string() })
+			.describe('Пространство, внутри которого собран отчёт: его процесс и его стадии'),
 		period: z.object({ start: z.iso.date(), end: z.iso.date() }),
 		filters: z.array(z.object({ label: z.string(), value: z.string() })),
 		scope: z.string().describe('Область доступа владельца ключа словами'),
@@ -1087,19 +1090,9 @@ export const apiReportSchema = z.object({
 	charts: z.object({
 		funnel: z
 			.object({
-				workspaces: z
-					.array(
-						z.object({
-							workspaceId: z.uuid(),
-							workspaceKey: z.string(),
-							workspaceName: z.string(),
-							stages: z.array(apiReportBucketSchema)
-						})
-					)
-					.describe(
-						'По воронке на пространство: у B2B и B2C свои стадии, и одинаковые ключи в ' +
-							'них законны — в одном списке две разные стадии слились бы в одну строку'
-					),
+				stages: z
+					.array(apiReportBucketSchema)
+					.describe('Стадии процесса пространства отчёта в порядке процесса'),
 				closed: z.array(apiReportBucketSchema),
 				note: z.string()
 			})
@@ -1157,6 +1150,7 @@ export function toApiReport(view: ReportView): ApiReport {
 			generatedAt: view.meta.generatedAt,
 			asOf: view.meta.asOf,
 			mode: view.meta.mode,
+			workspace: { key: view.meta.workspace.key, name: view.meta.workspace.name },
 			period: { start: view.meta.period.start, end: view.meta.period.end },
 			filters: view.meta.filters.map((filter) => ({ label: filter.label, value: filter.value })),
 			scope: view.meta.scope,
@@ -1190,12 +1184,7 @@ export function toApiReport(view: ReportView): ApiReport {
 				view.charts.funnel === null
 					? null
 					: {
-							workspaces: view.charts.funnel.workspaces.map((funnel) => ({
-								workspaceId: funnel.workspaceId,
-								workspaceKey: funnel.workspaceKey,
-								workspaceName: funnel.workspaceName,
-								stages: funnel.stages.map(bucket)
-							})),
+							stages: view.charts.funnel.stages.map(bucket),
 							closed: view.charts.funnel.closed.map(bucket),
 							note: view.charts.funnel.note
 						},

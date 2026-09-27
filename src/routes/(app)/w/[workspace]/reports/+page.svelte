@@ -24,7 +24,8 @@
 	import {
 		REPORT_MODES,
 		REPORT_MODE_LABELS,
-		type ReportFunnelWorkspace,
+		reportTitle,
+		type ReportFunnelChart,
 		type ReportMode,
 		type ReportParam
 	} from '$lib/contracts/reports';
@@ -32,6 +33,9 @@
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	/** Отчёт живёт внутри пространства, и его имя стоит в заголовке и в файлах. */
+	const title = $derived(reportTitle(data.meta.workspace.name));
 
 	const selectedColumns = $derived(data.meta.columns.map((column) => column.key));
 
@@ -78,14 +82,14 @@
 			narrowing.length === 0
 				? 'Отбор: без фильтров'
 				: `Отбор: ${narrowing.map((filter) => `${filter.label} — ${filter.value}`).join('; ')}`,
-			`Область доступа: ${data.meta.scope}. Собран ${formatDateTime(data.meta.generatedAt)}, отчёт ${data.meta.reportId}`
+			`Пространство: ${data.meta.workspace.name}. Область доступа: ${data.meta.scope}. Собран ${formatDateTime(data.meta.generatedAt)}, отчёт ${data.meta.reportId}`
 		];
 	});
 
 	/** Пересказ воронки словами: `canvas` для чтения с экрана недоступен. */
-	function funnelSummary(workspace: ReportFunnelWorkspace): string {
+	function funnelSummary(funnel: ReportFunnelChart): string {
 		return (
-			workspace.stages
+			funnel.stages
 				.filter((bucket) => bucket.value > 0)
 				.map((bucket) => `${bucket.label}: ${bucket.value}`)
 				.join('; ') || 'на стадиях никого'
@@ -120,14 +124,14 @@
 	 * Клик по полосе воронки ведёт к списку взаимодействий, которые за ней
 	 * стоят, — к таблице этого же отчёта под диаграммой: только она считает
 	 * стадию на дату среза так же, как воронка, и число её строк равно числу на
-	 * полосе. В адрес уезжают пространство и ключ стадии, остальные фильтры
+	 * полосе. В адрес уезжает ключ стадии, остальные фильтры
 	 * остаются — полоса нарисована под ними же.
 	 */
-	function selectStage(workspace: ReportFunnelWorkspace, index: number) {
-		const bucket = workspace.stages[index];
+	function selectStage(funnel: ReportFunnelChart, index: number) {
+		const bucket = funnel.stages[index];
 
 		if (bucket?.filter != null) {
-			void goto(stageDrilldownHref(page.url, period, workspace.workspaceKey, bucket.filter.value), {
+			void goto(stageDrilldownHref(page.url, period, bucket.filter.value), {
 				keepFocus: true,
 				noScroll: true
 			});
@@ -161,7 +165,7 @@
 {/snippet}
 
 <Header
-	title="Отчёты по взаимодействиям"
+	{title}
 	description="Где работа стоит на дату и что за период произошло. Числа экрана, диаграмм и файлов — одни и те же."
 >
 	{#snippet actions()}
@@ -170,7 +174,13 @@
 </Header>
 
 <Breadcrumbs
-	items={[{ label: 'Главное', href: resolve('/') }, { label: 'Отчёты по взаимодействиям' }]}
+	items={[
+		{
+			label: data.workspace.name,
+			href: resolve('/(app)/w/[workspace]/interactions', { workspace: data.workspace.key })
+		},
+		{ label: 'Отчёты' }
+	]}
 />
 
 <!-- Поля страницы такие же, как у остальных разделов: без них полоса вкладок
@@ -260,29 +270,25 @@
 
 	{#if data.charts.funnel !== null}
 		{@const funnel = data.charts.funnel}
-		<!-- Воронка своя у каждого пространства: у B2B и B2C разные стадии, и
-		     полосы двух процессов в одной картинке читались бы как один путь. -->
-		{#each funnel.workspaces as workspace (workspace.workspaceId)}
-			<ReportChart
-				title={funnel.workspaces.length > 1
-					? `Распределение по стадиям на дату среза — ${workspace.workspaceName}`
-					: 'Распределение по стадиям на дату среза'}
-				note={funnel.note}
-				fileName="Отчёт по взаимодействиям — воронка {workspace.workspaceName}"
-				summary={funnelSummary(workspace)}
-				labels={workspace.stages.map((bucket) => bucket.label)}
-				datasets={[
-					{
-						key: 'count',
-						label: 'Взаимодействий',
-						values: workspace.stages.map((bucket) => bucket.value)
-					}
-				]}
-				context={chartContext}
-				horizontal
-				onselect={(index) => selectStage(workspace, index)}
-			/>
-		{/each}
+		<!-- Воронка одна — по стадиям процесса этого пространства: у другого
+		     пространства свои стадии и свой отчёт. -->
+		<ReportChart
+			title="Распределение по стадиям на дату среза"
+			note={funnel.note}
+			fileName="{title} — воронка"
+			summary={funnelSummary(funnel)}
+			labels={funnel.stages.map((bucket) => bucket.label)}
+			datasets={[
+				{
+					key: 'count',
+					label: 'Взаимодействий',
+					values: funnel.stages.map((bucket) => bucket.value)
+				}
+			]}
+			context={chartContext}
+			horizontal
+			onselect={(index) => selectStage(funnel, index)}
+		/>
 		<p class="text-xs text-muted-foreground">
 			Вне воронки:
 			{#each funnel.closed as bucket, index (bucket.key)}
@@ -296,7 +302,7 @@
 		<ReportChart
 			title="Динамика переходов"
 			note={movement.note}
-			fileName="Отчёт по взаимодействиям — динамика"
+			fileName="{title} — динамика"
 			summary={movementSummary}
 			labels={movement.buckets.map((bucket) => bucket.label)}
 			datasets={movement.series}

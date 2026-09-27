@@ -10,6 +10,7 @@
  * то, что направления встают между ними.
  */
 import { describe, expect, it } from 'vitest';
+import { navLinks, sectionFor } from '$lib/components/app-shell/nav-links';
 import { groupedSections, navSections, visibleSections, type NavWorkspace } from '$lib/nav';
 import { DEFAULT_ROLES, PERMISSIONS } from '$lib/server/rbac/permissions';
 import { SETTINGS_SECTIONS } from '../../src/routes/(app)/settings/sections';
@@ -66,12 +67,13 @@ describe('разделы меню', () => {
 	it('оставляют менеджеру всё, кроме журнала, и в том же порядке', () => {
 		expect(labels(permissionsOf('manager'))).toEqual([
 			'Сводка',
-			'Отчёты',
 			'Документы',
-			// По пункту на пространство: раздел взаимодействий теперь принадлежит
-			// направлению, а не общей «Главной».
+			// Взаимодействия и отчёты принадлежат направлению, а не общей «Главной»:
+			// по паре пунктов на пространство.
 			'Взаимодействия',
+			'Отчёты',
 			'Взаимодействия',
+			'Отчёты',
 			'Организации',
 			'Контакты',
 			'Программы',
@@ -102,9 +104,9 @@ describe('группы меню', () => {
 		]);
 
 		expect(grouped).toEqual([
-			['Главное', ['Сводка', 'Отчёты', 'Документы']],
-			['Работа с ВУЗ', ['Взаимодействия']],
-			['Корпоративное обучение', ['Взаимодействия']],
+			['Главное', ['Сводка', 'Документы']],
+			['Работа с ВУЗ', ['Взаимодействия', 'Отчёты']],
+			['Корпоративное обучение', ['Взаимодействия', 'Отчёты']],
 			[
 				'Справочники',
 				['Организации', 'Контакты', 'Программы', 'Продукты', 'Направления', 'Данные об обучении']
@@ -141,6 +143,24 @@ describe('группы меню', () => {
 		const grouped = groupedSections(navSections([])).map((group) => group.label);
 
 		expect(grouped).toEqual(['Главное', 'Справочники', 'Настройки', 'Остальное']);
+	});
+
+	it('ведут в отчёт своего пространства: сквозного отчёта в меню нет', () => {
+		const reports = navSections(WORKSPACES).filter((section) => section.label === 'Отчёты');
+
+		expect(reports.map((section) => [section.href, section.group.id])).toEqual([
+			['/w/b2b/reports', 'workspace:b2b'],
+			['/w/b2c/reports', 'workspace:b2c']
+		]);
+	});
+
+	it('подсвечивают на странице отчётов «Отчёты», а не «Взаимодействия»', () => {
+		// Подсветка ищет пункт по префиксу адреса: отчёт лежит рядом со списком,
+		// а не под ним, и пункт списка на нём гореть не должен.
+		const links = navLinks(WORKSPACES);
+
+		expect(sectionFor(links, '/w/b2b/reports')?.href).toBe('/w/b2b/reports');
+		expect(sectionFor(links, '/w/b2b/interactions/new')?.href).toBe('/w/b2b/interactions');
 	});
 
 	it('показывают пространство без процесса: оно заведено, и это видно', () => {

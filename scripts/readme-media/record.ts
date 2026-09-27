@@ -112,7 +112,7 @@ const CLIPS: readonly Clip[] = [
 			await page.mouse.wheel(0, 700);
 			await page.waitForTimeout(BEAT);
 
-			await visit(page, '/reports', 'Отчёты по взаимодействиям');
+			await visit(page, '/w/b2b/reports', 'Отчёт по взаимодействиям — Работа с ВУЗ');
 			await page.mouse.wheel(0, 600);
 			await page.waitForTimeout(BEAT);
 

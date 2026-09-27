@@ -212,7 +212,10 @@ async function seed(): Promise<void> {
 }
 
 test('отчёт выгружается книгой, и файл непустой', async ({ page }) => {
+	// Прежний адрес уводит в отчёт первого пространства: закладки живут дольше
+	// маршрутов.
 	await page.goto('/reports');
+	await expect(page).toHaveURL(/\/w\/[^/]+\/reports/);
 	await waitForHydration(page);
 
 	// Форматы собраны в меню одной кнопки «Выгрузить».
@@ -225,7 +228,8 @@ test('отчёт выгружается книгой, и файл непусто
 
 	const name = download.suggestedFilename();
 
-	expect(name.startsWith('Отчёт по взаимодействиям')).toBe(true);
+	// В имени файла — пространство: отчёт описывает один процесс.
+	expect(name.startsWith('Отчёт по взаимодействиям — ')).toBe(true);
 	expect(name.endsWith('.xlsx')).toBe(true);
 
 	const path = await download.path();
@@ -239,7 +243,7 @@ test('переключение режима пересчитывает итог�
 
 	const errors = clientErrors(page);
 	const period = `from=${moscowDay(daysAgo(SEEDED.periodDaysAgo))}&to=${moscowDay(new Date())}`;
-	const address = `/reports?mode=snapshot&workspace=${GROUP_KEY}&${period}`;
+	const address = `/w/${GROUP_KEY}/reports?mode=snapshot&${period}`;
 
 	await page.goto(address);
 	await waitForHydration(page);

@@ -70,8 +70,9 @@ async function backdate(moment: string): Promise<void> {
 	);
 }
 
-function query(input: Parameters<typeof reportQuerySchema.parse>[0]): ReportQuery {
-	return reportQuerySchema.parse(input);
+/** Отчёт строится внутри пространства; здесь всё происходит в B2C. */
+function query(input: Record<string, unknown>): ReportQuery {
+	return reportQuerySchema.parse({ workspace: B2C_WORKSPACE_KEY, ...input });
 }
 
 /**
@@ -84,10 +85,7 @@ function shape(view: ReportView) {
 		rowKeys: view.rows.map((row) => row.rowKey).sort(),
 		interactions: view.rows.map((row) => row.interactionId).sort(),
 		totals: { rowCount: view.totals.rowCount, interactionCount: view.totals.interactionCount },
-		funnel: view.charts.funnel?.workspaces
-			.flatMap((workspace) => workspace.stages)
-			.map((bucket) => `${bucket.key}=${bucket.value}`)
-			.sort(),
+		funnel: view.charts.funnel?.stages.map((bucket) => `${bucket.key}=${bucket.value}`).sort(),
 		closed: view.charts.funnel?.closed.map((bucket) => `${bucket.key}=${bucket.value}`).sort()
 	};
 }

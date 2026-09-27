@@ -67,7 +67,6 @@
 			onchange: ({ from, to }) => void go({ from, to })
 		},
 		list('org', 'Вуз', options.organizations),
-		list('workspace', 'Пространство', options.workspaces),
 		list('dir', 'Направление', options.directions),
 		list('party', 'Тип контрагента', options.parties),
 		list('prog', 'Программа', options.programs),

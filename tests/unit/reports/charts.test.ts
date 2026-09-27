@@ -12,7 +12,7 @@ import {
 	buildFunnelFromCounts,
 	buildMovementChart
 } from '$lib/server/reports/charts';
-import { createStageIndex, type ReportWorkspace } from '$lib/server/reports/stages';
+import { createStageIndex } from '$lib/server/reports/stages';
 import { valueLabelPoints } from '$lib/components/reports/value-labels';
 
 describe('ось времени динамики переходов', () => {
@@ -119,109 +119,51 @@ describe('разрез по многозначному признаку', () => 
 
 describe('воронка', () => {
 	it('держит закрытые отдельным блоком и говорит, что это не конверсия', () => {
-		const funnel = buildFunnel(
-			[
-				{
-					workspaceId: 'g',
-					workspaceKey: 'b2b',
-					workspaceName: 'Работа с вузами',
-					stages: [{ key: 'g:contact', label: 'Контакты', value: 3, filter: null }]
-				}
-			],
-			{ completed: 2, cancelled: 1 }
-		);
+		const funnel = buildFunnel([{ key: 'g:contact', label: 'Контакты', value: 3, filter: null }], {
+			completed: 2,
+			cancelled: 1
+		});
 
 		expect(funnel.closed.map((bucket) => bucket.value)).toStrictEqual([2, 1]);
 		expect(funnel.note).toContain('не конверсия');
 	});
 });
 
-describe('воронка по группам процесса', () => {
-	/** Две группы с одинаковым ключом стадии: законная ситуация, см. `domain.md`. */
+describe('воронка пространства', () => {
+	/** Пространство отчёта: воронка строится по его процессу и только по нему. */
 	function index() {
-		const workspaces = new Map<string, ReportWorkspace>([
-			[
-				'g-b2b',
-				{
-					id: 'g-b2b',
-					key: 'b2b',
-					name: 'Работа с вузами',
-					stages: [
-						{ key: 'contact', name: 'Контакты', position: 1 },
-						{ key: 'meeting', name: 'Встреча', position: 2 }
-					]
-				}
-			],
-			[
-				'g-b2c',
-				{
-					id: 'g-b2c',
-					key: 'b2c',
-					name: 'Работа со слушателями',
-					stages: [
-						{ key: 'meeting', name: 'Консультация', position: 1 },
-						{ key: 'payment', name: 'Оплата', position: 2 }
-					]
-				}
+		return createStageIndex({
+			id: 'g-b2b',
+			key: 'b2b',
+			name: 'Работа с вузами',
+			stages: [
+				{ key: 'contact', name: 'Контакты', position: 1 },
+				{ key: 'meeting', name: 'Встреча', position: 2 }
 			]
-		]);
-
-		return createStageIndex(workspaces);
+		});
 	}
 
-	it('не складывает одинаковые ключи стадий разных процессов в одну полосу', () => {
+	it('показывает все стадии процесса по порядку, пустые — нулём', () => {
 		const funnel = buildFunnelFromCounts(
 			index(),
-			[
-				{ bucketId: 'g-b2b:meeting', stageName: 'Встреча', value: 3 },
-				{ bucketId: 'g-b2c:meeting', stageName: 'Консультация', value: 2 }
-			],
+			[{ bucketId: 'g-b2b:meeting', stageName: 'Встреча', value: 3 }],
 			{}
 		);
 
-		expect(funnel.workspaces.map((workspace) => workspace.workspaceKey)).toStrictEqual([
-			'b2b',
-			'b2c'
+		expect(funnel.stages.map((bucket) => [bucket.label, bucket.value])).toStrictEqual([
+			['Контакты', 0],
+			['Встреча', 3]
 		]);
-		expect(funnel.workspaces[0].stages.map((bucket) => [bucket.label, bucket.value])).toStrictEqual(
-			[
-				['Контакты', 0],
-				['Встреча', 3]
-			]
-		);
-		expect(funnel.workspaces[1].stages.map((bucket) => [bucket.label, bucket.value])).toStrictEqual(
-			[
-				['Консультация', 2],
-				['Оплата', 0]
-			]
-		);
 	});
 
-	it('не рисует пустую воронку рядом с непустой', () => {
-		const funnel = buildFunnelFromCounts(
-			index(),
-			[{ bucketId: 'g-b2b:contact', stageName: 'Контакты', value: 1 }],
-			{}
-		);
-
-		expect(funnel.workspaces.map((workspace) => workspace.workspaceKey)).toStrictEqual(['b2b']);
-	});
-
-	it('на пустой выборке показывает все процессы: нули и есть ответ', () => {
+	it('называет стадию без пространства: отчёт и так собран внутри одного', () => {
 		const funnel = buildFunnelFromCounts(index(), [], {});
 
-		expect(funnel.workspaces.map((workspace) => workspace.workspaceKey)).toStrictEqual([
-			'b2b',
-			'b2c'
-		]);
-		expect(
-			funnel.workspaces
-				.flatMap((workspace) => workspace.stages)
-				.every((bucket) => bucket.value === 0)
-		).toBe(true);
+		expect(funnel.stages.map((bucket) => bucket.label)).toStrictEqual(['Контакты', 'Встреча']);
+		expect(funnel.stages.every((bucket) => bucket.value === 0)).toBe(true);
 	});
 
-	it('удалённую из процесса стадию ставит в конец своей группы с пометкой', () => {
+	it('удалённую из процесса стадию ставит в конец с пометкой', () => {
 		const funnel = buildFunnelFromCounts(
 			index(),
 			[
@@ -231,9 +173,7 @@ describe('воронка по группам процесса', () => {
 			{}
 		);
 
-		const stages = funnel.workspaces[0].stages;
-
-		expect(stages.at(-1)).toStrictEqual({
+		expect(funnel.stages.at(-1)).toStrictEqual({
 			key: 'g-b2b:old',
 			label: 'Прежняя стадия (стадия удалена из процесса)',
 			value: 4,

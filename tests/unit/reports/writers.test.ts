@@ -74,9 +74,10 @@ describe('листы книги', () => {
 		);
 	});
 
-	it('на листе фильтров есть режим, период, область и правило', () => {
+	it('на листе фильтров есть пространство, режим, период, область и правило', () => {
 		const text = sheets[1].rows.map((row) => row.join(' ')).join('\n');
 
+		expect(text).toContain('Пространство Работа с вузами');
 		expect(text).toContain('Режим Срез');
 		expect(text).toContain('все взаимодействия');
 		expect(text).toContain('Срез на 31.12.2026.');
@@ -94,6 +95,7 @@ describe('листы книги', () => {
 describe('JSON', () => {
 	const payload = JSON.parse(reportJson(VIEW).toString('utf8')) as {
 		schemaVersion: number;
+		workspace: { key: string; name: string };
 		rows: {
 			rowKey: string;
 			interactionId: string;
@@ -104,8 +106,9 @@ describe('JSON', () => {
 		}[];
 	};
 
-	it('несёт версию схемы и все строки', () => {
-		expect(payload.schemaVersion).toBe(1);
+	it('несёт версию схемы, пространство и все строки', () => {
+		expect(payload.schemaVersion).toBe(2);
+		expect(payload.workspace).toStrictEqual({ key: 'b2b', name: 'Работа с вузами' });
 		expect(payload.rows.length).toBe(VIEW.rows.length);
 	});
 
@@ -301,9 +304,9 @@ describe('каждый файл называет свою сборку', () => {
 });
 
 describe('имя файла', () => {
-	it('в срезе называет дату среза и день сборки', () => {
+	it('в срезе называет пространство, дату среза и день сборки', () => {
 		expect(reportFileName(VIEW, 'xlsx', '2026-09-17')).toBe(
-			'Отчёт по взаимодействиям — срез на 31.12.2026 (собран 17.09.2026).xlsx'
+			'Отчёт по взаимодействиям — Работа с вузами, срез на 31.12.2026 (собран 17.09.2026).xlsx'
 		);
 	});
 
@@ -313,7 +316,7 @@ describe('имя файла', () => {
 		});
 
 		expect(reportFileName(movement, 'json', '2026-09-17')).toBe(
-			'Отчёт по взаимодействиям — движение 01.10.2026 — 31.12.2026 (собран 17.09.2026).json'
+			'Отчёт по взаимодействиям — Работа с вузами, движение 01.10.2026 — 31.12.2026 (собран 17.09.2026).json'
 		);
 	});
 });
@@ -329,14 +332,7 @@ describe('инварианты', () => {
 				...VIEW.charts,
 				funnel: {
 					...VIEW.charts.funnel!,
-					workspaces: [
-						{
-							workspaceId: '88888888-8888-4888-8888-888888888888',
-							workspaceKey: 'b2b',
-							workspaceName: 'Работа с вузами',
-							stages: [{ key: 'g:contact', label: 'Контакты', value: 5, filter: null }]
-						}
-					]
+					stages: [{ key: 'g:contact', label: 'Контакты', value: 5, filter: null }]
 				}
 			}
 		});

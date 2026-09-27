@@ -864,8 +864,10 @@ test.describe.serial('сквозной сценарий: от заявки до 
 	test('7. Отчёт за период выгружается в четырёх форматах', async () => {
 		// Адрес отчёта сужен до вуза прохода: числа обязаны сойтись с тем, что
 		// проход только что сделал, а не со всем стендом.
-		await manager.goto(`/reports?org=${INSTITUTION.id}`);
-		await expect(manager.getByRole('heading', { name: 'Отчёты по взаимодействиям' })).toBeVisible();
+		await manager.goto(`/w/${GROUP_KEY}/reports?org=${INSTITUTION.id}`);
+		await expect(
+			manager.getByRole('heading', { name: /^Отчёт по взаимодействиям — / })
+		).toBeVisible();
 		await expect(manager.getByTestId('report-row-count')).toHaveText('1');
 		await expect(manager.getByRole('link', { name: MAIN_TITLE })).toBeVisible();
 

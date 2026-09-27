@@ -26,8 +26,17 @@ import { ValidationError } from '../errors';
  * ссылку руками, и показывать ему отказ вместо отчёта незачем. А вот
  * испорченная дата периода отбрасыванию не подлежит: молча подставленный вместо
  * неё квартал означал бы отчёт не за тот период, о чём читающий не узнает.
+ *
+ * Пространство приходит не из строки запроса, а от вызывающего — из пути
+ * `/w/<ключ>/reports`. Параметр `workspace`, оставшийся в старой ссылке, в
+ * число разбираемых не входит (`REPORT_PARAMS`) и выборку не меняет: иначе
+ * адрес одного пространства показывал бы работу другого под своим заголовком.
  */
-export function readReportQuery(url: URL, today: string = formatIsoDay()): ReportQuery {
+export function readReportQuery(
+	url: URL,
+	workspace: string,
+	today: string = formatIsoDay()
+): ReportQuery {
 	const raw: Record<string, string[] | string> = {};
 
 	for (const param of REPORT_PARAMS) {
@@ -40,6 +49,7 @@ export function readReportQuery(url: URL, today: string = formatIsoDay()): Repor
 
 	const parsed = reportQuerySchema.safeParse({
 		...raw,
+		workspace,
 		mode: url.searchParams.get('mode') ?? undefined,
 		from: url.searchParams.get('from') ?? quarterStart(today),
 		to: url.searchParams.get('to') ?? today,

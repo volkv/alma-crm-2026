@@ -278,14 +278,14 @@ export const HELP_SHOTS: readonly Frame[] = [
 	},
 	{
 		name: 'user/reports-1',
-		path: '/reports',
+		path: '/w/b2b/reports',
 		role: 'manager',
 		caption: 'Срез: фильтры, распределение по стадиям и таблица',
-		waitFor: 'Отчёты по взаимодействиям'
+		waitFor: 'Отчёт по взаимодействиям — Работа с ВУЗ'
 	},
 	{
 		name: 'user/reports-2',
-		path: '/reports?mode=movement',
+		path: '/w/b2b/reports?mode=movement',
 		role: 'manager',
 		caption: 'Движение: события периода по видам',
 		waitFor: 'Каждая строка — один переход'

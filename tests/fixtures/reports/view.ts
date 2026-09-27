@@ -8,11 +8,12 @@ import type { ReportView } from '$lib/contracts/reports';
 export function sampleReportView(overrides: Partial<ReportView> = {}): ReportView {
 	const view: ReportView = {
 		meta: {
-			schemaVersion: 1,
+			schemaVersion: 2,
 			reportId: '0f6d8a52-3c1b-4e7a-9d2f-5b8c1e4a7f30',
 			generatedAt: '2026-09-17T09:00:00.000Z',
 			asOf: '2026-12-31T21:00:00.000Z',
 			mode: 'snapshot',
+			workspace: { key: 'b2b', name: 'Работа с вузами' },
 			period: { start: '2026-10-01', end: '2026-12-31' },
 			filters: [
 				{ label: 'Режим', value: 'Срез' },
@@ -99,25 +100,18 @@ export function sampleReportView(overrides: Partial<ReportView> = {}): ReportVie
 		totals: { rowCount: 2, interactionCount: 2, paused: 0, overdue: 1 },
 		charts: {
 			funnel: {
-				workspaces: [
+				stages: [
 					{
-						workspaceId: '88888888-8888-4888-8888-888888888888',
-						workspaceKey: 'b2b',
-						workspaceName: 'Работа с вузами',
-						stages: [
-							{
-								key: 'workspace:contact_search',
-								label: 'Поиск контактных лиц',
-								value: 1,
-								filter: { param: 'stage', value: 'contact_search' }
-							},
-							{
-								key: 'workspace:meeting',
-								label: 'Встреча',
-								value: 0,
-								filter: { param: 'stage', value: 'meeting' }
-							}
-						]
+						key: 'workspace:contact_search',
+						label: 'Поиск контактных лиц',
+						value: 1,
+						filter: { param: 'stage', value: 'contact_search' }
+					},
+					{
+						key: 'workspace:meeting',
+						label: 'Встреча',
+						value: 0,
+						filter: { param: 'stage', value: 'meeting' }
 					}
 				],
 				closed: [

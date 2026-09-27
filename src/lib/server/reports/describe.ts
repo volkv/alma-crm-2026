@@ -15,7 +15,7 @@ import {
 	type ReportQuery
 } from '$lib/contracts/reports';
 import { formatDate } from '$lib/format';
-import { directions, organizations, products, programs, users, workspaces } from '../db/schema';
+import { directions, organizations, products, programs, users } from '../db/schema';
 import type { ReportExecutor } from './transaction';
 
 async function namesByIds(
@@ -44,53 +44,39 @@ export async function describeFilters(
 	query: ReportQuery,
 	stageName: (key: string) => string
 ): Promise<ReportFilterView[]> {
-	const [
-		organizationNames,
-		directionNames,
-		programNames,
-		productNames,
-		ownerNames,
-		assigneeNames,
-		workspaceNames
-	] = await Promise.all([
-		namesByIds(query.org, (ids) =>
-			db
-				.select({ id: organizations.id, name: organizations.shortName })
-				.from(organizations)
-				.where(inArray(organizations.id, ids))
-		),
-		namesByIds(query.dir, (ids) =>
-			db
-				.select({ id: directions.id, name: directions.name })
-				.from(directions)
-				.where(inArray(directions.id, ids))
-		),
-		namesByIds(query.prog, (ids) =>
-			db
-				.select({ id: programs.id, name: programs.name })
-				.from(programs)
-				.where(inArray(programs.id, ids))
-		),
-		namesByIds(query.prod, (ids) =>
-			db
-				.select({ id: products.id, name: products.name })
-				.from(products)
-				.where(inArray(products.id, ids))
-		),
-		namesByIds(query.owner, (ids) =>
-			db.select({ id: users.id, name: users.fullName }).from(users).where(inArray(users.id, ids))
-		),
-		namesByIds(query.assignee, (ids) =>
-			db.select({ id: users.id, name: users.fullName }).from(users).where(inArray(users.id, ids))
-		),
-		query.workspace.length === 0
-			? Promise.resolve([])
-			: db
-					.select({ key: workspaces.key, name: workspaces.name })
-					.from(workspaces)
-					.where(inArray(workspaces.key, [...query.workspace]))
-					.then((rows) => rows.map((row) => row.name))
-	]);
+	const [organizationNames, directionNames, programNames, productNames, ownerNames, assigneeNames] =
+		await Promise.all([
+			namesByIds(query.org, (ids) =>
+				db
+					.select({ id: organizations.id, name: organizations.shortName })
+					.from(organizations)
+					.where(inArray(organizations.id, ids))
+			),
+			namesByIds(query.dir, (ids) =>
+				db
+					.select({ id: directions.id, name: directions.name })
+					.from(directions)
+					.where(inArray(directions.id, ids))
+			),
+			namesByIds(query.prog, (ids) =>
+				db
+					.select({ id: programs.id, name: programs.name })
+					.from(programs)
+					.where(inArray(programs.id, ids))
+			),
+			namesByIds(query.prod, (ids) =>
+				db
+					.select({ id: products.id, name: products.name })
+					.from(products)
+					.where(inArray(products.id, ids))
+			),
+			namesByIds(query.owner, (ids) =>
+				db.select({ id: users.id, name: users.fullName }).from(users).where(inArray(users.id, ids))
+			),
+			namesByIds(query.assignee, (ids) =>
+				db.select({ id: users.id, name: users.fullName }).from(users).where(inArray(users.id, ids))
+			)
+		]);
 
 	const filters: ReportFilterView[] = [
 		{ label: 'Режим', value: REPORT_MODE_LABELS[query.mode] },
@@ -104,13 +90,11 @@ export async function describeFilters(
 	const atMoment = `на ${formatDate(query.to)}`;
 	const now = 'сейчас';
 
-	// Пространство взаимодействия не меняется никогда, и момент ему не нужен.
-	const add = (label: string, note: string | null, values: readonly string[]): void => {
+	// Пространства среди фильтров нет: отчёт собран внутри одного, и его имя
+	// стоит в заголовке и в `meta.workspace`, а не в перечне сужений.
+	const add = (label: string, note: string, values: readonly string[]): void => {
 		if (values.length > 0) {
-			filters.push({
-				label: note === null ? label : `${label} (${note})`,
-				value: values.join(', ')
-			});
+			filters.push({ label: `${label} (${note})`, value: values.join(', ') });
 		}
 	};
 
@@ -120,7 +104,6 @@ export async function describeFilters(
 		now,
 		query.party.map((kind) => REPORT_PARTY_LABELS[kind])
 	);
-	add('Пространство', null, workspaceNames);
 	add('Направление', now, directionNames);
 	add('Программа', now, programNames);
 	add('Продукт', now, productNames);

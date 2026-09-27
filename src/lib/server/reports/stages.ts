@@ -13,7 +13,7 @@
  * `stages.revision_id`, и переименование правит эту функцию, а не пять запросов
  * в четырёх модулях.
  */
-import { asc, eq } from 'drizzle-orm';
+import { and, asc, eq } from 'drizzle-orm';
 import type { ActorContext } from '../actor';
 import { stages, workflows, workspaces } from '../db/schema';
 import { workspaceFilter } from '../rbac';
@@ -38,18 +38,20 @@ export type ReportWorkspace = {
 };
 
 /**
- * Пространства вызывающего с их действующими стадиями, в порядке пространств.
+ * Пространство отчёта с его действующими стадиями — или `null`, если такого нет
+ * или сотрудник в него не включён.
  *
- * Читаются все его пространства, а не только те, что встретились в выборке:
- * воронка обязана показать и стадию, на которой сейчас никто не стоит, — ноль
- * в ней значит «никого», а отсутствие строки читается как «такой стадии нет».
- * Чужие пространства в отчёт не попадают и нулями: их названия и стадии — уже
- * сведения о направлении, в которое сотрудник не включён.
+ * Стадии читаются все, а не только встретившиеся в выборке: воронка обязана
+ * показать и стадию, на которой сейчас никто не стоит, — ноль в ней значит
+ * «никого», а отсутствие строки читается как «такой стадии нет». Чужое
+ * пространство и несуществующее неразличимы — оба `null`: название и стадии
+ * чужого — уже сведения о направлении, в которое сотрудник не включён.
  */
-export async function readActiveWorkspaces(
+export async function readReportWorkspace(
 	db: ReportExecutor,
-	ctx: ActorContext
-): Promise<Map<string, ReportWorkspace>> {
+	ctx: ActorContext,
+	key: string
+): Promise<ReportWorkspace | null> {
 	const rows = await db
 		.select({
 			workspaceId: workspaces.id,
@@ -64,126 +66,90 @@ export async function readActiveWorkspaces(
 		// назначенного процесса и её стадии.
 		.leftJoin(workflows, eq(workflows.id, workspaces.workflowId))
 		.leftJoin(stages, eq(stages.revisionId, workflows.activeRevisionId))
-		.where(workspaceFilter(ctx, workspaces.id))
-		.orderBy(asc(workspaces.position), asc(stages.position));
+		// Сотрудник видит пространство, только если включён в него: та же
+		// граница, что у загрузчика ветки `/w/[workspace]`, но проверенная ещё раз
+		// здесь — отчёт собирают и экран, и выгрузка, и машинный вызов.
+		.where(and(eq(workspaces.key, key), workspaceFilter(ctx, workspaces.id)))
+		.orderBy(asc(stages.position));
 
-	const found = new Map<string, ReportWorkspace & { stages: ReportStage[] }>();
+	const [first] = rows;
+
+	if (first === undefined) {
+		return null;
+	}
+
+	const found: ReportStage[] = [];
 
 	for (const row of rows) {
-		let workspace = found.get(row.workspaceId);
-
-		if (workspace === undefined) {
-			workspace = {
-				id: row.workspaceId,
-				key: row.workspaceKey,
-				name: row.workspaceName,
-				stages: []
-			};
-			found.set(row.workspaceId, workspace);
-		}
-
 		if (row.stageKey !== null && row.stageName !== null && row.stagePosition !== null) {
-			workspace.stages.push({
-				key: row.stageKey,
-				name: row.stageName,
-				position: row.stagePosition
-			});
+			found.push({ key: row.stageKey, name: row.stageName, position: row.stagePosition });
 		}
 	}
 
-	return found;
+	return {
+		id: first.workspaceId,
+		key: first.workspaceKey,
+		name: first.workspaceName,
+		stages: found
+	};
 }
 
 /** Название и место стадии в порядке процесса. */
 export type StageLabel = {
 	/**
-	 * Название для таблицы и сверки: с пространством в скобках, когда
-	 * пространств с процессом больше одного. В строке таблицы иначе не понять,
-	 * чья это стадия.
+	 * Название стадии — без пространства: отчёт и так собран внутри одного, и
+	 * «Встреча (B2B)» повторяла бы заголовок экрана.
 	 */
 	label: string;
-	/**
-	 * Название без пространства: воронка пространства уже названа своим
-	 * заголовком.
-	 */
-	name: string;
 	order: number;
 	retired: boolean;
 };
 
-/** Стадии одного пространства — заготовка его воронки, в порядке процесса. */
-export type StageSkeletonWorkspace = {
-	workspaceId: string;
-	workspaceKey: string;
-	workspaceName: string;
-	stages: { bucketId: string; stageKey: string; label: StageLabel }[];
-};
+/** Полоса заготовки воронки: имя, ключ стадии и её название с местом. */
+export type StageSkeletonBucket = { bucketId: string; stageKey: string; label: StageLabel };
 
 export type StageIndex = {
-	label: (workspaceId: string, key: string, snapshotName: string | null) => StageLabel;
+	/** Пространство отчёта: его название стоит в заголовке и имени файла. */
+	workspace: ReportWorkspace;
+	label: (key: string, snapshotName: string | null) => StageLabel;
 	stageName: (key: string) => string;
-	/** Пространство по идентификатору: его ключ уходит в фильтр воронки. */
-	workspace: (workspaceId: string) => ReportWorkspace | null;
-	/**
-	 * Заготовка воронок: по воронке на пространство, стадии — в порядке
-	 * процесса.
-	 */
-	skeleton: () => StageSkeletonWorkspace[];
+	/** Заготовка воронки — стадии действующего процесса по порядку. */
+	skeleton: () => readonly StageSkeletonBucket[];
 };
 
 /**
- * Индекс стадий. Группировка идёт по паре «пространство + ключ стадии», а не
- * по названию и не по идентификатору стадии: ключ записан в момент входа и не
- * переписывается, поэтому переиздание процесса и переименование на числа не
- * влияют. Пространство в ключе обязательно — одинаковые ключи в разных
- * пространствах это законная ситуация, и без него две разные стадии слились бы
- * в одну строку.
+ * Имя полосы воронки: пространство и ключ стадии. Отчёт собран внутри одного
+ * пространства, но в имени оно остаётся — так полосы группирует база
+ * (`aggregate.ts`), и одинаковые ключи разных процессов не сольются, когда
+ * имя уедет из отчёта в чужой файл или систему.
  */
-export function createStageIndex(workspacesById: Map<string, ReportWorkspace>): StageIndex {
+export function stageBucketId(workspaceId: string, key: string): string {
+	return `${workspaceId}:${key}`;
+}
+
+/**
+ * Индекс стадий пространства отчёта. Группировка идёт по ключу стадии, а не по
+ * названию и не по идентификатору стадии: ключ записан в момент входа и не
+ * переписывается, поэтому переиздание процесса и переименование на числа не
+ * влияют.
+ */
+export function createStageIndex(workspace: ReportWorkspace): StageIndex {
 	const known = new Map<string, StageLabel>();
-	const skeleton: StageSkeletonWorkspace[] = [];
-	const nameByKey = new Map<string, string>();
+	const skeleton: StageSkeletonBucket[] = [];
 	const retired = new Map<string, StageLabel>();
 	let order = 0;
 
-	// Название стадии дополняется пространством, только когда пространств с
-	// процессом больше одного: иначе «Встреча (B2B)» повторяет то, что и так
-	// написано на экране.
-	const prefixed =
-		[...workspacesById.values()].filter((workspace) => workspace.stages.length > 0).length > 1;
+	for (const stage of workspace.stages) {
+		const label: StageLabel = { label: stage.name, order: order++, retired: false };
 
-	for (const workspace of workspacesById.values()) {
-		const bucket: StageSkeletonWorkspace = {
-			workspaceId: workspace.id,
-			workspaceKey: workspace.key,
-			workspaceName: workspace.name,
-			stages: []
-		};
-
-		for (const stage of workspace.stages) {
-			const bucketId = `${workspace.id}:${stage.key}`;
-			const label: StageLabel = {
-				label: prefixed ? `${stage.name} (${workspace.name})` : stage.name,
-				name: stage.name,
-				order: order++,
-				retired: false
-			};
-
-			known.set(bucketId, label);
-			bucket.stages.push({ bucketId, stageKey: stage.key, label });
-
-			if (!nameByKey.has(stage.key)) {
-				nameByKey.set(stage.key, stage.name);
-			}
-		}
-
-		skeleton.push(bucket);
+		known.set(stage.key, label);
+		skeleton.push({ bucketId: stageBucketId(workspace.id, stage.key), stageKey: stage.key, label });
 	}
 
 	return {
-		label(workspaceId, key, snapshotName) {
-			const bucketId = `${workspaceId}:${key}`;
-			const found = known.get(bucketId);
+		workspace,
+		label(key, snapshotName) {
+			const found = known.get(key);
 
 			if (found !== undefined) {
 				return found;
@@ -193,22 +159,21 @@ export function createStageIndex(workspacesById: Map<string, ReportWorkspace>): 
 			// Показывается название из снимка с пометкой, и такие стадии стоят в
 			// конце порядка — перенести строку в соседнюю стадию значило бы
 			// изменить прошлое.
-			let missing = retired.get(bucketId);
+			let missing = retired.get(key);
 
 			if (missing === undefined) {
-				const name = `${snapshotName ?? key} (стадия удалена из процесса)`;
-
-				missing = { label: name, name, order: order + retired.size, retired: true };
-				retired.set(bucketId, missing);
+				missing = {
+					label: `${snapshotName ?? key} (стадия удалена из процесса)`,
+					order: order + retired.size,
+					retired: true
+				};
+				retired.set(key, missing);
 			}
 
 			return missing;
 		},
 		stageName(key) {
-			return nameByKey.get(key) ?? key;
-		},
-		workspace(workspaceId) {
-			return workspacesById.get(workspaceId) ?? null;
+			return known.get(key)?.label ?? key;
 		},
 		skeleton() {
 			return skeleton;

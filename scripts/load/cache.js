@@ -104,7 +104,10 @@ function openCard(id) {
 }
 
 function openReport() {
-	return http.get(`${BASE_URL}/reports?mode=snapshot&${PERIOD}`, { jar, headers: HTML });
+	return http.get(`${BASE_URL}/w/${fixture.workspace}/reports?mode=snapshot&${PERIOD}`, {
+		jar,
+		headers: HTML
+	});
 }
 
 /** Пара «холодное открытие — повторное» по одному ответу каждая. */

@@ -62,6 +62,7 @@ const exchangeFile = (await import('../../../src/routes/api/v1/exchange/files/[.
 	.GET as Endpoint;
 const openApiDocument = (await import('../../../src/routes/api/openapi.json/+server'))
 	.GET as Endpoint;
+const report = (await import('../../../src/routes/api/v1/reports/+server')).GET as Endpoint;
 const docsPage = (await import('../../../src/routes/api/docs/+server')).GET as Endpoint;
 const docsAsset = (await import('../../../src/routes/api/docs/[...path]/+server')).GET as Endpoint;
 
@@ -441,6 +442,48 @@ describe('организация по идентификатору', () => {
 			apiEvent({ headers: bearer(issued.key), params: { id: 'не-uuid' }, routeId })
 		);
 		expect(malformed.status).toBe(400);
+	});
+});
+
+describe('отчёт', () => {
+	/** Запрос отчёта за квартал; пространство — как его передаст интегратор. */
+	function reportEvent(key: string, workspace: string | null): RequestEvent {
+		return apiEvent({
+			path: '/api/v1/reports',
+			routeId: '/api/v1/reports',
+			query: {
+				mode: 'snapshot',
+				from: '2026-07-01',
+				to: '2026-09-30',
+				...(workspace === null ? {} : { workspace })
+			},
+			headers: bearer(key)
+		});
+	}
+
+	it('строится внутри одного пространства: без него или со списком — 400 со словами', async () => {
+		const issued = await issueKey();
+
+		for (const workspace of [null, 'b2b,b2c']) {
+			const response = await report(reportEvent(issued.key, workspace));
+
+			expect(response.status, String(workspace)).toBe(400);
+
+			const failure = await body(response);
+			const issues = (failure.error as unknown as { details: { issues: string[] } }).details.issues;
+
+			expect(issues.some((issue) => issue.startsWith('query.workspace:'))).toBe(true);
+		}
+
+		const response = await report(reportEvent(issued.key, 'b2b'));
+		const payload = (await response.json()) as {
+			meta: { workspace: { key: string } };
+			charts: { funnel: { stages: unknown[] } | null };
+		};
+
+		expect(response.status).toBe(200);
+		expect(payload.meta.workspace.key).toBe('b2b');
+		expect(Array.isArray(payload.charts.funnel?.stages)).toBe(true);
 	});
 });
 

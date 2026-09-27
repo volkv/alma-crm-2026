@@ -41,7 +41,7 @@ import {
 import { formatDate } from '$lib/format';
 import type { ActorContext } from '../actor';
 import { getConfig } from '../config';
-import { ValidationError } from '../errors';
+import { NotFoundError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
 import {
 	readMovementAggregates,
@@ -54,8 +54,8 @@ import { describeFilters } from './describe';
 import { movementEventKind, readMovementRows, type MovementRow } from './movement';
 import { describeScope } from './query';
 import { readSnapshotRows, type SnapshotRow } from './snapshot';
-import { createStageIndex, readActiveWorkspaces, type StageIndex } from './stages';
-import { readReportSnapshot, type ReportSnapshot } from './transaction';
+import { createStageIndex, readReportWorkspace, type StageIndex } from './stages';
+import { readReportSnapshot, type ReportExecutor, type ReportSnapshot } from './transaction';
 
 const SECONDS_IN_DAY = 86_400;
 
@@ -147,7 +147,7 @@ function snapshotCell(
 		case 'stage':
 			return row.stageKey === null
 				? EMPTY_TEXT
-				: text(index.label(row.workspaceId, row.stageKey, row.stageName).label);
+				: text(index.label(row.stageKey, row.stageName).label);
 		case 'stageEnteredAt':
 			return { kind: 'date', value: row.enteredAt === null ? null : moscowDay(row.enteredAt) };
 		case 'daysOnStage':
@@ -178,13 +178,9 @@ function movementCell(
 
 	switch (column.key) {
 		case 'stageFrom':
-			return row.fromKey === null
-				? EMPTY_TEXT
-				: text(index.label(row.workspaceId, row.fromKey, row.fromName).label);
+			return row.fromKey === null ? EMPTY_TEXT : text(index.label(row.fromKey, row.fromName).label);
 		case 'stageTo':
-			return row.toKey === null
-				? EMPTY_TEXT
-				: text(index.label(row.workspaceId, row.toKey, row.toName).label);
+			return row.toKey === null ? EMPTY_TEXT : text(index.label(row.toKey, row.toName).label);
 		case 'moveKind': {
 			const kind = movementEventKind(row);
 
@@ -276,6 +272,27 @@ function movementSeries(
 }
 
 /**
+ * Пространство отчёта с его процессом. Незнакомое и чужое пространство
+ * отвечают одним и тем же отказом — как адрес `/w/<ключ>` у загрузчика ветки:
+ * отказ «нет доступа» подтвердил бы, что направление есть, и назвал бы его.
+ * Проверка стоит здесь, а не только в загрузчике: отчёт собирают ещё
+ * выгрузка и машинный вызов, и у каждого своя дорога сюда.
+ */
+export async function readReportStageIndex(
+	db: ReportExecutor,
+	ctx: ActorContext,
+	workspaceKey: string
+): Promise<StageIndex> {
+	const workspace = await readReportWorkspace(db, ctx, workspaceKey);
+
+	if (workspace === null) {
+		throw new NotFoundError('Пространство не найдено');
+	}
+
+	return createStageIndex(workspace);
+}
+
+/**
  * Отчёт целиком. Право — `interactions.read`: отчёт показывает ровно то, что
  * человек и так видит в списке, и своего права у раздела нет.
  *
@@ -300,7 +317,7 @@ async function assembleInSnapshot(
 ): Promise<ReportPage> {
 	const origin = getConfig().ORIGIN.replace(/\/$/, '');
 	const asOf = snapshotMoment(query.to);
-	const index = createStageIndex(await readActiveWorkspaces(tx, ctx));
+	const index = await readReportStageIndex(tx, ctx, query.workspace);
 	const columns = resolveColumns(query.mode, query.cols);
 
 	const meta = {
@@ -309,6 +326,7 @@ async function assembleInSnapshot(
 		generatedAt: takenAt.toISOString(),
 		asOf: asOf.toISOString(),
 		mode: query.mode,
+		workspace: { key: index.workspace.key, name: index.workspace.name },
 		period: { start: query.from, end: query.to },
 		filters: await describeFilters(tx, query, index.stageName),
 		scope: describeScope(ctx),

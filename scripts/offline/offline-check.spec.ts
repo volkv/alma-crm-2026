@@ -166,9 +166,7 @@ test.describe.serial('без интернета: полный проход', { t
 
 		expect(forManager.status()).not.toBe(200);
 		expect(forAdmin.status()).toBe(200);
-		note(
-			`/settings/health: менеджеру ${forManager.status()}, администратору ${forAdmin.status()}`
-		);
+		note(`/settings/health: менеджеру ${forManager.status()}, администратору ${forAdmin.status()}`);
 	});
 
 	test('заявка с сайта от имитатора CMS, снимок статуса уходит обратно', async () => {
@@ -348,8 +346,9 @@ test.describe.serial('без интернета: полный проход', { t
 	test('отчёт выгружается в XLSX и PDF (Gotenberg)', async () => {
 		const { page } = sessions.manager;
 
+		// Прежний адрес уводит в отчёт первого доступного пространства.
 		await page.goto('/reports');
-		await expect(page.getByRole('heading', { name: 'Отчёты по взаимодействиям' })).toBeVisible();
+		await expect(page.getByRole('heading', { name: /^Отчёт по взаимодействиям — / })).toBeVisible();
 
 		const rows = Number(await page.getByTestId('report-row-count').textContent());
 
