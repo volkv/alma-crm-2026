@@ -23,7 +23,7 @@ describe('«Основные сведения»', () => {
 		expect(report.fields.shortName).toContain('МИЭТ');
 		expect(report.fields.regDate).toBe('09 декабря 1965 г.');
 		expect(report.fields.address).toContain('площадь Шокина');
-		expect(report.fields.email).toBe('office@university.example.org.');
+		expect(report.fields.email).toBe('office@university.example.org');
 		expect(report.fields.founder).toContain('Министерство науки');
 	});
 });
@@ -38,6 +38,7 @@ describe('«Структура и органы управления»', () => {
 			name: 'Кузнецова Анна Павловна',
 			post: 'заведующий кафедрой',
 			email: 'kaf-sec@university.example.org',
+			phone: null,
 			address: '124498, ЦФО, г. Москва, г. Зеленоград, пл. Шокина, д.1, МИЭТ, ауд. 3334'
 		});
 	});

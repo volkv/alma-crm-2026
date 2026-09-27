@@ -96,8 +96,35 @@ describe('разбор ячейки контактов', () => {
 	it('кусок без имени возвращает как неразобранный', () => {
 		const result = parseContacts('приёмная +7 999 000-00-00; Орлов Пётр, orlov@vuz.ru');
 
-		expect(result.unparsed).toEqual(['приёмная +7 999 000-00-00']);
+		expect(result.unparsed).toEqual([
+			{
+				text: 'приёмная +7 999 000-00-00',
+				reason: 'после «приёмная» нет имени: фамилия и имя пишутся вместе, до первой запятой'
+			}
+		]);
 		expect(result.contacts.map(contactFullName)).toEqual(['Орлов Пётр']);
+	});
+
+	it('объясняет, какое слово не принято за имя', () => {
+		const [digit] = parseContacts('Проход2-С Иванова Мария Петровна, проректор').unparsed;
+
+		expect(digit.reason).toBe(
+			'«Проход2-С» не похоже на фамилию: в ФИО бывают только буквы, дефис и точка у инициала'
+		);
+		expect(parseContacts('rector@vuz.ru').unparsed[0].reason).toBe(
+			'в нём только почта или телефон, а нужны фамилия и имя'
+		);
+	});
+
+	it('маркер отчества за отчеством остаётся в ФИО, а не уходит в должность', () => {
+		const [contact] = parseContacts('Алиева Айгюн Рашидовна кызы, проректор').contacts;
+
+		expect(contact).toMatchObject({
+			lastName: 'Алиева',
+			firstName: 'Айгюн',
+			middleName: 'Рашидовна кызы',
+			position: 'проректор'
+		});
 	});
 
 	it('пустая ячейка — это ноль людей и ноль претензий', () => {

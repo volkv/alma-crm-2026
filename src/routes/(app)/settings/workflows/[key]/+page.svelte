@@ -70,6 +70,26 @@
 	const editable = $derived(draft !== null);
 	const stageNames = $derived(new Map((shown?.stages ?? []).map((s) => [s.id, s.name])));
 	const stageKeys = $derived(new Map((shown?.stages ?? []).map((s) => [s.id, s.key])));
+	/**
+	 * Номер стадии — её место в цепочке сейчас. Позиция в базе после удаления
+	 * стадии остаётся с пропуском («1, 3, 4»), а человек считает по порядку.
+	 */
+	const stageNumbers = $derived(
+		new Map((shown?.stages ?? []).map((s, index) => [s.id, index + 1]))
+	);
+
+	/**
+	 * Переходы в порядке цепочки: по номеру стадии «откуда», затем «куда». В
+	 * черновике они лежат в порядке заведения, и добавленный последним шаг из
+	 * первой стадии оказывался бы в конце таблицы.
+	 */
+	const orderedTransitions = $derived(
+		[...(shown?.transitions ?? [])].sort(
+			(left, right) =>
+				(stageNumbers.get(left.fromStageId) ?? 0) - (stageNumbers.get(right.fromStageId) ?? 0) ||
+				(stageNumbers.get(left.toStageId) ?? 0) - (stageNumbers.get(right.toStageId) ?? 0)
+		)
+	);
 	const permissionLabels = $derived(
 		new Map<string, string>(
 			data.permissions.map((permission) => [permission.key, permission.label])
@@ -306,7 +326,7 @@
 	const stageOptions = $derived(
 		(shown?.stages ?? []).map((stage) => ({
 			value: stage.key,
-			label: `${stage.position}. ${stage.name}`
+			label: `${stageNumbers.get(stage.id)}. ${stage.name}`
 		}))
 	);
 
@@ -314,7 +334,10 @@
 	const removeTargets = $derived(
 		(shown?.stages ?? [])
 			.filter((stage) => stage.key !== removing?.key)
-			.map((stage) => ({ value: stage.key, label: `${stage.position}. ${stage.name}` }))
+			.map((stage) => ({
+				value: stage.key,
+				label: `${stageNumbers.get(stage.id)}. ${stage.name}`
+			}))
 	);
 
 	/**
@@ -650,7 +673,7 @@
 											onclick={editable ? () => openStage(stage) : undefined}
 										>
 											<Table.Cell class="text-right align-top text-muted-foreground">
-												{stage.position}
+												{stageNumbers.get(stage.id)}
 											</Table.Cell>
 											<Table.Cell class="align-top whitespace-normal">
 												<span class="flex flex-wrap items-center gap-2">
@@ -784,7 +807,7 @@
 									</Table.Row>
 								</Table.Header>
 								<Table.Body>
-									{#each shown.transitions as transition (transition.id)}
+									{#each orderedTransitions as transition (transition.id)}
 										<Table.Row>
 											<Table.Cell class="whitespace-normal">
 												{stageNames.get(transition.fromStageId) ?? '—'}

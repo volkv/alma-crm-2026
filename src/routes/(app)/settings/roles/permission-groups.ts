@@ -72,7 +72,7 @@ export const PERMISSION_GROUPS: readonly PermissionGroup[] = [
 	},
 	{
 		key: 'process',
-		label: 'Процесс (workflow)',
+		label: 'Процесс',
 		permissions: ['stages.configure']
 	},
 	{

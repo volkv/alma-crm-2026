@@ -6,6 +6,7 @@
  * профессиональное» в карточке расходятся, и это замечают на демонстрации.
  */
 import type { FieldOption } from '$lib/components/form/field-select.svelte';
+import { NO_OPTION } from '$lib/contracts/common';
 import type { StatusTone } from '$lib/components/status-badge.svelte';
 import {
 	AFFILIATION_ROLE_KINDS,
@@ -137,8 +138,7 @@ export const CONSENT_BASIS_LABELS: Record<ConsentBasis, string> = {
 	legal: 'Требование закона'
 };
 
-/** Значение, которым список обозначает «ничего не выбрано». */
-export const NO_OPTION = 'none';
+export { NO_OPTION } from '$lib/contracts/common';
 
 function toOptions<TKey extends string>(
 	keys: readonly TKey[],

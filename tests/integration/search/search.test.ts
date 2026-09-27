@@ -292,7 +292,7 @@ describe('люди, договоры и домены — в той же обла
 				id: own,
 				targetId: own,
 				title: `${MARK}Своякова Тест`,
-				subtitle: `${MARK} мой вуз`
+				subtitle: `Проректор, ${MARK} мой вуз`
 			}
 		]);
 
@@ -339,6 +339,26 @@ describe('люди, договоры и домены — в той же обла
 
 		const all = await found(asUser(testActor()), 'alien-univ.example.ru', 'organization');
 		expect(all.map((hit) => hit.id)).toEqual([foreign]);
+
+		// Общий домен почты не делает своими все сайты под ним.
+		expect(await found(asUser(testActor()), 'ivanov@example.ru', 'organization')).toEqual([]);
+	});
+
+	it('находит по названию вуз, открытый через своё взаимодействие', async () => {
+		const { foreign, viewer } = await twoUniversities();
+
+		expect(await found(viewer, 'чужой вуз', 'organization')).toEqual([]);
+
+		await insertWork({ ownerUserId: viewer.id, organizationId: foreign, title: `${MARK} дело` });
+		// Актёр собирается заново: область пространства читается при сборке.
+		const again = await scopedActor(database.db, {
+			roleId: 'manager',
+			userId: viewer.id,
+			organizationIds: []
+		});
+
+		const hits = await found(asUser(again), 'чужой вуз', 'organization');
+		expect(hits.map((hit) => hit.id)).toEqual([foreign]);
 	});
 });
 

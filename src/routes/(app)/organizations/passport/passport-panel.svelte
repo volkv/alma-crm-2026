@@ -466,7 +466,7 @@
 				записывается само: отметьте, что принять, и сохраните форму.
 			</p>
 		</div>
-		{#if live}
+		{#if registryLive}
 			<StatusBadge tone={availability.remaining > 0 ? 'neutral' : 'warning'}>
 				Обращений на сегодня: осталось {availability.remaining} из {availability.dailyQuota}
 			</StatusBadge>
@@ -806,7 +806,9 @@
 									<div class="min-w-0 flex-1 basis-56">
 										<div>{contact.name}{contact.post ? `, ${contact.post}` : ''}</div>
 										<div class="text-xs text-faint">
-											{contact.unit}{contact.email ? ` · ${contact.email}` : ''}
+											{[contact.unit, contact.phone, contact.email]
+												.filter((part) => part !== null)
+												.join(' · ')}
 										</div>
 									</div>
 									{#if contactNames.has(normalizePersonName(contact.name))}

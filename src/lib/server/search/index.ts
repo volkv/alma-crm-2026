@@ -1,16 +1,16 @@
 /**
  * Выдача быстрого поиска.
  *
- * Граница доступа у каждой группы — та же, что у её раздела: организации,
- * взаимодействия, программы и продукты читаются самими читателями разделов,
- * вместе с их правом и областью. Там, где читатель раздела не умеет искать
- * нужным способом (человек по ФИО без расшифровки контактов, договор по
- * номеру, организация по домену сайта), выборка своя, но граница — тем же
- * серверным условием, что у списка раздела (`personInScope`, `scopeFilter`,
+ * Граница доступа у каждой группы — та же, что у её раздела: взаимодействия,
+ * программы и продукты читаются самими читателями разделов, вместе с их правом
+ * и областью. Там, где читатель раздела не умеет искать нужным способом
+ * (человек по ФИО без расшифровки контактов, договор по номеру, организация
+ * по домену сайта и с границей карточки), выборка своя, но граница — тем же
+ * серверным условием, что у раздела (`personInScope`, `scopeFilter`,
  * `visibleOrganizationFilter`), а не её пересказом: запись вне области обязана
  * не находиться, а не находиться и отказывать.
  */
-import { and, asc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
+import { and, asc, desc, eq, ilike, inArray, isNull, or, sql } from 'drizzle-orm';
 import {
 	SEARCH_GROUP_LIMIT,
 	SEARCH_KINDS,
@@ -18,10 +18,11 @@ import {
 	type SearchKind,
 	type SearchResult
 } from '$lib/search/contract';
+import { ORGANIZATION_KIND_LABELS } from '$lib/components/directory/labels';
 import type { ActorContext } from '../actor';
 import { getDb } from '../db';
 import { affiliations, contracts, organizations, people } from '../db/schema';
-import { listOrganizations, listProducts, listPrograms } from '../directory/read';
+import { listProducts, listPrograms } from '../directory/read';
 import { visibleOrganizationFilter } from '../interactions/access';
 import { listInteractions } from '../interactions/read';
 import { personInScope } from '../people/access';
@@ -54,30 +55,55 @@ function domainOf(query: string): string | null {
 }
 
 /**
- * Организации по домену сайта. Граница — та же, что у списка организаций и
- * его поиска (`visibleOrganizationFilter`).
+ * Сайты, которые подходят домену запроса: сам домен и его родители до имени
+ * второго уровня. Почта `priem@lk.spbstu.ru` ведёт к сайту `spbstu.ru`, а
+ * обратное неверно: почта `ivanov@example.org` не делает «своими» все сайты
+ * `*.example.org` — иначе общий домен, как у демонстрационных данных, находил
+ * бы разом все организации.
  */
-async function organizationsByDomain(ctx: ActorContext, query: string): Promise<SearchHit[]> {
-	const domain = domainOf(query);
+function siteHostsFor(domain: string): string[] {
+	const labels = domain.split('.');
 
-	if (domain === null) {
-		return [];
-	}
+	return labels.slice(0, -1).map((_, index) => labels.slice(index).join('.'));
+}
+
+/** Узел сайта организации без схемы, `www`, порта и пути — как его сравнивает поиск. */
+const WEBSITE_HOST = sql<string>`regexp_replace(
+	regexp_replace(lower(${organizations.website}), '^[a-z]+://', ''),
+	'^www\.|[:/?#].*$', '', 'g'
+)`;
+
+/**
+ * Организации по названию, ИНН или домену сайта.
+ *
+ * Граница — та же, что у карточки (`visibleOrganizationFilter`): поиск ведёт в
+ * карточку, и находить нужно ровно то, что откроется, — включая вуз, который
+ * виден через своё взаимодействие. Список раздела остаётся уже: он показывает
+ * только назначенные вузы.
+ */
+async function findOrganizations(ctx: ActorContext, query: string): Promise<SearchHit[]> {
+	const pattern = `%${query}%`;
+	const domain = domainOf(query);
+	const byName = sql<boolean>`coalesce(${or(
+		ilike(organizations.shortName, pattern),
+		ilike(organizations.legalName, pattern),
+		ilike(organizations.inn, pattern)
+	)}, false)`;
+	const matches =
+		domain === null ? byName : or(byName, inArray(WEBSITE_HOST, siteHostsFor(domain)));
 
 	const rows = await getDb()
 		.select({
 			id: organizations.id,
 			shortName: organizations.shortName,
-			website: organizations.website
+			inn: organizations.inn,
+			website: organizations.website,
+			byName
 		})
 		.from(organizations)
-		.where(
-			and(
-				visibleOrganizationFilter(ctx, organizations.id),
-				ilike(organizations.website, `%${domain}%`)
-			)
-		)
-		.orderBy(asc(organizations.shortName), asc(organizations.id))
+		.where(and(visibleOrganizationFilter(ctx, organizations.id), matches))
+		// Совпадения по названию — выше совпадений по сайту: их и искали.
+		.orderBy(desc(byName), asc(organizations.shortName), asc(organizations.id))
 		.limit(SEARCH_GROUP_LIMIT);
 
 	return rows.map((row) => ({
@@ -85,7 +111,7 @@ async function organizationsByDomain(ctx: ActorContext, query: string): Promise<
 		id: row.id,
 		targetId: row.id,
 		title: row.shortName,
-		subtitle: row.website
+		subtitle: row.byName ? (row.inn === null ? null : `ИНН ${row.inn}`) : row.website
 	}));
 }
 
@@ -97,27 +123,8 @@ async function organizationsByDomain(ctx: ActorContext, query: string): Promise<
 type GroupReader = (ctx: ActorContext, query: string) => Promise<SearchHit[]>;
 
 const READERS: Record<SearchKind, GroupReader> = {
-	organization: async (ctx, query) => {
-		if (!can(ctx, 'organizations.read')) {
-			return [];
-		}
-
-		const [found, byDomain] = await Promise.all([
-			listOrganizations(ctx, { kind: null, q: query, ...PAGE }),
-			organizationsByDomain(ctx, query)
-		]);
-
-		const hits: SearchHit[] = found.items.map((organization) => ({
-			kind: 'organization',
-			id: organization.id,
-			targetId: organization.id,
-			title: organization.shortName,
-			subtitle: organization.inn === null ? null : `ИНН ${organization.inn}`
-		}));
-		const seen = new Set(hits.map((hit) => hit.id));
-
-		return [...hits, ...byDomain.filter((hit) => !seen.has(hit.id))].slice(0, SEARCH_GROUP_LIMIT);
-	},
+	organization: async (ctx, query) =>
+		can(ctx, 'organizations.read') ? findOrganizations(ctx, query) : [],
 
 	person: async (ctx, query) => {
 		if (!can(ctx, 'people.read')) {
@@ -148,7 +155,9 @@ const READERS: Record<SearchKind, GroupReader> = {
 				: await db
 						.selectDistinct({
 							personId: affiliations.personId,
-							name: organizations.shortName
+							name: organizations.shortName,
+							kind: organizations.kind,
+							position: affiliations.position
 						})
 						.from(affiliations)
 						.innerJoin(organizations, eq(organizations.id, affiliations.organizationId))
@@ -163,15 +172,24 @@ const READERS: Record<SearchKind, GroupReader> = {
 						)
 						.orderBy(asc(organizations.shortName));
 
+		// Подпись — где человек работает: должность и организация. Карточка
+		// частного клиента носит его же ФИО, и повторять имя подписью незачем —
+		// о нём достаточно сказать, что это физическое лицо.
 		return rows.map((row) => {
-			const names = links.filter((link) => link.personId === row.id).map((link) => link.name);
+			const roles = links
+				.filter((link) => link.personId === row.id)
+				.map((link) =>
+					link.kind === 'individual'
+						? ORGANIZATION_KIND_LABELS.individual
+						: `${link.position}, ${link.name}`
+				);
 
 			return {
 				kind: 'person',
 				id: row.id,
 				targetId: row.id,
 				title: row.fullName,
-				subtitle: names.length === 0 ? null : names.join(', ')
+				subtitle: roles.length === 0 ? null : [...new Set(roles)].join('; ')
 			};
 		});
 	},

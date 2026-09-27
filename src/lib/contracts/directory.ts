@@ -13,6 +13,7 @@ import { isValidKpp, isValidOgrn } from '$lib/validation/requisites';
 import {
 	id,
 	isoDate,
+	optionalChoiceId,
 	optionalId,
 	optionalIsoDate,
 	optionalText,
@@ -214,14 +215,22 @@ export const updateSiteSchema = createSiteSchema.extend({
 	id: id('Некорректный идентификатор площадки')
 });
 
+/** Самый короткий осмысленный номер — пятизначный внутренний. */
+const PHONE_DIGITS_MIN = 5;
+
 const personFields = {
 	lastName: requiredText(100, 'Укажите фамилию'),
 	firstName: requiredText(100, 'Укажите имя'),
 	middleName: optionalText(100),
 	email: z.email({ error: 'Электронная почта указана неверно' }).nullable().default(null),
-	phone: optionalText(50).refine((value) => value === null || /^[\d\s+()-]{5,}$/.test(value), {
-		error: 'Телефон может содержать только цифры, пробелы и знаки + ( ) -'
-	}),
+	phone: optionalText(50)
+		.refine((value) => value === null || /^[\d\s+()-]+$/.test(value), {
+			error: 'Телефон может содержать только цифры, пробелы и знаки + ( ) -',
+			abort: true
+		})
+		.refine((value) => value === null || (value.match(/\d/g)?.length ?? 0) >= PHONE_DIGITS_MIN, {
+			error: `Телефон слишком короткий: нужно не меньше ${PHONE_DIGITS_MIN} цифр`
+		}),
 	notes: optionalText(4000)
 };
 
@@ -295,7 +304,7 @@ const affiliationFields = {
 	personId: id('Выберите человека'),
 	organizationId: id('Выберите организацию'),
 	/** Площадка обязана принадлежать той же организации — это проверяет база. */
-	siteId: optionalId('Некорректный идентификатор площадки'),
+	siteId: optionalChoiceId('Некорректный идентификатор площадки'),
 	position: affiliationPositionSchema,
 	roleKind: z.enum(AFFILIATION_ROLE_KINDS, { error: 'Выберите роль в организации' }),
 	/** Основной контакт организации по процессу: такой отмечают для быстрой связи. */
@@ -474,7 +483,7 @@ const productFields = {
 	code: requiredText(50, 'Укажите код продукта'),
 	name: requiredText(500, 'Укажите название продукта'),
 	/** Правообладатель или поставщик продукта, если он известен. */
-	vendorOrganizationId: optionalId('Некорректный идентификатор организации-поставщика'),
+	vendorOrganizationId: optionalChoiceId('Некорректный идентификатор организации-поставщика'),
 	description: optionalText(4000),
 	status: z.enum(LIFECYCLE_STATUSES).default('draft'),
 	...externalRefFields

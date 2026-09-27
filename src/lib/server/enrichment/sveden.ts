@@ -200,6 +200,63 @@ const HEAD_NAME = ['fio', 'headName', 'rukName', 'fioRuk'] as const;
 const HEAD_POST = ['post', 'headPost', 'rukPost'] as const;
 
 /**
+ * Значение без подписи поля.
+ *
+ * Приказ размечает сведение целиком, и вузы кладут в размеченный элемент и
+ * подпись: `<p itemprop="fullName"><b>Полное наименование</b>: …</p>`. Подписью
+ * считается начало до первого двоеточия, если это слова без цифр и кавычек:
+ * у адреса «Россия, 400005, г. Волгоград» и у часов «8:30» двоеточие подписи
+ * не отделяет. Подпись без значения — это пустое поле, а не значение.
+ */
+const CAPTION = /^\p{L}[\p{L}\s().,/-]{1,119}?\s*:\s*/u;
+
+export function withoutCaption(value: string | null): string | null {
+	if (value === null) {
+		return null;
+	}
+
+	const caption = CAPTION.exec(value);
+
+	if (caption === null) {
+		return value;
+	}
+
+	const rest = value.slice(caption[0].length).trim();
+
+	return rest === '' ? null : rest;
+}
+
+function withoutTrailingDot(value: string | null): string | null {
+	return value === null ? null : value.replace(/\s*\.$/, '');
+}
+
+const EMAIL_IN_TEXT = /[\p{L}\d._%+-]+@[\p{L}\d-]+(?:\.[\p{L}\d-]+)+/gu;
+
+/** Адреса почты в свободном тексте: ячейку заполняют как придётся. */
+function emailsIn(value: string): string[] {
+	return [...value.matchAll(EMAIL_IN_TEXT)].map((match) => match[0]);
+}
+
+/**
+ * Телефоны из ячейки: всё, что осталось без адресов почты, куски через `;` или
+ * `,` с хотя бы пятью цифрами. Вуз пишет в ячейку «Электронная почта» и номер —
+ * «(8442) 23-00-76; rector@vstu.ru», — и номер нужен карточке человека
+ * отдельным полем.
+ */
+function phonesIn(value: string): string[] {
+	return value
+		.replace(EMAIL_IN_TEXT, ' ')
+		.split(/[;,]/)
+		.map((part) =>
+			part
+				.replace(/^\s*(тел(ефон)?|т)\.?\s*:?\s*/iu, '')
+				.replace(/[.\s]+$/, '')
+				.trim()
+		)
+		.filter((part) => (part.match(/\d/g)?.length ?? 0) >= 5);
+}
+
+/**
  * Разбор страницы `/sveden/common`.
  *
  * Отдельно от захода, потому что проверять здесь нужно именно разбор, а сеть в
@@ -212,20 +269,22 @@ const HEAD_POST = ['post', 'headPost', 'rukPost'] as const;
 export function readSvedenPage(url: string, html: string): SvedenReport {
 	const data = readMicrodata(html);
 	const propertyCount = [...data.properties.values()].reduce((sum, list) => sum + list.length, 0);
+	const field = (names: readonly string[]) => withoutCaption(firstProperty(data, names));
+	const email = field(EMAIL);
 
 	return {
 		url,
 		found: propertyCount > 0,
 		fields: {
-			fullName: firstProperty(data, FULL_NAME),
-			shortName: firstProperty(data, SHORT_NAME),
-			regDate: firstProperty(data, REG_DATE),
-			address: firstProperty(data, ADDRESS),
-			telephone: firstProperty(data, TELEPHONE),
-			email: firstProperty(data, EMAIL),
-			founder: firstProperty(data, FOUNDER),
-			headName: firstProperty(data, HEAD_NAME),
-			headPost: firstProperty(data, HEAD_POST)
+			fullName: field(FULL_NAME),
+			shortName: field(SHORT_NAME),
+			regDate: field(REG_DATE),
+			address: withoutTrailingDot(field(ADDRESS)),
+			telephone: withoutTrailingDot(field(TELEPHONE)),
+			email: email === null ? null : (emailsIn(email)[0] ?? email),
+			founder: withoutTrailingDot(field(FOUNDER)),
+			headName: field(HEAD_NAME),
+			headPost: field(HEAD_POST)
 		},
 		propertyCount,
 		problem: propertyCount > 0 ? null : 'На странице нет микроразметки раздела'
@@ -244,9 +303,39 @@ function meaningful(value: string | null): string | null {
 		return null;
 	}
 
-	return /^(нет|отсутству[её]т|не предусмотрен[оа]?|не имеется|-|—|–)\.?$/i.test(value.trim())
+	const trimmed = value.trim();
+
+	// Ячейка без единой буквы и цифры — «--, --» — та же отписка.
+	return /^(нет|отсутству[её]т|не предусмотрен[оа]?|не имеется)\.?$/i.test(trimmed) ||
+		!/[\p{L}\d]/u.test(trimmed)
 		? null
-		: value;
+		: trimmed;
+}
+
+/**
+ * Название подразделения без ссылки на его положение.
+ *
+ * Ссылку `divisionClauseDocLink` вузы кладут внутрь ячейки `name`, и текст
+ * ссылки — «Положение от 03.12.2019» — прилипает к названию. Он вырезается,
+ * как и маркеры вложенности, которыми таблицу рисуют деревом («• Архив»).
+ */
+function unitName(value: string | null, documents: readonly string[]): string | null {
+	if (value === null) {
+		return null;
+	}
+
+	let name = value;
+
+	for (const document of documents) {
+		name = name.split(document).join(' ');
+	}
+
+	return meaningful(
+		name
+			.replace(/\s+Положени[ея]\s+(от|о)\s.*$/iu, '')
+			.replace(/^[^\p{L}\d«"]+/u, '')
+			.replace(/\s+/g, ' ')
+	);
 }
 
 /** Строки таблицы органов управления и подразделений. */
@@ -266,9 +355,17 @@ export function readStructPage(html: string): ContactCandidate[] {
 	const seen = new Set<string>();
 
 	for (const row of readItems(html, STRUCT_ROWS)) {
-		const unit = meaningful(property(row, 'name'));
+		const unit = unitName(property(row, 'name'), propertyValues(row, 'divisionClauseDocLink'));
 		const name = meaningful(property(row, 'fio'));
-		const email = meaningful(property(row, 'email'));
+		const reach = [property(row, 'email'), property(row, 'telephone')]
+			.map((cell) => meaningful(cell))
+			.filter((cell) => cell !== null)
+			.join('; ');
+		const phone = phonesIn(reach)[0] ?? null;
+		// Ячейка, в которой не нашлось ни адреса, ни номера («priem[at]vuz.ru»),
+		// остаётся почтой как есть: карточка человека покажет её на проверку.
+		const email =
+			emailsIn(reach)[0] ?? (phone === null ? meaningful(property(row, 'email')) : null);
 
 		if (unit === null || name === null) {
 			continue;
@@ -286,6 +383,7 @@ export function readStructPage(html: string): ContactCandidate[] {
 			name,
 			post: meaningful(property(row, 'post')),
 			email,
+			phone,
 			address: meaningful(property(row, 'addressStr'))
 		});
 

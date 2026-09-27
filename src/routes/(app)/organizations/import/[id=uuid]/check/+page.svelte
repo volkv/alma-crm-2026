@@ -164,7 +164,17 @@
 						<CheckIcon aria-hidden="true" />
 						Применить импорт
 					</Button>
-					{#if applicable === 0}
+					{#if applicable === 0 && data.record.unchangedCount === 0 && data.record.errorCount > 0}
+						<p class="mt-2 text-xs text-muted-foreground">
+							Все строки с ошибками — применить нечего. Исправьте файл и загрузите его заново или
+							отклоните эту загрузку.
+						</p>
+					{:else if applicable === 0 && data.record.errorCount > 0}
+						<p class="mt-2 text-xs text-muted-foreground">
+							Менять нечего: строки без ошибок справочник уже описывает, а строки с ошибками не
+							применятся. Применение запишет это и закроет загрузку.
+						</p>
+					{:else if applicable === 0}
 						<p class="mt-2 text-xs text-muted-foreground">
 							Менять нечего: справочник уже описан этим файлом. Применение запишет это и закроет
 							загрузку.

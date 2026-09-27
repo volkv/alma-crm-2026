@@ -402,18 +402,27 @@ export async function siteContactDraft(
 		candidate.email !== null && emailSchema.safeParse(candidate.email.trim()).success
 			? candidate.email.trim()
 			: null;
+	// Номер — так же: в карточку, если его пропускает форма человека, иначе в
+	// примечание как есть.
+	const phone =
+		candidate.phone !== null && createPersonSchema.shape.phone.safeParse(candidate.phone).success
+			? candidate.phone
+			: null;
 	const notes = [
 		`Из раздела «Сведения об образовательной организации» сайта ${site.website} (${site.struct.url}), прочитан ${formatDateTime(site.fetchedAt)}.`,
 		`Подразделение: ${candidate.unit}.`,
 		candidate.address === null ? null : `Адрес подразделения: ${candidate.address}.`,
 		candidate.email !== null && email === null
 			? `Почта на сайте записана как «${candidate.email}» — проверьте адрес.`
+			: null,
+		candidate.phone !== null && phone === null
+			? `Телефон на сайте записан как «${candidate.phone}» — проверьте номер.`
 			: null
 	]
 		.filter((line) => line !== null)
 		.join('\n');
 
-	const person = createPersonSchema.safeParse({ ...parts, email, phone: null, notes });
+	const person = createPersonSchema.safeParse({ ...parts, email, phone, notes });
 
 	if (!person.success) {
 		throw new ValidationError(

@@ -196,6 +196,8 @@ export const contactCandidateSchema = z.object({
 	name: text,
 	post: nullableText,
 	email: nullableText,
+	/** Номер из той же ячейки, что и почта: вузы пишут их вместе. */
+	phone: nullableText,
 	address: nullableText
 });
 

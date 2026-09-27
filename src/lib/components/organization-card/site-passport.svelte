@@ -332,6 +332,9 @@
 												<p class="break-words">{candidate.post}</p>
 											{/if}
 											<p class="text-xs break-words text-muted-foreground">{candidate.unit}</p>
+											{#if candidate.phone}
+												<p class="text-xs break-all text-muted-foreground">{candidate.phone}</p>
+											{/if}
 											{#if candidate.email}
 												<p class="text-xs break-all text-muted-foreground">{candidate.email}</p>
 											{/if}

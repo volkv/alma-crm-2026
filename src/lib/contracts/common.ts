@@ -40,6 +40,25 @@ export function optionalId(error: string) {
 	return z.uuid({ error }).nullable().default(null);
 }
 
+/**
+ * Значение, которым список выбора обозначает «ничего не выбрано». Список формы
+ * отправляет выбранное скрытым полем, поэтому строка «пусто» доходит до сервера
+ * буквально.
+ */
+export const NO_OPTION = 'none';
+
+/**
+ * Необязательная ссылка, выбираемая списком обычной формы: строка «ничего не
+ * выбрано» и пустое поле равны `null`, иначе «Без площадки» отказывало бы как
+ * неверный идентификатор.
+ */
+export function optionalChoiceId(error: string) {
+	return z
+		.union([z.literal([NO_OPTION, '']).transform(() => null), z.uuid({ error })], { error })
+		.nullable()
+		.default(null);
+}
+
 /** Календарная дата без времени: учебные и договорные сроки живут в днях. */
 export function isoDate(error: string) {
 	return z.iso.date({ error });

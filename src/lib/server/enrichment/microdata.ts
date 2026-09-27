@@ -65,10 +65,31 @@ const NAMED_ENTITIES: Record<string, string> = {
 	nbsp: ' ',
 	laquo: '«',
 	raquo: '»',
+	ldquo: '“',
+	rdquo: '”',
+	bdquo: '„',
 	mdash: '—',
 	ndash: '–',
+	minus: '−',
+	bull: '•',
+	middot: '·',
+	hellip: '…',
+	numero: '№',
+	sect: '§',
+	deg: '°',
+	copy: '©',
 	shy: ''
 };
+
+/**
+ * Сущность: с точкой с запятой — любая, без неё — только те, что браузер
+ * узнаёт и так. В тексте ячейки `&nbspОтдел` он показывает «Отдел» с пробелом,
+ * и на сайтах вузов такое встречается: таблицы набирали руками. Разбор в один
+ * проход, чтобы `&amp;nbsp;` стал текстом «&nbsp;», а не пробелом; перед `=`
+ * сущность без точки с запятой не читается — это параметр адреса (`?a=1&copy=2`).
+ */
+const ENTITY =
+	/&(?:(#x[0-9a-f]+|#\d+|[a-z]+);|(nbsp|amp|lt|gt|quot|laquo|raquo|copy|deg|sect|shy)(?!=))/gi;
 
 function codePoint(value: number, whole: string): string {
 	return Number.isInteger(value) && value > 0 && value <= 0x10ffff
@@ -77,8 +98,8 @@ function codePoint(value: number, whole: string): string {
 }
 
 function decodeEntities(value: string): string {
-	return value.replace(/&(#x[0-9a-f]+|#\d+|[a-z]+);/gi, (whole, body: string) => {
-		const lower = body.toLowerCase();
+	return value.replace(ENTITY, (whole, full: string | undefined, legacy: string | undefined) => {
+		const lower = (full ?? legacy ?? '').toLowerCase();
 
 		if (lower.startsWith('#x')) {
 			return codePoint(Number.parseInt(lower.slice(2), 16), whole);

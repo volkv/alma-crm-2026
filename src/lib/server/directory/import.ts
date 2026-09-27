@@ -1493,7 +1493,7 @@ function planContacts(
 	for (const chunk of parsed.unparsed) {
 		issues.push({
 			field: 'contacts',
-			message: `Контакт «${chunk}» не разобран: нужны хотя бы фамилия и имя`
+			message: `Контакт «${chunk.text}» не разобран: ${chunk.reason}`
 		});
 	}
 

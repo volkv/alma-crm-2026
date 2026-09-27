@@ -24,6 +24,7 @@ import {
 	relinkRemovedStage,
 	updateDraft
 } from '$lib/server/stages/process';
+import { pluralForm, pluralize } from '$lib/format';
 import { CHECKLIST_KEY_STYLE, keyFromName } from '$lib/key-from-name';
 import { stageFormSchema, transitionFormSchema, type ChecklistItemForm } from './schema';
 import type { Actions, PageServerLoad } from './$types';
@@ -486,12 +487,25 @@ export const actions: Actions = {
 
 		// Числа в ответе — фактические, из транзакции: предпросмотр справочен, и
 		// повторять его числа здесь значило бы отчитываться оценкой.
-		return {
-			ok: true,
-			message:
-				result.migratedCount === 0
-					? `Процесс изменён: перепривязано записей — ${result.reboundCount}, переехавших взаимодействий нет`
-					: `Процесс изменён: перепривязано записей — ${result.reboundCount}, переехало взаимодействий — ${result.migratedCount}`
-		};
+		return { ok: true, message: publicationMessage(result) };
 	}
 };
+
+/**
+ * Итог публикации словами: сколько открытых дел остались на своих стадиях уже
+ * в новой редакции и сколько переехали на другие стадии по правилам переноса.
+ */
+function publicationMessage(result: { reboundCount: number; migratedCount: number }): string {
+	const parts = [
+		result.reboundCount === 0
+			? null
+			: `${pluralize(result.reboundCount, ['открытое дело', 'открытых дела', 'открытых дел'])} ${pluralForm(result.reboundCount, ['осталось', 'остались', 'остались'])} на своих стадиях в новой редакции`,
+		result.migratedCount === 0
+			? null
+			: `${pluralize(result.migratedCount, ['дело', 'дела', 'дел'])} ${pluralForm(result.migratedCount, ['перенесено', 'перенесены', 'перенесены'])} на другие стадии`
+	].filter((part) => part !== null);
+
+	return parts.length === 0
+		? 'Процесс изменён. Открытых дел по нему нет — переносить было нечего'
+		: `Процесс изменён: ${parts.join(', ')}`;
+}

@@ -35,11 +35,18 @@ export type ParsedContact = ContactIdentity & {
 	position: string;
 };
 
+/** Кусок ячейки, из которого человека не собрать, и чего в нём не хватило. */
+export type UnparsedContact = {
+	/** Текст куска как есть. */
+	text: string;
+	/** Почему это не фамилия с именем — словами для человека, правящего файл. */
+	reason: string;
+};
+
 /** Что вышло из ячейки: разобранные люди и куски, в которых имени не нашлось. */
 export type ContactParseResult = {
 	contacts: ParsedContact[];
-	/** Куски ячейки, из которых человека не собрать: их текст как есть. */
-	unparsed: string[];
+	unparsed: UnparsedContact[];
 };
 
 /** Должность, когда в ячейке её не назвали. */
@@ -149,7 +156,10 @@ function patronymicEnd(named: readonly string[]): number | null {
 		}
 
 		if (PATRONYMIC.test(named[index]) && !named[index].endsWith('.')) {
-			return index;
+			// «Петровна кызы»: маркер за отчеством — тоже отчество, а не должность.
+			const next = named[index + 1];
+
+			return next !== undefined && PATRONYMIC_MARKER.test(next) ? index + 1 : index;
 		}
 	}
 
@@ -227,8 +237,31 @@ export function parsePersonName(value: string): ContactName | null {
 	return read === null || read.rest.length > 0 ? null : read.name;
 }
 
-/** Один человек из куска ячейки или `null`, если имени в нём не нашлось. */
-function parseOne(chunk: string): ParsedContact | null {
+/**
+ * Почему в куске нет фамилии с именем: по первой части, где есть хоть одно
+ * слово. Человек правит файл, и «нужны фамилия и имя» ему не говорит, какое
+ * слово система не приняла за имя.
+ */
+function whyNoName(parts: readonly string[]): string {
+	if (parts.length === 0) {
+		return 'в нём только почта или телефон, а нужны фамилия и имя';
+	}
+
+	const [first, second] = parts[0].split(/\s+/).flatMap(splitInitials);
+
+	if (!NAME_WORD.test(first)) {
+		return `«${first}» не похоже на фамилию: в ФИО бывают только буквы, дефис и точка у инициала`;
+	}
+
+	if (second === undefined) {
+		return `после «${first}» нет имени: фамилия и имя пишутся вместе, до первой запятой`;
+	}
+
+	return `«${second}» не похоже на имя: в ФИО бывают только буквы, дефис и точка у инициала`;
+}
+
+/** Один человек из куска ячейки или объяснение, почему имени в нём не нашлось. */
+function parseOne(chunk: string): ParsedContact | string {
 	let rest = chunk;
 
 	const email = EMAIL.exec(rest)?.[0] ?? null;
@@ -271,7 +304,7 @@ function parseOne(chunk: string): ParsedContact | null {
 		};
 	}
 
-	return null;
+	return whyNoName(parts);
 }
 
 /**
@@ -279,11 +312,11 @@ function parseOne(chunk: string): ParsedContact | null {
  *
  * Пустая ячейка — это ноль людей и ноль претензий: «здесь нет данных», а не
  * «данные неверны». Кусок без имени попадает в `unparsed` целиком — человек
- * увидит в претензии ровно тот текст, который система не поняла.
+ * увидит в претензии ровно тот текст, который система не поняла, и почему.
  */
 export function parseContacts(value: string): ContactParseResult {
 	const contacts: ParsedContact[] = [];
-	const unparsed: string[] = [];
+	const unparsed: UnparsedContact[] = [];
 
 	for (const raw of value.split(PEOPLE_SEPARATOR)) {
 		const chunk = raw.trim();
@@ -294,8 +327,8 @@ export function parseContacts(value: string): ContactParseResult {
 
 		const contact = parseOne(chunk);
 
-		if (contact === null) {
-			unparsed.push(chunk);
+		if (typeof contact === 'string') {
+			unparsed.push({ text: chunk, reason: contact });
 		} else {
 			contacts.push(contact);
 		}
