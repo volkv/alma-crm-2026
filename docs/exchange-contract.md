@@ -815,8 +815,9 @@ CRM идёт на адрес из настройки `exchange.cms.statusUrl`. �
 
 Второй путь списка в систему обучения — файлом, когда загрузку пользователей там делают руками.
 Кнопка «Выгрузить для LMS (xlsx)» в диалоге «Слушатели потока» отдаёт книгу по шаблону загрузки
-пользователей LMS заказчика: `GET /w/<пространство>/interactions/<id>/roster.xlsx?group=<uuid>`,
-одна выгрузка — один поток. Собирает её `exportLearningGroupRoster`
+пользователей LMS заказчика:
+`GET /w/<пространство>/interactions/<id>/files/learning/roster.xlsx?group=<uuid>`, одна выгрузка —
+один поток; файл отдаёт модуль «Обучение», и в пространстве, где он не действует, выгрузка отказывает. Собирает её `exportLearningGroupRoster`
 (`src/lib/server/integrations/exchange/roster.ts`), книгу — чистая функция `buildLmsUserWorkbook`
 (`roster-export.ts` рядом).
 

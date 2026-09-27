@@ -187,9 +187,11 @@
 			return null;
 		}
 
-		const path = resolve('/(app)/w/[workspace]/interactions/[id=uuid]/roster.xlsx', {
+		const path = resolve('/(app)/w/[workspace]/interactions/[id=uuid]/files/[module]/[file]', {
 			workspace,
-			id
+			id,
+			module: 'learning',
+			file: 'roster.xlsx'
 		});
 
 		return `${path}?group=${encodeURIComponent(rosterGroup.id)}`;

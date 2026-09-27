@@ -4,33 +4,28 @@
 	import { resolve } from '$app/paths';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { DOCUMENT_KIND_LABELS } from '$lib/contracts/documents';
-	import type { InteractionDocumentView } from '$lib/contracts/interactions';
 	import { formatDate } from '$lib/format';
-	import { getCardCommands } from './commands.svelte';
-	import ContextSection from './context-section.svelte';
+	import { ContextSection, getCardCommands } from '$lib/platform/card';
+	import type { CardPanelProps } from '$lib/platform/card-ui';
 
 	/**
 	 * Документ об обучении — итог дела с лицом. Отдельного поля у записи нет:
 	 * это документ дела вида «Документ об обучении», и панель показывает такие
 	 * документы, если они приложены.
 	 */
-	let {
-		documents,
-		canUpload
-	}: {
-		documents: readonly InteractionDocumentView[];
-		canUpload: boolean;
-	} = $props();
+	let { source, can }: CardPanelProps = $props();
 
 	const TRAINING_DOCUMENT_KIND = 'certificate';
 
 	const commands = getCardCommands();
-	const issued = $derived(documents.filter((document) => document.kind === TRAINING_DOCUMENT_KIND));
+	const issued = $derived(
+		source.interaction.documents.filter((document) => document.kind === TRAINING_DOCUMENT_KIND)
+	);
 </script>
 
 <ContextSection title="Документ об обучении">
 	{#snippet action()}
-		{#if canUpload && issued.length === 0}
+		{#if can.upload && issued.length === 0}
 			<Button size="xs" variant="outline" onclick={() => commands.open({ kind: 'upload' })}>
 				<UploadIcon aria-hidden="true" />
 				Приложить

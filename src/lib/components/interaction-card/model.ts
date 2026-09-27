@@ -37,6 +37,7 @@ import {
 import { PAYMENT_CHECKLIST_KEY, type PaymentFactView } from '$lib/contracts/payments';
 import type { ProcessCard } from '$lib/contracts/process-card';
 import { daysUntil, formatDate, formatDateTime, pluralize } from '$lib/format';
+import { visiblePanels, type ModuleKey } from '$lib/platform/registry';
 
 /**
  * Карточка взаимодействия как набор фактов, каждый из которых назван ровно в
@@ -174,6 +175,12 @@ export type CardSource = {
 	 * рисовать, нужно знать любому, кто запись видит.
 	 */
 	card: ProcessCard & { counterpartyKind: OrganizationKind };
+	/**
+	 * Модули, действующие в пространстве записи: включённые или нужные стадиям
+	 * его процесса. Панели и факты шапки выключенного модуля карточка не рисует,
+	 * даже если процесс их выбрал.
+	 */
+	modules: readonly ModuleKey[];
 };
 
 /**
@@ -340,7 +347,12 @@ export type CardModel = {
 	workspaceName: string;
 	shape: CounterpartyShape;
 	counterparty: { name: string; kindLabel: string };
-	/** Панели процесса в порядке каталога; сторона стоит всегда и в набор не входит. */
+	/** Действующие модули пространства: из них карточка берёт панели и факты шапки. */
+	modules: readonly ModuleKey[];
+	/**
+	 * Панели процесса в порядке каталога — только ядра и действующих модулей;
+	 * сторона стоит всегда и в набор не входит.
+	 */
 	panels: ProcessCard['panels'];
 	payment: CardPayment;
 	stage: { name: string; position: number; total: number } | null;
@@ -1214,7 +1226,8 @@ export function buildCard(source: CardSource, now: Date): CardModel {
 			name: source.counterparty?.shortName ?? primary?.organizationName ?? 'Контрагент не указан',
 			kindLabel: ORGANIZATION_KIND_LABELS[source.card.counterpartyKind]
 		},
-		panels: source.card.panels,
+		modules: source.modules,
+		panels: visiblePanels(source.card.panels, source.modules),
 		payment: buildPayment(
 			status.current === null ? status.history : [status.current, ...status.history],
 			source.paymentFact

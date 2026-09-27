@@ -1,7 +1,7 @@
 <script lang="ts">
 	import StatusBadge from '$lib/components/status-badge.svelte';
-	import ContextSection from './context-section.svelte';
-	import type { CardPayment } from './model';
+	import { ContextSection } from '$lib/platform/card';
+	import type { CardPanelProps } from '$lib/platform/card-ui';
 
 	/**
 	 * Стоимость и оплата. Оплата — факт процесса, а не поле записи: её отмечают
@@ -10,7 +10,9 @@
 	 * об этом, а не прячется. Оплата, загруженная выгрузкой сайта, называет
 	 * себя отдельной строкой: номер заявки, поток и день загрузки.
 	 */
-	let { payment }: { payment: CardPayment } = $props();
+	let { model }: CardPanelProps = $props();
+
+	const payment = $derived(model.payment);
 </script>
 
 <ContextSection title="Стоимость и оплата">

@@ -2,9 +2,9 @@
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import type { InteractionContractView } from '$lib/contracts/interactions';
 	import { formatDate } from '$lib/format';
-	import ContextSection from './context-section.svelte';
+	import { ContextSection, getCardCommands } from '$lib/platform/card';
+	import type { CardPanelProps } from '$lib/platform/card-ui';
 
 	/**
 	 * Договор, по которому идёт работа, и его позиции: продукт, лицензия и
@@ -12,14 +12,12 @@
 	 * срок договора и то, чего в шапке нет. Сам договор ведут в карточке
 	 * контрагента, здесь его только выбирают.
 	 */
-	let {
-		contract,
-		onEdit
-	}: {
-		contract: InteractionContractView | null;
-		/** Открыть выбор договора и позиций; `null` — права на правку нет. */
-		onEdit: (() => void) | null;
-	} = $props();
+	let { source, can }: CardPanelProps = $props();
+
+	const commands = getCardCommands();
+	const contract = $derived(source.interaction.contract);
+	/** Открыть выбор договора и позиций; `null` — права на правку нет. */
+	const onEdit = $derived(can.edit ? () => commands.open({ kind: 'contract' }) : null);
 
 	/** «Передан» — дело сделано; всё остальное ещё ждёт действия. */
 	const transferred = (status: string) =>

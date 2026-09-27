@@ -78,7 +78,8 @@
 		counterparty: data.counterparty,
 		exchange: data.exchange,
 		paymentFact: data.paymentFact,
-		card: data.card
+		card: data.card,
+		modules: data.modules
 	});
 	const model = $derived(buildCard(source, new Date()));
 	// Кого можно упомянуть: те, у кого доступ к делу, кроме самого себя. Список

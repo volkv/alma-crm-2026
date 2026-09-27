@@ -1,14 +1,17 @@
 <script lang="ts">
 	import type { LearningGroupView } from '$lib/contracts/exchange';
 	import { formatNumber } from '$lib/format';
-	import ContextSection from './context-section.svelte';
+	import { ContextSection } from '$lib/platform/card';
+	import type { CardPanelProps } from '$lib/platform/card-ui';
 
 	/**
 	 * Слушатели по данным потоков: сколько мест заявлено, сколько человек в
 	 * поимённых списках и что пришло из системы обучения. Сами списки — в
 	 * строке потока панели «Система обучения»: там их загружают и передают.
 	 */
-	let { groups }: { groups: readonly LearningGroupView[] } = $props();
+	let { source }: CardPanelProps = $props();
+
+	const groups = $derived(source.exchange.groups);
 
 	/** Сумма по потокам; `null` — ни один поток этого числа не прислал. */
 	function total(pick: (group: LearningGroupView) => number | null): number | null {

@@ -24,6 +24,7 @@ import type {
 	StageEntryView,
 	TransitionOptionView
 } from '$lib/contracts/interactions';
+import { INSTALLED_MODULES } from '$lib/platform/registry';
 
 const NOW = new Date('2026-09-23T09:00:00Z');
 const DAY = 24 * 60 * 60 * 1000;
@@ -199,6 +200,7 @@ function source(overrides: Partial<CardSource> = {}): CardSource {
 			templates: ['agreement'],
 			counterpartyKind: 'educational_institution'
 		},
+		modules: INSTALLED_MODULES.map((module) => module.key),
 		...overrides
 	};
 }
@@ -235,6 +237,12 @@ describe('вид карточки', () => {
 			stageName: 'Договор и оплата',
 			site: null
 		});
+	});
+
+	it('панель модуля, который в пространстве не действует, не рисуется; панели ядра остаются', () => {
+		const card = buildCard(source({ modules: ['contracts'] }), NOW);
+
+		expect(card.panels).toEqual(['terms', 'contract', 'documents']);
 	});
 
 	it('оплата, загруженная выгрузкой сайта, называет заявку, поток и день загрузки', () => {
