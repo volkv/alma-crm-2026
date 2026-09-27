@@ -115,6 +115,8 @@
 	/** Причина помехи выбирается из справочника: по ней потом считают, на чём встаём. */
 	let reasonCode = $state('');
 	let blockerDescription = $state('');
+	/** По умолчанию помеха запрещает переход — это осознанный выбор снять галочку. */
+	let blocksTransition = $state(true);
 
 	/**
 	 * Запись стадии, открытая, когда открыли диалог. Замораживается вместе с
@@ -136,6 +138,7 @@
 			conflict = null;
 			reasonCode = '';
 			blockerDescription = '';
+			blocksTransition = true;
 			reason = '';
 			reasonError = null;
 			attached = [];
@@ -488,7 +491,12 @@
 			/>
 		</div>
 		<Label class="flex items-center gap-2 font-normal">
-			<Checkbox name="blocksTransition" value="true" checked />
+			<Checkbox
+				name="blocksTransition"
+				value="true"
+				checked={blocksTransition}
+				onCheckedChange={(next) => (blocksTransition = next === true)}
+			/>
 			Запрещает переход на следующую стадию
 		</Label>
 	</form>
