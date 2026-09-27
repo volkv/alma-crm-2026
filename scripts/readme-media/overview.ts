@@ -544,7 +544,7 @@ async function exchangeTwice(page: Page, stand: Stand): Promise<void> {
 	await pointAt(page, submitted.nth(1));
 	await beat(page, 1);
 
-	await visit(page, '/settings/diagnostics', 'Связи и зависимости');
+	await visit(page, '/settings/health', 'Статус системы');
 	await beat(page, 0.6);
 	await press(page, page.getByRole('button', { name: 'Проверить заново' }));
 	await beat(page, 1);

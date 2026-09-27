@@ -357,10 +357,10 @@ export const SHOTS: readonly Frame[] = [
 	},
 	{
 		name: 'diagnostics',
-		path: '/settings/diagnostics',
+		path: '/settings/health',
 		role: 'admin',
 		caption: 'Самодиагностика: с чем система соединяется и отвечает ли это сейчас',
-		waitFor: 'Связи и зависимости'
+		waitFor: 'Статус системы'
 	},
 	{
 		name: 'help',

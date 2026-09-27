@@ -265,8 +265,8 @@ const STATIC_SECTIONS: readonly NavSection[] = [
 	{
 		// Самодиагностика связей: право то же, что у интеграций, — адреса CMS и
 		// системы обучения на ней те же, что в настройках обмена.
-		href: '/settings/diagnostics',
-		label: 'Связи и зависимости',
+		href: '/settings/health',
+		label: 'Статус системы',
 		icon: NetworkIcon,
 		group: SETTINGS,
 		permission: 'integrations.manage'

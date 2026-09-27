@@ -392,13 +392,13 @@ export const ADMIN_SCREENS: readonly TourScreen[] = [
 		]
 	},
 	{
-		id: 'settings-diagnostics',
-		title: 'Связи и зависимости',
-		route: '/settings/diagnostics',
+		id: 'settings-health',
+		title: 'Статус системы',
+		route: '/settings/health',
 		permission: 'integrations.manage',
 		help: HELP_SETTINGS,
 		intro: {
-			title: 'Связи и зависимости',
+			title: 'Статус системы',
 			body: 'Самодиагностика установки в закрытой сети: с чем система соединяется, зачем, обязательна ли связь и отвечает ли она сейчас. Проверка идёт при каждом открытии и наружу не ходит. Стоит в меню, в группе «Настройки».'
 		},
 		steps: [

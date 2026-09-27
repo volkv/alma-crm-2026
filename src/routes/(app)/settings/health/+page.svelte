@@ -64,12 +64,12 @@
 </script>
 
 <svelte:head>
-	<title>Связи и зависимости — Альма CRM</title>
+	<title>Статус системы — Альма CRM</title>
 </svelte:head>
 
 <Card.Root>
 	<Card.Header>
-		<Card.Title>Связи и зависимости</Card.Title>
+		<Card.Title>Статус системы</Card.Title>
 		<Card.Description>
 			С чем система соединяется, зачем и отвечает ли оно сейчас. Каждая связь проверяется при
 			открытии страницы, не дольше пары секунд; наружу, в интернет, открытие не ходит.

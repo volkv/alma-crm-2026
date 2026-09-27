@@ -159,15 +159,15 @@ test.describe.serial('без интернета: полный проход', { t
 
 		// Роли различаются не только именем: настройки связей закрыты менеджеру
 		// правами и открыты администратору.
-		const forManager = await sessions.manager.page.request.get('/settings/diagnostics', {
+		const forManager = await sessions.manager.page.request.get('/settings/health', {
 			maxRedirects: 0
 		});
-		const forAdmin = await sessions.admin.page.request.get('/settings/diagnostics');
+		const forAdmin = await sessions.admin.page.request.get('/settings/health');
 
 		expect(forManager.status()).not.toBe(200);
 		expect(forAdmin.status()).toBe(200);
 		note(
-			`/settings/diagnostics: менеджеру ${forManager.status()}, администратору ${forAdmin.status()}`
+			`/settings/health: менеджеру ${forManager.status()}, администратору ${forAdmin.status()}`
 		);
 	});
 
@@ -406,7 +406,7 @@ test.describe.serial('без интернета: полный проход', { t
 
 		/** Строки таблицы связей: название, адрес, роль для сценариев, состояние. */
 		async function links(): Promise<string[][]> {
-			await page.goto('/settings/diagnostics');
+			await page.goto('/settings/health');
 			await waitForHydration(page);
 			await expect(page.getByText('Основные сценарии работают без интернета:')).toHaveText(
 				/интернета:\s*да\s*$/

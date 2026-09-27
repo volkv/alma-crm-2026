@@ -178,7 +178,7 @@ export const ROLE_TOURS: Readonly<Record<string, readonly string[]>> = {
 		'settings-integrations',
 		'settings-general',
 		'exchange',
-		'settings-diagnostics',
+		'settings-health',
 		'notifications',
 		'audit',
 		'automation',
