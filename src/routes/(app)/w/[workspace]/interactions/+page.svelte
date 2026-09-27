@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
+	import { renderSnippet, type ColumnDef, type SvelteTable } from '@tanstack/svelte-table';
 	import { toast } from 'svelte-sonner';
 	import FunnelXIcon from '@lucide/svelte/icons/funnel-x';
 	import KanbanIcon from '@lucide/svelte/icons/kanban';
@@ -16,6 +16,7 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as SegmentedControl from '$lib/components/ui/segmented-control/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
+	import ColumnsMenu from '$lib/components/data-table/columns-menu.svelte';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
 	import EmptyState from '$lib/components/empty-state.svelte';
@@ -185,6 +186,15 @@
 
 	/** Ключ пространства стоит в адресе, и все ссылки раздела считаются от него. */
 	const workspace = $derived(data.workspace.key);
+
+	/**
+	 * Таблица на экране — и у неё есть колонки, которые можно выбрать. Меню
+	 * «Колонки» стоит не в панели списка, а в ряду отборов рядом с
+	 * переключателем вида (`columnsMenu={false}` и `ontable`): отдельная
+	 * строка ради одной кнопки отнимала у таблицы высоту первого экрана.
+	 */
+	const tableShown = $derived(data.view === 'table' && (data.total > 0 || data.isFiltered));
+	let tableApi = $state<SvelteTable<DataTableFeatures, InteractionListItem> | null>(null);
 	const newHref = $derived(resolve('/(app)/w/[workspace]/interactions/new', { workspace }));
 
 	function open(row: InteractionListItem) {
@@ -409,7 +419,17 @@
 	Ниже `2xl` у вариантов остаются одни значки: с подписями переключатель
 	отнимал у ряда место ещё под два фильтра, а на телефоне не влезал во вторую
 	строку рядом с фильтрами. Подпись тогда остаётся читалке и подсказке под
-	курсором. -->
+	курсором. Слева от переключателя в таблице — меню «Колонки», тоже значком.
+	-->
+{#snippet endControls()}
+	<div class="flex shrink-0 items-center gap-2">
+		{#if tableShown}
+			<ColumnsMenu table={tableApi} labelClass="max-2xl:sr-only" title="Колонки" />
+		{/if}
+		{@render viewSwitch()}
+	</div>
+{/snippet}
+
 {#snippet viewSwitch()}
 	<SegmentedControl.LinkGroup aria-label="Представление" class="shrink-0 flex-nowrap">
 		<SegmentedControl.Link
@@ -505,7 +525,7 @@
 			filters={stripFilters}
 			panelId="interactions-filter-panel"
 			trailing={data.isFiltered ? clearFilters : undefined}
-			end={viewSwitch}
+			end={endControls}
 		/>
 	</div>
 
@@ -550,6 +570,8 @@
 				defaultSort={{ columnId: 'dueAt', direction: 'asc' }}
 				bulkActions={data.canAssign ? assignAction : undefined}
 				onopen={open}
+				columnsMenu={false}
+				ontable={(table) => (tableApi = table)}
 			/>
 		{/if}
 	</div>

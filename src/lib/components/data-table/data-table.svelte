@@ -9,19 +9,18 @@
 		type ColumnDef,
 		type ColumnVisibilityState,
 		type RowData,
-		type RowSelectionState
+		type RowSelectionState,
+		type SvelteTable
 	} from '@tanstack/svelte-table';
 	import ArrowDownIcon from '@lucide/svelte/icons/arrow-down';
 	import ArrowUpIcon from '@lucide/svelte/icons/arrow-up';
 	import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import ChevronsUpDownIcon from '@lucide/svelte/icons/chevrons-up-down';
-	import Columns3Icon from '@lucide/svelte/icons/columns-3';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import XIcon from '@lucide/svelte/icons/x';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
-	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
@@ -30,6 +29,7 @@
 	import { formatNumber } from '$lib/format';
 	import { cn } from '$lib/utils';
 	import EmptyState from '../empty-state.svelte';
+	import ColumnsMenu from './columns-menu.svelte';
 	import { features, type DataTableFeatures } from './features';
 	import { PAGE_SIZES, readTableQuery, tableHref, type SortDirection } from './query';
 
@@ -62,6 +62,8 @@
 		onopen,
 		bulkActions,
 		toolbar,
+		columnsMenu = true,
+		ontable,
 		class: className,
 		...rest
 	}: {
@@ -115,6 +117,15 @@
 		 * у таблицы высоту первого экрана.
 		 */
 		toolbar?: Snippet;
+		/**
+		 * Встроенное меню «Колонки» в панели над списком. Экран, у которого над
+		 * списком своя строка контролов, выключает его и ставит
+		 * `columns-menu.svelte` к себе, взяв таблицу из `ontable`. Когда в панели не
+		 * остаётся ни поиска, ни `toolbar`, ни меню, панели нет вовсе.
+		 */
+		columnsMenu?: boolean;
+		/** Отдаёт экземпляр таблицы контролам вне компонента — меню «Колонки». */
+		ontable?: (table: SvelteTable<DataTableFeatures, TData>) => void;
 		class?: string;
 		/**
 		 * Остальное уезжает на корневой элемент списка. Нужно это одному —
@@ -250,6 +261,10 @@
 		}
 	});
 
+	// Экземпляр один на всё время жизни компонента — наружу он уходит до
+	// первой отрисовки, и меню снаружи оживает вместе со списком.
+	$effect.pre(() => ontable?.(table));
+
 	const visibleColumnCount = $derived(table.getVisibleLeafColumns().length + (selectable ? 1 : 0));
 	const skeletonRows = $derived(Array.from({ length: Math.min(query.size, 8) }, (_, i) => i));
 	const skeletonCells = $derived(Array.from({ length: visibleColumnCount }, (_, i) => i));
@@ -335,73 +350,42 @@
 		searchInput.focus();
 		if (searchInput instanceof HTMLInputElement) searchInput.select();
 	}
-
-	function columnTitle(column: { id: string; columnDef: { header?: unknown; meta?: unknown } }) {
-		const meta = column.columnDef.meta as { title?: string } | undefined;
-		if (meta?.title) return meta.title;
-
-		return typeof column.columnDef.header === 'string' ? column.columnDef.header : column.id;
-	}
 </script>
 
 <svelte:window onkeydown={onWindowKeydown} />
 
 <div class={cn('flex flex-col gap-3', className)} data-slot="data-table" {...rest}>
-	<div class="flex flex-wrap items-center gap-2">
-		{#if searchPlaceholder}
-			<!-- Поле не сжимается уже 12rem: контролам страницы (`toolbar`) рядом
+	{#if searchPlaceholder || toolbar || columnsMenu}
+		<div class="flex flex-wrap items-center gap-2">
+			{#if searchPlaceholder}
+				<!-- Поле не сжимается уже 12rem: контролам страницы (`toolbar`) рядом
 				с ним тесно на телефоне, и тогда уходят на следующую строку они, а
 				не поле превращается в значок. -->
-			<div class="relative min-w-48 flex-1 sm:max-w-xs">
-				<SearchIcon
-					class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
-					aria-hidden="true"
-				/>
-				<Input
-					bind:ref={searchInput}
-					type="search"
-					value={query.search}
-					placeholder={searchPlaceholder}
-					aria-label={searchPlaceholder}
-					class="pl-8 max-sm:min-h-11"
-					oninput={onSearchInput}
-				/>
-			</div>
-		{/if}
+				<div class="relative min-w-48 flex-1 sm:max-w-xs">
+					<SearchIcon
+						class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+						aria-hidden="true"
+					/>
+					<Input
+						bind:ref={searchInput}
+						type="search"
+						value={query.search}
+						placeholder={searchPlaceholder}
+						aria-label={searchPlaceholder}
+						class="pl-8 max-sm:min-h-11"
+						oninput={onSearchInput}
+					/>
+				</div>
+			{/if}
 
-		<div class="ml-auto flex flex-wrap items-center gap-2">
-			{@render toolbar?.()}
-			<DropdownMenu.Root>
-				<DropdownMenu.Trigger>
-					{#snippet child({ props })}
-						<Button {...props} variant="outline" class="max-sm:min-h-11">
-							<Columns3Icon aria-hidden="true" />
-							Колонки
-						</Button>
-					{/snippet}
-				</DropdownMenu.Trigger>
-				<DropdownMenu.Content align="end" class="w-52">
-					<!-- Заголовок обязан стоять внутри группы: без неё bits-ui не находит
-						контекст и всё содержимое меню не отрисовывается вовсе. -->
-					<DropdownMenu.Group>
-						<DropdownMenu.GroupHeading>Показывать колонки</DropdownMenu.GroupHeading>
-						<DropdownMenu.Separator />
-						{#each table
-							.getAllLeafColumns()
-							.filter((column) => column.getCanHide()) as column (column.id)}
-							<DropdownMenu.CheckboxItem
-								checked={column.getIsVisible()}
-								onCheckedChange={(checked) => column.toggleVisibility(checked)}
-								closeOnSelect={false}
-							>
-								{columnTitle(column)}
-							</DropdownMenu.CheckboxItem>
-						{/each}
-					</DropdownMenu.Group>
-				</DropdownMenu.Content>
-			</DropdownMenu.Root>
+			<div class="ml-auto flex flex-wrap items-center gap-2">
+				{@render toolbar?.()}
+				{#if columnsMenu}
+					<ColumnsMenu {table} />
+				{/if}
+			</div>
 		</div>
-	</div>
+	{/if}
 
 	{#if selectable && selectedIds.length > 0}
 		<div
