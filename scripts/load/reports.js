@@ -102,23 +102,21 @@ export default function () {
 
 	const mode = __VU % 2 === 0 ? 'movement' : 'snapshot';
 
-	// Отчёт живёт внутри пространства, и выгрузка лежит под его адресом.
-	const reports = `${BASE_URL}/w/${fixture.workspace}/reports`;
-	const screen = http.get(`${reports}?mode=${mode}&${PERIOD}`, {
+	const screen = http.get(`${BASE_URL}/reports?mode=${mode}&${PERIOD}`, {
 		jar,
 		headers: HTML,
 		tags: { step: 'report-screen' }
 	});
 	record('reportFilter', 'ssr', screen, statusIs(200));
 
-	const xlsx = http.get(`${reports}/export?format=xlsx&mode=${mode}&${PERIOD}`, {
+	const xlsx = http.get(`${BASE_URL}/reports/export?format=xlsx&mode=${mode}&${PERIOD}`, {
 		jar,
 		headers: HTML,
 		tags: { step: 'report-xlsx' }
 	});
 	record('reportXlsx', 'ssr', xlsx, statusIs(200));
 
-	const pdf = http.get(`${reports}/export?format=pdf&mode=${mode}&${PERIOD}`, {
+	const pdf = http.get(`${BASE_URL}/reports/export?format=pdf&mode=${mode}&${PERIOD}`, {
 		jar,
 		headers: HTML,
 		tags: { step: 'report-pdf' }
@@ -126,7 +124,7 @@ export default function () {
 	record('reportPdf', 'ssr', pdf, statusIs(200));
 
 	// Тот же отчёт без сборки файла: разница с XLSX и PDF — это цена формата.
-	const asJson = http.get(`${reports}/export?format=json&mode=${mode}&${PERIOD}`, {
+	const asJson = http.get(`${BASE_URL}/reports/export?format=json&mode=${mode}&${PERIOD}`, {
 		jar,
 		headers: { Accept: 'application/json' },
 		tags: { step: 'report-json' }

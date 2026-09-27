@@ -40,7 +40,6 @@ export function reportJson(view: ReportView): Buffer {
 		generatedAt: view.meta.generatedAt,
 		asOf: view.meta.asOf,
 		mode: view.meta.mode,
-		workspace: view.meta.workspace,
 		period: view.meta.period,
 		filters: view.meta.filters,
 		scope: view.meta.scope,

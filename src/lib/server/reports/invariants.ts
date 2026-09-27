@@ -19,9 +19,8 @@ import {
 } from '$lib/contracts/reports';
 import type { ActorContext } from '../actor';
 import { movementEventKind, readMovementRows } from './movement';
-import { readReportStageIndex } from './rows';
 import { readSnapshotRows } from './snapshot';
-import { stageBucketId } from './stages';
+import { readReportStageIndex } from './stages';
 import { readReportSnapshot } from './transaction';
 
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -46,7 +45,14 @@ export function checkReportInvariants(view: ReportView): InvariantViolation[] {
 	const rowCount = view.totals.rowCount;
 
 	if (view.charts.funnel !== null) {
-		const stages = sum(view.charts.funnel.stages.map((bucket) => bucket.value));
+		// Воронок столько, сколько пространств в выборке, и сходится с числом
+		// строк их общая сумма: разделение по процессам — это способ показать, а
+		// не два разных отчёта.
+		const stages = sum(
+			view.charts.funnel.workspaces.flatMap((workspace) =>
+				workspace.stages.map((bucket) => bucket.value)
+			)
+		);
 		const closed = sum(view.charts.funnel.closed.map((bucket) => bucket.value));
 
 		if (stages + closed !== rowCount) {
@@ -188,10 +194,10 @@ export async function reconcileModes(
 	const labels = new Map<string, string>();
 
 	const stageBucket = (workspaceId: string, key: string, name: string | null): string => {
-		const bucketId = stageBucketId(workspaceId, key);
+		const bucketId = `${workspaceId}:${key}`;
 
 		if (!labels.has(bucketId)) {
-			labels.set(bucketId, index.label(key, name).label);
+			labels.set(bucketId, index.label(workspaceId, key, name).label);
 		}
 
 		return bucketId;

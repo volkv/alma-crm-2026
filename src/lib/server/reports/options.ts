@@ -3,10 +3,8 @@
  *
  * Списки читаются под областью доступа того, кто открыл раздел: подсказка,
  * называющая вуз за пределами области, рассказывает о нём не меньше, чем строка
- * отчёта. Стадии берутся из действующей редакции процесса пространства отчёта —
- * по ключу, потому что фильтр бьёт по ключу, а показывается актуальное
- * название. Стадии соседнего пространства в списке не появляются: отчёт
- * строится внутри одного, и выбор чужой стадии всегда давал бы пустоту.
+ * отчёта. Стадии берутся из действующих редакций — по ключу, потому что фильтр
+ * бьёт по ключу, а показывается актуальное название.
  *
  * Семь выборок на каждое открытие раздела, и ни одна не зависит от того, что
  * человек ищет: меняются они вместе со справочником и с публикацией процесса,
@@ -15,8 +13,7 @@
  * доступа и отпечаток действующих назначений уже в ключе, а запись в справочник
  * уже обесценивает поколение. Структура процесса своей точкой сброса в ключ не
  * входит, поэтому её поколение добавляется частью имени — публикация меняет имя,
- * и список стадий собирается заново. Ключ пространства — тоже часть имени:
- * списки стадий у пространств разные.
+ * и список стадий собирается заново.
  *
  * Чего кэш не покрывает: словарь статусов передачи собирается из позиций
  * договоров, а правка договора поколения справочника не двигает. Новый статус
@@ -38,25 +35,19 @@ import { readProcessEpoch } from '../cache/process';
 import { getDb } from '../db';
 import { contractItems, directions, organizations, products, programs, users } from '../db/schema';
 import { scopeFilter } from '../rbac';
-import { readReportWorkspace } from './stages';
+import { readActiveWorkspaces } from './stages';
 
-export async function readFilterOptions(
-	ctx: ActorContext,
-	workspaceKey: string
-): Promise<ReportFilterOptions> {
+export async function readFilterOptions(ctx: ActorContext): Promise<ReportFilterOptions> {
 	return cachedDirectoryOptions(
 		ctx,
-		`reports:${await readProcessEpoch()}:${workspaceKey}`,
-		() => buildFilterOptions(ctx, workspaceKey),
+		`reports:${await readProcessEpoch()}`,
+		() => buildFilterOptions(ctx),
 		// Ни одного поля со временем: в списках только пара «значение и подпись».
 		(stored) => stored as ReportFilterOptions
 	);
 }
 
-async function buildFilterOptions(
-	ctx: ActorContext,
-	workspaceKey: string
-): Promise<ReportFilterOptions> {
+async function buildFilterOptions(ctx: ActorContext): Promise<ReportFilterOptions> {
 	const db = getDb();
 
 	const [
@@ -66,7 +57,7 @@ async function buildFilterOptions(
 		productRows,
 		ownerRows,
 		transferRows,
-		workspace
+		workspaces
 	] = await Promise.all([
 		db
 			.select({ value: organizations.id, label: organizations.shortName })
@@ -97,8 +88,20 @@ async function buildFilterOptions(
 			.from(contractItems)
 			.where(isNotNull(contractItems.transferStatus))
 			.orderBy(asc(contractItems.transferStatus)),
-		readReportWorkspace(db, ctx, workspaceKey)
+		readActiveWorkspaces(db, ctx)
 	]);
+
+	const stages = new Map<string, string>();
+
+	for (const workspace of workspaces.values()) {
+		for (const stage of workspace.stages) {
+			// Ключ один на все пространства, где он встретился: фильтр бьёт по
+			// ключу, и два пункта с одним ключом означали бы выбор без разницы.
+			if (!stages.has(stage.key)) {
+				stages.set(stage.key, stage.name);
+			}
+		}
+	}
 
 	return {
 		organizations: organizationRows,
@@ -106,7 +109,11 @@ async function buildFilterOptions(
 		programs: programRows,
 		products: productRows,
 		owners: ownerRows,
-		stages: (workspace?.stages ?? []).map((stage) => ({ value: stage.key, label: stage.name })),
+		stages: [...stages].map(([value, label]) => ({ value, label })),
+		workspaces: [...workspaces.values()].map((workspace) => ({
+			value: workspace.key,
+			label: workspace.name
+		})),
 		// Вендор стороной взаимодействия не бывает: фильтр по нему всегда пуст.
 		parties: ORGANIZATION_KINDS.filter((kind) => kind !== 'vendor').map((kind) => ({
 			value: kind,

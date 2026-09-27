@@ -23,7 +23,6 @@ import {
 	REPORT_PDF_FULL_MAX_ROWS,
 	REPORT_PDF_ROWS,
 	reportQuerySchema,
-	reportTitle,
 	type ReportCell,
 	type ReportQuery,
 	type ReportView
@@ -32,7 +31,6 @@ import { NO_ACCESS, type ActorContext } from '$lib/server/actor';
 import { auditEvents } from '$lib/server/db/schema';
 import { checkExportInvariant } from '$lib/server/reports/invariants';
 import { buildReport } from '$lib/server/reports/rows';
-import { B2B_WORKSPACE_KEY } from '$lib/server/stages/definitions';
 import { renderReport } from '$lib/server/reports/writers';
 import { REPORT_PDF_PART_ROWS } from '$lib/server/reports/writers/html';
 import { ValidationError } from '$lib/server/errors';
@@ -78,11 +76,7 @@ beforeEach(async () => {
 
 const admin = (): ActorContext => testActor();
 
-const QUERY: ReportQuery = reportQuerySchema.parse({
-	mode: 'snapshot',
-	workspace: B2B_WORKSPACE_KEY,
-	...QUARTER_PERIOD
-});
+const QUERY: ReportQuery = reportQuerySchema.parse({ mode: 'snapshot', ...QUARTER_PERIOD });
 
 /** Значение ячейки так, как его должен показать файл. */
 function expectedText(cell: ReportCell): string {
@@ -229,15 +223,13 @@ describe('четыре писателя одного отчёта', () => {
 		const payload = JSON.parse(file.body.toString('utf8')) as {
 			schemaVersion: number;
 			mode: string;
-			workspace: { key: string; name: string };
 			period: { start: string; end: string };
 			semantics: string;
 			rows: { interactionId: string; url: string | null; values: Record<string, unknown> }[];
 		};
 
-		expect(payload.schemaVersion).toBe(2);
+		expect(payload.schemaVersion).toBe(3);
 		expect(payload.mode).toBe('snapshot');
-		expect(payload.workspace).toStrictEqual(view.meta.workspace);
 		expect(payload.period).toStrictEqual({ start: QUARTER_PERIOD.from, end: QUARTER_PERIOD.to });
 		expect(payload.semantics).toBe(view.meta.semantics);
 		expect(payload.rows.map((row) => row.interactionId)).toStrictEqual(
@@ -372,13 +364,12 @@ describe('четыре писателя одного отчёта', () => {
 		});
 	}, 120_000);
 
-	it('называет файл пространством, режимом, периодом и днём сборки', async () => {
+	it('называет файл режимом, периодом и днём сборки', async () => {
 		const view = await buildReport(admin(), QUERY);
 		const file = await renderReport(view, 'xlsx', { day: '2026-09-17' });
 
-		expect(view.meta.workspace.key).toBe(B2B_WORKSPACE_KEY);
 		expect(file.fileName).toBe(
-			`${reportTitle(view.meta.workspace.name)}, срез на 31.12.2026 (собран 17.09.2026).xlsx`
+			'Отчёт по взаимодействиям — срез на 31.12.2026 (собран 17.09.2026).xlsx'
 		);
 	});
 });
@@ -387,7 +378,7 @@ describe('маршрут выгрузки', () => {
 	type Endpoint = (event: RequestEvent) => Promise<Response>;
 
 	async function exportRoute(): Promise<Endpoint> {
-		const module = await import('../../../src/routes/(app)/w/[workspace]/reports/export/+server');
+		const module = await import('../../../src/routes/(app)/reports/export/+server');
 
 		return module.GET as unknown as Endpoint;
 	}
@@ -396,8 +387,7 @@ describe('маршрут выгрузки', () => {
 		const GET = await exportRoute();
 		const response = await GET(
 			pageEvent({
-				path: `/w/${B2B_WORKSPACE_KEY}/reports/export`,
-				params: { workspace: B2B_WORKSPACE_KEY },
+				path: '/reports/export',
 				query: `?format=xlsx&mode=snapshot&from=${QUARTER_PERIOD.from}&to=${QUARTER_PERIOD.to}`
 			})
 		);
@@ -426,7 +416,6 @@ describe('маршрут выгрузки', () => {
 		expect(reportId).toMatch(/^[0-9a-f-]{36}$/);
 		expect(events[0].details).toStrictEqual({
 			reportId,
-			workspaceKey: B2B_WORKSPACE_KEY,
 			mode: 'snapshot',
 			periodStart: QUARTER_PERIOD.from,
 			periodEnd: QUARTER_PERIOD.to,
@@ -438,8 +427,7 @@ describe('маршрут выгрузки', () => {
 	it('не пускает без права на просмотр взаимодействий', async () => {
 		const GET = await exportRoute();
 		const event = pageEvent({
-			path: `/w/${B2B_WORKSPACE_KEY}/reports/export`,
-			params: { workspace: B2B_WORKSPACE_KEY },
+			path: '/reports/export',
 			query: '?format=json',
 			user: sessionUser('manager')
 		});
@@ -451,19 +439,19 @@ describe('маршрут выгрузки', () => {
 		await expect(GET(event)).rejects.toMatchObject({ status: 403 });
 	});
 
-	it('вне области доступа отвечает «не найдено», и наружу не уходит ни строки', async () => {
+	it('в выгрузку не попадают записи вне области доступа', async () => {
 		const GET = await exportRoute();
 		const scoped = sessionUser('manager');
 		const event = pageEvent({
-			path: `/w/${B2B_WORKSPACE_KEY}/reports/export`,
-			params: { workspace: B2B_WORKSPACE_KEY },
+			path: '/reports/export',
 			query: `?format=json&mode=snapshot&from=${QUARTER_PERIOD.from}&to=${QUARTER_PERIOD.to}`,
 			user: { ...scoped, scope: NO_ACCESS }
 		});
 
-		// Пустая область не включена ни в одно пространство: чужое пространство
-		// отвечает так же, как незнакомое, — как и его адрес `/w/<ключ>`.
-		await expect(GET(event)).rejects.toMatchObject({ status: 404 });
+		const response = await GET(event);
+		const payload = JSON.parse(await response.text()) as { rows: unknown[] };
+
+		expect(payload.rows).toStrictEqual([]);
 		expect(Object.keys(ids.interactions).length).toBe(8);
 	});
 });

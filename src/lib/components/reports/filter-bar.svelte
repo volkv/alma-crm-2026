@@ -66,6 +66,9 @@
 			testId: 'report-period',
 			onchange: ({ from, to }) => void go({ from, to })
 		},
+		// Пространство — первым из отборов: отчёт общий, и охват выбирают раньше
+		// остального.
+		list('workspace', 'Пространство', options.workspaces),
 		list('org', 'Вуз', options.organizations),
 		list('dir', 'Направление', options.directions),
 		list('party', 'Тип контрагента', options.parties),

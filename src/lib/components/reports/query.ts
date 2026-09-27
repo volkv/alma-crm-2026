@@ -16,38 +16,12 @@ import {
  * Значение по умолчанию из адреса убирается: два способа получить один и тот же
  * отчёт обязаны дать одну и ту же ссылку, иначе пересланная коллеге ссылка
  * отличается от своей же, набранной заново.
- *
- * Отчёт живёт внутри пространства (`/w/<ключ>/reports`), и все ссылки экрана —
- * от текущего пространства: ключ берётся из пути открытого адреса, а не из
- * параметра. Перейти отсюда в отчёт соседнего пространства нельзя — это другой
- * процесс и другой отчёт, в него ведёт меню.
  */
 
 /** Изменение фильтра: значение, список значений или «убрать параметр». */
 export type ReportChanges = Partial<Record<ReportParam, string | readonly string[] | null>>;
 
-/** Ключ пространства в пути отчёта; всё до него — базовый путь приложения. */
-const WORKSPACE_IN_PATH = /\/w\/([^/]+)\/reports(?:\/|$)/;
-
-/**
- * Пространство открытого отчёта — из пути. Адрес без него означал бы, что
- * ссылку собирают не на экране отчёта, а молча выбранное соседнее пространство
- * показало бы чужую работу под своим заголовком, поэтому здесь — отказ.
- */
-function workspaceOf(url: URL): string {
-	const match = WORKSPACE_IN_PATH.exec(url.pathname);
-
-	if (match === null) {
-		throw new Error(`Адрес не принадлежит отчёту пространства: ${url.pathname}`);
-	}
-
-	return decodeURIComponent(match[1]);
-}
-
-/** Адрес отчёта текущего пространства. */
-function reportsPath(url: URL): ResolvedPathname {
-	return resolve('/(app)/w/[workspace]/reports', { workspace: workspaceOf(url) });
-}
+const REPORTS_PATH = resolve('/reports');
 
 function applyChanges(url: URL, changes: ReportChanges): URLSearchParams {
 	const params = new URLSearchParams(url.searchParams);
@@ -73,9 +47,11 @@ function applyChanges(url: URL, changes: ReportChanges): URLSearchParams {
 
 export function reportHref(url: URL, changes: ReportChanges): ResolvedPathname {
 	const query = applyChanges(url, changes).toString();
-	const path = reportsPath(url);
 
-	return (query ? `${path}?${query}` : path) as ResolvedPathname;
+	// `resolve()` разбирает аргумент по ветвям объединения `Pathname`, и на
+	// нескольких десятках маршрутов вывод перестаёт сходиться; путь здесь всегда
+	// один и тот же, поэтому он подставляется литералом.
+	return (query ? `${REPORTS_PATH}?${query}` : REPORTS_PATH) as ResolvedPathname;
 }
 
 /** Текущие значения многозначного параметра. */
@@ -113,18 +89,19 @@ export type ReportPeriod = { mode: ReportMode; from: string; to: string };
  * числом на столбце. Общий список `/interactions` показывает **текущую** стадию
  * и ни периода, ни режима не знает — переход туда молча показал бы другой набор.
  *
- * Переход добавляет к выборке ключ стадии и **не снимает** остальные фильтры:
- * вуз, направление, программа, продукт, ответственный и состояние остаются в
- * адресе, потому что столбец нарисован под ними же. Пространство стоит в пути и
- * не меняется. Режим и период выписываются явно: ссылку отправляют коллеге, а
- * «сегодня» у него наступит завтра.
+ * Переход добавляет к выборке пространство и ключ стадии и **не снимает**
+ * остальные фильтры: вуз, направление, программа, продукт, ответственный и
+ * состояние остаются в адресе, потому что столбец нарисован под ними же.
+ * Режим и период выписываются явно: ссылку отправляют коллеге, а «сегодня» у
+ * него наступит завтра.
  */
 export function stageDrilldownHref(
 	url: URL,
 	period: ReportPeriod,
+	workspaceKey: string,
 	stageKey: string
 ): ResolvedPathname {
-	return reportHref(url, { ...period, stage: stageKey });
+	return reportHref(url, { ...period, workspace: workspaceKey, stage: stageKey });
 }
 
 /**
@@ -166,16 +143,16 @@ export function pageHref(url: URL, number: number): ResolvedPathname {
 	}
 
 	const query = params.toString();
-	const path = reportsPath(url);
 
-	return (query ? `${path}?${query}` : path) as ResolvedPathname;
+	return (query ? `${REPORTS_PATH}?${query}` : REPORTS_PATH) as ResolvedPathname;
 }
+
+const EXPORT_PATH = resolve('/reports/export');
 
 /**
  * Ссылка на выгрузку. В неё уходят только фильтры отчёта: страница таблицы и
  * прочее состояние экрана к содержимому файла отношения не имеют. У PDF в
- * ссылке стоит и вид — сводка или полный отчёт. Пространство — то же, что у
- * экрана: выгрузка лежит под его адресом.
+ * ссылке стоит и вид — сводка или полный отчёт.
  */
 export function exportHref(
 	url: URL,
@@ -198,10 +175,10 @@ export function exportHref(
 		params.set('pdf', pdfLayout);
 	}
 
-	const path = resolve('/(app)/w/[workspace]/reports/export', { workspace: workspaceOf(url) });
-
-	return `${path}?${params.toString()}` as ResolvedPathname;
+	return `${EXPORT_PATH}?${params.toString()}` as ResolvedPathname;
 }
+
+const INTERACTIONS_PATH = resolve('/interactions');
 
 /**
  * Ссылка «те же взаимодействия в списке».
@@ -212,12 +189,16 @@ export function exportHref(
  * несовпадении экран говорит словами рядом со ссылкой: молча суженный или
  * расширенный список хуже, чем честно неполный.
  *
- * Пространство переносится адресом: у списка оно стоит в пути, как и у отчёта,
- * и ссылка ведёт в список того же пространства.
+ * Пространство переносится не отбором, а адресом: у списка оно стоит в пути, и
+ * параметра для него больше нет. Отчёт общий, и выбрать в нём можно
+ * несколько направлений сразу или ни одного — такую ссылку одним адресом не
+ * выразить, и она ведёт на прежний адрес, который сам уводит туда, где у
+ * смотрящего есть работа.
  */
 export function interactionsHref(url: URL): ResolvedPathname {
 	const params = new URLSearchParams();
 	const states = selectedValues(url, 'state');
+	const workspaces = selectedValues(url, 'workspace');
 
 	if (states.length === 1) {
 		params.set('status', states[0]);
@@ -232,13 +213,20 @@ export function interactionsHref(url: URL): ResolvedPathname {
 	params.set('view', 'table');
 
 	const query = params.toString();
-	const path = resolve('/(app)/w/[workspace]/interactions', { workspace: workspaceOf(url) });
+	const path =
+		workspaces.length === 1
+			? (`/w/${encodeURIComponent(workspaces[0])}/interactions` as ResolvedPathname)
+			: INTERACTIONS_PATH;
 
 	return (query ? `${path}?${query}` : path) as ResolvedPathname;
 }
 
-/** Какие фильтры отчёта список взаимодействий не понимает. */
-export function unsupportedListFilters(url: URL): string[] {
+/**
+ * Какие фильтры отчёта список взаимодействий не понимает. `workspaceCount` —
+ * сколько пространств доступно смотрящему: без фильтра отчёт общий и охватывает
+ * их все, а список всегда показывает одно.
+ */
+export function unsupportedListFilters(url: URL, workspaceCount: number): string[] {
 	const dropped: string[] = [];
 	const named: [ReportParam, string][] = [
 		['org', 'вуз'],
@@ -261,6 +249,14 @@ export function unsupportedListFilters(url: URL): string[] {
 
 	if (selectedValues(url, 'state').length > 1) {
 		dropped.push('несколько состояний сразу');
+	}
+
+	// Одно пространство список понимает; несколько сразу — нет: у него это
+	// один выбор «чей процесс показать». Без фильтра отчёт берёт все доступные.
+	const workspaces = selectedValues(url, 'workspace').length;
+
+	if (workspaces > 1 || (workspaces === 0 && workspaceCount > 1)) {
+		dropped.push('несколько пространств сразу');
 	}
 
 	return dropped;

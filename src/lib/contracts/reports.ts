@@ -7,9 +7,11 @@
  * Поэтому режим всегда виден на экране, всегда стоит в адресе и всегда попадает
  * в шапку выгрузки.
  *
- * Отчёт живёт внутри пространства и строится ровно по одному: у пространств
- * разные процессы — свои стадии, сроки и метрики, — и сложенные вместе они
- * давали бы числа, которые ничего не описывают. Сквозного отчёта нет намеренно.
+ * Отчёт общий: по всем взаимодействиям, доступным смотрящему, с фильтром
+ * пространств (по умолчанию — все его пространства). У пространств разные
+ * процессы, поэтому всё, что зависит от стадий, — воронка — считается по
+ * пространству отдельно и не складывается; числа, от стадий не зависящие
+ * (итоги, разрезы, динамика по видам событий), считаются по выборке целиком.
  *
  * Семантика описана в `docs/reports.md`; здесь — её машинная часть: словари,
  * каталог колонок, схема разбора адреса и объект выдачи. Второго описания тех
@@ -23,9 +25,11 @@ import { ORGANIZATION_KINDS, type OrganizationKind } from './directory';
 /**
  * Версия схемы выгрузки. Растёт, когда меняется форма объекта, а не когда
  * добавилась колонка: по ней принимающая сторона решает, умеет ли она читать
- * файл.
+ * файл. Третья: воронка — по блоку на пространство (`charts.funnel.workspaces`),
+ * пространство — необязательный многозначный фильтр, а не поле `meta.workspace`
+ * второй версии.
  */
-export const REPORT_SCHEMA_VERSION = 2;
+export const REPORT_SCHEMA_VERSION = 3;
 
 /** Режим отчёта: срез на конец периода или движение за период. */
 export const REPORT_MODES = ['snapshot', 'movement'] as const;
@@ -412,15 +416,6 @@ export function resolveColumns(
 	return available.filter((column) => column.required || asked.has(column.key));
 }
 
-/**
- * Название отчёта — с пространством: на экране, в заголовке PDF и в имени файла.
- * Отчёт описывает один процесс, и файл без имени пространства в папке загрузок
- * не отличить от соседнего, снятого по другому направлению.
- */
-export function reportTitle(workspaceName: string): string {
-	return `Отчёт по взаимодействиям — ${workspaceName}`;
-}
-
 /** Начало текущего квартала — период по умолчанию. */
 export function quarterStart(today: string): string {
 	const month = Number(today.slice(5, 7));
@@ -455,21 +450,6 @@ const multiUuid = multiValue.transform((items) =>
 	items.filter((item) => z.uuid().safeParse(item).success)
 );
 
-/**
- * Пространство отчёта — ключом (`b2b`, `b2c`), ровно одно и обязательно. Экран
- * берёт его из пути (`/w/<ключ>/reports`), машинный вызов — из параметра. Список
- * через запятую или повтор параметра — не «сквозной отчёт», а ошибка вопроса:
- * стадии двух процессов в одной выборке не складываются.
- */
-export const REPORT_WORKSPACE_ISSUE =
-	'Отчёт строится внутри одного пространства: укажите ровно одно — workspace=<ключ пространства>';
-
-const workspaceKey = z
-	.string({ error: REPORT_WORKSPACE_ISSUE })
-	.trim()
-	.min(1, { error: REPORT_WORKSPACE_ISSUE })
-	.refine((value) => !value.includes(','), { error: REPORT_WORKSPACE_ISSUE });
-
 const flag = z
 	.union([z.string(), z.boolean()])
 	.default(false)
@@ -501,8 +481,12 @@ export const reportQuerySchema = z.object({
 	/** Статус передачи по позициям договора — свободный словарь справочника. */
 	transfer: multiValue,
 	party: multiEnum(ORGANIZATION_KINDS),
-	/** Пространство — по ключу; одно, см. `REPORT_WORKSPACE_ISSUE`. */
-	workspace: workspaceKey,
+	/**
+	 * Пространства — по ключу (`b2b`, `b2c`), сколько угодно; пусто — все
+	 * доступные. Недоступный ключ — отказ «не найдено», а не пропуск
+	 * (`readReportStageIndex`).
+	 */
+	workspace: multiValue,
 	overdue: flag,
 	paused: flag,
 	cols: multiValue
@@ -513,9 +497,6 @@ export type ReportQuery = z.output<typeof reportQuerySchema>;
 /**
  * Параметры адреса, которые отчёт понимает. Всё остальное в адресе он не
  * трогает: рядом живёт состояние таблицы, и чужие параметры не его дело.
- *
- * Пространства среди них нет: на экране оно стоит в пути, а не в строке
- * запроса, и параметр, оставшийся в старой ссылке, выборку не меняет.
  */
 export const REPORT_PARAMS = [
 	'mode',
@@ -531,6 +512,7 @@ export const REPORT_PARAMS = [
 	'state',
 	'transfer',
 	'party',
+	'workspace',
 	'overdue',
 	'paused',
 	'cols'
@@ -658,8 +640,6 @@ export type ReportMeta = {
 	/** Момент среза `T`. */
 	asOf: string;
 	mode: ReportMode;
-	/** Пространство, внутри которого собран отчёт: его процесс и его стадии. */
-	workspace: { key: string; name: string };
 	period: { start: string; end: string };
 	filters: readonly ReportFilterView[];
 	/** Область доступа словами: «все организации» или сколько именно видно. */
@@ -680,11 +660,25 @@ export type ReportBucket = {
 };
 
 /**
- * Воронка: распределение на дату, не конверсия. Одна — по стадиям процесса
- * пространства отчёта, в порядке процесса.
+ * Воронка одного пространства.
+ *
+ * Стадии разных пространств в одну воронку не складываются: у B2B и B2C свои
+ * процессы и свои стадии, а одинаковые ключи в них — законная ситуация. Полоса
+ * «Встреча» рядом с полосой «Оплата» из другого процесса выглядит как один
+ * путь, которым она не является.
  */
-export type ReportFunnelChart = {
+export type ReportFunnelWorkspace = {
+	workspaceId: string;
+	/** Ключ пространства (`b2b`, `b2c`) — им сужается отчёт по клику. */
+	workspaceKey: string;
+	workspaceName: string;
 	stages: readonly ReportBucket[];
+};
+
+/** Воронка: распределение на дату, не конверсия. */
+export type ReportFunnelChart = {
+	/** По одной воронке на пространство, в порядке пространств. */
+	workspaces: readonly ReportFunnelWorkspace[];
 	closed: readonly ReportBucket[];
 	note: string;
 };
@@ -762,8 +756,8 @@ export type ReportFilterOptions = {
 	programs: FilterOption[];
 	products: FilterOption[];
 	owners: FilterOption[];
-	/** Стадии процесса пространства отчёта. */
 	stages: FilterOption[];
+	workspaces: FilterOption[];
 	parties: FilterOption[];
 	states: FilterOption[];
 	transferStatuses: FilterOption[];

@@ -194,13 +194,13 @@ export function interactionConditions(ctx: ActorContext, query: ReportQuery): SQ
 		)`);
 	}
 
-	// Пространство задано всегда: отчёт строится внутри одного, и сквозной
-	// выборки у него нет (`docs/reports.md`, «Отчёт внутри пространства»).
-	conditions.push(sql`exists (
-		select 1 from workspaces workspace
-		where workspace.id = interactions.workspace_id
-			and workspace.key = ${query.workspace}
-	)`);
+	if (query.workspace.length > 0) {
+		conditions.push(sql`exists (
+			select 1 from workspaces workspace
+			where workspace.id = interactions.workspace_id
+				and workspace.key in ${inList(query.workspace)}
+		)`);
+	}
 
 	return and(...conditions) ?? sql`true`;
 }

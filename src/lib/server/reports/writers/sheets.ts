@@ -97,7 +97,6 @@ function filtersSheet(view: ReportView): SpreadsheetWriteSheet {
 		['Показатель', 'Значение'],
 		['Идентификатор отчёта', view.meta.reportId],
 		['Отчёт собран', formatDateTime(view.meta.generatedAt)],
-		['Пространство', view.meta.workspace.name],
 		['Режим', REPORT_MODE_LABELS[view.meta.mode]],
 		...view.meta.filters.map((filter): SpreadsheetWriteCell[] => [filter.label, filter.value]),
 		['Область доступа', view.meta.scope],
@@ -120,8 +119,15 @@ function summarySheet(view: ReportView): SpreadsheetWriteSheet {
 	if (view.charts.funnel !== null) {
 		const funnel = view.charts.funnel;
 
-		rows.push(...bucketRows('Стадия на дату среза', funnel.stages));
-		rows.push([]);
+		// Воронка своя у каждого пространства: одинаковые ключи стадий в B2B и
+		// B2C законны, и в одном списке две разные стадии слились бы в одну строку.
+		for (const workspace of funnel.workspaces) {
+			rows.push(
+				...bucketRows(`Стадия на дату среза — ${workspace.workspaceName}`, workspace.stages)
+			);
+			rows.push([]);
+		}
+
 		rows.push(...bucketRows('Закрыто за период', funnel.closed));
 		rows.push([]);
 		rows.push(['В том числе на паузе', view.totals.paused]);

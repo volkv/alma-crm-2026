@@ -313,15 +313,15 @@ export const SHOTS: readonly Frame[] = [
 	},
 	{
 		name: 'reports',
-		path: '/w/b2b/reports',
+		path: '/reports',
 		role: 'manager',
 		caption:
 			'Отчёты: срез и движение, фильтры, диаграммы, четыре формата выгрузки, PDF — сводкой или целиком',
-		waitFor: 'Отчёт по взаимодействиям — Работа с ВУЗ'
+		waitFor: 'Отчёты по взаимодействиям'
 	},
 	{
 		name: 'reports-movement',
-		path: '/w/b2b/reports?mode=movement',
+		path: '/reports?mode=movement',
 		role: 'manager',
 		caption: 'Отчёт в режиме движения: события периода по видам',
 		waitFor: 'Каждая строка — один переход'
@@ -436,12 +436,12 @@ export const SHOTS: readonly Frame[] = [
 	},
 	{
 		name: 'theme-dark',
-		path: '/w/b2b/reports',
+		path: '/reports',
 		role: 'manager',
 		caption: 'Тёмная тема: те же токены, диаграммы берут цвета оттуда же',
 		// Отчёты, а не сводка: тема меняет не только фон, но и цвета диаграмм, а
 		// проверить это можно только там, где диаграммы есть.
-		waitFor: 'Отчёт по взаимодействиям — Работа с ВУЗ',
+		waitFor: 'Отчёты по взаимодействиям',
 		theme: 'dark'
 	},
 	{

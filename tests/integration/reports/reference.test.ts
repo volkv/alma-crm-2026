@@ -11,7 +11,6 @@ import type { z } from 'zod';
 import { interactionListQuerySchema } from '$lib/contracts/interactions';
 import { reportQuerySchema, type ReportQuery, type ReportView } from '$lib/contracts/reports';
 import type { ActorContext } from '$lib/server/actor';
-import { B2B_WORKSPACE_KEY } from '$lib/server/stages/definitions';
 import { organizationResponsibles } from '$lib/server/db/schema';
 import { listInteractions } from '$lib/server/interactions/read';
 import { checkReportInvariants, reconcileModes } from '$lib/server/reports/invariants';
@@ -90,19 +89,13 @@ function delegatedActor(userIds: readonly string[], workspaceIds: readonly strin
  * Запрос отчёта из того, что пишут в адресе: многозначные фильтры принимаются
  * строкой, как их и передают ссылкой.
  */
-/**
- * Запрос отчёта. Отчёт строится внутри пространства, и эталонный набор живёт в
- * B2B — оно и подставляется, если тест не назвал другое.
- */
-function query(
-	input: Omit<z.input<typeof reportQuerySchema>, 'workspace'> & { workspace?: string }
-): ReportQuery {
-	return reportQuerySchema.parse({ workspace: B2B_WORKSPACE_KEY, ...input });
+function query(input: z.input<typeof reportQuerySchema>): ReportQuery {
+	return reportQuerySchema.parse(input);
 }
 
 /** Полосы всех воронок подряд: воронка своя у каждой группы процесса. */
 function funnelStages(view: ReportView) {
-	return view.charts.funnel?.stages ?? [];
+	return view.charts.funnel?.workspaces.flatMap((workspace) => workspace.stages) ?? [];
 }
 
 /** Число в стадии воронки по ключу: корзина — это пара «группа + ключ». */

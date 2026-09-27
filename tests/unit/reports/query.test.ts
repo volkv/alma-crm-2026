@@ -11,7 +11,6 @@ import { moscowDayStart, snapshotMoment } from '$lib/contracts/calendar';
 import {
 	columnsForMode,
 	quarterStart,
-	reportQuerySchema,
 	reportSemantics,
 	resolveColumns
 } from '$lib/contracts/reports';
@@ -21,7 +20,7 @@ import { readReportQuery } from '$lib/server/reports/query';
 const TODAY = '2026-09-17';
 
 function read(query: string) {
-	return readReportQuery(new URL(`http://localhost/w/b2b/reports${query}`), 'b2b', TODAY);
+	return readReportQuery(new URL(`http://localhost/reports${query}`), TODAY);
 }
 
 describe('период', () => {
@@ -54,23 +53,6 @@ describe('период', () => {
 
 		expect(asOf.toISOString()).toBe('2026-12-31T21:00:00.000Z');
 		expect(asOf.getTime() - moscowDayStart('2026-12-31').getTime()).toBe(24 * 60 * 60 * 1000);
-	});
-});
-
-describe('пространство', () => {
-	it('берётся от вызывающего, а параметр адреса его не меняет', () => {
-		// Параметр остаётся в старых ссылках со времён сквозного отчёта; адрес
-		// одного пространства обязан показывать его работу, а не соседнюю.
-		expect(read('?workspace=b2c').workspace).toBe('b2b');
-	});
-
-	it('обязательно и одно: список пространств — ошибка вопроса, а не сквозной отчёт', () => {
-		const base = { mode: 'snapshot', from: '2026-07-01', to: TODAY };
-
-		expect(reportQuerySchema.safeParse(base).success).toBe(false);
-		expect(reportQuerySchema.safeParse({ ...base, workspace: 'b2b,b2c' }).success).toBe(false);
-		expect(reportQuerySchema.safeParse({ ...base, workspace: ['b2b', 'b2c'] }).success).toBe(false);
-		expect(reportQuerySchema.safeParse({ ...base, workspace: 'b2b' }).success).toBe(true);
 	});
 });
 

@@ -83,13 +83,11 @@ const PERIOD = 'from=2026-09-01&to=2027-08-31';
  * Фильтры отчёта, которые перебирает сценарий: срез и движение, срез по
  * просроченным и по стадии, всё — в пространстве записи.
  */
-// Отчёт живёт внутри пространства: пространство — в пути, а не в фильтре.
-const REPORTS = `${BASE_URL}/w/${fixture.workspace}/reports`;
 const REPORT_FILTERS = [
-	`mode=snapshot&${PERIOD}`,
-	`mode=movement&${PERIOD}`,
-	`mode=snapshot&${PERIOD}&overdue=true`,
-	`mode=snapshot&${PERIOD}&stage=meeting`
+	`mode=snapshot&${PERIOD}&workspace=${fixture.workspace}`,
+	`mode=movement&${PERIOD}&workspace=${fixture.workspace}`,
+	`mode=snapshot&${PERIOD}&workspace=${fixture.workspace}&overdue=true`,
+	`mode=snapshot&${PERIOD}&workspace=${fixture.workspace}&stage=meeting`
 ];
 
 const poolExhausted = new Counter('pool_exhausted');
@@ -263,7 +261,7 @@ export default function () {
 	// Смена фильтра отчёта: тот же отчёт с другим разрезом — именно так с ним и
 	// работают, а не открывают один раз.
 	const filter = REPORT_FILTERS[(slot + __ITER) % REPORT_FILTERS.length];
-	const report = http.get(`${REPORTS}?${filter}&page=1`, {
+	const report = http.get(`${BASE_URL}/reports?${filter}&page=1`, {
 		jar,
 		headers: HTML,
 		redirects: 0,

@@ -26,8 +26,7 @@ import {
 	type ReportFunnelChart,
 	type ReportMovementChart,
 	type ReportPdfLayout,
-	type ReportView,
-	reportTitle
+	type ReportView
 } from '$lib/contracts/reports';
 import { formatDate, formatDateTime } from '$lib/format';
 
@@ -72,16 +71,23 @@ function bucketList(title: string, buckets: readonly ReportBucket[]): string {
 	return `<section class="summary"><h2>${escapeHtml(title)}</h2><ul>${items}</ul></section>`;
 }
 
-/** Воронка таблицей: стадии процесса пространства и отдельно — закрытые. */
+/**
+ * Воронка таблицей — по одной на пространство, и заголовок всегда называет его:
+ * у пространств разные процессы, числа их стадий не складываются, а одинаковые
+ * ключи стадий в двух процессах законны — без имени строки читались бы как одна.
+ */
 function funnelHtml(funnel: ReportFunnelChart | null): string {
 	if (funnel === null) {
 		return '';
 	}
 
-	return (
-		bucketList('Стадия на дату среза', funnel.stages) +
-		bucketList('Закрыто за период', funnel.closed)
-	);
+	const stages = funnel.workspaces
+		.map((workspace) =>
+			bucketList(`Стадия на дату среза — ${workspace.workspaceName}`, workspace.stages)
+		)
+		.join('');
+
+	return stages + bucketList('Закрыто за период', funnel.closed);
 }
 
 /**
@@ -158,7 +164,6 @@ type ReportPdfPart = { page: string; footer: string };
  * подвал называет и часть.
  */
 function footerHtml(
-	title: string,
 	reportId: string,
 	layout: ReportPdfLayout,
 	part: number,
@@ -170,7 +175,7 @@ function footerHtml(
 		body { font: 8px "DejaVu Sans", Arial, sans-serif; color: #4b5563; width: 100%; margin: 0 0.4in; }
 		.line { display: flex; justify-content: space-between; }
 	</style></head><body><div class="line">
-		<span>${escapeHtml(title)} · ${REPORT_PDF_LAYOUT_LABELS[layout].toLowerCase()} · ${escapeHtml(reportId)}</span>
+		<span>Отчёт по взаимодействиям · ${REPORT_PDF_LAYOUT_LABELS[layout].toLowerCase()} · ${escapeHtml(reportId)}</span>
 		<span>${partLabel} <span class="pageNumber"></span>/<span class="totalPages"></span></span>
 	</div></body></html>`;
 }
@@ -224,7 +229,6 @@ function headerHtml(view: ReportView, layout: ReportPdfLayout): string {
 		{ label: 'Идентификатор отчёта', value: view.meta.reportId },
 		{ label: 'Отчёт собран', value: formatDateTime(view.meta.generatedAt) },
 		{ label: 'Вид PDF', value: layoutNote(view, layout) },
-		{ label: 'Пространство', value: view.meta.workspace.name },
 		{ label: 'Режим', value: REPORT_MODE_LABELS[view.meta.mode] },
 		...view.meta.filters.filter((filter) => filter.label !== 'Режим'),
 		{ label: 'Область доступа', value: view.meta.scope },
@@ -242,7 +246,7 @@ function headerHtml(view: ReportView, layout: ReportPdfLayout): string {
 			? `<p class="cut">Показаны первые ${printed} строк из ${view.rows.length}; вся таблица — в полном PDF и в выгрузках XLSX и JSON по той же ссылке.</p>`
 			: '';
 
-	return `<h1>${escapeHtml(reportTitle(view.meta.workspace.name))}, ${REPORT_PDF_LAYOUT_LABELS[layout].toLowerCase()}</h1>
+	return `<h1>Отчёт по взаимодействиям — ${REPORT_PDF_LAYOUT_LABELS[layout].toLowerCase()}</h1>
 	<p class="rule">${escapeHtml(view.meta.semantics)}</p>
 	<dl>${filters}</dl>
 	${cut}`;
@@ -281,9 +285,7 @@ export function reportPdfParts(view: ReportView, layout: ReportPdfLayout): Repor
 		chunks.push([]);
 	}
 
-	const title = escapeHtml(
-		`${reportTitle(view.meta.workspace.name)}, ${REPORT_PDF_LAYOUT_LABELS[layout].toLowerCase()}`
-	);
+	const title = `Отчёт по взаимодействиям — ${REPORT_PDF_LAYOUT_LABELS[layout].toLowerCase()}`;
 
 	return chunks.map((rows, index) => {
 		const first = index === 0;
@@ -303,13 +305,7 @@ export function reportPdfParts(view: ReportView, layout: ReportPdfLayout): Repor
 
 		return {
 			page,
-			footer: footerHtml(
-				reportTitle(view.meta.workspace.name),
-				view.meta.reportId,
-				layout,
-				index + 1,
-				chunks.length
-			)
+			footer: footerHtml(view.meta.reportId, layout, index + 1, chunks.length)
 		};
 	});
 }

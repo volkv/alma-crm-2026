@@ -212,10 +212,7 @@ async function seed(): Promise<void> {
 }
 
 test('отчёт выгружается книгой, и файл непустой', async ({ page }) => {
-	// Прежний адрес уводит в отчёт первого пространства: закладки живут дольше
-	// маршрутов.
 	await page.goto('/reports');
-	await expect(page).toHaveURL(/\/w\/[^/]+\/reports/);
 	await waitForHydration(page);
 
 	// Форматы собраны в меню одной кнопки «Выгрузить».
@@ -228,8 +225,7 @@ test('отчёт выгружается книгой, и файл непусто
 
 	const name = download.suggestedFilename();
 
-	// В имени файла — пространство: отчёт описывает один процесс.
-	expect(name.startsWith('Отчёт по взаимодействиям — ')).toBe(true);
+	expect(name.startsWith('Отчёт по взаимодействиям')).toBe(true);
 	expect(name.endsWith('.xlsx')).toBe(true);
 
 	const path = await download.path();
@@ -243,9 +239,10 @@ test('переключение режима пересчитывает итог�
 
 	const errors = clientErrors(page);
 	const period = `from=${moscowDay(daysAgo(SEEDED.periodDaysAgo))}&to=${moscowDay(new Date())}`;
-	const address = `/w/${GROUP_KEY}/reports?mode=snapshot&${period}`;
-
-	await page.goto(address);
+	// Прежний адрес отчёта пространства ведёт в общий отчёт с тем же охватом:
+	// пространство переезжает из пути в фильтр, остальные параметры — как были.
+	await page.goto(`/w/${GROUP_KEY}/reports?mode=snapshot&${period}`);
+	await expect(page).toHaveURL(new RegExp(`/reports\\?.*workspace=${GROUP_KEY}`));
 	await waitForHydration(page);
 
 	// В группе одна запись: в срезе это одна строка, а в движении — два события,

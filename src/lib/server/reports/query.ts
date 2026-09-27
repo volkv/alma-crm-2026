@@ -26,17 +26,10 @@ import { ValidationError } from '../errors';
  * ссылку руками, и показывать ему отказ вместо отчёта незачем. А вот
  * испорченная дата периода отбрасыванию не подлежит: молча подставленный вместо
  * неё квартал означал бы отчёт не за тот период, о чём читающий не узнает.
- *
- * Пространство приходит не из строки запроса, а от вызывающего — из пути
- * `/w/<ключ>/reports`. Параметр `workspace`, оставшийся в старой ссылке, в
- * число разбираемых не входит (`REPORT_PARAMS`) и выборку не меняет: иначе
- * адрес одного пространства показывал бы работу другого под своим заголовком.
+ * Недоступное пространство — тоже не отбрасывается, а отвечает «не найдено»
+ * при сборке (`readReportStageIndex`): без него выборка стала бы шире вопроса.
  */
-export function readReportQuery(
-	url: URL,
-	workspace: string,
-	today: string = formatIsoDay()
-): ReportQuery {
+export function readReportQuery(url: URL, today: string = formatIsoDay()): ReportQuery {
 	const raw: Record<string, string[] | string> = {};
 
 	for (const param of REPORT_PARAMS) {
@@ -49,7 +42,6 @@ export function readReportQuery(
 
 	const parsed = reportQuerySchema.safeParse({
 		...raw,
-		workspace,
 		mode: url.searchParams.get('mode') ?? undefined,
 		from: url.searchParams.get('from') ?? quarterStart(today),
 		to: url.searchParams.get('to') ?? today,
@@ -71,6 +63,21 @@ export function readReportQuery(
 	}
 
 	return parsed.data;
+}
+
+/**
+ * Адрес общего отчёта (или его выгрузки) с охватом одного пространства — для
+ * прежних адресов `/w/<ключ>/reports`. Строка запроса переезжает целиком, а
+ * пространство из пути заменяет собой любые `workspace` в ней: вопрос ссылки —
+ * это пространство из её пути.
+ */
+export function scopedReportAddress(path: string, url: URL, workspaceKey: string): string {
+	const params = new URLSearchParams(url.searchParams);
+
+	params.delete('workspace');
+	params.append('workspace', workspaceKey);
+
+	return `${path}?${params.toString()}`;
 }
 
 /**

@@ -219,7 +219,7 @@ describe('адрес экрана', () => {
 
 	it('главная — это только корень', () => {
 		expect(screenForPath('/')?.id).toBe('home');
-		expect(screenForPath('/w/b2b/reports')?.id).toBe('reports');
+		expect(screenForPath('/reports')?.id).toBe('reports');
 		// Чужой раздел с тем же началом адреса — не свой экран.
 		expect(screenForPath('/interactions-board')).toBeNull();
 	});
@@ -456,7 +456,7 @@ describe('тур экрана', () => {
 			throw new Error('Экран отчётов пропал из реестра');
 		}
 
-		const stops = screenTourFor(screen, permissionsOf('lead'), '/w/b2b/reports');
+		const stops = screenTourFor(screen, permissionsOf('lead'), '/reports');
 		const last = stops[stops.length - 1];
 
 		expect(stops[0].kind).toBe('intro');

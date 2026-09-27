@@ -100,6 +100,20 @@ const STATIC_SECTIONS: readonly NavSection[] = [
 		permission: null
 	},
 	{
+		// Отчёт общий — по всем взаимодействиям, которые человек видит, с фильтром
+		// пространств: руководителю нужен один взгляд на всю работу, а воронки
+		// внутри отчёта всё равно считаются по пространству отдельно. Право то же,
+		// что у списка: отчёт показывает ровно то, что человек и так видит в
+		// списке взаимодействий, и право, расходящееся с `interactions.read`,
+		// однажды показало бы в отчёте лишнее или спрятало своё
+		// (`docs/access-matrix.md`, раздел 3).
+		href: '/reports',
+		label: 'Отчёты',
+		icon: BarChart3Icon,
+		group: MAIN,
+		permission: 'interactions.read'
+	},
+	{
 		// Документы — договоры и акты по шаблону — рождаются из взаимодействий и
 		// правятся вместе с ними: это ежедневная работа, а не каталог, в который
 		// заглядывают раз в месяц.
@@ -305,12 +319,8 @@ function workspaceIcon(key: string): LucideIcon {
  * Заголовок — имя пространства, а не слово «Пространство»: человек ходит в
  * «Работу с ВУЗ», а не в «пространство номер один».
  *
- * Отчёты — внутри пространства, а не в «Главном»: у направлений разные
- * процессы, свои стадии и метрики, и сквозного отчёта, складывающего их числа,
- * нет. Право у отчёта то же, что у списка: он показывает ровно то, что человек и
- * так видит в списке взаимодействий, и право, расходящееся с
- * `interactions.read`, однажды показало бы в отчёте лишнее или спрятало своё
- * (`docs/access-matrix.md`, раздел 3).
+ * Отчётов в секции нет: отчёт общий и стоит в «Главном», а пространство в нём —
+ * фильтр.
  */
 function workspaceSections(workspace: NavWorkspace): NavSection[] {
 	const group: NavGroup = { id: `workspace:${workspace.key}`, label: workspace.name };
@@ -320,13 +330,6 @@ function workspaceSections(workspace: NavWorkspace): NavSection[] {
 			href: `/w/${workspace.key}/interactions`,
 			label: 'Взаимодействия',
 			icon: workspaceIcon(workspace.key),
-			group,
-			permission: 'interactions.read'
-		},
-		{
-			href: `/w/${workspace.key}/reports`,
-			label: 'Отчёты',
-			icon: BarChart3Icon,
 			group,
 			permission: 'interactions.read'
 		},

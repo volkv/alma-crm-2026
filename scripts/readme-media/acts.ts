@@ -347,7 +347,7 @@ async function transition(page: Page, label: string, reason: string): Promise<vo
  * карточка и раскрытое «Сделано на стадии» с отметкой по документу.
  */
 export async function traceNumber(page: Page): Promise<void> {
-	await visit(page, '/w/b2b/reports', 'Отчёт по взаимодействиям — Работа с ВУЗ');
+	await visit(page, '/reports', 'Отчёты по взаимодействиям');
 	await scroll(page, 560);
 	await narrowByFunnel(page, STAND.signed.stage, STAND.signed.funnelIndex);
 	await beat(page, 0.8);
@@ -718,7 +718,7 @@ export async function runLearningGroup(page: Page): Promise<string> {
  * PDF и открытый скачанный PDF.
  */
 export async function reportAndExport(page: Page, crew: Crew): Promise<void> {
-	await visit(page, '/w/b2b/reports', 'Отчёт по взаимодействиям — Работа с ВУЗ');
+	await visit(page, '/reports', 'Отчёты по взаимодействиям');
 	await pointAt(page, page.getByTestId('report-row-count').first());
 	await beat(page, 1);
 
