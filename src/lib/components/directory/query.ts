@@ -66,3 +66,17 @@ export function clearedFiltersHref(url: URL, params: readonly string[]): Resolve
 
 	return href(url, next);
 }
+
+/**
+ * Тот же список с добавленным или снятым значением многозначного фильтра
+ * (`kind=a,b` — несколько значений работают как «или»). Пункты дропдауна
+ * выбирают обычно подряд, и каждый клик меняет одно значение, а не весь набор.
+ */
+export function toggledFilterHref(url: URL, param: string, value: string): ResolvedPathname {
+	const current = (url.searchParams.get(param) ?? '').split(',').filter((item) => item !== '');
+	const next = current.includes(value)
+		? current.filter((item) => item !== value)
+		: [...current, value];
+
+	return filterHref(url, param, next.join(','));
+}

@@ -1,5 +1,6 @@
 <script lang="ts" module>
-	import type { InteractionFilterOption } from '$lib/contracts/interactions';
+	/** Вариант фильтра-списка: значение для адреса и подпись. */
+	export type FilterOption = { value: string; label: string };
 
 	/** Фильтр ленты: дропдаун со списком значений или переключатель. */
 	export type StripFilter =
@@ -7,7 +8,7 @@
 				kind: 'list';
 				key: string;
 				label: string;
-				options: readonly InteractionFilterOption[];
+				options: readonly FilterOption[];
 				selected: readonly string[];
 				single?: boolean;
 				testId?: string;
@@ -69,12 +70,14 @@
 	let {
 		filters,
 		panelId,
+		moreTestId,
 		trailing,
 		end
 	}: {
 		filters: readonly StripFilter[];
 		/** `id` панели спрятанных фильтров — на него ссылается `aria-controls` воронки. */
 		panelId: string;
+		moreTestId?: string;
 		trailing?: Snippet;
 		/** То, что стоит в конце строки, прижатое вправо: переключатель вида. */
 		end?: Snippet;
@@ -199,7 +202,7 @@
 		title={measuring ? undefined : 'Ещё фильтры'}
 		aria-expanded={measuring ? undefined : panelOpen}
 		aria-controls={measuring ? undefined : panelId}
-		data-testid={measuring ? undefined : 'interactions-filter-more'}
+		data-testid={measuring ? undefined : moreTestId}
 		tabindex={measuring ? -1 : undefined}
 		onclick={measuring ? undefined : () => (open = !open)}
 	>

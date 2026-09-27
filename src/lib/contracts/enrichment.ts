@@ -367,7 +367,7 @@ export const registryPickSchema = z.object({
  */
 export const registryCreateSchema = z.object({
 	token: registryToken,
-	kind: z.enum(ORGANIZATION_FORM_KINDS, { error: 'Выберите вид организации' })
+	kind: z.enum(ORGANIZATION_FORM_KINDS, { error: 'Выберите тип организации' })
 });
 
 /** Строка реестра в выпадающем списке поля. */

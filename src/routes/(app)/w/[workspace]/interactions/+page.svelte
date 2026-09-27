@@ -12,7 +12,6 @@
 	import { resolve } from '$app/paths';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
-	import * as Tooltip from '$lib/components/ui/tooltip/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as SegmentedControl from '$lib/components/ui/segmented-control/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
@@ -25,8 +24,8 @@
 	import StageTimeline from '$lib/components/stage-timeline.svelte';
 	import StatusBadge, { type StatusTone } from '$lib/components/status-badge.svelte';
 	import Board from '$lib/components/interactions/board.svelte';
-	import FilterStrip, { type StripFilter } from '$lib/components/interactions/filter-strip.svelte';
-	import ListSearch from '$lib/components/interactions/list-search.svelte';
+	import FilterBar from '$lib/components/filters/filter-bar.svelte';
+	import type { StripFilter } from '$lib/components/filters/filter-strip.svelte';
 	import OwnerFilter from '$lib/components/interactions/owner-filter.svelte';
 	import { toTimelineStages } from '$lib/components/interactions/timeline';
 	import { filterHref } from '$lib/components/directory/query';
@@ -461,31 +460,6 @@
 	</Button>
 {/snippet}
 
-<!-- Сброс снимает всё разом: фильтры, ответственных и поиск
-	(`clearedFiltersHref`). Кнопка стоит сразу за фильтрами и есть, только пока
-	есть что снимать. -->
-{#snippet clearFilters()}
-	<Tooltip.Provider delayDuration={300}>
-		<Tooltip.Root>
-			<Tooltip.Trigger>
-				{#snippet child({ props })}
-					<Button
-						{...props}
-						variant="ghost"
-						size="icon"
-						href={clearedFiltersHref(page.url, workspace)}
-						aria-label="Сбросить фильтры"
-						data-testid="interactions-filter-clear"
-					>
-						<FunnelXIcon aria-hidden="true" />
-					</Button>
-				{/snippet}
-			</Tooltip.Trigger>
-			<Tooltip.Content>Сбросить фильтры</Tooltip.Content>
-		</Tooltip.Root>
-	</Tooltip.Provider>
-{/snippet}
-
 <!-- Доска с `sm` занимает остаток экрана под отборами: оболочка ограничивает
 	страницу ростом экрана, а эта колонка и обёртка списка передают остаток
 	доске (`board.svelte`). Таблица растёт по строкам, как раньше. -->
@@ -495,40 +469,31 @@
 		data.view === 'board' && 'sm:min-h-0 sm:flex-1 sm:gap-3 sm:py-4'
 	)}
 >
-	<!-- Ряд отборов: поиск, ответственные, фильтры, переключатель вида. С `sm`
-		это одна строка — фильтры, которые не поместились, уходят в панель под
-		воронкой (`filter-strip.svelte`), и строка не переносится. На телефоне
-		две: поиск с аватарками и под ними фильтры с переключателем вида; панель
-		спрятанных фильтров раскрывается третьей строкой. Цели нажатия на
-		телефоне — 44 px. Аватарки из правила высоты исключены: растянутая по
-		высоте кнопка превращала круг и ободок выбора в овал, — зону нажатия они
-		растят сами, невидимым псевдоэлементом (`owner-filter.svelte`). -->
-	<div
-		class="flex flex-wrap items-center gap-x-2 gap-y-3 max-sm:[&_a]:min-h-11 max-sm:[&_button:not([data-owner-avatar])]:min-h-11"
+	<!-- Ряд отборов: поиск, ответственные, фильтры, переключатель вида
+		(`filter-bar.svelte`). Сброс снимает всё разом: фильтры, ответственных и
+		поиск (`clearedFiltersHref`). -->
+	<FilterBar
 		data-tour="interactions-filters"
+		testId="interactions"
+		search={{
+			value: data.search,
+			placeholder: 'Поиск по названию и организации',
+			onsearch: (value) =>
+				void goto(filterHref(page.url, 'q', value), { keepFocus: true, noScroll: true })
+		}}
+		filters={stripFilters}
+		clearHref={data.isFiltered ? clearedFiltersHref(page.url, workspace) : null}
+		end={endControls}
 	>
-		<div class="flex w-full min-w-0 items-center gap-3 sm:w-auto sm:shrink-0">
-			<ListSearch
-				value={data.search}
-				placeholder="Поиск по названию и организации"
-				onsearch={(value) =>
-					void goto(filterHref(page.url, 'q', value), { keepFocus: true, noScroll: true })}
-			/>
+		{#snippet lead()}
 			<OwnerFilter
 				options={data.filterOptions.owners}
 				selected={data.filters.owner}
 				currentUser={data.user ?? null}
 				ontoggle={(value) => toggleAttr('owner', value)}
 			/>
-		</div>
-
-		<FilterStrip
-			filters={stripFilters}
-			panelId="interactions-filter-panel"
-			trailing={data.isFiltered ? clearFilters : undefined}
-			end={endControls}
-		/>
-	</div>
+		{/snippet}
+	</FilterBar>
 
 	<!-- `data-tour` — метка подсказок: рамка встаёт вокруг списка целиком —
 		и таблицы, и доски (`$lib/onboarding/screens`). -->

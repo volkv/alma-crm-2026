@@ -442,7 +442,7 @@ export async function resolveIntakeWorkspace(
 		.limit(1);
 
 	if (row === undefined) {
-		throw new ValidationError('Этот вид организации не может быть основной стороной', [
+		throw new ValidationError('Этот тип организации не может быть основной стороной', [
 			`Организации вида «${kind}» не задают процесс: основной стороной бывают учебное заведение, юридическое и физическое лицо`
 		]);
 	}

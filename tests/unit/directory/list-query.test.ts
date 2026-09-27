@@ -20,8 +20,8 @@ import {
 describe('список организаций', () => {
 	it('без параметров даёт первую страницу без фильтров', () => {
 		expect(organizationDirectoryQuerySchema.parse({})).toEqual({
-			kind: null,
-			educationLevel: null,
+			kind: [],
+			educationLevel: [],
 			q: null,
 			sortBy: 'shortName',
 			sortDirection: 'asc',
@@ -33,7 +33,7 @@ describe('список организаций', () => {
 	it('принимает фильтры и сортировку из адреса', () => {
 		expect(
 			organizationDirectoryQuerySchema.parse({
-				kind: 'operator',
+				kind: 'operator,customer_company',
 				educationLevel: 'spo',
 				q: '  Политех  ',
 				sortBy: 'region',
@@ -42,8 +42,8 @@ describe('список организаций', () => {
 				pageSize: 50
 			})
 		).toEqual({
-			kind: 'operator',
-			educationLevel: 'spo',
+			kind: ['operator', 'customer_company'],
+			educationLevel: ['spo'],
 			q: 'Политех',
 			sortBy: 'region',
 			sortDirection: 'desc',
@@ -54,13 +54,13 @@ describe('список организаций', () => {
 
 	it('превращает непонятный фильтр в отсутствие фильтра, а не в ошибку', () => {
 		const parsed = organizationDirectoryQuerySchema.parse({
-			kind: 'чушь',
+			kind: 'чушь,operator',
 			educationLevel: 42,
 			sortDirection: 'вниз'
 		});
 
-		expect(parsed.kind).toBeNull();
-		expect(parsed.educationLevel).toBeNull();
+		expect(parsed.kind).toEqual(['operator']);
+		expect(parsed.educationLevel).toEqual([]);
 		expect(parsed.sortDirection).toBe('asc');
 	});
 

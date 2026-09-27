@@ -155,7 +155,7 @@ export async function startLicenseRenewal(
 	const partyRole = PARTY_ROLE_BY_KIND[item.organizationKind];
 
 	if (partyRole === undefined) {
-		throw new ValidationError('Этот вид организации не ведёт процесс', [
+		throw new ValidationError('Этот тип организации не ведёт процесс', [
 			'Продление запускается для учебного заведения, юридического или физического лица'
 		]);
 	}

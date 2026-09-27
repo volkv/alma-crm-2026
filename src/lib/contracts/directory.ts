@@ -526,9 +526,33 @@ export const ORGANIZATION_SORT_KEYS = [
 	'isActive'
 ] as const;
 
+/**
+ * Многозначный фильтр из адреса: `kind=a,b` — несколько значений работают
+ * как «или». Незнакомые значения отбрасываются по одному, а не обнуляют весь
+ * отбор; пустой список — фильтра нет.
+ */
+function enumList<const T extends readonly [string, ...string[]]>(values: T) {
+	const known = new Set<string>(values);
+
+	// `catch` — и для чужого типа, и для отсутствующего ключа: без него поле
+	// объекта стало бы необязательным и пропадало бы из результата.
+	return z
+		.union([z.string(), z.array(z.unknown())])
+		.catch('')
+		.transform((raw): T[number][] => {
+			const items = typeof raw === 'string' ? raw.split(',') : raw;
+
+			return [
+				...new Set(
+					items.filter((item): item is T[number] => typeof item === 'string' && known.has(item))
+				)
+			];
+		});
+}
+
 export const organizationDirectoryQuerySchema = z.object({
-	kind: z.enum(ORGANIZATION_KINDS).nullable().catch(null),
-	educationLevel: z.enum(EDUCATION_LEVELS).nullable().catch(null),
+	kind: enumList(ORGANIZATION_KINDS),
+	educationLevel: enumList(EDUCATION_LEVELS),
 	q: searchQuery,
 	sortBy: z.enum(ORGANIZATION_SORT_KEYS).catch('shortName'),
 	sortDirection,

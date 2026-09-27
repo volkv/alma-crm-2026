@@ -41,7 +41,7 @@
 >
 	<dl class="grid gap-x-6 gap-y-3 sm:grid-cols-2 xl:grid-cols-5">
 		<div class="min-w-0">
-			<dt class="text-xs text-muted-foreground">Вид</dt>
+			<dt class="text-xs text-muted-foreground">Тип</dt>
 			<dd class="mt-0.5 flex flex-wrap items-center gap-1.5 text-sm">
 				<StatusBadge tone={ORGANIZATION_KIND_TONES[organization.kind]}>
 					{ORGANIZATION_KIND_LABELS[organization.kind]}

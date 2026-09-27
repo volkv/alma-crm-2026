@@ -2,16 +2,15 @@
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
-	import type { InteractionFilterOption } from '$lib/contracts/interactions';
+	import type { FilterOption } from './filter-strip.svelte';
 	import FilterCount from './filter-count.svelte';
 
 	/**
-	 * Фильтр списка и доски в виде дропдауна: статус, стадия, вуз, направление,
-	 * программа, продукт. Тот же приём, что у отчёта
+	 * Фильтр списка в виде дропдауна: у взаимодействий — статус, стадия, вуз,
+	 * направление, программа, продукт; у организаций — тип и уровень. Тот же приём, что у отчёта
 	 * (`components/reports/multi-filter.svelte`) — несколько пунктов работают
 	 * как «или», меню не закрывается после выбора, — но сама ссылка не входит в
-	 * компонент: адрес списка живёт в route-модуле
-	 * `w/[workspace]/interactions/filters.ts`, а не в `$lib`, и собирает её
+	 * компонент: адрес списка у каждого экрана свой, и собирает её
 	 * вызывающий (`+page.svelte`) через `ontoggle`.
 	 *
 	 * Подпись стоит внутри кнопки, а не рядом с ней, как в трекерах задач:
@@ -22,11 +21,6 @@
 	 *
 	 * `single` — фильтр с одним значением (статус, стадия): меню закрывается
 	 * после выбора, а что поставить вместо прежнего, решает вызывающий.
-	 *
-	 * Варианты вуза, направления, программы и продукта — только те, что реально
-	 * встречаются в пространстве и в области доступа того, кто список открыл
-	 * (`interactions/read.ts`, `readInteractionFilterOptions`), — не весь
-	 * справочник отчёта.
 	 */
 	let {
 		label,
@@ -37,7 +31,7 @@
 		ontoggle
 	}: {
 		label: string;
-		options: readonly InteractionFilterOption[];
+		options: readonly FilterOption[];
 		selected: readonly string[];
 		single?: boolean;
 		testId?: string;

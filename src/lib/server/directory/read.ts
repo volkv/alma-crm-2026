@@ -479,12 +479,12 @@ export async function listOrganizationRows(
 
 	const conditions: SQL[] = [scopeFilter(ctx, organizations.id)];
 
-	if (query.kind !== null) {
-		conditions.push(eq(organizations.kind, query.kind));
+	if (query.kind.length > 0) {
+		conditions.push(inArray(organizations.kind, query.kind));
 	}
 
-	if (query.educationLevel !== null) {
-		conditions.push(eq(organizations.educationLevel, query.educationLevel));
+	if (query.educationLevel.length > 0) {
+		conditions.push(inArray(organizations.educationLevel, query.educationLevel));
 	}
 
 	if (query.q !== null) {

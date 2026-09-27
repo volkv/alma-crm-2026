@@ -57,7 +57,7 @@
 	const { form } = untrack(() => superform);
 
 	const FIELD_LABELS: Record<PassportField, string> = {
-		kind: 'Вид организации',
+		kind: 'Тип организации',
 		educationLevel: 'Уровень образования',
 		legalName: 'Полное наименование',
 		shortName: 'Краткое наименование',

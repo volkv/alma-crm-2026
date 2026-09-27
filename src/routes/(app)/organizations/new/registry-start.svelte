@@ -327,7 +327,7 @@
 										() => chosenKind, (next) => (chosenKind = next as OrganizationFormKind)
 									}
 								>
-									<Select.Trigger size="sm" aria-label="Вид организации">
+									<Select.Trigger size="sm" aria-label="Тип организации">
 										{ORGANIZATION_KIND_LABELS[chosenKind]}
 									</Select.Trigger>
 									<Select.Content>

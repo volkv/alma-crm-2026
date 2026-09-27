@@ -62,7 +62,7 @@
 <div class="grid gap-4 sm:grid-cols-2">
 	<FieldSelect
 		name="kind"
-		label="Вид организации"
+		label="Тип организации"
 		required
 		options={kindOptions}
 		errors={$errors.kind}
