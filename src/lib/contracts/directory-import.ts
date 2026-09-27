@@ -22,6 +22,7 @@
  */
 import { z } from 'zod';
 import { optionalText } from './common';
+import { AWAITING_TRANSFER_STATUS, TRANSFERRED_STATUS } from './documents';
 
 /**
  * Что описывает файл. От вида зависят поля строки, синонимы колонок и правила
@@ -118,7 +119,7 @@ export const CATALOG_FIELD_HINTS: Record<CatalogField, string> = {
 	contractValidUntil: 'Срок договора; «2027» читается как 31 декабря 2027 года',
 	licenseSignedAt: 'Дата подписи лицензии; один год здесь датой не считается',
 	licenseUntil: 'Срок лицензии; «2027» читается как 31 декабря 2027 года',
-	transferStatus: 'Статус по передаче словарём: «передано», «в работе», «не начато»',
+	transferStatus: `Статус по передаче словарём: «${AWAITING_TRANSFER_STATUS}», «${TRANSFERRED_STATUS}»`,
 	manager: 'ФИО сотрудника оператора: он станет ответственным за вуз целиком',
 	contacts: 'Свободный текст: ФИО, телефон и почта; каждый разбирается в контакт вуза',
 	comment: 'Дописывается в примечание карточки вуза, уже записанное не затирает'

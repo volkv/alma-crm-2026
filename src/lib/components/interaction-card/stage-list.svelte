@@ -106,7 +106,9 @@
 						class="size-4 shrink-0 text-success transition-transform group-open:rotate-90"
 						aria-hidden="true"
 					/>
-					Пройдено {passed.length} — с 1-й по {passed.length}-ю
+					<!-- Числом, а не диапазоном номеров: в пути бывают стадии,
+						убранные из процесса, и «с 1-й по N-ю» тогда врёт. -->
+					Пройдено стадий: {passed.length}
 				</summary>
 				<ol class="flex flex-col">
 					{#each passed as stage (stage.id)}

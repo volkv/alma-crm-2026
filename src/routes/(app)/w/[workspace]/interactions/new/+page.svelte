@@ -18,7 +18,7 @@
 	import Header from '$lib/components/header.svelte';
 	import OrganizationPicker from '$lib/components/interactions/organization-picker.svelte';
 	import { NO_OPTION, toLookupOptions, withEmptyOption } from '$lib/components/directory/labels';
-	import type { ContractView, LookupOption } from '$lib/contracts/directory';
+	import type { ContractView, LookupOption, OrganizationKind } from '$lib/contracts/directory';
 	import {
 		CONTRACT_STATUS_LABELS,
 		createInteractionSchema,
@@ -55,6 +55,17 @@
 			'Учебное заведение обязательно: с ним ведётся процесс. Компания-заказчик — если подготовку заказывает она.',
 		legal_entity: 'Юридическое лицо, которое отправляет на обучение своих сотрудников.',
 		individual: 'Человек, который учится сам и сам оплачивает обучение.'
+	};
+
+	/**
+	 * Кого искать в поле стороны: режим «Компания» — только юридических лиц и
+	 * компании-заказчики, «Физическое лицо» — только физлиц, «Учебное
+	 * заведение» — только вузы и колледжи.
+	 */
+	const SEARCH_KINDS: Record<PrimaryKind, readonly OrganizationKind[]> = {
+		educational_institution: ['educational_institution'],
+		legal_entity: ['legal_entity', 'customer_company'],
+		individual: ['individual']
 	};
 
 	const isPrimaryKind = (kind: string | null): kind is PrimaryKind =>
@@ -377,6 +388,7 @@
 								registryRole={data.registryAvailable && isInstitution
 									? 'educational_institution'
 									: null}
+								kinds={SEARCH_KINDS[counterpartyKind]}
 								createKind={counterpartyKind === 'individual'
 									? data.canCreate.individual
 										? 'individual'
@@ -433,6 +445,7 @@
 								{lookupPath}
 								placeholder="Компания, для которой готовят специалистов"
 								registryRole={data.registryAvailable ? 'customer' : null}
+								kinds={SEARCH_KINDS.legal_entity}
 								createKind={data.canCreate.organization ? 'customer_company' : null}
 								value={customer?.id ?? null}
 								label={customer?.label ?? null}
@@ -497,14 +510,14 @@
 					{/if}
 					<FieldDate
 						name="academicPeriodStart"
-						label={isInstitution ? 'Учебный период: с' : 'Обучение: с'}
+						label={isInstitution ? 'Учебный период: с' : 'Период обучения: с'}
 						max={periods.academicPeriodEnd}
 						bind:value={periods.academicPeriodStart}
 						errors={$errors.academicPeriodStart}
 					/>
 					<FieldDate
 						name="academicPeriodEnd"
-						label={isInstitution ? 'Учебный период: по' : 'Обучение: по'}
+						label={isInstitution ? 'Учебный период: по' : 'Период обучения: по'}
 						min={periods.academicPeriodStart}
 						bind:value={periods.academicPeriodEnd}
 						errors={$errors.academicPeriodEnd}

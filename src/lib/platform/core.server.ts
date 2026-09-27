@@ -70,4 +70,8 @@ export { contentDisposition } from '$lib/server/documents/filename';
 
 // Модули пространства и их факты в истории дела.
 export { assertModuleActive, readActiveModules } from '$lib/server/platform/workspace-modules';
-export { recordModuleFact } from '$lib/server/platform/module-facts';
+export {
+	readModuleFact,
+	recordModuleFact,
+	recordModuleFactIn
+} from '$lib/server/platform/module-facts';

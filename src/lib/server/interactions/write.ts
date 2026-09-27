@@ -597,6 +597,19 @@ export async function updateInteraction(
 			.from(interactionContractItems)
 			.where(eq(interactionContractItems.interactionId, definition.id));
 
+		// Площадки основной стороны: её подразделение закрывает пункт процесса,
+		// и выбор его с причиной — такое же решение, как смена стороны.
+		const previousSites = await tx
+			.select({ siteId: interactionPartySites.siteId })
+			.from(interactionPartySites)
+			.innerJoin(interactionParties, eq(interactionParties.id, interactionPartySites.partyId))
+			.where(
+				and(
+					eq(interactionParties.interactionId, definition.id),
+					eq(interactionParties.isPrimary, true)
+				)
+			);
+
 		const changes = scalarChanges(before, definition);
 
 		// Сторона сравнивается вместе с ролью и признаком основной, программа —
@@ -633,6 +646,13 @@ export async function updateInteraction(
 				oldValue: previousProducts.map((product) => product.productId),
 				newValue: definition.productIds
 			});
+		}
+
+		const previousSiteIds = previousSites.map((site) => site.siteId);
+		const nextSiteIds = definition.parties.find((party) => party.isPrimary)?.siteIds ?? [];
+
+		if (!sameSet(previousSiteIds, nextSiteIds)) {
+			changes.push({ field: 'sites', oldValue: previousSiteIds, newValue: nextSiteIds });
 		}
 
 		// Договор и его позиции — тоже решение, и в истории они стоят рядом со

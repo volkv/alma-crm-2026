@@ -85,7 +85,6 @@ import {
 	findIndividual,
 	findOrCreateIndividual,
 	isUniqueViolation,
-	markOwnerAssigned,
 	ownerActor,
 	recordApplicationConsent,
 	type ApplicantPerson
@@ -1045,9 +1044,6 @@ async function createFromApplication(
 			applicationConsent(data.consent)
 		);
 	}
-
-	// Ответственного назначил сам приём — пункт об этом отмечается им же.
-	await markOwnerAssigned(ctx, tx, interactionId);
 
 	// Дело пришло само, и ответственный узнаёт о нём колокольчиком и письмом,
 	// а не случайно на доске. Новая ревизия заявки дела не заводит и второго

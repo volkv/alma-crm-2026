@@ -25,7 +25,7 @@ import {
 	type DocumentStatusFact,
 	type DocumentTemplateKey
 } from './documents';
-import type { LearningPurpose } from './exchange';
+import type { ApplicationStatus, LearningPurpose } from './exchange';
 import { MY_DAY_INTERACTION_KINDS } from './my-day';
 import type { PersonView } from './directory';
 import { CHECKLIST_ACTION_KEYS } from '$lib/platform/checklist';
@@ -488,12 +488,19 @@ export const updateInteractionSchema = createInteractionSchema.extend({
  * ролей организации этой стороны; `null` — контакт снят. Остальные поля
  * стороны команда не трогает, поэтому форме их везти незачем.
  */
+/**
+ * «Как связываться» — канал связи в роли контактного лица, как в карточке
+ * организации. `null` — не менять записанный.
+ */
+export const contactChannelField = optionalText(200);
+
 export const changeInteractionContactSchema = z.object({
 	interactionId: id('Некорректный идентификатор взаимодействия'),
 	partyId: id('Некорректный идентификатор стороны'),
 	contactAffiliationId: optionalId('Некорректный идентификатор контактного лица'),
 	editVersion: editVersionField,
-	reason: optionalText(1000)
+	reason: optionalText(1000),
+	channel: contactChannelField
 });
 
 export type ChangeInteractionContactDraft = z.input<typeof changeInteractionContactSchema>;
@@ -1343,6 +1350,11 @@ export type StageProgressItem = {
 	note: string | null;
 	/** Чек-лист стадии по действующему процессу: его показывают, раскрыв стадию. */
 	checklist: ChecklistItem[];
+	/**
+	 * Стадию прошли, а потом убрали из процесса: она остаётся в пути дела
+	 * названием и номером из снимка записи, чек-листа по процессу у неё нет.
+	 */
+	removed: boolean;
 };
 
 export type StagePauseView = {
@@ -1454,7 +1466,39 @@ export type InteractionPartyView = {
 	/** Контактное лицо участника; контакты маскирует `toPersonView`. */
 	contact: PersonView | null;
 	contactPosition: string | null;
+	/**
+	 * «Как связываться» из роли контактного лица; `null` — не указан или нет
+	 * права видеть людей организации.
+	 */
+	contactChannel: string | null;
 	sites: { id: string; name: string }[];
+};
+
+/**
+ * Заявка с сайта, из которой заведено дело, и что о ней знает сайт: ключ
+ * заявки и последний отправленный на сайт статус с исходом доставки. Читается
+ * из журнала обмена по делу — КАМу журнал целиком не открыт, а «ушло ли на
+ * сайт» он спрашивает у карточки.
+ */
+export type SiteApplicationView = {
+	/** Ключ заявки на сайте (`externalId` дела). */
+	key: string;
+	/** Последний статус, который ушёл на сайт; `null` — ещё ничего не уходило. */
+	sent: { status: ApplicationStatus; at: Date } | null;
+	/**
+	 * Исход последнего сообщения о статусе: доставлено, ждёт отправки или
+	 * повтора, не доставлено, разобрано вручную; `null` — сообщений не было.
+	 */
+	delivery: 'delivered' | 'waiting' | 'failed' | 'dismissed' | null;
+};
+
+/** Статус заявки словами заявителя — как его показывает сайт. */
+export const SITE_APPLICATION_STATUS_LABELS: Record<ApplicationStatus, string> = {
+	received: 'Принята',
+	in_progress: 'В работе',
+	on_hold: 'Приостановлена',
+	completed: 'Завершена',
+	cancelled: 'Отменена'
 };
 
 export type InteractionProgramView = {
@@ -1936,13 +1980,17 @@ export function toApiInteractionDetail(
 			name: product.name
 		})),
 		contract: view.contract,
-		progress: status.progress.map((item) => ({
-			key: item.key,
-			name: item.name,
-			position: item.position,
-			category: item.category,
-			state: item.state
-		})),
+		// Стадии процесса, а не путь дела: удалённая из процесса стадия в
+		// ответе API не числится.
+		progress: status.progress
+			.filter((item) => !item.removed)
+			.map((item) => ({
+				key: item.key,
+				name: item.name,
+				position: item.position,
+				category: item.category,
+				state: item.state
+			})),
 		externalSource: view.externalSource,
 		externalId: view.externalId,
 		createdAt: view.createdAt.toISOString(),

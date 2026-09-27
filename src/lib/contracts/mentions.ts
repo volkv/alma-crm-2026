@@ -69,3 +69,31 @@ export function mentionToken(name: string, userId: string): string {
 
 	return `@[${label.slice(0, 120)}](${userId})`;
 }
+
+/** Сколько знаков комментария видно в строке колокольчика. */
+const EXCERPT_LENGTH = 120;
+
+const EMAIL = /[^\s@]+@[^\s@]+\.[^\s@]+/g;
+/** Цифры через пробелы, скобки и дефисы; телефоном считается от десяти цифр. */
+const PHONE_CANDIDATE = /\+?\d[\d\s()-]{8,}\d/g;
+const PHONE_DIGITS = 10;
+
+/**
+ * Начало комментария для строки колокольчика: одной строкой, упоминания —
+ * именами, без токенов, почта и телефоны скрыты. Колокольчик открыт на
+ * любом экране, и чужие контакты, вписанные в комментарий, с него не читаются
+ * — их видно в самой карточке.
+ */
+export function mentionExcerpt(body: string): string {
+	const text = splitMentions(body)
+		.map((segment) => (segment.kind === 'mention' ? `@${segment.label}` : segment.text))
+		.join('')
+		.replace(EMAIL, '[почта скрыта]')
+		.replace(PHONE_CANDIDATE, (candidate) =>
+			candidate.replace(/\D/g, '').length >= PHONE_DIGITS ? '[телефон скрыт]' : candidate
+		)
+		.replace(/\s+/g, ' ')
+		.trim();
+
+	return text.length > EXCERPT_LENGTH ? `${text.slice(0, EXCERPT_LENGTH - 1)}…` : text;
+}

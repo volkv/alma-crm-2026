@@ -109,7 +109,60 @@
 		}
 	});
 
-	const columns: ColumnDef<DataTableFeatures, InteractionListItem>[] = [
+	/**
+	 * Как назвать сторону в колонке и фильтре — по тому, с кем работает
+	 * пространство: «Вуз» у учебных заведений, «Компания» и «Физлицо» у
+	 * коммерческого обучения, «Контрагент», когда видов несколько. Основная
+	 * сторона коммерческого обучения записана заказчиком, поэтому там одна
+	 * колонка стороны — по заказчику, а колонки учебного заведения нет.
+	 */
+	const institutionSpace = $derived(
+		data.counterpartyKinds.length === 1 && data.counterpartyKinds[0] === 'educational_institution'
+	);
+	const partyLabel = $derived.by(() => {
+		if (data.counterpartyKinds.length !== 1) return 'Контрагент';
+
+		const [kind] = data.counterpartyKinds;
+
+		return kind === 'educational_institution'
+			? 'Вуз'
+			: kind === 'individual'
+				? 'Физлицо'
+				: 'Компания';
+	});
+
+	const partyColumns = $derived<ColumnDef<DataTableFeatures, InteractionListItem>[]>(
+		institutionSpace
+			? [
+					{
+						accessorKey: 'institutionName',
+						header: PARTY_ROLE_LABELS.educational_institution,
+						meta: { title: PARTY_ROLE_LABELS.educational_institution },
+						enableSorting: false,
+						cell: ({ row }) => renderSnippet(nameCell, row.original.institutionName)
+					},
+					{
+						accessorKey: 'customerName',
+						header: PARTY_ROLE_LABELS.customer,
+						meta: { title: PARTY_ROLE_LABELS.customer },
+						enableSorting: false,
+						cell: ({ row }) => renderSnippet(nameCell, row.original.customerName)
+					}
+				]
+			: [
+					{
+						// У вузовского дела в смешанном пространстве сторона — вуз.
+						id: 'party',
+						header: partyLabel,
+						meta: { title: partyLabel },
+						enableSorting: false,
+						cell: ({ row }) =>
+							renderSnippet(nameCell, row.original.institutionName ?? row.original.customerName)
+					}
+				]
+	);
+
+	const columns: ColumnDef<DataTableFeatures, InteractionListItem>[] = $derived([
 		{
 			accessorKey: 'title',
 			header: 'Взаимодействие',
@@ -117,20 +170,7 @@
 			enableHiding: false,
 			cell: ({ row }) => renderSnippet(titleCell, row.original)
 		},
-		{
-			accessorKey: 'institutionName',
-			header: PARTY_ROLE_LABELS.educational_institution,
-			meta: { title: PARTY_ROLE_LABELS.educational_institution },
-			enableSorting: false,
-			cell: ({ row }) => renderSnippet(nameCell, row.original.institutionName)
-		},
-		{
-			accessorKey: 'customerName',
-			header: PARTY_ROLE_LABELS.customer,
-			meta: { title: PARTY_ROLE_LABELS.customer },
-			enableSorting: false,
-			cell: ({ row }) => renderSnippet(nameCell, row.original.customerName)
-		},
+		...partyColumns,
 		{
 			id: 'stage',
 			header: 'Стадия',
@@ -156,7 +196,7 @@
 			meta: { title: 'Активность', align: 'end' },
 			cell: ({ row }) => formatDateTime(row.original.lastActivityAt)
 		}
-	];
+	]);
 
 	/**
 	 * Колонки, которые уступают место, когда список не помещается, — в том
@@ -313,7 +353,7 @@
 						} satisfies StripFilter
 					]
 				: []),
-			list('org', 'Вуз', data.filterOptions.organizations),
+			list('org', partyLabel, data.filterOptions.organizations),
 			list('dir', 'Направление', data.filterOptions.directions),
 			list('prog', 'Программа', data.filterOptions.programs),
 			list('prod', 'Продукт', data.filterOptions.products),

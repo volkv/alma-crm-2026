@@ -30,6 +30,10 @@
 	 *
 	 * Итог встречи не заводит своей сущности: диалог напоминает записать его
 	 * командой «Результат стадии» и сам её открывает.
+	 *
+	 * Контактное лицо дела отмечено участником по умолчанию. Назначенная
+	 * встреча подставляется в поля при следующем открытии: встреча, которая ещё
+	 * впереди, так переносится — участникам уходит обновление того же события.
 	 */
 	let { source, data, workspaceKey }: CardDialogProps = $props();
 
@@ -43,6 +47,10 @@
 	const contacts = $derived(loaded?.contacts ?? []);
 	/** Нет права видеть людей организации: список пуст поэтому, а не потому что их нет. */
 	const contactsDenied = $derived(loaded?.contactsDenied ?? false);
+	/** Назначенная встреча дела; `null` — ещё не назначали. */
+	const saved = $derived(loaded?.meeting ?? null);
+	/** Новое назначение переносит встречу, которая ещё впереди. */
+	const rescheduling = $derived(saved?.upcoming === true);
 
 	const commands = getCardCommands();
 
@@ -98,11 +106,14 @@
 				return;
 			}
 
-			start = '';
-			durationMinutes = 60;
-			location = '';
+			start = saved?.upcoming === true ? saved.start : '';
+			durationMinutes = saved?.upcoming === true ? saved.durationMinutes : 60;
+			location = saved?.upcoming === true ? (saved.location ?? '') : '';
 			agenda = defaultAgenda(entry);
-			selectedContactIds = [];
+			// Контактное лицо дела — участник по умолчанию, если его видно в списке.
+			const preset = loaded?.defaultContactId ?? null;
+			selectedContactIds =
+				preset !== null && contacts.some((contact) => contact.id === preset) ? [preset] : [];
 		});
 	});
 
@@ -125,11 +136,10 @@
 	}
 
 	/**
-	 * Ссылка на файл собирается из набранного в форме: `Button` со ссылкой, а не
-	 * форма с отправкой, — так адрес меняется вместе с полями, а закрыть диалог
-	 * можно ровно тем же крестиком, что и любой другой. Строка запроса собрана
-	 * вручную, а не `URLSearchParams`: здесь это одноразовое значение внутри
-	 * `$derived`, а не долгоживущее изменяемое состояние.
+	 * Ссылка на файл: дату, длительность и место сервер берёт у сохранённой
+	 * встречи, из формы — повестка и участники. Строка запроса собрана вручную,
+	 * а не `URLSearchParams`: здесь это одноразовое значение внутри `$derived`,
+	 * а не долгоживущее изменяемое состояние.
 	 */
 	const icsHref = $derived.by(() => {
 		const path = resolve('/(app)/w/[workspace]/interactions/[id=uuid]/files/[module]/[file]', {
@@ -139,13 +149,7 @@
 			file: 'meeting.ics'
 		});
 
-		const params = [query('start', start), query('duration', String(durationMinutes))];
-
-		if (location.trim() !== '') {
-			params.push(query('location', location.trim()));
-		}
-
-		params.push(query('agenda', agenda));
+		const params = [query('agenda', agenda)];
 
 		for (const id of selectedContactIds) {
 			params.push(query('attendee', id));
@@ -199,6 +203,12 @@
 	width="lg"
 >
 	<div class="flex flex-col gap-4">
+		{#if rescheduling}
+			<InlineHint>
+				Встреча уже назначена — поля ниже показывают её. Сохранение перенесёт её: участникам уйдёт
+				обновление того же события календаря, а не вторая встреча.
+			</InlineHint>
+		{/if}
 		<div class="grid gap-3 sm:grid-cols-2">
 			<div class="flex flex-col gap-1.5">
 				<Label for="card-meeting-start">Дата и время (Москва)</Label>
@@ -309,7 +319,9 @@
 			</Button>
 			<Button type="submit" form="card-meeting-schedule" disabled={!canDownload || saving}>
 				<CalendarIcon aria-hidden="true" />
-				Назначить и скачать приглашение (.ics)
+				{rescheduling
+					? 'Перенести и скачать приглашение (.ics)'
+					: 'Назначить и скачать приглашение (.ics)'}
 			</Button>
 		</div>
 	{/snippet}

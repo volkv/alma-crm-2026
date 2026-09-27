@@ -4,6 +4,8 @@
  * модулей (правило модуля делает модуль нужным стадии), и каталог действий,
  * который сам стоит на реестре.
  */
+import type { LearningPurpose } from '$lib/contracts/exchange';
+
 export type ChecklistRuleSpec = {
 	readonly key: string;
 	/** Что проверяется — словами для редактора процесса и подсказки у пункта. */
@@ -14,6 +16,11 @@ export type ChecklistRuleSpec = {
 	 * редактор просто не предлагает (`offeredChecklistRules`).
 	 */
 	readonly module: string | null;
+	/**
+	 * Назначение потока, который читает правило: поток другого назначения
+	 * пункт не закрывает. Нет — правило о потоках не спрашивает.
+	 */
+	readonly purpose?: LearningPurpose;
 };
 
 /**
@@ -32,6 +39,7 @@ export const CHECKLIST_RULES = [
 		label: 'У контактного лица стороны указан канал связи',
 		module: null
 	},
+	{ key: 'responsible_assigned', label: 'У дела назначен ответственный', module: null },
 	{ key: 'stage_result', label: 'Записан результат этой стадии', module: null },
 	{
 		key: 'program_version_new',
@@ -51,22 +59,26 @@ export const CHECKLIST_RULES = [
 	{
 		key: 'teachers_group_formed',
 		label: 'Заявлен поток «Преподаватели» со слушателями',
-		module: 'learning'
+		module: 'learning',
+		purpose: 'teachers'
 	},
 	{
 		key: 'teachers_training_completed',
 		label: 'Обучение потока «Преподаватели» завершено',
-		module: 'learning'
+		module: 'learning',
+		purpose: 'teachers'
 	},
 	{
 		key: 'upskilling_group_program',
 		label: 'Заявлен поток «Повышение квалификации» по программе дела',
-		module: 'learning'
+		module: 'learning',
+		purpose: 'upskilling'
 	},
 	{
 		key: 'upskilling_enrolled',
 		label: 'Система обучения прислала зачисление по потоку «Повышение квалификации»',
-		module: 'learning'
+		module: 'learning',
+		purpose: 'upskilling'
 	},
 	{
 		key: 'training_document',

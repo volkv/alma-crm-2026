@@ -418,11 +418,14 @@
 							{event.detail}
 						</p>
 					{/if}
+					<!-- Автор и длительность — своими элементами, а не пустой строкой
+						текста после <time>: пустой текст сервер не выводит вовсе, и
+						браузер при гидратации не нашёл бы узла, который ждёт. -->
 					<p class="mt-0.5 text-xs text-faint">
 						<time datetime={new Date(event.at).toISOString()}>{formatDateTime(event.at)}</time
-						>{event.author ? ` · ${event.author}` : ''}{event.duration
-							? ` · ${event.duration}`
-							: ''}
+						>{#if event.author}<span> · {event.author}</span>{/if}{#if event.duration}<span>
+								· {event.duration}</span
+							>{/if}
 					</p>
 				</div>
 			</li>

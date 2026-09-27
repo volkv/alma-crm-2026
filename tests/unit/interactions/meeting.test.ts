@@ -11,13 +11,14 @@ import { describe, expect, it } from 'vitest';
 import {
 	buildMeetingInvite,
 	escapeIcsText,
-	meetingInviteUid,
+	nextMeetingIdentity,
 	type MeetingInviteInput
 } from '../../../src/modules/meetings/server/ics';
 
 function baseInput(overrides: Partial<MeetingInviteInput> = {}): MeetingInviteInput {
 	return {
 		uid: 'meeting-test@lct-crm.local',
+		sequence: 0,
 		summary: 'Встреча: СЗПУ',
 		agenda: 'Обсудить программы',
 		location: null,
@@ -134,19 +135,27 @@ describe('сборка приглашения на встречу (.ics)', () =>
 	});
 });
 
-describe('стабильность UID приглашения', () => {
-	it('одинаковый для той же записи и того же времени встречи', () => {
-		const start = new Date('2026-10-05T11:00:00.000Z');
+describe('перенос встречи в календаре', () => {
+	const now = new Date('2026-10-01T09:00:00.000Z');
 
-		expect(meetingInviteUid('interaction-1', start, 60)).toBe(
-			meetingInviteUid('interaction-1', start, 60)
+	it('встреча впереди переносится: тот же UID, SEQUENCE растёт и попадает в файл', () => {
+		const next = nextMeetingIdentity(
+			{ uid: 'meeting-a@lct-crm.local', sequence: 1, start: new Date('2026-10-05T11:00:00.000Z') },
+			now
 		);
+
+		expect(next).toEqual({ uid: 'meeting-a@lct-crm.local', sequence: 2 });
+		expect(unfold(buildMeetingInvite(baseInput(next)))).toContain('SEQUENCE:2');
 	});
 
-	it('другой для другого времени той же записи', () => {
-		const uidA = meetingInviteUid('interaction-1', new Date('2026-10-05T11:00:00.000Z'), 60);
-		const uidB = meetingInviteUid('interaction-1', new Date('2026-10-05T12:00:00.000Z'), 60);
+	it('после прошедшей встречи назначается следующая — свой UID, SEQUENCE с нуля', () => {
+		const next = nextMeetingIdentity(
+			{ uid: 'meeting-a@lct-crm.local', sequence: 3, start: new Date('2026-09-20T11:00:00.000Z') },
+			now
+		);
 
-		expect(uidA).not.toBe(uidB);
+		expect(next.uid).not.toBe('meeting-a@lct-crm.local');
+		expect(next.sequence).toBe(0);
+		expect(nextMeetingIdentity(null, now).sequence).toBe(0);
 	});
 });

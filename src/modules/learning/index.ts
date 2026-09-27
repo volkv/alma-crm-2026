@@ -19,7 +19,7 @@ export default defineModule({
 		},
 		{
 			key: 'learning',
-			label: 'Группа в системе обучения',
+			label: 'Система обучения',
 			hint: 'Потоки в системе обучения и заявка на новый',
 			order: 50
 		},

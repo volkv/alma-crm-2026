@@ -7,13 +7,18 @@
  * стоимости ловит версия условий.
  */
 import { and, eq } from 'drizzle-orm';
-import type { InteractionTermsView, SetInteractionTermsInput } from '$lib/contracts/terms';
+import {
+	formatPriceRub,
+	type InteractionTermsView,
+	type SetInteractionTermsInput
+} from '$lib/contracts/terms';
 import {
 	assertInteractionVisible,
 	ConflictError,
 	getDb,
 	interactionTerms,
 	recordAuditEvent,
+	recordModuleFactIn,
 	requirePermission,
 	users,
 	withTransaction,
@@ -49,12 +54,17 @@ export async function readInteractionTerms(
 	return row ?? NONE;
 }
 
+/** Стоимость во фразе ленты; не названа — прочерк. */
+function priceText(kopecks: number | null): string {
+	return kopecks === null ? '—' : formatPriceRub(kopecks);
+}
+
 const STALE = 'Стоимость уже изменили в другой вкладке — обновите карточку и повторите';
 
 /**
  * Назвать или снять стоимость. Версия из формы должна совпасть с записанной:
- * иначе чужая правка молча затёрлась бы. Та же стоимость — не правка: версия
- * и журнал не трогаются.
+ * иначе чужая правка молча затёрлась бы. Та же стоимость — не правка: версия,
+ * лента и журнал не трогаются.
  */
 export async function setInteractionTerms(
 	ctx: ActorContext,
@@ -109,6 +119,14 @@ export async function setInteractionTerms(
 					)
 				);
 		}
+
+		// Правка стоимости видна в ленте дела рядом с правками плана.
+		await recordModuleFactIn(ctx, tx, {
+			interactionId: input.interactionId,
+			module: 'payment',
+			fact: 'price',
+			text: `Стоимость: ${priceText(input.price)} (было: ${priceText(current?.priceKopecks ?? null)})`
+		});
 
 		await recordAuditEvent(
 			ctx,

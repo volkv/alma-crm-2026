@@ -1,17 +1,29 @@
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import { id, optionalText, requiredText } from '$lib/contracts/common';
-import { createOrganizationSchema, isAffiliationCurrent } from '$lib/contracts/directory';
+import {
+	createOrganizationSchema,
+	createSiteSchema,
+	isAffiliationCurrent,
+	ORGANIZATION_KINDS,
+	type LookupOption,
+	type OrganizationKind
+} from '$lib/contracts/directory';
 import {
 	REGISTRY_PICK_KINDS,
 	registryPickQuerySchema,
 	registryPickSchema
 } from '$lib/contracts/enrichment';
 import { formatIsoDay } from '$lib/format';
-import { actorFromEvent } from '$lib/server/actor';
+import { actorFromEvent, type ActorContext } from '$lib/server/actor';
 import { listOrganizationContracts } from '$lib/server/directory/contracts';
-import { listAffiliations, listSites, lookupOrganizations } from '$lib/server/directory/read';
-import { createOrganization } from '$lib/server/directory/write';
+import {
+	listAffiliations,
+	listOrganizations,
+	listSites,
+	lookupOrganizations
+} from '$lib/server/directory/read';
+import { createOrganization, createSite } from '$lib/server/directory/write';
 import { EnrichmentRefusal } from '$lib/server/enrichment/access';
 import { DadataError } from '$lib/server/enrichment/dadata';
 import { createFromRegistry, searchRegistryCandidates } from '$lib/server/enrichment/pick';
@@ -39,7 +51,15 @@ import type { RequestHandler } from './$types';
 const lookupQuerySchema = z.discriminatedUnion(
 	'kind',
 	[
-		z.object({ kind: z.literal('organizations') }),
+		z.object({
+			kind: z.literal('organizations'),
+			/** Каких видов искать: `kinds=legal_entity,customer_company`; нет — любых. */
+			kinds: z
+				.string()
+				.optional()
+				.transform((value) => (value === undefined || value === '' ? [] : value.split(',')))
+				.pipe(z.array(z.enum(ORGANIZATION_KINDS, { error: 'Неизвестный вид организации' })))
+		}),
 		z.object({ kind: z.literal('registry'), ...registryPickQuerySchema.shape }),
 		z.object({
 			kind: z.enum(['sites', 'contacts', 'contracts']),
@@ -55,6 +75,7 @@ export const GET: RequestHandler = async (event) => {
 	const query = lookupQuerySchema.safeParse({
 		kind: event.url.searchParams.get('kind'),
 		organizationId: event.url.searchParams.get('organizationId') ?? undefined,
+		kinds: event.url.searchParams.get('kinds') ?? undefined,
 		q: event.url.searchParams.get('q') ?? undefined
 	});
 
@@ -67,7 +88,14 @@ export const GET: RequestHandler = async (event) => {
 
 	try {
 		if (query.data.kind === 'organizations') {
-			return json({ items: await lookupOrganizations(ctx, event.url.searchParams.get('q')) });
+			const q = event.url.searchParams.get('q');
+
+			return json({
+				items:
+					query.data.kinds.length === 0
+						? await lookupOrganizations(ctx, q)
+						: await lookupOrganizationsOfKinds(ctx, q, query.data.kinds)
+			});
 		}
 
 		if (query.data.kind === 'registry') {
@@ -105,6 +133,38 @@ export const GET: RequestHandler = async (event) => {
 	}
 };
 
+/** Сколько подсказок отдаёт поле: столько же, сколько поиск справочника. */
+const LOOKUP_LIMIT = 20;
+
+/**
+ * Подсказки только нужных видов: поле «Компания» не предлагает вузов и
+ * физлиц. Ищет тот же список справочника, что раздел «Организации», — по виду,
+ * с той же областью доступа; выбрать сторону можно только из действующих.
+ */
+async function lookupOrganizationsOfKinds(
+	ctx: ActorContext,
+	q: string | null,
+	kinds: readonly OrganizationKind[]
+): Promise<LookupOption[]> {
+	const pages = await Promise.all(
+		kinds.map((kind) =>
+			listOrganizations(ctx, {
+				kind,
+				q: q === null || q.trim() === '' ? null : q.trim(),
+				page: 1,
+				pageSize: LOOKUP_LIMIT
+			})
+		)
+	);
+
+	return pages
+		.flatMap((page) => page.items)
+		.filter((organization) => organization.isActive)
+		.sort((left, right) => left.shortName.localeCompare(right.shortName, 'ru'))
+		.slice(0, LOOKUP_LIMIT)
+		.map((organization) => ({ id: organization.id, label: organization.shortName }));
+}
+
 /**
  * Физическое лицо, заведённое из поля формы: ФИО и способ связи. Почта
  * обязательна — по ней, как и у заявки с сайта, находится уже заведённый
@@ -122,12 +182,14 @@ const individualSchema = z.object({
 
 /**
  * Что можно завести из поля формы: строку реестра, организацию вручную (тем же
- * описанием, что у формы справочника) или физическое лицо.
+ * описанием, что у формы справочника), физическое лицо — или площадку
+ * организации стороны, её подразделение, не уходя из карточки дела.
  */
 const createBodySchema = z.union([
 	registryPickSchema,
 	z.object({ create: z.literal('organization'), organization: createOrganizationSchema }),
-	z.object({ create: z.literal('individual'), person: individualSchema })
+	z.object({ create: z.literal('individual'), person: individualSchema }),
+	z.object({ create: z.literal('site'), site: createSiteSchema })
 ]);
 
 /**
@@ -173,6 +235,14 @@ export const POST: RequestHandler = async (event) => {
 			const created = await createOrganization(ctx, request.organization);
 
 			return json({ item: { id: created.id, label: created.shortName } });
+		}
+
+		// Площадка заводится тем же сервисом справочника, что форма площадки в
+		// карточке организации: право, проверка организации и журнал — его.
+		if (request.create === 'site') {
+			const created = await createSite(ctx, request.site);
+
+			return json({ item: { id: created.id, label: created.name } });
 		}
 
 		const created = await createIndividualCounterparty(ctx, request.person);

@@ -96,6 +96,7 @@ import { hasPaymentFact } from '../integrations/exchange/payments';
 import { can, requirePermission } from '../rbac';
 import { interactionScopeFilter } from '../interactions/access';
 import { nextEdit } from '../interactions/edit-version';
+import { recordModuleFactIn } from '../platform/module-facts';
 import { checkEntryFacts, type EntryFacts } from './facts';
 import {
 	firstStage,
@@ -997,15 +998,42 @@ export async function setChecklistItem(
 	ctx: ActorContext,
 	input: SetChecklistItemInput
 ): Promise<void> {
-	await withTransaction(ctx, (tx) =>
-		writeChecklistItem(ctx, tx, {
+	await withTransaction(ctx, async (tx) => {
+		const before = await readOpenChecklistMark(tx, input.interactionId, input.key);
+
+		await writeChecklistItem(ctx, tx, {
 			interactionId: input.interactionId,
 			key: input.key,
 			done: input.done,
 			stageEntryId: input.stageEntryId,
 			onFact: 'reject'
-		})
-	);
+		});
+
+		// Оплата, отмеченная рукой, — деньги, а не галочка процесса: в ленте она
+		// стоит рядом с оплатой с сайта, с автором и временем. Строку истории
+		// пишет только человек, как и у правки плана.
+		if (input.key === PAYMENT_CHECKLIST_KEY && before !== input.done && ctx.user !== null) {
+			await recordModuleFactIn(ctx, tx, {
+				interactionId: input.interactionId,
+				module: 'payment',
+				fact: 'manual_mark',
+				text: input.done
+					? 'Оплата отмечена вручную: «Оплата получена»'
+					: 'Отметка «Оплата получена» снята'
+			});
+		}
+	});
+}
+
+/** Отметка пункта на открытой записи до правки; `false` — не отмечен. */
+async function readOpenChecklistMark(tx: Tx, interactionId: string, key: string): Promise<boolean> {
+	const [entry] = await tx
+		.select({ state: stageEntries.checklistState })
+		.from(stageEntries)
+		.where(and(eq(stageEntries.interactionId, interactionId), isNull(stageEntries.leftAt)))
+		.limit(1);
+
+	return entry?.state[key] === true;
 }
 
 /**

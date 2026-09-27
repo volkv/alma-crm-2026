@@ -8,12 +8,14 @@
  * Протухание считается отдельно и не здесь: оно про тишину вокруг записи
  * (`interactions.last_activity_at`), а не про часы на стадии.
  */
-import { desc, eq, inArray, type SQL } from 'drizzle-orm';
+import { and, desc, eq, inArray, type SQL } from 'drizzle-orm';
 import type {
 	BlockerView,
+	ProcessRevisionView,
 	StageEntryView,
 	StagePauseView,
 	StageProgressItem,
+	StageCategory,
 	StageView,
 	InteractionStatusView
 } from '$lib/contracts/interactions';
@@ -22,6 +24,7 @@ import { getDb } from '../db';
 import {
 	blockers,
 	documents,
+	processStageKeys,
 	stageEntries,
 	stageEntryDocuments,
 	stageEntryStatus,
@@ -231,6 +234,18 @@ async function readFacts(executor: Executor, rows: EntryRow[]): Promise<Map<stri
 	return checked;
 }
 
+/** Запись стадии в объёме, который нужен ленте процесса. */
+export type ProgressEntry = {
+	stageId: string;
+	stageKey: string;
+	/** Название и номер стадии из снимка записи — такими её проходили. */
+	name: string;
+	position: number;
+	category: StageCategory;
+	enteredAt: Date;
+	leftAt: Date | null;
+};
+
 /**
  * Лента процесса: каким состоянием показать каждую стадию.
  *
@@ -239,8 +254,18 @@ async function readFacts(executor: Executor, rows: EntryRow[]): Promise<Map<stri
  * записи остаются на стадиях своих редакций. По идентификатору лента карточки
  * после первого же изменения процесса показала бы пустую историю.
  *
- * Стадия, которую перешагнули (записи нет, а процесс уже дальше), показывается
- * пропущенной — иначе пропуск был бы виден только в истории.
+ * Стадия, которую перешагнули (записи нет, а дело уже дальше), показывается
+ * пропущенной — иначе пропуск был бы виден только в истории. «Дальше» у
+ * открытого дела — его текущая стадия, у закрытого — самая дальняя из
+ * пройденных: у завершённого дела впереди ничего нет, и стадия, которую
+ * вставили в процесс после того, как дело её место миновало, — не «впереди», а
+ * «добавлена после прохождения» (`introducedAt` — когда ключ стадии впервые
+ * появился в процессе).
+ *
+ * Пройденная стадия, которую потом убрали из процесса, остаётся в пути дела —
+ * названием и номером из снимка записи, отметкой «удалена из процесса», на том
+ * месте, где её проходили. Иначе шкала завершённого дела после правки процесса
+ * теряла бы часть истории.
  *
  * Стадия дальше текущей, пройденная до возврата, снова впереди: дело вернулось,
  * и идти через неё придётся заново. Отметкой «пройдена» она уводила бы
@@ -248,22 +273,39 @@ async function readFacts(executor: Executor, rows: EntryRow[]): Promise<Map<stri
  */
 export function buildProgress(
 	revisionStages: StageView[],
-	entries: { stageKey: string; leftAt: Date | null }[],
+	entries: readonly ProgressEntry[],
 	current: { stageKey: string; dueAt: Date; isOverdue: boolean; isPaused: boolean } | null,
-	hasBlockingBlockers: boolean
+	hasBlockingBlockers: boolean,
+	introducedAt: ReadonlyMap<string, Date>
 ): StageProgressItem[] {
 	const visited = new Set(entries.map((entry) => entry.stageKey));
-	const currentStage = revisionStages.find((stage) => stage.key === current?.stageKey);
-	const currentPosition = currentStage?.position ?? 0;
+	const positionByKey = new Map(revisionStages.map((stage) => [stage.key, stage.position]));
+	const currentPosition =
+		current === null
+			? Math.max(
+					0,
+					...revisionStages.filter((stage) => visited.has(stage.key)).map((stage) => stage.position)
+				)
+			: (positionByKey.get(current.stageKey) ?? 0);
 
-	return revisionStages.map((stage) => {
+	/** Когда дело впервые ушло дальше этой позиции: после этого вставленная стадия — уже позади. */
+	function passedBeyond(position: number): Date | null {
+		const later = entries.filter((entry) => (positionByKey.get(entry.stageKey) ?? 0) > position);
+
+		return later.length === 0
+			? null
+			: new Date(Math.min(...later.map((entry) => entry.enteredAt.getTime())));
+	}
+
+	const items: StageProgressItem[] = revisionStages.map((stage) => {
 		const base = {
 			stageId: stage.id,
 			key: stage.key,
 			name: stage.name,
 			position: stage.position,
 			category: stage.category,
-			checklist: stage.checklist
+			checklist: stage.checklist,
+			removed: false
 		};
 
 		if (current !== null && stage.key === current.stageKey) {
@@ -292,11 +334,75 @@ export function buildProgress(
 		}
 
 		if (stage.position < currentPosition) {
-			return { ...base, state: 'skipped' as const, dueAt: null, note: 'перешагнули' };
+			const introduced = introducedAt.get(stage.key);
+			const passed = passedBeyond(stage.position);
+			const addedLater = introduced !== undefined && passed !== null && introduced > passed;
+
+			return {
+				...base,
+				state: 'skipped' as const,
+				dueAt: null,
+				note: addedLater ? 'добавлена в процесс после прохождения' : 'перешагнули'
+			};
 		}
 
 		return { ...base, state: 'pending' as const, dueAt: null, note: null };
 	});
+
+	return withRemovedStages(items, entries, positionByKey);
+}
+
+/**
+ * Пройденные стадии, которых в процессе больше нет, — на своих местах пути:
+ * сразу за стадией процесса, пройденной перед ними.
+ */
+function withRemovedStages(
+	items: StageProgressItem[],
+	entries: readonly ProgressEntry[],
+	positionByKey: ReadonlyMap<string, number>
+): StageProgressItem[] {
+	const chronological = [...entries].sort(
+		(left, right) => left.enteredAt.getTime() - right.enteredAt.getTime()
+	);
+	const placed = new Set<string>();
+	const result = [...items];
+
+	for (const [index, entry] of chronological.entries()) {
+		if (positionByKey.has(entry.stageKey) || placed.has(entry.stageKey)) {
+			continue;
+		}
+
+		placed.add(entry.stageKey);
+
+		// Последний проход стадии: её название и номер — такими, как их видели.
+		const last = chronological.findLast((candidate) => candidate.stageKey === entry.stageKey);
+		const anchor = chronological
+			.slice(0, index)
+			.findLast((candidate) => positionByKey.has(candidate.stageKey));
+		const anchorIndex =
+			anchor === undefined ? -1 : result.findIndex((item) => item.key === anchor.stageKey);
+		// За стадией-якорем могли уже встать другие удалённые: новая — после них.
+		let insertAt = anchorIndex + 1;
+
+		while (insertAt < result.length && result[insertAt].removed) {
+			insertAt += 1;
+		}
+
+		result.splice(insertAt, 0, {
+			stageId: (last ?? entry).stageId,
+			key: entry.stageKey,
+			name: (last ?? entry).name,
+			position: (last ?? entry).position,
+			category: (last ?? entry).category,
+			checklist: [],
+			removed: true,
+			state: 'done',
+			dueAt: null,
+			note: 'удалена из процесса'
+		});
+	}
+
+	return result;
 }
 
 /**
@@ -328,6 +434,44 @@ async function readBlockers(executor: Executor, interactionId: string): Promise<
 	return rows.map((row) => toBlockerView({ ...row.blocker, raisedByName: row.raisedByName }));
 }
 
+/** Запись стадии для ленты процесса — ключом, названием и номером из её снимка. */
+function progressEntry(row: EntryRow): ProgressEntry {
+	return {
+		stageId: row.entry.stageId,
+		stageKey: row.entry.stageSnapshot.key,
+		name: row.entry.stageSnapshot.name,
+		position: row.entry.stageSnapshot.position,
+		category: row.entry.stageSnapshot.category,
+		enteredAt: row.entry.enteredAt,
+		leftAt: row.entry.leftAt
+	};
+}
+
+/** Когда каждый ключ стадии редакции впервые появился в её процессе. */
+export async function readStageIntroductions(
+	executor: Executor,
+	revision: Pick<ProcessRevisionView, 'workflowId' | 'stages'>
+): Promise<Map<string, Date>> {
+	if (revision.stages.length === 0) {
+		return new Map();
+	}
+
+	const rows = await executor
+		.select({ key: processStageKeys.key, firstSeenAt: processStageKeys.firstSeenAt })
+		.from(processStageKeys)
+		.where(
+			and(
+				eq(processStageKeys.workflowId, revision.workflowId),
+				inArray(
+					processStageKeys.key,
+					revision.stages.map((stage) => stage.key)
+				)
+			)
+		);
+
+	return new Map(rows.map((row) => [row.key, row.firstSeenAt]));
+}
+
 /**
  * Состояние взаимодействия целиком: текущая запись стадии, история с паузами,
  * помехи и лента маршрута.
@@ -347,7 +491,10 @@ export async function getInteractionStatus(
 		readBlockers(db, interactionId)
 	]);
 
-	const facts = await readFacts(db, rows);
+	const [facts, introduced] = await Promise.all([
+		readFacts(db, rows),
+		readStageIntroductions(db, revision)
+	]);
 	const views = rows.map((row) =>
 		toEntryView(
 			row,
@@ -370,7 +517,7 @@ export async function getInteractionStatus(
 		history: views.filter((view) => view.leftAt !== null),
 		progress: buildProgress(
 			revision.stages,
-			rows.map((row) => ({ stageKey: row.entry.stageSnapshot.key, leftAt: row.entry.leftAt })),
+			rows.map(progressEntry),
 			current === null
 				? null
 				: {
@@ -379,12 +526,13 @@ export async function getInteractionStatus(
 						isOverdue: current.isOverdue,
 						isPaused: current.isPaused
 					},
-			openBlocking.length > 0
+			openBlocking.length > 0,
+			introduced
 		),
 		blockers: blockerList,
 		isStale: isStale(current?.snapshot ?? null, interaction.lastActivityAt),
 		lastActivityAt: interaction.lastActivityAt,
-		migratedFrom: migrationNotice(currentRow, revision.stages)
+		migratedFrom: migrationNotice(currentRow, rows)
 	};
 }
 
@@ -392,10 +540,14 @@ export async function getInteractionStatus(
  * Уведомление «стадия перенесена при изменении процесса». Рисуется из отметок
  * переезда открытой записи и отдельного состояния не заводит: закрылась запись
  * — уведомления больше нет, потому что дальше человек шёл сам.
+ *
+ * Прежняя стадия исчезла из процесса — на то её и переносили, — поэтому её
+ * название берётся из снимка той записи, которую переезд закрыл: в текущей
+ * структуре процесса его уже нет, а ключ стадии человеку ничего не говорит.
  */
 function migrationNotice(
 	row: EntryRow | null,
-	revisionStages: StageView[]
+	rows: readonly EntryRow[]
 ): { stageKey: string; stageName: string; at: Date } | null {
 	const key = row?.entry.migratedFromStageKey ?? null;
 	const at = row?.entry.migratedAt ?? null;
@@ -404,9 +556,14 @@ function migrationNotice(
 		return null;
 	}
 
-	// Прежняя стадия исчезла из процесса — на то её и переносили; название
-	// берём из текущей структуры, только если ключ там ещё есть.
-	const stage = revisionStages.find((candidate) => candidate.key === key);
+	const left = rows.find(
+		(candidate) =>
+			candidate.entry.outcome === 'migrated' && candidate.entry.stageSnapshot.key === key
+	);
 
-	return { stageKey: key, stageName: stage?.name ?? key, at };
+	if (left === undefined) {
+		throw new Error(`Запись перенесена со стадии «${key}», а закрытой записи о ней нет`);
+	}
+
+	return { stageKey: key, stageName: left.entry.stageSnapshot.name, at };
 }

@@ -11,6 +11,7 @@
  */
 import { and, count, desc, eq, isNull, sql } from 'drizzle-orm';
 import type { Inbox, InboxItem, MarkInboxReadInput } from '$lib/contracts/inbox';
+import { mentionExcerpt } from '$lib/contracts/mentions';
 import { NOTIFICATION_CHANNELS } from '$lib/contracts/notifications';
 import type { ActorContext } from '../actor';
 import { getConfig } from '../config';
@@ -132,6 +133,7 @@ export async function listInbox(ctx: ActorContext): Promise<Inbox> {
 				workspaceKey: workspaces.key,
 				interactionTitle: interactions.title,
 				authorName: users.fullName,
+				body: comments.body,
 				createdAt: commentMentions.createdAt,
 				readAt: commentMentions.readAt
 			})
@@ -161,7 +163,11 @@ export async function listInbox(ctx: ActorContext): Promise<Inbox> {
 	]);
 
 	const items: InboxItem[] = [
-		...mentionRows.map((row) => ({ kind: 'mention' as const, ...row })),
+		...mentionRows.map(({ body, ...row }) => ({
+			kind: 'mention' as const,
+			...row,
+			excerpt: mentionExcerpt(body)
+		})),
 		...noticeRows.map((row) => ({ kind: 'application' as const, ...row }))
 	]
 		.sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())

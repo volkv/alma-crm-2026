@@ -32,6 +32,7 @@
  */
 import { and, asc, count, eq, inArray, sql, type SQL } from 'drizzle-orm';
 import type { PageResult } from '$lib/contracts/common';
+import { AWAITING_TRANSFER_STATUS } from '$lib/contracts/documents';
 import type {
 	ContractItemView,
 	ContractListQuery,
@@ -57,14 +58,6 @@ import {
 import { requirePermission, scopeFilter } from '../rbac';
 import { withUniqueConflicts } from './conflicts';
 import { getOrganization } from './read';
-
-/**
- * Статус позиции, с которым она заводится, когда файл о нём молчит. Словарь
- * `transfer_status` свободный (каталога заказчика ещё нет), и «ожидает
- * передачи» — единственное утверждение, которое можно сделать о позиции, про
- * передачу которой ничего не сказано.
- */
-export const DEFAULT_TRANSFER_STATUS = 'ожидает передачи';
 
 /** Одно изменение записи: машинный ключ для кода и название для человека. */
 export type FieldChange = {
@@ -228,6 +221,9 @@ export function mergeContractItem(
 		draft.licenseUntil,
 		sink
 	);
+	// Словарь `transfer_status` свободный (каталога заказчика ещё нет), и «ожидает
+	// передачи» — единственное утверждение, которое можно сделать о позиции, про
+	// передачу которой файл молчит.
 	const transferStatus =
 		merge(
 			CONTRACT_ITEM_FIELD_LABELS,
@@ -235,7 +231,7 @@ export function mergeContractItem(
 			current?.transferStatus ?? null,
 			draft.transferStatus,
 			sink
-		) ?? DEFAULT_TRANSFER_STATUS;
+		) ?? AWAITING_TRANSFER_STATUS;
 
 	assertOrdered(
 		licenseSignedAt,

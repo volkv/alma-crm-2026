@@ -16,9 +16,10 @@
  * сохранённый при выходе (`commands.ts`), и не пересчитывается: история
  * стадии — это то, что было, когда с неё ушли, а не то, что есть сейчас.
  */
-import { and, eq, gt, inArray, isNotNull, sql } from 'drizzle-orm';
+import { and, eq, gt, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import type { ChecklistFact, ChecklistState, StageSnapshot } from '$lib/contracts/interactions';
 import { isFactItem } from '$lib/contracts/interactions';
+import { CONTRACT_DOCUMENT_KIND, CONTRACT_DOCUMENT_TEMPLATES } from '$lib/contracts/documents';
 import { PAYMENT_CHECKLIST_KEY } from '$lib/contracts/payments';
 import { checklistRule, type ChecklistRuleKey } from '$lib/platform/checklist-rules';
 import { formatDate, pluralize } from '$lib/format';
@@ -32,13 +33,15 @@ import {
 	interactionPartySites,
 	interactionProducts,
 	interactionPrograms,
+	interactions,
 	learningGroupLearners,
 	learningGroupResults,
 	learningGroups,
 	products,
 	programs,
 	programVersions,
-	sites
+	sites,
+	users
 } from '../db/schema';
 import type { Tx } from '../db/transaction';
 import { readDocumentMark } from '../documents/evidence';
@@ -137,6 +140,24 @@ const contactChannel: Evaluate = async (executor, entries) => {
 	return byInteraction(
 		entries,
 		new Map(rows.map((row) => [row.interactionId, done('У контактного лица указан канал связи')]))
+	);
+};
+
+/**
+ * Ответственный у дела. Дело без ответственного не заводится, поэтому пункт
+ * выполнен с первой минуты и называет, кто ведёт дело: просить человека
+ * отметить то, что система уже знает, — лишняя галочка.
+ */
+const responsibleAssigned: Evaluate = async (executor, entries) => {
+	const rows = await executor
+		.select({ interactionId: interactions.id, name: users.fullName })
+		.from(interactions)
+		.innerJoin(users, eq(users.id, interactions.ownerUserId))
+		.where(inArray(interactions.id, interactionIds(entries)));
+
+	return byInteraction(
+		entries,
+		new Map(rows.map((row) => [row.interactionId, done(`Ответственный: ${row.name}`)]))
 	);
 };
 
@@ -443,9 +464,11 @@ const trainingDocument: Evaluate = async (executor, entries) => {
 };
 
 /**
- * Договор заключён: соглашение дела отмечено «Утверждён» или оферта
- * акцептована оплатой — отметкой «Оплата получена» этой же стадии. Физическое
- * лицо договора не подписывает: оплата по оферте и есть акцепт.
+ * Договор заключён: документ договора дела отмечен «Утверждён» — соглашение,
+ * документ вида «Договор» или собранный по шаблону договора (сублицензионный,
+ * договор с юридическим лицом), — или оферта акцептована оплатой: отметкой
+ * «Оплата получена» этой же стадии. Физическое лицо договора не подписывает:
+ * оплата по оферте и есть акцепт.
  */
 const contractConcluded: Evaluate = async (executor, entries) => {
 	const rows = await executor
@@ -458,7 +481,10 @@ const contractConcluded: Evaluate = async (executor, entries) => {
 		.where(
 			and(
 				inArray(documents.interactionId, interactionIds(entries)),
-				eq(documents.kind, 'agreement'),
+				or(
+					inArray(documents.kind, ['agreement', CONTRACT_DOCUMENT_KIND]),
+					inArray(documents.templateKey, [...CONTRACT_DOCUMENT_TEMPLATES])
+				),
 				isNotNull(documents.approvedAt)
 			)
 		);
@@ -484,6 +510,7 @@ const contractConcluded: Evaluate = async (executor, entries) => {
 const EVALUATORS: Record<ChecklistRuleKey, Evaluate> = {
 	party_department: partyDepartment,
 	contact_channel: contactChannel,
+	responsible_assigned: responsibleAssigned,
 	stage_result: stageResult,
 	program_version_new: programVersionNew,
 	licenses_issued: licensesIssued,

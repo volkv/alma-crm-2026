@@ -19,6 +19,7 @@
 		type CompositionSection
 	} from '$lib/components/interaction-card/commands.svelte';
 	import CompositionDialog from '$lib/components/interaction-card/composition-dialog.svelte';
+	import ContactDialog from '$lib/components/interaction-card/contact-dialog.svelte';
 	import ContextPanels from '$lib/components/interaction-card/context-panels.svelte';
 	import DocumentDialogs from '$lib/components/interaction-card/document-dialogs.svelte';
 	import EventFeed from '$lib/components/interaction-card/event-feed.svelte';
@@ -30,6 +31,10 @@
 	import QuietNote from '$lib/components/interaction-card/quiet-note.svelte';
 	import RecordDialogs from '$lib/components/interaction-card/record-dialogs.svelte';
 	import StageDialogs from '$lib/components/interaction-card/stage-dialogs.svelte';
+	import {
+		siteProgramUnrecognized,
+		SITE_PROGRAM_UNRECOGNIZED_NOTICE
+	} from '$lib/contracts/exchange';
 	import type { InteractionAction } from '$lib/contracts/interactions';
 	import { formatDateTime } from '$lib/format';
 	import { cardDialogs } from '$lib/platform/card-ui-registry';
@@ -149,6 +154,9 @@
 	 * рендерятся дважды.
 	 */
 	let contextOpen = $state(false);
+
+	/** Основная сторона: её контактное лицо правит диалог контакта. */
+	const primaryParty = $derived(data.interaction.parties.find((party) => party.isPrimary) ?? null);
 </script>
 
 <svelte:head>
@@ -194,6 +202,22 @@
 		</InlineHint>
 	{/if}
 
+	{#if siteProgramUnrecognized(data.interaction)}
+		<!-- Приём заявки ставит программу только по опознанному коду: дело с
+			сайта без программы — код не опознан или не прислан. Пометка уходит,
+			как только программу выберут. -->
+		<InlineHint tone="warning">
+			<span class="flex flex-1 flex-wrap items-center justify-between gap-2">
+				{SITE_PROGRAM_UNRECOGNIZED_NOTICE}
+				{#if data.composition !== null}
+					<Button size="sm" variant="outline" onclick={() => commands.openComposition('offering')}>
+						Выбрать программу
+					</Button>
+				{/if}
+			</span>
+		</InlineHint>
+	{/if}
+
 	{#if live !== null && live.stale}
 		<InlineHint tone="info">
 			<span class="flex flex-1 flex-wrap items-center justify-between gap-2">
@@ -218,6 +242,7 @@
 
 	<CardFacts
 		{model}
+		siteApplication={data.siteApplication}
 		moduleData={data.moduleData}
 		counterpartyId={data.counterparty === null
 			? null
@@ -327,6 +352,9 @@
 		groups={model.modules.includes('learning') ? data.exchange.groups : []}
 		shape={model.shape}
 	/>
+{/if}
+{#if primaryParty !== null && can('edit')}
+	<ContactDialog interaction={data.interaction} party={primaryParty} shape={model.shape} />
 {/if}
 <DocumentDialogs interaction={data.interaction} supersessions={data.supersessions} />
 <LearningDialogs

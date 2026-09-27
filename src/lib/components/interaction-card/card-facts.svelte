@@ -1,6 +1,11 @@
 <script lang="ts">
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import { resolve } from '$app/paths';
+	import {
+		SITE_APPLICATION_STATUS_LABELS,
+		type SiteApplicationView
+	} from '$lib/contracts/interactions';
+	import { formatDateTime } from '$lib/format';
 	import { headerFactsFor } from '$lib/platform/card-ui-registry';
 	import { isCurrentState } from './stage-look';
 	import type { CardModel } from './model';
@@ -26,9 +31,12 @@
 	let {
 		model,
 		counterpartyId,
+		siteApplication,
 		moduleData = {}
 	}: {
 		model: CardModel;
+		/** Заявка с сайта, из которой заведено дело; `null` — дело не с сайта. */
+		siteApplication: SiteApplicationView | null;
 		/** Данные действующих модулей по ключу модуля — факту шапки его модуля. */
 		moduleData?: Readonly<Record<string, unknown>>;
 		/**
@@ -58,6 +66,24 @@
 	 * в шапке остаётся ответственный.
 	 */
 	const facts = $derived(headerFactsFor(model.modules, model.shape));
+
+	const DELIVERY_LABELS: Record<NonNullable<SiteApplicationView['delivery']>, string> = {
+		delivered: 'доставлено',
+		waiting: 'новый статус ждёт отправки',
+		failed: 'ошибка доставки — повтор назначит администратор',
+		dismissed: 'разобрано администратором вручную'
+	};
+
+	function siteStatus(application: SiteApplicationView): string {
+		const sent =
+			application.sent === null
+				? 'статус на сайт ещё не отправлялся'
+				: `статус на сайте: ${SITE_APPLICATION_STATUS_LABELS[application.sent.status]} (${formatDateTime(application.sent.at)})`;
+
+		return application.delivery === null
+			? sent
+			: `${sent} · ${DELIVERY_LABELS[application.delivery]}`;
+	}
 
 	const secondaryLabel = $derived.by(() => {
 		const names = [
@@ -109,6 +135,18 @@
 				{/if}
 				{#if model.counterparty.kindLabel}
 					<span class="block text-xs font-normal text-faint">{model.counterparty.kindLabel}</span>
+				{/if}
+				{#if siteApplication !== null}
+					<!-- Что видит заявитель на сайте: последний ушедший статус и дошёл
+						ли он. Журнал обмена открыт администратору, КАМу — эта строка. -->
+					<span
+						class="block text-xs font-normal text-muted-foreground"
+						data-slot="site-application"
+					>
+						Заявка с сайта <span class="font-mono">{siteApplication.key}</span> · {siteStatus(
+							siteApplication
+						)}
+					</span>
 				{/if}
 			</dd>
 		</div>

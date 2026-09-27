@@ -326,7 +326,7 @@
 			{/if}
 			<div class="flex flex-col gap-1.5">
 				<Label for="card-academic-start">
-					{shape === 'institution' ? 'Учебный период' : 'Обучение'}: с
+					{shape === 'institution' ? 'Учебный период' : 'Период обучения'}: с
 				</Label>
 				<DateField
 					id="card-academic-start"
@@ -337,7 +337,7 @@
 			</div>
 			<div class="flex flex-col gap-1.5">
 				<Label for="card-academic-end">
-					{shape === 'institution' ? 'Учебный период' : 'Обучение'}: по
+					{shape === 'institution' ? 'Учебный период' : 'Период обучения'}: по
 				</Label>
 				<DateField
 					id="card-academic-end"
@@ -354,7 +354,11 @@
 				id="card-plan-reason"
 				name="reason"
 				rows={2}
-				placeholder="Например: вуз попросил сдвинуть сроки"
+				placeholder={shape === 'institution'
+					? 'Например: вуз попросил сдвинуть сроки'
+					: shape === 'company'
+						? 'Например: компания попросила сдвинуть сроки'
+						: 'Например: слушатель попросил перенести начало'}
 				bind:value={planReason}
 			/>
 		</div>

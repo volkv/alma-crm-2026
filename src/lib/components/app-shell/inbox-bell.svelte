@@ -108,6 +108,9 @@
 										<span class="font-medium">Новое дело с сайта</span> назначено вам
 									{/if}
 								</span>
+								{#if item.kind === 'mention' && item.excerpt !== ''}
+									<span class="line-clamp-2 block text-foreground/80">«{item.excerpt}»</span>
+								{/if}
 								<span class="block truncate text-muted-foreground">{item.interactionTitle}</span>
 								<span class="block text-xs text-faint">
 									{formatDateTime(item.createdAt)}{item.readAt === null ? ' · новое' : ''}

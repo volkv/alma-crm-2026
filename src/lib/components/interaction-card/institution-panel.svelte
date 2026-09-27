@@ -6,8 +6,7 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import type { OrganizationView } from '$lib/contracts/directory';
 	import type { InteractionSummaryView, InteractionView } from '$lib/contracts/interactions';
-	import type { CompositionSection } from './commands.svelte';
-	import ContactDialog from './contact-dialog.svelte';
+	import { getCardCommands, type CompositionSection } from './commands.svelte';
 	import ContactLine from './contact-line.svelte';
 	import ContextSection from './context-section.svelte';
 	import OfferingList from './offering-list.svelte';
@@ -59,7 +58,7 @@
 		(page.data.summary as InteractionSummaryView | undefined)?.canDo.actions.includes('edit') ??
 			false
 	);
-	let contactOpen = $state(false);
+	const commands = getCardCommands();
 </script>
 
 <div class="flex flex-col gap-5" data-slot="institution-panel">
@@ -67,7 +66,7 @@
 		<ContextSection title="Контактное лицо">
 			{#snippet action()}
 				{#if canEdit}
-					<Button size="xs" variant="outline" onclick={() => (contactOpen = true)}>
+					<Button size="xs" variant="outline" onclick={() => commands.open({ kind: 'contact' })}>
 						<UserPenIcon aria-hidden="true" />
 						{institution.contact === null ? 'Указать' : 'Изменить'}
 					</Button>
@@ -75,9 +74,6 @@
 			{/snippet}
 			<ContactLine party={institution} />
 		</ContextSection>
-		{#if canEdit}
-			<ContactDialog bind:open={contactOpen} {interaction} party={institution} />
-		{/if}
 	{/if}
 
 	<ContextSection title="Учебное заведение">

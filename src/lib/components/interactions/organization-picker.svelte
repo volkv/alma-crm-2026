@@ -41,6 +41,7 @@
 		invalid = false,
 		registryRole = null,
 		createKind = null,
+		kinds = null,
 		onselect
 	}: {
 		/** Идентификатор контрола: на него ссылается подпись поля. */
@@ -69,6 +70,11 @@
 		 */
 		createKind?: OrganizationKind | null;
 		/**
+		 * Каких видов организации искать; `null` — любых. Поле «Компания» не
+		 * предлагает вузов и физлиц, поле «Учебное заведение» — компаний.
+		 */
+		kinds?: readonly OrganizationKind[] | null;
+		/**
 		 * Выбор или сброс. У физического лица, заведённого здесь же, вторым
 		 * аргументом — его роль в своей организации: он же контактное лицо.
 		 */
@@ -77,6 +83,8 @@
 
 	/** Короче трёх букв реестр отвечает сотней однофамильцев. */
 	const REGISTRY_MIN_QUERY = 3;
+
+	const SEARCH_FAILED = 'Поиск не удался — повторите';
 
 	const STATUS_NOTES: Partial<Record<LegalStatus, string>> = {
 		liquidating: 'в процессе ликвидации',
@@ -88,6 +96,8 @@
 	let query = $state('');
 	let options = $state<LookupOption[]>([]);
 	let loading = $state(false);
+	/** Поиск по справочнику не удался: пустой список выдал бы это за «не нашлось». */
+	let searchError = $state<string | null>(null);
 	let open = $state(false);
 	let timer: ReturnType<typeof setTimeout> | undefined;
 	let registryTimer: ReturnType<typeof setTimeout> | undefined;
@@ -123,23 +133,37 @@
 
 	async function search(text: string, current: number) {
 		loading = true;
+		searchError = null;
 
 		try {
 			const response = await fetch(
-				`${lookupPath}?kind=organizations&q=${encodeURIComponent(text)}`
+				`${lookupPath}?kind=organizations&q=${encodeURIComponent(text)}${
+					kinds === null ? '' : `&kinds=${kinds.join(',')}`
+				}`
 			);
-			const body: { items?: LookupOption[] } = response.ok ? await response.json() : {};
+			const body: { items: LookupOption[] } | null = response.ok ? await response.json() : null;
 
 			if (current !== generation) {
 				return;
 			}
 
-			options = body.items ?? [];
+			if (body === null) {
+				options = [];
+				searchError = SEARCH_FAILED;
+				return;
+			}
+
+			options = body.items;
 
 			// В справочнике пусто — спрашиваем реестр сами, с паузой сверх обычной:
 			// реестр стоит квоты, и промежуточные строки быстрого набора ему не нужны.
 			if (options.length === 0 && registryReady) {
 				registryTimer = setTimeout(() => void searchRegistry(text, current), 350);
+			}
+		} catch {
+			if (current === generation) {
+				options = [];
+				searchError = SEARCH_FAILED;
 			}
 		} finally {
 			if (current === generation) {
@@ -190,6 +214,7 @@
 		open = true;
 		generation += 1;
 		candidates = null;
+		searchError = null;
 		registryError = null;
 		registryLoading = false;
 		clearTimeout(timer);
@@ -378,6 +403,8 @@
 			<div class="rounded-md border border-border bg-surface shadow-sm" aria-live="polite">
 				{#if loading}
 					<p class="px-3 py-2 text-xs text-muted-foreground">Ищем…</p>
+				{:else if searchError !== null}
+					<p class="px-3 py-2 text-xs text-destructive" role="alert">{searchError}</p>
 				{:else if options.length === 0}
 					<p class="px-3 py-2 text-xs text-muted-foreground">
 						{#if query === ''}

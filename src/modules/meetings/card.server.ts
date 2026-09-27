@@ -16,6 +16,7 @@ import {
 	getDb,
 	getInteraction,
 	listAffiliations,
+	readModuleFact,
 	recordAuditEvent,
 	recordModuleFact,
 	requirePermission,
@@ -24,9 +25,9 @@ import {
 	toPageError,
 	users
 } from '$lib/platform/core.server';
-import type { MeetingsCardData } from './data';
+import type { MeetingsCardData, SavedMeeting } from './data';
 import meetings from './index';
-import { buildMeetingInvite, meetingInviteUid } from './server/ics';
+import { buildMeetingInvite, nextMeetingIdentity } from './server/ics';
 
 const START_PATTERN = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}$/;
 const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -61,26 +62,6 @@ function parseDuration(raw: string | null): number | null {
 		: null;
 }
 
-function readStart(raw: string | null): Date {
-	const start = parseStart(raw);
-
-	if (start === null) {
-		error(400, 'Дата и время встречи указаны неверно');
-	}
-
-	return start;
-}
-
-function readDuration(raw: string | null): number {
-	const minutes = parseDuration(raw);
-
-	if (minutes === null) {
-		error(400, 'Длительность встречи указана неверно');
-	}
-
-	return minutes;
-}
-
 const MOSCOW_WHEN = new Intl.DateTimeFormat('ru-RU', {
 	timeZone: 'Europe/Moscow',
 	day: '2-digit',
@@ -89,6 +70,43 @@ const MOSCOW_WHEN = new Intl.DateTimeFormat('ru-RU', {
 	hour: '2-digit',
 	minute: '2-digit'
 });
+
+/** Момент встречи как значение поля `datetime-local` по Москве. */
+function moscowInput(start: Date): string {
+	return new Date(start.getTime() + 3 * 60 * 60 * 1000).toISOString().slice(0, 16);
+}
+
+/** Факт «встреча назначена», как его сохранил `meetingSchedule`. */
+type StoredMeeting = {
+	start: Date;
+	durationMinutes: number;
+	location: string | null;
+	uid: string;
+	sequence: number;
+};
+
+/** Последняя назначенная встреча дела; `null` — встреч ещё не назначали. */
+async function readMeeting(interactionId: string): Promise<StoredMeeting | null> {
+	const fact = await readModuleFact(getDb(), interactionId, meetings.key, 'scheduled');
+
+	if (fact === null) {
+		return null;
+	}
+
+	const { start, durationMinutes, location, uid, sequence } = fact.data;
+
+	if (
+		typeof start !== 'string' ||
+		typeof durationMinutes !== 'number' ||
+		(location !== null && typeof location !== 'string') ||
+		typeof uid !== 'string' ||
+		typeof sequence !== 'number'
+	) {
+		throw new Error(`Встреча дела ${interactionId} сохранена без своих данных`);
+	}
+
+	return { start: new Date(start), durationMinutes, location, uid, sequence };
+}
 
 /** Встреча одной фразой для ленты и пункта чек-листа. */
 function meetingText(start: Date, durationMinutes: number, location: string | null): string {
@@ -151,15 +169,26 @@ export default defineCardServer(meetings, {
 				return fail(400, { message: 'Встреча не сохранена', issues });
 			}
 
-			return run(() =>
-				recordModuleFact(ctx, {
+			return run(async () => {
+				// Встреча ещё впереди — это перенос той же встречи: календарь
+				// участников обновит событие по тому же `UID` и большему `SEQUENCE`.
+				const identity = nextMeetingIdentity(await readMeeting(event.params.id), new Date());
+
+				await recordModuleFact(ctx, {
 					interactionId: event.params.id,
 					module: meetings.key,
 					fact: 'scheduled',
 					text: meetingText(start, durationMinutes, location),
+					data: {
+						start: start.toISOString(),
+						durationMinutes,
+						location,
+						uid: identity.uid,
+						sequence: identity.sequence
+					},
 					auditType: 'interactions.meeting_invited'
-				})
-			);
+				});
+			});
 		}
 	},
 
@@ -170,9 +199,10 @@ export default defineCardServer(meetings, {
 		 * Ссылка из диалога карточки: сюда приходят с сессионной кукой, а отказ
 		 * рисуется страницей ошибки, как и у скачивания документа.
 		 *
-		 * Параметры — дата, длительность, место, повестка и выбранные участники —
-		 * приходят строкой запроса от диалога, а не спрятаны в теле: файл можно
-		 * переслать ссылкой повторно с теми же условиями. Имена и почту участников
+		 * Дата, длительность, место и идентификатор события — сохранённой встречи
+		 * дела (`meetingSchedule`): файл описывает то, что записано в деле, и
+		 * перенос приходит участникам обновлением того же события. Повестка и
+		 * выбранные участники приходят строкой запроса от диалога. Имена и почту участников
 		 * сервер не принимает от вызывающего — только идентификаторы контактов;
 		 * само имя и то, можно ли показать почту, читаются заново отсюда, по
 		 * действующему праву на персональные данные, а не по тому, что было на
@@ -182,10 +212,6 @@ export default defineCardServer(meetings, {
 			const ctx = actorFromEvent(event);
 			const { url, params } = event;
 
-			const start = readStart(url.searchParams.get('start'));
-			const durationMinutes = readDuration(url.searchParams.get('duration'));
-			const rawLocation = url.searchParams.get('location')?.trim() ?? '';
-			const location = rawLocation === '' ? null : rawLocation.slice(0, MAX_LOCATION_LENGTH);
 			const agenda = (url.searchParams.get('agenda') ?? '').trim().slice(0, MAX_AGENDA_LENGTH);
 			const attendeeIds = readAttendeeIds(url);
 
@@ -199,6 +225,12 @@ export default defineCardServer(meetings, {
 				});
 
 				const interaction = await getInteraction(ctx, params.id);
+				const meeting = await readMeeting(interaction.id);
+
+				if (meeting === null) {
+					error(400, 'Встреча по делу ещё не назначена: сначала назначьте её в диалоге');
+				}
+
 				const organizerEmail = await findOwnerEmail(interaction.ownerUserId);
 
 				if (organizerEmail === null) {
@@ -244,16 +276,16 @@ export default defineCardServer(meetings, {
 					}
 				}
 
-				const uid = meetingInviteUid(interaction.id, start, durationMinutes);
 				const generatedAt = new Date();
 
 				const ics = buildMeetingInvite({
-					uid,
+					uid: meeting.uid,
+					sequence: meeting.sequence,
 					summary: `Встреча: ${interaction.title}`,
 					agenda,
-					location,
-					start,
-					durationMinutes,
+					location: meeting.location,
+					start: meeting.start,
+					durationMinutes: meeting.durationMinutes,
 					organizer: { name: interaction.ownerName, email: organizerEmail },
 					attendeesWithEmail,
 					attendeeNamesWithoutEmail,
@@ -289,19 +321,36 @@ export default defineCardServer(meetings, {
 	 * Контакты основной стороны для диалога приглашения (участники с почтой,
 	 * галочками): та же область доступа, что у справочника людей, а не у
 	 * карточки взаимодействия саму по себе. Без права список пуст, и диалог
-	 * говорит почему, а не молчит.
+	 * говорит почему, а не молчит. Контактное лицо дела отмечено по умолчанию,
+	 * а назначенная встреча подставляется в поля при следующем открытии.
 	 */
 	load: async ({ ctx, interaction }): Promise<MeetingsCardData> => {
 		const primary = interaction.parties.find((party) => party.isPrimary);
+		const stored = await readMeeting(interaction.id);
+		const meeting: SavedMeeting | null =
+			stored === null
+				? null
+				: {
+						start: moscowInput(stored.start),
+						durationMinutes: stored.durationMinutes,
+						location: stored.location,
+						upcoming: stored.start.getTime() > Date.now()
+					};
+		const defaultContactId = primary?.contactAffiliationId ?? null;
 
 		if (primary === undefined) {
-			return { contacts: [], contactsDenied: false };
+			return { contacts: [], contactsDenied: false, defaultContactId, meeting };
 		}
 
 		if (!can(ctx, 'people.read')) {
-			return { contacts: [], contactsDenied: true };
+			return { contacts: [], contactsDenied: true, defaultContactId, meeting };
 		}
 
-		return { contacts: await listAffiliations(ctx, primary.organizationId), contactsDenied: false };
+		return {
+			contacts: await listAffiliations(ctx, primary.organizationId),
+			contactsDenied: false,
+			defaultContactId,
+			meeting
+		};
 	}
 });

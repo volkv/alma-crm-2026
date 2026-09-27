@@ -80,7 +80,6 @@ import {
 	findIndividual,
 	findOrCreateIndividual,
 	isUniqueViolation,
-	markOwnerAssigned,
 	ownerActor,
 	recordApplicationConsent
 } from './applicant';
@@ -939,9 +938,6 @@ async function applyInTransaction(
 			},
 			{ via: 'site' }
 		);
-
-		// Ответственного назначила сама загрузка — пункт об этом отмечается ею же.
-		await markOwnerAssigned(owner, tx, interactionId);
 
 		// Дело завела загрузка, а ведёт его другой сотрудник: он узнаёт о нём
 		// колокольчиком и письмом. Себе, загрузившему, сообщать незачем.

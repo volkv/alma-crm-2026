@@ -18,7 +18,8 @@
 	import { actionEnhance } from '$lib/components/interactions/action-enhance';
 	import OrganizationPicker from '$lib/components/interactions/organization-picker.svelte';
 	import StaleNotice from '$lib/components/interactions/stale-notice.svelte';
-	import type { LookupOption } from '$lib/contracts/directory';
+	import { SITE_KIND_LABELS } from '$lib/components/directory/labels';
+	import { SITE_KINDS, type LookupOption, type SiteKind } from '$lib/contracts/directory';
 	import type { LearningGroupView } from '$lib/contracts/exchange';
 	import {
 		PARTY_ROLE_LABELS,
@@ -151,6 +152,9 @@
 			pickError = null;
 			programQuery = '';
 			productQuery = '';
+			newSiteName = '';
+			newSiteKind = 'department';
+			newSiteError = null;
 		});
 	});
 
@@ -220,6 +224,55 @@
 		const body: { items: LookupOption[] } = await response.json();
 
 		return body.items;
+	}
+
+	/**
+	 * Новая площадка — прямо здесь: подразделения, с которым идёт работа,
+	 * часто ещё нет в справочнике, и уводить за ним в карточку организации
+	 * значило бы терять набранный состав. Заводит её тот же сервис, что форма
+	 * площадки в карточке организации; заведённая сразу отмечена.
+	 */
+	let newSiteName = $state('');
+	let newSiteKind = $state<SiteKind>('department');
+	let newSiteError = $state<string | null>(null);
+	let creatingSite = $state(false);
+
+	async function createSite(organizationId: string) {
+		const name = newSiteName.trim();
+
+		if (name === '') {
+			newSiteError = 'Укажите название площадки';
+			return;
+		}
+
+		creatingSite = true;
+		newSiteError = null;
+
+		try {
+			const response = await fetch(lookupPath, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({
+					create: 'site',
+					site: { organizationId, kind: newSiteKind, name }
+				})
+			});
+			const body: { item?: LookupOption; error?: string } = await response.json();
+
+			if (!response.ok || body.item === undefined) {
+				newSiteError = body.error ?? `Площадка не заведена: сервер ответил ${response.status}`;
+				return;
+			}
+
+			const site = body.item;
+
+			primarySites = [...(primarySites ?? []), site];
+			toggleSite(site.id, true);
+			newSiteName = '';
+			newSiteKind = 'department';
+		} finally {
+			creatingSite = false;
+		}
 	}
 
 	function toggleSite(siteId: string, on: boolean) {
@@ -499,6 +552,54 @@
 		(COMPOSITION_SECTIONS as readonly string[]).includes(value);
 </script>
 
+{#snippet newSite(organizationId: string)}
+	<div class="flex flex-col gap-1.5" data-slot="new-site">
+		<p class="text-xs font-medium">Новая площадка</p>
+		<div class="flex flex-wrap items-end gap-2">
+			<Input
+				class="min-w-0 flex-1 basis-48"
+				aria-label="Название новой площадки"
+				placeholder="Например: кафедра информационных систем"
+				bind:value={newSiteName}
+				onkeydown={(event) => {
+					// Enter заводит площадку, а не отправляет весь состав.
+					if (event.key === 'Enter') {
+						event.preventDefault();
+						void createSite(organizationId);
+					}
+				}}
+			/>
+			<Select.Root
+				type="single"
+				value={newSiteKind}
+				onValueChange={(value) => (newSiteKind = value as SiteKind)}
+			>
+				<Select.Trigger size="sm" class="w-40" aria-label="Вид новой площадки">
+					{SITE_KIND_LABELS[newSiteKind]}
+				</Select.Trigger>
+				<Select.Content>
+					{#each SITE_KINDS as kind (kind)}
+						<Select.Item value={kind} label={SITE_KIND_LABELS[kind]} />
+					{/each}
+				</Select.Content>
+			</Select.Root>
+			<Button
+				type="button"
+				size="sm"
+				variant="outline"
+				disabled={creatingSite || newSiteName.trim() === ''}
+				onclick={() => createSite(organizationId)}
+			>
+				<PlusIcon aria-hidden="true" />
+				{creatingSite ? 'Заводим…' : 'Завести и отметить'}
+			</Button>
+		</div>
+		{#if newSiteError !== null}
+			<p class="text-xs text-destructive" role="alert">{newSiteError}</p>
+		{/if}
+	</div>
+{/snippet}
+
 <FormDialog
 	bind:open={open.get, open.set}
 	title="Изменить состав"
@@ -613,8 +714,11 @@
 									</fieldset>
 								{:else if primarySites !== null}
 									<p class="text-xs text-muted-foreground">
-										У организации нет площадок: подразделение заводят в её карточке.
+										У организации ещё нет площадок: заведите подразделение ниже.
 									</p>
+								{/if}
+								{#if primarySites !== null}
+									{@render newSite(party.organizationId)}
 								{/if}
 							{/if}
 

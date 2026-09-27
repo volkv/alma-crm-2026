@@ -90,7 +90,10 @@ export default defineCardServer(learning, {
 			const parsed = parse(completeLearningGroupSchema, {
 				interactionId: event.params.id,
 				learningGroupId: data.get('learningGroupId'),
-				comment: data.get('comment')
+				comment: data.get('comment'),
+				// Флажок «досрочно» приходит строкой только отмеченным: без него
+				// поток с концом в будущем сервер не закроет.
+				early: data.get('early') === 'true'
 			});
 
 			if (!parsed.ok) return parsed.failure;

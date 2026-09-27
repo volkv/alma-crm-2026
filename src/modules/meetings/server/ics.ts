@@ -9,7 +9,7 @@
  * без testcontainers.
  */
 
-import { createHash } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 
 /** Предел строки контента по RFC 5545 (раздел 3.1) — октеты, не символы. */
 const FOLD_LIMIT_OCTETS = 75;
@@ -25,8 +25,10 @@ const encoder = new TextEncoder();
 export type MeetingAttendee = { name: string; email: string };
 
 export type MeetingInviteInput = {
-	/** Устойчивый идентификатор события — см. {@link meetingInviteUid}. */
+	/** Устойчивый идентификатор события — см. {@link nextMeetingIdentity}. */
 	uid: string;
+	/** Номер редакции события: растёт с каждым переносом той же встречи. */
+	sequence: number;
 	/** Заголовок встречи. */
 	summary: string;
 	/** Повестка; переносы строк экранируются как `\n` по тексту RFC. */
@@ -166,7 +168,7 @@ export function buildMeetingInvite(input: MeetingInviteInput): string {
 		simpleLine('DTSTAMP', formatIcsInstant(input.generatedAt)),
 		simpleLine('DTSTART', start),
 		simpleLine('DTEND', end),
-		'SEQUENCE:0',
+		`SEQUENCE:${input.sequence}`,
 		simpleLine('SUMMARY', escapeIcsText(input.summary)),
 		simpleLine('DESCRIPTION', escapeIcsText(description)),
 		...(input.location !== null && input.location.trim() !== ''
@@ -183,21 +185,24 @@ export function buildMeetingInvite(input: MeetingInviteInput): string {
 	return lines.join('\r\n') + '\r\n';
 }
 
-/**
- * `UID` стабилен для одной записи и одного времени встречи: повторное
- * скачивание того же приглашения обновляет то же событие в календаре
- * получателя, а не заводит рядом второе. Другое время — уже другая встреча и
- * другой `UID`.
- */
-export function meetingInviteUid(
-	interactionId: string,
-	start: Date,
-	durationMinutes: number
-): string {
-	const hash = createHash('sha256')
-		.update(`${interactionId}|${start.toISOString()}|${durationMinutes}`)
-		.digest('hex')
-		.slice(0, 32);
+/** Сохранённая встреча дела в объёме, который нужен календарю получателя. */
+export type MeetingIdentity = { uid: string; sequence: number };
 
-	return `meeting-${hash}@${UID_DOMAIN}`;
+/**
+ * Какое событие календаря описывает новое назначение встречи.
+ *
+ * Встреча, которая ещё впереди, при новом назначении **переносится**: `UID`
+ * тот же, `SEQUENCE` на единицу больше — календарь получателя обновит событие,
+ * а не заведёт рядом второе (RFC 5545, 3.8.7.4). Прошедшая встреча уже
+ * состоялась, и новое назначение — это следующая встреча со своим `UID`.
+ */
+export function nextMeetingIdentity(
+	previous: (MeetingIdentity & { start: Date }) | null,
+	now: Date
+): MeetingIdentity {
+	if (previous !== null && previous.start.getTime() > now.getTime()) {
+		return { uid: previous.uid, sequence: previous.sequence + 1 };
+	}
+
+	return { uid: `meeting-${randomUUID()}@${UID_DOMAIN}`, sequence: 0 };
 }

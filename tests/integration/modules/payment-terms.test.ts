@@ -3,8 +3,9 @@
  * сохраняется, читается и не затирает чужую правку из соседней вкладки.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
-import { setInteractionTermsSchema } from '$lib/contracts/terms';
+import { formatPriceRub, setInteractionTermsSchema } from '$lib/contracts/terms';
 import { ConflictError } from '$lib/server/errors';
+import { readModuleFact } from '$lib/server/platform/module-facts';
 import {
 	readInteractionTerms,
 	setInteractionTerms
@@ -64,5 +65,9 @@ describe('стоимость дела', () => {
 			setInteractionTermsSchema.parse({ interactionId, version: '1', price: '' })
 		);
 		expect(cleared).toMatchObject({ priceKopecks: null, version: 2 });
+
+		// Каждая правка стоимости — строка ленты с прежним значением.
+		const fact = await readModuleFact(database.db, interactionId, 'payment', 'price');
+		expect(fact?.text).toBe(`Стоимость: — (было: ${formatPriceRub(4_500_050)})`);
 	}, 60_000);
 });

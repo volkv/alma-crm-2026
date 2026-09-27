@@ -73,8 +73,13 @@ import {
 import { NotFoundError } from '../errors';
 import { withPiiTrace } from '../people/pii-trace';
 import { toPersonView } from '../people/serialize';
-import { requirePermission, workspaceFilter } from '../rbac';
-import { buildProgress, isStale } from '../stages/status';
+import { can, requirePermission, workspaceFilter } from '../rbac';
+import {
+	buildProgress,
+	isStale,
+	readStageIntroductions,
+	type ProgressEntry
+} from '../stages/status';
 import { readActiveRevisionForWorkspace } from '../stages/process';
 import { assertInteractionVisible, interactionScopeFilter } from './access';
 import { listMyDayInteractionIds } from './my-day';
@@ -703,25 +708,46 @@ async function readProgress(rows: ListRow[]): Promise<Map<string, StageProgressI
 		)
 	);
 
-	const entryRows = await db
-		.select({
-			interactionId: stageEntries.interactionId,
-			stageKey: sql<string>`${stageEntries.stageSnapshot} ->> 'key'`,
-			leftAt: stageEntries.leftAt
-		})
-		.from(stageEntries)
-		.where(
-			inArray(
-				stageEntries.interactionId,
-				rows.map((row) => row.interaction.id)
+	const [entryRows, introductions] = await Promise.all([
+		db
+			.select({
+				interactionId: stageEntries.interactionId,
+				stageId: stageEntries.stageId,
+				snapshot: stageEntries.stageSnapshot,
+				enteredAt: stageEntries.enteredAt,
+				leftAt: stageEntries.leftAt
+			})
+			.from(stageEntries)
+			.where(
+				inArray(
+					stageEntries.interactionId,
+					rows.map((row) => row.interaction.id)
+				)
+			),
+		Promise.all(
+			[...revisions].map(
+				async ([workspaceId, revision]) =>
+					[
+						workspaceId,
+						revision === null ? new Map<string, Date>() : await readStageIntroductions(db, revision)
+					] as const
 			)
-		);
+		).then((pairs) => new Map(pairs))
+	]);
 
-	const entriesByInteraction = new Map<string, { stageKey: string; leftAt: Date | null }[]>();
+	const entriesByInteraction = new Map<string, ProgressEntry[]>();
 
 	for (const entry of entryRows) {
 		const list = entriesByInteraction.get(entry.interactionId) ?? [];
-		list.push({ stageKey: entry.stageKey, leftAt: entry.leftAt });
+		list.push({
+			stageId: entry.stageId,
+			stageKey: entry.snapshot.key,
+			name: entry.snapshot.name,
+			position: entry.snapshot.position,
+			category: entry.snapshot.category,
+			enteredAt: entry.enteredAt,
+			leftAt: entry.leftAt
+		});
 		entriesByInteraction.set(entry.interactionId, list);
 	}
 
@@ -747,7 +773,8 @@ async function readProgress(rows: ListRow[]): Promise<Map<string, StageProgressI
 							isOverdue: row.status.isOverdue,
 							isPaused: row.status.isPaused
 						},
-				blocking.has(row.interaction.id)
+				blocking.has(row.interaction.id),
+				introductions.get(row.interaction.workspaceId) ?? new Map()
 			)
 		);
 	}
@@ -831,6 +858,9 @@ async function readPartyRows(
 		// забытое во вложенном ответе, — это утечка.
 		contact: row.person === null ? null : toPersonView(ctx, row.person),
 		contactPosition: row.affiliation?.position ?? null,
+		// Канал связи — способ достучаться до человека: его видит тот, кому
+		// открыты люди организации, как и в её карточке.
+		contactChannel: can(ctx, 'people.read') ? (row.affiliation?.channel ?? null) : null,
 		sites: siteRows
 			.filter((site) => site.partyId === row.party.id)
 			.map((site) => ({ id: site.id, name: site.name }))
@@ -1111,7 +1141,8 @@ const REFERENCE_FIELDS = {
 	products: 'product',
 	contract: 'contract',
 	contractItems: 'contract_item',
-	contact: 'affiliation'
+	contact: 'affiliation',
+	sites: 'site'
 } as const;
 
 type ReferenceKind = (typeof REFERENCE_FIELDS)[keyof typeof REFERENCE_FIELDS];
@@ -1268,6 +1299,9 @@ async function readReferenceNames(
 				.from(contractItems)
 				.innerJoin(products, eq(products.id, contractItems.productId))
 				.where(inArray(contractItems.id, ids))
+		),
+		read('site', (ids) =>
+			db.select({ id: sites.id, name: sites.name }).from(sites).where(inArray(sites.id, ids))
 		),
 		// Контактное лицо называется человеком, а не его ролью: имя берётся из
 		// карточки человека при чтении, и обезличенный человек не всплывает в

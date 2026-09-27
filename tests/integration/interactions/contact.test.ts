@@ -16,6 +16,7 @@ import {
 	createInteractionContact
 } from '$lib/server/interactions/contact';
 import { getInteraction } from '$lib/server/interactions/read';
+import { getInteractionStatus } from '$lib/server/stages/status';
 import {
 	insertOrganization,
 	insertPerson,
@@ -88,13 +89,22 @@ describe('смена контактного лица', () => {
 			partyId: party.id,
 			contactAffiliationId: own,
 			editVersion: before.editVersion,
-			reason: 'Прежний контакт ушёл'
+			reason: 'Прежний контакт ушёл',
+			channel: 'Telegram, по будням'
 		});
 
 		const after = await getInteraction(ctx, interactionId);
 
 		expect(after.parties.find((row) => row.id === party.id)?.contactAffiliationId).toBe(own);
+		expect(after.parties.find((row) => row.id === party.id)?.contactChannel).toBe(
+			'Telegram, по будням'
+		);
 		expect(after.editVersion).toBe(before.editVersion + 1);
+
+		// «Как связываться» из диалога контакта закрывает пункт первой стадии.
+		const status = await getInteractionStatus(ctx, interactionId);
+
+		expect(status.current?.facts.channel_agreed).toMatchObject({ done: true });
 
 		const history = await database.db
 			.select()
@@ -166,12 +176,12 @@ describe('новый контакт из карточки', () => {
 			) as PermissionKey[]
 		});
 
-		await expect(createInteractionContact(withoutPeople, command)).rejects.toBeInstanceOf(
+		await expect(createInteractionContact(withoutPeople, command, null)).rejects.toBeInstanceOf(
 			ForbiddenError
 		);
 		expect(await database.db.select().from(people)).toHaveLength(0);
 
-		const { affiliationId } = await createInteractionContact(ctx, command);
+		const { affiliationId } = await createInteractionContact(ctx, command, 'Почта');
 
 		const [role] = await database.db
 			.select()
@@ -183,7 +193,8 @@ describe('новый контакт из карточки', () => {
 			position: 'Проректор по учебной работе',
 			roleKind: 'vice_rector',
 			validFrom: '2026-01-01',
-			validTo: '2099-12-31'
+			validTo: '2099-12-31',
+			channel: 'Почта'
 		});
 
 		const after = await getInteraction(ctx, interactionId);

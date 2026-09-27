@@ -1,4 +1,4 @@
-import { fail } from '@sveltejs/kit';
+import { error, fail } from '@sveltejs/kit';
 import {
 	advanceStageSchema,
 	cancelInteractionSchema,
@@ -28,6 +28,7 @@ import { fields, parse, run, text } from '$lib/server/forms';
 import { listOrganizationContracts } from '$lib/server/directory/contracts';
 import { getOrganization } from '$lib/server/directory/read';
 import { DocumentConversionError } from '$lib/server/documents/errors';
+import { NotFoundError } from '$lib/server/errors';
 import { generateDocumentPackage } from '$lib/server/documents/package';
 import { listInteractionSupersessions } from '$lib/server/documents/read';
 import { markDocument } from '$lib/server/documents/status';
@@ -46,6 +47,7 @@ import {
 	readCompositionCatalog,
 	readCompositionOperator
 } from '$lib/server/interactions/composition';
+import { readSiteApplication } from '$lib/server/interactions/site-application';
 import { getInteractionSummary } from '$lib/server/interactions/summary';
 import { updateInteraction } from '$lib/server/interactions/write';
 import {
@@ -123,20 +125,30 @@ export const load: PageServerLoad = async (event) => {
 		const canEdit = can(ctx, 'interactions.write');
 		// Состав дела правят только те, кто может править запись: каталог и
 		// организация школы нужны его диалогу, остальным их не читают.
-		const [contracts, counterparty, card, paymentFact, modules, catalog, operator] =
-			await Promise.all([
-				primary !== undefined && canEdit
-					? listOrganizationContracts(ctx, primary.organizationId)
-					: [],
-				primary !== undefined && can(ctx, 'organizations.read')
-					? getOrganization(ctx, primary.organizationId)
-					: null,
-				readInteractionCard(interaction),
-				readPaymentFact(interaction),
-				readActiveModules(interaction.workspaceId),
-				canEdit ? readCompositionCatalog(ctx) : null,
-				canEdit ? readCompositionOperator() : null
-			]);
+		const [
+			contracts,
+			counterparty,
+			card,
+			paymentFact,
+			modules,
+			catalog,
+			operator,
+			siteApplication
+		] = await Promise.all([
+			primary !== undefined && canEdit
+				? listOrganizationContracts(ctx, primary.organizationId)
+				: [],
+			primary !== undefined && can(ctx, 'organizations.read')
+				? getOrganization(ctx, primary.organizationId)
+				: null,
+			readInteractionCard(interaction),
+			readPaymentFact(interaction),
+			readActiveModules(interaction.workspaceId),
+			canEdit ? readCompositionCatalog(ctx) : null,
+			canEdit ? readCompositionOperator() : null,
+			// Заявка с сайта: ключ и какой статус видит заявитель.
+			readSiteApplication(interaction)
+		]);
 		// Свои данные действующих модулей — для их панелей и диалогов; данные
 		// выключенного модуля не читаются.
 		const moduleData = await loadModuleCardData(event, ctx, interaction, modules.active);
@@ -161,14 +173,26 @@ export const load: PageServerLoad = async (event) => {
 			counterparty,
 			card,
 			paymentFact,
+			siteApplication,
 			modules: modules.active,
 			moduleData,
 			composition: catalog === null || operator === null ? null : { catalog, operator }
 		};
 	} catch (cause) {
+		// Дело, которого человек не видит, — чаще всего переданное коллеге:
+		// руководитель сменил ответственного, и область доступа его больше не
+		// пускает. Отказ называет это, не говоря, есть ли дело и чьё оно, —
+		// так же, как отвечает на чужое или несуществующее.
+		if (cause instanceof NotFoundError) {
+			error(404, { message: CARD_UNAVAILABLE });
+		}
+
 		toPageError(cause);
 	}
 };
+
+const CARD_UNAVAILABLE =
+	'Дело передано другому сотруднику или недоступно вам. Ваши дела — в списке пространства';
 
 /**
  * Файлы, приложенные к переходу, — сначала документами взаимодействия, потом

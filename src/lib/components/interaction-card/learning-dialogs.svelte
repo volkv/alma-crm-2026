@@ -40,8 +40,8 @@
 		type InteractionStatusView,
 		type InteractionView
 	} from '$lib/contracts/interactions';
-	import type { ChecklistRuleKey } from '$lib/platform/checklist-rules';
-	import { pluralForm, pluralize } from '$lib/format';
+	import { checklistRule } from '$lib/platform/checklist-rules';
+	import { formatDate, formatIsoDay, pluralForm, pluralize } from '$lib/format';
 	import { getCardCommands } from './commands.svelte';
 	import { purposeCountingStages, type CardExchange, type CardOffering } from './model';
 
@@ -87,20 +87,6 @@
 
 	const offeringLabel = (offering: CardOffering) => `${offering.code} — ${offering.name}`;
 
-	/**
-	 * Пункты чек-листа, которые закрывает поток определённого назначения: пункт
-	 * «Сформирована группа преподавателей» ждёт поток «Обучение преподавателей»,
-	 * пункт о зачислении слушателя — «Повышение квалификации». Правило пункта
-	 * названо в описании стадии (`$lib/platform/checklist-rules`), назначение —
-	 * здесь: правило читает потоки этого назначения (`stages/facts.ts`).
-	 */
-	const RULE_PURPOSES: Partial<Record<ChecklistRuleKey, LearningPurpose>> = {
-		teachers_group_formed: 'teachers',
-		teachers_training_completed: 'teachers',
-		upskilling_group_program: 'upskilling',
-		upskilling_enrolled: 'upskilling'
-	};
-
 	const status = $derived(page.data.status as InteractionStatusView | undefined);
 
 	/** Назначения, которых ждут пункты чек-листа стадии. */
@@ -110,7 +96,11 @@
 		return [
 			...new Set(
 				checklist.flatMap((item) => {
-					const purpose = isFactItem(item) ? RULE_PURPOSES[item.completion.rule] : undefined;
+					// Назначение потока, который ждёт пункт, называет само правило
+					// (`$lib/platform/checklist-rules`): его же читает проверка фактов.
+					const purpose = isFactItem(item)
+						? checklistRule(item.completion.rule)?.purpose
+						: undefined;
 
 					return purpose === undefined ? [] : [purpose];
 				})
@@ -222,6 +212,8 @@
 	let chosenProducts = $state<string[]>([]);
 	let completeGroupId = $state('');
 	let completeComment = $state('');
+	/** «Обучение закончилось досрочно»: без него поток с концом в будущем не закрыть. */
+	let completeEarly = $state(false);
 	/**
 	 * Отказ по заявке — у самой формы, а не тостом: тост всплывает в углу поверх
 	 * полей и гаснет вместе с причиной, закрывая ровно то, что надо исправить.
@@ -251,6 +243,7 @@
 			rosterLoaded = false;
 			rosterRefusal = null;
 			completeComment = '';
+			completeEarly = false;
 			completeGroupId =
 				current.kind === 'complete-group'
 					? (current.groupId ?? (unfinished.length === 1 ? unfinished[0].id : ''))
@@ -274,6 +267,24 @@
 	);
 	const completing = $derived(
 		exchange.groups.find((group) => group.id === completeGroupId) ?? null
+	);
+	/** По плану поток ещё идёт: отметка — досрочное завершение, и его подтверждают явно. */
+	const completingPlannedEnd = $derived(
+		completing !== null && completing.endsOn !== null && completing.endsOn > formatIsoDay()
+			? completing.endsOn
+			: null
+	);
+	/**
+	 * Промежуточный результат из системы обучения уже пришёл, а финального нет:
+	 * «итога нет» тогда неправда — есть числа, нет только конца.
+	 */
+	const completingInterim = $derived(
+		completing !== null && completing.lastResultAt !== null && completing.enrolled !== null
+	);
+	const completeDescription = $derived(
+		completing !== null && completingInterim && completing.lastResultAt !== null
+			? `Из системы обучения пришёл промежуточный результат (${formatDate(completing.lastResultAt)}: зачислено ${completing.enrolled ?? 0}, завершили ${completing.completed ?? 0}), финального итога нет. Если обучение закончилось, отметьте это; объяснение обязательно: оно останется на потоке и в ленте.`
+			: 'Итога из системы обучения нет, а обучение закончилось. Объяснение обязательно: оно останется на потоке и в ленте.'
 	);
 
 	/** Поток, чей список открыт. */
@@ -537,8 +548,8 @@
 <FormDialog
 	bind:open={completeOpen.get, completeOpen.set}
 	title="Обучение завершено"
-	description="Итога из системы обучения нет, а обучение закончилось. Объяснение обязательно: оно останется на потоке и в ленте."
-	dirty={completeComment.trim() !== ''}
+	description={completeDescription}
+	dirty={completeComment.trim() !== '' || completeEarly}
 >
 	<form
 		id="card-complete-group-form"
@@ -567,7 +578,11 @@
 			<input type="hidden" name="learningGroupId" value={completeGroupId} />
 		</div>
 		<div class="flex flex-col gap-1.5">
-			<Label for="card-complete-comment">Почему обучение завершено без итога</Label>
+			<Label for="card-complete-comment">
+				{completingInterim
+					? 'Почему обучение завершено без финального итога'
+					: 'Почему обучение завершено без итога'}
+			</Label>
 			<Textarea
 				id="card-complete-comment"
 				name="comment"
@@ -576,12 +591,34 @@
 				bind:value={completeComment}
 			/>
 		</div>
+		{#if completing !== null && completingPlannedEnd !== null}
+			<div class="flex flex-col gap-1">
+				<Label class="flex items-center gap-2 font-normal">
+					<Checkbox
+						checked={completeEarly}
+						onCheckedChange={(checked) => (completeEarly = checked === true)}
+					/>
+					Обучение закончилось досрочно
+				</Label>
+				<p class="text-xs text-muted-foreground">
+					По плану поток {completing.streamNumber} идёт до {formatDate(completingPlannedEnd)}: без
+					этой отметки завершение не поставить.
+				</p>
+				{#if completeEarly}
+					<input type="hidden" name="early" value="true" />
+				{/if}
+			</div>
+		{/if}
 	</form>
 
 	{#snippet footer({ close })}
 		<div class="flex justify-end gap-2">
 			<Button type="button" variant="outline" onclick={close}>Отмена</Button>
-			<Button type="submit" form="card-complete-group-form" disabled={completing === null}>
+			<Button
+				type="submit"
+				form="card-complete-group-form"
+				disabled={completing === null || (completingPlannedEnd !== null && !completeEarly)}
+			>
 				Отметить обучение завершённым
 			</Button>
 		</div>

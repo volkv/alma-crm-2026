@@ -31,6 +31,7 @@ import {
 	B2C_PROCESS
 } from '$lib/server/stages/definitions';
 import { ensureWorkflow } from '$lib/server/stages/process';
+import { getInteractionStatus } from '$lib/server/stages/status';
 import { advanceTo } from '../stages/fixture';
 import {
 	ensureSchoolOperator,
@@ -145,16 +146,6 @@ async function interactionOf(externalId: string): Promise<string> {
 	return row.id;
 }
 
-/** Отметка «Назначен ответственный» на открытой записи стадии. */
-async function ownerAssignedMark(interactionId: string): Promise<boolean | undefined> {
-	const [entry] = await database.db
-		.select({ state: stageEntries.checklistState })
-		.from(stageEntries)
-		.where(and(eq(stageEntries.interactionId, interactionId), isNull(stageEntries.leftAt)));
-
-	return entry.state.owner_assigned;
-}
-
 /** Отметка об оплате на открытой записи стадии и ключ этой стадии. */
 async function openEntry(
 	interactionId: string
@@ -241,8 +232,12 @@ describe('загрузка оплат с сайта', () => {
 		// отметку ставит вход на стадию оплаты по сохранённому факту.
 		const fresh = await interactionOf(NEW_ORDER);
 		expect((await openEntry(fresh)).key).toBe('lead_intake');
-		// Ответственного назначила загрузка — пункт об этом отмечен ею же.
-		expect(await ownerAssignedMark(fresh)).toBe(true);
+		// Ответственного назначила загрузка — пункт закрыт фактом, без отметки.
+		expect(
+			(await getInteractionStatus(testActor(), fresh)).current?.facts.owner_assigned
+		).toMatchObject({
+			done: true
+		});
 
 		await advanceTo(testActor(), database, fresh, 'contract_payment');
 		expect(await openEntry(fresh)).toEqual({ key: 'contract_payment', paymentReceived: true });

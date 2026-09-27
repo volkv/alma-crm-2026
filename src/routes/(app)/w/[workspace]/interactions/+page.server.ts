@@ -13,6 +13,7 @@ import { readTableQuery } from '$lib/components/data-table/query';
 import { actorFromEvent } from '$lib/server/actor';
 import { getDb } from '$lib/server/db';
 import { toActionFailure } from '$lib/server/http';
+import { readWorkspaceCounterpartyKinds } from '$lib/server/interactions/composition';
 import { getInteractionBoard } from '$lib/server/interactions/board';
 import { listInteractions, readInteractionFilterOptions } from '$lib/server/interactions/read';
 import { can } from '$lib/server/rbac';
@@ -101,7 +102,10 @@ export const load: PageServerLoad = async (event) => {
 	// Процесс назначен и процесс описан — разные состояния: у назначенного
 	// пустого процесса колонок нет так же, как у отсутствующего, но причина и
 	// исправление другие, и экран обязан назвать именно их.
-	const workflow = await readWorkflowForWorkspace(getDb(), workspace.id);
+	const [workflow, counterpartyKinds] = await Promise.all([
+		readWorkflowForWorkspace(getDb(), workspace.id),
+		readWorkspaceCounterpartyKinds(workspace.id)
+	]);
 
 	const common = {
 		filters,
@@ -114,6 +118,8 @@ export const load: PageServerLoad = async (event) => {
 						name: workflow.name,
 						described: workflow.activeRevisionId !== null
 					},
+		/** С кем работает пространство: по этому называются колонка и фильтр стороны. */
+		counterpartyKinds,
 		/** Может ли смотрящий сам описать процесс: ему — ссылка в редактор. */
 		canConfigure: can(ctx, 'stages.configure'),
 		search: table.search,

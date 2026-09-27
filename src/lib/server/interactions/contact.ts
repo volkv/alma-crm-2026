@@ -41,6 +41,7 @@ import {
 	type OrganizationContactDraft,
 	type SiteContactCandidate
 } from '../directory/organization-card';
+import { setAffiliationChannel } from '../directory/write';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { publishAfterCommit } from '../live/publish';
 import { can, requirePermission } from '../rbac';
@@ -200,7 +201,25 @@ export async function changeInteractionContact(
 			}
 		}
 
-		// Тот же контакт — не правка: версия не сдвигается, и коллега с
+		// «Как связываться» пишется в роль человека — тем же сервисом, что у
+		// карточки организации, с его правом на людей и журналом. Роль — та,
+		// что станет контактом: канал без человека приписать некому.
+		if (command.channel !== null) {
+			if (command.contactAffiliationId === null) {
+				throw new ValidationError('Канал связи указывают у контактного лица', [
+					'Выберите контактное лицо или оставьте «Как связываться» пустым'
+				]);
+			}
+
+			await setAffiliationChannel(
+				ctx,
+				{ affiliationId: command.contactAffiliationId, channel: command.channel },
+				tx
+			);
+			publishAfterCommit(tx, locked.interaction.id, { type: 'interaction.changed' });
+		}
+
+		// Тот же контакт — не правка записи: версия не сдвигается, и коллега с
 		// открытой формой плана не получит отказа из-за пустого действия.
 		if (locked.party.contactAffiliationId === command.contactAffiliationId) {
 			return;
@@ -246,7 +265,9 @@ async function partyOrganizationId(ctx: ActorContext, ref: PartyRef): Promise<st
  */
 export async function createInteractionContact(
 	ctx: ActorContext,
-	input: CreateInteractionContactDraft
+	input: CreateInteractionContactDraft,
+	/** «Как связываться» у новой роли; `null` — не договаривались. */
+	channel: string | null
 ): Promise<{ affiliationId: string }> {
 	requirePermission(ctx, 'interactions.write');
 	requirePermission(ctx, 'people.write');
@@ -266,7 +287,9 @@ export async function createInteractionContact(
 	let draft: OrganizationContactDraft;
 
 	if (command.source.kind === 'site') {
-		draft = await siteContactDraft(ctx, organizationId, command.source.candidate);
+		const fromSite = await siteContactDraft(ctx, organizationId, command.source.candidate);
+
+		draft = { ...fromSite, role: { ...fromSite.role, channel } };
 	} else {
 		const { position, roleKind, validFrom, validTo, ...person } = command.source.contact;
 
@@ -279,7 +302,7 @@ export async function createInteractionContact(
 				isPrimary: false,
 				validFrom,
 				validTo,
-				channel: null
+				channel
 			}
 		};
 	}

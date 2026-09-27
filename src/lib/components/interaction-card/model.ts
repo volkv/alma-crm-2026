@@ -43,6 +43,7 @@ import type { ProcessCard } from '$lib/contracts/process-card';
 import { daysUntil, formatDate, formatDateTime, pluralize } from '$lib/format';
 import { checklistAction, moduleActionKey } from '$lib/platform/checklist';
 import { checklistRule } from '$lib/platform/checklist-rules';
+import { readModuleFactValue } from '$lib/platform/module-fact';
 import {
 	cardActionSpecs,
 	moduleByKey,
@@ -219,6 +220,8 @@ export type CardCommand =
 	| { kind: 'cancel' }
 	| { kind: 'plan' }
 	| { kind: 'contract' }
+	/** Контактное лицо основной стороны и его канал связи — одним диалогом. */
+	| { kind: 'contact' }
 	/** `documentKind` — вид, с которым открывается загрузка («Документ об обучении»). */
 	| { kind: 'upload'; documentKind?: UploadedDocumentKind }
 	| { kind: 'revision'; documentId: string }
@@ -440,12 +443,31 @@ const DAY_MS = 24 * 60 * 60 * 1000;
 
 const DAYS = ['день', 'дня', 'дней'] as const;
 
+/** Кто перенёс дело при изменении процесса: публикация, а не сотрудник по делу. */
+const MIGRATION_AUTHOR = 'изменение процесса администратором';
+
 const OUTCOME_LABELS: Record<StageOutcome, string> = {
 	completed: 'стадия пройдена',
 	returned: 'возврат на стадию',
 	skipped: 'стадия пропущена',
 	migrated: 'перенос при изменении процесса'
 };
+
+/**
+ * Подпись поля истории. Учебный период — слово вуза: у коммерческого обучения
+ * лица и компании это период обучения.
+ */
+function fieldLabel(field: string, shape: CounterpartyShape): string {
+	if (shape !== 'institution' && field === 'academicPeriodStart') {
+		return 'Период обучения: начало';
+	}
+
+	if (shape !== 'institution' && field === 'academicPeriodEnd') {
+		return 'Период обучения: окончание';
+	}
+
+	return FIELD_LABELS[field] ?? field;
+}
 
 const FIELD_LABELS: Record<string, string> = {
 	title: 'Название',
@@ -459,7 +481,8 @@ const FIELD_LABELS: Record<string, string> = {
 	products: 'Продукты',
 	contract: 'Договор',
 	contractItems: 'Позиции договора',
-	contact: 'Контактное лицо'
+	contact: 'Контактное лицо',
+	sites: 'Подразделение и площадки'
 };
 
 function primaryParty(interaction: InteractionView): InteractionPartyView | null {
@@ -678,6 +701,8 @@ function checklistCommand(
 			return make({ kind: 'contract' });
 		case 'party':
 			return make({ kind: 'reveal', target: 'party' });
+		case 'contact':
+			return make({ kind: 'contact' });
 		case 'package': {
 			const templates = packageTemplates(
 				offeredTemplates(context.card.templates, context.modules),
@@ -722,7 +747,7 @@ function moduleFact(
 
 	const change = changes.find((candidate) => candidate.field.startsWith(`${module}:`));
 
-	return change !== undefined && typeof change.newValue === 'string' ? change.newValue : null;
+	return change === undefined ? null : (readModuleFactValue(change.newValue)?.text ?? null);
 }
 
 /** Как пункт закрывается — словами для списка стадий. */
@@ -740,7 +765,11 @@ function checklistRequirement(
 	item: ChecklistItem,
 	context: RequirementContext
 ): Requirement {
-	const button = item.action === undefined ? null : checklistCommand(item.action, item, context);
+	// «Записать результат» у пункта — дубль, когда результат и так условие
+	// стадии: кнопка стоит у того условия, а пункт закроется тем же текстом.
+	const duplicate = item.action === 'result' && entry.snapshot.requiresResult;
+	const button =
+		item.action === undefined || duplicate ? null : checklistCommand(item.action, item, context);
 	const saved = moduleFact(item.action, context.changes);
 
 	if (isFactItem(item)) {
@@ -1264,7 +1293,9 @@ export function buildEvents(source: CardSource): CardEvent[] {
 				kind: 'stage',
 				title: leftTitle(entry, entry.outcome, next),
 				detail: detail.length === 0 ? null : detail.join(' · '),
-				author: entry.responsibleName,
+				// Перенос делает не ответственный, а публикация процесса: подпись
+				// ответственного читалась бы как «он перевёл дело сам».
+				author: entry.outcome === 'migrated' ? MIGRATION_AUTHOR : entry.responsibleName,
 				duration: stageDuration(entry),
 				tone: entry.outcome === 'completed' ? 'success' : 'warning'
 			});
@@ -1373,10 +1404,8 @@ export function buildEvents(source: CardSource): CardEvent[] {
 	for (const change of changes) {
 		// Факт модуля (`<модуль>:<факт>`) записан готовой фразой — ею и читается.
 		const moduleFactText =
-			moduleByKey(change.field.split(':')[0]) !== undefined &&
-			change.field.includes(':') &&
-			typeof change.newValue === 'string'
-				? change.newValue
+			moduleByKey(change.field.split(':')[0]) !== undefined && change.field.includes(':')
+				? (readModuleFactValue(change.newValue)?.text ?? null)
 				: null;
 
 		events.push({
@@ -1385,7 +1414,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 			kind: 'plan',
 			title:
 				moduleFactText ??
-				`${FIELD_LABELS[change.field] ?? change.field}: ${describeChange(change.oldLabel, change.oldValue)} → ${describeChange(change.newLabel, change.newValue)}`,
+				`${fieldLabel(change.field, counterpartyShape(source.card.counterpartyKind))}: ${describeChange(change.oldLabel, change.oldValue)} → ${describeChange(change.newLabel, change.newValue)}`,
 			detail: change.reason,
 			author: change.authorName,
 			duration: null,
@@ -1548,7 +1577,11 @@ export function buildCard(source: CardSource, now: Date): CardModel {
 		stage:
 			stage === null
 				? null
-				: { name: stage.name, position: stage.position, total: status.progress.length },
+				: {
+						name: stage.name,
+						position: stage.position,
+						total: status.progress.filter((item) => !item.removed).length
+					},
 		timing: interaction.status === 'active' ? buildTiming(summary, now) : null,
 		quiet: interaction.status === 'active' ? buildQuiet(status, now) : null,
 		responsible: summary.whoActs.responsibleUser?.name ?? null,

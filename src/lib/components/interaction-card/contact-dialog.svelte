@@ -20,10 +20,17 @@
 	import { newOrganizationContactSchema } from '$lib/contracts/directory';
 	import type { InteractionPartyView, InteractionView } from '$lib/contracts/interactions';
 	import { formatIsoDay } from '$lib/format';
+	import { getCardCommands } from './commands.svelte';
+	import type { CounterpartyShape } from './model';
 
 	/**
-	 * Контактное лицо стороны: человек из действующих ролей её организации,
-	 * «Не выбрано» — или новый человек, заведённый тут же.
+	 * Контактное лицо основной стороны: человек из действующих ролей её
+	 * организации, «Не выбрано» — или новый человек, заведённый тут же.
+	 *
+	 * Здесь же — «Как связываться»: канал связи, о котором договорились, живёт
+	 * в роли человека, и пункт «Согласован канал связи» закрывается на месте,
+	 * без похода в карточку организации. Открывается диалог командой карточки
+	 * (`contact`) — из панели стороны и кнопкой у пункта чек-листа.
 	 *
 	 * Список — те же подсказки, что у формы заведения записи, и читается он при
 	 * каждом открытии: роль могли завести в карточке вуза минуту назад.
@@ -38,14 +45,26 @@
 	 * правки для ленты: отказ 409 оставляет выбор и ввод в диалоге.
 	 */
 	let {
-		open = $bindable(false),
 		interaction,
-		party
+		party,
+		shape
 	}: {
-		open?: boolean;
 		interaction: InteractionView;
 		party: InteractionPartyView;
+		shape: CounterpartyShape;
 	} = $props();
+
+	const commands = getCardCommands();
+	const open = $derived(commands.is('contact'));
+
+	function setOpen(next: boolean) {
+		if (!next) commands.close();
+	}
+
+	/** Чей это человек — словами для подписей: вуза, компании или сам слушатель. */
+	const whose = $derived(
+		shape === 'institution' ? 'вуза' : shape === 'company' ? 'компании' : 'стороны'
+	);
 
 	type Option = { id: string; label: string };
 	type Candidate = { unit: string; name: string; position: string };
@@ -90,6 +109,8 @@
 	let fieldErrors = $state<Record<string, string[]>>({});
 	let formError = $state<string | null>(null);
 	let reason = $state('');
+	/** «Как связываться»: пусто — не менять записанное. */
+	let channel = $state('');
 	let editVersion = $state(untrack(() => interaction.editVersion));
 	let conflict = $state<string | null>(null);
 	/** Кандидат паспорта, которого сейчас заводят: `unit + name`. */
@@ -149,7 +170,11 @@
 			key === 'validFrom' ? value !== formatIsoDay() : value.trim() !== ''
 		)
 	);
-	const dirty = $derived(contactId !== initialId || reason.trim() !== '' || contactTouched);
+	const initialChannel = $derived(party.contactChannel ?? '');
+	const channelChanged = $derived(channel.trim() !== initialChannel.trim());
+	const dirty = $derived(
+		contactId !== initialId || reason.trim() !== '' || contactTouched || channelChanged
+	);
 
 	async function loadOptions() {
 		loading = true;
@@ -196,6 +221,7 @@
 			fieldErrors = {};
 			formError = null;
 			reason = '';
+			channel = party.contactChannel ?? '';
 			editVersion = interaction.editVersion;
 			conflict = null;
 			adding = null;
@@ -243,17 +269,26 @@
 				partyId: party.id,
 				contactAffiliationId: contactId === NO_OPTION ? null : contactId,
 				editVersion,
-				reason
+				reason,
+				channel: channelInput()
 			})
 		});
 
 		if (response.ok) {
-			open = false;
+			commands.close();
 			await invalidateAll();
 			return;
 		}
 
 		await showFailure(response, 'Контактное лицо не сохранено');
+	}
+
+	/**
+	 * Канал связи уходит, только если его поменяли: `null` — оставить
+	 * записанный. Стереть канал отсюда нельзя — его снимают в карточке роли.
+	 */
+	function channelInput(): string | null {
+		return channelChanged && channel.trim() !== '' ? channel.trim() : null;
 	}
 
 	/** Пустые необязательные поля уходят `null`: так их ждёт схема. */
@@ -304,11 +339,17 @@
 		const response = await fetch(createUrl, {
 			method: 'POST',
 			headers: { 'content-type': 'application/json' },
-			body: JSON.stringify({ partyId: party.id, editVersion, reason, source })
+			body: JSON.stringify({
+				partyId: party.id,
+				editVersion,
+				reason,
+				source,
+				channel: channel.trim() === '' ? null : channel.trim()
+			})
 		});
 
 		if (response.ok) {
-			open = false;
+			commands.close();
 			await invalidateAll();
 			return true;
 		}
@@ -359,10 +400,21 @@
 	}
 </script>
 
+{#snippet channelField()}
+	<FieldInput
+		name="contact-channel"
+		label="Как связываться"
+		description="Как договорились: почта, телефон, мессенджер или портал. Закрывает пункт «Согласован канал связи»."
+		placeholder="Например: Telegram, по будням после 15:00"
+		errors={fieldErrors.channel}
+		bind:value={channel}
+	/>
+{/snippet}
+
 <FormDialog
-	bind:open
+	bind:open={() => open, setOpen}
 	title="Контактное лицо"
-	description="Человек вуза, с которым ведётся работа. Смена попадёт в ленту вместе с причиной."
+	description="Человек {whose}, с которым ведётся работа, и как с ним связываться. Смена контакта попадёт в ленту вместе с причиной."
 	{dirty}
 	width={mode === 'create' ? 'lg' : 'md'}
 >
@@ -378,7 +430,7 @@
 				value={mode}
 				onValueChange={(value) => (mode = value as Mode)}
 			>
-				<SegmentedControl.Item value="pick">Из контактов вуза</SegmentedControl.Item>
+				<SegmentedControl.Item value="pick">Из контактов {whose}</SegmentedControl.Item>
 				<SegmentedControl.Item value="create">Новый человек</SegmentedControl.Item>
 			</SegmentedControl.Root>
 		{/if}
@@ -386,7 +438,18 @@
 		{#if mode === 'pick'}
 			<div class="flex flex-col gap-1.5">
 				<Label for="card-contact">Контактное лицо</Label>
-				<Select.Root type="single" bind:value={contactId} disabled={loading}>
+				<Select.Root
+					type="single"
+					bind:value={
+						() => contactId,
+						(next) => {
+							contactId = next;
+							// Канал записан у прежнего человека: у выбранного он свой.
+							channel = next === initialId ? (party.contactChannel ?? '') : '';
+						}
+					}
+					disabled={loading}
+				>
 					<Select.Trigger id="card-contact" class="w-full">
 						{loading ? 'Загружаем список…' : chosenLabel}
 					</Select.Trigger>
@@ -401,6 +464,9 @@
 					<InlineHint tone="warning"
 						>Список людей не загрузился: закройте диалог и откройте снова.</InlineHint
 					>
+				{/if}
+				{#if canCreate && contactId !== NO_OPTION}
+					{@render channelField()}
 				{/if}
 				{#if canCreate}
 					<p class="text-xs text-muted-foreground">
@@ -520,6 +586,7 @@
 					errors={fieldErrors.phone}
 					bind:value={contact.phone}
 				/>
+				<div class="sm:col-span-2">{@render channelField()}</div>
 			</div>
 			<p class="text-xs text-muted-foreground">
 				Почта и телефон — персональные данные: хранятся зашифрованными, без права на них в карточке
@@ -551,7 +618,7 @@
 				disabled={saving ||
 					loading ||
 					adding !== null ||
-					(mode === 'pick' && contactId === initialId)}
+					(mode === 'pick' && contactId === initialId && !channelChanged)}
 			>
 				{mode === 'create' ? 'Завести и сделать контактом' : 'Сохранить'}
 			</Button>

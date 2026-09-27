@@ -1,6 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { createInteractionContactSchema } from '$lib/contracts/directory';
 import { id } from '$lib/contracts/common';
+import { contactChannelField } from '$lib/contracts/interactions';
 import { actorFromEvent } from '$lib/server/actor';
 import { AppError, statusForError, ValidationError } from '$lib/server/errors';
 import { createInteractionContact, newContactOptions } from '$lib/server/interactions/contact';
@@ -12,13 +13,17 @@ import type { RequestHandler } from './$types';
  * `GET ?partyId=` — можно ли заводить людей и какие кандидаты из прочитанного
  * паспорта организации стороны есть: `{ canCreate, candidates }`.
  *
- * `POST` — `{ partyId, editVersion, reason, source }`, где `source` — новый
- * человек с ролью (`{ kind: 'manual', contact }`) или кандидат из паспорта
- * (`{ kind: 'site', candidate: { unit, name } }`). Ответ — `{ affiliationId }`.
+ * `POST` — `{ partyId, editVersion, reason, source, channel }`, где `source` —
+ * новый человек с ролью (`{ kind: 'manual', contact }`) или кандидат из
+ * паспорта (`{ kind: 'site', candidate: { unit, name } }`), а `channel` —
+ * «Как связываться» у его роли. Ответ — `{ affiliationId }`.
  * Отказ — `{ error, issues, fields }`: `fields` раскладывает претензии схемы по
  * полям формы, чтобы ошибка стояла у поля, а ввод оставался в диалоге.
  */
 const partyIdSchema = id('Некорректный идентификатор стороны');
+
+/** Канал связи — рядом с источником контакта, а не внутри описания человека. */
+const bodySchema = createInteractionContactSchema.extend({ channel: contactChannelField });
 
 function failure(error: unknown): Response {
 	if (error instanceof AppError) {
@@ -64,7 +69,7 @@ export const POST: RequestHandler = async (event) => {
 	}
 
 	// Запись берётся из адреса, а не из тела: адрес проверен сопоставителем.
-	const parsed = createInteractionContactSchema.safeParse({
+	const parsed = bodySchema.safeParse({
 		...(typeof body === 'object' && body !== null ? body : {}),
 		interactionId: event.params.id
 	});
@@ -91,7 +96,9 @@ export const POST: RequestHandler = async (event) => {
 	}
 
 	try {
-		return json(await createInteractionContact(actorFromEvent(event), parsed.data), {
+		const { channel, ...input } = parsed.data;
+
+		return json(await createInteractionContact(actorFromEvent(event), input, channel), {
 			status: 201
 		});
 	} catch (error) {

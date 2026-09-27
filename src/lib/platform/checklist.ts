@@ -40,8 +40,8 @@ export type ChecklistActionSpec = {
 
 /**
  * Действия ядра. Каждое открывает форму карточки, в которой делают работу по
- * пункту, либо раскрывает панель стороны: контакт, подразделение и канал связи
- * правятся там.
+ * пункту, либо раскрывает панель стороны. Контактное лицо и его канал связи
+ * правятся одним диалогом (`contact`), подразделение — в составе дела.
  */
 const CORE_ACTIONS = [
 	{ key: 'result', label: 'Записать результат', module: null },
@@ -52,6 +52,7 @@ const CORE_ACTIONS = [
 	{ key: 'plan', label: 'Изменить план', module: null },
 	{ key: 'contract', label: 'Выбрать договор и позиции', module: 'contracts' },
 	{ key: 'party', label: 'Открыть сторону', module: null },
+	{ key: 'contact', label: 'Указать контакт и канал связи', module: null },
 	{ key: 'send_group', label: 'Заявить поток', module: 'learning' },
 	{ key: 'complete_group', label: 'Отметить завершение обучения', module: 'learning' }
 ] as const satisfies readonly ChecklistActionSpec[];

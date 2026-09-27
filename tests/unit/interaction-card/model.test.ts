@@ -425,7 +425,7 @@ describe('меню «Ещё»', () => {
 			authorName: 'Зотов Илья',
 			field: 'meetings:scheduled',
 			oldValue: null,
-			newValue: 'Назначена встреча: 01.10.2026, 11:00 по Москве, 60 мин',
+			newValue: { text: 'Назначена встреча: 01.10.2026, 11:00 по Москве, 60 мин', data: {} },
 			oldLabel: null,
 			newLabel: null,
 			reason: null
