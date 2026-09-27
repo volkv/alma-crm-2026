@@ -32,6 +32,7 @@ export {
 	people,
 	programs,
 	users,
+	workflows,
 	workspaces
 } from '$lib/server/db/schema';
 
@@ -56,6 +57,7 @@ export {
 } from '$lib/server/integrations/exchange/roster';
 
 // Справочник и люди.
+export { contactFullName } from '$lib/server/directory/contacts';
 export { listAffiliations } from '$lib/server/directory/read';
 export { listOrganizationContracts } from '$lib/server/directory/contracts';
 export { withPiiTrace } from '$lib/server/people/pii-trace';

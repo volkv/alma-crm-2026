@@ -16,6 +16,7 @@ import {
 	readActiveModules,
 	setWorkspaceModule
 } from '$lib/server/platform/workspace-modules';
+import { uploadDocument } from '$lib/server/documents/upload';
 import { B2C_PROCESS } from '$lib/server/stages/definitions';
 import { startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
 import {
@@ -172,13 +173,13 @@ describe('модули пространства', () => {
 			kind: 'legal_entity'
 		});
 
-		await assertModuleActive(admin, interactionId, 'payment');
+		await assertModuleActive(admin, interactionId, 'contracts');
 
-		await removeRow(B2C_WORKSPACE_KEY, 'payment');
-		const refusal = assertModuleActive(admin, interactionId, 'payment');
+		await removeRow(B2C_WORKSPACE_KEY, 'contracts');
+		const refusal = assertModuleActive(admin, interactionId, 'contracts');
 		await expect(refusal).rejects.toThrow(ValidationError);
 		await expect(refusal).rejects.toThrow(
-			'Модуль «Оплата» не подключён к пространству «Коммерческое обучение»'
+			'Модуль «Договоры и лицензии» не подключён к пространству «Коммерческое обучение»'
 		);
 
 		// Обучение нужно стадии «Зачисление и обучение» — строка ему не нужна.
@@ -193,5 +194,57 @@ describe('модули пространства', () => {
 		await expect(assertModuleActive(outsider, interactionId, 'learning')).rejects.toThrow(
 			NotFoundError
 		);
+	});
+
+	it('«Оплату» не выключить, пока стадия ждёт отметки «Оплата получена»; документ выключенного модуля не загрузить', async () => {
+		const admin = testActor({ roleId: 'admin' });
+		// Коммерческий процесс без стадий с данными обучения: «Обучение» здесь
+		// действует только включённым, и его можно выключить.
+		await seedProcess(database, B2C_WORKSPACE_KEY, {
+			...B2C_PROCESS,
+			stages: B2C_PROCESS.stages.map((stage) => ({
+				...stage,
+				requiresLmsData: false,
+				lmsGroupPurposes: null
+			}))
+		});
+
+		const payment = setWorkspaceModule(admin, {
+			workspaceKey: B2C_WORKSPACE_KEY,
+			moduleKey: 'payment',
+			enabled: false
+		});
+		await expect(payment).rejects.toThrow(ConflictError);
+		await expect(payment).rejects.toThrow('«Договор и оплата»');
+
+		const { interactionId } = await createInteractionOn(admin, database, {
+			kind: 'legal_entity'
+		});
+		expect(
+			await setWorkspaceModule(admin, {
+				workspaceKey: B2C_WORKSPACE_KEY,
+				moduleKey: 'learning',
+				enabled: false
+			})
+		).toEqual({ changed: true });
+
+		const certificate = {
+			interactionId,
+			kind: 'certificate',
+			title: 'Удостоверение о повышении квалификации',
+			file: { mime: 'text/plain', bytes: new TextEncoder().encode('Удостоверение\n') }
+		};
+		const refusal = uploadDocument(admin, certificate);
+		await expect(refusal).rejects.toThrow(ValidationError);
+		await expect(refusal).rejects.toThrow(
+			'Вид документа «Документ об обучении» даёт модуль «Обучение», он не подключён к пространству «Коммерческое обучение»'
+		);
+
+		await setWorkspaceModule(admin, {
+			workspaceKey: B2C_WORKSPACE_KEY,
+			moduleKey: 'learning',
+			enabled: true
+		});
+		expect(await uploadDocument(admin, certificate)).toMatchObject({ kind: 'certificate' });
 	});
 });

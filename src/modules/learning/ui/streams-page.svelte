@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import UsersRoundIcon from '@lucide/svelte/icons/users-round';
@@ -157,12 +158,48 @@
 {/if}
 
 {#if page.deals.length === 0}
+	{@const path = page.firstStream}
+	{@const workflow = path.workflow}
 	<div class="rounded-lg border border-border bg-surface">
-		<EmptyState
-			icon={UsersRoundIcon}
-			title="Потоков пока нет"
-			description="Поток появляется в деле, когда на него заявляют группу в системе обучения — кнопкой «Заявить поток» в карточке взаимодействия. Здесь видны дела, доступные вам."
-		/>
+		{#if path.panelChosen}
+			<EmptyState
+				icon={UsersRoundIcon}
+				title="Потоков пока нет"
+				description="Первый поток заявляют в карточке взаимодействия: панель «Группа в системе обучения», кнопка «Заявить поток». Здесь видны дела, доступные вам."
+			>
+				{#snippet action()}
+					<Button
+						size="sm"
+						href={resolve('/(app)/w/[workspace]/interactions', { workspace: workspace.key })}
+					>
+						Открыть взаимодействия
+						<ArrowRightIcon aria-hidden="true" />
+					</Button>
+				{/snippet}
+			</EmptyState>
+		{:else if workflow !== null && path.canConfigure}
+			<EmptyState
+				icon={UsersRoundIcon}
+				title="Потоков пока нет"
+				description="Поток заявляют кнопкой «Заявить поток» в панели «Группа в системе обучения», а процесс «{workflow.name}» эту панель в карточку не выбрал. Добавьте её в составе карточки процесса — кнопка появится в карточках пространства."
+			>
+				{#snippet action()}
+					<Button
+						size="sm"
+						href="{resolve('/(app)/settings/workflows/[key]', { key: workflow.key })}#card"
+					>
+						Настроить состав карточки
+						<ArrowRightIcon aria-hidden="true" />
+					</Button>
+				{/snippet}
+			</EmptyState>
+		{:else}
+			<EmptyState
+				icon={UsersRoundIcon}
+				title="Потоков пока нет"
+				description="Поток заявляют кнопкой «Заявить поток» в панели «Группа в системе обучения», а процесс пространства эту панель в карточку не выбрал. Добавить её может администратор с правом «Настройка маршрутов и стадий»."
+			/>
+		{/if}
 	</div>
 {:else}
 	<div class="overflow-x-auto rounded-lg border border-border bg-surface">

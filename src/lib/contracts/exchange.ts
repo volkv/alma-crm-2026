@@ -766,6 +766,23 @@ export const LEARNING_TRAINING_STATES = ['awaiting', 'in_progress', 'completed']
 
 export type LearningTrainingState = (typeof LEARNING_TRAINING_STATES)[number];
 
+/**
+ * Как идёт обучение потока: завершено — есть отметка сотрудника или итоговый
+ * результат (`isFinalLearningResult`), идёт — пришёл хоть какой-то результат,
+ * иначе ждём данных. Одно правило на карточку и сводку потоков пространства.
+ */
+export function learningTrainingState(group: {
+	completionMarked: boolean;
+	finished: boolean;
+	hasResult: boolean;
+}): LearningTrainingState {
+	if (group.completionMarked || group.finished) {
+		return 'completed';
+	}
+
+	return group.hasResult ? 'in_progress' : 'awaiting';
+}
+
 export const exchangeFilterSchema = z.object({
 	direction: z.enum(EXCHANGE_DIRECTIONS).nullable().default(null),
 	system: z.enum(EXCHANGE_SYSTEMS).nullable().default(null),

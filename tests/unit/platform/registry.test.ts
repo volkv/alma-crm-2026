@@ -86,10 +86,11 @@ describe('модули, нужные стадиям', () => {
 		expect(required.has('meetings')).toBe(false);
 	});
 
-	it('в коммерческом обучении стадиям нужно только обучение', () => {
+	it('в коммерческом обучении стадиям нужны оплата и обучение', () => {
 		const required = requiredModules(processDefinitionSchema.parse(B2C_PROCESS).stages);
 
-		expect([...required.keys()]).toEqual(['learning']);
+		expect([...required.keys()]).toEqual(['payment', 'learning']);
+		expect(required.get('payment')).toEqual(['Договор и оплата']);
 	});
 
 	it('действующие — включённые и нужные стадиям, в порядке конфига, без чужих ключей', () => {

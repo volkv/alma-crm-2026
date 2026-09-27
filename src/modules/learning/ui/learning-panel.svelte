@@ -18,7 +18,11 @@
 	 * постоянно: поток заводят раз в семестр, а читают его состояние каждый день.
 	 *
 	 * Панель показывается там, где поток уже есть или где его требует стадия: на
-	 * поиске контактов пустая «Система обучения» только отвлекала бы.
+	 * поиске контактов пустая «Система обучения» только отвлекала бы. Если же
+	 * данных обучения не ждёт ни одна стадия процесса — модуль включили в
+	 * настройках пространства, а не по правилу стадии, — «своей» стадии у потока
+	 * нет, и панель с кнопкой «Заявить поток» видна всегда: иначе первый поток
+	 * было бы негде завести.
 	 */
 	let { source }: CardPanelProps = $props();
 
@@ -35,7 +39,9 @@
 	/** Можно ли отметить обучение завершённым без итога из системы обучения. */
 	const canComplete = $derived(exchange.canComplete && source.interaction.status === 'active');
 	const shown = $derived(
-		groups.length > 0 || source.status.current?.snapshot.requiresLmsData === true
+		groups.length > 0 ||
+			learningStages.length === 0 ||
+			source.status.current?.snapshot.requiresLmsData === true
 	);
 
 	const commands = getCardCommands();

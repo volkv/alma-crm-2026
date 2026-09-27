@@ -12,6 +12,7 @@
  * перестала бы быть цепочкой одного документа.
  */
 import {
+	documentKindLabel,
 	uploadDocumentSchema,
 	type DocumentTemplateKey,
 	type DocumentView,
@@ -19,12 +20,15 @@ import {
 } from '$lib/contracts/documents';
 import { eq } from 'drizzle-orm';
 import type { AuditDetails } from '$lib/contracts/audit';
+import { kindOwner, moduleByKey } from '$lib/platform/registry';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
-import { documentContractItems, documents } from '../db/schema';
+import { getDb } from '../db';
+import { documentContractItems, documents, interactions, workspaces } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { publishAfterCommit } from '../live/publish';
-import { ConflictError, ValidationError } from '../errors';
+import { ConflictError, NotFoundError, ValidationError } from '../errors';
+import { readActiveModules } from '../platform/workspace-modules';
 import { requirePermission } from '../rbac';
 import { touchInteraction } from '../stages/commands';
 import {
@@ -74,6 +78,7 @@ export async function uploadDocument(
 
 	if (parsed.interactionId !== null) {
 		await assertInteractionAccessible(ctx, parsed.interactionId);
+		await assertKindOffered(parsed.interactionId, parsed.kind);
 	}
 
 	// Загруженный руками файл не собран по шаблону: засчитать его отметку за
@@ -111,9 +116,49 @@ export async function uploadDocumentRevision(
 		file: input.file
 	});
 
+	if (parsed.interactionId !== null) {
+		await assertKindOffered(parsed.interactionId, parsed.kind);
+	}
+
 	// Скан подписанного экземпляра — тот же документ: шаблон наследуется, иначе
 	// отметка на подписанном акте не закрыла бы стадию передачи.
 	return writeDocument(ctx, parsed, input.file, superseded.templateKey);
+}
+
+/**
+ * Вид документа, которым владеет модуль, загружается в дело, только пока этот
+ * модуль действует в пространстве дела — как шаблон модуля собирается только
+ * при нём (`assertTemplateOffered`). Диалог загрузки такой вид и не предлагает,
+ * но форма могла быть открыта до выключения модуля, а адрес действия набирают и
+ * руками. Документ без дела пространства не имеет, и правило его не касается.
+ * Уже загруженные документы вида остаются на месте: выключение модуля данных
+ * не стирает.
+ */
+async function assertKindOffered(interactionId: string, kind: string): Promise<void> {
+	const owner = kindOwner(kind);
+
+	if (owner === null) {
+		return;
+	}
+
+	const [row] = await getDb()
+		.select({ workspaceId: workspaces.id, workspaceName: workspaces.name })
+		.from(interactions)
+		.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
+		.where(eq(interactions.id, interactionId));
+
+	if (row === undefined) {
+		throw new NotFoundError('Взаимодействие не найдено');
+	}
+
+	const { active } = await readActiveModules(row.workspaceId);
+
+	if (!active.includes(owner)) {
+		throw new ValidationError(
+			`Вид документа «${documentKindLabel(kind)}» даёт модуль «${moduleByKey(owner)?.label ?? owner}», он не подключён к пространству «${row.workspaceName}»`,
+			['Его подключают в «Настройки → Пространства»']
+		);
+	}
 }
 
 /** Проверка контрактом: та же схема, что и у формы в браузере. */

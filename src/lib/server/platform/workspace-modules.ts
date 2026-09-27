@@ -28,7 +28,7 @@ import {
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
-import { workspaceModules, workspaces } from '../db/schema';
+import { workflows, workspaceModules, workspaces } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { ConflictError, ValidationError } from '../errors';
 import { assertInteractionVisible } from '../interactions/access';
@@ -121,18 +121,32 @@ export async function readActiveModulesForWorkspaces(
 	);
 }
 
-/** Модули всех пространств — для настроек пространств. */
+/**
+ * Модули всех пространств — для настроек пространств.
+ *
+ * Панель модуля видна в карточке, только если её выбрал и процесс
+ * пространства, поэтому рядом с модулем названы его панели, которых процесс не
+ * выбрал: иначе администратор включит модуль и не поймёт, почему панели нет.
+ */
 export async function listWorkspaceModules(ctx: ActorContext): Promise<WorkspaceModulesView[]> {
 	await requirePermission(ctx, 'stages.configure', { type: 'stages.process_viewed' });
 
 	const rows = await getDb()
-		.select({ id: workspaces.id, key: workspaces.key, name: workspaces.name })
+		.select({
+			id: workspaces.id,
+			key: workspaces.key,
+			name: workspaces.name,
+			panels: workflows.cardPanels
+		})
 		.from(workspaces)
+		.leftJoin(workflows, eq(workflows.id, workspaces.workflowId))
 		.orderBy(workspaces.position);
 
 	return Promise.all(
 		rows.map(async (workspace): Promise<WorkspaceModulesView> => {
 			const state = await readActiveModules(workspace.id);
+
+			const chosen = new Set<string>(workspace.panels ?? []);
 
 			return {
 				workspaceId: workspace.id,
@@ -145,7 +159,10 @@ export async function listWorkspaceModules(ctx: ActorContext): Promise<Workspace
 					enabled: state.enabled.has(module.key),
 					requiredBy: [...(state.required.get(module.key) ?? [])],
 					active: state.active.includes(module.key),
-					contributions: moduleContributions(module.key)
+					contributions: moduleContributions(module.key),
+					unchosenPanels: module.panels
+						.filter((panel) => !chosen.has(panel.key))
+						.map((panel) => panel.label)
 				}))
 			};
 		})

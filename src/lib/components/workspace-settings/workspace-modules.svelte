@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { tick } from 'svelte';
 	import { enhance } from '$app/forms';
+	import { resolve } from '$app/paths';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Switch } from '$lib/components/ui/switch/index.js';
@@ -14,10 +15,22 @@
 	 * стадии: иначе непонятно, почему выключить нельзя. Проверка всё равно в
 	 * сервисе — адрес действия набирают и руками.
 	 *
+	 * Панель модуля видна в карточке, только если её выбрал ещё и процесс
+	 * пространства. Поэтому у действующего модуля названы панели, которых процесс
+	 * не выбрал, и ссылка на состав карточки процесса: без неё администратор
+	 * включит модуль и будет искать панель, которой в карточке нет.
+	 *
 	 * Какому пространству принадлежат модули, форма не сообщает: действие
 	 * `?/module` стоит на странице пространства и берёт его ключ из адреса.
 	 */
-	let { modules }: { modules: WorkspaceModuleState[] } = $props();
+	let {
+		modules,
+		workflow
+	}: {
+		modules: WorkspaceModuleState[];
+		/** Процесс пространства; `null` — не назначен, и карточек пока нет. */
+		workflow: { key: string; name: string } | null;
+	} = $props();
 
 	/**
 	 * Выбор, отправленный на сервер, но ещё не подтверждённый ответом: пока
@@ -36,6 +49,15 @@
 		const names = stages.map((name) => `«${name}»`).join(', ');
 
 		return `${stages.length === 1 ? 'Нужен стадии' : 'Нужен стадиям'} ${names}`;
+	}
+
+	/** «Панель «А» не выбрана … — её не будет» или «Панели «А», «Б» не выбраны … — их не будет». */
+	function unchosenText(panels: readonly string[], workflowName: string): string {
+		const names = panels.map((name) => `«${name}»`).join(', ');
+
+		return panels.length === 1
+			? `Панель ${names} не выбрана в составе карточки процесса «${workflowName}» — в карточках её не будет.`
+			: `Панели ${names} не выбраны в составе карточки процесса «${workflowName}» — в карточках их не будет.`;
 	}
 
 	/**
@@ -101,6 +123,17 @@
 						{#if required}
 							<span class="text-xs text-muted-foreground">
 								Выключить нельзя, пока стадии процесса его требуют.
+							</span>
+						{/if}
+						{#if module.active && workflow !== null && module.unchosenPanels.length > 0}
+							<span class="text-xs text-warning-soft-foreground">
+								{unchosenText(module.unchosenPanels, workflow.name)}
+								<a
+									class="font-medium underline underline-offset-2"
+									href="{resolve('/(app)/settings/workflows/[key]', { key: workflow.key })}#card"
+								>
+									Настроить состав карточки
+								</a>
 							</span>
 						{/if}
 					</span>

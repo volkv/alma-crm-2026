@@ -3,7 +3,15 @@
  * физического лица держится на ней, поэтому у лица шапка карточки называет
  * оплату, а не договор.
  */
+import type { PAYMENT_CHECKLIST_KEY } from '$lib/contracts/payments';
 import { defineModule } from '$lib/platform/define';
+
+/**
+ * Пункт чек-листа «Оплата получена». Значение — строкой: манифест читает сид
+ * обычным процессом Node, поэтому из контрактов сюда идут только типы, а
+ * совпадение с ключом ядра проверяет компилятор.
+ */
+const PAYMENT_ITEM: typeof PAYMENT_CHECKLIST_KEY = 'payment_received';
 
 export default defineModule({
 	key: 'payment',
@@ -21,5 +29,7 @@ export default defineModule({
 	cardActions: [],
 	sections: [],
 	documents: { templates: [], kinds: [] },
-	requiredByStage: null
+	// Стадию с пунктом «Оплата получена» без модуля не пройти: отметку ставят в
+	// его панели, и факт оплаты с сайта называет его шапка.
+	requiredByStage: (stage) => stage.checklist.some((item) => item.key === PAYMENT_ITEM)
 });
