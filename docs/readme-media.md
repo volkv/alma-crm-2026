@@ -77,7 +77,7 @@ node scripts/readme-media/record.ts                # все ролики
 
 Снимки в статьях `/help` снимаются тем же скриптом и с того же стенда — другой набор кадров.
 `MEDIA_BASE_URL` при этом указывает на тот стенд, с которого снимают: локальный
-`http://localhost:3000` или публичный `https://crm.volkv.com` (пароль демонстрационных записей —
+`http://localhost:3000` или публичный `https://alma.volkv.com` (пароль демонстрационных записей —
 всё тот же `SEED_DEMO_PASSWORD` из окружения той машины; на самом стенде он написан на странице
 входа).
 
@@ -163,7 +163,7 @@ node scripts/readme-media/capture.ts --set=help user/reports-1 admin/audit-1   #
 ### Как записать
 
 ```bash
-export MEDIA_BASE_URL=https://crm.volkv.com
+export MEDIA_BASE_URL=https://alma.volkv.com
 export SEED_DEMO_PASSWORD='…'          # пароль демонстрационных записей каталога
 export SCREENCAST_DIR=…                # каталог вне репозитория, куда лечь ролику
 
@@ -261,7 +261,7 @@ ffmpeg -i screencast-subtitles.mp4 -i voice.m4a -map 0:v -map 1:a \
 автоматизации, повторную подачу заявки без дубля, самодиагностику и Swagger.
 
 ```bash
-export MEDIA_BASE_URL=https://crm.volkv.com
+export MEDIA_BASE_URL=https://alma.volkv.com
 export SEED_DEMO_PASSWORD='…'
 export OVERVIEW_DIR=…                  # каталог вне репозитория
 node scripts/readme-media/overview.ts --list
