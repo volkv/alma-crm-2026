@@ -20,6 +20,7 @@ import {
 	searchQuery
 } from './common';
 import { CONTRACT_STATUSES, editVersionField, type ContractStatus } from './interactions';
+import { addSiteContactSchema } from './organization-card';
 
 /**
  * Кем организация приходится процессу: вуз, юридическое или физическое лицо,
@@ -347,6 +348,42 @@ export const endAffiliationSchema = z.object({
 	validTo: isoDate('Укажите дату окончания полномочий')
 });
 
+/**
+ * Новый контакт организации одной формой: человек и его роль в ней. Поля —
+ * те же, что у форм «новый человек» и «новый контакт» карточки вуза, без
+ * примечания, площадки и канала: их дописывают в карточке человека.
+ */
+export const newOrganizationContactSchema = z
+	.object({
+		lastName: personFields.lastName,
+		firstName: personFields.firstName,
+		middleName: personFields.middleName,
+		email: personFields.email,
+		phone: personFields.phone,
+		position: affiliationFields.position,
+		roleKind: affiliationFields.roleKind,
+		validFrom: affiliationFields.validFrom,
+		validTo: affiliationFields.validTo
+	})
+	.refine(affiliationPeriodIsOrdered, affiliationPeriodError);
+
+/**
+ * Контактное лицо стороны взаимодействия, которого в справочнике ещё нет:
+ * заводится на месте — вручную или кандидатом из паспорта организации — и
+ * сразу становится контактом стороны. Версия и причина — как у смены
+ * контакта из списка.
+ */
+export const createInteractionContactSchema = z.object({
+	interactionId: id('Некорректный идентификатор взаимодействия'),
+	partyId: id('Некорректный идентификатор стороны'),
+	editVersion: editVersionField,
+	reason: optionalText(1000),
+	source: z.discriminatedUnion('kind', [
+		z.object({ kind: z.literal('manual'), contact: newOrganizationContactSchema }),
+		z.object({ kind: z.literal('site'), candidate: addSiteContactSchema })
+	])
+});
+
 const programFields = {
 	/** Код программы в номенклатуре оператора; по нему сверяют планы и отчёты. */
 	code: requiredText(50, 'Укажите код программы'),
@@ -658,6 +695,8 @@ export type SetRetentionInput = z.output<typeof setRetentionSchema>;
 export type CreateAffiliationInput = z.output<typeof createAffiliationSchema>;
 export type UpdateAffiliationInput = z.output<typeof updateAffiliationSchema>;
 export type EndAffiliationInput = z.output<typeof endAffiliationSchema>;
+export type NewOrganizationContactInput = z.output<typeof newOrganizationContactSchema>;
+export type CreateInteractionContactDraft = z.input<typeof createInteractionContactSchema>;
 export type CreateProgramInput = z.output<typeof createProgramSchema>;
 export type UpdateProgramInput = z.output<typeof updateProgramSchema>;
 export type CreateProgramVersionInput = z.output<typeof createProgramVersionSchema>;

@@ -9,6 +9,8 @@ import {
 	createPersonSchema,
 	isAffiliationCurrent,
 	type AffiliationView,
+	type CreateAffiliationInput,
+	type CreatePersonInput,
 	type PersonView
 } from '$lib/contracts/directory';
 import {
@@ -31,8 +33,8 @@ import type { ActorContext } from '../actor';
 import { invalidateDirectoryOptions } from '../cache/directory';
 import { getDb } from '../db';
 import { auditEvents } from '../db/schema';
-import { withTransaction } from '../db/transaction';
-import { lookupSite } from '../enrichment';
+import { withTransaction, type Tx } from '../db/transaction';
+import { lookupSite, peekSiteReport } from '../enrichment';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { listInteractions } from '../interactions/read';
 import { can, requirePermission } from '../rbac';
@@ -194,11 +196,86 @@ function positionOf(post: string | null, unit: string): string {
 		: combined;
 }
 
-export type AddedSiteContact = { person: PersonView; affiliation: AffiliationView };
+export type AddedContact = { person: PersonView; affiliation: AffiliationView };
+
+/** Контакт организации до записи: человек и его роль в ней. */
+export type OrganizationContactDraft = {
+	person: CreatePersonInput;
+	role: Omit<CreateAffiliationInput, 'personId' | 'organizationId'>;
+};
 
 /**
- * Заводит кандидата из подраздела «Структура» человеком и его ролью в
- * организации — одной транзакцией.
+ * Заводит контакт организации: человека и его роль в ней — в транзакции
+ * вызывающего. Единственный путь, которым карточки заводят контакт одним
+ * действием: кандидат с сайта и новый человек из карточки взаимодействия
+ * проходят те же `createPerson` и `createAffiliation`, что и формы
+ * справочника, — с их правами, шифрованием контактов и журналом.
+ */
+export async function createOrganizationContact(
+	ctx: ActorContext,
+	organizationId: string,
+	draft: OrganizationContactDraft,
+	tx: Tx
+): Promise<AddedContact> {
+	const person = await createPerson(ctx, draft.person, tx);
+	const affiliation = await createAffiliation(
+		ctx,
+		{ ...draft.role, personId: person.id, organizationId },
+		tx
+	);
+
+	return { person, affiliation };
+}
+
+/** Кандидат из паспорта, которого можно завести контактом одним щелчком. */
+export type SiteContactCandidate = {
+	unit: string;
+	name: string;
+	/** Должность, с которой он ляжет в роль. */
+	position: string;
+};
+
+/**
+ * Кандидаты в контакты из уже прочитанного паспорта организации: только из
+ * кэша, наружу чтение не ходит и квоты не тратит. Не прочитан паспорт, нет
+ * сайта или права читать паспорт — список пуст: предлагать нечего. Кандидаты
+ * без ФИО и те, кто уже в действующих контактах, не предлагаются.
+ */
+export async function listSiteContactCandidates(
+	ctx: ActorContext,
+	organizationId: string
+): Promise<SiteContactCandidate[]> {
+	if (!can(ctx, 'people.write') || !can(ctx, 'organizations.write')) {
+		return [];
+	}
+
+	const organization = await getOrganization(ctx, organizationId);
+
+	if (organization.website === null) {
+		return [];
+	}
+
+	const site = await peekSiteReport(ctx, organization.website);
+
+	if (site === null) {
+		return [];
+	}
+
+	const contacts = await listAffiliations(ctx, organizationId);
+	const today = formatIsoDay();
+
+	return site.contacts.flatMap((row) =>
+		row.name === null ||
+		splitPersonName(row.name) === null ||
+		sameActiveContact(contacts, row.name, today) !== undefined
+			? []
+			: [{ unit: row.unit, name: row.name, position: positionOf(row.post, row.unit) }]
+	);
+}
+
+/**
+ * Кандидат из подраздела «Структура» — человеком и его ролью в организации,
+ * ещё не записанными.
  *
  * Данные кандидата сервер берёт не из формы, а из раздела `/sveden` той
  * организации, чей сайт стоит в карточке (`lookupSite` — ответ живёт в кэше
@@ -206,11 +283,11 @@ export type AddedSiteContact = { person: PersonView; affiliation: AffiliationVie
  * добавить; кем он был на сайте и когда сайт прочитан, подделать браузером
  * нельзя. Источник и дата остаются в примечании человека.
  */
-export async function addSiteContact(
+export async function siteContactDraft(
 	ctx: ActorContext,
 	organizationId: string,
 	input: AddSiteContactInput
-): Promise<AddedSiteContact> {
+): Promise<OrganizationContactDraft> {
 	requirePermission(ctx, 'people.write');
 
 	const organization = await getOrganization(ctx, organizationId);
@@ -277,26 +354,30 @@ export async function addSiteContact(
 		);
 	}
 
-	const added = await withTransaction(ctx, async (tx) => {
-		const created = await createPerson(ctx, person.data, tx);
-		const affiliation = await createAffiliation(
-			ctx,
-			{
-				personId: created.id,
-				organizationId,
-				siteId: null,
-				position: positionOf(candidate.post, candidate.unit),
-				roleKind: roleKindFromPost(candidate.post),
-				isPrimary: false,
-				validFrom: formatIsoDay(),
-				validTo: null,
-				channel: null
-			},
-			tx
-		);
+	return {
+		person: person.data,
+		role: {
+			siteId: null,
+			position: positionOf(candidate.post, candidate.unit),
+			roleKind: roleKindFromPost(candidate.post),
+			isPrimary: false,
+			validFrom: formatIsoDay(),
+			validTo: null,
+			channel: null
+		}
+	};
+}
 
-		return { person: created, affiliation };
-	});
+/** Кандидат из подраздела «Структура» — в контакты организации одной транзакцией. */
+export async function addSiteContact(
+	ctx: ActorContext,
+	organizationId: string,
+	input: AddSiteContactInput
+): Promise<AddedContact> {
+	const draft = await siteContactDraft(ctx, organizationId, input);
+	const added = await withTransaction(ctx, (tx) =>
+		createOrganizationContact(ctx, organizationId, draft, tx)
+	);
 
 	// Вложенные записи обесценили кэш выпадающих списков до фиксации; после неё —
 	// ещё раз, чтобы в окне между ними никто не собрал список без нового человека.
