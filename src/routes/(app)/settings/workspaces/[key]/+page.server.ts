@@ -229,25 +229,61 @@ export const actions: Actions = {
 		}
 	},
 
-	/** Включить сотрудника в пространство: он увидит работу направления со следующего запроса. */
+	/**
+	 * Включить сотрудника в пространство: он увидит работу направления со
+	 * следующего запроса. Страница предлагает включить заодно и его
+	 * руководителя — тот видит работу подчинённого только в пространствах, куда
+	 * включён сам. Руководитель включается отдельной командой следом: у него
+	 * свои проверки, и отказ по нему не отменяет уже сделанного.
+	 */
 	addMember: async (event) => {
 		const body = await event.request.formData();
 		const parsed = addWorkspaceMemberSchema.safeParse({
 			key: event.params.key,
 			userId: body.get('userId')
 		});
+		const managerId = body.get('managerUserId');
+		const manager =
+			typeof managerId === 'string' && managerId !== ''
+				? addWorkspaceMemberSchema.safeParse({ key: event.params.key, userId: managerId })
+				: null;
 
 		if (!parsed.success) {
 			return fail(400, { message: issuesText(parsed.error.issues), issues: [] });
 		}
 
+		if (manager !== null && !manager.success) {
+			return fail(400, { message: issuesText(manager.error.issues), issues: [] });
+		}
+
+		const ctx = actorFromEvent(event);
+
 		try {
-			await addWorkspaceMember(actorFromEvent(event), parsed.data);
+			await addWorkspaceMember(ctx, parsed.data);
 		} catch (failure) {
 			return toActionFailure(failure);
 		}
 
-		return { ok: true, message: 'Сотрудник включён в пространство', issues: [] };
+		if (manager === null) {
+			return { ok: true, message: 'Сотрудник включён в пространство', issues: [] };
+		}
+
+		try {
+			await addWorkspaceMember(ctx, manager.data);
+		} catch (failure) {
+			const refusal = toActionFailure(failure);
+
+			return fail(refusal.status, {
+				message: `Сотрудник включён, а руководитель — нет: ${refusal.data.message}`,
+				issues: refusal.data.issues
+			});
+		}
+
+		return {
+			ok: true,
+			message: 'Сотрудник и его руководитель включены в пространство',
+			issues: []
+		};
 	},
 
 	/**

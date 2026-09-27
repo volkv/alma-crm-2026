@@ -4,6 +4,7 @@
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import RouteIcon from '@lucide/svelte/icons/route';
 	import { enhance } from '$app/forms';
+	import { resolve } from '$app/paths';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
@@ -42,11 +43,22 @@
 		/** Право `stages.transition`: без него доска только показывает. */
 		canTransition,
 		/** Список отобран фильтром — пустота значит разное в двух случаях. */
-		isFiltered
+		isFiltered,
+		workspaceKey,
+		/**
+		 * Процесс пространства: не назначен (`null`) или назначен, но ещё не
+		 * описан, — у доски без колонок две разные причины.
+		 */
+		process,
+		/** Право настраивать процесс: ему пустая доска даёт ссылку на исправление. */
+		canConfigure
 	}: {
 		board: InteractionBoardView;
 		canTransition: boolean;
 		isFiltered: boolean;
+		workspaceKey: string;
+		process: { key: string; name: string; described: boolean } | null;
+		canConfigure: boolean;
 	} = $props();
 
 	/** Какую карточку сейчас тащат и над какой колонкой держат. */
@@ -234,11 +246,45 @@
 
 {#if board.revision === null}
 	<div class="rounded-lg border border-border bg-surface">
-		<EmptyState
-			icon={RouteIcon}
-			title="Процесс не назначен"
-			description="Доска раскладывает взаимодействия по стадиям действующего процесса. Пока пространству не назначен процесс, раскладывать не по чему — и завести здесь запись тоже нельзя: стадии, на которую её поставить, не существует."
-		/>
+		{#if process === null}
+			<EmptyState
+				icon={RouteIcon}
+				title="Процесс не назначен"
+				description="Доска раскладывает взаимодействия по стадиям действующего процесса. Пока пространству не назначен процесс, раскладывать не по чему — и завести здесь запись тоже нельзя: стадии, на которую её поставить, не существует.{canConfigure
+					? ''
+					: ' Назначает процесс администратор.'}"
+			>
+				{#snippet action()}
+					{#if canConfigure}
+						<Button
+							variant="outline"
+							href={resolve('/(app)/settings/workspaces/[key]', { key: workspaceKey })}
+						>
+							Назначить процесс
+						</Button>
+					{/if}
+				{/snippet}
+			</EmptyState>
+		{:else}
+			<EmptyState
+				icon={RouteIcon}
+				title="Процесс не описан"
+				description="Пространству назначен процесс «{process.name}», но стадий в нём ещё нет: раскладывать не по чему, и завести дело нельзя — стадии, на которую его поставить, не существует.{canConfigure
+					? ''
+					: ' Описывает процесс администратор.'}"
+			>
+				{#snippet action()}
+					{#if canConfigure}
+						<Button
+							variant="outline"
+							href={resolve('/(app)/settings/workflows/[key]', { key: process.key })}
+						>
+							Описать процесс
+						</Button>
+					{/if}
+				{/snippet}
+			</EmptyState>
+		{/if}
 	</div>
 {:else if board.total === 0}
 	<div class="rounded-lg border border-border bg-surface">

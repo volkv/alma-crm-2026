@@ -13,6 +13,8 @@
 	import * as Select from '$lib/components/ui/select/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
+	import { Label } from '$lib/components/ui/label/index.js';
 	import ConfirmDialog from '$lib/components/confirm-dialog.svelte';
 	import Flash from '$lib/components/directory/flash.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
@@ -138,6 +140,8 @@
 
 	/** Выбранный для включения сотрудник. */
 	let addChoice = $state('');
+	/** Включить заодно и руководителя выбранного — по умолчанию да. */
+	let withManager = $state(true);
 
 	// Включённый уходит из списка кандидатов — выбор за ним не остаётся.
 	const submitAdd: SubmitFunction = () => {
@@ -146,9 +150,35 @@
 
 			if (result.type === 'success') {
 				addChoice = '';
+				withManager = true;
 			}
 		};
 	};
+
+	/** Сотрудники по идентификатору — чтобы назвать руководителя по имени. */
+	const people = $derived(
+		new Map((data.members?.candidates ?? []).map((person) => [person.userId, person]))
+	);
+
+	/**
+	 * Руководитель, которого стоит включить вместе с сотрудником: он есть, он
+	 * не администратор (тот видит всё и так) и в пространство ещё не включён.
+	 * Руководитель видит работу подчинённых только там, куда включён сам, и
+	 * без него его отчёты молча не учтут работу этого пространства.
+	 */
+	function missingManager(userId: string) {
+		const managerId = people.get(userId)?.managerUserId ?? null;
+
+		if (managerId === null || data.members === null) {
+			return null;
+		}
+
+		const inside = data.members.list.some((member) => member.userId === managerId);
+
+		return inside ? null : (people.get(managerId) ?? null);
+	}
+
+	const choiceManager = $derived(addChoice === '' ? null : missingManager(addChoice));
 
 	/** Кого ещё можно включить: действующие сотрудники не из состава. */
 	const candidates = $derived.by(() => {
@@ -267,6 +297,19 @@
 					<span>
 						<StatusBadge tone="warning">Взаимодействия заводить нечем</StatusBadge>
 					</span>
+				{:else if workspace.stageCount === 0}
+					<!-- Процесс назначен, но ещё не описан: заводить дела нечем, и
+						доска говорит то же самое. -->
+					<p class="text-sm text-muted-foreground">
+						<StatusBadge tone="warning">Процесс не описан</StatusBadge>
+						Стадий ещё нет — взаимодействия заводить нечем.
+						<a
+							class="rounded-sm text-link underline-offset-4 focus-ring hover:text-link-hover hover:underline"
+							href={resolve('/(app)/settings/workflows/[key]', { key: workspace.workflow.key })}
+						>
+							Описать процесс
+						</a>
+					</p>
 				{:else}
 					<p class="text-sm text-muted-foreground">
 						Стадий в действующей редакции: {formatNumber(workspace.stageCount)}.
@@ -356,10 +399,27 @@
 						<Table.Body>
 							{#each data.members.list as member (member.userId)}
 								<Table.Row>
+									{@const manager = missingManager(member.userId)}
 									<Table.Cell class="font-medium whitespace-normal">
 										{member.fullName}
 										{#if !member.isActive}
 											<StatusBadge tone="neutral">Выключен</StatusBadge>
+										{/if}
+										{#if manager !== null}
+											<!-- Руководитель не в пространстве — не видит эту работу
+												подчинённого. Включается одной кнопкой рядом. -->
+											<form
+												method="POST"
+												action="?/addMember"
+												use:enhance
+												class="mt-1 flex flex-wrap items-center gap-2 text-xs font-normal text-muted-foreground"
+											>
+												<input type="hidden" name="userId" value={manager.userId} />
+												Руководитель {manager.fullName} не включён и эту работу не видит.
+												<Button type="submit" variant="link" size="sm" class="h-auto px-0 text-xs">
+													Включить руководителя
+												</Button>
+											</form>
 										{/if}
 									</Table.Cell>
 									<Table.Cell>{member.roleName}</Table.Cell>
@@ -392,6 +452,11 @@
 					class="flex flex-wrap items-center gap-2"
 				>
 					<input type="hidden" name="userId" value={addChoice} />
+					<input
+						type="hidden"
+						name="managerUserId"
+						value={choiceManager !== null && withManager ? choiceManager.userId : ''}
+					/>
 					<Select.Root type="single" value={addChoice} onValueChange={(next) => (addChoice = next)}>
 						<Select.Trigger class="w-72" aria-label="Кого включить в пространство">
 							{candidates.find((candidate) => candidate.userId === addChoice)?.fullName ??
@@ -410,6 +475,16 @@
 						<PlusIcon aria-hidden="true" />
 						Включить
 					</Button>
+					{#if choiceManager !== null}
+						<Label class="flex basis-full items-center gap-2 text-sm font-normal">
+							<Checkbox
+								checked={withManager}
+								onCheckedChange={(next) => (withManager = next === true)}
+							/>
+							Включить и руководителя — {choiceManager.fullName}: он видит работу подчинённых только
+							в пространствах, куда включён сам
+						</Label>
+					{/if}
 				</form>
 			{/if}
 		</Card.Content>

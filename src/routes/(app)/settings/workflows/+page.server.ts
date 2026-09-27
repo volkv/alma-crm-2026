@@ -1,5 +1,6 @@
-import { error, type ActionFailure } from '@sveltejs/kit';
-import { fail, message, setError, superValidate, type SuperValidated } from 'sveltekit-superforms';
+import { error, redirect, type ActionFailure } from '@sveltejs/kit';
+import { resolve } from '$app/paths';
+import { fail, setError, superValidate, type SuperValidated } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { createWorkflowSchema } from '$lib/contracts/interactions';
 import { actorFromEvent } from '$lib/server/actor';
@@ -68,10 +69,14 @@ function asFormError<Out extends Record<string, unknown>, M, In extends Record<s
 
 export const actions: Actions = {
 	/**
-	 * Новый процесс заводится пустым: ни стадии, ни перехода. Стадии описывают
+	 * Новый процесс заводится пустым или копией другого. Пустой описывают
 	 * черновиком в редакторе, а не этой формой — описание работы это полтора
 	 * десятка строк с нормативами и переходами, и просить их разом у того, кто
 	 * только придумал название, значило бы отложить заведение до конца работы.
+	 *
+	 * Заведение заканчивается переходом в редактор нового процесса — так же,
+	 * как заведение пространства открывает его страницу: следующий шаг почти
+	 * всегда там.
 	 */
 	create: async (event) => {
 		const form = await superValidate(event.request, zod4(createWorkflowSchema), {
@@ -82,12 +87,19 @@ export const actions: Actions = {
 			return fail(400, { form });
 		}
 
+		let created;
+
 		try {
-			await createWorkflow(actorFromEvent(event), form.data);
+			created = await createWorkflow(actorFromEvent(event), form.data);
 		} catch (failure) {
 			return asFormError(form, failure);
 		}
 
-		return message(form, `Процесс «${form.data.name}» заведён: опишите стадии черновиком`);
+		redirect(
+			303,
+			`${resolve('/(app)/settings/workflows/[key]', { key: created.key })}?done=${
+				form.data.copyFromKey === null ? 'created' : 'copied'
+			}`
+		);
 	}
 };

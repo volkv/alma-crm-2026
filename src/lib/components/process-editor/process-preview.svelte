@@ -1,8 +1,13 @@
 <script lang="ts">
+	import { resolve } from '$app/paths';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatNumber } from '$lib/format';
-	import type { ProcessPreview, StageChangeKind } from '$lib/contracts/interactions';
+	import type {
+		ProcessPreview,
+		ProcessPreviewMove,
+		StageChangeKind
+	} from '$lib/contracts/interactions';
 
 	/**
 	 * Последствия применения черновика: сколько записей переедет, сколько
@@ -29,6 +34,27 @@
 	 * не переезжая: переименование и правка параметров. Переезжающие сюда не
 	 * идут — их считает `preview.affected`.
 	 */
+	/**
+	 * Переезжающие дела по пространствам: процесс бывает назначен нескольким,
+	 * и администратор должен видеть, чью работу двигает. Сервер уже отдаёт их
+	 * по порядку пространств в меню.
+	 */
+	const movesByWorkspace = $derived.by(() => {
+		const groups: { key: string; name: string; moves: ProcessPreviewMove[] }[] = [];
+
+		for (const move of preview.moves) {
+			const group = groups.find((candidate) => candidate.key === move.workspaceKey);
+
+			if (group === undefined) {
+				groups.push({ key: move.workspaceKey, name: move.workspaceName, moves: [move] });
+			} else {
+				group.moves.push(move);
+			}
+		}
+
+		return groups;
+	});
+
 	const affectedInPlace = $derived(
 		rows
 			.filter((row) => row.change === 'renamed' || row.change === 'changed')
@@ -50,6 +76,42 @@
 			<strong class="text-foreground">{formatNumber(affectedInPlace)}</strong>
 		</p>
 	</div>
+
+	{#if movesByWorkspace.length > 0}
+		<section class="flex flex-col gap-2" aria-labelledby="preview-moves">
+			<h3 id="preview-moves" class="text-sm font-medium">Какие дела переедут</h3>
+			{#each movesByWorkspace as group (group.key)}
+				<div class="flex flex-col gap-1">
+					<p class="section-overline">
+						{group.name} — {formatNumber(group.moves.length)}
+					</p>
+					<ul class="flex flex-col divide-y divide-border rounded-md border border-border">
+						{#each group.moves as move (move.interactionId)}
+							<li class="flex flex-col gap-0.5 px-3 py-2 text-sm">
+								<a
+									class="rounded-sm font-medium text-link underline-offset-4 focus-ring hover:text-link-hover hover:underline"
+									href={resolve('/(app)/w/[workspace]/interactions/[id=uuid]', {
+										workspace: move.workspaceKey,
+										id: move.interactionId
+									})}
+								>
+									{move.title}
+								</a>
+								<span class="text-xs text-muted-foreground">
+									{move.ownerName} · «{move.fromStageName}» →
+									{#if move.toStageName === null}
+										<span class="text-danger">куда — не указано</span>
+									{:else}
+										«{move.toStageName}»
+									{/if}
+								</span>
+							</li>
+						{/each}
+					</ul>
+				</div>
+			{/each}
+		</section>
+	{/if}
 
 	{#if rows.length === 0}
 		<EmptyState

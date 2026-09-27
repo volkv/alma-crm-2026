@@ -22,6 +22,7 @@
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatNumber } from '$lib/format';
+	import { ADDRESS_KEY_STYLE, keyFromName } from '$lib/key-from-name';
 	import { createWorkspaceSchema } from '$lib/contracts/interactions';
 	import type { PageProps } from './$types';
 
@@ -52,6 +53,19 @@
 		untrack(() => data.createForm),
 		{ validators: zod4Client(createWorkspaceSchema) }
 	);
+
+	/** Ключ правили руками — название его больше не переписывает. */
+	let keyEdited = $state(false);
+
+	const takenKeys = $derived(new Set(data.workspaces.map((workspace) => workspace.key)));
+
+	function rename(next: string) {
+		$createData.name = next;
+
+		if (!keyEdited) {
+			$createData.key = keyFromName(next, ADDRESS_KEY_STYLE, takenKeys);
+		}
+	}
 
 	/**
 	 * Ключи в том порядке, в каком они встанут после перестановки строки.
@@ -276,16 +290,22 @@
 				label="Название"
 				required
 				placeholder="Корпоративное обучение"
-				bind:value={$createData.name}
+				bind:value={() => $createData.name, rename}
 				errors={$createErrors.name}
 			/>
 			<FieldInput
 				name="key"
 				label="Ключ"
 				required
-				description="Строчные латинские буквы, цифры и дефис. Ключ встанет в адрес доски и останется в нём навсегда: переименование его не меняет."
-				placeholder="corporate"
-				bind:value={$createData.key}
+				description="Собирается из названия; поправьте, если хотите. Строчные латинские буквы, цифры и дефис — ключ встанет в адрес доски навсегда: переименование его не меняет."
+				placeholder="korporativnoe-obuchenie"
+				bind:value={
+					() => $createData.key,
+					(next) => {
+						keyEdited = true;
+						$createData.key = next;
+					}
+				}
 				errors={$createErrors.key}
 			/>
 			<FieldTextarea
@@ -302,7 +322,7 @@
 			<FieldSelect
 				name="workflowKey"
 				label="Процесс"
-				description="Один процесс можно назначить нескольким пространствам: два направления по одному сценарию — это одно описание работы, а не две копии."
+				description="Один процесс можно назначить нескольким пространствам — тогда правка процесса меняет работу во всех. Своя работа — свой процесс: заведите его в «Процессах», пустым или копией."
 				options={workflowOptions}
 				placeholder="Назначить позже"
 				bind:value={

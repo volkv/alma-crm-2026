@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
+	import { enhance } from '$app/forms';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
@@ -23,13 +24,32 @@
 	 */
 	let {
 		card,
-		action
+		action,
+		lmsStages
 	}: {
 		/** Что записано сейчас. */
 		card: { panels: CardPanel[]; templates: DocumentTemplateKey[] };
 		/** Адрес действия сохранения. */
 		action: string;
+		/**
+		 * Стадии действующего процесса, которые ждут данных системы обучения.
+		 * Панель потоков карточка показывает на них и там, где поток уже
+		 * заявлен, — не на всём пути дела.
+		 */
+		lmsStages: string[];
 	} = $props();
+
+	/**
+	 * Где панель видна не всегда — словами под её названием в предпросмотре.
+	 * Остальные панели стоят в карточке на любой стадии.
+	 */
+	const stageNote = $derived<Partial<Record<CardPanel, string>>>(
+		lmsStages.length === 0
+			? {}
+			: {
+					learning: `на стадиях ${lmsStages.map((name) => `«${name}»`).join(', ')} и там, где поток уже заявлен`
+				}
+	);
 
 	/**
 	 * Состав в форме — до сохранения. Предпросмотр читает его же: администратор
@@ -95,7 +115,16 @@
 	}
 </script>
 
-<form method="POST" {action} class="grid gap-6 md:grid-cols-[minmax(0,1fr)_16rem]">
+<!-- `enhance`: ответ остаётся на этой вкладке, а в адресе не застревает
+	`?/card`. -->
+<form
+	method="POST"
+	{action}
+	use:enhance={() =>
+		async ({ update }) =>
+			update({ reset: false })}
+	class="grid gap-6 md:grid-cols-[minmax(0,1fr)_16rem]"
+>
 	<div class="flex flex-col gap-4">
 		<fieldset class="flex flex-col gap-4">
 			<legend class="mb-2 text-sm font-medium">Панели</legend>
@@ -166,9 +195,17 @@
 		<ol class="flex list-inside list-decimal flex-col gap-1 text-sm">
 			<li>Сторона и условия</li>
 			{#each CARD_PANELS.filter((panel) => panels.includes(panel)) as panel (panel)}
-				<li>{CARD_PANEL_LABELS[panel]}</li>
+				<li>
+					{CARD_PANEL_LABELS[panel]}
+					{#if stageNote[panel]}
+						<span class="block pl-4 text-xs text-muted-foreground">{stageNote[panel]}</span>
+					{/if}
+				</li>
 			{/each}
 		</ol>
+		<p class="text-xs text-muted-foreground">
+			Панель модуля видна только в пространствах, где модуль действует.
+		</p>
 		<p class="text-xs text-muted-foreground">
 			{#if templates.length === 0}
 				Документы по шаблону не собираются.

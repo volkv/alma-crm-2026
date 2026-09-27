@@ -6,7 +6,6 @@
 	import { resolve } from '$app/paths';
 	import { superForm } from 'sveltekit-superforms';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
-	import { toast } from 'svelte-sonner';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
@@ -14,11 +13,13 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
+	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatNumber } from '$lib/format';
+	import { ADDRESS_KEY_STYLE, keyFromName } from '$lib/key-from-name';
 	import { createWorkflowSchema } from '$lib/contracts/interactions';
 	import type { PageProps } from './$types';
 
@@ -26,25 +27,44 @@
 
 	let createOpen = $state(false);
 
+	// Успех заведения — переход в редактор нового процесса, а сообщение о нём
+	// показывает уже он; здесь остаются только ошибки формы.
 	const {
 		form: createData,
 		errors: createErrors,
 		enhance: createEnhance,
-		submitting: createSubmitting,
-		reset: resetCreate
+		submitting: createSubmitting
 	} = superForm(
 		untrack(() => data.createForm),
-		{
-			validators: zod4Client(createWorkflowSchema),
-			onUpdated: ({ form }) => {
-				if (typeof form.message === 'string') {
-					toast.success(form.message);
-					createOpen = false;
-					resetCreate();
-				}
-			}
-		}
+		{ validators: zod4Client(createWorkflowSchema) }
 	);
+
+	/** Ключ правили руками — название его больше не переписывает. */
+	let keyEdited = $state(false);
+
+	const takenKeys = $derived(new Set(data.workflows.map((workflow) => workflow.key)));
+
+	function rename(next: string) {
+		$createData.name = next;
+
+		if (!keyEdited) {
+			$createData.key = keyFromName(next, ADDRESS_KEY_STYLE, takenKeys);
+		}
+	}
+
+	/**
+	 * Образцы копии — процессы, в которых есть что копировать. Пустое значение
+	 * — «пустой процесс»: стадии описывают в редакторе с нуля.
+	 */
+	const copyOptions = $derived([
+		{ value: '', label: 'Пустой — стадии опишу в редакторе' },
+		...data.workflows
+			.filter((workflow) => workflow.stageCount > 0)
+			.map((workflow) => ({
+				value: workflow.key,
+				label: `Копия «${workflow.name}» — стадий: ${formatNumber(workflow.stageCount)}`
+			}))
+	]);
 
 	/**
 	 * Обычная таблица, а не `DataTable`: процессов единицы, их не ищут и не
@@ -69,8 +89,8 @@
 		<Card.Title>Процессы</Card.Title>
 		<Card.Description>
 			Процесс описан данными: стадии с нормативами и чек-листами и переходы между ними. Новый
-			процесс заводится пустым — стадии описывают черновиком уже в редакторе, и до его применения на
-			работу они не влияют.
+			процесс заводится пустым — стадии описывают черновиком в редакторе — или копией действующего
+			процесса, которую потом правят черновиком.
 		</Card.Description>
 		<Card.Action>
 			<Button size="sm" onclick={() => (createOpen = true)}>
@@ -90,7 +110,7 @@
 		{#if data.workflows.length === 0}
 			<EmptyState
 				title="Процессов нет"
-				description="Заведите первый процесс: он появится пустым, а стадии и переходы вы опишете черновиком в редакторе."
+				description="Заведите первый процесс: стадии и переходы вы опишете черновиком в редакторе."
 			/>
 		{:else}
 			<div class="overflow-x-auto">
@@ -182,9 +202,10 @@
 		<Dialog.Header>
 			<Dialog.Title>Новый процесс</Dialog.Title>
 			<Dialog.Description>
-				Описание работы: стадии, нормативы, чек-листы и переходы. Заводится пустым — стадии вы
-				опишете черновиком в редакторе, и пока черновик не применён, ни на одно взаимодействие он не
-				влияет. Где работать по этому процессу, решается отдельно, в разделе «Пространства».
+				Описание работы: стадии, нормативы, чек-листы и переходы. Пустой процесс описывают в
+				редакторе, копия сразу получает стадии, переходы и состав карточки образца — их правят
+				черновиком. Где работать по процессу, решается в разделе «Пространства». После заведения
+				откроется редактор.
 			</Dialog.Description>
 		</Dialog.Header>
 
@@ -207,17 +228,33 @@
 				label="Название"
 				required
 				placeholder="Корпоративные продажи"
-				bind:value={$createData.name}
+				bind:value={() => $createData.name, rename}
 				errors={$createErrors.name}
 			/>
 			<FieldInput
 				name="key"
 				label="Ключ"
 				required
-				description="Строчные латинские буквы, цифры и дефис. Ключ встанет в адрес редактора и останется в нём навсегда."
-				placeholder="corporate"
-				bind:value={$createData.key}
+				description="Собирается из названия; поправьте, если хотите. Строчные латинские буквы, цифры и дефис — ключ встанет в адрес редактора навсегда."
+				placeholder="korporativnye-prodazhi"
+				bind:value={
+					() => $createData.key,
+					(next) => {
+						keyEdited = true;
+						$createData.key = next;
+					}
+				}
 				errors={$createErrors.key}
+			/>
+			<FieldSelect
+				name="copyFromKey"
+				label="С чего начать"
+				options={copyOptions}
+				bind:value={
+					() => $createData.copyFromKey ?? '',
+					(next) => ($createData.copyFromKey = next === '' ? null : next)
+				}
+				errors={$createErrors.copyFromKey}
 			/>
 			<FieldTextarea
 				name="description"

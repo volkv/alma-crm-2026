@@ -17,12 +17,15 @@ import {
 	createDraft,
 	discardDraft,
 	getWorkflow,
+	linkInsertedStage,
 	previewPublication,
 	processDefinition,
 	publishProcess,
+	relinkRemovedStage,
 	updateDraft
 } from '$lib/server/stages/process';
-import { parseChecklist, stageFormSchema, transitionFormSchema } from './schema';
+import { CHECKLIST_KEY_STYLE, keyFromName } from '$lib/key-from-name';
+import { stageFormSchema, transitionFormSchema, type ChecklistItemForm } from './schema';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -128,6 +131,28 @@ async function readDraftDefinition(
 	return processDefinition(draft);
 }
 
+/**
+ * Чек-лист стадии из формы. Сохранённые пункты приезжают со своими ключами —
+ * по ним в идущих делах хранятся отметки, — а новым ключ собирается из
+ * названия и не повторяет ни один ключ этой стадии.
+ */
+function checklistFromForm(items: readonly ChecklistItemForm[]) {
+	const taken = new Set(items.map((item) => item.key).filter((key) => key !== ''));
+
+	return items.map((item) => {
+		const key = item.key === '' ? keyFromName(item.label, CHECKLIST_KEY_STYLE, taken) : item.key;
+
+		taken.add(key);
+
+		return { key, label: item.label, required: item.required };
+	});
+}
+
+/** Изменения цепочки переходов одной фразой — к сообщению об успехе. */
+function withChainNote(text: string, changes: readonly string[]): string {
+	return changes.length === 0 ? text : `${text}. Переходы перестроены: ${changes.join('; ')}`;
+}
+
 /** Значение поля формы строкой; пустое и отсутствующее — одно и то же. */
 function field(form: FormData, name: string): string {
 	const value = form.get(name);
@@ -160,13 +185,20 @@ export const actions: Actions = {
 	},
 
 	createDraft: async (event) => {
+		let empty: boolean;
+
 		try {
-			await createDraft(actorFromEvent(event), event.params.key);
+			empty = (await createDraft(actorFromEvent(event), event.params.key)).stages.length === 0;
 		} catch (failure) {
 			return toActionFailure(failure);
 		}
 
-		return { ok: true, message: 'Черновик изменений создан копией действующего процесса' };
+		return {
+			ok: true,
+			message: empty
+				? 'Черновик заведён: добавьте первую стадию, затем следующие и переходы между ними — и примените'
+				: 'Черновик изменений создан копией действующего процесса'
+		};
 	},
 
 	discardDraft: async (event) => {
@@ -188,6 +220,14 @@ export const actions: Actions = {
 
 		const input = form.data;
 		const ctx = actorFromEvent(event);
+		const slaDays = input.slaDays;
+
+		// Схема уже отказала пустому нормативу; проверка здесь сужает тип.
+		if (slaDays === null) {
+			return setError(form, 'slaDays', 'Укажите норматив в днях');
+		}
+
+		let chainChanges: string[] = [];
 
 		try {
 			const definition = await readDraftDefinition(ctx, event.params.key);
@@ -221,16 +261,17 @@ export const actions: Actions = {
 			}
 
 			// Позиция — это место в цепочке, а не хранимое поле: номера расставит
-			// запись редакции по порядку списка. Значение за краями списка
-			// означает «в конец», а не ошибку ввода.
-			const place = Math.min(Math.max(input.position, 1), stages.length + 1) - 1;
+			// запись редакции по порядку списка. Пусто или за краями списка —
+			// «в конец», а не ошибка ввода.
+			const place =
+				Math.min(Math.max(input.position ?? stages.length + 1, 1), stages.length + 1) - 1;
 
 			stages.splice(place, 0, {
 				key: input.key,
 				name: input.name,
 				category: input.category,
-				slaDays: input.slaDays,
-				staleAfterDays: input.staleAfterDays === 0 ? null : input.staleAfterDays,
+				slaDays,
+				staleAfterDays: input.staleAfterDays,
 				requiresResult: input.requiresResult,
 				requiresConfirmation: input.requiresConfirmation,
 				requiresLmsData: input.requiresLmsData,
@@ -243,15 +284,33 @@ export const actions: Actions = {
 				lmsGroupPurposes: input.lmsGroupPurposes.length === 0 ? null : input.lmsGroupPurposes,
 				onEnterNotify: input.onEnterNotify === '' ? null : input.onEnterNotify,
 				isFinal: input.isFinal,
-				checklist: parseChecklist(input.checklist).items
+				checklist: checklistFromForm(input.checklist)
 			});
 
-			await updateDraft(ctx, event.params.key, { ...definition, stages });
+			// Новая стадия встаёт в цепочку сама: прямой шаг между соседями
+			// заменяется двумя через неё. Правка существующей стадии переходов не
+			// трогает — их меняют явно.
+			let transitions = definition.transitions;
+
+			if (index === -1) {
+				const chain = linkInsertedStage(stages, definition.transitions, input.key);
+
+				transitions = chain.transitions;
+				chainChanges = chain.changes;
+			}
+
+			await updateDraft(ctx, event.params.key, { ...definition, stages, transitions });
 		} catch (failure) {
 			return asFormError(form, failure);
 		}
 
-		return message(form, input.originalKey === '' ? 'Стадия добавлена' : 'Стадия сохранена');
+		return message(
+			form,
+			withChainNote(
+				input.originalKey === '' ? 'Стадия добавлена' : 'Стадия сохранена',
+				chainChanges
+			)
+		);
 	},
 
 	deleteStage: async (event) => {
@@ -264,6 +323,7 @@ export const actions: Actions = {
 		}
 
 		const ctx = actorFromEvent(event);
+		let chainChanges: string[];
 
 		try {
 			const definition = await readDraftDefinition(ctx, event.params.key);
@@ -283,11 +343,11 @@ export const actions: Actions = {
 			}
 
 			// Переходы уходят вместе со стадией: переход без одного из концов —
-			// это не описание процесса, а висячая ссылка, и оставлять её человеку
-			// на доделку значит запереть применение на непонятной претензии.
-			const transitions = definition.transitions.filter(
-				(transition) => transition.fromStageKey !== key && transition.toStageKey !== key
-			);
+			// это не описание процесса, а висячая ссылка. Линейное звено при этом
+			// сшивается прямым шагом, чтобы цепочка не порвалась.
+			const chain = relinkRemovedStage(definition.stages, definition.transitions, key);
+
+			chainChanges = chain.changes;
 
 			// Явно выбранная цель переноса сильнее умолчания; пустая означает
 			// «как решит движок» — предыдущая сохранившаяся стадия.
@@ -309,14 +369,14 @@ export const actions: Actions = {
 			await updateDraft(ctx, event.params.key, {
 				...definition,
 				stages,
-				transitions,
+				transitions: chain.transitions,
 				migrationRules
 			});
 		} catch (failure) {
 			return toActionFailure(failure);
 		}
 
-		return { ok: true, message: 'Стадия удалена из черновика' };
+		return { ok: true, message: withChainNote('Стадия удалена из черновика', chainChanges) };
 	},
 
 	transition: async (event) => {

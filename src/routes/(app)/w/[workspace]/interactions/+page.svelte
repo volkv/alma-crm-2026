@@ -196,6 +196,19 @@
 	let tableApi = $state<SvelteTable<DataTableFeatures, InteractionListItem> | null>(null);
 	const newHref = $derived(resolve('/(app)/w/[workspace]/interactions/new', { workspace }));
 
+	/**
+	 * Почему завести дело нельзя; `null` — можно. Без назначенного или без
+	 * описанного процесса стадии, на которую встанет запись, не существует, и
+	 * кнопка говорит об этом, а не падает в конце заполненной формы.
+	 */
+	const createBlocked = $derived(
+		data.process === null
+			? 'Пространству не назначен процесс'
+			: data.process.described
+				? null
+				: `В процессе «${data.process.name}» ещё нет стадий`
+	);
+
 	function open(row: InteractionListItem) {
 		return goto(resolve('/(app)/w/[workspace]/interactions/[id=uuid]', { workspace, id: row.id }));
 	}
@@ -400,14 +413,20 @@
 	description="{data.workspace.name}: где стоит каждое дело и сколько у него осталось времени."
 >
 	{#snippet actions()}
-		<!-- В пространстве без назначенного процесса заводить нечего: стадии, на
-			которую встанет запись, не существует. Кнопки нет вовсе — предложить
-			действие и отказать в нём хуже, чем не предлагать. -->
-		{#if data.workspace.hasWorkflow}
+		<!-- Без описанного процесса заводить нечем: стадии, на которую встанет
+			запись, не существует. Кнопка недоступна и называет причину — иначе
+			форма заполнялась бы целиком и отказывала только при сохранении. -->
+		{#if createBlocked === null}
 			<Button href={newHref}>
 				<PlusIcon aria-hidden="true" />
 				Создать взаимодействие
 			</Button>
+		{:else}
+			<Button disabled title={createBlocked} aria-describedby="create-blocked">
+				<PlusIcon aria-hidden="true" />
+				Создать взаимодействие
+			</Button>
+			<span id="create-blocked" class="sr-only">{createBlocked}</span>
 		{/if}
 	{/snippet}
 </Header>
@@ -502,15 +521,30 @@
 		class={cn('min-w-0', data.view === 'board' && 'sm:flex sm:min-h-0 sm:flex-1 sm:flex-col')}
 	>
 		{#if data.view === 'board'}
-			<Board board={data.board} canTransition={data.canTransition} isFiltered={data.isFiltered} />
+			<Board
+				board={data.board}
+				canTransition={data.canTransition}
+				isFiltered={data.isFiltered}
+				workspaceKey={workspace}
+				process={data.process}
+				canConfigure={data.canConfigure}
+			/>
 		{:else if data.total === 0 && !data.isFiltered}
 			<div class="rounded-lg border border-border bg-surface">
 				<EmptyState
 					title="Взаимодействий пока нет"
-					description="Заведите первое: выберите учебное заведение, программы и ответственного — маршрут стадий подставится сам."
+					description={createBlocked === null
+						? 'Заведите первое: выберите учебное заведение, программы и ответственного — маршрут стадий подставится сам.'
+						: `${createBlocked}: завести дело пока нельзя. ${
+								!data.canConfigure
+									? 'Процесс настраивает администратор.'
+									: data.process === null
+										? 'Назначьте процесс в «Настройки → Пространства».'
+										: 'Опишите его в «Настройки → Процессы».'
+							}`}
 				>
 					{#snippet action()}
-						{#if data.workspace.hasWorkflow}
+						{#if createBlocked === null}
 							<Button href={newHref}>
 								<PlusIcon aria-hidden="true" />
 								Создать взаимодействие

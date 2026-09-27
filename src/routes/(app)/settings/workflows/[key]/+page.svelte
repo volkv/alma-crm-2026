@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { onMount, untrack } from 'svelte';
+	import { enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
+	import type { SubmitFunction } from '@sveltejs/kit';
 	import { page } from '$app/state';
 	import { superForm } from 'sveltekit-superforms';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
@@ -9,6 +11,7 @@
 	import HistoryIcon from '@lucide/svelte/icons/history';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PlusIcon from '@lucide/svelte/icons/plus';
+	import XIcon from '@lucide/svelte/icons/x';
 	import Trash2Icon from '@lucide/svelte/icons/trash-2';
 	import UploadIcon from '@lucide/svelte/icons/upload';
 	import * as Alert from '$lib/components/ui/alert/index.js';
@@ -24,7 +27,6 @@
 	import FormDialog from '$lib/components/form-dialog.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
-	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import FormField from '$lib/components/form/form-field.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
@@ -35,7 +37,9 @@
 	import StageRequirements from '$lib/components/process-editor/stage-requirements.svelte';
 	import StageStrip from '$lib/components/interaction-card/stage-strip.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
+	import Flash from '$lib/components/directory/flash.svelte';
 	import { formatNumber, pluralize } from '$lib/format';
+	import { keyFromName, STAGE_KEY_STYLE } from '$lib/key-from-name';
 	import {
 		DOCUMENT_STATUS_FACTS,
 		DOCUMENT_STATUS_FACT_LABELS,
@@ -52,7 +56,7 @@
 		type StageView
 	} from '$lib/contracts/interactions';
 	import { STAGE_CATEGORY_LABELS } from '../../../w/[workspace]/interactions/filters';
-	import { CHECKLIST_HINT, formatChecklist, stageFormSchema, transitionFormSchema } from './schema';
+	import { stageFormSchema, transitionFormSchema } from './schema';
 	import type { PageProps } from './$types';
 
 	let { data, form: actionResult }: PageProps = $props();
@@ -82,9 +86,9 @@
 
 	let tab = $state<Tab>('stages');
 
-	// Раздел помнит адрес: сохранение состава карточки — обычная отправка
-	// формы, и после неё экран открывается заново на том же разделе, а не на
-	// стадиях. Читается после гидрации: на сервере якоря адреса нет.
+	// Раздел открывается по якорю адреса: ссылки «Состав карточки» из
+	// настроек модулей ведут сразу в него. Читается после гидрации: на сервере
+	// якоря адреса нет.
 	onMount(() => {
 		const hash = page.url.hash.slice(1);
 
@@ -131,6 +135,9 @@
 	} = superForm(
 		untrack(() => data.stageForm),
 		{
+			// Чек-лист — список пунктов, а не строка: форма уходит целиком,
+			// как описано в схеме, без разбора полей по именам.
+			dataType: 'json',
 			validators: zod4Client(stageFormSchema),
 			onUpdated: ({ form }) => {
 				if (form.message) {
@@ -159,8 +166,31 @@
 		}
 	);
 
+	/**
+	 * Ключ новой стадии правили руками: тогда название его больше не
+	 * переписывает. Пока не правили — ключ следует за названием.
+	 */
+	let keyEdited = $state(false);
+
+	/**
+	 * Ключи, которые новой стадии предлагать нельзя: стадии черновика и ключи,
+	 * снятые прошлыми применениями, — они заняты навсегда.
+	 */
+	const takenStageKeys = $derived(
+		new Set([...(shown?.stages ?? []).map((stage) => stage.key), ...detail.retiredStageKeys])
+	);
+
+	function renameStage(next: string) {
+		$stageData.name = next;
+
+		if ($stageData.originalKey === '' && !keyEdited) {
+			$stageData.key = keyFromName(next, STAGE_KEY_STYLE, takenStageKeys);
+		}
+	}
+
 	/** Стадия в форме: пусто — заводится новая и встаёт в конец цепочки. */
 	function openStage(stage: StageView | null) {
+		keyEdited = false;
 		$stageData = {
 			originalKey: stage?.key ?? '',
 			position: stage?.position ?? (shown?.stages.length ?? 0) + 1,
@@ -168,9 +198,8 @@
 			name: stage?.name ?? '',
 			category: stage?.category ?? 'contact',
 			slaDays: stage?.slaDays ?? 7,
-			// Ноль в поле означает «срока без событий нет»: в базе это пусто, но
-			// пустое числовое поле не отличить от неверно введённого.
-			staleAfterDays: stage?.staleAfterDays ?? 0,
+			// Пусто — тишину по делу не подсвечивать.
+			staleAfterDays: stage?.staleAfterDays ?? null,
 			requiresResult: stage?.requiresResult ?? false,
 			requiresConfirmation: stage?.requiresConfirmation ?? false,
 			requiresLmsData: stage?.requiresLmsData ?? false,
@@ -184,7 +213,7 @@
 			// Пустая строка — «никого не уведомлять», по той же причине.
 			onEnterNotify: stage?.onEnterNotify ?? '',
 			isFinal: stage?.isFinal ?? false,
-			checklist: stage === null ? '' : formatChecklist(stage.checklist)
+			checklist: (stage?.checklist ?? []).map((item) => ({ ...item }))
 		};
 		$stageErrors = {};
 		stageOpen = true;
@@ -229,11 +258,38 @@
 		return data.preview?.rows.find((row) => row.stageKey === key)?.interactions ?? 0;
 	}
 
-	/** Пример в поле чек-листа: показывает обе формы записи — обязательную и нет. */
-	const CHECKLIST_PLACEHOLDER = [
-		'* contact_confirmed: Подтверждён контакт ответственного лица',
-		'channel_agreed: Согласован канал связи'
-	].join('\n');
+	/** Новый пункт чек-листа: ключ ему соберёт сервер из названия. */
+	function addChecklistItem() {
+		$stageData.checklist = [...$stageData.checklist, { key: '', label: '', required: false }];
+	}
+
+	function removeChecklistItem(index: number) {
+		$stageData.checklist = $stageData.checklist.filter((_, position) => position !== index);
+	}
+
+	/**
+	 * Отправка действий без формы-обёртки superforms: ответ остаётся на месте,
+	 * а в адресе не застревает `?/createDraft`. Диалог, из которого ушла
+	 * форма, закрывается после ответа — и при успехе, и при отказе: отказ
+	 * показывается над разделами.
+	 */
+	function submitThen(close: () => void): SubmitFunction {
+		return () =>
+			async ({ update }) => {
+				await update();
+				close();
+			};
+	}
+
+	/**
+	 * Стадии, на которых карточка показывает панель системы обучения, — её
+	 * видно не на всём пути, и состав карточки говорит об этом заранее.
+	 */
+	const lmsStageNames = $derived(
+		(detail.active?.stages ?? [])
+			.filter((stage) => stage.requiresLmsData)
+			.map((stage) => stage.name)
+	);
 
 	const stageOptions = $derived(
 		(shown?.stages ?? []).map((stage) => ({
@@ -279,28 +335,34 @@
 	description,
 	value,
 	errors,
+	required = false,
 	onchange
 }: {
 	name: string;
 	label: string;
 	description?: string;
-	value: number;
+	value: number | null;
 	errors: string[] | undefined;
-	onchange: (next: number) => void;
+	required?: boolean;
+	onchange: (next: number | null) => void;
 })}
-	<FormField {name} {label} {description} {errors} required>
+	<FormField {name} {label} {description} {errors} {required}>
 		{#snippet control({ id, describedBy, invalid })}
-			<!-- Пустое поле даёт NaN, и схема скажет об этом словами; подменять его
-				нулём нельзя — ноль здесь означал бы настоящее значение. -->
+			<!-- Пустое поле — это `null`, а не ноль: ноль здесь означал бы настоящее
+				значение, и схема отказывает пустому обязательному полю словами. -->
 			<Input
 				{id}
 				{name}
 				type="number"
 				inputmode="numeric"
-				{value}
+				value={value ?? ''}
 				aria-invalid={invalid}
 				aria-describedby={describedBy}
-				oninput={(event) => onchange(event.currentTarget.valueAsNumber)}
+				oninput={(event) => {
+					const next = event.currentTarget.valueAsNumber;
+
+					onchange(Number.isNaN(next) ? null : next);
+				}}
 			/>
 		{/snippet}
 	</FormField>
@@ -322,6 +384,15 @@
 		{label}
 	</Label>
 {/snippet}
+
+<Flash
+	messages={{
+		created:
+			'Процесс заведён пустым. Нажмите «Описать процесс»: в черновике добавьте стадии и переходы и примените его',
+		copied:
+			'Процесс заведён копией и уже действует. Назначьте его пространству, а стадии правьте черновиком изменений'
+	}}
+/>
 
 {#if notice}
 	<Alert.Root>
@@ -364,9 +435,13 @@
 			{/if}
 		</Card.Title>
 		<Card.Description>
-			{#if detail.active === null}
-				Стадий ещё нет: заведите черновик, опишите в нём стадии и примените его. Пока стадий нет,
-				завести взаимодействие в пространстве с этим процессом нельзя.
+			{#if detail.active === null && !editable}
+				Стадий ещё нет. Нажмите «Описать процесс»: откроется черновик, в нём добавьте стадии и
+				переходы и примените его. Пока стадий нет, завести взаимодействие в пространстве с этим
+				процессом нельзя.
+			{:else if detail.active === null}
+				Черновик первой редакции: добавьте стадии по порядку — шаги вперёд между соседними система
+				поставит сама — и примените. Дел на процессе ещё нет, переносить при применении некого.
 			{:else if editable}
 				Стадии и переходы правятся в черновике — копии действующего процесса. На работу он не
 				влияет, пока его не применят.
@@ -391,16 +466,16 @@
 					Изменения процесса
 				</Button>
 				{#if draft === null}
-					<form method="POST" action="?/createDraft">
-						<Button type="submit" size="sm" disabled={detail.active === null}>
+					<form method="POST" action="?/createDraft" use:enhance>
+						<Button type="submit" size="sm">
 							<PencilIcon aria-hidden="true" />
-							Черновик изменений
+							{detail.active === null ? 'Описать процесс' : 'Черновик изменений'}
 						</Button>
 					</form>
 				{:else}
 					<!-- Отмена черновика уничтожает всю подготовленную правку и вернуть
 						её нечем: спрашиваем так же, как перед применением ко всем. -->
-					<form method="POST" action="?/discardDraft" bind:this={discardForm}>
+					<form method="POST" action="?/discardDraft" bind:this={discardForm} use:enhance>
 						<Button type="button" variant="outline" size="sm" onclick={() => (discardOpen = true)}>
 							Отменить черновик
 						</Button>
@@ -491,7 +566,7 @@
 		{#if shown === null}
 			<EmptyState
 				title="В процессе нет ни одной стадии"
-				description="Заведите черновик изменений и опишите в нём первую стадию."
+				description="Нажмите «Описать процесс» вверху: откроется черновик, и в нём можно добавить первую стадию."
 			/>
 		{:else}
 			<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
@@ -727,7 +802,7 @@
 														</Button>
 														<!-- Переход — это одна строка настройки, и возвращается он тем
 															же диалогом, которым заводился: подтверждать тут нечего. -->
-														<form method="POST" action="?/deleteTransition">
+														<form method="POST" action="?/deleteTransition" use:enhance>
 															<input
 																type="hidden"
 																name="fromStageKey"
@@ -773,7 +848,7 @@
 					процесса.
 				</InlineHint>
 				<!-- Якорь в адресе действия возвращает на этот раздел после сохранения. -->
-				<ProcessCardForm card={data.card} action="?/card#card" />
+				<ProcessCardForm card={data.card} action="?/card" lmsStages={lmsStageNames} />
 			</Card.Content>
 		</Card.Root>
 	</Tabs.Content>
@@ -840,7 +915,7 @@
 			label="Название"
 			description="Что на этой стадии делают, а не на каком участке процесса она стоит."
 			required
-			bind:value={$stageData.name}
+			bind:value={() => $stageData.name, renameStage}
 			errors={$stageErrors.name}
 		/>
 		<div class="grid gap-4 sm:grid-cols-2">
@@ -850,13 +925,14 @@
 				description: 'Из него считается срок стадии.',
 				value: $stageData.slaDays,
 				errors: $stageErrors.slaDays,
+				required: true,
 				onchange: (next) => ($stageData.slaDays = next)
 			})}
 			{@render numberField({
 				name: 'staleAfterDays',
 				label: 'Без событий, дней',
 				description:
-					'Когда подсветить тишину по делу; 0 — не подсвечивать. Считается от последнего события.',
+					'Когда подсветить тишину по делу; пусто — не подсвечивать. Считается от последнего события.',
 				value: $stageData.staleAfterDays,
 				errors: $stageErrors.staleAfterDays,
 				onchange: (next) => ($stageData.staleAfterDays = next)
@@ -866,6 +942,7 @@
 			{@render numberField({
 				name: 'position',
 				label: 'Позиция в процессе',
+				description: 'Пусто — в конец цепочки.',
 				value: $stageData.position,
 				errors: $stageErrors.position,
 				onchange: (next) => ($stageData.position = next)
@@ -990,15 +1067,57 @@
 				onchange: (next) => ($stageData.isFinal = next)
 			})}
 		</fieldset>
-		<FieldTextarea
-			name="checklist"
-			label="Чек-лист"
-			description={CHECKLIST_HINT}
-			rows={5}
-			placeholder={CHECKLIST_PLACEHOLDER}
-			bind:value={$stageData.checklist}
-			errors={$stageErrors.checklist}
-		/>
+		<!-- Чек-лист — список пунктов: название и флажок обязательности. Ключ
+			пункта собирает сервер из названия и больше не меняет: по нему в идущих
+			делах хранятся отметки. -->
+		<fieldset class="flex flex-col gap-2">
+			<legend class="text-sm font-medium">Чек-лист</legend>
+			<p class="text-xs text-muted-foreground">
+				Что проверить на стадии. Обязательный пункт не пускает дело дальше, пока его не отметят.
+			</p>
+			{#if $stageErrors.checklist?._errors}
+				<span class="text-xs text-danger">{$stageErrors.checklist._errors.join('; ')}</span>
+			{/if}
+			{#each $stageData.checklist as item, index (index)}
+				{@const labelErrors = $stageErrors.checklist?.[index]?.label}
+				<div class="flex flex-col gap-1">
+					<div class="flex flex-wrap items-center gap-2">
+						<Input
+							class="min-w-0 flex-1"
+							aria-label="Пункт {index + 1}"
+							aria-invalid={labelErrors !== undefined}
+							placeholder="Например: подтверждён контакт ответственного лица"
+							bind:value={$stageData.checklist[index].label}
+						/>
+						<Label class="flex items-center gap-2 font-normal">
+							<Checkbox
+								checked={item.required}
+								onCheckedChange={(next) => ($stageData.checklist[index].required = next === true)}
+							/>
+							Обязательный
+						</Label>
+						<Button
+							variant="ghost"
+							size="icon-sm"
+							aria-label="Убрать пункт {index + 1}"
+							title="Убрать пункт"
+							onclick={() => removeChecklistItem(index)}
+						>
+							<XIcon aria-hidden="true" />
+						</Button>
+					</div>
+					{#if labelErrors}
+						<span class="text-xs text-danger">{labelErrors.join('; ')}</span>
+					{/if}
+				</div>
+			{/each}
+			<div>
+				<Button variant="outline" size="sm" onclick={addChecklistItem}>
+					<PlusIcon aria-hidden="true" />
+					Добавить пункт
+				</Button>
+			</div>
+		</fieldset>
 
 		<!-- Ключ — техническое имя стадии: по нему хранятся отметки чек-листа,
 			слепки пройденных стадий и сопоставление при изменении процесса. Людям,
@@ -1009,9 +1128,15 @@
 				<FieldInput
 					name="key"
 					label="Ключ"
-					description="Латиницей, навсегда: по нему сопоставляются записи при изменении процесса."
+					description="Собирается из названия; поправьте, если хотите. Латиницей и навсегда: по нему сопоставляются записи при изменении процесса."
 					required
-					bind:value={$stageData.key}
+					bind:value={
+						() => $stageData.key,
+						(next) => {
+							keyEdited = true;
+							$stageData.key = next;
+						}
+					}
 					errors={$stageErrors.key}
 				/>
 			{:else}
@@ -1143,8 +1268,19 @@
 	description="Стадия, её чек-лист и переходы, которые её касаются, исчезнут из черновика. Ключ «{removing?.key ??
 		''}» останется занятым навсегда: завести под ним другую стадию будет нельзя."
 >
-	<form id="remove-stage-form" method="POST" action="?/deleteStage" class="flex flex-col gap-4">
+	<form
+		id="remove-stage-form"
+		method="POST"
+		action="?/deleteStage"
+		use:enhance={submitThen(() => (removeOpen = false))}
+		class="flex flex-col gap-4"
+	>
 		<input type="hidden" name="key" value={removing?.key ?? ''} />
+
+		<InlineHint tone="info">
+			Если в стадию вёл один шаг вперёд и из неё выходил один, их заменит прямой шаг — цепочка не
+			порвётся. Ручные ветвления вокруг стадии система не перестраивает.
+		</InlineHint>
 
 		<InlineHint tone={standingOn(removing?.key ?? '') > 0 ? 'warning' : 'info'}>
 			Сейчас на этой стадии стоит незавершённых взаимодействий: {formatNumber(
@@ -1179,14 +1315,21 @@
 <FormDialog
 	bind:open={applyOpen}
 	width="xl"
-	title="Применить изменения ко всем?"
-	description="Изменение применится сразу ко всем незавершённым взаимодействиям всех пространств, которым назначен этот процесс. Записи сопоставляются по ключу стадии; переедут только те, чья стадия исчезла."
+	title={detail.active === null ? 'Применить процесс?' : 'Применить изменения ко всем?'}
+	description={detail.active === null
+		? 'Стадии и переходы черновика станут действующим процессом: в пространствах с ним можно будет заводить взаимодействия. Дел на процессе ещё нет — переносить некого.'
+		: 'Изменение применится сразу ко всем незавершённым взаимодействиям всех пространств, которым назначен этот процесс. Записи сопоставляются по ключу стадии; переедут только те, чья стадия исчезла.'}
 >
 	{#if data.preview !== null}
 		<ProcessPreview preview={data.preview} />
 	{/if}
 
-	<form id="publish-process-form" method="POST" action="?/publish"></form>
+	<form
+		id="publish-process-form"
+		method="POST"
+		action="?/publish"
+		use:enhance={submitThen(() => (applyOpen = false))}
+	></form>
 
 	{#snippet footer({ close })}
 		<div class="flex justify-end gap-2">

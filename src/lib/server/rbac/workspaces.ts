@@ -161,7 +161,12 @@ export async function listWorkspaceMemberships(ctx: ActorContext): Promise<{
 			.where(eq(interactions.status, 'active'))
 			.groupBy(interactions.workspaceId, interactions.ownerUserId),
 		db
-			.select({ userId: users.id, fullName: users.fullName, roleName: roles.name })
+			.select({
+				userId: users.id,
+				fullName: users.fullName,
+				roleName: roles.name,
+				managerUserId: users.managerUserId
+			})
 			.from(users)
 			.innerJoin(roles, eq(roles.id, users.roleId))
 			.where(and(eq(users.isActive, true), notInArray(users.roleId, [...FULL_SCOPE_ROLE_IDS])))

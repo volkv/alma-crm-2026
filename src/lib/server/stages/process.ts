@@ -36,6 +36,7 @@ import {
 	type ProcessDefinitionInput,
 	type WorkspaceSummary,
 	type ProcessPreview,
+	type ProcessPreviewMove,
 	type ProcessPreviewRow,
 	type ProcessRevisionView,
 	type RenameWorkspaceInput,
@@ -63,7 +64,8 @@ import {
 	stageMigrationRules,
 	stagePauses,
 	stages,
-	stageTransitions
+	stageTransitions,
+	users
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { cachedActiveRevision, invalidateProcessRevisions } from '../cache/process';
@@ -393,7 +395,7 @@ export async function requireActiveRevision(
 
 	if (revision === null) {
 		throw new ConflictError(
-			`В процессе «${workflow.name}» ещё нет стадий: заведите их в разделе «Процесс» и примените ко всем`
+			`В процессе «${workflow.name}» ещё нет стадий: откройте его в «Настройки → Процессы», опишите стадии и переходы и примените`
 		);
 	}
 
@@ -970,6 +972,18 @@ export function validateProcessDraft(
 		issues.push(`На первую стадию «${first.name}» ведёт переход вперёд: начало процесса одно`);
 	}
 
+	// Стадия, в которую не ведёт ни один путь от первой, в работе не
+	// встретится: её видно на доске, а дело на неё не попадёт никогда.
+	const fromFirst = reachableFrom(first.key, reachable);
+
+	for (const stage of ordered.slice(1)) {
+		if (!fromFirst.has(stage.key)) {
+			issues.push(
+				`В стадию «${stage.name}» не ведёт ни один переход от начала процесса: дело на неё не попадёт`
+			);
+		}
+	}
+
 	if (finals.length > 0) {
 		const finalKeys = new Set(finals.map((stage) => stage.key));
 
@@ -1013,21 +1027,22 @@ export function validateProcessDraft(
 	return issues;
 }
 
-/** Достижима ли из стадии хотя бы одна финальная — обход в ширину по переходам. */
+/** Достижима ли из стадии хотя бы одна финальная. */
 function canReachFinal(
 	from: string,
 	reachable: ReadonlyMap<string, string[]>,
 	finalKeys: ReadonlySet<string>
 ): boolean {
+	return [...reachableFrom(from, reachable)].some((key) => finalKeys.has(key));
+}
+
+/** Стадии, куда можно попасть из данной, включая её саму, — обход в ширину. */
+function reachableFrom(from: string, reachable: ReadonlyMap<string, string[]>): Set<string> {
 	const seen = new Set<string>([from]);
 	const queue = [from];
 
 	while (queue.length > 0) {
 		const key = queue.shift() as string;
-
-		if (finalKeys.has(key)) {
-			return true;
-		}
 
 		for (const next of reachable.get(key) ?? []) {
 			if (!seen.has(next)) {
@@ -1037,7 +1052,143 @@ function canReachFinal(
 		}
 	}
 
-	return false;
+	return seen;
+}
+
+/* ------------------------------------------------------------------------- *
+ * Цепочка переходов при вставке и удалении стадии.
+ * ------------------------------------------------------------------------- */
+
+type TransitionInput = ProcessDefinitionInput['transitions'][number];
+
+/** Что стало с переходами: новый набор и изменения словами — их видит администратор. */
+export type ChainChange = { transitions: TransitionInput[]; changes: string[] };
+
+/** Переход вперёд по умолчанию — тот, что заводит форма перехода. */
+function forwardLink(fromStageKey: string, toStageKey: string): TransitionInput {
+	return {
+		fromStageKey,
+		toStageKey,
+		kind: 'forward',
+		requiredPermissionKey: 'stages.transition',
+		requiresReason: false
+	};
+}
+
+/**
+ * Встраивает новую стадию в цепочку переходов.
+ *
+ * Трогается только линейное звено: прямой шаг вперёд «предыдущая → следующая»
+ * заменяется двумя — через новую стадию — с тем же правом и тем же требованием
+ * причины. Ветвления, возвраты и пропуски, заведённые руками, остаются как
+ * были: угадывать, в какую ветку администратор ставит стадию, система не
+ * берётся, а проверка черновика назовёт недостижимую стадию словами.
+ *
+ * В начале цепочки новая стадия получает шаг на прежнюю первую, в конце —
+ * шаг с прежней последней, если с той ещё некуда идти и она не финальная.
+ */
+export function linkInsertedStage(
+	stages: readonly { key: string; name: string; isFinal: boolean }[],
+	transitions: readonly TransitionInput[],
+	insertedKey: string
+): ChainChange {
+	const index = stages.findIndex((stage) => stage.key === insertedKey);
+	const inserted = stages[index];
+
+	if (inserted === undefined) {
+		throw new ValidationError('Стадии нет в процессе', [`Ключ «${insertedKey}»`]);
+	}
+
+	const previous = stages[index - 1];
+	const next = stages[index + 1];
+	const result = [...transitions];
+	const changes: string[] = [];
+	const hasForwardFrom = (key: string) =>
+		result.some((transition) => transition.fromStageKey === key && transition.kind === 'forward');
+
+	if (previous !== undefined && next !== undefined) {
+		const direct = result.findIndex(
+			(transition) =>
+				transition.fromStageKey === previous.key &&
+				transition.toStageKey === next.key &&
+				transition.kind === 'forward'
+		);
+
+		if (direct !== -1) {
+			const [link] = result.splice(direct, 1);
+
+			result.push({ ...link, toStageKey: inserted.key });
+
+			if (!inserted.isFinal) {
+				result.push({ ...link, fromStageKey: inserted.key });
+			}
+
+			changes.push(
+				inserted.isFinal
+					? `шаг «${previous.name}» → «${next.name}» теперь ведёт на «${inserted.name}»`
+					: `шаг «${previous.name}» → «${next.name}» заменён двумя: «${previous.name}» → «${inserted.name}» → «${next.name}»`
+			);
+		}
+
+		return { transitions: result, changes };
+	}
+
+	if (previous === undefined && next !== undefined && !inserted.isFinal) {
+		result.push(forwardLink(inserted.key, next.key));
+		changes.push(`добавлен шаг «${inserted.name}» → «${next.name}»`);
+	}
+
+	if (previous !== undefined && next === undefined && !previous.isFinal) {
+		if (!hasForwardFrom(previous.key)) {
+			result.push(forwardLink(previous.key, inserted.key));
+			changes.push(`добавлен шаг «${previous.name}» → «${inserted.name}»`);
+		}
+	}
+
+	return { transitions: result, changes };
+}
+
+/**
+ * Сшивает цепочку на месте удаляемой стадии: если в неё вёл ровно один шаг
+ * вперёд и из неё выходил ровно один, их заменяет прямой шаг — с правом и
+ * требованием причины входящего. Остальные переходы удаляемой стадии уходят
+ * вместе с ней; ручные ветвления вокруг неё система не перестраивает.
+ */
+export function relinkRemovedStage(
+	stages: readonly { key: string; name: string }[],
+	transitions: readonly TransitionInput[],
+	removedKey: string
+): ChainChange {
+	const nameOf = new Map(stages.map((stage) => [stage.key, stage.name]));
+	const incoming = transitions.filter(
+		(transition) => transition.toStageKey === removedKey && transition.kind === 'forward'
+	);
+	const outgoing = transitions.filter(
+		(transition) => transition.fromStageKey === removedKey && transition.kind === 'forward'
+	);
+	const result = transitions.filter(
+		(transition) => transition.fromStageKey !== removedKey && transition.toStageKey !== removedKey
+	);
+	const changes: string[] = [];
+	const [into] = incoming;
+	const [out] = outgoing;
+
+	if (
+		incoming.length === 1 &&
+		outgoing.length === 1 &&
+		into.fromStageKey !== out.toStageKey &&
+		!result.some(
+			(transition) =>
+				transition.fromStageKey === into.fromStageKey && transition.toStageKey === out.toStageKey
+		)
+	) {
+		result.push({ ...into, toStageKey: out.toStageKey });
+		changes.push(
+			`добавлен шаг «${nameOf.get(into.fromStageKey)}» → «${nameOf.get(out.toStageKey)}» вместо двух через удалённую стадию`
+		);
+	}
+
+	return { transitions: result, changes };
 }
 
 /**
@@ -1054,7 +1205,7 @@ export function buildPreview(input: {
 	migrationRules: readonly StageMigrationRuleView[];
 	nameByKey: ReadonlyMap<string, string>;
 	issues: readonly string[];
-}): ProcessPreview {
+}): Omit<ProcessPreview, 'moves'> {
 	const ruleByKey = new Map(input.migrationRules.map((rule) => [rule.removedStageKey, rule]));
 	const rows: ProcessPreviewRow[] = [];
 	const movedFrom = new Set<string>();
@@ -1617,6 +1768,7 @@ export async function getWorkflow(ctx: ActorContext, workflowKey: string): Promi
 		active,
 		draft,
 		workspaces: assigned,
+		retiredStageKeys: [...archivedKeys].sort(),
 		issues:
 			draft === null
 				? []
@@ -1629,11 +1781,18 @@ export async function getWorkflow(ctx: ActorContext, workflowKey: string): Promi
 }
 
 /**
- * Новый процесс — пустой, без единой стадии.
+ * Новый процесс — пустой или копией другого.
  *
- * Стадии заводят черновиком, а не формой создания: описание работы — это
- * четырнадцать строк с нормативами и переходами, и просить их разом у того, кто
- * только придумал название, значило бы отложить заведение до конца работы.
+ * Пустой процесс описывают черновиком в редакторе, а не формой создания:
+ * описание работы — это десяток строк с нормативами и переходами, и просить их
+ * разом у того, кто только придумал название, значило бы отложить заведение до
+ * конца работы.
+ *
+ * Копия берёт действующие стадии, переходы и состав карточки образца и сразу
+ * становится действующей редакцией нового процесса: назначен он ещё никому, дел
+ * на нём нет, и переносить при такой публикации некого. Черновик образца не
+ * копируется — это неприменённая правка чужого процесса. История ключей у копии
+ * своя: снятые в образце ключи ей не мешают.
  */
 export async function createWorkflow(
 	ctx: ActorContext,
@@ -1651,10 +1810,46 @@ export async function createWorkflow(
 			throw new ConflictError(`Процесс с ключом «${input.key}» уже заведён`);
 		}
 
+		const source = input.copyFromKey === null ? null : await readCopySource(tx, input.copyFromKey);
+
 		const [created] = await tx
 			.insert(workflows)
-			.values({ key: input.key, name: input.name, description: input.description })
+			.values({
+				key: input.key,
+				name: input.name,
+				description: input.description,
+				...(source === null
+					? {}
+					: { cardPanels: source.cardPanels, documentTemplateKeys: source.documentTemplateKeys })
+			})
 			.returning({ id: workflows.id });
+
+		if (source !== null) {
+			const at = new Date();
+			const [revision] = await tx
+				.insert(processRevisions)
+				.values({
+					workflowId: created.id,
+					version: 1,
+					name: input.name,
+					note: source.definition.note,
+					publishedAt: at
+				})
+				.returning({ id: processRevisions.id });
+
+			await writeRevisionContent(tx, revision.id, {
+				...source.definition,
+				name: input.name,
+				migrationRules: []
+			});
+
+			await tx
+				.update(workflows)
+				.set({ activeRevisionId: revision.id, updatedAt: at })
+				.where(eq(workflows.id, created.id));
+
+			await syncStageKeys(tx, created.id, await readRevision(tx, revision.id), at);
+		}
 
 		await recordAuditEvent(
 			ctx,
@@ -1662,7 +1857,10 @@ export async function createWorkflow(
 				type: 'workflows.created',
 				outcome: 'success',
 				subject: { type: 'workflow', id: created.id },
-				details: { workflowKey: input.key }
+				details:
+					source === null
+						? { workflowKey: input.key }
+						: { workflowKey: input.key, sourceWorkflowKey: source.key }
 			},
 			tx
 		);
@@ -1677,6 +1875,44 @@ export async function createWorkflow(
 	}
 
 	return summary;
+}
+
+/**
+ * Образец копии: действующая структура и состав карточки процесса. Копировать
+ * процесс без стадий незачем — пустой заводится и так, — поэтому это отказ.
+ */
+async function readCopySource(
+	tx: Tx,
+	workflowKey: string
+): Promise<{
+	key: string;
+	definition: ProcessDefinitionInput;
+	cardPanels: (typeof workflows.$inferSelect)['cardPanels'];
+	documentTemplateKeys: (typeof workflows.$inferSelect)['documentTemplateKeys'];
+}> {
+	const source = await readWorkflowByKey(tx, workflowKey);
+	const active = await readActiveRevision(tx, source);
+
+	if (active === null) {
+		throw new ValidationError('Копировать нечего', [
+			`В процессе «${source.name}» ещё нет стадий: заведите новый процесс пустым`
+		]);
+	}
+
+	const [card] = await tx
+		.select({
+			cardPanels: workflows.cardPanels,
+			documentTemplateKeys: workflows.documentTemplateKeys
+		})
+		.from(workflows)
+		.where(eq(workflows.id, source.id));
+
+	return {
+		key: source.key,
+		definition: processDefinition(active),
+		cardPanels: card.cardPanels,
+		documentTemplateKeys: card.documentTemplateKeys
+	};
 }
 
 /** Ключи стадий редакции по порядку; у отсутствующей редакции — пусто. */
@@ -1741,8 +1977,10 @@ async function lockWorkflowByKey(
  *
  * Так меняется процесс: действующую редакцию править нельзя, а писать её
  * заново руками значит переписать четырнадцать стадий ради правки одного
- * норматива. У пространства без процесса черновик заводится пустым — с одной
- * стадией, потому что процесса без стадий не существует.
+ * норматива. У процесса без действующей редакции черновик заводится пустым:
+ * первую стадию добавляют в нём же, а применить его можно, только когда
+ * стадии и переходы описаны (`validateProcessDraft`). Первое применение
+ * никого не переносит — дел на процессе без стадий быть не может.
  */
 export async function createDraft(
 	ctx: ActorContext,
@@ -1762,28 +2000,24 @@ export async function createDraft(
 
 		const active = await readActiveRevision(tx, workflow);
 
-		if (active === null) {
-			throw new ConflictError(
-				`В процессе «${workflow.name}» ещё нет стадий: сначала заведите их набором данных`
-			);
-		}
-
 		const [created] = await tx
 			.insert(processRevisions)
 			.values({
 				workflowId: workflow.id,
 				version: await nextVersion(tx, workflow.id),
-				name: active.name,
-				note: active.note
+				name: active?.name ?? workflow.name,
+				note: active?.note ?? null
 			})
 			.returning({ id: processRevisions.id });
 
 		// Правила переноса не копируются: они принадлежат той редакции, в которой
 		// ключ исчез, и в новом черновике описывали бы перенос, которого не будет.
-		await writeRevisionContent(tx, created.id, {
-			...processDefinition(active),
-			migrationRules: []
-		});
+		if (active !== null) {
+			await writeRevisionContent(tx, created.id, {
+				...processDefinition(active),
+				migrationRules: []
+			});
+		}
 
 		await recordAuditEvent(
 			ctx,
@@ -1971,13 +2205,74 @@ export async function previewPublication(
 		openByKey
 	});
 
-	return buildPreview({
-		workflowId: workflow.id,
-		matches: matchStages(active?.stages ?? [], draft.stages),
-		openByKey,
-		migrationRules: draft.migrationRules,
-		nameByKey: new Map(draft.stages.map((stage) => [stage.key, stage.name])),
-		issues
+	const nameByKey = new Map(draft.stages.map((stage) => [stage.key, stage.name]));
+
+	return {
+		...buildPreview({
+			workflowId: workflow.id,
+			matches: matchStages(active?.stages ?? [], draft.stages),
+			openByKey,
+			migrationRules: draft.migrationRules,
+			nameByKey,
+			issues
+		}),
+		moves: await readMoves(db, workflow.id, draft, nameByKey)
+	};
+}
+
+/**
+ * Дела, которые применение переставит на другую стадию, — поимённо. Это
+ * незавершённые дела всех пространств процесса, чья текущая стадия в черновике
+ * исчезла; куда они поедут, говорит правило переноса черновика.
+ */
+async function readMoves(
+	executor: Executor,
+	workflowId: string,
+	draft: ProcessRevisionView,
+	nameByKey: ReadonlyMap<string, string>
+): Promise<ProcessPreviewMove[]> {
+	const surviving = draft.stages.map((stage) => stage.key);
+	const ruleByKey = new Map(
+		draft.migrationRules.map((rule) => [rule.removedStageKey, rule.targetStageKey])
+	);
+
+	const rows = await executor
+		.select({
+			interactionId: interactions.id,
+			title: interactions.title,
+			workspaceKey: workspaces.key,
+			workspaceName: workspaces.name,
+			ownerName: users.fullName,
+			stageKey: stages.key,
+			stageName: stages.name
+		})
+		.from(stageEntries)
+		.innerJoin(interactions, eq(interactions.id, stageEntries.interactionId))
+		.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
+		.innerJoin(stages, eq(stages.id, stageEntries.stageId))
+		.innerJoin(users, eq(users.id, interactions.ownerUserId))
+		.where(
+			and(
+				isNull(stageEntries.leftAt),
+				eq(workspaces.workflowId, workflowId),
+				eq(interactions.status, 'active'),
+				surviving.length === 0 ? sql`true` : notInArray(stages.key, surviving)
+			)
+		)
+		.orderBy(asc(workspaces.position), asc(interactions.title));
+
+	return rows.map((row) => {
+		const target = ruleByKey.get(row.stageKey);
+
+		return {
+			interactionId: row.interactionId,
+			title: row.title,
+			workspaceKey: row.workspaceKey,
+			workspaceName: row.workspaceName,
+			ownerName: row.ownerName,
+			fromStageName: row.stageName,
+			toStageName: target === undefined ? null : (nameByKey.get(target) ?? target)
+		};
 	});
 }
 

@@ -11,11 +11,13 @@ import {
 } from '$lib/contracts/interactions';
 import { readTableQuery } from '$lib/components/data-table/query';
 import { actorFromEvent } from '$lib/server/actor';
+import { getDb } from '$lib/server/db';
 import { toActionFailure } from '$lib/server/http';
 import { getInteractionBoard } from '$lib/server/interactions/board';
 import { listInteractions, readInteractionFilterOptions } from '$lib/server/interactions/read';
 import { can } from '$lib/server/rbac';
 import { advanceStage, returnStage, setResponsible, skipStage } from '$lib/server/stages/commands';
+import { readWorkflowForWorkspace } from '$lib/server/stages/process';
 import { readFilters } from './filters';
 import { responsibleOptions } from './responsible';
 import { chooseView, VIEW_COOKIE } from './view-preference';
@@ -89,9 +91,24 @@ export const load: PageServerLoad = async (event) => {
 		filters.prod.length > 0 ||
 		filters.owner.length > 0;
 
+	// Процесс назначен и процесс описан — разные состояния: у назначенного
+	// пустого процесса колонок нет так же, как у отсутствующего, но причина и
+	// исправление другие, и экран обязан назвать именно их.
+	const workflow = await readWorkflowForWorkspace(getDb(), workspace.id);
+
 	const common = {
 		filters,
 		isFiltered,
+		process:
+			workflow === null
+				? null
+				: {
+						key: workflow.key,
+						name: workflow.name,
+						described: workflow.activeRevisionId !== null
+					},
+		/** Может ли смотрящий сам описать процесс: ему — ссылка в редактор. */
+		canConfigure: can(ctx, 'stages.configure'),
 		search: table.search,
 		/** Показанное представление — выбор человека, а не вынужденное умолчание. */
 		rememberView,

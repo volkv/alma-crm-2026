@@ -228,24 +228,11 @@ staff('черновик изменений применяется ко всем 
 	await expect(page.getByText('Стадия удалена из черновика')).toBeVisible();
 	await expect(page.getByRole('row').filter({ hasText: REMOVED_KEY })).toHaveCount(0);
 
-	// Цепочка порвалась: со стадии перед удалённой больше некуда идти вперёд, и
-	// применить черновик нельзя, пока это не починят. Экран говорит об этом
-	// словами, а не молча гасит кнопку.
-	await expect(page.getByText(/нет перехода вперёд/).first()).toBeVisible();
-	await expect(page.getByRole('button', { name: 'Применить ко всем' })).toBeDisabled();
-
-	await openLayer(page.getByRole('button', { name: 'Добавить переход' }).first(), dialog);
-
-	const from = page.getByRole('option', { name: new RegExp(RENAMED_NAME) });
-	await openLayer(dialog.getByRole('combobox', { name: /^Откуда/ }), from);
-	await from.click();
-
-	const to = page.getByRole('option', { name: /Завершение/ });
-	await openLayer(dialog.getByRole('combobox', { name: /^Куда/ }), to);
-	await to.click();
-
-	await dialog.getByRole('button', { name: 'Добавить переход' }).click();
-	await expect(page.getByText('Переход добавлен')).toBeVisible();
+	// Цепочка не порвалась: шаги «середина → лишняя → завершение» система
+	// заменила прямым шагом и сказала об этом, так что применить можно сразу.
+	await expect(page.getByText(/Переходы перестроены/)).toBeVisible();
+	await expect(page.getByText(/нет перехода вперёд/)).toHaveCount(0);
+	await expect(page.getByRole('button', { name: 'Применить ко всем' })).toBeEnabled();
 
 	// Предпросмотр: сначала числа, потом подтверждение.
 	await openLayer(page.getByRole('button', { name: 'Применить ко всем' }), dialog);
@@ -254,6 +241,8 @@ staff('черновик изменений применяется ко всем 
 	await expect(
 		dialog.getByRole('listitem').filter({ hasText: REMOVED_NAME }).first()
 	).toBeVisible();
+	// Переезжающее дело названо поимённо, а не только числом.
+	await expect(dialog.getByRole('link', { name: INTERACTION_TITLE })).toBeVisible();
 
 	await dialog.getByRole('button', { name: 'Применить ко всем' }).click();
 
