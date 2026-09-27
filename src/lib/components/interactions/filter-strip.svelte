@@ -44,8 +44,13 @@
 	 * оба встают во flex-ряд вызывающего (ему нужен `flex-wrap`). Строка —
 	 * фильтры и за ними `end` (переключатель вида) — занимает остаток ширины
 	 * ряда: `flex-1`, основа 0, так что её ширину задаёт ряд, а не
-	 * содержимое, и пересчёт не качается. Уже `min-w-60` строка не сжимается —
-	 * столько нужно воронке со счётчиком, сбросу, «Колонкам» и переключателю; на
+	 * содержимое, и пересчёт не качается. Между фильтрами и `end` — зазор
+	 * `gap-4` (16 px) вместо обычных 8 px между кнопками: фильтры и то, что
+	 * относится к виду («Колонки», переключатель), — разные группы, и вплотную
+	 * они сливаются. Зазор отнят у ширины ленты самой раскладкой, поэтому мерка
+	 * его учитывает без отдельного слагаемого: не влез фильтр с зазором —
+	 * уходит в панель. Уже `min-w-64` строка не сжимается — столько нужно
+	 * воронке со счётчиком, сбросу, зазору, «Колонкам» и переключателю; на
 	 * планшете, где рядом с поиском и аватарками не остаётся и этого, строка
 	 * целиком уходит на свою линию, а не наезжает на соседей и не бросает
 	 * переключатель одного. Панель встаёт отдельной линией под рядом
@@ -102,15 +107,24 @@
 	// Раздвинули окно, и всё поместилось — панели показывать нечего.
 	const panelOpen = $derived(open && hidden.length > 0);
 
+	function width(element: HTMLElement): number {
+		return Math.ceil(element.getBoundingClientRect().width);
+	}
+
 	function measure() {
 		if (strip === null || ghost === null) return;
 
 		const cells = Array.from(ghost.querySelectorAll<HTMLElement>(':scope > [data-cell]'));
-		const widths = cells.map((cell) => cell.offsetWidth);
+		// Дробные ширины округляются в запас — кнопки вверх, лента вниз: сумма
+		// округлённых вниз `offsetWidth` могла бы превысить ленту на пиксель-два,
+		// и последний фильтр съел бы зазор перед переключателем.
+		const widths = cells.map((cell) => width(cell));
 		// Воронку копия держит со счётчиком: место под него занято заранее, и
 		// появление числа не выталкивает из строки ещё один фильтр.
-		const moreWidth = ghost.querySelector<HTMLElement>(':scope > [data-more]')?.offsetWidth ?? 0;
-		const available = strip.clientWidth - (tail === null ? 0 : tail.offsetWidth + GAP);
+		const moreCell = ghost.querySelector<HTMLElement>(':scope > [data-more]');
+		const moreWidth = moreCell === null ? 0 : width(moreCell);
+		const available =
+			Math.floor(strip.getBoundingClientRect().width) - (tail === null ? 0 : width(tail) + GAP);
 		const total =
 			widths.reduce((sum, width) => sum + width, 0) + GAP * Math.max(widths.length - 1, 0);
 
@@ -194,7 +208,7 @@
 	</Button>
 {/snippet}
 
-<div class="flex min-w-60 flex-1 basis-0 items-center gap-2">
+<div class="flex min-w-64 flex-1 basis-0 items-center gap-4">
 	<div
 		bind:this={strip}
 		class={cn(
