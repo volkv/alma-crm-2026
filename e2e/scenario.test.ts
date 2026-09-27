@@ -602,25 +602,12 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		await dialog.getByRole('button', { name: 'Удалить стадию' }).click();
 		await expect(admin.getByText('Стадия удалена из черновика')).toBeVisible();
 
-		// Цепочка порвалась: с переименованной стадии больше некуда идти вперёд,
-		// и применить черновик нельзя, пока это не починят.
-		await expect(admin.getByText(/нет перехода вперёд/).first()).toBeVisible();
-		await expect(admin.getByRole('button', { name: 'Применить ко всем' })).toBeDisabled();
-
-		await openLayer(admin.getByRole('button', { name: 'Добавить переход' }).first(), dialog);
-
-		const from = admin.getByRole('option', { name: new RegExp(RENAMED_NAME) });
-
-		await openLayer(dialog.getByRole('combobox', { name: /^Откуда/ }), from);
-		await from.click();
-
-		const to = admin.getByRole('option', { name: new RegExp(STAGES[3].name) });
-
-		await openLayer(dialog.getByRole('combobox', { name: /^Куда/ }), to);
-		await to.click();
-
-		await dialog.getByRole('button', { name: 'Добавить переход' }).click();
-		await expect(admin.getByText('Переход добавлен')).toBeVisible();
+		// Цепочка не порвалась: шаги «Сверка программ → лишняя → Итог года»
+		// система заменила прямым шагом и сказала об этом, так что применить
+		// можно сразу.
+		await expect(admin.getByText(/Переходы перестроены/)).toBeVisible();
+		await expect(admin.getByText(/нет перехода вперёд/)).toHaveCount(0);
+		await expect(admin.getByRole('button', { name: 'Применить ко всем' })).toBeEnabled();
 
 		// Предпросмотр: сначала числа, потом подтверждение.
 		await openLayer(admin.getByRole('button', { name: 'Применить ко всем' }), dialog);
