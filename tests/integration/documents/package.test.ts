@@ -117,8 +117,8 @@ describe('пакет документов', () => {
 		const outcomes = await generateDocumentPackage(ctx, interaction.id, {
 			templates: ['agreement', 'sublicense', 'handover_act'],
 			city: 'Москва',
-			operatorSigner: 'директора Иванова И. И.',
-			counterpartySigner: 'ректора Петрова П. П.'
+			operatorSigner: 'директор Школы Иванов И. И.',
+			counterpartySigner: 'ректор Петров П. П.'
 		});
 
 		expect(outcomes.map((outcome) => [outcome.templateKey, outcome.status])).toEqual([
@@ -148,8 +148,8 @@ describe('пакет документов', () => {
 		// Следующая сборка подставит город и подписантов этой.
 		expect(await readPackageDefaults(ctx, interaction.id)).toEqual({
 			city: 'Москва',
-			operatorSigner: 'директора Иванова И. И.',
-			counterpartySigner: 'ректора Петрова П. П.'
+			operatorSigner: 'директор Школы Иванов И. И.',
+			counterpartySigner: 'ректор Петров П. П.'
 		});
 
 		// Акт, загруженный руками, стадию не закрывает даже с «Утверждён»: он не
@@ -183,6 +183,41 @@ describe('пакет документов', () => {
 		expect(
 			(await listDocumentRevisions(ctx, signed.id)).map((revision) => revision.revisionNote)
 		).toEqual([null, 'Подписанный сторонами скан']);
+
+		// Подписанная сублицензия — это подписанный договор: черновик договора
+		// дела становится действующим.
+		const sublicense = outcomes.find((outcome) => outcome.templateKey === 'sublicense');
+		if (sublicense?.status !== 'generated') throw new Error('Сублицензия не собрана');
+		await markDocument(ctx, sublicense.documentIds[1], 'approved');
+		const [activated] = await database.db
+			.select({ status: contracts.status })
+			.from(contracts)
+			.where(eq(contracts.id, contract.id));
+		expect(activated.status).toBe('active');
+
+		// Пересборка акта — новая редакция цепочки, а не третий акт рядом:
+		// подписанный скан уходит в историю, а засчитанная стадией отметка остаётся.
+		const [rebuilt] = await generateDocumentPackage(ctx, interaction.id, {
+			templates: ['handover_act'],
+			city: 'Москва',
+			operatorSigner: 'директор Школы Иванов И. И.',
+			counterpartySigner: 'ректор Петров П. П.'
+		});
+		if (rebuilt.status !== 'generated') throw new Error('Акт не пересобран');
+		const acts = await database.db
+			.select({ id: documents.id, supersedesId: documents.supersedesId })
+			.from(documents)
+			.where(
+				and(eq(documents.interactionId, interaction.id), eq(documents.templateKey, 'handover_act'))
+			);
+		expect(acts).toHaveLength(5);
+		expect(acts.find((row) => row.id === rebuilt.documentIds[0])?.supersedesId).toBe(
+			act.documentIds[0]
+		);
+		expect(acts.find((row) => row.id === rebuilt.documentIds[1])?.supersedesId).toBe(signed.id);
+		expect(
+			(await readDocumentMark(database.db, interaction.id, 'approved', 'handover_act'))?.documentId
+		).toBe(signed.id);
 	}, 120_000);
 
 	it('отказ сборки называет сначала состав дела и ведёт к сторонам, потом поля формы', async () => {

@@ -7,10 +7,12 @@
  * поставить (`at`), переставить нельзя: отметка о согласовании, которую можно
  * переписать, ничего не доказывает.
  */
-import { and, eq, inArray, isNull, ne } from 'drizzle-orm';
+import { and, eq, inArray, isNull, ne, sql } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
 import { moscowDay } from '$lib/contracts/calendar';
 import {
+	CONTRACT_DOCUMENT_KIND,
+	CONTRACT_DOCUMENT_TEMPLATES,
 	markDayBounds,
 	markDayIssue,
 	TRANSFERRED_STATUS,
@@ -19,12 +21,18 @@ import {
 } from '$lib/contracts/documents';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
-import { contractItems, documentContractItems, documents } from '../db/schema';
+import {
+	contractItems,
+	contracts,
+	documentContractItems,
+	documents,
+	interactions
+} from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { publishAfterCommit } from '../live/publish';
 import { bumpContractsOfItems } from '../directory/contracts';
 import { ConflictError, ValidationError } from '../errors';
-import { editorOf, type Editor } from '../interactions/edit-version';
+import { editorOf, nextEdit, type Editor } from '../interactions/edit-version';
 import { requirePermission } from '../rbac';
 import { applyDocumentMark, touchInteraction } from '../stages/commands';
 import { MARK_MOMENT_COLUMNS } from './evidence';
@@ -103,6 +111,56 @@ async function markItemsTransferred(tx: Tx, documentId: string, editor: Editor):
 }
 
 /**
+ * Подписанный договор делает договор дела действующим. Документ договора —
+ * сублицензия или договор с юридическим лицом, собранные по шаблону (и их
+ * сканы новой редакцией), или файл вида «Договор». Черновик, выбранный в деле,
+ * получает состояние «Действует» и, если дата подписания не записана, — день
+ * отметки. Договор в другом состоянии не трогается: закрытый не оживает от
+ * позднего скана, а действующему менять нечего. Возвращает договор, который
+ * стал действующим, или `null`.
+ */
+async function activateSignedContract(
+	tx: Tx,
+	row: Pick<typeof documents.$inferSelect, 'interactionId' | 'templateKey' | 'kind'>,
+	day: string,
+	editor: Editor
+): Promise<string | null> {
+	const isContract =
+		row.kind === CONTRACT_DOCUMENT_KIND ||
+		(row.templateKey !== null &&
+			(CONTRACT_DOCUMENT_TEMPLATES as readonly string[]).includes(row.templateKey));
+
+	if (!isContract || row.interactionId === null) {
+		return null;
+	}
+
+	const [chosen] = await tx
+		.select({ contractId: interactions.contractId })
+		.from(interactions)
+		.where(eq(interactions.id, row.interactionId));
+
+	if (chosen?.contractId == null) {
+		return null;
+	}
+
+	// Дата подписания встаёт, только если не нарушит срок действия: договор,
+	// записанный «до» раньше дня отметки, остаётся без даты — её исправляют в
+	// карточке организации, а не угадывают здесь.
+	const [activated] = await tx
+		.update(contracts)
+		.set({
+			status: 'active',
+			signedOn: sql`case when ${contracts.signedOn} is null and (${contracts.validUntil} is null or ${contracts.validUntil} >= ${day}::date) then ${day}::date else ${contracts.signedOn} end`,
+			...nextEdit(contracts.editVersion, editor),
+			updatedAt: new Date()
+		})
+		.where(and(eq(contracts.id, chosen.contractId), eq(contracts.status, 'draft')))
+		.returning({ id: contracts.id });
+
+	return activated?.id ?? null;
+}
+
+/**
  * Ставит отметку по документу.
  *
  * `at` позволяет записать факт, случившийся раньше, чем до него дошли руки в
@@ -172,6 +230,10 @@ export async function markDocument(
 
 		const transferredItemCount =
 			fact === 'approved' ? await markItemsTransferred(tx, row.id, editorOf(ctx)) : 0;
+		const activatedContractId =
+			fact === 'approved'
+				? await activateSignedContract(tx, row, moscowDay(moment), editorOf(ctx))
+				: null;
 
 		await recordAuditEvent(
 			ctx,
@@ -187,6 +249,7 @@ export async function markDocument(
 				details: {
 					changedFields: Object.keys(values),
 					...(transferredItemCount === 0 ? {} : { transferredItemCount }),
+					...(activatedContractId === null ? {} : { activatedContractId }),
 					...(row.interactionId === null ? {} : { interactionId: row.interactionId })
 				}
 			},

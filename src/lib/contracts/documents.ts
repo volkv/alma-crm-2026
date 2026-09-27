@@ -242,6 +242,29 @@ export function packageTemplates(
  */
 export const TRANSFERRED_STATUS = 'передан';
 
+/** Статус позиции, пока акт передачи по ней не подписан. */
+export const AWAITING_TRANSFER_STATUS = 'ожидает передачи';
+
+/**
+ * Статусы передачи, которые предлагает форма позиции. Столбец в базе —
+ * строка, и импорт каталога может принести своё слово; форма же даёт выбор из
+ * этих двух: «передан вузу» от руки отчёт «что передано» уже не нашёл бы.
+ */
+export const TRANSFER_STATUSES = [AWAITING_TRANSFER_STATUS, TRANSFERRED_STATUS] as const;
+
+/**
+ * Документы, которые и есть договор дела: сублицензионный договор с вузом,
+ * договор с юридическим лицом и загруженный руками файл вида «Договор».
+ * Отметка «Утверждён» на таком документе — подписанный договор, и выбранный в
+ * деле договор-черновик становится действующим.
+ */
+export const CONTRACT_DOCUMENT_TEMPLATES = [
+	'sublicense',
+	'legal_entity_contract'
+] as const satisfies readonly DocumentTemplateKey[];
+
+export const CONTRACT_DOCUMENT_KIND = 'contract';
+
 /**
  * Сборка пакета: что вводит человек. Всё остальное — реквизиты, позиции,
  * сроки — берётся из карточек, а подписантов в справочнике нет: их называет
@@ -253,6 +276,10 @@ export const generatePackageSchema = z.object({
 		.array(z.enum(DOCUMENT_TEMPLATE_KEYS, { error: 'Такого шаблона документа нет' }))
 		.min(1, { error: 'Выберите хотя бы один документ пакета' }),
 	/**
+	 * Подписант — должность и ФИО в именительном падеже, как в строке подписи:
+	 * «директор Школы Петров П. П.». Тем же текстом он назван и во вступлении
+	 * («от имени Оператора действует …»), поэтому второго поля в другом падеже нет.
+	 *
 	 * Город и подписанты необязательны на входе: чего не хватает, сборка
 	 * называет в отказе каждого документа — после того, чего не хватает в самом
 	 * деле (сторон, сроков, договора). Иначе форма сначала требовала бы
@@ -353,6 +380,7 @@ export const DOCUMENT_ORIGIN_LABELS: Record<DocumentKind, string> = {
  */
 export const UPLOADED_DOCUMENT_KINDS = [
 	'agreement',
+	'contract',
 	'annex',
 	'order',
 	'act',
@@ -375,6 +403,7 @@ export type SystemDocumentKind =
  */
 export const DOCUMENT_KIND_LABELS: Record<UploadedDocumentKind | SystemDocumentKind, string> = {
 	agreement: 'Соглашение',
+	contract: 'Договор',
 	annex: 'Приложение к соглашению',
 	order: 'Приказ',
 	act: 'Акт',

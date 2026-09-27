@@ -44,6 +44,19 @@ export function formatPriceRub(kopecks: number): string {
 	}).format(kopecks / 100);
 }
 
+/**
+ * Стоимость словами для документа: «45 000 руб.», «45 000,50 руб.». Знак ₽
+ * в договор не идёт: шрифт службы печати PDF может его не знать.
+ */
+export function formatDocumentPrice(kopecks: number): string {
+	const rubles = new Intl.NumberFormat('ru-RU', {
+		minimumFractionDigits: kopecks % 100 === 0 ? 0 : 2,
+		maximumFractionDigits: 2
+	}).format(kopecks / 100);
+
+	return `${rubles} руб.`;
+}
+
 export const setInteractionTermsSchema = z.object({
 	interactionId: id('Некорректный идентификатор взаимодействия'),
 	/**

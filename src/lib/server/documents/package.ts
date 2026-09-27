@@ -23,11 +23,18 @@ import {
 	type PackageOutcome
 } from '$lib/contracts/documents';
 import type { InteractionPartyView, InteractionView } from '$lib/contracts/interactions';
+import { formatDocumentPrice } from '$lib/contracts/terms';
 import { formatDate } from '$lib/format';
 import { moduleByKey, offeredTemplates, templateOwner } from '$lib/platform/registry';
 import type { ActorContext } from '../actor';
 import { getDb } from '../db';
-import { documents, interactionParties, organizations, people } from '../db/schema';
+import {
+	documents,
+	interactionParties,
+	interactionTerms,
+	organizations,
+	people
+} from '../db/schema';
 import { ValidationError } from '../errors';
 import { getInteraction } from '../interactions/read';
 import { readActiveModules } from '../platform/workspace-modules';
@@ -57,6 +64,8 @@ type PackageSource = {
 	primary: OrganizationRow;
 	operator: OrganizationRow | null;
 	customer: InteractionPartyView | null;
+	/** Стоимость из коммерческих условий дела в копейках; `null` — не названа. */
+	priceKopecks: number | null;
 };
 
 /** Готовый к сборке документ или перечень того, чего не хватает. */
@@ -290,6 +299,17 @@ function customerData(source: PackageSource, issues: Issues): TemplateData {
 	};
 }
 
+/**
+ * Условие о стоимости: названа в карточке — сумма, нет — прежняя оговорка о
+ * счёте Исполнителя. Отказа нет: договор без суммы законен, сумму тогда
+ * называет счёт.
+ */
+function priceClause(source: PackageSource, named: string, unnamed: string): string {
+	return source.priceKopecks === null
+		? unnamed
+		: named.replace('{price}', formatDocumentPrice(source.priceKopecks));
+}
+
 /** Собирает данные шаблона; чего не хватает — дописывает в `issues`. */
 type Builder = (source: PackageSource, issues: Issues) => Built;
 
@@ -380,7 +400,12 @@ const BUILDERS: Record<DocumentTemplateKey, Builder> = {
 				learnerName: names?.fullName ?? '',
 				learnerSigner: names?.signer ?? '',
 				programs: programs(source, issues),
-				...studyPeriod(source, issues)
+				...studyPeriod(source, issues),
+				priceClause: priceClause(
+					source,
+					'Стоимость обучения — {price}. Обучение начинается после поступления оплаты.',
+					'Стоимость обучения указывается в счёте Исполнителя. Обучение начинается после поступления оплаты.'
+				)
 			}
 		};
 	},
@@ -390,7 +415,12 @@ const BUILDERS: Record<DocumentTemplateKey, Builder> = {
 			...operatorData(source, issues),
 			...customerData(source, issues),
 			programs: programs(source, issues),
-			...studyPeriod(source, issues)
+			...studyPeriod(source, issues),
+			priceClause: priceClause(
+				source,
+				'Стоимость услуг — {price}, оплачивается Заказчиком до начала обучения.',
+				'Стоимость услуг определяется счётом Исполнителя и оплачивается Заказчиком до начала обучения.'
+			)
 		}
 	}),
 	services_act: (source, issues) => ({
@@ -507,12 +537,18 @@ export async function generateDocumentPackage(
 		throw new ValidationError('Основная сторона взаимодействия не найдена в справочнике');
 	}
 
+	const [terms] = await getDb()
+		.select({ priceKopecks: interactionTerms.priceKopecks })
+		.from(interactionTerms)
+		.where(eq(interactionTerms.interactionId, interactionId));
+
 	const source: PackageSource = {
 		interaction,
 		input,
 		primary,
 		operator: operatorParty === undefined ? null : (rows.get(operatorParty.organizationId) ?? null),
-		customer: customerParty
+		customer: customerParty,
+		priceKopecks: terms?.priceKopecks ?? null
 	};
 
 	const outcomes: PackageOutcome[] = [];

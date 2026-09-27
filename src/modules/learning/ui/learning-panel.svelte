@@ -6,7 +6,8 @@
 	import {
 		EXCHANGE_STATE_LABELS,
 		LEARNING_PURPOSE_LABELS,
-		type LearningGroupView
+		type LearningGroupView,
+		type LearningPurpose
 	} from '$lib/contracts/exchange';
 	import { formatDate, formatDateTime } from '$lib/format';
 	import { ContextSection, describeUncountedGroup, getCardCommands } from '$lib/platform/card';
@@ -27,7 +28,13 @@
 	let { source }: CardPanelProps = $props();
 
 	const exchange = $derived(source.exchange);
-	const groups = $derived(exchange.groups);
+	/**
+	 * Новые потоки первыми: работают со свежим, а старый поток, стоящий
+	 * сверху, собирал в себя слушателей, которых несли в новый.
+	 */
+	const groups = $derived(
+		exchange.groups.toSorted((left, right) => right.streamNumber - left.streamNumber)
+	);
 	/** Программы записи: по ним видно, что программу потока из записи убрали. */
 	const programs = $derived(exchange.programs);
 	/** Стадии с данными обучения: по ним видно, что стадия не берёт назначение потока. */
@@ -44,6 +51,15 @@
 			source.status.current?.snapshot.requiresLmsData === true
 	);
 
+	/**
+	 * «Поток стадию не подтверждает» говорит о стадии с данными обучения
+	 * («Ведение занятий» ждёт студентов). Пока идёт другая стадия, пометка у
+	 * потока преподавателей читалась бы как спор с её же чек-листом, который
+	 * такой поток и ждёт, — поэтому она видна, когда стадия с данными обучения
+	 * текущая.
+	 */
+	const lmsStageCurrent = $derived(source.status.current?.snapshot.requiresLmsData === true);
+
 	const commands = getCardCommands();
 	const id = 'card-learning';
 
@@ -58,6 +74,13 @@
 		group.messageState === null
 			? 'заявка не отправлялась'
 			: `заявка: ${EXCHANGE_STATE_LABELS[group.messageState].toLowerCase()}`;
+
+	/** Кого учит поток — одним словом для кнопки списка. */
+	const PURPOSE_SHORT: Record<LearningPurpose, string> = {
+		students: 'студенты',
+		teachers: 'преподаватели',
+		upskilling: 'повышение квалификации'
+	};
 
 	const TRAINING = {
 		completed: { label: 'Обучение завершено', tone: 'success' },
@@ -147,7 +170,7 @@
 									{formatDateTime(group.completionMark.at)}: «{group.completionMark.comment}»
 								</p>
 							{/if}
-							{#if !group.countsForStage}
+							{#if !group.countsForStage && lmsStageCurrent}
 								<p class="text-xs break-words text-warning-soft-foreground">
 									{describeUncountedGroup(group, { programs, learningStages })}
 								</p>
@@ -160,7 +183,9 @@
 									onclick={() => commands.open({ kind: 'roster', groupId: group.id })}
 								>
 									<UsersIcon aria-hidden="true" />
-									Слушатели…
+									Слушатели потока {group.streamNumber}{group.purpose === null
+										? ''
+										: ` — ${PURPOSE_SHORT[group.purpose]}`}
 								</Button>
 							</div>
 							{#if canComplete && group.trainingState !== 'completed'}

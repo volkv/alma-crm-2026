@@ -3382,10 +3382,10 @@ async function generateSignedDocument(
 			contractSignedOn: contract?.signedOn == null ? '' : formatDate(contract.signedOn),
 			operatorName: operator.organizationName,
 			operatorRequisites: await organizationRequisites(operator.organizationId),
-			operatorSigner: 'директора Орлова В. С.',
+			operatorSigner: 'директор Школы Орлов В. С.',
 			institutionName: institution.organizationName,
 			institutionRequisites: await organizationRequisites(institution.organizationId),
-			institutionSigner: 'ректора',
+			institutionSigner: 'ректор',
 			items: items.map(({ productName, licenseUntil }) => ({ productName, licenseUntil }))
 		}
 	});
@@ -3761,9 +3761,9 @@ async function generateAgreement(ctx: ActorContext, interactionId: string): Prom
 				city: 'Москва',
 				date: formatDate(new Date()),
 				operatorName: operator.organizationName,
-				operatorSigner: 'директора Орлова В. С.',
+				operatorSigner: 'директор Школы Орлов В. С.',
 				institutionName: institution.organizationName,
-				institutionSigner: 'ректора',
+				institutionSigner: 'ректор',
 				customerName: customer.organizationName,
 				periodStart: formatDate(view.agreementPeriodStart),
 				periodEnd: formatDate(view.agreementPeriodEnd),

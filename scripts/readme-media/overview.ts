@@ -301,8 +301,8 @@ async function documents(page: Page, crew: Crew): Promise<void> {
 
 	await pack.waitFor({ state: 'visible', timeout: WAIT });
 	await pack.locator('#card-package-city').fill('Москва');
-	await pack.locator('#card-package-operator-signer').fill('директора Орлова К. В.');
-	await pack.locator('#card-package-counterparty-signer').fill('ректора Ерохина С. Д.');
+	await pack.locator('#card-package-operator-signer').fill('директор Школы Орлов К. В.');
+	await pack.locator('#card-package-counterparty-signer').fill('ректор Ерохин С. Д.');
 	await beat(page, 0.6);
 	await press(page, pack.getByRole('button', { name: 'Собрать', exact: true }));
 

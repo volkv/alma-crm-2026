@@ -1,7 +1,12 @@
 <script lang="ts">
+	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import type { SubmitFunction } from '@sveltejs/kit';
+	import { untrack } from 'svelte';
 	import { enhance } from '$app/forms';
+	import { goto } from '$app/navigation';
+	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import EmptyState from '$lib/components/empty-state.svelte';
@@ -15,6 +20,7 @@
 	import { rebaseDraft } from '$lib/components/interactions/rebase-draft';
 	import StaleNotice from '$lib/components/interactions/stale-notice.svelte';
 	import type { ContractItemView, ContractView } from '$lib/contracts/directory';
+	import { AWAITING_TRANSFER_STATUS, TRANSFER_STATUSES } from '$lib/contracts/documents';
 	import { CONTRACT_STATUS_LABELS, CONTRACT_STATUSES } from '$lib/contracts/interactions';
 	import { LICENSE_STATE_LABELS, licenseState } from '$lib/contracts/license';
 	import { formatDate } from '$lib/format';
@@ -40,6 +46,11 @@
 	 * открытии: версия у договора с позициями одна. Чужая правка после неё —
 	 * отказ 409 в самой форме, введённое остаётся, а «Обновить карточку»
 	 * перечитывает страницу без повторной отправки.
+	 *
+	 * Сюда приходят и из карточки взаимодействия — «Создать договор» с адресом
+	 * возврата в `?return=`. Тогда блок говорит, куда вернуться, держит адрес
+	 * возврата после сохранения и сразу открывает форму нового договора, если
+	 * договоров ещё нет.
 	 */
 	let {
 		contracts,
@@ -77,6 +88,36 @@
 	const productOptions = $derived(toLookupOptions(products));
 
 	/**
+	 * Дело, из которого пришли завести договор. Берётся только путь этого же
+	 * приложения: адрес возврата приходит в строке запроса, и ссылка наружу
+	 * по нему была бы открытым перенаправлением.
+	 */
+	const returnPath = $derived.by(() => {
+		const value = page.url.searchParams.get('return');
+
+		return value !== null &&
+			value.startsWith('/') &&
+			!value.startsWith('//') &&
+			!value.includes('\\')
+			? value
+			: null;
+	});
+
+	/**
+	 * Статусы передачи в форме позиции: закрытый выбор, а у позиции, которой
+	 * импорт принёс своё слово, оно остаётся в списке — иначе форма молча
+	 * подменила бы его первым из списка.
+	 */
+	function transferOptions(current: string) {
+		const values: readonly string[] =
+			current === '' || (TRANSFER_STATUSES as readonly string[]).includes(current)
+				? TRANSFER_STATUSES
+				: [...TRANSFER_STATUSES, current];
+
+		return values.map((value) => ({ value, label: value }));
+	}
+
+	/**
 	 * Какая форма открыта. Одна на весь блок: у полей формы идентификаторы
 	 * совпадают с именами, и две открытые формы дали бы на странице две подписи,
 	 * ведущие в одно поле.
@@ -85,7 +126,13 @@
 		| { kind: 'contract'; contract: ContractView | null }
 		| { kind: 'item'; contractId: string; item: ContractItemView | null };
 
-	let open = $state<OpenForm | null>(null);
+	let open = $state<OpenForm | null>(
+		untrack(() =>
+			returnPath !== null && canWrite && contracts.length === 0
+				? { kind: 'contract', contract: null }
+				: null
+		)
+	);
 
 	/**
 	 * Продление уже отправлено: кнопки блокируются до ответа, чтобы второе
@@ -100,10 +147,10 @@
 	let signedOn = $state('');
 	let validUntil = $state('');
 	let status = $state<string>('draft');
+	let transferStatus = $state(AWAITING_TRANSFER_STATUS as string);
 	let productId = $state('');
 	let licenseSignedAt = $state('');
 	let licenseUntil = $state('');
-	let transferStatus = $state('');
 	/** Версия договора на момент открытия формы; у нового договора её нет. */
 	let editVersion = $state<number | null>(null);
 	/** Поля открытой формы, какими их открыли: от них считается, что тронуто. */
@@ -124,7 +171,7 @@
 			productId: item?.productId ?? products[0]?.id ?? '',
 			licenseSignedAt: item?.licenseSignedAt ?? '',
 			licenseUntil: item?.licenseUntil ?? '',
-			transferStatus: item?.transferStatus ?? ''
+			transferStatus: item?.transferStatus ?? AWAITING_TRANSFER_STATUS
 		};
 	}
 
@@ -200,6 +247,21 @@
 
 			if (result.type === 'redirect') {
 				open = null;
+
+				// Сохранение ведёт на карточку организации без адреса возврата:
+				// он возвращается в адрес, чтобы кнопка «Вернуться к
+				// взаимодействию» не пропала после первого же сохранения.
+				if (returnPath !== null) {
+					const target = new URL(result.location, page.url);
+					target.searchParams.set('return', returnPath);
+					// Путь этого же приложения, собранный сервером; `resolve` лишь
+					// добавит базовый путь (тот же приём, что у `directory/query.ts`).
+					await goto(resolve(`${target.pathname}${target.search}#contracts` as `/?${string}`), {
+						invalidateAll: true
+					});
+
+					return;
+				}
 			}
 
 			await update();
@@ -227,7 +289,8 @@
 <!-- `data-tour` — метка подсказок: по ней тур находит блок договоров на
 	карточке организации (`$lib/onboarding/screens`). -->
 <section
-	class="min-w-0 rounded-xl border border-border bg-surface"
+	id="contracts"
+	class="min-w-0 scroll-mt-4 rounded-xl border border-border bg-surface"
 	data-tour="organization-contracts"
 >
 	<header class="flex flex-wrap items-start justify-between gap-3 border-b border-border px-4 py-3">
@@ -238,11 +301,25 @@
 				выбирает договор и нужные его позиции.
 			</p>
 		</div>
-		{#if canWrite}
-			<Button variant="outline" size="sm" onclick={() => editContract(null)}>
-				<PlusIcon aria-hidden="true" />
-				Добавить договор
-			</Button>
+		<div class="flex flex-wrap gap-2">
+			{#if returnPath !== null}
+				<Button variant="outline" size="sm" href={returnPath}>
+					<ArrowLeftIcon aria-hidden="true" />
+					Вернуться к взаимодействию
+				</Button>
+			{/if}
+			{#if canWrite}
+				<Button variant="outline" size="sm" onclick={() => editContract(null)}>
+					<PlusIcon aria-hidden="true" />
+					Добавить договор
+				</Button>
+			{/if}
+		</div>
+		{#if returnPath !== null}
+			<p class="basis-full text-xs text-muted-foreground">
+				Заведите договор и его позиции, затем вернитесь к взаимодействию: там договор выбирают
+				вместе с нужными позициями.
+			</p>
 		{/if}
 	</header>
 
@@ -431,11 +508,12 @@
 										<p class="text-sm">{current.productCode} — {current.productName}</p>
 									</div>
 								{/if}
-								<FieldInput
+								<FieldSelect
 									name="transferStatus"
 									label="Статус по передаче"
 									required
-									placeholder="Например: передан вузу"
+									description="«передан» ставит сам подписанный акт передачи"
+									options={transferOptions(current?.transferStatus ?? '')}
 									bind:value={transferStatus}
 								/>
 								<FieldDate

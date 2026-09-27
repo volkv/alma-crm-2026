@@ -35,7 +35,12 @@
 		type RosterView
 	} from '$lib/contracts/exchange';
 	import type { OrganizationKind } from '$lib/contracts/directory';
-	import type { InteractionView } from '$lib/contracts/interactions';
+	import {
+		isFactItem,
+		type InteractionStatusView,
+		type InteractionView
+	} from '$lib/contracts/interactions';
+	import type { ChecklistRuleKey } from '$lib/platform/checklist-rules';
 	import { pluralForm, pluralize } from '$lib/format';
 	import { getCardCommands } from './commands.svelte';
 	import { purposeCountingStages, type CardExchange, type CardOffering } from './model';
@@ -83,15 +88,62 @@
 	const offeringLabel = (offering: CardOffering) => `${offering.code} — ${offering.name}`;
 
 	/**
-	 * Назначения потока и стадии, которые засчитают его итог. Выбрать можно
-	 * любое: поток преподавателей в процессе работы с вузом законен, даже если
-	 * стадию с данными обучения подтверждает только поток студентов. Но
-	 * засчитываемые помечены, а единственное засчитываемое подставлено сразу —
-	 * иначе поток легко завести так, что стадию он не подтвердит никогда.
+	 * Пункты чек-листа, которые закрывает поток определённого назначения: пункт
+	 * «Сформирована группа преподавателей» ждёт поток «Обучение преподавателей»,
+	 * пункт о зачислении слушателя — «Повышение квалификации». Правило пункта
+	 * названо в описании стадии (`$lib/platform/checklist-rules`), назначение —
+	 * здесь: правило читает потоки этого назначения (`stages/facts.ts`).
+	 */
+	const RULE_PURPOSES: Partial<Record<ChecklistRuleKey, LearningPurpose>> = {
+		teachers_group_formed: 'teachers',
+		teachers_training_completed: 'teachers',
+		upskilling_group_program: 'upskilling',
+		upskilling_enrolled: 'upskilling'
+	};
+
+	const status = $derived(page.data.status as InteractionStatusView | undefined);
+
+	/** Назначения, которых ждут пункты чек-листа стадии. */
+	function checklistPurposes(
+		checklist: readonly InteractionStatusView['progress'][number]['checklist'][number][]
+	): LearningPurpose[] {
+		return [
+			...new Set(
+				checklist.flatMap((item) => {
+					const purpose = isFactItem(item) ? RULE_PURPOSES[item.completion.rule] : undefined;
+
+					return purpose === undefined ? [] : [purpose];
+				})
+			)
+		];
+	}
+
+	/**
+	 * Какие стадии засчитают поток назначения — итогом из системы обучения
+	 * (стадии с данными обучения) или пунктом чек-листа. `null` — процесс
+	 * назначения не различает: засчитывает любое.
+	 */
+	function countingStages(purpose: LearningPurpose): string[] | null {
+		const byResult = purposeCountingStages(exchange.learningStages, purpose);
+		const byChecklist = (status?.progress ?? [])
+			.filter((stage) => checklistPurposes(stage.checklist).includes(purpose))
+			.map((stage) => stage.name);
+
+		if (byResult === null && byChecklist.length === 0) {
+			return null;
+		}
+
+		return [...new Set([...(byResult ?? []), ...byChecklist])];
+	}
+
+	/**
+	 * Назначения потока и стадии, которые его засчитают. Выбрать можно любое,
+	 * но засчитываемые помечены: поток, который не засчитает ни одна стадия,
+	 * завести легко, а заметить поздно.
 	 */
 	const purposeOptions = $derived(
 		LEARNING_PURPOSES.map((value) => {
-			const stages = purposeCountingStages(exchange.learningStages, value);
+			const stages = countingStages(value);
 			const mark =
 				stages === null || stages.length === 0
 					? ''
@@ -104,8 +156,31 @@
 			};
 		})
 	);
+
+	/**
+	 * Назначение, которого ждёт текущая стадия: пункт её чек-листа или её
+	 * собственное правило данных обучения. Одно — оно и подставляется; стадия,
+	 * которая ждёт «преподавателей», не должна получить поток студентов по
+	 * умолчанию.
+	 */
+	const stagePurpose = $derived.by((): LearningPurpose | null => {
+		const snapshot = status?.current?.snapshot ?? null;
+
+		if (snapshot === null) return null;
+
+		const fromChecklist = checklistPurposes(snapshot.checklist);
+
+		if (fromChecklist.length === 1) return fromChecklist[0];
+
+		const fromResult = snapshot.requiresLmsData ? (snapshot.lmsGroupPurposes ?? []) : [];
+
+		return fromChecklist.length === 0 && fromResult.length === 1 ? fromResult[0] : null;
+	});
+
 	/** Назначение, которое форма подставляет сама; `''` — выбирает сотрудник. */
 	const defaultPurpose = $derived.by(() => {
+		if (stagePurpose !== null) return stagePurpose;
+
 		const counted = purposeOptions.filter((option) => option.counts);
 
 		return counted.length === 1 ? counted[0].value : '';
@@ -113,6 +188,25 @@
 	const purposeCounts = $derived(
 		purposeOptions.find((option) => option.value === purpose)?.counts ?? true
 	);
+
+	/** Предел номера потока — тот же, что у контракта заявки в `$lib/contracts/exchange`. */
+	const STREAM_NUMBER_MAX = 99;
+
+	/**
+	 * Что не так с номером потока — до отправки, у самого поля. Пустое поле
+	 * `bind:value` числового ввода отдаёт как `null`.
+	 */
+	const streamIssue = $derived.by(() => {
+		const value = streamNumber as number | null;
+
+		if (value === null || !Number.isInteger(value)) return 'Номер потока — целое число';
+
+		if (value < 1 || value > STREAM_NUMBER_MAX) {
+			return `Номер потока — от 1 до ${STREAM_NUMBER_MAX}`;
+		}
+
+		return null;
+	});
 
 	/** Потоки, которые ещё можно отметить завершёнными. */
 	const unfinished = $derived(
@@ -343,7 +437,14 @@
 				<input type="hidden" name="purpose" value={purpose} />
 				{#if !purposeCounts}
 					<InlineHint tone="warning">
-						Стадию такой поток не подтвердит: итог засчитывается только у назначений с пометкой.
+						Такой поток не засчитает ни одна стадия процесса: ни итогом обучения, ни пунктом
+						чек-листа. Засчитываемые назначения — с пометкой.
+					</InlineHint>
+				{:else if stagePurpose !== null && purpose !== '' && purpose !== stagePurpose}
+					<InlineHint tone="warning">
+						Текущая стадия «{status?.current?.snapshot.name}» ждёт поток «{LEARNING_PURPOSE_LABELS[
+							stagePurpose
+						]}»: этот её пункты не закроет.
 					</InlineHint>
 				{/if}
 			</div>
@@ -371,14 +472,27 @@
 				</fieldset>
 			{/if}
 			<div class="flex flex-col gap-1.5">
-				<Label for="card-stream-number">Поток</Label>
+				<Label for="card-stream-number">Номер потока</Label>
 				<Input
 					id="card-stream-number"
 					name="streamNumber"
 					type="number"
 					min="1"
+					max={STREAM_NUMBER_MAX}
+					step="1"
+					aria-invalid={streamIssue === null ? undefined : true}
+					aria-describedby="card-stream-number-hint"
 					bind:value={streamNumber}
 				/>
+				<p
+					id="card-stream-number-hint"
+					class="text-xs {streamIssue === null
+						? 'text-muted-foreground'
+						: 'text-danger-soft-foreground'}"
+				>
+					{streamIssue ??
+						`Порядковый номер потока в этом деле, от 1 до ${STREAM_NUMBER_MAX}: по нему поток узнают в системе обучения.`}
+				</p>
 			</div>
 			<div class="flex flex-col gap-1.5">
 				<Label for="card-planned-seats">Мест в потоке</Label>
@@ -412,7 +526,7 @@
 			<Button
 				type="submit"
 				form="card-send-group-form"
-				disabled={!exchange.canSend || exchange.issue !== null}
+				disabled={!exchange.canSend || exchange.issue !== null || streamIssue !== null}
 			>
 				Отправить в LMS
 			</Button>
@@ -476,8 +590,10 @@
 
 <FormDialog
 	bind:open={rosterOpen.get, rosterOpen.set}
-	title={rosterGroup === null ? 'Слушатели потока' : `Слушатели потока ${rosterGroup.streamNumber}`}
-	description="Поимённый список группы: загружается файлом, передаётся в систему обучения кнопкой. Люди узнаются по почте — второй записи об одном человеке загрузка не заводит."
+	title={rosterGroup === null
+		? 'Слушатели потока'
+		: `Слушатели потока ${rosterGroup.streamNumber}${rosterGroup.purpose === null ? '' : ` — ${LEARNING_PURPOSE_LABELS[rosterGroup.purpose].toLowerCase()}`}`}
+	description="Поимённый список группы: загружается файлом, передаётся в систему обучения кнопкой. Люди узнаются по почте — второй записи об одном человеке загрузка не заводит. Попал не в тот поток — «Убрать» и загрузите в нужный: до передачи в LMS он там и не появится."
 	width="xl"
 >
 	<div class="flex flex-col gap-4">
@@ -559,12 +675,15 @@
 									<input type="hidden" name="personId" value={learner.personId} />
 									<Button
 										type="submit"
-										size="icon-xs"
-										variant="ghost"
-										aria-label="Убрать {learner.fullName} из списка"
-										title="Убрать из списка"
+										size="xs"
+										variant="outline"
+										aria-label="Убрать {learner.fullName} из потока"
+										title={learner.status === 'transferred'
+											? 'Из системы обучения человек уйдёт со следующей передачей списка'
+											: undefined}
 									>
 										<XIcon aria-hidden="true" />
+										Убрать
 									</Button>
 								</form>
 							{/if}

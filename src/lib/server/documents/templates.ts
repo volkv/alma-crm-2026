@@ -57,7 +57,11 @@ const SIGNING: readonly DocumentTemplateVariable[] = [
 const OPERATOR: readonly DocumentTemplateVariable[] = [
 	{ key: 'operatorName', label: 'Оператор: полное наименование', required: true },
 	{ key: 'operatorRequisites', label: 'Оператор: ИНН, КПП, ОГРН', required: true },
-	{ key: 'operatorSigner', label: 'Оператор: подписант в родительном падеже', required: true }
+	{
+		key: 'operatorSigner',
+		label: 'Оператор: подписант: должность и ФИО, как в строке подписи',
+		required: true
+	}
 ];
 
 function institution(role: string): DocumentTemplateVariable[] {
@@ -66,7 +70,7 @@ function institution(role: string): DocumentTemplateVariable[] {
 		{ key: 'institutionRequisites', label: `${role}: ИНН, КПП, ОГРН`, required: true },
 		{
 			key: 'institutionSigner',
-			label: `${role}: подписант в родительном падеже`,
+			label: `${role}: подписант: должность и ФИО, как в строке подписи`,
 			required: true
 		}
 	];
@@ -78,6 +82,17 @@ const CUSTOMER: readonly DocumentTemplateVariable[] = [
 	{ key: 'customerRequisites', label: 'Заказчик: реквизиты', required: true },
 	{ key: 'customerSigner', label: 'Заказчик: подписант', required: true }
 ];
+
+/**
+ * Условие о стоимости одной фразой: названа стоимость в карточке дела — сумма,
+ * нет — прежняя оговорка «по счёту Исполнителя». Фразой, а не числом: пустая
+ * сумма в договоре была бы дефектом, а не «стоимость не названа».
+ */
+const PRICE: DocumentTemplateVariable = {
+	key: 'priceClause',
+	label: 'Условие о стоимости: сумма из карточки дела или оговорка о счёте',
+	required: true
+};
 
 /** Что и когда изучают: программы и период обучения. */
 const STUDY: readonly DocumentTemplateVariable[] = [
@@ -106,7 +121,7 @@ export const BUILT_IN_TEMPLATES: Record<DocumentTemplateKey, BuiltInTemplate> = 
 			{ key: 'operatorName', label: 'Оператор: полное наименование', required: true },
 			{
 				key: 'operatorSigner',
-				label: 'Оператор: подписант в родительном падеже',
+				label: 'Оператор: подписант: должность и ФИО, как в строке подписи',
 				required: true
 			},
 			{
@@ -116,7 +131,7 @@ export const BUILT_IN_TEMPLATES: Record<DocumentTemplateKey, BuiltInTemplate> = 
 			},
 			{
 				key: 'institutionSigner',
-				label: 'Образовательная организация: подписант в родительном падеже',
+				label: 'Образовательная организация: подписант: должность и ФИО, как в строке подписи',
 				required: true
 			},
 			{ key: 'customerName', label: 'Заказчик подготовки', required: true },
@@ -160,13 +175,14 @@ export const BUILT_IN_TEMPLATES: Record<DocumentTemplateKey, BuiltInTemplate> = 
 			...OPERATOR,
 			{ key: 'learnerName', label: 'Слушатель: фамилия, имя, отчество', required: true },
 			{ key: 'learnerSigner', label: 'Слушатель: фамилия и инициалы', required: true },
-			...STUDY
+			...STUDY,
+			PRICE
 		]
 	},
 	legal_entity_contract: {
 		name: DOCUMENT_TEMPLATE_LABELS.legal_entity_contract,
 		fileName: 'legal-entity-contract.docx',
-		variables: [...SIGNING, ...OPERATOR, ...CUSTOMER, ...STUDY]
+		variables: [...SIGNING, ...OPERATOR, ...CUSTOMER, ...STUDY, PRICE]
 	},
 	services_act: {
 		name: DOCUMENT_TEMPLATE_LABELS.services_act,

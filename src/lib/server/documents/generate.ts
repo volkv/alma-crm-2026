@@ -10,11 +10,12 @@
  * транзакция. Конвертация ходит по сети и может занять секунды — держать всё
  * это время открытую транзакцию значит держать блокировки из-за чужой службы.
  */
-import { and, eq, inArray } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
+import { and, desc, eq, inArray, isNull } from 'drizzle-orm';
 import Docxtemplater from 'docxtemplater';
 import PizZip from 'pizzip';
 import type { AuditDetails } from '$lib/contracts/audit';
-import type { DocumentSigning, DocumentView } from '$lib/contracts/documents';
+import type { DocumentSigning, DocumentTemplateKey, DocumentView } from '$lib/contracts/documents';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getConfig } from '../config';
@@ -22,7 +23,7 @@ import { getDb } from '../db';
 import { documentContractItems, documents, interactionContractItems } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { publishAfterCommit } from '../live/publish';
-import { ValidationError } from '../errors';
+import { ConflictError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
 import { assertTemplateOffered } from '../stages/card';
 import { touchInteraction } from '../stages/commands';
@@ -228,8 +229,68 @@ async function assertItemsChosen(
 	}
 }
 
+const successor = alias(documents, 'successor');
+
+/**
+ * Действующая редакция документа, собранного в деле по этому шаблону в этом
+ * формате, — её новая сборка и заменяет. Пересборка пакета — это новая
+ * редакция того же соглашения, а не второе соглашение рядом: иначе в деле
+ * копятся одинаковые «Соглашение — …», и отметку ставят наугад. Скан
+ * подписанного экземпляра, загруженный новой редакцией, остаётся в истории, а
+ * его отметки — доказательством стадии (`evidence.ts` заменённых не исключает).
+ *
+ * Строка блокируется, а преемник проверяется уже после блокировки: две
+ * сборки наперегонки иначе дали бы редакции две «следующих».
+ */
+async function currentGeneratedRevision(
+	tx: Tx,
+	interactionId: string,
+	templateKey: DocumentTemplateKey,
+	mime: AllowedDocumentMime
+): Promise<string | null> {
+	const [head] = await tx
+		.select({ id: documents.id })
+		.from(documents)
+		.leftJoin(successor, eq(successor.supersedesId, documents.id))
+		.where(
+			and(
+				eq(documents.interactionId, interactionId),
+				eq(documents.kind, GENERATED_KIND),
+				eq(documents.templateKey, templateKey),
+				eq(documents.mime, mime),
+				isNull(successor.id)
+			)
+		)
+		.orderBy(desc(documents.createdAt), desc(documents.id))
+		.limit(1)
+		.for('update', { of: documents });
+
+	if (head === undefined) {
+		return null;
+	}
+
+	const [taken] = await tx
+		.select({ id: documents.id })
+		.from(documents)
+		.where(eq(documents.supersedesId, head.id))
+		.limit(1);
+
+	if (taken !== undefined) {
+		throw new ConflictError(
+			'Этот документ только что собрали заново в другой вкладке — обновите карточку'
+		);
+	}
+
+	return head.id;
+}
+
+/** Пометка новой редакции, которую дала пересборка по шаблону. */
+const REBUILT_NOTE = 'Собран заново по шаблону';
+
 /**
  * Создаёт документы по шаблону — по одному на каждый запрошенный формат.
+ * Документ, уже собранный в деле по тому же шаблону и в том же формате,
+ * получает новую редакцию, а не двойника.
  * Возвращает их в том же порядке, в каком перечислены форматы в
  * {@link DOCUMENT_FORMATS}.
  */
@@ -316,15 +377,22 @@ export async function generateDocument(
 			}
 
 			for (const blob of staged) {
+				const supersedesId =
+					interactionId === null
+						? null
+						: await currentGeneratedRevision(tx, interactionId, templateKey, blob.mime);
+
 				await promoteBlob(blob);
 
 				const [row] = await tx
 					.insert(documents)
 					.values({
 						interactionId,
+						supersedesId,
 						kind: GENERATED_KIND,
 						templateKey,
 						title,
+						revisionNote: supersedesId === null ? null : REBUILT_NOTE,
 						signing: input.signing ?? null,
 						filePath: blob.relativePath,
 						mime: blob.mime,
@@ -348,6 +416,10 @@ export async function generateDocument(
 
 				if (interactionId !== null) {
 					details.interactionId = interactionId;
+				}
+
+				if (supersedesId !== null) {
+					details.supersededDocumentId = supersedesId;
 				}
 
 				await recordAuditEvent(

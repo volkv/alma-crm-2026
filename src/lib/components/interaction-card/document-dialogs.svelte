@@ -16,13 +16,16 @@
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import { actionEnhance } from '$lib/components/interactions/action-enhance';
 	import {
+		documentFormat,
 		documentKindLabel,
 		markDayBounds,
 		DOCUMENT_KIND_LABELS,
 		DOCUMENT_STATUS_FACTS,
 		DOCUMENT_STATUS_FACT_LABELS,
+		DOCUMENT_TEMPLATE_KEYS,
 		DOCUMENT_TEMPLATE_LABELS,
 		UPLOADED_DOCUMENT_KINDS,
+		type UploadedDocumentKind,
 		type DocumentStatusFact,
 		type DocumentTemplateKey,
 		type PackageDefaults,
@@ -33,15 +36,16 @@
 	} from '$lib/contracts/documents';
 	import type { InteractionDocumentView, InteractionView } from '$lib/contracts/interactions';
 	import { resolve } from '$app/paths';
-	import { pluralize } from '$lib/format';
+	import { formatDate, pluralize } from '$lib/format';
 	import { kindOwner } from '$lib/platform/registry';
 	import { getCardCommands } from './commands.svelte';
+	import type { CardCommand } from './model';
 
 	/**
 	 * Диалоги документов дела: загрузка, новая редакция, отметка и пакет
 	 * документов по шаблонам. Документ неизменяем: исправленный файл встаёт
-	 * новой редакцией, отметку снять нельзя, повторная сборка пакета встаёт
-	 * рядом отдельными файлами.
+	 * новой редакцией, отметку снять нельзя, повторная сборка пакета даёт
+	 * собранному документу новую редакцию, а не двойника рядом.
 	 */
 	let {
 		interaction,
@@ -82,6 +86,77 @@
 
 	const documents = $derived(interaction.documents);
 	const superseded = $derived(new Set(supersessions.map((item) => item.documentId)));
+	/** Редакция → та, которую она заменила: по цепочке считается номер редакции. */
+	const predecessorOf = $derived(
+		new Map(supersessions.map((item) => [item.supersededById, item.documentId]))
+	);
+
+	/** Номер редакции в цепочке документа: у первой — 1. */
+	function revisionNo(documentId: string): number {
+		let count = 1;
+		let current = predecessorOf.get(documentId);
+
+		while (current !== undefined && count <= documents.length) {
+			count += 1;
+			current = predecessorOf.get(current);
+		}
+
+		return count;
+	}
+
+	/**
+	 * Документ одной строкой для выбора: у пересобранного пакета названия
+	 * совпадают, различают их формат, дата и номер редакции.
+	 */
+	function describeDocument(document: InteractionDocumentView): string {
+		const format = documentFormat(document.mime)?.toUpperCase() ?? document.mime;
+
+		return `${document.title} · ${format} · ${formatDate(document.createdAt)} · ред. ${revisionNo(document.id)}`;
+	}
+
+	/**
+	 * Документы, собранные по шаблону и ещё не заменённые: скан подписанного
+	 * экземпляра встаёт их новой редакцией. Порядок — по каталогу шаблонов
+	 * (соглашение раньше акта), внутри шаблона PDF раньше DOCX: подписывают
+	 * напечатанный PDF.
+	 */
+	const revisionTargets = $derived(
+		documents
+			.filter((document) => document.templateKey !== null && !superseded.has(document.id))
+			.toSorted(
+				(left, right) =>
+					templateOrder(left.templateKey) - templateOrder(right.templateKey) ||
+					Number(documentFormat(right.mime) === 'pdf') -
+						Number(documentFormat(left.mime) === 'pdf') ||
+					right.createdAt.getTime() - left.createdAt.getTime()
+			)
+	);
+
+	function templateOrder(key: DocumentTemplateKey | null): number {
+		return key === null ? Number.MAX_SAFE_INTEGER : DOCUMENT_TEMPLATE_KEYS.indexOf(key);
+	}
+
+	/**
+	 * Вид загрузки по умолчанию: у вуза главная бумага — соглашение, у лица и
+	 * компании — договор. Подписанный договор юрлица видом «Соглашение» читался
+	 * бы как другая бумага.
+	 */
+	const defaultUploadKind = $derived<UploadedDocumentKind>(
+		(page.data.card as { counterpartyKind?: string } | undefined)?.counterpartyKind ===
+			'educational_institution'
+			? 'agreement'
+			: 'contract'
+	);
+
+	/**
+	 * Стадия, на которой бумаги подписывают и обмениваются ими: загрузка с неё
+	 * по умолчанию — новая редакция собранного документа (подписанный скан), а
+	 * не отдельный файл, который стадия не засчитает.
+	 */
+	const documentsStage = $derived(
+		(page.data.status as { current?: { snapshot?: { category?: string } } | null } | undefined)
+			?.current?.snapshot?.category === 'documents'
+	);
 
 	function unmarked(document: InteractionDocumentView): DocumentStatusFact[] {
 		const moments: Record<DocumentStatusFact, Date | null> = {
@@ -137,6 +212,9 @@
 
 	let uploadTitle = $state('');
 	let uploadKind = $state<string>('agreement');
+	/** Чью новую редакцию загружают; `''` — новый документ. */
+	let uploadTarget = $state('');
+	let uploadNote = $state('');
 	let uploadChosen = $state<readonly string[]>([]);
 	let revisionChosen = $state<readonly string[]>([]);
 	let revisionNote = $state('');
@@ -149,6 +227,20 @@
 	let packageOperatorSigner = $state('');
 	let packageCounterpartySigner = $state('');
 	let packageOutcomes = $state<PackageOutcome[]>([]);
+	/** Претензии к полям формы сборки, найденные до отправки. */
+	let packageErrors = $state<Partial<Record<PackageField, string>>>({});
+	/**
+	 * Пакет, из которого ушли исправлять дело («Изменить план», стороны,
+	 * договор): когда тот диалог закроется, пакет откроется снова с тем же
+	 * выбором и введёнными полями — вводить подписантов заново не придётся.
+	 */
+	let packageReturn = $state<{
+		command: Extract<CardCommand, { kind: 'package' }>;
+		chosen: DocumentTemplateKey[];
+		city: string;
+		operatorSigner: string;
+		counterpartySigner: string;
+	} | null>(null);
 	let packageRefusal = $state<{ message: string; description?: string } | null>(null);
 	/**
 	 * Умолчания формы сборки приходят отдельным запросом при открытии: город из
@@ -173,7 +265,13 @@
 			if (current === null) return;
 
 			uploadTitle = '';
-			uploadKind = current.kind === 'upload' ? (current.documentKind ?? 'agreement') : 'agreement';
+			uploadKind =
+				current.kind === 'upload' ? (current.documentKind ?? defaultUploadKind) : defaultUploadKind;
+			uploadTarget =
+				current.kind === 'upload' && current.documentKind === undefined && documentsStage
+					? (revisionTargets.find((document) => document.approvedAt === null)?.id ?? '')
+					: '';
+			uploadNote = '';
 			uploadChosen = [];
 			revisionChosen = [];
 			revisionNote = '';
@@ -182,7 +280,18 @@
 			packageRefusal = null;
 
 			if (current.kind === 'package') {
-				packageChosen = [...current.templates];
+				const back = packageReturn;
+
+				packageReturn = null;
+				packageErrors = {};
+				packageChosen = back?.chosen ?? [...current.templates];
+
+				if (back !== null) {
+					packageCity = back.city;
+					packageOperatorSigner = back.operatorSigner;
+					packageCounterpartySigner = back.counterpartySigner;
+				}
+
 				void loadPackageDefaults();
 			}
 
@@ -251,11 +360,63 @@
 	 * состава дела, план и договор — свои диалоги. Открытый диалог сменяет этот.
 	 */
 	function openFix(fix: PackageFix) {
+		if (packageCommand !== null) {
+			packageReturn = {
+				command: packageCommand,
+				chosen: [...packageChosen],
+				city: packageCity,
+				operatorSigner: packageOperatorSigner,
+				counterpartySigner: packageCounterpartySigner
+			};
+		}
+
 		if (fix === 'parties') {
 			commands.openComposition('parties');
 		} else {
 			commands.open({ kind: fix });
 		}
+	}
+
+	/** Диалог исправления закрыт — сохранил человек или передумал: пакет снова открыт. */
+	$effect(() => {
+		if (commands.busy || packageReturn === null) return;
+
+		// Поля и выбор вернёт сброс формы при открытии пакета (эффект выше):
+		// он узнаёт возврат по `packageReturn` и снимает его сам.
+		untrack(() => {
+			if (packageReturn !== null) commands.open(packageReturn.command);
+		});
+	});
+
+	type PackageField = 'city' | 'operatorSigner' | 'counterpartySigner';
+
+	/** Подписант контрагента нужен всем, кроме физического лица: оно подписывает само. */
+	const needsCounterpartySigner = $derived(packageCommand?.counterpartyKind !== 'individual');
+
+	/**
+	 * Обязательные поля формы — до отправки, у самого поля. Сервер проверяет их
+	 * ещё раз, но без названного подписанта не собирается ни один документ, и
+	 * ждать ответа ради этого незачем.
+	 */
+	function packageFieldErrors(): Partial<Record<PackageField, string>> {
+		const errors: Partial<Record<PackageField, string>> = {};
+
+		if (packageCity.trim() === '') errors.city = 'Укажите город подписания';
+		if (packageOperatorSigner.trim() === '') {
+			errors.operatorSigner = 'Укажите, кто подписывает за оператора';
+		}
+		if (needsCounterpartySigner && packageCounterpartySigner.trim() === '') {
+			errors.counterpartySigner = 'Укажите, кто подписывает за контрагента';
+		}
+
+		return errors;
+	}
+
+	/** Что уже собрано в деле по шаблону: действующие редакции собранных документов. */
+	function builtOf(template: DocumentTemplateKey): InteractionDocumentView[] {
+		return documents.filter(
+			(document) => document.templateKey === template && !superseded.has(document.id)
+		);
 	}
 
 	function togglePackage(template: DocumentTemplateKey, on: boolean) {
@@ -273,8 +434,18 @@
 	 * документом пишет, что заполнить. Отказ целиком (не собралось ничего)
 	 * показывается в самой форме: исправлять его здесь же.
 	 */
-	const packageSubmit: SubmitFunction = () => {
+	const packageSubmit: SubmitFunction = ({ cancel, formElement }) => {
 		packageRefusal = null;
+		packageErrors = packageFieldErrors();
+
+		const invalid = Object.keys(packageErrors)[0] as PackageField | undefined;
+
+		if (invalid !== undefined) {
+			cancel();
+			formElement.querySelector<HTMLInputElement>(`[name="${invalid}"]`)?.focus();
+
+			return;
+		}
 
 		return async ({ result, update }) => {
 			if (result.type === 'failure') {
@@ -330,8 +501,15 @@
 	};
 </script>
 
-<!-- Звёздочка у поля, без которого документ не собрать; проверяет его сервер,
-	после данных дела, поэтому атрибута `required` у поля нет. -->
+{#snippet fieldError(id: string, message: string | undefined)}
+	{#if message !== undefined}
+		<p {id} class="text-xs text-danger-soft-foreground">{message}</p>
+	{/if}
+{/snippet}
+
+<!-- Звёздочка у поля, без которого документ не собрать. Пустое поле форма
+	называет у него самого до отправки (`packageFieldErrors`), атрибута `required`
+	нет: браузерная подсказка всплывала бы по-английски поверх диалога. -->
 {#snippet requiredMark()}
 	<span class="text-danger" aria-hidden="true">*</span>
 	<span class="sr-only">обязательное поле</span>
@@ -341,45 +519,91 @@
 	bind:open={uploadOpen.get, uploadOpen.set}
 	title="Загрузить документ"
 	description="PDF, DOCX, XLSX, изображение или архив, до 25 МиБ."
-	dirty={uploadTitle.trim() !== '' || uploadChosen.length > 0}
+	dirty={uploadTitle.trim() !== '' || uploadNote.trim() !== '' || uploadChosen.length > 0}
 >
 	<form
 		id="card-upload-form"
 		method="POST"
-		action="?/upload"
+		action={uploadTarget === '' ? '?/upload' : '?/uploadRevision'}
 		enctype="multipart/form-data"
 		use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
 		class="flex flex-col gap-3"
 	>
-		<div class="flex flex-col gap-1.5">
-			<Label for="card-document-title">Название</Label>
-			<Input
-				id="card-document-title"
-				name="title"
-				placeholder="Например: подписанное соглашение"
-				bind:value={uploadTitle}
-			/>
-		</div>
-		<div class="flex flex-col gap-1.5">
-			<Label for="card-document-kind">Вид документа</Label>
-			<Select.Root type="single" name="kind" bind:value={uploadKind}>
-				<Select.Trigger id="card-document-kind" class="w-full">
-					{documentKindLabel(uploadKind)}
-				</Select.Trigger>
-				<Select.Content>
-					{#each uploadKinds as kind (kind)}
-						<Select.Item value={kind} label={DOCUMENT_KIND_LABELS[kind]} />
-					{/each}
-				</Select.Content>
-			</Select.Root>
-			{#if uploadKind === 'act'}
+		{#if revisionTargets.length > 0}
+			<div class="flex flex-col gap-1.5">
+				<Label for="card-upload-target">Что загружаете</Label>
+				<Select.Root type="single" bind:value={uploadTarget}>
+					<Select.Trigger id="card-upload-target" class="w-full">
+						<span class="truncate">
+							{uploadTarget === ''
+								? 'Новый документ'
+								: `Новая редакция: ${describeDocument(
+										revisionTargets.find((document) => document.id === uploadTarget) ??
+											revisionTargets[0]
+									)}`}
+						</span>
+					</Select.Trigger>
+					<Select.Content>
+						<Select.Item value="" label="Новый документ" />
+						{#each revisionTargets as document (document.id)}
+							<Select.Item
+								value={document.id}
+								label={`Новая редакция: ${describeDocument(document)}`}
+							/>
+						{/each}
+					</Select.Content>
+				</Select.Root>
 				<p class="text-xs text-muted-foreground">
-					Подписанный акт передачи загружайте не здесь, а новой редакцией акта, собранного по
-					шаблону: меню документа → «Загрузить новую редакцию». Отдельно загруженный акт стадию не
-					закроет — он не связан с позициями договора.
+					Скан подписанного экземпляра собранного документа загружайте его новой редакцией: он
+					остаётся тем же документом, и отметка «{DOCUMENT_STATUS_FACT_LABELS.approved}» на нём
+					засчитывается стадией. Отдельный документ её не закроет.
 				</p>
-			{/if}
-		</div>
+			</div>
+		{/if}
+
+		{#if uploadTarget !== ''}
+			<input type="hidden" name="supersedesId" value={uploadTarget} />
+			<div class="flex flex-col gap-1.5">
+				<Label for="card-upload-note">Что изменилось</Label>
+				<Input
+					id="card-upload-note"
+					name="note"
+					maxlength={500}
+					placeholder="Например: подписанный сторонами скан"
+					bind:value={uploadNote}
+				/>
+			</div>
+		{:else}
+			<div class="flex flex-col gap-1.5">
+				<Label for="card-document-title">Название</Label>
+				<Input
+					id="card-document-title"
+					name="title"
+					placeholder="Например: подписанное соглашение"
+					bind:value={uploadTitle}
+				/>
+			</div>
+			<div class="flex flex-col gap-1.5">
+				<Label for="card-document-kind">Вид документа</Label>
+				<Select.Root type="single" name="kind" bind:value={uploadKind}>
+					<Select.Trigger id="card-document-kind" class="w-full">
+						{documentKindLabel(uploadKind)}
+					</Select.Trigger>
+					<Select.Content>
+						{#each uploadKinds as kind (kind)}
+							<Select.Item value={kind} label={DOCUMENT_KIND_LABELS[kind]} />
+						{/each}
+					</Select.Content>
+				</Select.Root>
+				{#if uploadKind === 'act'}
+					<p class="text-xs text-muted-foreground">
+						Подписанный акт передачи загружайте не здесь, а новой редакцией акта, собранного по
+						шаблону: «Что загружаете» → «Новая редакция». Отдельно загруженный акт стадию не закроет
+						— он не связан с позициями договора.
+					</p>
+				{/if}
+			</div>
+		{/if}
 		<FileInput
 			id="card-document-file"
 			name="file"
@@ -476,11 +700,13 @@
 					}
 				>
 					<Select.Trigger id="card-mark-document" class="w-full">
-						<span class="truncate">{markDocument?.title ?? 'Выберите документ'}</span>
+						<span class="truncate">
+							{markDocument === null ? 'Выберите документ' : describeDocument(markDocument)}
+						</span>
 					</Select.Trigger>
 					<Select.Content>
 						{#each markCandidates as document (document.id)}
-							<Select.Item value={document.id} label={document.title} />
+							<Select.Item value={document.id} label={describeDocument(document)} />
 						{/each}
 					</Select.Content>
 				</Select.Root>
@@ -488,8 +714,8 @@
 					<p class="text-xs text-muted-foreground">
 						Стадия засчитывает только «{DOCUMENT_TEMPLATE_LABELS[markTemplate]}», собранный по
 						шаблону. Путь: «Собрать пакет документов» в панели «Документы» → подписанный скан
-						загрузить новой редакцией собранного документа (меню документа → «Загрузить новую
-						редакцию») → отметить «{DOCUMENT_STATUS_FACT_LABELS.approved}».
+						загрузить новой редакцией собранного документа («Загрузить» → «Что загружаете» → «Новая
+						редакция») → отметить «{DOCUMENT_STATUS_FACT_LABELS.approved}».
 					</p>
 				{:else if markCandidates.length === 0}
 					<p class="text-xs text-muted-foreground">
@@ -508,7 +734,9 @@
 				{/if}
 			</div>
 		{:else}
-			<p class="text-sm font-medium break-words">«{markDocument?.title ?? ''}»</p>
+			<p class="text-sm font-medium break-words">
+				{markDocument === null ? '' : describeDocument(markDocument)}
+			</p>
 		{/if}
 		<input type="hidden" name="documentId" value={markDocumentId} />
 
@@ -582,13 +810,14 @@
 <FormDialog
 	bind:open={packageOpen.get, packageOpen.set}
 	title="Пакет документов"
-	description="Каждый документ соберётся в DOCX и PDF. Реквизиты, позиции договора, программы и сроки берутся из карточек; здесь — только то, чего в справочнике нет. Собранные раньше файлы останутся: новая сборка встаёт рядом."
+	description="Каждый документ соберётся в DOCX и PDF. Реквизиты, позиции договора, программы, сроки и стоимость берутся из карточек; здесь — только то, чего в справочнике нет. Документ, уже собранный в деле, получит новую редакцию: прежняя останется в истории."
 	width="lg"
 >
 	<form
 		id="card-package-form"
 		method="POST"
 		action="?/package"
+		novalidate
 		use:enhance={packageSubmit}
 		class="flex flex-col gap-3"
 	>
@@ -596,6 +825,7 @@
 			<legend class="mb-1 text-sm font-medium">Документы</legend>
 			{#each packageCommand?.templates ?? [] as template (template)}
 				{@const outcome = outcomeOf(template)}
+				{@const built = builtOf(template)}
 				<Label class="flex items-start gap-2 font-normal">
 					<Checkbox
 						name="templates"
@@ -606,6 +836,20 @@
 					/>
 					<span class="flex flex-col gap-0.5">
 						{DOCUMENT_TEMPLATE_LABELS[template]}
+						{#if built.length > 0 && outcome === null}
+							<span class="text-xs text-muted-foreground">
+								Уже в деле: {built
+									.map(
+										(document) =>
+											`${documentFormat(document.mime)?.toUpperCase() ?? document.mime}, ред. ${revisionNo(document.id)} от ${formatDate(document.createdAt)}${document.approvedAt === null ? '' : `, ${DOCUMENT_STATUS_FACT_LABELS.approved.toLowerCase()}`}`
+									)
+									.join('; ')}. Новая сборка встанет новой редакцией{built.some(
+									(document) => document.approvedAt !== null
+								)
+									? ' — подписанный экземпляр останется в истории, стадия его не потеряет'
+									: ''}.
+							</span>
+						{/if}
 						{#if outcome?.status === 'generated'}
 							<span class="text-xs text-success">Собран</span>
 						{:else if outcome?.status === 'refused'}
@@ -645,36 +889,64 @@
 				Город подписания
 				{@render requiredMark()}
 			</Label>
-			<Input id="card-package-city" name="city" placeholder="Москва" bind:value={packageCity} />
+			<Input
+				id="card-package-city"
+				name="city"
+				placeholder="Москва"
+				aria-invalid={packageErrors.city === undefined ? undefined : true}
+				aria-describedby={packageErrors.city === undefined ? undefined : 'card-package-city-error'}
+				oninput={() => (packageErrors.city = undefined)}
+				bind:value={packageCity}
+			/>
+			{@render fieldError('card-package-city-error', packageErrors.city)}
 		</div>
 		<div class="flex flex-col gap-1.5">
 			<Label for="card-package-operator-signer">
-				Подписант оператора (в родительном падеже)
+				Подписант оператора
 				{@render requiredMark()}
 			</Label>
 			<Input
 				id="card-package-operator-signer"
 				name="operatorSigner"
-				placeholder="директора Иванова И. И."
+				placeholder="директор Школы Иванов И. И."
+				aria-invalid={packageErrors.operatorSigner === undefined ? undefined : true}
+				aria-describedby="card-package-signer-hint{packageErrors.operatorSigner === undefined
+					? ''
+					: ' card-package-operator-signer-error'}"
+				oninput={() => (packageErrors.operatorSigner = undefined)}
 				bind:value={packageOperatorSigner}
 			/>
+			{@render fieldError('card-package-operator-signer-error', packageErrors.operatorSigner)}
 		</div>
-		{#if packageCommand?.counterpartyKind !== 'individual'}
+		{#if needsCounterpartySigner}
 			<div class="flex flex-col gap-1.5">
 				<Label for="card-package-counterparty-signer">
-					Подписант контрагента (в родительном падеже)
+					Подписант контрагента
 					{@render requiredMark()}
 				</Label>
 				<Input
 					id="card-package-counterparty-signer"
 					name="counterpartySigner"
 					placeholder={packageCommand?.counterpartyKind === 'educational_institution'
-						? 'ректора Петрова П. П.'
-						: 'генерального директора Сидорова С. С.'}
+						? 'ректор Петров П. П.'
+						: 'генеральный директор Сидоров С. С.'}
+					aria-invalid={packageErrors.counterpartySigner === undefined ? undefined : true}
+					aria-describedby="card-package-signer-hint{packageErrors.counterpartySigner === undefined
+						? ''
+						: ' card-package-counterparty-signer-error'}"
+					oninput={() => (packageErrors.counterpartySigner = undefined)}
 					bind:value={packageCounterpartySigner}
 				/>
+				{@render fieldError(
+					'card-package-counterparty-signer-error',
+					packageErrors.counterpartySigner
+				)}
 			</div>
 		{/if}
+		<p id="card-package-signer-hint" class="text-xs text-muted-foreground">
+			Должность и фамилия с инициалами — как в строке подписи, в именительном падеже. Во вступлении
+			документа подписант назван так же: «от имени … действует директор Школы Иванов И. И.».
+		</p>
 	</form>
 
 	{#snippet footer({ close })}
