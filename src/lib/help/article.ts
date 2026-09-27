@@ -121,8 +121,20 @@ function parseFrontmatter(source: string, path: string): { data: unknown; body: 
  */
 const SOURCE_PATH = /(?:^|\/)content\/(user|admin)\/\d+-([a-z0-9-]+)\.md$/;
 
+const BOM = new RegExp(`^${String.fromCharCode(0xfeff)}`);
+
+/**
+ * Текст файла к одному виду: без BOM и с переводом строки `\n`. Клон на Windows
+ * с `core.autocrlf` отдаёт статьи с `\r\n`, и без этого шапка не находилась бы,
+ * а значения полей тащили бы `\r` в оглавление.
+ */
+function normalizeSource(source: string): string {
+	return source.replace(BOM, '').replace(/\r\n?/g, '\n');
+}
+
 /** Статья из исходного файла: шапка проверена, адрес и раздел сверены с путём. */
-export function parseHelpArticle(path: string, source: string): HelpPage {
+export function parseHelpArticle(path: string, rawSource: string): HelpPage {
+	const source = normalizeSource(rawSource);
 	const location = SOURCE_PATH.exec(path);
 
 	if (location === null) {

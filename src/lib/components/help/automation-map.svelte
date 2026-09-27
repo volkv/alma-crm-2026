@@ -1,10 +1,13 @@
 <script lang="ts">
+	/**
+	 * Карта автоматизации внутри статьи справки: шаги процесса, что на каждом
+	 * делает система и где это увидеть. Данные собирает сервер
+	 * (`$lib/server/automation-map`) под права читающего.
+	 */
 	import { resolve } from '$app/paths';
 	import type { Pathname } from '$app/types';
 	import ArrowRightIcon from '@lucide/svelte/icons/arrow-right';
 	import BookOpenIcon from '@lucide/svelte/icons/book-open';
-	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
-	import Header from '$lib/components/header.svelte';
 	import StatusBadge, { type StatusTone } from '$lib/components/status-badge.svelte';
 	import {
 		AUTOMATION_KINDS,
@@ -13,9 +16,9 @@
 		type AutomationKind
 	} from '$lib/automation-map';
 	import { formatNumber } from '$lib/format';
-	import type { PageProps } from './$types';
+	import type { AutomationMapView } from '$lib/server/automation-map';
 
-	let { data }: PageProps = $props();
+	let { data }: { data: AutomationMapView } = $props();
 
 	/** Тон метки — по тому, кто делает работу, а не по цвету, который хочется. */
 	const KIND_TONES: Record<AutomationKind, StatusTone> = {
@@ -26,17 +29,6 @@
 
 	type Action = (typeof data.crossCutting)[number];
 </script>
-
-<svelte:head>
-	<title>Карта автоматизации — Альма CRM</title>
-</svelte:head>
-
-<Header
-	title="Карта автоматизации"
-	description={`Что система берёт на себя на каждом из ${data.steps.length} шагов процесса «${data.processName}» и где это увидеть.`}
-/>
-
-<Breadcrumbs items={[{ label: 'Главное', href: resolve('/') }, { label: 'Карта автоматизации' }]} />
 
 {#snippet action(item: Action)}
 	<li class="flex min-w-0 flex-col gap-1.5 py-3 first:pt-0 last:pb-0">
@@ -85,12 +77,10 @@
 	</li>
 {/snippet}
 
-<div class="flex flex-col gap-6 p-4 sm:px-9 sm:py-6">
-	<!-- `data-tour` — метка для подсказок (`$lib/onboarding/screens`). -->
+<div class="flex flex-col gap-6">
 	<section
 		aria-labelledby="automation-legend"
 		class="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4"
-		data-tour="automation-legend"
 	>
 		<h2 id="automation-legend" class="section-title">Три вида автоматизации</h2>
 		<ul class="grid gap-3 sm:grid-cols-3">
@@ -109,7 +99,7 @@
 		</p>
 	</section>
 
-	<ol class="flex flex-col gap-3" data-tour="automation-steps">
+	<ol class="flex flex-col gap-3">
 		{#each data.steps as step (step.key)}
 			<li class="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:flex-row">
 				<div class="flex shrink-0 items-baseline gap-2 sm:w-64">
@@ -133,7 +123,6 @@
 	<section
 		aria-labelledby="automation-cross"
 		class="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4"
-		data-tour="automation-cross"
 	>
 		<h2 id="automation-cross" class="section-title">На всём процессе</h2>
 		<ul class="flex flex-col divide-y divide-border">

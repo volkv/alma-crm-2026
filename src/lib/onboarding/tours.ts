@@ -134,7 +134,6 @@ export const ROLE_TOURS: Readonly<Record<string, readonly string[]>> = {
 		'directions',
 		'data',
 		'reports',
-		'automation',
 		'help',
 		'settings-profile'
 	],
@@ -153,7 +152,6 @@ export const ROLE_TOURS: Readonly<Record<string, readonly string[]>> = {
 		'documents',
 		'notifications',
 		'audit',
-		'automation',
 		'help',
 		'settings-profile'
 	],
@@ -181,7 +179,6 @@ export const ROLE_TOURS: Readonly<Record<string, readonly string[]>> = {
 		'settings-health',
 		'notifications',
 		'audit',
-		'automation',
 		'help',
 		'settings-profile'
 	]

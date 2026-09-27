@@ -12,7 +12,6 @@ import KeyRoundIcon from '@lucide/svelte/icons/key-round';
 import LandmarkIcon from '@lucide/svelte/icons/landmark';
 import LayoutDashboardIcon from '@lucide/svelte/icons/layout-dashboard';
 import LayoutGridIcon from '@lucide/svelte/icons/layout-grid';
-import MapIcon from '@lucide/svelte/icons/map';
 import NetworkIcon from '@lucide/svelte/icons/network';
 import PackageIcon from '@lucide/svelte/icons/package';
 import PlugZapIcon from '@lucide/svelte/icons/plug-zap';
@@ -114,16 +113,6 @@ const STATIC_SECTIONS: readonly NavSection[] = [
 		icon: FileTextIcon,
 		group: MAIN,
 		permission: 'documents.read'
-	},
-	{
-		// Карта отвечает, что система делает на каждом шаге процесса и где это
-		// увидеть. Право то же, что у взаимодействий: карта рассказывает об их
-		// работе, и без права на неё показывать нечего.
-		href: '/automation',
-		label: 'Карта автоматизации',
-		icon: MapIcon,
-		group: MAIN,
-		permission: 'interactions.read'
 	},
 
 	// «Справочники» — общий каталог оператора: кто, чему и по каким программам.

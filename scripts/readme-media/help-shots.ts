@@ -316,14 +316,6 @@ export const HELP_SHOTS: readonly Frame[] = [
 		prepare: scrollTo('Система обучения')
 	},
 	{
-		name: 'user/automation-1',
-		path: '/automation',
-		role: 'manager',
-		caption:
-			'Карта автоматизации: шаг, что делает система, где это увидеть и число из журнала обмена',
-		waitFor: 'Карта автоматизации'
-	},
-	{
 		name: 'admin/process-1',
 		path: '/settings/workflows',
 		role: 'admin',

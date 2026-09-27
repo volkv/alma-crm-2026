@@ -1,4 +1,3 @@
-import { error } from '@sveltejs/kit';
 import {
 	AUTOMATION_COUNTER_LABELS,
 	AUTOMATION_CROSS_CUTTING,
@@ -11,18 +10,20 @@ import {
 	type AutomationStatus
 } from '$lib/automation-map';
 import type { ExchangeQuery } from '$lib/contracts/exchange';
-import { actorFromEvent, type ActorContext } from '$lib/server/actor';
+import type { ActorContext } from '$lib/server/actor';
 import { listExchangeMessages } from '$lib/server/integrations/exchange/messages';
 import { can } from '$lib/server/rbac';
 import { B2B_PROCESS, B2B_WORKSPACE_KEY } from '$lib/server/stages/definitions';
-import type { PageServerLoad } from './$types';
 
 /**
  * Карта автоматизации: четырнадцать шагов базового процесса и то, что на каждом
- * из них берёт на себя система.
+ * из них берёт на себя система. Показывает её статья справки «Карта
+ * автоматизации»: своего раздела в меню у карты нет — работы на ней не делают,
+ * её читают.
  *
  * Право — то же, что у списка взаимодействий: карта рассказывает о работе с
- * вузом, и тому, кто этой работы не видит, показывать на ней нечего. Ссылка
+ * вузом, и тому, кто этой работы не видит, показывать на ней нечего — статья
+ * остаётся без карты. Ссылка
  * «Где это» остаётся только там, где экран открыт роли: остальное названо
  * словами, без ссылки на отказ.
  *
@@ -74,11 +75,11 @@ async function readCounters(ctx: ActorContext): Promise<Map<AutomationCounter, n
 	return new Map(keys.map((key, index) => [key, values[index]]));
 }
 
-export const load: PageServerLoad = async (event) => {
-	const ctx = actorFromEvent(event);
+export type AutomationMapView = NonNullable<Awaited<ReturnType<typeof loadAutomationMap>>>;
 
+export async function loadAutomationMap(ctx: ActorContext) {
 	if (!can(ctx, 'interactions.read')) {
-		error(403, 'Раздел доступен только с правом «Просмотр взаимодействий»');
+		return null;
 	}
 
 	const counters = await readCounters(ctx);
@@ -105,7 +106,6 @@ export const load: PageServerLoad = async (event) => {
 	const names = new Map(B2B_PROCESS.stages.map((stage) => [stage.key, stage.name]));
 
 	return {
-		processName: B2B_PROCESS.name,
 		steps: AUTOMATION_STEPS.map((step, index) => {
 			const name = names.get(step.stageKey);
 
@@ -118,4 +118,4 @@ export const load: PageServerLoad = async (event) => {
 		crossCutting: AUTOMATION_CROSS_CUTTING.map(view),
 		countersShown: counters !== null
 	};
-};
+}

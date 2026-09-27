@@ -753,7 +753,7 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 			'Карта автоматизации проходит все четырнадцать шагов процесса: что система делает сама, где помогает сотруднику, а где без доказательства дальше не пройти, — со ссылкой на экран и статью справки.'
 		],
 		play: async (page) => {
-			await visit(page, '/automation', 'Карта автоматизации');
+			await visit(page, '/help/user/automation', 'Карта автоматизации');
 			await beat(page, 1);
 			await scroll(page, 600);
 			await beat(page, 1);

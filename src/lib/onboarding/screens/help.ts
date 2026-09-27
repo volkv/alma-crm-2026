@@ -32,11 +32,6 @@ export const HELP_PROGRAMS = {
 } as const;
 export const HELP_REPORTS = { section: 'user', page: 'reports', title: 'Отчёты' } as const;
 export const HELP_DATA = { section: 'user', page: 'data', title: 'Данные об обучении' } as const;
-export const HELP_AUTOMATION = {
-	section: 'user',
-	page: 'automation',
-	title: 'Карта автоматизации'
-} as const;
 export const HELP_PROCESS = { section: 'admin', page: 'process', title: 'Процесс' } as const;
 export const HELP_USERS = {
 	section: 'admin',

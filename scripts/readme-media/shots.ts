@@ -283,7 +283,7 @@ export const SHOTS: readonly Frame[] = [
 	},
 	{
 		name: 'automation',
-		path: '/automation',
+		path: '/help/user/automation',
 		role: 'manager',
 		caption:
 			'Карта автоматизации: 14 шагов процесса, что делает система на каждом и где это увидеть',

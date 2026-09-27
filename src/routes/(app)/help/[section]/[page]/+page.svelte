@@ -4,6 +4,7 @@
 	import ChevronLeftIcon from '@lucide/svelte/icons/chevron-left';
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import AutomationMap from '$lib/components/help/automation-map.svelte';
 	import HelpArticle from '$lib/components/help/help-article.svelte';
 	import HelpToc from '$lib/components/help/help-toc.svelte';
 	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
@@ -53,6 +54,17 @@
 
 	<div class="flex min-w-0 flex-1 flex-col gap-6">
 		<HelpArticle html={data.article.html} />
+
+		{#if data.tail !== null}
+			{#if data.automationMap !== null}
+				<AutomationMap data={data.automationMap} />
+			{:else}
+				<p class="text-sm text-muted-foreground">
+					Карта открывается с правом «Просмотр взаимодействий».
+				</p>
+			{/if}
+			<HelpArticle html={data.tail} />
+		{/if}
 
 		<nav
 			class="flex flex-wrap justify-between gap-2 border-t border-border pt-4"
