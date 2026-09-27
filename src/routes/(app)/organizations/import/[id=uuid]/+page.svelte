@@ -81,7 +81,12 @@
 		<KeyValueRow label="Загрузил" value={data.record.authorName} />
 		<KeyValueRow label="Загружено" value={formatDateTime(data.record.createdAt)} />
 		<KeyValueRow label="Применено" value={confirmedAt} />
-		<KeyValueRow label="Примечание" value={data.record.note} />
+		<!-- У отклонённой загрузки в примечании — причина отказа (так его пишет
+			`rejectCatalogImport`): подпись говорит, что это за текст. -->
+		<KeyValueRow
+			label={data.record.status === 'rejected' ? 'Причина отказа' : 'Примечание'}
+			value={data.record.note}
+		/>
 	</KeyValue>
 
 	<div class="grid gap-3 sm:grid-cols-4" data-tour="organizations-import-run-counts">

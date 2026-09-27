@@ -2,7 +2,7 @@
  * Карточка организации сверх справочника: откуда реквизиты, какая работа идёт
  * по пространствам и как кандидат с сайта вуза становится контактом.
  */
-import { and, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq } from 'drizzle-orm';
 import { z } from 'zod';
 import {
 	affiliationPositionSchema,
@@ -32,7 +32,7 @@ import { formatDateTime, formatIsoDay } from '$lib/format';
 import type { ActorContext } from '../actor';
 import { invalidateDirectoryOptions } from '../cache/directory';
 import { getDb } from '../db';
-import { auditEvents } from '../db/schema';
+import { auditEvents, directoryImportRows, directoryImports } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { lookupSite, peekSiteReport } from '../enrichment';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
@@ -105,6 +105,77 @@ export async function readPassportApplied(
 		actorLabel: row.actorLabel,
 		provenance
 	};
+}
+
+/**
+ * Как организация появилась в справочнике: загрузкой каталога или вручную.
+ * Отвечает на вопрос «откуда реквизиты», когда приёмки из паспорта не было.
+ */
+export type OrganizationOriginView =
+	| { kind: 'import'; at: Date }
+	| { kind: 'manual'; at: Date; actorLabel: string }
+	| { kind: 'individual'; at: Date };
+
+/**
+ * Происхождение организации: подтверждённая загрузка каталога, строка
+ * которой её завела, либо событие `organizations.created` журнала. Импорт
+ * проверяется первым: он заводит организацию тем же сервисом, и событие
+ * создания у импортированной тоже есть. Организация, заведённая до журнала
+ * (демо-данные), происхождения не имеет — `null`.
+ *
+ * Права здесь те же, что у `readPassportApplied`: одна строка о той
+ * организации, которую вызывающий уже видит.
+ */
+export async function readOrganizationOrigin(
+	organizationId: string
+): Promise<OrganizationOriginView | null> {
+	const db = getDb();
+	const [imported] = await db
+		.select({ at: directoryImports.confirmedAt })
+		.from(directoryImportRows)
+		.innerJoin(directoryImports, eq(directoryImports.id, directoryImportRows.importId))
+		.where(
+			and(
+				eq(directoryImportRows.organizationId, organizationId),
+				eq(directoryImportRows.action, 'create'),
+				eq(directoryImports.status, 'confirmed')
+			)
+		)
+		.orderBy(asc(directoryImports.confirmedAt))
+		.limit(1);
+
+	// У подтверждённой загрузки момент подтверждения есть всегда — это проверяет база.
+	if (imported !== undefined && imported.at !== null) {
+		return { kind: 'import', at: imported.at };
+	}
+
+	const [created] = await db
+		.select({
+			at: auditEvents.occurredAt,
+			actorLabel: auditEvents.actorLabel,
+			details: auditEvents.details
+		})
+		.from(auditEvents)
+		.where(
+			and(
+				eq(auditEvents.eventType, 'organizations.created'),
+				eq(auditEvents.subjectType, 'organization'),
+				eq(auditEvents.subjectId, organizationId)
+			)
+		)
+		.orderBy(asc(auditEvents.occurredAt))
+		.limit(1);
+
+	if (created === undefined) {
+		return null;
+	}
+
+	// Контрагент-физлицо заводится вместе с человеком: в событии — его карточка.
+	if ((created.details as { personId?: unknown } | null)?.personId !== undefined) {
+		return { kind: 'individual', at: created.at };
+	}
+
+	return { kind: 'manual', at: created.at, actorLabel: created.actorLabel };
 }
 
 /* ------------------------------------------------------------------------- *
@@ -239,7 +310,7 @@ export type SiteContactCandidate = {
  * Кандидаты в контакты из уже прочитанного паспорта организации: только из
  * кэша, наружу чтение не ходит и квоты не тратит. Не прочитан паспорт, нет
  * сайта или права читать паспорт — список пуст: предлагать нечего. Кандидаты
- * без ФИО и те, кто уже в действующих контактах, не предлагаются.
+ * с ФИО из одного слова и те, кто уже в действующих контактах, не предлагаются.
  */
 export async function listSiteContactCandidates(
 	ctx: ActorContext,
@@ -265,9 +336,7 @@ export async function listSiteContactCandidates(
 	const today = formatIsoDay();
 
 	return site.contacts.flatMap((row) =>
-		row.name === null ||
-		splitPersonName(row.name) === null ||
-		sameActiveContact(contacts, row.name, today) !== undefined
+		splitPersonName(row.name) === null || sameActiveContact(contacts, row.name, today) !== undefined
 			? []
 			: [{ unit: row.unit, name: row.name, position: positionOf(row.post, row.unit) }]
 	);
@@ -299,11 +368,10 @@ export async function siteContactDraft(
 	const site = (await lookupSite(ctx, organization.website)).passport.site;
 	const wanted = normalizePersonName(input.name);
 	const candidate = site?.contacts.find(
-		(row) =>
-			row.unit === input.unit && row.name !== null && normalizePersonName(row.name) === wanted
+		(row) => row.unit === input.unit && normalizePersonName(row.name) === wanted
 	);
 
-	if (site === null || candidate === undefined || candidate.name === null) {
+	if (site === null || candidate === undefined) {
 		throw new NotFoundError(
 			'Этого человека в подразделе «Структура» сайта больше нет: прочитайте «Сведения» заново'
 		);

@@ -7,12 +7,14 @@
  * а это молча не те договоры в справочнике.
  */
 import { describe, expect, it } from 'vitest';
-import { CATALOG_FIELDS } from '$lib/contracts/directory-import';
+import { CATALOG_FIELDS, IMPORT_FIELDS_BY_KIND } from '$lib/contracts/directory-import';
 import {
 	generateCode,
 	parseCatalogDate,
 	suggestCatalogMapping
 } from '$lib/server/directory/import';
+import { importSampleHeaders } from '$lib/server/directory/import-sample';
+import { suggestVendorMapping } from '$lib/server/directory/vendor-import';
 
 /** Шапка рабочей таблицы заказчика: все десять колонок технического задания. */
 const CUSTOMER_HEADERS = [
@@ -126,5 +128,20 @@ describe('код новой записи', () => {
 
 	it('не остаётся пустым у названия без латиницы и цифр', () => {
 		expect(generateCode('«»', new Set())).toBe('CODE');
+	});
+});
+
+describe('образец файла', () => {
+	it('каждая колонка образца сама ложится на своё поле', () => {
+		const expected = (kind: 'catalog' | 'vendors') =>
+			Object.fromEntries(
+				IMPORT_FIELDS_BY_KIND[kind].fields.map((field) => [
+					IMPORT_FIELDS_BY_KIND[kind].labels[field],
+					field
+				])
+			);
+
+		expect(suggestCatalogMapping(importSampleHeaders('catalog'))).toEqual(expected('catalog'));
+		expect(suggestVendorMapping(importSampleHeaders('vendors'))).toEqual(expected('vendors'));
 	});
 });

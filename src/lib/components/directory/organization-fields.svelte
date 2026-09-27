@@ -9,7 +9,11 @@
 		EducationLevel,
 		OrganizationKind
 	} from '$lib/contracts/directory';
-	import { EDUCATION_LEVEL_OPTIONS, ORGANIZATION_FORM_KIND_OPTIONS } from './labels';
+	import {
+		EDUCATION_LEVEL_OPTIONS,
+		ORGANIZATION_FORM_KIND_OPTIONS,
+		ORGANIZATION_KIND_HINTS
+	} from './labels';
 
 	/**
 	 * Поля организации — один набор на создание и на изменение. Идентификатор в
@@ -65,6 +69,7 @@
 		label="Тип организации"
 		required
 		options={kindOptions}
+		description={ORGANIZATION_KIND_HINTS[$form.kind]}
 		errors={$errors.kind}
 		bind:value={() => $form.kind, (next) => ($form.kind = next as OrganizationKind)}
 	/>

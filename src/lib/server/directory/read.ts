@@ -23,6 +23,7 @@ import {
 	type SQL
 } from 'drizzle-orm';
 import type { PgColumn } from 'drizzle-orm/pg-core';
+import { formatIsoDay } from '$lib/format';
 import type { PageResult } from '$lib/contracts/common';
 import type {
 	AffiliationView,
@@ -99,6 +100,7 @@ export function toOrganizationView(row: typeof organizations.$inferSelect): Orga
 		isActive: row.isActive,
 		externalSource: row.externalSource,
 		externalId: row.externalId,
+		personId: row.personId,
 		createdAt: row.createdAt,
 		updatedAt: row.updatedAt
 	};
@@ -1221,6 +1223,71 @@ export async function listOrganizationOptions(ctx: ActorContext): Promise<Lookup
 		// Ни одного поля со временем: подбор — это пара «идентификатор и подпись».
 		(stored) => stored as LookupOption[]
 	);
+}
+
+/**
+ * Люди для выбора контактом организации. У тёзок к ФИО добавлено, чем они
+ * различаются: организация действующей роли и почта — маскированная, если у
+ * сотрудника нет права видеть контакты целиком (`toPersonView`). Иначе из двух
+ * «Ивановых Иванов» выбирают наугад.
+ *
+ * Подсказка собирается мимо кэша подбора: в ней персональные данные, их
+ * маскирование зависит от прав, а чтение попадает в след обращений к ПДн.
+ */
+export async function listPersonPickerOptions(ctx: ActorContext): Promise<LookupOption[]> {
+	const options = await listPersonOptions(ctx);
+	const seen = new Map<string, number>();
+
+	for (const option of options) {
+		seen.set(option.label, (seen.get(option.label) ?? 0) + 1);
+	}
+
+	const namesakeIds = options
+		.filter((option) => (seen.get(option.label) ?? 0) > 1)
+		.map((option) => option.id);
+
+	if (namesakeIds.length === 0) {
+		return options;
+	}
+
+	const hints = await withPiiTrace(ctx, async () => {
+		const today = formatIsoDay();
+		const [rows, roles] = await Promise.all([
+			getDb()
+				.select()
+				.from(people)
+				.where(and(inArray(people.id, namesakeIds), personInScope(ctx))),
+			getDb()
+				.select({ personId: affiliations.personId, label: organizations.shortName })
+				.from(affiliations)
+				.innerJoin(organizations, eq(organizations.id, affiliations.organizationId))
+				.where(
+					and(
+						inArray(affiliations.personId, namesakeIds),
+						scopeFilter(ctx, affiliations.organizationId),
+						or(isNull(affiliations.validTo), sql`${affiliations.validTo} >= ${today}`)
+					)
+				)
+				.orderBy(desc(affiliations.isPrimary), asc(organizations.shortName))
+		]);
+		const result = new Map<string, string>();
+
+		for (const row of rows) {
+			const view = toPersonView(ctx, row);
+			const organization = roles.find((role) => role.personId === row.id)?.label ?? null;
+			const parts = [organization, view.email].filter((part) => part !== null && part !== '');
+
+			result.set(row.id, parts.length > 0 ? parts.join(' · ') : 'без роли и почты');
+		}
+
+		return result;
+	});
+
+	return options.map((option) => {
+		const hint = hints.get(option.id);
+
+		return hint === undefined ? option : { id: option.id, label: `${option.label} — ${hint}` };
+	});
 }
 
 /**

@@ -63,8 +63,24 @@ const PAIRED_INITIALS = /^(\p{L})\.\s*(\p{L})\.?$/u;
 /** Слово имени: буквы, дефис и, у инициала, точка. Цифре в имени места нет. */
 const NAME_WORD = /^\p{L}[\p{L}-]*\.?$/u;
 
-/** Сколько слов подряд считается ФИО: фамилия, имя и, если есть, отчество. */
+/**
+ * Сколько слов подряд считается ФИО без узнанного отчества: фамилия, имя и
+ * третье слово. Дальше — должность («Иванов Иван Иванович начальник отдела»).
+ */
 const MAX_NAME_WORDS = 3;
+
+/**
+ * Сколько слов может занять ФИО, когда отчество узнано по окончанию: двойная
+ * фамилия через пробел («Проход-C Тестова Вера Петровна») и отчество с
+ * «оглы» / «кызы» («Мамедов Рашид Али оглы»).
+ */
+const MAX_NAME_WORDS_WITH_PATRONYMIC = 5;
+
+/** Отчество по окончанию: «-вич», «-вна», «-ична», «-ич». */
+const PATRONYMIC = /(вич|вна|чна|ич)$/iu;
+
+/** Тюркское отчество — отдельным словом после имени отца. */
+const PATRONYMIC_MARKER = /^(оглы|кызы|улы|гызы)$/iu;
 
 /** Люди в ячейке разделены точкой с запятой или переводом строки. */
 const PEOPLE_SEPARATOR = /[;\n\r]+/;
@@ -95,29 +111,95 @@ function splitInitials(word: string): string[] {
 	return paired === null ? [word] : [`${paired[1]}.`, `${paired[2]}.`];
 }
 
-/** Первая буква заглавная, остальные как в файле: `ИВАНОВ` → `Иванов`. */
+/**
+ * Регистр слова имени. Набранное целиком заглавными («ИВАНОВА-ПЕТРОВА»)
+ * приводится к «Иванова-Петрова» — каждая часть через дефис с заглавной;
+ * написанное в смешанном регистре остаётся как в файле, только первая буква
+ * заглавная: «Проход-B» и «МакКой» — так их и назвали. Инициал («И.») и
+ * маркер отчества («оглы») не трогаются, кроме первой буквы инициала.
+ */
 function capitalize(word: string): string {
-	return word.slice(0, 1).toLocaleUpperCase('ru') + word.slice(1).toLocaleLowerCase('ru');
+	if (PATRONYMIC_MARKER.test(word)) {
+		return word.toLocaleLowerCase('ru');
+	}
+
+	const upper = word.toLocaleUpperCase('ru');
+	const shouting = word === upper && word !== word.toLocaleLowerCase('ru') && word.length > 2;
+
+	return word
+		.split('-')
+		.map((part) =>
+			part === ''
+				? part
+				: part.slice(0, 1).toLocaleUpperCase('ru') +
+					(shouting ? part.slice(1).toLocaleLowerCase('ru') : part.slice(1))
+		)
+		.join('-');
 }
 
 /**
- * Имя из остатка куска: первые два-три слова.
+ * Где кончается ФИО, если отчество узнаётся: индекс последнего слова имени
+ * или `null`. Отчество — третье слово и дальше (перед ним фамилия и имя);
+ * «оглы» / «кызы» идёт отдельным словом за именем отца.
+ */
+function patronymicEnd(named: readonly string[]): number | null {
+	for (let index = 2; index < named.length; index += 1) {
+		if (PATRONYMIC_MARKER.test(named[index]) && index >= 3) {
+			return index;
+		}
+
+		if (PATRONYMIC.test(named[index]) && !named[index].endsWith('.')) {
+			return index;
+		}
+	}
+
+	return null;
+}
+
+/**
+ * Имя из остатка куска.
  *
- * Два слова — это фамилия и имя, три — с отчеством; всё, что дальше, — уже
- * должность («Иванов Иван Иванович, начальник отдела» без запятой). Меньше
+ * Если среди слов узнаётся отчество (по окончанию или «оглы»), имя кончается
+ * на нём: перед отчеством — имя, перед именем — фамилия, хоть из двух слов.
+ * Иначе два слова — это фамилия и имя, три — с отчеством; всё, что дальше, —
+ * уже должность («Иванов Иван Иванович начальник отдела» без запятой). Меньше
  * двух слов — имени нет: у человека в справочнике фамилия и имя обязательны.
  */
 function readName(words: readonly string[]): { name: ContactName; rest: string[] } | null {
 	const expanded = words.flatMap(splitInitials);
-	const named: string[] = [];
+	const candidates: string[] = [];
 
 	for (const word of expanded) {
-		if (named.length === MAX_NAME_WORDS || !NAME_WORD.test(word)) {
+		if (candidates.length === MAX_NAME_WORDS_WITH_PATRONYMIC || !NAME_WORD.test(word)) {
 			break;
 		}
 
-		named.push(word);
+		candidates.push(word);
 	}
+
+	const end = patronymicEnd(candidates);
+
+	if (end !== null) {
+		const marker = PATRONYMIC_MARKER.test(candidates[end]);
+		const middleStart = marker ? end - 1 : end;
+		const firstIndex = middleStart - 1;
+
+		if (firstIndex >= 1) {
+			return {
+				name: {
+					lastName: candidates.slice(0, firstIndex).map(capitalize).join(' '),
+					firstName: capitalize(candidates[firstIndex]),
+					middleName: candidates
+						.slice(middleStart, end + 1)
+						.map(capitalize)
+						.join(' ')
+				},
+				rest: expanded.slice(end + 1)
+			};
+		}
+	}
+
+	const named = candidates.slice(0, MAX_NAME_WORDS);
 
 	if (named.length < 2) {
 		return null;

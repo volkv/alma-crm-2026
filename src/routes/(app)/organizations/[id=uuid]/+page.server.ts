@@ -34,6 +34,7 @@ import { startLicenseRenewal } from '$lib/server/directory/license-renewal';
 import {
 	addSiteContact,
 	listOrganizationWork,
+	readOrganizationOrigin,
 	readPassportApplied
 } from '$lib/server/directory/organization-card';
 import { matchSchoolPrograms } from '$lib/server/directory/program-match';
@@ -96,6 +97,7 @@ export const load: PageServerLoad = async (event) => {
 			licenseWarningDays,
 			work,
 			passportApplied,
+			origin,
 			availability,
 			sitePassport
 		] = await Promise.all([
@@ -109,10 +111,13 @@ export const load: PageServerLoad = async (event) => {
 			getSetting('license_warning_days'),
 			listOrganizationWork(ctx, organization.id, workspaces),
 			readPassportApplied(organization.id),
+			readOrganizationOrigin(organization.id),
 			// Чтение раздела «Сведения» — то же действие, что в форме правки, и
 			// право то же: без права на правку кнопки нет, и настройку незачем читать.
 			canWrite ? passportAvailability(ctx) : Promise.resolve(null),
-			canWrite ? cachedSitePassport(ctx, organization.website) : Promise.resolve(null)
+			canWrite && organization.kind === 'educational_institution'
+				? cachedSitePassport(ctx, organization.website)
+				: Promise.resolve(null)
 		]);
 
 		return {
@@ -145,6 +150,7 @@ export const load: PageServerLoad = async (event) => {
 			canStartInteraction: can(ctx, 'interactions.write'),
 			work,
 			passportApplied,
+			origin,
 			// Раздел «Сведения» читается по сайту из карточки: без сайта и без
 			// включённых источников кнопки нет, а причина сказана словами.
 			siteReading:

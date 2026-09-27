@@ -48,7 +48,7 @@
 />
 
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
-	<PassportPanel {superform} availability={data.passport} bind:accepted />
+	<PassportPanel {superform} availability={data.passport} contacts={data.contacts} bind:accepted />
 
 	<form
 		data-tour="organization-edit-form"

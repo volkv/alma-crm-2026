@@ -255,9 +255,10 @@ const STRUCT_ROWS = ['structOrgUprav'] as const;
 /**
  * Подразделения и их руководители из `/sveden/struct`.
  *
- * Строка без руководителя и без почты кандидатом в контакты не становится:
- * «Конференция работников» с прочерком вместо ФИО — это не человек, которому
- * можно написать. Повторы одной пары «подразделение — руководитель» (таблица
+ * Строка без ФИО руководителя кандидатом в контакты не становится, даже с
+ * почтой: контакт справочника — человек, и «Попечительский совет» с общим
+ * ящиком завести им нельзя, а в списке кандидатов он только сбивает счёт.
+ * Повторы одной пары «подразделение — руководитель» (таблица
  * бывает продублирована скрытым блоком для проверяющих) сливаются.
  */
 export function readStructPage(html: string): ContactCandidate[] {
@@ -269,11 +270,11 @@ export function readStructPage(html: string): ContactCandidate[] {
 		const name = meaningful(property(row, 'fio'));
 		const email = meaningful(property(row, 'email'));
 
-		if (unit === null || (name === null && email === null)) {
+		if (unit === null || name === null) {
 			continue;
 		}
 
-		const key = `${unit}\u0000${name ?? ''}`.toLocaleLowerCase('ru');
+		const key = `${unit}\u0000${name}`.toLocaleLowerCase('ru');
 
 		if (seen.has(key)) {
 			continue;

@@ -4,6 +4,7 @@
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import type { ResolvedPathname } from '$app/types';
 	import AffiliationFields from '$lib/components/directory/affiliation-fields.svelte';
 	import FormAlert from '$lib/components/directory/form-alert.svelte';
 	import type { DirectoryMessage } from '$lib/components/directory/messages';
@@ -30,6 +31,15 @@
 	);
 
 	const { enhance, submitting, message } = superform;
+
+	/**
+	 * Новый человек из этой формы: после заведения он вернётся сюда уже
+	 * выбранным. Путь собран `resolve`; добавлена только строка запроса, а её
+	 * типа в `ResolvedPathname` нет (тот же приём — карточка организации).
+	 */
+	const newPersonHref = $derived(
+		`${resolve('/(app)/people/new')}?for=${data.organization.id}` as ResolvedPathname
+	);
 </script>
 
 <svelte:head><title>Новый контакт — Альма CRM</title></svelte:head>
@@ -52,7 +62,7 @@
 				description="Контакт — это роль человека в организации, поэтому сначала заводят человека."
 			>
 				{#snippet action()}
-					<Button href={resolve('/(app)/people/new')}>Завести человека</Button>
+					<Button href={newPersonHref}>Завести человека</Button>
 				{/snippet}
 			</EmptyState>
 		</div>
@@ -71,6 +81,11 @@
 				people={data.people}
 				sites={data.siteOptions}
 			/>
+			<p class="-mt-2 text-xs text-muted-foreground">
+				Нужного человека нет в списке?
+				<a class="text-link hover:text-link-hover" href={newPersonHref}>Завести нового</a> — после сохранения
+				он вернётся в эту форму выбранным.
+			</p>
 			<FormActions
 				submitting={$submitting}
 				submitLabel="Добавить контакт"

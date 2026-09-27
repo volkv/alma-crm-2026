@@ -1,10 +1,11 @@
 import { redirect } from '@sveltejs/kit';
+import { z } from 'zod';
 import { fail, message, superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { resolve } from '$app/paths';
 import { createAffiliationSchema } from '$lib/contracts/directory';
 import { actorFromEvent } from '$lib/server/actor';
-import { getOrganization, listPersonOptions, listSites } from '$lib/server/directory/read';
+import { getOrganization, listPersonPickerOptions, listSites } from '$lib/server/directory/read';
 import { createAffiliation } from '$lib/server/directory/write';
 import { ConflictError, ValidationError } from '$lib/server/errors';
 import { formatIsoDay } from '$lib/format';
@@ -21,8 +22,17 @@ export const load: PageServerLoad = async (event) => {
 		const [organization, sites, people] = await Promise.all([
 			getOrganization(ctx, event.params.id),
 			listSites(ctx, event.params.id),
-			listPersonOptions(ctx)
+			listPersonPickerOptions(ctx)
 		]);
+
+		// Человек, только что заведённый из этой формы (`/people/new?for=…`),
+		// приходит выбранным. Чужой или несуществующий идентификатор выбора не
+		// даёт: подставляется только тот, кто есть в списке.
+		const requested = z.uuid().safeParse(event.url.searchParams.get('person'));
+		const personId =
+			requested.success && people.some((person) => person.id === requested.data)
+				? requested.data
+				: undefined;
 
 		return {
 			organization,
@@ -31,6 +41,7 @@ export const load: PageServerLoad = async (event) => {
 			form: await superValidate(
 				{
 					organizationId: organization.id,
+					personId,
 					roleKind: 'coordinator' as const,
 					validFrom: formatIsoDay()
 				},

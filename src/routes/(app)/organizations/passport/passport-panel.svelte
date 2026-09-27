@@ -8,6 +8,7 @@
 	import LoaderIcon from '@lucide/svelte/icons/loader-2';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
+	import UserPlusIcon from '@lucide/svelte/icons/user-plus';
 	import { deserialize, enhance } from '$app/forms';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import * as Alert from '$lib/components/ui/alert/index.js';
@@ -33,6 +34,7 @@
 		type PassportAvailability,
 		type PassportField
 	} from '$lib/contracts/enrichment';
+	import { normalizePersonName, splitPersonName } from '$lib/contracts/organization-card';
 	import { formatDateTime } from '$lib/format';
 
 	/**
@@ -47,11 +49,19 @@
 	let {
 		superform,
 		availability,
-		accepted = $bindable()
+		accepted = $bindable(),
+		contacts = null
 	}: {
 		superform: SuperForm<CreateOrganizationInput>;
 		availability: PassportAvailability;
 		accepted: PassportAcceptance;
+		/**
+		 * Заведение кандидатов контактами — только у сохранённой организации:
+		 * кандидата сервер берёт из раздела того сайта, что записан в карточке
+		 * (`savedWebsite`), а не из поля формы. `null` — организации ещё нет
+		 * или нет права заводить людей.
+		 */
+		contacts?: { savedWebsite: string | null; names: readonly string[] } | null;
 	} = $props();
 
 	const { form } = untrack(() => superform);
@@ -88,6 +98,11 @@
 	let query = $state(untrack(() => $form.inn ?? $form.shortName ?? ''));
 	let issued = $state<IssuedPassport | null>(null);
 	let selected = $state<Partial<Record<PassportField, boolean>>>({});
+	/** Выбранное написание поля, если источник дал несколько (`variants`). */
+	let picked = $state<Partial<Record<PassportField, string>>>({});
+	/** Кандидаты, заведённые контактами из этой панели, — в дополнение к `contacts.names`. */
+	let added = $state<string[]>([]);
+	let adding = $state<string | null>(null);
 	let failure = $state<{ message: string; issues: string[] } | null>(null);
 	let pending = $state<'registry' | 'site' | 'import' | null>(null);
 
@@ -188,6 +203,7 @@
 		closeSuggestions();
 		issued = next;
 		selected = defaultSelection(next);
+		picked = {};
 		failure = null;
 	}
 
@@ -237,6 +253,8 @@
 		field: PassportField;
 		current: string | null;
 		offered: string;
+		/** Все написания из источника; одно — у полей без вариантов. */
+		options: string[];
 		source: FieldSource;
 		fetchedAt: string;
 		same: boolean;
@@ -257,15 +275,17 @@
 			}
 
 			const current = currentValue(field);
+			const offered = picked[field] ?? offer.value;
 
 			return [
 				{
 					field,
 					current,
-					offered: offer.value,
+					offered,
+					options: [offer.value, ...(offer.variants ?? [])],
 					source: offer.source,
 					fetchedAt: offer.fetchedAt,
-					same: current === offer.value
+					same: current === offered
 				}
 			];
 		});
@@ -312,6 +332,7 @@
 
 					issued = next;
 					selected = defaultSelection(next);
+					picked = {};
 
 					if (kind === 'import') {
 						formElement.reset();
@@ -372,6 +393,46 @@
 		);
 	}
 
+	/** ФИО действующих контактов и заведённых отсюда — для отметки «в контактах». */
+	const contactNames = $derived(new Set([...(contacts?.names ?? []), ...added]));
+
+	/**
+	 * Кандидата можно завести, только если прочитан сайт, записанный в карточке:
+	 * сервер ищет его в разделе этого сайта, и кандидат с другого сайта, набранного
+	 * в форме, но не сохранённого, там не найдётся.
+	 */
+	function mayAddFrom(siteWebsite: string): boolean {
+		return (
+			contacts !== null &&
+			contacts.savedWebsite !== null &&
+			normalizedOrigin(contacts.savedWebsite) === normalizedOrigin(siteWebsite)
+		);
+	}
+
+	/** Оба адреса уже проверены как URL: карточка — схемой, паспорт — сервером. */
+	function normalizedOrigin(value: string): string {
+		return new URL(value).hostname.replace(/^www\./, '').toLowerCase();
+	}
+
+	function addCandidate(name: string, key: string): SubmitFunction {
+		return () => {
+			adding = key;
+
+			return async ({ result }) => {
+				adding = null;
+
+				if (result.type === 'success') {
+					added = [...added, normalizePersonName(name)];
+					toast.success(`${name} — в контактах организации`);
+				} else if (result.type === 'failure') {
+					toast.error(String(result.data?.message ?? 'Контакт не добавлен'));
+				} else if (result.type === 'error') {
+					toast.error(result.error?.message ?? 'Сбой приложения');
+				}
+			};
+		};
+	}
+
 	/** Снимок того же формата, что отдаёт поиск: его загружают там, где источники выключены. */
 	function downloadSnapshot() {
 		if (issued === null) {
@@ -407,7 +468,7 @@
 		</div>
 		{#if live}
 			<StatusBadge tone={availability.remaining > 0 ? 'neutral' : 'warning'}>
-				Обращений на сегодня: {availability.remaining} из {availability.dailyQuota}
+				Обращений на сегодня: осталось {availability.remaining} из {availability.dailyQuota}
 			</StatusBadge>
 		{/if}
 	</div>
@@ -424,10 +485,10 @@
 	{:else if !availability.registryConfigured}
 		<Alert.Root>
 			<TriangleAlertIcon aria-hidden="true" />
-			<Alert.Title>Поиск по ЕГРЮЛ не настроен</Alert.Title>
+			<Alert.Title>Поиск по ЕГРЮЛ не подключён</Alert.Title>
 			<Alert.Description>
-				Администратору стенда нужно задать переменную окружения <code>DADATA_API_KEY</code>. Раздел
-				«Сведения» на сайте читается и без неё.
+				Реквизиты введите вручную или загрузите снимок паспорта. Раздел «Сведения» на сайте читается
+				и без ЕГРЮЛ.
 			</Alert.Description>
 		</Alert.Root>
 	{/if}
@@ -622,7 +683,27 @@
 									{display(row.field, row.current)}
 								</td>
 								<td class="py-2 pr-2 break-words">
-									{#if row.same}
+									{#if row.options.length > 1}
+										<fieldset class="flex flex-col gap-1">
+											<legend class="sr-only">Какое написание принять</legend>
+											{#each row.options as option (option)}
+												<label class="flex items-start gap-2">
+													<input
+														type="radio"
+														class="mt-1"
+														name={`passport-variant-${row.field}`}
+														value={option}
+														checked={row.offered === option}
+														onchange={() => (picked = { ...picked, [row.field]: option })}
+													/>
+													<span>{option}</span>
+												</label>
+											{/each}
+										</fieldset>
+										{#if row.same}
+											<span class="text-xs text-faint">выбранное совпадает с карточкой</span>
+										{/if}
+									{:else if row.same}
 										<span class="text-faint">совпадает</span>
 									{:else}
 										{display(row.field, row.offered)}
@@ -705,17 +786,47 @@
 						Кандидаты в контакты — руководители подразделений: {site.contacts.length}
 					</summary>
 					<p class="mt-1 text-xs text-muted-foreground">
-						Из подраздела «Структура и органы управления». Сами в справочник не попадают: нужного
-						человека заведите на карточке организации.
+						Из подраздела «Структура и органы управления». Сами в справочник не попадают:
+						{#if contacts === null}
+							завести человека контактом можно на карточке сохранённой организации.
+						{:else if !mayAddFrom(site.website)}
+							сайт в форме не сохранён — сохраните его, и кандидатов можно будет завести контактами.
+						{:else}
+							нужного заведите кнопкой «Завести контактом», источник и дата запишутся в примечание
+							человека.
+						{/if}
 					</p>
 					{#if site.contacts.length > 0}
-						<ul class="mt-2 flex max-h-72 flex-col gap-1 overflow-y-auto pr-2">
-							{#each site.contacts as contact, index (index)}
-								<li class="border-t border-border pt-1 first:border-0">
-									<div>{contact.name ?? '—'}{contact.post ? `, ${contact.post}` : ''}</div>
-									<div class="text-xs text-faint">
-										{contact.unit}{contact.email ? ` · ${contact.email}` : ''}
+						<ul class="mt-2 flex max-h-96 flex-col gap-1 overflow-y-auto pr-2">
+							{#each site.contacts as contact (`${contact.unit}\u0000${contact.name}`)}
+								{@const key = `${contact.unit}\u0000${contact.name}`}
+								<li
+									class="flex flex-wrap items-start justify-between gap-x-3 gap-y-1 border-t border-border pt-1 first:border-0"
+								>
+									<div class="min-w-0 flex-1 basis-56">
+										<div>{contact.name}{contact.post ? `, ${contact.post}` : ''}</div>
+										<div class="text-xs text-faint">
+											{contact.unit}{contact.email ? ` · ${contact.email}` : ''}
+										</div>
 									</div>
+									{#if contactNames.has(normalizePersonName(contact.name))}
+										<StatusBadge tone="success">В контактах</StatusBadge>
+									{:else if splitPersonName(contact.name) === null}
+										<span class="text-xs text-faint">Вручную: ФИО из одного слова</span>
+									{:else if mayAddFrom(site.website)}
+										<form
+											method="POST"
+											action="?/addSiteContact"
+											use:enhance={addCandidate(contact.name, key)}
+										>
+											<input type="hidden" name="unit" value={contact.unit} />
+											<input type="hidden" name="name" value={contact.name} />
+											<Button type="submit" variant="outline" size="sm" disabled={adding !== null}>
+												<UserPlusIcon aria-hidden="true" />
+												{adding === key ? 'Заводим…' : 'Завести контактом'}
+											</Button>
+										</form>
+									{/if}
 								</li>
 							{/each}
 						</ul>

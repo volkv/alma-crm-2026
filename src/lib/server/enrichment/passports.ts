@@ -80,7 +80,8 @@ export type AcceptedValues = Record<PassportField, string | null>;
  *
  * Отказ — паспорт не найден (истёк или выдан другому сотруднику) или поле в нём
  * не предлагалось: форма утверждает то, чего сервер не выдавал, и сохранять
- * такое происхождение нельзя. Поле, значение которого разошлось с паспортом,
+ * такое происхождение нельзя. Поле, значение которого разошлось с паспортом
+ * (не совпало ни с предложенным, ни с одним из написаний `variants`),
  * пропускается молча по смыслу, а не по небрежности: сотрудник поправил его
  * после приёмки, и оно стало введённым вручную.
  *
@@ -134,7 +135,9 @@ export async function resolveAcceptance(
 			throw new ValidationError(`Поле «${field}» источник не предлагал`);
 		}
 
-		if (values[field] !== offered.value) {
+		const value = values[field];
+
+		if (value !== offered.value && !(offered.variants ?? []).some((variant) => variant === value)) {
 			continue;
 		}
 

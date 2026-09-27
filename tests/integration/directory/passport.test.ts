@@ -49,7 +49,7 @@ beforeEach(async () => {
 								data: {
 									inn: INN,
 									kpp: '780201001',
-									ogrn: '1027801570540',
+									ogrn: '1027802505279',
 									okved: '85.22',
 									branch_type: 'MAIN',
 									name: {

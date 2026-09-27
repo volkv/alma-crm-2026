@@ -124,7 +124,34 @@
 	 * вуз» (`assignResponsible` в `+page.server.ts`).
 	 */
 	const WHOLE_ORGANIZATION = '__whole';
-	const WHOLE_ORGANIZATION_LABEL = 'весь вуз';
+
+	/**
+	 * Слова карточки по виду организации: «вуз» у учебного заведения, у
+	 * компании и остальных — «организация». Карточка общая, а говорить с
+	 * юрлицом вузовскими словами значит путать, с кем работа.
+	 */
+	const isInstitution = $derived(data.organization.kind === 'educational_institution');
+	const words = $derived(
+		isInstitution
+			? {
+					whole: 'весь вуз',
+					accusative: 'вуз',
+					thisAccusative: 'этот вуз',
+					thisNominative: 'этот вуз',
+					byIt: 'по нему',
+					unassigned: 'Вуз не закреплён ни за кем',
+					sitesEmpty: 'Кампусы, филиалы и подразделения'
+				}
+			: {
+					whole: 'вся организация',
+					accusative: 'организацию',
+					thisAccusative: 'эту организацию',
+					thisNominative: 'эта организация',
+					byIt: 'по ней',
+					unassigned: 'Организация не закреплена ни за кем',
+					sitesEmpty: 'Офисы, филиалы и подразделения'
+				}
+	);
 
 	let assignUserId = $state('');
 	let assignDirectionId = $state(WHOLE_ORGANIZATION);
@@ -174,13 +201,25 @@
 <Header title={data.organization.shortName}>
 	{#snippet actions()}
 		{#if data.canWrite}
-			<Button
-				variant="outline"
-				href={resolve('/(app)/organizations/[id=uuid]/edit', { id: data.organization.id })}
-			>
-				<PencilIcon aria-hidden="true" />
-				Изменить
-			</Button>
+			<!-- Физическое лицо — это карточка человека: ФИО и контакты правятся там,
+				а формы организации для него нет. -->
+			{#if data.organization.personId !== null}
+				<Button
+					variant="outline"
+					href={resolve('/(app)/people/[id=uuid]', { id: data.organization.personId })}
+				>
+					<PencilIcon aria-hidden="true" />
+					Карточка человека
+				</Button>
+			{:else}
+				<Button
+					variant="outline"
+					href={resolve('/(app)/organizations/[id=uuid]/edit', { id: data.organization.id })}
+				>
+					<PencilIcon aria-hidden="true" />
+					Изменить
+				</Button>
+			{/if}
 			{#if data.organization.isActive}
 				<Button variant="outline" onclick={() => (archiveOpen = true)}>
 					<ArchiveIcon aria-hidden="true" />
@@ -287,20 +326,24 @@
 			/>
 
 			<!-- «Сведения с сайта» — подготовка к работе, а не сама работа: под
-				взаимодействиями и договорами, свёрнутые до счётчиков. -->
-			<div class="min-w-0 rounded-xl border border-border bg-surface p-4">
-				<!-- Прочитанные «Сведения» живут в самом блоке: при переходе на карточку
+				взаимодействиями и договорами, свёрнутые до счётчиков. Раздел
+				«Сведения об образовательной организации» есть только у учебных
+				заведений — у компании его искать незачем. -->
+			{#if isInstitution}
+				<div class="min-w-0 rounded-xl border border-border bg-surface p-4">
+					<!-- Прочитанные «Сведения» живут в самом блоке: при переходе на карточку
 					другого вуза блок создаётся заново, чтобы не показать чужих кандидатов. -->
-				{#key data.organization.id}
-					<SitePassport
-						website={data.organization.website}
-						reading={data.siteReading}
-						initial={data.sitePassport}
-						canAddContacts={data.canWritePeople}
-						{contactNames}
-					/>
-				{/key}
-			</div>
+					{#key data.organization.id}
+						<SitePassport
+							website={data.organization.website}
+							reading={data.siteReading}
+							initial={data.sitePassport}
+							canAddContacts={data.canWritePeople}
+							{contactNames}
+						/>
+					{/key}
+				</div>
+			{/if}
 
 			<section
 				class="min-w-0 rounded-xl border border-border bg-surface"
@@ -309,16 +352,16 @@
 				<header class="border-b border-border px-4 py-3">
 					<h2 class="section-title">Ответственные</h2>
 					<p class="mt-1 text-xs text-muted-foreground">
-						Кто ведёт вуз. От этого зависит, кто видит его карточку и взаимодействия по нему:
-						назначение действует немедленно, а снятое закрывается точной меткой времени и остаётся в
-						истории.
+						Кто ведёт {words.accusative}. От этого зависит, кто видит его карточку и взаимодействия
+						по нему: назначение действует немедленно, а снятое закрывается точной меткой времени и
+						остаётся в истории.
 					</p>
 				</header>
 
 				{#if currentResponsibles.length === 0}
 					<EmptyState
 						title="Ответственного нет"
-						description="Вуз не закреплён ни за кем: в списках менеджеров он не появится."
+						description={`${words.unassigned}: в списках менеджеров не появится.`}
 					/>
 				{:else}
 					<Table.Root>
@@ -341,7 +384,7 @@
 										{#if row.directionName}
 											{row.directionName}
 										{:else}
-											<StatusBadge tone="neutral">весь вуз</StatusBadge>
+											<StatusBadge tone="neutral">{words.whole}</StatusBadge>
 										{/if}
 									</Table.Cell>
 									<Table.Cell>{formatDateTime(row.validFrom)}</Table.Cell>
@@ -397,13 +440,13 @@
 								<input type="hidden" name="directionId" value={assignDirection?.id ?? ''} />
 								<Select.Root type="single" bind:value={assignDirectionId}>
 									<Select.Trigger id="assignDirectionId" class="min-w-56 text-sm">
-										{assignDirection?.name ?? WHOLE_ORGANIZATION_LABEL}
+										{assignDirection?.name ?? words.whole}
 									</Select.Trigger>
 									<Select.Content>
 										<!-- Общее назначение и назначения по направлениям на одном вузе
 										     не сосуществуют, поэтому лишний вариант из списка убран. -->
 										{#if !hasByDirection}
-											<Select.Item value={WHOLE_ORGANIZATION} label={WHOLE_ORGANIZATION_LABEL} />
+											<Select.Item value={WHOLE_ORGANIZATION} label={words.whole} />
 										{/if}
 										{#each data.directionOptions as direction (direction.id)}
 											<Select.Item
@@ -425,9 +468,9 @@
 									<span class="flex flex-col gap-0.5">
 										<span>Передать незавершённые взаимодействия новому ответственному</span>
 										<span class="text-xs text-muted-foreground">
-											Уйдут записи в работе, где этот вуз — основная сторона, а владелец — прежний
-											ответственный; при назначении по направлению — только записи этого
-											направления. Завершённые и отменённые остаются у тех, кто их вёл.
+											Уйдут записи в работе, где {words.thisNominative} — основная сторона, а владелец
+											— прежний ответственный; при назначении по направлению — только записи этого направления.
+											Завершённые и отменённые остаются у тех, кто их вёл.
 										</span>
 									</span>
 								</Label>
@@ -438,7 +481,7 @@
 
 						{#if hasGeneral}
 							<InlineHint class="mt-3">
-								За вуз целиком уже кто-то отвечает: чтобы разделить его по направлениям, сначала
+								За {words.accusative} целиком уже кто-то отвечает: чтобы разделить по направлениям, сначала
 								снимите общее назначение.
 							</InlineHint>
 						{/if}
@@ -463,7 +506,7 @@
 								{#each pastResponsibles as row (row.id)}
 									<Table.Row>
 										<Table.Cell>{row.userFullName}</Table.Cell>
-										<Table.Cell>{row.directionName ?? 'весь вуз'}</Table.Cell>
+										<Table.Cell>{row.directionName ?? words.whole}</Table.Cell>
 										<Table.Cell>{formatDateTime(row.validFrom)}</Table.Cell>
 										<Table.Cell
 											>{row.validTo === null ? '—' : formatDateTime(row.validTo)}</Table.Cell
@@ -481,10 +524,15 @@
 			class="flex min-w-0 flex-col gap-5 rounded-xl border border-border bg-surface p-4 lg:col-start-2 lg:row-start-1"
 			aria-label="Контекст"
 		>
-			<RequisitesPanel organization={data.organization} passportApplied={data.passportApplied} />
+			<RequisitesPanel
+				organization={data.organization}
+				passportApplied={data.passportApplied}
+				origin={data.origin}
+			/>
 
 			<ContactsList
 				organizationId={data.organization.id}
+				fromSite={isInstitution}
 				affiliations={data.affiliations}
 				{siteNames}
 				canRead={data.canReadPeople}
@@ -512,8 +560,7 @@
 
 					{#if data.sites.length === 0}
 						<p class="text-sm text-muted-foreground">
-							Площадок нет. Кампусы, филиалы и подразделения нужны, чтобы взаимодействие знало, где
-							оно идёт.
+							Площадок нет. {words.sitesEmpty} нужны, чтобы взаимодействие знало, где оно идёт.
 						</p>
 					{:else}
 						<ul class="flex flex-col divide-y divide-border">
@@ -583,7 +630,7 @@
 	title="Снять ответственного?"
 	description={releasing === null
 		? undefined
-		: `${releasing.userFullName} перестанет видеть этот вуз и взаимодействия по нему сразу после снятия. Незавершённые записи, которые он ведёт сам, останутся у него.`}
+		: `${releasing.userFullName} перестанет видеть ${words.thisAccusative} и взаимодействия ${words.byIt} сразу после снятия. Незавершённые записи, которые он ведёт сам, останутся у него.`}
 	confirmLabel="Снять"
 	tone="danger"
 	onconfirm={() => releaseForm?.requestSubmit()}

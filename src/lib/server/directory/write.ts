@@ -779,7 +779,9 @@ export async function endAffiliation(
 			withTransaction(ctx, async (tx) => {
 				const [row] = await tx
 					.update(affiliations)
-					.set({ validTo: input.validTo, updatedAt: sql`now()` })
+					// Основной контакт — тот, кому писать дальше; у закрытых полномочий
+					// такого «дальше» нет, даже если последний день ещё не прошёл.
+					.set({ validTo: input.validTo, isPrimary: false, updatedAt: sql`now()` })
 					.where(eq(affiliations.id, input.id))
 					.returning();
 
@@ -792,7 +794,7 @@ export async function endAffiliation(
 						details: {
 							personId: row.personId,
 							organizationId: row.organizationId,
-							changedFields: ['validTo']
+							changedFields: before.isPrimary ? ['validTo', 'isPrimary'] : ['validTo']
 						}
 					},
 					tx

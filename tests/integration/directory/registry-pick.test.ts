@@ -34,7 +34,7 @@ function party(inn: string, name: string, okved: string, status = 'ACTIVE') {
 		data: {
 			inn,
 			kpp: '780201001',
-			ogrn: '1027801570540',
+			ogrn: '1027802505279',
 			okved,
 			branch_type: 'MAIN',
 			emails: [{ value: 'info@politech.example' }],
@@ -132,7 +132,7 @@ describe('сторона взаимодействия из ЕГРЮЛ', () => {
 			shortName: 'ТАКОЙ-ТО ПОЛИТЕХНИЧЕСКИЙ УНИВЕРСИТЕТ',
 			inn: UNIVERSITY_INN,
 			kpp: '780201001',
-			ogrn: '1027801570540',
+			ogrn: '1027802505279',
 			region: 'г Санкт-Петербург',
 			website: 'https://politech.example'
 		});

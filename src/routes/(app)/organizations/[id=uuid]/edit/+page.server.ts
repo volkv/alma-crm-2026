@@ -1,16 +1,24 @@
 import { redirect } from '@sveltejs/kit';
+import { personFullName } from '$lib/components/organization-card/model';
 import { fail, message, superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { resolve } from '$app/paths';
-import { createOrganizationSchema } from '$lib/contracts/directory';
+import { createOrganizationSchema, isAffiliationCurrent } from '$lib/contracts/directory';
+import { addSiteContactSchema, normalizePersonName } from '$lib/contracts/organization-card';
+import { formatIsoDay } from '$lib/format';
 import { actorFromEvent } from '$lib/server/actor';
 import { passportAvailability } from '$lib/server/enrichment/access';
 import { resolveAcceptance } from '$lib/server/enrichment/passports';
-import { findOrganizationByInn, getOrganization } from '$lib/server/directory/read';
+import { addSiteContact } from '$lib/server/directory/organization-card';
+import {
+	findOrganizationByInn,
+	getOrganization,
+	listAffiliations
+} from '$lib/server/directory/read';
 import { updateOrganization } from '$lib/server/directory/write';
 import { ConflictError, ValidationError } from '$lib/server/errors';
 import { toActionFailure, toPageError } from '$lib/server/http';
-import { requirePermission } from '$lib/server/rbac';
+import { can, requirePermission } from '$lib/server/rbac';
 import { passportActions, readAcceptance } from '../../passport/actions.server';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -21,12 +29,29 @@ export const load: PageServerLoad = async (event) => {
 		requirePermission(ctx, 'organizations.write');
 		const organization = await getOrganization(ctx, event.params.id);
 
+		// Физическое лицо ведётся карточкой человека: формы организации у него нет
+		// (`ORGANIZATION_FORM_KINDS`), и открытая форма не смогла бы его сохранить.
+		if (organization.personId !== null) {
+			redirect(303, resolve('/(app)/people/[id=uuid]/edit', { id: organization.personId }));
+		}
+
+		const today = formatIsoDay();
+
 		return {
 			organization,
 			form: await superValidate(organization, zod4(createOrganizationSchema), { errors: false }),
 			passport: await passportAvailability(ctx),
 			// Сменить вид на вендора может только полный доступ (`updateOrganization`).
-			allowVendor: ctx.scope.kind === 'all'
+			allowVendor: ctx.scope.kind === 'all',
+			// Кандидатов с сайта заводит контактами тот, кто вправе заводить людей.
+			contacts: can(ctx, 'people.write')
+				? {
+						savedWebsite: organization.website,
+						names: (await listAffiliations(ctx, organization.id))
+							.filter((row) => isAffiliationCurrent(row, today))
+							.map((row) => normalizePersonName(personFullName(row)))
+					}
+				: null
 		};
 	} catch (error) {
 		toPageError(error);
@@ -35,6 +60,31 @@ export const load: PageServerLoad = async (event) => {
 
 export const actions: Actions = {
 	...passportActions,
+
+	/**
+	 * Кандидат из «Сведений» — в контакты, не уходя из формы. Тот же сервис, что
+	 * на карточке: данные кандидата сервер берёт из раздела сайта, записанного в
+	 * карточке, а форма называет только, кого завести.
+	 */
+	addSiteContact: async (event) => {
+		const parsed = addSiteContactSchema.safeParse(
+			Object.fromEntries(await event.request.formData())
+		);
+
+		if (!parsed.success) {
+			return fail(400, {
+				message: parsed.error.issues[0]?.message ?? 'Контакт не добавлен'
+			});
+		}
+
+		try {
+			const added = await addSiteContact(actorFromEvent(event), event.params.id, parsed.data);
+
+			return { addedContact: `${added.person.lastName} ${added.person.firstName}` };
+		} catch (error) {
+			return toActionFailure(error);
+		}
+	},
 
 	/**
 	 * Сохранение карточки. Вместе с реквизитами форма присылает отметки полей,

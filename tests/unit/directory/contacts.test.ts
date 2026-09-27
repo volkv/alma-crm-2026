@@ -11,7 +11,8 @@ import {
 	CONTACT_DEFAULT_POSITION,
 	contactFullName,
 	normalizeContactPhone,
-	parseContacts
+	parseContacts,
+	parsePersonName
 } from '$lib/server/directory/contacts';
 
 describe('разбор ячейки контактов', () => {
@@ -53,6 +54,27 @@ describe('разбор ячейки контактов', () => {
 		expect(contact.lastName).toBe('Иванов');
 		expect(contact.firstName).toBe('И.');
 		expect(contact.middleName).toBe('И.');
+	});
+
+	it('ФИО из четырёх слов с отчеством не отдаёт отчество в должность и не меняет регистр после дефиса', () => {
+		const [contact] = parseContacts('Проход-C Тестова Вера Петровна, проректор').contacts;
+
+		expect(contact).toMatchObject({
+			lastName: 'Проход-C Тестова',
+			firstName: 'Вера',
+			middleName: 'Петровна',
+			position: 'проректор'
+		});
+		expect(parsePersonName('Мамедов Рашид Али оглы')).toEqual({
+			lastName: 'Мамедов',
+			firstName: 'Рашид',
+			middleName: 'Али оглы'
+		});
+		expect(parsePersonName('ИВАНОВА-ПЕТРОВА МАРИЯ')).toEqual({
+			lastName: 'Иванова-Петрова',
+			firstName: 'Мария',
+			middleName: null
+		});
 	});
 
 	it('слова после ФИО становятся должностью', () => {

@@ -169,14 +169,147 @@ export function registryWarnings(
 }
 
 /**
+ * Наименование, как его набрали в ячейке сайта: с заглавной буквы и без точки
+ * в конце — «федеральное … Великого».» в карточку не переносят.
+ */
+function tidyOrganizationName(value: string): string {
+	const trimmed = value.trim().replace(/\s+/g, ' ').replace(/\.+$/, '').trim();
+
+	return trimmed.charAt(0).toLocaleUpperCase('ru') + trimmed.slice(1);
+}
+
+/**
+ * Написания через запятую: запятая внутри кавычек («…», "…") частью названия
+ * остаётся. Повторы и пустые куски отбрасываются.
+ */
+function splitNameVariants(value: string): string[] {
+	const parts: string[] = [];
+	let depth = 0;
+	let current = '';
+
+	for (const char of value) {
+		if (char === '«') {
+			depth += 1;
+		} else if (char === '»') {
+			depth = Math.max(0, depth - 1);
+		} else if (char === '"') {
+			depth = depth === 0 ? 1 : 0;
+		}
+
+		if (char === ',' && depth === 0) {
+			parts.push(current);
+			current = '';
+		} else {
+			current += char;
+		}
+	}
+
+	parts.push(current);
+
+	const seen = new Set<string>();
+
+	return parts
+		.map((part) => tidyOrganizationName(part))
+		.filter((part) => {
+			const key = part.toLocaleLowerCase('ru');
+
+			if (part === '' || seen.has(key)) {
+				return false;
+			}
+
+			seen.add(key);
+			return true;
+		});
+}
+
+/**
+ * Организационно-правовая форма в начале краткого наименования: «ФГАОУ ВО
+ * СПбПУ». В справочнике краткое наименование — то, как вуз зовут в работе,
+ * поэтому такие написания предлагаются последними.
+ */
+const LEGAL_FORM_PREFIX = /^(Ф?Г[АБК]?(ОУ|У)|[АЧН]?НОУ|АНО|ЧОУ|ОУ|МБОУ|МАОУ|ГАПОУ|ГБПОУ)(\s|$)/u;
+
+/**
+ * Краткое наименование с сайта: одно предложенное и остальные написания.
+ * Предлагается первое без организационно-правовой формы; если такого нет —
+ * первое как есть.
+ */
+function shortNameOffer(value: string | null | undefined, fetchedAt: string) {
+	const variants = splitNameVariants(value ?? '');
+	const [first] = variants;
+
+	if (first === undefined) {
+		return undefined;
+	}
+
+	const chosen = variants.find((variant) => !LEGAL_FORM_PREFIX.test(variant)) ?? first;
+	const others = variants.filter((variant) => variant !== chosen);
+
+	return {
+		value: chosen,
+		...(others.length > 0 ? { variants: others } : {}),
+		source: 'sveden' as const,
+		fetchedAt
+	};
+}
+
+/** Субъекты с самостоятельным «г.» в адресе: у остальных регион — область, край, республика. */
+const FEDERAL_CITIES = ['Москва', 'Санкт-Петербург', 'Севастополь'] as const;
+
+/**
+ * Регион из адреса «Сведений»: первая часть адреса, похожая на субъект
+ * федерации, — «г. Санкт-Петербург», «Свердловская обл.», «Республика
+ * Татарстан». Адрес набран руками, поэтому это догадка, а не значение
+ * источника; не нашлось похожего — `null`.
+ */
+function regionFromAddress(address: string | null | undefined): string | null {
+	if (address === null || address === undefined) {
+		return null;
+	}
+
+	// «Место нахождения: 195251, г. …» — подпись до двоеточия адресом не является.
+	const body = address.includes(':') ? address.slice(address.lastIndexOf(':') + 1) : address;
+
+	for (const raw of body.split(',')) {
+		const part = raw.trim().replace(/\.$/, '');
+
+		for (const city of FEDERAL_CITIES) {
+			if (new RegExp(`^(г\\.?|город)\\s*${city}$`, 'iu').test(part)) {
+				return `г. ${city}`;
+			}
+		}
+
+		if (/\sобл$/u.test(part)) {
+			return part.replace(/обл$/u, 'область');
+		}
+
+		if (
+			/^Республика\s+\S/u.test(part) ||
+			/\s(область|край|автономный округ|автономная область|АО)$/u.test(part) ||
+			/\sРеспублика$/u.test(part)
+		) {
+			return part;
+		}
+	}
+
+	return null;
+}
+
+/**
  * Паспорт по разделу `/sveden` сайта.
  *
- * Из полей карточки сайт предлагает только наименования: реквизиты живут в
- * реестре, и сайт, где ИНН набран руками, ему не соперник. Остальное —
- * руководители подразделений и программы — идёт списками для просмотра.
+ * Из полей карточки сайт предлагает наименования и — догадкой по адресу —
+ * регион: реквизиты живут в реестре, и сайт, где ИНН набран руками, ему не
+ * соперник. Краткое наименование сайт даёт перечнем написаний; предлагается
+ * одно, остальные — на выбор. Руководители подразделений и программы идут
+ * списками для просмотра.
  */
 export function sitePassport(report: SiteReport): OrganizationPassport {
 	const common = report.common.found ? report.common.fields : null;
+	const fullName =
+		common?.fullName === null || common?.fullName === undefined
+			? null
+			: tidyOrganizationName(common.fullName);
 
 	return {
 		version: 1,
@@ -184,8 +317,9 @@ export function sitePassport(report: SiteReport): OrganizationPassport {
 		entity: null,
 		others: [],
 		fields: compact({
-			legalName: valueOf(common?.fullName, 'sveden', report.fetchedAt),
-			shortName: valueOf(common?.shortName, 'sveden', report.fetchedAt)
+			legalName: valueOf(fullName, 'sveden', report.fetchedAt),
+			shortName: shortNameOffer(common?.shortName, report.fetchedAt),
+			region: valueOf(regionFromAddress(common?.address), 'guess', report.fetchedAt)
 		}),
 		site: report,
 		warnings: siteWarnings(report)

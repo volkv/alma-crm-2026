@@ -7,7 +7,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { auditFilterSchema } from '$lib/contracts/audit';
-import { pageQuerySchema } from '$lib/contracts/common';
+import { optionalIsoDate, pageQuerySchema } from '$lib/contracts/common';
 import {
 	catalogListQuerySchema,
 	createAffiliationSchema,
@@ -468,6 +468,24 @@ describe('нормализация пустых значений', () => {
 
 		expect(result.notes).toBeNull();
 		expect(result.region).toBeNull();
+	});
+});
+
+describe('необязательная дата', () => {
+	const schema = optionalIsoDate('Дата указана неверно');
+
+	it('пустое поле формы — это «даты нет», а не неверная дата', () => {
+		expect(schema.parse('')).toBeNull();
+		expect(schema.parse(null)).toBeNull();
+		expect(schema.parse(undefined)).toBeNull();
+		expect(schema.parse('2027-08-31')).toBe('2027-08-31');
+	});
+
+	it('неверную дату отвергает своим сообщением', () => {
+		const result = schema.safeParse('31.08.2027');
+
+		expect(result.success).toBe(false);
+		if (!result.success) expect(result.error.issues[0]?.message).toBe('Дата указана неверно');
 	});
 });
 

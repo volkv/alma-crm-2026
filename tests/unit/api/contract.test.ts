@@ -101,6 +101,7 @@ describe('организация в ответе API', () => {
 		isActive: true,
 		externalSource: null,
 		externalId: null,
+		personId: null,
 		createdAt: new Date('2026-09-12T10:00:00.000Z'),
 		updatedAt: new Date('2026-09-12T11:30:00.000Z')
 	};

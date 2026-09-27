@@ -24,7 +24,7 @@
 		canReadPeople
 	}: {
 		organization: OrganizationView;
-		/** Действующие назначения: сотрудник и направление (`null` — весь вуз). */
+		/** Действующие назначения: сотрудник и направление (`null` — вся организация). */
 		responsibles: readonly { id: string; userFullName: string; directionName: string | null }[];
 		partner: PartnerStatus;
 		/** Действующий контакт с отметкой «основной»; `null` — такого нет. */
@@ -89,7 +89,10 @@
 							<li class="break-words">
 								<span class="font-medium">{row.userFullName}</span>
 								<span class="text-xs text-muted-foreground">
-									— {row.directionName ?? 'весь вуз'}
+									— {row.directionName ??
+										(organization.kind === 'educational_institution'
+											? 'весь вуз'
+											: 'вся организация')}
 								</span>
 							</li>
 						{/each}

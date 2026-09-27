@@ -1,4 +1,5 @@
 import { redirect } from '@sveltejs/kit';
+import { z } from 'zod';
 import { fail, message, superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { resolve } from '$app/paths';
@@ -44,6 +45,17 @@ export const actions: Actions = {
 			}
 
 			return toActionFailure(error);
+		}
+
+		// Заведён из формы контакта организации: туда и вернуться, уже с ним.
+		// Параметр — только идентификатор; видна ли организация, проверит та форма.
+		const target = z.uuid().safeParse(event.url.searchParams.get('for'));
+
+		if (target.success) {
+			redirect(
+				303,
+				`${resolve('/(app)/organizations/[id=uuid]/affiliations/new', { id: target.data })}?person=${created.id}`
+			);
 		}
 
 		redirect(303, `${resolve('/(app)/people/[id=uuid]', { id: created.id })}?done=created`);

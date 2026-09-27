@@ -9,6 +9,7 @@
 	import ContextSection from '$lib/components/interaction-card/context-section.svelte';
 	import { AFFILIATION_ROLE_LABELS } from '$lib/components/directory/labels';
 	import {
+		isAffiliationClosable,
 		isAffiliationCurrent,
 		type AffiliationRoleKind,
 		type AffiliationView
@@ -27,6 +28,7 @@
 	 */
 	let {
 		organizationId,
+		fromSite,
 		affiliations,
 		siteNames,
 		canRead,
@@ -35,6 +37,8 @@
 		onclose
 	}: {
 		organizationId: string;
+		/** Подсказывать ли «Сведения» с сайта: раздел есть только у учебных заведений. */
+		fromSite: boolean;
 		affiliations: readonly AffiliationView[];
 		siteNames: ReadonlyMap<string, string>;
 		canRead: boolean;
@@ -89,7 +93,7 @@
 			</div>
 			<!-- Закрытие полномочий — редкое действие с подтверждением: в меню
 				строки, а не кнопкой под каждым контактом. -->
-			{#if canWrite && isAffiliationCurrent(row, today)}
+			{#if canWrite && isAffiliationClosable(row, today)}
 				<DropdownMenu.Root>
 					<DropdownMenu.Trigger>
 						{#snippet child({ props })}
@@ -148,8 +152,9 @@
 			</p>
 		{:else if current.length === 0 && past.length === 0}
 			<p class="text-sm text-muted-foreground">
-				Контактов пока нет. Добавьте человека, с которым идёт переписка, — или возьмите его из
-				«Сведений» с сайта вуза.
+				Контактов пока нет. Добавьте человека, с которым идёт переписка{fromSite
+					? ' — или возьмите его из «Сведений» с сайта вуза'
+					: ''}.
 			</p>
 		{:else}
 			{#if masked}

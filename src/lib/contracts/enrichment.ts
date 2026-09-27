@@ -108,6 +108,13 @@ const moment = z.iso.datetime({ offset: true });
  */
 export const passportValueSchema = z.object({
 	value: text.min(1),
+	/**
+	 * Другие написания того же поля в том же источнике: раздел «Сведения» даёт
+	 * краткое наименование перечнем («ФГАОУ ВО СПбПУ, СПбПУ, Политех»).
+	 * `value` — предложенное из них; сотрудник вправе принять любое другое, и
+	 * источник у него тот же.
+	 */
+	variants: z.array(text.min(1)).max(10).optional(),
 	source: z.enum(FIELD_SOURCES),
 	fetchedAt: moment
 });
@@ -185,7 +192,8 @@ export type SvedenReport = z.infer<typeof svedenCommonSchema>;
 export const contactCandidateSchema = z.object({
 	/** Подразделение или орган управления. */
 	unit: text,
-	name: nullableText,
+	/** ФИО руководителя: строка без него кандидатом не считается. */
+	name: text,
 	post: nullableText,
 	email: nullableText,
 	address: nullableText

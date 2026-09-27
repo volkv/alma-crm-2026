@@ -148,8 +148,12 @@ export const apiOrganizationSchema = z.object({
 export type ApiOrganization = z.output<typeof apiOrganizationSchema>;
 
 export function toApiOrganization(view: OrganizationView): ApiOrganization {
+	// Ссылка физического лица на карточку человека — внутренняя: персональные
+	// данные API отдаёт своими маршрутами и своими правами, а не через организацию.
+	const { personId: _personId, ...published } = view;
+
 	return {
-		...view,
+		...published,
 		createdAt: view.createdAt.toISOString(),
 		updatedAt: view.updatedAt.toISOString()
 	};

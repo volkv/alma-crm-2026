@@ -20,7 +20,8 @@
 		CATALOG_IMPORT_STATUS_LABELS,
 		CATALOG_WIZARD_STEPS,
 		DIRECTORY_IMPORT_KIND_HINTS,
-		DIRECTORY_IMPORT_KIND_LABELS
+		DIRECTORY_IMPORT_KIND_LABELS,
+		type DirectoryImportKind
 	} from '$lib/contracts/directory-import';
 	import { formatDateTime, formatNumber } from '$lib/format';
 	import type { PageProps } from './$types';
@@ -116,6 +117,15 @@
 			accept=".xls,.xlsx,.csv,.json,text/csv,application/json,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
 			required
 		/>
+
+		<p class="-mt-2 text-xs text-muted-foreground">
+			Образец файла с нужными колонками, строкой-примером и подсказками, как заполнять:
+			<a
+				class="text-link hover:text-link-hover"
+				href={resolve('/(app)/organizations/import/sample/[kind]', { kind })}
+				download>{DIRECTORY_IMPORT_KIND_LABELS[kind as DirectoryImportKind]} (XLSX)</a
+			>.
+		</p>
 
 		<FieldTextarea
 			name="note"

@@ -129,24 +129,16 @@
 	};
 
 	function keyOf(candidate: ContactCandidate): string {
-		return `${candidate.unit}\u0000${candidate.name ?? ''}`;
+		return `${candidate.unit}\u0000${candidate.name}`;
 	}
 
 	/** Почему кандидата нельзя добавить одним щелчком; `null` — можно. */
 	function refusal(candidate: ContactCandidate): string | null {
-		if (candidate.name === null) {
-			return 'на сайте нет ФИО';
-		}
-
-		if (splitPersonName(candidate.name) === null) {
-			return 'ФИО из одного слова';
-		}
-
-		return null;
+		return splitPersonName(candidate.name) === null ? 'ФИО из одного слова' : null;
 	}
 
 	function isContact(candidate: ContactCandidate): boolean {
-		return candidate.name !== null && contactNames.has(normalizePersonName(candidate.name));
+		return contactNames.has(normalizePersonName(candidate.name));
 	}
 
 	function addCandidate(candidate: ContactCandidate): SubmitFunction {
@@ -184,8 +176,8 @@
 					)}.
 				{:else}
 					Руководители подразделений и программы из раздела «Сведения об образовательной
-					организации». Обращений к внешним источникам на сегодня: {reading?.remaining ?? 0}; ответ
-					живёт в кэше сутки.
+					организации». Обращений к внешним источникам на сегодня осталось: {reading?.remaining ??
+						0}; ответ живёт в кэше сутки.
 				{/if}
 			</p>
 		</div>
@@ -335,7 +327,7 @@
 									{@const why = refusal(candidate)}
 									<li class="flex flex-wrap items-start justify-between gap-x-3 gap-y-1.5 py-2">
 										<div class="min-w-0 flex-1 basis-56 text-sm">
-											<p class="font-medium break-words">{candidate.name ?? '—'}</p>
+											<p class="font-medium break-words">{candidate.name}</p>
 											{#if candidate.post}
 												<p class="break-words">{candidate.post}</p>
 											{/if}

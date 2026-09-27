@@ -580,7 +580,7 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		shortName: 'Маяк-Телеком',
 		inn: '0000000265',
 		kpp: '000001026',
-		ogrn: '1260000000260',
+		ogrn: '1260000000259',
 		region: 'Ленинградская область',
 		website: 'https://mayak-telecom.example.com',
 		notes: 'Юридическое лицо обучает своих сотрудников: пространство B2C. Организация вымышлена.'
@@ -592,7 +592,7 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		shortName: 'ИТ Школа Ростелекома',
 		inn: '0000000258',
 		kpp: '000001025',
-		ogrn: '1260000000259',
+		ogrn: '1260000000260',
 		region: 'г. Москва',
 		website: 'https://itschool.example.org',
 		notes:
@@ -605,7 +605,7 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		shortName: 'Базис',
 		inn: '0000000272',
 		kpp: '000001027',
-		ogrn: '1260000000227',
+		ogrn: '1260000000270',
 		region: 'г. Москва',
 		website: 'https://basis.example.org',
 		notes: VENDOR_NOTE
@@ -617,7 +617,7 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		shortName: 'ТДата',
 		inn: '0000000280',
 		kpp: '000001028',
-		ogrn: '1260000000228',
+		ogrn: '1260000000281',
 		region: 'г. Москва',
 		website: 'https://tdata.example.org',
 		notes: VENDOR_NOTE
@@ -629,7 +629,7 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		shortName: 'Ростелеком',
 		inn: '0000000297',
 		kpp: '000001029',
-		ogrn: '1260000000229',
+		ogrn: '1260000000292',
 		region: 'г. Москва',
 		website: 'https://rostelecom.example.org',
 		notes: VENDOR_NOTE
@@ -641,7 +641,7 @@ const ORGANIZATIONS: readonly OrganizationSeed[] = [
 		shortName: 'РТК ИТ Плюс',
 		inn: '0000000307',
 		kpp: '000001030',
-		ogrn: '1260000000230',
+		ogrn: '1260000000303',
 		region: 'г. Москва',
 		website: 'https://rtk-it-plus.example.org',
 		notes: VENDOR_NOTE

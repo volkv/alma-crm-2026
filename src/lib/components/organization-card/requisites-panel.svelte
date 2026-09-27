@@ -8,14 +8,20 @@
 	/**
 	 * Реквизиты организации — полное наименование, ИНН, КПП, ОГРН — и откуда
 	 * они взялись. Происхождение — из журнала: последняя приёмка полей из паспорта организации называет
-	 * поля, источник и дату ответа источника. Нет такой записи — реквизиты
-	 * набраны руками или пришли импортом, и это сказано прямо.
+	 * поля, источник и дату ответа источника. Как организация появилась —
+	 * загрузкой каталога или вручную — сказано всегда, если это записано.
 	 */
 	let {
 		organization,
-		passportApplied
+		passportApplied,
+		origin
 	}: {
 		organization: OrganizationView;
+		origin:
+			| { kind: 'import'; at: Date }
+			| { kind: 'manual'; at: Date; actorLabel: string }
+			| { kind: 'individual'; at: Date }
+			| null;
 		passportApplied: {
 			occurredAt: Date;
 			actorLabel: string;
@@ -93,11 +99,18 @@
 </ContextSection>
 
 <ContextSection title="Источник реквизитов">
-	{#if passportApplied === null}
-		<p class="text-sm text-muted-foreground">
-			Записей о приёмке из ЕГРЮЛ или с сайта нет: реквизиты введены вручную или импортом.
-		</p>
+	{#if origin === null}
+		<p class="text-sm text-muted-foreground">Как организация попала в справочник, не записано.</p>
+	{:else if origin.kind === 'import'}
+		<p class="text-sm">Импорт каталога от {formatDateTime(origin.at)}.</p>
+	{:else if origin.kind === 'individual'}
+		<p class="text-sm">Заведена вместе с карточкой человека {formatDateTime(origin.at)}.</p>
 	{:else}
+		<p class="text-sm">
+			Введено вручную: {origin.actorLabel}, {formatDateTime(origin.at)}.
+		</p>
+	{/if}
+	{#if passportApplied !== null}
 		<ul class="flex flex-col gap-1.5 text-sm">
 			{#each bySource as group (group.key)}
 				<li class="break-words">

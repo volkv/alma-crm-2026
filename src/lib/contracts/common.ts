@@ -45,13 +45,16 @@ export function isoDate(error: string) {
 	return z.iso.date({ error });
 }
 
-/** Необязательная календарная дата. */
+/**
+ * Необязательная календарная дата. Пустое поле формы приходит пустой строкой —
+ * она равна `null` и проверяется до формата даты, иначе «оставьте пустым»
+ * отказывало бы как неверная дата.
+ */
 export function optionalIsoDate(error: string) {
-	return z.iso
-		.date({ error })
+	return z
+		.union([z.literal('').transform(() => null), z.iso.date({ error })], { error })
 		.nullable()
-		.default(null)
-		.transform((value) => (value === null || value === '' ? null : value));
+		.default(null);
 }
 
 /** Постраничный запрос. `coerce` — потому что из query-строки приходят строки. */

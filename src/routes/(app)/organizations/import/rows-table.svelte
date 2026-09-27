@@ -12,6 +12,10 @@
 		type CatalogRowAction,
 		type DirectoryImportKind
 	} from '$lib/contracts/directory-import';
+	import { formatDate } from '$lib/format';
+
+	/** Календарный день так, как его разбирает импорт. */
+	const ISO_DAY = /^\d{4}-\d{2}-\d{2}$/;
 
 	/**
 	 * Строки каталога вместе с тем, что импорт с ними сделает или сделал.
@@ -60,6 +64,13 @@
 
 	const dash = (value: string | null): string => value ?? '—';
 
+	/**
+	 * Значение строки так, как его читает человек: календарный день из файла
+	 * разобран в `ГГГГ-ММ-ДД`, а показывается `ДД.ММ.ГГГГ`, как во всём продукте.
+	 */
+	const shown = (value: string | null): string =>
+		value !== null && ISO_DAY.test(value) ? formatDate(value) : dash(value);
+
 	const showContact = $derived(
 		kind === 'vendors' && rows.some((row) => row.vendorContact !== null)
 	);
@@ -106,7 +117,7 @@
 						</Table.Cell>
 						{#if kind === 'catalog'}
 							<Table.Cell class="whitespace-nowrap">{dash(row.contractNumber)}</Table.Cell>
-							<Table.Cell class="whitespace-nowrap">{dash(row.licenseUntil)}</Table.Cell>
+							<Table.Cell class="whitespace-nowrap">{shown(row.licenseUntil)}</Table.Cell>
 							<Table.Cell>{dash(row.transferStatus)}</Table.Cell>
 						{:else if showContact}
 							<Table.Cell>
@@ -143,7 +154,7 @@
 									<ul class="flex flex-col gap-0.5">
 										{#each row.changes as change (change.target + change.subject + change.field)}
 											<li class="text-xs text-muted-foreground">
-												{change.subject} · {change.field}: {change.from ?? '—'} → {change.to}
+												{change.subject} · {change.field}: {shown(change.from)} → {shown(change.to)}
 											</li>
 										{/each}
 									</ul>

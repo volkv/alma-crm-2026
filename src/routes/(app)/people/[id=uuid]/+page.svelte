@@ -17,7 +17,7 @@
 	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatDate } from '$lib/format';
-	import { isAffiliationCurrent, type PersonAffiliationView } from '$lib/contracts/directory';
+	import { isAffiliationClosable, type PersonAffiliationView } from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -174,7 +174,7 @@
 										Изменить
 									</Button>
 								{/if}
-								{#if data.canWrite && isAffiliationCurrent(row.affiliation, data.today)}
+								{#if data.canWrite && isAffiliationClosable(row.affiliation, data.today)}
 									<Button variant="ghost" size="sm" onclick={() => askClose(row)}>Закрыть</Button>
 								{/if}
 							</Table.Cell>

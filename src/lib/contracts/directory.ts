@@ -9,6 +9,7 @@
  */
 import { z } from 'zod';
 import { isValidInn } from '$lib/validation/inn';
+import { isValidKpp, isValidOgrn } from '$lib/validation/requisites';
 import {
 	id,
 	isoDate,
@@ -121,6 +122,14 @@ const innField = optionalText(12).refine((value) => value === null || isValidInn
 	error: 'ИНН должен состоять из 10 или 12 цифр и проходить проверку контрольной суммы'
 });
 
+const kppField = optionalText(9).refine((value) => value === null || isValidKpp(value), {
+	error: 'КПП — 9 знаков: 4 цифры, 2 цифры или заглавные латинские буквы, 3 цифры'
+});
+
+const ogrnField = optionalText(15).refine((value) => value === null || isValidOgrn(value), {
+	error: 'ОГРН — 13 цифр (у ИП 15) с верной контрольной цифрой'
+});
+
 /**
  * Примечание карточки организации. Отдельным именем по той же причине, что и
  * должность: импорт каталога дописывает в него комментарий строки и обязан
@@ -141,8 +150,8 @@ const organizationFields = {
 	legalName: requiredText(500, 'Укажите полное наименование организации'),
 	shortName: requiredText(200, 'Укажите краткое наименование организации'),
 	inn: innField,
-	kpp: optionalText(9),
-	ogrn: optionalText(15),
+	kpp: kppField,
+	ogrn: ogrnField,
 	region: optionalText(200),
 	website: z
 		.url({ error: 'Сайт указывают полным адресом, вместе с https://' })
@@ -314,6 +323,16 @@ const affiliationPeriodError = {
  */
 export function isAffiliationCurrent(row: { validTo: string | null }, today: string): boolean {
 	return row.validTo === null || row.validTo >= today;
+}
+
+/**
+ * Закрыть полномочия сегодняшним днём можно, пока их последний день не
+ * назначен на сегодня или раньше: закрытая сегодня роль действует до конца дня
+ * (`isAffiliationCurrent`), но закрывать её второй раз нечего — сервис ответит
+ * конфликтом (`endAffiliation`).
+ */
+export function isAffiliationClosable(row: { validTo: string | null }, today: string): boolean {
+	return row.validTo === null || row.validTo > today;
 }
 
 export const createAffiliationSchema = z
@@ -732,6 +751,8 @@ export type OrganizationView = {
 	isActive: boolean;
 	externalSource: string | null;
 	externalId: string | null;
+	/** Человек физического лица (`kind = 'individual'`): его ФИО и контакты ведутся там. */
+	personId: string | null;
 	createdAt: Date;
 	updatedAt: Date;
 };
