@@ -211,7 +211,13 @@ export const DOCUMENT_TEMPLATE_COUNTERPARTIES: Record<
 	services_act: ['individual', 'legal_entity']
 };
 
-/** Шаблоны процесса, подходящие виду контрагента, в порядке каталога. */
+/**
+ * Шаблоны процесса, подходящие виду контрагента, в порядке каталога.
+ *
+ * Шаблоны недействующих модулей отсекает вызывающий — `offeredTemplates` из
+ * `$lib/platform/registry` до этого вызова: реестр сам читает названия
+ * шаблонов отсюда, и обратный импорт замкнул бы цикл.
+ */
 export function packageTemplates(
 	offered: readonly DocumentTemplateKey[],
 	counterpartyKind: OrganizationKind

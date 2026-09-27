@@ -14,7 +14,7 @@
 		CARD_PANEL_LABELS,
 		type CardPanel
 	} from '$lib/contracts/process-card';
-	import { PANEL_CATALOG } from '$lib/platform/registry';
+	import { moduleByKey, PANEL_CATALOG, templateOwner } from '$lib/platform/registry';
 
 	/**
 	 * Состав карточки процесса: панели и шаблоны документов. Правится без
@@ -77,6 +77,17 @@
 		return groups;
 	})();
 
+	/**
+	 * Название модуля, которому принадлежит шаблон, или `null` — шаблон ядра.
+	 * Как и панель модуля, такой шаблон процесс выбирает всегда, а собирается
+	 * он только там, где модуль действует.
+	 */
+	function templateOwnerLabel(template: DocumentTemplateKey): string | null {
+		const owner = templateOwner(template);
+
+		return owner === null ? null : (moduleByKey(owner)?.label ?? owner);
+	}
+
 	function toggle<T>(list: T[], item: T, on: boolean): T[] {
 		return on
 			? [...list.filter((value) => value !== item), item]
@@ -125,14 +136,23 @@
 		<fieldset class="flex flex-col gap-2">
 			<legend class="mb-2 text-sm font-medium">Шаблоны документов</legend>
 			{#each DOCUMENT_TEMPLATE_KEYS as template (template)}
-				<Label class="flex items-center gap-2 font-normal">
+				{@const owner = templateOwnerLabel(template)}
+				<Label class="flex items-start gap-2 font-normal">
 					<Checkbox
 						name="templates"
 						value={template}
 						checked={templates.includes(template)}
 						onCheckedChange={(next) => (templates = toggle(templates, template, next === true))}
+						class="mt-0.5"
 					/>
-					{DOCUMENT_TEMPLATE_LABELS[template]}
+					<span class="flex flex-col">
+						{DOCUMENT_TEMPLATE_LABELS[template]}
+						{#if owner !== null}
+							<span class="text-xs text-muted-foreground">
+								Модуль «{owner}»: собирается в пространствах, где модуль подключён.
+							</span>
+						{/if}
+					</span>
 				</Label>
 			{/each}
 		</fieldset>

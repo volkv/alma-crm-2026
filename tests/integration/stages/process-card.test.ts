@@ -4,12 +4,17 @@
  * читают их оттуда. Проверка на настоящей базе — значения держит проверка по
  * каталогу в схеме, и именно её миграция обязана пройти.
  */
+import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { workspaceModules } from '$lib/server/db/schema';
 import { ValidationError } from '$lib/server/errors';
 import { generateDocument } from '$lib/server/documents/generate';
+import { BUILT_IN_TEMPLATES } from '$lib/server/documents/templates';
 import { getInteraction } from '$lib/server/interactions/read';
+import { setWorkspaceModule } from '$lib/server/platform/workspace-modules';
 import { B2C_PROCESS } from '$lib/server/stages/definitions';
 import { getProcessCard, readInteractionCard, updateProcessCard } from '$lib/server/stages/card';
+import { readWorkspaceByKey } from '$lib/server/stages/process';
 import { startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
 import {
 	B2B_PROCESS,
@@ -79,5 +84,56 @@ describe('состав карточки процесса', () => {
 		await expect(
 			updateProcessCard(ctx, 'b2c', { panels: ['licenses'], templates: [] })
 		).rejects.toThrow(ValidationError);
+	});
+
+	it('шаблон модуля собирается, только пока модуль подключён к пространству', async () => {
+		const ctx = testActor({ roleId: 'admin' });
+		// Без стадии, которую закрывает отметка на акте, «Договоры и лицензии»
+		// процессу не нужны и держатся только строкой пространства.
+		await seedProcess(database, B2B_WORKSPACE_KEY, {
+			...B2B_PROCESS,
+			stages: B2B_PROCESS.stages.map((stage) => ({
+				...stage,
+				requiresDocumentMark: null,
+				requiresDocumentTemplate: null
+			}))
+		});
+		const { interactionId } = await createInteractionOn(ctx, database);
+		const workspace = await readWorkspaceByKey(database.db, B2B_WORKSPACE_KEY);
+		await database.db
+			.delete(workspaceModules)
+			.where(
+				and(
+					eq(workspaceModules.workspaceId, workspace.id),
+					eq(workspaceModules.moduleKey, 'contracts')
+				)
+			);
+
+		const sublicense = {
+			templateKey: 'sublicense',
+			interactionId,
+			title: 'Сублицензионный договор',
+			formats: ['docx' as const],
+			data: Object.fromEntries(
+				BUILT_IN_TEMPLATES.sublicense.variables.map((variable) => [
+					variable.key,
+					variable.key === 'items'
+						? [{ productName: 'Учебная платформа', licenseUntil: '31.08.2027' }]
+						: 'Значение'
+				])
+			)
+		};
+
+		await expect(generateDocument(ctx, sublicense)).rejects.toThrow(
+			'даёт модуль «Договоры и лицензии», он не подключён к пространству'
+		);
+
+		await setWorkspaceModule(ctx, {
+			workspaceKey: B2B_WORKSPACE_KEY,
+			moduleKey: 'contracts',
+			enabled: true
+		});
+
+		expect(await generateDocument(ctx, sublicense)).toHaveLength(1);
 	});
 });

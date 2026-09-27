@@ -2,7 +2,7 @@
 	import { packageTemplates, type DocumentSupersession } from '$lib/contracts/documents';
 	import { PARTY_ROLE_LABELS } from '$lib/contracts/interactions';
 	import { cardPanelComponent } from '$lib/platform/card-ui-registry';
-	import { panelOwner } from '$lib/platform/registry';
+	import { offeredTemplates, panelOwner } from '$lib/platform/registry';
 	import { getCardCommands } from './commands.svelte';
 	import ContactLine from './contact-line.svelte';
 	import ContextSection from './context-section.svelte';
@@ -22,7 +22,8 @@
 	 * Сроки и документы — панели ядра, остальные приносят модули
 	 * (`$lib/platform/card-ui-registry`), и видны они, только пока модуль
 	 * действует в пространстве. Что панель модуля показывает и когда
-	 * прячется, решает сама панель.
+	 * прячется, решает сама панель. Так же и шаблоны: сублицензию и акт
+	 * передачи панель документов предлагает, только пока действует их модуль.
 	 */
 	let {
 		source,
@@ -120,7 +121,10 @@
 			<DocumentsPanel
 				documents={source.interaction.documents}
 				{supersessions}
-				templates={packageTemplates(source.card.templates, source.card.counterpartyKind)}
+				templates={packageTemplates(
+					offeredTemplates(source.card.templates, model.modules),
+					source.card.counterpartyKind
+				)}
 				counterpartyKind={source.card.counterpartyKind}
 				canUpload={can.upload}
 				canGenerate={can.generate}

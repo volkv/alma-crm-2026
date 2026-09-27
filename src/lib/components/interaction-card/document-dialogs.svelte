@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { applyAction, enhance } from '$app/forms';
+	import { page } from '$app/state';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { toast } from 'svelte-sonner';
 	import * as Select from '$lib/components/ui/select/index.js';
@@ -29,6 +30,7 @@
 	} from '$lib/contracts/documents';
 	import type { InteractionDocumentView, InteractionView } from '$lib/contracts/interactions';
 	import { pluralize } from '$lib/format';
+	import { kindOwner } from '$lib/platform/registry';
 	import { getCardCommands } from './commands.svelte';
 
 	/**
@@ -58,6 +60,21 @@
 	const revisionOpen = opened('revision');
 	const markOpen = opened('mark');
 	const packageOpen = opened('package');
+
+	/**
+	 * Виды, которые можно выбрать при загрузке. Вид модуля («Документ об
+	 * обучении» у «Обучения») предлагается, только пока модуль действует в
+	 * пространстве дела; действующие модули отдаёт загрузчик карточки.
+	 */
+	const uploadKinds = $derived.by(() => {
+		const active = (page.data.modules as readonly string[] | undefined) ?? [];
+
+		return UPLOADED_DOCUMENT_KINDS.filter((kind) => {
+			const owner = kindOwner(kind);
+
+			return owner === null || active.includes(owner);
+		});
+	});
 
 	const documents = $derived(interaction.documents);
 	const superseded = $derived(new Set(supersessions.map((item) => item.documentId)));
@@ -243,7 +260,7 @@
 					{documentKindLabel(uploadKind)}
 				</Select.Trigger>
 				<Select.Content>
-					{#each UPLOADED_DOCUMENT_KINDS as kind (kind)}
+					{#each uploadKinds as kind (kind)}
 						<Select.Item value={kind} label={DOCUMENT_KIND_LABELS[kind]} />
 					{/each}
 				</Select.Content>

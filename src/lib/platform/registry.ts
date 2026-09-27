@@ -11,6 +11,7 @@
  */
 import config from '../../../crm.config.ts';
 import {
+	DOCUMENT_TEMPLATE_KEYS,
 	DOCUMENT_TEMPLATE_LABELS,
 	documentKindLabel,
 	type DocumentTemplateKey
@@ -136,6 +137,51 @@ export function activeModules(
 	return INSTALLED_MODULES.filter(
 		(module) => enabledSet.has(module.key) || required.has(module.key)
 	).map((module) => module.key);
+}
+
+const TEMPLATE_OWNERS = new Map<string, ModuleKey>(
+	INSTALLED_MODULES.flatMap((module) =>
+		module.documents.templates.map((template): [string, ModuleKey] => [template, module.key])
+	)
+);
+
+const KIND_OWNERS = new Map<string, ModuleKey>(
+	INSTALLED_MODULES.flatMap((module) =>
+		module.documents.kinds.map((kind): [string, ModuleKey] => [kind, module.key])
+	)
+);
+
+/**
+ * Владелец шаблона документа: ключ модуля или `null` — шаблон ядра. Каталог
+ * шаблонов закрыт в ядре (`DOCUMENT_TEMPLATE_KEYS`), модуль только объявляет,
+ * какие из них его: на каталоге держатся публичное API и снимок стадии.
+ */
+export function templateOwner(template: string): ModuleKey | null {
+	return TEMPLATE_OWNERS.get(template) ?? null;
+}
+
+/** Владелец вида документа: ключ модуля или `null` — вид ядра. */
+export function kindOwner(kind: string): ModuleKey | null {
+	return KIND_OWNERS.get(kind) ?? null;
+}
+
+/**
+ * Шаблоны, которые дело может собрать: выбранные процессом, принадлежащие ядру
+ * или действующему модулю, в порядке каталога. Как и у панелей, выбор процесса
+ * не пропадает при выключенном модуле — шаблон вернётся, когда модуль снова
+ * подключат.
+ */
+export function offeredTemplates(
+	chosen: readonly string[],
+	active: Iterable<string>
+): DocumentTemplateKey[] {
+	const activeSet = new Set(active);
+
+	return DOCUMENT_TEMPLATE_KEYS.filter((template) => {
+		const owner = templateOwner(template);
+
+		return chosen.includes(template) && (owner === null || activeSet.has(owner));
+	});
 }
 
 /** Название шаблона; ключ вне каталога печатается как записан. */

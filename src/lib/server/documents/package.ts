@@ -1,6 +1,7 @@
 /**
- * Пакет документов дела: все шаблоны, которые объявил процесс и которые
- * подходят виду контрагента, одним действием.
+ * Пакет документов дела: все шаблоны, которые объявил процесс, которые дают
+ * ядро или действующие модули пространства и которые подходят виду
+ * контрагента, одним действием.
  *
  * Реквизиты сторон, позиции договора, программы и сроки берутся из карточек —
  * организации, физического лица, договора и плана. Человек называет только то,
@@ -20,11 +21,13 @@ import {
 } from '$lib/contracts/documents';
 import type { InteractionPartyView, InteractionView } from '$lib/contracts/interactions';
 import { formatDate } from '$lib/format';
+import { moduleByKey, offeredTemplates, templateOwner } from '$lib/platform/registry';
 import type { ActorContext } from '../actor';
 import { getDb } from '../db';
 import { organizations, people } from '../db/schema';
 import { ValidationError } from '../errors';
 import { getInteraction } from '../interactions/read';
+import { readActiveModules } from '../platform/workspace-modules';
 import { requirePermission } from '../rbac';
 import { readInteractionCard } from '../stages/card';
 import { generateDocument, type TemplateData } from './generate';
@@ -378,8 +381,28 @@ function prepare(key: DocumentTemplateKey, source: PackageSource): Prepared {
 }
 
 /**
+ * Почему шаблона нет в пакете дела. Шаблон выключенного модуля объясняется
+ * отдельно: процесс его предлагает, и без подсказки человек искал бы причину в
+ * редакторе процесса.
+ */
+function foreignReason(
+	key: DocumentTemplateKey,
+	active: readonly string[],
+	workspaceName: string
+): string {
+	const owner = templateOwner(key);
+
+	if (owner !== null && !active.includes(owner)) {
+		return `«${DOCUMENT_TEMPLATE_LABELS[key]}» даёт модуль «${moduleByKey(owner)?.label ?? owner}», он не подключён к пространству «${workspaceName}»: его подключают в «Настройки → Пространства»`;
+	}
+
+	return `«${DOCUMENT_TEMPLATE_LABELS[key]}» не подходит процессу или контрагенту`;
+}
+
+/**
  * Собирает пакет. Выбранные шаблоны обязаны быть в пакете дела — объявлены
- * процессом и подходят виду контрагента; иначе отказ целиком, до сборки.
+ * процессом, принадлежат ядру или действующему модулю и подходят виду
+ * контрагента; иначе отказ целиком, до сборки.
  * Отказ отдельного документа из-за данных — его исход, а не ошибка пакета.
  * Сбой службы PDF прерывает сборку: собранное до него остаётся в деле.
  */
@@ -391,8 +414,16 @@ export async function generateDocumentPackage(
 	requirePermission(ctx, 'documents.generate');
 
 	const interaction = await getInteraction(ctx, interactionId);
-	const card = await readInteractionCard(interaction);
-	const offered = packageTemplates(card.templates, card.counterpartyKind);
+	const [card, modules] = await Promise.all([
+		readInteractionCard(interaction),
+		readActiveModules(interaction.workspaceId)
+	]);
+	// Шаблон модуля входит в пакет, только пока модуль действует в пространстве
+	// дела: выбор процесса при этом не теряется.
+	const offered = packageTemplates(
+		offeredTemplates(card.templates, modules.active),
+		card.counterpartyKind
+	);
 	const foreign = input.templates.filter((key) => !offered.includes(key));
 
 	if (offered.length === 0) {
@@ -404,9 +435,7 @@ export async function generateDocumentPackage(
 	if (foreign.length > 0) {
 		throw new ValidationError(
 			'Эти документы не входят в пакет дела',
-			foreign.map(
-				(key) => `«${DOCUMENT_TEMPLATE_LABELS[key]}» не подходит процессу или контрагенту`
-			)
+			foreign.map((key) => foreignReason(key, modules.active, interaction.workspaceName))
 		);
 	}
 

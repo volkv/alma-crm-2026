@@ -12,12 +12,14 @@ import type { OrganizationKind } from '$lib/contracts/directory';
 import { DOCUMENT_TEMPLATE_LABELS, type DocumentTemplateKey } from '$lib/contracts/documents';
 import type { InteractionView } from '$lib/contracts/interactions';
 import { processCardSchema, type ProcessCard } from '$lib/contracts/process-card';
+import { moduleByKey, templateOwner } from '$lib/platform/registry';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
 import { interactions, organizations, workflows, workspaces } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
+import { readActiveModules } from '../platform/workspace-modules';
 import { requirePermission } from '../rbac';
 import { readWorkflowByKey, type Executor } from './process';
 
@@ -92,8 +94,13 @@ export async function readInteractionCard(
 }
 
 /**
- * Шаблон доступен в карточке, только если его объявил процесс записи. Проверка
- * на сервере, а не только скрытой кнопкой: форму можно отправить и без неё.
+ * Шаблон доступен в карточке, только если его объявил процесс записи и, когда
+ * шаблон принадлежит модулю, этот модуль действует в пространстве записи.
+ * Проверка на сервере, а не только скрытой кнопкой: форму можно отправить и без
+ * неё.
+ *
+ * Модуль, нужный стадии действующей редакции, действует всегда: стадию,
+ * которую подтверждает отметка на акте передачи, этот отказ не остановит.
  */
 export async function assertTemplateOffered(
 	executor: Executor,
@@ -101,7 +108,12 @@ export async function assertTemplateOffered(
 	templateKey: DocumentTemplateKey
 ): Promise<void> {
 	const [row] = await executor
-		.select({ templates: workflows.documentTemplateKeys, workflowName: workflows.name })
+		.select({
+			templates: workflows.documentTemplateKeys,
+			workflowName: workflows.name,
+			workspaceId: workspaces.id,
+			workspaceName: workspaces.name
+		})
 		.from(interactions)
 		.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
 		.innerJoin(workflows, eq(workflows.id, workspaces.workflowId))
@@ -115,6 +127,21 @@ export async function assertTemplateOffered(
 		throw new ValidationError('Шаблон недоступен в этом процессе', [
 			`Процесс «${row.workflowName}» не предлагает шаблон «${DOCUMENT_TEMPLATE_LABELS[templateKey]}»: его включают в редакторе процесса`
 		]);
+	}
+
+	const owner = templateOwner(templateKey);
+
+	if (owner === null) {
+		return;
+	}
+
+	const { active } = await readActiveModules(row.workspaceId, executor);
+
+	if (!active.includes(owner)) {
+		throw new ValidationError(
+			`Шаблон «${DOCUMENT_TEMPLATE_LABELS[templateKey]}» даёт модуль «${moduleByKey(owner)?.label ?? owner}», он не подключён к пространству «${row.workspaceName}»`,
+			['Его подключают в «Настройки → Пространства»']
+		);
 	}
 }
 
