@@ -59,9 +59,14 @@
 	 * цвет выбранного, фиолетовый: оранжевый только у главного действия. Фокус с
 	 * клавиатуры рисуется `outline`, а не тенью (`focus-ring`) — иначе он
 	 * затирал бы ободок выбора, который тоже тень.
+	 *
+	 * Кнопка — ровный круг в размер аватарки (`size-8 aspect-square`). На
+	 * телефоне зона нажатия растёт до 44 px невидимым `::after`, а не высотой
+	 * кнопки: вытянутая кнопка рисовала бы овальный ободок. Поэтому ряд отборов
+	 * и не растягивает кнопки с `data-owner-avatar` своим правилом высоты.
 	 */
 	const OWNER_BUTTON =
-		'relative rounded-full ring-2 ring-background transition-transform outline-none hover:z-20 hover:-translate-y-0.5 focus-visible:z-20 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring';
+		'relative flex size-8 shrink-0 aspect-square items-center justify-center rounded-full ring-2 ring-background transition-transform outline-none hover:z-20 hover:-translate-y-0.5 focus-visible:z-20 focus-visible:outline-2 focus-visible:outline-offset-4 focus-visible:outline-ring max-sm:after:absolute max-sm:after:-inset-1.5 max-sm:after:rounded-full';
 	const SELECTED = 'z-10 ring-selection-border ring-offset-2 ring-offset-background';
 
 	function caption(option: InteractionFilterOption): string {
@@ -85,6 +90,7 @@
 							<button
 								{...props}
 								type="button"
+								data-owner-avatar
 								aria-pressed={active}
 								aria-label={caption(option)}
 								data-active={active ? 'true' : undefined}
@@ -115,11 +121,12 @@
 							<button
 								{...props}
 								type="button"
+								data-owner-avatar
 								aria-label="Ещё ответственные: {rest.length}"
 								data-active={restSelected > 0 ? 'true' : undefined}
 								class={cn(
 									OWNER_BUTTON,
-									'flex size-8 items-center justify-center bg-muted text-xs font-medium text-muted-foreground tabular-nums',
+									'bg-muted text-xs font-medium text-muted-foreground tabular-nums',
 									restSelected > 0 && SELECTED
 								)}
 							>

@@ -193,7 +193,7 @@
 			token: 'bg-selection',
 			label: 'selection — выбранное',
 			light: 'status-01-50',
-			dark: 'status-01-950'
+			dark: 'status-01-800'
 		},
 		{
 			token: 'bg-input',

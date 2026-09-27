@@ -168,7 +168,9 @@ html:not([data-theme-preference]) [data-theme-icon='light'] {
 	--atmr-status-01-50: #f1e6ff;
 	--atmr-status-01-100: #ddbfff;
 	--atmr-status-01-200: #bb80ff;
+	--atmr-status-01-300: #a759ff;
 	--atmr-status-01-600: #6500d9;
+	--atmr-status-01-800: #470099;
 	--atmr-status-01-900: #3c0080;
 	--atmr-status-01-950: #2a0059;
 
@@ -394,8 +396,14 @@ html[data-theme='dark'] {
 	 * Lc 60, так что пара ДС тёмной темы остаётся (наведение Lc 84, нажатие Lc 96).
 	 * Белая подпись на `#e8470f` дала бы Lc 71, но заливка на тёмной панели
 	 * читалась бы тусклым пятном (край 4.01:1 против 8.36:1 у `accent-200`). Ссылка и
-	 * кольцо — ступень 200 фиолетовой шкалы, выделение — глубокая 950 с
-	 * текстом 200.
+	 * кольцо — ступень 200 фиолетовой шкалы.
+	 *
+	 * Выделение — ступень 800 с текстом 100 (7.51:1) и обводкой 300 (4.14:1 на
+	 * панели, 3.83:1 на меню). Зеркальная светлой 950 с обводкой 900 по
+	 * светлоте почти совпадала с панелью (1.07:1, обводка 1.13:1): нажатый
+	 * фильтр, выбранный вариант переключателя и ободок выбранной аватарки
+	 * сливались с фоном, и выбранное отличалось от невыбранного одним оттенком
+	 * текста.
 	 */
 	--accent-base: var(--atmr-accent-200);
 	--accent-strong: var(--atmr-accent-100);
@@ -405,9 +413,9 @@ html[data-theme='dark'] {
 	--link-base: var(--atmr-status-01-200);
 	--link-strong: var(--atmr-status-01-100);
 	--link-on: var(--atmr-neutral-990);
-	--selection-base: var(--atmr-status-01-950);
-	--selection-on: var(--atmr-status-01-200);
-	--selection-border: var(--atmr-status-01-900);
+	--selection-base: var(--atmr-status-01-800);
+	--selection-on: var(--atmr-status-01-100);
+	--selection-border: var(--atmr-status-01-300);
 
 	/* Та же ступень, что и в светлой: на `bg-surface1` тёмной темы 3.88:1. */
 	--control-border: var(--atmr-neutral-400);

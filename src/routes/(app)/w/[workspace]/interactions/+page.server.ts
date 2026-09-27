@@ -75,13 +75,16 @@ export const load: PageServerLoad = async (event) => {
 	// Пространство приходит из адреса: его разобрал и проверил загрузчик ветки
 	// (`/w/[workspace]/+layout.server.ts`), и незнакомый ключ до сюда не доходит.
 	const { workspace } = await event.parent();
+	// На доске колонки и есть стадии: фильтра стадии там нет, и параметр,
+	// оставшийся в адресе от таблицы, не должен прятать колонки без объяснения.
+	const stageCategory = view === 'board' ? null : filters.stageCategory;
 
 	// Пустой список под фильтром и пустой раздел — разные состояния: в первом
 	// случае человеку нужно снять фильтр, во втором — завести первую запись.
 	const isFiltered =
 		table.search !== '' ||
 		filters.status !== null ||
-		filters.stageCategory !== null ||
+		stageCategory !== null ||
 		filters.overdue ||
 		filters.org.length > 0 ||
 		filters.dir.length > 0 ||
@@ -104,7 +107,7 @@ export const load: PageServerLoad = async (event) => {
 		const [board, filterOptions] = await Promise.all([
 			getInteractionBoard(ctx, workspace, {
 				status: filters.status,
-				stageCategory: filters.stageCategory,
+				stageCategory,
 				overdue: filters.overdue,
 				q: table.search === '' ? null : table.search,
 				org: filters.org,

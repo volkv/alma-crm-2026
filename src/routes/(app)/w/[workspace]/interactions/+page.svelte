@@ -1,8 +1,7 @@
 <script lang="ts">
 	import { renderSnippet, type ColumnDef } from '@tanstack/svelte-table';
 	import { toast } from 'svelte-sonner';
-	import FilterXIcon from '@lucide/svelte/icons/filter-x';
-	import ListFilterIcon from '@lucide/svelte/icons/list-filter';
+	import FunnelXIcon from '@lucide/svelte/icons/funnel-x';
 	import KanbanIcon from '@lucide/svelte/icons/kanban';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import TableIcon from '@lucide/svelte/icons/table';
@@ -13,20 +12,19 @@
 	import { resolve } from '$app/paths';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
 	import * as Select from '$lib/components/ui/select/index.js';
+	import * as Tooltip from '$lib/components/ui/tooltip/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as SegmentedControl from '$lib/components/ui/segmented-control/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
-	import FilterSelect from '$lib/components/directory/filter-select.svelte';
-	import type { FieldOption } from '$lib/components/form/field-select.svelte';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import Header from '$lib/components/header.svelte';
 	import SlaChip from '$lib/components/sla-chip.svelte';
 	import StageTimeline from '$lib/components/stage-timeline.svelte';
 	import StatusBadge, { type StatusTone } from '$lib/components/status-badge.svelte';
 	import Board from '$lib/components/interactions/board.svelte';
-	import ListFilter from '$lib/components/interactions/list-filter.svelte';
+	import FilterStrip, { type StripFilter } from '$lib/components/interactions/filter-strip.svelte';
 	import ListSearch from '$lib/components/interactions/list-search.svelte';
 	import OwnerFilter from '$lib/components/interactions/owner-filter.svelte';
 	import { toTimelineStages } from '$lib/components/interactions/timeline';
@@ -35,8 +33,11 @@
 		INTERACTION_STATUSES,
 		PARTY_ROLE_LABELS,
 		STAGE_CATEGORIES,
+		type InteractionFilterOption,
 		type InteractionListItem,
-		type InteractionViewMode
+		type InteractionStatus,
+		type InteractionViewMode,
+		type StageCategory
 	} from '$lib/contracts/interactions';
 	import { formatDateTime } from '$lib/format';
 	import { cn } from '$lib/utils';
@@ -54,12 +55,12 @@
 
 	let { data, form }: PageProps = $props();
 
-	const STATUS_OPTIONS: readonly FieldOption[] = INTERACTION_STATUSES.map((status) => ({
+	const STATUS_OPTIONS: readonly InteractionFilterOption[] = INTERACTION_STATUSES.map((status) => ({
 		value: status,
 		label: INTERACTION_STATUS_LABELS[status]
 	}));
 
-	const STAGE_OPTIONS: readonly FieldOption[] = STAGE_CATEGORIES.map((category) => ({
+	const STAGE_OPTIONS: readonly InteractionFilterOption[] = STAGE_CATEGORIES.map((category) => ({
 		value: category,
 		label: STAGE_CATEGORY_LABELS[category]
 	}));
@@ -182,26 +183,6 @@
 		return null;
 	}
 
-	/** Сколько отборов включено — число на кнопке «Фильтры» на телефоне. */
-	const activeFilters = $derived(
-		[
-			data.filters.status !== null,
-			data.filters.stageCategory !== null,
-			data.filters.overdue,
-			data.filters.org.length > 0,
-			data.filters.dir.length > 0,
-			data.filters.prog.length > 0,
-			data.filters.prod.length > 0,
-			data.filters.owner.length > 0,
-			data.view === 'board' && data.search !== ''
-		].filter(Boolean).length
-	);
-
-	let filtersOpen = $state(false);
-
-	/** Таблица со своей строкой поиска — туда встаёт переключатель вида. */
-	const showsTable = $derived(data.view === 'table' && (data.total > 0 || data.isFiltered));
-
 	/** Ключ пространства стоит в адресе, и все ссылки раздела считаются от него. */
 	const workspace = $derived(data.workspace.key);
 	const newHref = $derived(resolve('/(app)/w/[workspace]/interactions/new', { workspace }));
@@ -224,6 +205,78 @@
 			noScroll: true
 		});
 	}
+
+	/**
+	 * Одиночный фильтр в том же дропдауне, что и многозначные: выбранный пункт
+	 * снимается повторным нажатием, другой — заменяет прежний.
+	 */
+	function pickStatus(value: InteractionStatus) {
+		void go({ status: data.filters.status === value ? null : value });
+	}
+
+	function pickStage(value: StageCategory) {
+		void go({ stageCategory: data.filters.stageCategory === value ? null : value });
+	}
+
+	/**
+	 * Фильтры ленты по порядку важности: не поместившиеся по ширине уходят с
+	 * конца в панель под воронкой (`filter-strip.svelte`). Стадии на доске нет —
+	 * колонки и есть стадии (сервер параметр там тоже не читает).
+	 */
+	const stripFilters = $derived.by((): StripFilter[] => {
+		const list = (
+			key: 'org' | 'dir' | 'prog' | 'prod',
+			label: string,
+			options: readonly InteractionFilterOption[]
+		): StripFilter => ({
+			kind: 'list',
+			key,
+			label,
+			options,
+			selected: data.filters[key],
+			testId: `interactions-filter-${key}`,
+			ontoggle: (value) => toggleAttr(key, value)
+		});
+
+		return [
+			{
+				kind: 'list',
+				key: 'status',
+				label: 'Статус',
+				options: STATUS_OPTIONS,
+				selected: data.filters.status === null ? [] : [data.filters.status],
+				single: true,
+				testId: 'interactions-filter-status',
+				ontoggle: (value) => pickStatus(value as InteractionStatus)
+			},
+			...(data.view === 'table'
+				? [
+						{
+							kind: 'list',
+							key: 'stage',
+							label: 'Стадия',
+							options: STAGE_OPTIONS,
+							selected: data.filters.stageCategory === null ? [] : [data.filters.stageCategory],
+							single: true,
+							testId: 'interactions-filter-stage',
+							ontoggle: (value: string) => pickStage(value as StageCategory)
+						} satisfies StripFilter
+					]
+				: []),
+			list('org', 'Вуз', data.filterOptions.organizations),
+			list('dir', 'Направление', data.filterOptions.directions),
+			list('prog', 'Программа', data.filterOptions.programs),
+			list('prod', 'Продукт', data.filterOptions.products),
+			{
+				kind: 'toggle',
+				key: 'overdue',
+				label: 'Просроченные',
+				active: data.filters.overdue,
+				testId: 'interactions-filter-overdue',
+				ontoggle: () => void go({ overdue: !data.filters.overdue })
+			}
+		];
+	});
 
 	/**
 	 * Представление живёт в адресе рядом с фильтрами: отобранный набор один, и
@@ -350,44 +403,66 @@
 </Header>
 
 <!-- Представление — часть адреса: ссылкой на список делятся вместе с тем,
-	каким его смотрели. В таблице переключатель стоит в строке поиска рядом с
-	«Колонками»: над списком остаются две строки контролов, а не три.
+	каким его смотрели. Переключатель стоит в конце ряда отборов и у таблицы, и
+	у доски.
 
-	В строке отборов (`compact`) на ноутбучной ширине остаются одни значки:
-	с подписями переключатель не влезал в ряд и один занимал вторую строку, а
-	её высоту на доске отнимали у колонок. Подпись тогда остаётся читалке и
-	подсказке под курсором. -->
-{#snippet viewSwitch(compact: boolean)}
-	{@const label = compact ? 'sm:max-2xl:sr-only' : undefined}
-	<SegmentedControl.LinkGroup aria-label="Представление">
+	Ниже `2xl` у вариантов остаются одни значки: с подписями переключатель
+	отнимал у ряда место ещё под два фильтра, а на телефоне не влезал во вторую
+	строку рядом с фильтрами. Подпись тогда остаётся читалке и подсказке под
+	курсором. -->
+{#snippet viewSwitch()}
+	<SegmentedControl.LinkGroup aria-label="Представление" class="shrink-0 flex-nowrap">
 		<SegmentedControl.Link
 			href={viewHref('table')}
 			current={data.view === 'table'}
-			title={compact ? 'Таблица' : undefined}
+			title="Таблица"
+			aria-label="Таблица"
 		>
 			<TableIcon aria-hidden="true" />
-			<span class={label}>Таблица</span>
+			<span class="max-2xl:sr-only">Таблица</span>
 		</SegmentedControl.Link>
 		<SegmentedControl.Link
 			href={viewHref('board')}
 			current={data.view === 'board'}
-			title={compact ? 'Доска' : undefined}
+			title="Доска"
+			aria-label="Доска"
 		>
 			<KanbanIcon aria-hidden="true" />
-			<span class={label}>Доска</span>
+			<span class="max-2xl:sr-only">Доска</span>
 		</SegmentedControl.Link>
 	</SegmentedControl.LinkGroup>
 {/snippet}
 
-{#snippet tableViewSwitch()}
-	{@render viewSwitch(false)}
-{/snippet}
-
 {#snippet resetFilters()}
 	<Button variant="outline" href={clearedFiltersHref(page.url, workspace)}>
-		<FilterXIcon aria-hidden="true" />
+		<FunnelXIcon aria-hidden="true" />
 		Сбросить фильтры
 	</Button>
+{/snippet}
+
+<!-- Сброс снимает всё разом: фильтры, ответственных и поиск
+	(`clearedFiltersHref`). Кнопка стоит сразу за фильтрами и есть, только пока
+	есть что снимать. -->
+{#snippet clearFilters()}
+	<Tooltip.Provider delayDuration={300}>
+		<Tooltip.Root>
+			<Tooltip.Trigger>
+				{#snippet child({ props })}
+					<Button
+						{...props}
+						variant="ghost"
+						size="icon"
+						href={clearedFiltersHref(page.url, workspace)}
+						aria-label="Сбросить фильтры"
+						data-testid="interactions-filter-clear"
+					>
+						<FunnelXIcon aria-hidden="true" />
+					</Button>
+				{/snippet}
+			</Tooltip.Trigger>
+			<Tooltip.Content>Сбросить фильтры</Tooltip.Content>
+		</Tooltip.Root>
+	</Tooltip.Provider>
 {/snippet}
 
 <!-- Доска с `sm` занимает остаток экрана под отборами: оболочка ограничивает
@@ -399,99 +474,39 @@
 		data.view === 'board' && 'sm:min-h-0 sm:flex-1 sm:gap-3 sm:py-4'
 	)}
 >
-	<!-- На телефоне отборы свёрнуты в панель за кнопкой «Фильтры»: восемь
-		контролов занимали весь первый экран, и до самого списка надо было
-		листать. С `sm` обёртка панели исчезает из раскладки (`contents`), и
-		отборы стоят в общем ряду, как стояли. Цели нажатия на телефоне — 44 px. -->
-	<!-- На доске промежутки ряда уже: так отборы и переключатель вида стоят
-		одной строкой с ноутбучной ширины, и строка не отнимает высоту у колонок. -->
+	<!-- Ряд отборов: поиск, ответственные, фильтры, переключатель вида. С `sm`
+		это одна строка — фильтры, которые не поместились, уходят в панель под
+		воронкой (`filter-strip.svelte`), и строка не переносится. На телефоне
+		две: поиск с аватарками и под ними фильтры с переключателем вида; панель
+		спрятанных фильтров раскрывается третьей строкой. Цели нажатия на
+		телефоне — 44 px. Аватарки из правила высоты исключены: растянутая по
+		высоте кнопка превращала круг и ободок выбора в овал, — зону нажатия они
+		растят сами, невидимым псевдоэлементом (`owner-filter.svelte`). -->
 	<div
-		class={cn(
-			'flex flex-wrap items-center gap-3 max-sm:[&_a]:min-h-11 max-sm:[&_button]:min-h-11',
-			data.view === 'board' && 'sm:gap-x-2'
-		)}
+		class="flex flex-wrap items-center gap-x-2 gap-y-3 max-sm:[&_a]:min-h-11 max-sm:[&_button:not([data-owner-avatar])]:min-h-11"
 		data-tour="interactions-filters"
 	>
-		<Button
-			variant={activeFilters > 0 ? 'secondary' : 'outline'}
-			class="sm:hidden"
-			aria-expanded={filtersOpen}
-			aria-controls="interactions-filter-panel"
-			onclick={() => (filtersOpen = !filtersOpen)}
-		>
-			<ListFilterIcon aria-hidden="true" />
-			Фильтры{activeFilters > 0 ? ` (${activeFilters})` : ''}
-		</Button>
-
-		<div
-			id="interactions-filter-panel"
-			class="{filtersOpen
-				? 'flex'
-				: 'hidden'} order-last w-full flex-wrap items-center gap-3 sm:order-none sm:contents"
-		>
-			<FilterSelect param="status" label="Статус" options={STATUS_OPTIONS} allLabel="Любой" />
-			<FilterSelect param="stage" label="Стадия" options={STAGE_OPTIONS} allLabel="Любая" />
-			<ListFilter
-				label="Вуз"
-				options={data.filterOptions.organizations}
-				selected={data.filters.org}
-				testId="interactions-filter-org"
-				ontoggle={(value) => toggleAttr('org', value)}
+		<div class="flex w-full min-w-0 items-center gap-3 sm:w-auto sm:shrink-0">
+			<ListSearch
+				value={data.search}
+				placeholder="Поиск по названию и организации"
+				onsearch={(value) =>
+					void goto(filterHref(page.url, 'q', value), { keepFocus: true, noScroll: true })}
 			/>
-			<ListFilter
-				label="Направление"
-				options={data.filterOptions.directions}
-				selected={data.filters.dir}
-				testId="interactions-filter-dir"
-				ontoggle={(value) => toggleAttr('dir', value)}
-			/>
-			<ListFilter
-				label="Программа"
-				options={data.filterOptions.programs}
-				selected={data.filters.prog}
-				testId="interactions-filter-prog"
-				ontoggle={(value) => toggleAttr('prog', value)}
-			/>
-			<ListFilter
-				label="Продукт"
-				options={data.filterOptions.products}
-				selected={data.filters.prod}
-				testId="interactions-filter-prod"
-				ontoggle={(value) => toggleAttr('prod', value)}
-			/>
-
-			<Button
-				variant={data.filters.overdue ? 'selected' : 'outline'}
-				aria-pressed={data.filters.overdue}
-				onclick={() => go({ overdue: !data.filters.overdue })}
-			>
-				Просроченные
-			</Button>
 			<OwnerFilter
 				options={data.filterOptions.owners}
 				selected={data.filters.owner}
 				currentUser={data.user ?? null}
 				ontoggle={(value) => toggleAttr('owner', value)}
 			/>
-
-			<!-- Поиск принадлежит таблице и живёт в её строке поиска; у доски такой
-				строки нет, и её поиск стоит здесь, среди отборов, — по тому же
-				параметру адреса, так что при смене вида запрос сохраняется. -->
-			{#if data.view === 'board'}
-				<ListSearch
-					value={data.search}
-					placeholder="Поиск по названию и организации"
-					onsearch={(value) =>
-						void goto(filterHref(page.url, 'q', value), { keepFocus: true, noScroll: true })}
-				/>
-			{/if}
 		</div>
 
-		<!-- Без таблицы (доска, пустой раздел) строки поиска нет, и переключатель
-			встаёт в конец строки отборов. -->
-		{#if !showsTable}
-			<div class="ms-auto">{@render viewSwitch(true)}</div>
-		{/if}
+		<FilterStrip
+			filters={stripFilters}
+			panelId="interactions-filter-panel"
+			trailing={data.isFiltered ? clearFilters : undefined}
+			end={viewSwitch}
+		/>
 	</div>
 
 	<!-- `data-tour` — метка подсказок: рамка встаёт вокруг списка целиком —
@@ -527,7 +542,6 @@
 				rows={data.rows}
 				total={data.total}
 				getRowId={(row) => row.id}
-				searchPlaceholder="Поиск по названию и организации"
 				emptyTitle="Ничего не найдено"
 				emptyDescription="Под этот запрос и отбор не попало ни одной записи."
 				emptyAction={data.isFiltered ? resetFilters : undefined}
@@ -535,7 +549,6 @@
 				stacked
 				defaultSort={{ columnId: 'dueAt', direction: 'asc' }}
 				bulkActions={data.canAssign ? assignAction : undefined}
-				toolbar={tableViewSwitch}
 				onopen={open}
 			/>
 		{/if}
