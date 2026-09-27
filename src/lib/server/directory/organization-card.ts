@@ -7,6 +7,7 @@ import { z } from 'zod';
 import {
 	affiliationPositionSchema,
 	createPersonSchema,
+	isAffiliationCurrent,
 	type AffiliationView,
 	type PersonView
 } from '$lib/contracts/directory';
@@ -159,13 +160,14 @@ const emailSchema = z.email();
 /** Действующий контакт организации с тем же ФИО: второй такой не нужен. */
 function sameActiveContact(
 	affiliations: readonly AffiliationView[],
-	name: string
+	name: string,
+	today: string
 ): AffiliationView | undefined {
 	const wanted = normalizePersonName(name);
 
 	return affiliations.find(
 		(row) =>
-			row.validTo === null &&
+			isAffiliationCurrent(row, today) &&
 			normalizePersonName(
 				[row.person.lastName, row.person.firstName, row.person.middleName]
 					.filter((part) => part !== null && part !== '')
@@ -238,7 +240,11 @@ export async function addSiteContact(
 		);
 	}
 
-	const existing = sameActiveContact(await listAffiliations(ctx, organizationId), candidate.name);
+	const existing = sameActiveContact(
+		await listAffiliations(ctx, organizationId),
+		candidate.name,
+		formatIsoDay()
+	);
 
 	if (existing !== undefined) {
 		throw new ConflictError(`${candidate.name} уже в контактах организации`);

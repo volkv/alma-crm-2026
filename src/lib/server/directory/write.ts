@@ -32,6 +32,7 @@ import type {
 	ProgramVersionView,
 	ProgramView,
 	SiteView,
+	UpdateAffiliationInput,
 	UpdateDirectionInput,
 	UpdateOrganizationInput,
 	UpdatePersonInput,
@@ -761,7 +762,9 @@ export async function endAffiliation(
 		throw new NotFoundError('Роль не найдена');
 	}
 
-	if (before.validTo !== null) {
+	// Роль с заранее известной датой окончания закрывают досрочно: позже уже
+	// назначенного дня полномочия не продлевают — для этого есть правка роли.
+	if (before.validTo !== null && before.validTo <= input.validTo) {
 		throw new ConflictError(`Полномочия уже закрыты ${before.validTo}`);
 	}
 
@@ -790,6 +793,63 @@ export async function endAffiliation(
 							personId: row.personId,
 							organizationId: row.organizationId,
 							changedFields: ['validTo']
+						}
+					},
+					tx
+				);
+
+				return toAffiliationView(ctx, tx, row);
+			})
+		)
+	);
+}
+
+/**
+ * Правка роли: опечатка в должности, не та роль в процессе, неверная дата
+ * начала. Человек и организация остаются прежними — это та же запись, на
+ * которую ссылаются взаимодействия. Закрытую роль править можно: исправить
+ * историю не то же самое, что её стереть.
+ */
+export async function updateAffiliation(
+	ctx: ActorContext,
+	input: UpdateAffiliationInput
+): Promise<AffiliationView> {
+	await requirePermission(ctx, 'people.write', {
+		type: 'people.affiliation_updated',
+		subject: { type: 'affiliation', id: input.id }
+	});
+
+	const { id, ...fields } = input;
+
+	const [before] = await getDb()
+		.select()
+		.from(affiliations)
+		.where(and(eq(affiliations.id, id), scopeFilter(ctx, affiliations.organizationId)))
+		.limit(1);
+
+	if (before === undefined) {
+		throw new NotFoundError('Роль не найдена');
+	}
+
+	return written(
+		withPiiTrace(ctx, () =>
+			withTransaction(ctx, async (tx) => {
+				const [row] = await tx
+					.update(affiliations)
+					.set({ ...fields, updatedAt: sql`now()` })
+					.where(eq(affiliations.id, id))
+					.returning();
+
+				await recordAuditEvent(
+					ctx,
+					{
+						type: 'people.affiliation_updated',
+						outcome: 'success',
+						subject: { type: 'affiliation', id: row.id },
+						details: {
+							personId: row.personId,
+							organizationId: row.organizationId,
+							changedFields: changedFields(before, fields)
 						}
 					},
 					tx

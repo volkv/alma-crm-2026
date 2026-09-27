@@ -8,7 +8,11 @@
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import ContextSection from '$lib/components/interaction-card/context-section.svelte';
 	import { AFFILIATION_ROLE_LABELS } from '$lib/components/directory/labels';
-	import type { AffiliationRoleKind, AffiliationView } from '$lib/contracts/directory';
+	import {
+		isAffiliationCurrent,
+		type AffiliationRoleKind,
+		type AffiliationView
+	} from '$lib/contracts/directory';
 	import { formatDate } from '$lib/format';
 	import { personFullName } from './model';
 
@@ -27,6 +31,7 @@
 		siteNames,
 		canRead,
 		canWrite,
+		today,
 		onclose
 	}: {
 		organizationId: string;
@@ -34,6 +39,8 @@
 		siteNames: ReadonlyMap<string, string>;
 		canRead: boolean;
 		canWrite: boolean;
+		/** Сегодня по Москве: роль с прошедшей датой окончания уходит в прежние. */
+		today: string;
 		/** Закрыть полномочия: подтверждение и форма — у страницы. */
 		onclose: (row: AffiliationView) => void;
 	} = $props();
@@ -55,7 +62,7 @@
 
 	const current = $derived(
 		affiliations
-			.filter((row) => row.validTo === null)
+			.filter((row) => isAffiliationCurrent(row, today))
 			.toSorted(
 				(left, right) =>
 					Number(right.isPrimary) - Number(left.isPrimary) ||
@@ -64,7 +71,7 @@
 	);
 	let expanded = $state(false);
 	const shown = $derived(expanded ? current : current.slice(0, FOLDED));
-	const past = $derived(affiliations.filter((row) => row.validTo !== null));
+	const past = $derived(affiliations.filter((row) => !isAffiliationCurrent(row, today)));
 	const masked = $derived(affiliations.some((row) => row.person.contactsMasked));
 </script>
 
@@ -82,7 +89,7 @@
 			</div>
 			<!-- Закрытие полномочий — редкое действие с подтверждением: в меню
 				строки, а не кнопкой под каждым контактом. -->
-			{#if canWrite && row.validTo === null}
+			{#if canWrite && isAffiliationCurrent(row, today)}
 				<DropdownMenu.Root>
 					<DropdownMenu.Trigger>
 						{#snippet child({ props })}

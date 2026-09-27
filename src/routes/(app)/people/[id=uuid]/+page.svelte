@@ -17,7 +17,7 @@
 	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatDate } from '$lib/format';
-	import type { PersonAffiliationView } from '$lib/contracts/directory';
+	import { isAffiliationCurrent, type PersonAffiliationView } from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -45,6 +45,7 @@
 		created: 'Человек заведён',
 		updated: 'Изменения сохранены',
 		affiliation_created: 'Роль добавлена',
+		affiliation_updated: 'Роль изменена',
 		affiliation_ended: 'Полномочия закрыты',
 		retention_changed: 'Срок хранения сохранён',
 		consent_recorded: 'Согласие зафиксировано',
@@ -136,7 +137,7 @@
 						<Table.Head>Роль</Table.Head>
 						<Table.Head>Площадка</Table.Head>
 						<Table.Head>Период</Table.Head>
-						<Table.Head class="w-28"></Table.Head>
+						<Table.Head class="w-48"></Table.Head>
 					</Table.Row>
 				</Table.Header>
 				<Table.Body>
@@ -160,8 +161,20 @@
 									? 'по настоящее время'
 									: formatDate(row.affiliation.validTo)}
 							</Table.Cell>
-							<Table.Cell class="text-right">
-								{#if data.canWrite && row.affiliation.validTo === null}
+							<Table.Cell class="text-right whitespace-nowrap">
+								{#if data.canWrite}
+									<Button
+										variant="ghost"
+										size="sm"
+										href={resolve('/(app)/people/[id=uuid]/affiliations/[affiliationId=uuid]', {
+											id: data.person.id,
+											affiliationId: row.affiliation.id
+										})}
+									>
+										Изменить
+									</Button>
+								{/if}
+								{#if data.canWrite && isAffiliationCurrent(row.affiliation, data.today)}
 									<Button variant="ghost" size="sm" onclick={() => askClose(row)}>Закрыть</Button>
 								{/if}
 							</Table.Cell>

@@ -20,6 +20,8 @@
 	 * (организация уже известна), из карточки человека — организацию. Площадку в
 	 * этом случае не спрашивают: она обязана принадлежать выбранной организации,
 	 * а список площадок заранее неизвестен — её добавляют из карточки организации.
+	 * При правке человека и организацию не выбирают вовсе: роль в другой
+	 * организации — другая роль.
 	 */
 	let {
 		superform,
@@ -29,7 +31,7 @@
 		sites = []
 	}: {
 		superform: SuperForm<CreateAffiliationInput>;
-		mode: 'in-organization' | 'for-person';
+		mode: 'in-organization' | 'for-person' | 'edit';
 		people?: readonly LookupOption[];
 		organizations?: readonly LookupOption[];
 		sites?: readonly LookupOption[];
@@ -62,6 +64,9 @@
 			() => $form.siteId ?? NO_OPTION, (next) => ($form.siteId = next === NO_OPTION ? null : next)
 		}
 	/>
+{:else if mode === 'edit'}
+	<input type="hidden" name="personId" value={$form.personId} />
+	<input type="hidden" name="organizationId" value={$form.organizationId} />
 {:else}
 	<input type="hidden" name="personId" value={$form.personId} />
 

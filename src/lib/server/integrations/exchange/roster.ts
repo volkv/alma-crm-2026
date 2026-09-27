@@ -50,6 +50,7 @@ import {
 } from '../../db/schema';
 import { withTransaction, type Tx } from '../../db/transaction';
 import { publishAfterCommit } from '../../live/publish';
+import { currentAffiliationFilter } from '../../directory/affiliation-current';
 import { contactFullName, parsePersonName, type ContactName } from '../../directory/contacts';
 import { createAffiliation, createPerson } from '../../directory/write';
 import { ForbiddenError, NotFoundError, ValidationError } from '../../errors';
@@ -376,7 +377,7 @@ async function planRows(
 							and(
 								eq(affiliations.personId, people.id),
 								eq(affiliations.organizationId, group.organization.id),
-								isNull(affiliations.validTo)
+								currentAffiliationFilter()
 							)
 						)
 				);
@@ -569,7 +570,7 @@ export async function importLearningGroupRoster(
 						and(
 							eq(affiliations.personId, personId),
 							eq(affiliations.organizationId, organization.id),
-							isNull(affiliations.validTo)
+							currentAffiliationFilter()
 						)
 					)
 					.limit(1);

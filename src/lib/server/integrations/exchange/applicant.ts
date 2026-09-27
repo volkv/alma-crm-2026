@@ -28,6 +28,7 @@ import {
 	workspaces
 } from '../../db/schema';
 import type { Tx } from '../../db/transaction';
+import { currentAffiliationFilter } from '../../directory/affiliation-current';
 import { createAffiliation, createPerson } from '../../directory/write';
 import { ValidationError } from '../../errors';
 import { formatPhone, hashEmail, hashPhone } from '../../people/pii';
@@ -374,7 +375,7 @@ export async function ensureOwnAffiliation(
 			and(
 				eq(affiliations.personId, options.personId),
 				eq(affiliations.organizationId, options.organizationId),
-				isNull(affiliations.validTo)
+				currentAffiliationFilter()
 			)
 		)
 		.limit(1);

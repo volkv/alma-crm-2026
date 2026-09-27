@@ -10,7 +10,7 @@
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { affiliations, people } from '$lib/server/db/schema';
-import { createAffiliation, updatePerson } from '$lib/server/directory/write';
+import { createAffiliation, updateAffiliation, updatePerson } from '$lib/server/directory/write';
 import { NotFoundError } from '$lib/server/errors';
 import {
 	insertOrganization,
@@ -91,5 +91,59 @@ describe('запись людей вне области доступа', () => {
 
 		expect(person.lastName).toBe('Чужов');
 		expect(roles.map((role) => role.organizationId)).toEqual([foreignId]);
+	});
+
+	it('правит свою роль, а роль в чужом вузе не находит', async () => {
+		const ownId = await insertOrganization(database.db, { shortName: 'Свой вуз' });
+		const foreignId = await insertOrganization(database.db, { shortName: 'Чужой вуз' });
+		const personId = await insertPerson(database.db, { lastName: 'Двойнов' });
+
+		const [own, foreign] = await database.db
+			.insert(affiliations)
+			.values([
+				{
+					personId,
+					organizationId: ownId,
+					position: 'Проретор',
+					roleKind: 'vice_rector',
+					validFrom: '2026-01-01'
+				},
+				{
+					personId,
+					organizationId: foreignId,
+					position: 'Декан',
+					roleKind: 'dean',
+					validFrom: '2026-01-01'
+				}
+			])
+			.returning();
+
+		const manager = await scopedActor(database.db, {
+			roleId: 'manager',
+			permissions: ['organizations.read', 'people.read', 'people.write', 'people.read_pii'],
+			organizationIds: [ownId]
+		});
+		const fields = {
+			position: 'Проректор',
+			roleKind: 'vice_rector' as const,
+			isPrimary: true,
+			validFrom: '2026-02-01',
+			validTo: null,
+			channel: 'Почта'
+		};
+
+		const updated = await updateAffiliation(manager, { id: own.id, ...fields });
+
+		expect(updated).toMatchObject({ organizationId: ownId, ...fields });
+		await expect(updateAffiliation(manager, { id: foreign.id, ...fields })).rejects.toBeInstanceOf(
+			NotFoundError
+		);
+
+		const [untouched] = await database.db
+			.select()
+			.from(affiliations)
+			.where(eq(affiliations.id, foreign.id));
+
+		expect(untouched.position).toBe('Декан');
 	});
 });

@@ -609,6 +609,25 @@ export const USER_SCREENS: readonly TourScreen[] = [
 		]
 	},
 	{
+		id: 'person-affiliation',
+		title: 'Изменение роли человека',
+		route: '/people/[id=uuid]/affiliations/[affiliationId=uuid]',
+		permission: 'people.write',
+		help: HELP_DIRECTORY,
+		intro: {
+			title: 'Изменение роли человека',
+			body: 'Правка роли, уже заведённой у человека: должность, роль в процессе, период полномочий, канал связи. Открывается кнопкой «Изменить» в блоке ролей на карточке человека.'
+		},
+		steps: [
+			{
+				id: 'form',
+				title: 'Та же роль, исправленные поля',
+				body: 'Организация у роли не меняется: на эту запись ссылаются взаимодействия, где человек был контактом. Перешёл в другую организацию — эту роль закрывают, а новую добавляют.',
+				target: 'person-affiliation-form'
+			}
+		]
+	},
+	{
 		id: 'programs',
 		title: 'Программы',
 		route: '/programs',

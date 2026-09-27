@@ -31,7 +31,7 @@
 	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatDateTime } from '$lib/format';
-	import type { AffiliationView } from '$lib/contracts/directory';
+	import { isAffiliationCurrent, type AffiliationView } from '$lib/contracts/directory';
 	import type { ResponsibleView } from '$lib/server/directory/responsibles';
 	import type { ResolvedPathname } from '$app/types';
 	import type { PageProps } from './$types';
@@ -40,7 +40,9 @@
 
 	const siteNames = $derived(new Map(data.sites.map((site) => [site.id, site.name])));
 
-	const currentAffiliations = $derived(data.affiliations.filter((row) => row.validTo === null));
+	const currentAffiliations = $derived(
+		data.affiliations.filter((row) => isAffiliationCurrent(row, data.today))
+	);
 
 	/** ФИО действующих контактов: по ним кандидат с сайта помечается «в контактах». */
 	const contactNames = $derived(
@@ -487,6 +489,7 @@
 				{siteNames}
 				canRead={data.canReadPeople}
 				canWrite={data.canWritePeople}
+				today={data.today}
 				onclose={askClose}
 			/>
 

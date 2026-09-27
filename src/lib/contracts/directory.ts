@@ -305,13 +305,37 @@ const affiliationPeriodError = {
 	path: ['validTo']
 };
 
+/**
+ * Роль действует, пока её последний день не прошёл. Дата окончания бывает
+ * заранее известной — срок полномочий по приказу, — и роль с ней остаётся
+ * действующей до этого дня включительно. `today` — день по Москве
+ * (`formatIsoDay`): по нему живёт процесс.
+ */
+export function isAffiliationCurrent(row: { validTo: string | null }, today: string): boolean {
+	return row.validTo === null || row.validTo >= today;
+}
+
 export const createAffiliationSchema = z
 	.object(affiliationFields)
 	.refine(affiliationPeriodIsOrdered, affiliationPeriodError);
 
-export const updateAffiliationSchema = createAffiliationSchema.extend({
-	id: id('Некорректный идентификатор роли')
-});
+/**
+ * Правка уже заведённой роли. Человека и организацию у роли не меняют: роль в
+ * другой организации — это другая роль, и взаимодействия, где человек был
+ * контактом, не должны задним числом переехать в чужой вуз. Площадку правят с
+ * карточки организации — там известен её список.
+ */
+export const updateAffiliationSchema = z
+	.object({
+		id: id('Некорректный идентификатор роли'),
+		position: affiliationFields.position,
+		roleKind: affiliationFields.roleKind,
+		isPrimary: affiliationFields.isPrimary,
+		validFrom: affiliationFields.validFrom,
+		validTo: affiliationFields.validTo,
+		channel: affiliationFields.channel
+	})
+	.refine(affiliationPeriodIsOrdered, affiliationPeriodError);
 
 /**
  * Закрытие периода полномочий. Роль не удаляют: человек действительно занимал
