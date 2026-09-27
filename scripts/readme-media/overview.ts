@@ -493,7 +493,7 @@ async function rolesAndSpaces(page: Page): Promise<void> {
 	await scroll(page, 480);
 	await beat(page, 1);
 
-	await visit(page, '/w/b2c/interactions', 'Взаимодействия');
+	await visit(page, '/w/b2c/interactions?view=table', 'Взаимодействия');
 	await beat(page, 0.6);
 	await press(page, page.getByRole('row').nth(1));
 	await page.waitForURL(/\/interactions\/[0-9a-f-]{36}/u, { timeout: WAIT });

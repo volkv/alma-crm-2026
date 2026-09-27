@@ -40,6 +40,17 @@ export function interactionsHref(filter: InteractionsFilter): ResolvedPathname {
 		params.set('owner', filter.owner);
 	}
 
+	// Доска этот набор не покажет: фильтра стадии у неё нет (колонки и есть
+	// стадии), а у завершённых и отменённых нет текущей стадии, и на доске они
+	// не стоят. Число на плитке обязано совпасть со списком — туда ведёт
+	// таблица. Остальное открывается как обычно: прошлым выбором или доской.
+	if (
+		filter.stageCategory !== undefined ||
+		(filter.status !== undefined && filter.status !== 'active')
+	) {
+		params.set('view', 'table');
+	}
+
 	const query = params.toString();
 
 	// Путь известен и постоянен, `resolve` позвали с литералом выше; меняется

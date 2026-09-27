@@ -231,7 +231,7 @@ async function assignInstitution(page: Page, fullName: string): Promise<void> {
 
 /** Открыть запись стенда поиском по названию и убедиться, что открылась она. */
 export async function openInteraction(page: Page, query: string, expected: string): Promise<void> {
-	await visit(page, `/interactions?q=${encodeURIComponent(query)}`, 'Взаимодействия');
+	await visit(page, `/interactions?view=table&q=${encodeURIComponent(query)}`, 'Взаимодействия');
 
 	const row = page.getByRole('row').nth(1);
 
@@ -633,7 +633,7 @@ export async function handOver(page: Page, stand: Stand): Promise<void> {
 
 /** У прежнего ответственного записей по переданному вузу больше нет. */
 export async function showHandedOver(page: Page): Promise<void> {
-	await visit(page, `/interactions?q=${STAND.institution.query}`, 'Взаимодействия');
+	await visit(page, `/interactions?view=table&q=${STAND.institution.query}`, 'Взаимодействия');
 	await page.getByText('Ничего не найдено').first().waitFor({ state: 'visible', timeout: WAIT });
 	await beat(page, 1.6);
 }

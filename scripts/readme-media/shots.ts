@@ -241,7 +241,7 @@ export const SHOTS: readonly Frame[] = [
 	},
 	{
 		name: 'interactions-overdue',
-		path: '/interactions?overdue=true',
+		path: '/interactions?view=table&overdue=true',
 		role: 'manager',
 		caption: 'Список с фильтром просроченных',
 		waitFor: 'Взаимодействия'
@@ -455,7 +455,7 @@ export const SHOTS: readonly Frame[] = [
 	},
 	{
 		name: 'help-menu',
-		path: '/interactions',
+		path: '/interactions?view=table',
 		role: 'manager',
 		caption: 'Значок «?» в шапке: подсказки по экрану, полный тур и статья справки',
 		waitFor: 'Этот экран: Взаимодействия',

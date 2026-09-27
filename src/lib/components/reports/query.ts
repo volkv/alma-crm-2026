@@ -208,6 +208,10 @@ export function interactionsHref(url: URL): ResolvedPathname {
 		params.set('overdue', 'true');
 	}
 
+	// Список — таблица: доска показывает не все записи колонки и не показывает
+	// завершённых, а ссылку открывают, чтобы сверить набор со строками отчёта.
+	params.set('view', 'table');
+
 	const query = params.toString();
 	const path =
 		workspaces.length === 1

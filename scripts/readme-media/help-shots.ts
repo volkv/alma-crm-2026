@@ -117,7 +117,7 @@ export const HELP_SHOTS: readonly Frame[] = [
 	},
 	{
 		name: 'user/interactions-1',
-		path: '/interactions',
+		path: '/interactions?view=table',
 		role: 'manager',
 		caption: 'Список взаимодействий: фильтры, колонки, сроки',
 		waitFor: 'Взаимодействия'

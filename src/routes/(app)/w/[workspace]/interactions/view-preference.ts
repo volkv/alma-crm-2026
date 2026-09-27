@@ -31,10 +31,34 @@ export function storeView(view: InteractionViewMode) {
 	document.cookie = `${VIEW_COOKIE}=${view}; path=/; max-age=${MAX_AGE}; samesite=lax`;
 }
 
+/** Значение представления из адреса или куки; непонятное — не выбор вовсе. */
+function toView(value: string | null | undefined): InteractionViewMode | null {
+	return value === 'board' || value === 'table' ? value : null;
+}
+
 /**
- * Запомненный выбор из строки кук. Непонятное значение — не ошибка, а просто
- * «не доска»: раздел открывается обычной таблицей.
+ * Каким представлением открыть раздел. Адрес важнее памяти: пришли по ссылке
+ * с `view` — показывается ровно то, чем поделились. Без параметра — «как
+ * обычно», то есть выбор, сделанный в прошлый раз. Непонятное значение в
+ * адресе или куке — не ошибка, а просто отсутствие выбора.
+ *
+ * Пока человек ничего не выбирал, раздел открывается доской: на ней сразу
+ * видно, где стоит каждое дело. Кроме пространства без процесса — доске там
+ * раскладывать не по чему, и она показала бы одно «процесс не назначен»,
+ * тогда как таблица покажет записи, если они есть. Такое умолчание —
+ * вынужденное, а не выбор, и запоминать его нельзя (`remember: false`): иначе
+ * один заход в пустое пространство переключил бы на таблицу все остальные.
  */
-export function storedView(cookie: string | undefined): InteractionViewMode {
-	return cookie === 'board' ? 'board' : 'table';
+export function chooseView(input: {
+	requested: string | null;
+	stored: string | undefined;
+	hasWorkflow: boolean;
+}): { view: InteractionViewMode; remember: boolean } {
+	const chosen = toView(input.requested) ?? toView(input.stored);
+
+	if (chosen !== null) {
+		return { view: chosen, remember: true };
+	}
+
+	return input.hasWorkflow ? { view: 'board', remember: true } : { view: 'table', remember: false };
 }

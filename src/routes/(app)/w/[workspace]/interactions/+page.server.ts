@@ -18,7 +18,7 @@ import { can } from '$lib/server/rbac';
 import { advanceStage, returnStage, setResponsible, skipStage } from '$lib/server/stages/commands';
 import { readFilters } from './filters';
 import { responsibleOptions } from './responsible';
-import { storedView, VIEW_COOKIE } from './view-preference';
+import { chooseView, VIEW_COOKIE } from './view-preference';
 import type { Actions, PageServerLoad, RequestEvent } from './$types';
 
 /** Колонки, по которым список сортируется на сервере. */
@@ -42,21 +42,18 @@ function toSort(sortBy: string | null, direction: 'asc' | 'desc'): InteractionSo
 }
 
 /**
- * Выбранное представление. Значение из адреса — это ввод человека: непонятное
- * `view=xyz` не ошибка запроса, а просто не доска.
- *
- * Адрес важнее памяти: пришли по ссылке с `view` — показывается ровно то, чем
- * поделились. Адрес без параметра означает «как обычно», и обычное берётся из
- * куки — выбора, сделанного в прошлый раз (`view-preference.ts`).
+ * Выбранное представление: адрес, иначе кука прошлого выбора, иначе доска —
+ * правило целиком в `chooseView` (`view-preference.ts`).
  */
-function readView(event: Pick<RequestEvent, 'url' | 'cookies'>): InteractionViewMode {
-	const requested = event.url.searchParams.get('view');
-
-	if (requested !== null) {
-		return requested === 'board' ? 'board' : 'table';
-	}
-
-	return storedView(event.cookies.get(VIEW_COOKIE));
+function readView(
+	event: Pick<RequestEvent, 'url' | 'cookies'>,
+	hasWorkflow: boolean
+): { view: InteractionViewMode; remember: boolean } {
+	return chooseView({
+		requested: event.url.searchParams.get('view'),
+		stored: event.cookies.get(VIEW_COOKIE),
+		hasWorkflow
+	});
 }
 
 /** Претензии схемы перехода — словами и рядом с действием, а не «не вышло». */
@@ -71,10 +68,10 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 	const table = readTableQuery(event.url);
 	const filters = readFilters(event.url);
-	const view = readView(event);
 	// Пространство приходит из адреса: его разобрал и проверил загрузчик ветки
 	// (`/w/[workspace]/+layout.server.ts`), и незнакомый ключ до сюда не доходит.
 	const { workspace } = await event.parent();
+	const { view, remember: rememberView } = readView(event, workspace.hasWorkflow);
 	// На доске колонки и есть стадии: фильтра стадии там нет, и параметр,
 	// оставшийся в адресе от таблицы, не должен прятать колонки без объяснения.
 	const stageCategory = view === 'board' ? null : filters.stageCategory;
@@ -96,6 +93,8 @@ export const load: PageServerLoad = async (event) => {
 		filters,
 		isFiltered,
 		search: table.search,
+		/** Показанное представление — выбор человека, а не вынужденное умолчание. */
+		rememberView,
 		canAssign: can(ctx, 'interactions.reassign'),
 		/** Право двигать стадии: без него доска только показывает. */
 		canTransition: can(ctx, 'stages.transition')

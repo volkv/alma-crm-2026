@@ -219,12 +219,12 @@ test.describe.serial('без интернета: полный проход', { t
 	test('список и карточка: переход стадии с комментарием и файлом', async () => {
 		const { page } = sessions.manager;
 
-		await page.goto('/w/b2b/interactions');
+		await page.goto('/w/b2b/interactions?view=table');
 		await expect(page.getByRole('heading', { level: 1 })).toHaveText('Взаимодействия');
 
 		const listed = await page.getByRole('row').count();
 
-		await page.goto(`/w/b2b/interactions?q=${encodeURIComponent('Заявка с сайта')}`);
+		await page.goto(`/w/b2b/interactions?view=table&q=${encodeURIComponent('Заявка с сайта')}`);
 		await expect(page.getByRole('row').filter({ hasText: 'Заявка с сайта' }).first()).toBeVisible();
 		note(
 			`список взаимодействий b2b: ${listed - 1} строк на первой странице, заявка с сайта находится поиском`

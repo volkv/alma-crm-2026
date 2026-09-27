@@ -721,7 +721,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 
 		// Пространство заявки — стенда, а не прохода: его определяет таблица
 		// соответствий по виду заявителя, и вуз попадает в `b2b`.
-		await manager.goto(`/w/b2b/interactions?q=${encodeURIComponent(APPLICANT_NAME)}`);
+		await manager.goto(`/w/b2b/interactions?view=table&q=${encodeURIComponent(APPLICANT_NAME)}`);
 		await expect(manager.getByText(expectedTitle)).toBeVisible();
 
 		// Снимок статуса уходит в чужой процесс по сети. Отправляет его цикл

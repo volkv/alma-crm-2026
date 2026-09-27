@@ -99,7 +99,7 @@ const CLIPS: readonly Clip[] = [
 		caption: 'Обзор: сводка, доска, карточка, отчёты, справочники, данные, справка',
 		play: async (page) => {
 			await visit(page, '/', 'Мой день');
-			await visit(page, '/interactions', 'Взаимодействия');
+			await visit(page, '/interactions?view=table', 'Взаимодействия');
 			await visit(page, '/interactions?view=board', 'Взаимодействия');
 			await visit(
 				page,
