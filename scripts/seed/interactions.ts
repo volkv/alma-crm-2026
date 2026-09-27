@@ -34,8 +34,10 @@ import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import {
 	createInteractionSchema,
 	isFactItem,
+	PARTY_ROLE_LABELS,
 	type BlockerReason,
 	type CreateInteractionInput,
+	type InteractionView,
 	type StageView
 } from '$lib/contracts/interactions';
 import type { DocumentStatusFact, DocumentTemplateKey } from '$lib/contracts/documents';
@@ -57,7 +59,6 @@ import {
 	learningGroupProducts,
 	learningGroupResults,
 	learningGroups,
-	organizations,
 	programVersions,
 	stageEntries,
 	stagePauses,
@@ -67,6 +68,7 @@ import { withTransaction, type Tx } from '$lib/server/db/transaction';
 import { DocumentConversionError } from '$lib/server/documents/errors';
 import { readDocumentMark } from '$lib/server/documents/evidence';
 import { generateDocument } from '$lib/server/documents/generate';
+import { PDF_MIME } from '$lib/server/documents/mime';
 import { markDocument } from '$lib/server/documents/status';
 import { uploadDocument, uploadDocumentRevision } from '$lib/server/documents/upload';
 import { getExchangeSettings } from '$lib/server/integrations/settings';
@@ -97,6 +99,16 @@ import {
 import { readWorkspaceByKey, requireActiveRevisionForWorkspace } from '$lib/server/stages/process';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import { contractOf } from './contracts';
+import {
+	INSTITUTION_SIGNER,
+	OPERATOR_SIGNER,
+	organizationRequisites,
+	renderSyntheticDocument,
+	syntheticDocumentNumber,
+	type DocumentLine,
+	type DocumentParty,
+	type SyntheticDocumentContent
+} from './documents';
 import { seedId } from './ids';
 import { seedRoster } from './rosters';
 import { SERVICE_USER_EMAIL } from './users';
@@ -1519,7 +1531,9 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 		sinceDaysAgo: 19,
 		lastActivityDaysAgo: 8,
 		agreement: ['2026-09-01', '2027-08-31'],
-		closeChecklist: true
+		closeChecklist: true,
+		document: true,
+		signedDocument: true
 	},
 	{
 		key: 'paid-signing-44',
@@ -1536,7 +1550,9 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 		startedDaysAgo: 144,
 		sinceDaysAgo: 5,
 		lastActivityDaysAgo: 2,
-		agreement: ['2026-09-01', '2027-08-31']
+		agreement: ['2026-09-01', '2027-08-31'],
+		document: true,
+		signedDocument: true
 	},
 	{
 		key: 'ukct-signing-45',
@@ -1551,7 +1567,8 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 		startedDaysAgo: 151,
 		sinceDaysAgo: 7,
 		lastActivityDaysAgo: 3,
-		agreement: ['2026-09-01', '2027-08-31']
+		agreement: ['2026-09-01', '2027-08-31'],
+		document: true
 	},
 	{
 		key: 'nkis-signing-46',
@@ -1568,7 +1585,9 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 		sinceDaysAgo: 9,
 		lastActivityDaysAgo: 4,
 		agreement: ['2026-09-01', '2027-08-31'],
-		closeChecklist: true
+		closeChecklist: true,
+		document: true,
+		signedDocument: true
 	},
 	{
 		key: 'vts-signing-47',
@@ -1583,7 +1602,8 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 		sinceDaysAgo: 31,
 		lastActivityDaysAgo: 12,
 		agreement: ['2026-09-01', '2027-08-31'],
-		comments: ['Соглашение на подписи у руководства вуза.']
+		comments: ['Соглашение на подписи у руководства вуза.'],
+		document: true
 	},
 	{
 		key: 'skpa-signing-48',
@@ -1597,7 +1617,9 @@ const FUNNEL_INTERACTIONS: readonly InteractionSeed[] = [
 		startedDaysAgo: 139,
 		sinceDaysAgo: 5,
 		lastActivityDaysAgo: 2,
-		agreement: ['2026-09-01', '2027-08-31']
+		agreement: ['2026-09-01', '2027-08-31'],
+		document: true,
+		signedDocument: true
 	},
 	{
 		key: 'lyceum306-materials_handover-49',
@@ -2704,7 +2726,8 @@ export const INTERACTION_SEED_SIZES = {
 	/**
 	 * Подписанные акты передачи — по тому же правилу у стадии передачи
 	 * материалов: её закрывает отметка «Утверждён» на акте, собранном по
-	 * шаблону (один DOCX на дело).
+	 * шаблону (DOCX и, если печать PDF доступна, ещё и PDF — отмечается именно
+	 * он; см. `generateSignedDocument`).
 	 */
 	handoverActs: ALL_INTERACTIONS.filter((seed) => needsSignedDocument(seed, 'materials_handover'))
 		.length,
@@ -3290,47 +3313,99 @@ async function recordSignedDocument(
 	await markDocument(ctx, documentId, mark, undefined, 'Подписан обеими сторонами');
 }
 
-/** Скан подписанного соглашения, приложенный к делу. */
+/**
+ * Стороны соглашения, как их печатает синтетический документ: учебное
+ * заведение и оператор подписывают, заказчик подготовки — только упомянут,
+ * как в самом шаблоне «Соглашение» (`generateAgreement`).
+ */
+async function agreementParties(view: InteractionView): Promise<DocumentParty[]> {
+	const institution = view.parties.find((party) => party.partyRole === 'educational_institution');
+	const operator = view.parties.find((party) => party.partyRole === 'operator');
+	const customer = view.parties.find((party) => party.partyRole === 'customer');
+
+	if (institution === undefined || operator === undefined) {
+		throw new Error(`Взаимодействию «${view.title}» не хватает сторон для документа`);
+	}
+
+	const parties: DocumentParty[] = [
+		{
+			role: PARTY_ROLE_LABELS.educational_institution,
+			name: institution.organizationName,
+			requisites: await organizationRequisites(institution.organizationId),
+			signer: INSTITUTION_SIGNER
+		},
+		{
+			role: PARTY_ROLE_LABELS.operator,
+			name: operator.organizationName,
+			requisites: await organizationRequisites(operator.organizationId),
+			signer: OPERATOR_SIGNER
+		}
+	];
+
+	if (customer !== undefined) {
+		parties.push({ role: PARTY_ROLE_LABELS.customer, name: customer.organizationName });
+	}
+
+	return parties;
+}
+
+/** Срок действия соглашения и его программы — как строки документа. */
+function agreementLines(view: InteractionView): DocumentLine[] {
+	const period: DocumentLine[] =
+		view.agreementPeriodStart === null || view.agreementPeriodEnd === null
+			? []
+			: [
+					{
+						label: 'Срок действия',
+						value: `${formatDate(view.agreementPeriodStart)} — ${formatDate(view.agreementPeriodEnd)}`
+					}
+				];
+
+	return [
+		...period,
+		...view.programs.map((program) => ({ label: 'Программа', value: program.name }))
+	];
+}
+
+/**
+ * Скан подписанного соглашения, приложенный к делу, — экземпляр, который
+ * менеджер получил от вуза и приложил как есть.
+ */
 async function uploadSignedAgreement(ctx: ActorContext, interactionId: string): Promise<string> {
+	const view = await getInteraction(ctx, interactionId);
+
+	const content: SyntheticDocumentContent = {
+		title: 'Соглашение о сотрудничестве, подписанный экземпляр',
+		docNumber: syntheticDocumentNumber(interactionId, 'СОГ'),
+		docDate: formatDate(new Date()),
+		intro: `Экземпляр по делу «${view.title}», подписанный руководителями сторон и приложенный к делу.`,
+		parties: await agreementParties(view),
+		lines: agreementLines(view),
+		note: 'Подписан обеими сторонами.'
+	};
+
+	const file = await renderSyntheticDocument(content, (message) =>
+		console.log(
+			`seed: подписанный экземпляр для «${view.title}» собран текстовым файлом — служба преобразования в PDF недоступна (${message})`
+		)
+	);
+
 	const document = await uploadDocument(ctx, {
 		interactionId,
 		kind: 'agreement',
 		title: 'Соглашение о сотрудничестве, подписанный экземпляр',
-		file: {
-			mime: 'text/plain',
-			bytes: new TextEncoder().encode(
-				'Соглашение о сотрудничестве.\nПодписанный сторонами экземпляр, приложенный к делу.\n'
-			)
-		}
+		file
 	});
 
 	return document.id;
 }
 
-/** Реквизиты организации одной строкой — так их печатает пакет документов. */
-async function organizationRequisites(organizationId: string): Promise<string> {
-	const [row] = await getDb()
-		.select({ inn: organizations.inn, kpp: organizations.kpp, ogrn: organizations.ogrn })
-		.from(organizations)
-		.where(eq(organizations.id, organizationId))
-		.limit(1);
-
-	if (row === undefined) {
-		throw new Error(`Организация ${organizationId} не заведена`);
-	}
-
-	return [
-		row.inn === null ? null : `ИНН ${row.inn}`,
-		row.kpp === null ? null : `КПП ${row.kpp}`,
-		row.ogrn === null ? null : `ОГРН ${row.ogrn}`
-	]
-		.filter((part): part is string => part !== null)
-		.join(', ');
-}
-
 /**
- * Документ, собранный по шаблону стадии. Только DOCX: служба преобразования в
- * PDF поднята не на каждой машине, а стадия без документа не отпускает вперёд.
+ * Документ, собранный по шаблону стадии, — в DOCX и, если печать PDF доступна,
+ * ещё и в PDF: акту, как и «подписанному экземпляру», нужен формат, который
+ * открывается без Word. Недоступная служба не должна ронять заливку — стадия
+ * без документа не отпускает вперёд, — поэтому при отказе печати акт остаётся
+ * в одном DOCX, как и раньше.
  *
  * Акт передаёт позиции договора, выбранные делом, — как акт из пакета
  * документов (`handover_act` в `src/lib/server/documents/package.ts`): отметка
@@ -3369,11 +3444,10 @@ async function generateSignedDocument(
 		throw new Error(`Договору № ${contract.number} не задана дата подписания`);
 	}
 
-	const [document] = await generateDocument(ctx, {
+	const command = {
 		templateKey,
 		interactionId,
 		title: `Акт передачи материалов и лицензий — ${view.title}`,
-		formats: ['docx'],
 		contractItemIds: items.map((item) => item.id),
 		data: {
 			city: 'Москва',
@@ -3382,13 +3456,31 @@ async function generateSignedDocument(
 			contractSignedOn: contract?.signedOn == null ? '' : formatDate(contract.signedOn),
 			operatorName: operator.organizationName,
 			operatorRequisites: await organizationRequisites(operator.organizationId),
-			operatorSigner: 'директор Школы Орлов В. С.',
+			operatorSigner: OPERATOR_SIGNER,
 			institutionName: institution.organizationName,
 			institutionRequisites: await organizationRequisites(institution.organizationId),
-			institutionSigner: 'ректор',
+			institutionSigner: INSTITUTION_SIGNER,
 			items: items.map(({ productName, licenseUntil }) => ({ productName, licenseUntil }))
 		}
-	});
+	};
+
+	let created;
+
+	try {
+		created = await generateDocument(ctx, { ...command, formats: ['docx', 'pdf'] });
+	} catch (error) {
+		if (!(error instanceof DocumentConversionError)) {
+			throw error;
+		}
+
+		console.log(
+			`seed: PDF-экземпляр акта для «${view.title}» не собран — служба преобразования в PDF недоступна (${error.message}); акт остаётся в DOCX`
+		);
+
+		created = await generateDocument(ctx, { ...command, formats: ['docx'] });
+	}
+
+	const document = created.find((doc) => doc.mime === PDF_MIME) ?? created[0];
 
 	if (document === undefined) {
 		throw new Error(`Акт передачи для «${view.title}» не собран`);
@@ -3518,17 +3610,7 @@ async function provideStageFacts(
 				await recordPurposeStream(seed, interactionId, 'upskilling', instance, runStart);
 				break;
 			case 'training_document':
-				await uploadDocument(ctx, {
-					interactionId,
-					kind: 'certificate',
-					title: 'Удостоверение о повышении квалификации',
-					file: {
-						mime: 'text/plain',
-						bytes: new TextEncoder().encode(
-							'Удостоверение о повышении квалификации.\nВыдано по итогам обучения.\n'
-						)
-					}
-				});
+				await uploadTrainingDocument(ctx, interactionId);
 				break;
 			case 'stage_result':
 			case 'contract_concluded':
@@ -3761,9 +3843,9 @@ async function generateAgreement(ctx: ActorContext, interactionId: string): Prom
 				city: 'Москва',
 				date: formatDate(new Date()),
 				operatorName: operator.organizationName,
-				operatorSigner: 'директор Школы Орлов В. С.',
+				operatorSigner: OPERATOR_SIGNER,
 				institutionName: institution.organizationName,
-				institutionSigner: 'ректор',
+				institutionSigner: INSTITUTION_SIGNER,
 				customerName: customer.organizationName,
 				periodStart: formatDate(view.agreementPeriodStart),
 				periodEnd: formatDate(view.agreementPeriodEnd),
@@ -3785,16 +3867,24 @@ async function generateAgreement(ctx: ActorContext, interactionId: string): Prom
 	}
 }
 
-/**
- * Текстовый «скан» соглашения. Настоящий PDF набору не нужен: в хранилище
- * проверяется соответствие содержимого заявленному типу, и `text/plain` этой
- * проверке отвечает честнее, чем подделанный заголовок PDF.
- */
-function scanBytes(revision: number): Uint8Array {
-	return new TextEncoder().encode(
-		`Соглашение о сотрудничестве. Редакция ${revision}.\n` +
-			'Скан подписанного экземпляра, приложенный к взаимодействию.\n'
-	);
+/** Содержимое скана соглашения — одно и то же дело, разные редакции. */
+function scanContent(
+	view: InteractionView,
+	parties: readonly DocumentParty[],
+	lines: readonly DocumentLine[],
+	interactionId: string,
+	revision: number,
+	note: string
+): SyntheticDocumentContent {
+	return {
+		title: 'Скан подписанного соглашения',
+		docNumber: `${syntheticDocumentNumber(interactionId, 'СКАН')}/${revision}`,
+		docDate: formatDate(new Date()),
+		intro: `Редакция ${revision}. Скан подписанного экземпляра по делу «${view.title}», приложенный к взаимодействию.`,
+		parties,
+		lines,
+		note
+	};
 }
 
 /**
@@ -3803,16 +3893,83 @@ function scanBytes(revision: number): Uint8Array {
  * цепочку редакций, ни фильтр «только действующие».
  */
 async function uploadScanWithRevision(ctx: ActorContext, interactionId: string): Promise<void> {
+	const view = await getInteraction(ctx, interactionId);
+	const parties = await agreementParties(view);
+	const lines = agreementLines(view);
+
+	const warn = (revision: number) => (message: string) =>
+		console.log(
+			`seed: скан соглашения (редакция ${revision}) для «${view.title}» собран текстовым файлом — служба преобразования в PDF недоступна (${message})`
+		);
+
 	const first = await uploadDocument(ctx, {
 		interactionId,
 		kind: 'agreement',
 		title: 'Скан подписанного соглашения',
-		file: { mime: 'text/plain', bytes: scanBytes(1) }
+		file: await renderSyntheticDocument(
+			scanContent(view, parties, lines, interactionId, 1, 'Исходная редакция.'),
+			warn(1)
+		)
 	});
 
 	await uploadDocumentRevision(ctx, {
 		supersedesId: first.id,
-		file: { mime: 'text/plain', bytes: scanBytes(2) }
+		file: await renderSyntheticDocument(
+			scanContent(
+				view,
+				parties,
+				lines,
+				interactionId,
+				2,
+				'Исправлена опечатка в реквизитах, исходный скан заменён.'
+			),
+			warn(2)
+		)
+	});
+}
+
+/**
+ * Документ об обучении: слушатель — заказчик дела (в B2C это либо сама
+ * организация, либо физическое лицо), оператор — тот, кто его выдал.
+ */
+async function uploadTrainingDocument(ctx: ActorContext, interactionId: string): Promise<void> {
+	const view = await getInteraction(ctx, interactionId);
+	const learner = view.parties.find((party) => party.partyRole === 'customer');
+	const operator = view.parties.find((party) => party.partyRole === 'operator');
+
+	if (learner === undefined || operator === undefined) {
+		throw new Error(`Взаимодействию «${view.title}» не хватает сторон для документа об обучении`);
+	}
+
+	const content: SyntheticDocumentContent = {
+		title: 'Удостоверение о повышении квалификации',
+		docNumber: syntheticDocumentNumber(interactionId, 'УДО'),
+		docDate: formatDate(new Date()),
+		intro: `Выдано по итогам обучения — ${view.title}.`,
+		parties: [
+			{ role: 'Слушатель', name: learner.organizationName },
+			{
+				role: PARTY_ROLE_LABELS.operator,
+				name: operator.organizationName,
+				requisites: await organizationRequisites(operator.organizationId),
+				signer: OPERATOR_SIGNER
+			}
+		],
+		lines: view.programs.map((program) => ({ label: 'Программа', value: program.name })),
+		note: 'Документ выдан по итогам обучения.'
+	};
+
+	const file = await renderSyntheticDocument(content, (message) =>
+		console.log(
+			`seed: удостоверение для «${view.title}» собрано текстовым файлом — служба преобразования в PDF недоступна (${message})`
+		)
+	);
+
+	await uploadDocument(ctx, {
+		interactionId,
+		kind: 'certificate',
+		title: 'Удостоверение о повышении квалификации',
+		file
 	});
 }
 
