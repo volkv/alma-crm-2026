@@ -37,7 +37,7 @@ import {
 import { PAYMENT_CHECKLIST_KEY, type PaymentFactView } from '$lib/contracts/payments';
 import type { ProcessCard } from '$lib/contracts/process-card';
 import { daysUntil, formatDate, formatDateTime, pluralize } from '$lib/format';
-import { visiblePanels, type ModuleKey } from '$lib/platform/registry';
+import { cardActionSpecs, visiblePanels, type ModuleKey } from '$lib/platform/registry';
 
 /**
  * Карточка взаимодействия как набор фактов, каждый из которых назван ровно в
@@ -219,7 +219,11 @@ export type CardCommand =
 	| { kind: 'send-group' }
 	| { kind: 'complete-group'; groupId: string | null }
 	| { kind: 'roster'; groupId: string }
-	| { kind: 'invite-meeting' };
+	/**
+	 * Действие карточки, которое принёс модуль (`cardActions` манифеста): диалог
+	 * к нему рисует сам модуль, и узнаёт свою команду по ключам модуля и действия.
+	 */
+	| { kind: 'module'; module: ModuleKey; action: string };
 
 /**
  * Вид контрагента, от которого зависят шапка и условия: вуз работает по
@@ -407,17 +411,6 @@ function counterpartyShape(kind: OrganizationKind): CounterpartyShape {
 }
 
 /**
- * Ключ стадии «Встреча с представителями» в сиде базового процесса
- * (`$lib/server/stages/definitions.ts`). На ней у пункта чек-листа «Встреча
- * назначена» рядом появляется кнопка приглашения — на любой другой стадии
- * команда доступна только из меню «Ещё».
- */
-export const MEETING_STAGE_KEY = 'meeting';
-
-/** Пункт чек-листа стадии «Встреча с представителями», к которому привязана кнопка приглашения. */
-export const MEETING_SCHEDULED_CHECKLIST_KEY = 'meeting_scheduled';
-
-/**
  * Оплата по записям стадий, новые первыми: ищется последняя стадия, в чек-листе
  * которой объявлена отметка об оплате. Пока стадия открыта, отметка — условие
  * перехода, и названа она у главного действия; здесь — только где её ставят.
@@ -572,16 +565,22 @@ function describeLmsEvidence(entry: StageEntryView): string | null {
  * Подтверждение попадает в список и там, где стадия его не требует, если оно
  * уже есть: чем подтверждена стадия — факт о ней, и спрятать его только
  * потому, что процесс его не просил, значило бы потерять.
+ *
+ * `modules` — действующие модули пространства: пункт чек-листа, к которому
+ * модуль привязал своё действие (`checklistItems`), держит кнопку этого
+ * действия прямо у себя — на любой стадии, где такой пункт есть.
  */
-export function buildRequirements(entry: StageEntryView, exchange: CardExchange): Requirement[] {
+export function buildRequirements(
+	entry: StageEntryView,
+	exchange: CardExchange,
+	modules: readonly string[]
+): Requirement[] {
 	const { snapshot } = entry;
+	const moduleActions = cardActionSpecs(modules);
 	const requirements: Requirement[] = snapshot.checklist.map((item) => {
-		// На стадии встречи пункт «Встреча назначена» держит кнопку приглашения
-		// прямо у чек-листа: там она уместнее всего. На остальных стадиях та же
-		// команда стоит только в меню «Ещё» (`buildSecondary`) — встречи бывают и
-		// вне этой стадии.
-		const isMeetingChecklistItem =
-			snapshot.key === MEETING_STAGE_KEY && item.key === MEETING_SCHEDULED_CHECKLIST_KEY;
+		// Пункт, закрытый действием модуля, — первым по порядку конфига: два
+		// модуля на одном пункте дали бы две кнопки там, где место под одну.
+		const action = moduleActions.find((spec) => spec.checklistItems.includes(item.key));
 
 		return {
 			key: `checklist:${item.key}`,
@@ -590,11 +589,10 @@ export function buildRequirements(entry: StageEntryView, exchange: CardExchange)
 			required: item.required,
 			close: 'check',
 			checklistKey: item.key,
-			cta: isMeetingChecklistItem ? 'Пригласить на встречу' : null,
-			command: isMeetingChecklistItem ? { kind: 'invite-meeting' } : null,
-			hint: isMeetingChecklistItem
-				? 'Файл приглашения для календаря; отметьте пункт, когда встреча назначена.'
-				: null,
+			cta: action?.label ?? null,
+			command:
+				action === undefined ? null : { kind: 'module', module: action.module, action: action.key },
+			hint: action?.checklistHint ?? null,
 			doneNote: null
 		};
 	});
@@ -711,7 +709,7 @@ function buildAction(source: CardSource): CardAction {
 		return { kind: 'none', label: 'Запись не стоит ни на одной стадии' };
 	}
 
-	const requirements = buildRequirements(entry, exchange);
+	const requirements = buildRequirements(entry, exchange, source.modules);
 	const blockers = summary.blocking.blockers.filter((blocker) => blocker.blocksTransition);
 	const softBlockers = summary.blocking.blockers.filter((blocker) => !blocker.blocksTransition);
 	const pause =
@@ -865,18 +863,24 @@ function buildSecondary(source: CardSource, action: CardAction): SecondaryAction
 		});
 	}
 
-	// Встреча случается не только на стадии, названной в её честь: команда стоит
-	// в меню «Ещё» всегда, а на самой стадии встречи дублируется кнопкой у пункта
-	// чек-листа (см. `buildRequirements`). Право то же, что у правки записи
-	// (`edit`): приглашение — действие по карточке, а не просмотр.
-	result.push({
-		key: 'invite-meeting',
-		label: 'Пригласить на встречу',
-		allowed: can('edit'),
-		reason: can('edit') ? null : 'Нет права менять взаимодействие',
-		tone: 'default',
-		command: { kind: 'invite-meeting' }
-	});
+	// Действия действующих модулей стоят в меню на любой стадии, а у пункта
+	// чек-листа, к которому модуль их привязал, дублируются кнопкой (см.
+	// `buildRequirements`). Право модуль называет сам (`requires`) — действием
+	// из приговора сервера, как у пунктов ядра.
+	for (const spec of cardActionSpecs(source.modules)) {
+		if (!spec.menu) continue;
+
+		const allowed = spec.requires === null || can(spec.requires);
+
+		result.push({
+			key: `module:${spec.module}:${spec.key}`,
+			label: spec.label,
+			allowed,
+			reason: allowed ? null : spec.deniedReason,
+			tone: 'default',
+			command: { kind: 'module', module: spec.module, action: spec.key }
+		});
+	}
 
 	// Результат и подтверждение, которых стадия не требует (или которые уже
 	// есть), живут в меню: условием перехода они не стоят, а записать или

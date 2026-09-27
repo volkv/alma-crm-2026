@@ -15,7 +15,6 @@
 	import EventFeed from '$lib/components/interaction-card/event-feed.svelte';
 	import LearningDialogs from '$lib/components/interaction-card/learning-dialogs.svelte';
 	import { LiveCard } from '$lib/components/interaction-card/live.svelte';
-	import MeetingDialogs from '$lib/components/interaction-card/meeting-dialogs.svelte';
 	import { buildCard, type CardSource } from '$lib/components/interaction-card/model';
 	import Presence from '$lib/components/interaction-card/presence.svelte';
 	import PrimaryAction from '$lib/components/interaction-card/primary-action.svelte';
@@ -24,6 +23,7 @@
 	import StageDialogs from '$lib/components/interaction-card/stage-dialogs.svelte';
 	import type { InteractionAction } from '$lib/contracts/interactions';
 	import { formatDateTime } from '$lib/format';
+	import { cardDialogs } from '$lib/platform/card-ui-registry';
 	import { INTERACTION_STATUS_LABELS } from '../filters';
 	import type { PageProps } from './$types';
 
@@ -228,6 +228,7 @@
 					{source}
 					{model}
 					supersessions={data.supersessions}
+					moduleData={data.moduleData}
 					can={{
 						edit: can('edit'),
 						upload: can('upload_document'),
@@ -265,10 +266,12 @@
 />
 <DocumentDialogs interaction={data.interaction} supersessions={data.supersessions} />
 <LearningDialogs exchange={data.exchange} />
-<MeetingDialogs
-	interaction={data.interaction}
-	entry={data.status.current}
-	contacts={data.meetingContacts}
-	contactsDenied={data.meetingContactsDenied}
-	workspaceKey={data.workspace.key}
-/>
+<!-- Диалоги действующих модулей: каждый узнаёт свою команду сам. -->
+{#each cardDialogs(model.modules) as dialog (dialog.module)}
+	<dialog.component
+		{source}
+		{model}
+		data={data.moduleData?.[dialog.module]}
+		workspaceKey={data.workspace.key}
+	/>
+{/each}

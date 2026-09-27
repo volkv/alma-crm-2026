@@ -13,7 +13,7 @@ import {
 	escapeIcsText,
 	meetingInviteUid,
 	type MeetingInviteInput
-} from '$lib/server/interactions/meeting';
+} from '../../../src/modules/meetings/server/ics';
 
 function baseInput(overrides: Partial<MeetingInviteInput> = {}): MeetingInviteInput {
 	return {

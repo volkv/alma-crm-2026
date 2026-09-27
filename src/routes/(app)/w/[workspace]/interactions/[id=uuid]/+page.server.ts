@@ -26,7 +26,7 @@ import {
 import { actorFromEvent } from '$lib/server/actor';
 import { fields, parse, run, text } from '$lib/server/forms';
 import { listOrganizationContracts } from '$lib/server/directory/contracts';
-import { getOrganization, listAffiliations } from '$lib/server/directory/read';
+import { getOrganization } from '$lib/server/directory/read';
 import { DocumentConversionError } from '$lib/server/documents/errors';
 import { generateDocumentPackage } from '$lib/server/documents/package';
 import { listInteractionSupersessions } from '$lib/server/documents/read';
@@ -112,29 +112,20 @@ export const load: PageServerLoad = async (event) => {
 		// Состав карточки — панели и шаблоны — объявляет процесс записи, а вид
 		// шапки задаёт вид основной стороны.
 		const primary = interaction.parties.find((party) => party.isPrimary);
-		// Контакты стороны — для диалога приглашения на встречу (участники с
-		// почтой, галочками): та же область доступа, что у справочника людей, а не
-		// у карточки взаимодействия саму по себе. Без права список пуст, и диалог
-		// говорит почему, а не молчит.
-		const meetingContactsDenied = primary !== undefined && !can(ctx, 'people.read');
 		// Факт оплаты с сайта читается по уже прочитанному взаимодействию: его
 		// область доступа проверил `getInteraction`.
 		// Действующие модули пространства: включённые и нужные стадиям процесса.
-		const [contracts, counterparty, card, meetingContacts, paymentFact, modules] =
-			await Promise.all([
-				primary !== undefined && can(ctx, 'interactions.write')
-					? listOrganizationContracts(ctx, primary.organizationId)
-					: [],
-				primary !== undefined && can(ctx, 'organizations.read')
-					? getOrganization(ctx, primary.organizationId)
-					: null,
-				readInteractionCard(interaction),
-				primary !== undefined && can(ctx, 'people.read')
-					? listAffiliations(ctx, primary.organizationId)
-					: [],
-				readPaymentFact(interaction),
-				readActiveModules(interaction.workspaceId)
-			]);
+		const [contracts, counterparty, card, paymentFact, modules] = await Promise.all([
+			primary !== undefined && can(ctx, 'interactions.write')
+				? listOrganizationContracts(ctx, primary.organizationId)
+				: [],
+			primary !== undefined && can(ctx, 'organizations.read')
+				? getOrganization(ctx, primary.organizationId)
+				: null,
+			readInteractionCard(interaction),
+			readPaymentFact(interaction),
+			readActiveModules(interaction.workspaceId)
+		]);
 		// Свои данные действующих модулей — для их панелей и диалогов; данные
 		// выключенного модуля не читаются.
 		const moduleData = await loadModuleCardData(event, ctx, interaction, modules.active);
@@ -152,8 +143,6 @@ export const load: PageServerLoad = async (event) => {
 			contracts,
 			counterparty,
 			card,
-			meetingContacts,
-			meetingContactsDenied,
 			paymentFact,
 			modules: modules.active,
 			moduleData

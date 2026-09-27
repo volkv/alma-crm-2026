@@ -284,7 +284,8 @@ describe('условия перехода', () => {
 	it('собирает чек-лист, результат и итог обучения из снимка стадии', () => {
 		const requirements = buildRequirements(
 			entry({ checklistState: { schedule_published: true } }),
-			NO_EXCHANGE
+			NO_EXCHANGE,
+			INSTALLED_MODULES.map((module) => module.key)
 		);
 
 		expect(requirements.map((item) => [item.key, item.done, item.required])).toEqual([
@@ -366,7 +367,7 @@ describe('меню «Ещё»', () => {
 		expect(card.secondary.map((item) => item.command.kind)).toEqual([
 			'transition',
 			'pause',
-			'invite-meeting',
+			'module',
 			'confirm',
 			'raise-blocker',
 			'assign',
@@ -377,6 +378,37 @@ describe('меню «Ещё»', () => {
 		// Результат стадия требует и он не записан — он стоит условием у главной
 		// кнопки, а не вторым входом в меню.
 		expect(card.secondary.some((item) => item.command.kind === 'result')).toBe(false);
+	});
+
+	it('приглашение на встречу — в меню и у пункта чек-листа, только пока «Встречи» действуют', () => {
+		const meeting = entry({
+			snapshot: {
+				...entry().snapshot,
+				key: 'meeting',
+				name: 'Встреча с представителями',
+				requiresLmsData: false,
+				checklist: [{ key: 'meeting_scheduled', label: 'Встреча назначена', required: true }]
+			}
+		});
+		const invite = { kind: 'module', module: 'meetings', action: 'invite' };
+		const build = (modules: CardSource['modules']) =>
+			buildCard(source({ status: status({ current: meeting }), modules }), NOW);
+
+		const withMeetings = build(['meetings']);
+
+		expect(withMeetings.secondary.map((item) => item.command)).toContainEqual(invite);
+		if (withMeetings.action.kind !== 'forward') throw new Error('ожидался шаг вперёд');
+		expect(withMeetings.action.requirements[0]).toMatchObject({
+			key: 'checklist:meeting_scheduled',
+			cta: 'Пригласить на встречу',
+			command: invite
+		});
+
+		const without = build([]);
+
+		expect(without.secondary.some((item) => item.command.kind === 'module')).toBe(false);
+		if (without.action.kind !== 'forward') throw new Error('ожидался шаг вперёд');
+		expect(without.action.requirements[0]).toMatchObject({ cta: null, command: null });
 	});
 });
 

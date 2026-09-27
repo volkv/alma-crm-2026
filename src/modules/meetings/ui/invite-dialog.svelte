@@ -10,42 +10,47 @@
 	import FormDialog from '$lib/components/form-dialog.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import type { AffiliationView } from '$lib/contracts/directory';
-	import type { InteractionView, StageEntryView } from '$lib/contracts/interactions';
-	import { getCardCommands } from './commands.svelte';
+	import type { StageEntryView } from '$lib/contracts/interactions';
+	import { getCardCommands, type CardCommand } from '$lib/platform/card';
+	import type { CardDialogProps } from '$lib/platform/card-ui';
+	import type { MeetingsCardData } from '../data';
 
 	/**
 	 * Приглашение на встречу файлом календаря.
 	 *
 	 * Диалог только собирает параметры — дату, длительность, место, участников и
-	 * повестку — в ссылку на серверный маршрут `meeting.ics`: сам файл, права на
-	 * контакты участников и запись в журнал остаются за маршрутом, диалог их не
-	 * решает. Кнопка «Скачать» — обычная ссылка на файл, а не форма: так проще
-	 * держать её адрес в силе, пока человек донабирает повестку.
+	 * повестку — в ссылку на файл модуля `meeting.ics` (`card.server.ts`): сам
+	 * файл, права на контакты участников и запись в журнал остаются за сервером,
+	 * диалог их не решает. Кнопка «Скачать» — обычная ссылка на файл, а не форма:
+	 * так проще держать её адрес в силе, пока человек донабирает повестку.
 	 *
 	 * Итог встречи не заводит своей сущности: диалог только напоминает записать
 	 * его командой «Результат стадии» и сам её открывает.
 	 */
-	let {
-		interaction,
-		entry,
-		contacts,
-		contactsDenied,
-		workspaceKey
-	}: {
-		interaction: InteractionView;
-		/** Текущая стадия; повестка по умолчанию собирается из её незакрытых пунктов. */
-		entry: StageEntryView | null;
-		/** Контакты основной стороны с почтой — чекбоксами в списке участников. */
-		contacts: readonly AffiliationView[];
-		/** Нет права видеть людей организации: список пуст поэтому, а не потому что их нет. */
-		contactsDenied: boolean;
-		workspaceKey: string;
-	} = $props();
+	let { source, data, workspaceKey }: CardDialogProps = $props();
+
+	const interaction = $derived(source.interaction);
+	/** Текущая стадия; повестка по умолчанию собирается из её незакрытых пунктов. */
+	const entry = $derived(source.status.current);
+	// Данные кладёт `load` модуля (`card.server.ts`): пока модуль действует, он
+	// зовётся на каждой загрузке карточки.
+	const loaded = $derived(data as MeetingsCardData | undefined);
+	/** Контакты основной стороны с почтой — чекбоксами в списке участников. */
+	const contacts = $derived(loaded?.contacts ?? []);
+	/** Нет права видеть людей организации: список пуст поэтому, а не потому что их нет. */
+	const contactsDenied = $derived(loaded?.contactsDenied ?? false);
 
 	const commands = getCardCommands();
 
+	/** Своя команда — действие «Пригласить» модуля «Встречи» из манифеста. */
+	function isInvite(command: CardCommand | null): boolean {
+		return (
+			command?.kind === 'module' && command.module === 'meetings' && command.action === 'invite'
+		);
+	}
+
 	const opened = {
-		get: () => commands.is('invite-meeting'),
+		get: () => isInvite(commands.current),
 		set: (next: boolean) => {
 			if (!next) commands.close();
 		}
@@ -58,13 +63,13 @@
 	}
 
 	/** Повестка по умолчанию: незакрытые пункты чек-листа текущей стадии. */
-	function defaultAgenda(source: StageEntryView | null): string {
-		if (source === null) {
+	function defaultAgenda(stage: StageEntryView | null): string {
+		if (stage === null) {
 			return '';
 		}
 
-		return source.snapshot.checklist
-			.filter((item) => source.checklistState[item.key] !== true)
+		return stage.snapshot.checklist
+			.filter((item) => stage.checklistState[item.key] !== true)
 			.map((item) => `– ${item.label}`)
 			.join('\n');
 	}
@@ -81,7 +86,7 @@
 		const current = commands.current;
 
 		untrack(() => {
-			if (current === null || current.kind !== 'invite-meeting') {
+			if (!isInvite(current)) {
 				return;
 			}
 
@@ -119,9 +124,11 @@
 	 * `$derived`, а не долгоживущее изменяемое состояние.
 	 */
 	const icsHref = $derived.by(() => {
-		const path = resolve('/(app)/w/[workspace]/interactions/[id=uuid]/meeting.ics', {
+		const path = resolve('/(app)/w/[workspace]/interactions/[id=uuid]/files/[module]/[file]', {
 			workspace: workspaceKey,
-			id: interaction.id
+			id: interaction.id,
+			module: 'meetings',
+			file: 'meeting.ics'
 		});
 
 		const params = [query('start', start), query('duration', String(durationMinutes))];
