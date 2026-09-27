@@ -62,6 +62,7 @@ import {
 import { withTransaction } from '../db/transaction';
 import { removeStoredFiles } from '../documents/storage';
 import { ConflictError } from '../errors';
+import { restoreDemoMocks } from '../integrations/exchange/demo';
 import { requirePermission } from '../rbac';
 import { getRedis } from '../redis';
 import { DEMO_LOCKED_SETTINGS } from '../settings';
@@ -460,6 +461,14 @@ export async function resetDemoData(
 		// Показатели дашборда собраны по снимкам, которых больше нет: собранное
 		// до сброса читать нельзя.
 		await invalidateStatsDashboard();
+
+		// Отказ имитатора, оставленный прошлым показом, сбросу не принадлежит
+		// данным, но стенду принадлежит: после сброса обмен обязан работать.
+		// Недоступное управление имитатора сброс не отменяет — данные уже
+		// залиты, а отказ снимется сам по сроку, — но и не проходит молча.
+		for (const problem of await restoreDemoMocks()) {
+			console.error('[demo] сброс не вернул имитатор в рабочий режим:', problem);
+		}
 
 		const result = await countDemoData();
 

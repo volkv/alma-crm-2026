@@ -8,6 +8,11 @@
  * Четвёртая, `match`, сужает их до обращений по одному объекту: имитатор на
  * стенде один, и сломанная доставка одной заявки не должна ломать соседнюю.
  *
+ * Пятая, `ttlSeconds`, даёт сценарию срок: по его истечении имитатор сам
+ * возвращается в исходное состояние, как после `reset`. Имитатор на стенде
+ * общий, и отказ, включённый на показе и забытый показывающим, иначе ломал бы
+ * обмен всем, кто придёт после.
+ *
  * Сценарий действует **только на эндпоинты контракта** — те, которыми
  * пользуется CRM. Управление имитатором обязано отвечать и тогда, когда
  * сценарий велел «отвечать 503»: иначе сценарий нечем было бы снять.
@@ -30,6 +35,11 @@ export type ScenarioState = {
 	 * «сломай доставку этой заявки» не должно ломать соседнюю.
 	 */
 	match: string | null;
+	/**
+	 * Когда сценарий кончится сам (ISO-время): с этого момента имитатор
+	 * работает так, будто ему прислали `reset`. `null` — срока нет.
+	 */
+	expiresAt: string | null;
 };
 
 export type Scenario = {
@@ -52,14 +62,22 @@ const DEFAULT_STATE: ScenarioState = {
 	status: 503,
 	delayMs: 0,
 	mode: 'normal',
-	match: null
+	match: null,
+	expiresAt: null
 };
 
 /** Больше часа ждать нечего: имитатор поднят ради проверки, а не ради зависания. */
 const MAX_DELAY_MS = 60_000;
 const MAX_FAIL_NEXT = 1000;
+/** Сутки: сценарий дольше — это уже не проверка, а сломанный стенд. */
+const MAX_TTL_SECONDS = 86_400;
 
-const FIELDS = ['failNext', 'status', 'delayMs', 'mode', 'match', 'reset'] as const;
+const FIELDS = ['failNext', 'status', 'delayMs', 'mode', 'match', 'ttlSeconds', 'reset'] as const;
+
+export type ScenarioOptions = {
+	/** Текущее время в миллисекундах; подменяется в проверках срока. */
+	now?: () => number;
+};
 
 function readInteger(
 	value: unknown,
@@ -83,12 +101,26 @@ function readInteger(
 	return number;
 }
 
-export function createScenario(): Scenario {
+export function createScenario(options: ScenarioOptions = {}): Scenario {
+	const now = options.now ?? Date.now;
 	let state: ScenarioState = { ...DEFAULT_STATE };
+
+	/**
+	 * Текущий сценарий с учётом срока. Срок проверяется при каждом обращении,
+	 * а не таймером: пока к имитатору никто не обращается, истёкший сценарий
+	 * ничего и не портит, а таймер пришлось бы ещё и снимать.
+	 */
+	function current(): ScenarioState {
+		if (state.expiresAt !== null && now() >= Date.parse(state.expiresAt)) {
+			state = { ...DEFAULT_STATE };
+		}
+
+		return state;
+	}
 
 	return {
 		read() {
-			return { ...state };
+			return { ...current() };
 		},
 
 		apply(input) {
@@ -106,7 +138,7 @@ export function createScenario(): Scenario {
 				issues.push(`неизвестные поля: ${unknown.join(', ')}`);
 			}
 
-			const next: ScenarioState = { ...state };
+			const next: ScenarioState = { ...current() };
 
 			if ('failNext' in body) {
 				const value = readInteger(body.failNext, 'failNext', 0, MAX_FAIL_NEXT, issues);
@@ -150,6 +182,20 @@ export function createScenario(): Scenario {
 				}
 			}
 
+			// Срок отсчитывается от этого обращения; `null` снимает срок, а
+			// сценарий без `ttlSeconds` сохраняет прежний — как и прочие поля.
+			if ('ttlSeconds' in body) {
+				if (body.ttlSeconds === null) {
+					next.expiresAt = null;
+				} else {
+					const value = readInteger(body.ttlSeconds, 'ttlSeconds', 1, MAX_TTL_SECONDS, issues);
+
+					if (value !== null) {
+						next.expiresAt = new Date(now() + value * 1000).toISOString();
+					}
+				}
+			}
+
 			let reset = false;
 
 			if ('reset' in body) {
@@ -172,7 +218,7 @@ export function createScenario(): Scenario {
 		},
 
 		takeFailure() {
-			if (state.failNext < 1) {
+			if (current().failNext < 1) {
 				return null;
 			}
 

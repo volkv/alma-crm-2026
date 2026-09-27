@@ -4,12 +4,14 @@ import {
 	exchangeQuerySchema,
 	retryMessageSchema
 } from '$lib/contracts/exchange';
+import { pluralize } from '$lib/format';
 import { actorFromEvent } from '$lib/server/actor';
 import { getConfig } from '$lib/server/config';
 import { toActionFailure } from '$lib/server/http';
 import {
 	DEMO_APPLICATION_FORMS,
 	DEMO_MOCK_SYSTEMS,
+	DEMO_OFFLINE_TTL_SECONDS,
 	readDemoMocks,
 	sendDemoApplication,
 	setDemoMockAvailability,
@@ -69,7 +71,8 @@ export const load: PageServerLoad = async (event) => {
 		demoApplication: config.DEMO_MODE && config.DEMO_CMS_TRIGGER_URL !== null,
 		// Демо-переключатель доступности имитаторов — тоже принадлежность
 		// стенда; вне DEMO_MODE список пуст.
-		demoMocks: await readDemoMocks(ctx)
+		demoMocks: await readDemoMocks(ctx),
+		demoOfflineMinutes: DEMO_OFFLINE_TTL_SECONDS / 60
 	};
 };
 
@@ -204,7 +207,7 @@ export const actions: Actions = {
 			message:
 				available === 'true'
 					? 'Имитатор снова доступен: сообщения из очереди уйдут следующим повтором — или нажмите «Повторить» у строки'
-					: 'Имитатор недоступен: исходящие к нему встанут в очередь повторов с сетевой ошибкой. Верните доступность после показа — имитатор общий для всего стенда',
+					: `Имитатор недоступен: исходящие к нему встанут в очередь повторов с сетевой ошибкой. Через ${pluralize(DEMO_OFFLINE_TTL_SECONDS / 60, ['минуту', 'минуты', 'минут'])} он вернётся сам — имитатор общий для всего стенда`,
 			issues: [] as string[],
 			ok: true
 		};

@@ -89,6 +89,18 @@
 		}
 	});
 
+	// Между переходами — опрос и возвращение во вкладку: заявка с сайта
+	// приходит, пока человек стоит на одной странице. Зависимость — сам факт
+	// входа, а не объект пользователя: тот приходит заново с каждым переходом,
+	// и опрос перезапускался бы вместе с ним.
+	const signedIn = $derived(user !== null);
+
+	$effect(() => {
+		if (signedIn) {
+			return inbox.watch();
+		}
+	});
+
 	function onWindowKeydown(event: KeyboardEvent) {
 		if (event.key.toLowerCase() === 'k' && (event.ctrlKey || event.metaKey)) {
 			event.preventDefault();

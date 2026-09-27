@@ -9,7 +9,7 @@
 	import MessageRow from '$lib/components/exchange/message-row.svelte';
 	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
 	import Header from '$lib/components/header.svelte';
-	import { formatNumber } from '$lib/format';
+	import { formatNumber, pluralize } from '$lib/format';
 	import PaymentsDialog from './payments-dialog.svelte';
 	import type { PageProps } from './$types';
 
@@ -21,6 +21,17 @@
 	 * собирается из входящего сообщения и ушедшего следом статуса.
 	 */
 	let { data, form }: PageProps = $props();
+
+	/**
+	 * Через сколько минут недоступный имитатор вернётся сам. Минута — не
+	 * меньше одной: «через 0 минут» читалось бы как «уже вернулся», а это
+	 * покажет только следующее чтение состояния.
+	 */
+	function returnsIn(returnsAt: string): string {
+		const minutes = Math.max(1, Math.ceil((Date.parse(returnsAt) - Date.now()) / 60_000));
+
+		return pluralize(minutes, ['минуту', 'минуты', 'минут']);
+	}
 
 	const pages = $derived(Math.max(1, Math.ceil(data.messages.total / data.messages.pageSize)));
 
@@ -110,8 +121,9 @@
 	{#if data.demoMocks.length > 0}
 		<!--
 			Стенд: отказ и восстановление обмена по заказу. Переключатель ставит
-			имитатору сценарий «рвать соединения» — исходящие к нему встают в
-			очередь повторов, — и снимает его. Имитатор общий для всего стенда.
+			имитатору сценарий «рвать соединения» со сроком — исходящие к нему
+			встают в очередь повторов, — и снимает его. Имитатор общий для всего
+			стенда, поэтому забытый отказ снимается сам.
 		-->
 		<section
 			class="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4"
@@ -123,7 +135,8 @@
 				</h2>
 				<p class="text-sm text-muted-foreground">
 					Недоступный имитатор рвёт соединения: исходящие к нему получают сетевую ошибку и ждут
-					повтора. Верните доступность — и «Повторить» у строки доставит то же сообщение.
+					повтора. Через {pluralize(data.demoOfflineMinutes, ['минуту', 'минуты', 'минут'])} он вернётся
+					сам, раньше — «Вернуть сейчас»; после этого «Повторить» у строки доставит то же сообщение.
 				</p>
 			</div>
 			<ul class="flex flex-col gap-2">
@@ -138,13 +151,19 @@
 							<span
 								class={mock.available ? 'text-muted-foreground' : 'text-danger-soft-foreground'}
 							>
-								{mock.available ? 'доступен' : 'недоступен — рвёт соединения'}
+								{#if mock.available}
+									доступен
+								{:else if mock.returnsAt !== null}
+									недоступен — рвёт соединения, вернётся сам через {returnsIn(mock.returnsAt)}
+								{:else}
+									недоступен — рвёт соединения
+								{/if}
 							</span>
 							<form method="POST" action="?/mockAvailability" use:enhance>
 								<input type="hidden" name="system" value={mock.system} />
 								<input type="hidden" name="available" value={mock.available ? 'false' : 'true'} />
 								<Button type="submit" variant="outline" size="sm">
-									{mock.available ? 'Сделать недоступным' : 'Вернуть доступность'}
+									{mock.available ? 'Сделать недоступным' : 'Вернуть сейчас'}
 								</Button>
 							</form>
 						{/if}

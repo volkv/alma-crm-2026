@@ -182,6 +182,12 @@ export async function sendDemoApplication(
  * сообщение в очереди повторов; `mode: "normal"` возвращает имитатор, и
  * следующий повтор доставляет то же сообщение.
  *
+ * Отказ ставится со сроком (`ttlSeconds`, `DEMO_OFFLINE_TTL_SECONDS`): имитатор
+ * общий для всего стенда, и показывающий, ушедший без «Вернуть сейчас»,
+ * иначе оставил бы обмен сломанным всем, кто придёт после. По сроку имитатор
+ * возвращается сам; вернуть раньше — та же кнопка. Сброс демонстрационных
+ * данных тоже возвращает оба имитатора (`restoreDemoMocks`).
+ *
  * Адрес управления — корень того узла, куда CRM доставляет сообщения этого
  * направления (адрес карточки заявки у CMS, адрес заведения группы у LMS):
  * недоступным становится ровно тот, кому CRM пишет. Управление имитатором
@@ -199,12 +205,17 @@ const MOCK_TITLES: Record<DemoMockSystem, string> = {
 	lms: 'Имитатор LMS'
 };
 
+/** Сколько имитатор остаётся недоступным, если его не вернуть раньше. */
+export const DEMO_OFFLINE_TTL_SECONDS = 5 * 60;
+
 /** Состояние имитатора для переключателя. */
 export type DemoMockState = {
 	system: DemoMockSystem;
 	title: string;
 	/** `true` — отвечает, `false` — рвёт соединения; `null` — не узнали. */
 	available: boolean | null;
+	/** Когда недоступный имитатор вернётся сам (ISO); `null` — срока нет или доступен. */
+	returnsAt: string | null;
 	/** Почему состояние не узнать или не переключить; `null` — всё в порядке. */
 	problem: string | null;
 };
@@ -230,7 +241,7 @@ async function scenarioUrl(system: DemoMockSystem): Promise<URL | string> {
 async function postScenario(
 	system: DemoMockSystem,
 	body: Record<string, unknown>
-): Promise<{ available: boolean } | { problem: string }> {
+): Promise<{ available: boolean; returnsAt: string | null } | { problem: string }> {
 	const url = await scenarioUrl(system);
 
 	if (typeof url === 'string') {
@@ -289,11 +300,18 @@ async function postScenario(
 
 	const scenario = isRecord(parsed) && isRecord(parsed.scenario) ? parsed.scenario : null;
 
-	if (scenario === null || (scenario.mode !== 'normal' && scenario.mode !== 'offline')) {
+	if (
+		scenario === null ||
+		(scenario.mode !== 'normal' && scenario.mode !== 'offline') ||
+		(scenario.expiresAt !== null && typeof scenario.expiresAt !== 'string')
+	) {
 		return { problem: 'имитатор ответил не тем, чем отвечает управление сценарием' };
 	}
 
-	return { available: scenario.mode === 'normal' };
+	return {
+		available: scenario.mode === 'normal',
+		returnsAt: scenario.mode === 'offline' ? scenario.expiresAt : null
+	};
 }
 
 /** Можно ли показывать переключатель: только демонстрационный стенд. */
@@ -318,6 +336,7 @@ export async function readDemoMocks(ctx: ActorContext): Promise<DemoMockState[]>
 				system,
 				title: MOCK_TITLES[system],
 				available: 'available' in outcome ? outcome.available : null,
+				returnsAt: 'available' in outcome ? outcome.returnsAt : null,
 				problem: 'problem' in outcome ? outcome.problem : null
 			};
 		})
@@ -338,9 +357,36 @@ export async function setDemoMockAvailability(
 		);
 	}
 
-	const outcome = await postScenario(system, { mode: available ? 'normal' : 'offline' });
+	const outcome = await postScenario(
+		system,
+		available
+			? { mode: 'normal', ttlSeconds: null }
+			: { mode: 'offline', ttlSeconds: DEMO_OFFLINE_TTL_SECONDS }
+	);
 
 	if ('problem' in outcome) {
 		throw new ValidationError(`${MOCK_TITLES[system]}: ${outcome.problem}`);
 	}
+}
+
+/**
+ * Вернуть оба имитатора в `normal` — шаг сброса демонстрационных данных:
+ * стенд после сброса обязан обмениваться, а не рвать соединения по отказу,
+ * оставленному прошлым показом. Право проверяет сам сброс.
+ *
+ * Возвращает, что не удалось, словами — по строке на имитатор; пустой список —
+ * оба вернулись. Сброс данных из-за этого не откатывается: данные уже залиты,
+ * а недоступный имитатор вернётся сам по сроку.
+ */
+export async function restoreDemoMocks(): Promise<string[]> {
+	const outcomes = await Promise.all(
+		DEMO_MOCK_SYSTEMS.map(async (system) => ({
+			system,
+			outcome: await postScenario(system, { mode: 'normal', ttlSeconds: null })
+		}))
+	);
+
+	return outcomes.flatMap(({ system, outcome }) =>
+		'problem' in outcome ? [`${MOCK_TITLES[system]}: ${outcome.problem}`] : []
+	);
 }

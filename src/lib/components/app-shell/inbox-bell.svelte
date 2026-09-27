@@ -34,7 +34,14 @@
 	}
 </script>
 
-<Popover.Root bind:open>
+<Popover.Root
+	bind:open
+	onOpenChange={(next) => {
+		if (next) {
+			inbox.opened();
+		}
+	}}
+>
 	<Popover.Trigger>
 		{#snippet child({ props })}
 			<Button
