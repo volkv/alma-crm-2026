@@ -617,7 +617,10 @@ export type ReportColumnView = {
 	label: string;
 	kind: ReportCellKind;
 	sort: ReportColumnSort;
-	/** «на 31.12.2026» у исторических, «сейчас» у текущих. */
+	/**
+	 * «на 31.12.2026» у исторических, «сейчас» у текущих, «за период 01.10.2026 —
+	 * 31.12.2026» у колонок события движения.
+	 */
 	note: string;
 };
 

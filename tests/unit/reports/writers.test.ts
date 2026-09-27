@@ -219,10 +219,14 @@ describe('страница на печать', () => {
 		expect(html).toContain(`Показаны первые ${REPORT_PDF_ROWS} строк из ${total}`);
 		expect(html).toContain('полном PDF');
 		expect(html).toContain('XLSX');
+		expect(html).not.toContain('содержат одно и то же');
 	});
 
-	it('на выборке меньше потолка о сокращении не пишет', () => {
-		expect(reportHtml(VIEW)).not.toContain('Показаны первые');
+	it('на выборке меньше потолка о сокращении не пишет, а говорит, что виды совпадают', () => {
+		const html = reportHtml(VIEW);
+
+		expect(html).not.toContain('Показаны первые');
+		expect(html).toContain('сводка и полный PDF содержат одно и то же');
 	});
 
 	it('печатает числа обеих диаграмм таблицами, а не отсылает к экрану', () => {
@@ -286,7 +290,10 @@ describe('каждый файл называет свою сборку', () => {
 		expect(html).toContain(`<dt>Идентификатор отчёта</dt><dd>${reportId}</dd>`);
 		expect(html).toMatch(/<dt>Отчёт собран<\/dt><dd>17\.09\.2026/);
 		expect(html).toContain('<dt>Период</dt><dd>01.10.2026 — 31.12.2026</dd>');
-		expect(reportPdfParts(VIEW, 'summary')[0].footer).toContain(reportId);
+		// Номер страницы отделён от идентификатора словом, а не приклеен к нему.
+		expect(reportPdfParts(VIEW, 'summary')[0].footer).toContain(
+			`${reportId} · стр. <span class="pageNumber"></span>`
+		);
 	});
 
 	it('json: идентификатор, момент сборки, срез, период и фильтры', () => {

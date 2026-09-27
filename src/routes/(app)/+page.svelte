@@ -1,5 +1,5 @@
 <script lang="ts">
-	import { formatDayAndMonth } from '$lib/format';
+	import { formatDayAndMonth, formatNumber } from '$lib/format';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import Header from '$lib/components/header.svelte';
 	import ActivityFeed from '$lib/components/home/activity-feed.svelte';
@@ -8,7 +8,8 @@
 	import MyDay from '$lib/components/home/my-day.svelte';
 	import PortfolioBar from '$lib/components/home/portfolio-bar.svelte';
 	import StatTiles from '$lib/components/home/stat-tiles.svelte';
-	import { interactionsHref } from '$lib/components/home/links';
+	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
+	import { singleHref } from '$lib/components/home/links';
 	import { MY_DAY_BASIS_LABELS } from '$lib/contracts/my-day';
 	import { AUDIT_EVENT_LABELS } from './audit/labels';
 	import { STAGE_CATEGORY_LABELS } from './w/[workspace]/interactions/filters';
@@ -19,6 +20,9 @@
 	const overview = $derived(data.overview);
 	const myDay = $derived(data.myDay);
 	const today = $derived(formatDayAndMonth(overview.generatedAt));
+	const lists = $derived(data.lists);
+	/** «Мои» по пространствам: одна ссылка, если свои дела в одном пространстве. */
+	const mineHref = $derived(singleHref(lists.mine));
 </script>
 
 <svelte:head>
@@ -30,9 +34,36 @@
 	description="Что требует внимания сегодня, {today}. {MY_DAY_BASIS_LABELS[myDay.basis]}"
 >
 	{#snippet actions()}
-		<Button variant="outline" href={interactionsHref({ status: 'active', owner: data.user?.id })}>
-			Мои взаимодействия
-		</Button>
+		<!-- «Мои» — те, что ведёте вы, без дел коллег по вашим вузам. Список живёт
+			в пространстве: своя работа в нескольких — выбор пространства. -->
+		{#if mineHref !== null}
+			<Button variant="outline" href={mineHref}>Мои взаимодействия</Button>
+		{:else if lists.mine.length > 1}
+			<DropdownMenu.Root>
+				<DropdownMenu.Trigger>
+					{#snippet child({ props })}
+						<Button {...props} variant="outline">Мои взаимодействия</Button>
+					{/snippet}
+				</DropdownMenu.Trigger>
+				<DropdownMenu.Content align="end">
+					<DropdownMenu.Group>
+						<DropdownMenu.GroupHeading>Те, что ведёте вы</DropdownMenu.GroupHeading>
+						{#each lists.mine as part (part.key)}
+							<DropdownMenu.Item>
+								{#snippet child({ props })}
+									<a {...props} href={part.href}>
+										{part.name}
+										<span class="ml-auto pl-3 text-muted-foreground tabular-nums">
+											{formatNumber(part.count)}
+										</span>
+									</a>
+								{/snippet}
+							</DropdownMenu.Item>
+						{/each}
+					</DropdownMenu.Group>
+				</DropdownMenu.Content>
+			</DropdownMenu.Root>
+		{/if}
 	{/snippet}
 </Header>
 
@@ -51,7 +82,7 @@
 	</div>
 
 	<div class="min-w-0">
-		<MyDay sections={myDay.sections} />
+		<MyDay sections={myDay.sections} listParts={{ overdue: lists.overdue }} />
 	</div>
 
 	<div class="grid min-w-0 gap-4 lg:grid-cols-2 xl:grid-cols-1">
@@ -60,8 +91,12 @@
 			description="Активные взаимодействия по группам стадий процесса"
 			data-tour="home-portfolio"
 		>
-			<StatTiles counters={overview.counters} />
-			<PortfolioBar distribution={overview.distribution} labels={STAGE_CATEGORY_LABELS} />
+			<StatTiles counters={overview.counters} active={lists.active} overdue={lists.overdue} />
+			<PortfolioBar
+				distribution={overview.distribution}
+				labels={STAGE_CATEGORY_LABELS}
+				categoryParts={lists.categories}
+			/>
 		</HomeSection>
 
 		<HomeSection title="Недавняя активность" description="Последние события по взаимодействиям">

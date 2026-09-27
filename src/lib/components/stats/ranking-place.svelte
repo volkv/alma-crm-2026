@@ -3,7 +3,7 @@
 	import type { ResolvedPathname } from '$app/types';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { statPeriodKey } from '$lib/contracts/stats';
-	import type { RankingPlace } from '$lib/contracts/ranking';
+	import { RANKING_FORMULA_NOTE, type RankingPlace } from '$lib/contracts/ranking';
 	import { formatDate, formatNumber } from '$lib/format';
 	import ScoreBreakdown from './score-breakdown.svelte';
 
@@ -46,10 +46,18 @@
 					из {formatNumber(place.total)}, балл {formatNumber(place.entry.score)}
 				</span>
 			</p>
+			{#if place.entry.priorityBonus > 0 || place.entry.factPlace !== place.entry.place}
+				<p class="text-sm text-muted-foreground">
+					По одним фактам: {place.entry.factPlace}-е место, балл {formatNumber(
+						place.entry.factScore
+					)}
+				</p>
+			{/if}
 			<ScoreBreakdown score={place.entry} />
 			<p class="text-xs text-muted-foreground">{place.reason}</p>
 			<p class="text-xs text-muted-foreground">
-				Формула — гипотеза команды, а не формула заказчика; веса настраиваются на экране рейтинга.
+				{RANKING_FORMULA_NOTE} на экране рейтинга. Считается по фактам системы — заявкам с сайта и учебным
+				группам, а не по загруженным снимкам статистики.
 			</p>
 		</div>
 	{/if}

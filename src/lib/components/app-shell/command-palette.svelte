@@ -1,10 +1,13 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import type { Pathname } from '$app/types';
 	import type { LucideIcon } from '$lib/icon';
 	import BuildingIcon from '@lucide/svelte/icons/building';
+	import FilePenLineIcon from '@lucide/svelte/icons/file-pen-line';
 	import GraduationCapIcon from '@lucide/svelte/icons/graduation-cap';
 	import HandshakeIcon from '@lucide/svelte/icons/handshake';
 	import PackageIcon from '@lucide/svelte/icons/package';
+	import UserRoundIcon from '@lucide/svelte/icons/user-round';
 	import * as Command from '$lib/components/ui/command/index.js';
 	import {
 		SEARCH_KINDS,
@@ -13,21 +16,26 @@
 		type SearchHit,
 		type SearchKind
 	} from '$lib/search/contract';
+	import { shortcutMatches, type SearchShortcut } from '$lib/search/shortcuts';
 	import type { NavLink } from './nav-links';
 
 	/**
 	 * Единственная точка «найти что угодно»: `Ctrl`/`⌘` + `K` в любом месте
 	 * приложения. Разделы палитра знает от оболочки — те же и в том же порядке,
-	 * что в меню, — а записи спрашивает у `GET /search`, который отбирает их
-	 * правами и областью доступа того, кто ищет.
+	 * что в меню, — плюс страницы внутри разделов (`$lib/search/shortcuts`), а
+	 * записи спрашивает у `GET /search`, который отбирает их правами и областью
+	 * доступа того, кто ищет.
 	 */
 	let {
 		open = $bindable(false),
-		links = []
+		links = [],
+		shortcuts = []
 	}: {
 		open?: boolean;
 		/** Разделы, открытые этому человеку; отбирает их оболочка. */
 		links?: readonly NavLink[];
+		/** Страницы внутри разделов, открытые этому человеку; отбирает оболочка. */
+		shortcuts?: readonly SearchShortcut[];
 	} = $props();
 
 	/**
@@ -40,11 +48,23 @@
 	/** Куда ведёт группа выдачи и чем она подписана. */
 	const KINDS: Record<
 		SearchKind,
-		{ heading: string; icon: LucideIcon; href: (id: string) => string }
+		{ heading: string; icon: LucideIcon; href: (targetId: string) => string }
 	> = {
 		organization: {
 			heading: 'Организации',
 			icon: BuildingIcon,
+			href: (id) => resolve('/(app)/organizations/[id=uuid]', { id })
+		},
+		person: {
+			heading: 'Люди',
+			icon: UserRoundIcon,
+			href: (id) => resolve('/(app)/people/[id=uuid]', { id })
+		},
+		contract: {
+			// Отдельной страницы у договора нет: он живёт блоком карточки
+			// организации, туда и ведёт строка.
+			heading: 'Договоры',
+			icon: FilePenLineIcon,
 			href: (id) => resolve('/(app)/organizations/[id=uuid]', { id })
 		},
 		interaction: {
@@ -100,6 +120,12 @@
 	);
 
 	/**
+	 * Страницы внутри разделов — только по запросу: в оглавлении с пустой
+	 * строкой им не место, там и так все разделы меню.
+	 */
+	const pages = $derived(short ? [] : shortcuts.filter((page) => shortcutMatches(page, term)));
+
+	/**
 	 * Названия разделов, которые встречаются не по одному разу.
 	 *
 	 * Пространств заказчик заводит сколько нужно, и пункт у каждого называется
@@ -122,6 +148,9 @@
 		...(sections.length === 0
 			? []
 			: [{ key: 'sections', heading: 'Разделы', rows: sections.map(sectionRow) }]),
+		...(pages.length === 0
+			? []
+			: [{ key: 'pages', heading: 'Страницы', rows: pages.map(shortcutRow) }]),
 		...SEARCH_KINDS.flatMap((kind) => {
 			const rows = hits.filter((hit) => hit.kind === kind).map(hitRow);
 
@@ -141,10 +170,22 @@
 		};
 	}
 
+	function shortcutRow(page: SearchShortcut): Row {
+		return {
+			value: `page:${page.href}`,
+			// Путь страницы постоянен и параметров не содержит: `resolve` только
+			// добавит базовый путь — так же, как у разделов меню (`nav-links.ts`).
+			href: resolve(page.href as Pathname & '/'),
+			title: page.label,
+			subtitle: page.section,
+			icon: page.icon
+		};
+	}
+
 	function hitRow(hit: SearchHit): Row {
 		return {
 			value: `${hit.kind}:${hit.id}`,
-			href: KINDS[hit.kind].href(hit.id),
+			href: KINDS[hit.kind].href(hit.targetId),
 			title: hit.title,
 			subtitle: hit.subtitle,
 			icon: KINDS[hit.kind].icon
@@ -238,7 +279,7 @@
 <Command.Dialog
 	bind:open
 	title="Поиск"
-	description="Поиск по разделам, организациям, взаимодействиям, программам и продуктам"
+	description="Поиск по разделам и страницам, организациям (и по домену сайта или почты), людям, договорам, взаимодействиям, программам и продуктам"
 	loop
 	shouldFilter={false}
 >

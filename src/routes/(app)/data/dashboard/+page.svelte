@@ -28,6 +28,7 @@
 		type StatDashboardOrganizationRow,
 		type StatDashboardSortKey
 	} from '$lib/contracts/stats';
+	import { RANKING_FORMULA_NOTE } from '$lib/contracts/ranking';
 	import { formatDate, formatDateTime, formatNumber } from '$lib/format';
 	import type { PageProps } from './$types';
 
@@ -49,6 +50,9 @@
 
 	/** Ссылка на выгрузку: тот же период, что и на экране. */
 	const exportHref = $derived(withPeriod(resolve('/(app)/data/export'), {}));
+
+	/** Блок «Происхождение»: на него ссылается подпись источника у каждого числа. */
+	const SOURCES_ANCHOR = 'dashboard-sources';
 
 	/** Сколько программ показывает дашборд: это верхушка рейтинга, а не отчёт. */
 	const TOP_PROGRAMS = 5;
@@ -151,12 +155,27 @@
 			</InlineHint>
 		{/if}
 
-		<DashboardTiles totals={dashboard.totals} />
+		<!-- Два источника на одном экране: плитки и таблицы — из загруженных
+			снимков статистики, рейтинг — из фактов самой CRM. Числа у них разные
+			по природе, и экран обязан это сказать, а не оставить человеку
+			сравнивать «1 836 обучающихся» с «1 обучающимся у лидера». -->
+		<InlineHint tone="info">
+			<span data-slot="dashboard-sources-note">
+				Плитки и таблицы — из подтверждённых снимков статистики: файлы вузов и системы обучения, их
+				список — в блоке <a
+					href="#{SOURCES_ANCHOR}"
+					class="text-link underline-offset-2 hover:underline">«Происхождение»</a
+				>. Рейтинг считается по другому источнику — фактам CRM: заявкам с сайта и учебным группам,
+				заведённым в системе. Поэтому его числа меньше и с плитками не складываются.
+			</span>
+		</InlineHint>
+
+		<DashboardTiles totals={dashboard.totals} sourcesAnchor={SOURCES_ANCHOR} />
 
 		<div class="grid gap-4 xl:grid-cols-2">
 			<Section
 				title="Топ программ по рейтингу"
-				description="По фактам системы за тот же период: заявки с сайта, потоки, обучающиеся и завершившие. Формула — гипотеза команды, веса настраиваются."
+				description="Источник — факты CRM за тот же период, а не снимки: заявки с сайта, потоки, обучающиеся и завершившие по учебным группам системы. {RANKING_FORMULA_NOTE}."
 			>
 				{#snippet action()}
 					<Button variant="outline" size="sm" href={rankingHref}>Весь рейтинг</Button>
@@ -263,6 +282,8 @@
 		</Section>
 
 		<Section
+			id={SOURCES_ANCHOR}
+			class="scroll-mt-24"
 			data-tour="data-dashboard-origin"
 			title="Происхождение"
 			description="Из каких загрузок сложилась картина периода. Актуальность — это подтверждение импорта, а не момент загрузки файла."

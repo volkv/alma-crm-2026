@@ -21,6 +21,7 @@
 		RANKING_FACT_HINTS,
 		RANKING_FACT_LABELS,
 		RANKING_FACTS,
+		RANKING_FORMULA_NOTE,
 		RANKING_PRIORITY_LEVELS,
 		rankingWeightsSchema,
 		type RankingWeights
@@ -116,12 +117,25 @@
 		<InlineHint tone="info">
 			<span class="flex flex-col gap-1">
 				<span>
-					<strong>Гипотеза команды, а не формула заказчика; веса настраиваются.</strong>
+					<strong>{RANKING_FORMULA_NOTE}.</strong>
 					{describeFormula(ranking.weights)}.
 				</span>
 				<span>
 					{FACTS_TEXT}
 					У группы учитывается один результат — последний, поэтому промежуточный и итоговый не складываются.
+				</span>
+				<span>
+					Места итоговые — вместе с поправкой за ручной приоритет. Если приоритет сдвинул строку,
+					рядом с баллом стоит место по одним фактам.
+				</span>
+				<span data-slot="ranking-source">
+					Источник чисел — факты системы: заявки с сайта и учебные группы, заведённые в CRM. Это не
+					те числа, что на
+					<a
+						href={resolve('/(app)/data/dashboard')}
+						class="text-link underline-offset-2 hover:underline">дашборде</a
+					>: там — загруженные снимки статистики (файлы вузов и системы обучения), и в них
+					обучающиеся всех групп, а не только заведённых в CRM.
 				</span>
 			</span>
 		</InlineHint>

@@ -27,7 +27,12 @@ import {
 	type StatDashboardView,
 	type StatMeasures
 } from '$lib/contracts/stats';
-import { describeFormula, RANKING_FACT_LABELS, RANKING_FACTS } from '$lib/contracts/ranking';
+import {
+	describeFormula,
+	RANKING_FACT_LABELS,
+	RANKING_FACTS,
+	RANKING_FORMULA_NOTE
+} from '$lib/contracts/ranking';
 import { formatDate, formatDateTime, formatIsoDay } from '$lib/format';
 import { spreadsheetText } from '../spreadsheet';
 import { statFileMime } from './format';
@@ -148,12 +153,14 @@ function fillSummary(workbook: ExcelJS.Workbook, view: StatDashboardView, day: s
 
 /**
  * Рейтинг программ по фактам системы. Балл обязан объясняться: рядом с ним
- * лежат сами факты, их вклад и поправка за ручной приоритет, а последней
- * строкой — формула, по которой всё это сложено, с пометкой, что это гипотеза.
+ * лежат сами факты, их вклад, поправка за ручной приоритет и место по одним
+ * фактам, а последней строкой — формула, по которой всё это сложено, с
+ * пометкой, что она — предложение, а не утверждённое правило.
  */
 function fillPrograms(workbook: ExcelJS.Workbook, view: StatDashboardView): void {
 	const sheet = addSheet(workbook, 'Программы', [
 		{ header: 'Место', width: 8 },
+		{ header: 'Место по фактам', width: 16 },
 		{ header: 'Код', width: 16 },
 		{ header: 'Программа', width: 44 },
 		{ header: 'Балл', width: 10 },
@@ -169,6 +176,7 @@ function fillPrograms(workbook: ExcelJS.Workbook, view: StatDashboardView): void
 	for (const entry of view.ranking.programs) {
 		sheet.addRow([
 			entry.place,
+			entry.factPlace,
 			spreadsheetText(entry.code),
 			spreadsheetText(entry.name),
 			entry.score,
@@ -181,9 +189,7 @@ function fillPrograms(workbook: ExcelJS.Workbook, view: StatDashboardView): void
 
 	sheet.addRow([]);
 	sheet.addRow([
-		spreadsheetText(
-			`Гипотеза команды, не формула заказчика; веса настраиваются: ${describeFormula(view.ranking.weights)}`
-		)
+		spreadsheetText(`${RANKING_FORMULA_NOTE}: ${describeFormula(view.ranking.weights)}`)
 	]);
 }
 

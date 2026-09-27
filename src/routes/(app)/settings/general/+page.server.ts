@@ -41,6 +41,14 @@ const FORM_IDS = {
 	enrichment: 'enrichment'
 } as const;
 
+/**
+ * Честная подпись раздела в заголовке страницы (`settings/+layout.svelte`
+ * читает `page.data.settingsDescription`) — вместо унаследованной от таблицы
+ * подразделов (`../sections.ts`), которая называет только первую карточку.
+ * Порядок — тот, в котором карточки идут на странице.
+ */
+const PAGE_DESCRIPTION = 'Вход и сроки сессий, уведомления, внешние источники и демо-стенд';
+
 export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
@@ -71,6 +79,7 @@ export const load: PageServerLoad = async (event) => {
 	]);
 
 	return {
+		settingsDescription: PAGE_DESCRIPTION,
 		bannerForm: await superValidate(banner, zod4(settingSchemas.login_banner), {
 			id: FORM_IDS.banner
 		}),

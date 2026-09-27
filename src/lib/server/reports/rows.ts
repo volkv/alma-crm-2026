@@ -201,16 +201,33 @@ function movementCell(
 	}
 }
 
+/**
+ * Пометка колонки — на какой момент или за какой промежуток её значение.
+ *
+ * Колонки события (есть только в движении) описывают сам переход, случившийся
+ * внутри периода, а не состояние на его конец: пометка «на 30.09.2026» под
+ * «Из стадии» читалась бы как «стадия на конец периода».
+ */
+function columnNote(column: ReportColumnDefinition, period: ReportPeriodDays): string {
+	if (!column.modes.includes('snapshot')) {
+		return `за период ${formatDate(period.from)} — ${formatDate(period.to)}`;
+	}
+
+	return column.sort === 'historical' ? `на ${formatDate(period.to)}` : 'сейчас';
+}
+
+type ReportPeriodDays = { from: string; to: string };
+
 function columnViews(
 	columns: readonly ReportColumnDefinition[],
-	asOfDay: string
+	period: ReportPeriodDays
 ): ReportColumnView[] {
 	return columns.map((column) => ({
 		key: column.key,
 		label: column.label,
 		kind: column.kind,
 		sort: column.sort,
-		note: column.sort === 'historical' ? `на ${formatDate(asOfDay)}` : 'сейчас'
+		note: columnNote(column, period)
 	}));
 }
 
@@ -313,7 +330,7 @@ async function assembleInSnapshot(
 		filters: await describeFilters(tx, query, index.stageName),
 		scope: describeScope(ctx),
 		semantics: reportSemantics(query.mode, query.from, query.to),
-		columns: columnViews(columns, query.to)
+		columns: columnViews(columns, { from: query.from, to: query.to })
 	};
 
 	if (query.mode === 'movement') {

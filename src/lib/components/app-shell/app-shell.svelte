@@ -10,6 +10,7 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Toaster } from '$lib/components/ui/sonner/index.js';
 	import { visibleSections, type NavWorkspace } from '$lib/nav';
+	import { SEARCH_SHORTCUTS } from '$lib/search/shortcuts';
 	import { theme } from '$lib/theme.svelte';
 	import type { SessionUser } from '$lib/server/auth/types';
 	import AppDock from './app-dock.svelte';
@@ -74,6 +75,10 @@
 	// отвечающая 403, — это не навигация.
 	const links = $derived(
 		user === null ? [] : visibleSections(navLinks(workspaces), user.permissions)
+	);
+	// Страницы внутри разделов для палитры — по тому же правилу.
+	const shortcuts = $derived(
+		user === null ? [] : visibleSections(SEARCH_SHORTCUTS, user.permissions)
 	);
 
 	// Колокольчик перечитывается на каждом переходе, и первый раз — при
@@ -275,7 +280,7 @@
 
 <AppDock {links} {user} />
 
-<CommandPalette bind:open={search.open} {links} />
+<CommandPalette bind:open={search.open} {links} {shortcuts} />
 <!-- Тост рисует свой слой со своими переменными: тему ему говорят отдельно,
 	иначе он остаётся светлым посреди тёмной страницы. -->
 <Toaster position="bottom-right" closeButton theme={theme.resolved} />

@@ -15,6 +15,9 @@
 	 *
 	 * Объяснение считается по всему рейтингу, даже когда показана только его
 	 * верхушка: отрыв от соседа снизу у пятой строки — это шестая строка.
+	 *
+	 * Место и балл по одним фактам стоят рядом с итоговыми, когда их сдвинул
+	 * ручной приоритет: решение человека не должно молча решать места.
 	 */
 	let {
 		entries,
@@ -46,9 +49,16 @@
 						<span class="font-medium underline-offset-2 hover:underline">{entry.name}</span>
 						<span class="text-xs text-muted-foreground">{entry.code}</span>
 					</a>
-					<span class="ml-auto flex shrink-0 items-baseline gap-1">
-						<span class="text-xs text-muted-foreground">Балл</span>
-						<span class="font-medium" data-slot="score-value">{formatNumber(entry.score)}</span>
+					<span class="ml-auto flex shrink-0 flex-col items-end">
+						<span class="flex items-baseline gap-1">
+							<span class="text-xs text-muted-foreground">Балл</span>
+							<span class="font-medium" data-slot="score-value">{formatNumber(entry.score)}</span>
+						</span>
+						{#if entry.priorityBonus > 0 || entry.factPlace !== entry.place}
+							<span class="text-xs text-muted-foreground" data-slot="fact-place">
+								по фактам {formatNumber(entry.factScore)}, {entry.factPlace}-е место
+							</span>
+						{/if}
 					</span>
 				</div>
 				<div class="flex flex-col gap-1 pl-7">

@@ -17,7 +17,9 @@ import type { Actions, PageServerLoad } from './$types';
  *
  * Порог и включённые каналы страница показывает, но не правит: они живут в
  * общих настройках под `settings.write` — кто распоряжается стендом, тот и
- * решает, когда система начинает напоминать.
+ * решает, когда система начинает напоминать. Ссылку на них видит только тот,
+ * у кого это право есть, — у остальных вела бы на страницу, которую откроет
+ * отказом.
  */
 export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
@@ -57,7 +59,8 @@ export const load: PageServerLoad = async (event) => {
 		licenseWarningDays,
 		channels,
 		digest,
-		canManage: can(ctx, 'notifications.manage')
+		canManage: can(ctx, 'notifications.manage'),
+		canConfigure: can(ctx, 'settings.write')
 	};
 };
 

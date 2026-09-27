@@ -59,13 +59,45 @@
 
 	const hiddenOnPhone = $derived(columns.filter((column) => !PHONE_COLUMNS.has(column.key)).length);
 
+	/*
+	 * Ширина на широком экране. Строка в одну линию растягивала таблицу по
+	 * самому длинному названию и списку направлений: на 1440 px она занимала
+	 * больше двух тысяч пикселей, и стадия с ответственным уезжали за край.
+	 * Текст переносится, у длинных колонок есть потолок ширины, а числа и даты
+	 * остаются в одну строку — они короткие и читаются только целиком.
+	 * Взаимодействие закреплено слева: при широком наборе колонок, который
+	 * всё же прокручивается, строка не теряет названия.
+	 */
+	const WIDE_HEAD = 'whitespace-normal py-2 align-bottom';
+	const PINNED =
+		'sm:sticky sm:left-0 sm:z-10 sm:bg-surface sm:shadow-[inset_-1px_0_0_var(--color-border)]';
+	const PINNED_ROW_HOVER =
+		'sm:group-hover:bg-[color-mix(in_oklab,var(--color-muted)_50%,var(--color-surface))]';
+
+	/** Потолок ширины содержимого колонки на широком экране. */
+	function widthClass(column: ReportColumnView): string {
+		switch (column.kind) {
+			case 'link':
+				return 'sm:min-w-56 sm:max-w-80';
+			case 'text':
+			case 'list':
+				return 'sm:max-w-48';
+			case 'number':
+			case 'date':
+			case 'datetime':
+				return 'sm:whitespace-nowrap';
+		}
+	}
+
 	/** Класс ячейки: выравнивание числа и её место в записи на телефоне. */
-	function cellClass(column: ReportColumnView, cell: ReportCell): string {
+	function cellClass(column: ReportColumnView, cell: ReportCell, position: number): string {
 		const shown =
 			PHONE_COLUMNS.has(column.key) && !(cell.kind !== 'link' && plainText(cell) === '');
 
 		return cn(
+			'whitespace-normal',
 			column.kind === 'number' && 'text-right',
+			position === 0 && [PINNED, PINNED_ROW_HOVER],
 			STACK_CELL,
 			cell.kind === 'link' ? 'max-sm:basis-full' : 'max-sm:basis-auto max-sm:text-xs',
 			!shown && 'max-sm:hidden'
@@ -110,8 +142,14 @@
 		<Table.Root data-slot="report-table" class={STACK_BLOCK} containerClass={STACK_BLOCK}>
 			<Table.Header class="max-sm:hidden">
 				<Table.Row>
-					{#each columns as column (column.key)}
-						<Table.Head class={column.kind === 'number' ? 'text-right' : undefined}>
+					{#each columns as column, position (column.key)}
+						<Table.Head
+							class={cn(
+								WIDE_HEAD,
+								column.kind === 'number' && 'text-right',
+								position === 0 && PINNED
+							)}
+						>
 							{column.label}
 							<span class="block text-xs font-normal text-faint">{column.note}</span>
 						</Table.Head>
@@ -120,23 +158,26 @@
 			</Table.Header>
 			<Table.Body class={STACK_BLOCK}>
 				{#each rows as row (row.rowKey)}
-					<Table.Row data-row={row.interactionId} class={STACK_ROW}>
+					<Table.Row data-row={row.interactionId} class={cn('group', STACK_ROW)}>
 						{#each row.cells as cell, position (columns[position].key)}
 							{@const column = columns[position]}
-							<Table.Cell class={cellClass(column, cell)}>
+							<Table.Cell class={cellClass(column, cell, position)}>
 								{#if cell.kind === 'link' && cell.value !== null}
 									<!-- Адрес карточки в ячейке абсолютный: он нужен файлам, которые
 									     живут вне приложения. На экране ссылка собирается маршрутом —
 									     так её проверяет сборка, а переход остаётся клиентским. -->
 									<a
-										class="text-link focus-ring hover:text-link-hover max-sm:line-clamp-2 max-sm:font-medium"
+										class={cn(
+											'text-link focus-ring hover:text-link-hover max-sm:line-clamp-2 max-sm:font-medium sm:block',
+											widthClass(column)
+										)}
 										href={resolve('/(app)/interactions/[id=uuid]', { id: row.interactionId })}
 									>
 										{cell.value}
 									</a>
 								{:else}
 									<span class="text-muted-foreground sm:hidden">{column.label}:</span>
-									{plainText(cell)}
+									<span class={cn('sm:block', widthClass(column))}>{plainText(cell)}</span>
 								{/if}
 							</Table.Cell>
 						{/each}

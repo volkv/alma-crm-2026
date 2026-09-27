@@ -2,7 +2,8 @@
 	import CircleCheckIcon from '@lucide/svelte/icons/circle-check';
 	import EmptyState from '$lib/components/empty-state.svelte';
 	import DayCard from './day-card.svelte';
-	import type { MyDaySection } from '$lib/contracts/my-day';
+	import type { MyDayKind, MyDaySection } from '$lib/contracts/my-day';
+	import type { WorkspaceCount } from './links';
 
 	/**
 	 * «Мой день»: что требует внимания сегодня, карточкой на раздел. Порядок
@@ -14,7 +15,14 @@
 	 * соседний. Пустые разделы карточек не получают — их ноль уже виден в
 	 * счётчиках наверху (`day-counters.svelte`).
 	 */
-	let { sections }: { sections: readonly MyDaySection[] } = $props();
+	let {
+		sections,
+		listParts
+	}: {
+		sections: readonly MyDaySection[];
+		/** Разделы, у которых есть отбор в списке, — с частями по пространствам. */
+		listParts: Partial<Record<MyDayKind, readonly WorkspaceCount[]>>;
+	} = $props();
 </script>
 
 {#if sections.length === 0}
@@ -28,7 +36,7 @@
 {:else}
 	<div class="grid items-start gap-4 lg:grid-cols-2" data-slot="my-day">
 		{#each sections as section (section.kind)}
-			<DayCard {section} />
+			<DayCard {section} listParts={listParts[section.kind]} />
 		{/each}
 	</div>
 {/if}

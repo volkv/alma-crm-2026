@@ -9,8 +9,19 @@
 	 * ноль, прочерк — незаполненная колонка, и рядом с ним так и написано.
 	 * Сами числа собирает `statDashboardTiles` — та же функция, по которой
 	 * строится лист «Сводка» в выгрузке.
+	 *
+	 * У каждого числа подписан источник — снимки статистики — и ссылка на их
+	 * список: на том же экране рядом стоит рейтинг по фактам CRM, и без подписи
+	 * два набора чисел читаются как противоречие.
 	 */
-	let { totals }: { totals: StatDashboardTotals } = $props();
+	let {
+		totals,
+		sourcesAnchor
+	}: {
+		totals: StatDashboardTotals;
+		/** Якорь блока с источниками на той же странице. */
+		sourcesAnchor: string;
+	} = $props();
 
 	const tiles = $derived(statDashboardTiles(totals));
 
@@ -47,6 +58,13 @@
 					{extra.label}: {extra.value === null ? '— нет данных' : formatNumber(extra.value)}
 				</span>
 			{/each}
+			<a
+				href="#{sourcesAnchor}"
+				class="mt-auto pt-1 text-xs text-link underline-offset-2 hover:underline"
+				data-slot="tile-source"
+			>
+				Источник: снимки статистики
+			</a>
 		</div>
 	{/each}
 </div>

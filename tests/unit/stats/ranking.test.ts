@@ -57,6 +57,15 @@ describe('балл', () => {
 		expect(ranked.map((entry) => entry.id)).toStrictEqual(['b', 'a']);
 		expect(explainPlace(ranked, 1)).toContain(`На ${4 * WEIGHTS.priorityStep} баллов меньше`);
 		expect(explainPlace(ranked, 0)).toContain('Ручной приоритет 2');
+		// Места по одним фактам: при равных фактах выше тот, чей код меньше, —
+		// итоговое первое место «Вторая» получила приоритетом, и это сказано.
+		expect(ranked.map((entry) => [entry.id, entry.place, entry.factPlace])).toStrictEqual([
+			['b', 1, 2],
+			['a', 2, 1]
+		]);
+		expect(explainPlace(ranked, 0)).toContain(
+			'По одним фактам, без ручного приоритета, — 2-е место'
+		);
 	});
 });
 

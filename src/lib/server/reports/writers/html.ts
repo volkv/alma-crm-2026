@@ -28,7 +28,7 @@ import {
 	type ReportPdfLayout,
 	type ReportView
 } from '$lib/contracts/reports';
-import { formatDate, formatDateTime } from '$lib/format';
+import { formatDate, formatDateTime, pluralize } from '$lib/format';
 
 function escapeHtml(value: string): string {
 	return value
@@ -122,7 +122,8 @@ const STYLE = `
 	* { box-sizing: border-box; }
 	body { font: 10px/1.4 "DejaVu Sans", Arial, sans-serif; color: #10151f; margin: 0; }
 	h1 { font-size: 15px; margin: 0 0 4px; }
-	h2 { font-size: 11px; margin: 12px 0 4px; }
+	h2 { font-size: 11px; margin: 12px 0 4px; break-after: avoid; page-break-after: avoid; }
+	.summary { break-inside: avoid; page-break-inside: avoid; }
 	.rule { font-size: 9px; color: #4b5563; margin: 0 0 8px; }
 	dl { display: grid; grid-template-columns: max-content 1fr; gap: 1px 10px; margin: 0 0 10px; font-size: 9px; }
 	dt { color: #4b5563; }
@@ -162,6 +163,10 @@ type ReportPdfPart = { page: string; footer: string };
  * лист без шапки обязан называть сборку, из которой он взят. Нумерация идёт
  * внутри части — сквозную движок не знает, — поэтому у многочастного файла
  * подвал называет и часть.
+ *
+ * Подвал — одна строка с явными разделителями и словом «стр.»: раскладка
+ * по краям в шаблоне подвала не держалась, и номер страницы печатался вплотную
+ * к идентификатору, так что «…60a1/11» читалось как часть идентификатора.
  */
 function footerHtml(
 	reportId: string,
@@ -169,20 +174,24 @@ function footerHtml(
 	part: number,
 	parts: number
 ): string {
-	const partLabel = parts > 1 ? ` · часть ${part} из ${parts}, стр.` : '';
+	const partLabel = parts > 1 ? `часть ${part} из ${parts} · ` : '';
 
 	return `<!doctype html><html><head><meta charset="utf-8"><style>
-		body { font: 8px "DejaVu Sans", Arial, sans-serif; color: #4b5563; width: 100%; margin: 0 0.4in; }
-		.line { display: flex; justify-content: space-between; }
-	</style></head><body><div class="line">
-		<span>Отчёт по взаимодействиям · ${REPORT_PDF_LAYOUT_LABELS[layout].toLowerCase()} · ${escapeHtml(reportId)}</span>
-		<span>${partLabel} <span class="pageNumber"></span>/<span class="totalPages"></span></span>
-	</div></body></html>`;
+		body { font: 8px "DejaVu Sans", Arial, sans-serif; color: #4b5563; margin: 0 0.4in; }
+	</style></head><body><div>Отчёт по взаимодействиям · ${REPORT_PDF_LAYOUT_LABELS[layout].toLowerCase()} · ${escapeHtml(reportId)} · ${partLabel}стр. <span class="pageNumber"></span> из <span class="totalPages"></span></div></body></html>`;
 }
 
 /** Сколько строк таблицы печатает PDF этого вида. */
 function pdfRowCount(view: ReportView, layout: ReportPdfLayout): number {
 	return layout === 'full' ? view.rows.length : Math.min(view.rows.length, REPORT_PDF_ROWS);
+}
+
+/**
+ * Пометка о совпадении видов: при выборке не длиннее `REPORT_PDF_ROWS` сводка
+ * печатает всю таблицу, как и полный отчёт.
+ */
+function sameContentNote(rowCount: number): string {
+	return `В выборке ${pluralize(rowCount, ['строка', 'строки', 'строк'])} — не больше ${REPORT_PDF_ROWS}, поэтому сводка и полный PDF содержат одно и то же.`;
 }
 
 /** Вид PDF словами — для заголовка и шапки условий. */
@@ -241,10 +250,14 @@ function headerHtml(view: ReportView, layout: ReportPdfLayout): string {
 
 	// Пометка о сокращении стоит над таблицей, а не под ней: читающий обязан
 	// узнать, что строк больше, до того, как начнёт считать по видимым.
+	// Выборка не длиннее сводки — сводка и полный PDF печатают одно и то же.
+	// Без пометки два файла с разными названиями ищут друг в друге разницу.
 	const cut =
 		printed < view.rows.length
 			? `<p class="cut">Показаны первые ${printed} строк из ${view.rows.length}; вся таблица — в полном PDF и в выгрузках XLSX и JSON по той же ссылке.</p>`
-			: '';
+			: view.rows.length <= REPORT_PDF_ROWS
+				? `<p class="rule">${escapeHtml(sameContentNote(view.rows.length))}</p>`
+				: '';
 
 	return `<h1>Отчёт по взаимодействиям — ${REPORT_PDF_LAYOUT_LABELS[layout].toLowerCase()}</h1>
 	<p class="rule">${escapeHtml(view.meta.semantics)}</p>

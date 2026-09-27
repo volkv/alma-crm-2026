@@ -4,8 +4,9 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { MY_DAY_SECTIONS, type MyDayItem, type MyDaySection } from '$lib/contracts/my-day';
 	import { formatNumber } from '$lib/format';
-	import { interactionHref, interactionsHref, organizationHref } from './links';
+	import { interactionHref, organizationHref, singleHref, type WorkspaceCount } from './links';
 	import { MY_DAY_KIND_VIEW, myDayAnchor } from './my-day-kinds';
+	import WorkspaceParts from './workspace-parts.svelte';
 
 	/**
 	 * Карточка раздела «Моего дня»: заголовок со счётчиком, первые строки и
@@ -20,7 +21,17 @@
 	 * она ведёт в карточку, где действие и выбирают, и глагол обещал бы то,
 	 * чего нажатие не делает.
 	 */
-	let { section }: { section: MyDaySection } = $props();
+	let {
+		section,
+		listParts = []
+	}: {
+		section: MyDaySection;
+		/**
+		 * Тот же набор в списках пространств — у раздела, для которого у списка
+		 * есть отбор. Пусто — отбора нет, и карточка раскрывается на месте.
+		 */
+		listParts?: readonly WorkspaceCount[];
+	} = $props();
 
 	/** Сколько строк видно сразу: четыре карточки по три строки — один экран ноутбука. */
 	const FOLDED = 3;
@@ -34,13 +45,16 @@
 
 	/**
 	 * Полный набор есть в списке только у просрочки — у него фильтр
-	 * `overdue`. У остальных разделов списка с таким отбором нет, поэтому
-	 * карточка раскрывается на месте до всех строк, что прислал сервер
+	 * `overdue`, и главная приносит его части по пространствам (`listParts`).
+	 * Работа в одном пространстве — одна ссылка «Все N в списке»; в нескольких
+	 * — ссылка на каждую часть: сумма частей равна числу раздела.
+	 *
+	 * У остальных разделов списка с таким отбором нет, поэтому карточка
+	 * раскрывается на месте до всех строк, что прислал сервер
 	 * (`MY_DAY_SECTION_LIMIT`), и честно говорит, сколько осталось за ними.
 	 */
-	const listHref = $derived(
-		section.kind === 'overdue' ? interactionsHref({ status: 'active', overdue: true }) : null
-	);
+	const hasList = $derived(listParts.length > 0);
+	const listHref = $derived(singleHref(listParts));
 	const canExpand = $derived(section.items.length > FOLDED);
 	/** Строки, которых сервер не прислал: их видно только в списке или не видно вовсе. */
 	const beyond = $derived(section.total - section.items.length);
@@ -112,8 +126,10 @@
 		{/each}
 	</ul>
 
-	{#if (listHref !== null && section.total > shown.length) || canExpand || beyond > 0}
-		<footer class="mt-auto flex items-center gap-3 border-t border-border px-4 py-2 text-xs">
+	{#if (hasList && section.total > shown.length) || canExpand || beyond > 0}
+		<footer
+			class="mt-auto flex flex-wrap items-center gap-x-3 gap-y-1 border-t border-border px-4 py-2 text-xs"
+		>
 			{#if listHref !== null}
 				<a
 					href={listHref}
@@ -121,6 +137,9 @@
 				>
 					Все {formatNumber(section.total)} в списке
 				</a>
+			{:else if hasList}
+				<span class="text-muted-foreground">Все {formatNumber(section.total)} в списках:</span>
+				<WorkspaceParts parts={listParts} label={meta.title} />
 			{:else}
 				{#if canExpand}
 					<button

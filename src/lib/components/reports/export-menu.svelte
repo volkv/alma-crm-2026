@@ -13,7 +13,7 @@
 		REPORT_PDF_ROWS,
 		type ReportPdfLayout
 	} from '$lib/contracts/reports';
-	import { formatNumber } from '$lib/format';
+	import { formatNumber, pluralize } from '$lib/format';
 	import { exportHref } from './query';
 
 	/**
@@ -29,10 +29,23 @@
 	/** Выше потолка полного PDF сервер ответил бы отказом: вся таблица — в XLSX. */
 	const fullPdfTooLarge = $derived(rowCount > REPORT_PDF_FULL_MAX_ROWS);
 
-	const pdfHints: Record<ReportPdfLayout, string> = {
-		summary: `Итоги, числа диаграмм и первые ${REPORT_PDF_ROWS} строк таблицы`,
-		full: `Итоги, числа диаграмм и вся таблица выборки — до ${formatNumber(REPORT_PDF_FULL_MAX_ROWS)} строк`
-	};
+	/**
+	 * Выборка не длиннее сводки: оба вида PDF печатают всю таблицу, и меню
+	 * говорит это до скачивания, а не оставляет искать разницу в двух файлах.
+	 */
+	const pdfSame = $derived(rowCount <= REPORT_PDF_ROWS);
+
+	const pdfHints: Record<ReportPdfLayout, string> = $derived(
+		pdfSame
+			? {
+					summary: `Итоги, числа диаграмм и вся таблица — ${pluralize(rowCount, ['строка', 'строки', 'строк'])}`,
+					full: `Совпадает со сводкой: в выборке не больше ${REPORT_PDF_ROWS} строк`
+				}
+			: {
+					summary: `Итоги, числа диаграмм и первые ${REPORT_PDF_ROWS} строк таблицы`,
+					full: `Итоги, числа диаграмм и вся таблица выборки — до ${formatNumber(REPORT_PDF_FULL_MAX_ROWS)} строк`
+				}
+	);
 
 	const formatHints: Record<Exclude<(typeof REPORT_FORMATS)[number], 'pdf'>, string> = {
 		xlsx: 'Книга: таблица, фильтры и числа диаграмм',

@@ -16,14 +16,16 @@
  * два рассказа об одних и тех же людях, и сложить их значит посчитать людей
  * дважды.
  *
- * **Формула — гипотеза команды**, а не формула заказчика: веса подобраны так,
- * чтобы поток весил как небольшая группа, а завершивший — вдвое больше
- * записавшегося. Веса хранятся настройкой и меняются без выпуска; экран
- * показывает и формулу, и разложение балла каждой строки.
+ * **Формула — предложение, настраивается**: заказчиком она не утверждена, и
+ * экран не выдаёт её за утверждённую. Веса подобраны так, чтобы поток весил
+ * как небольшая группа, а завершивший — вдвое больше записавшегося. Веса
+ * хранятся настройкой и меняются без выпуска; экран показывает и формулу, и
+ * разложение балла каждой строки.
  *
  * Ручной приоритет программы (`programs.priority`) — явная поправка, а не
- * скрытый множитель: он добавляет баллы отдельным слагаемым, и на экране видно,
- * сколько места программа получила за счёт решения человека.
+ * скрытый множитель: он добавляет баллы отдельным слагаемым. Поэтому у каждой
+ * строки два места — по одним фактам и итоговое, с поправкой, — и на экране
+ * видно, сколько мест программа получила за счёт решения человека.
  */
 import { z } from 'zod';
 import { formatNumber, pluralize } from '$lib/format';
@@ -153,21 +155,61 @@ export type RankingSubject = {
 	organizationCount: number;
 };
 
-export type RankingEntry = RankingScore & Omit<RankingSubject, 'priority'> & { place: number };
+export type RankingEntry = RankingScore &
+	Omit<RankingSubject, 'priority'> & {
+		/** Итоговое место — по баллу вместе с поправкой за ручной приоритет. */
+		place: number;
+		/** Балл одних фактов, без поправки: `score − priorityBonus`. */
+		factScore: number;
+		/**
+		 * Место по одним фактам. Отличается от `place` ровно тогда, когда места
+		 * решил ручной приоритет, — и экран обязан это показать, а не спрятать в
+		 * итоговом порядке.
+		 */
+		factPlace: number;
+	};
+
+type Scored = RankingScore & Omit<RankingSubject, 'priority'> & { factScore: number };
 
 /**
- * Места по баллу. Равные баллы разводятся кодом: иначе порядок зависел бы от
+ * Порядок по баллу. Равные баллы разводятся кодом: иначе порядок зависел бы от
  * того, в каком порядке их вернула база, и одна и та же ссылка показывала бы
  * разные места.
+ */
+function placesBy(
+	entries: readonly Scored[],
+	value: (entry: Scored) => number
+): Map<string, number> {
+	const ordered = [...entries].sort(
+		(left, right) => value(right) - value(left) || left.code.localeCompare(right.code)
+	);
+
+	return new Map(ordered.map((entry, index) => [entry.id, index + 1]));
+}
+
+/**
+ * Места по баллу: итоговое (с поправкой за приоритет) и по одним фактам.
+ * Строки идут в порядке итогового места.
  */
 export function rankSubjects(
 	subjects: readonly RankingSubject[],
 	weights: RankingWeights
 ): RankingEntry[] {
-	return subjects
-		.map((subject) => ({ ...subject, ...scoreFacts(subject.facts, weights, subject.priority) }))
-		.sort((left, right) => right.score - left.score || left.code.localeCompare(right.code))
-		.map((entry, index) => ({ ...entry, place: index + 1 }));
+	const scored: Scored[] = subjects.map((subject) => {
+		const score = scoreFacts(subject.facts, weights, subject.priority);
+
+		return { ...subject, ...score, factScore: score.score - score.priorityBonus };
+	});
+	const places = placesBy(scored, (entry) => entry.score);
+	const factPlaces = placesBy(scored, (entry) => entry.factScore);
+
+	return scored
+		.map((entry) => ({
+			...entry,
+			place: places.get(entry.id) as number,
+			factPlace: factPlaces.get(entry.id) as number
+		}))
+		.sort((left, right) => left.place - right.place);
 }
 
 const POINTS: [string, string, string] = ['балл', 'балла', 'баллов'];
@@ -227,8 +269,35 @@ export function explainPlace(entries: readonly RankingEntry[], index: number): s
 		);
 	}
 
+	// Без поправки и без сдвига фраза про «место по фактам» повторяла бы место.
+	if (entry.priorityBonus > 0 || entry.factPlace !== entry.place) {
+		parts.push(factPlaceText(entry));
+	}
+
 	return parts.join(' ');
 }
+
+/**
+ * Место по одним фактам словами: совпадает ли оно с итоговым и насколько его
+ * сдвинул ручной приоритет — вверх своей поправкой или вниз чужой.
+ */
+export function factPlaceText(entry: RankingEntry): string {
+	if (entry.factPlace === entry.place) {
+		return `По одним фактам, без ручного приоритета, — то же ${entry.factPlace}-е место.`;
+	}
+
+	const moved = entry.factPlace - entry.place;
+	const direction = moved > 0 ? 'поднял' : 'опустил';
+
+	return `По одним фактам, без ручного приоритета, — ${entry.factPlace}-е место: приоритет ${direction} строку на ${pluralize(Math.abs(moved), ['место', 'места', 'мест'])}.`;
+}
+
+/**
+ * Как экран и выгрузка называют статус формулы: заказчиком она не утверждена,
+ * и выдавать её за утверждённую нельзя. Одна строка на все места, где о
+ * формуле говорится, — иначе пересказы разойдутся.
+ */
+export const RANKING_FORMULA_NOTE = 'Формула рейтинга — предложение, настраивается';
 
 /** Формула словами и числами — одной строкой над таблицей и в выгрузке. */
 export function describeFormula(weights: RankingWeights): string {

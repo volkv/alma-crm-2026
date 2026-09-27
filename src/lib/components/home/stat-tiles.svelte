@@ -3,16 +3,34 @@
 	import { formatNumber } from '$lib/format';
 	import type { OverviewCounters } from '$lib/server/interactions/overview';
 	import { cn } from '$lib/utils';
-	import { interactionsHref } from './links';
+	import { singleHref, type WorkspaceCount } from './links';
+	import WorkspaceParts from './workspace-parts.svelte';
 
 	/**
 	 * Портфель в шести числах: сколько в работе, сколько горит и сколько уже
 	 * позади. Плитка, у которой есть такой же набор в списке, — ссылка: число
 	 * без возможности увидеть, из чего оно сложилось, заставляет верить на слово.
+	 * Если работа в нескольких пространствах, ссылки — у частей числа под ним
+	 * (`WorkspaceParts`): список живёт в пространстве, и одной ссылкой весь
+	 * набор не открыть.
+	 *
+	 * У паузы, помех, тишины и завершённых за 30 дней такого отбора в списке
+	 * нет, и плитка не притворяется ссылкой: ссылка на список без этого отбора
+	 * показала бы другое число.
 	 *
 	 * Считает числа сервер (`getWorkOverview`), компонент только показывает их.
 	 */
-	let { counters }: { counters: OverviewCounters } = $props();
+	let {
+		counters,
+		active,
+		overdue
+	}: {
+		counters: OverviewCounters;
+		/** «В работе» по пространствам — теми же списками, куда ведут ссылки. */
+		active: readonly WorkspaceCount[];
+		/** «Просроченные» по пространствам. */
+		overdue: readonly WorkspaceCount[];
+	} = $props();
 
 	type Tile = {
 		label: string;
@@ -20,8 +38,10 @@
 		/** Чем число является: подпись объясняет, что именно посчитано. */
 		hint: string;
 		tone: 'neutral' | 'danger' | 'warning' | 'success';
-		/** Список с тем же набором; `null` — такого фильтра в списке нет. */
+		/** Список с тем же набором; `null` — такого фильтра в списке нет или частей несколько. */
 		href: ResolvedPathname | null;
+		/** Части по пространствам со ссылками; пусто — отбора в списке нет. */
+		parts: readonly WorkspaceCount[];
 	};
 
 	const tiles = $derived<Tile[]>([
@@ -30,42 +50,48 @@
 			value: counters.active,
 			hint: 'активных взаимодействий',
 			tone: 'neutral',
-			href: interactionsHref({ status: 'active' })
+			href: singleHref(active),
+			parts: active
 		},
 		{
 			label: 'Просроченные',
 			value: counters.overdue,
 			hint: 'срок стадии прошёл',
 			tone: 'danger',
-			href: interactionsHref({ status: 'active', overdue: true })
+			href: singleHref(overdue),
+			parts: overdue
 		},
 		{
 			label: 'На паузе',
 			value: counters.paused,
 			hint: 'часы стадии остановлены',
 			tone: 'neutral',
-			href: null
+			href: null,
+			parts: []
 		},
 		{
 			label: 'С помехами',
 			value: counters.blocked,
 			hint: 'есть открытая помеха',
 			tone: 'warning',
-			href: null
+			href: null,
+			parts: []
 		},
 		{
 			label: 'Тишина',
 			value: counters.stale,
 			hint: 'событий нет дольше нормы',
 			tone: 'neutral',
-			href: null
+			href: null,
+			parts: []
 		},
 		{
 			label: 'Завершённые',
 			value: counters.completedRecently,
 			hint: 'за последние 30 дней',
 			tone: 'success',
-			href: interactionsHref({ status: 'completed' })
+			href: null,
+			parts: []
 		}
 	]);
 
@@ -102,6 +128,7 @@
 		{#if tile.href === null}
 			<div class="flex min-w-0 flex-col bg-surface px-4 py-2.5">
 				{@render body(tile)}
+				<WorkspaceParts parts={tile.parts} label={tile.label} />
 			</div>
 		{:else}
 			<a

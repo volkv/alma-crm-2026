@@ -10,23 +10,42 @@ import type { InteractionStatus, StageCategory } from '$lib/contracts/interactio
  * Имена параметров те же, что читает список (`interactions/filters.ts`): адрес
  * — это контракт между двумя страницами, и придумывать для него второй словарь
  * нельзя.
+ *
+ * Список живёт в пространстве, а сводка считает по всем пространствам сразу.
+ * Поэтому ссылка — всегда в конкретное пространство, а число плитки, если
+ * работа есть в нескольких, раскладывается по ним (`WorkspaceCount`): сумма
+ * частей равна плитке, и каждая часть — ровно столько строк, сколько в списке
+ * по её ссылке. Прежний адрес `/interactions` уводил в одно пространство и
+ * показывал там часть числа.
  */
 export type InteractionsFilter = {
-	status?: InteractionStatus;
+	status: InteractionStatus;
 	stageCategory?: StageCategory;
 	overdue?: boolean;
 	/** Ответственный: «мои» — это отбор по себе, как аватаркой над списком. */
 	owner?: string;
 };
 
-const LIST_PATH = resolve('/interactions');
+/** Часть числа плитки, приходящаяся на одно пространство, и ссылка на неё. */
+export type WorkspaceCount = {
+	key: string;
+	name: string;
+	count: number;
+	href: ResolvedPathname;
+};
 
-export function interactionsHref(filter: InteractionsFilter): ResolvedPathname {
+/**
+ * Список пространства под фильтром плитки. Всегда таблицей: на доске нет
+ * фильтра стадии, завершённых она не показывает, а в колонке видна не каждая
+ * запись — число на плитке обязано совпасть со строками, а их считает таблица.
+ */
+export function interactionsHref(
+	workspaceKey: string,
+	filter: InteractionsFilter
+): ResolvedPathname {
 	const params = new URLSearchParams();
 
-	if (filter.status !== undefined) {
-		params.set('status', filter.status);
-	}
+	params.set('status', filter.status);
 
 	if (filter.stageCategory !== undefined) {
 		params.set('stage', filter.stageCategory);
@@ -40,22 +59,21 @@ export function interactionsHref(filter: InteractionsFilter): ResolvedPathname {
 		params.set('owner', filter.owner);
 	}
 
-	// Доска этот набор не покажет: фильтра стадии у неё нет (колонки и есть
-	// стадии), а у завершённых и отменённых нет текущей стадии, и на доске они
-	// не стоят. Число на плитке обязано совпасть со списком — туда ведёт
-	// таблица. Остальное открывается как обычно: прошлым выбором или доской.
-	if (
-		filter.stageCategory !== undefined ||
-		(filter.status !== undefined && filter.status !== 'active')
-	) {
-		params.set('view', 'table');
-	}
+	params.set('view', 'table');
 
-	const query = params.toString();
+	const path = resolve('/(app)/w/[workspace]/interactions', { workspace: workspaceKey });
 
-	// Путь известен и постоянен, `resolve` позвали с литералом выше; меняется
-	// только строка запроса, а её типа в `ResolvedPathname` нет.
-	return (query === '' ? LIST_PATH : `${LIST_PATH}?${query}`) as ResolvedPathname;
+	// Меняется только строка запроса, а её типа в `ResolvedPathname` нет.
+	return `${path}?${params.toString()}` as ResolvedPathname;
+}
+
+/**
+ * Куда ведёт плитка целиком: в список, если вся работа в одном пространстве.
+ * Если в нескольких — `null`: одной ссылкой такой набор не открыть, и плитка
+ * показывает части по пространствам.
+ */
+export function singleHref(parts: readonly WorkspaceCount[]): ResolvedPathname | null {
+	return parts.length === 1 ? parts[0].href : null;
 }
 
 /** Карточка взаимодействия: из любой строки сводки открывается она же. */

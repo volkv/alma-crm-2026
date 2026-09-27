@@ -14,7 +14,13 @@ import type { RequestEvent } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { SessionUser } from '$lib/server/auth/types';
-import { interactionParties, interactions } from '$lib/server/db/schema';
+import {
+	affiliations,
+	contracts,
+	interactionParties,
+	interactions,
+	organizations
+} from '$lib/server/db/schema';
 import {
 	SEARCH_GROUP_LIMIT,
 	searchResultSchema,
@@ -24,6 +30,7 @@ import {
 import {
 	insertInteractionWithStage,
 	insertOrganization,
+	insertPerson,
 	insertUser,
 	scopedActor,
 	startTestDatabase,
@@ -119,7 +126,7 @@ describe('что поиск находит', () => {
 		const hits = await found(asUser(testActor()), 'академия связи', 'organization');
 
 		expect(hits).toEqual([
-			{ kind: 'organization', id, title: `${MARK} академия связи`, subtitle: null }
+			{ kind: 'organization', id, targetId: id, title: `${MARK} академия связи`, subtitle: null }
 		]);
 	});
 
@@ -135,6 +142,7 @@ describe('что поиск находит', () => {
 			{
 				kind: 'organization',
 				id,
+				targetId: id,
 				title: `${MARK} технический университет`,
 				subtitle: 'ИНН 7714236875'
 			}
@@ -156,6 +164,7 @@ describe('что поиск находит', () => {
 			{
 				kind: 'interaction',
 				id: interactionId,
+				targetId: interactionId,
 				title: `${MARK} программа стажировок`,
 				subtitle: `${MARK} колледж`
 			}
@@ -215,6 +224,121 @@ describe('область доступа в поиске', () => {
 
 		const all = await found(asUser(testActor()), MARK, 'interaction');
 		expect(all.map((hit) => hit.id).sort()).toEqual([own, alien].sort());
+	});
+});
+
+describe('люди, договоры и домены — в той же области, что их разделы', () => {
+	/** Вуз в области менеджера и чужой вуз — с человеком, договором и сайтом у каждого. */
+	async function twoUniversities() {
+		const mine = await insertOrganization(database.db, { shortName: `${MARK} мой вуз` });
+		const foreign = await insertOrganization(database.db, { shortName: `${MARK} чужой вуз` });
+
+		await database.db
+			.update(organizations)
+			.set({ website: 'https://www.my-univ.example.ru/' })
+			.where(eq(organizations.id, mine));
+		await database.db
+			.update(organizations)
+			.set({ website: 'https://alien-univ.example.ru' })
+			.where(eq(organizations.id, foreign));
+
+		const own = await insertPerson(database.db, {
+			lastName: `${MARK}Своякова`,
+			email: 'svoyakova@my-univ.example.ru'
+		});
+		const alien = await insertPerson(database.db, {
+			lastName: `${MARK}Чужакова`,
+			email: 'chuzhakova@alien-univ.example.ru'
+		});
+
+		await database.db.insert(affiliations).values([
+			{
+				personId: own,
+				organizationId: mine,
+				position: 'Проректор',
+				roleKind: 'vice_rector',
+				validFrom: '2026-01-01'
+			},
+			{
+				personId: alien,
+				organizationId: foreign,
+				position: 'Проректор',
+				roleKind: 'vice_rector',
+				validFrom: '2026-01-01'
+			}
+		]);
+
+		const [ownContract, alienContract] = await database.db
+			.insert(contracts)
+			.values([
+				{ organizationId: mine, number: `${MARK}-Д-001` },
+				{ organizationId: foreign, number: `${MARK}-Д-002` }
+			])
+			.returning({ id: contracts.id });
+
+		const viewer = await scopedActor(database.db, { roleId: 'manager', organizationIds: [mine] });
+
+		return { mine, foreign, own, alien, ownContract, alienContract, viewer: asUser(viewer) };
+	}
+
+	it('находит человека по ФИО только в своей области и без контактов в выдаче', async () => {
+		const { own, alien, viewer } = await twoUniversities();
+
+		const hits = await found(viewer, `${MARK}`, 'person');
+
+		expect(hits).toEqual([
+			{
+				kind: 'person',
+				id: own,
+				targetId: own,
+				title: `${MARK}Своякова Тест`,
+				subtitle: `${MARK} мой вуз`
+			}
+		]);
+
+		const all = await found(asUser(testActor()), `${MARK}`, 'person');
+		expect(all.map((hit) => hit.id).sort()).toEqual([own, alien].sort());
+	});
+
+	it('находит человека по точной почте только тому, кому контакты открыты без маски', async () => {
+		const { own } = await twoUniversities();
+		const email = 'svoyakova@my-univ.example.ru';
+
+		const open = await found(asUser(testActor()), email, 'person');
+		expect(open.map((hit) => hit.id)).toEqual([own]);
+
+		const masked = testActor({
+			permissions: ['people.read', 'organizations.read', 'interactions.read']
+		});
+		expect(await found(asUser(masked), email, 'person')).toEqual([]);
+	});
+
+	it('находит договор по номеру в своей области и ведёт в карточку организации', async () => {
+		const { mine, ownContract, viewer } = await twoUniversities();
+
+		const hits = await found(viewer, `${MARK}-Д-00`, 'contract');
+
+		expect(hits).toEqual([
+			{
+				kind: 'contract',
+				id: ownContract.id,
+				targetId: mine,
+				title: `Договор № ${MARK}-Д-001`,
+				subtitle: `${MARK} мой вуз`
+			}
+		]);
+	});
+
+	it('находит организацию по домену почты и сайта в своей области', async () => {
+		const { mine, foreign, viewer } = await twoUniversities();
+
+		const byEmail = await found(viewer, 'rector@my-univ.example.ru', 'organization');
+		expect(byEmail.map((hit) => hit.id)).toEqual([mine]);
+
+		expect(await found(viewer, 'alien-univ.example.ru', 'organization')).toEqual([]);
+
+		const all = await found(asUser(testActor()), 'alien-univ.example.ru', 'organization');
+		expect(all.map((hit) => hit.id)).toEqual([foreign]);
 	});
 });
 
