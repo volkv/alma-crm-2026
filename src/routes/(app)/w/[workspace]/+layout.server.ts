@@ -2,6 +2,7 @@ import { error } from '@sveltejs/kit';
 import { actorFromEvent } from '$lib/server/actor';
 import { getDb } from '$lib/server/db';
 import { NotFoundError } from '$lib/server/errors';
+import { readActiveModules } from '$lib/server/platform/workspace-modules';
 import { canEnterWorkspace } from '$lib/server/rbac';
 import { readWorkflowForWorkspace, readWorkspaceByKey } from '$lib/server/stages/process';
 import type { LayoutServerLoad } from './$types';
@@ -40,7 +41,10 @@ export const load: LayoutServerLoad = async (event) => {
 		error(404, 'Пространство не найдено');
 	}
 
-	const workflow = await readWorkflowForWorkspace(db, workspace.id);
+	const [workflow, modules] = await Promise.all([
+		readWorkflowForWorkspace(db, workspace.id),
+		readActiveModules(workspace.id)
+	]);
 
 	return {
 		workspace: {
@@ -48,7 +52,12 @@ export const load: LayoutServerLoad = async (event) => {
 			key: workspace.key,
 			name: workspace.name,
 			/** Процесс назначен: без него работать здесь нечем, и это говорит доска. */
-			hasWorkflow: workflow !== null
+			hasWorkflow: workflow !== null,
+			/**
+			 * Действующие модули: включённые и нужные стадиям процесса. Страницы
+			 * модулей ветки проверяют по ним, подключён ли модуль.
+			 */
+			modules: modules.active
 		}
 	};
 };

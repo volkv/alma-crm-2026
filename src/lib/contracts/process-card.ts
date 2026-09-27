@@ -12,44 +12,28 @@
  * контрагента — вуз, физическое лицо, юридическое лицо.
  */
 import { z } from 'zod';
+import { PANEL_CATALOG, PANEL_KEYS, type PanelKey } from '$lib/platform/registry';
 import { DOCUMENT_TEMPLATE_KEYS, type DocumentTemplateKey } from './documents';
 
 /**
- * Каталог панелей. Порядок здесь — порядок на экране: сначала сроки и
- * коммерческие условия, потом обучение, в конце документы.
+ * Каталог панелей — панели ядра и всех установленных модулей
+ * (`$lib/platform/registry`). Порядок здесь — порядок на экране: сначала сроки
+ * и коммерческие условия, потом обучение, в конце документы. Своих литералов у
+ * состава карточки больше нет: ключи панелей объявляют манифесты модулей, и
+ * модуль, добавленный в `crm.config.ts`, попадает в каталог без правки ядра.
  */
-export const CARD_PANELS = [
-	'terms',
-	'contract',
-	'payment',
-	'learners',
-	'learning',
-	'training_document',
-	'documents'
-] as const;
+export const CARD_PANELS = PANEL_KEYS;
 
-export type CardPanel = (typeof CARD_PANELS)[number];
+export type CardPanel = PanelKey;
 
-export const CARD_PANEL_LABELS: Record<CardPanel, string> = {
-	terms: 'Сроки',
-	contract: 'Договор с позициями и лицензиями',
-	payment: 'Стоимость и оплата',
-	learners: 'Слушатели',
-	learning: 'Группа в системе обучения',
-	training_document: 'Документ об обучении',
-	documents: 'Документы'
-};
+export const CARD_PANEL_LABELS = Object.fromEntries(
+	PANEL_CATALOG.map((panel) => [panel.key, panel.label])
+) as Record<CardPanel, string>;
 
 /** Что панель показывает — подсказка в редакторе процесса. */
-export const CARD_PANEL_HINTS: Record<CardPanel, string> = {
-	terms: 'У вуза — срок соглашения и учебный год, у лица — период обучения',
-	contract: 'Договор контрагента, выбранные позиции, лицензии и их передача',
-	payment: 'Отметка «Оплата получена» из чек-листа процесса; стоимость в записи не хранится',
-	learners: 'Сколько слушателей заявлено, зачислено, окончило и отчислено — по данным потоков',
-	learning: 'Потоки в системе обучения и заявка на новый',
-	training_document: 'Документы вида «Документ об обучении», приложенные к делу',
-	documents: 'Все документы дела, загрузка и сборка по шаблону'
-};
+export const CARD_PANEL_HINTS = Object.fromEntries(
+	PANEL_CATALOG.map((panel) => [panel.key, panel.hint])
+) as Record<CardPanel, string>;
 
 /** Набор панелей и шаблонов процесса — то, что читает карточка. */
 export type ProcessCard = {

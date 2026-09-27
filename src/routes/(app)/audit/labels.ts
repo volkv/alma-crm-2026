@@ -97,6 +97,8 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'workspaces.renamed': 'Пространство переименовано',
 	'workspaces.reordered': 'Порядок пространств изменён',
 	'workspaces.workflow_assigned': 'Пространству назначен процесс',
+	'workspaces.module_enabled': 'Модуль подключён к пространству',
+	'workspaces.module_disabled': 'Модуль отключён от пространства',
 	'workflows.created': 'Процесс заведён',
 	'workflows.card_configured': 'Состав карточки процесса изменён',
 	'documents.uploaded': 'Документ загружен',

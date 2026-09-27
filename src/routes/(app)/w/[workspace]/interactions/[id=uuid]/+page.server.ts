@@ -1,5 +1,4 @@
 import { fail } from '@sveltejs/kit';
-import type { z } from 'zod';
 import {
 	advanceStageSchema,
 	cancelInteractionSchema,
@@ -32,6 +31,7 @@ import {
 } from '$lib/contracts/exchange';
 import { NO_OPTION } from '$lib/components/directory/labels';
 import { actorFromEvent } from '$lib/server/actor';
+import { fields, fileField, parse, run, text } from '$lib/server/forms';
 import { listOrganizationContracts } from '$lib/server/directory/contracts';
 import { getOrganization, listAffiliations } from '$lib/server/directory/read';
 import { DocumentConversionError } from '$lib/server/documents/errors';
@@ -78,6 +78,7 @@ import {
 	skipStage
 } from '$lib/server/stages/commands';
 import { interactionCardDependency } from '$lib/contracts/live';
+import { readActiveModules } from '$lib/server/platform/workspace-modules';
 import { readInteractionCard } from '$lib/server/stages/card';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import { responsibleOptions } from '../responsible';
@@ -134,19 +135,22 @@ export const load: PageServerLoad = async (event) => {
 		const meetingContactsDenied = primary !== undefined && !can(ctx, 'people.read');
 		// Факт оплаты с сайта читается по уже прочитанному взаимодействию: его
 		// область доступа проверил `getInteraction`.
-		const [contracts, counterparty, card, meetingContacts, paymentFact] = await Promise.all([
-			primary !== undefined && can(ctx, 'interactions.write')
-				? listOrganizationContracts(ctx, primary.organizationId)
-				: [],
-			primary !== undefined && can(ctx, 'organizations.read')
-				? getOrganization(ctx, primary.organizationId)
-				: null,
-			readInteractionCard(interaction),
-			primary !== undefined && can(ctx, 'people.read')
-				? listAffiliations(ctx, primary.organizationId)
-				: [],
-			readPaymentFact(interaction)
-		]);
+		// Действующие модули пространства: включённые и нужные стадиям процесса.
+		const [contracts, counterparty, card, meetingContacts, paymentFact, modules] =
+			await Promise.all([
+				primary !== undefined && can(ctx, 'interactions.write')
+					? listOrganizationContracts(ctx, primary.organizationId)
+					: [],
+				primary !== undefined && can(ctx, 'organizations.read')
+					? getOrganization(ctx, primary.organizationId)
+					: null,
+				readInteractionCard(interaction),
+				primary !== undefined && can(ctx, 'people.read')
+					? listAffiliations(ctx, primary.organizationId)
+					: [],
+				readPaymentFact(interaction),
+				readActiveModules(interaction.workspaceId)
+			]);
 
 		return {
 			interaction,
@@ -163,44 +167,13 @@ export const load: PageServerLoad = async (event) => {
 			card,
 			meetingContacts,
 			meetingContactsDenied,
-			paymentFact
+			paymentFact,
+			modules: modules.active
 		};
 	} catch (cause) {
 		toPageError(cause);
 	}
 };
-
-/** Поля формы в объекте, пригодном для схемы контракта. */
-function fields(data: FormData): Record<string, unknown> {
-	const result: Record<string, unknown> = {};
-
-	for (const key of new Set(data.keys())) {
-		const values = data.getAll(key);
-		result[key] = values.length === 1 ? values[0] : values;
-	}
-
-	return result;
-}
-
-/**
- * Разбор тела формы по схеме контракта. Претензии показываются рядом с
- * действием, а не превращаются в отказ без объяснения.
- */
-function parse<TSchema extends z.ZodType>(schema: TSchema, input: unknown) {
-	const parsed = schema.safeParse(input);
-
-	if (!parsed.success) {
-		return {
-			ok: false as const,
-			failure: fail(400, {
-				message: 'Данные действия не прошли проверку',
-				issues: parsed.error.issues.map((issue) => issue.message)
-			})
-		};
-	}
-
-	return { ok: true as const, data: parsed.data };
-}
 
 /**
  * Файлы, приложенные к переходу, — сначала документами взаимодействия, потом
@@ -240,37 +213,6 @@ async function attach(
 	}
 
 	return { ok: true, documentIds };
-}
-
-/** Общая обёртка действия: предметная ошибка становится отказом формы. */
-async function run(action: () => Promise<unknown>) {
-	try {
-		await action();
-
-		return { ok: true };
-	} catch (cause) {
-		// Отказ внешней службы преобразования — не ошибка предметной области и не
-		// наш сбой: человеку нужно сказать, что документ не собрался, и почему.
-		if (cause instanceof DocumentConversionError) {
-			return fail(502, { message: cause.message, issues: [] as string[] });
-		}
-
-		return toActionFailure(cause);
-	}
-}
-
-/** Файл списка слушателей из формы; `null` — файла не выбрали. */
-function rosterFile(data: FormData): File | null {
-	const file = data.get('file');
-
-	return file instanceof File && file.size > 0 ? file : null;
-}
-
-/** Значение поля формы как строка или `null` для пустого. */
-function text(data: FormData, key: string): string | null {
-	const value = data.get(key);
-
-	return typeof value === 'string' && value.trim() !== '' ? value.trim() : null;
 }
 
 export const actions: Actions = {
@@ -629,7 +571,7 @@ export const actions: Actions = {
 
 		if (!parsed.ok) return parsed.failure;
 
-		const file = rosterFile(data);
+		const file = fileField(data, 'file');
 
 		if (file === null) {
 			return fail(400, { message: 'Выберите файл со списком слушателей', issues: [] as string[] });
@@ -661,7 +603,7 @@ export const actions: Actions = {
 
 		if (!parsed.ok) return parsed.failure;
 
-		const file = rosterFile(data);
+		const file = fileField(data, 'file');
 
 		if (file === null) {
 			return fail(400, { message: 'Выберите файл со списком слушателей', issues: [] as string[] });

@@ -20,6 +20,7 @@
 | `directory.ts`        | `organizations`, `sites`, `people`, `affiliations`, `consents`, программы и продукты, `directions`, `product_directions`, `product_contacts`, `organization_responsibles` |
 | `directory-import.ts` | `directory_imports`, `directory_import_rows` — загрузка каталога или вендоров и её строки                                                                                 |
 | `interactions.ts`     | Пространства и их реестры, процессы, редакции процесса, стадии и переходы, взаимодействия, записи стадий, паузы, блокировки, комментарии, договоры                        |
+| `modules.ts`          | `workspace_modules` — модули, включённые пространству (`docs/architecture.md`, «Модули и платформа»)                                                                      |
 | `documents.ts`        | `document_templates`, `documents`, `stage_entry_documents`                                                                                                                |
 | `exchange.ts`         | `exchange_messages`, `learning_groups`, `learning_group_results`                                                                                                          |
 | `api.ts`              | `api_keys`                                                                                                                                                                |
@@ -60,7 +61,8 @@
 | `interaction_parties`         | Частичная уникальность `(interaction_id) WHERE is_primary` — основная сторона одна                                                                                                                                                                                                                                                                                  |
 | `organization_responsibles`   | Частичная уникальность `(organization_id, direction_id) NULLS NOT DISTINCT WHERE valid_to IS NULL`                                                                                                                                                                                                                                                                  |
 | `workspace_intake_routes`     | Первичный ключ по виду заявителя: маршрут приёма извне ведёт ровно в одно пространство                                                                                                                                                                                                                                                                              |
-| `workflows`                   | Уникальность `key`; `workspaces.workflow_id` — `on delete restrict`: назначенный процесс не удалить                                                                                                                                                                                                                                                                 |
+| `workflows`                   | Уникальность `key`; `workspaces.workflow_id` — `on delete restrict`: назначенный процесс не удалить; CHECK `document_template_keys` — шаблоны из каталога. Панели `card_panels` база не проверяет (CHECK снят в 0038): каталог панелей собирается из модулей установки, и проверяет его приложение (`processCardSchema`)                                            |
+| `workspace_modules`           | Первичный ключ `(workspace_id, module_key)`; CHECK формата ключа модуля (каталог модулей — в конфиге, не в базе); `workspace_id` — `on delete cascade`, `enabled_by` — `on delete set null`                                                                                                                                                                         |
 | `process_revisions`           | Уникальность `(workflow_id, version)`; частичная уникальность `(workflow_id) WHERE published_at IS NULL`                                                                                                                                                                                                                                                            |
 | `stages`, `stage_transitions` | Уникальность `(revision_id, key)` и `(revision_id, position)`; `(from_stage_id, to_stage_id)`; CHECK `on_enter_notify` — `responsible`, `manager` или пусто; CHECK `requires_document_template` — только вместе с `requires_document_mark` и шаблоном из каталога; CHECK `lms_group_purposes` — только вместе с `requires_lms_data`, непусто и из назначений группы |
 | `stage_migration_rules`       | Уникальность `(revision_id, removed_stage_key)`, CHECK «ключи различны»                                                                                                                                                                                                                                                                                             |
@@ -246,6 +248,26 @@ rename`, данными миграция не двигает. Таблица с�
 пространству — отдельное действие, `assignWorkflow`.
 `reset()` в интеграционных тестах чистит таблицы целиком, и туда эти строки возвращает снимок,
 снятый прогоном сразу после миграций (`tests/integration/helpers/db.ts`).
+
+**Модули пространства кладёт миграция 0038.** Строка `workspace_modules` означает «модуль включён
+явно»; выключение удаляет строку, данные самого модуля (договоры, потоки) остаются. Миграция
+включила каждому пространству те модули, которыми оно уже пользовалось: «Встречи» — всем;
+«Договоры и лицензии» — где процесс держит панель договора или шаблоны сублицензии и акта, где
+стадия ждёт отметки на них и где принимают вузы и юридических лиц; «Оплата» — где есть панель
+оплаты, пункт `payment_received` или приём физических лиц; «Обучение» — где есть панели обучения
+или стадия подтверждается данными LMS. Итог для эталона: `b2b` — договоры, обучение, встречи;
+`b2c` — все четыре. Действующими считаются не только включённые, но и нужные стадиям действующей
+редакции (`requiredByStage` в манифесте модуля), поэтому пространство без строк — например,
+пространство сценария e2e, заведённое прямым SQL, — всё равно получает обучение, если его стадия
+подтверждается данными LMS. Таблица входит в снимок `REFERENCE_TABLES` интеграционных тестов, а
+сброс стенда возвращает модули эталонных пространств (`REFERENCE_MODULES` в
+`src/lib/server/demo/reset.ts`).
+
+**Значение по умолчанию `card_panels` — прежний литерал** из семи ключей
+(`LEGACY_DEFAULT_PANELS` в схеме), а не каталог из реестра: значение живёт в базе и сдвинуться
+вслед за конфигом установки может только миграцией. Панель модуля, который в пространстве не
+действует, карточка не рисует; незнакомый ключ — панель модуля, убранного из установки, —
+пропускается молча и исчезает при следующем сохранении состава в редакторе процесса.
 
 **Что делает миграция 0007 с данными.** Порядок фиксирован, и каждый шаг восстановим до последнего:
 редакции привязываются к пространствам по семейству прежнего маршрута (`university-partnership` →

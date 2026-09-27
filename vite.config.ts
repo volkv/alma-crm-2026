@@ -63,6 +63,8 @@ export default defineConfig({
 			typescript: {
 				config: (config) => {
 					config.include.push(
+						// Модули установки: конфиг лежит в корне, рядом с остальными.
+						'../crm.config.ts',
 						'../drizzle.config.ts',
 						'../playwright.config.ts',
 						'../eslint.config.js',

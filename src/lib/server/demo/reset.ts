@@ -24,8 +24,9 @@
  *   залить эталоном уже нельзя — сид упрётся в стадию, которой нет. Поэтому
  *   редакции, стадии, переходы, правила переноса и реестр ключей всех
  *   пространств очищаются вместе с данными, а `ensureProcess` внутри сида
- *   заводит процесс заново. Имена эталонных пространств и состав карточки
- *   эталонных процессов живут вне редакций и возвращаются к эталону отдельно;
+ *   заводит процесс заново. Имена эталонных пространств, их модули и состав
+ *   карточки эталонных процессов живут вне редакций и возвращаются к эталону
+ *   отдельно;
  * - **настройки делятся надвое.** То, что демонстрации открыто, стирается, и
  *   эталон кладёт сид; то, что задал штатный администратор стенда (адреса
  *   интеграций, расписание сброса, баннер входа), остаётся
@@ -38,10 +39,11 @@
  * не демонстрационные, и кнопка, стирающая их «до эталона», там означала бы
  * потерю работы.
  */
-import { count, eq, notInArray, sql } from 'drizzle-orm';
+import { count, eq, inArray, notInArray, sql } from 'drizzle-orm';
 import type { DocumentTemplateKey } from '$lib/contracts/documents';
 import { INTEGRATION_SETTING_KEYS } from '$lib/contracts/integrations';
 import type { CardPanel } from '$lib/contracts/process-card';
+import type { ModuleKey } from '$lib/platform/registry';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getConfig } from '../config';
@@ -52,6 +54,7 @@ import {
 	interactions,
 	organizations,
 	workflows,
+	workspaceModules,
 	workspaces,
 	processRevisions,
 	processStageKeys
@@ -227,6 +230,17 @@ const REFERENCE_WORKSPACES: readonly { key: string; name: string; description: s
 ];
 
 /**
+ * Модули эталонных пространств — те, что включила им миграция
+ * `drizzle/0038_workspace_modules.sql`. Показ включает и выключает модули в
+ * настройках пространств, и стенд, где у вуза выключили «Встречи», расходился бы
+ * со сценарием. Пространства, заведённые посетителем, сброс не трогает.
+ */
+const REFERENCE_MODULES: readonly { workspaceKey: string; modules: readonly ModuleKey[] }[] = [
+	{ workspaceKey: B2B_WORKSPACE_KEY, modules: ['contracts', 'learning', 'meetings'] },
+	{ workspaceKey: B2C_WORKSPACE_KEY, modules: ['contracts', 'payment', 'learning', 'meetings'] }
+];
+
+/**
  * Ключ блокировки сброса и её срок.
  *
  * Блокировка нужна потому, что сброс — это не одна транзакция и быть ею не
@@ -320,6 +334,38 @@ async function clearDemoData(ctx: ActorContext): Promise<string[]> {
 				.update(workspaces)
 				.set({ name: workspace.name, description: workspace.description, updatedAt: at })
 				.where(eq(workspaces.key, workspace.key));
+		}
+
+		// Модули эталонных пространств — удалить и включить заново: строки,
+		// которых в эталоне нет, иначе пережили бы сброс.
+		const referenceWorkspaces = await tx
+			.select({ id: workspaces.id, key: workspaces.key })
+			.from(workspaces)
+			.where(
+				inArray(
+					workspaces.key,
+					REFERENCE_MODULES.map((reference) => reference.workspaceKey)
+				)
+			);
+
+		if (referenceWorkspaces.length > 0) {
+			await tx.delete(workspaceModules).where(
+				inArray(
+					workspaceModules.workspaceId,
+					referenceWorkspaces.map((workspace) => workspace.id)
+				)
+			);
+
+			const rows = referenceWorkspaces.flatMap((workspace) =>
+				(
+					REFERENCE_MODULES.find((reference) => reference.workspaceKey === workspace.key)
+						?.modules ?? []
+				).map((moduleKey) => ({ workspaceId: workspace.id, moduleKey }))
+			);
+
+			if (rows.length > 0) {
+				await tx.insert(workspaceModules).values(rows);
+			}
 		}
 
 		// Настройки, которые правит показ, стираются, и эталон кладёт сид той же

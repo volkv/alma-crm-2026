@@ -37,7 +37,9 @@ import {
 	type DocumentStatusFact,
 	type DocumentTemplateKey
 } from '$lib/contracts/documents';
-import { CARD_PANELS, type CardPanel } from '$lib/contracts/process-card';
+// Только тип: каталог панелей собирается из конфига установки
+// (`crm.config.ts`), а схему читает миграция, которой конфиг не нужен.
+import type { CardPanel } from '$lib/contracts/process-card';
 import type {
 	ChecklistItem,
 	ChecklistState,
@@ -199,6 +201,23 @@ function textArray(values: readonly string[]) {
 }
 
 /**
+ * Состав карточки нового процесса — весь каталог на момент, когда панели ещё
+ * не принадлежали модулям. Литерал, а не каталог из реестра: значение по
+ * умолчанию живёт в базе, и сдвинуться вслед за конфигом установки оно может
+ * только миграцией. Панель модуля, не подключённого к пространству, карточка
+ * всё равно не нарисует (`visiblePanels` в `$lib/platform/registry`).
+ */
+const LEGACY_DEFAULT_PANELS = [
+	'terms',
+	'contract',
+	'payment',
+	'learners',
+	'learning',
+	'training_document',
+	'documents'
+] as const;
+
+/**
  * Процесс: описание работы — стадии, переходы, нормативы, чек-листы, — живущее
  * само по себе.
  *
@@ -216,8 +235,10 @@ function textArray(values: readonly string[]) {
  * Состав карточки — панели и шаблоны документов — тоже свойство процесса, а не
  * редакции: это вид рабочего места, а не структура работы. Стадий он не
  * касается, переносить по нему нечего, и правка применяется сразу, без
- * черновика и публикации. Значения держит проверка по каталогу: неизвестная
- * панель в строке — это панель, которую карточка молча не нарисует. Новый
+ * черновика и публикации. Панели проверяет приложение (`processCardSchema`), а
+ * не база: каталог собирается из модулей установки, и проверка в базе требовала
+ * бы миграцию на каждый модуль. Незнакомая панель в строке — панель модуля,
+ * которого в установке больше нет, — карточкой молча пропускается. Новый
  * процесс получает весь каталог: карточка без панели, о которой администратор
  * ещё не знает, выглядела бы поломкой, а лишнее он снимет галочкой.
  */
@@ -231,7 +252,11 @@ export const workflows = pgTable(
 		activeRevisionId: uuid().references((): AnyPgColumn => processRevisions.id, {
 			onDelete: 'restrict'
 		}),
-		cardPanels: text().array().$type<CardPanel[]>().notNull().default(textArray(CARD_PANELS)),
+		cardPanels: text()
+			.array()
+			.$type<CardPanel[]>()
+			.notNull()
+			.default(textArray(LEGACY_DEFAULT_PANELS)),
 		documentTemplateKeys: text()
 			.array()
 			.$type<DocumentTemplateKey[]>()
@@ -241,7 +266,6 @@ export const workflows = pgTable(
 	},
 	(table) => [
 		unique('workflows_key_key').on(table.key),
-		check('workflows_card_panels_known', sql`${table.cardPanels} <@ ${textArray(CARD_PANELS)}`),
 		check(
 			'workflows_document_template_keys_known',
 			sql`${table.documentTemplateKeys} <@ ${textArray(DOCUMENT_TEMPLATE_KEYS)}`

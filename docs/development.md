@@ -5,6 +5,7 @@
 | Файл                                           | Что внутри                                                                       |
 | ---------------------------------------------- | -------------------------------------------------------------------------------- |
 | [`architecture.md`](architecture.md)           | Карта: путь запроса, модули, владельцы таблиц, транзакции, где что искать        |
+| [`modules.md`](modules.md)                     | Модули установки: манифест, `crm.config.ts`, слоты ядра, граница и её проверки   |
 | [`data-model.md`](data-model.md)               | Схема базы, контракты, как звать сервисы, ошибки и права                         |
 | [`auth.md`](auth.md)                           | Вход через Keycloak, сессии, защита маршрутов, роли realm, демо-режим            |
 | [`directory.md`](directory.md)                 | Справочники: организации, площадки, люди, программы, продукты                    |
@@ -120,7 +121,10 @@ src/
   app.css                      Tailwind 4: @import и @theme с токенами
   hooks.server.ts              init (конфигурация и два фоновых таймера) и sequence из хуков
   app.d.ts                     App.Locals и App.Error
+  modules/                     модули установки: по папке на модуль, манифест в index.ts
+    contracts/ payment/ learning/ meetings/
   lib/
+    platform/                  ядро модулей: defineModule, defineConfig, каталог, фасады для модулей
     nav.ts                     разделы главной навигации: постоянные и по секции на пространство
     format.ts                  даты, числа, склонение, инициалы
     utils.ts                   cn() и служебные типы shadcn-svelte
@@ -131,6 +135,8 @@ src/
       form/                    поля и кнопки формы поверх superforms
     server/                    код, который никогда не попадает в браузер
       config.ts                схема переменных окружения (Zod) и getConfig()
+      forms.ts                 разбор форм в действиях: поля, претензии, обёртка действия
+      platform/                модули пространства: включённые, нужные стадиям, действующие
       redis.ts                 клиент ioredis и pingRedis()
       auth/types.ts            SessionUser
       api/types.ts             ApiKeyContext
@@ -147,6 +153,7 @@ src/
       w/[workspace]/           процессные разделы под ключом пространства (взаимодействия)
       ui-kit/                  витрина компонентов
     api/health/+server.ts      GET /api/health
+crm.config.ts                  какие модули входят в установку (defineConfig)
 drizzle/                       SQL-миграции и журнал drizzle-kit
 scripts/migrate.ts             применение миграций (локально и в контейнере)
 tests/unit/                    модульные тесты
@@ -161,6 +168,11 @@ static/                        файлы, отдаваемые как есть
 `sveltekit()` внутри `vite.config.ts` — там же адаптер, принудительный runes-режим, `version.name`
 (его отдаёт `/api/health`), `csp` и список дополнительных файлов для tsconfig. Это единственное
 место с настройками Kit: `svelte-check` (4.7+) и Vite читают их отсюда, заводить второй файл не надо.
+
+`crm.config.ts` в корне — конфигурация установки: какие модули в неё входят
+([`modules.md`](modules.md)). Он включён в typescript-конфиг Kit тем же списком в `vite.config.ts`,
+а подключается относительным путём с явным `.ts`: его читают и миграция с сидом в обычном Node, а
+хук алиасов (`scripts/seed/aliases.ts`) принял бы `.config` за расширение файла.
 
 `kit.csp` описывает Content-Security-Policy: всё грузится только со своего origin, `mode: 'auto'`
 проставляет хэши и nonce скриптам и стилям, которые Kit вставляет сам. Директиву расширяют вместе с

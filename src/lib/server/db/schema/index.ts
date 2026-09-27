@@ -9,6 +9,7 @@ export * from './documents';
 export * from './exchange';
 export * from './interactions';
 export * from './mentions';
+export * from './modules';
 export * from './notifications';
 export * from './settings';
 export * from './stats';

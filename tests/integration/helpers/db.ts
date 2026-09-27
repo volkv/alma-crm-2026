@@ -43,9 +43,14 @@ import { startTestStorage, type TestStorage } from './storage';
  *
  * Порядок значим: строки возвращаются в нём, и ссылающаяся таблица обязана
  * стоять после той, на которую ссылается. Пространство ссылается на процесс, а
- * соответствие видов контрагента — на пространство.
+ * его модули и соответствие видов контрагента — на пространство.
  */
-const REFERENCE_TABLES = ['workflows', 'workspaces', 'workspace_intake_routes'] as const;
+const REFERENCE_TABLES = [
+	'workflows',
+	'workspaces',
+	'workspace_modules',
+	'workspace_intake_routes'
+] as const;
 
 export type TestDatabase = {
 	/** Тот же самый handle, что получают сервисы через `getDb()`. */

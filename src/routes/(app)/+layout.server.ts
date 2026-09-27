@@ -1,5 +1,6 @@
 import { actorFromEvent } from '$lib/server/actor';
 import { getConfig } from '$lib/server/config';
+import { readActiveModulesForWorkspaces } from '$lib/server/platform/workspace-modules';
 import { canEnterWorkspace } from '$lib/server/rbac';
 import { getSetting } from '$lib/server/settings';
 import { listWorkspacesForNav } from '$lib/server/stages/process';
@@ -28,6 +29,9 @@ import type { LayoutServerLoad } from './$types';
  * видит все). Чужое пространство в меню не попадает даже заголовком: его
  * название — уже сведения о направлении, а адрес его всё равно ответит 404
  * (`w/[workspace]/+layout.server.ts`).
+ *
+ * С каждым пространством едут его действующие модули: пункты меню модулей
+ * зависят от них, а меню собирается здесь.
  */
 export const load: LayoutServerLoad = async (event) => {
 	const { locals } = event;
@@ -38,11 +42,16 @@ export const load: LayoutServerLoad = async (event) => {
 		locals.user === null ? [] : listWorkspacesForNav()
 	]);
 	const ctx = actorFromEvent(event);
+	const entered = workspaces.filter((workspace) => canEnterWorkspace(ctx, workspace.id));
+	const modules = await readActiveModulesForWorkspaces(entered.map((workspace) => workspace.id));
 
 	return {
 		user: locals.user,
 		demoMode,
 		demoResetHour: schedule !== null && schedule.enabled ? schedule.hour : null,
-		workspaces: workspaces.filter((workspace) => canEnterWorkspace(ctx, workspace.id))
+		workspaces: entered.map((workspace) => ({
+			...workspace,
+			modules: modules.get(workspace.id) ?? []
+		}))
 	};
 };
