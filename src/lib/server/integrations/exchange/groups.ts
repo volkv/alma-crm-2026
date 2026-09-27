@@ -14,12 +14,12 @@ import { and, asc, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
 	EXCHANGE_EVENT_TYPES,
 	isFinalLearningResult,
+	learningTrainingState,
 	type CompleteLearningGroupInput,
 	type ExchangeMessageState,
 	type LearningGroupLearnerView,
 	type LearningGroupView,
 	type LearningPurpose,
-	type LearningTrainingState,
 	type LmsEvidence,
 	type SendLearningGroupInput
 } from '$lib/contracts/exchange';
@@ -500,12 +500,11 @@ export async function listLearningGroups(
 						byName: row.completionMarkedByName,
 						comment: row.completionComment
 					};
-		const trainingState: LearningTrainingState =
-			completionMark !== null || finished.has(row.id)
-				? 'completed'
-				: result !== undefined
-					? 'in_progress'
-					: 'awaiting';
+		const trainingState = learningTrainingState({
+			completionMarked: completionMark !== null,
+			finished: finished.has(row.id),
+			hasResult: result !== undefined
+		});
 
 		return {
 			id: row.id,

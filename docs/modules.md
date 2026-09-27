@@ -492,7 +492,3 @@ export default defineConfig({ modules: [contracts, payment, learning, meetings, 
   «Утверждён» на сублицензии или акте передачи (`markItemsTransferred`) живёт в
   `src/lib/server/documents/status.ts` — общем сервисе документов, а не в модуле «Договоры и
   лицензии», хотя шаблонами владеет именно он.
-- **Правило «как идёт обучение потока» записано один раз, но карточка пока считает его сама.**
-  `learningTrainingState` (`$lib/contracts/exchange.ts`) зовёт страница «Потоки и слушатели»;
-  `listLearningGroups` в обмене с LMS держит ту же формулу у себя и переходит на общую функцию
-  отдельной правкой.
