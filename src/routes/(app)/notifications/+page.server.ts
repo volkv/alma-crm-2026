@@ -6,6 +6,7 @@ import { listNotificationDeliveries, retryNotificationDelivery } from '$lib/serv
 import { can } from '$lib/server/rbac';
 import { getSetting } from '$lib/server/settings';
 import type { Actions, PageServerLoad } from './$types';
+import { PERMISSIONS } from '$lib/server/rbac/permissions';
 
 /**
  * Уведомления: журнал доставок напоминаний о зависших взаимодействиях.
@@ -25,7 +26,7 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	if (!can(ctx, 'notifications.read')) {
-		error(403, 'Раздел доступен только с правом «Просмотр журнала уведомлений»');
+		error(403, `Раздел доступен только с правом «${PERMISSIONS['notifications.read']}»`);
 	}
 
 	const parsed = notificationQuerySchema.safeParse({

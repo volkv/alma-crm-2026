@@ -24,7 +24,7 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	if (!can(ctx, 'users.manage')) {
-		error(403, 'Раздел доступен только с правом «Управление пользователями и ролями»');
+		error(403, `Раздел доступен только с правом «${PERMISSIONS['users.manage']}»`);
 	}
 
 	const roles = await Promise.all(

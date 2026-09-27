@@ -1,7 +1,6 @@
 <script lang="ts">
 	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
-	import { resolve } from '$app/paths';
 	import CircleHelpIcon from '@lucide/svelte/icons/circle-help';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as SegmentedControl from '$lib/components/ui/segmented-control/index.js';
@@ -169,9 +168,7 @@
 	{/snippet}
 </Header>
 
-<Breadcrumbs
-	items={[{ label: 'Главное', href: resolve('/') }, { label: 'Отчёты по взаимодействиям' }]}
-/>
+<Breadcrumbs items={[{ label: 'Главное' }, { label: 'Отчёты по взаимодействиям' }]} />
 
 <!-- Поля страницы такие же, как у остальных разделов: без них полоса вкладок
 	с отрицательным отступом выходила за край окна, а «Колонки» и «Сбросить

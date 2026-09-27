@@ -4,6 +4,7 @@ import { getConfig } from '$lib/server/config';
 import { startDemoResetTimer } from '$lib/server/demo/schedule';
 import { csrf } from '$lib/server/hooks/csrf';
 import { guard } from '$lib/server/hooks/guard';
+import { piiTrace } from '$lib/server/hooks/pii-trace';
 import { rateLimit } from '$lib/server/hooks/rate-limit';
 import { requestId } from '$lib/server/hooks/request-id';
 import { securityHeaders } from '$lib/server/hooks/security-headers';
@@ -60,6 +61,9 @@ export const init: ServerInit = () => {
  * `serverTiming` стоит вторым, сразу за идентификатором запроса: замер обязан
  * покрывать всё, что делает приложение, включая разбор сессии и проверку прав,
  * — иначе он отвечает не на тот вопрос, который задаёт человек с секундомером.
+ *
+ * `piiTrace` — последним: он пишет след просмотра персональных данных от имени
+ * того, кого уже узнал `session`, и только для запроса, который пропустили.
  */
 export const handle = sequence(
 	requestId,
@@ -68,7 +72,8 @@ export const handle = sequence(
 	csrf,
 	session,
 	guard,
-	rateLimit
+	rateLimit,
+	piiTrace
 );
 
 /**

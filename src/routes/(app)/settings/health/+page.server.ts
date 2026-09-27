@@ -4,6 +4,7 @@ import { toActionFailure } from '$lib/server/http';
 import { checkExternalSources, DADATA_HOST, runDiagnostics } from '$lib/server/diagnostics';
 import { can } from '$lib/server/rbac';
 import type { Actions, PageServerLoad } from './$types';
+import { PERMISSIONS } from '$lib/server/rbac/permissions';
 
 /**
  * «Статус системы»: самодиагностика установки в закрытой сети.
@@ -20,7 +21,7 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	if (!can(ctx, 'integrations.manage')) {
-		error(403, 'Раздел доступен только с правом «Настройка вебхуков и интеграций»');
+		error(403, `Раздел доступен только с правом «${PERMISSIONS['integrations.manage']}»`);
 	}
 
 	return { report: await runDiagnostics(ctx), dadataHost: DADATA_HOST };

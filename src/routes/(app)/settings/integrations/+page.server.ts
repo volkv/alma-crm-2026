@@ -34,6 +34,7 @@ import {
 } from '$lib/server/integrations/subscriptions';
 import { can } from '$lib/server/rbac';
 import type { Actions, PageServerLoad } from './$types';
+import { PERMISSIONS } from '$lib/server/rbac/permissions';
 
 /**
  * Интеграции: подписки на события, подключения обмена и выгрузка из LMS.
@@ -63,7 +64,7 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	if (!can(ctx, 'integrations.manage')) {
-		error(403, 'Раздел доступен только с правом «Настройка вебхуков и интеграций»');
+		error(403, `Раздел доступен только с правом «${PERMISSIONS['integrations.manage']}»`);
 	}
 
 	const [webhooks, lms, delivery, lmsState, exchange, owners] = await Promise.all([

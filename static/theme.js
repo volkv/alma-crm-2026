@@ -24,7 +24,8 @@
  */
 (function () {
 	var stored = localStorage.getItem('lct-crm:theme');
-	var preference = stored === 'dark' || stored === 'system' ? stored : 'light';
+	// Умолчание — «как в системе», как и в `src/lib/theme.svelte.ts`.
+	var preference = stored === 'light' || stored === 'dark' ? stored : 'system';
 	var dark =
 		preference === 'dark' ||
 		(preference === 'system' && window.matchMedia('(prefers-color-scheme: dark)').matches);

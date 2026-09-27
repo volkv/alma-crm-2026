@@ -13,6 +13,7 @@ import type { StatusTone } from '$lib/components/status-badge.svelte';
 import {
 	AUDIT_EVENT_TYPES,
 	type AuditEventType,
+	type AuditEventView,
 	type AuditOutcome,
 	type AuditSource
 } from '$lib/contracts/audit';
@@ -240,10 +241,14 @@ const SUBJECT_LABELS: Record<string, string> = {
 	contract_item: 'Позиция договора',
 	interaction: 'Взаимодействие',
 	// `process_group` остаётся ради записей, сделанных до выделения процесса:
-	// подпись у них была «Пространство», и стирать её значило бы обезличить
-	// историю. Новые события про устройство работы пишутся под `workflow`.
-	process_group: 'Пространство',
+	// стирать подпись значило бы обезличить историю. Новые события про
+	// устройство работы пишутся под `workflow` и `workspace`; своя подпись у
+	// прежнего кода нужна фильтру, где два одинаковых «Пространства» не различить.
+	process_group: 'Пространство (прежние записи)',
+	workspace: 'Пространство',
 	workflow: 'Процесс',
+	direction: 'ИТ-направление',
+	directory_import: 'Импорт каталога',
 	document: 'Документ',
 	stat_snapshot: 'Снимок данных',
 	user: 'Пользователь',
@@ -266,6 +271,7 @@ const SUBJECT_SECTIONS: Record<string, string> = {
 	organization: '/organizations',
 	person: '/people',
 	consent: '/people',
+	direction: '/directions',
 	interaction: '/interactions',
 	document: '/documents',
 	stat_snapshot: '/data',
@@ -279,12 +285,43 @@ const SUBJECT_SECTIONS: Record<string, string> = {
  * `nav.ts`: разделы вводятся в работу по очереди, а журнал ссылается на них
  * с первого дня — он пишет о том, что уже произошло.
  */
-export function subjectHref(type: string, id: string): ResolvedPathname | null {
+function subjectHref(type: string, id: string): ResolvedPathname | null {
 	const section = SUBJECT_SECTIONS[type];
 
 	// Одна ветвь объединения, а не весь `Pathname`: см. `data-table/query.ts` —
 	// на нынешнем числе маршрутов TypeScript не сопоставляет объединение целиком.
 	return section === undefined ? null : resolve(`${section}/${id}` as Pathname & '/');
+}
+
+/** Над чем действовали — подпись и ссылка для колонки и карточки события. */
+export type AuditSubject = { label: string; href: ResolvedPathname | null };
+
+/**
+ * Субъект события. У просмотра контактов его нет в колонках: одно событие на
+ * запрос называет всех, чьи контакты раскрыли, списком в подробностях. Один
+ * человек — ссылка на его карточку, несколько — их число.
+ */
+export function auditSubject(
+	event: Pick<AuditEventView, 'eventType' | 'subjectType' | 'subjectId' | 'details'>
+): AuditSubject | null {
+	if (event.subjectType !== null) {
+		return {
+			label: subjectTypeLabel(event.subjectType),
+			href: event.subjectId === null ? null : subjectHref(event.subjectType, event.subjectId)
+		};
+	}
+
+	const personIds = event.details.personIds;
+
+	if (event.eventType === 'people.pii_viewed' && Array.isArray(personIds)) {
+		const [only] = personIds;
+
+		return personIds.length === 1 && typeof only === 'string'
+			? { label: SUBJECT_LABELS.person, href: subjectHref('person', only) }
+			: { label: `Люди: ${personIds.length}`, href: null };
+	}
+
+	return null;
 }
 
 /** Служебные поля подробностей, у которых есть человеческое имя. */

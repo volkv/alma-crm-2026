@@ -55,13 +55,7 @@
 	description="Журнал обмена с CMS сайта и системой обучения: что пришло, что ушло и чем ответили"
 />
 
-<Breadcrumbs
-	items={[
-		{ label: 'Главное', href: resolve('/') },
-		{ label: 'Настройки' },
-		{ label: 'Внешние системы' }
-	]}
-/>
+<Breadcrumbs items={[{ label: 'Настройки' }, { label: 'Внешние системы' }]} />
 
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	{#if form}

@@ -26,6 +26,7 @@ import {
 	renameWorkspace
 } from '$lib/server/stages/process';
 import type { Actions, PageServerLoad } from './$types';
+import { PERMISSIONS } from '$lib/server/rbac/permissions';
 
 /**
  * Страница одного пространства: название, процесс, модули и сотрудники.
@@ -52,7 +53,7 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	if (!can(ctx, 'stages.configure')) {
-		error(403, 'Раздел доступен только с правом «Настройка маршрутов и стадий»');
+		error(403, `Раздел доступен только с правом «${PERMISSIONS['stages.configure']}»`);
 	}
 
 	// Читается весь ряд, а не одно пространство: счётчики стадий и

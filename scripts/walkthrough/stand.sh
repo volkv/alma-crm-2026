@@ -70,7 +70,8 @@ usage() {
 
   up <копия> [коммит]  checkout (если задан коммит) → зависимости → общая
                        инфраструктура (Keycloak/Gotenberg) → своя база, бакет
-                       и чистая база Redis → сборка → миграции → демо-сид →
+                       и чистая база Redis → шрифты из static/fonts основного
+                       дерева (если есть) → сборка → миграции → демо-сид →
                        свои имитаторы CMS/LMS (58181/58182, смотрят в стенд) →
                        запуск сервера в фоне (pid-файл и лог — в копии)
   down <копия>         остановить сервер и имитаторы стенда (общую
@@ -301,6 +302,26 @@ sync_scripts() {
 		"$copy/scripts/walkthrough/"
 }
 
+# Фирменная гарнитура лежит вне репозитория (`static/fonts/` в `.gitignore`,
+# docs/deployment.md, «Шрифт»), поэтому в свежей копии её нет, и стенд без неё
+# сыпал бы 404 на каждой странице. Каталог основного дерева копируется до
+# сборки: `static/` уходит в `build/client` при `pnpm run build`. Нет каталога
+# в основном дереве — стенд идёт на запасной гарнитуре, как любая установка
+# без шрифта.
+sync_fonts() {
+	local copy="$1"
+	local source="$MAIN_REPO/static/fonts"
+
+	if [ ! -d "$source" ]; then
+		log "Шрифтов в $source нет — стенд пойдёт на запасной гарнитуре"
+		return 0
+	fi
+
+	mkdir -p "$copy/static/fonts"
+	cp -a "$source/." "$copy/static/fonts/"
+	log "Шрифты скопированы в $copy/static/fonts"
+}
+
 build_app() {
 	local copy="$1"
 	(
@@ -375,6 +396,7 @@ cmd_up() {
 	ensure_infra "$copy"
 	ensure_database "$copy"
 	ensure_bucket "$copy"
+	sync_fonts "$copy"
 	build_app "$copy"
 
 	local pidfile

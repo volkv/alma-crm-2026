@@ -22,6 +22,7 @@ import {
 import { importPayments, previewPayments } from '$lib/server/integrations/exchange/payments';
 import { can } from '$lib/server/rbac';
 import type { Actions, PageServerLoad, RequestEvent } from './$types';
+import { PERMISSIONS } from '$lib/server/rbac/permissions';
 
 /**
  * Внешние системы: журнал обмена в обе стороны.
@@ -35,7 +36,7 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	if (!can(ctx, 'integrations.manage')) {
-		error(403, 'Раздел доступен только с правом «Настройка вебхуков и интеграций»');
+		error(403, `Раздел доступен только с правом «${PERMISSIONS['integrations.manage']}»`);
 	}
 
 	const parsed = exchangeQuerySchema.safeParse({

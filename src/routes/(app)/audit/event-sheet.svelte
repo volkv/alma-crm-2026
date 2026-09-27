@@ -13,8 +13,7 @@
 		AUDIT_SOURCE_LABELS,
 		auditEventLabel,
 		detailLabel,
-		subjectHref,
-		subjectTypeLabel
+		auditSubject
 	} from './labels';
 	import { auditHref } from './filters';
 
@@ -37,9 +36,7 @@
 	} = $props();
 
 	const details = $derived(Object.entries(event?.details ?? {}));
-	const link = $derived(
-		event?.subjectType && event.subjectId ? subjectHref(event.subjectType, event.subjectId) : null
-	);
+	const subject = $derived(event === null ? null : auditSubject(event));
 
 	/** Значение подробности в том виде, в каком его можно прочитать. */
 	function detailValue(value: unknown): string {
@@ -87,14 +84,14 @@
 					<KeyValueRow label="Ключ доступа" value={event.apiKeyId} />
 					<KeyValueRow label="Клиент" value={event.userAgent} />
 					<KeyValueRow label="Над чем">
-						{#if event.subjectType === null}
+						{#if subject === null}
 							<span class="text-faint">—</span>
 						{:else}
-							<span>{subjectTypeLabel(event.subjectType)}</span>
-							{#if link}
+							<span>{subject.label}</span>
+							{#if subject.href}
 								<a
 									class="ml-1 inline-flex items-center gap-1 text-link focus-ring hover:text-link-hover"
-									href={link}
+									href={subject.href}
 								>
 									Открыть карточку
 									<ExternalLinkIcon class="size-3" aria-hidden="true" />

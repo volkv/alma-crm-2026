@@ -7,6 +7,7 @@ import { readReportQuery } from '$lib/server/reports/query';
 import { buildReportPage } from '$lib/server/reports/rows';
 import { can } from '$lib/server/rbac';
 import type { PageServerLoad } from './$types';
+import { PERMISSIONS } from '$lib/server/rbac/permissions';
 
 /**
  * Раздел отчётов. Своего права у него нет: отчёт показывает ровно то, что
@@ -22,7 +23,7 @@ export const load: PageServerLoad = async (event) => {
 
 	// Вошёл — не значит «можно»: адрес набирают руками.
 	if (!can(ctx, 'interactions.read')) {
-		error(403, 'Отчёты доступны только с правом «Просмотр взаимодействий»');
+		error(403, `Отчёты доступны только с правом «${PERMISSIONS['interactions.read']}»`);
 	}
 
 	try {

@@ -23,6 +23,10 @@
 	let confirmOpen = $state(false);
 	let deactivateForm = $state<HTMLFormElement | null>(null);
 
+	let pendingUnlink = $state<UserView | null>(null);
+	let unlinkOpen = $state(false);
+	let unlinkForm = $state<HTMLFormElement | null>(null);
+
 	/** Результат любого действия раздела приходит обычным `fail`, а не через superforms. */
 	const switchMessage = $derived(
 		actionResult !== null && 'message' in actionResult ? actionResult.message : null
@@ -104,6 +108,16 @@
 		confirmOpen = true;
 	}
 
+	/**
+	 * Отвязка ничего не удаляет, но следующий вход решает, кто владеет записью:
+	 * её свяжет тот, кто войдёт с этой подтверждённой почтой. Поэтому она
+	 * спрашивает и объясняет, а не срабатывает с одного нажатия.
+	 */
+	function askUnlink(user: UserView) {
+		pendingUnlink = user;
+		unlinkOpen = true;
+	}
+
 	let tableApi = $state<SvelteTable<DataTableFeatures, UserView> | null>(null);
 </script>
 
@@ -117,7 +131,9 @@
 			{user.isActive ? 'Работает' : 'Выключен'}
 		</StatusBadge>
 		{#if user.isDemo}
-			<StatusBadge tone="warning" title="Учётная запись публичной демонстрации">Демо</StatusBadge>
+			<StatusBadge tone="warning" title="Учётная запись публичной демонстрации">
+				Демо-учётка
+			</StatusBadge>
 		{/if}
 		{#if user.roleId === 'service'}
 			<StatusBadge tone="neutral" title="Машинный субъект: от его имени работают ключи обмена">
@@ -125,7 +141,7 @@
 			</StatusBadge>
 		{:else if !user.isLinked}
 			<StatusBadge tone="neutral" title="Запись ещё ни разу не входила через каталог">
-				Не связан
+				Ждёт первого входа
 			</StatusBadge>
 		{/if}
 	</span>
@@ -149,10 +165,7 @@
 			<!-- Каталог перезавели — субъект у того же человека стал другим, и вход
 			     его не узнаёт. Отвязка возвращает запись в состояние «свяжется при
 			     первом входе по подтверждённой почте», не трогая портфель. -->
-			<form method="POST" action="?/unlink">
-				<input type="hidden" name="userId" value={user.id} />
-				<Button type="submit" variant="outline" size="sm">Отвязать</Button>
-			</form>
+			<Button variant="outline" size="sm" onclick={() => askUnlink(user)}>Отвязать</Button>
 		{/if}
 		{#if canDeactivate(user)}
 			<Button variant="outline" size="sm" onclick={() => askDeactivate(user)}>Выключить</Button>
@@ -189,6 +202,27 @@
 			Здесь задаётся то, чего в каталоге нет: кому сотрудник подчиняется — от этого зависит, чью
 			работу видит руководитель и кому уходит эскалация.
 		</InlineHint>
+
+		<dl
+			class="grid gap-x-4 gap-y-1 text-sm text-muted-foreground sm:grid-cols-[max-content_1fr]"
+			aria-label="Что значат отметки и команды"
+		>
+			<dt class="font-medium text-foreground">Демо-учётка</dt>
+			<dd>
+				Ею входят все, кто открыл демонстрационный стенд; пока стенд в демо-режиме, её не выключить.
+			</dd>
+			<dt class="font-medium text-foreground">Ждёт первого входа</dt>
+			<dd>
+				Запись есть, но человек ещё ни разу не входил через каталог: первый вход по подтверждённой
+				почте свяжет их сам.
+			</dd>
+			<dt class="font-medium text-foreground">Отвязать</dt>
+			<dd>
+				Нужно, когда учётную запись в каталоге завели заново и вход человека больше не узнаётся.
+				Портфель, роль и история остаются, сессии завершаются; запись вернётся в «Ждёт первого
+				входа».
+			</dd>
+		</dl>
 
 		<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`).
 			Обёртка без оформления: у списка своя разметка, а `min-w-0` оставляет ей
@@ -232,6 +266,20 @@
 	tone="danger"
 	onconfirm={() => deactivateForm?.requestSubmit()}
 />
+
+<ConfirmDialog
+	bind:open={unlinkOpen}
+	title="Отвязать от каталога учётных записей?"
+	description={pendingUnlink === null
+		? undefined
+		: `${pendingUnlink.fullName} (${pendingUnlink.email}) перестанет быть связан со своей записью в каталоге. Его сессии завершатся; дела, роль и история останутся на месте. При следующем входе с подтверждённой почтой ${pendingUnlink.email} запись свяжется заново — с тем, кто войдёт. Нужно, если учётную запись в каталоге завели заново и вход её не узнаёт.`}
+	confirmLabel="Отвязать"
+	onconfirm={() => unlinkForm?.requestSubmit()}
+/>
+
+<form method="POST" action="?/unlink" bind:this={unlinkForm} class="hidden">
+	<input type="hidden" name="userId" value={pendingUnlink?.id ?? ''} />
+</form>
 
 <!-- Диалог только подтверждает; отправляет обычная форма — так на сервер приходит
 	то же самое, что от любой другой формы раздела, и действие одно на все пути. -->

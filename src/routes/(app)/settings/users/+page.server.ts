@@ -14,6 +14,7 @@ import {
 import { can } from '$lib/server/rbac';
 import { toActionFailure, type ActionErrorPayload } from '$lib/server/http';
 import type { Actions, PageServerLoad } from './$types';
+import { PERMISSIONS } from '$lib/server/rbac/permissions';
 
 /**
  * Управление доступом: кто заведён в системе, кому подчиняется и работает ли
@@ -32,7 +33,7 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	if (!can(ctx, 'users.manage')) {
-		error(403, 'Раздел доступен только с правом «Управление пользователями и ролями»');
+		error(403, `Раздел доступен только с правом «${PERMISSIONS['users.manage']}»`);
 	}
 
 	const query = readTableQuery(event.url);

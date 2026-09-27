@@ -7,6 +7,7 @@ import { listUsers } from '$lib/server/auth/users';
 import { can } from '$lib/server/rbac';
 import { AUDIT_DENIED_PARAM, readAuditFilter } from './filters';
 import type { PageServerLoad } from './$types';
+import { PERMISSIONS } from '$lib/server/rbac/permissions';
 
 /**
  * Журнал действий. Страница ничего не решает сама: фильтр приезжает из адреса,
@@ -22,7 +23,7 @@ export const load: PageServerLoad = async (event) => {
 
 	// Вошёл — не значит «можно»: журнал видит тот, у кого есть право на него.
 	if (!can(ctx, 'audit.read')) {
-		error(403, 'Журнал действий доступен только с правом «Просмотр журнала действий»');
+		error(403, `Журнал действий доступен только с правом «${PERMISSIONS['audit.read']}»`);
 	}
 
 	const filter = readAuditFilter(event.url);

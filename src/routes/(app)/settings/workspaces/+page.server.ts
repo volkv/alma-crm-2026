@@ -16,6 +16,7 @@ import {
 	reorderWorkspaces
 } from '$lib/server/stages/process';
 import type { Actions, PageServerLoad } from './$types';
+import { PERMISSIONS } from '$lib/server/rbac/permissions';
 
 /**
  * Список пространств: направления работы, их порядок в меню и заведение
@@ -40,7 +41,7 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	if (!can(ctx, 'stages.configure')) {
-		error(403, 'Раздел доступен только с правом «Настройка маршрутов и стадий»');
+		error(403, `Раздел доступен только с правом «${PERMISSIONS['stages.configure']}»`);
 	}
 
 	// Процессы нужны ради формы заведения: процесс можно назначить сразу.

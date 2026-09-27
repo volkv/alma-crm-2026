@@ -16,6 +16,7 @@ import {
 	stuckWatchSchema
 } from './schema';
 import type { Actions, PageServerLoad } from './$types';
+import { PERMISSIONS } from '$lib/server/rbac/permissions';
 
 /**
  * Общие настройки: то, что администратор меняет из интерфейса, а не
@@ -53,7 +54,7 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	if (!can(ctx, 'settings.write')) {
-		error(403, 'Раздел доступен только с правом «Изменение настроек приложения»');
+		error(403, `Раздел доступен только с правом «${PERMISSIONS['settings.write']}»`);
 	}
 
 	const [

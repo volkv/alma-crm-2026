@@ -1,6 +1,5 @@
 <script lang="ts">
 	import { page } from '$app/state';
-	import { resolve } from '$app/paths';
 	import { renderSnippet, type ColumnDef, type SvelteTable } from '@tanstack/svelte-table';
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -20,8 +19,8 @@
 		AUDIT_OUTCOME_TONES,
 		AUDIT_SOURCE_LABELS,
 		auditEventLabel,
-		subjectHref,
-		subjectTypeLabel
+		auditSubject,
+		type AuditSubject
 	} from './labels';
 	import type { PageProps } from './$types';
 
@@ -91,8 +90,7 @@
 			header: 'Над чем',
 			meta: { title: 'Над чем' },
 			enableSorting: false,
-			cell: ({ row }) =>
-				renderSnippet(subjectCell, { type: row.original.subjectType, id: row.original.subjectId })
+			cell: ({ row }) => renderSnippet(subjectCell, { subject: auditSubject(row.original) })
 		},
 		{
 			accessorKey: 'requestId',
@@ -126,11 +124,11 @@
 	{/if}
 {/snippet}
 
-{#snippet subjectCell({ type, id }: { type: string | null; id: string | null })}
-	{#if type === null}
+{#snippet subjectCell({ subject }: { subject: AuditSubject | null })}
+	{#if subject === null}
 		<span class="text-faint">—</span>
 	{:else}
-		{@const href = id === null ? null : subjectHref(type, id)}
+		{@const href = subject.href}
 		{#if href}
 			<!-- Клик по ссылке не должен заодно открывать карточку события. -->
 			<a
@@ -138,10 +136,10 @@
 				{href}
 				onclick={(clicked) => clicked.stopPropagation()}
 			>
-				{subjectTypeLabel(type)}
+				{subject.label}
 			</a>
 		{:else}
-			<span>{subjectTypeLabel(type)}</span>
+			<span>{subject.label}</span>
 		{/if}
 	{/if}
 {/snippet}
@@ -185,7 +183,7 @@
 	{/snippet}
 </Header>
 
-<Breadcrumbs items={[{ label: 'Главное', href: resolve('/') }, { label: 'Журнал действий' }]} />
+<Breadcrumbs items={[{ label: 'Остальное' }, { label: 'Журнал действий' }]} />
 
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	<FilterBar url={page.url} actors={data.actors} table={tableApi} />

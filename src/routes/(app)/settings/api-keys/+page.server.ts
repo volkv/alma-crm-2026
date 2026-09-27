@@ -10,6 +10,7 @@ import { AppError, ForbiddenError, ValidationError } from '$lib/server/errors';
 import { toActionFailure } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import type { Actions, PageServerLoad } from './$types';
+import { PERMISSIONS } from '$lib/server/rbac/permissions';
 
 /**
  * Ключи доступа к публичному API.
@@ -26,7 +27,7 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	if (!can(ctx, 'api_keys.manage')) {
-		error(403, 'Раздел доступен только с правом «Управление ключами доступа к API»');
+		error(403, `Раздел доступен только с правом «${PERMISSIONS['api_keys.manage']}»`);
 	}
 
 	// Ключ действует правами и областью своего владельца, поэтому владельца

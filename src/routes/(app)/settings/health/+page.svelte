@@ -24,20 +24,27 @@
 		not_checked: { label: 'Не проверялось', tone: 'info' }
 	};
 
+	/**
+	 * Что связь значит для работы. Подписи короткие, поэтому под таблицей стоит
+	 * легенда с теми же пояснениями: подсказка в `title` видна не всем и не на
+	 * телефоне.
+	 */
 	const KIND: Record<Kind, { label: string; hint: string }> = {
 		required: {
-			label: 'Обязательна',
-			hint: 'Локальная зависимость: без неё не работают основные сценарии'
+			label: 'Обязательная',
+			hint: 'Своя служба установки: база, кэш, хранилище файлов, вход, сборка документов. Без неё не работают вход, карточка, документы или отчёты.'
 		},
 		allowed: {
-			label: 'Разрешённая',
-			hint: 'Связь внутри сети установки: без неё выключается одно направление'
+			label: 'Внутри сети',
+			hint: 'Соседняя система в сети заказчика: CMS, система обучения, почтовый сервер. Без неё встаёт только своё направление, например обмен или письма; остальное работает.'
 		},
 		external: {
-			label: 'Отключаемая',
-			hint: 'Выход в интернет: выключается флагом, основные сценарии от него не зависят'
+			label: 'Через интернет',
+			hint: 'Внешний сервис в интернете. Выключается флагом «Внешние источники»; без него реквизиты организации вводятся вручную, основные сценарии от него не зависят.'
 		}
 	};
+
+	const KIND_ORDER: readonly Kind[] = ['required', 'allowed', 'external'];
 
 	const checkedAt = $derived(
 		new Date(data.report.checkedAt).toLocaleString('ru-RU', {
@@ -153,6 +160,20 @@
 				</Table.Body>
 			</Table.Root>
 		</div>
+
+		<dl
+			class="grid gap-x-3 gap-y-1.5 text-xs text-muted-foreground sm:grid-cols-[max-content_1fr]"
+			aria-label="Что значит колонка «Для основных сценариев»"
+		>
+			{#each KIND_ORDER as kind (kind)}
+				<dt>
+					<StatusBadge tone={kind === 'required' ? 'accent' : 'neutral'}>
+						{KIND[kind].label}
+					</StatusBadge>
+				</dt>
+				<dd class="self-center">{KIND[kind].hint}</dd>
+			{/each}
+		</dl>
 
 		<p class="text-xs text-muted-foreground" data-testid="outbound-allow-list">
 			Разрешённые узлы внутри сети (<code>OUTBOUND_ALLOWED_HOSTS</code>):
