@@ -293,6 +293,9 @@
 								revision.sizeBytes
 							)}{revision.authorName ? ` · ${revision.authorName}` : ''}
 						</span>
+						{#if revision.revisionNote !== null}
+							<span class="block text-sm break-words">{revision.revisionNote}</span>
+						{/if}
 					</span>
 					{#if revision.isCurrent}
 						<StatusBadge tone="success" dot>Действует</StatusBadge>
@@ -330,6 +333,15 @@
 					description="Название, вид и взаимодействие останутся прежними — меняется только файл."
 					required
 				/>
+				<div class="flex min-w-60 flex-1 flex-col gap-1.5">
+					<Label for="revisionNote">Что изменилось</Label>
+					<Input
+						id="revisionNote"
+						name="note"
+						maxlength={500}
+						placeholder="Например: подписанный сторонами скан"
+					/>
+				</div>
 				<Button type="submit" size="sm">Загрузить новую редакцию</Button>
 			</form>
 		{/if}

@@ -109,11 +109,12 @@ export const actions: Actions = {
 
 	/**
 	 * Новая редакция этого документа. Название, вид и взаимодействие сервис
-	 * берёт у заменяемой редакции — форма спрашивает только файл.
+	 * берёт у заменяемой редакции — форма спрашивает файл и что изменилось.
 	 */
 	uploadRevision: async (event) => {
 		const data = await event.request.formData();
 		const file = data.get('file');
+		const note = data.get('note');
 
 		if (!(file instanceof File) || file.size === 0) {
 			return fail(400, { message: 'Выберите файл новой редакции', issues: [] as string[] });
@@ -125,7 +126,8 @@ export const actions: Actions = {
 		try {
 			created = await uploadDocumentRevision(actorFromEvent(event), {
 				supersedesId: event.params.id,
-				file: { mime: file.type, bytes }
+				file: { mime: file.type, bytes },
+				note: typeof note === 'string' ? note : null
 			});
 		} catch (error) {
 			return toActionFailure(error);

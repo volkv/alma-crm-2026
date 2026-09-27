@@ -1,18 +1,21 @@
 /**
  * Серверная часть «Договоров и лицензий» в карточке: выбор договора записи и
- * его позиций. Правка идёт той же командой ядра, что и правка плана, — права,
+ * его позиций, и есть ли у стороны из чего выбирать. Правка идёт той же командой ядра, что и правка плана, — права,
  * область и проверку версии держит она.
  */
 import { updateInteractionSchema } from '$lib/contracts/interactions';
 import { defineCardServer, NO_OPTION } from '$lib/platform/card.server';
 import {
 	actorFromEvent,
+	can,
 	getInteraction,
+	listOrganizationContracts,
 	parse,
 	run,
 	text,
 	updateInteraction
 } from '$lib/platform/core.server';
+import type { ContractsCardData } from './data';
 import contracts from './index';
 
 export default defineCardServer(contracts, {
@@ -68,5 +71,21 @@ export default defineCardServer(contracts, {
 		}
 	},
 	files: {},
-	load: null
+	/**
+	 * Есть ли у основной стороны договоры: без них выбирать нечего, и панель
+	 * ведёт создать договор в карточку организации. Читается только тем, кто
+	 * может править запись и видит организации, — остальным кнопки выбора не
+	 * показывают вовсе.
+	 */
+	load: async ({ ctx, interaction }): Promise<ContractsCardData> => {
+		const primary = interaction.parties.find((party) => party.isPrimary) ?? null;
+
+		if (primary === null || !can(ctx, 'interactions.write') || !can(ctx, 'organizations.read')) {
+			return { contractCount: null, organizationId: primary?.organizationId ?? null };
+		}
+
+		const list = await listOrganizationContracts(ctx, primary.organizationId);
+
+		return { contractCount: list.length, organizationId: primary.organizationId };
+	}
 });

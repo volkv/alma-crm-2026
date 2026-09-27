@@ -1,5 +1,6 @@
 <script lang="ts">
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+	import { resolve } from '$app/paths';
 	import { headerFactsFor } from '$lib/platform/card-ui-registry';
 	import { isCurrentState } from './stage-look';
 	import type { CardModel } from './model';
@@ -22,7 +23,20 @@
 	 * страница ставит под действием: до главного действия в первом экране
 	 * должны уместиться контрагент, стадия и срок.
 	 */
-	let { model }: { model: CardModel } = $props();
+	let {
+		model,
+		counterpartyId,
+		moduleData = {}
+	}: {
+		model: CardModel;
+		/** Данные действующих модулей по ключу модуля — факту шапки его модуля. */
+		moduleData?: Readonly<Record<string, unknown>>;
+		/**
+		 * Основная сторона в справочнике — имя контрагента ведёт в её карточку;
+		 * `null` — справочник человеку не открыт, и имя остаётся текстом.
+		 */
+		counterpartyId: string | null;
+	} = $props();
 
 	/**
 	 * Следующая стадия — по порядку процесса, как её показывает полоса:
@@ -70,7 +84,7 @@
 		</dd>
 	</div>
 	{#each facts as fact (`${fact.module}:${fact.key}`)}
-		<fact.component {model} label={fact.label} {hide} />
+		<fact.component {model} label={fact.label} {hide} data={moduleData[fact.module]} />
 	{/each}
 {/snippet}
 
@@ -84,7 +98,15 @@
 		<div class="min-w-0">
 			<dt class="text-xs text-muted-foreground">Контрагент</dt>
 			<dd class="mt-0.5 text-sm font-medium break-words">
-				{model.counterparty.name}
+				{#if counterpartyId === null}
+					{model.counterparty.name}
+				{:else}
+					<a
+						class="rounded-sm text-link focus-ring hover:text-link-hover hover:underline"
+						href={resolve('/(app)/organizations/[id=uuid]', { id: counterpartyId })}
+						>{model.counterparty.name}</a
+					>
+				{/if}
 				{#if model.counterparty.kindLabel}
 					<span class="block text-xs font-normal text-faint">{model.counterparty.kindLabel}</span>
 				{/if}

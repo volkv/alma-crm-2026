@@ -66,6 +66,7 @@ export function toDocumentView(row: typeof documents.$inferSelect): DocumentView
 		sizeBytes: row.sizeBytes,
 		sha256: row.sha256,
 		uploadedBy: row.uploadedBy,
+		revisionNote: row.revisionNote,
 		createdAt: row.createdAt,
 		agreedAt: row.agreedAt,
 		approvedAt: row.approvedAt,
@@ -407,6 +408,7 @@ export async function listDocumentRevisions(
 		sizeBytes: item.document.sizeBytes,
 		createdAt: item.document.createdAt,
 		authorName: item.authorName,
+		revisionNote: item.document.revisionNote,
 		isCurrent: item.supersededById === null
 	}));
 }

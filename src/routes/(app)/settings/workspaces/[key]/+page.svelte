@@ -208,7 +208,7 @@
 	</Alert.Root>
 {/if}
 
-<Card.Root>
+<Card.Root data-tour="workspace-main">
 	<Card.Header>
 		<Card.Title>Основное</Card.Title>
 		<Card.Description>
@@ -354,7 +354,7 @@
 	<input type="hidden" name="workflowKey" value={assignWorkflowKey} />
 </form>
 
-<Card.Root>
+<Card.Root data-tour="workspace-modules">
 	<Card.Header>
 		<Card.Title>Модули</Card.Title>
 		<Card.Description>
@@ -370,7 +370,7 @@
 </Card.Root>
 
 {#if data.members !== null}
-	<Card.Root>
+	<Card.Root data-tour="workspace-members">
 		<Card.Header>
 			<Card.Title>Сотрудники</Card.Title>
 			<Card.Description>

@@ -69,3 +69,14 @@ export const HELP_NOTIFICATIONS = {
 	page: 'notifications',
 	title: 'Уведомления'
 } as const;
+export const HELP_WORKSPACES = {
+	section: 'admin',
+	page: 'workspaces',
+	title: 'Пространства'
+} as const;
+export const HELP_API_KEYS = {
+	section: 'admin',
+	page: 'api-keys',
+	title: 'Ключи доступа'
+} as const;
+export const HELP_HEALTH = { section: 'admin', page: 'health', title: 'Статус системы' } as const;

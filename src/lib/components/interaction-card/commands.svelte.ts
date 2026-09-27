@@ -2,6 +2,15 @@ import { getContext, setContext } from 'svelte';
 import type { CardCommand } from './model';
 
 /**
+ * Разделы состава дела: стороны и то, что предлагаем, — программы и продукты.
+ * Ключ раздела стоит и в адресе карточки (`?compose=parties`): по нему отказ
+ * пакета документов ведёт прямо туда, где недостающую сторону добавляют.
+ */
+export const COMPOSITION_SECTIONS = ['parties', 'offering'] as const;
+
+export type CompositionSection = (typeof COMPOSITION_SECTIONS)[number];
+
+/**
  * Какой диалог карточки открыт сейчас.
  *
  * Одну и ту же команду начинают из разных мест: пункт меню «Ещё», кнопка у
@@ -11,13 +20,32 @@ import type { CardCommand } from './model';
  */
 export class CardCommands {
 	current = $state<CardCommand | null>(null);
+	/**
+	 * Открытый раздел диалога «Изменить состав»; `null` — диалог закрыт. Стоит
+	 * рядом с `current`, а не внутри него: состав открывают из панелей
+	 * контекста и по ссылке из отказа пакета, и открыт он, как любой диалог
+	 * карточки, только один.
+	 */
+	composition = $state<CompositionSection | null>(null);
 
 	open(command: CardCommand): void {
+		this.composition = null;
 		this.current = command;
+	}
+
+	openComposition(section: CompositionSection): void {
+		this.current = null;
+		this.composition = section;
 	}
 
 	close(): void {
 		this.current = null;
+		this.composition = null;
+	}
+
+	/** Открыт ли хоть один диалог: живая карточка тогда не перечитывает себя сама. */
+	get busy(): boolean {
+		return this.current !== null || this.composition !== null;
 	}
 
 	/** Открыт ли диалог этого вида; сама команда — в `current`. */

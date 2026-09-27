@@ -52,7 +52,7 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	if (!can(ctx, 'stages.configure')) {
-		error(403, 'Раздел доступен только с правом «Настройка маршрутов и стадий»');
+		error(403, `Раздел доступен только с правом «${PERMISSIONS['stages.configure']}»`);
 	}
 
 	try {
@@ -144,7 +144,17 @@ function checklistFromForm(items: readonly ChecklistItemForm[]) {
 
 		taken.add(key);
 
-		return { key, label: item.label, required: item.required };
+		return {
+			key,
+			label: item.label,
+			required: item.required,
+			...(item.help === '' ? {} : { help: item.help }),
+			completion:
+				item.rule === ''
+					? ({ kind: 'manual' } as const)
+					: ({ kind: 'fact', rule: item.rule } as const),
+			...(item.action === '' ? {} : { action: item.action })
+		};
 	});
 }
 

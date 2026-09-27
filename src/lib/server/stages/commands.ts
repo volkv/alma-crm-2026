@@ -26,7 +26,7 @@
  * набранный на прежней стадии, не ложится в новую, даже если это возврат на ту
  * же самую стадию.
  */
-import { and, eq, inArray, isNull, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull, sql } from 'drizzle-orm';
 import type {
 	AdvanceStageInput,
 	CancelInteractionInput,
@@ -52,6 +52,7 @@ import type {
 	StageTransitionKind,
 	StageTransitionView
 } from '$lib/contracts/interactions';
+import { isFactItem } from '$lib/contracts/interactions';
 import type { AuditEventType } from '$lib/contracts/audit';
 import {
 	DOCUMENT_STATUS_FACT_LABELS,
@@ -95,7 +96,13 @@ import { hasPaymentFact } from '../integrations/exchange/payments';
 import { can, requirePermission } from '../rbac';
 import { interactionScopeFilter } from '../interactions/access';
 import { nextEdit } from '../interactions/edit-version';
-import { firstStage, requireActiveRevisionForWorkspace, stageSnapshot } from './process';
+import { checkEntryFacts, type EntryFacts } from './facts';
+import {
+	firstStage,
+	keptChecklistMarks,
+	requireActiveRevisionForWorkspace,
+	stageSnapshot
+} from './process';
 import {
 	evaluateTransition,
 	LMS_NOT_COMPLETED,
@@ -286,12 +293,52 @@ async function countBlockingBlockers(tx: Tx, interactionId: string): Promise<num
 	return rows.length;
 }
 
+/**
+ * Что команда перехода кладёт в запись вместе с уходом: ручные отметки и
+ * результат. Пункты-факты считаются уже с ними — результат, записанный той же
+ * командой, закрывает «Зафиксированы договорённости», а отметка об оплате —
+ * «Договор заключён».
+ */
+type EntryOverrides = { checklistState: ChecklistState; resultText: string | null };
+
+function overridesOf(entry: typeof stageEntries.$inferSelect): EntryOverrides {
+	return { checklistState: entry.checklistState, resultText: entry.resultText };
+}
+
+/** Пункты-факты открытой записи с данными дела на момент вопроса. */
+function readEntryFacts(
+	executor: Executor,
+	entry: typeof stageEntries.$inferSelect,
+	overrides: EntryOverrides = overridesOf(entry)
+): Promise<EntryFacts> {
+	return checkEntryFacts(executor, {
+		id: entry.id,
+		interactionId: entry.interactionId,
+		enteredAt: entry.enteredAt,
+		resultText: overrides.resultText,
+		checklistState: overrides.checklistState,
+		snapshot: entry.stageSnapshot
+	});
+}
+
+/**
+ * Отметки, с которыми запись закрывается: ручные и результат проверки каждого
+ * пункта-факта. Закрытую запись больше не пересчитывают (`frozenFacts`).
+ */
+function withFrozenFacts(marks: ChecklistState, facts: EntryFacts): ChecklistState {
+	return {
+		...marks,
+		...Object.fromEntries(Object.entries(facts).map(([key, fact]) => [key, fact.done]))
+	};
+}
+
 /** Состояние стадии в объёме правил перехода. */
 async function readStageState(
 	tx: Tx,
-	entry: typeof stageEntries.$inferSelect
+	entry: typeof stageEntries.$inferSelect,
+	overrides: EntryOverrides = overridesOf(entry)
 ): Promise<StageState> {
-	const [paused, blocking, evidence, mark] = await Promise.all([
+	const [paused, blocking, evidence, mark, facts] = await Promise.all([
 		hasOpenPause(tx, entry.id),
 		countBlockingBlockers(tx, entry.interactionId),
 		// Факт, пришедший до входа на стадию, засчитывается: система обучения
@@ -305,14 +352,16 @@ async function readStageState(
 		// его кладут и вход на стадию, и сама отметка, — а прочитать заново
 		// приходится там, где требование включили публикацией уже под открытой
 		// записью: документ отмечен, а снимка на ней нет.
-		readCurrentDocumentMark(tx, entry)
+		readCurrentDocumentMark(tx, entry),
+		readEntryFacts(tx, entry, overrides)
 	]);
 
 	return {
 		stageId: entry.stageId,
 		snapshot: entry.stageSnapshot,
-		checklistState: entry.checklistState,
-		resultText: entry.resultText,
+		checklistState: overrides.checklistState,
+		facts,
+		resultText: overrides.resultText,
 		confirmation: entry.confirmation,
 		lmsEvidence: entry.lmsEvidence ?? evidence,
 		documentMarkEvidence: mark,
@@ -614,7 +663,14 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 			);
 		}
 
-		const state = await readStageState(tx, entry);
+		rejectFactMarks(entry.stageSnapshot, input.checklistState ?? {});
+
+		const checklistState = { ...entry.checklistState, ...(input.checklistState ?? {}) };
+		const resultText =
+			input.resultText !== null && input.resultText !== undefined && input.resultText !== ''
+				? input.resultText
+				: entry.resultText;
+		const state = await readStageState(tx, entry, { checklistState, resultText });
 		const verdict = evaluateTransition(ctx, state, transition, {
 			reason: input.reason ?? null,
 			resultText: input.resultText ?? null,
@@ -639,16 +695,14 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 						target.requiresDocumentMark,
 						target.requiresDocumentTemplate
 					);
-		const checklistState = { ...entry.checklistState, ...(input.checklistState ?? {}) };
-		const resultText =
-			input.resultText !== null && input.resultText !== undefined && input.resultText !== ''
-				? input.resultText
-				: entry.resultText;
-
 		const [left] = await tx
 			.update(stageEntries)
 			.set({
-				checklistState,
+				// Со стадии уходят с тем, что на ней было: ручные отметки и
+				// результат проверки каждого пункта-факта. Закрытая запись дальше
+				// не пересчитывается — данные дела могут измениться, а история
+				// стадии нет (`frozenFacts` в `facts.ts`).
+				checklistState: withFrozenFacts(checklistState, state.facts),
 				resultText,
 				leftAt: now,
 				outcome: OUTCOME_BY_KIND[input.kind],
@@ -680,7 +734,10 @@ async function moveStage(ctx: ActorContext, input: MoveInput): Promise<void> {
 				responsibleUserId: entry.responsibleUserId ?? interaction.ownerUserId,
 				documentMarkEvidence: targetMark,
 				...(await lmsEntryPatch(tx, input.interactionId, stageSnapshot(target))),
-				...(await paymentEntryPatch(tx, input.interactionId, stageSnapshot(target)))
+				checklistState: {
+					...(await earlierMarks(tx, input.interactionId, stageSnapshot(target))),
+					...(await paymentEntryPatch(tx, input.interactionId, stageSnapshot(target)))
+				}
 			})
 			.returning({ id: stageEntries.id });
 
@@ -876,7 +933,18 @@ export async function resumeStage(ctx: ActorContext, input: ResumeStageInput): P
 async function writeChecklistItem(
 	ctx: ActorContext,
 	tx: Tx,
-	input: { interactionId: string; key: string; done: boolean; stageEntryId: string | null }
+	input: {
+		interactionId: string;
+		key: string;
+		done: boolean;
+		stageEntryId: string | null;
+		/**
+		 * Что делать с пунктом-фактом: отметка человека на него — отказ
+		 * (`reject`), машинная отметка по факту обмена — не нужна вовсе (`skip`):
+		 * такой пункт уже закрывают данные дела.
+		 */
+		onFact: 'reject' | 'skip';
+	}
 ): Promise<void> {
 	requirePermission(ctx, 'stages.transition');
 
@@ -891,6 +959,15 @@ async function writeChecklistItem(
 	if (!entry.stageSnapshot.checklist.some((item) => item.key === input.key)) {
 		throw new ValidationError('В чек-листе стадии нет такого пункта', [input.key]);
 	}
+
+	if (
+		input.onFact === 'skip' &&
+		entry.stageSnapshot.checklist.some((item) => item.key === input.key && isFactItem(item))
+	) {
+		return;
+	}
+
+	rejectFactMarks(entry.stageSnapshot, { [input.key]: input.done });
 
 	await tx
 		.update(stageEntries)
@@ -925,7 +1002,8 @@ export async function setChecklistItem(
 			interactionId: input.interactionId,
 			key: input.key,
 			done: input.done,
-			stageEntryId: input.stageEntryId
+			stageEntryId: input.stageEntryId,
+			onFact: 'reject'
 		})
 	);
 }
@@ -934,7 +1012,8 @@ export async function setChecklistItem(
  * Отметить пункт чек-листа открытой стадии в транзакции вызывающего: факт,
  * пришедший не из формы карточки (оплата с сайта), и отметка о нём обязаны
  * случиться вместе или не случиться вовсе. Пункта нет в чек-листе открытой
- * стадии — отказ, как у отметки из карточки.
+ * стадии — отказ, как у отметки из карточки. Процесс сделал пункт фактом —
+ * отметка не ставится: его закрывают данные дела, а не обмен.
  */
 export async function markChecklistItemIn(
 	ctx: ActorContext,
@@ -942,7 +1021,13 @@ export async function markChecklistItemIn(
 	interactionId: string,
 	key: string
 ): Promise<void> {
-	await writeChecklistItem(ctx, tx, { interactionId, key, done: true, stageEntryId: null });
+	await writeChecklistItem(ctx, tx, {
+		interactionId,
+		key,
+		done: true,
+		stageEntryId: null,
+		onFact: 'skip'
+	});
 }
 
 export async function setStageResult(ctx: ActorContext, input: SetStageResultInput): Promise<void> {
@@ -1122,14 +1207,64 @@ async function paymentEntryPatch(
 	tx: Tx,
 	interactionId: string,
 	snapshot: StageSnapshot
-): Promise<{ checklistState?: ChecklistState }> {
+): Promise<ChecklistState> {
 	if (!snapshot.checklist.some((item) => item.key === PAYMENT_CHECKLIST_KEY)) {
 		return {};
 	}
 
-	return (await hasPaymentFact(tx, interactionId))
-		? { checklistState: { [PAYMENT_CHECKLIST_KEY]: true } }
-		: {};
+	return (await hasPaymentFact(tx, interactionId)) ? { [PAYMENT_CHECKLIST_KEY]: true } : {};
+}
+
+/**
+ * Ручные отметки, с которыми дело возвращается на стадию, где уже было.
+ *
+ * Возврат — выход из тупика, а не отмена сделанного: пункты, которые отметили
+ * при прошлом проходе, остаются отмеченными, если стадия спрашивает о той же
+ * работе — тот же ключ, та же подпись и тот же способ закрытия
+ * (`keptChecklistMarks`). Изменённый публикацией пункт начинается заново:
+ * отметка отвечала на другой вопрос. Пункты-факты не переносятся — их считают
+ * данные дела.
+ */
+async function earlierMarks(
+	tx: Tx,
+	interactionId: string,
+	snapshot: StageSnapshot
+): Promise<ChecklistState> {
+	const [earlier] = await tx
+		.select({ snapshot: stageEntries.stageSnapshot, checklistState: stageEntries.checklistState })
+		.from(stageEntries)
+		.where(
+			and(
+				eq(stageEntries.interactionId, interactionId),
+				isNotNull(stageEntries.leftAt),
+				sql`${stageEntries.stageSnapshot}->>'key' = ${snapshot.key}`
+			)
+		)
+		.orderBy(desc(stageEntries.leftAt))
+		.limit(1);
+
+	return earlier === undefined
+		? {}
+		: keptChecklistMarks(earlier.snapshot.checklist, snapshot.checklist, earlier.checklistState);
+}
+
+/**
+ * Пункт-факт закрывают данные дела, и отметка на него — не выполнение, а
+ * подмена: отказ, а не молчаливый пропуск, иначе форма, приславшая отметку,
+ * считала бы пункт закрытым.
+ */
+function rejectFactMarks(snapshot: StageSnapshot, marks: ChecklistState): void {
+	const facts = snapshot.checklist.filter(
+		(item) => isFactItem(item) && marks[item.key] !== undefined
+	);
+
+	if (facts.length > 0) {
+		throw new ValidationError('Этот пункт закрывают данные дела, а не отметка', [
+			...facts.map(
+				(item) => `«${item.label}» выполняется данными дела, отметить его вручную нельзя`
+			)
+		]);
+	}
 }
 
 /**
@@ -1616,12 +1751,14 @@ export async function addComment(
 /**
  * Закрытие взаимодействия: завершение и отмена.
  *
- * Это не шаг по процессу, поэтому чек-лист здесь не проверяется: его проверяет
- * переход, а закрытие фиксирует исход. Но «обязательства исполнены» не должно
- * доказываться нажатием кнопки: если финальная стадия требует результата,
- * подтверждения или данных обучения, завершение без них отклоняется теми же
- * словами, что и переход вперёд. Досрочное закрытие — закрытие не с финальной
- * стадии — разрешает только право настраивать процесс и только с объяснением.
+ * «Обязательства исполнены» не должно доказываться нажатием кнопки: штатное
+ * завершение с финальной стадии спрашивает то же, что шаг вперёд, — закрыт ли
+ * обязательный чек-лист (ручные пункты — отметкой, пункты-факты — данными
+ * дела), записан ли результат, есть ли подтверждение и данные обучения, — и
+ * отказывает теми же словами. Отмена и досрочное закрытие — закрытие не с
+ * финальной стадии — признают, что обязательства не исполнены, и доказательств
+ * исполнения не требуют; досрочное разрешает только право настраивать процесс
+ * и только с объяснением.
  */
 
 type ClosingState = {
@@ -1685,6 +1822,9 @@ function closingVerdict(state: ClosingState): InteractionClosingView {
  */
 export function missingStageEvidence(entry: {
 	stageSnapshot: StageSnapshot;
+	checklistState: ChecklistState;
+	/** Пункты-факты записи: результат проверки данными дела. */
+	facts: EntryFacts;
 	resultText: string | null;
 	confirmation: StageConfirmation | null;
 	/** Снимок записи стадии либо факт по взаимодействию, если снимка ещё нет. */
@@ -1693,6 +1833,20 @@ export function missingStageEvidence(entry: {
 	documentMarkEvidence: DocumentMarkEvidence | null;
 }): string[] {
 	const missing: string[] = [];
+
+	for (const item of entry.stageSnapshot.checklist) {
+		if (!item.required) {
+			continue;
+		}
+
+		if (isFactItem(item)) {
+			if (entry.facts[item.key]?.done !== true) {
+				missing.push(`Не выполнен пункт чек-листа «${item.label}»: его закрывают данные дела`);
+			}
+		} else if (entry.checklistState[item.key] !== true) {
+			missing.push(`Не закрыт обязательный пункт чек-листа: «${item.label}»`);
+		}
+	}
 
 	if (entry.stageSnapshot.requiresResult && (entry.resultText ?? '').trim() === '') {
 		missing.push('У стадии не записан результат');
@@ -1741,6 +1895,7 @@ async function readClosingState(
 			? null
 			: await readLmsEvidence(executor, interaction.id, entry.stageSnapshot.lmsGroupPurposes);
 	const mark = entry === null ? null : await readCurrentDocumentMark(executor, entry);
+	const facts = entry === null ? {} : await readEntryFacts(executor, entry);
 
 	return {
 		status: row.status,
@@ -1750,6 +1905,7 @@ async function readClosingState(
 				? []
 				: missingStageEvidence({
 						...entry,
+						facts,
 						lmsEvidence: entry.lmsEvidence ?? evidence,
 						documentMarkEvidence: mark
 					}),
@@ -1779,16 +1935,28 @@ export async function getInteractionClosing(
 	return closingVerdict(await readClosingState(ctx, db, row));
 }
 
-/** Закрывает открытую запись стадии вместе с её паузой. */
+/**
+ * Закрывает открытую запись стадии вместе с её паузой. Результат проверки
+ * пунктов-фактов остаётся в записи, как и при переходе: закрытая запись не
+ * пересчитывается.
+ */
 async function closeOpenStage(
 	tx: Tx,
 	entry: typeof stageEntries.$inferSelect,
 	outcome: 'completed' | null,
 	outcomeReason: string | null
 ): Promise<void> {
+	const facts = await readEntryFacts(tx, entry);
+
 	await tx
 		.update(stageEntries)
-		.set({ leftAt: now, outcome, outcomeReason, updatedAt: now })
+		.set({
+			leftAt: now,
+			outcome,
+			outcomeReason,
+			checklistState: withFrozenFacts(entry.checklistState, facts),
+			updatedAt: now
+		})
 		.where(eq(stageEntries.id, entry.id));
 
 	await closeOpenPause(tx, entry.id);

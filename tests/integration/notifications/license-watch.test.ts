@@ -26,6 +26,7 @@ import { getRedis } from '$lib/server/redis';
 import { setSetting } from '$lib/server/settings';
 import { B2B_PROCESS } from '$lib/server/stages/definitions';
 import {
+	ensureSchoolOperator,
 	insertOrganization,
 	insertUser,
 	startTestDatabase,
@@ -53,6 +54,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
 	await database.reset();
+	// Продление заводит дело, а стороной каждого дела стоит школа-оператор.
+	await ensureSchoolOperator(database.db);
 	await setSetting(testActor(), 'notification_channels', {
 		email: false,
 		telegram: true,

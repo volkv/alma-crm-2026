@@ -35,6 +35,7 @@ import {
 	workspaces,
 	type ActorContext
 } from '$lib/platform/core.server';
+import { PERMISSIONS } from '$lib/platform/permissions.server';
 
 /** Сколько дел страница показывает: дальше список перестаёт быть обзором. */
 export const STREAMS_DEAL_LIMIT = 200;
@@ -114,6 +115,12 @@ export type FirstStreamPath = {
 	workflow: { key: string; name: string } | null;
 	/** Может ли вызывающий править состав карточки процесса. */
 	canConfigure: boolean;
+	/**
+	 * Подпись права, которым правят состав карточки. Разметка не видит
+	 * `$lib/server/**`, поэтому подпись для пустого состояния несёт сюда сервер —
+	 * та же строка, что стоит в матрице ролей.
+	 */
+	configurePermissionLabel: string;
 };
 
 /** Ключ панели, в которой заявляют поток (`index.ts`). */
@@ -355,7 +362,8 @@ async function readFirstStreamPath(
 	return {
 		panelChosen: row?.panels.includes(LEARNING_PANEL) ?? false,
 		workflow: row === undefined ? null : { key: row.key, name: row.name },
-		canConfigure: can(ctx, 'stages.configure')
+		canConfigure: can(ctx, 'stages.configure'),
+		configurePermissionLabel: PERMISSIONS['stages.configure']
 	};
 }
 

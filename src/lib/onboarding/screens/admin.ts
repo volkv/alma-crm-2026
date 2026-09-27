@@ -6,15 +6,17 @@
  */
 import type { TourScreen } from '../screens';
 import {
-	HELP_ACCESS,
+	HELP_API_KEYS,
 	HELP_AUDIT,
 	HELP_EXCHANGE,
+	HELP_HEALTH,
 	HELP_INTEGRATIONS,
 	HELP_NOTIFICATIONS,
 	HELP_PROCESS,
 	HELP_ROLES,
 	HELP_SETTINGS,
-	HELP_USERS
+	HELP_USERS,
+	HELP_WORKSPACES
 } from './help';
 
 export const ADMIN_SCREENS: readonly TourScreen[] = [
@@ -193,7 +195,7 @@ export const ADMIN_SCREENS: readonly TourScreen[] = [
 		title: 'Ключи доступа',
 		route: '/settings/api-keys',
 		permission: 'api_keys.manage',
-		help: HELP_ACCESS,
+		help: HELP_API_KEYS,
 		intro: {
 			title: 'Ключи доступа',
 			body: 'Ключи, которыми внешние системы обращаются к публичному API. Ключ ходит правами и областью своего владельца и виден один раз — сразу после выпуска; потерянный не восстанавливают, а отзывают и выпускают заново. Стоит в меню, в группе «Настройки».'
@@ -268,7 +270,7 @@ export const ADMIN_SCREENS: readonly TourScreen[] = [
 		title: 'Пространства',
 		route: '/settings/workspaces',
 		permission: 'stages.configure',
-		help: HELP_PROCESS,
+		help: HELP_WORKSPACES,
 		intro: {
 			title: 'Пространства',
 			body: 'Пространство — рабочее место направления: своя секция в меню, свои взаимодействия и назначенный процесс. Здесь их заводят и расставляют по порядку, а у каждого пространства есть своя страница: название, процесс, модули и сотрудники. Стоит в меню, в группе «Настройки».'
@@ -291,6 +293,39 @@ export const ADMIN_SCREENS: readonly TourScreen[] = [
 				title: 'Кто где работает',
 				body: 'Пространство — граница доступа: сотрудник видит взаимодействия только тех пространств, в которые включён, а меню показывает только их. Администратор видит все без включения. Состав правят на странице пространства, в блоке «Сотрудники»: рядом с каждым видно, сколько незавершённых взаимодействий пространства за ним, и исключить того, у кого они есть, можно только после подтверждения — он перестанет их видеть.',
 				target: 'settings-workspaces',
+				permission: 'users.manage'
+			}
+		]
+	},
+	{
+		id: 'settings-workspace-group',
+		title: 'Пространство',
+		route: '/settings/workspaces/[key]',
+		sample: 'workspace',
+		permission: 'stages.configure',
+		help: HELP_WORKSPACES,
+		intro: {
+			title: 'Страница пространства',
+			body: 'Одно пространство целиком: название и пояснение, назначенный процесс, подключённые модули и состав сотрудников. Открывается строкой из списка пространств.'
+		},
+		steps: [
+			{
+				id: 'main',
+				title: 'Основное',
+				body: 'Название и пояснение видны в меню и в заголовке доски; ключ стоит в адресе доски и переименованием не меняется. Здесь же назначают процесс — первый раз всегда, а смену предлагают, только пока в пространстве нет ни одного взаимодействия.',
+				target: 'workspace-main'
+			},
+			{
+				id: 'modules',
+				title: 'Модули',
+				body: 'Какие модули подключены пространству: у каждого переключатель, список «Даёт» и требование стадией процесса, если оно есть, — такой модуль выключить нельзя. Выключение ничего не стирает: подключите модуль снова, и записанное в нём вернётся на место.',
+				target: 'workspace-modules'
+			},
+			{
+				id: 'members',
+				title: 'Сотрудники',
+				body: 'Кто работает в пространстве: включают и исключают здесь же, а рядом с каждым видно, сколько незавершённых взаимодействий пространства он ведёт. Исключение с ними спрашивает подтверждения — сотрудник перестанет их видеть.',
+				target: 'workspace-members',
 				permission: 'users.manage'
 			}
 		]
@@ -396,7 +431,7 @@ export const ADMIN_SCREENS: readonly TourScreen[] = [
 		title: 'Статус системы',
 		route: '/settings/health',
 		permission: 'integrations.manage',
-		help: HELP_SETTINGS,
+		help: HELP_HEALTH,
 		intro: {
 			title: 'Статус системы',
 			body: 'Самодиагностика установки в закрытой сети: с чем система соединяется, зачем, обязательна ли связь и отвечает ли она сейчас. Проверка идёт при каждом открытии и наружу не ходит. Стоит в меню, в группе «Настройки».'

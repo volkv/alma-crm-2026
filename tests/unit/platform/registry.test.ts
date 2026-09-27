@@ -77,10 +77,16 @@ describe('каталог панелей', () => {
 });
 
 describe('модули, нужные стадиям', () => {
-	it('в процессе вуза обучение нужно ведению занятий, договоры — передаче лицензий', () => {
+	it('в процессе вуза обучение нужно стадиям с потоками, договоры — передаче лицензий', () => {
 		const required = requiredModules(processDefinitionSchema.parse(B2B_PROCESS).stages);
 
-		expect(required.get('learning')).toEqual(['Ведение занятий']);
+		// Ведению занятий — данные обучения, обучению преподавателей и повышению
+		// квалификации — пункты, которые закрывает поток нужного назначения.
+		expect(required.get('learning')).toEqual([
+			'Обучение преподавателей',
+			'Ведение занятий',
+			'Повышение квалификации'
+		]);
 		expect(required.get('contracts')).toEqual(['Передача материалов и лицензий']);
 		expect(required.has('payment')).toBe(false);
 		expect(required.has('meetings')).toBe(false);
@@ -111,8 +117,8 @@ describe('слоты модулей', () => {
 	it('факт шапки выбирается по виду контрагента и действующим модулям', () => {
 		const all = ['contracts', 'payment', 'learning', 'meetings'];
 
-		expect(headerFactSpecs(all, 'person').map((fact) => fact.key)).toEqual(['payment']);
-		expect(headerFactSpecs(all, 'company').map((fact) => fact.key)).toEqual(['contract']);
+		expect(headerFactSpecs(all, 'person').map((fact) => fact.key)).toEqual(['price', 'payment']);
+		expect(headerFactSpecs(all, 'company').map((fact) => fact.key)).toEqual(['contract', 'price']);
 		expect(headerFactSpecs(['learning'], 'institution')).toEqual([]);
 	});
 });

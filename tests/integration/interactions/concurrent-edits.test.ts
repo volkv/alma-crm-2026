@@ -120,19 +120,24 @@ describe('версия правки', () => {
 	it('вторая правка плана по той же версии получает отказ и ничего не пишет', async () => {
 		const ctx = admin();
 		await seedProcess(database, B2B_WORKSPACE_KEY, B2B_PROCESS);
-		const { interactionId, organizationId } = await createInteractionOn(ctx, database, {
+		const { interactionId } = await createInteractionOn(ctx, database, {
 			title: 'Подготовка специалистов'
 		});
 
-		// Оба открыли форму плана на одной версии.
-		const { editVersion } = await getInteraction(ctx, interactionId);
+		// Оба открыли форму плана на одной версии. Стороны форма плана везёт как
+		// есть — вместе с оператором, которого поставило заведение.
+		const { editVersion, parties } = await getInteraction(ctx, interactionId);
 		const plan = (title: string) =>
 			updateInteractionSchema.parse({
 				id: interactionId,
 				editVersion,
 				title,
 				ownerUserId: TEST_USER_IDS.admin,
-				parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
+				parties: parties.map((party) => ({
+					organizationId: party.organizationId,
+					partyRole: party.partyRole,
+					isPrimary: party.isPrimary
+				}))
 			});
 
 		// Обсуждение полей не переписывает: версия остаётся, план сохраняется.

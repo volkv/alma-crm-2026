@@ -1,15 +1,24 @@
 <script lang="ts">
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+	import { tick, untrack } from 'svelte';
+	import { afterNavigate, replaceState } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
 	import Header from '$lib/components/header.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import AccessPeople from '$lib/components/interaction-card/access-people.svelte';
+	import { withoutParam } from '$lib/components/directory/query';
 	import CardFacts from '$lib/components/interaction-card/card-facts.svelte';
-	import { setCardCommands } from '$lib/components/interaction-card/commands.svelte';
+	import {
+		COMPOSITION_SECTIONS,
+		setCardCommands,
+		type CompositionSection
+	} from '$lib/components/interaction-card/commands.svelte';
+	import CompositionDialog from '$lib/components/interaction-card/composition-dialog.svelte';
 	import ContextPanels from '$lib/components/interaction-card/context-panels.svelte';
 	import DocumentDialogs from '$lib/components/interaction-card/document-dialogs.svelte';
 	import EventFeed from '$lib/components/interaction-card/event-feed.svelte';
@@ -30,8 +39,8 @@
 	/**
 	 * Карточка взаимодействия — одной колонкой, сверху вниз: факты и процесс,
 	 * единственное главное действие с тем, что ему мешает, и лента всего, что
-	 * случилось. Контекст (сторона и панели, которые объявил процесс) стоит узкой
-	 * колонкой сбоку на рабочем экране, а на телефоне — между действием и
+	 * случилось. Контекст (сторона и панели, которые объявил процесс) стоит
+	 * колонкой около 40 % сбоку на широком экране, а уже — между действием и
 	 * лентой, свёрнутым.
 	 *
 	 * Приговор по каждой команде выносит сервер; карточка только раскладывает
@@ -60,12 +69,48 @@
 	);
 
 	$effect(() => {
-		const card = new LiveCard(liveUrl, interactionId, () => commands.current !== null);
+		const card = new LiveCard(liveUrl, interactionId, () => commands.busy);
 
 		live = card;
 		card.start();
 
 		return () => card.stop();
+	});
+
+	// Карточка перечитана — своим действием или по событию: полоса «изменилась»
+	// о том, что уже на экране, больше не нужна. Без этого собственный переход
+	// из диалога оставлял её висеть: событие о нём приходит, пока диалог ещё
+	// открыт.
+	$effect(() => {
+		void data.interaction;
+		untrack(() => live?.settle());
+	});
+
+	/**
+	 * `?compose=parties` — открыть «Изменить состав» на разделе: так ведут
+	 * сюда отказ пакета документов и ссылки из подсказок. Параметр снимается
+	 * с адреса сразу, иначе «назад» и перезагрузка открывали бы диалог снова.
+	 *
+	 * Момент — `afterNavigate`, а не эффект: по ссылке страница приходит
+	 * обычной загрузкой, и `replaceState` посреди гидратации падает внутри
+	 * маршрутизатора (тот же приём, что у `directory/flash.svelte`).
+	 */
+	afterNavigate(async () => {
+		const requested = page.url.searchParams.get('compose');
+
+		if (requested === null) return;
+
+		const cleaned = withoutParam(page.url, 'compose');
+
+		if (
+			data.composition !== null &&
+			(COMPOSITION_SECTIONS as readonly string[]).includes(requested)
+		) {
+			commands.openComposition(requested as CompositionSection);
+		}
+
+		await tick();
+		replaceState(cleaned, page.state);
 	});
 
 	const source = $derived<CardSource>({
@@ -171,17 +216,26 @@
 		</div>
 	{/if}
 
-	<CardFacts {model} />
+	<CardFacts
+		{model}
+		moduleData={data.moduleData}
+		counterpartyId={data.counterparty === null
+			? null
+			: (data.interaction.parties.find((party) => party.isPrimary)?.organizationId ?? null)}
+	/>
 
-	<!-- Три блока — действие, контекст, лента — стоят в разметке в том порядке,
+	<!-- Контекст — около 40 % ширины, но не уже 400 и не шире 480 px: в нём
+		правят состав, договор и документы, и 320 px не хватало ни на кнопки
+		разделов, ни на бейджи. Уже этой ширины колонка одна.
+		Три блока — действие, контекст, лента — стоят в разметке в том порядке,
 		в каком их читают на телефоне. На рабочем экране контекст уходит в правую
 		колонку на всю высоту, а лишняя высота достаётся последней строке, чтобы
 		между действием и лентой не появлялся зазор. -->
 	<div
-		class="grid min-w-0 items-start gap-4 lg:grid-cols-[minmax(0,1fr)_18rem] lg:grid-rows-[auto_1fr] xl:grid-cols-[minmax(0,1fr)_20rem]"
+		class="grid min-w-0 items-start gap-4 xl:grid-cols-[minmax(0,1fr)_clamp(25rem,40%,30rem)] xl:grid-rows-[auto_1fr]"
 	>
 		<div
-			class="min-w-0 rounded-xl border border-border bg-surface p-4 shadow-xs lg:col-start-1 lg:row-start-1"
+			class="min-w-0 rounded-xl border border-border bg-surface p-4 shadow-xs xl:col-start-1 xl:row-start-1"
 		>
 			<PrimaryAction
 				action={model.action}
@@ -201,13 +255,13 @@
 		{/if}
 
 		<aside
-			class="min-w-0 rounded-xl border border-border bg-surface lg:col-start-2 lg:row-span-2 lg:row-start-1"
+			class="min-w-0 rounded-xl border border-border bg-surface xl:col-start-2 xl:row-span-2 xl:row-start-1"
 			aria-label="Контекст"
 			data-tour="interaction-context"
 		>
 			<button
 				type="button"
-				class="flex w-full items-center justify-between gap-2 rounded-xl p-4 text-left text-sm font-medium focus-ring lg:hidden"
+				class="flex w-full items-center justify-between gap-2 rounded-xl p-4 text-left text-sm font-medium focus-ring xl:hidden"
 				aria-expanded={contextOpen}
 				aria-controls="card-context"
 				onclick={() => (contextOpen = !contextOpen)}
@@ -222,7 +276,7 @@
 			</button>
 			<div
 				id="card-context"
-				class="border-t border-border p-4 lg:border-t-0 {contextOpen ? '' : 'max-lg:hidden'}"
+				class="border-t border-border p-4 xl:border-t-0 {contextOpen ? '' : 'max-xl:hidden'}"
 			>
 				<ContextPanels
 					{source}
@@ -232,14 +286,15 @@
 					can={{
 						edit: can('edit'),
 						upload: can('upload_document'),
-						generate: can('generate_document')
+						generate: can('generate_document'),
+						compose: data.composition !== null
 					}}
 				/>
 			</div>
 		</aside>
 
 		<div
-			class="min-w-0 rounded-xl border border-border bg-surface p-4 lg:col-start-1 lg:row-start-2"
+			class="min-w-0 rounded-xl border border-border bg-surface p-4 xl:col-start-1 xl:row-start-2"
 		>
 			<EventFeed
 				events={model.events}
@@ -264,8 +319,21 @@
 	contracts={data.contracts}
 	shape={model.shape}
 />
+{#if data.composition !== null}
+	<CompositionDialog
+		interaction={data.interaction}
+		catalog={data.composition.catalog}
+		operator={data.composition.operator}
+		groups={model.modules.includes('learning') ? data.exchange.groups : []}
+		shape={model.shape}
+	/>
+{/if}
 <DocumentDialogs interaction={data.interaction} supersessions={data.supersessions} />
-<LearningDialogs exchange={data.exchange} />
+<LearningDialogs
+	exchange={data.exchange}
+	interaction={data.interaction}
+	counterpartyKind={data.card.counterpartyKind}
+/>
 <!-- Диалоги действующих модулей: каждый узнаёт свою команду сам. -->
 {#each cardDialogs(model.modules) as dialog (dialog.module)}
 	<dialog.component

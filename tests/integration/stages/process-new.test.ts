@@ -24,6 +24,7 @@ import {
 import { getInteractionStatus } from '$lib/server/stages/status';
 import {
 	insertOrganization,
+	ensureSchoolOperator,
 	startTestDatabase,
 	testActor,
 	TEST_USER_IDS,
@@ -45,6 +46,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
 	await database.reset();
+	// Заведение дела ставит школу стороной и без неё отказывает.
+	await ensureSchoolOperator(database.db);
 });
 
 type StageInput = ProcessDefinitionInput['stages'][number];

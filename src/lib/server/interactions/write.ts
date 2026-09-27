@@ -58,6 +58,7 @@ import {
 } from '../stages/process';
 import { interactionScopeFilter } from './access';
 import { assertEditVersion, editorOf, firstEdit, nextEdit, type Editor } from './edit-version';
+import { withSchoolOperator } from './operator';
 import { getInteraction } from './read';
 
 /** Момент, который ставит база: часы приложения и базы могут расходиться. */
@@ -342,7 +343,10 @@ export async function createInteractionIn(
 ): Promise<string> {
 	requirePermission(ctx, 'interactions.write');
 
-	const definition = parseCreate(input);
+	const parsed = parseCreate(input);
+	// Оператор ставится здесь, а не формой: так правило одно для формы, API и
+	// заявок с сайта, и дело не доходит до пакета документов без школы.
+	const definition = { ...parsed, parties: await withSchoolOperator(tx, parsed.parties) };
 
 	await assertPartiesAllowed(ctx, tx, definition.parties);
 	await assertContractAllowed(tx, definition);
@@ -492,6 +496,14 @@ function scalarChanges(
 	return candidates.filter((change) => change.oldValue !== change.newValue);
 }
 
+function partyKey(party: { organizationId: string; partyRole: string; isPrimary: boolean }) {
+	return `${party.organizationId}:${party.partyRole}:${party.isPrimary ? 'primary' : ''}`;
+}
+
+function programKey(program: { programId: string; programVersionId: string | null }) {
+	return `${program.programId}:${program.programVersionId ?? ''}`;
+}
+
 function sameSet(left: readonly string[], right: readonly string[]): boolean {
 	const a = [...left].sort();
 	const b = [...right].sort();
@@ -561,13 +573,17 @@ export async function updateInteraction(
 		const previousParties = await tx
 			.select({
 				organizationId: interactionParties.organizationId,
-				partyRole: interactionParties.partyRole
+				partyRole: interactionParties.partyRole,
+				isPrimary: interactionParties.isPrimary
 			})
 			.from(interactionParties)
 			.where(eq(interactionParties.interactionId, definition.id));
 
 		const previousPrograms = await tx
-			.select({ programId: interactionPrograms.programId })
+			.select({
+				programId: interactionPrograms.programId,
+				programVersionId: interactionPrograms.programVersionId
+			})
 			.from(interactionPrograms)
 			.where(eq(interactionPrograms.interactionId, definition.id));
 
@@ -583,33 +599,27 @@ export async function updateInteraction(
 
 		const changes = scalarChanges(before, definition);
 
-		if (
-			!sameSet(
-				previousParties.map((party) => party.organizationId),
-				definition.parties.map((party) => party.organizationId)
-			)
-		) {
-			changes.push({
-				field: 'parties',
-				oldValue: previousParties,
-				newValue: definition.parties.map((party) => ({
-					organizationId: party.organizationId,
-					partyRole: party.partyRole
-				}))
-			});
+		// Сторона сравнивается вместе с ролью и признаком основной, программа —
+		// вместе с версией: смена роли у той же организации и переход на новую
+		// версию той же программы — решения, и в истории они обязаны быть видны,
+		// а не пропасть за совпавшим набором идентификаторов.
+		const nextParties = definition.parties.map((party) => ({
+			organizationId: party.organizationId,
+			partyRole: party.partyRole,
+			isPrimary: party.isPrimary
+		}));
+
+		if (!sameSet(previousParties.map(partyKey), nextParties.map(partyKey))) {
+			changes.push({ field: 'parties', oldValue: previousParties, newValue: nextParties });
 		}
 
-		if (
-			!sameSet(
-				previousPrograms.map((program) => program.programId),
-				definition.programs.map((program) => program.programId)
-			)
-		) {
-			changes.push({
-				field: 'programs',
-				oldValue: previousPrograms.map((program) => program.programId),
-				newValue: definition.programs.map((program) => program.programId)
-			});
+		const nextPrograms = definition.programs.map((program) => ({
+			programId: program.programId,
+			programVersionId: program.programVersionId
+		}));
+
+		if (!sameSet(previousPrograms.map(programKey), nextPrograms.map(programKey))) {
+			changes.push({ field: 'programs', oldValue: previousPrograms, newValue: nextPrograms });
 		}
 
 		if (

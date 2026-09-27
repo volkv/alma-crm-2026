@@ -99,6 +99,8 @@ export const DEMO_DATA_TABLES = [
 	'interaction_products',
 	'interaction_contract_items',
 	'interaction_changes',
+	// Стоимость дела — условие самого дела и уходит вместе с ним.
+	'interaction_terms',
 	'stage_entries',
 	'stage_pauses',
 	'blockers',
@@ -186,7 +188,8 @@ const PRESERVED_SETTING_KEYS: readonly string[] = [
 
 /**
  * Состав карточки эталонных процессов — тот, что задали им миграции
- * `drizzle/0025_process_card.sql` и `drizzle/0026_document_package.sql`.
+ * `drizzle/0025_process_card.sql`, `drizzle/0026_document_package.sql` и
+ * `drizzle/0040_interaction_terms.sql` (договор у коммерческого обучения).
  *
  * Состав — свойство процесса, а не редакции, поэтому пересборка редакций его не
  * касается, а показ правит его редактором процесса. Процессы, заведённые
@@ -204,7 +207,15 @@ const REFERENCE_CARDS: readonly {
 	},
 	{
 		workflowKey: B2C_WORKFLOW_KEY,
-		cardPanels: ['terms', 'payment', 'learners', 'learning', 'training_document', 'documents'],
+		cardPanels: [
+			'terms',
+			'payment',
+			'contract',
+			'learners',
+			'learning',
+			'training_document',
+			'documents'
+		],
 		documentTemplateKeys: ['offer', 'legal_entity_contract', 'services_act']
 	}
 ];

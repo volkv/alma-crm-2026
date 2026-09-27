@@ -10,7 +10,8 @@
  * приговор с причинами отказа на выходе. Ни базы, ни HTTP — только правила.
  *
  * На шаге вперёд задаётся шесть вопросов стадии: снята ли пауза, закрыты ли
- * обязательные пункты чек-листа, записан ли результат, есть ли подтверждение,
+ * обязательные пункты чек-листа (ручные — отметкой, пункты-факты — данными
+ * дела), записан ли результат, есть ли подтверждение,
  * завершено ли обучение (и по группе ли нужного назначения, если стадия его
  * сузила) и стоит ли нужная отметка по документу дела (и на документе ли
  * нужного шаблона, если стадия его назвала). На возврате и пропуске они не
@@ -23,11 +24,13 @@ import {
 	type DocumentMarkEvidence
 } from '$lib/contracts/documents';
 import { LEARNING_PURPOSE_LABELS } from '$lib/contracts/exchange';
-import type {
-	ChecklistState,
-	StageConfirmation,
-	StageSnapshot,
-	StageTransitionView
+import {
+	isFactItem,
+	type ChecklistFact,
+	type ChecklistState,
+	type StageConfirmation,
+	type StageSnapshot,
+	type StageTransitionView
 } from '$lib/contracts/interactions';
 import type { ActorContext } from '../actor';
 import { can } from '../rbac';
@@ -39,7 +42,13 @@ export type StageState = {
 	stageId: string;
 	/** Слепок стадии: чек-лист и требования берутся из него, а не из структуры. */
 	snapshot: StageSnapshot;
+	/** Ручные отметки чек-листа. */
 	checklistState: ChecklistState;
+	/**
+	 * Пункты-факты: результат проверки данными дела (`facts.ts`). Отметка на
+	 * такой пункт не засчитывается — ни сохранённая, ни пришедшая с командой.
+	 */
+	facts: Record<string, ChecklistFact>;
 	resultText: string | null;
 	confirmation: StageConfirmation | null;
 	/** Факт завершения обучения по взаимодействию; `null` — обучение не завершено. */
@@ -135,7 +144,15 @@ export function evaluateTransition(
 		const checklistState = { ...state.checklistState, ...(intent?.checklistState ?? {}) };
 
 		for (const item of state.snapshot.checklist) {
-			if (item.required && checklistState[item.key] !== true) {
+			if (!item.required) {
+				continue;
+			}
+
+			if (isFactItem(item)) {
+				if (state.facts[item.key]?.done !== true) {
+					reasons.push(`Не выполнен пункт чек-листа «${item.label}»: его закрывают данные дела`);
+				}
+			} else if (checklistState[item.key] !== true) {
 				reasons.push(`Не закрыт обязательный пункт чек-листа: «${item.label}»`);
 			}
 		}

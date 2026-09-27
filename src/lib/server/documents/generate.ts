@@ -14,7 +14,7 @@ import { and, eq, inArray } from 'drizzle-orm';
 import Docxtemplater from 'docxtemplater';
 import PizZip from 'pizzip';
 import type { AuditDetails } from '$lib/contracts/audit';
-import type { DocumentView } from '$lib/contracts/documents';
+import type { DocumentSigning, DocumentView } from '$lib/contracts/documents';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getConfig } from '../config';
@@ -60,6 +60,11 @@ export type GenerateDocumentCommand = {
 	 * на каждую созданную запись; позиции обязаны быть выбраны взаимодействием.
 	 */
 	contractItemIds?: readonly string[];
+	/**
+	 * Город и подписанты, с которыми документ собран, — ложатся на документ,
+	 * чтобы следующая сборка подставила их сама. Документ вне пакета их не знает.
+	 */
+	signing?: DocumentSigning | null;
 };
 
 /** Вид документа, который записывается в `documents.kind` для сгенерированных файлов. */
@@ -320,6 +325,7 @@ export async function generateDocument(
 						kind: GENERATED_KIND,
 						templateKey,
 						title,
+						signing: input.signing ?? null,
 						filePath: blob.relativePath,
 						mime: blob.mime,
 						sizeBytes: blob.sizeBytes,

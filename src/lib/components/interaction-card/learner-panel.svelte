@@ -1,13 +1,18 @@
 <script lang="ts">
 	import PencilIcon from '@lucide/svelte/icons/pencil';
+	import PlusIcon from '@lucide/svelte/icons/plus';
+	import { resolve } from '$app/paths';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import type { OrganizationView } from '$lib/contracts/directory';
 	import type { LearningGroupView } from '$lib/contracts/exchange';
 	import type { InteractionView } from '$lib/contracts/interactions';
 	import { formatDate } from '$lib/format';
+	import type { CompositionSection } from './commands.svelte';
 	import ContactLine from './contact-line.svelte';
 	import ContextSection from './context-section.svelte';
 	import OfferingList from './offering-list.svelte';
+	import PartyName from './party-name.svelte';
+	import Requisites from './requisites.svelte';
 
 	/**
 	 * Сторона и условия обучения лица. Физическое лицо учится само: у него
@@ -23,7 +28,8 @@
 		shape,
 		groups,
 		paidStreamNumber,
-		onEditPlan
+		onEditPlan,
+		onCompose
 	}: {
 		interaction: InteractionView;
 		organization: OrganizationView | null;
@@ -40,6 +46,8 @@
 		 * сроков, где ей место; `null` — не здесь или права на правку нет.
 		 */
 		onEditPlan: (() => void) | null;
+		/** Открыть «Изменить состав» на разделе; `null` — права на правку нет. */
+		onCompose: ((section: CompositionSection) => void) | null;
 	} = $props();
 
 	const learner = $derived(interaction.parties.find((party) => party.isPrimary) ?? null);
@@ -80,29 +88,53 @@
 
 	<ContextSection title={shape === 'person' ? 'Слушатель' : 'Компания'}>
 		{#snippet action()}
-			{#if onEditPlan !== null}
-				<Button size="xs" variant="outline" onclick={onEditPlan}>
-					<PencilIcon aria-hidden="true" />
-					Изменить план
-				</Button>
-			{/if}
+			<div class="flex flex-wrap gap-1.5">
+				{#if onCompose !== null}
+					<Button size="xs" variant="outline" onclick={() => onCompose('parties')}>
+						Сменить сторону
+					</Button>
+				{/if}
+				{#if onEditPlan !== null}
+					<Button size="xs" variant="outline" onclick={onEditPlan}>
+						<PencilIcon aria-hidden="true" />
+						Изменить план
+					</Button>
+				{/if}
+			</div>
 		{/snippet}
-		{#if organization !== null && shape === 'company'}
-			<div class="flex flex-col gap-0.5 text-sm">
-				<p class="break-words">{organization.legalName}</p>
-				<p class="text-xs text-muted-foreground">
-					{[organization.region, organization.inn ? `ИНН ${organization.inn}` : null]
-						.filter((part) => part !== null)
-						.join(' · ')}
-				</p>
+		{#if learner !== null && shape === 'company'}
+			<div class="flex min-w-0 flex-col gap-1 text-sm">
+				<PartyName organizationId={learner.organizationId} name={learner.organizationName} />
+				{#if organization !== null}
+					<Requisites {organization} />
+				{/if}
 			</div>
 		{/if}
 		{#if shape === 'person' && learner !== null}
+			<!-- Имя слушателя уже в строке контакта: ссылка на его карточку —
+				отдельной строкой, а не вторым повтором ФИО. -->
 			<ContactLine party={learner} />
+			<a
+				class="w-fit rounded-sm text-xs text-link focus-ring hover:text-link-hover hover:underline"
+				href={resolve('/(app)/organizations/[id=uuid]', { id: learner.organizationId })}
+				>Карточка слушателя в справочнике</a
+			>
 		{/if}
 	</ContextSection>
 
 	<ContextSection title={shape === 'person' ? 'Программа и поток' : 'Программы и продукты'}>
+		{#snippet action()}
+			{#if onCompose !== null}
+				<Button size="xs" variant="outline" onclick={() => onCompose('offering')}>
+					{#if interaction.programs.length === 0 && interaction.products.length === 0}
+						<PlusIcon aria-hidden="true" />
+						Добавить
+					{:else}
+						Изменить
+					{/if}
+				</Button>
+			{/if}
+		{/snippet}
 		<OfferingList {interaction} />
 		{#if shape === 'person'}
 			<p class="text-xs text-muted-foreground tabular-nums">

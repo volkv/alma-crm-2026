@@ -3,8 +3,10 @@ import {
 	DOCUMENT_STATUS_FACT_LABELS,
 	DOCUMENT_TEMPLATE_LABELS,
 	documentKindLabel,
+	packageTemplates,
 	type DocumentStatusFact,
-	type DocumentTemplateKey
+	type DocumentTemplateKey,
+	type UploadedDocumentKind
 } from '$lib/contracts/documents';
 import type { OrganizationKind, OrganizationView } from '$lib/contracts/directory';
 import {
@@ -17,6 +19,7 @@ import {
 } from '$lib/contracts/exchange';
 import {
 	blockerReasonLabel,
+	isFactItem,
 	CONTRACT_STATUS_LABELS,
 	PAUSE_REASON_LABELS,
 	type BlockerView,
@@ -28,6 +31,7 @@ import {
 	type InteractionStatusView,
 	type InteractionSummaryView,
 	type InteractionView,
+	type ChecklistItem,
 	type StageConfirmation,
 	type StageEntryView,
 	type StageOutcome,
@@ -37,7 +41,15 @@ import {
 import { PAYMENT_CHECKLIST_KEY, type PaymentFactView } from '$lib/contracts/payments';
 import type { ProcessCard } from '$lib/contracts/process-card';
 import { daysUntil, formatDate, formatDateTime, pluralize } from '$lib/format';
-import { cardActionSpecs, visiblePanels, type ModuleKey } from '$lib/platform/registry';
+import { checklistAction, moduleActionKey } from '$lib/platform/checklist';
+import { checklistRule } from '$lib/platform/checklist-rules';
+import {
+	cardActionSpecs,
+	moduleByKey,
+	offeredTemplates,
+	visiblePanels,
+	type ModuleKey
+} from '$lib/platform/registry';
 
 /**
  * Карточка взаимодействия как набор фактов, каждый из которых назван ровно в
@@ -207,9 +219,19 @@ export type CardCommand =
 	| { kind: 'cancel' }
 	| { kind: 'plan' }
 	| { kind: 'contract' }
-	| { kind: 'upload' }
+	/** `documentKind` — вид, с которым открывается загрузка («Документ об обучении»). */
+	| { kind: 'upload'; documentKind?: UploadedDocumentKind }
 	| { kind: 'revision'; documentId: string }
-	| { kind: 'mark'; documentId: string | null; fact: DocumentStatusFact | null }
+	/**
+	 * `template` — шаблон, который ждёт стадия: диалог предлагает только
+	 * документы, собранные по нему, и объясняет, почему остальные не подходят.
+	 */
+	| {
+			kind: 'mark';
+			documentId: string | null;
+			fact: DocumentStatusFact | null;
+			template?: DocumentTemplateKey | null;
+	  }
 	| {
 			kind: 'package';
 			/** Шаблоны пакета дела: объявлены процессом и подходят контрагенту. */
@@ -223,7 +245,13 @@ export type CardCommand =
 	 * Действие карточки, которое принёс модуль (`cardActions` манифеста): диалог
 	 * к нему рисует сам модуль, и узнаёт свою команду по ключам модуля и действия.
 	 */
-	| { kind: 'module'; module: ModuleKey; action: string };
+	| { kind: 'module'; module: ModuleKey; action: string }
+	/**
+	 * Показать сторону дела в «Контексте»: контакт, подразделение и канал связи
+	 * правятся там. Диалога у команды нет — её выполняет тот, кто нажал
+	 * (`revealParty` в `primary-action.svelte`).
+	 */
+	| { kind: 'reveal'; target: 'party' };
 
 /**
  * Вид контрагента, от которого зависят шапка и условия: вуз работает по
@@ -266,12 +294,33 @@ export type CardQuiet = {
 	advice: string;
 };
 
+/** Пункт чек-листа стадии словами — для просмотра стадии из списка процесса. */
+export type StageDotItem = {
+	label: string;
+	required: boolean;
+	/** «отметка человека» или что проверяют данные дела. */
+	how: string;
+	help: string | null;
+};
+
+/** Переход на стадию из списка процесса: пропуск или возврат, как в меню «Ещё». */
+export type StageDotMove = {
+	label: string;
+	allowed: boolean;
+	reason: string | null;
+	command: CardCommand;
+};
+
 export type StageDot = {
 	id: string;
 	position: number;
 	name: string;
 	state: StageProgressItem['state'];
 	note: string | null;
+	checklist: StageDotItem[];
+	/** Результат последнего прохода стадии; `null` — не записан или стадию не проходили. */
+	result: string | null;
+	moves: StageDotMove[];
 };
 
 /** Условие шага вперёд, которое ставит стадия. */
@@ -281,8 +330,11 @@ export type Requirement = {
 	done: boolean;
 	/** Обязательное условие держит переход; необязательное — только напоминает. */
 	required: boolean;
-	/** Чем закрывают условие: отметка в списке или отдельное действие. */
-	close: 'check' | 'action' | 'external';
+	/**
+	 * Чем закрывают условие: отметка в списке, отдельное действие, внешняя
+	 * система или данные дела (пункт-факт: галочки у него нет).
+	 */
+	close: 'check' | 'action' | 'external' | 'fact';
 	/** Ключ пункта чек-листа, который отмечается формой; только у `check`. */
 	checklistKey: string | null;
 	/** Подпись кнопки для `action` и `external`. */
@@ -293,6 +345,11 @@ export type Requirement = {
 	hint: string | null;
 	/** Чем условие выполнено — у сделанного: результат, чем подтверждено. */
 	doneNote: string | null;
+	/**
+	 * Что по условию уже сохранено, но его пока не закрывает: у пункта-факта —
+	 * почему данных мало, у ручного — факт модуля рядом («встреча назначена на…»).
+	 */
+	note: string | null;
 };
 
 export type SecondaryAction = {
@@ -326,6 +383,11 @@ export type CardAction =
 			/** Отказ сервера, не объяснённый ни условиями, ни помехами. */
 			otherReasons: string[];
 			pause: { reason: string; note: string; since: Date; nextAction: string | null } | null;
+			/**
+			 * Записанный результат стадии: виден сразу после записи, а не только
+			 * в ленте после перехода; `null` — не записан.
+			 */
+			result: string | null;
 	  }
 	| { kind: 'closed'; label: string; outcome: string | null; at: Date | null }
 	| { kind: 'none'; label: string };
@@ -396,7 +458,8 @@ const FIELD_LABELS: Record<string, string> = {
 	programs: 'Программы',
 	products: 'Продукты',
 	contract: 'Договор',
-	contractItems: 'Позиции договора'
+	contractItems: 'Позиции договора',
+	contact: 'Контактное лицо'
 };
 
 function primaryParty(interaction: InteractionView): InteractionPartyView | null {
@@ -559,6 +622,165 @@ function describeLmsEvidence(entry: StageEntryView): string | null {
 	return `Отмечено сотрудником по потоку ${evidence.streamNumber} ${formatDateTime(evidence.markedAt)}: «${evidence.comment}»`;
 }
 
+/** Что нужно модели, чтобы разложить условия стадии и кнопки у пунктов. */
+export type RequirementContext = Pick<CardSource, 'exchange' | 'modules' | 'card' | 'changes'>;
+
+/**
+ * Кнопка у пункта чек-листа по действию, которое выбрал процесс
+ * (`$lib/platform/checklist`). Действие модуля, который в пространстве не
+ * действует, кнопки не даёт; пакет без единого подходящего шаблона и отметка
+ * завершения без потока — тоже: кнопка, за которой пусто, хуже её отсутствия.
+ *
+ * Загрузка и отметка документа подстраиваются под правило пункта: пункт «Выдан
+ * документ об обучении» открывает загрузку сразу с видом «Документ об
+ * обучении», пункт про акт передачи — отметку «Утверждён» только среди актов,
+ * собранных по шаблону.
+ */
+function checklistCommand(
+	key: string,
+	item: ChecklistItem,
+	context: RequirementContext
+): { cta: string; command: CardCommand } | null {
+	const spec = checklistAction(key);
+
+	if (
+		spec === undefined ||
+		(spec.module !== null && !context.modules.some((module) => module === spec.module))
+	) {
+		return null;
+	}
+
+	const make = (command: CardCommand) => ({ cta: spec.label, command });
+	const rule = isFactItem(item) ? item.completion.rule : null;
+
+	switch (key) {
+		case 'result':
+			return make({ kind: 'result' });
+		case 'confirm':
+			return make({ kind: 'confirm' });
+		case 'upload':
+			return make(
+				rule === 'training_document'
+					? { kind: 'upload', documentKind: 'certificate' }
+					: { kind: 'upload' }
+			);
+		case 'mark':
+			return make(
+				rule === 'handover_act_approved'
+					? { kind: 'mark', documentId: null, fact: 'approved', template: 'handover_act' }
+					: rule === 'contract_concluded'
+						? { kind: 'mark', documentId: null, fact: 'approved', template: null }
+						: { kind: 'mark', documentId: null, fact: null }
+			);
+		case 'plan':
+			return make({ kind: 'plan' });
+		case 'contract':
+			return make({ kind: 'contract' });
+		case 'party':
+			return make({ kind: 'reveal', target: 'party' });
+		case 'package': {
+			const templates = packageTemplates(
+				offeredTemplates(context.card.templates, context.modules),
+				context.card.counterpartyKind
+			);
+
+			return templates.length === 0
+				? null
+				: make({ kind: 'package', templates, counterpartyKind: context.card.counterpartyKind });
+		}
+		case 'send_group':
+			return make({ kind: 'send-group' });
+		case 'complete_group':
+			return context.exchange.groups.length === 0 || !context.exchange.canComplete
+				? null
+				: make({ kind: 'complete-group', groupId: null });
+	}
+
+	const action = cardActionSpecs(context.modules).find(
+		(candidate) => moduleActionKey(candidate.module, candidate.key) === key
+	);
+
+	return action === undefined
+		? null
+		: make({ kind: 'module', module: action.module, action: action.key });
+}
+
+/**
+ * Последний факт, который модуль записал в историю дела (`<модуль>:<факт>` в
+ * поле правки): рядом с пунктом, у которого стоит действие модуля, виден уже
+ * сохранённый результат — например, на когда назначена встреча.
+ */
+function moduleFact(
+	actionKey: string | undefined,
+	changes: readonly InteractionChangeView[]
+): string | null {
+	const module = actionKey === undefined ? null : (checklistAction(actionKey)?.module ?? null);
+
+	if (module === null) {
+		return null;
+	}
+
+	const change = changes.find((candidate) => candidate.field.startsWith(`${module}:`));
+
+	return change !== undefined && typeof change.newValue === 'string' ? change.newValue : null;
+}
+
+/** Как пункт закрывается — словами для списка стадий. */
+function checklistHow(item: ChecklistItem): string {
+	if (!isFactItem(item)) {
+		return 'отметка человека';
+	}
+
+	return `данные дела: ${checklistRule(item.completion.rule)?.label ?? item.completion.rule}`;
+}
+
+/** Пункт чек-листа как условие стадии. */
+function checklistRequirement(
+	entry: StageEntryView,
+	item: ChecklistItem,
+	context: RequirementContext
+): Requirement {
+	const button = item.action === undefined ? null : checklistCommand(item.action, item, context);
+	const saved = moduleFact(item.action, context.changes);
+
+	if (isFactItem(item)) {
+		const fact = entry.facts[item.key] ?? { done: false, evidence: null };
+		const rule = checklistRule(item.completion.rule);
+
+		return {
+			key: `checklist:${item.key}`,
+			label: item.label,
+			done: fact.done,
+			required: item.required,
+			close: 'fact',
+			checklistKey: null,
+			cta: button?.cta ?? null,
+			command: button?.command ?? null,
+			hint:
+				item.help ??
+				(rule === undefined
+					? null
+					: `Закроется само, когда в деле будет: ${rule.label.toLowerCase()}.`),
+			doneNote: fact.done ? fact.evidence : null,
+			note: fact.done ? null : fact.evidence
+		};
+	}
+
+	return {
+		key: `checklist:${item.key}`,
+		label: item.label,
+		done: entry.checklistState[item.key] === true,
+		required: item.required,
+		close: 'check',
+		checklistKey: item.key,
+		cta: button?.cta ?? null,
+		command: button?.command ?? null,
+		hint: item.help ?? null,
+		doneNote: null,
+		note: saved
+	};
+}
+
 /**
  * Условия шага вперёд с текущей стадии — из её снимка и того, что уже сделано.
  *
@@ -566,36 +788,19 @@ function describeLmsEvidence(entry: StageEntryView): string | null {
  * уже есть: чем подтверждена стадия — факт о ней, и спрятать его только
  * потому, что процесс его не просил, значило бы потерять.
  *
- * `modules` — действующие модули пространства: пункт чек-листа, к которому
- * модуль привязал своё действие (`checklistItems`), держит кнопку этого
- * действия прямо у себя — на любой стадии, где такой пункт есть.
+ * Пункт чек-листа несёт пояснение «что значит сделать» и кнопку действия,
+ * которые выбрал процесс; пункт-факт закрывают данные дела — галочки у него
+ * нет, рядом видно, чем он закрыт или чего не хватает.
  */
 export function buildRequirements(
 	entry: StageEntryView,
-	exchange: CardExchange,
-	modules: readonly string[]
+	context: RequirementContext
 ): Requirement[] {
 	const { snapshot } = entry;
-	const moduleActions = cardActionSpecs(modules);
-	const requirements: Requirement[] = snapshot.checklist.map((item) => {
-		// Пункт, закрытый действием модуля, — первым по порядку конфига: два
-		// модуля на одном пункте дали бы две кнопки там, где место под одну.
-		const action = moduleActions.find((spec) => spec.checklistItems.includes(item.key));
-
-		return {
-			key: `checklist:${item.key}`,
-			label: item.label,
-			done: entry.checklistState[item.key] === true,
-			required: item.required,
-			close: 'check',
-			checklistKey: item.key,
-			cta: action?.label ?? null,
-			command:
-				action === undefined ? null : { kind: 'module', module: action.module, action: action.key },
-			hint: action?.checklistHint ?? null,
-			doneNote: null
-		};
-	});
+	const { exchange } = context;
+	const requirements: Requirement[] = snapshot.checklist.map((item) =>
+		checklistRequirement(entry, item, context)
+	);
 
 	if (snapshot.requiresResult) {
 		const done = entry.resultText !== null && entry.resultText.trim() !== '';
@@ -610,7 +815,10 @@ export function buildRequirements(
 			cta: 'Записать результат',
 			command: { kind: 'result' },
 			hint: null,
-			doneNote: done ? entry.resultText : null
+			// Сам текст стоит под заголовком «Следующего шага» (`CardAction.result`):
+			// второй раз в списке сделанного он только удлинял бы его.
+			doneNote: null,
+			note: null
 		});
 	}
 
@@ -643,7 +851,8 @@ export function buildRequirements(
 			hint: noStream
 				? `Сначала заявите поток в систему обучения — итог придёт оттуда.${purposeHint}`
 				: `Итог придёт из системы обучения сам. Если данных не будет, отметьте завершение с объяснением.${purposeHint}`,
-			doneNote: describeLmsEvidence(entry)
+			doneNote: describeLmsEvidence(entry),
+			note: null
 		});
 	}
 
@@ -658,7 +867,8 @@ export function buildRequirements(
 			cta: 'Подтвердить',
 			command: { kind: 'confirm' },
 			hint: 'Файлом, отметкой ответственного или записью системы обучения.',
-			doneNote: describeConfirmation(entry)
+			doneNote: describeConfirmation(entry),
+			note: null
 		});
 	}
 
@@ -679,9 +889,14 @@ export function buildRequirements(
 			close: 'action',
 			checklistKey: null,
 			cta: 'Отметить документ',
-			command: { kind: 'mark', documentId: null, fact: mark },
-			hint: 'Стадию закрывает отметка по самому документу, а не отметка ответственного.',
-			doneNote: evidence === null ? null : `«${evidence.title}» от ${formatDate(evidence.markedAt)}`
+			command: { kind: 'mark', documentId: null, fact: mark, template },
+			hint:
+				template === null
+					? 'Стадию закрывает отметка по самому документу, а не отметка ответственного.'
+					: `Засчитывается только документ, собранный по шаблону: «Собрать пакет документов» → подписанный скан загрузить новой редакцией собранного → отметить «${DOCUMENT_STATUS_FACT_LABELS[mark]}».`,
+			doneNote:
+				evidence === null ? null : `«${evidence.title}» от ${formatDate(evidence.markedAt)}`,
+			note: null
 		});
 	}
 
@@ -689,7 +904,7 @@ export function buildRequirements(
 }
 
 function buildAction(source: CardSource): CardAction {
-	const { interaction, status, summary, closing, exchange } = source;
+	const { interaction, status, summary, closing } = source;
 
 	if (interaction.status !== 'active') {
 		const last = status.history[0] ?? null;
@@ -709,7 +924,9 @@ function buildAction(source: CardSource): CardAction {
 		return { kind: 'none', label: 'Запись не стоит ни на одной стадии' };
 	}
 
-	const requirements = buildRequirements(entry, exchange, source.modules);
+	const requirements = buildRequirements(entry, source);
+	const result =
+		entry.resultText !== null && entry.resultText.trim() !== '' ? entry.resultText : null;
 	const blockers = summary.blocking.blockers.filter((blocker) => blocker.blocksTransition);
 	const softBlockers = summary.blocking.blockers.filter((blocker) => !blocker.blocksTransition);
 	const pause =
@@ -745,7 +962,8 @@ function buildAction(source: CardSource): CardAction {
 			blockers,
 			softBlockers,
 			otherReasons: allowed ? [] : ['Нет права снимать паузу'],
-			pause
+			pause,
+			result
 		};
 	}
 
@@ -761,7 +979,8 @@ function buildAction(source: CardSource): CardAction {
 			blockers,
 			softBlockers,
 			otherReasons: explained(chosen.allowed) ? [] : chosen.reasons,
-			pause
+			pause,
+			result
 		};
 	}
 
@@ -774,7 +993,8 @@ function buildAction(source: CardSource): CardAction {
 		blockers,
 		softBlockers,
 		otherReasons: explained(closing.complete.allowed) ? [] : closing.complete.reasons,
-		pause
+		pause,
+		result
 	};
 }
 
@@ -985,6 +1205,23 @@ function stageDuration(entry: StageEntryView): string {
 const stageTitle = (entry: StageEntryView) => `${entry.snapshot.position}. ${entry.snapshot.name}`;
 
 /**
+ * Событие ухода со стадии словами. Возврат и пропуск называют обе стадии —
+ * откуда и куда: «„3. Встреча“ — возврат на стадию» читалось как возврат на
+ * третью, хотя дело ушло с неё на вторую.
+ */
+function leftTitle(entry: StageEntryView, outcome: StageOutcome, next: StageEntryView | null) {
+	if (next !== null && outcome === 'returned') {
+		return `Возврат с «${stageTitle(entry)}» на «${stageTitle(next)}»`;
+	}
+
+	if (next !== null && outcome === 'skipped') {
+		return `Пропуск: с «${stageTitle(entry)}» сразу на «${stageTitle(next)}»`;
+	}
+
+	return `«${stageTitle(entry)}» — ${OUTCOME_LABELS[outcome]}`;
+}
+
+/**
  * Единая лента: переходы, паузы, подтверждения, комментарии, документы,
  * правки плана, помехи и обмен с системой обучения — одним списком по времени,
  * новые сверху. Каждое событие попадает в ленту один раз и только сюда.
@@ -995,7 +1232,10 @@ export function buildEvents(source: CardSource): CardEvent[] {
 	const entries = status.current === null ? status.history : [status.current, ...status.history];
 	const oldest = entries.at(-1) ?? null;
 
-	for (const entry of entries) {
+	for (const [index, entry] of entries.entries()) {
+		// Записи идут новыми вперёд: следующая по времени — та, что перед этой.
+		const next = index > 0 ? entries[index - 1] : null;
+
 		if (entry === oldest) {
 			events.push({
 				id: `created:${interaction.id}`,
@@ -1022,7 +1262,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 				id: `left:${entry.id}`,
 				at: entry.leftAt,
 				kind: 'stage',
-				title: `«${stageTitle(entry)}» — ${OUTCOME_LABELS[entry.outcome]}`,
+				title: leftTitle(entry, entry.outcome, next),
 				detail: detail.length === 0 ? null : detail.join(' · '),
 				author: entry.responsibleName,
 				duration: stageDuration(entry),
@@ -1131,11 +1371,21 @@ export function buildEvents(source: CardSource): CardEvent[] {
 	}
 
 	for (const change of changes) {
+		// Факт модуля (`<модуль>:<факт>`) записан готовой фразой — ею и читается.
+		const moduleFactText =
+			moduleByKey(change.field.split(':')[0]) !== undefined &&
+			change.field.includes(':') &&
+			typeof change.newValue === 'string'
+				? change.newValue
+				: null;
+
 		events.push({
 			id: `change:${change.id}`,
 			at: change.changedAt,
 			kind: 'plan',
-			title: `${FIELD_LABELS[change.field] ?? change.field}: ${describeChange(change.oldLabel, change.oldValue)} → ${describeChange(change.newLabel, change.newValue)}`,
+			title:
+				moduleFactText ??
+				`${FIELD_LABELS[change.field] ?? change.field}: ${describeChange(change.oldLabel, change.oldValue)} → ${describeChange(change.newLabel, change.newValue)}`,
 			detail: change.reason,
 			author: change.authorName,
 			duration: null,
@@ -1214,6 +1464,47 @@ export function buildEvents(source: CardSource): CardEvent[] {
 	return events.sort((a, b) => new Date(b.at).getTime() - new Date(a.at).getTime());
 }
 
+/**
+ * Стадии процесса для полосы и списка. Каждую можно раскрыть: что на ней
+ * спрашивают, чем кончился прошлый проход и можно ли туда пропустить или
+ * вернуться — те же переходы, что в меню «Ещё», с теми же причинами отказа.
+ */
+function buildStageDots(source: CardSource): StageDot[] {
+	const { status, summary, interaction } = source;
+	const entries = status.current === null ? status.history : [status.current, ...status.history];
+	const moves =
+		interaction.status === 'active'
+			? summary.canDo.transitions.filter((option) => option.transition.kind !== 'forward')
+			: [];
+
+	return status.progress.map((item) => {
+		const last = entries.find((entry) => entry.snapshot.key === item.key && entry.leftAt !== null);
+
+		return {
+			id: item.stageId,
+			position: item.position,
+			name: item.name,
+			state: item.state,
+			note: item.note,
+			checklist: item.checklist.map((point) => ({
+				label: point.label,
+				required: point.required,
+				how: checklistHow(point),
+				help: point.help ?? null
+			})),
+			result: last?.resultText ?? null,
+			moves: moves
+				.filter((option) => option.toStage.id === item.stageId)
+				.map((option) => ({
+					label: `${TRANSITION_VERBS[option.transition.kind]} «${option.toStage.name}»`,
+					allowed: option.allowed,
+					reason: option.allowed ? null : option.reasons.join('; '),
+					command: transitionCommand(option)
+				}))
+		};
+	});
+}
+
 export function buildCard(source: CardSource, now: Date): CardModel {
 	const { interaction, status, summary } = source;
 	const primary = primaryParty(interaction);
@@ -1252,13 +1543,7 @@ export function buildCard(source: CardSource, now: Date): CardModel {
 						status: CONTRACT_STATUS_LABELS[interaction.contract.status],
 						validUntil: interaction.contract.validUntil
 					},
-		stages: status.progress.map((item) => ({
-			id: item.stageId,
-			position: item.position,
-			name: item.name,
-			state: item.state,
-			note: item.note
-		})),
+		stages: buildStageDots(source),
 		action,
 		primary: primaryCommand(source, action),
 		secondary: buildSecondary(source, action),

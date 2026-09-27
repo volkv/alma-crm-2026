@@ -8,7 +8,12 @@
 	 * следующая стадии названы над полосой (`CardFacts`), все названия — в
 	 * списке (`StageList`), который раскрывают по требованию.
 	 */
-	let { stages }: { stages: readonly StageDot[] } = $props();
+	let {
+		stages
+	}: {
+		/** Полосе нужно только положение: редактор процесса рисует её без дела. */
+		stages: readonly Pick<StageDot, 'id' | 'position' | 'name' | 'state'>[];
+	} = $props();
 </script>
 
 <ol class="flex items-center gap-0.5" aria-label="Стадии процесса" data-slot="stage-strip">

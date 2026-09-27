@@ -17,6 +17,7 @@ import {
 import { defineCardServer } from '$lib/platform/card.server';
 import {
 	actorFromEvent,
+	addCounterpartyLearner,
 	contentDisposition,
 	exportLearningGroupRoster,
 	fileField,
@@ -203,6 +204,19 @@ export default defineCardServer(learning, {
 			if (!parsed.ok) return parsed.failure;
 
 			return run(() => removeLearner(actorFromEvent(event), parsed.data));
+		},
+
+		/** Слушатель — сам контрагент-лицо: в список одной кнопкой, без файла. */
+		rosterAddCounterparty: async (event) => {
+			const data = await event.request.formData();
+			const parsed = parse(learningGroupRosterSchema, {
+				interactionId: event.params.id,
+				learningGroupId: data.get('learningGroupId')
+			});
+
+			if (!parsed.ok) return parsed.failure;
+
+			return run(() => addCounterpartyLearner(actorFromEvent(event), parsed.data));
 		}
 	},
 

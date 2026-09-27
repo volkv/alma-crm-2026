@@ -16,6 +16,7 @@ import {
 	documentKindLabel,
 	type DocumentTemplateKey
 } from '$lib/contracts/documents';
+import { CHECKLIST_RULES } from './checklist-rules';
 import { CORE_PANELS } from './core-panels';
 import type {
 	CardActionSpec,
@@ -101,19 +102,26 @@ export function visiblePanels(chosen: readonly string[], active: Iterable<string
 
 /**
  * Модули, без которых стадии не закрыть: модуль → названия стадий, которым он
- * нужен. Модуль без правила (`requiredByStage: null`) сюда не попадает никогда.
+ * нужен. Нужен модуль стадии, если так решает его правило (`requiredByStage`)
+ * или если пункт её чек-листа закрывается фактом модуля (`CHECKLIST_RULES`):
+ * без модуля данных для такого пункта нет, и стадия встала бы навсегда.
  */
 export function requiredModules(stages: readonly StageRuleInput[]): Map<ModuleKey, string[]> {
 	const required = new Map<ModuleKey, string[]>();
 
 	for (const module of INSTALLED_MODULES) {
 		const rule = module.requiredByStage;
+		const needs = (stage: StageRuleInput) =>
+			(rule !== null && rule(stage)) ||
+			stage.checklist.some(({ completion }) => {
+				if (completion?.kind !== 'fact') return false;
 
-		if (rule === null) {
-			continue;
-		}
+				return CHECKLIST_RULES.some(
+					(candidate) => candidate.key === completion.rule && candidate.module === module.key
+				);
+			});
 
-		const names = stages.filter((stage) => rule(stage)).map((stage) => stage.name);
+		const names = stages.filter(needs).map((stage) => stage.name);
 
 		if (names.length > 0) {
 			required.set(module.key, names);

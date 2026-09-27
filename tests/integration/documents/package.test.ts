@@ -5,7 +5,7 @@
  * хранилищем: пакет — это три пары файлов, и проверяется, что они легли в
  * дело, а акт запомнил позиции договора, которые он передаёт.
  */
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { createInteractionSchema } from '$lib/contracts/interactions';
 import {
@@ -13,14 +13,19 @@ import {
 	contracts,
 	documents,
 	interactionContractItems,
+	interactionParties,
 	interactions,
 	products
 } from '$lib/server/db/schema';
-import { generateDocumentPackage } from '$lib/server/documents/package';
+import { readDocumentMark } from '$lib/server/documents/evidence';
+import { generateDocumentPackage, readPackageDefaults } from '$lib/server/documents/package';
+import { listDocumentRevisions } from '$lib/server/documents/read';
 import { markDocument } from '$lib/server/documents/status';
+import { uploadDocument, uploadDocumentRevision } from '$lib/server/documents/upload';
 import { createInteraction } from '$lib/server/interactions/write';
 import { B2B_PROCESS } from '$lib/server/stages/definitions';
 import {
+	ensureSchoolOperator,
 	insertOrganization,
 	startTestDatabase,
 	testActor,
@@ -139,5 +144,94 @@ describe('пакет документов', () => {
 			.from(contractItems)
 			.where(eq(contractItems.id, item.id));
 		expect(after.transferStatus).toBe('передан');
+
+		// Следующая сборка подставит город и подписантов этой.
+		expect(await readPackageDefaults(ctx, interaction.id)).toEqual({
+			city: 'Москва',
+			operatorSigner: 'директора Иванова И. И.',
+			counterpartySigner: 'ректора Петрова П. П.'
+		});
+
+		// Акт, загруженный руками, стадию не закрывает даже с «Утверждён»: он не
+		// собран по шаблону. Скан — новая редакция собранного акта — закрывает.
+		const scan = { mime: 'application/pdf', bytes: new TextEncoder().encode('%PDF-1.4\n%scan') };
+		const manual = await uploadDocument(ctx, {
+			interactionId: interaction.id,
+			kind: 'act',
+			title: 'Акт, подписанный вузом',
+			file: scan
+		});
+		await markDocument(ctx, manual.id, 'approved');
+		const countedBefore = await readDocumentMark(
+			database.db,
+			interaction.id,
+			'approved',
+			'handover_act'
+		);
+		expect(countedBefore?.documentId).toBe(act.documentIds[1]);
+
+		const signed = await uploadDocumentRevision(ctx, {
+			supersedesId: act.documentIds[1],
+			file: scan,
+			note: 'Подписанный сторонами скан'
+		});
+		expect(signed.revisionNote).toBe('Подписанный сторонами скан');
+		await markDocument(ctx, signed.id, 'approved');
+		expect(
+			(await readDocumentMark(database.db, interaction.id, 'approved', 'handover_act'))?.documentId
+		).toBe(signed.id);
+		expect(
+			(await listDocumentRevisions(ctx, signed.id)).map((revision) => revision.revisionNote)
+		).toEqual([null, 'Подписанный сторонами скан']);
 	}, 120_000);
+
+	it('отказ сборки называет сначала состав дела и ведёт к сторонам, потом поля формы', async () => {
+		const ctx = testActor({ roleId: 'admin' });
+		await seedProcess(database, B2B_WORKSPACE_KEY, B2B_PROCESS);
+
+		const institutionId = await insertOrganization(database.db, {
+			shortName: 'Технический университет',
+			inn: '7701000001'
+		});
+		await ensureSchoolOperator(database.db);
+		const interaction = await createInteraction(
+			ctx,
+			B2B_WORKSPACE_KEY,
+			createInteractionSchema.parse({
+				title: 'Без оператора',
+				ownerUserId: TEST_USER_IDS.admin,
+				agreementPeriodStart: '2026-09-01',
+				agreementPeriodEnd: '2027-08-31',
+				parties: [
+					{ organizationId: institutionId, partyRole: 'educational_institution', isPrimary: true }
+				]
+			})
+		);
+		await ensureInteractionProgram(database, interaction.id);
+		// Оператора из состава убрали — так выглядят и дела, заведённые до того,
+		// как заведение дела стало ставить школу стороной само.
+		await database.db
+			.delete(interactionParties)
+			.where(
+				and(
+					eq(interactionParties.interactionId, interaction.id),
+					eq(interactionParties.partyRole, 'operator')
+				)
+			);
+
+		const [outcome] = await generateDocumentPackage(ctx, interaction.id, {
+			templates: ['agreement'],
+			city: null,
+			operatorSigner: null,
+			counterpartySigner: null
+		});
+
+		if (outcome.status !== 'refused') throw new Error('Соглашение без оператора собралось');
+		expect(outcome.fixes).toEqual(['parties']);
+		// Данные дела — раньше полей формы.
+		const firstFormIssue = outcome.issues.findIndex((issue) => issue.includes('в форме сборки'));
+		const operatorIssue = outcome.issues.findIndex((issue) => issue.includes('оператора стороной'));
+		expect(operatorIssue).toBeGreaterThanOrEqual(0);
+		expect(firstFormIssue).toBeGreaterThan(operatorIssue);
+	}, 60_000);
 });

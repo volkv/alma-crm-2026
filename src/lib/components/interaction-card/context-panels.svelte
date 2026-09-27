@@ -1,4 +1,6 @@
 <script lang="ts">
+	import PlusIcon from '@lucide/svelte/icons/plus';
+	import { Button } from '$lib/components/ui/button/index.js';
 	import { packageTemplates, type DocumentSupersession } from '$lib/contracts/documents';
 	import { PARTY_ROLE_LABELS } from '$lib/contracts/interactions';
 	import { cardPanelComponent } from '$lib/platform/card-ui-registry';
@@ -6,6 +8,7 @@
 	import { getCardCommands } from './commands.svelte';
 	import ContactLine from './contact-line.svelte';
 	import ContextSection from './context-section.svelte';
+	import PartyName from './party-name.svelte';
 	import DocumentsPanel from './documents-panel.svelte';
 	import InstitutionPanel from './institution-panel.svelte';
 	import LearnerPanel from './learner-panel.svelte';
@@ -35,8 +38,11 @@
 		source: CardSource;
 		model: CardModel;
 		supersessions: readonly DocumentSupersession[];
-		/** Что человеку можно в этой записи; недоступные кнопки панели не рисуют. */
-		can: { edit: boolean; upload: boolean; generate: boolean };
+		/**
+		 * Что человеку можно в этой записи; недоступные кнопки панели не рисуют.
+		 * `compose` — на странице есть диалог состава (каталог для него прочитан).
+		 */
+		can: { edit: boolean; upload: boolean; generate: boolean; compose: boolean };
 		/** Данные, которые модули загрузили для карточки сами, по ключу модуля. */
 		moduleData?: Readonly<Record<string, unknown>>;
 	} = $props();
@@ -68,6 +74,23 @@
 
 	const editPlan = $derived(can.edit ? () => commands.open({ kind: 'plan' }) : null);
 	/**
+	 * «Изменить состав» на нужном разделе — из того блока, о котором речь.
+	 * Диалог стоит на странице, только когда правка разрешена, поэтому и
+	 * кнопки — только тогда.
+	 */
+	const compose = $derived(
+		can.edit && can.compose
+			? (section: 'parties' | 'offering') => commands.openComposition(section)
+			: null
+	);
+	/**
+	 * Оператор — сама школа — сторона пакета документов: его отсутствие в деле
+	 * стоит назвать, а не оставить догадкой до первого отказа пакета.
+	 */
+	const operatorMissing = $derived(
+		!source.interaction.parties.some((party) => party.partyRole === 'operator')
+	);
+	/**
 	 * Правка плана живёт у сроков; процесс без панели сроков ставит её к
 	 * стороне — название записи правят в любом процессе.
 	 */
@@ -86,6 +109,7 @@
 			interaction={source.interaction}
 			organization={source.counterparty}
 			onEditPlan={partyEditPlan}
+			onCompose={compose}
 		/>
 	{:else}
 		<LearnerPanel
@@ -95,22 +119,40 @@
 			{groups}
 			{paidStreamNumber}
 			onEditPlan={partyEditPlan}
+			onCompose={compose}
 		/>
 	{/if}
 
-	{#if otherParties.length > 0}
+	{#if otherParties.length > 0 || compose !== null}
 		<ContextSection title="Другие стороны">
+			{#snippet action()}
+				{#if compose !== null}
+					<Button size="xs" variant="outline" onclick={() => compose('parties')}>
+						{#if otherParties.length === 0}
+							<PlusIcon aria-hidden="true" />
+							Добавить
+						{:else}
+							Изменить
+						{/if}
+					</Button>
+				{/if}
+			{/snippet}
 			<ul class="flex flex-col gap-2">
 				{#each otherParties as party (party.id)}
-					<li class="flex flex-col gap-0.5">
+					<li class="flex min-w-0 flex-col gap-0.5">
 						<p class="text-xs text-muted-foreground">{PARTY_ROLE_LABELS[party.partyRole]}</p>
-						<p class="text-sm break-words">{party.organizationName}</p>
+						<PartyName organizationId={party.organizationId} name={party.organizationName} />
 						{#if party.contact !== null}
 							<ContactLine {party} />
 						{/if}
 					</li>
 				{/each}
 			</ul>
+			{#if operatorMissing}
+				<p class="text-xs text-muted-foreground">
+					Оператор (сама школа) не указан: без него не собрать пакет документов.
+				</p>
+			{/if}
 		</ContextSection>
 	{/if}
 

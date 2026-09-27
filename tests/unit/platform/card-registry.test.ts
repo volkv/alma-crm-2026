@@ -42,15 +42,18 @@ beforeEach(() => {
 });
 
 describe('действия модулей в карточке', () => {
-	it('приносят действия «Обучения» и «Договоров» под прежними именами', () => {
+	it('приносят действия «Обучения», «Договоров», «Оплаты» и «Встреч» под своими именами', () => {
 		expect(Object.keys(moduleCardActionHandlers([])).sort()).toEqual([
 			'completeGroup',
 			'contract',
+			'meetingSchedule',
+			'rosterAddCounterparty',
 			'rosterImport',
 			'rosterPreview',
 			'rosterRemove',
 			'rosterSend',
-			'sendGroup'
+			'sendGroup',
+			'setPrice'
 		]);
 	});
 

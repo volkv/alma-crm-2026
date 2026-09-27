@@ -56,6 +56,7 @@
 		type StageView
 	} from '$lib/contracts/interactions';
 	import { STAGE_CATEGORY_LABELS } from '../../../w/[workspace]/interactions/filters';
+	import { offeredChecklistActions, offeredChecklistRules } from '$lib/platform/checklist';
 	import { stageFormSchema, transitionFormSchema } from './schema';
 	import type { PageProps } from './$types';
 
@@ -213,7 +214,15 @@
 			// Пустая строка — «никого не уведомлять», по той же причине.
 			onEnterNotify: stage?.onEnterNotify ?? '',
 			isFinal: stage?.isFinal ?? false,
-			checklist: (stage?.checklist ?? []).map((item) => ({ ...item }))
+			// Пустые строки формы — «нет»: без пояснения, ручная отметка, без кнопки.
+			checklist: (stage?.checklist ?? []).map((item) => ({
+				key: item.key,
+				label: item.label,
+				required: item.required,
+				help: item.help ?? '',
+				rule: item.completion?.kind === 'fact' ? item.completion.rule : ('' as const),
+				action: item.action ?? ''
+			}))
 		};
 		$stageErrors = {};
 		stageOpen = true;
@@ -260,7 +269,10 @@
 
 	/** Новый пункт чек-листа: ключ ему соберёт сервер из названия. */
 	function addChecklistItem() {
-		$stageData.checklist = [...$stageData.checklist, { key: '', label: '', required: false }];
+		$stageData.checklist = [
+			...$stageData.checklist,
+			{ key: '', label: '', required: false, help: '', rule: '', action: '' }
+		];
 	}
 
 	function removeChecklistItem(index: number) {
@@ -689,6 +701,12 @@
 														{#each stage.checklist as item (item.key)}
 															<li class="text-xs">
 																{item.label}
+																{#if item.completion?.kind === 'fact'}
+																	<span
+																		class="text-muted-foreground"
+																		title="Закрывается данными дела, а не отметкой">(данные)</span
+																	>
+																{/if}
 																{#if item.required}
 																	<span class="text-danger" title="Обязательный пункт">*</span>
 																{/if}
@@ -1067,13 +1085,16 @@
 				onchange: (next) => ($stageData.isFinal = next)
 			})}
 		</fieldset>
-		<!-- Чек-лист — список пунктов: название и флажок обязательности. Ключ
-			пункта собирает сервер из названия и больше не меняет: по нему в идущих
-			делах хранятся отметки. -->
+		<!-- Чек-лист — список пунктов: название, обязательность, пояснение, чем
+			закрывается и кнопка рядом. Ключ пункта собирает сервер из названия и
+			больше не меняет: по нему в идущих делах хранятся отметки. -->
 		<fieldset class="flex flex-col gap-2">
 			<legend class="text-sm font-medium">Чек-лист</legend>
 			<p class="text-xs text-muted-foreground">
-				Что проверить на стадии. Обязательный пункт не пускает дело дальше, пока его не отметят.
+				Что проверить на стадии. Обязательный пункт не пускает дело дальше, пока его не отметят —
+				или, если его закрывают данные дела, пока данных нет: галочкой такой пункт не закрыть.
+				Кнопка рядом с пунктом открывает форму карточки, где делают работу, но сама пункт не
+				закрывает.
 			</p>
 			{#if $stageErrors.checklist?._errors}
 				<span class="text-xs text-danger">{$stageErrors.checklist._errors.join('; ')}</span>
@@ -1109,6 +1130,40 @@
 					{#if labelErrors}
 						<span class="text-xs text-danger">{labelErrors.join('; ')}</span>
 					{/if}
+					<Input
+						class="min-w-0"
+						aria-label="Пояснение к пункту {index + 1}"
+						placeholder="Что значит сделать пункт: например, «выберите у стороны подразделение»"
+						bind:value={$stageData.checklist[index].help}
+					/>
+					<div class="grid gap-2 sm:grid-cols-2">
+						<FieldSelect
+							name="checklist-rule-{index}"
+							label="Чем закрывается"
+							options={[
+								{ value: '', label: 'Отметкой человека' },
+								...offeredChecklistRules().map((rule) => ({
+									value: rule.key,
+									label: `Данными: ${rule.label}`
+								}))
+							]}
+							bind:value={$stageData.checklist[index].rule}
+							errors={$stageErrors.checklist?.[index]?.rule}
+						/>
+						<FieldSelect
+							name="checklist-action-{index}"
+							label="Кнопка рядом с пунктом"
+							options={[
+								{ value: '', label: 'Без кнопки' },
+								...offeredChecklistActions().map((action) => ({
+									value: action.key,
+									label: action.label
+								}))
+							]}
+							bind:value={$stageData.checklist[index].action}
+							errors={$stageErrors.checklist?.[index]?.action}
+						/>
+					</div>
 				</div>
 			{/each}
 			<div>

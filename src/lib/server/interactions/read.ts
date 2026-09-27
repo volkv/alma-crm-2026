@@ -61,6 +61,7 @@ import {
 	people,
 	productDirections,
 	products,
+	programVersions,
 	programs,
 	sites,
 	stageEntries,
@@ -858,6 +859,7 @@ async function readDocuments(interactionId: string): Promise<InteractionDocument
 		.select({
 			id: documents.id,
 			kind: documents.kind,
+			templateKey: documents.templateKey,
 			title: documents.title,
 			mime: documents.mime,
 			sizeBytes: documents.sizeBytes,
@@ -993,6 +995,9 @@ export async function getInteraction(
  * события по записи (`cache/interactions.ts`). Право и видимость проверяются
  * до кэша и по базе: кэш ускоряет ответ, а не решает, кому он положен.
  */
+/** Подпись комментария, пришедшего с заявкой сайта. */
+const INTAKE_COMMENT_AUTHOR = 'Заявка с сайта';
+
 export async function listComments(
 	ctx: ActorContext,
 	interactionId: string
@@ -1014,7 +1019,11 @@ export async function listComments(
 			return rows.map((row) => ({
 				id: row.comment.id,
 				authorId: row.comment.authorId,
-				authorName: row.authorName,
+				// Текст заявки заносит приём от имени ответственного за входящие, но
+				// написал его не он: в ленте он подписан источником, а не сотрудником.
+				authorName:
+					row.comment.source === 'application_intake' ? INTAKE_COMMENT_AUTHOR : row.authorName,
+				source: row.comment.source,
 				body: row.comment.body,
 				createdAt: row.comment.createdAt
 			}));
@@ -1080,6 +1089,18 @@ function referencedIds(field: string, value: unknown): string[] | null {
 		);
 	}
 
+	// Программа записывается вместе с версией; ранние строки истории хранят
+	// одни идентификаторы программ, и читаются они так же.
+	if (field === 'programs') {
+		return value.map((item) =>
+			typeof item === 'string'
+				? item
+				: isRecord(item) && typeof item.programId === 'string'
+					? item.programId
+					: ''
+		);
+	}
+
 	return value.map((item) => (typeof item === 'string' ? item : ''));
 }
 
@@ -1095,7 +1116,34 @@ function partyRoleSuffix(item: unknown): string {
 
 	const label = PARTY_ROLE_LABELS[item.partyRole as PartyRole];
 
-	return label === undefined ? '' : ` (${label.toLocaleLowerCase('ru')})`;
+	if (label === undefined) {
+		return '';
+	}
+
+	// Признак основной стороны пишется с правки состава: смена основной —
+	// такое же решение, как смена роли.
+	const role = label.toLocaleLowerCase('ru');
+
+	return item.isPrimary === true ? ` (${role}, основная)` : ` (${role})`;
+}
+
+/** Версия программы в строке истории; `null` — версия не закреплена или строка ранняя. */
+function programVersionOf(item: unknown): string | null {
+	return isRecord(item) && typeof item.programVersionId === 'string' ? item.programVersionId : null;
+}
+
+/** Номера версий программ, упомянутых в истории, — одним запросом. */
+async function readProgramVersionNumbers(ids: Set<string>): Promise<Map<string, number>> {
+	if (ids.size === 0) {
+		return new Map();
+	}
+
+	const rows = await getDb()
+		.select({ id: programVersions.id, version: programVersions.version })
+		.from(programVersions)
+		.where(inArray(programVersions.id, [...ids]));
+
+	return new Map(rows.map((row) => [row.id, row.version]));
 }
 
 /** Имена записей по идентификаторам — по одному запросу на вид ссылки. */
@@ -1236,7 +1284,41 @@ async function buildInteractionChanges(interactionId: string): Promise<Interacti
 		wanted.set(kind, ids);
 	}
 
-	const names = await readReferenceNames(wanted);
+	const versionIds = new Set<string>();
+
+	for (const row of rows) {
+		if (row.change.field !== 'programs') {
+			continue;
+		}
+
+		for (const value of [row.change.oldValue, row.change.newValue]) {
+			for (const item of Array.isArray(value) ? value : []) {
+				const versionId = programVersionOf(item);
+
+				if (versionId !== null) {
+					versionIds.add(versionId);
+				}
+			}
+		}
+	}
+
+	const [names, versions] = await Promise.all([
+		readReferenceNames(wanted),
+		readProgramVersionNumbers(versionIds)
+	]);
+
+	/** Версия рядом с программой: «переход на новую версию» иначе не отличить от «ничего». */
+	function versionSuffix(item: unknown): string {
+		const versionId = programVersionOf(item);
+
+		if (versionId === null) {
+			return '';
+		}
+
+		const version = versions.get(versionId);
+
+		return version === undefined ? ' (версия недоступна)' : ` (версия ${version})`;
+	}
 
 	/** Подпись одного значения: `null` — поле не ссылочное. */
 	function label(field: string, value: unknown): string | null {
@@ -1259,7 +1341,11 @@ async function buildInteractionChanges(interactionId: string): Promise<Interacti
 			.map((referenced, index) => {
 				const name = known.get(referenced) ?? UNKNOWN_REFERENCE;
 
-				return field === 'parties' ? `${name}${partyRoleSuffix(items[index])}` : name;
+				if (field === 'parties') {
+					return `${name}${partyRoleSuffix(items[index])}`;
+				}
+
+				return field === 'programs' ? `${name}${versionSuffix(items[index])}` : name;
 			})
 			.join(', ');
 	}

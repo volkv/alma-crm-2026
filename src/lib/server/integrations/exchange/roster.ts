@@ -53,7 +53,7 @@ import { publishAfterCommit } from '../../live/publish';
 import { currentAffiliationFilter } from '../../directory/affiliation-current';
 import { contactFullName, parsePersonName, type ContactName } from '../../directory/contacts';
 import { createAffiliation, createPerson } from '../../directory/write';
-import { ForbiddenError, NotFoundError, ValidationError } from '../../errors';
+import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../errors';
 import { interactionScopeFilter } from '../../interactions/access';
 import { personVisible } from '../../people/access';
 import { consentWithdrawn } from '../../people/consents';
@@ -859,6 +859,62 @@ export async function removeLearner(ctx: ActorContext, input: RemoveLearnerInput
 				outcome: 'success',
 				subject: { type: 'interaction', id: group.interactionId },
 				details: { learningGroupId: group.id, personId: input.personId }
+			},
+			tx
+		);
+	});
+}
+
+/**
+ * Слушатель — сам контрагент. Физическое лицо учится само, и файл со списком из
+ * одной строки, где записано то, что система и так знает, был бы пустой
+ * работой. Поэтому контрагента-лицо вносят в список потока одной кнопкой; у
+ * вуза и компании своего слушателя нет — их список идёт файлом.
+ */
+export async function addCounterpartyLearner(
+	ctx: ActorContext,
+	input: LearningGroupRosterInput
+): Promise<void> {
+	requirePermission(ctx, 'people.write');
+
+	await withTransaction(ctx, async (tx) => {
+		const group = await readGroup(ctx, tx, input, true);
+
+		if (group.organization === null || group.organization.kind !== 'individual') {
+			throw new ValidationError('Контрагент дела — не физическое лицо', [
+				'Слушателей вуза или компании загружают списком из файла'
+			]);
+		}
+
+		const [person] = await tx
+			.select({ id: people.id, anonymizedAt: people.anonymizedAt })
+			.from(organizations)
+			.innerJoin(people, eq(people.id, organizations.personId))
+			.where(eq(organizations.id, group.organization.id));
+
+		if (person === undefined || person.anonymizedAt !== null) {
+			throw new ValidationError('Слушателя не добавить: персональные данные обезличены');
+		}
+
+		const inserted = await tx
+			.insert(learningGroupLearners)
+			.values({ learningGroupId: group.id, personId: person.id, addedBy: ctx.user?.id ?? null })
+			.onConflictDoNothing()
+			.returning({ personId: learningGroupLearners.personId });
+
+		if (inserted.length === 0) {
+			throw new ConflictError('Слушатель уже в списке этого потока');
+		}
+
+		publishAfterCommit(tx, group.interactionId, { type: 'interaction.changed' });
+
+		await recordAuditEvent(
+			ctx,
+			{
+				type: 'exchange.roster_loaded',
+				outcome: 'success',
+				subject: { type: 'interaction', id: group.interactionId },
+				details: { learningGroupId: group.id, learnerCount: 1, personCount: 0 }
 			},
 			tx
 		);

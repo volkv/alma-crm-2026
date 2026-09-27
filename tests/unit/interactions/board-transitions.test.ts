@@ -122,6 +122,7 @@ function state(overrides: Partial<StageState> = {}): StageState {
 		stageId: MEETING.id,
 		snapshot: snapshot(),
 		checklistState: {},
+		facts: {},
 		resultText: null,
 		confirmation: null,
 		lmsEvidence: null,

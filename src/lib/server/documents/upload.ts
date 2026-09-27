@@ -60,6 +60,8 @@ export type UploadDocumentRevisionCommand = {
 	/** Редакция, которую заменяет этот файл. */
 	supersedesId: string;
 	file: UploadedFile;
+	/** Что изменилось по сравнению с заменяемой редакцией; видно в истории документа. */
+	note?: string | null;
 };
 
 export async function uploadDocument(
@@ -73,6 +75,7 @@ export async function uploadDocument(
 		supersedesId: null,
 		kind: input.kind,
 		title: input.title,
+		revisionNote: null,
 		file: input.file
 	});
 
@@ -113,6 +116,7 @@ export async function uploadDocumentRevision(
 		supersedesId: superseded.id,
 		kind: superseded.kind,
 		title: superseded.title,
+		revisionNote: input.note ?? null,
 		file: input.file
 	});
 
@@ -167,6 +171,7 @@ function parseUpload(input: {
 	supersedesId: string | null;
 	kind: string;
 	title: string;
+	revisionNote: string | null;
 	file: UploadedFile;
 }): UploadDocumentInput {
 	const parsed = uploadDocumentSchema.safeParse({
@@ -174,6 +179,7 @@ function parseUpload(input: {
 		supersedesId: input.supersedesId,
 		kind: input.kind,
 		title: input.title,
+		revisionNote: input.revisionNote,
 		mime: input.file.mime,
 		sizeBytes: input.file.bytes.byteLength
 	});
@@ -209,6 +215,7 @@ async function writeDocument(
 					kind: fields.kind,
 					templateKey,
 					title: fields.title,
+					revisionNote: fields.revisionNote,
 					filePath: staged.relativePath,
 					mime: staged.mime,
 					sizeBytes: staged.sizeBytes,

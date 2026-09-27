@@ -32,7 +32,13 @@ import {
 } from '$lib/server/stages/definitions';
 import { ensureWorkflow } from '$lib/server/stages/process';
 import { advanceTo } from '../stages/fixture';
-import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
+import {
+	ensureSchoolOperator,
+	startTestDatabase,
+	testActor,
+	TEST_USER_IDS,
+	type TestDatabase
+} from '../helpers/db';
 
 /**
  * Загрузка оплат с сайта на синтетической выгрузке с той же грязью, что у
@@ -67,6 +73,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
 	await database.reset();
+	// Заведение дела ставит школу стороной и без неё отказывает.
+	await ensureSchoolOperator(database.db);
 
 	await database.db.transaction(async (tx) => {
 		await ensureWorkflow(tx, B2B_WORKSPACE_KEY, B2B_PROCESS);

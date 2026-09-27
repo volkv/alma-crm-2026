@@ -1,6 +1,8 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import CalendarIcon from '@lucide/svelte/icons/calendar';
+	import type { SubmitFunction } from '@sveltejs/kit';
+	import { applyAction, enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
@@ -16,16 +18,18 @@
 	import type { MeetingsCardData } from '../data';
 
 	/**
-	 * Приглашение на встречу файлом календаря.
+	 * Назначение встречи и приглашение файлом календаря.
 	 *
-	 * Диалог только собирает параметры — дату, длительность, место, участников и
-	 * повестку — в ссылку на файл модуля `meeting.ics` (`card.server.ts`): сам
-	 * файл, права на контакты участников и запись в журнал остаются за сервером,
-	 * диалог их не решает. Кнопка «Скачать» — обычная ссылка на файл, а не форма:
-	 * так проще держать её адрес в силе, пока человек донабирает повестку.
+	 * «Назначить» делает две вещи по очереди: сохраняет дату, длительность и
+	 * место в деле (действие модуля `meetingSchedule`) — встреча видна в ленте и
+	 * у пункта «Встреча назначена», — а затем скачивает файл приглашения
+	 * `meeting.ics` (`card.server.ts`) с участниками и повесткой. Файл, права на
+	 * контакты участников и запись в журнал остаются за сервером, диалог их не
+	 * решает. Сам пункт чек-листа отмечает человек, когда время согласовано:
+	 * отправленное приглашение ещё не согласие.
 	 *
-	 * Итог встречи не заводит своей сущности: диалог только напоминает записать
-	 * его командой «Результат стадии» и сам её открывает.
+	 * Итог встречи не заводит своей сущности: диалог напоминает записать его
+	 * командой «Результат стадии» и сам её открывает.
 	 */
 	let { source, data, workspaceKey }: CardDialogProps = $props();
 
@@ -68,8 +72,12 @@
 			return '';
 		}
 
+		// Пункт-факт закрывают данные дела, ручной — отметка: в повестку идёт
+		// то, что не закрыто ни тем, ни другим.
 		return stage.snapshot.checklist
-			.filter((item) => stage.checklistState[item.key] !== true)
+			.filter(
+				(item) => stage.checklistState[item.key] !== true && stage.facts[item.key]?.done !== true
+			)
 			.map((item) => `– ${item.label}`)
 			.join('\n');
 	}
@@ -147,12 +155,47 @@
 	});
 
 	const canDownload = $derived(start !== '' && durationMinutes > 0);
+
+	/** Почему встречу не сохранили — словами сервера, у самой формы. */
+	let refusal = $state<string | null>(null);
+	let saving = $state(false);
+
+	/**
+	 * Сохранить встречу и следом скачать приглашение: файл уходит только за
+	 * сохранённой встречей, иначе в календаре участников оказалась бы встреча,
+	 * которой в деле нет.
+	 */
+	const schedule: SubmitFunction = () => {
+		const href = icsHref;
+
+		refusal = null;
+		saving = true;
+
+		return async ({ result, update }) => {
+			saving = false;
+
+			if (result.type === 'success') {
+				await update();
+				commands.close();
+				window.location.assign(href);
+			} else if (result.type === 'failure') {
+				const data = (result.data ?? {}) as { message?: unknown; issues?: unknown };
+				const issues = Array.isArray(data.issues) ? data.issues.join('; ') : '';
+
+				refusal = [typeof data.message === 'string' ? data.message : 'Встреча не сохранена', issues]
+					.filter((part) => part !== '')
+					.join(': ');
+			} else {
+				await applyAction(result);
+			}
+		};
+	};
 </script>
 
 <FormDialog
 	bind:open={opened.get, opened.set}
 	title="Пригласить на встречу"
-	description="Файл приглашения для календаря (.ics): дата, место, участники и повестка."
+	description="Встреча сохранится в деле, участникам — файл для календаря (.ics) с датой, местом и повесткой."
 	width="lg"
 >
 	<div class="flex flex-col gap-4">
@@ -240,6 +283,22 @@
 			Отдельной сущности «итог встречи» в системе нет: после встречи запишите итог обычной командой
 			«{entry?.resultText ? 'Изменить результат стадии' : 'Записать результат стадии'}».
 		</InlineHint>
+
+		{#if refusal !== null}
+			<InlineHint tone="warning">{refusal}</InlineHint>
+		{/if}
+
+		<form
+			id="card-meeting-schedule"
+			method="POST"
+			action="?/meetingSchedule"
+			use:enhance={schedule}
+			class="hidden"
+		>
+			<input type="hidden" name="start" value={start} />
+			<input type="hidden" name="duration" value={String(durationMinutes)} />
+			<input type="hidden" name="location" value={location} />
+		</form>
 	</div>
 
 	{#snippet footer({ close })}
@@ -248,13 +307,9 @@
 			<Button type="button" variant="outline" onclick={() => commands.open({ kind: 'result' })}>
 				Записать результат стадии
 			</Button>
-			<Button
-				href={canDownload ? icsHref : undefined}
-				disabled={!canDownload}
-				data-sveltekit-reload
-			>
+			<Button type="submit" form="card-meeting-schedule" disabled={!canDownload || saving}>
 				<CalendarIcon aria-hidden="true" />
-				Скачать приглашение (.ics)
+				Назначить и скачать приглашение (.ics)
 			</Button>
 		</div>
 	{/snippet}

@@ -7,14 +7,15 @@
  * `evaluateTransition`, и интерфейс не имеет права выводить её заново.
  */
 import { eq, inArray } from 'drizzle-orm';
-import type {
-	InteractionAction,
-	InteractionSummaryView,
-	TransitionOptionView
+import {
+	isFactItem,
+	type InteractionAction,
+	type InteractionSummaryView,
+	type TransitionOptionView
 } from '$lib/contracts/interactions';
 import type { ActorContext } from '../actor';
 import { getDb } from '../db';
-import { interactionParties, organizations } from '../db/schema';
+import { interactionParties, organizations, users } from '../db/schema';
 import { can, requirePermission } from '../rbac';
 import { requireActiveRevisionForWorkspace } from '../stages/process';
 import { getInteractionStatus } from '../stages/status';
@@ -34,6 +35,25 @@ async function readPartyNames(partyIds: string[]): Promise<Map<string, string>> 
 		.where(inArray(interactionParties.id, partyIds));
 
 	return new Map(rows.map((row) => [row.id, row.name]));
+}
+
+/**
+ * Кто вёл закрытое дело. Открытой стадии у него нет, и ответственного за
+ * стадию тоже, — но вопрос «кто этим занимался» после завершения задают чаще,
+ * чем до: отвечает владелец записи.
+ */
+async function readOwner(ownerUserId: string): Promise<{ id: string; name: string }> {
+	const [owner] = await getDb()
+		.select({ id: users.id, name: users.fullName })
+		.from(users)
+		.where(eq(users.id, ownerUserId))
+		.limit(1);
+
+	if (owner === undefined) {
+		throw new Error(`Владелец взаимодействия ${ownerUserId} не найден`);
+	}
+
+	return owner;
 }
 
 export async function getInteractionSummary(
@@ -72,6 +92,7 @@ export async function getInteractionSummary(
 			stageId: current.stageId,
 			snapshot: current.snapshot,
 			checklistState: current.checklistState,
+			facts: current.facts,
 			resultText: current.resultText,
 			confirmation: current.confirmation,
 			lmsEvidence: current.lmsEvidence,
@@ -156,7 +177,12 @@ export async function getInteractionSummary(
 	const openChecklist =
 		current === null
 			? []
-			: current.snapshot.checklist.filter((item) => current.checklistState[item.key] !== true);
+			: // Пункт-факт открыт, пока его не закрыли данные дела, ручной — пока не отмечен.
+				current.snapshot.checklist.filter((item) =>
+					isFactItem(item)
+						? current.facts[item.key]?.done !== true
+						: current.checklistState[item.key] !== true
+				);
 
 	return {
 		happening: {
@@ -184,12 +210,14 @@ export async function getInteractionSummary(
 		},
 		whoActs: {
 			responsibleUser:
-				current?.responsibleUserId === null || current?.responsibleUserId === undefined
-					? null
-					: {
-							id: current.responsibleUserId,
-							name: current.responsibleName ?? 'Ответственный не указан'
-						},
+				current === null
+					? await readOwner(interaction.ownerUserId)
+					: current.responsibleUserId === null
+						? null
+						: {
+								id: current.responsibleUserId,
+								name: current.responsibleName ?? 'Ответственный не указан'
+							},
 			waitingParty
 		},
 		canDo: { transitions, actions }

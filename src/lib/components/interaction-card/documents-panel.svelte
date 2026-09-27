@@ -165,7 +165,7 @@
 								</StatusBadge>
 							{/if}
 							{#each marks(document) as mark (mark.key)}
-								<StatusBadge tone={mark.tone} dot>
+								<StatusBadge tone={mark.tone} dot wrap>
 									{mark.label}{mark.note === null ? '' : `: ${mark.note}`}
 								</StatusBadge>
 							{/each}

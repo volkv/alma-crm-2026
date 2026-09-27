@@ -65,15 +65,32 @@ async function first<TItem>(
 	return item === undefined ? null : identify(item);
 }
 
-/** Показательное взаимодействие: сначала просроченное, иначе любое доступное. */
-async function sampleInteraction(ctx: ActorContext): Promise<string | null> {
+/**
+ * Показательное взаимодействие: сначала просроченное, иначе любое доступное —
+ * **из того же пространства**, в которое тур ведёт. Адрес карточки несёт оба
+ * сегмента, и дело чужого пространства под адресом этого открылось бы с
+ * чужими крошками и меню, а живое обновление ответило бы «не найдено».
+ */
+async function sampleInteraction(
+	ctx: ActorContext,
+	workspace: string | null
+): Promise<string | null> {
+	if (workspace === null) {
+		return null;
+	}
+
 	const overdue = await first(
 		ctx,
 		'interactions.read',
 		() =>
 			listInteractions(
 				ctx,
-				interactionListQuerySchema.parse({ status: 'active', overdue: true, pageSize: 1 })
+				interactionListQuerySchema.parse({
+					workspace,
+					status: 'active',
+					overdue: true,
+					pageSize: 1
+				})
 			),
 		(item) => item.id
 	);
@@ -85,7 +102,7 @@ async function sampleInteraction(ctx: ActorContext): Promise<string | null> {
 	return first(
 		ctx,
 		'interactions.read',
-		() => listInteractions(ctx, interactionListQuerySchema.parse({ pageSize: 1 })),
+		() => listInteractions(ctx, interactionListQuerySchema.parse({ workspace, pageSize: 1 })),
 		(item) => item.id
 	);
 }
@@ -131,60 +148,52 @@ async function sampleWorkspace(ctx: ActorContext): Promise<string | null> {
 /**
  * Что тур сможет открыть этой сессии. Запросы идут разом: их восемь, каждый за
  * одной строкой, и последовательная очередь сделала бы старт тура заметно
- * медленнее без единой причины.
+ * медленнее без единой причины. Взаимодействие ждёт пространство: образец
+ * берётся из него.
  */
 export async function tourSamples(ctx: ActorContext): Promise<TourSamples> {
-	const [
-		workspace,
-		interaction,
-		organization,
-		person,
-		program,
-		product,
-		direction,
-		documentId,
-		dataSnapshot
-	] = await Promise.all([
-		sampleWorkspace(ctx),
-		sampleInteraction(ctx),
-		sampleOrganization(ctx),
-		first(
-			ctx,
-			'people.read',
-			() => listPeople(ctx, peopleListQuerySchema.parse({ pageSize: 1 })),
-			(item) => item.person.id
-		),
-		first(
-			ctx,
-			'programs.read',
-			() => listProgramRows(ctx, programDirectoryQuerySchema.parse({ pageSize: 1 })),
-			(item) => item.program.id
-		),
-		first(
-			ctx,
-			'products.read',
-			() => listProductRows(ctx, productDirectoryQuerySchema.parse({ pageSize: 1 })),
-			(item) => item.product.id
-		),
-		first(
-			ctx,
-			'directions.read',
-			() => listDirectionRows(ctx, directionDirectoryQuerySchema.parse({ pageSize: 1 })),
-			(item) => item.direction.id
-		),
-		first(
-			ctx,
-			'documents.read',
-			() => listDocuments(ctx, documentListQuerySchema.parse({ pageSize: 1 })),
-			(item) => item.id
-		),
-		first(
-			ctx,
-			'stats.read',
-			() => listSnapshots(ctx, statSnapshotListQuerySchema.parse({ pageSize: 1 })),
-			(item) => item.id
-		)
-	]);
+	const workspace = await sampleWorkspace(ctx);
+	const [interaction, organization, person, program, product, direction, documentId, dataSnapshot] =
+		await Promise.all([
+			sampleInteraction(ctx, workspace),
+			sampleOrganization(ctx),
+			first(
+				ctx,
+				'people.read',
+				() => listPeople(ctx, peopleListQuerySchema.parse({ pageSize: 1 })),
+				(item) => item.person.id
+			),
+			first(
+				ctx,
+				'programs.read',
+				() => listProgramRows(ctx, programDirectoryQuerySchema.parse({ pageSize: 1 })),
+				(item) => item.program.id
+			),
+			first(
+				ctx,
+				'products.read',
+				() => listProductRows(ctx, productDirectoryQuerySchema.parse({ pageSize: 1 })),
+				(item) => item.product.id
+			),
+			first(
+				ctx,
+				'directions.read',
+				() => listDirectionRows(ctx, directionDirectoryQuerySchema.parse({ pageSize: 1 })),
+				(item) => item.direction.id
+			),
+			first(
+				ctx,
+				'documents.read',
+				() => listDocuments(ctx, documentListQuerySchema.parse({ pageSize: 1 })),
+				(item) => item.id
+			),
+			first(
+				ctx,
+				'stats.read',
+				() => listSnapshots(ctx, statSnapshotListQuerySchema.parse({ pageSize: 1 })),
+				(item) => item.id
+			)
+		]);
 
 	return {
 		workspace,

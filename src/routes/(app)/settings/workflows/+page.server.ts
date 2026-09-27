@@ -7,6 +7,7 @@ import { actorFromEvent } from '$lib/server/actor';
 import { AppError, ForbiddenError } from '$lib/server/errors';
 import { errorIssues, toActionFailure, type ActionErrorPayload } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
+import { PERMISSIONS } from '$lib/server/rbac/permissions';
 import { createWorkflow, listWorkflows } from '$lib/server/stages/process';
 import type { Actions, PageServerLoad } from './$types';
 
@@ -33,7 +34,7 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	if (!can(ctx, 'stages.configure')) {
-		error(403, 'Раздел доступен только с правом «Настройка маршрутов и стадий»');
+		error(403, `Раздел доступен только с правом «${PERMISSIONS['stages.configure']}»`);
 	}
 
 	const [workflows, createForm] = await Promise.all([

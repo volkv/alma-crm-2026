@@ -518,6 +518,25 @@ export async function insertOrganization(
 }
 
 /**
+ * Организация школы — действующая организация вида «Оператор». Заведение
+ * взаимодействия ставит её стороной само и без неё отказывает, поэтому тесты,
+ * которые заводят дела сервисом, заводят и её. Повторный вызов возвращает ту
+ * же: вторая такая организация сделала бы школу неоднозначной.
+ */
+export async function ensureSchoolOperator(
+	database: PostgresJsDatabase<typeof schema>,
+	shortName = 'Оператор'
+): Promise<string> {
+	const [existing] = await database
+		.select({ id: schema.organizations.id })
+		.from(schema.organizations)
+		.where(and(eq(schema.organizations.kind, 'operator'), eq(schema.organizations.isActive, true)))
+		.limit(1);
+
+	return existing?.id ?? insertOrganization(database, { shortName, kind: 'operator' });
+}
+
+/**
  * Человек справочника: контакты заполнены, потому что их и проверяют.
  *
  * Контакты кладутся тем же слоем, что и у формы (`people/pii.ts`): в базе они

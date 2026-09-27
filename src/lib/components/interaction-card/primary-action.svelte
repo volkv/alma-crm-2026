@@ -5,6 +5,7 @@
 	import CircleCheckBigIcon from '@lucide/svelte/icons/circle-check-big';
 	import CircleIcon from '@lucide/svelte/icons/circle';
 	import CirclePauseIcon from '@lucide/svelte/icons/circle-pause';
+	import DatabaseIcon from '@lucide/svelte/icons/database';
 	import FlagIcon from '@lucide/svelte/icons/flag';
 	import LockIcon from '@lucide/svelte/icons/lock';
 	import OctagonAlertIcon from '@lucide/svelte/icons/octagon-alert';
@@ -36,6 +37,11 @@
 	 * Отметка пункта отвечает сразу, не дожидаясь сервера: это самое частое
 	 * действие на стадии. Если сервер откажет, страница перечитает настоящее
 	 * состояние.
+	 *
+	 * У пункта видно, что значит его сделать (пояснение процесса), и кнопка,
+	 * которая открывает нужную форму. Пункт-факт галочки не имеет: его
+	 * закрывают данные дела, и рядом сказано, чем он закрыт или чего не хватает.
+	 * Записанный результат стадии стоит под заголовком сразу после записи.
 	 */
 	let {
 		action,
@@ -136,6 +142,36 @@
 		}
 	}
 
+	/**
+	 * Показать сторону дела в «Контексте»: контакт, подразделение и канал связи
+	 * правятся там. На узком экране «Контекст» свёрнут — его раскрывают той же
+	 * кнопкой, что и человек, и только потом прокручивают к стороне.
+	 */
+	async function revealParty() {
+		const panel = document.querySelector<HTMLElement>(
+			'[data-slot="institution-panel"], [data-slot="learner-panel"]'
+		);
+
+		if (panel === null) return;
+
+		if (panel.offsetParent === null) {
+			document
+				.querySelector<HTMLButtonElement>('[aria-controls="card-context"][aria-expanded="false"]')
+				?.click();
+			await tick();
+		}
+
+		panel.scrollIntoView({ behavior: 'smooth', block: 'start' });
+	}
+
+	function runCommand(command: CardCommand) {
+		if (command.kind === 'reveal') {
+			void revealParty();
+		} else {
+			commands.open(command);
+		}
+	}
+
 	function resolve(blocker: BlockerView) {
 		commands.open({
 			kind: 'resolve-blocker',
@@ -166,25 +202,44 @@
 	</form>
 {/snippet}
 
+{#snippet explanation(item: Requirement)}
+	{#if item.hint}
+		<p class="text-xs text-muted-foreground">{item.hint}</p>
+	{/if}
+	{#if item.note}
+		<p class="text-xs break-words text-foreground">{item.note}</p>
+	{/if}
+{/snippet}
+
 {#snippet requirementRow(item: Requirement)}
 	<li class="flex flex-wrap items-start gap-x-3 gap-y-1.5 py-2">
 		<div class="flex min-w-0 flex-1 basis-56 items-start gap-2.5">
 			{#if item.close === 'check'}
 				{@render checkbox(item)}
-				<label for="{id}-{item.key}" class="min-w-0 text-sm">{item.label}</label>
-			{:else}
-				<CircleIcon class="mt-0.5 size-4 shrink-0 text-faint" aria-hidden="true" />
 				<div class="min-w-0">
-					<p class="text-sm">{item.label}</p>
-					{#if item.hint}
-						<p class="text-xs text-muted-foreground">{item.hint}</p>
-					{/if}
+					<label for="{id}-{item.key}" class="text-sm">{item.label}</label>
+					{@render explanation(item)}
+				</div>
+			{:else}
+				{#if item.close === 'fact'}
+					<DatabaseIcon class="mt-0.5 size-4 shrink-0 text-faint" aria-hidden="true" />
+				{:else}
+					<CircleIcon class="mt-0.5 size-4 shrink-0 text-faint" aria-hidden="true" />
+				{/if}
+				<div class="min-w-0">
+					<p class="text-sm">
+						{item.label}
+						{#if item.close === 'fact'}
+							<span class="text-xs text-muted-foreground">— закроется данными дела</span>
+						{/if}
+					</p>
+					{@render explanation(item)}
 				</div>
 			{/if}
 		</div>
 		{#if item.cta && item.command}
 			{@const command = item.command}
-			<Button size="sm" variant="outline" onclick={() => commands.open(command)}>
+			<Button size="sm" variant="outline" onclick={() => runCommand(command)}>
 				{item.cta}
 			</Button>
 		{/if}
@@ -325,6 +380,21 @@
 			<input type="hidden" name="stageEntryId" value={action.stageEntryId} />
 		</form>
 
+		{#if action.result !== null}
+			<div
+				class="flex items-start gap-2 rounded-lg bg-surface-muted px-3 py-2"
+				data-slot="card-result"
+			>
+				<div class="min-w-0 flex-1 text-sm">
+					<p class="text-xs text-muted-foreground">Результат стадии</p>
+					<p class="break-words whitespace-pre-line">{action.result}</p>
+				</div>
+				<Button size="sm" variant="ghost" onclick={() => commands.open({ kind: 'result' })}>
+					Изменить
+				</Button>
+			</div>
+		{/if}
+
 		{#if action.allowed && action.kind !== 'resume' && missing.length === 0 && done.length > 0}
 			<p class="flex items-center gap-1.5 text-sm text-success-soft-foreground">
 				<CheckIcon class="size-4" aria-hidden="true" />
@@ -384,9 +454,14 @@
 						<li class="flex items-start gap-2">
 							{#if item.close === 'check'}
 								{@render checkbox(item)}
-								<label for="{id}-{item.key}" class="min-w-0 text-muted-foreground">
-									{item.label}
-								</label>
+								<div class="min-w-0">
+									<label for="{id}-{item.key}" class="text-muted-foreground">
+										{item.label}
+									</label>
+									{#if item.note}
+										<p class="text-xs break-words text-muted-foreground">{item.note}</p>
+									{/if}
+								</div>
 							{:else}
 								<CheckIcon class="mt-0.5 size-4 shrink-0 text-success" aria-hidden="true" />
 								<div class="min-w-0">

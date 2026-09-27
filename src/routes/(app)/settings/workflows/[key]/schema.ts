@@ -16,6 +16,8 @@ import {
 	STAGE_ENTER_NOTIFY_TARGETS,
 	STAGE_TRANSITION_KINDS
 } from '$lib/contracts/interactions';
+import { CHECKLIST_ACTION_KEYS } from '$lib/platform/checklist';
+import { CHECKLIST_RULE_KEYS } from '$lib/platform/checklist-rules';
 
 /**
  * Ключ стадии. Он уезжает в базу и в слепки уже пройденных стадий, поэтому
@@ -30,11 +32,17 @@ const KEY_ERROR = 'Ключ — латиница в нижнем регистр�
  * Пункт чек-листа в форме. Ключ пуст у пункта, добавленного сейчас: его
  * собирает сервер из названия. У сохранённого пункта ключ приезжает обратно
  * без изменений — по нему в идущих делах хранятся отметки.
+ *
+ * Пустые строки — «нет»: без пояснения, ручная отметка вместо правила, без
+ * кнопки. Пустой выбор в списке не отличить от невыбранного.
  */
 const checklistItemFormSchema = z.object({
 	key: z.union([z.literal(''), z.string().regex(KEY_PATTERN, { error: KEY_ERROR }).max(100)]),
 	label: requiredText(300, 'Назовите пункт чек-листа или удалите его'),
-	required: z.boolean()
+	required: z.boolean(),
+	help: z.string().trim().max(500, { error: 'Пояснение — не длиннее 500 символов' }).default(''),
+	rule: z.enum(['', ...CHECKLIST_RULE_KEYS], { error: 'Такого правила проверки нет' }).default(''),
+	action: z.enum(['', ...CHECKLIST_ACTION_KEYS], { error: 'Такого действия нет' }).default('')
 });
 
 export type ChecklistItemForm = z.output<typeof checklistItemFormSchema>;

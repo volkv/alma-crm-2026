@@ -7,7 +7,7 @@
  * все проверки движка: повторять двадцать строк подготовки в каждом файле
  * значит однажды получить четыре разных «демонстрационных процесса».
  */
-import { eq } from 'drizzle-orm';
+import { and, eq } from 'drizzle-orm';
 import {
 	DOCUMENT_TEMPLATE_LABELS,
 	type DocumentStatusFact,
@@ -16,19 +16,29 @@ import {
 import type { LearningPurpose, LmsEvidence } from '$lib/contracts/exchange';
 import {
 	createInteractionSchema,
+	isFactItem,
 	type ChecklistItem,
 	type ProcessDefinitionInput,
-	type ProcessRevisionView
+	type ProcessRevisionView,
+	type StageEntryView
 } from '$lib/contracts/interactions';
 import type { ActorContext } from '$lib/server/actor';
 import {
+	contractItems,
+	contracts,
 	documents,
+	interactionContractItems,
+	interactionParties,
+	interactionPartySites,
 	interactionPrograms,
 	interactions,
 	learningGroupResults,
 	learningGroups,
-	programs
+	products,
+	programs,
+	sites
 } from '$lib/server/db/schema';
+import { getDb } from '$lib/server/db';
 import { withTransaction } from '$lib/server/db/transaction';
 import { markDocument } from '$lib/server/documents/status';
 import { createInteraction } from '$lib/server/interactions/write';
@@ -47,7 +57,13 @@ import {
 	requireActiveRevisionForWorkspace
 } from '$lib/server/stages/process';
 import { getInteractionStatus } from '$lib/server/stages/status';
-import { insertOrganization, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
+import {
+	ensureSchoolOperator,
+	insertDocument,
+	insertOrganization,
+	TEST_USER_IDS,
+	type TestDatabase
+} from '../helpers/db';
 
 export { B2B_WORKSPACE_KEY, B2B_PROCESS, B2C_WORKSPACE_KEY };
 
@@ -112,6 +128,9 @@ export async function createInteractionOn(
 	} = {}
 ): Promise<{ interactionId: string; organizationId: string }> {
 	const kind = options.kind ?? 'educational_institution';
+
+	await ensureSchoolOperator(database.db);
+
 	const organizationId =
 		options.organizationId ??
 		(await insertOrganization(database.db, {
@@ -138,7 +157,11 @@ export async function createInteractionOn(
 	return { interactionId: interaction.id, organizationId };
 }
 
-/** Закрывает обязательные пункты чек-листа текущей стадии. */
+/**
+ * Закрывает обязательные пункты чек-листа текущей стадии: ручные — отметкой,
+ * пункты-факты — данными дела (`provideRequiredFacts`), потому что отметкой
+ * они не закрываются.
+ */
 export async function closeRequiredChecklist(
 	ctx: ActorContext,
 	interactionId: string
@@ -151,7 +174,7 @@ export async function closeRequiredChecklist(
 	}
 
 	for (const item of current.snapshot.checklist) {
-		if (item.required) {
+		if (item.required && !isFactItem(item)) {
 			await setChecklistItem(ctx, {
 				interactionId,
 				stageEntryId: current.id,
@@ -160,6 +183,10 @@ export async function closeRequiredChecklist(
 			});
 		}
 	}
+
+	// Отметка об оплате уже стоит: «Договор заключён» у лица закрывается ею.
+	// `getDb()` — та же база, что у проверки (`helpers/db.ts`).
+	await provideRequiredFacts(ctx, { db: getDb() }, interactionId, current);
 }
 
 /**
@@ -182,7 +209,7 @@ export async function openEntryId(ctx: ActorContext, interactionId: string): Pro
  * только группа, чья программа входит в программы взаимодействия.
  */
 export async function ensureInteractionProgram(
-	database: TestDatabase,
+	database: Pick<TestDatabase, 'db'>,
 	interactionId: string
 ): Promise<string> {
 	const [existing] = await database.db
@@ -223,7 +250,7 @@ export async function ensureInteractionProgram(
  */
 export async function provideLmsEvidence(
 	ctx: ActorContext,
-	database: TestDatabase,
+	database: Pick<TestDatabase, 'db'>,
 	interactionId: string,
 	counters: { enrolled: number; completed: number; expelled: number } = {
 		enrolled: 20,
@@ -322,6 +349,129 @@ export async function provideDocumentMark(
 	await markDocument(ctx, document.id, mark);
 
 	return document.id;
+}
+
+/**
+ * Данные дела, которыми закрываются обязательные пункты-факты текущей стадии:
+ * то же, что сделал бы человек в карточке, — выбрал подразделение, записал
+ * итог, выбрал позиции договора с лицензиями, заявил поток, приложил документ.
+ * Подделать факт отметкой нельзя: проверка перестала бы проверять правило.
+ */
+export async function provideRequiredFacts(
+	ctx: ActorContext,
+	database: Pick<TestDatabase, 'db'>,
+	interactionId: string,
+	current: StageEntryView
+): Promise<void> {
+	const rules = new Set(
+		current.snapshot.checklist
+			.filter((item) => item.required && current.facts[item.key]?.done !== true)
+			.flatMap((item) => (isFactItem(item) ? [item.completion.rule] : []))
+	);
+	const primaryParty = async () => {
+		const [party] = await database.db
+			.select({ id: interactionParties.id, organizationId: interactionParties.organizationId })
+			.from(interactionParties)
+			.where(
+				and(
+					eq(interactionParties.interactionId, interactionId),
+					eq(interactionParties.isPrimary, true)
+				)
+			);
+
+		return party;
+	};
+
+	for (const rule of rules) {
+		switch (rule) {
+			case 'party_department': {
+				const party = await primaryParty();
+				const [site] = await database.db
+					.insert(sites)
+					.values({
+						organizationId: party.organizationId,
+						kind: 'department',
+						name: 'Кафедра информационных технологий'
+					})
+					.returning({ id: sites.id });
+
+				await database.db
+					.insert(interactionPartySites)
+					.values({ partyId: party.id, siteId: site.id });
+				break;
+			}
+			case 'stage_result':
+				await setStageResult(ctx, {
+					interactionId,
+					stageEntryId: current.id,
+					resultText: `Итог стадии «${current.snapshot.name}»`
+				});
+				break;
+			case 'licenses_issued': {
+				const party = await primaryParty();
+				const [product] = await database.db
+					.insert(products)
+					.values({
+						code: `LIC-${crypto.randomUUID().slice(0, 8)}`,
+						name: 'Учебная платформа',
+						status: 'active'
+					})
+					.returning({ id: products.id });
+				const [contract] = await database.db
+					.insert(contracts)
+					.values({
+						organizationId: party.organizationId,
+						number: `СЛ-${crypto.randomUUID().slice(0, 6)}`,
+						signedOn: '2026-09-10'
+					})
+					.returning({ id: contracts.id });
+				const [item] = await database.db
+					.insert(contractItems)
+					.values({
+						contractId: contract.id,
+						productId: product.id,
+						licenseSignedAt: '2026-09-12',
+						licenseUntil: '2027-08-31',
+						transferStatus: 'ожидает передачи'
+					})
+					.returning({ id: contractItems.id });
+
+				await database.db
+					.update(interactions)
+					.set({ contractId: contract.id })
+					.where(eq(interactions.id, interactionId));
+				await database.db
+					.insert(interactionContractItems)
+					.values({ interactionId, contractItemId: item.id, contractId: contract.id });
+				break;
+			}
+			// Поток с итогом закрывает оба пункта: и «сформирована», и «завершено».
+			case 'teachers_group_formed':
+			case 'teachers_training_completed':
+				await provideLmsEvidence(ctx, database, interactionId, undefined, 'teachers');
+				rules.delete('teachers_group_formed');
+				rules.delete('teachers_training_completed');
+				break;
+			case 'upskilling_group_program':
+			case 'upskilling_enrolled':
+				await provideLmsEvidence(ctx, database, interactionId, undefined, 'upskilling');
+				rules.delete('upskilling_group_program');
+				rules.delete('upskilling_enrolled');
+				break;
+			case 'training_document':
+				await insertDocument(database.db, {
+					interactionId,
+					kind: 'certificate',
+					title: 'Удостоверение о повышении квалификации'
+				});
+				break;
+			// Оплату по оферте отмечает `closeRequiredChecklist` — это ручной пункт.
+			case 'contract_concluded':
+				break;
+			default:
+				throw new Error(`Проводка по процессу не умеет закрывать правило «${rule}»`);
+		}
+	}
 }
 
 /**

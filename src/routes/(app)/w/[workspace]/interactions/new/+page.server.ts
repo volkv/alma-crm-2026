@@ -2,12 +2,22 @@ import { error, redirect } from '@sveltejs/kit';
 import { fail, message, superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { id } from '$lib/contracts/common';
-import { catalogListQuerySchema, type LookupOption } from '$lib/contracts/directory';
+import {
+	catalogListQuerySchema,
+	type LookupOption,
+	type OrganizationKind
+} from '$lib/contracts/directory';
 import { createInteractionSchema } from '$lib/contracts/interactions';
 import { actorFromEvent, type ActorContext } from '$lib/server/actor';
-import { listProducts, listPrograms, pickOrganization } from '$lib/server/directory/read';
+import {
+	getOrganization,
+	listProducts,
+	listPrograms,
+	pickOrganization
+} from '$lib/server/directory/read';
 import { passportAvailability } from '$lib/server/enrichment/access';
 import { toActionFailure, toPageError } from '$lib/server/http';
+import { readWorkspaceCounterpartyKinds } from '$lib/server/interactions/composition';
 import { createInteraction } from '$lib/server/interactions/write';
 import { can, requirePermission } from '$lib/server/rbac';
 import { responsibleOptions } from '../responsible';
@@ -41,25 +51,36 @@ async function registryAvailable(ctx: ActorContext): Promise<boolean> {
 async function presetInstitution(
 	ctx: ActorContext,
 	raw: string | null
-): Promise<{ option: LookupOption | null; refused: string | null }> {
+): Promise<{
+	option: LookupOption | null;
+	kind: OrganizationKind | null;
+	refused: string | null;
+}> {
 	if (raw === null) {
-		return { option: null, refused: null };
+		return { option: null, kind: null, refused: null };
 	}
 
 	const parsed = organizationParam.safeParse(raw);
 
 	if (!parsed.success) {
-		return { option: null, refused: parsed.error.issues[0].message };
+		return { option: null, kind: null, refused: parsed.error.issues[0].message };
 	}
 
 	const option = await pickOrganization(ctx, parsed.data);
 
-	return option === null
-		? {
-				option: null,
-				refused: 'Организация из ссылки не найдена, в архиве или вне вашей области доступа'
-			}
-		: { option, refused: null };
+	if (option === null) {
+		return {
+			option: null,
+			kind: null,
+			refused: 'Организация из ссылки не найдена, в архиве или вне вашей области доступа'
+		};
+	}
+
+	// Вид подставленной организации выбирает и вид формы: компания с её
+	// карточки открывает форму для компании, а не для вуза.
+	const organization = await getOrganization(ctx, option.id);
+
+	return { option, kind: organization.kind, refused: null };
 }
 
 export const load: PageServerLoad = async (event) => {
@@ -87,13 +108,14 @@ export const load: PageServerLoad = async (event) => {
 		);
 	}
 
-	const [programs, products, users, form, preset, registry] = await Promise.all([
+	const [programs, products, users, form, preset, registry, counterpartyKinds] = await Promise.all([
 		listPrograms(ctx, catalogPage),
 		listProducts(ctx, catalogPage),
 		responsibleOptions(event),
 		superValidate(zod4(createInteractionSchema)),
 		presetInstitution(ctx, event.url.searchParams.get('organization')),
-		registryAvailable(ctx)
+		registryAvailable(ctx),
+		readWorkspaceCounterpartyKinds(workspace.id)
 	]);
 
 	// Ответственный по умолчанию подставляется сразу: в девяти случаях из десяти
@@ -106,8 +128,16 @@ export const load: PageServerLoad = async (event) => {
 		products: products.items,
 		users,
 		presetInstitution: preset.option,
+		presetKind: preset.kind,
 		presetRefused: preset.refused,
-		registryAvailable: registry
+		registryAvailable: registry,
+		counterpartyKinds,
+		// Завести контрагента из поля формы можно тому, кто заводит организации;
+		// физическое лицо — ещё и человека.
+		canCreate: {
+			organization: can(ctx, 'organizations.write'),
+			individual: can(ctx, 'organizations.write') && can(ctx, 'people.write')
+		}
 	};
 };
 

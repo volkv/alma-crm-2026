@@ -66,6 +66,7 @@ function entry(overrides: Partial<StageEntryView> = {}): StageEntryView {
 		lmsEvidence: null,
 		documentMarkEvidence: null,
 		checklistState: {},
+		facts: {},
 		documents: [],
 		dueAt: new Date(NOW.getTime() + 5 * DAY),
 		pausedSeconds: 0,
@@ -284,8 +285,7 @@ describe('условия перехода', () => {
 	it('собирает чек-лист, результат и итог обучения из снимка стадии', () => {
 		const requirements = buildRequirements(
 			entry({ checklistState: { schedule_published: true } }),
-			NO_EXCHANGE,
-			INSTALLED_MODULES.map((module) => module.key)
+			source({ modules: INSTALLED_MODULES.map((module) => module.key) })
 		);
 
 		expect(requirements.map((item) => [item.key, item.done, item.required])).toEqual([
@@ -380,29 +380,60 @@ describe('меню «Ещё»', () => {
 		expect(card.secondary.some((item) => item.command.kind === 'result')).toBe(false);
 	});
 
-	it('приглашение на встречу — в меню и у пункта чек-листа, только пока «Встречи» действуют', () => {
+	it('приглашение на встречу — в меню и у пункта, которому его выбрал процесс, пока «Встречи» действуют', () => {
 		const meeting = entry({
 			snapshot: {
 				...entry().snapshot,
 				key: 'meeting',
 				name: 'Встреча с представителями',
 				requiresLmsData: false,
-				checklist: [{ key: 'meeting_scheduled', label: 'Встреча назначена', required: true }]
+				checklist: [
+					{
+						key: 'meeting_scheduled',
+						label: 'Встреча назначена',
+						required: true,
+						help: 'Назначьте встречу кнопкой',
+						action: 'meetings:invite'
+					}
+				]
 			}
 		});
 		const invite = { kind: 'module', module: 'meetings', action: 'invite' };
+		const scheduled = {
+			id: 'change-meeting',
+			changedAt: daysAgo(1),
+			authorId: 'user-1',
+			authorName: 'Зотов Илья',
+			field: 'meetings:scheduled',
+			oldValue: null,
+			newValue: 'Назначена встреча: 01.10.2026, 11:00 по Москве, 60 мин',
+			oldLabel: null,
+			newLabel: null,
+			reason: null
+		};
 		const build = (modules: CardSource['modules']) =>
-			buildCard(source({ status: status({ current: meeting }), modules }), NOW);
+			buildCard(
+				source({ status: status({ current: meeting }), modules, changes: [scheduled] }),
+				NOW
+			);
 
 		const withMeetings = build(['meetings']);
 
 		expect(withMeetings.secondary.map((item) => item.command)).toContainEqual(invite);
 		if (withMeetings.action.kind !== 'forward') throw new Error('ожидался шаг вперёд');
+		// Пункт ручной: встречу назначили — это видно рядом, но отмечает человек.
 		expect(withMeetings.action.requirements[0]).toMatchObject({
 			key: 'checklist:meeting_scheduled',
+			close: 'check',
+			done: false,
 			cta: 'Пригласить на встречу',
-			command: invite
+			command: invite,
+			hint: 'Назначьте встречу кнопкой',
+			note: 'Назначена встреча: 01.10.2026, 11:00 по Москве, 60 мин'
 		});
+		expect(withMeetings.events.find((event) => event.id === 'change:change-meeting')?.title).toBe(
+			'Назначена встреча: 01.10.2026, 11:00 по Москве, 60 мин'
+		);
 
 		const without = build([]);
 
@@ -475,6 +506,7 @@ describe('лента событий', () => {
 						id: 'comment-1',
 						authorId: 'user-1',
 						authorName: 'Зотов Илья',
+						source: 'manual',
 						body: 'Группа собрана',
 						createdAt: daysAgo(6)
 					}

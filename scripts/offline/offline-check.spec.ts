@@ -234,19 +234,42 @@ test.describe.serial('без интернета: полный проход', { t
 
 		const action = page.locator('[data-slot="card-action"]');
 
-		// Обязательные пункты первой стадии закрываются галочками, как их
-		// закрывает менеджер; каждая — отдельный запрос формы.
-		for (const label of [
-			'Найдено профильное подразделение',
-			'Подтверждён контакт ответственного лица'
-		]) {
-			const box = action.getByRole('checkbox', { name: label });
+		// «Найдено профильное подразделение» — пункт-факт: закрывает его не
+		// галочка, а выбранная площадка вида «Подразделение» у вуза в составе
+		// дела (`$lib/components/interaction-card/model.ts`). Путь — тот же, что
+		// у менеджера: «Открыть сторону» у пункта, пока он открыт (закрытый
+		// пункт открыл бы сторону без кнопки — она уже в панели), «Выбрать
+		// площадки» у учебного заведения, отметка площадки и сохранение состава.
+		const openParty = action
+			.locator('li')
+			.filter({ hasText: 'Найдено профильное подразделение' })
+			.getByRole('button', { name: 'Открыть сторону' });
 
-			await Promise.all([
-				page.waitForResponse((response) => response.url().includes('/checklist') && response.ok()),
-				box.click()
-			]);
+		if ((await openParty.count()) > 0) {
+			await openParty.click();
 		}
+
+		const institutionPanel = page.locator('[data-slot="institution-panel"]');
+		const composition = page.getByRole('dialog');
+
+		await openLayer(
+			institutionPanel.getByRole('button', { name: 'Выбрать площадки' }),
+			composition
+		);
+		await composition
+			.getByRole('checkbox', { name: 'Кафедра информационной безопасности' })
+			.click();
+		await composition.getByRole('button', { name: 'Сохранить состав' }).click();
+		await expect(composition).toBeHidden();
+
+		// Обязательный ручной пункт первой стадии закрывается галочкой, как её
+		// закрывает менеджер, — отдельным запросом формы.
+		const box = action.getByRole('checkbox', { name: 'Подтверждён контакт ответственного лица' });
+
+		await Promise.all([
+			page.waitForResponse((response) => response.url().includes('/checklist') && response.ok()),
+			box.click()
+		]);
 
 		const advance = action.getByRole('button', { name: /^Перейти к «/ });
 

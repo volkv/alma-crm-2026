@@ -8,8 +8,9 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import InlineHint from '$lib/components/inline-hint.svelte';
+	import CounterpartyCreate from './counterparty-create.svelte';
 	import { EDUCATION_LEVEL_LABELS } from '$lib/components/directory/labels';
-	import type { LookupOption } from '$lib/contracts/directory';
+	import type { LookupOption, OrganizationKind } from '$lib/contracts/directory';
 	import type { LegalStatus, RegistryCandidate, RegistryPickRole } from '$lib/contracts/enrichment';
 
 	/**
@@ -25,6 +26,10 @@
 	 * суточной квоты сотрудника, и тратить её на каждую набранную букву при
 	 * найденном в справочнике незачем. Выбранная строка реестра заводится
 	 * организацией справочника сразу, с видом по этому полю.
+	 *
+	 * Нет ни в справочнике, ни в реестре (реестр выключен, организации в нём
+	 * нет, это физическое лицо) — контрагента заводят здесь же вручную
+	 * (`createKind`), не уходя из формы.
 	 */
 	let {
 		id,
@@ -35,6 +40,7 @@
 		describedBy,
 		invalid = false,
 		registryRole = null,
+		createKind = null,
 		onselect
 	}: {
 		/** Идентификатор контрола: на него ссылается подпись поля. */
@@ -57,7 +63,16 @@
 		 * только по справочнику.
 		 */
 		registryRole?: RegistryPickRole | null;
-		onselect?: (option: LookupOption | null) => void;
+		/**
+		 * Кого заводить вручную, если нужного не нашлось; `null` — заводить
+		 * отсюда нельзя (нет права на справочник).
+		 */
+		createKind?: OrganizationKind | null;
+		/**
+		 * Выбор или сброс. У физического лица, заведённого здесь же, вторым
+		 * аргументом — его роль в своей организации: он же контактное лицо.
+		 */
+		onselect?: (option: LookupOption | null, contactAffiliationId?: string | null) => void;
 	} = $props();
 
 	/** Короче трёх букв реестр отвечает сотней однофамильцев. */
@@ -85,6 +100,10 @@
 	let creating = $state<string | null>(null);
 	/** Выбранная организация только что заведена из ЕГРЮЛ. */
 	let createdFromRegistry = $state(false);
+	/** Открыта форма заведения вручную; строка — то, что было набрано. */
+	let manualQuery = $state<string | null>(null);
+	/** Выбранный контрагент только что заведён вручную. */
+	let createdManually = $state(false);
 
 	/**
 	 * Номер набора: ответ на прежнюю строку не должен перетирать подсказки к
@@ -189,7 +208,23 @@
 		candidates = null;
 		registryError = null;
 		createdFromRegistry = fromRegistry;
+		createdManually = false;
+		manualQuery = null;
 		onselect?.(option);
+	}
+
+	function created(option: LookupOption, contactAffiliationId: string | null) {
+		value = option.id;
+		label = option.label;
+		query = '';
+		open = false;
+		options = [];
+		candidates = null;
+		registryError = null;
+		createdFromRegistry = false;
+		createdManually = true;
+		manualQuery = null;
+		onselect?.(option, contactAffiliationId);
 	}
 
 	/**
@@ -237,6 +272,8 @@
 		options = [];
 		candidates = null;
 		createdFromRegistry = false;
+		createdManually = false;
+		manualQuery = null;
 		onselect?.(null);
 	}
 
@@ -292,6 +329,18 @@
 			</Button>
 		</div>
 
+		{#if createdManually}
+			<InlineHint tone="info">
+				<span>
+					Контрагент заведён в справочнике. Реквизиты дополняют в <a
+						class="underline underline-offset-2"
+						href={resolve('/(app)/organizations/[id=uuid]', { id: value })}
+						target="_blank"
+						rel="noopener">его карточке</a
+					>.
+				</span>
+			</InlineHint>
+		{/if}
 		{#if createdFromRegistry}
 			<InlineHint tone="info">
 				<span>
@@ -454,6 +503,27 @@
 							</ul>
 						{/if}
 					</section>
+				{/if}
+
+				{#if manualQuery !== null && createKind !== null}
+					<CounterpartyCreate
+						kind={createKind}
+						{lookupPath}
+						query={manualQuery}
+						oncreated={created}
+						oncancel={() => (manualQuery = null)}
+					/>
+				{:else if createKind !== null && !loading && query.trim() !== ''}
+					<button
+						type="button"
+						class="flex w-full items-center gap-1.5 border-t border-border px-3 py-2 text-left text-xs text-muted-foreground focus-ring hover:bg-surface-muted hover:text-foreground"
+						onclick={() => (manualQuery = query)}
+					>
+						<PlusIcon class="size-3.5" aria-hidden="true" />
+						{createKind === 'individual'
+							? 'Нет в справочнике? Завести физическое лицо'
+							: 'Нет в справочнике? Завести организацию вручную'}
+					</button>
 				{/if}
 			</div>
 		{/if}

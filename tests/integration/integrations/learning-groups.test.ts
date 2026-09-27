@@ -560,7 +560,13 @@ describe('что подтверждает стадию', () => {
 
 		// Итог второго потока, названный ключом заявки первого, — это не наш
 		// поток: результат отвергается целиком, и ничего не подтверждается.
-		const second = await requestGroup(interactionId, { streamNumber: 2 });
+		// Номер — следующий свободный: по дороге к «Ведению занятий» дело уже
+		// завело поток преподавателей, которым закрыт пункт их обучения.
+		const [{ streams }] = await database.db
+			.select({ streams: sql<number>`count(*)::int` })
+			.from(learningGroups)
+			.where(eq(learningGroups.interactionId, interactionId));
+		const second = await requestGroup(interactionId, { streamNumber: streams + 1 });
 
 		await expect(
 			receiveLearningGroupResult(

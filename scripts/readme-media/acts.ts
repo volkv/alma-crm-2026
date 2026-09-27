@@ -9,7 +9,7 @@
  * `Stand`, и `restorePass` возвращает ровно отмеченное.
  */
 import path from 'node:path';
-import type { Browser, Page } from '@playwright/test';
+import type { Browser, Locator, Page } from '@playwright/test';
 
 import {
 	BASE_URL,
@@ -39,11 +39,13 @@ export const RENAMED_STAGE = {
 /** Первая стадия процесса учебных заведений: на ней стоит заявка с сайта. */
 const FIRST_STAGE = 'Поиск контактных лиц';
 
-/** Обязательные пункты первой стадии: их закрывает менеджер в кадре. */
-const FIRST_STAGE_CHECKLIST = [
-	'Найдено профильное подразделение',
-	'Подтверждён контакт ответственного лица'
-] as const;
+/**
+ * Обязательные пункты первой стадии. Подразделение пункт видит сам — по
+ * площадке вида «Подразделение», выбранной у вуза в составе дела; контакт
+ * менеджер подтверждает галочкой.
+ */
+const FIRST_STAGE_DEPARTMENT_ITEM = 'Найдено профильное подразделение';
+const FIRST_STAGE_CHECKLIST = ['Подтверждён контакт ответственного лица'] as const;
 
 /**
  * Записи стенда, на которых держатся сцены.
@@ -68,7 +70,12 @@ const STAND = {
 	/** Стадия отчёта, по столбцу которой идёт клик в сцене отчёта. */
 	narrowed: { stage: 'Корректировка документов', funnelIndex: 4 },
 	/** Вуз, которого руководитель передаёт другому менеджеру. */
-	institution: { query: 'МТУСИ', name: 'МТУСИ' }
+	institution: { query: 'МТУСИ', name: 'МТУСИ' },
+	/**
+	 * Профильное подразделение вуза заявки с сайта (заявку подаёт МТУСИ):
+	 * площадка вида «Подразделение» в карточке вуза.
+	 */
+	department: 'Кафедра информационной безопасности'
 } as const;
 
 /**
@@ -171,6 +178,61 @@ async function setChecklistItem(
 		await toggle.click();
 		await page.waitForTimeout(400);
 	}
+}
+
+/**
+ * Привести выбор профильного подразделения у вуза в деле к `chosen`.
+ *
+ * Так же, как менеджер: «Открыть сторону» у пункта чек-листа, «Выбрать
+ * площадки» у учебного заведения, отметка площадки в составе дела и
+ * сохранение. Пункт закрывается данными, а не галочкой: выбранное
+ * подразделение он видит сам. Выбор уже такой — диалог закрывается без сохранения: пустая
+ * правка оставила бы в ленте запись ни о чём.
+ */
+async function setDepartment(
+	page: Page,
+	chosen: boolean,
+	options: { shown?: boolean } = {}
+): Promise<void> {
+	const click = async (target: Locator) => {
+		if (options.shown === true) {
+			await press(page, target);
+		} else {
+			await target.click();
+		}
+	};
+
+	// Кнопка стоит у пункта, пока он открыт; закрытый пункт уезжает в
+	// «Сделано на стадии» без кнопки, и сторона открывается сразу в панели.
+	const reveal = page
+		.locator('[data-slot="card-action"] li')
+		.filter({ hasText: FIRST_STAGE_DEPARTMENT_ITEM })
+		.getByRole('button', { name: 'Открыть сторону' });
+
+	if ((await reveal.count()) > 0) {
+		await click(reveal);
+	}
+
+	await click(
+		page
+			.locator('[data-slot="institution-panel"]')
+			.getByRole('button', { name: 'Выбрать площадки' })
+	);
+
+	const dialog = page.getByRole('dialog');
+	const site = dialog.getByRole('checkbox', { name: STAND.department });
+
+	await site.waitFor({ state: 'visible', timeout: WAIT });
+
+	if ((await site.isChecked()) === chosen) {
+		await dialog.getByRole('button', { name: 'Отмена' }).click();
+		await dialog.waitFor({ state: 'hidden', timeout: WAIT });
+		return;
+	}
+
+	await click(site);
+	await click(dialog.getByRole('button', { name: 'Сохранить состав' }));
+	await dialog.waitFor({ state: 'hidden', timeout: WAIT });
 }
 
 /** Ключи учебных групп, названные на карточке: по ним видно, какая заведена сейчас. */
@@ -483,6 +545,9 @@ export async function workTheCard(page: Page, stand: Stand, crew: Crew): Promise
 	await Promise.all([
 		draftMention(lead, DEMO_MANAGER_NAME, LEAD_NOTE),
 		(async () => {
+			await setDepartment(page, true, { shown: true });
+			await beat(page, 0.6);
+
 			for (const item of FIRST_STAGE_CHECKLIST) {
 				await setChecklistItem(page, item, true, { shown: true });
 				await beat(page, 0.6);
@@ -819,10 +884,13 @@ export async function restorePass(
 
 			// Чек-лист возвращается следом: стадия, на которую вернулись, иначе
 			// осталась бы закрытой, и следующий проход начался бы не с того, с чего
-			// начинается стенд.
+			// начинается стенд. Подразделение пункт видит по данным дела — его
+			// выбор снимается в составе.
 			for (const item of FIRST_STAGE_CHECKLIST) {
 				await setChecklistItem(page, item, false);
 			}
+
+			await setDepartment(page, false);
 
 			console.log(`стадия возвращена: ${FIRST_STAGE}`);
 		});

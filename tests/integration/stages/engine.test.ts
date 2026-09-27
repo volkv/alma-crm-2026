@@ -449,9 +449,11 @@ describe('возврат и пропуск', () => {
 		expect(status.current?.snapshot.key).toBe('contact_search');
 		expect(returned?.outcome).toBe('returned');
 		expect(returned?.outcomeReason).toBe('Контакт оказался не тот');
-		// Отметки чек-листа первой стадии — в её прежней записи; новая начинается
-		// с чистого листа, потому что стадию проходят заново.
-		expect(status.current?.checklistState).toEqual({});
+		// Возврат не отменяет сделанного: ручные отметки первой стадии вернулись
+		// вместе с делом, пункты те же. Пункт-факт отметок не несёт — его
+		// закрывают данные дела, и они на месте.
+		expect(status.current?.checklistState).toEqual({ contact_confirmed: true });
+		expect(status.current?.facts.profile_unit_found.done).toBe(true);
 	});
 
 	it('пропуск перешагивает стадию, и она видна пропущенной', async () => {

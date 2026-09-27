@@ -3,8 +3,11 @@ import { actorFromEvent } from '$lib/server/actor';
 import { lookupUsers } from '$lib/server/auth/users';
 import { can } from '$lib/server/rbac';
 
-/** Кого можно назначить ответственным: идентификатор, имя и роль для списка. */
-export type ResponsibleOption = { id: string; name: string; roleName: string };
+/**
+ * Кого можно назначить ответственным: идентификатор, имя и роль для списка.
+ * Ключ роли — чтобы отличить тех, кто ведёт дела, от учёток с полной областью.
+ */
+export type ResponsibleOption = { id: string; name: string; roleId: string; roleName: string };
 
 /**
  * Ответственного выбирают из действующих сотрудников пространства — всех, а не
@@ -32,5 +35,10 @@ export async function responsibleOptions(event: RequestEvent): Promise<Responsib
 
 	const staff = await lookupUsers(ctx, { workspaceKey });
 
-	return staff.map((user) => ({ id: user.id, name: user.fullName, roleName: user.roleName }));
+	return staff.map((user) => ({
+		id: user.id,
+		name: user.fullName,
+		roleId: user.roleId,
+		roleName: user.roleName
+	}));
 }

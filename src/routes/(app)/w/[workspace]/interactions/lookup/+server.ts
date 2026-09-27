@@ -1,7 +1,7 @@
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
-import { id } from '$lib/contracts/common';
-import { isAffiliationCurrent } from '$lib/contracts/directory';
+import { id, optionalText, requiredText } from '$lib/contracts/common';
+import { createOrganizationSchema, isAffiliationCurrent } from '$lib/contracts/directory';
 import {
 	REGISTRY_PICK_KINDS,
 	registryPickQuerySchema,
@@ -11,16 +11,19 @@ import { formatIsoDay } from '$lib/format';
 import { actorFromEvent } from '$lib/server/actor';
 import { listOrganizationContracts } from '$lib/server/directory/contracts';
 import { listAffiliations, listSites, lookupOrganizations } from '$lib/server/directory/read';
+import { createOrganization } from '$lib/server/directory/write';
 import { EnrichmentRefusal } from '$lib/server/enrichment/access';
 import { DadataError } from '$lib/server/enrichment/dadata';
 import { createFromRegistry, searchRegistryCandidates } from '$lib/server/enrichment/pick';
 import { AppError, statusForError } from '$lib/server/errors';
+import { createIndividualCounterparty } from '$lib/server/interactions/counterparty';
 import type { RequestHandler } from './$types';
 
 /**
  * Подсказки для формы взаимодействия: организации по поиску, их площадки,
  * контактные лица и договоры; организации из реестра (ЕГРЮЛ), если в
- * справочнике нужной нет, и `POST` — завести выбранную строку реестра.
+ * справочнике нужной нет, и `POST` — завести контрагента, которого в
+ * справочнике нет: строку реестра, организацию вручную или физическое лицо.
  *
  * Маршрут лежит внутри оболочки приложения, а не в `/api`: это подсказка для
  * страницы, она ходит с сессией и правами того, кто заполняет форму. Публичный
@@ -103,9 +106,36 @@ export const GET: RequestHandler = async (event) => {
 };
 
 /**
- * Завести организацию из строки реестра, выбранной в поле формы. Тело — номер
- * строки и поле; реквизиты сервер берёт из своей копии, а не из запроса.
- * Ответ — организация в том же виде, что и подсказки справочника.
+ * Физическое лицо, заведённое из поля формы: ФИО и способ связи. Почта
+ * обязательна — по ней, как и у заявки с сайта, находится уже заведённый
+ * человек, и второй записи о нём не появляется.
+ */
+const individualSchema = z.object({
+	lastName: requiredText(100, 'Укажите фамилию'),
+	firstName: requiredText(100, 'Укажите имя'),
+	middleName: optionalText(100),
+	email: z.email({ error: 'Электронная почта указана неверно' }),
+	phone: optionalText(50).refine((value) => value === null || /^[\d\s+()-]{5,}$/.test(value), {
+		error: 'Телефон может содержать только цифры, пробелы и знаки + ( ) -'
+	})
+});
+
+/**
+ * Что можно завести из поля формы: строку реестра, организацию вручную (тем же
+ * описанием, что у формы справочника) или физическое лицо.
+ */
+const createBodySchema = z.union([
+	registryPickSchema,
+	z.object({ create: z.literal('organization'), organization: createOrganizationSchema }),
+	z.object({ create: z.literal('individual'), person: individualSchema })
+]);
+
+/**
+ * Завести контрагента, которого нет в справочнике, из поля формы. Строку
+ * реестра сервер заводит по своей копии, а не по запросу; организацию вручную
+ * — сервисом справочника, с его проверками; физическое лицо — вместе с
+ * человеком и его ролью. Ответ — организация в том же виде, что и подсказки
+ * справочника, у физического лица — ещё и его роль: он же контактное лицо.
  */
 export const POST: RequestHandler = async (event) => {
 	let body: unknown;
@@ -116,7 +146,7 @@ export const POST: RequestHandler = async (event) => {
 		return json({ error: 'Тело запроса — не JSON' }, { status: 400 });
 	}
 
-	const parsed = registryPickSchema.safeParse(body);
+	const parsed = createBodySchema.safeParse(body);
 
 	if (!parsed.success) {
 		return json(
@@ -125,14 +155,29 @@ export const POST: RequestHandler = async (event) => {
 		);
 	}
 
-	try {
-		const { created: _created, ...item } = await createFromRegistry(
-			actorFromEvent(event),
-			parsed.data.token,
-			REGISTRY_PICK_KINDS[parsed.data.role]
-		);
+	const ctx = actorFromEvent(event);
+	const request = parsed.data;
 
-		return json({ item });
+	try {
+		if ('token' in request) {
+			const { created: _created, ...item } = await createFromRegistry(
+				ctx,
+				request.token,
+				REGISTRY_PICK_KINDS[request.role]
+			);
+
+			return json({ item });
+		}
+
+		if (request.create === 'organization') {
+			const created = await createOrganization(ctx, request.organization);
+
+			return json({ item: { id: created.id, label: created.shortName } });
+		}
+
+		const created = await createIndividualCounterparty(ctx, request.person);
+
+		return json({ item: created.option, contactAffiliationId: created.contactAffiliationId });
 	} catch (error) {
 		return failure(error);
 	}

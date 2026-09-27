@@ -54,11 +54,11 @@ export type CardActionSpec<K extends string = string> = {
 	/** `null` — действие доступно всякому, кто видит карточку. */
 	readonly requires: InteractionAction | null;
 	readonly deniedReason: string;
-	/** Пункт в меню «Ещё». */
+	/**
+	 * Пункт в меню «Ещё». Кнопку у пункта чек-листа ставит процесс: действие
+	 * выбирают в описании пункта (`action` = `<модуль>:<действие>`).
+	 */
 	readonly menu: boolean;
-	/** Пункты чек-листа стадии, у которых стоит кнопка этого действия. */
-	readonly checklistItems: readonly string[];
-	readonly checklistHint?: string;
 };
 
 /** Пункт меню пространства со страницей модуля. */

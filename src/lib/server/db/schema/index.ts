@@ -13,3 +13,4 @@ export * from './modules';
 export * from './notifications';
 export * from './settings';
 export * from './stats';
+export * from './terms';

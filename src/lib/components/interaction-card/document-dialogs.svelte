@@ -9,6 +9,7 @@
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
+	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import DateField from '$lib/components/form/date-field.svelte';
 	import FileInput from '$lib/components/form/file-input.svelte';
 	import FormDialog from '$lib/components/form-dialog.svelte';
@@ -24,11 +25,14 @@
 		UPLOADED_DOCUMENT_KINDS,
 		type DocumentStatusFact,
 		type DocumentTemplateKey,
+		type PackageDefaults,
+		type PackageFix,
 		type PackageOutcome,
 		type DocumentSupersession,
 		type MarkDayBounds
 	} from '$lib/contracts/documents';
 	import type { InteractionDocumentView, InteractionView } from '$lib/contracts/interactions';
+	import { resolve } from '$app/paths';
 	import { pluralize } from '$lib/format';
 	import { kindOwner } from '$lib/platform/registry';
 	import { getCardCommands } from './commands.svelte';
@@ -103,7 +107,14 @@
 	 * только действующие редакции, у которых этой отметки ещё нет.
 	 */
 	const markCommand = $derived(commands.current?.kind === 'mark' ? commands.current : null);
-	const markCandidates = $derived(
+	/**
+	 * Шаблон, который ждёт стадия: засчитывается только отметка на документе,
+	 * собранном по нему, или на его новой редакции (скан подписанного
+	 * экземпляра наследует шаблон). Загруженный руками файл того же вида стадию
+	 * не закроет — поэтому его нет среди кандидатов, а ниже сказано почему.
+	 */
+	const markTemplate = $derived(markCommand?.template ?? null);
+	const markOpenDocuments = $derived(
 		documents.filter(
 			(document) =>
 				!superseded.has(document.id) &&
@@ -112,11 +123,23 @@
 					unmarked(document).includes(markCommand.fact))
 		)
 	);
+	const markCandidates = $derived(
+		markTemplate === null
+			? markOpenDocuments
+			: markOpenDocuments.filter((document) => document.templateKey === markTemplate)
+	);
+	/** Документы, которые подошли бы по отметке, но собраны не по шаблону стадии. */
+	const markForeign = $derived(
+		markTemplate === null
+			? []
+			: markOpenDocuments.filter((document) => document.templateKey !== markTemplate)
+	);
 
 	let uploadTitle = $state('');
 	let uploadKind = $state<string>('agreement');
 	let uploadChosen = $state<readonly string[]>([]);
 	let revisionChosen = $state<readonly string[]>([]);
+	let revisionNote = $state('');
 	let markDocumentId = $state('');
 	let markFact = $state<DocumentStatusFact>('agreed');
 	let markDay = $state('');
@@ -127,6 +150,11 @@
 	let packageCounterpartySigner = $state('');
 	let packageOutcomes = $state<PackageOutcome[]>([]);
 	let packageRefusal = $state<{ message: string; description?: string } | null>(null);
+	/**
+	 * Умолчания формы сборки приходят отдельным запросом при открытии: город из
+	 * прошлой сборки или реквизитов оператора, подписанты — из прошлой сборки.
+	 */
+	let packageDefaultsError = $state<string | null>(null);
 
 	const packageCommand = $derived(commands.current?.kind === 'package' ? commands.current : null);
 
@@ -145,15 +173,17 @@
 			if (current === null) return;
 
 			uploadTitle = '';
-			uploadKind = 'agreement';
+			uploadKind = current.kind === 'upload' ? (current.documentKind ?? 'agreement') : 'agreement';
 			uploadChosen = [];
 			revisionChosen = [];
+			revisionNote = '';
 			markNote = '';
 			packageOutcomes = [];
 			packageRefusal = null;
 
 			if (current.kind === 'package') {
 				packageChosen = [...current.templates];
+				void loadPackageDefaults();
 			}
 
 			if (current.kind === 'mark') {
@@ -171,6 +201,61 @@
 
 		markFact = fact !== null && available.includes(fact) ? fact : (available[0] ?? 'agreed');
 		markDay = markBounds.max;
+	}
+
+	/**
+	 * Подставляет умолчания, не затирая того, что человек уже ввёл. Отказ —
+	 * строкой в форме: поля остаются пустыми, и их заполняют руками.
+	 */
+	async function loadPackageDefaults() {
+		const { id } = page.params;
+
+		packageDefaultsError = null;
+
+		if (id === undefined) return;
+
+		const response = await fetch(resolve('/(app)/documents/package-defaults/[id=uuid]', { id }));
+
+		if (!response.ok) {
+			packageDefaultsError =
+				'Не удалось подставить город и подписантов прошлой сборки — впишите их сами.';
+
+			return;
+		}
+
+		const defaults = (await response.json()) as PackageDefaults;
+
+		if (packageCity.trim() === '') packageCity = defaults.city ?? '';
+		if (packageOperatorSigner.trim() === '') packageOperatorSigner = defaults.operatorSigner ?? '';
+		if (packageCounterpartySigner.trim() === '') {
+			packageCounterpartySigner = defaults.counterpartySigner ?? '';
+		}
+	}
+
+	/** Куда ведёт исправление из отказа сборки: название кнопки и что она делает. */
+	const FIX_LABELS: Record<PackageFix, string> = {
+		parties: 'Изменить состав → Стороны',
+		plan: 'Изменить план',
+		contract: 'Выбрать договор'
+	};
+
+	/** Исправления всех отказавших документов, без повторов, в порядке важности. */
+	const packageFixes = $derived(
+		(['parties', 'plan', 'contract'] as const).filter((fix) =>
+			packageOutcomes.some((outcome) => outcome.status === 'refused' && outcome.fixes.includes(fix))
+		)
+	);
+
+	/**
+	 * Каждое исправление — диалог этой же карточки: стороны — раздел «Стороны»
+	 * состава дела, план и договор — свои диалоги. Открытый диалог сменяет этот.
+	 */
+	function openFix(fix: PackageFix) {
+		if (fix === 'parties') {
+			commands.openComposition('parties');
+		} else {
+			commands.open({ kind: fix });
+		}
 	}
 
 	function togglePackage(template: DocumentTemplateKey, on: boolean) {
@@ -193,14 +278,29 @@
 
 		return async ({ result, update }) => {
 			if (result.type === 'failure') {
-				const data = (result.data ?? {}) as { message?: unknown; issues?: unknown };
+				const data = (result.data ?? {}) as {
+					message?: unknown;
+					issues?: unknown;
+					outcomes?: unknown;
+				};
+				const message = typeof data.message === 'string' ? data.message : 'Пакет не собран';
+
+				// Отказ всего пакета с исходами по документам — те же строки под
+				// каждым документом и кнопки исправлений, что и у частичного.
+				if (Array.isArray(data.outcomes)) {
+					packageOutcomes = data.outcomes as PackageOutcome[];
+					packageRefusal = { message };
+
+					return;
+				}
+
 				const issues = Array.isArray(data.issues)
 					? data.issues.filter((issue): issue is string => typeof issue === 'string')
 					: [];
 
 				packageOutcomes = [];
 				packageRefusal = {
-					message: typeof data.message === 'string' ? data.message : 'Пакет не собран',
+					message,
 					description: issues.length > 0 ? issues.join('; ') : undefined
 				};
 
@@ -229,6 +329,13 @@
 		};
 	};
 </script>
+
+<!-- Звёздочка у поля, без которого документ не собрать; проверяет его сервер,
+	после данных дела, поэтому атрибута `required` у поля нет. -->
+{#snippet requiredMark()}
+	<span class="text-danger" aria-hidden="true">*</span>
+	<span class="sr-only">обязательное поле</span>
+{/snippet}
 
 <FormDialog
 	bind:open={uploadOpen.get, uploadOpen.set}
@@ -265,6 +372,13 @@
 					{/each}
 				</Select.Content>
 			</Select.Root>
+			{#if uploadKind === 'act'}
+				<p class="text-xs text-muted-foreground">
+					Подписанный акт передачи загружайте не здесь, а новой редакцией акта, собранного по
+					шаблону: меню документа → «Загрузить новую редакцию». Отдельно загруженный акт стадию не
+					закроет — он не связан с позициями договора.
+				</p>
+			{/if}
 		</div>
 		<FileInput
 			id="card-document-file"
@@ -288,7 +402,7 @@
 	title="Новая редакция документа"
 	description="«{revisionOf?.title ??
 		''}» останется в деле и будет скачиваться по-прежнему: файл неизменяем. Новая редакция встанет на его место с тем же названием и видом."
-	dirty={revisionChosen.length > 0}
+	dirty={revisionChosen.length > 0 || revisionNote.trim() !== ''}
 >
 	<form
 		id="card-revision-form"
@@ -299,6 +413,13 @@
 		class="flex flex-col gap-3"
 	>
 		<input type="hidden" name="supersedesId" value={revisionOf?.id ?? ''} />
+		{#if revisionOf?.templateKey != null}
+			<p class="text-sm text-muted-foreground">
+				Документ собран по шаблону «{DOCUMENT_TEMPLATE_LABELS[revisionOf.templateKey]}». Скан
+				подписанного экземпляра, загруженный здесь, остаётся тем же документом: отметка «Утверждён»
+				на нём засчитывается стадией.
+			</p>
+		{/if}
 		<FileInput
 			id="card-revision-file"
 			name="file"
@@ -306,6 +427,18 @@
 			required
 			onchoose={(names) => (revisionChosen = names)}
 		/>
+		<div class="flex flex-col gap-1.5">
+			<Label for="card-revision-note">Что изменилось</Label>
+			<Textarea
+				id="card-revision-note"
+				name="note"
+				rows={2}
+				maxlength={500}
+				placeholder="Например: подписанный сторонами скан; исправлены сроки"
+				bind:value={revisionNote}
+			/>
+			<p class="text-xs text-muted-foreground">Видно в истории редакций документа.</p>
+		</div>
 	</form>
 
 	{#snippet footer({ close })}
@@ -351,10 +484,27 @@
 						{/each}
 					</Select.Content>
 				</Select.Root>
-				{#if markCandidates.length === 0}
+				{#if markTemplate !== null}
+					<p class="text-xs text-muted-foreground">
+						Стадия засчитывает только «{DOCUMENT_TEMPLATE_LABELS[markTemplate]}», собранный по
+						шаблону. Путь: «Собрать пакет документов» в панели «Документы» → подписанный скан
+						загрузить новой редакцией собранного документа (меню документа → «Загрузить новую
+						редакцию») → отметить «{DOCUMENT_STATUS_FACT_LABELS.approved}».
+					</p>
+				{:else if markCandidates.length === 0}
 					<p class="text-xs text-muted-foreground">
 						Подходящих документов нет — загрузите подписанный файл в панели «Документы».
 					</p>
+				{/if}
+				{#if markForeign.length > 0}
+					<InlineHint tone="warning">
+						<span>
+							{markForeign.map((document) => `«${document.title}»`).join(', ')}
+							{markForeign.length === 1 ? 'не собран' : 'не собраны'} по шаблону — отметка на
+							{markForeign.length === 1 ? 'нём' : 'них'} стадию не закроет. Загрузите скан как новую редакцию
+							собранного документа.
+						</span>
+					</InlineHint>
 				{/if}
 			</div>
 		{:else}
@@ -476,12 +626,32 @@
 			</InlineHint>
 		{/if}
 
+		{#if packageFixes.length > 0}
+			<div class="flex flex-wrap gap-2">
+				{#each packageFixes as fix (fix)}
+					<Button size="sm" variant="outline" onclick={() => openFix(fix)}>
+						{FIX_LABELS[fix]}
+					</Button>
+				{/each}
+			</div>
+		{/if}
+
+		{#if packageDefaultsError !== null}
+			<p class="text-xs text-muted-foreground">{packageDefaultsError}</p>
+		{/if}
+
 		<div class="flex flex-col gap-1.5">
-			<Label for="card-package-city">Город подписания</Label>
+			<Label for="card-package-city">
+				Город подписания
+				{@render requiredMark()}
+			</Label>
 			<Input id="card-package-city" name="city" placeholder="Москва" bind:value={packageCity} />
 		</div>
 		<div class="flex flex-col gap-1.5">
-			<Label for="card-package-operator-signer">Подписант оператора (в родительном падеже)</Label>
+			<Label for="card-package-operator-signer">
+				Подписант оператора (в родительном падеже)
+				{@render requiredMark()}
+			</Label>
 			<Input
 				id="card-package-operator-signer"
 				name="operatorSigner"
@@ -493,6 +663,7 @@
 			<div class="flex flex-col gap-1.5">
 				<Label for="card-package-counterparty-signer">
 					Подписант контрагента (в родительном падеже)
+					{@render requiredMark()}
 				</Label>
 				<Input
 					id="card-package-counterparty-signer"

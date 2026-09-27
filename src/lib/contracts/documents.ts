@@ -83,6 +83,12 @@ export const uploadDocumentSchema = z.object({
 	/** Вид документа: соглашение, приказ, акт, отчёт. Справочник настраивается. */
 	kind: requiredText(100, 'Укажите вид документа'),
 	title: requiredText(300, 'Укажите название документа'),
+	/**
+	 * Что изменилось в новой редакции: «подписанный скан», «исправлены сроки».
+	 * У первой редакции не бывает — сервис принимает его только вместе с
+	 * `supersedesId`.
+	 */
+	revisionNote: optionalText(500),
 	mime: z.enum(ALLOWED_DOCUMENT_MIME_TYPES, { error: 'Такой тип файла загрузить нельзя' }),
 	sizeBytes: z
 		.number({ error: 'Не удалось определить размер файла' })
@@ -246,17 +252,60 @@ export const generatePackageSchema = z.object({
 	templates: z
 		.array(z.enum(DOCUMENT_TEMPLATE_KEYS, { error: 'Такого шаблона документа нет' }))
 		.min(1, { error: 'Выберите хотя бы один документ пакета' }),
-	city: requiredText(100, 'Укажите город подписания'),
-	operatorSigner: requiredText(200, 'Укажите подписанта оператора'),
+	/**
+	 * Город и подписанты необязательны на входе: чего не хватает, сборка
+	 * называет в отказе каждого документа — после того, чего не хватает в самом
+	 * деле (сторон, сроков, договора). Иначе форма сначала требовала бы
+	 * город, а потом отправляла бы в карточку дела, и город вводили бы зря.
+	 */
+	city: optionalText(100),
+	operatorSigner: optionalText(200),
 	counterpartySigner: optionalText(200)
 });
 
 export type GeneratePackageInput = z.output<typeof generatePackageSchema>;
 
-/** Исход сборки по одному шаблону пакета. */
+/**
+ * Город и подписанты, с которыми документ собран. Хранятся на документе: по
+ * ним следующая сборка подставляет то же, что назвали в прошлый раз.
+ */
+export type DocumentSigning = {
+	city: string;
+	operatorSigner: string;
+	counterpartySigner: string | null;
+};
+
+/**
+ * Что форма сборки подставляет сама. Город — названный в прошлой сборке этого
+ * дела, иначе город из реквизитов оператора; подписант оператора — из прошлой
+ * сборки этого дела, иначе из последней сборки в системе; подписант
+ * контрагента — только из прошлой сборки этого дела. `null` — подставить нечего.
+ */
+export type PackageDefaults = {
+	city: string | null;
+	operatorSigner: string | null;
+	counterpartySigner: string | null;
+};
+
+/**
+ * Где в карточке дела исправляют то, чего не хватило сборке: состав дела
+ * (стороны), сроки плана, договор записи. Форма сборки ведёт туда кнопкой, а
+ * не только называет место словами.
+ */
+export type PackageFix = 'parties' | 'plan' | 'contract';
+
+/**
+ * Исход сборки по одному шаблону пакета. В отказе сначала то, чего не хватает
+ * в самом деле (`fixes` ведут туда), потом — поля формы сборки.
+ */
 export type PackageOutcome =
 	| { templateKey: DocumentTemplateKey; status: 'generated'; documentIds: string[] }
-	| { templateKey: DocumentTemplateKey; status: 'refused'; issues: string[] };
+	| {
+			templateKey: DocumentTemplateKey;
+			status: 'refused';
+			issues: string[];
+			fixes: PackageFix[];
+	  };
 
 /**
  * Метка вида, под которой генерация записывает свои файлы в `documents.kind`.
@@ -456,6 +505,8 @@ export type DocumentRevisionView = {
 	createdAt: Date;
 	/** Кто загрузил редакцию; `null` — если учётной записи уже нет. */
 	authorName: string | null;
+	/** Что изменилось по сравнению с предыдущей редакцией; `null` — не сказано. */
+	revisionNote: string | null;
 	/** Действующая редакция — та, которую никто не заменил. */
 	isCurrent: boolean;
 };
@@ -482,6 +533,8 @@ export type DocumentView = {
 	sizeBytes: number;
 	sha256: string;
 	uploadedBy: string | null;
+	/** Что изменилось по сравнению с заменённой редакцией; `null` — не сказано. */
+	revisionNote: string | null;
 	createdAt: Date;
 	agreedAt: Date | null;
 	approvedAt: Date | null;

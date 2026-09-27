@@ -12,6 +12,6 @@
 <div class="min-w-0 {hide}">
 	<dt class="text-xs text-muted-foreground">{label}</dt>
 	<dd class="mt-0.5 text-sm">
-		<StatusBadge tone={model.payment.tone} dot>{model.payment.text}</StatusBadge>
+		<StatusBadge tone={model.payment.tone} dot wrap>{model.payment.text}</StatusBadge>
 	</dd>
 </div>

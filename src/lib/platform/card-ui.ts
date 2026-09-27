@@ -35,6 +35,8 @@ export type HeaderFactProps = {
 	model: CardModel;
 	label: string;
 	hide: string;
+	/** Данные, которые модуль загрузил для карточки сам; `undefined` — не загружал. */
+	data: unknown;
 };
 
 /** Пропсы диалогов модуля: они стоят на странице карточки рядом с диалогами ядра. */

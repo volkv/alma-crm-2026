@@ -25,6 +25,7 @@ export {
 	contractItems,
 	documentContractItems,
 	documents,
+	interactionTerms,
 	interactions,
 	learningGroupLearners,
 	learningGroupResults,
@@ -48,6 +49,7 @@ export {
 	requestLearningGroup
 } from '$lib/server/integrations/exchange/groups';
 export {
+	addCounterpartyLearner,
 	exportLearningGroupRoster,
 	importLearningGroupRoster,
 	listInteractionLearners,
@@ -66,5 +68,6 @@ export { toPersonView } from '$lib/server/people/serialize';
 // Файлы.
 export { contentDisposition } from '$lib/server/documents/filename';
 
-// Модули пространства.
+// Модули пространства и их факты в истории дела.
 export { assertModuleActive, readActiveModules } from '$lib/server/platform/workspace-modules';
+export { recordModuleFact } from '$lib/server/platform/module-facts';

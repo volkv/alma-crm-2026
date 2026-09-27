@@ -42,6 +42,7 @@ import { getInteractionStatus } from '$lib/server/stages/status';
 import { interactionListQuerySchema } from '$lib/contracts/interactions';
 import type { ActorContext } from '$lib/server/actor';
 import {
+	ensureSchoolOperator,
 	insertOrganization,
 	insertUser,
 	startTestDatabase,
@@ -71,8 +72,13 @@ beforeEach(async () => {
 const admin = (): ActorContext => testActor({ roleId: 'admin' });
 const emptyQuery = interactionListQuerySchema.parse({});
 
-/** Процесс учебных заведений: без него взаимодействие завести нельзя. */
+/**
+ * Процесс учебных заведений и организация школы: без них взаимодействие
+ * завести нельзя.
+ */
 async function demoProcess(): Promise<string> {
+	await ensureSchoolOperator(database.db);
+
 	return database.db.transaction((tx) => ensureWorkflow(tx, B2B_WORKSPACE_KEY, B2B_PROCESS));
 }
 
@@ -125,7 +131,9 @@ describe('заведение взаимодействия', () => {
 		const card = await getInteraction(ctx, created.id);
 		const status = await getInteractionStatus(ctx, created.id);
 
+		// Оператора (саму школу) форма не передаёт — его ставит заведение.
 		expect(card.parties.map((party) => party.organizationName).sort()).toEqual([
+			'Оператор',
 			'СЗПУ',
 			'Северный центр цифровых компетенций'
 		]);
@@ -309,10 +317,7 @@ describe('область доступа при заведении', () => {
 			shortName: 'Заказчик',
 			kind: 'customer_company'
 		});
-		const operatorId = await insertOrganization(database.db, {
-			shortName: 'Оператор',
-			kind: 'operator'
-		});
+		const operatorId = await ensureSchoolOperator(database.db);
 
 		const { ctx: manager, userId: managerId } = await managerFor([institutionId]);
 
@@ -323,15 +328,14 @@ describe('область доступа при заведении', () => {
 				title: 'Состав дополняется по ходу',
 				ownerUserId: managerId,
 				parties: [
-					{ organizationId: institutionId, partyRole: 'educational_institution', isPrimary: true },
-					{ organizationId: customerId, partyRole: 'customer' }
+					{ organizationId: institutionId, partyRole: 'educational_institution', isPrimary: true }
 				]
 			})
 		);
 
 		// Правка состава присылает список целиком, и основная сторона в нём та
-		// же: проверять её заново незачем, а оператор в область не входит ни у
-		// кого, кроме полного доступа.
+		// же: проверять её заново незачем, а заказчик и оператор в область
+		// менеджера не входят.
 		const updated = await updateInteraction(
 			manager,
 			updateInteractionSchema.parse({
@@ -339,7 +343,7 @@ describe('область доступа при заведении', () => {
 				editVersion: (await getInteraction(manager, created.id)).editVersion,
 				title: 'Состав дополняется по ходу',
 				ownerUserId: managerId,
-				reason: 'Добавили организацию-оператора',
+				reason: 'Добавили заказчика подготовки',
 				parties: [
 					{ organizationId: institutionId, partyRole: 'educational_institution', isPrimary: true },
 					{ organizationId: customerId, partyRole: 'customer' },
@@ -382,7 +386,10 @@ describe('правка плана', () => {
 				agreementPeriodStart: '2026-10-01',
 				agreementPeriodEnd: '2027-05-31',
 				reason: 'Вуз попросил сдвинуть сроки',
-				parties: [{ organizationId, partyRole: 'educational_institution', isPrimary: true }]
+				parties: [
+					{ organizationId, partyRole: 'educational_institution', isPrimary: true },
+					{ organizationId: await ensureSchoolOperator(database.db), partyRole: 'operator' }
+				]
 			})
 		);
 
@@ -917,7 +924,8 @@ describe('история правок: имена вместо идентифи�
 				reason: 'Передали работу и дополнили состав',
 				parties: [
 					{ organizationId: institutionId, partyRole: 'educational_institution', isPrimary: true },
-					{ organizationId: customerId, partyRole: 'customer' }
+					{ organizationId: customerId, partyRole: 'customer' },
+					{ organizationId: await ensureSchoolOperator(database.db), partyRole: 'operator' }
 				],
 				programs: [{ programId }],
 				productIds: [productId]
@@ -929,9 +937,11 @@ describe('история правок: имена вместо идентифи�
 		);
 
 		expect(byField.get('ownerUserId')?.newLabel).toBe('Тестовый Пользователь');
-		expect(byField.get('parties')?.oldLabel).toBe('СЗПУ (учебное заведение)');
+		expect(byField.get('parties')?.oldLabel).toBe(
+			'СЗПУ (учебное заведение, основная), Оператор (оператор)'
+		);
 		expect(byField.get('parties')?.newLabel).toBe(
-			'СЗПУ (учебное заведение), Заказчик (компания-заказчик)'
+			'СЗПУ (учебное заведение, основная), Заказчик (компания-заказчик), Оператор (оператор)'
 		);
 		expect(byField.get('programs')?.oldLabel).toBe('—');
 		expect(byField.get('programs')?.newLabel).toBe('Программа 09.03.01');

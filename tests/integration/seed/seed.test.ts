@@ -353,7 +353,16 @@ describe('сид', () => {
 				['szpu-2026', 'analytics'],
 				['szpu-2026', 'cloud'],
 				['ukct-2026', 'lms'],
-				['vkgtu-2026', 'docs']
+				['vkgtu-2026', 'docs'],
+				['vkgtu-2026', 'security'],
+				['uguis-licenses', 'lab'],
+				['sivt-licenses', 'lms'],
+				['batse-licenses', 'docs'],
+				['sruit-licenses', 'docs'],
+				['puts-licenses', 'lab'],
+				['yutus-licenses', 'lab'],
+				['bit-licenses', 'lab'],
+				['nkis-licenses', 'analytics']
 			]
 				.map(([contract, product]) => seedId('contract-item', `${contract}:${product}`))
 				.sort()
@@ -366,7 +375,28 @@ describe('сид', () => {
 			.innerJoin(documentContractItems, eq(documentContractItems.documentId, documents.id));
 
 		expect(actsWithItems.map((row) => row.interactionId).sort()).toStrictEqual(
-			['szpu-vnedrenie', 'vkgtu-prepod', 'ukct-zanyatiya', 'szpu-2025']
+			[
+				'szpu-vnedrenie',
+				'vkgtu-prepod',
+				'ukct-zanyatiya',
+				'szpu-2025',
+				'uguis-vnedr',
+				'uguis-documentation_update-70',
+				'uguis-2025b',
+				'sivt-implementation_support-54',
+				'batse-implementation_support-56',
+				'sruit-teacher_training-58',
+				'sruit-2025',
+				'puts-teacher_training-60',
+				'ukct-program_update-62',
+				'ukct-2025-spo',
+				'szpu-classes-68',
+				'yutus-documentation_update-72',
+				'vkgtu-qualification_upgrade-74',
+				'vkgtu-2025-mag',
+				'bit-execution_control-76',
+				'nkis-2025'
+			]
 				.map((key) => seedId('interaction', key))
 				.sort()
 		);
@@ -443,12 +473,14 @@ describe('сид', () => {
 		// Каждое соглашение собирается сразу в двух форматах: DOCX и PDF, к одному
 		// делу приложен скан и его вторая редакция, у каждого дела, прошедшего
 		// подписание, лежит подписанный экземпляр с отметкой «Утверждён», а у
-		// прошедшего передачу материалов — подписанный акт передачи.
+		// прошедшего передачу материалов — подписанный акт передачи, у
+		// завершённого обучения лица — документ об обучении.
 		await expect(countRows(documents)).resolves.toBe(
 			INTERACTION_SEED_SIZES.documents * 2 +
 				INTERACTION_SEED_SIZES.scans +
 				INTERACTION_SEED_SIZES.signedAgreements +
-				INTERACTION_SEED_SIZES.handoverActs
+				INTERACTION_SEED_SIZES.handoverActs +
+				INTERACTION_SEED_SIZES.trainingDocuments
 		);
 
 		// Отметка «Утверждён» стоит ровно на них: стадии подписания и передачи

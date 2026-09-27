@@ -773,6 +773,100 @@ const SITES: readonly SiteSeed[] = [
 		name: 'Учебный корпус на Энергетической',
 		address: 'г. Москва, Энергетическая улица, 62',
 		region: 'г. Москва'
+	},
+	// Профильные подразделения: с ними работают дела, прошедшие поиск
+	// контактов, — пункт «Найдено профильное подразделение» закрывает площадка
+	// этого вида у стороны дела.
+	{
+		key: 'lyceum306-dept',
+		organizationKey: 'lyceum306',
+		kind: 'department',
+		name: 'Кафедра информатики и робототехники',
+		region: 'Московская область'
+	},
+	{
+		key: 'vts-dept',
+		organizationKey: 'vts',
+		kind: 'department',
+		name: 'Отделение информационных технологий',
+		region: 'Ярославская область'
+	},
+	{
+		key: 'paid-dept',
+		organizationKey: 'paid',
+		kind: 'department',
+		name: 'Институт информационных и вычислительных технологий',
+		region: 'г. Москва'
+	},
+	{
+		key: 'nkis-dept',
+		organizationKey: 'nkis',
+		kind: 'department',
+		name: 'Отделение инфокоммуникационных систем',
+		region: 'г. Санкт-Петербург'
+	},
+	{
+		key: 'school47-dept',
+		organizationKey: 'school47',
+		kind: 'department',
+		name: 'Методическое объединение учителей информатики',
+		region: 'Новосибирская область'
+	},
+	{
+		key: 'skpa-dept',
+		organizationKey: 'skpa',
+		kind: 'department',
+		name: 'Отделение компьютерных сетей',
+		region: 'Оренбургская область'
+	},
+	{
+		key: 'sruit-dept',
+		organizationKey: 'sruit',
+		kind: 'department',
+		name: 'Факультет информационных технологий',
+		region: 'г. Москва'
+	},
+	{
+		key: 'ukct-dept',
+		organizationKey: 'ukct',
+		kind: 'department',
+		name: 'Отделение цифровых технологий',
+		region: 'Свердловская область'
+	},
+	{
+		key: 'yutus-dept',
+		organizationKey: 'yutus',
+		kind: 'department',
+		name: 'Факультет электроники и вычислительной техники',
+		region: 'Волгоградская область'
+	},
+	{
+		key: 'batse-dept',
+		organizationKey: 'batse',
+		kind: 'department',
+		name: 'Институт разработки программного обеспечения',
+		region: 'Республика Татарстан'
+	},
+	{
+		key: 'sivt-dept',
+		organizationKey: 'sivt',
+		kind: 'department',
+		name: 'Кафедра информационных технологий',
+		region: 'Новосибирская область'
+	},
+	{
+		key: 'bit-dept',
+		organizationKey: 'bit',
+		kind: 'department',
+		name: 'Кафедра информационной безопасности',
+		region: 'г. Москва'
+	},
+	{
+		key: 'puts-dept',
+		organizationKey: 'puts',
+		kind: 'department',
+		name: 'Институт прикладных информационных технологий',
+		region: 'Саратовская область'
 	}
 ];
 

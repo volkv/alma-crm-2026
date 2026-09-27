@@ -31,6 +31,7 @@ import {
 import type { Tx } from '../db/transaction';
 import { requirePermission } from '../rbac';
 import { assertInteractionVisible } from '../interactions/access';
+import { checkFacts, frozenFacts, type EntryFacts } from './facts';
 import { requireActiveRevisionForWorkspace } from './process';
 
 type Executor = Tx | ReturnType<typeof getDb>;
@@ -81,7 +82,8 @@ function toPauseView(row: typeof stagePauses.$inferSelect): StagePauseView {
 function toEntryView(
 	row: EntryRow,
 	pauses: StagePauseView[],
-	documents: StageEntryView['documents']
+	documents: StageEntryView['documents'],
+	facts: EntryFacts
 ): StageEntryView {
 	return {
 		id: row.entry.id,
@@ -100,6 +102,7 @@ function toEntryView(
 		lmsEvidence: row.entry.lmsEvidence,
 		documentMarkEvidence: row.entry.documentMarkEvidence,
 		checklistState: row.entry.checklistState,
+		facts,
 		documents,
 		dueAt: row.status.dueAt,
 		pausedSeconds: row.status.pausedSeconds,
@@ -202,6 +205,33 @@ async function readEntries(
 }
 
 /**
+ * Пункты-факты по записям: у открытой — проверка данными дела сейчас, у
+ * закрытых — результат, сохранённый при выходе.
+ */
+async function readFacts(executor: Executor, rows: EntryRow[]): Promise<Map<string, EntryFacts>> {
+	const open = rows.filter((row) => row.entry.leftAt === null);
+	const checked = await checkFacts(
+		executor,
+		open.map((row) => ({
+			id: row.entry.id,
+			interactionId: row.entry.interactionId,
+			enteredAt: row.entry.enteredAt,
+			resultText: row.entry.resultText,
+			checklistState: row.entry.checklistState,
+			snapshot: row.entry.stageSnapshot
+		}))
+	);
+
+	for (const row of rows) {
+		if (row.entry.leftAt !== null) {
+			checked.set(row.entry.id, frozenFacts(row.entry.stageSnapshot, row.entry.checklistState));
+		}
+	}
+
+	return checked;
+}
+
+/**
  * Лента процесса: каким состоянием показать каждую стадию.
  *
  * Стадии и записи сопоставляются **по ключу**, а не по `stage_id`: строка
@@ -211,6 +241,10 @@ async function readEntries(
  *
  * Стадия, которую перешагнули (записи нет, а процесс уже дальше), показывается
  * пропущенной — иначе пропуск был бы виден только в истории.
+ *
+ * Стадия дальше текущей, пройденная до возврата, снова впереди: дело вернулось,
+ * и идти через неё придётся заново. Отметкой «пройдена» она уводила бы
+ * «Дальше» на стадию через одну.
  */
 export function buildProgress(
 	revisionStages: StageView[],
@@ -228,7 +262,8 @@ export function buildProgress(
 			key: stage.key,
 			name: stage.name,
 			position: stage.position,
-			category: stage.category
+			category: stage.category,
+			checklist: stage.checklist
 		};
 
 		if (current !== null && stage.key === current.stageKey) {
@@ -246,6 +281,10 @@ export function buildProgress(
 				dueAt: current.dueAt,
 				note: hasBlockingBlockers ? 'есть помеха' : current.isPaused ? 'часы стоят' : null
 			};
+		}
+
+		if (visited.has(stage.key) && current !== null && stage.position > currentPosition) {
+			return { ...base, state: 'pending' as const, dueAt: null, note: 'пройдена до возврата' };
 		}
 
 		if (visited.has(stage.key)) {
@@ -308,8 +347,14 @@ export async function getInteractionStatus(
 		readBlockers(db, interactionId)
 	]);
 
+	const facts = await readFacts(db, rows);
 	const views = rows.map((row) =>
-		toEntryView(row, pauses.get(row.entry.id) ?? [], attachments.get(row.entry.id) ?? [])
+		toEntryView(
+			row,
+			pauses.get(row.entry.id) ?? [],
+			attachments.get(row.entry.id) ?? [],
+			facts.get(row.entry.id) ?? {}
+		)
 	);
 	const current = views.find((view) => view.leftAt === null) ?? null;
 	const currentRow = rows.find((row) => row.entry.leftAt === null) ?? null;

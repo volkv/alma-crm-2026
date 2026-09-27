@@ -22,6 +22,7 @@ import {
 } from 'drizzle-orm/pg-core';
 import {
 	DOCUMENT_TEMPLATE_KEYS,
+	type DocumentSigning,
 	type DocumentTemplateKey,
 	type DocumentTemplateVariable
 } from '$lib/contracts/documents';
@@ -67,6 +68,17 @@ export const documents = pgTable(
 		 */
 		templateKey: text().$type<DocumentTemplateKey>(),
 		title: text().notNull(),
+		/**
+		 * Что изменилось в этой редакции по сравнению с заменённой — словами
+		 * того, кто её загрузил. У первой редакции пусто: менять было нечего.
+		 */
+		revisionNote: text(),
+		/**
+		 * Город и подписанты, с которыми документ собран по шаблону; у
+		 * загруженного руками — пусто. По ним форма следующей сборки подставляет
+		 * то же, что назвали в прошлый раз.
+		 */
+		signing: jsonb().$type<DocumentSigning>(),
 		/** Ключ объекта с файлом в хранилище документов (`files/<uuid>`). */
 		filePath: text().notNull(),
 		mime: text().notNull(),

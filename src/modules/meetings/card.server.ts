@@ -1,12 +1,12 @@
 /**
- * Серверная часть «Встреч» в карточке: контакты стороны для диалога
- * приглашения и сам файл приглашения (.ics).
+ * Серверная часть «Встреч» в карточке: назначенная встреча как факт дела,
+ * контакты стороны для диалога приглашения и сам файл приглашения (.ics).
  *
  * Права на запись и на персональные данные участников проверяются здесь же, по
  * действующему праву в момент скачивания; что модуль действует в пространстве
  * дела, проверяет реестр до вызова.
  */
-import { error } from '@sveltejs/kit';
+import { error, fail } from '@sveltejs/kit';
 import { eq } from 'drizzle-orm';
 import { defineCardServer } from '$lib/platform/card.server';
 import {
@@ -17,7 +17,10 @@ import {
 	getInteraction,
 	listAffiliations,
 	recordAuditEvent,
+	recordModuleFact,
 	requirePermission,
+	run,
+	text,
 	toPageError,
 	users
 } from '$lib/platform/core.server';
@@ -36,14 +39,32 @@ const MAX_AGENDA_LENGTH = 4000;
 /** Пояс встречи: Москва, круглый год без перехода на летнее время с 2014 года. */
 const MOSCOW_OFFSET = '+03:00';
 
-function readStart(raw: string | null): Date {
+/** Начало встречи по Москве; `null` — дата и время указаны неверно. */
+function parseStart(raw: string | null): Date | null {
 	if (raw === null || !START_PATTERN.test(raw)) {
-		error(400, 'Дата и время встречи указаны неверно');
+		return null;
 	}
 
 	const start = new Date(`${raw}:00${MOSCOW_OFFSET}`);
 
-	if (Number.isNaN(start.getTime())) {
+	return Number.isNaN(start.getTime()) ? null : start;
+}
+
+/** Длительность в минутах; `null` — вне допустимого. */
+function parseDuration(raw: string | null): number | null {
+	const minutes = raw === null ? NaN : Number(raw);
+
+	return Number.isInteger(minutes) &&
+		minutes >= MIN_DURATION_MINUTES &&
+		minutes <= MAX_DURATION_MINUTES
+		? minutes
+		: null;
+}
+
+function readStart(raw: string | null): Date {
+	const start = parseStart(raw);
+
+	if (start === null) {
 		error(400, 'Дата и время встречи указаны неверно');
 	}
 
@@ -51,17 +72,30 @@ function readStart(raw: string | null): Date {
 }
 
 function readDuration(raw: string | null): number {
-	const minutes = raw === null ? NaN : Number(raw);
+	const minutes = parseDuration(raw);
 
-	if (
-		!Number.isInteger(minutes) ||
-		minutes < MIN_DURATION_MINUTES ||
-		minutes > MAX_DURATION_MINUTES
-	) {
+	if (minutes === null) {
 		error(400, 'Длительность встречи указана неверно');
 	}
 
 	return minutes;
+}
+
+const MOSCOW_WHEN = new Intl.DateTimeFormat('ru-RU', {
+	timeZone: 'Europe/Moscow',
+	day: '2-digit',
+	month: '2-digit',
+	year: 'numeric',
+	hour: '2-digit',
+	minute: '2-digit'
+});
+
+/** Встреча одной фразой для ленты и пункта чек-листа. */
+function meetingText(start: Date, durationMinutes: number, location: string | null): string {
+	return [
+		`Назначена встреча: ${MOSCOW_WHEN.format(start)} по Москве, ${durationMinutes} мин`,
+		...(location === null ? [] : [`место: ${location}`])
+	].join(', ');
 }
 
 function readAttendeeIds(url: URL): string[] {
@@ -94,7 +128,40 @@ function contactName(person: {
 }
 
 export default defineCardServer(meetings, {
-	actions: {},
+	actions: {
+		/**
+		 * Назначенная встреча — факт дела: дата, длительность и место ложатся в
+		 * историю и видны в ленте и у пункта «Встреча назначена». Файл
+		 * приглашения диалог скачивает следом, отдельной ссылкой.
+		 */
+		meetingSchedule: async (event) => {
+			const ctx = actorFromEvent(event);
+			const data = await event.request.formData();
+			const start = parseStart(text(data, 'start'));
+			const durationMinutes = parseDuration(text(data, 'duration'));
+			const location = text(data, 'location')?.slice(0, MAX_LOCATION_LENGTH) ?? null;
+			const issues = [
+				...(start === null ? ['Укажите дату и время встречи'] : []),
+				...(durationMinutes === null
+					? [`Длительность — от ${MIN_DURATION_MINUTES} минут до суток`]
+					: [])
+			];
+
+			if (start === null || durationMinutes === null) {
+				return fail(400, { message: 'Встреча не сохранена', issues });
+			}
+
+			return run(() =>
+				recordModuleFact(ctx, {
+					interactionId: event.params.id,
+					module: meetings.key,
+					fact: 'scheduled',
+					text: meetingText(start, durationMinutes, location),
+					auditType: 'interactions.meeting_invited'
+				})
+			);
+		}
+	},
 
 	files: {
 		/**

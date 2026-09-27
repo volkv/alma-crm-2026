@@ -67,6 +67,36 @@ type ContractSeed = {
 	items: readonly ContractItemSeed[];
 };
 
+/**
+ * Договор вуза с лицензиями на продукты: позиции ждут передачи, лицензия по
+ * каждой оформлена в день подписания и действует до конца договора. Список из
+ * одного элемента — чтобы встать в перечень договоров распаковкой.
+ */
+function institutionContract(
+	organizationKey: string,
+	number: string,
+	signedOn: string,
+	validUntil: string,
+	productKeys: readonly string[]
+): ContractSeed[] {
+	return [
+		{
+			key: `${organizationKey}-licenses`,
+			organizationKey,
+			number,
+			signedOn,
+			validUntil,
+			status: 'active',
+			items: productKeys.map((productKey) => ({
+				productKey,
+				transferStatus: 'ожидает передачи',
+				licenseSignedAt: signedOn,
+				licenseUntil: validUntil
+			}))
+		}
+	];
+}
+
 const CONTRACTS: readonly ContractSeed[] = [
 	{
 		key: 'szpu-2026',
@@ -125,9 +155,26 @@ const CONTRACTS: readonly ContractSeed[] = [
 				transferStatus: 'ожидает передачи',
 				licenseSignedAt: '2025-10-06',
 				licenseUntil: '2026-12-31'
+			},
+			{
+				productKey: 'security',
+				transferStatus: 'ожидает передачи',
+				licenseSignedAt: '2025-10-06',
+				licenseUntil: '2026-12-31'
 			}
 		]
 	},
+	// Договоры вузов, чьи дела прошли передачу материалов: лицензия на каждый
+	// продукт дела оформлена позицией договора — без неё пункт «Выданы
+	// лицензии на продукты» не закрыть, и дело не ушло бы дальше передачи.
+	...institutionContract('uguis', 'РТК-2026-0205', '2026-02-01', '2027-01-31', ['lab']),
+	...institutionContract('sivt', 'РТК-2026-0211', '2026-02-10', '2027-02-28', ['lms']),
+	...institutionContract('batse', 'РТК-2026-0216', '2026-02-16', '2027-02-28', ['docs']),
+	...institutionContract('sruit', 'РТК-2025-0377', '2025-09-01', '2026-12-31', ['docs']),
+	...institutionContract('puts', 'РТК-2026-0223', '2026-02-20', '2027-02-28', ['lab']),
+	...institutionContract('yutus', 'РТК-2026-0229', '2026-03-02', '2027-03-31', ['lab']),
+	...institutionContract('bit', 'РТК-2026-0234', '2026-03-10', '2027-03-31', ['lab']),
+	...institutionContract('nkis', 'РТК-2025-0391', '2025-09-15', '2026-12-31', ['analytics']),
 	// Пространство B2C: договор принадлежит контрагенту и здесь — тому же физическому
 	// или юридическому лицу, с которым идёт процесс. Ничего особенного в нём
 	// нет: та же запись с номером, сроками и позициями.
@@ -182,6 +229,52 @@ const INTERACTION_CONTRACTS: readonly {
 	{ interactionKey: 'vkgtu-prepod', contractKey: 'vkgtu-2026', productKeys: ['docs'] },
 	{ interactionKey: 'ukct-zanyatiya', contractKey: 'ukct-2026', productKeys: ['lms'] },
 	{ interactionKey: 'mayak-dogovor', contractKey: 'mayak-2026', productKeys: ['analytics'] },
+	// Дела вузов, прошедшие передачу материалов, — каждое с позицией по своему
+	// продукту.
+	{ interactionKey: 'uguis-vnedr', contractKey: 'uguis-licenses', productKeys: ['lab'] },
+	{
+		interactionKey: 'uguis-documentation_update-70',
+		contractKey: 'uguis-licenses',
+		productKeys: ['lab']
+	},
+	{ interactionKey: 'uguis-2025b', contractKey: 'uguis-licenses', productKeys: ['lab'] },
+	{
+		interactionKey: 'sivt-implementation_support-54',
+		contractKey: 'sivt-licenses',
+		productKeys: ['lms']
+	},
+	{
+		interactionKey: 'batse-implementation_support-56',
+		contractKey: 'batse-licenses',
+		productKeys: ['docs']
+	},
+	{
+		interactionKey: 'sruit-teacher_training-58',
+		contractKey: 'sruit-licenses',
+		productKeys: ['docs']
+	},
+	{ interactionKey: 'sruit-2025', contractKey: 'sruit-licenses', productKeys: ['docs'] },
+	{
+		interactionKey: 'puts-teacher_training-60',
+		contractKey: 'puts-licenses',
+		productKeys: ['lab']
+	},
+	{ interactionKey: 'ukct-program_update-62', contractKey: 'ukct-2026', productKeys: ['lms'] },
+	{ interactionKey: 'ukct-2025-spo', contractKey: 'ukct-2026', productKeys: ['lms'] },
+	{ interactionKey: 'szpu-classes-68', contractKey: 'szpu-2026', productKeys: ['analytics'] },
+	{
+		interactionKey: 'yutus-documentation_update-72',
+		contractKey: 'yutus-licenses',
+		productKeys: ['lab']
+	},
+	{
+		interactionKey: 'vkgtu-qualification_upgrade-74',
+		contractKey: 'vkgtu-2026',
+		productKeys: ['security']
+	},
+	{ interactionKey: 'vkgtu-2025-mag', contractKey: 'vkgtu-2026', productKeys: ['security'] },
+	{ interactionKey: 'bit-execution_control-76', contractKey: 'bit-licenses', productKeys: ['lab'] },
+	{ interactionKey: 'nkis-2025', contractKey: 'nkis-licenses', productKeys: ['analytics'] },
 	{ interactionKey: 'sorokin-obuchenie', contractKey: 'sorokin-2026', productKeys: ['docs'] }
 ];
 

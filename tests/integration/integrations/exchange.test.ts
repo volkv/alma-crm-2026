@@ -54,6 +54,7 @@ import {
 	insertDocument,
 	insertOrganization,
 	insertUser,
+	ensureSchoolOperator,
 	startTestDatabase,
 	testActor,
 	TEST_USER_IDS,
@@ -180,6 +181,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
 	await database.reset();
+	// Заведение дела ставит школу стороной и без неё отказывает.
+	await ensureSchoolOperator(database.db);
 
 	await database.db.transaction(async (tx) => {
 		await ensureWorkflow(tx, B2B_WORKSPACE_KEY, B2B_PROCESS);
@@ -1064,9 +1067,19 @@ describe('учебная группа', () => {
 		expect(result.result).toBe('created');
 		expect(result.data.stageConfirmed).toBe(true);
 
-		const [saved] = await database.db.select().from(learningGroupResults);
+		// Результат именно этой группы: по дороге к «Ведению занятий» дело завело
+		// ещё и поток преподавателей со своим итогом.
+		const [saved] = await database.db
+			.select()
+			.from(learningGroupResults)
+			.innerJoin(learningGroups, eq(learningGroups.id, learningGroupResults.learningGroupId))
+			.where(eq(learningGroups.groupExternalId, groupExternalId));
 
-		expect(saved).toMatchObject({ enrolled: 45, completed: 38, expelled: 4 });
+		expect(saved.learning_group_results).toMatchObject({
+			enrolled: 45,
+			completed: 38,
+			expelled: 4
+		});
 
 		const [updated] = await database.db
 			.select()

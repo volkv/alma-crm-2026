@@ -28,9 +28,11 @@ import {
 } from '$lib/contracts/documents';
 import { LEARNING_PURPOSE_LABELS } from '$lib/contracts/exchange';
 import {
+	isFactItem,
 	processDefinitionSchema,
 	STAGE_ENTER_NOTIFY_LABELS,
 	type AssignWorkspaceWorkflowInput,
+	type ChecklistItem,
 	type CreateWorkflowInput,
 	type CreateWorkspaceInput,
 	type ProcessDefinitionInput,
@@ -50,6 +52,8 @@ import {
 	type WorkflowDetail,
 	type WorkflowSummary
 } from '$lib/contracts/interactions';
+import { checklistAction } from '$lib/platform/checklist';
+import { checklistRule } from '$lib/platform/checklist-rules';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
@@ -647,7 +651,7 @@ type ComparableStage = {
 	 */
 	onEnterNotify: StageEnterNotifyTarget | null;
 	isFinal: boolean;
-	checklist: { key: string; label: string; required: boolean }[];
+	checklist: ChecklistItem[];
 };
 
 /** Что стало со стадией: одна строка сопоставления по ключу. */
@@ -660,10 +664,80 @@ export type StageMatch = {
 	name: string;
 };
 
-function checklistText(
-	items: readonly { key: string; label: string; required: boolean }[]
-): string {
-	return items.map((item) => `${item.required ? '*' : ''}${item.key}:${item.label}`).join('|');
+/** Способ закрытия пункта строкой: отсутствие и явная ручная отметка — одно и то же. */
+function completionText(item: ChecklistItem): string {
+	return item.completion?.kind === 'fact' ? `fact:${item.completion.rule}` : 'manual';
+}
+
+/**
+ * Пункт целиком строкой для сравнения: ключ, подпись, обязательность, способ
+ * закрытия, пояснение и действие. Смена правила проверки меняет смысл
+ * требования и обязана попасть в предпросмотр так же, как смена подписи.
+ */
+function checklistText(items: readonly ChecklistItem[]): string {
+	return items
+		.map((item) =>
+			[
+				`${item.required ? '*' : ''}${item.key}:${item.label}`,
+				completionText(item),
+				item.help ?? '',
+				item.action ?? ''
+			].join('~')
+		)
+		.join('|');
+}
+
+/** Что именно изменилось в чек-листе — по фразе на пункт, для предпросмотра. */
+function checklistChanges(
+	before: readonly ChecklistItem[],
+	after: readonly ChecklistItem[]
+): string[] {
+	const beforeByKey = new Map(before.map((item) => [item.key, item]));
+	const afterKeys = new Set(after.map((item) => item.key));
+	const changes: string[] = [];
+
+	for (const item of after) {
+		const was = beforeByKey.get(item.key);
+
+		if (was === undefined) {
+			changes.push(`чек-лист: добавлен пункт «${item.label}»`);
+			continue;
+		}
+
+		const parts: string[] = [];
+
+		if (was.label !== item.label) parts.push(`подпись «${was.label}» → «${item.label}»`);
+		if (was.required !== item.required) {
+			parts.push(item.required ? 'стал обязательным' : 'стал необязательным');
+		}
+		if (completionText(was) !== completionText(item)) {
+			parts.push(
+				item.completion?.kind === 'fact'
+					? `закрывается данными: ${checklistRule(item.completion.rule)?.label ?? item.completion.rule}`
+					: 'закрывается отметкой человека'
+			);
+		}
+		if ((was.help ?? '') !== (item.help ?? '')) parts.push('изменено пояснение');
+		if ((was.action ?? '') !== (item.action ?? '')) {
+			parts.push(
+				item.action === undefined
+					? 'убрана кнопка действия'
+					: `кнопка «${checklistAction(item.action)?.label ?? item.action}»`
+			);
+		}
+
+		if (parts.length > 0) {
+			changes.push(`чек-лист, «${item.label}»: ${parts.join(', ')}`);
+		}
+	}
+
+	for (const item of before) {
+		if (!afterKeys.has(item.key)) {
+			changes.push(`чек-лист: убран пункт «${item.label}»`);
+		}
+	}
+
+	return changes;
 }
 
 /** Назначения групп строкой для сравнения: порядок в списке смысла не несёт. */
@@ -754,7 +828,10 @@ function stageDifferences(before: ComparableStage, after: ComparableStage): stri
 	}
 
 	if (checklistText(before.checklist) !== checklistText(after.checklist)) {
-		changes.push('изменён чек-лист');
+		const detailed = checklistChanges(before.checklist, after.checklist);
+
+		// Разошёлся только порядок пунктов — назвать его и сказать нечего иначе.
+		changes.push(...(detailed.length > 0 ? detailed : ['чек-лист: изменён порядок пунктов']));
 	}
 
 	return changes;
@@ -2475,9 +2552,14 @@ type MigratedInteraction = {
 };
 
 /**
- * Отметки чек-листа, которые переезжают вместе с записью на другую стадию.
+ * Отметки чек-листа, которые переезжают вместе с записью на другую стадию,
+ * остаются у записи при изменении процесса и возвращаются при повторном входе
+ * на стадию.
  *
- * Переезжает пункт, совпавший **и ключом, и подписью**. Ключи чек-листа
+ * Переезжает ручной пункт, совпавший **ключом, подписью и способом
+ * закрытия**. Пункт, ставший фактом, отметки не принимает вовсе — его
+ * закрывают данные дела; пункт, переставший быть фактом, начинается с чистой
+ * отметки: сохранённый результат проверки — не решение человека. Ключи чек-листа
  * уникальны внутри стадии, а не внутри процесса: `papers` на «Документах» и
  * `papers` на «Проверке» — два разных требования, и совпадение ключа при
  * переезде случайно. Отметка описывает сделанную работу, и переносить её на
@@ -2489,18 +2571,25 @@ type MigratedInteraction = {
  * на целевой стадии нет вовсе, не переезжают: читать их некому, а в записи они
  * выглядели бы выполненной работой.
  */
-function keptChecklistMarks(
+export function keptChecklistMarks(
 	before: StageSnapshot['checklist'],
 	after: StageSnapshot['checklist'],
 	marks: Record<string, boolean>
 ): Record<string, boolean> {
-	const labelByKey = new Map(before.map((item) => [item.key, item.label]));
+	const beforeByKey = new Map(before.map((item) => [item.key, item]));
 	const kept: Record<string, boolean> = {};
 
 	for (const item of after) {
+		const was = beforeByKey.get(item.key);
 		const mark = marks[item.key];
 
-		if (mark !== undefined && labelByKey.get(item.key) === item.label) {
+		if (
+			mark !== undefined &&
+			was !== undefined &&
+			!isFactItem(was) &&
+			!isFactItem(item) &&
+			was.label === item.label
+		) {
 			kept[item.key] = mark;
 		}
 	}
@@ -2567,6 +2656,14 @@ export async function migrateEntries(
 				.set({
 					stageId: target.id,
 					stageSnapshot: stageSnapshot(target),
+					// Отметки остаются только у пунктов, которые спрашивают о той же
+					// работе: пункт с новой подписью или ставший фактом начинается
+					// заново (`keptChecklistMarks`).
+					checklistState: keptChecklistMarks(
+						entry.stageSnapshot.checklist,
+						target.checklist,
+						entry.checklistState
+					),
 					// Требование отметки по документу могли включить этой же
 					// публикацией, а документ дела давно отмечен: снимок отметки
 					// подтягивается сразу, иначе карточка объявила бы стадию

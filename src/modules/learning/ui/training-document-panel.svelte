@@ -15,6 +15,7 @@
 	 */
 	let { source, can }: CardPanelProps = $props();
 
+	/** Вид «Документ об обучении»: «Приложить» открывает загрузку сразу с ним. */
 	const TRAINING_DOCUMENT_KIND = 'certificate';
 
 	const commands = getCardCommands();
@@ -26,7 +27,11 @@
 <ContextSection title="Документ об обучении">
 	{#snippet action()}
 		{#if can.upload && issued.length === 0}
-			<Button size="xs" variant="outline" onclick={() => commands.open({ kind: 'upload' })}>
+			<Button
+				size="xs"
+				variant="outline"
+				onclick={() => commands.open({ kind: 'upload', documentKind: TRAINING_DOCUMENT_KIND })}
+			>
 				<UploadIcon aria-hidden="true" />
 				Приложить
 			</Button>

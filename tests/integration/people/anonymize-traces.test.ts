@@ -39,7 +39,13 @@ import {
 } from '$lib/server/stages/definitions';
 import { ensureWorkflow } from '$lib/server/stages/process';
 import { setSetting } from '$lib/server/settings';
-import { startTestDatabase, testActor, TEST_USER_IDS, type TestDatabase } from '../helpers/db';
+import {
+	ensureSchoolOperator,
+	startTestDatabase,
+	testActor,
+	TEST_USER_IDS,
+	type TestDatabase
+} from '../helpers/db';
 
 /**
  * Что остаётся от человека после уничтожения его данных.
@@ -88,6 +94,8 @@ afterAll(async () => {
 
 beforeEach(async () => {
 	await database.reset();
+	// Заведение дела ставит школу стороной и без неё отказывает.
+	await ensureSchoolOperator(database.db);
 	// Утренняя сводка идёт тем же проходом цикла и зависит от часов прогона:
 	// здесь считаются только напоминания о зависших.
 	await setSetting(testActor(), 'daily_digest', { enabled: false, hour: 8 });

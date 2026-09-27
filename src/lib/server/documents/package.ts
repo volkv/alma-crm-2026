@@ -10,13 +10,16 @@
  * себе: акт без выбранных позиций не мешает собраться договору, а в отказе
  * названо поле, которое надо заполнить, и где.
  */
-import { eq, inArray } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
 import type { OrganizationKind } from '$lib/contracts/directory';
 import {
 	DOCUMENT_TEMPLATE_LABELS,
 	packageTemplates,
+	type DocumentSigning,
 	type DocumentTemplateKey,
 	type GeneratePackageInput,
+	type PackageFix,
+	type PackageDefaults,
 	type PackageOutcome
 } from '$lib/contracts/documents';
 import type { InteractionPartyView, InteractionView } from '$lib/contracts/interactions';
@@ -24,7 +27,7 @@ import { formatDate } from '$lib/format';
 import { moduleByKey, offeredTemplates, templateOwner } from '$lib/platform/registry';
 import type { ActorContext } from '../actor';
 import { getDb } from '../db';
-import { organizations, people } from '../db/schema';
+import { documents, interactionParties, organizations, people } from '../db/schema';
 import { ValidationError } from '../errors';
 import { getInteraction } from '../interactions/read';
 import { readActiveModules } from '../platform/workspace-modules';
@@ -59,7 +62,9 @@ type PackageSource = {
 /** Готовый к сборке документ или перечень того, чего не хватает. */
 type Built = { title: string; data: TemplateData; contractItemIds?: string[] };
 
-type Prepared = ({ ok: true } & Built) | { ok: false; issues: string[] };
+type Prepared =
+	| ({ ok: true; signing: DocumentSigning } & Built)
+	| { ok: false; issues: string[]; fixes: PackageFix[] };
 
 async function readOrganizations(ids: string[]): Promise<Map<string, OrganizationRow>> {
 	const rows = await getDb()
@@ -103,10 +108,19 @@ async function readOrganizations(ids: string[]): Promise<Map<string, Organizatio
 	);
 }
 
+/**
+ * Чего не хватает документу, по месту исправления. `record` — то, что правят в
+ * карточке дела или справочнике (стороны, сроки, договор, реквизиты); `form` —
+ * поля самой формы сборки. Отказ называет сначала первое: пока в деле нет
+ * оператора, просить город подписания бессмысленно — его ввели бы зря.
+ * `fixes` — куда в карточке ведёт кнопка отказа.
+ */
+type Issues = { record: string[]; form: string[]; fixes: Set<PackageFix> };
+
 /** Реквизиты строкой: ИНН обязателен, КПП и ОГРН — если записаны. */
-function requisites(organization: OrganizationRow, role: string, issues: string[]): string {
+function requisites(organization: OrganizationRow, role: string, issues: Issues): string {
 	if (organization.inn === null) {
-		issues.push(`${role}: заполните ИНН в карточке организации «${organization.legalName}»`);
+		issues.record.push(`${role}: заполните ИНН в карточке организации «${organization.legalName}»`);
 
 		return '';
 	}
@@ -120,10 +134,25 @@ function requisites(organization: OrganizationRow, role: string, issues: string[
 		.join(', ');
 }
 
+const NO_OPERATOR =
+	'Добавьте оператора стороной взаимодействия: «Изменить состав» → «Стороны» в карточке дела';
+
+/** Подписант оператора из формы; не назван — поле формы, а не данные дела. */
+function operatorSigner(source: PackageSource, issues: Issues): string {
+	if (source.input.operatorSigner === null) {
+		issues.form.push('Укажите подписанта оператора в форме сборки');
+
+		return '';
+	}
+
+	return source.input.operatorSigner;
+}
+
 /** Оператор — сторона дела с ролью «оператор»; без неё подписывать некому. */
-function operatorData(source: PackageSource, issues: string[]): TemplateData {
+function operatorData(source: PackageSource, issues: Issues): TemplateData {
 	if (source.operator === null) {
-		issues.push('Добавьте оператора стороной взаимодействия: «Изменить план» → «Стороны»');
+		issues.record.push(NO_OPERATOR);
+		issues.fixes.add('parties');
 
 		return {};
 	}
@@ -131,13 +160,13 @@ function operatorData(source: PackageSource, issues: string[]): TemplateData {
 	return {
 		operatorName: source.operator.legalName,
 		operatorRequisites: requisites(source.operator, 'Оператор', issues),
-		operatorSigner: source.input.operatorSigner
+		operatorSigner: operatorSigner(source, issues)
 	};
 }
 
-function counterpartySigner(source: PackageSource, issues: string[]): string {
+function counterpartySigner(source: PackageSource, issues: Issues): string {
 	if (source.input.counterpartySigner === null) {
-		issues.push('Укажите подписанта контрагента в форме сборки');
+		issues.form.push('Укажите подписанта контрагента в форме сборки');
 
 		return '';
 	}
@@ -145,20 +174,22 @@ function counterpartySigner(source: PackageSource, issues: string[]): string {
 	return source.input.counterpartySigner;
 }
 
-function programs(source: PackageSource, issues: string[]): { name: string }[] {
+function programs(source: PackageSource, issues: Issues): { name: string }[] {
 	if (source.interaction.programs.length === 0) {
-		issues.push('Добавьте образовательные программы во взаимодействие');
+		issues.record.push('Добавьте образовательные программы: «Изменить состав» в карточке дела');
+		issues.fixes.add('parties');
 	}
 
 	return source.interaction.programs.map((program) => ({ name: program.name }));
 }
 
 /** Период обучения — учебный период плана: у лица это срок обучения. */
-function studyPeriod(source: PackageSource, issues: string[]): TemplateData {
+function studyPeriod(source: PackageSource, issues: Issues): TemplateData {
 	const { academicPeriodStart: start, academicPeriodEnd: end } = source.interaction;
 
 	if (start === null || end === null) {
-		issues.push('Заполните период обучения: «Изменить план» в панели «Сроки»');
+		issues.record.push('Заполните период обучения: «Изменить план» в панели «Сроки»');
+		issues.fixes.add('plan');
 
 		return {};
 	}
@@ -171,24 +202,26 @@ function studyPeriod(source: PackageSource, issues: string[]): TemplateData {
  * каждой позиции должен быть срок лицензии: без него лицензия в документе
  * бессрочна, а это уже другое обязательство.
  */
-function contractItems(source: PackageSource, issues: string[]) {
+function contractItems(source: PackageSource, issues: Issues) {
 	const contract = source.interaction.contract;
 
 	if (contract === null) {
-		issues.push('Выберите договор взаимодействия в панели «Договор»');
+		issues.record.push('Выберите договор взаимодействия в панели «Договор и позиции»');
+		issues.fixes.add('contract');
 
 		return null;
 	}
 
 	if (contract.items.length === 0) {
-		issues.push('Выберите позиции договора в панели «Договор»');
+		issues.record.push('Выберите позиции договора в панели «Договор и позиции»');
+		issues.fixes.add('contract');
 
 		return null;
 	}
 
 	const items = contract.items.map((item) => {
 		if (item.licenseUntil === null) {
-			issues.push(
+			issues.record.push(
 				`Позиция «${item.name}»: заполните срок лицензии в договоре № ${contract.number} (карточка организации)`
 			);
 		}
@@ -203,7 +236,7 @@ function contractItems(source: PackageSource, issues: string[]) {
 	return { contract, items };
 }
 
-function institutionData(source: PackageSource, issues: string[]): TemplateData {
+function institutionData(source: PackageSource, issues: Issues): TemplateData {
 	return {
 		institutionName: source.primary.legalName,
 		institutionRequisites: requisites(source.primary, 'Образовательная организация', issues),
@@ -212,11 +245,13 @@ function institutionData(source: PackageSource, issues: string[]): TemplateData 
 }
 
 /** Фамилия, имя, отчество и подпись «Фамилия И. О.» физического лица. */
-function personNames(source: PackageSource, issues: string[]) {
+function personNames(source: PackageSource, issues: Issues) {
 	const person = source.primary.person;
 
 	if (person === null || person.anonymizedAt !== null) {
-		issues.push('Персональные данные слушателя обезличены или не записаны: документ не составить');
+		issues.record.push(
+			'Персональные данные слушателя обезличены или не записаны: документ не составить'
+		);
 
 		return null;
 	}
@@ -235,7 +270,7 @@ function personNames(source: PackageSource, issues: string[]) {
 }
 
 /** Заказчик коммерческого обучения: компания со своими реквизитами или лицо. */
-function customerData(source: PackageSource, issues: string[]): TemplateData {
+function customerData(source: PackageSource, issues: Issues): TemplateData {
 	if (source.primary.kind === 'individual') {
 		const names = personNames(source, issues);
 
@@ -256,22 +291,27 @@ function customerData(source: PackageSource, issues: string[]): TemplateData {
 }
 
 /** Собирает данные шаблона; чего не хватает — дописывает в `issues`. */
-type Builder = (source: PackageSource, issues: string[]) => Built;
+type Builder = (source: PackageSource, issues: Issues) => Built;
 
 const BUILDERS: Record<DocumentTemplateKey, Builder> = {
 	agreement: (source, issues) => {
 		const { agreementPeriodStart: start, agreementPeriodEnd: end } = source.interaction;
 
 		if (start === null || end === null) {
-			issues.push('Заполните срок соглашения: «Изменить план» в панели «Сроки»');
+			issues.record.push('Заполните срок соглашения: «Изменить план» в панели «Сроки»');
+			issues.fixes.add('plan');
 		}
 
 		if (source.customer === null) {
-			issues.push('Добавьте заказчика подготовки стороной взаимодействия');
+			issues.record.push(
+				'Добавьте заказчика подготовки стороной взаимодействия: «Изменить состав» → «Стороны» в карточке дела'
+			);
+			issues.fixes.add('parties');
 		}
 
 		if (source.operator === null) {
-			issues.push('Добавьте оператора стороной взаимодействия: «Изменить план» → «Стороны»');
+			issues.record.push(NO_OPERATOR);
+			issues.fixes.add('parties');
 		}
 
 		// Реквизитов в соглашении нет — ИНН здесь не спрашивается.
@@ -279,7 +319,7 @@ const BUILDERS: Record<DocumentTemplateKey, Builder> = {
 			title: `Соглашение — ${source.interaction.title}`,
 			data: {
 				operatorName: source.operator?.legalName ?? '',
-				operatorSigner: source.input.operatorSigner,
+				operatorSigner: operatorSigner(source, issues),
 				institutionName: source.primary.legalName,
 				institutionSigner: counterpartySigner(source, issues),
 				customerName: source.customer?.organizationName ?? '',
@@ -308,7 +348,7 @@ const BUILDERS: Record<DocumentTemplateKey, Builder> = {
 		const chosen = contractItems(source, issues);
 
 		if (chosen !== null && chosen.contract.signedOn === null) {
-			issues.push(
+			issues.record.push(
 				`Заполните дату подписания договора № ${chosen.contract.number} (карточка организации)`
 			);
 		}
@@ -365,18 +405,29 @@ const BUILDERS: Record<DocumentTemplateKey, Builder> = {
 };
 
 function prepare(key: DocumentTemplateKey, source: PackageSource): Prepared {
-	const issues: string[] = [];
+	const issues: Issues = { record: [], form: [], fixes: new Set() };
 	const built = BUILDERS[key](source, issues);
+	const { city, operatorSigner: signer, counterpartySigner: counterparty } = source.input;
 
-	if (issues.length > 0) {
-		// Одно и то же поле (например, ИНН оператора) спрашивается один раз.
-		return { ok: false, issues: [...new Set(issues)] };
+	if (city === null) {
+		issues.form.push('Укажите город подписания в форме сборки');
+	}
+
+	if (issues.record.length > 0 || issues.form.length > 0 || city === null || signer === null) {
+		// Одно и то же поле (например, ИНН оператора) спрашивается один раз;
+		// данные дела — раньше полей формы.
+		return {
+			ok: false,
+			issues: [...new Set([...issues.record, ...issues.form])],
+			fixes: [...issues.fixes]
+		};
 	}
 
 	return {
 		ok: true,
 		...built,
-		data: { city: source.input.city, date: formatDate(new Date()), ...built.data }
+		data: { city, date: formatDate(new Date()), ...built.data },
+		signing: { city, operatorSigner: signer, counterpartySigner: counterparty }
 	};
 }
 
@@ -470,7 +521,12 @@ export async function generateDocumentPackage(
 		const prepared = prepare(key, source);
 
 		if (!prepared.ok) {
-			outcomes.push({ templateKey: key, status: 'refused', issues: prepared.issues });
+			outcomes.push({
+				templateKey: key,
+				status: 'refused',
+				issues: prepared.issues,
+				fixes: prepared.fixes
+			});
 			continue;
 		}
 
@@ -481,7 +537,8 @@ export async function generateDocumentPackage(
 				title: prepared.title,
 				data: prepared.data,
 				formats: ['docx', 'pdf'],
-				contractItemIds: prepared.contractItemIds
+				contractItemIds: prepared.contractItemIds,
+				signing: prepared.signing
 			});
 
 			outcomes.push({
@@ -497,10 +554,89 @@ export async function generateDocumentPackage(
 			outcomes.push({
 				templateKey: key,
 				status: 'refused',
-				issues: [error.message, ...error.issues]
+				issues: [error.message, ...error.issues],
+				fixes: []
 			});
 		}
 	}
 
 	return outcomes;
+}
+
+/** Столицы-регионы: у них регион в реквизитах и есть город. */
+const FEDERAL_CITIES = ['Москва', 'Санкт-Петербург', 'Севастополь'];
+
+/**
+ * Город из региона реквизитов: «г. Москва» и «Москва» — город, «Московская
+ * область» — нет, и угадывать его из области форма не берётся.
+ */
+function cityFromRegion(region: string | null): string | null {
+	const text = region?.trim() ?? '';
+	const named = /^г\.?\s+(.+)$/u.exec(text);
+
+	if (named !== null) {
+		return named[1].trim();
+	}
+
+	return FEDERAL_CITIES.includes(text) ? text : null;
+}
+
+/**
+ * Что подставить в форму сборки пакета: город и подписантов прошлой сборки
+ * этого дела; чего в нём нет — город из реквизитов оператора и подписант
+ * оператора из последней сборки по делам того же оператора. Подписант
+ * контрагента берётся только из этого дела: у другого контрагента другой.
+ */
+export async function readPackageDefaults(
+	ctx: ActorContext,
+	interactionId: string
+): Promise<PackageDefaults> {
+	requirePermission(ctx, 'documents.generate');
+
+	const interaction = await getInteraction(ctx, interactionId);
+	const operatorParty = interaction.parties.find((party) => party.partyRole === 'operator');
+	const db = getDb();
+
+	const [own] = await db
+		.select({ signing: documents.signing })
+		.from(documents)
+		.where(and(eq(documents.interactionId, interactionId), isNotNull(documents.signing)))
+		.orderBy(desc(documents.createdAt), desc(documents.id))
+		.limit(1);
+
+	if (operatorParty === undefined) {
+		return {
+			city: own?.signing?.city ?? null,
+			operatorSigner: own?.signing?.operatorSigner ?? null,
+			counterpartySigner: own?.signing?.counterpartySigner ?? null
+		};
+	}
+
+	const [operator] = await db
+		.select({ region: organizations.region })
+		.from(organizations)
+		.where(eq(organizations.id, operatorParty.organizationId));
+	const [sameOperator] =
+		own?.signing?.operatorSigner !== undefined
+			? []
+			: await db
+					.select({ signing: documents.signing })
+					.from(documents)
+					.innerJoin(
+						interactionParties,
+						and(
+							eq(interactionParties.interactionId, documents.interactionId),
+							eq(interactionParties.partyRole, 'operator'),
+							eq(interactionParties.organizationId, operatorParty.organizationId)
+						)
+					)
+					.where(isNotNull(documents.signing))
+					.orderBy(desc(documents.createdAt), desc(documents.id))
+					.limit(1);
+
+	return {
+		city: own?.signing?.city ?? cityFromRegion(operator?.region ?? null),
+		operatorSigner: own?.signing?.operatorSigner ?? sameOperator?.signing?.operatorSigner ?? null,
+		counterpartySigner: own?.signing?.counterpartySigner ?? null
+	};
 }

@@ -27,6 +27,8 @@ import {
 } from './documents';
 import type { LearningPurpose } from './exchange';
 import type { PersonView } from './directory';
+import { CHECKLIST_ACTION_KEYS } from '$lib/platform/checklist';
+import { CHECKLIST_RULE_KEYS, type ChecklistRuleKey } from '$lib/platform/checklist-rules';
 
 /** Смысловая группа стадии; по ней раскрашивают ленту и считают сводки. */
 export const STAGE_CATEGORIES = [
@@ -178,14 +180,60 @@ export function blockerReasonLabel(reasonCode: string): string {
 		: reasonCode;
 }
 
-/** Пункт чек-листа стадии. `key` стабилен, по нему хранится отметка. */
+/**
+ * Чем закрывается пункт: отметкой человека или фактом из данных дела по
+ * правилу закрытого каталога (`$lib/platform/checklist`). Факт галочкой не
+ * заменяется — ни из карточки, ни в команде перехода.
+ */
+export const checklistCompletionSchema = z.discriminatedUnion('kind', [
+	z.object({ kind: z.literal('manual') }),
+	z.object({
+		kind: z.literal('fact'),
+		rule: z.enum(CHECKLIST_RULE_KEYS, { error: 'Такого правила проверки пункта нет' })
+	})
+]);
+
+export type ChecklistCompletion = z.output<typeof checklistCompletionSchema>;
+
+/**
+ * Пункт чек-листа стадии. `key` стабилен, по нему хранится отметка.
+ *
+ * `help`, `completion` и `action` необязательны: пункты, описанные до них,
+ * лежат в базе без этих полей, и отсутствие означает прежнее — ручную отметку
+ * без пояснения и без кнопки. Пустое пояснение из формы — то же отсутствие.
+ */
 export const checklistItemSchema = z.object({
 	key: requiredText(100, 'У пункта чек-листа должен быть ключ'),
 	label: requiredText(300, 'У пункта чек-листа должно быть название'),
-	required: z.boolean().default(false)
+	required: z.boolean().default(false),
+	/** Что значит сделать пункт — словами для того, кто ведёт дело. */
+	help: z
+		.string()
+		.trim()
+		.max(500, { error: 'Пояснение к пункту — не длиннее 500 символов' })
+		.transform((value) => (value === '' ? undefined : value))
+		.optional(),
+	/** Способ закрытия; отсутствие — ручная отметка. */
+	completion: checklistCompletionSchema.optional(),
+	/** Кнопка рядом с пунктом: открывает форму карточки, но пункт не закрывает. */
+	action: z.enum(CHECKLIST_ACTION_KEYS, { error: 'Такого действия у пункта нет' }).optional()
 });
 
 export type ChecklistItem = z.output<typeof checklistItemSchema>;
+
+/** Пункт закрывается фактом из данных дела, а не отметкой. */
+export function isFactItem(
+	item: ChecklistItem
+): item is ChecklistItem & { completion: { kind: 'fact'; rule: ChecklistRuleKey } } {
+	return item.completion?.kind === 'fact';
+}
+
+/**
+ * Результат проверки пункта-факта: выполнен ли и чем — словами («Выбрано
+ * подразделение: кафедра ИТ»). У открытой стадии его считает сервер при каждом
+ * чтении; у закрытой — сохранён при выходе и не пересчитывается.
+ */
+export type ChecklistFact = { done: boolean; evidence: string | null };
 
 /** Отметки по чек-листу: ключ пункта → выполнен или нет. */
 export const checklistStateSchema = z.record(z.string(), z.boolean());
@@ -1259,6 +1307,8 @@ export type StageProgressItem = {
 	/** Срок текущей стадии; у остальных пусто. */
 	dueAt: Date | null;
 	note: string | null;
+	/** Чек-лист стадии по действующему процессу: его показывают, раскрыв стадию. */
+	checklist: ChecklistItem[];
 };
 
 export type StagePauseView = {
@@ -1294,6 +1344,11 @@ export type StageEntryView = {
 	/** Отметка по документу, которой подтверждена стадия; `null` — её нет. */
 	documentMarkEvidence: DocumentMarkEvidence | null;
 	checklistState: ChecklistState;
+	/**
+	 * Пункты-факты: ключ пункта → результат проверки. У открытой записи его
+	 * считает сервер при чтении, у закрытой — сохранённый при выходе.
+	 */
+	facts: Record<string, ChecklistFact>;
 	/** Файлы, приложенные к этой записи стадии вместе с переходом. */
 	documents: { id: string; title: string; mime: string; sizeBytes: number }[];
 	dueAt: Date;
@@ -1325,7 +1380,12 @@ export type BlockerView = {
 export type CommentView = {
 	id: string;
 	authorId: string;
+	/**
+	 * Подпись автора в ленте. У текста, пришедшего с заявкой сайта, — источник
+	 * («Заявка с сайта»), а не сотрудник, от имени которого её приняли.
+	 */
 	authorName: string;
+	source: CommentSource;
 	body: string;
 	createdAt: Date;
 };
@@ -1438,6 +1498,11 @@ export type InteractionView = {
 export type InteractionDocumentView = {
 	id: string;
 	kind: string;
+	/**
+	 * Шаблон, по которому документ собран (у новой редакции — унаследованный);
+	 * `null` — загружен руками. Стадия, ждущая акт, засчитывает только его.
+	 */
+	templateKey: DocumentTemplateKey | null;
 	title: string;
 	mime: string;
 	sizeBytes: number;
@@ -1888,3 +1953,25 @@ export const apiTransitionResultSchema = z.object({
 });
 
 export type ApiTransitionResult = z.output<typeof apiTransitionResultSchema>;
+
+/**
+ * Что предлагают выбрать в составе дела: действующие программы с их версиями
+ * и действующие продукты. Версия программы — то, по какой её редакции идёт
+ * работа; `null` в составе — «версия не закреплена».
+ */
+export type CompositionCatalog = {
+	programs: {
+		id: string;
+		code: string;
+		name: string;
+		versions: { id: string; version: number; effectiveFrom: string }[];
+	}[];
+	products: { id: string; code: string; name: string }[];
+};
+
+/**
+ * Организация школы для стороны «Оператор». Справочник может её не знать или
+ * знать несколько: тогда предложить нечего, и причина говорится словами.
+ */
+export type CompositionOperator =
+	{ state: 'configured'; id: string; name: string } | { state: 'unavailable'; reason: string };

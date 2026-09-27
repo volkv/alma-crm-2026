@@ -16,16 +16,20 @@ const PAYMENT_ITEM: typeof PAYMENT_CHECKLIST_KEY = 'payment_received';
 export default defineModule({
 	key: 'payment',
 	label: 'Оплата',
-	description: 'Стоимость и отметка об оплате в карточке, факт оплаты с сайта в шапке у лица',
+	description:
+		'Стоимость дела и отметка об оплате в карточке, стоимость и факт оплаты с сайта в шапке',
 	panels: [
 		{
 			key: 'payment',
 			label: 'Стоимость и оплата',
-			hint: 'Отметка «Оплата получена» из чек-листа процесса; стоимость в записи не хранится',
+			hint: 'Стоимость дела в рублях и отметка «Оплата получена» из чек-листа процесса',
 			order: 30
 		}
 	],
-	headerFacts: [{ key: 'payment', label: 'Оплата', shapes: ['person'] }],
+	headerFacts: [
+		{ key: 'price', label: 'Стоимость', shapes: ['person', 'company'] },
+		{ key: 'payment', label: 'Оплата', shapes: ['person'] }
+	],
 	cardActions: [],
 	sections: [],
 	documents: { templates: [], kinds: [] },

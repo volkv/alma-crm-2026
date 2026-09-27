@@ -527,15 +527,19 @@
 			</p>
 		{/if}
 
-		<div class="flex flex-col gap-1.5">
-			<Label for="card-contact-reason">Причина правки</Label>
-			<Textarea
-				id="card-contact-reason"
-				rows={2}
-				placeholder="Например: прежний контакт перешёл на другую должность"
-				bind:value={reason}
-			/>
-		</div>
+		<!-- Причина — у смены контакта: первое назначение ничего не отменяет,
+			и объяснять в нём нечего. -->
+		{#if party.contactAffiliationId !== null}
+			<div class="flex flex-col gap-1.5">
+				<Label for="card-contact-reason">Причина правки</Label>
+				<Textarea
+					id="card-contact-reason"
+					rows={2}
+					placeholder="Например: прежний контакт перешёл на другую должность"
+					bind:value={reason}
+				/>
+			</div>
+		{/if}
 	</form>
 
 	{#snippet footer({ close })}

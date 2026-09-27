@@ -6,6 +6,7 @@
  */
 import { and, eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { checklistRule } from '$lib/platform/checklist-rules';
 import { workspaceModules } from '$lib/server/db/schema';
 import { ValidationError } from '$lib/server/errors';
 import { generateDocument } from '$lib/server/documents/generate';
@@ -56,7 +57,15 @@ describe('состав карточки процесса', () => {
 		const card = await readInteractionCard(await getInteraction(ctx, interactionId));
 
 		expect(card).toEqual({
-			panels: ['terms', 'payment', 'learners', 'learning', 'training_document', 'documents'],
+			panels: [
+				'terms',
+				'payment',
+				'learners',
+				'learning',
+				'training_document',
+				'documents',
+				'contract'
+			],
 			templates: ['offer', 'legal_entity_contract', 'services_act'],
 			counterpartyKind: 'legal_entity'
 		});
@@ -92,10 +101,18 @@ describe('состав карточки процесса', () => {
 		// процессу не нужны и держатся только строкой пространства.
 		await seedProcess(database, B2B_WORKSPACE_KEY, {
 			...B2B_PROCESS,
+			// Пункты, которые закрывают данные «Договоров», тоже делают модуль
+			// нужным стадии: здесь они ручные.
 			stages: B2B_PROCESS.stages.map((stage) => ({
 				...stage,
 				requiresDocumentMark: null,
-				requiresDocumentTemplate: null
+				requiresDocumentTemplate: null,
+				checklist: stage.checklist.map((item) =>
+					item.completion?.kind === 'fact' &&
+					checklistRule(item.completion.rule)?.module === 'contracts'
+						? { ...item, completion: { kind: 'manual' as const } }
+						: item
+				)
 			}))
 		});
 		const { interactionId } = await createInteractionOn(ctx, database);

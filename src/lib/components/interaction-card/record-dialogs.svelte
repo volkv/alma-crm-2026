@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { enhance } from '$app/forms';
+	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -181,6 +182,10 @@
 		JSON.stringify(plan) !== JSON.stringify(planBase) || planReason.trim() !== ''
 	);
 
+	/** Основная сторона: в её карточке создают договор, если выбирать не из чего. */
+	const contractOrganizationId = $derived(
+		interaction.parties.find((party) => party.isPrimary)?.organizationId ?? null
+	);
 	const chosenContract = $derived(contracts.find((contract) => contract.id === contractId) ?? null);
 	const contractLabel = $derived(
 		chosenContract === null
@@ -372,8 +377,19 @@
 >
 	{#if contracts.length === 0}
 		<InlineHint>
-			У основной стороны нет договоров: заведите договор в её карточке, и он появится в этом списке.
+			У основной стороны нет договоров: создайте договор в её карточке — оттуда вернётесь сюда и
+			выберете его.
 		</InlineHint>
+		{#if contractOrganizationId !== null}
+			<Button
+				size="sm"
+				variant="outline"
+				class="self-start"
+				href={`${resolve('/(app)/organizations/[id=uuid]', { id: contractOrganizationId })}?return=${encodeURIComponent(`${page.url.pathname}${page.url.search}`)}#contracts`}
+			>
+				Создать договор
+			</Button>
+		{/if}
 	{:else}
 		<form
 			id="card-contract-form"

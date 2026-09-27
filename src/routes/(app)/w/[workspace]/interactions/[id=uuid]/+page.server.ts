@@ -34,6 +34,7 @@ import { markDocument } from '$lib/server/documents/status';
 import { uploadDocument, uploadDocumentRevision } from '$lib/server/documents/upload';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
+import { hasFullScope } from '$lib/server/rbac/workspaces';
 import { readInteractionExchange } from '$lib/server/integrations/exchange/groups';
 import { readPaymentFact } from '$lib/server/integrations/exchange/payments';
 import {
@@ -41,6 +42,10 @@ import {
 	listComments,
 	listInteractionChanges
 } from '$lib/server/interactions/read';
+import {
+	readCompositionCatalog,
+	readCompositionOperator
+} from '$lib/server/interactions/composition';
 import { getInteractionSummary } from '$lib/server/interactions/summary';
 import { updateInteraction } from '$lib/server/interactions/write';
 import {
@@ -115,17 +120,23 @@ export const load: PageServerLoad = async (event) => {
 		// Факт оплаты с сайта читается по уже прочитанному взаимодействию: его
 		// область доступа проверил `getInteraction`.
 		// Действующие модули пространства: включённые и нужные стадиям процесса.
-		const [contracts, counterparty, card, paymentFact, modules] = await Promise.all([
-			primary !== undefined && can(ctx, 'interactions.write')
-				? listOrganizationContracts(ctx, primary.organizationId)
-				: [],
-			primary !== undefined && can(ctx, 'organizations.read')
-				? getOrganization(ctx, primary.organizationId)
-				: null,
-			readInteractionCard(interaction),
-			readPaymentFact(interaction),
-			readActiveModules(interaction.workspaceId)
-		]);
+		const canEdit = can(ctx, 'interactions.write');
+		// Состав дела правят только те, кто может править запись: каталог и
+		// организация школы нужны его диалогу, остальным их не читают.
+		const [contracts, counterparty, card, paymentFact, modules, catalog, operator] =
+			await Promise.all([
+				primary !== undefined && canEdit
+					? listOrganizationContracts(ctx, primary.organizationId)
+					: [],
+				primary !== undefined && can(ctx, 'organizations.read')
+					? getOrganization(ctx, primary.organizationId)
+					: null,
+				readInteractionCard(interaction),
+				readPaymentFact(interaction),
+				readActiveModules(interaction.workspaceId),
+				canEdit ? readCompositionCatalog(ctx) : null,
+				canEdit ? readCompositionOperator() : null
+			]);
 		// Свои данные действующих модулей — для их панелей и диалогов; данные
 		// выключенного модуля не читаются.
 		const moduleData = await loadModuleCardData(event, ctx, interaction, modules.active);
@@ -137,7 +148,13 @@ export const load: PageServerLoad = async (event) => {
 			closing,
 			comments,
 			changes,
-			users,
+			// Передают дело тем, кто ведёт дела в пространстве: учётки с полной
+			// областью (администраторы) проходят в пространство без членства и дел
+			// не ведут. Нынешний владелец остаётся в списке, кем бы он ни был, —
+			// иначе диалог не смог бы его назвать.
+			users: users.filter(
+				(user) => !hasFullScope(user.roleId) || user.id === interaction.ownerUserId
+			),
 			supersessions,
 			exchange,
 			contracts,
@@ -145,7 +162,8 @@ export const load: PageServerLoad = async (event) => {
 			card,
 			paymentFact,
 			modules: modules.active,
-			moduleData
+			moduleData,
+			composition: catalog === null || operator === null ? null : { catalog, operator }
 		};
 	} catch (cause) {
 		toPageError(cause);
@@ -446,7 +464,8 @@ const core = {
 		return run(() =>
 			uploadDocumentRevision(actorFromEvent(event), {
 				supersedesId,
-				file: { mime: file.type, bytes }
+				file: { mime: file.type, bytes },
+				note: text(data, 'note')
 			})
 		);
 	},
@@ -505,6 +524,7 @@ const core = {
 			if (outcomes.every((outcome) => outcome.status === 'refused')) {
 				return fail(400, {
 					message: 'Ни один документ пакета не собран',
+					outcomes,
 					issues: outcomes.flatMap((outcome) =>
 						outcome.status === 'refused'
 							? outcome.issues.map(
@@ -523,6 +543,62 @@ const core = {
 
 			return toActionFailure(cause);
 		}
+	},
+
+	/**
+	 * Состав дела: стороны, программы с версиями, продукты и то, что от них
+	 * зависит в договоре. Диалог присылает итоговые списки одним полем JSON —
+	 * они вложенные; название, сроки и ответственный едут как есть, а версия
+	 * записи — та, с которой диалог открыли.
+	 */
+	compose: async (event) => {
+		const ctx = actorFromEvent(event);
+		const data = await event.request.formData();
+		const raw = data.get('composition');
+		let composition: Record<string, unknown>;
+
+		try {
+			const parsed: unknown = typeof raw === 'string' ? JSON.parse(raw) : null;
+
+			if (typeof parsed !== 'object' || parsed === null || Array.isArray(parsed)) {
+				return fail(400, { message: 'Состав не пришёл с формой', issues: [] as string[] });
+			}
+
+			composition = parsed as Record<string, unknown>;
+		} catch {
+			return fail(400, { message: 'Состав пришёл в непонятном виде', issues: [] as string[] });
+		}
+
+		let current;
+
+		try {
+			current = await getInteraction(ctx, event.params.id);
+		} catch (cause) {
+			return toActionFailure(cause);
+		}
+
+		const parsed = parse(updateInteractionSchema, {
+			id: current.id,
+			editVersion: Number(data.get('editVersion')),
+			title: current.title,
+			agreementPeriodStart: current.agreementPeriodStart,
+			agreementPeriodEnd: current.agreementPeriodEnd,
+			academicPeriodStart: current.academicPeriodStart,
+			academicPeriodEnd: current.academicPeriodEnd,
+			ownerUserId: current.ownerUserId,
+			reason: text(data, 'reason'),
+			externalSource: current.externalSource,
+			externalId: current.externalId,
+			parties: composition.parties,
+			programs: composition.programs,
+			productIds: composition.productIds,
+			contractId: composition.contractId,
+			contractItemIds: composition.contractItemIds
+		});
+
+		if (!parsed.ok) return parsed.failure;
+
+		return run(() => updateInteraction(ctx, parsed.data));
 	},
 
 	update: async (event) => {

@@ -8,6 +8,7 @@
  */
 import { and, eq, like } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
+import { checklistRule } from '$lib/platform/checklist-rules';
 import { auditEvents, workspaceModules, workspaces } from '$lib/server/db/schema';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '$lib/server/errors';
 import {
@@ -108,12 +109,16 @@ describe('модули пространства', () => {
 		await expect(refusal).rejects.toThrow(ConflictError);
 		await expect(refusal).rejects.toThrow('«Ведение занятий»');
 
+		// Обучению преподавателей и повышению квалификации модуль нужен ради
+		// пунктов, которые закрывает поток нужного назначения.
+		const requiredBy = ['Обучение преподавателей', 'Ведение занятий', 'Повышение квалификации'];
+
 		// Строку убрали в обход настроек — модуль всё равно действует по стадии.
 		await removeRow(B2B_WORKSPACE_KEY, 'learning');
 		const state = await readActiveModules(await workspaceId(B2B_WORKSPACE_KEY));
 
 		expect(state.enabled.has('learning')).toBe(false);
-		expect(state.required.get('learning')).toEqual(['Ведение занятий']);
+		expect(state.required.get('learning')).toEqual(requiredBy);
 		expect(state.active).toEqual(['contracts', 'learning', 'meetings']);
 
 		const views = await listWorkspaceModules(ctx);
@@ -124,7 +129,7 @@ describe('модули пространства', () => {
 		expect(learning).toMatchObject({
 			enabled: false,
 			active: true,
-			requiredBy: ['Ведение занятий']
+			requiredBy
 		});
 	});
 
@@ -198,14 +203,21 @@ describe('модули пространства', () => {
 
 	it('«Оплату» не выключить, пока стадия ждёт отметки «Оплата получена»; документ выключенного модуля не загрузить', async () => {
 		const admin = testActor({ roleId: 'admin' });
-		// Коммерческий процесс без стадий с данными обучения: «Обучение» здесь
-		// действует только включённым, и его можно выключить.
+		// Коммерческий процесс без стадий с данными обучения и без пунктов,
+		// которые закрывают данные «Обучения»: модуль здесь действует только
+		// включённым, и его можно выключить.
 		await seedProcess(database, B2C_WORKSPACE_KEY, {
 			...B2C_PROCESS,
 			stages: B2C_PROCESS.stages.map((stage) => ({
 				...stage,
 				requiresLmsData: false,
-				lmsGroupPurposes: null
+				lmsGroupPurposes: null,
+				checklist: stage.checklist.map((item) =>
+					item.completion?.kind === 'fact' &&
+					checklistRule(item.completion.rule)?.module === 'learning'
+						? { ...item, completion: { kind: 'manual' as const } }
+						: item
+				)
 			}))
 		});
 

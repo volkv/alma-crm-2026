@@ -34,6 +34,8 @@
 		type RosterRowAction,
 		type RosterView
 	} from '$lib/contracts/exchange';
+	import type { OrganizationKind } from '$lib/contracts/directory';
+	import type { InteractionView } from '$lib/contracts/interactions';
 	import { pluralForm, pluralize } from '$lib/format';
 	import { getCardCommands } from './commands.svelte';
 	import { purposeCountingStages, type CardExchange, type CardOffering } from './model';
@@ -45,8 +47,25 @@
 	 * подтверждает человек, и ошибочный переход не должен превращаться в группу
 	 * в чужой системе. Отметка нужна там, где итога из системы обучения нет, а
 	 * обучение закончилось, — поэтому без объяснения её не поставить.
+	 *
+	 * Форма заявки подставляет то, что дело уже знает: даты занятий — учебный
+	 * период из «Сроков», а физическому лицу одно место — он учится сам.
 	 */
-	let { exchange }: { exchange: CardExchange } = $props();
+	let {
+		exchange,
+		interaction,
+		counterpartyKind
+	}: {
+		exchange: CardExchange;
+		interaction: InteractionView;
+		counterpartyKind: OrganizationKind;
+	} = $props();
+
+	/** Физическое лицо учится само: одно место, и слушатель — он же. */
+	const individual = $derived(counterpartyKind === 'individual');
+	const counterpartyName = $derived(
+		interaction.parties.find((party) => party.isPrimary)?.organizationName ?? null
+	);
 
 	const commands = getCardCommands();
 
@@ -127,9 +146,9 @@
 			if (current === null) return;
 
 			streamNumber = exchange.nextStreamNumber;
-			plannedSeats = 30;
-			startsOn = '';
-			endsOn = '';
+			plannedSeats = individual ? 1 : 30;
+			startsOn = interaction.academicPeriodStart ?? '';
+			endsOn = interaction.academicPeriodEnd ?? '';
 			programId = '';
 			purpose = defaultPurpose;
 			chosenProducts = [];
@@ -254,7 +273,9 @@
 	bind:open={sendOpen.get, sendOpen.set}
 	title="Заявить поток в систему обучения"
 	description="Поток закрепляет программу, продукты и то, для кого обучение. Стадию подтвердит его итог: завершившие и дата окончания."
-	dirty={purpose !== defaultPurpose || startsOn !== '' || endsOn !== ''}
+	dirty={purpose !== defaultPurpose ||
+		startsOn !== (interaction.academicPeriodStart ?? '') ||
+		endsOn !== (interaction.academicPeriodEnd ?? '')}
 	width="lg"
 >
 	<div class="flex flex-col gap-3">
@@ -377,6 +398,11 @@
 				<Label for="card-ends-on">Окончание</Label>
 				<DateField id="card-ends-on" name="endsOn" min={startsOn} bind:value={endsOn} />
 			</div>
+			{#if interaction.academicPeriodStart !== null || interaction.academicPeriodEnd !== null}
+				<p class="text-xs text-muted-foreground sm:col-span-2">
+					Даты подставлены из учебного периода в «Сроках» дела — поправьте, если поток идёт иначе.
+				</p>
+			{/if}
 		</form>
 	</div>
 
@@ -475,7 +501,11 @@
 					Имена слушателей видны тем, кому открыт справочник людей.
 				</p>
 			{:else if rosterLearners.length === 0}
-				<p class="text-sm text-muted-foreground">Список пуст: загрузите файл ниже.</p>
+				<p class="text-sm text-muted-foreground">
+					{individual
+						? 'Список пуст: слушатель — сам контрагент, добавьте его кнопкой.'
+						: 'Список пуст: загрузите файл ниже.'}
+				</p>
 			{:else}
 				{#if exchange.canExportRoster && rosterExportHref !== null}
 					<div class="flex flex-col gap-2">
@@ -543,6 +573,19 @@
 				</ul>
 			{/if}
 		</section>
+
+		{#if exchange.canManageRoster && rosterGroup !== null && individual && rosterGroup.learnerCount === 0}
+			<form
+				method="POST"
+				action="?/rosterAddCounterparty"
+				use:enhance={actionEnhance({ onfailure: (refusal) => (rosterRefusal = refusal) })}
+			>
+				<input type="hidden" name="learningGroupId" value={rosterGroup.id} />
+				<Button type="submit" variant="outline" size="sm">
+					Добавить слушателем{counterpartyName === null ? ' контрагента' : `: ${counterpartyName}`}
+				</Button>
+			</form>
+		{/if}
 
 		{#if exchange.canManageRoster && rosterGroup !== null}
 			<form

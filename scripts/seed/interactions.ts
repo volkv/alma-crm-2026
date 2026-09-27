@@ -33,6 +33,7 @@ import { randomUUID } from 'node:crypto';
 import { and, asc, eq, inArray, isNull } from 'drizzle-orm';
 import {
 	createInteractionSchema,
+	isFactItem,
 	type BlockerReason,
 	type CreateInteractionInput,
 	type StageView
@@ -94,6 +95,7 @@ import {
 	B2C_PROCESS
 } from '$lib/server/stages/definitions';
 import { readWorkspaceByKey, requireActiveRevisionForWorkspace } from '$lib/server/stages/process';
+import { getInteractionStatus } from '$lib/server/stages/status';
 import { contractOf } from './contracts';
 import { seedId } from './ids';
 import { seedRoster } from './rosters';
@@ -2599,6 +2601,7 @@ const ALL_INTERACTIONS: readonly InteractionSeed[] = [...B2B_ALL, ...B2C_ALL];
  * откроет историю на демонстрации.
  */
 const STAGE_RESULTS: Record<string, string> = {
+	meeting: 'Встреча проведена: договорились о пакете документов и сроках подписания.',
 	materials_handover: 'Комплект материалов и лицензии переданы, акт подписан обеими сторонами.',
 	implementation_support: 'Учебная среда развёрнута, канал поддержки открыт.',
 	teacher_training: 'Группа преподавателей обучена, обратная связь собрана.',
@@ -2714,12 +2717,34 @@ export const INTERACTION_SEED_SIZES = {
 	 * от одной точки отсчёта на всю заливку.
 	 */
 	learningGroups: ALL_INTERACTIONS.reduce(streamCount, 0),
-	learningResults: ALL_INTERACTIONS.reduce(streamCount, 0)
+	learningResults: ALL_INTERACTIONS.reduce(streamCount, 0),
+	/**
+	 * Документы об обучении: по одному у завершённого обучения лица — пункт
+	 * «Выдан документ об обучении» финальной стадии закрывает только он.
+	 */
+	trainingDocuments: B2C_ALL.filter((seed) => seed.completedWith !== undefined).length
 } as const;
 
-/** Потоков у дела: основной и дополнительные. */
+/**
+ * Потоков у дела: основной и дополнительные, плюс поток преподавателей у дела,
+ * прошедшего их обучение, и поток повышения квалификации у прошедшего его, —
+ * их пункты-факты закрывает поток нужного назначения (`recordPurposeStream`).
+ */
 function streamCount(total: number, seed: InteractionSeed): number {
-	return seed.learning === undefined ? total : total + 1 + (seed.extraStreams?.length ?? 0);
+	const own = seed.learning === undefined ? 0 : 1 + (seed.extraStreams?.length ?? 0);
+	const purposes = ['teacher_training', 'qualification_upgrade'].filter((stageKey) =>
+		walksPast(seed, stageKey)
+	).length;
+
+	return total + own + purposes;
+}
+
+/** Уходит ли дело набора со стадии процесса вуза шагом вперёд. */
+function walksPast(seed: InteractionSeed, stageKey: string): boolean {
+	const required = B2B_PROCESS.stages.findIndex((stage) => stage.key === stageKey);
+	const position = B2B_PROCESS.stages.findIndex((stage) => stage.key === seed.stage);
+
+	return 'institution' in seed && required !== -1 && position > required;
 }
 
 /**
@@ -2870,6 +2895,40 @@ const OPERATOR_PARTY = {
 	siteIds: []
 };
 
+/**
+ * Профильное подразделение вуза в справочнике (`directory.ts`): площадка вида
+ * «Подразделение», с которой работает дело. У вуза, для которого справочник
+ * называет своё подразделение, оно и берётся.
+ */
+const PROFILE_DEPARTMENTS: Readonly<Record<string, string>> = {
+	szpu: 'szpu-dept-is',
+	pupi: 'pupi-dept-ai',
+	uguis: 'uguis-dept-auto',
+	vkgtu: 'vkgtu-dept-comm'
+};
+
+function profileDepartment(institution: string): string {
+	return PROFILE_DEPARTMENTS[institution] ?? `${institution}-dept`;
+}
+
+/**
+ * Площадки вуза в деле. Дело, ушедшее с поиска контактов, работает с
+ * профильным подразделением — пункт «Найдено профильное подразделение»
+ * закрывает именно оно, — и набор выбирает его при заведении, как это
+ * сделал бы менеджер. Дело на поиске контактов подразделения ещё не нашло.
+ */
+function institutionSites(seed: InteractionSeed): string[] {
+	if (!('institution' in seed)) {
+		return [];
+	}
+
+	const chosen = seed.sites ?? [];
+	const department = profileDepartment(seed.institution);
+	const pastSearch = seed.stage !== 'contact_search' || seed.returnedFrom !== undefined;
+
+	return pastSearch && !chosen.includes(department) ? [...chosen, department] : [...chosen];
+}
+
 /** Стороны записи в том виде, в каком их принимает контракт создания. */
 function partiesOf(seed: InteractionSeed) {
 	if ('institution' in seed) {
@@ -2879,7 +2938,7 @@ function partiesOf(seed: InteractionSeed) {
 				partyRole: 'educational_institution',
 				isPrimary: true,
 				contactAffiliationId: seedId('affiliation', `${seed.contact}-primary`),
-				siteIds: (seed.sites ?? []).map((site) => seedId('site', site))
+				siteIds: institutionSites(seed).map((site) => seedId('site', site))
 			},
 			{
 				organizationId: seedId('organization', seed.customer),
@@ -3338,6 +3397,148 @@ async function generateSignedDocument(
 	return document.id;
 }
 
+/** Пункт-факт стадии, который закрывает записанный результат. */
+function needsStageResult(stage: StageView): boolean {
+	return stage.checklist.some(
+		(item) => isFactItem(item) && item.completion.rule === 'stage_result'
+	);
+}
+
+/**
+ * Поток нужного назначения с итогом — то, чем в карточке закрываются пункты
+ * «Сформирована группа преподавателей», «Занятия проведены», «Подобрана
+ * программа ПК» и «Участники зачислены». Номер потока идёт после потоков,
+ * которые набор заводит записи сам (`recordLearningResult`), — у пары «дело +
+ * номер» уникальность.
+ */
+async function recordPurposeStream(
+	seed: InteractionSeed,
+	interactionId: string,
+	purpose: 'teachers' | 'upskilling',
+	instance: string,
+	runStart: Date
+): Promise<void> {
+	if (seed.programs.length === 0) {
+		throw new Error(
+			`Взаимодействию «${seed.key}» нужна программа: поток «${purpose}» закрепляет её`
+		);
+	}
+
+	const own = seed.learning === undefined ? 0 : 1 + (seed.extraStreams ?? []).length;
+	const streamNumber = own + (purpose === 'teachers' ? 1 : 2);
+	const learningGroupId = seedId('learning-group', `${seed.key}:${purpose}`);
+	const [periodStart, periodEnd] = seed.academic ?? seed.agreement;
+	const occurredAt = daysBefore(runStart, seed.lastActivityDaysAgo + 5);
+
+	await getDb()
+		.insert(learningGroups)
+		.values({
+			id: learningGroupId,
+			interactionId,
+			streamNumber,
+			system: 'lms',
+			instance,
+			groupExternalId: `${seed.key}-${purpose}`,
+			requestedAt: daysBefore(runStart, seed.lastActivityDaysAgo + 40),
+			plannedSeats: 12,
+			startsOn: periodStart,
+			endsOn: periodEnd,
+			lastResultAt: occurredAt,
+			programId: seedId('program', seed.programs[0]),
+			purpose
+		})
+		.onConflictDoNothing({ target: learningGroups.id });
+
+	await getDb()
+		.insert(learningGroupResults)
+		.values({
+			learningGroupId,
+			occurredAt,
+			periodStart,
+			periodEnd,
+			finishedOn: periodStart,
+			enrolled: 12,
+			completed: 11,
+			expelled: 1
+		})
+		.onConflictDoNothing({
+			target: [learningGroupResults.learningGroupId, learningGroupResults.occurredAt]
+		});
+}
+
+/**
+ * Данные дела под обязательные пункты-факты стадии — то, что в карточке сделал
+ * бы менеджер: заявил поток нужного назначения, приложил документ об
+ * обучении. Пункт, уже закрытый данными, не трогается. Подразделение и
+ * позиции договора с лицензиями набор выбирает при заведении дела
+ * (`institutionSites`, `contracts.ts`), результат стадии едет с переходом
+ * (`stepForward`), оплата по оферте — ручной отметкой «Оплата получена»:
+ * их отсутствие здесь — ошибка набора, а не повод достроить данные на ходу.
+ */
+async function provideStageFacts(
+	ctx: ActorContext,
+	seed: InteractionSeed,
+	interactionId: string,
+	stage: StageView,
+	instance: string,
+	runStart: Date
+): Promise<void> {
+	const current = (await getInteractionStatus(ctx, interactionId)).current;
+
+	if (current === null) {
+		throw new Error(`Взаимодействие ${interactionId} не стоит ни на одной стадии`);
+	}
+
+	const rules = new Set(
+		stage.checklist
+			.filter((item) => item.required && current.facts[item.key]?.done !== true)
+			.flatMap((item) => (isFactItem(item) ? [item.completion.rule] : []))
+	);
+
+	for (const rule of rules) {
+		switch (rule) {
+			// Подразделение набор выбирает при заведении дела (`institutionSites`).
+			case 'party_department':
+				throw new Error(
+					`У «${seed.key}» не выбрано профильное подразделение: его называет PROFILE_DEPARTMENTS`
+				);
+			// Лицензии — данные договора (`contracts.ts`): позицию по каждому
+			// продукту дела выбирает связь набора, подставлять её здесь значило бы
+			// завести договор, которого в наборе нет.
+			case 'licenses_issued':
+				throw new Error(
+					`У «${seed.key}» не по каждому продукту выбрана позиция договора с датой лицензии: опишите её в INTERACTION_CONTRACTS`
+				);
+			case 'teachers_group_formed':
+			case 'teachers_training_completed':
+				await recordPurposeStream(seed, interactionId, 'teachers', instance, runStart);
+				break;
+			case 'upskilling_group_program':
+			case 'upskilling_enrolled':
+				await recordPurposeStream(seed, interactionId, 'upskilling', instance, runStart);
+				break;
+			case 'training_document':
+				await uploadDocument(ctx, {
+					interactionId,
+					kind: 'certificate',
+					title: 'Удостоверение о повышении квалификации',
+					file: {
+						mime: 'text/plain',
+						bytes: new TextEncoder().encode(
+							'Удостоверение о повышении квалификации.\nВыдано по итогам обучения.\n'
+						)
+					}
+				});
+				break;
+			case 'stage_result':
+			case 'contract_concluded':
+				break;
+			default:
+				throw new Error(`Набор не умеет закрывать пункт по правилу «${rule}»`);
+		}
+	}
+}
+
 /**
  * Доказательство исполнения финальной стадии — перед завершением дела.
  *
@@ -3350,9 +3551,20 @@ async function generateSignedDocument(
 async function closeFinalStage(
 	ctx: ActorContext,
 	interactionId: string,
-	stage: StageView
+	stage: StageView,
+	evidence: StageEvidence
 ): Promise<void> {
 	const { id: stageEntryId } = await readOpenEntry(getDb(), interactionId);
+
+	// Завершение спрашивает и чек-лист финальной стадии: ручные пункты отмечает
+	// ответственный, пункты-факты закрывают данные дела.
+	for (const item of stage.checklist) {
+		if (item.required && !isFactItem(item)) {
+			await setChecklistItem(ctx, { interactionId, stageEntryId, key: item.key, done: true });
+		}
+	}
+
+	await evidence.facts(stage);
 
 	if (!stage.requiresLmsData && stage.requiresConfirmation) {
 		await confirmStage(ctx, {
@@ -3373,6 +3585,16 @@ async function closeFinalStage(
 	}
 }
 
+/**
+ * Чем набор закрывает стадию помимо отметок: факт из системы обучения — для
+ * стадии, которая без него никуда не отпускает, и данные дела — для
+ * пунктов-фактов чек-листа (`provideStageFacts`).
+ */
+type StageEvidence = {
+	lms: () => Promise<void>;
+	facts: (stage: StageView) => Promise<void>;
+};
+
 /** Один шаг вперёд со всем, чего стадия требует перед выходом. */
 async function stepForward(
 	ctx: ActorContext,
@@ -3380,9 +3602,10 @@ async function stepForward(
 	from: StageView,
 	toStageId: string,
 	revision: number,
-	/** Факт обучения — для стадии, которая без него никуда не отпускает. */
-	provideLmsEvidence: () => Promise<void>
+	evidence: StageEvidence
 ): Promise<void> {
+	await evidence.facts(from);
+
 	if (from.requiresDocumentMark !== null) {
 		// Стадию с отметкой по документу закрывает сам документ: движок ставит на
 		// неё подтверждение видом `document_mark`.
@@ -3397,7 +3620,7 @@ async function stepForward(
 		// подтверждение видом `lms_record`. Отметка ответственного поверх него
 		// стёрла бы то, чем стадия подтверждена на самом деле. Стадию с отметкой
 		// по документу так же подтвердила сама отметка.
-		await provideLmsEvidence();
+		await evidence.lms();
 	} else if (from.requiresConfirmation && from.requiresDocumentMark === null) {
 		await confirmStage(ctx, {
 			interactionId,
@@ -3414,11 +3637,17 @@ async function stepForward(
 		// Комментарий к шагу вперёд просит только процесс, который так настроен;
 		// у демонстрационного такого перехода нет.
 		reason: null,
-		resultText: from.requiresResult ? (STAGE_RESULTS[from.key] ?? null) : null,
+		// Результат едет и там, где его ждёт пункт-факт «записан результат»:
+		// итог встречи закрывает «Зафиксированы договорённости».
+		resultText:
+			from.requiresResult || needsStageResult(from) ? (STAGE_RESULTS[from.key] ?? null) : null,
 		// Отметки чек-листа едут вместе с переходом: «закрыть последний пункт и
-		// сразу перейти» — законная операция движка, а не два круга.
+		// сразу перейти» — законная операция движка, а не два круга. Только
+		// ручные: пункт-факт отметкой не закрывается, его закрыли данные.
 		checklistState: Object.fromEntries(
-			from.checklist.filter((item) => item.required).map((item) => [item.key, true])
+			from.checklist
+				.filter((item) => item.required && !isFactItem(item))
+				.map((item) => [item.key, true])
 		)
 	});
 }
@@ -3439,7 +3668,7 @@ async function walkTo(
 	interactionId: string,
 	process: Process,
 	targetKey: string,
-	provideLmsEvidence: () => Promise<void>
+	evidence: StageEvidence
 ): Promise<void> {
 	const target = stageByKey(process.stages, targetKey);
 
@@ -3454,7 +3683,7 @@ async function walkTo(
 			throw new Error(`Со стадии «${stage.key}» нет шага вперёд`);
 		}
 
-		await stepForward(ctx, interactionId, stage, next, process.revision, provideLmsEvidence);
+		await stepForward(ctx, interactionId, stage, next, process.revision, evidence);
 	}
 }
 
@@ -3604,7 +3833,7 @@ async function applyState(
 
 	if (seed.closeChecklist === true) {
 		for (const item of stage.checklist) {
-			if (item.required) {
+			if (item.required && !isFactItem(item)) {
 				await setChecklistItem(ctx, {
 					interactionId,
 					stageEntryId: entry.id,
@@ -3886,8 +4115,12 @@ export async function seedInteractions(): Promise<void> {
 		}
 
 		const provideLmsEvidence = () => recordLearningResult(service, seed, id, lmsInstance, runStart);
+		const evidence: StageEvidence = {
+			lms: provideLmsEvidence,
+			facts: (stage) => provideStageFacts(ctx, seed, id, stage, lmsInstance, runStart)
+		};
 
-		await walkTo(ctx, id, plan, seed.stage, provideLmsEvidence);
+		await walkTo(ctx, id, plan, seed.stage, evidence);
 
 		// Стадия, на которой взаимодействие остановилось, тоже бывает с данными
 		// обучения: её никто не закрывает, но подтверждённой она обязана быть —
@@ -3916,7 +4149,7 @@ export async function seedInteractions(): Promise<void> {
 			const from = stageByKey(stages, seed.stage);
 			const to = stageByKey(stages, seed.returnedFrom);
 
-			await stepForward(ctx, id, from, to.id, plan.revision, provideLmsEvidence);
+			await stepForward(ctx, id, from, to.id, plan.revision, evidence);
 			await returnStage(ctx, {
 				interactionId: id,
 				fromStageId: to.id,
@@ -3931,7 +4164,7 @@ export async function seedInteractions(): Promise<void> {
 		}
 
 		if (seed.completedWith !== undefined) {
-			await closeFinalStage(ctx, id, stageByKey(stages, seed.stage));
+			await closeFinalStage(ctx, id, stageByKey(stages, seed.stage), evidence);
 
 			await completeInteraction(ctx, {
 				interactionId: id,

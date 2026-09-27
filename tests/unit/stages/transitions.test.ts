@@ -66,6 +66,7 @@ function state(overrides: Partial<StageState> = {}): StageState {
 		stageId: STAGE_ID,
 		snapshot: snapshot(),
 		checklistState: {},
+		facts: {},
 		resultText: null,
 		confirmation: null,
 		lmsEvidence: null,

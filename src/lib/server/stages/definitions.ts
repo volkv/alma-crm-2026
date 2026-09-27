@@ -17,6 +17,7 @@ import type {
 	ProcessDefinitionInput,
 	StageTransitionDefinitionInput
 } from '$lib/contracts/interactions';
+import type { ChecklistRuleKey } from '$lib/platform/checklist-rules';
 import type { PermissionKey } from '../rbac/permissions';
 
 /** Ключ пространства, в котором идёт работа с учебными заведениями. */
@@ -38,8 +39,27 @@ export const B2C_WORKFLOW_KEY = 'b2c';
 /** Право, без которого движение по процессу недоступно. */
 const TRANSITION_PERMISSION: PermissionKey = 'stages.transition';
 
-function item(key: string, label: string, required: boolean): ChecklistItem {
-	return { key, label, required };
+/**
+ * Пункт чек-листа. Пояснение обязательно у каждого пункта поставки: «галочка
+ * без объяснения» не говорит, что значит сделать. Пункт-факт (`fact`)
+ * закрывают данные дела по правилу каталога, отметка его не заменяет;
+ * действие (`action`) — кнопка рядом, открывающая форму, где делают работу.
+ */
+function item(
+	key: string,
+	label: string,
+	required: boolean,
+	options: { help: string; fact?: ChecklistRuleKey; action?: string }
+): ChecklistItem {
+	return {
+		key,
+		label,
+		required,
+		help: options.help,
+		completion:
+			options.fact === undefined ? { kind: 'manual' } : { kind: 'fact', rule: options.fact },
+		...(options.action === undefined ? {} : { action: options.action })
+	};
 }
 
 /** Шаг вперёд по цепочке: причина не нужна, процесс идёт своим ходом. */
@@ -100,9 +120,20 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('profile_unit_found', 'Найдено профильное подразделение', true),
-				item('contact_confirmed', 'Подтверждён контакт ответственного лица', true),
-				item('channel_agreed', 'Согласован канал связи', false)
+				item('profile_unit_found', 'Найдено профильное подразделение', true, {
+					help: 'Выберите у стороны площадку вида «Подразделение» — кафедру или институт, с которым идёт работа. Нет такой площадки — заведите её в карточке вуза. Пункт закроется сам.',
+					fact: 'party_department',
+					action: 'party'
+				}),
+				item('contact_confirmed', 'Подтверждён контакт ответственного лица', true, {
+					help: 'Укажите у стороны контактное лицо с его ролью и отметьте, когда он подтвердил, что ведёт работу с нами. Просто заведённого человека для этого мало.',
+					action: 'party'
+				}),
+				item('channel_agreed', 'Согласован канал связи', false, {
+					help: 'Укажите у контактного лица канал связи — почта, телефон, мессенджер или портал. Пункт закроется сам.',
+					fact: 'contact_channel',
+					action: 'party'
+				})
 			]
 		},
 		{
@@ -120,9 +151,17 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('offer_sent', 'Отправлено описание программ', true),
-				item('needs_collected', 'Собраны потребности подразделения', false),
-				item('programs_checked', 'Сверена актуальность программ', true)
+				item('offer_sent', 'Отправлено описание программ', true, {
+					help: 'Отметьте, когда описание программ ушло вузу. Приложите отправленный файл — будет видно, что именно отправили.',
+					action: 'upload'
+				}),
+				item('needs_collected', 'Собраны потребности подразделения', false, {
+					help: 'Запишите потребности подразделения комментарием в ленте или приложите файл, затем отметьте.',
+					action: 'upload'
+				}),
+				item('programs_checked', 'Сверена актуальность программ', true, {
+					help: 'Сверьте программы и их версии в составе дела с тем, что нужно вузу; расхождения запишите комментарием и отметьте.'
+				})
 			]
 		},
 		{
@@ -140,9 +179,19 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('meeting_scheduled', 'Встреча назначена', true),
-				item('participants_confirmed', 'Состав участников подтверждён', false),
-				item('minutes_recorded', 'Зафиксированы договорённости', true)
+				item('meeting_scheduled', 'Встреча назначена', true, {
+					help: 'Назначьте встречу кнопкой: дата и место сохранятся в деле, участникам уйдёт файл для календаря. Отметьте, когда время согласовано с вузом.',
+					action: 'meetings:invite'
+				}),
+				item('participants_confirmed', 'Состав участников подтверждён', false, {
+					help: 'Отметьте, когда участники со стороны вуза подтвердили, что придут. Состав — в приглашении.',
+					action: 'meetings:invite'
+				}),
+				item('minutes_recorded', 'Зафиксированы договорённости', true, {
+					help: 'Запишите итог встречи результатом стадии — пункт закроется сам.',
+					fact: 'stage_result',
+					action: 'result'
+				})
 			]
 		},
 		{
@@ -160,9 +209,18 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('package_sent', 'Пакет документов отправлен', true),
-				item('package_received', 'Получен ответный пакет', false),
-				item('requisites_checked', 'Сверены реквизиты сторон', true)
+				item('package_sent', 'Пакет документов отправлен', true, {
+					help: 'Соберите пакет по шаблонам, отправьте вузу и отметьте.',
+					action: 'package'
+				}),
+				item('package_received', 'Получен ответный пакет', false, {
+					help: 'Загрузите ответные документы вуза в карточку и отметьте.',
+					action: 'upload'
+				}),
+				item('requisites_checked', 'Сверены реквизиты сторон', true, {
+					help: 'Сверьте реквизиты в пакете с карточками организаций сторон и отметьте. Ошибку исправляют в справочнике.',
+					action: 'party'
+				})
 			]
 		},
 		{
@@ -180,8 +238,14 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('remarks_collected', 'Собраны замечания сторон', true),
-				item('revision_agreed', 'Правки согласованы', true)
+				item('remarks_collected', 'Собраны замечания сторон', true, {
+					help: 'Приложите замечания сторон файлом или запишите комментарием и отметьте.',
+					action: 'upload'
+				}),
+				item('revision_agreed', 'Правки согласованы', true, {
+					help: 'Загрузите согласованную редакцию и отметьте, когда стороны подтвердили правки: загрузка сама согласования не доказывает.',
+					action: 'upload'
+				})
 			]
 		},
 		{
@@ -207,9 +271,17 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: 'manager',
 			isFinal: false,
 			checklist: [
-				item('signatories_confirmed', 'Подтверждены подписанты сторон', true),
-				item('signed_scan_received', 'Получен скан подписанного документа', true),
-				item('original_filed', 'Оригинал передан на хранение', false)
+				item('signatories_confirmed', 'Подтверждены подписанты сторон', true, {
+					help: 'Отметьте, когда подписанты сторон и их полномочия подтверждены. Подписанты — у контактов стороны.',
+					action: 'party'
+				}),
+				item('signed_scan_received', 'Получен скан подписанного документа', true, {
+					help: 'Загрузите скан подписанного соглашения и отметьте.',
+					action: 'upload'
+				}),
+				item('original_filed', 'Оригинал передан на хранение', false, {
+					help: 'Отметьте, когда оригинал передан на хранение; где он лежит, запишите комментарием.'
+				})
 			]
 		},
 		{
@@ -232,9 +304,20 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('kit_prepared', 'Комплект материалов подготовлен', true),
-				item('licenses_issued', 'Выданы лицензии на продукты', true),
-				item('handover_act_signed', 'Подписан акт передачи', false)
+				item('kit_prepared', 'Комплект материалов подготовлен', true, {
+					help: 'Перечислите состав комплекта в результате стадии и отметьте.',
+					action: 'result'
+				}),
+				item('licenses_issued', 'Выданы лицензии на продукты', true, {
+					help: 'Выберите в деле позицию договора по каждому продукту и укажите у неё дату оформления лицензии — пункт закроется сам. У дела без продуктов он закрыт: лицензировать нечего.',
+					fact: 'licenses_issued',
+					action: 'contract'
+				}),
+				item('handover_act_signed', 'Подписан акт передачи', false, {
+					help: 'Соберите акт передачи по шаблону, загрузите подписанный скан новой редакцией и отметьте «Утверждён» — пункт закроется сам.',
+					fact: 'handover_act_approved',
+					action: 'mark'
+				})
 			]
 		},
 		{
@@ -252,9 +335,17 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('rollout_plan_agreed', 'Согласован план внедрения', true),
-				item('environment_ready', 'Развёрнута учебная среда', true),
-				item('support_channel_open', 'Открыт канал технической поддержки', false)
+				item('rollout_plan_agreed', 'Согласован план внедрения', true, {
+					help: 'Приложите согласованный план внедрения и отметьте.',
+					action: 'upload'
+				}),
+				item('environment_ready', 'Развёрнута учебная среда', true, {
+					help: 'Запишите адрес учебной среды в результате стадии и отметьте, когда она развёрнута.',
+					action: 'result'
+				}),
+				item('support_channel_open', 'Открыт канал технической поддержки', false, {
+					help: 'Запишите комментарием адрес поддержки и ответственного и отметьте.'
+				})
 			]
 		},
 		{
@@ -272,9 +363,20 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('group_formed', 'Сформирована группа преподавателей', true),
-				item('sessions_held', 'Занятия проведены', true),
-				item('feedback_collected', 'Собрана обратная связь', false)
+				item('group_formed', 'Сформирована группа преподавателей', true, {
+					help: 'Заявите поток с назначением «Обучение преподавателей» и загрузите список слушателей — пункт закроется сам.',
+					fact: 'teachers_group_formed',
+					action: 'send_group'
+				}),
+				item('sessions_held', 'Занятия проведены', true, {
+					help: 'Закроется по итогу из системы обучения или по отметке завершения потока преподавателей.',
+					fact: 'teachers_training_completed',
+					action: 'complete_group'
+				}),
+				item('feedback_collected', 'Собрана обратная связь', false, {
+					help: 'Приложите или запишите комментарием обратную связь и отметьте.',
+					action: 'upload'
+				})
 			]
 		},
 		{
@@ -292,9 +394,18 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('gaps_identified', 'Выявлены расхождения с требованиями', true),
-				item('changes_agreed', 'Изменения согласованы с учебным заведением', true),
-				item('program_version_registered', 'Заведена новая версия программы', false)
+				item('gaps_identified', 'Выявлены расхождения с требованиями', true, {
+					help: 'Запишите расхождения с требованиями в результате стадии и отметьте.',
+					action: 'result'
+				}),
+				item('changes_agreed', 'Изменения согласованы с учебным заведением', true, {
+					help: 'Приложите протокол согласования изменений с вузом и отметьте.',
+					action: 'upload'
+				}),
+				item('program_version_registered', 'Заведена новая версия программы', false, {
+					help: 'Заведите новую версию программы в справочнике «Программы» и закрепите её в составе дела — пункт закроется сам. Версия, выбранная раньше, его не закрывает.',
+					fact: 'program_version_new'
+				})
 			]
 		},
 		{
@@ -318,9 +429,18 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('schedule_published', 'Опубликовано расписание', true),
-				item('attendance_tracked', 'Ведётся учёт посещаемости', true),
-				item('midterm_review', 'Проведён промежуточный разбор', false)
+				item('schedule_published', 'Опубликовано расписание', true, {
+					help: 'Приложите расписание или запишите комментарием ссылку на него и отметьте.',
+					action: 'upload'
+				}),
+				item('attendance_tracked', 'Ведётся учёт посещаемости', true, {
+					help: 'Отметьте, когда учёт посещаемости ведётся; журнал приложите файлом.',
+					action: 'upload'
+				}),
+				item('midterm_review', 'Проведён промежуточный разбор', false, {
+					help: 'Запишите итог промежуточного разбора в результате стадии и отметьте.',
+					action: 'result'
+				})
 			]
 		},
 		{
@@ -338,8 +458,13 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('materials_revised', 'Обновлены учебные материалы', true),
-				item('versions_published', 'Версии выложены в хранилище', true)
+				item('materials_revised', 'Обновлены учебные материалы', true, {
+					help: 'Приложите обновлённые редакции материалов и отметьте.',
+					action: 'upload'
+				}),
+				item('versions_published', 'Версии выложены в хранилище', true, {
+					help: 'Запишите комментарием, в каком хранилище и по какой ссылке лежат версии, и отметьте.'
+				})
 			]
 		},
 		{
@@ -357,9 +482,20 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('course_selected', 'Подобрана программа повышения квалификации', true),
-				item('participants_enrolled', 'Участники зачислены', true),
-				item('certificates_issued', 'Выданы документы об обучении', false)
+				item('course_selected', 'Подобрана программа повышения квалификации', true, {
+					help: 'Заявите поток с назначением «Повышение квалификации» по программе дела — пункт закроется сам.',
+					fact: 'upskilling_group_program',
+					action: 'send_group'
+				}),
+				item('participants_enrolled', 'Участники зачислены', true, {
+					help: 'Закроется, когда система обучения пришлёт зачисление по потоку повышения квалификации. Отправленный список — ещё не зачисление.',
+					fact: 'upskilling_enrolled'
+				}),
+				item('certificates_issued', 'Выданы документы об обучении', false, {
+					help: 'Приложите документы об обучении или реестр выдачи видом «Документ об обучении» — пункт закроется сам.',
+					fact: 'training_document',
+					action: 'upload'
+				})
 			]
 		},
 		{
@@ -379,9 +515,17 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			// дальше, и перехода вперёд с неё не требуется.
 			isFinal: true,
 			checklist: [
-				item('report_collected', 'Собран отчёт по мероприятию', true),
-				item('metrics_checked', 'Сверены плановые и фактические показатели', true),
-				item('next_period_planned', 'Намечен следующий период', false)
+				item('report_collected', 'Собран отчёт по мероприятию', true, {
+					help: 'Приложите отчёт по мероприятию и отметьте.',
+					action: 'upload'
+				}),
+				item('metrics_checked', 'Сверены плановые и фактические показатели', true, {
+					help: 'Сверьте плановые и фактические показатели дела и отметьте; расхождения запишите комментарием.'
+				}),
+				item('next_period_planned', 'Намечен следующий период', false, {
+					help: 'Запишите следующий период в результате стадии или заведите новое взаимодействие из карточки вуза, затем отметьте.',
+					action: 'result'
+				})
 			]
 		}
 	],
@@ -450,8 +594,12 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('request_understood', 'Запрос понят и зафиксирован', true),
-				item('owner_assigned', 'Назначен ответственный', true)
+				item('request_understood', 'Запрос понят и зафиксирован', true, {
+					help: 'Запишите запрос заявителя комментарием в ленте и отметьте.'
+				}),
+				item('owner_assigned', 'Назначен ответственный', true, {
+					help: 'Отметьте, когда ответственный за заявку назначен. Заявка с сайта отмечает пункт сама.'
+				})
 			]
 		},
 		{
@@ -469,8 +617,13 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('program_selected', 'Подобрана программа обучения', true),
-				item('offer_sent', 'Отправлены программа, стоимость и условия', true)
+				item('program_selected', 'Подобрана программа обучения', true, {
+					help: 'Выберите программу в составе дела и отметьте.'
+				}),
+				item('offer_sent', 'Отправлены программа, стоимость и условия', true, {
+					help: 'Отправьте программу, стоимость и условия, приложите отправленное и отметьте.',
+					action: 'upload'
+				})
 			]
 		},
 		{
@@ -490,8 +643,14 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('contract_signed', 'Договор подписан', true),
-				item('payment_received', 'Оплата получена', true)
+				item('contract_signed', 'Договор заключён', true, {
+					help: 'Физическое лицо договор не подписывает: оплата по оферте — акцепт, и пункт закроется отметкой «Оплата получена». Юридическому лицу загрузите подписанный договор видом «Соглашение» и отметьте «Утверждён».',
+					fact: 'contract_concluded',
+					action: 'mark'
+				}),
+				item('payment_received', 'Оплата получена', true, {
+					help: 'Отметьте, когда оплата поступила. Оплата, загруженная с сайта, отмечает пункт сама.'
+				})
 			]
 		},
 		{
@@ -515,8 +674,13 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('enrolled', 'Слушатель зачислен в поток', true),
-				item('classes_started', 'Занятия начаты', true)
+				item('enrolled', 'Слушатель зачислен в поток', true, {
+					help: 'Заявите поток и отметьте, когда слушатель зачислен. Результат из системы обучения отмечает пункт сам.',
+					action: 'send_group'
+				}),
+				item('classes_started', 'Занятия начаты', true, {
+					help: 'Отметьте, когда занятия начались. Результат из системы обучения отмечает пункт сам.'
+				})
 			]
 		},
 		{
@@ -534,9 +698,19 @@ export const B2C_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: true,
 			checklist: [
-				item('assessment_done', 'Итоговая аттестация проведена', true),
-				item('document_issued', 'Выдан документ об обучении', true),
-				item('feedback_collected', 'Собрана обратная связь', false)
+				item('assessment_done', 'Итоговая аттестация проведена', true, {
+					help: 'Запишите итог аттестации результатом стадии и отметьте.',
+					action: 'result'
+				}),
+				item('document_issued', 'Выдан документ об обучении', true, {
+					help: 'Приложите документ об обучении видом «Документ об обучении» — пункт закроется сам.',
+					fact: 'training_document',
+					action: 'upload'
+				}),
+				item('feedback_collected', 'Собрана обратная связь', false, {
+					help: 'Приложите или запишите комментарием обратную связь и отметьте.',
+					action: 'upload'
+				})
 			]
 		}
 	],

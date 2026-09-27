@@ -46,6 +46,7 @@ import {
 } from '../db/schema';
 import { requirePermission } from '../rbac';
 import { readActiveRevisionForWorkspace } from '../stages/process';
+import { checkFacts } from '../stages/facts';
 import { evaluateTransition, type StageState } from '../stages/transitions';
 import { interactionScopeFilter } from './access';
 import { interactionAttributeConditions } from './read';
@@ -146,6 +147,9 @@ async function readBoardRows(ctx: ActorContext, workspaceId: string, query: Inte
 			title: interactions.title,
 			ownerName: users.fullName,
 			stageId: stageEntries.stageId,
+			// Псевдоним обязателен: у дела и записи стадии оба столбца зовутся `id`.
+			entryId: sql<string>`${stageEntries.id}`.as('entry_id'),
+			enteredAt: stageEntries.enteredAt,
 			checklistState: stageEntries.checklistState,
 			resultText: stageEntries.resultText,
 			confirmation: stageEntries.confirmation,
@@ -419,10 +423,22 @@ export async function getInteractionBoard(
 
 	const ids = rows.map((row) => row.id);
 
-	const [organizationNames, offerings, blockerCounts] = await Promise.all([
+	const [organizationNames, offerings, blockerCounts, facts] = await Promise.all([
 		readOrganizationNames(ids),
 		readOfferings(ids),
-		readBlockerCounts(ids)
+		readBlockerCounts(ids),
+		// Пункты-факты всех карточек пачкой: то же правило, что у команды перехода.
+		checkFacts(
+			getDb(),
+			rows.map((row) => ({
+				id: row.entryId,
+				interactionId: row.id,
+				enteredAt: row.enteredAt,
+				resultText: row.resultText,
+				checklistState: row.checklistState,
+				snapshot: row.snapshot
+			}))
+		)
 	]);
 
 	const entries: BoardEntry[] = rows.map((row) => {
@@ -432,6 +448,7 @@ export async function getInteractionBoard(
 			stageId: row.stageId,
 			snapshot: row.snapshot,
 			checklistState: row.checklistState,
+			facts: facts.get(row.entryId) ?? {},
 			resultText: row.resultText,
 			confirmation: row.confirmation,
 			lmsEvidence: row.lmsEvidence,
