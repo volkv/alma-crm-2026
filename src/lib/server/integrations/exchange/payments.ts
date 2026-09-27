@@ -80,9 +80,9 @@ import {
 	findIndividual,
 	findOrCreateIndividual,
 	isUniqueViolation,
-	ownerActor,
-	recordApplicationConsent
+	ownerActor
 } from './applicant';
+import { recordProcessingBasis } from '../../people/consents';
 import { hashMessage } from './intake';
 
 /* ------------------------------------------------------------ разбор файла */
@@ -988,7 +988,7 @@ async function applyInTransaction(
 	if (personId !== null) {
 		// Оплата — это заключённый договор-оферта: основание обработки данных
 		// слушателя, отдельное от согласия из заявки.
-		await recordApplicationConsent(owner, tx, personId, {
+		await recordProcessingBasis(owner, tx, personId, {
 			basis: 'contract',
 			textVersion: 'payment-import',
 			givenAt: formatIsoDay()

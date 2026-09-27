@@ -37,6 +37,7 @@ import { withTransaction, type Tx } from '../db/transaction';
 import { lookupSite, peekSiteReport } from '../enrichment';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { listInteractions } from '../interactions/read';
+import { recordProcessingBasis } from '../people/consents';
 import { can, requirePermission } from '../rbac';
 import { getOrganization, listAffiliations } from './read';
 import { createAffiliation, createPerson } from './write';
@@ -280,7 +281,8 @@ export type OrganizationContactDraft = {
  * вызывающего. Единственный путь, которым карточки заводят контакт одним
  * действием: кандидат с сайта и новый человек из карточки взаимодействия
  * проходят те же `createPerson` и `createAffiliation`, что и формы
- * справочника, — с их правами, шифрованием контактов и журналом.
+ * справочника, — с их правами, шифрованием контактов и журналом, — и
+ * получают основание обработки.
  */
 export async function createOrganizationContact(
 	ctx: ActorContext,
@@ -294,6 +296,16 @@ export async function createOrganizationContact(
 		{ ...draft.role, personId: person.id, organizationId },
 		tx
 	);
+	const day = formatIsoDay();
+
+	// Представитель контрагента: его данные обрабатываются ради договора с
+	// организацией, как и у контакта из импорта каталога (`import.ts`), —
+	// основание «исполнение договора», версия текста — день записи.
+	await recordProcessingBasis(ctx, tx, person.id, {
+		basis: 'contract',
+		textVersion: day,
+		givenAt: day
+	});
 
 	return { person, affiliation };
 }

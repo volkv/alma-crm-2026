@@ -10,6 +10,7 @@
 import { and, asc, desc, eq, isNull, sql } from 'drizzle-orm';
 import { alias } from 'drizzle-orm/pg-core';
 import {
+	type ConsentBasis,
 	type ConsentView,
 	type RecordConsentInput,
 	type WithdrawConsentInput
@@ -18,7 +19,7 @@ import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
 import { consents, people, users } from '../db/schema';
-import { withTransaction } from '../db/transaction';
+import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, NotFoundError } from '../errors';
 import { assertPersonVisible, personVisible } from './access';
 import { requirePermission } from '../rbac';
@@ -238,4 +239,51 @@ export async function withdrawConsent(
 
 		return row.id;
 	}).then(readConsent);
+}
+
+/**
+ * Основание обработки, которое приносит сам путь заведения человека: заявка с
+ * сайта — согласие, оплата — договор-оферту, контакт организации — договор с
+ * ней, физлицо из формы дела — то, что выбрал сотрудник. Пишется в транзакции
+ * вызывающего, без `recordConsent`: тот — путь карточки, он открывает свою
+ * транзакцию и проверяет видимость человека, которого общий пул ещё не видит.
+ * Запись с той же версией текста второй раз не заводится.
+ */
+export async function recordProcessingBasis(
+	ctx: ActorContext,
+	tx: Tx,
+	personId: string,
+	basis: { basis: ConsentBasis; textVersion: string; givenAt: string }
+): Promise<void> {
+	const existing = await tx
+		.select({ id: consents.id })
+		.from(consents)
+		.where(and(eq(consents.personId, personId), eq(consents.textVersion, basis.textVersion)))
+		.limit(1);
+
+	if (existing.length > 0) {
+		return;
+	}
+
+	const [row] = await tx
+		.insert(consents)
+		.values({
+			personId,
+			basis: basis.basis,
+			textVersion: basis.textVersion,
+			givenAt: basis.givenAt,
+			recordedBy: ctx.user?.id ?? null
+		})
+		.returning({ id: consents.id });
+
+	await recordAuditEvent(
+		ctx,
+		{
+			type: 'people.consent_recorded',
+			outcome: 'success',
+			subject: { type: 'consent', id: row.id },
+			details: { personId }
+		},
+		tx
+	);
 }

@@ -10,7 +10,6 @@
  * зовут.
  */
 import { and, eq, ne, sql } from 'drizzle-orm';
-import type { ConsentBasis } from '$lib/contracts/directory';
 import { formatIsoDay } from '$lib/format';
 import type { ActorContext } from '../../actor';
 import { recordAuditEvent } from '../../audit';
@@ -18,7 +17,6 @@ import { loadSessionUser } from '../../auth/session';
 import { getConfig } from '../../config';
 import {
 	affiliations,
-	consents,
 	interactions,
 	organizationResponsibles,
 	organizations,
@@ -260,7 +258,7 @@ export async function findIndividual(
  * ({@link ensureOwnAffiliation}): контактное лицо здесь — он сам, и второй
  * записи `people` о том же человеке не появляется.
  */
-async function createIndividual(
+export async function createIndividual(
 	ctx: ActorContext,
 	tx: Tx,
 	person: ApplicantPerson
@@ -451,49 +449,4 @@ export async function findExisting(
 		workspaceId: row.workspaceId,
 		workspaceName: row.workspaceName
 	};
-}
-
-/**
- * Основание обработки данных физлица: запись, а не галочка, — у неё есть вид,
- * версия текста и дата. Заявка приносит согласие (`consent`), оплата —
- * заключённый договор-оферту (`contract`). Запись с той же версией текста
- * второй раз не заводится.
- */
-export async function recordApplicationConsent(
-	ctx: ActorContext,
-	tx: Tx,
-	personId: string,
-	consent: { basis: ConsentBasis; textVersion: string; givenAt: string }
-): Promise<void> {
-	const existing = await tx
-		.select({ id: consents.id })
-		.from(consents)
-		.where(and(eq(consents.personId, personId), eq(consents.textVersion, consent.textVersion)))
-		.limit(1);
-
-	if (existing.length > 0) {
-		return;
-	}
-
-	const [row] = await tx
-		.insert(consents)
-		.values({
-			personId,
-			basis: consent.basis,
-			textVersion: consent.textVersion,
-			givenAt: consent.givenAt,
-			recordedBy: ctx.user?.id ?? null
-		})
-		.returning({ id: consents.id });
-
-	await recordAuditEvent(
-		ctx,
-		{
-			type: 'people.consent_recorded',
-			outcome: 'success',
-			subject: { type: 'consent', id: row.id },
-			details: { personId }
-		},
-		tx
-	);
 }

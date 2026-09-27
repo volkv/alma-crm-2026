@@ -1,6 +1,6 @@
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
-import { id, optionalText, requiredText } from '$lib/contracts/common';
+import { id } from '$lib/contracts/common';
 import {
 	createOrganizationSchema,
 	createSiteSchema,
@@ -14,6 +14,7 @@ import {
 	registryPickQuerySchema,
 	registryPickSchema
 } from '$lib/contracts/enrichment';
+import { individualCounterpartySchema } from '$lib/contracts/interactions';
 import { formatIsoDay } from '$lib/format';
 import { actorFromEvent, type ActorContext } from '$lib/server/actor';
 import { listOrganizationContracts } from '$lib/server/directory/contracts';
@@ -166,21 +167,6 @@ async function lookupOrganizationsOfKinds(
 }
 
 /**
- * Физическое лицо, заведённое из поля формы: ФИО и способ связи. Почта
- * обязательна — по ней, как и у заявки с сайта, находится уже заведённый
- * человек, и второй записи о нём не появляется.
- */
-const individualSchema = z.object({
-	lastName: requiredText(100, 'Укажите фамилию'),
-	firstName: requiredText(100, 'Укажите имя'),
-	middleName: optionalText(100),
-	email: z.email({ error: 'Электронная почта указана неверно' }),
-	phone: optionalText(50).refine((value) => value === null || /^[\d\s+()-]{5,}$/.test(value), {
-		error: 'Телефон может содержать только цифры, пробелы и знаки + ( ) -'
-	})
-});
-
-/**
  * Что можно завести из поля формы: строку реестра, организацию вручную (тем же
  * описанием, что у формы справочника), физическое лицо — или площадку
  * организации стороны, её подразделение, не уходя из карточки дела.
@@ -188,7 +174,7 @@ const individualSchema = z.object({
 const createBodySchema = z.union([
 	registryPickSchema,
 	z.object({ create: z.literal('organization'), organization: createOrganizationSchema }),
-	z.object({ create: z.literal('individual'), person: individualSchema }),
+	z.object({ create: z.literal('individual'), person: individualCounterpartySchema }),
 	z.object({ create: z.literal('site'), site: createSiteSchema })
 ]);
 

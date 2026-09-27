@@ -6,6 +6,7 @@
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import {
+		CONSENT_BASIS_LABELS,
 		EDUCATION_LEVEL_LABELS,
 		EDUCATION_LEVEL_OPTIONS,
 		ORGANIZATION_KIND_LABELS
@@ -17,6 +18,10 @@
 		type OrganizationKind
 	} from '$lib/contracts/directory';
 	import { lookupQueryKind } from '$lib/contracts/enrichment';
+	import {
+		INDIVIDUAL_COUNTERPARTY_BASES,
+		type IndividualCounterpartyBasis
+	} from '$lib/contracts/interactions';
 
 	/**
 	 * Контрагент, которого нет в справочнике, — прямо из поля формы.
@@ -24,8 +29,10 @@
 	 * Организацию заводит сервис справочника с теми же проверками, что форма
 	 * «Организации → Новая»; здесь — только поля, без которых карточку не
 	 * отличить от соседней: наименования, ИНН, регион, у вуза — уровень.
-	 * Остальное дополняют в карточке организации. Физическое лицо — ФИО и
-	 * способ связи: человек и его роль заводятся вместе с ним.
+	 * Остальное дополняют в карточке организации. Физическое лицо — ФИО,
+	 * способ связи и основание обработки его данных: человек, его роль и
+	 * основание заводятся вместе с ним. Основание не подставляется заранее —
+	 * его выбирает сотрудник, который знает, согласие это или договор.
 	 *
 	 * Это не `<form>`: поле выбора стоит внутри формы дела, а вложенная форма
 	 * отправила бы внешнюю. Отправка — запросом к адресу подсказок.
@@ -63,7 +70,14 @@
 	function initialPerson(text: string) {
 		const [lastName = '', firstName = '', middleName = ''] = text.trim().split(/\s+/);
 
-		return { lastName, firstName, middleName, email: '', phone: '' };
+		return {
+			lastName,
+			firstName,
+			middleName,
+			email: '',
+			phone: '',
+			basis: '' as IndividualCounterpartyBasis | ''
+		};
 	}
 
 	// Поля заполняются из набранного один раз, при открытии: дальше они — ввод
@@ -76,6 +90,9 @@
 
 	const individual = $derived(kind === 'individual');
 	const levelOptions = [{ value: '', label: 'Не указан' }, ...EDUCATION_LEVEL_OPTIONS];
+
+	const isBasis = (value: string): value is IndividualCounterpartyBasis =>
+		(INDIVIDUAL_COUNTERPARTY_BASES as readonly string[]).includes(value);
 
 	const isLevel = (value: string): value is EducationLevel =>
 		(EDUCATION_LEVELS as readonly string[]).includes(value);
@@ -91,7 +108,9 @@
 					firstName: person.firstName,
 					middleName: blank(person.middleName),
 					email: person.email.trim(),
-					phone: blank(person.phone)
+					phone: blank(person.phone),
+					// Не выбрано — уходит пустым, и отказ с причиной скажет сервер.
+					basis: person.basis
 				}
 			};
 		}
@@ -186,6 +205,24 @@
 				<Label for="{idPrefix}-phone">Телефон</Label>
 				<Input id="{idPrefix}-phone" type="tel" bind:value={person.phone} />
 			</div>
+		</div>
+		<div class="flex flex-col gap-1.5">
+			<Label for="{idPrefix}-basis">Основание обработки персональных данных</Label>
+			<Select.Root
+				type="single"
+				bind:value={
+					() => person.basis, (next: string) => (person.basis = isBasis(next) ? next : '')
+				}
+			>
+				<Select.Trigger id="{idPrefix}-basis" class="w-full">
+					{person.basis === '' ? 'Выберите основание' : CONSENT_BASIS_LABELS[person.basis]}
+				</Select.Trigger>
+				<Select.Content>
+					{#each INDIVIDUAL_COUNTERPARTY_BASES as value (value)}
+						<Select.Item {value} label={CONSENT_BASIS_LABELS[value]} />
+					{/each}
+				</Select.Content>
+			</Select.Root>
 		</div>
 	{:else}
 		<div class="grid gap-3 sm:grid-cols-2">

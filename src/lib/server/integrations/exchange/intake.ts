@@ -86,9 +86,9 @@ import {
 	findOrCreateIndividual,
 	isUniqueViolation,
 	ownerActor,
-	recordApplicationConsent,
 	type ApplicantPerson
 } from './applicant';
+import { recordProcessingBasis } from '../../people/consents';
 import { enqueueApplicationStatus } from './outbox';
 import { currentApplicationStatus } from './payloads';
 
@@ -915,7 +915,7 @@ async function updateExisting(
 	}
 
 	if (personId !== null && data.consent !== null && data.consent.given) {
-		await recordApplicationConsent(ctx, tx, personId, applicationConsent(data.consent));
+		await recordProcessingBasis(ctx, tx, personId, applicationConsent(data.consent));
 	}
 
 	const [workspace] = await tx
@@ -1037,12 +1037,7 @@ async function createFromApplication(
 	}
 
 	if (counterparty.personId !== null && data.consent !== null && data.consent.given) {
-		await recordApplicationConsent(
-			ctx,
-			tx,
-			counterparty.personId,
-			applicationConsent(data.consent)
-		);
+		await recordProcessingBasis(ctx, tx, counterparty.personId, applicationConsent(data.consent));
 	}
 
 	// Дело пришло само, и ответственный узнаёт о нём колокольчиком и письмом,

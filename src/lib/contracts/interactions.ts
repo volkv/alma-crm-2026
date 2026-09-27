@@ -27,7 +27,7 @@ import {
 } from './documents';
 import type { ApplicationStatus, LearningPurpose } from './exchange';
 import { MY_DAY_INTERACTION_KINDS } from './my-day';
-import type { PersonView } from './directory';
+import type { ConsentBasis, PersonView } from './directory';
 import { CHECKLIST_ACTION_KEYS } from '$lib/platform/checklist';
 import { CHECKLIST_RULE_KEYS, type ChecklistRuleKey } from '$lib/platform/checklist-rules';
 
@@ -2057,3 +2057,37 @@ export type CompositionCatalog = {
  */
 export type CompositionOperator =
 	{ state: 'configured'; id: string; name: string } | { state: 'unavailable'; reason: string };
+
+/**
+ * На каком основании обрабатываются данные физического лица, заведённого из
+ * формы дела. Выбирает сотрудник: частный клиент либо дал согласие (заявка,
+ * звонок, письмо), либо заключает договор-оферту — тот же выбор, что у заявки с
+ * сайта и загрузки оплат. «Требование закона» к слушателю не относится.
+ */
+export const INDIVIDUAL_COUNTERPARTY_BASES = [
+	'consent',
+	'contract'
+] as const satisfies readonly ConsentBasis[];
+
+export type IndividualCounterpartyBasis = (typeof INDIVIDUAL_COUNTERPARTY_BASES)[number];
+
+/**
+ * Физическое лицо, заведённое из поля формы дела: ФИО, способ связи и
+ * основание обработки. Почта обязательна — по ней, как и у заявки с сайта,
+ * находится уже заведённый человек; основание обязательно — без него данные
+ * человека лежали бы в системе ни на чём.
+ */
+export const individualCounterpartySchema = z.object({
+	lastName: requiredText(100, 'Укажите фамилию'),
+	firstName: requiredText(100, 'Укажите имя'),
+	middleName: optionalText(100),
+	email: z.email({ error: 'Электронная почта указана неверно' }),
+	phone: optionalText(50).refine((value) => value === null || /^[\d\s+()-]{5,}$/.test(value), {
+		error: 'Телефон может содержать только цифры, пробелы и знаки + ( ) -'
+	}),
+	basis: z.enum(INDIVIDUAL_COUNTERPARTY_BASES, {
+		error: 'Выберите основание обработки персональных данных'
+	})
+});
+
+export type IndividualCounterpartyInput = z.output<typeof individualCounterpartySchema>;
