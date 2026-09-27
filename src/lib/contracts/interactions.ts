@@ -434,6 +434,21 @@ export const updateInteractionSchema = createInteractionSchema.extend({
 	reason: optionalText(1000)
 });
 
+/**
+ * Смена контактного лица стороны из карточки. Контакт — одна из действующих
+ * ролей организации этой стороны; `null` — контакт снят. Остальные поля
+ * стороны команда не трогает, поэтому форме их везти незачем.
+ */
+export const changeInteractionContactSchema = z.object({
+	interactionId: id('Некорректный идентификатор взаимодействия'),
+	partyId: id('Некорректный идентификатор стороны'),
+	contactAffiliationId: optionalId('Некорректный идентификатор контактного лица'),
+	editVersion: editVersionField,
+	reason: optionalText(1000)
+});
+
+export type ChangeInteractionContactDraft = z.input<typeof changeInteractionContactSchema>;
+
 /** По какому столбцу и в какую сторону упорядочен список взаимодействий. */
 export const INTERACTION_SORTS = [
 	'lastActivityAt',

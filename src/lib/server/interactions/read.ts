@@ -1037,7 +1037,8 @@ const REFERENCE_FIELDS = {
 	programs: 'program',
 	products: 'product',
 	contract: 'contract',
-	contractItems: 'contract_item'
+	contractItems: 'contract_item',
+	contact: 'affiliation'
 } as const;
 
 type ReferenceKind = (typeof REFERENCE_FIELDS)[keyof typeof REFERENCE_FIELDS];
@@ -1062,9 +1063,10 @@ function referencedIds(field: string, value: unknown): string[] | null {
 		return null;
 	}
 
-	// Одиночная ссылка: ответственный и договор лежат в значении строкой, а не
-	// списком, — и пустой договор это «договора нет», а не «список пуст».
-	if (field === 'ownerUserId' || field === 'contract') {
+	// Одиночная ссылка: ответственный, договор и контактное лицо лежат в
+	// значении строкой, а не списком, — и пустой договор это «договора нет», а
+	// не «список пуст».
+	if (field === 'ownerUserId' || field === 'contract' || field === 'contact') {
 		return typeof value === 'string' ? [value] : [''];
 	}
 
@@ -1154,6 +1156,19 @@ async function readReferenceNames(
 				.from(contractItems)
 				.innerJoin(products, eq(products.id, contractItems.productId))
 				.where(inArray(contractItems.id, ids))
+		),
+		// Контактное лицо называется человеком, а не его ролью: имя берётся из
+		// карточки человека при чтении, и обезличенный человек не всплывает в
+		// истории прежним именем.
+		read('affiliation', (ids) =>
+			db
+				.select({
+					id: affiliations.id,
+					name: sql<string>`${people.lastName} || ' ' || ${people.firstName}`
+				})
+				.from(affiliations)
+				.innerJoin(people, eq(people.id, affiliations.personId))
+				.where(inArray(affiliations.id, ids))
 		)
 	]);
 

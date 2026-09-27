@@ -1,8 +1,11 @@
 <script lang="ts">
 	import PencilIcon from '@lucide/svelte/icons/pencil';
+	import UserPenIcon from '@lucide/svelte/icons/user-pen';
+	import { page } from '$app/state';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import type { OrganizationView } from '$lib/contracts/directory';
-	import type { InteractionView } from '$lib/contracts/interactions';
+	import type { InteractionSummaryView, InteractionView } from '$lib/contracts/interactions';
+	import ContactDialog from './contact-dialog.svelte';
 	import ContactLine from './contact-line.svelte';
 	import ContextSection from './context-section.svelte';
 	import OfferingList from './offering-list.svelte';
@@ -35,13 +38,35 @@
 	const customer = $derived(
 		interaction.parties.find((party) => party.partyRole === 'customer') ?? null
 	);
+
+	/**
+	 * Сменить контакт можно тому, у кого есть действие «изменить»: сводка
+	 * карточки уже лежит в данных страницы, второй раз её не спрашивают.
+	 * Кнопка — подсказка, а не защита: право проверяет сервер.
+	 */
+	const canEdit = $derived(
+		(page.data.summary as InteractionSummaryView | undefined)?.canDo.actions.includes('edit') ??
+			false
+	);
+	let contactOpen = $state(false);
 </script>
 
 <div class="flex flex-col gap-5" data-slot="institution-panel">
 	{#if institution !== null}
 		<ContextSection title="Контактное лицо">
+			{#snippet action()}
+				{#if canEdit}
+					<Button size="xs" variant="outline" onclick={() => (contactOpen = true)}>
+						<UserPenIcon aria-hidden="true" />
+						{institution.contact === null ? 'Указать' : 'Изменить'}
+					</Button>
+				{/if}
+			{/snippet}
 			<ContactLine party={institution} />
 		</ContextSection>
+		{#if canEdit}
+			<ContactDialog bind:open={contactOpen} {interaction} party={institution} />
+		{/if}
 	{/if}
 
 	<ContextSection title="Учебное заведение">

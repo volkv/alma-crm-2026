@@ -1,11 +1,13 @@
 import { json } from '@sveltejs/kit';
 import { z } from 'zod';
 import { id } from '$lib/contracts/common';
+import { isAffiliationCurrent } from '$lib/contracts/directory';
 import {
 	REGISTRY_PICK_KINDS,
 	registryPickQuerySchema,
 	registryPickSchema
 } from '$lib/contracts/enrichment';
+import { formatIsoDay } from '$lib/format';
 import { actorFromEvent } from '$lib/server/actor';
 import { listOrganizationContracts } from '$lib/server/directory/contracts';
 import { listAffiliations, listSites, lookupOrganizations } from '$lib/server/directory/read';
@@ -82,13 +84,18 @@ export const GET: RequestHandler = async (event) => {
 			return json({ items: sites.map((site) => ({ id: site.id, label: site.name })) });
 		}
 
+		// Контактным лицом выбирают только действующую роль: прежняя — это
+		// человек, который в организации уже не работает с нами.
 		const affiliations = await listAffiliations(ctx, query.data.organizationId);
+		const today = formatIsoDay();
 
 		return json({
-			items: affiliations.map((affiliation) => ({
-				id: affiliation.id,
-				label: `${affiliation.person.lastName} ${affiliation.person.firstName} — ${affiliation.position}`
-			}))
+			items: affiliations
+				.filter((affiliation) => isAffiliationCurrent(affiliation, today))
+				.map((affiliation) => ({
+					id: affiliation.id,
+					label: `${affiliation.person.lastName} ${affiliation.person.firstName} — ${affiliation.position}`
+				}))
 		});
 	} catch (error) {
 		return failure(error);
