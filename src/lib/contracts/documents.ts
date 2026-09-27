@@ -287,7 +287,15 @@ export const generatePackageSchema = z.object({
 	 */
 	city: optionalText(100),
 	operatorSigner: optionalText(200),
-	counterpartySigner: optionalText(200)
+	counterpartySigner: optionalText(200),
+	/**
+	 * Шаблоны, чью утверждённую (подписанную) редакцию человек согласился
+	 * заменить. Без этого согласия сборка такой документ не трогает: новая
+	 * редакция встала бы поверх подписанной и была бы уже неподписанной.
+	 */
+	replaceApproved: z
+		.array(z.enum(DOCUMENT_TEMPLATE_KEYS, { error: 'Такого шаблона документа нет' }))
+		.default([])
 });
 
 export type GeneratePackageInput = z.output<typeof generatePackageSchema>;

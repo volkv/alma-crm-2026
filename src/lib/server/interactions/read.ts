@@ -23,6 +23,7 @@ import {
 	type SQL
 } from 'drizzle-orm';
 import type { PageResult } from '$lib/contracts/common';
+import { GENERATED_DOCUMENT_KIND } from '$lib/contracts/documents';
 import { PARTY_ROLE_LABELS } from '$lib/contracts/interactions';
 import type {
 	CommentView,
@@ -954,6 +955,8 @@ async function readDocuments(interactionId: string): Promise<InteractionDocument
 			id: documents.id,
 			kind: documents.kind,
 			templateKey: documents.templateKey,
+			supersedesId: documents.supersedesId,
+			signing: documents.signing,
 			title: documents.title,
 			mime: documents.mime,
 			sizeBytes: documents.sizeBytes,
@@ -969,7 +972,12 @@ async function readDocuments(interactionId: string): Promise<InteractionDocument
 		.where(eq(documents.interactionId, interactionId))
 		.orderBy(desc(documents.createdAt));
 
-	return rows;
+	// Загрузка новой редакции наследует вид «собран по шаблону» и шаблон, но
+	// город и подписантов сборки у неё нет: подписи сборщика нет — это скан.
+	return rows.map(({ supersedesId, signing, ...row }) => ({
+		...row,
+		scan: row.kind === GENERATED_DOCUMENT_KIND && supersedesId !== null && signing === null
+	}));
 }
 
 /** Карточка без сторон: то, что одинаково для всех, кто её видит. */

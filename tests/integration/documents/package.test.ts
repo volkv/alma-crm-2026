@@ -116,6 +116,7 @@ describe('пакет документов', () => {
 
 		const outcomes = await generateDocumentPackage(ctx, interaction.id, {
 			templates: ['agreement', 'sublicense', 'handover_act'],
+			replaceApproved: [],
 			city: 'Москва',
 			operatorSigner: 'директор Школы Иванов И. И.',
 			counterpartySigner: 'ректор Петров П. П.'
@@ -195,21 +196,41 @@ describe('пакет документов', () => {
 			.where(eq(contracts.id, contract.id));
 		expect(activated.status).toBe('active');
 
-		// Пересборка акта — новая редакция цепочки, а не третий акт рядом:
-		// подписанный скан уходит в историю, а засчитанная стадией отметка остаётся.
+		const actRevisions = async () =>
+			database.db
+				.select({ id: documents.id, supersedesId: documents.supersedesId })
+				.from(documents)
+				.where(
+					and(
+						eq(documents.interactionId, interaction.id),
+						eq(documents.templateKey, 'handover_act')
+					)
+				);
+
+		// Пакет по умолчанию подписанный акт не трогает: новая редакция поверх
+		// утверждённой была бы уже неподписанной.
+		const [kept] = await generateDocumentPackage(ctx, interaction.id, {
+			templates: ['handover_act'],
+			replaceApproved: [],
+			city: 'Москва',
+			operatorSigner: 'директор Школы Иванов И. И.',
+			counterpartySigner: 'ректор Петров П. П.'
+		});
+		expect(kept.status).toBe('refused');
+		expect(await actRevisions()).toHaveLength(3);
+
+		// Пересборка с явным согласием — новая редакция цепочки, а не третий акт
+		// рядом: подписанный скан уходит в историю, засчитанная стадией отметка
+		// остаётся.
 		const [rebuilt] = await generateDocumentPackage(ctx, interaction.id, {
 			templates: ['handover_act'],
+			replaceApproved: ['handover_act'],
 			city: 'Москва',
 			operatorSigner: 'директор Школы Иванов И. И.',
 			counterpartySigner: 'ректор Петров П. П.'
 		});
 		if (rebuilt.status !== 'generated') throw new Error('Акт не пересобран');
-		const acts = await database.db
-			.select({ id: documents.id, supersedesId: documents.supersedesId })
-			.from(documents)
-			.where(
-				and(eq(documents.interactionId, interaction.id), eq(documents.templateKey, 'handover_act'))
-			);
+		const acts = await actRevisions();
 		expect(acts).toHaveLength(5);
 		expect(acts.find((row) => row.id === rebuilt.documentIds[0])?.supersedesId).toBe(
 			act.documentIds[0]
@@ -256,6 +277,7 @@ describe('пакет документов', () => {
 
 		const [outcome] = await generateDocumentPackage(ctx, interaction.id, {
 			templates: ['agreement'],
+			replaceApproved: [],
 			city: null,
 			operatorSigner: null,
 			counterpartySigner: null

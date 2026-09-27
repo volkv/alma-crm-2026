@@ -185,7 +185,9 @@
 					{/if}
 				</dl>
 			{/if}
-			<StageStrip stages={model.stages} />
+			<!-- Шкала — стадии действующего процесса: удалённая из него пройденная
+				стадия дала бы лишний отрезок рядом с «Стадия N из M». -->
+			<StageStrip stages={model.stages.filter((stage) => !stage.removed)} />
 			<details class="group">
 				<summary
 					class="flex w-fit list-none items-center gap-1 rounded-sm text-xs text-link focus-ring hover:text-link-hover hover:underline [&::-webkit-details-marker]:hidden"

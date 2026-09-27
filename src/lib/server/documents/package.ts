@@ -10,7 +10,8 @@
  * себе: акт без выбранных позиций не мешает собраться договору, а в отказе
  * названо поле, которое надо заполнить, и где.
  */
-import { and, desc, eq, inArray, isNotNull } from 'drizzle-orm';
+import { and, desc, eq, inArray, isNotNull, isNull } from 'drizzle-orm';
+import { alias } from 'drizzle-orm/pg-core';
 import type { OrganizationKind } from '$lib/contracts/directory';
 import {
 	DOCUMENT_TEMPLATE_LABELS,
@@ -302,7 +303,8 @@ function customerData(source: PackageSource, issues: Issues): TemplateData {
 /**
  * Условие о стоимости: названа в карточке — сумма, нет — прежняя оговорка о
  * счёте Исполнителя. Отказа нет: договор без суммы законен, сумму тогда
- * называет счёт.
+ * называет счёт. Сумма кончается сокращением «руб.», поэтому в тексте условия
+ * за `{price}` не ставят точку — вышло бы «руб..».
  */
 function priceClause(source: PackageSource, named: string, unnamed: string): string {
 	return source.priceKopecks === null
@@ -403,7 +405,7 @@ const BUILDERS: Record<DocumentTemplateKey, Builder> = {
 				...studyPeriod(source, issues),
 				priceClause: priceClause(
 					source,
-					'Стоимость обучения — {price}. Обучение начинается после поступления оплаты.',
+					'Стоимость обучения — {price}, обучение начинается после поступления оплаты.',
 					'Стоимость обучения указывается в счёте Исполнителя. Обучение начинается после поступления оплаты.'
 				)
 			}
@@ -480,11 +482,53 @@ function foreignReason(
 	return `«${DOCUMENT_TEMPLATE_LABELS[key]}» не подходит процессу или контрагенту`;
 }
 
+const successor = alias(documents, 'successor');
+
+/**
+ * Шаблоны, у которых действующая редакция в деле утверждена — подписана
+ * сторонами. Действующая — та, которую ещё никто не заменил; скан, загруженный
+ * новой редакцией собранного, наследует его шаблон и тоже считается.
+ */
+async function approvedTemplates(
+	interactionId: string,
+	templates: readonly DocumentTemplateKey[]
+): Promise<Set<DocumentTemplateKey>> {
+	if (templates.length === 0) {
+		return new Set();
+	}
+
+	const rows = await getDb()
+		.selectDistinct({ templateKey: documents.templateKey })
+		.from(documents)
+		.leftJoin(successor, eq(successor.supersedesId, documents.id))
+		.where(
+			and(
+				eq(documents.interactionId, interactionId),
+				inArray(documents.templateKey, [...templates]),
+				isNotNull(documents.approvedAt),
+				isNull(successor.id)
+			)
+		);
+
+	return new Set(
+		rows.map((row) => row.templateKey).filter((key): key is DocumentTemplateKey => key !== null)
+	);
+}
+
+/**
+ * Отказ пересобрать подписанный документ без явного согласия: новая редакция
+ * встала бы поверх подписанной, и действующей стала бы неподписанная.
+ */
+const SIGNED_ISSUE =
+	'Документ подписан: его действующая редакция утверждена, пересборка создаст неподписанную редакцию поверх неё. Чтобы всё же пересобрать, включите его в пакет явно';
+
 /**
  * Собирает пакет. Выбранные шаблоны обязаны быть в пакете дела — объявлены
  * процессом, принадлежат ядру или действующему модулю и подходят виду
  * контрагента; иначе отказ целиком, до сборки.
  * Отказ отдельного документа из-за данных — его исход, а не ошибка пакета.
+ * Документ, чья действующая редакция утверждена, пересобирается только с
+ * явным согласием (`replaceApproved`), иначе — отказ этого документа.
  * Сбой службы PDF прерывает сборку: собранное до него остаётся в деле.
  */
 export async function generateDocumentPackage(
@@ -552,8 +596,15 @@ export async function generateDocumentPackage(
 	};
 
 	const outcomes: PackageOutcome[] = [];
+	const chosen = offered.filter((item) => input.templates.includes(item));
+	const signed = await approvedTemplates(interactionId, chosen);
 
-	for (const key of offered.filter((item) => input.templates.includes(item))) {
+	for (const key of chosen) {
+		if (signed.has(key) && !input.replaceApproved.includes(key)) {
+			outcomes.push({ templateKey: key, status: 'refused', issues: [SIGNED_ISSUE], fixes: [] });
+			continue;
+		}
+
 		const prepared = prepare(key, source);
 
 		if (!prepared.ok) {

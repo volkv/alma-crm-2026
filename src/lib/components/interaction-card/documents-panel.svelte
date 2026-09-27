@@ -154,9 +154,15 @@
 							{document.title}
 						</a>
 						<p class="text-xs text-muted-foreground">
-							{documentKindLabel(document.kind)} · {format(document.mime)} · {formatBytes(
-								document.sizeBytes
-							)} · {formatDate(document.createdAt)}
+							{#if document.scan}
+								Скан, загружен {formatDate(document.createdAt)} · {format(document.mime)} · {formatBytes(
+									document.sizeBytes
+								)}
+							{:else}
+								{documentKindLabel(document.kind)} · {format(document.mime)} · {formatBytes(
+									document.sizeBytes
+								)} · {formatDate(document.createdAt)}
+							{/if}
 						</p>
 						<div class="mt-1 flex flex-wrap items-center gap-1.5">
 							{#if !current}

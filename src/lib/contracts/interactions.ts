@@ -1581,6 +1581,11 @@ export type InteractionDocumentView = {
 	 * `null` — загружен руками. Стадия, ждущая акт, засчитывает только его.
 	 */
 	templateKey: DocumentTemplateKey | null;
+	/**
+	 * Скан, загруженный новой редакцией собранного документа: шаблон у него
+	 * унаследован, но сам файл сборщик не собирал.
+	 */
+	scan: boolean;
 	title: string;
 	mime: string;
 	sizeBytes: number;

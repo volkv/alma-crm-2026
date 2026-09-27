@@ -53,6 +53,7 @@ import type {
 	StageTransitionView
 } from '$lib/contracts/interactions';
 import { isFactItem } from '$lib/contracts/interactions';
+import { checklistRule } from '$lib/platform/checklist-rules';
 import type { AuditEventType } from '$lib/contracts/audit';
 import {
 	DOCUMENT_STATUS_FACT_LABELS,
@@ -1351,9 +1352,14 @@ export async function applyLmsEvidence(
 	}
 
 	if (!entry.stageSnapshot.requiresLmsData) {
+		const closed = await awaitedStreamItems(tx, input, entry.stageSnapshot);
+
 		return {
 			confirmed: false,
-			note: `Стадия не подтверждена: взаимодействие на стадии «${entry.stageSnapshot.name}», данные обучения ей не требуются`
+			note:
+				closed.length === 0
+					? `Стадия не подтверждена: взаимодействие на стадии «${entry.stageSnapshot.name}», данные обучения ей не требуются`
+					: `Итог принят: закрыт пункт ${closed.map((label) => `«${label}»`).join(', ')} стадии «${entry.stageSnapshot.name}». Стадию подтверждает ответственный — итог обучения её не заменяет`
 		};
 	}
 
@@ -1412,6 +1418,36 @@ export async function applyLmsEvidence(
 		confirmed: true,
 		note: `Стадия «${entry.stageSnapshot.name}» подтверждена: обучение завершено`
 	};
+}
+
+/**
+ * Пункты-факты стадии, которые закрывает итог потока этой группы (правило с
+ * `closedByResult`, например `teachers_training_completed`). Стадия без требования
+ * данных обучения итогом не подтверждается, но её пункт итог закрывает — и
+ * ответ системе обучения называет его, а не «данные не требуются».
+ */
+async function awaitedStreamItems(
+	tx: Tx,
+	input: { interactionId: string; evidence: LmsEvidence },
+	snapshot: StageSnapshot
+): Promise<string[]> {
+	const labels: string[] = [];
+
+	for (const item of snapshot.checklist) {
+		const rule = isFactItem(item) ? checklistRule(item.completion.rule) : undefined;
+		const purpose = rule?.closedByResult === true ? rule.purpose : undefined;
+
+		if (
+			purpose !== undefined &&
+			(await groupCountsForStage(tx, input.interactionId, input.evidence.learningGroupId, [
+				purpose
+			]))
+		) {
+			labels.push(item.label);
+		}
+	}
+
+	return labels;
 }
 
 /**

@@ -132,6 +132,32 @@
 	/** Выбранная поиском организация уже стоит стороной: сказать, а не молча пропустить. */
 	let pickError = $state<string | null>(null);
 	let programQuery = $state('');
+	/** Переименовать дело вслед за сменой программы — только по согласию человека. */
+	let retitle = $state(false);
+
+	/**
+	 * Новое название дела, когда одну программу заменили другой, а старая
+	 * стояла в названии: название само не меняется (его могли написать
+	 * руками), но предложить замену стоит. `null` — предлагать нечего.
+	 */
+	const renamedTitle = $derived.by(() => {
+		const removed = base.programs.filter(
+			(program) => !draft.programs.some((item) => item.programId === program.programId)
+		);
+		const added = draft.programs.filter(
+			(program) => !base.programs.some((item) => item.programId === program.programId)
+		);
+
+		if (
+			removed.length !== 1 ||
+			added.length !== 1 ||
+			!interaction.title.includes(removed[0].name)
+		) {
+			return null;
+		}
+
+		return interaction.title.replace(removed[0].name, added[0].name);
+	});
 	let productQuery = $state('');
 
 	// Диалог открывается с тем составом, что в записи сейчас, и на том
@@ -338,7 +364,8 @@
 				programVersionId: program.programVersionId
 			})),
 			productIds: draft.productIds,
-			...contract
+			...contract,
+			...(retitle && renamedTitle !== null ? { title: renamedTitle } : {})
 		})
 	);
 
@@ -932,6 +959,22 @@
 								{/each}
 							</ul>
 						{/if}
+					{/if}
+					{#if renamedTitle !== null}
+						<Label class="flex items-start gap-2 font-normal" data-slot="composition-retitle">
+							<Checkbox
+								checked={retitle}
+								onCheckedChange={(checked) => (retitle = checked === true)}
+								class="mt-0.5"
+							/>
+							<span class="text-sm break-words">
+								Обновить название дела: «{renamedTitle}»
+								<span class="block text-xs text-muted-foreground">
+									Сейчас в названии прежняя программа. Документы, собранные дальше, возьмут новое
+									название.
+								</span>
+							</span>
+						</Label>
 					{/if}
 				</fieldset>
 

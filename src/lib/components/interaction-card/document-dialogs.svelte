@@ -284,7 +284,10 @@
 
 				packageReturn = null;
 				packageErrors = {};
-				packageChosen = back?.chosen ?? [...current.templates];
+				// Подписанный документ по умолчанию не пересобирается: его новая
+				// редакция встала бы поверх подписанной уже неподписанной.
+				packageChosen =
+					back?.chosen ?? (current.chosen ?? current.templates).filter((key) => !isSigned(key));
 
 				if (back !== null) {
 					packageCity = back.city;
@@ -417,6 +420,11 @@
 		return documents.filter(
 			(document) => document.templateKey === template && !superseded.has(document.id)
 		);
+	}
+
+	/** Действующая редакция документа утверждена — он подписан сторонами. */
+	function isSigned(template: DocumentTemplateKey): boolean {
+		return builtOf(template).some((document) => document.approvedAt !== null);
 	}
 
 	function togglePackage(template: DocumentTemplateKey, on: boolean) {
@@ -810,7 +818,7 @@
 <FormDialog
 	bind:open={packageOpen.get, packageOpen.set}
 	title="Пакет документов"
-	description="Каждый документ соберётся в DOCX и PDF. Реквизиты, позиции договора, программы, сроки и стоимость берутся из карточек; здесь — только то, чего в справочнике нет. Документ, уже собранный в деле, получит новую редакцию: прежняя останется в истории."
+	description="Каждый документ соберётся в DOCX и PDF. Реквизиты, позиции договора, программы, сроки и стоимость берутся из карточек; здесь — только то, чего в справочнике нет. Документ, уже собранный в деле, получит новую редакцию: прежняя останется в истории. Подписанные документы не отмечены — их пересобирают, только отметив явно."
 	width="lg"
 >
 	<form
@@ -826,6 +834,10 @@
 			{#each packageCommand?.templates ?? [] as template (template)}
 				{@const outcome = outcomeOf(template)}
 				{@const built = builtOf(template)}
+				{@const signed = isSigned(template)}
+				{#if signed && packageChosen.includes(template)}
+					<input type="hidden" name="replaceApproved" value={template} />
+				{/if}
 				<Label class="flex items-start gap-2 font-normal">
 					<Checkbox
 						name="templates"
@@ -841,13 +853,15 @@
 								Уже в деле: {built
 									.map(
 										(document) =>
-											`${documentFormat(document.mime)?.toUpperCase() ?? document.mime}, ред. ${revisionNo(document.id)} от ${formatDate(document.createdAt)}${document.approvedAt === null ? '' : `, ${DOCUMENT_STATUS_FACT_LABELS.approved.toLowerCase()}`}`
+											`${documentFormat(document.mime)?.toUpperCase() ?? document.mime}${document.scan ? ' (скан)' : ''}, ред. ${revisionNo(document.id)} от ${formatDate(document.createdAt)}${document.approvedAt === null ? '' : `, ${DOCUMENT_STATUS_FACT_LABELS.approved.toLowerCase()}`}`
 									)
-									.join('; ')}. Новая сборка встанет новой редакцией{built.some(
-									(document) => document.approvedAt !== null
-								)
-									? ' — подписанный экземпляр останется в истории, стадия его не потеряет'
-									: ''}.
+									.join('; ')}.{signed ? '' : ' Новая сборка встанет новой редакцией.'}
+							</span>
+						{/if}
+						{#if signed && outcome === null}
+							<span class="text-xs text-warning-soft-foreground" data-slot="package-signed">
+								Подписан — пересборка создаст неподписанную редакцию поверх подписанной. Отметьте,
+								только если нужна именно новая редакция.
 							</span>
 						{/if}
 						{#if outcome?.status === 'generated'}

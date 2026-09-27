@@ -239,6 +239,11 @@ export type CardCommand =
 			kind: 'package';
 			/** Шаблоны пакета дела: объявлены процессом и подходят контрагенту. */
 			templates: DocumentTemplateKey[];
+			/**
+			 * Что отмечено при открытии; нет — все шаблоны пакета. Подписанные
+			 * документы диалог не отмечает в любом случае.
+			 */
+			chosen?: DocumentTemplateKey[];
 			counterpartyKind: OrganizationKind;
 	  }
 	| { kind: 'send-group' }
@@ -319,6 +324,11 @@ export type StageDot = {
 	position: number;
 	name: string;
 	state: StageProgressItem['state'];
+	/**
+	 * Стадию прошли, а потом убрали из процесса: в пути дела она есть, но
+	 * номера в действующем процессе у неё нет, и шкала её не считает.
+	 */
+	removed: boolean;
 	note: string | null;
 	checklist: StageDotItem[];
 	/** Результат последнего прохода стадии; `null` — не записан или стадию не проходили. */
@@ -646,7 +656,38 @@ function describeLmsEvidence(entry: StageEntryView): string | null {
 }
 
 /** Что нужно модели, чтобы разложить условия стадии и кнопки у пунктов. */
-export type RequirementContext = Pick<CardSource, 'exchange' | 'modules' | 'card' | 'changes'>;
+export type RequirementContext = Pick<
+	CardSource,
+	'exchange' | 'modules' | 'card' | 'changes' | 'interaction'
+>;
+
+/**
+ * Пакет, открытый на одном шаблоне, — пока документа по нему в деле нет:
+ * стадия, ждущая отметку на акте, сначала просит акт собрать, а отмечать
+ * нечего. `null` — документ уже собран или процесс шаблон не предлагает.
+ */
+function buildFirst(
+	template: DocumentTemplateKey,
+	context: RequirementContext
+): Extract<CardCommand, { kind: 'package' }> | null {
+	if (context.interaction.documents.some((document) => document.templateKey === template)) {
+		return null;
+	}
+
+	const templates = packageTemplates(
+		offeredTemplates(context.card.templates, context.modules),
+		context.card.counterpartyKind
+	);
+
+	return templates.includes(template)
+		? {
+				kind: 'package',
+				templates,
+				chosen: [template],
+				counterpartyKind: context.card.counterpartyKind
+			}
+		: null;
+}
 
 /**
  * Кнопка у пункта чек-листа по действию, которое выбрал процесс
@@ -687,7 +728,13 @@ function checklistCommand(
 					? { kind: 'upload', documentKind: 'certificate' }
 					: { kind: 'upload' }
 			);
-		case 'mark':
+		case 'mark': {
+			const build = rule === 'handover_act_approved' ? buildFirst('handover_act', context) : null;
+
+			if (build !== null) {
+				return { cta: 'Собрать акт передачи', command: build };
+			}
+
 			return make(
 				rule === 'handover_act_approved'
 					? { kind: 'mark', documentId: null, fact: 'approved', template: 'handover_act' }
@@ -695,6 +742,7 @@ function checklistCommand(
 						? { kind: 'mark', documentId: null, fact: 'approved', template: null }
 						: { kind: 'mark', documentId: null, fact: null }
 			);
+		}
 		case 'plan':
 			return make({ kind: 'plan' });
 		case 'contract':
@@ -811,6 +859,33 @@ function checklistRequirement(
 }
 
 /**
+ * Чем подтверждается стадия — ровно то, что засчитает движок. Итог системы
+ * обучения подтверждает стадию сам, только если стадия ждёт данных обучения;
+ * отметка на документе — если стадия ждёт отметки. Остальное подтверждает
+ * ответственный: файлом, своей отметкой или ссылкой на запись в системе
+ * обучения, которую он вводит сам.
+ */
+function confirmationHint(snapshot: StageEntryView['snapshot']): string {
+	const manual = 'файлом, отметкой ответственного или ссылкой на запись в системе обучения';
+
+	if (snapshot.requiresLmsData) {
+		return `Итог из системы обучения подтвердит стадию сам; без него — ${manual}.`;
+	}
+
+	if (snapshot.requiresDocumentMark !== null) {
+		return `Отметка на документе подтвердит стадию сама; без неё — ${manual}.`;
+	}
+
+	const byResult = snapshot.checklist.some(
+		(item) => isFactItem(item) && checklistRule(item.completion.rule)?.closedByResult === true
+	);
+
+	return byResult
+		? `Итог потока из системы обучения закрывает пункт чек-листа, но не стадию: её подтверждает ответственный — ${manual}.`
+		: `Подтверждает ответственный — ${manual}.`;
+}
+
+/**
  * Условия шага вперёд с текущей стадии — из её снимка и того, что уже сделано.
  *
  * Подтверждение попадает в список и там, где стадия его не требует, если оно
@@ -895,7 +970,7 @@ export function buildRequirements(
 			checklistKey: null,
 			cta: 'Подтвердить',
 			command: { kind: 'confirm' },
-			hint: 'Файлом, отметкой ответственного или записью системы обучения.',
+			hint: confirmationHint(snapshot),
 			doneNote: describeConfirmation(entry),
 			note: null
 		});
@@ -906,6 +981,7 @@ export function buildRequirements(
 	if (mark !== null) {
 		const evidence = entry.documentMarkEvidence?.mark === mark ? entry.documentMarkEvidence : null;
 		const template = snapshot.requiresDocumentTemplate;
+		const build = template === null ? null : buildFirst(template, context);
 
 		requirements.push({
 			key: 'document-mark',
@@ -917,12 +993,15 @@ export function buildRequirements(
 			required: true,
 			close: 'action',
 			checklistKey: null,
-			cta: 'Отметить документ',
-			command: { kind: 'mark', documentId: null, fact: mark, template },
+			cta:
+				build === null || template === null
+					? 'Отметить документ'
+					: `Собрать «${DOCUMENT_TEMPLATE_LABELS[template]}»`,
+			command: build ?? { kind: 'mark', documentId: null, fact: mark, template },
 			hint:
 				template === null
 					? 'Стадию закрывает отметка по самому документу, а не отметка ответственного.'
-					: `Засчитывается только документ, собранный по шаблону: «Собрать пакет документов» → подписанный скан загрузить новой редакцией собранного → отметить «${DOCUMENT_STATUS_FACT_LABELS[mark]}».`,
+					: `Засчитывается только документ, собранный по шаблону: собрать его → подписанный скан загрузить новой редакцией собранного → отметить «${DOCUMENT_STATUS_FACT_LABELS[mark]}».`,
 			doneNote:
 				evidence === null ? null : `«${evidence.title}» от ${formatDate(evidence.markedAt)}`,
 			note: null
@@ -1373,7 +1452,7 @@ export function buildEvents(source: CardSource): CardEvent[] {
 			at: document.createdAt,
 			kind: 'document',
 			title: `Добавлен документ «${document.title}»`,
-			detail: documentKindLabel(document.kind),
+			detail: document.scan ? 'Скан новой редакцией' : documentKindLabel(document.kind),
 			author: null,
 			duration: null,
 			tone: 'neutral'
@@ -1532,6 +1611,7 @@ function buildStageDots(source: CardSource): StageDot[] {
 			position: item.position,
 			name: item.name,
 			state: item.state,
+			removed: item.removed,
 			note: item.note,
 			checklist: item.checklist.map((point) => ({
 				label: point.label,

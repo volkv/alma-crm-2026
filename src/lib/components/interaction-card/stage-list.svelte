@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { pluralize } from '$lib/format';
 	import { getCardCommands } from './commands.svelte';
 	import type { StageDot } from './model';
 	import { isCurrentState, STAGE_LOOKS } from './stage-look';
@@ -24,6 +25,9 @@
 	const firstOpen = $derived(stages.findIndex((stage) => stage.state !== 'done'));
 	const passed = $derived(firstOpen > 1 ? stages.slice(0, firstOpen) : ([] as StageDot[]));
 	const rest = $derived(stages.slice(passed.length));
+	/** Пройденные стадии действующего процесса: удалённые из него не в счёт. */
+	const passedCount = $derived(passed.filter((stage) => !stage.removed).length);
+	const passedRemoved = $derived(passed.length - passedCount);
 </script>
 
 {#snippet row(stage: StageDot)}
@@ -39,7 +43,9 @@
 			<Icon class="mt-0.5 size-4 shrink-0 {look.iconClass}" aria-hidden="true" />
 			<span class="flex min-w-0 flex-col text-sm {here ? 'font-medium text-foreground' : ''}">
 				<span class="break-words">
-					<span class="tabular-nums">{stage.position}.</span>
+					<!-- У удалённой из процесса стадии номера нет: прежний номер совпал бы
+						с номером стадии, стоящей теперь на её месте. -->
+					{#if !stage.removed}<span class="tabular-nums">{stage.position}.</span>{/if}
 					{stage.name}
 					<span class="sr-only">— {look.label}</span>
 				</span>
@@ -107,8 +113,11 @@
 						aria-hidden="true"
 					/>
 					<!-- Числом, а не диапазоном номеров: в пути бывают стадии,
-						убранные из процесса, и «с 1-й по N-ю» тогда врёт. -->
-					Пройдено стадий: {passed.length}
+						убранные из процесса, и «с 1-й по N-ю» тогда врёт. Их и не
+						считают: «Пройдено» — о действующем процессе. -->
+					Пройдено стадий: {passedCount}{passedRemoved > 0
+						? `, ещё ${pluralize(passedRemoved, ['удалена', 'удалены', 'удалены'])} из процесса`
+						: ''}
 				</summary>
 				<ol class="flex flex-col">
 					{#each passed as stage (stage.id)}

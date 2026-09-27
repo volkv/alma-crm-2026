@@ -21,6 +21,12 @@ export type ChecklistRuleSpec = {
 	 * пункт не закрывает. Нет — правило о потоках не спрашивает.
 	 */
 	readonly purpose?: LearningPurpose;
+	/**
+	 * Пункт закрывает итог обучения по потоку этого назначения: ответ системе
+	 * обучения на такой итог называет пункт, даже если стадию итог не
+	 * подтверждает.
+	 */
+	readonly closedByResult?: true;
 };
 
 /**
@@ -66,7 +72,8 @@ export const CHECKLIST_RULES = [
 		key: 'teachers_training_completed',
 		label: 'Обучение потока «Преподаватели» завершено',
 		module: 'learning',
-		purpose: 'teachers'
+		purpose: 'teachers',
+		closedByResult: true
 	},
 	{
 		key: 'upskilling_group_program',

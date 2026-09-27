@@ -531,6 +531,7 @@ const core = {
 		const data = await event.request.formData();
 		const parsed = parse(generatePackageSchema, {
 			templates: data.getAll('templates'),
+			replaceApproved: data.getAll('replaceApproved'),
 			city: data.get('city') ?? '',
 			operatorSigner: data.get('operatorSigner') ?? '',
 			counterpartySigner: text(data, 'counterpartySigner')
@@ -572,8 +573,9 @@ const core = {
 	/**
 	 * Состав дела: стороны, программы с версиями, продукты и то, что от них
 	 * зависит в договоре. Диалог присылает итоговые списки одним полем JSON —
-	 * они вложенные; название, сроки и ответственный едут как есть, а версия
-	 * записи — та, с которой диалог открыли.
+	 * они вложенные; сроки и ответственный едут как есть, название — как есть
+	 * или новое, если человек согласился переименовать дело вслед за
+	 * программой; версия записи — та, с которой диалог открыли.
 	 */
 	compose: async (event) => {
 		const ctx = actorFromEvent(event);
@@ -604,7 +606,9 @@ const core = {
 		const parsed = parse(updateInteractionSchema, {
 			id: current.id,
 			editVersion: Number(data.get('editVersion')),
-			title: current.title,
+			// Название меняется, только если диалог предложил замену программы в
+			// нём и человек согласился; иначе едет как есть.
+			title: composition.title ?? current.title,
 			agreementPeriodStart: current.agreementPeriodStart,
 			agreementPeriodEnd: current.agreementPeriodEnd,
 			academicPeriodStart: current.academicPeriodStart,

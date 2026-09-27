@@ -176,7 +176,7 @@
 	const CONFIRM_KINDS = [
 		{ value: 'mark', label: 'Отметка ответственного' },
 		{ value: 'file', label: 'Документ взаимодействия' },
-		{ value: 'lms_record', label: 'Запись в системе обучения' }
+		{ value: 'lms_record', label: 'Ссылка на запись в системе обучения' }
 	] as const;
 
 	type ConfirmKind = (typeof CONFIRM_KINDS)[number]['value'];
