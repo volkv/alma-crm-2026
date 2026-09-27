@@ -339,6 +339,10 @@ services:
       # кнопки нет: установка с настоящей CMS не нажимает её заявки за неё.
       # Стенд профиля `stand` ставит здесь `http://mock-cms:8081/__send-application`.
       DEMO_CMS_TRIGGER_URL: ${DEMO_CMS_TRIGGER_URL:-}
+      # Токен управления имитаторами — тот же, что у `mock-cms`/`mock-lms`: им
+      # демо-переключатель «имитатор недоступен / доступен» на экране «Внешние
+      # системы» ставит сценарий отказа. Работает только при DEMO_MODE=true.
+      MOCK_CONTROL_TOKEN: ${MOCK_CONTROL_TOKEN:?set MOCK_CONTROL_TOKEN in .env}
       EXCHANGE_CMS_INSTANCE: ${EXCHANGE_CMS_INSTANCE:-itschool-site}
       EXCHANGE_LMS_INSTANCE: ${EXCHANGE_LMS_INSTANCE:-moodle-itschool}
       EXCHANGE_SECRET: ${EXCHANGE_SECRET:-}

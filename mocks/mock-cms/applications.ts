@@ -88,3 +88,62 @@ export function applicationTemplate(
 export function templateExternalId(form: ApplicationForm): string {
 	return TEMPLATES[form].externalId;
 }
+
+/**
+ * Заявитель, которого назвали в форме страницы стенда: ФИО физлица (`b2c`) или
+ * название организации (`b2b`).
+ *
+ * Строка короткая и из букв, цифр и обычной пунктуации: триггер открыт наружу,
+ * и из поля формы в CRM уходит только имя, а не произвольный текст.
+ */
+const APPLICANT_PATTERN = /^[\p{L}\p{N}][\p{L}\p{N} .,«»"'()-]{1,119}$/u;
+
+export function applicantIssue(form: ApplicationForm, applicant: string): string | null {
+	if (!APPLICANT_PATTERN.test(applicant)) {
+		return 'applicant: от 2 до 120 знаков — буквы, цифры, пробелы и обычная пунктуация';
+	}
+
+	if (form === 'b2c' && applicant.split(/\s+/).filter((part) => part !== '').length < 2) {
+		return 'applicant: у физлица укажите фамилию и имя через пробел';
+	}
+
+	return null;
+}
+
+/**
+ * Тело заявки набора с заявителем из формы.
+ *
+ * CRM узнаёт физлицо по почте, затем по телефону, а организацию — по ИНН, затем
+ * по ОГРН (`docs/exchange-contract.md`, раздел 3). Оставь здесь почту, телефон и
+ * реквизиты набора — и заявка «своего» заявителя приклеилась бы к заявителю
+ * набора. Поэтому почта строится из ключа заявки, телефона и реквизитов нет:
+ * новый заявитель остаётся новым.
+ */
+export function applicationWithApplicant(
+	form: ApplicationForm,
+	externalId: string,
+	revision: number,
+	applicant: string
+): Record<string, unknown> {
+	const data = applicationTemplate(form, externalId, revision);
+	const contact = data.contact as Record<string, unknown>;
+	const email = `applicant-${externalId.replace(/[^0-9a-z-]/gi, '')}@example.org`;
+
+	if (form === 'b2c') {
+		const [lastName, firstName, ...rest] = applicant.split(/\s+/).filter((part) => part !== '');
+		const middleName = rest.length === 0 ? null : rest.join(' ');
+
+		data.applicant = { kind: 'individual', lastName, firstName, middleName };
+		data.contact = { ...contact, lastName, firstName, middleName, email, phone: null };
+	} else {
+		data.applicant = {
+			...(data.applicant as Record<string, unknown>),
+			name: applicant,
+			inn: null,
+			ogrn: null
+		};
+		data.contact = { ...contact, email, phone: null };
+	}
+
+	return data;
+}

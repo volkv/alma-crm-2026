@@ -507,6 +507,64 @@ describe('приём заявки с сайта', () => {
 		expect(written.map((row) => row.body).join(' ')).toContain('октябрь');
 	});
 
+	it('новая ревизия без изменений не дублирует комментарий и снимок статуса', async () => {
+		const key = apiKey;
+
+		const first = await intake(apiEvent({ body: envelope(B2B_DATA), key }));
+		const { data } = (await first.json()) as { data: { interactionId: string } };
+
+		/** Снимки статуса по заявке, которые CRM отправила или отправит на сайт. */
+		const statuses = () =>
+			database.db
+				.select({ id: exchangeMessages.id, state: exchangeMessages.state })
+				.from(exchangeMessages)
+				.where(
+					and(
+						eq(exchangeMessages.direction, 'outbound'),
+						eq(exchangeMessages.eventType, 'application.status')
+					)
+				);
+
+		// Первый снимок уже ушёл на сайт: ждущий снимок принял бы новое
+		// изменение и сам, и дубль здесь проверялся бы не тем правилом.
+		await runExchangeCycle(testActor());
+		expect(await statuses()).toMatchObject([{ state: 'sent' }]);
+
+		const repeat = await intake(apiEvent({ body: envelope({ ...B2B_DATA, revision: 2 }), key }));
+		const body = (await repeat.json()) as {
+			result: string;
+			data: { applicationStatus: string };
+		};
+
+		expect(body.result).toBe('updated');
+		// Ответ называет то же состояние, что уходит на сайт снимком.
+		expect(body.data.applicationStatus).toBe('received');
+
+		const intakeComments = await database.db
+			.select({ body: comments.body })
+			.from(comments)
+			.where(
+				and(
+					eq(comments.interactionId, data.interactionId),
+					eq(comments.source, 'application_intake')
+				)
+			);
+
+		expect(intakeComments).toHaveLength(1);
+		expect(await statuses()).toHaveLength(1);
+
+		// Изменение, видное заявителю, снимок ставит — а следующее, пока тот ещё
+		// ждёт отправки, второго не ставит: ждущий унесёт состояние после обоих.
+		await intake(
+			apiEvent({ body: envelope({ ...B2B_DATA, revision: 3, comment: 'Ждём звонка.' }), key })
+		);
+		await intake(
+			apiEvent({ body: envelope({ ...B2B_DATA, revision: 4, comment: 'Звонка не было.' }), key })
+		);
+
+		expect((await statuses()).map((row) => row.state).sort()).toEqual(['pending', 'sent']);
+	});
+
 	it('не применяет сообщение с ревизией не больше применённой', async () => {
 		const key = apiKey;
 

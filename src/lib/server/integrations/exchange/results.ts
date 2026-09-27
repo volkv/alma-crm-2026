@@ -17,7 +17,7 @@
  * `ignored_stale`. Сравнение идёт под блокировкой строки взаимодействия — иначе
  * два параллельных результата оба сочли бы себя новее.
  */
-import { and, desc, eq, sql } from 'drizzle-orm';
+import { and, count, desc, eq, isNull, sql } from 'drizzle-orm';
 import {
 	EXCHANGE_SCHEMA_VERSION,
 	isSupportedSchemaVersion,
@@ -32,14 +32,16 @@ import {
 	exchangeMessages,
 	interactions,
 	learningGroupResults,
-	learningGroups
+	learningGroups,
+	stageEntries
 } from '../../db/schema';
-import { withTransaction } from '../../db/transaction';
+import { withTransaction, type Tx } from '../../db/transaction';
 import { publishAfterCommit } from '../../live/publish';
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../../errors';
 import { requirePermission } from '../../rbac';
-import { applyLmsEvidence } from '../../stages/commands';
+import { applyLmsEvidence, markChecklistItemIn } from '../../stages/commands';
 import { getExchangeSettings } from '../settings';
+import { ownerActor } from './applicant';
 import { hashMessage } from './intake';
 import { groupRequestExternalId } from './payloads';
 
@@ -58,6 +60,119 @@ function isUniqueViolation(error: unknown): boolean {
 	}
 
 	return false;
+}
+
+/**
+ * Пункты чек-листа, которые следуют из результата потока сами: «Слушатель
+ * зачислен в поток» — зачисленные есть, «Занятия начаты» — зачисленные есть и
+ * период обучения к моменту отправки начался (или обучение уже закончилось).
+ * Ключи — пункты стадии «Обучение» процесса B2C (`stages/definitions.ts`);
+ * у стадии без таких пунктов отмечать нечего.
+ */
+const LEARNING_CHECKLIST = [
+	{ key: 'enrolled', label: 'Слушатель зачислен в поток' },
+	{ key: 'classes_started', label: 'Занятия начаты' }
+] as const;
+
+/** День отправки по часам отправителя: дата из `occurredAt`, как он её написал. */
+function senderDay(occurredAt: string): string {
+	return occurredAt.slice(0, 10);
+}
+
+/**
+ * Какие пункты чек-листа подтверждает результат. Чужой системе здесь верят ровно
+ * настолько, насколько она сказала: зачисленных ноль — не отмечается ничего.
+ */
+function learningFacts(message: LearningGroupResultMessage): Set<string> {
+	const facts = new Set<string>();
+	const { counters, period, finishedOn } = message.data;
+
+	if (counters.enrolled === 0) {
+		return facts;
+	}
+
+	facts.add('enrolled');
+
+	const day = senderDay(message.occurredAt);
+	const started =
+		finishedOn !== null ||
+		counters.completed > 0 ||
+		(period?.start !== null && period?.start !== undefined && period.start <= day);
+
+	if (started) {
+		facts.add('classes_started');
+	}
+
+	return facts;
+}
+
+/**
+ * Отметить пункты «зачислен» и «занятия начаты» открытой стадии, если они
+ * следуют из результата, — в транзакции приёма, вместе с фактом.
+ *
+ * Только когда у дела один поток: тогда результат этой группы и есть состояние
+ * всего обучения по делу. Потоков несколько — «зачислены» по одному ещё не
+ * значит «зачислены» по делу, и пункт остаётся решению сотрудника. Отмечается
+ * от имени ответственного за дело — как оплата с сайта (`payments.ts`): у
+ * машинного субъекта обмена права на чек-лист нет, а пункт ставит тот же
+ * журнал `interactions.checklist_changed`, что и отметка из карточки.
+ *
+ * Возвращает подписи отмеченных пунктов — для ответа отправителю.
+ */
+async function markLearningChecklist(
+	ctx: ActorContext,
+	tx: Tx,
+	interactionId: string,
+	message: LearningGroupResultMessage
+): Promise<string[]> {
+	const facts = learningFacts(message);
+
+	if (facts.size === 0) {
+		return [];
+	}
+
+	const [{ groups }] = await tx
+		.select({ groups: count() })
+		.from(learningGroups)
+		.where(eq(learningGroups.interactionId, interactionId));
+
+	if (groups !== 1) {
+		return [];
+	}
+
+	const [entry] = await tx
+		.select({ snapshot: stageEntries.stageSnapshot, checklistState: stageEntries.checklistState })
+		.from(stageEntries)
+		.where(and(eq(stageEntries.interactionId, interactionId), isNull(stageEntries.leftAt)))
+		.limit(1);
+
+	if (entry === undefined) {
+		return [];
+	}
+
+	const due = LEARNING_CHECKLIST.filter(
+		(item) =>
+			facts.has(item.key) &&
+			entry.checklistState[item.key] !== true &&
+			entry.snapshot.checklist.some((declared) => declared.key === item.key)
+	);
+
+	if (due.length === 0) {
+		return [];
+	}
+
+	const [interaction] = await tx
+		.select({ ownerUserId: interactions.ownerUserId })
+		.from(interactions)
+		.where(eq(interactions.id, interactionId))
+		.limit(1);
+	const owner = await ownerActor(ctx, interaction.ownerUserId);
+
+	for (const item of due) {
+		await markChecklistItemIn(owner, tx, interactionId, item.key);
+	}
+
+	return due.map((item) => item.label);
 }
 
 /** Сохранённый ответ на повтор того же события; `null` — сообщения в журнале нет. */
@@ -117,6 +232,16 @@ export async function receiveLearningGroupResult(
 		throw new ForbiddenError(
 			`Экземпляр «${message.source.instance}» не совпадает с подключением обмена`
 		);
+	}
+
+	// Обучение не может закончиться позже, чем о нём сообщили: дата окончания
+	// в будущем — это плановая дата конца потока, а не факт, и принять её
+	// значило бы засчитать стадии «обучение завершено» до того, как оно
+	// завершилось. Сравнение по дню отправителя: оба значения — его.
+	if (message.data.finishedOn !== null && message.data.finishedOn > senderDay(message.occurredAt)) {
+		throw new ValidationError('Дата окончания обучения ещё не наступила', [
+			`data.finishedOn: ${message.data.finishedOn} позже дня отправки (${senderDay(message.occurredAt)}) — пока обучение идёт, пришлите результат без даты окончания`
+		]);
 	}
 
 	const requestHash = hashMessage(message);
@@ -262,6 +387,7 @@ export async function receiveLearningGroupResult(
 				interactionId: group.interactionId,
 				evidence
 			});
+			const marked = await markLearningChecklist(ctx, tx, group.interactionId, message);
 			publishAfterCommit(tx, group.interactionId, { type: 'interaction.changed' });
 
 			const response: LearningGroupResultResponse = {
@@ -272,7 +398,10 @@ export async function receiveLearningGroupResult(
 					learningGroupId: group.id,
 					interactionId: group.interactionId,
 					stageConfirmed: outcome.confirmed,
-					note: outcome.note
+					note:
+						marked.length === 0
+							? outcome.note
+							: `${outcome.note}. Отмечено в чек-листе: ${marked.map((label) => `«${label}»`).join(', ')}`
 				}
 			};
 

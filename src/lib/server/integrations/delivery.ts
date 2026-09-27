@@ -79,11 +79,28 @@ export type DeliveryOutcome = {
 	error: string | null;
 };
 
-/** Сообщение об ошибке отправки — по-русски и без стека. */
-function describeFailure(error: unknown): string {
+/**
+ * Частые сетевые коды — словами: что они значат для того, кто настраивает
+ * приёмник. Код остаётся рядом — по нему ищут в логах приёмника и сети.
+ */
+const NETWORK_REASONS: Record<string, string> = {
+	ECONNREFUSED: 'приёмник не принимает соединения — он не запущен или адрес указан неверно',
+	ECONNRESET: 'приёмник оборвал соединение, не ответив',
+	ENOTFOUND: 'имя узла приёмника не находится — проверьте адрес',
+	EAI_AGAIN: 'имя узла приёмника сейчас не разрешается — сбой DNS, попытка повторится',
+	ETIMEDOUT: 'соединение с приёмником не установилось вовремя',
+	EHOSTUNREACH: 'узел приёмника недоступен из сети CRM'
+};
+
+/**
+ * Сообщение об ошибке отправки — по-русски и без стека. Общее для подписок и
+ * обмена (`exchange/delivery.ts`): отказ сети значит одно и то же, куда бы ни
+ * шло сообщение.
+ */
+export function describeFailure(error: unknown, timeoutMs: number): string {
 	if (error instanceof Error) {
 		if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-			return `Получатель не ответил за ${WEBHOOK_TIMEOUT_MS / 1000} с`;
+			return `Получатель не ответил за ${timeoutMs / 1000} с`;
 		}
 
 		// У ошибок сети сообщение короткое и по делу («fetch failed»), а причина
@@ -95,9 +112,15 @@ function describeFailure(error: unknown): string {
 				? String((cause as { code: unknown }).code)
 				: null;
 
-		return code === null
-			? `Не удалось отправить: ${error.message}`
-			: `Не удалось отправить: ${code}`;
+		if (code === null) {
+			return `Не удалось отправить: ${error.message}`;
+		}
+
+		const reason = NETWORK_REASONS[code];
+
+		return reason === undefined
+			? `Не удалось отправить: ${code}`
+			: `Не удалось отправить: ${reason} (${code})`;
 	}
 
 	return `Не удалось отправить: ${String(error)}`;
@@ -164,6 +187,6 @@ export async function postWebhook(
 			error: `Получатель ответил ${response.status}`
 		};
 	} catch (error) {
-		return { ok: false, status: null, error: describeFailure(error) };
+		return { ok: false, status: null, error: describeFailure(error, WEBHOOK_TIMEOUT_MS) };
 	}
 }

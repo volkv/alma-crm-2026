@@ -2,6 +2,7 @@
 	import TriangleAlertIcon from '@lucide/svelte/icons/triangle-alert';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { applyAction, enhance } from '$app/forms';
+	import { asset, resolve } from '$app/paths';
 	import { invalidateAll } from '$app/navigation';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -104,6 +105,23 @@
 	<div class="flex flex-col gap-4">
 		<InlineHint tone="info">{PAYMENTS_ASSUMPTION}</InlineHint>
 
+		<!-- Образцы выгрузки: те же колонки, что ждёт разбор, и курсы из
+			справочника стенда — файл проходит проверку как есть. -->
+		<p class="text-sm text-muted-foreground">
+			Образец файла:
+			<a
+				class="text-link underline-offset-4 hover:underline"
+				href={asset('/samples/payments.json')}
+				download>JSON</a
+			>
+			·
+			<a
+				class="text-link underline-offset-4 hover:underline"
+				href={asset('/samples/payments.csv')}
+				download>таблица CSV</a
+			>
+		</p>
+
 		{#if refusal !== null}
 			<Alert.Root variant="destructive">
 				<TriangleAlertIcon aria-hidden="true" />
@@ -168,6 +186,14 @@
 										{labels[row.action]}
 									</StatusBadge>
 								</div>
+								{#if row.interactionId !== null}
+									<a
+										class="text-xs text-link underline-offset-4 hover:underline"
+										href={resolve('/(app)/interactions/[id=uuid]', { id: row.interactionId })}
+									>
+										Открыть дело
+									</a>
+								{/if}
 								{#if row.orderId !== null}
 									<span class="text-xs break-all text-muted-foreground">
 										{[

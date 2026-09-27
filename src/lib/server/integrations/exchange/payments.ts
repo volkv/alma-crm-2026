@@ -615,13 +615,15 @@ async function readPaymentMessage(
 	requestHash: string | null;
 	lastError: string | null;
 	createdAt: Date;
+	interactionId: string | null;
 } | null> {
 	const [row] = await executor
 		.select({
 			state: exchangeMessages.state,
 			requestHash: exchangeMessages.requestHash,
 			lastError: exchangeMessages.lastError,
-			createdAt: exchangeMessages.createdAt
+			createdAt: exchangeMessages.createdAt,
+			interactionId: exchangeMessages.interactionId
 		})
 		.from(exchangeMessages)
 		.where(
@@ -641,9 +643,11 @@ function rowView(
 	row: CheckedRow,
 	action: PaymentRowAction,
 	notes: string[],
-	issues: string[] = row.issues
+	issues: string[] = row.issues,
+	interactionId: string | null = null
 ): PaymentRowView {
 	return {
+		interactionId,
 		place: row.place,
 		orderId: row.record?.orderId ?? null,
 		fullName: row.record === null ? row.fullName : applicantPersonName(row.record),
@@ -684,7 +688,13 @@ async function previewRow(
 	const message = await readPaymentMessage(tx, options.instance, record.orderId);
 
 	if (message?.state === 'processed') {
-		return rowView(row, 'unchanged', unchangedNote(message, record));
+		return rowView(
+			row,
+			'unchanged',
+			unchangedNote(message, record),
+			row.issues,
+			message.interactionId
+		);
 	}
 
 	let target: PaymentTarget;
@@ -712,7 +722,7 @@ async function previewRow(
 	if (target.kind === 'existing') {
 		notes.push(stageNote(await readPaymentStage(tx, target.existing.id), false));
 
-		return rowView(row, 'update', notes);
+		return rowView(row, 'update', notes, row.issues, target.existing.id);
 	}
 
 	notes.push(
@@ -788,8 +798,16 @@ export async function previewPayments(
 type ValidRow = CheckedRow & { record: PaymentRecord; programId: string };
 
 type Applied =
-	| { result: 'unchanged'; message: { requestHash: string | null; createdAt: Date } }
-	| { result: 'created' | 'updated'; stage: PaymentStage; personFound: boolean };
+	| {
+			result: 'unchanged';
+			message: { requestHash: string | null; createdAt: Date; interactionId: string | null };
+	  }
+	| {
+			result: 'created' | 'updated';
+			stage: PaymentStage;
+			personFound: boolean;
+			interactionId: string;
+	  };
 
 /** Дело по оплате: найдено по номеру заказа или заведено. */
 async function applyInTransaction(
@@ -1007,7 +1025,8 @@ async function applyInTransaction(
 	return {
 		result,
 		stage,
-		personFound: target.kind === 'existing' || target.found !== null
+		personFound: target.kind === 'existing' || target.found !== null,
+		interactionId
 	};
 }
 
@@ -1098,15 +1117,31 @@ async function applyRow(
 		const applied = await run();
 
 		if (applied.result === 'unchanged') {
-			return rowView(row, 'unchanged', unchangedNote(applied.message, row.record));
+			return rowView(
+				row,
+				'unchanged',
+				unchangedNote(applied.message, row.record),
+				row.issues,
+				applied.message.interactionId
+			);
 		}
 
-		return rowView(row, applied.result === 'created' ? 'create' : 'update', [
-			...(applied.result === 'created'
-				? [applied.personFound ? 'Физлицо найдено в справочнике' : 'Физлицо заведено в справочнике']
-				: []),
-			stageNote(applied.stage, true)
-		]);
+		return rowView(
+			row,
+			applied.result === 'created' ? 'create' : 'update',
+			[
+				...(applied.result === 'created'
+					? [
+							applied.personFound
+								? 'Физлицо найдено в справочнике'
+								: 'Физлицо заведено в справочнике'
+						]
+					: []),
+				stageNote(applied.stage, true)
+			],
+			row.issues,
+			applied.interactionId
+		);
 	} catch (error) {
 		// Предметный отказ объясним словами — его читает администратор. Всё
 		// остальное — наша поломка: её разбирают по логу, а не по журналу обмена.

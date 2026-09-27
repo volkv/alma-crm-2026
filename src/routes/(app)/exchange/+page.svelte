@@ -68,6 +68,14 @@
 		<Alert.Root variant={form.ok ? 'default' : 'destructive'}>
 			<Alert.Description>
 				{form.message}
+				{#if 'interactionId' in form && form.interactionId}
+					<a
+						class="text-link underline-offset-4 hover:underline"
+						href={resolve('/(app)/interactions/[id=uuid]', { id: form.interactionId })}
+					>
+						Открыть дело заявки
+					</a>
+				{/if}
 				{#if form.issues.length > 0}
 					<ul class="list-inside list-disc">
 						{#each form.issues as issue (issue)}
@@ -98,6 +106,53 @@
 				контракту обмена и станет взаимодействием.
 			</span>
 		</form>
+	{/if}
+
+	{#if data.demoMocks.length > 0}
+		<!--
+			Стенд: отказ и восстановление обмена по заказу. Переключатель ставит
+			имитатору сценарий «рвать соединения» — исходящие к нему встают в
+			очередь повторов, — и снимает его. Имитатор общий для всего стенда.
+		-->
+		<section
+			class="flex flex-col gap-3 rounded-lg border border-border bg-surface p-4"
+			aria-labelledby="exchange-demo-mocks-title"
+		>
+			<div class="flex flex-col gap-1">
+				<h2 id="exchange-demo-mocks-title" class="text-sm font-medium">
+					Демо: отказ и восстановление обмена
+				</h2>
+				<p class="text-sm text-muted-foreground">
+					Недоступный имитатор рвёт соединения: исходящие к нему получают сетевую ошибку и ждут
+					повтора. Верните доступность — и «Повторить» у строки доставит то же сообщение.
+				</p>
+			</div>
+			<ul class="flex flex-col gap-2">
+				{#each data.demoMocks as mock (mock.system)}
+					<li class="flex flex-wrap items-center gap-3 text-sm">
+						<span class="min-w-32 font-medium">{mock.title}</span>
+						{#if mock.available === null}
+							<span class="text-danger-soft-foreground">
+								Состояние неизвестно: {mock.problem}
+							</span>
+						{:else}
+							<span
+								class={mock.available ? 'text-muted-foreground' : 'text-danger-soft-foreground'}
+							>
+								{mock.available ? 'доступен' : 'недоступен — рвёт соединения'}
+							</span>
+							<form method="POST" action="?/mockAvailability" use:enhance>
+								<input type="hidden" name="system" value={mock.system} />
+								<input type="hidden" name="available" value={mock.available ? 'false' : 'true'} />
+								<Button type="submit" variant="outline" size="sm">
+									{mock.available ? 'Сделать недоступным' : 'Вернуть доступность'}
+								</Button>
+							</form>
+						{/if}
+					</li>
+				{/each}
+			</ul>
+		</section>
 	{/if}
 
 	<!-- Загрузка оплат с сайта — не принадлежность стенда: выгрузку оплат

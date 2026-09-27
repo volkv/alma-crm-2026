@@ -87,7 +87,22 @@ export async function postToCrm(
 		});
 	} catch (error) {
 		const name = error instanceof Error ? error.name : '';
-		const message = error instanceof Error ? error.message : String(error);
+		// У сетевой ошибки `fetch` сообщение одно на все случаи («fetch failed»),
+		// а причина с кодом вроде ECONNREFUSED или ENOTFOUND лежит в `cause` —
+		// по ней и видно, что адрес CRM у имитатора не тот.
+		const cause = error instanceof Error ? error.cause : null;
+		const code =
+			typeof cause === 'object' && cause !== null && 'code' in cause
+				? String((cause as { code: unknown }).code)
+				: null;
+		const message =
+			code !== null
+				? code
+				: cause instanceof Error
+					? cause.message
+					: error instanceof Error
+						? error.message
+						: String(error);
 
 		return {
 			url,
@@ -96,7 +111,7 @@ export async function postToCrm(
 			error:
 				name === 'TimeoutError' || name === 'AbortError'
 					? `CRM не ответила за ${target.timeoutMs ?? DEFAULT_CRM_TIMEOUT_MS} мс`
-					: `Не удалось отправить: ${message}`
+					: `Не удалось отправить в ${url}: ${message}`
 		};
 	}
 

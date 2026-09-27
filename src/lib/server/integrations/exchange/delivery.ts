@@ -26,7 +26,7 @@ import { recordAuditEvent } from '../../audit';
 import { getDb } from '../../db';
 import { exchangeMessages, learningGroupLearners, learningGroups } from '../../db/schema';
 import { withTransaction } from '../../db/transaction';
-import { retryDelaySeconds, signPayload } from '../delivery';
+import { describeFailure, retryDelaySeconds, signPayload } from '../delivery';
 import { outboundTargetIssue } from '../outbound';
 import { getExchangeSettings } from '../settings';
 import { buildApplicationStatus, buildLearningGroupRequest } from './payloads';
@@ -62,26 +62,6 @@ type Attempt = {
 	/** Временный ли отказ: только такие уходят в очередь повторов. */
 	temporary: boolean;
 };
-
-function describeFailure(error: unknown, timeoutMs: number): string {
-	if (error instanceof Error) {
-		if (error.name === 'TimeoutError' || error.name === 'AbortError') {
-			return `Получатель не ответил за ${timeoutMs / 1000} с`;
-		}
-
-		const cause = error.cause;
-		const code =
-			cause !== null && typeof cause === 'object' && 'code' in cause
-				? String((cause as { code: unknown }).code)
-				: null;
-
-		return code === null
-			? `Не удалось отправить: ${error.message}`
-			: `Не удалось отправить: ${code}`;
-	}
-
-	return `Не удалось отправить: ${String(error)}`;
-}
 
 /**
  * Одна попытка. Исключений не бросает: неудача — обычный исход доставки, и

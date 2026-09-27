@@ -28,9 +28,8 @@
  * том числе от двух одновременных доставок.
  */
 import { createHash } from 'node:crypto';
-import { and, eq, inArray, sql } from 'drizzle-orm';
+import { and, desc, eq, inArray, sql } from 'drizzle-orm';
 import {
-	APPLICATION_STATUSES,
 	EXCHANGE_SCHEMA_VERSION,
 	MAX_REVISION_STEP,
 	PROCESS_GROUP_BY_APPLICANT,
@@ -48,6 +47,7 @@ import { recordAuditEvent } from '../../audit';
 import { getDb } from '../../db';
 import {
 	affiliations,
+	comments,
 	contractItems,
 	exchangeMessages,
 	interactionContractItems,
@@ -88,6 +88,7 @@ import {
 	type ApplicantPerson
 } from './applicant';
 import { enqueueApplicationStatus } from './outbox';
+import { currentApplicationStatus } from './payloads';
 
 /** Должность контактного лица, когда сайт её не спросил. */
 const DEFAULT_POSITION = 'Контактное лицо (заявка с сайта)';
@@ -263,6 +264,20 @@ function intakeComment(
 	}
 
 	return lines.join('\n\n').slice(0, 4000);
+}
+
+/** Текст последнего комментария заявки по делу; `null` — таких ещё не было. */
+async function lastIntakeComment(tx: Tx, interactionId: string): Promise<string | null> {
+	const [row] = await tx
+		.select({ body: comments.body })
+		.from(comments)
+		.where(
+			and(eq(comments.interactionId, interactionId), eq(comments.source, 'application_intake'))
+		)
+		.orderBy(desc(comments.createdAt))
+		.limit(1);
+
+	return row?.body ?? null;
 }
 
 type Counterparty = {
@@ -585,6 +600,12 @@ type ApplyOutcome = {
 	contactPersonId: string | null;
 	processGroup: string;
 	needsReview: boolean;
+	/**
+	 * Изменилось ли то, что сайт видит в снимке статуса. Новая ревизия с тем же
+	 * текстом меняет контакты и состав, но не снимок — и второй такой же снимок
+	 * на сайт не уходит.
+	 */
+	snapshotChanged: boolean;
 };
 
 /**
@@ -733,9 +754,13 @@ async function updateExisting(
 
 	const comment = intakeComment(data, catalogue.unknown, transferStatusApplied);
 
-	if (comment !== '') {
-		// Комментарий приписывается, а не затирает прежний: повтор ничего не
-		// удаляет.
+	// Комментарий приписывается, а не затирает прежний: повтор ничего не
+	// удаляет. Но и не повторяется: новая ревизия заявки с тем же текстом —
+	// правка контактов или состава, а не новое слово заявителя, и лента дела не
+	// должна копить одинаковые строки.
+	const commentAdded = comment !== '' && (await lastIntakeComment(tx, existing.id)) !== comment;
+
+	if (commentAdded) {
 		await addComment(
 			ctx,
 			{ interactionId: existing.id, body: comment, source: 'application_intake' },
@@ -763,7 +788,8 @@ async function updateExisting(
 		// прежним именем: внешний контракт меняют отдельно от внутренней
 		// перестройки, чтобы не складывать два независимых риска.
 		processGroup: workspace.key,
-		needsReview: false
+		needsReview: false,
+		snapshotChanged: commentAdded
 	};
 }
 
@@ -878,7 +904,8 @@ async function createFromApplication(
 		organizationId: counterparty.organizationId,
 		contactPersonId,
 		processGroup: PROCESS_GROUP_BY_APPLICANT[data.applicant.kind],
-		needsReview: counterparty.needsReview
+		needsReview: counterparty.needsReview,
+		snapshotChanged: true
 	};
 }
 
@@ -1057,7 +1084,8 @@ export async function receiveApplication(
 							organizationId: existing.organizationId,
 							contactPersonId: null,
 							processGroup: message.data.form,
-							needsReview: false
+							needsReview: false,
+							snapshotChanged: false
 						};
 					} else {
 						outcome = updated;
@@ -1072,7 +1100,9 @@ export async function receiveApplication(
 						interactionId: outcome.interactionId,
 						organizationId: outcome.organizationId,
 						contactPersonId: outcome.contactPersonId,
-						applicationStatus: APPLICATION_STATUSES[0],
+						// То же состояние, что уйдёт на сайт снимком следом: заявка,
+						// обновлённая на третьей стадии, — уже «в работе», а не «получена».
+						applicationStatus: await currentApplicationStatus(tx, outcome.interactionId),
 						processGroup: outcome.processGroup,
 						needsReview: outcome.needsReview
 					}
@@ -1088,9 +1118,11 @@ export async function receiveApplication(
 					})
 					.where(eq(exchangeMessages.id, row.id));
 
-				if (state === 'processed') {
+				if (state === 'processed' && outcome.snapshotChanged) {
 					// Снимок статуса уходит на сайт после приёма — в этой же
-					// транзакции, а отправляется после коммита (outbox).
+					// транзакции, а отправляется после коммита (outbox). Ревизия,
+					// не изменившая снимка, его не шлёт: сайт получил бы то же,
+					// что уже знает.
 					await enqueueApplicationStatus(tx, outcome.interactionId);
 				}
 

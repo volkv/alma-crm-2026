@@ -7,7 +7,13 @@ import {
 import { actorFromEvent } from '$lib/server/actor';
 import { getConfig } from '$lib/server/config';
 import { toActionFailure } from '$lib/server/http';
-import { sendDemoApplication } from '$lib/server/integrations/exchange/demo';
+import {
+	DEMO_MOCK_SYSTEMS,
+	readDemoMocks,
+	sendDemoApplication,
+	setDemoMockAvailability,
+	type DemoMockSystem
+} from '$lib/server/integrations/exchange/demo';
 import {
 	dismissExchangeMessage,
 	listExchangeMessages,
@@ -57,7 +63,10 @@ export const load: PageServerLoad = async (event) => {
 		filter: parsed.data,
 		// Кнопка «Демо: заявка с сайта» — принадлежность стенда: она жмёт триггер
 		// имитатора CMS, которого у установки с настоящей CMS нет.
-		demoApplication: config.DEMO_MODE && config.DEMO_CMS_TRIGGER_URL !== null
+		demoApplication: config.DEMO_MODE && config.DEMO_CMS_TRIGGER_URL !== null,
+		// Демо-переключатель доступности имитаторов — тоже принадлежность
+		// стенда; вне DEMO_MODE список пуст.
+		demoMocks: await readDemoMocks(ctx)
 	};
 };
 
@@ -71,6 +80,13 @@ async function paymentsFile(
 		? { name: file.name, bytes: new Uint8Array(await file.arrayBuffer()) }
 		: null;
 }
+
+/** Итог приёма заявки словами — для сообщения кнопки «Демо: заявка с сайта». */
+const DEMO_RESULT_LABELS: Record<string, string> = {
+	created: 'заведено новое дело',
+	updated: 'дело обновлено',
+	unchanged: 'эту редакцию заявки CRM уже приняла, ничего не изменилось'
+};
 
 const NO_PAYMENTS_FILE = {
 	message: 'Выберите файл выгрузки оплат с сайта',
@@ -127,15 +143,58 @@ export const actions: Actions = {
 	demoApplication: async (event) => {
 		try {
 			const sent = await sendDemoApplication(actorFromEvent(event));
+			const outcome =
+				sent.result === null ? '' : `, итог — ${DEMO_RESULT_LABELS[sent.result] ?? sent.result}`;
 
 			return {
-				message: `Имитатор CMS подал заявку ${sent.externalId}: CRM приняла её (код ${sent.crmStatus}). Строка журнала появится в списке ниже`,
+				message: `Имитатор CMS подал заявку ${sent.externalId}: CRM приняла её (код ${sent.crmStatus}${outcome}). Входящая строка — первая в журнале ниже`,
 				issues: [] as string[],
-				ok: true
+				ok: true,
+				interactionId: sent.interactionId
 			};
 		} catch (failure) {
 			return toActionFailure(failure);
 		}
+	},
+
+	/**
+	 * Демо-переключатель «имитатор недоступен / доступен»: показать отказ
+	 * доставки и восстановление обмена на стенде (`demo.ts`).
+	 */
+	mockAvailability: async (event) => {
+		const form = await event.request.formData();
+		const system = form.get('system');
+		const available = form.get('available');
+
+		if (
+			!DEMO_MOCK_SYSTEMS.includes(system as DemoMockSystem) ||
+			(available !== 'true' && available !== 'false')
+		) {
+			return fail(400, {
+				message: 'Не указано, какой имитатор и в какое состояние переключить',
+				issues: [] as string[],
+				ok: false
+			});
+		}
+
+		try {
+			await setDemoMockAvailability(
+				actorFromEvent(event),
+				system as DemoMockSystem,
+				available === 'true'
+			);
+		} catch (failure) {
+			return toActionFailure(failure);
+		}
+
+		return {
+			message:
+				available === 'true'
+					? 'Имитатор снова доступен: сообщения из очереди уйдут следующим повтором — или нажмите «Повторить» у строки'
+					: 'Имитатор недоступен: исходящие к нему встанут в очередь повторов с сетевой ошибкой. Верните доступность после показа — имитатор общий для всего стенда',
+			issues: [] as string[],
+			ok: true
+		};
 	},
 
 	retry: async (event) => {
@@ -152,13 +211,16 @@ export const actions: Actions = {
 		try {
 			const outcome = await retryExchangeMessage(actorFromEvent(event), parsed.data.messageId);
 
-			return outcome.ok
-				? { message: 'Сообщение доставлено', issues: [] as string[], ok: true }
-				: fail(502, {
-						message: outcome.error ?? 'Доставка не удалась, сообщение осталось в очереди',
-						issues: [] as string[],
-						ok: false
-					});
+			// Недоставка — исход доставки, а не сбой запроса: страница отвечает
+			// обычным ответом с `ok: false`, и журнал ниже перечитывается с новой
+			// попыткой. Код 502 здесь значил бы, что сломалась сама CRM.
+			return {
+				message: outcome.ok
+					? 'Сообщение доставлено'
+					: `Не доставлено: ${outcome.error ?? 'получатель не принял сообщение'}. Сообщение осталось в очереди повторов`,
+				issues: [] as string[],
+				ok: outcome.ok
+			};
 		} catch (failure) {
 			return toActionFailure(failure);
 		}

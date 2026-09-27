@@ -992,9 +992,20 @@ PostgreSQL из compose и логическую базу Redis под номер
 | База PostgreSQL       | `lct_walk`, в том же контейнере `postgres` (порт 55432), что у разработки                                                |
 | Логическая база Redis | `15` — e2e занимает 10–14, разработка без номера — 0                                                                     |
 | Бакет MinIO           | `lct-documents-walk`                                                                                                     |
+| Имитаторы CMS / LMS   | свои: `lct-walk-mock-cms` на 58181, `lct-walk-mock-lms` на 58182                                                         |
 
-Keycloak, имитаторы `mock-cms`/`mock-lms` и Gotenberg — тот же общий стек `docker-compose.yml`, что
-и у разработки; `stand.sh` поднимает их сам (`docker compose up -d --wait`), если ещё не подняты.
+Keycloak и Gotenberg — тот же общий стек `docker-compose.yml`, что и у разработки; `stand.sh`
+поднимает их сам (`docker compose up -d --wait`), если ещё не подняты. Имитаторы у стенда свои: они
+сами стучатся в CRM (заявка с сайта, результат из LMS), а общие `lct-crm-mock-*` смотрят в
+`http://app:3000` или в приложение прогона e2e. Стенд собирает образ из `mocks/` своей копии и
+поднимает два контейнера с `CRM_BASE_URL=http://host.docker.internal:<порт стенда>` и
+`--add-host host.docker.internal:host-gateway` — тем же путём, каким e2e связывает имитаторов со
+своим приложением, — а адреса имитаторов записывает в `.env` стенда (`EXCHANGE_CMS_STATUS_URL`,
+`EXCHANGE_LMS_GROUPS_URL`, `EXCHANGE_LMS_BASE_URL`, `DEMO_CMS_TRIGGER_URL`). Форма имитатора CMS
+стенда — `http://localhost:58181/`, имитатора LMS — `http://localhost:58182/`. Логическая база Redis
+стенда очищается при `up`, если сервер не запущен: в ней живут подписки на события, которые сброс
+демо-данных не трогает, и чужие подписки прогонов тестов на этом номере базы всплывали бы на экране
+интеграций.
 Данные — тот же демонстрационный сид, что и у публичного стенда (`docs/seeds.md`,
 `scripts/seed/`, `DEMO_MODE=true`): миграции до последней, затем сид, модули пространств включены
 как в эталоне.
@@ -1003,15 +1014,15 @@ Keycloak, имитаторы `mock-cms`/`mock-lms` и Gotenberg — тот же 
 scripts/walkthrough/stand.sh up /home/volkv/Desktop/code/alma-crm-2026-walk <коммит>   # собрать и запустить
 scripts/walkthrough/stand.sh status /home/volkv/Desktop/code/alma-crm-2026-walk        # жив ли процесс, отвечает ли /api/health
 scripts/walkthrough/stand.sh reseed /home/volkv/Desktop/code/alma-crm-2026-walk        # вернуть демо-данные к эталону
-scripts/walkthrough/stand.sh down /home/volkv/Desktop/code/alma-crm-2026-walk          # остановить процесс сервера
+scripts/walkthrough/stand.sh down /home/volkv/Desktop/code/alma-crm-2026-walk          # остановить сервер и имитаторы стенда
 ```
 
 Копия — обычный `git worktree` рядом с рабочим деревом; `коммит` у `up` необязателен — без него
 собирается то, что в копии уже стоит, с ним копия сначала переключается (`git checkout --detach`).
 Повторный `up` на новом коммите — способ переставить стенд: checkout, зависимости, инфраструктура,
 миграции, сид и сборка идут одной командой. Лог и pid-файл процесса лежат в `<копия>/.walkthrough/`;
-`down` останавливает только процесс сервера — общую инфраструктуру и базу трогать нельзя, ими же
-пользуются разработка и e2e.
+`down` останавливает процесс сервера и имитаторы стенда — общую инфраструктуру и базу трогать нельзя,
+ими же пользуются разработка и e2e.
 
 `reseed` не несёт своей логики очистки: он открывает браузер (Playwright), входит демонстрационным
 администратором и нажимает ту же кнопку «Сбросить демо-данные» на `/settings/general`, что и

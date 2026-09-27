@@ -817,16 +817,20 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		await expect(manager.getByText(learningGroupId, { exact: false }).first()).toBeVisible();
 
 		// Результат группы: стадию он подтверждает, но никуда её не двигает —
-		// переход остаётся решением сотрудника.
+		// переход остаётся решением сотрудника. Итог приходит после окончания
+		// потока: дату окончания позже дня отправки CRM не принимает.
 		const result = await request.post('/api/v1/exchange/learning-groups/results', {
 			headers: { authorization: `Bearer ${lmsExchangeKey}`, 'content-type': 'application/json' },
-			data: envelope('learning_group.result', 'lms', {
-				groupExternalId: learningGroupId,
-				requestExternalId,
-				period: { start: '2026-10-01', end: '2027-05-31' },
-				finishedOn: '2027-05-20',
-				counters: { enrolled: 45, completed: 38, expelled: 4 }
-			})
+			data: {
+				...envelope('learning_group.result', 'lms', {
+					groupExternalId: learningGroupId,
+					requestExternalId,
+					period: { start: '2026-10-01', end: '2027-05-31' },
+					finishedOn: '2027-05-20',
+					counters: { enrolled: 45, completed: 38, expelled: 4 }
+				}),
+				occurredAt: '2027-05-21T06:00:00Z'
+			}
 		});
 
 		expect(result.status()).toBe(200);

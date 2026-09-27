@@ -355,6 +355,10 @@ services:
       # direction of the contract — the button appears only with DEMO_MODE=true,
       # and a deployment with a real CMS leaves this empty.
       DEMO_CMS_TRIGGER_URL: ${DEMO_CMS_TRIGGER_URL:-http://mock-cms:8081/__send-application}
+      # The control token of the imitators, the same value they take below: the
+      # «имитатор недоступен / доступен» switch of the «Внешние системы» screen
+      # presents it to `__scenario`. Demo scaffolding as well — DEMO_MODE only.
+      MOCK_CONTROL_TOKEN: ${MOCK_CONTROL_TOKEN:-}
       # The names of the connections, and the same variables the imitators read
       # below: the CRM checks `source.instance` of an incoming message against
       # these and the seed binds an exchange key to one of them. Two names for one

@@ -35,6 +35,7 @@ import {
 	stageEntryStatus,
 	users
 } from '../../db/schema';
+import type { Tx } from '../../db/transaction';
 import { consentWithdrawn } from '../../people/consents';
 import { decryptContact } from '../../people/pii';
 
@@ -64,6 +65,39 @@ function applicationStatusOf(options: {
 	}
 
 	return options.position === 1 ? 'received' : 'in_progress';
+}
+
+/**
+ * Состояние заявки прямо сейчас — тем же правилом, что уезжает на сайт в
+ * снимке `application.status`. Его же называет ответ приёма заявки: иначе
+ * сайт получал бы в ответе одно, а следом снимком другое.
+ */
+export async function currentApplicationStatus(
+	executor: Tx | ReturnType<typeof getDb>,
+	interactionId: string
+): Promise<ApplicationStatus> {
+	const [interaction] = await executor
+		.select({ status: interactions.status })
+		.from(interactions)
+		.where(eq(interactions.id, interactionId))
+		.limit(1);
+
+	if (interaction === undefined) {
+		throw new Error(`Взаимодействие ${interactionId} не найдено`);
+	}
+
+	const [entry] = await executor
+		.select({ snapshot: stageEntries.stageSnapshot, isPaused: stageEntryStatus.isPaused })
+		.from(stageEntries)
+		.innerJoin(stageEntryStatus, eq(stageEntryStatus.stageEntryId, stageEntries.id))
+		.where(and(eq(stageEntries.interactionId, interactionId), isNull(stageEntries.leftAt)))
+		.limit(1);
+
+	return applicationStatusOf({
+		status: interaction.status,
+		position: entry?.snapshot.position ?? null,
+		paused: entry?.isPaused ?? false
+	});
 }
 
 /** Тело `application.status`; `null` — взаимодействия больше нет. */

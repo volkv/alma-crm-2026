@@ -16,7 +16,7 @@
  * ссылки на `stages/` здесь нет ни одной.
  */
 import { randomUUID } from 'node:crypto';
-import { eq } from 'drizzle-orm';
+import { and, eq, isNull } from 'drizzle-orm';
 import {
 	EXCHANGE_EVENT_TYPES,
 	parseExternalSource,
@@ -101,6 +101,38 @@ export async function enqueueApplicationStatus(tx: Tx, interactionId: string): P
 	const settings = await getExchangeSettings(tx);
 
 	if (settings.cms.statusUrl === null || settings.cms.instance !== source.instance) {
+		return;
+	}
+
+	// Снимок по этой заявке уже ждёт первой отправки — второй не нужен: тело
+	// собирается в момент отправки (`delivery.ts`), и ждущее сообщение и так
+	// унесёт состояние после этого изменения. Без этого серия шагов подряд —
+	// сид, проведённый по стадиям, или сотрудник, прошедший три стадии за
+	// минуту, — давала пачку одинаковых снимков последнего состояния.
+	//
+	// Ждущее сообщение берётся под блокировку строки и только нетронутым:
+	// ни одной попытки, тела нет. Цикл доставки забирает сообщение условной
+	// правкой той же строки (`claim` увеличивает `attempt`), поэтому он либо
+	// заберёт его раньше — и условие здесь уже не совпадёт, новое сообщение
+	// встанет в очередь, — либо дождётся конца этой транзакции и соберёт тело
+	// уже с этим изменением.
+	const [waiting] = await tx
+		.select({ id: exchangeMessages.id })
+		.from(exchangeMessages)
+		.where(
+			and(
+				eq(exchangeMessages.direction, 'outbound'),
+				eq(exchangeMessages.eventType, EXCHANGE_EVENT_TYPES.applicationStatus),
+				eq(exchangeMessages.interactionId, interactionId),
+				eq(exchangeMessages.state, 'pending'),
+				eq(exchangeMessages.attempt, 0),
+				isNull(exchangeMessages.envelope)
+			)
+		)
+		.limit(1)
+		.for('update');
+
+	if (waiting !== undefined) {
 		return;
 	}
 

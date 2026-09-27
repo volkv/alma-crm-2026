@@ -9,6 +9,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 import type { Journal } from './journal.ts';
 import type { Scenario } from './scenario.ts';
+import { escapeHtml } from './state-page.ts';
 
 /**
  * Предел тела одного сообщения — 1 МиБ, как в контракте обмена (раздел 2).
@@ -71,6 +72,27 @@ export function problem(status: number, code: string, message: string): MockRepl
  */
 export function backToStatePage(): MockReply {
 	return { status: 303, headers: { location: './' } };
+}
+
+/**
+ * Отказ триггера, нажатого кнопкой со страницы состояния: страница со ссылкой
+ * назад, а не JSON. Нажавший смотрит в браузер, и конверт ошибки на весь экран
+ * ему ничего не скажет. Код ответа тот же, что у запроса из проверки.
+ */
+export function formProblem(status: number, message: string): MockReply {
+	return {
+		status,
+		html: `<!doctype html>
+<html lang="ru">
+<head><meta charset="utf-8"><title>Ошибка: заявка не отправлена</title></head>
+<body>
+<h1>Ошибка: не отправлено</h1>
+<p>${escapeHtml(message)}</p>
+<p><a href="./">Вернуться к странице имитатора</a></p>
+</body>
+</html>
+`
+	};
 }
 
 /** Разобранное тело триггера: поля и то, пришли ли они из формы страницы. */

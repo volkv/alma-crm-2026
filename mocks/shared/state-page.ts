@@ -34,7 +34,7 @@ export type TriggerForm = {
 	submit: string;
 };
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
 	return value
 		.replace(/&/g, '&amp;')
 		.replace(/</g, '&lt;')
@@ -97,6 +97,12 @@ export function renderStatePage(state: {
 	forms: readonly TriggerForm[];
 	/** Закрыты ли управляющие адреса токеном: на стенде это видно сразу. */
 	controlProtected: boolean;
+	/**
+	 * Карточка одного объекта над формами — готовая разметка сервиса; `null` —
+	 * без неё. Так страница после нажатия кнопки показывает, чем кончилось
+	 * именно это нажатие.
+	 */
+	spotlight: string | null;
 }): string {
 	const rows = state.journal.map(journalRow).join('\n');
 	const forms = state.forms.map(triggerForm).join('\n');
@@ -114,6 +120,7 @@ export function renderStatePage(state: {
 <h1>${escapeHtml(state.title)}</h1>
 <p>Имитатор стенда, а не настоящая система: обмен с ним ничего не доказывает о работе с системой заказчика.</p>
 <p>${control}</p>
+${state.spotlight ?? ''}
 <h2>Запустить сцену</h2>
 ${forms}
 <h2>Сценарий</h2>

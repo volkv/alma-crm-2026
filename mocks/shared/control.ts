@@ -54,6 +54,11 @@ export type ControlOptions = {
 	forms: readonly TriggerForm[];
 	/** Токен управляющих адресов; `null` — управление открыто. */
 	controlToken?: string | null;
+	/**
+	 * Карточка одного объекта над формами страницы по строке запроса —
+	 * разметка, уже экранированная сервисом; `null` — без карточки.
+	 */
+	spotlight?: (query: URLSearchParams) => string | null;
 };
 
 /** Сверка постоянная по времени: по обычному сравнению токен подбирается побайтно. */
@@ -121,9 +126,10 @@ export function controlRoutes(options: ControlOptions): MockRoute[] {
 			method: 'GET',
 			path: '/',
 			contract: false,
-			handle: () => ({
+			handle: (request) => ({
 				status: 200,
 				html: renderStatePage({
+					spotlight: options.spotlight?.(request.url.searchParams) ?? null,
 					name,
 					title,
 					scenario: scenario.read(),

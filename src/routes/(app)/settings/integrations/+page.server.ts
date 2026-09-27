@@ -90,6 +90,10 @@ export const load: PageServerLoad = async (event) => {
 		// уводят данные на чужой узел и переживают сессию
 		// (`docs/access-matrix.md`, раздел 5).
 		canManageEndpoints: can(ctx, 'integrations.manage_endpoints'),
+		// Демонстрационная сессия этого права не получает, даже если роль его
+		// даёт (`demoSessionPermissions`): страница обязана сказать об этом
+		// прямо, а не отсылать к праву, которое у роли в матрице есть.
+		demoSession: ctx.user?.isDemo === true,
 		origin: config.ORIGIN,
 		webhookForm: await superValidate(zod4(webhookFormSchema), { id: FORM_IDS.webhook }),
 		lmsForm: await superValidate(
@@ -217,9 +221,16 @@ export const actions: Actions = {
 
 		const outcome = await sendTestEvent(ctx, subscription);
 
-		return outcome.ok
-			? { message: `Получатель ответил ${outcome.status ?? ''}`.trim(), issues: [], ok: true }
-			: fail(502, { message: outcome.error ?? 'Доставка не удалась', issues: [], ok: false });
+		// Недоставка тестового события — ответ на вопрос «дойдёт ли», а не сбой
+		// запроса: страница отвечает обычным ответом с `ok: false`. Код 502
+		// здесь значил бы, что сломалась сама CRM, и сыпался бы в консоль.
+		return {
+			message: outcome.ok
+				? `Получатель ответил ${outcome.status ?? ''}`.trim()
+				: `Тестовое событие не доставлено: ${outcome.error ?? 'получатель не принял событие'}`,
+			issues: [],
+			ok: outcome.ok
+		};
 	},
 
 	lms: async (event) => {
@@ -278,9 +289,9 @@ export const actions: Actions = {
 		try {
 			const state = await syncLms(ctx);
 
-			return state.ok
-				? { message: state.message, issues: [], ok: true }
-				: fail(502, { message: state.message, issues: [], ok: false });
+			// Неудачная выгрузка — исход, а не сбой запроса: тот же ответ, что и
+			// у тестового события.
+			return { message: state.message, issues: [], ok: state.ok };
 		} catch (failure) {
 			// Сюда доходит только отказ по правам: сбой самой выгрузки возвращается
 			// состоянием, а не исключением.

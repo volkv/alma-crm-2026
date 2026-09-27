@@ -462,7 +462,14 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 					envelope = repeatOf;
 				} else {
 					const period = nested(body, 'period');
-					const finishedOn = readString(body.finishedOn) ?? group.endsOn;
+					// Дата окончания по умолчанию — конец потока, но только если он уже
+					// наступил: плановая дата в будущем — не факт окончания, и CRM такой
+					// результат отвергает. Поток, который ещё идёт, шлёт результат без
+					// даты окончания — промежуточный.
+					const today = new Date().toISOString().slice(0, 10);
+					const finishedOn =
+						readString(body.finishedOn) ??
+						(group.endsOn !== null && group.endsOn <= today ? group.endsOn : null);
 
 					envelope = buildEnvelope({
 						eventType: 'learning_group.result',

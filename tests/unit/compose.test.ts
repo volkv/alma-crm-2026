@@ -60,7 +60,9 @@ describe('ключи обмена в docker-compose.yml', () => {
 		// него дотянулся, а на стенде страница и триггер выходят наружу.
 		expect(defaults(prod, 'MOCK_CONTROL_TOKEN')).toHaveLength(0);
 		expect(prod).not.toContain('${MOCK_CONTROL_TOKEN?');
-		expect(prod.match(/\$\{MOCK_CONTROL_TOKEN:\?/g)).toHaveLength(2);
+		// Три места: оба имитатора и приложение — оно предъявляет токен, ставя
+		// имитатору сценарий отказа с экрана «Внешние системы».
+		expect(prod.match(/\$\{MOCK_CONTROL_TOKEN:\?/g)).toHaveLength(3);
 	});
 });
 

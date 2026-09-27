@@ -11,17 +11,20 @@
  * только то, что CRM говорит на объявленном контракте.
  */
 import {
+	applicantIssue,
 	applicationTemplate,
+	applicationWithApplicant,
 	isApplicationForm,
 	templateExternalId,
 	APPLICATION_FORMS,
 	type ApplicationForm
 } from './applications.ts';
+import { renderApplicationSpotlight } from './spotlight.ts';
 import { CONTROL_HEADER, controlAllowed, controlRoutes } from '../shared/control.ts';
-import { crmIssue, postToCrm, type CrmTarget } from '../shared/crm.ts';
+import { crmIssue, postToCrm, type CrmCall, type CrmTarget } from '../shared/crm.ts';
 import { buildEnvelope, parseEnvelope, type Envelope } from '../shared/envelope.ts';
 import {
-	backToStatePage,
+	formProblem,
 	parseTriggerBody,
 	problem,
 	startMockService,
@@ -37,7 +40,7 @@ import { checkSignature } from '../shared/signature.ts';
 export const CRM_APPLICATIONS_PATH = '/api/v1/applications';
 
 /** Поля триггера заявки: всё остальное — опечатка или чужая договорённость. */
-const TRIGGER_FIELDS = ['form', 'externalId', 'revision', 'eventId', 'data'] as const;
+const TRIGGER_FIELDS = ['form', 'externalId', 'applicant', 'revision', 'eventId', 'data'] as const;
 
 /**
  * Поля триггера, которыми распоряжается только управление имитатором.
@@ -60,6 +63,53 @@ const CONTROL_ONLY_FIELDS = ['revision', 'eventId', 'data'] as const;
  * заявки стенда заводит кто угодно снаружи и сколько угодно.
  */
 const OPEN_EXTERNAL_ID = /^site-2026-\d{6}$/;
+
+/**
+ * Ключ новой заявки, когда в форме назвали своего заявителя, а ключа не дали.
+ *
+ * Ключ набора означал бы изменение заявки набора — под чужим именем. Номер
+ * случайный из верхней половины нумерации стенда: сид занимает нижние номера
+ * (`site-2026-000201`…), а счётчик с единицы после перезапуска имитатора
+ * наступил бы на заявку, которую CRM уже помнит, — и получил бы `unchanged`.
+ */
+function freshExternalId(taken: ReadonlyMap<string, unknown>): string {
+	for (;;) {
+		const candidate = `site-2026-${String(500_000 + Math.floor(Math.random() * 500_000))}`;
+
+		if (!taken.has(candidate)) {
+			return candidate;
+		}
+	}
+}
+
+/** Что CRM ответила на заявку: итог приёма, ключ дела — или что помешало. */
+function crmOutcome(call: CrmCall): {
+	crmResult: string | null;
+	interactionId: string | null;
+	crmError: string | null;
+} {
+	if (call.error !== null) {
+		return { crmResult: null, interactionId: null, crmError: call.error };
+	}
+
+	const body =
+		typeof call.body === 'object' && call.body !== null
+			? (call.body as Record<string, unknown>)
+			: null;
+	const data =
+		typeof body?.data === 'object' && body.data !== null
+			? (body.data as Record<string, unknown>)
+			: null;
+	const ok = call.status !== null && call.status >= 200 && call.status < 300;
+
+	return {
+		crmResult: ok && typeof body?.result === 'string' ? body.result : null,
+		interactionId: ok && typeof data?.interactionId === 'string' ? data.interactionId : null,
+		crmError: ok
+			? null
+			: `CRM ответила ${String(call.status)}${typeof body?.message === 'string' ? `: ${body.message}` : ''}`
+	};
+}
 
 export type MockCmsOptions = {
 	/** `0` — любой свободный порт: так сервис поднимается в тестах. */
@@ -97,6 +147,14 @@ type StoredApplication = {
 	sentAt: string | null;
 	/** Чем CRM ответила на последнюю отправку. */
 	crmStatus: number | null;
+	/** Итог приёма в CRM: `created`, `updated`, `unchanged`; `null` — не принята. */
+	crmResult: string | null;
+	/** Взаимодействие, которым заявка стала в CRM. */
+	interactionId: string | null;
+	/** Почему CRM не приняла заявку — словами; `null` — приняла или не отправляли. */
+	crmError: string | null;
+	/** Заявитель, как его назвали в форме; `null` — заявитель набора. */
+	applicant: string | null;
 	/** Снимки статуса, присланные CRM: свежий — последний. */
 	statuses: { at: string; eventId: string; data: Record<string, unknown> }[];
 };
@@ -204,6 +262,10 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 					lastEventId: null,
 					sentAt: null,
 					crmStatus: null,
+					crmResult: null,
+					interactionId: null,
+					crmError: null,
+					applicant: null,
 					statuses: []
 				};
 
@@ -258,8 +320,8 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 			// «Демо: заявка с сайта» на экране «Внешние системы».
 			//
 			// Открыт он наружу, поэтому и принимает снаружи только выбор сцены:
-			// набор формы и ключ заявки стенда. Собственное тело сообщения —
-			// `CONTROL_ONLY_FIELDS` — за токеном управления.
+			// набор формы, ключ заявки стенда и имя заявителя. Собственное тело
+			// сообщения — `CONTROL_ONLY_FIELDS` — за токеном управления.
 			method: 'POST',
 			path: '/__send-application',
 			contract: false,
@@ -270,13 +332,18 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 					return problem(400, 'validation', parsedBody.message);
 				}
 
+				// Кнопка со страницы состояния получает отказ страницей со ссылкой
+				// назад, а не JSON: нажавший смотрит в браузер, а не в тело ответа.
+				const refuse = (status: number, code: string, message: string): MockReply =>
+					parsedBody.fromForm ? formProblem(status, message) : problem(status, code, message);
+
 				const body = parsedBody.body;
 				const unknown = Object.keys(body).filter(
 					(name) => !(TRIGGER_FIELDS as readonly string[]).includes(name)
 				);
 
 				if (unknown.length > 0) {
-					return problem(400, 'validation', `Неизвестные поля: ${unknown.join(', ')}`);
+					return refuse(400, 'validation', `Неизвестные поля: ${unknown.join(', ')}`);
 				}
 
 				// Снаружи триггер выбирает сцену, а не сочиняет сообщение: тело заявки
@@ -286,7 +353,7 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 				const controlOnly = CONTROL_ONLY_FIELDS.filter((name) => body[name] !== undefined);
 
 				if (!controlled && controlOnly.length > 0) {
-					return problem(
+					return refuse(
 						403,
 						'control_forbidden',
 						`Поля ${controlOnly.join(', ')} задаёт только управление имитатором: назовите токен в заголовке ${CONTROL_HEADER}`
@@ -294,7 +361,7 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 				}
 
 				if (body.externalId !== undefined && typeof body.externalId !== 'string') {
-					return problem(400, 'validation', 'externalId: ожидается строка');
+					return refuse(400, 'validation', 'externalId: ожидается строка');
 				}
 
 				if (
@@ -302,7 +369,7 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 					typeof body.externalId === 'string' &&
 					!OPEN_EXTERNAL_ID.test(body.externalId)
 				) {
-					return problem(
+					return refuse(
 						400,
 						'validation',
 						'externalId: ключ заявки стенда имеет вид site-2026-000123; произвольный задаёт только управление имитатором'
@@ -312,33 +379,55 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 				const requestedForm = body.form ?? 'b2b';
 
 				if (!isApplicationForm(requestedForm)) {
-					return problem(400, 'validation', `form: ожидается ${APPLICATION_FORMS.join(' или ')}`);
+					return refuse(400, 'validation', `form: ожидается ${APPLICATION_FORMS.join(' или ')}`);
 				}
 
 				const form: ApplicationForm = requestedForm;
 
+				if (body.applicant !== undefined && typeof body.applicant !== 'string') {
+					return refuse(400, 'validation', 'applicant: ожидается строка');
+				}
+
+				const applicant = typeof body.applicant === 'string' ? body.applicant.trim() : null;
+
+				if (applicant !== null) {
+					const issue = applicantIssue(form, applicant);
+
+					if (issue !== null) {
+						return refuse(400, 'validation', issue);
+					}
+				}
+
+				if (applicant !== null && body.data !== undefined) {
+					return refuse(
+						400,
+						'validation',
+						'applicant и data вместе не задаются: data — всё тело заявки'
+					);
+				}
+
 				if (body.eventId !== undefined && typeof body.eventId !== 'string') {
-					return problem(400, 'validation', 'eventId: ожидается строка');
+					return refuse(400, 'validation', 'eventId: ожидается строка');
 				}
 
 				if (
 					body.revision !== undefined &&
 					(!Number.isInteger(body.revision) || (body.revision as number) < 1)
 				) {
-					return problem(400, 'validation', 'revision: ожидается целое число от единицы');
+					return refuse(400, 'validation', 'revision: ожидается целое число от единицы');
 				}
 
 				if (
 					body.data !== undefined &&
 					(typeof body.data !== 'object' || body.data === null || Array.isArray(body.data))
 				) {
-					return problem(400, 'validation', 'data: ожидается объект тела заявки');
+					return refuse(400, 'validation', 'data: ожидается объект тела заявки');
 				}
 
 				const issue = crmIssue(crm);
 
 				if (issue !== null) {
-					return problem(503, 'not_configured', issue);
+					return refuse(503, 'not_configured', issue);
 				}
 
 				const repeatOf = typeof body.eventId === 'string' ? (sent.get(body.eventId) ?? null) : null;
@@ -354,16 +443,23 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 					const externalId =
 						typeof body.externalId === 'string' && body.externalId !== ''
 							? body.externalId
-							: templateExternalId(form);
+							: applicant !== null
+								? freshExternalId(applications)
+								: templateExternalId(form);
 					const previous = applications.get(externalId);
 					// Ревизии у карточки может не быть вовсе: её завёл статус из CRM, а
 					// формы, которая нумерует изменения, у такой заявки не было.
 					const revision =
 						typeof body.revision === 'number' ? body.revision : (previous?.revision ?? 0) + 1;
+					// Заявитель повторной отправки — тот же, что в первой: иначе
+					// изменение заявки молча вернуло бы ей заявителя набора.
+					const named = applicant ?? previous?.applicant ?? null;
 					const data =
-						body.data === undefined
-							? applicationTemplate(form, externalId, revision)
-							: { externalId, revision, ...(body.data as Record<string, unknown>) };
+						body.data !== undefined
+							? { externalId, revision, ...(body.data as Record<string, unknown>) }
+							: named !== null
+								? applicationWithApplicant(form, externalId, revision, named)
+								: applicationTemplate(form, externalId, revision);
 
 					envelope = buildEnvelope({
 						eventType: 'application.submitted',
@@ -391,6 +487,8 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 					lastEventId: envelope.eventId,
 					sentAt: envelope.occurredAt,
 					crmStatus: call.status,
+					...crmOutcome(call),
+					applicant: applicant ?? previous?.applicant ?? null,
 					statuses: previous?.statuses ?? []
 				});
 
@@ -406,11 +504,16 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 					payload: envelope
 				});
 
-				// Кнопка со страницы состояния возвращает на неё же: нажавший смотрит
-				// в журнал стенда, а не в тело ответа. Запросу из проверки уходит
-				// разбор целиком.
+				// Кнопка со страницы состояния ведёт на карточку своей заявки на той
+				// же странице: что ответила CRM и какие статусы пришли. Адрес
+				// относительный и с ключом в строке запроса — та же страница,
+				// которую прокси стенда пропускает наружу. Запросу из проверки
+				// уходит разбор целиком.
 				return parsedBody.fromForm
-					? backToStatePage()
+					? {
+							status: 303,
+							headers: { location: `./?application=${encodeURIComponent(externalId)}` }
+						}
 					: {
 							status: 200,
 							json: {
@@ -449,9 +552,14 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 						fields: [
 							{ name: 'form', label: 'Набор', options: APPLICATION_FORMS },
 							{
+								name: 'applicant',
+								label: 'Заявитель',
+								hint: 'b2b — название организации, b2c — фамилия и имя. Пусто — заявитель набора; названный заявитель получает новый ключ заявки'
+							},
+							{
 								name: 'externalId',
 								label: 'Ключ заявки',
-								hint: 'пусто — ключ заявки набора; тот же ключ означает изменение той же заявки. Вид ключа — site-2026-000123'
+								hint: 'пусто — ключ заявки набора или новый ключ для названного заявителя; тот же ключ означает изменение той же заявки. Вид ключа — site-2026-000123'
 							}
 						],
 						submit: 'Отправить заявку в CRM'
@@ -464,8 +572,11 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 				// Зрителю сцены нужно другое — дошло ли, чем ответили и в каком
 				// состоянии заявка.
 				pageObjects: () => ({
-					applications: [...applications.values()].map((application) => ({
+					applications: [...applications.values()].map(({ applicant, ...application }) => ({
 						...application,
+						// Имя, набранное в форме, видно только в карточке своей заявки:
+						// страница открыта всем, и список чужих заявителей ей не нужен.
+						applicant: applicant === null ? null : 'названный в форме',
 						statuses: application.statuses.map((status) => ({
 							at: status.at,
 							eventId: status.eventId,
@@ -473,6 +584,16 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 						}))
 					}))
 				}),
+				// Карточка своей заявки над формой: после отправки кнопка ведёт сюда
+				// с ключом заявки в строке запроса.
+				spotlight: (query) => {
+					const externalId = query.get('application');
+					const application = externalId === null ? undefined : applications.get(externalId);
+
+					return externalId === null
+						? null
+						: renderApplicationSpotlight(externalId, application ?? null);
+				},
 				forget,
 				// Ни ключа, ни секрета в состоянии нет: страница стенда открыта, и
 				// показывать в ней значения нельзя. Видно только, настроен ли обмен.

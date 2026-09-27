@@ -2,11 +2,19 @@
 #
 # Стенд для ручного прохода сценариев: отдельная рабочая копия на
 # зафиксированном коммите, изолированная от разработки и от e2e — свой порт,
-# своя база PostgreSQL, свой номер базы Redis, свой бакет MinIO. Keycloak,
-# имитаторы CMS/LMS и Gotenberg — общий стек `docker-compose.yml`, тот же, что
-# у разработки и у e2e; общая база и Redis у них тоже, но стенд живёт в
+# своя база PostgreSQL, свой номер базы Redis, свой бакет MinIO и свои
+# имитаторы CMS/LMS. Keycloak и Gotenberg — общий стек `docker-compose.yml`, тот
+# же, что у разработки и у e2e; общая база и Redis у них тоже, но стенд живёт в
 # собственном имени базы и собственной логической базе Redis, поэтому им есть
 # чем не пересекаться.
+#
+# Имитаторы у стенда свои, а не общие `lct-crm-mock-*`: имитатор сам стучится в
+# CRM (заявка с сайта, результат из LMS), и адрес CRM у него задан окружением
+# контейнера. Общие смотрят в `http://app:3000` (контейнер `app`) или, после
+# прогона e2e, в приложение прогона на 4173, а приложение стенда живёт на
+# хосте, на своём порту. Переписать общим адрес значило бы сломать e2e и
+# разработку; поэтому стенд поднимает два своих контейнера из образа
+# `mocks/Dockerfile` своей копии на своих портах и называет им свой адрес.
 #
 # Использование:
 #   scripts/walkthrough/stand.sh up [копия] [коммит]
@@ -38,9 +46,17 @@ STAND_S3_ACCESS_KEY=lct
 STAND_S3_SECRET_KEY=lct-secret-key
 
 # Сервисы общего стека, которые нужны стенду. Без `app` (стенд запускает свой
-# процесс на хосте, не контейнером) и без `minio-init` (одноразовая задача,
-# заводится отдельным вызовом ниже).
-INFRA_SERVICES=(postgres redis keycloak gotenberg mailpit minio mock-cms mock-lms)
+# процесс на хосте, не контейнером), без `minio-init` (одноразовая задача,
+# заводится отдельным вызовом ниже) и без имитаторов — у стенда свои.
+INFRA_SERVICES=(postgres redis keycloak gotenberg mailpit minio)
+
+# Свои имитаторы стенда: порты на хосте, образ и имена контейнеров. Порты —
+# рядом с общими 58081/58082, но не они: общие остаются за разработкой и e2e.
+STAND_MOCK_CMS_PORT="${STAND_MOCK_CMS_PORT:-58181}"
+STAND_MOCK_LMS_PORT="${STAND_MOCK_LMS_PORT:-58182}"
+STAND_MOCK_IMAGE=lct-walk-mocks
+STAND_MOCK_CMS_CONTAINER=lct-walk-mock-cms
+STAND_MOCK_LMS_CONTAINER=lct-walk-mock-lms
 
 if [ -s "$HOME/.nvm/nvm.sh" ]; then
 	# shellcheck disable=SC1091
@@ -53,11 +69,12 @@ usage() {
 Использование: stand.sh <up|down|status|reseed> [копия] [коммит]
 
   up <копия> [коммит]  checkout (если задан коммит) → зависимости → общая
-                       инфраструктура (Keycloak/Gotenberg/имитаторы) → своя
-                       база и бакет → миграции → демо-сид → сборка → запуск
-                       сервера в фоне (pid-файл и лог — в копии)
-  down <копия>         остановить процесс сервера стенда (инфраструктуру и
-                       базу не трогает — они общие с разработкой и e2e)
+                       инфраструктура (Keycloak/Gotenberg) → своя база, бакет
+                       и чистая база Redis → сборка → миграции → демо-сид →
+                       свои имитаторы CMS/LMS (58181/58182, смотрят в стенд) →
+                       запуск сервера в фоне (pid-файл и лог — в копии)
+  down <копия>         остановить сервер и имитаторы стенда (общую
+                       инфраструктуру и базу не трогает)
   status <копия>       жив ли процесс, отвечает ли /api/health
   reseed <копия>       вернуть демо-данные к эталону той же кнопкой, что и
                        администратор стенда (/settings/general → «Сбросить
@@ -130,6 +147,13 @@ prepare_env() {
 	# ручного выпуска.
 	set_env_var "$env_file" EXCHANGE_API_KEY_CMS "lct_local-dev-only-cms-key-000000000"
 	set_env_var "$env_file" EXCHANGE_API_KEY_LMS "lct_local-dev-only-lms-key-000000000"
+	# Обмен идёт со своими имитаторами стенда (`start_mocks`), а не с общими.
+	# Сохранённые на экране интеграций адреса сильнее этих умолчаний
+	# (`integrations/settings.ts`) и сбросом демо-данных не стираются.
+	set_env_var "$env_file" EXCHANGE_CMS_STATUS_URL "http://localhost:${STAND_MOCK_CMS_PORT}/api/applications/{externalId}/status"
+	set_env_var "$env_file" EXCHANGE_LMS_GROUPS_URL "http://localhost:${STAND_MOCK_LMS_PORT}/api/groups"
+	set_env_var "$env_file" EXCHANGE_LMS_BASE_URL "http://localhost:${STAND_MOCK_LMS_PORT}"
+	set_env_var "$env_file" DEMO_CMS_TRIGGER_URL "http://localhost:${STAND_MOCK_CMS_PORT}/__send-application"
 
 	log "Конфигурация записана: $env_file"
 }
@@ -194,6 +218,80 @@ ensure_bucket() {
 		"mc alias set walk http://minio:9000 '${STAND_S3_ACCESS_KEY}' '${STAND_S3_SECRET_KEY}' && mc mb --ignore-existing walk/${STAND_BUCKET}" >/dev/null
 
 	log "Бакет ${STAND_BUCKET} готов"
+}
+
+# Значение переменной из `.env` копии: имитаторам нужны те же ключи обмена,
+# секрет подписи и имена экземпляров, что и приложению стенда.
+env_value() {
+	local file="$1" key="$2"
+	grep -m1 "^${key}=" "$file" | cut -d= -f2-
+}
+
+# Свои имитаторы стенда. Образ собирается из `mocks/` копии — той же версии,
+# что и приложение стенда. `host.docker.internal` — шлюз сети контейнера,
+# `host-gateway` заводит это имя и на Linux; приложение стенда слушает
+# `0.0.0.0` (`HOST` в `.env`), и имитатор достаёт его через шлюз, как
+# имитаторы e2e достают приложение прогона (`e2e/stack.ts`). Контейнеры
+# пересоздаются при каждом `up`: адрес и ключи могли измениться.
+start_mocks() {
+	local copy="$1"
+	local env_file="$copy/.env"
+	local crm="http://host.docker.internal:${STAND_PORT}"
+	local secret cms_key lms_key cms_instance lms_instance token
+	secret="$(env_value "$env_file" EXCHANGE_SECRET)"
+	cms_key="$(env_value "$env_file" EXCHANGE_API_KEY_CMS)"
+	lms_key="$(env_value "$env_file" EXCHANGE_API_KEY_LMS)"
+	cms_instance="$(env_value "$env_file" EXCHANGE_CMS_INSTANCE)"
+	lms_instance="$(env_value "$env_file" EXCHANGE_LMS_INSTANCE)"
+	token="$(env_value "$env_file" MOCK_CONTROL_TOKEN)"
+
+	docker build -q -t "$STAND_MOCK_IMAGE" "$copy/mocks" >/dev/null
+	stop_mocks
+
+	docker run -d --name "$STAND_MOCK_CMS_CONTAINER" --restart unless-stopped \
+		--add-host host.docker.internal:host-gateway \
+		-p "${STAND_MOCK_CMS_PORT}:8081" \
+		-e MOCK_SERVICE=cms -e PORT=8081 \
+		-e CRM_BASE_URL="$crm" -e CRM_API_KEY="$cms_key" \
+		-e EXCHANGE_SECRET="$secret" -e INSTANCE_NAME="$cms_instance" \
+		-e CONTROL_TOKEN="$token" \
+		"$STAND_MOCK_IMAGE" >/dev/null
+
+	docker run -d --name "$STAND_MOCK_LMS_CONTAINER" --restart unless-stopped \
+		--add-host host.docker.internal:host-gateway \
+		-p "${STAND_MOCK_LMS_PORT}:8082" \
+		-e MOCK_SERVICE=lms -e PORT=8082 \
+		-e CRM_BASE_URL="$crm" -e CRM_API_KEY="$lms_key" \
+		-e EXCHANGE_SECRET="$secret" -e INSTANCE_NAME="$lms_instance" \
+		-e CONTROL_TOKEN="$token" \
+		-e PUBLIC_URL="http://localhost:${STAND_MOCK_LMS_PORT}" \
+		"$STAND_MOCK_IMAGE" >/dev/null
+
+	log "Имитаторы стенда: CMS http://localhost:${STAND_MOCK_CMS_PORT}/, LMS http://localhost:${STAND_MOCK_LMS_PORT}/ → CRM ${crm}"
+}
+
+# Контейнера может не быть (первый `up`, повторный `down`) — это не ошибка,
+# а любая другая ошибка `docker rm` видна в выводе.
+stop_mocks() {
+	local name
+	for name in "$STAND_MOCK_CMS_CONTAINER" "$STAND_MOCK_LMS_CONTAINER"; do
+		if docker container inspect "$name" >/dev/null 2>&1; then
+			docker rm -f "$name" >/dev/null
+			log "Имитатор стенда $name остановлен"
+		fi
+	done
+}
+
+# Своя логическая база Redis стенда начинается пустой. В ней живут сессии,
+# очереди и подписки на события (`integrations/subscriptions.ts`), которые
+# сброс демо-данных не трогает: подписку заводит штатный администратор. Номер
+# базы до стенда занимали прогоны тестов, и их подписка «Приёмник прогона …» на
+# `127.0.0.1:<порт>` всплывала на экране интеграций как часть эталона.
+# Чистится только перед запуском сервера, а не под живым.
+flush_redis() {
+	local copy="$1"
+	compose "$copy" exec -T redis redis-cli -n "$STAND_REDIS_DB" FLUSHDB >/dev/null
+	log "Redis стенда (база ${STAND_REDIS_DB}) очищена"
 }
 
 sync_scripts() {
@@ -278,7 +376,17 @@ cmd_up() {
 	ensure_database "$copy"
 	ensure_bucket "$copy"
 	build_app "$copy"
+
+	local pidfile
+	pidfile="$(pid_file "$copy")"
+	if [ -f "$pidfile" ] && kill -0 "$(cat "$pidfile")" 2>/dev/null; then
+		log "Сервер уже запущен — Redis стенда не очищается"
+	else
+		flush_redis "$copy"
+	fi
+
 	migrate_and_seed "$copy"
+	start_mocks "$copy"
 	start_server "$copy"
 	wait_healthy
 }
@@ -290,6 +398,7 @@ cmd_down() {
 
 	if [ ! -f "$pidfile" ]; then
 		log "PID-файл не найден — сервер этим скриптом не запущен"
+		stop_mocks
 		return 0
 	fi
 
@@ -312,6 +421,7 @@ cmd_down() {
 	fi
 
 	rm -f "$pidfile"
+	stop_mocks
 }
 
 cmd_status() {
