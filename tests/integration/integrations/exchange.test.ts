@@ -9,6 +9,8 @@ import { createServer } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { afterAll, afterEach, beforeAll, beforeEach, describe, expect, it } from 'vitest';
 import { createApiKey } from '$lib/server/api/keys';
+import { loadSessionUser } from '$lib/server/auth/session';
+import { listInbox } from '$lib/server/inbox';
 import { EXCHANGE_SCHEMA_VERSION, MAX_REVISION_STEP } from '$lib/contracts/exchange';
 import {
 	affiliations,
@@ -20,6 +22,7 @@ import {
 	interactions,
 	learningGroupResults,
 	learningGroups,
+	notificationDeliveries,
 	organizationResponsibles,
 	organizations,
 	people,
@@ -474,6 +477,48 @@ describe('приём заявки с сайта', () => {
 		const rows = await database.db.select({ id: people.id }).from(people);
 
 		expect(rows).toEqual([{ id: body.data.contactPersonId }]);
+	});
+
+	it('ответственный узнаёт о новом деле один раз: колокольчик и письмо без данных заявителя', async () => {
+		const eventId = crypto.randomUUID();
+		const first = envelope(B2C_DATA, { eventId });
+
+		const created = (await (await intake(apiEvent({ body: first, key: apiKey }))).json()) as {
+			data: { interactionId: string };
+		};
+		// Повтор того же события и новая ревизия заявки дела не заводят — и
+		// второго уведомления не дают.
+		await intake(apiEvent({ body: first, key: apiKey }));
+		await intake(apiEvent({ body: envelope({ ...B2C_DATA, revision: 2 }), key: apiKey }));
+
+		const letters = await database.db
+			.select()
+			.from(notificationDeliveries)
+			.where(eq(notificationDeliveries.kind, 'site_application'));
+
+		// Канал по умолчанию — почта: одно письмо ответственному.
+		expect(letters).toHaveLength(1);
+		expect(letters[0]).toMatchObject({
+			interactionId: created.data.interactionId,
+			recipientUserId: TEST_USER_IDS.manager,
+			channel: 'email',
+			status: 'queued'
+		});
+		expect(letters[0].body).toContain(`/interactions/${created.data.interactionId}`);
+		expect(`${letters[0].subject}\n${letters[0].body}`).not.toMatch(/Ветров|vetrov|900/);
+
+		const manager = await loadSessionUser(TEST_USER_IDS.manager);
+
+		if (manager === null) {
+			throw new Error('Ответственный за входящие не собрался');
+		}
+
+		const inbox = await listInbox({ ...testActor(), user: manager, scope: manager.scope });
+
+		expect(inbox.unread).toBe(1);
+		expect(inbox.items).toMatchObject([
+			{ kind: 'application', interactionId: created.data.interactionId, readAt: null }
+		]);
 	});
 
 	it('обновляет заявку полным снимком и приписывает комментарий, а не затирает', async () => {

@@ -57,7 +57,7 @@ import { getSetting } from '../settings';
 import { sendThroughChannel, type ChannelOutcome, type NotificationRecipient } from './channels';
 import { runDailyDigest } from './digest';
 import { runLicenseWatch } from './license-watch';
-import { runMentionDelivery } from './mention';
+import { runInboxDelivery } from './inbox';
 import { stuckNotificationMessage, type NotificationMessage } from './message';
 import { FAILURE_RETRY_MINUTES, nextNotifyAt } from './schedule';
 import { runStageEnterDelivery } from './stage-enter';
@@ -430,7 +430,8 @@ function count(report: NotificationReport, status: NotificationDeliveryStatus): 
 /**
  * Проход наблюдателей по всем включённым каналам: сначала зависшие
  * взаимодействия, затем сроки лицензий (`license-watch.ts`), утренняя сводка
- * (`digest.ts`), письма об упоминаниях (`mention.ts`) и о входе на стадию
+ * (`digest.ts`), письма колокольчика — об упоминаниях и новых делах с сайта
+ * (`inbox.ts`) — и о входе на стадию
  * (`stage-enter.ts`). Отчёт у них общий.
  *
  * Своего замка не берёт — им распоряжается `runIntegrationsCycle`. Порог и
@@ -471,9 +472,10 @@ export async function runNotificationCycle(ctx: ActorContext): Promise<Notificat
 		count(report, status);
 	}
 
-	// Письма об упоминаниях: очередь ставит сам комментарий, проход её
-	// разбирает, перепроверив, что адресат всё ещё видит дело (`mention.ts`).
-	for (const status of await runMentionDelivery(ctx, enabled, now)) {
+	// Письма колокольчика: очередь ставит сам комментарий или приём с сайта,
+	// проход её разбирает, перепроверив, что адресат всё ещё видит дело
+	// (`inbox.ts`).
+	for (const status of await runInboxDelivery(ctx, enabled, now)) {
 		count(report, status);
 	}
 

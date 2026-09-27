@@ -1,4 +1,14 @@
-import { STAGE_CATEGORIES, type StageCategory } from '$lib/contracts/interactions';
+import {
+	INTERACTION_LIST_STATES,
+	STAGE_CATEGORIES,
+	type InteractionListState,
+	type StageCategory
+} from '$lib/contracts/interactions';
+import {
+	isMyDayInteractionKind,
+	type MyDay,
+	type MyDayInteractionKind
+} from '$lib/contracts/my-day';
 import {
 	interactionsHref,
 	type InteractionsFilter,
@@ -8,7 +18,7 @@ import type { ActorContext } from '$lib/server/actor';
 import { actorFromEvent } from '$lib/server/actor';
 import { toPageError } from '$lib/server/http';
 import { getMyDay } from '$lib/server/interactions/my-day';
-import { getWorkOverview } from '$lib/server/interactions/overview';
+import { COMPLETED_WINDOW_DAYS, getWorkOverview } from '$lib/server/interactions/overview';
 import { listInteractions } from '$lib/server/interactions/read';
 import type { PageServerLoad } from './$types';
 
@@ -32,6 +42,9 @@ async function countIn(
 		workspace: workspace.key,
 		stageCategory: filter.stageCategory ?? null,
 		overdue: filter.overdue ?? false,
+		state: filter.state ?? null,
+		day: filter.day ?? null,
+		closedWithin: filter.closedWithin ?? null,
 		org: [],
 		dir: [],
 		prog: [],
@@ -63,15 +76,19 @@ async function split(
 }
 
 /**
- * Ссылки плиток в списки пространств. Отбор считается только там, где есть
- * активная работа: в пространстве без неё ни просрочки, ни «моих», ни стадий
- * нет, и спрашивать об этом базу незачем.
+ * Ссылки плиток и разделов «Моего дня» в списки пространств. Отбор по
+ * активной работе считается только там, где она есть: в пространстве без неё
+ * ни просрочки, ни «моих», ни стадий нет, и спрашивать об этом базу незачем.
+ * Разделы «Моего дня» — только непустые: у пустого раздела нет карточки.
  */
-async function listLinks(ctx: ActorContext, workspaces: readonly Workspace[]) {
+async function listLinks(ctx: ActorContext, workspaces: readonly Workspace[], myDay: MyDay) {
 	const active = await split(ctx, workspaces, { status: 'active' });
 	const busy = workspaces.filter((workspace) => active.some((part) => part.key === workspace.key));
+	const dayKinds = myDay.sections
+		.map((section) => section.kind)
+		.filter((kind) => isMyDayInteractionKind(kind));
 
-	const [overdue, mine, categories] = await Promise.all([
+	const [overdue, mine, categories, states, completed, day] = await Promise.all([
 		split(ctx, busy, { status: 'active', overdue: true }),
 		// Без пользователя «моих» нет; сама сводка такому запросу откажет правом.
 		ctx.user === null ? [] : split(ctx, busy, { status: 'active', owner: ctx.user.id }),
@@ -80,6 +97,19 @@ async function listLinks(ctx: ActorContext, workspaces: readonly Workspace[]) {
 				async (category) =>
 					[category, await split(ctx, busy, { status: 'active', stageCategory: category })] as const
 			)
+		),
+		Promise.all(
+			INTERACTION_LIST_STATES.map(
+				async (state) => [state, await split(ctx, busy, { status: 'active', state })] as const
+			)
+		),
+		// Завершённые — по всем пространствам: активной работы в пространстве
+		// может уже не быть, а завершённое за месяц в нём есть.
+		split(ctx, workspaces, { status: 'completed', closedWithin: COMPLETED_WINDOW_DAYS }),
+		Promise.all(
+			dayKinds.map(
+				async (kind) => [kind, await split(ctx, busy, { status: 'active', day: kind })] as const
+			)
 		)
 	]);
 
@@ -87,7 +117,10 @@ async function listLinks(ctx: ActorContext, workspaces: readonly Workspace[]) {
 		active,
 		overdue,
 		mine,
-		categories: Object.fromEntries(categories) as Record<StageCategory, WorkspaceCount[]>
+		categories: Object.fromEntries(categories) as Record<StageCategory, WorkspaceCount[]>,
+		states: Object.fromEntries(states) as Record<InteractionListState, WorkspaceCount[]>,
+		completed,
+		day: Object.fromEntries(day) as Partial<Record<MyDayInteractionKind, WorkspaceCount[]>>
 	};
 }
 
@@ -110,11 +143,9 @@ export const load: PageServerLoad = async (event) => {
 	const { workspaces } = await event.parent();
 
 	try {
-		const [overview, myDay, lists] = await Promise.all([
-			getWorkOverview(ctx, now),
-			getMyDay(ctx, now),
-			listLinks(ctx, workspaces)
-		]);
+		const [overview, myDay] = await Promise.all([getWorkOverview(ctx, now), getMyDay(ctx, now)]);
+		// Разделы «Моего дня» со ссылками — только те, что есть сегодня.
+		const lists = await listLinks(ctx, workspaces, myDay);
 
 		return { overview, myDay, lists };
 	} catch (cause) {

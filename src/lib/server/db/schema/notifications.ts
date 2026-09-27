@@ -14,7 +14,7 @@
  * одинаковых строк. Что повторов было несколько, видно по счётчику попыток и по
  * моменту последней отправки.
  *
- * Предметов четыре, и у строки заполнен ровно один (проверка
+ * Предметов пять, и у строки заполнен ровно один (проверка
  * `notification_deliveries_subject_one_of`):
  * - запись стадии (`stage_entry_id` вместе со своим взаимодействием) — у
  *   напоминания о зависшем взаимодействии и у уведомления о входе на стадию:
@@ -26,12 +26,16 @@
  * - день утренней сводки (`digest_day`) вместе с получателем — у сводки «Мой
  *   день»: одна на сотрудника, день и канал;
  * - упоминание в комментарии (`mention_id` вместе со своим взаимодействием) —
- *   у письма «Вас упомянули в деле»: одно на упоминание и канал.
+ *   у письма «Вас упомянули в деле»: одно на упоминание и канал;
+ * - уведомление о новом деле с сайта (`application_notice_id` вместе со своим
+ *   взаимодействием) — у письма «Вам назначено новое дело с сайта»: одно на
+ *   уведомление и канал.
  */
 import { relations, sql } from 'drizzle-orm';
 import {
 	check,
 	date,
+	foreignKey,
 	index,
 	integer,
 	pgEnum,
@@ -48,6 +52,7 @@ import {
 } from '$lib/contracts/notifications';
 import { users } from './auth';
 import { contractItems, interactions, stageEntries } from './interactions';
+import { applicationNotices } from './application-notices';
 import { commentMentions } from './mentions';
 import { timestamps } from './shared';
 
@@ -88,6 +93,11 @@ export const notificationDeliveries = pgTable(
 		 * заполнено рядом с ним — по нему журнал сужается областью читателя.
 		 */
 		mentionId: uuid().references(() => commentMentions.id, { onDelete: 'cascade' }),
+		/**
+		 * Уведомление о новом деле с сайта. Предмет дедупликации, как у
+		 * упоминания: одно письмо на уведомление и канал.
+		 */
+		applicationNoticeId: uuid(),
 		/**
 		 * Кому уходит: руководитель ответственного за взаимодействие, ответственный
 		 * за вуз или его руководитель — по виду. Пусто — получателя нет, и это не
@@ -141,9 +151,20 @@ export const notificationDeliveries = pgTable(
 		uniqueIndex('notification_deliveries_mention_key')
 			.on(table.kind, table.mentionId, table.channel)
 			.where(sql`${table.mentionId} is not null`),
+		// Имя внешнего ключа задано явно: сгенерированное длиннее 63 символов, и
+		// PostgreSQL обрезал бы его молча, разойдясь со снимком схемы.
+		foreignKey({
+			name: 'notification_deliveries_application_notice_fk',
+			columns: [table.applicationNoticeId],
+			foreignColumns: [applicationNotices.id]
+		}).onDelete('cascade'),
+		// И для нового дела с сайта: одно письмо на уведомление по каналу.
+		uniqueIndex('notification_deliveries_application_notice_key')
+			.on(table.kind, table.applicationNoticeId, table.channel)
+			.where(sql`${table.applicationNoticeId} is not null`),
 		check(
 			'notification_deliveries_subject_one_of',
-			sql`(${table.stageEntryId} is not null and ${table.interactionId} is not null and ${table.contractItemId} is null and ${table.licenseUntil} is null and ${table.digestDay} is null and ${table.mentionId} is null) or (${table.stageEntryId} is null and ${table.interactionId} is null and ${table.contractItemId} is not null and ${table.licenseUntil} is not null and ${table.digestDay} is null and ${table.mentionId} is null) or (${table.stageEntryId} is null and ${table.interactionId} is null and ${table.contractItemId} is null and ${table.licenseUntil} is null and ${table.digestDay} is not null and ${table.mentionId} is null) or (${table.stageEntryId} is null and ${table.interactionId} is not null and ${table.contractItemId} is null and ${table.licenseUntil} is null and ${table.digestDay} is null and ${table.mentionId} is not null)`
+			sql`(${table.stageEntryId} is not null and ${table.interactionId} is not null and ${table.contractItemId} is null and ${table.licenseUntil} is null and ${table.digestDay} is null and ${table.mentionId} is null and ${table.applicationNoticeId} is null) or (${table.stageEntryId} is null and ${table.interactionId} is null and ${table.contractItemId} is not null and ${table.licenseUntil} is not null and ${table.digestDay} is null and ${table.mentionId} is null and ${table.applicationNoticeId} is null) or (${table.stageEntryId} is null and ${table.interactionId} is null and ${table.contractItemId} is null and ${table.licenseUntil} is null and ${table.digestDay} is not null and ${table.mentionId} is null and ${table.applicationNoticeId} is null) or (${table.stageEntryId} is null and ${table.interactionId} is not null and ${table.contractItemId} is null and ${table.licenseUntil} is null and ${table.digestDay} is null and ${table.mentionId} is not null and ${table.applicationNoticeId} is null) or (${table.stageEntryId} is null and ${table.interactionId} is not null and ${table.contractItemId} is null and ${table.licenseUntil} is null and ${table.digestDay} is null and ${table.mentionId} is null and ${table.applicationNoticeId} is not null)`
 		),
 		// Наблюдатель выбирает то, чему пришёл срок: строк в журнале со временем
 		// тысячи, а созревших единицы.
@@ -151,7 +172,8 @@ export const notificationDeliveries = pgTable(
 		index('notification_deliveries_status_idx').on(table.status, table.createdAt),
 		index('notification_deliveries_interaction_idx').on(table.interactionId, table.createdAt),
 		index('notification_deliveries_contract_item_idx').on(table.contractItemId),
-		index('notification_deliveries_mention_idx').on(table.mentionId)
+		index('notification_deliveries_mention_idx').on(table.mentionId),
+		index('notification_deliveries_application_notice_idx').on(table.applicationNoticeId)
 	]
 );
 
@@ -171,6 +193,10 @@ export const notificationDeliveriesRelations = relations(notificationDeliveries,
 	mention: one(commentMentions, {
 		fields: [notificationDeliveries.mentionId],
 		references: [commentMentions.id]
+	}),
+	applicationNotice: one(applicationNotices, {
+		fields: [notificationDeliveries.applicationNoticeId],
+		references: [applicationNotices.id]
 	}),
 	recipient: one(users, {
 		fields: [notificationDeliveries.recipientUserId],

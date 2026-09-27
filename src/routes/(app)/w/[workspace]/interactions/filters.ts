@@ -1,10 +1,13 @@
 import { resolve } from '$app/paths';
 import type { ResolvedPathname } from '$app/types';
 import {
+	INTERACTION_LIST_STATES,
 	STAGE_CATEGORIES,
+	type InteractionListState,
 	type InteractionStatus,
 	type StageCategory
 } from '$lib/contracts/interactions';
+import { MY_DAY_INTERACTION_KINDS, type MyDayInteractionKind } from '$lib/contracts/my-day';
 
 /**
  * Фильтры списка взаимодействий живут в адресной строке рядом с состоянием
@@ -20,6 +23,12 @@ export type InteractionFilters = {
 	status: InteractionStatus | null;
 	stageCategory: StageCategory | null;
 	overdue: boolean;
+	/** Состояние портфеля: на паузе, с помехами, тишина — как плитки главной. */
+	state: InteractionListState | null;
+	/** Раздел «Моего дня»: ровно те дела, что главная положила в раздел. */
+	day: MyDayInteractionKind | null;
+	/** Закрыты за последние N дней (адрес — `closed`); `null` — без окна. */
+	closedWithin: number | null;
 	/** Вуз — основная сторона взаимодействия. */
 	org: string[];
 	/** Направление — объединение направлений продуктов и программ, как в отчёте. */
@@ -32,6 +41,21 @@ export type InteractionFilters = {
 
 const STATUS_VALUES = new Set(['active', 'completed', 'cancelled']);
 const CATEGORY_VALUES = new Set<string>(STAGE_CATEGORIES);
+const STATE_VALUES = new Set<string>(INTERACTION_LIST_STATES);
+const DAY_VALUES = new Set<string>(MY_DAY_INTERACTION_KINDS);
+/** Окно «закрыты за N дней»: те же границы, что у схемы запроса списка. */
+const CLOSED_PATTERN = /^[1-9]\d{0,2}$/;
+const CLOSED_MAX_DAYS = 365;
+
+function readClosedWithin(value: string | null): number | null {
+	if (value === null || !CLOSED_PATTERN.test(value)) {
+		return null;
+	}
+
+	const days = Number(value);
+
+	return days <= CLOSED_MAX_DAYS ? days : null;
+}
 
 /**
  * Многозначный параметр списка: имена и смысл значений — как у отчёта (`org`,
@@ -59,6 +83,8 @@ function readIds(url: URL, param: ListAttributeParam): string[] {
 export function readFilters(url: URL): InteractionFilters {
 	const status = url.searchParams.get('status');
 	const stageCategory = url.searchParams.get('stage');
+	const state = url.searchParams.get('state');
+	const day = url.searchParams.get('day');
 
 	return {
 		status: status !== null && STATUS_VALUES.has(status) ? (status as InteractionStatus) : null,
@@ -67,6 +93,9 @@ export function readFilters(url: URL): InteractionFilters {
 				? (stageCategory as StageCategory)
 				: null,
 		overdue: url.searchParams.get('overdue') === 'true',
+		state: state !== null && STATE_VALUES.has(state) ? (state as InteractionListState) : null,
+		day: day !== null && DAY_VALUES.has(day) ? (day as MyDayInteractionKind) : null,
+		closedWithin: readClosedWithin(url.searchParams.get('closed')),
 		org: readIds(url, 'org'),
 		dir: readIds(url, 'dir'),
 		prog: readIds(url, 'prog'),
@@ -110,6 +139,9 @@ export function filtersHref(
 	apply('status', next.status);
 	apply('stage', next.stageCategory);
 	apply('overdue', next.overdue ? 'true' : null);
+	apply('state', next.state);
+	apply('day', next.day);
+	apply('closed', next.closedWithin === null ? null : String(next.closedWithin));
 	applyIds('org', next.org);
 	applyIds('dir', next.dir);
 	applyIds('prog', next.prog);
@@ -155,7 +187,17 @@ export function toggledFilterHref(
 export function clearedFiltersHref(url: URL, workspace: string): ResolvedPathname {
 	const params = new URLSearchParams(url.searchParams);
 
-	for (const name of ['status', 'stage', 'overdue', 'q', 'page', ...LIST_ATTRIBUTE_PARAMS]) {
+	for (const name of [
+		'status',
+		'stage',
+		'overdue',
+		'state',
+		'day',
+		'closed',
+		'q',
+		'page',
+		...LIST_ATTRIBUTE_PARAMS
+	]) {
 		params.delete(name);
 	}
 

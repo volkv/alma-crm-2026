@@ -61,6 +61,7 @@ import {
 	programs
 } from '../../db/schema';
 import { withTransaction, type Tx } from '../../db/transaction';
+import { queueApplicationNotice } from '../../inbox';
 import { publishAfterCommit } from '../../live/publish';
 import { bumpContractsOfItems } from '../../directory/contracts';
 import { createAffiliation, createOrganization, createPerson } from '../../directory/write';
@@ -897,6 +898,11 @@ async function createFromApplication(
 
 	// Ответственного назначил сам приём — пункт об этом отмечается им же.
 	await markOwnerAssigned(ctx, tx, interactionId);
+
+	// Дело пришло само, и ответственный узнаёт о нём колокольчиком и письмом,
+	// а не случайно на доске. Новая ревизия заявки дела не заводит и второго
+	// уведомления не даёт.
+	await queueApplicationNotice(tx, { interactionId, userId: ownerUserId });
 
 	return {
 		result: 'created',

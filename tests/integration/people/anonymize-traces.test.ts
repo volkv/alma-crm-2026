@@ -242,8 +242,9 @@ async function tracesOf(needles: readonly string[]): Promise<string[]> {
 
 describe('следы человека после обезличивания', () => {
 	/**
-	 * Сцена: две заявки одного человека, напоминание по каждой, комментарий
-	 * сотрудника и переименование одной из записей.
+	 * Сцена: две заявки одного человека, уведомление ответственному и
+	 * напоминание по каждой, комментарий сотрудника и переименование одной из
+	 * записей.
 	 *
 	 * Заявок две, потому что копии ФИО расходятся по-разному: у второй записи
 	 * заголовок остался тем, что собрала заявка, а у первой сотрудник его
@@ -294,7 +295,9 @@ describe('следы человека после обезличивания', ()
 
 		const report = await runNotificationCycle(systemActor(crypto.randomUUID()));
 
-		expect(report.scanned).toBe(2);
+		// Четыре письма: по напоминанию о зависшем на каждую запись и по
+		// уведомлению ответственному о каждом новом деле с сайта.
+		expect(report.scanned).toBe(4);
 
 		// И только теперь — переименование: письмо уже ушло с прежним заголовком,
 		// а прежний заголовок лёг в предметную историю.
@@ -359,10 +362,9 @@ describe('следы человека после обезличивания', ()
 			.select({ subject: notificationDeliveries.subject, body: notificationDeliveries.body })
 			.from(notificationDeliveries);
 
-		expect(deliveries).toEqual([
-			{ subject: ANONYMIZED_TEXT, body: ANONYMIZED_TEXT },
-			{ subject: ANONYMIZED_TEXT, body: ANONYMIZED_TEXT }
-		]);
+		expect(deliveries).toEqual(
+			Array.from({ length: 4 }, () => ({ subject: ANONYMIZED_TEXT, body: ANONYMIZED_TEXT }))
+		);
 
 		const titleChanges = await database.db
 			.select({ oldValue: interactionChanges.oldValue, newValue: interactionChanges.newValue })

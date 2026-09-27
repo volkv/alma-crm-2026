@@ -31,8 +31,11 @@ const ACTIVITY_LIMIT = 10;
  * «Журнал действий» и ничего не теряет.
  */
 const ACTIVITY_PER_INTERACTION = 2;
-/** Окно, за которое считаются завершённые взаимодействия. */
-const COMPLETED_WINDOW_DAYS = 30;
+/**
+ * Окно, за которое считаются завершённые взаимодействия. Им же плитка ведёт в
+ * список (`closed` в адресе): число и строки обязаны совпасть.
+ */
+export const COMPLETED_WINDOW_DAYS = 30;
 const DAY_MS = 24 * 60 * 60 * 1000;
 
 /**
@@ -146,6 +149,22 @@ function countCounters(
 		blocked: rows.filter((row) => row.openBlockers > 0).length,
 		stale: rows.filter((row) => isStale(row.snapshot, row.lastActivityAt, now)).length
 	};
+}
+
+/**
+ * Активные дела области, в которых тишина дольше нормы стадии, — тем же
+ * правилом `isStale`, что плитка «Тишина»: по ним список отбирает `state=stale`,
+ * и число плитки совпадает со строками списка.
+ */
+export async function listStaleInteractionIds(
+	ctx: ActorContext,
+	now: Date = new Date()
+): Promise<string[]> {
+	requirePermission(ctx, 'interactions.read');
+
+	const rows = await readPortfolio(ctx);
+
+	return rows.filter((row) => isStale(row.snapshot, row.lastActivityAt, now)).map((row) => row.id);
 }
 
 function buildDistribution(rows: PortfolioRow[]): OverviewDistribution {

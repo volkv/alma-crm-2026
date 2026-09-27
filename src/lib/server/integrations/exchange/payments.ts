@@ -53,6 +53,7 @@ import {
 	stageEntries
 } from '../../db/schema';
 import { withTransaction, type Tx } from '../../db/transaction';
+import { queueApplicationNotice } from '../../inbox';
 import { AppError, ConflictError, ValidationError } from '../../errors';
 import { nextEdit } from '../../interactions/edit-version';
 import { createInteractionIn } from '../../interactions/write';
@@ -941,6 +942,12 @@ async function applyInTransaction(
 
 		// Ответственного назначила сама загрузка — пункт об этом отмечается ею же.
 		await markOwnerAssigned(owner, tx, interactionId);
+
+		// Дело завела загрузка, а ведёт его другой сотрудник: он узнаёт о нём
+		// колокольчиком и письмом. Себе, загрузившему, сообщать незачем.
+		if (ctx.user?.id !== ownerUserId) {
+			await queueApplicationNotice(tx, { interactionId, userId: ownerUserId });
+		}
 	} else {
 		interactionId = target.existing.id;
 		organizationId = target.existing.organizationId;

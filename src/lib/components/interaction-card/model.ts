@@ -1223,11 +1223,11 @@ function leftTitle(entry: StageEntryView, outcome: StageOutcome, next: StageEntr
 
 /**
  * Единая лента: переходы, паузы, подтверждения, комментарии, документы,
- * правки плана, помехи и обмен с системой обучения — одним списком по времени,
- * новые сверху. Каждое событие попадает в ленту один раз и только сюда.
+ * правки плана, помехи, оплата с сайта и обмен с системой обучения — одним
+ * списком по времени, новые сверху. Каждое событие попадает в ленту один раз и только сюда.
  */
 export function buildEvents(source: CardSource): CardEvent[] {
-	const { interaction, status, comments, changes, exchange } = source;
+	const { interaction, status, comments, changes, exchange, paymentFact } = source;
 	const events: CardEvent[] = [];
 	const entries = status.current === null ? status.history : [status.current, ...status.history];
 	const oldest = entries.at(-1) ?? null;
@@ -1417,6 +1417,24 @@ export function buildEvents(source: CardSource): CardEvent[] {
 				tone: 'success'
 			});
 		}
+	}
+
+	// Оплата с сайта — факт обмена, а не правка сотрудника: номер заявки и
+	// поток, без имени плательщика (оно и так в названии дела и в карточке).
+	if (paymentFact !== null) {
+		events.push({
+			id: `payment:${paymentFact.orderId}`,
+			at: paymentFact.loadedAt,
+			kind: 'exchange',
+			title: 'Оплата подтверждена на сайте',
+			detail: [
+				`заявка ${paymentFact.orderId}`,
+				...(paymentFact.streamNumber === null ? [] : [`поток ${paymentFact.streamNumber}`])
+			].join(', '),
+			author: null,
+			duration: null,
+			tone: 'success'
+		});
 	}
 
 	for (const group of exchange.groups) {

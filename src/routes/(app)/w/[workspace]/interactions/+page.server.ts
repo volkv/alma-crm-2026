@@ -77,6 +77,12 @@ export const load: PageServerLoad = async (event) => {
 	// На доске колонки и есть стадии: фильтра стадии там нет, и параметр,
 	// оставшийся в адресе от таблицы, не должен прятать колонки без объяснения.
 	const stageCategory = view === 'board' ? null : filters.stageCategory;
+	// Отборы по состоянию, разделу «Моего дня» и окну закрытия — только у
+	// таблицы: на них ведут числа главной, и число обязано совпасть со строками,
+	// а доска показывает не каждую запись в колонке.
+	const tableFiltered =
+		view !== 'board' &&
+		(filters.state !== null || filters.day !== null || filters.closedWithin !== null);
 
 	// Пустой список под фильтром и пустой раздел — разные состояния: в первом
 	// случае человеку нужно снять фильтр, во втором — завести первую запись.
@@ -85,6 +91,7 @@ export const load: PageServerLoad = async (event) => {
 		filters.status !== null ||
 		stageCategory !== null ||
 		filters.overdue ||
+		tableFiltered ||
 		filters.org.length > 0 ||
 		filters.dir.length > 0 ||
 		filters.prog.length > 0 ||
@@ -143,6 +150,9 @@ export const load: PageServerLoad = async (event) => {
 		workspace: workspace.key,
 		stageCategory: filters.stageCategory,
 		overdue: filters.overdue,
+		state: filters.state,
+		day: filters.day,
+		closedWithin: filters.closedWithin,
 		org: filters.org,
 		dir: filters.dir,
 		prog: filters.prog,

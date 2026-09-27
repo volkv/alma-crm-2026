@@ -2,7 +2,7 @@
 	import type { Snippet } from 'svelte';
 	import HelpMenu from '$lib/components/onboarding/help-menu.svelte';
 	import ThemeToggle from '$lib/components/app-shell/theme-toggle.svelte';
-	import MentionBell from '$lib/components/app-shell/mention-bell.svelte';
+	import InboxBell from '$lib/components/app-shell/inbox-bell.svelte';
 
 	/**
 	 * Шапка страницы: что открыто, что с этим можно сделать и справка с темой
@@ -135,7 +135,7 @@
 				{/if}
 				<!-- Колокольчик упоминаний — первым: это единственный значок ряда,
 					который говорит о чём-то новом для человека, а не о системе. -->
-				<MentionBell />
+				<InboxBell />
 				<HelpMenu />
 				<!-- Обёртка несёт метку тура: рамка обводит кнопку целиком. -->
 				<div data-tour="theme-toggle" class="flex shrink-0 items-center">

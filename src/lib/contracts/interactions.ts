@@ -26,6 +26,7 @@ import {
 	type DocumentTemplateKey
 } from './documents';
 import type { LearningPurpose } from './exchange';
+import { MY_DAY_INTERACTION_KINDS } from './my-day';
 import type { PersonView } from './directory';
 import { CHECKLIST_ACTION_KEYS } from '$lib/platform/checklist';
 import { CHECKLIST_RULE_KEYS, type ChecklistRuleKey } from '$lib/platform/checklist-rules';
@@ -528,6 +529,17 @@ const multiUuid = z
 			.filter((item) => z.uuid().safeParse(item).success)
 	);
 
+/** Состояния портфеля, по которым отбирает список. */
+export const INTERACTION_LIST_STATES = ['paused', 'blocked', 'stale'] as const;
+
+export type InteractionListState = (typeof INTERACTION_LIST_STATES)[number];
+
+export const INTERACTION_LIST_STATE_LABELS: Record<InteractionListState, string> = {
+	paused: 'На паузе',
+	blocked: 'С помехами',
+	stale: 'Тишина'
+};
+
 export const interactionListQuerySchema = z.object({
 	status: z.enum(INTERACTION_STATUSES).nullable().default(null),
 	ownerUserId: optionalId('Некорректный идентификатор ответственного'),
@@ -544,6 +556,28 @@ export const interactionListQuerySchema = z.object({
 		.union([z.boolean(), z.enum(['true', 'false'])])
 		.default(false)
 		.transform((value) => value === true || value === 'true'),
+	/**
+	 * Состояние портфеля — то же правило, что у плиток главной
+	 * (`interactions/overview.ts`): на паузе, с открытой помехой, тишина дольше
+	 * нормы стадии.
+	 */
+	state: z.enum(INTERACTION_LIST_STATES).nullable().default(null),
+	/**
+	 * Раздел «Моего дня»: ровно те дела, что главная положила в этот раздел, —
+	 * тем же разбором (`interactions/my-day.ts`), а не вторым описанием правила.
+	 */
+	day: z.enum(MY_DAY_INTERACTION_KINDS).nullable().default(null),
+	/**
+	 * Закрыты (завершены или отменены) за последние N дней — по последнему
+	 * событию, как плитка «Завершённые» главной.
+	 */
+	closedWithin: z.coerce
+		.number({ error: 'Окно закрытия — число дней' })
+		.int({ error: 'Окно закрытия — целое число дней' })
+		.min(1, { error: 'Окно закрытия — от 1 дня' })
+		.max(365, { error: 'Окно закрытия — не больше 365 дней' })
+		.nullable()
+		.default(null),
 	/** Вуз — основная сторона взаимодействия (`interaction_parties.is_primary`). */
 	org: multiUuid,
 	/**

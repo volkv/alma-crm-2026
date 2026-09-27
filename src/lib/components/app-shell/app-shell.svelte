@@ -20,7 +20,7 @@
 	import { createNavCollapse } from './nav-collapse.svelte';
 	import { createNavGroups, setNavGroups } from './nav-groups.svelte';
 	import { navLinks } from './nav-links';
-	import { mentions } from './mentions.svelte';
+	import { inbox } from './inbox.svelte';
 	import { search } from './search.svelte';
 
 	/**
@@ -82,10 +82,10 @@
 	);
 
 	// Колокольчик перечитывается на каждом переходе, и первый раз — при
-	// загрузке: `afterNavigate` срабатывает и на ней (`mentions.svelte.ts`).
+	// загрузке: `afterNavigate` срабатывает и на ней (`inbox.svelte.ts`).
 	afterNavigate(({ to }) => {
 		if (user !== null && to !== null) {
-			void mentions.refresh(to.url.pathname);
+			void inbox.refresh(to.url.pathname);
 		}
 	});
 

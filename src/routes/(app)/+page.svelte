@@ -82,7 +82,7 @@
 	</div>
 
 	<div class="min-w-0">
-		<MyDay sections={myDay.sections} listParts={{ overdue: lists.overdue }} />
+		<MyDay sections={myDay.sections} listParts={lists.day} />
 	</div>
 
 	<div class="grid min-w-0 gap-4 lg:grid-cols-2 xl:grid-cols-1">
@@ -91,7 +91,13 @@
 			description="Активные взаимодействия по группам стадий процесса"
 			data-tour="home-portfolio"
 		>
-			<StatTiles counters={overview.counters} active={lists.active} overdue={lists.overdue} />
+			<StatTiles
+				counters={overview.counters}
+				active={lists.active}
+				overdue={lists.overdue}
+				states={lists.states}
+				completed={lists.completed}
+			/>
 			<PortfolioBar
 				distribution={overview.distribution}
 				labels={STAGE_CATEGORY_LABELS}

@@ -22,6 +22,7 @@ import {
 	MY_DAY_SECTION_LIMIT,
 	type MyDay,
 	type MyDayBasis,
+	type MyDayInteractionKind,
 	type MyDayItem,
 	type MyDayKind
 } from '$lib/contracts/my-day';
@@ -309,6 +310,29 @@ function basisOf(ctx: ActorContext): MyDayBasis {
 	}
 
 	return ctx.scope.userIds.size > 1 ? 'team' : 'own';
+}
+
+/**
+ * Дела раздела «Моего дня» — все, а не первые строки: по ним список дел
+ * отбирает ровно тот набор, что посчитан на главной (`day` в адресе списка).
+ * Разбор тот же (`classify`), поэтому число раздела и строки списка не
+ * расходятся.
+ */
+export async function listMyDayInteractionIds(
+	ctx: ActorContext,
+	kind: MyDayInteractionKind,
+	now: Date = new Date()
+): Promise<string[]> {
+	requirePermission(ctx, 'interactions.read');
+
+	const [rows, thresholdDays] = await Promise.all([
+		readInteractions(ctx),
+		getSetting('stuck_threshold_days')
+	]);
+
+	return rows
+		.filter((row) => classify(row, now, thresholdDays)?.kind === kind)
+		.map((row) => row.id);
 }
 
 /**

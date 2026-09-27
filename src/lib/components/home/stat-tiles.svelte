@@ -1,5 +1,6 @@
 <script lang="ts">
 	import type { ResolvedPathname } from '$app/types';
+	import type { InteractionListState } from '$lib/contracts/interactions';
 	import { formatNumber } from '$lib/format';
 	import type { OverviewCounters } from '$lib/server/interactions/overview';
 	import { cn } from '$lib/utils';
@@ -14,22 +15,27 @@
 	 * (`WorkspaceParts`): список живёт в пространстве, и одной ссылкой весь
 	 * набор не открыть.
 	 *
-	 * У паузы, помех, тишины и завершённых за 30 дней такого отбора в списке
-	 * нет, и плитка не притворяется ссылкой: ссылка на список без этого отбора
-	 * показала бы другое число.
+	 * У каждой плитки такой отбор есть: пауза, помехи и тишина — `state`,
+	 * завершённые за 30 дней — `closed` в адресе списка.
 	 *
 	 * Считает числа сервер (`getWorkOverview`), компонент только показывает их.
 	 */
 	let {
 		counters,
 		active,
-		overdue
+		overdue,
+		states,
+		completed
 	}: {
 		counters: OverviewCounters;
 		/** «В работе» по пространствам — теми же списками, куда ведут ссылки. */
 		active: readonly WorkspaceCount[];
 		/** «Просроченные» по пространствам. */
 		overdue: readonly WorkspaceCount[];
+		/** «На паузе», «С помехами», «Тишина» по пространствам. */
+		states: Readonly<Record<InteractionListState, readonly WorkspaceCount[]>>;
+		/** «Завершённые» за окно по пространствам. */
+		completed: readonly WorkspaceCount[];
 	} = $props();
 
 	type Tile = {
@@ -38,9 +44,9 @@
 		/** Чем число является: подпись объясняет, что именно посчитано. */
 		hint: string;
 		tone: 'neutral' | 'danger' | 'warning' | 'success';
-		/** Список с тем же набором; `null` — такого фильтра в списке нет или частей несколько. */
+		/** Список с тем же набором; `null` — частей несколько или набор пуст. */
 		href: ResolvedPathname | null;
-		/** Части по пространствам со ссылками; пусто — отбора в списке нет. */
+		/** Части по пространствам со ссылками; пусто — набор пуст. */
 		parts: readonly WorkspaceCount[];
 	};
 
@@ -66,32 +72,32 @@
 			value: counters.paused,
 			hint: 'часы стадии остановлены',
 			tone: 'neutral',
-			href: null,
-			parts: []
+			href: singleHref(states.paused),
+			parts: states.paused
 		},
 		{
 			label: 'С помехами',
 			value: counters.blocked,
 			hint: 'есть открытая помеха',
 			tone: 'warning',
-			href: null,
-			parts: []
+			href: singleHref(states.blocked),
+			parts: states.blocked
 		},
 		{
 			label: 'Тишина',
 			value: counters.stale,
 			hint: 'событий нет дольше нормы',
 			tone: 'neutral',
-			href: null,
-			parts: []
+			href: singleHref(states.stale),
+			parts: states.stale
 		},
 		{
 			label: 'Завершённые',
 			value: counters.completedRecently,
 			hint: 'за последние 30 дней',
 			tone: 'success',
-			href: null,
-			parts: []
+			href: singleHref(completed),
+			parts: completed
 		}
 	]);
 

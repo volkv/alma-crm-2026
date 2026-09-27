@@ -40,7 +40,8 @@ export const NOTIFICATION_KINDS = [
 	'license_expired',
 	'daily_digest',
 	'mention',
-	'stage_entered'
+	'stage_entered',
+	'site_application'
 ] as const;
 
 export type NotificationKind = (typeof NOTIFICATION_KINDS)[number];
@@ -60,7 +61,8 @@ export const NOTIFICATION_KIND_LABELS: Record<NotificationKind, string> = {
 	license_expired: 'Истекла лицензия',
 	daily_digest: 'Утренняя сводка',
 	mention: 'Упоминание в деле',
-	stage_entered: 'Дело вошло на стадию'
+	stage_entered: 'Дело вошло на стадию',
+	site_application: 'Новое дело с сайта'
 };
 
 /**

@@ -264,6 +264,25 @@ describe('вид карточки', () => {
 		);
 	});
 
+	it('оплата с сайта стоит в ленте событием обмена с номером заявки и потоком', () => {
+		const events = buildEvents(
+			source({
+				paymentFact: {
+					orderId: 'ORD-20260313051569-QWERTY',
+					streamNumber: 1,
+					loadedAt: new Date('2026-09-20T09:00:00Z'),
+					stageName: 'Договор и оплата'
+				}
+			})
+		);
+
+		expect(events.find((event) => event.id === 'payment:ORD-20260313051569-QWERTY')).toMatchObject({
+			kind: 'exchange',
+			title: 'Оплата подтверждена на сайте',
+			detail: 'заявка ORD-20260313051569-QWERTY, поток 1'
+		});
+	});
+
 	it('оплата с сайта до стадии оплаты — «оплачено на сайте», а не «не отмечена»', () => {
 		const payment = buildPayment([entry()], {
 			orderId: 'ORD-1',

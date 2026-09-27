@@ -1,12 +1,12 @@
 /*
- * Колокольчик упоминаний: состояние на весь документ.
+ * Колокольчик — упоминания и новые дела с сайта: состояние на весь документ.
  *
  * Колокольчиков два — в шапке страницы на широком экране и в нижней панели
  * телефона, — а спрашивать сервер и помнить ответ должен один. Перечитывается
  * он на каждом переходе между страницами (`app-shell.svelte` зовёт
  * `refresh`): своего канала у пользователя в живом потоке нет — поток открыт
  * по карточке дела, — и навигация оказывается тем моментом, когда свежее
- * число нужно. Открытая карточка отмечает свои упоминания прочитанными:
+ * число нужно. Открытая карточка отмечает свои строки прочитанными:
  * человек пришёл туда, куда его звали.
  *
  * На сервере состояние не меняется никогда: меняют его только обработчики
@@ -15,12 +15,13 @@
  */
 import { resolve } from '$app/paths';
 import {
-	mentionInboxSchema,
-	type MarkMentionsReadInput,
-	type MentionInbox
-} from '$lib/contracts/mentions';
+	inboxSchema,
+	type Inbox,
+	type InboxItem,
+	type MarkInboxReadInput
+} from '$lib/contracts/inbox';
 
-let inbox = $state<MentionInbox | null>(null);
+let loaded = $state<Inbox | null>(null);
 let failure = $state<string | null>(null);
 let issued = 0;
 
@@ -34,8 +35,8 @@ async function refusal(response: Response): Promise<string> {
 		: `Сервер ответил ${response.status}`;
 }
 
-async function post(input: MarkMentionsReadInput): Promise<void> {
-	const response = await fetch(resolve('/(app)/mentions'), {
+async function post(input: MarkInboxReadInput): Promise<void> {
+	const response = await fetch(resolve('/(app)/inbox'), {
 		method: 'POST',
 		headers: { 'content-type': 'application/json', accept: 'application/json' },
 		body: JSON.stringify(input)
@@ -48,7 +49,7 @@ async function post(input: MarkMentionsReadInput): Promise<void> {
 
 async function load(): Promise<void> {
 	const token = ++issued;
-	const response = await fetch(resolve('/(app)/mentions'), {
+	const response = await fetch(resolve('/(app)/inbox'), {
 		headers: { accept: 'application/json' }
 	});
 
@@ -56,12 +57,12 @@ async function load(): Promise<void> {
 		throw new Error(await refusal(response));
 	}
 
-	const next = mentionInboxSchema.parse(await response.json());
+	const next = inboxSchema.parse(await response.json());
 
 	// Ответ ложится, только если его ещё ждут: два быстрых перехода подряд не
 	// должны вернуть число первого поверх второго.
 	if (token === issued) {
-		inbox = next;
+		loaded = next;
 		failure = null;
 	}
 }
@@ -74,24 +75,24 @@ async function run(step: () => Promise<void>): Promise<void> {
 	} catch (error) {
 		failure =
 			error instanceof Error
-				? `Упоминания не загрузились: ${error.message}`
-				: 'Упоминания не загрузились. Проверьте связь.';
+				? `Уведомления не загрузились: ${error.message}`
+				: 'Уведомления не загрузились. Проверьте связь.';
 	}
 }
 
-export const mentions = {
-	get inbox(): MentionInbox | null {
-		return inbox;
+export const inbox = {
+	get current(): Inbox | null {
+		return loaded;
 	},
 	get failure(): string | null {
 		return failure;
 	},
 	get unread(): number {
-		return inbox?.unread ?? 0;
+		return loaded?.unread ?? 0;
 	},
 	/**
 	 * Перечитать после перехода. Если открыта карточка дела — сначала отметить
-	 * его упоминания прочитанными.
+	 * его строки прочитанными.
 	 */
 	refresh(pathname: string): Promise<void> {
 		const card = CARD_PATH.exec(pathname);
@@ -102,8 +103,8 @@ export const mentions = {
 			}
 		});
 	},
-	markRead(mentionId: string): Promise<void> {
-		return run(() => post({ scope: 'mention', mentionId }));
+	markRead(item: InboxItem): Promise<void> {
+		return run(() => post({ scope: item.kind, id: item.id }));
 	},
 	markAllRead(): Promise<void> {
 		return run(() => post({ scope: 'all' }));

@@ -1,6 +1,11 @@
 import { resolve } from '$app/paths';
 import type { ResolvedPathname } from '$app/types';
-import type { InteractionStatus, StageCategory } from '$lib/contracts/interactions';
+import type {
+	InteractionListState,
+	InteractionStatus,
+	StageCategory
+} from '$lib/contracts/interactions';
+import type { MyDayInteractionKind } from '$lib/contracts/my-day';
 
 /**
  * Ссылки со сводки в список взаимодействий.
@@ -22,6 +27,12 @@ export type InteractionsFilter = {
 	status: InteractionStatus;
 	stageCategory?: StageCategory;
 	overdue?: boolean;
+	/** Состояние портфеля: пауза, помехи, тишина. */
+	state?: InteractionListState;
+	/** Раздел «Моего дня». */
+	day?: MyDayInteractionKind;
+	/** Закрыты за последние N дней. */
+	closedWithin?: number;
 	/** Ответственный: «мои» — это отбор по себе, как аватаркой над списком. */
 	owner?: string;
 };
@@ -36,8 +47,8 @@ export type WorkspaceCount = {
 
 /**
  * Список пространства под фильтром плитки. Всегда таблицей: на доске нет
- * фильтра стадии, завершённых она не показывает, а в колонке видна не каждая
- * запись — число на плитке обязано совпасть со строками, а их считает таблица.
+ * фильтров стадии, состояния, раздела «Моего дня» и окна закрытия, завершённых
+ * она не показывает, а в колонке видна не каждая запись — число на плитке обязано совпасть со строками, а их считает таблица.
  */
 export function interactionsHref(
 	workspaceKey: string,
@@ -53,6 +64,18 @@ export function interactionsHref(
 
 	if (filter.overdue === true) {
 		params.set('overdue', 'true');
+	}
+
+	if (filter.state !== undefined) {
+		params.set('state', filter.state);
+	}
+
+	if (filter.day !== undefined) {
+		params.set('day', filter.day);
+	}
+
+	if (filter.closedWithin !== undefined) {
+		params.set('closed', String(filter.closedWithin));
 	}
 
 	if (filter.owner !== undefined) {

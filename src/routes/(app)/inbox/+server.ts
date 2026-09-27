@@ -1,17 +1,17 @@
 import { json } from '@sveltejs/kit';
-import { markMentionsReadSchema } from '$lib/contracts/mentions';
+import { markInboxReadSchema } from '$lib/contracts/inbox';
 import { actorFromEvent } from '$lib/server/actor';
 import { AppError, statusForError } from '$lib/server/errors';
-import { listMentionInbox, markMentionsRead } from '$lib/server/mentions';
+import { listInbox, markInboxRead } from '$lib/server/inbox';
 import type { RequestHandler } from './$types';
 
 /**
- * Колокольчик упоминаний: `GET` — свои упоминания и число непрочитанных,
- * `POST` — отметить прочитанным.
+ * Колокольчик: `GET` — свои упоминания и новые дела с сайта и число
+ * непрочитанных, `POST` — отметить прочитанным.
  *
  * Маршрут внутри оболочки, а не в `/api`: колокольчик — часть страницы, он
  * ходит с сессией того, кто смотрит, и отвечает только о нём самом. Чужих
- * упоминаний здесь не прочитать и не отметить: адресат — всегда тот, кто
+ * строк здесь не прочитать и не отметить: адресат — всегда тот, кто
  * вошёл.
  */
 function failure(error: unknown): Response {
@@ -24,7 +24,7 @@ function failure(error: unknown): Response {
 
 export const GET: RequestHandler = async (event) => {
 	try {
-		return json(await listMentionInbox(actorFromEvent(event)));
+		return json(await listInbox(actorFromEvent(event)));
 	} catch (error) {
 		return failure(error);
 	}
@@ -39,7 +39,7 @@ export const POST: RequestHandler = async (event) => {
 		return json({ error: 'Тело запроса — не JSON' }, { status: 400 });
 	}
 
-	const parsed = markMentionsReadSchema.safeParse(body);
+	const parsed = markInboxReadSchema.safeParse(body);
 
 	if (!parsed.success) {
 		return json(
@@ -49,7 +49,7 @@ export const POST: RequestHandler = async (event) => {
 	}
 
 	try {
-		return json({ marked: await markMentionsRead(actorFromEvent(event), parsed.data) });
+		return json({ marked: await markInboxRead(actorFromEvent(event), parsed.data) });
 	} catch (error) {
 		return failure(error);
 	}

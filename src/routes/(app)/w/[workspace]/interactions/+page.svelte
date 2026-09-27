@@ -30,16 +30,24 @@
 	import { toTimelineStages } from '$lib/components/interactions/timeline';
 	import { filterHref } from '$lib/components/directory/query';
 	import {
+		INTERACTION_LIST_STATE_LABELS,
+		INTERACTION_LIST_STATES,
 		INTERACTION_STATUSES,
 		PARTY_ROLE_LABELS,
 		STAGE_CATEGORIES,
 		type InteractionFilterOption,
 		type InteractionListItem,
+		type InteractionListState,
 		type InteractionStatus,
 		type InteractionViewMode,
 		type StageCategory
 	} from '$lib/contracts/interactions';
-	import { formatDateTime } from '$lib/format';
+	import {
+		MY_DAY_INTERACTION_KINDS,
+		MY_DAY_SECTIONS,
+		type MyDayInteractionKind
+	} from '$lib/contracts/my-day';
+	import { formatDateTime, pluralize } from '$lib/format';
 	import { cn } from '$lib/utils';
 	import {
 		clearedFiltersHref,
@@ -64,6 +72,18 @@
 		value: category,
 		label: STAGE_CATEGORY_LABELS[category]
 	}));
+
+	const STATE_OPTIONS: readonly InteractionFilterOption[] = INTERACTION_LIST_STATES.map(
+		(state) => ({ value: state, label: INTERACTION_LIST_STATE_LABELS[state] })
+	);
+
+	const DAY_OPTIONS: readonly InteractionFilterOption[] = MY_DAY_INTERACTION_KINDS.map((kind) => ({
+		value: kind,
+		label: MY_DAY_SECTIONS[kind].title
+	}));
+
+	/** Окно «закрыты за N дней», которое включает переключатель, — как у плитки главной. */
+	const CLOSED_WINDOW_DAYS = 30;
 
 	let assignOpen = $state(false);
 	let assignIds = $state<string[]>([]);
@@ -240,6 +260,14 @@
 		void go({ stageCategory: data.filters.stageCategory === value ? null : value });
 	}
 
+	function pickState(value: InteractionListState) {
+		void go({ state: data.filters.state === value ? null : value });
+	}
+
+	function pickDay(value: MyDayInteractionKind) {
+		void go({ day: data.filters.day === value ? null : value });
+	}
+
 	/**
 	 * Фильтры ленты по порядку важности: не поместившиеся по ширине уходят с
 	 * конца в панель под воронкой (`filter-strip.svelte`). Стадии на доске нет —
@@ -296,7 +324,44 @@
 				active: data.filters.overdue,
 				testId: 'interactions-filter-overdue',
 				ontoggle: () => void go({ overdue: !data.filters.overdue })
-			}
+			},
+			// Состояние, раздел «Моего дня» и окно закрытия — только у таблицы:
+			// на них ведут числа главной, а доска показывает не каждую запись.
+			...(data.view === 'table'
+				? ([
+						{
+							kind: 'list',
+							key: 'state',
+							label: 'Состояние',
+							options: STATE_OPTIONS,
+							selected: data.filters.state === null ? [] : [data.filters.state],
+							single: true,
+							testId: 'interactions-filter-state',
+							ontoggle: (value: string) => pickState(value as InteractionListState)
+						},
+						{
+							kind: 'list',
+							key: 'day',
+							label: 'Мой день',
+							options: DAY_OPTIONS,
+							selected: data.filters.day === null ? [] : [data.filters.day],
+							single: true,
+							testId: 'interactions-filter-day',
+							ontoggle: (value: string) => pickDay(value as MyDayInteractionKind)
+						},
+						{
+							kind: 'toggle',
+							key: 'closed',
+							label: `Закрыты за ${pluralize(data.filters.closedWithin ?? CLOSED_WINDOW_DAYS, ['день', 'дня', 'дней'])}`,
+							active: data.filters.closedWithin !== null,
+							testId: 'interactions-filter-closed',
+							ontoggle: () =>
+								void go({
+									closedWithin: data.filters.closedWithin === null ? CLOSED_WINDOW_DAYS : null
+								})
+						}
+					] satisfies StripFilter[])
+				: [])
 		];
 	});
 

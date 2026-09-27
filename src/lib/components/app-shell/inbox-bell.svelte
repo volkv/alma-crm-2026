@@ -4,27 +4,34 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import * as Popover from '$lib/components/ui/popover/index.js';
 	import { formatDateTime, pluralize } from '$lib/format';
-	import { mentions } from './mentions.svelte';
+	import type { InboxItem } from '$lib/contracts/inbox';
+	import { inbox } from './inbox.svelte';
 
 	/**
-	 * Колокольчик: где меня упомянули.
+	 * Колокольчик: где меня упомянули и какие новые дела с сайта мне назначены.
 	 *
-	 * Число — непрочитанные упоминания в делах, которые человек видит сейчас.
-	 * Строка ведёт в карточку, к самому комментарию, и сразу отмечается
-	 * прочитанной; открытая карточка отмечает прочитанными все свои упоминания.
-	 * Текста комментария здесь нет: что сказали — видно в ленте карточки, рядом
-	 * с тем, о чём говорили.
+	 * Число — непрочитанные строки обоих видов в делах, которые человек видит
+	 * сейчас. Строка ведёт в карточку (упоминание — к самому комментарию) и
+	 * сразу отмечается прочитанной; открытая карточка отмечает прочитанными все
+	 * свои строки. Текста комментария здесь нет: что сказали — видно в ленте
+	 * карточки, рядом с тем, о чём говорили.
 	 */
 	let { class: className = '' }: { class?: string } = $props();
 
 	let open = $state(false);
 
-	const unread = $derived(mentions.unread);
+	const unread = $derived(inbox.unread);
+
 	const label = $derived(
 		unread === 0
-			? 'Упоминания: новых нет'
-			: `Упоминания: ${pluralize(unread, ['новое', 'новых', 'новых'])}`
+			? 'Уведомления: новых нет'
+			: `Уведомления: ${pluralize(unread, ['новое', 'новых', 'новых'])}`
 	);
+
+	/** Упоминание ведёт сразу к своему комментарию, новое дело — в карточку. */
+	function anchor(item: InboxItem): string {
+		return item.kind === 'mention' ? `#comment-${item.commentId}` : '';
+	}
 </script>
 
 <Popover.Root bind:open>
@@ -36,7 +43,7 @@
 				size="icon-sm"
 				class="relative text-muted-foreground {className}"
 				aria-label={label}
-				data-slot="mention-bell"
+				data-slot="inbox-bell"
 			>
 				<BellIcon aria-hidden="true" />
 				{#if unread > 0}
@@ -52,37 +59,38 @@
 	</Popover.Trigger>
 	<Popover.Content align="end" class="w-80 gap-2 p-0">
 		<div class="flex items-center justify-between gap-2 border-b border-border px-3 py-2">
-			<p class="text-sm font-medium">Упоминания</p>
+			<p class="text-sm font-medium">Уведомления</p>
 			{#if unread > 0}
-				<Button variant="ghost" size="sm" onclick={() => void mentions.markAllRead()}>
+				<Button variant="ghost" size="sm" onclick={() => void inbox.markAllRead()}>
 					Прочитать все
 				</Button>
 			{/if}
 		</div>
-		{#if mentions.failure !== null}
-			<p class="px-3 pb-2 text-sm text-danger" role="alert">{mentions.failure}</p>
+		{#if inbox.failure !== null}
+			<p class="px-3 pb-2 text-sm text-danger" role="alert">{inbox.failure}</p>
 		{/if}
-		{#if mentions.inbox === null}
+		{#if inbox.current === null}
 			<p class="px-3 pb-3 text-sm text-muted-foreground">Загружаем…</p>
-		{:else if mentions.inbox.items.length === 0}
+		{:else if inbox.current.items.length === 0}
 			<p class="px-3 pb-3 text-sm text-muted-foreground">
-				Вас пока не упоминали. Коллеги зовут в обсуждение через «@» в комментарии к делу.
+				Новых нет. Здесь появятся упоминания — коллеги зовут в обсуждение через «@» в комментарии к
+				делу — и новые дела с сайта, назначенные вам.
 			</p>
 		{:else}
 			<ul class="flex max-h-96 flex-col overflow-y-auto pb-1">
-				{#each mentions.inbox.items as item (item.id)}
+				{#each inbox.current.items as item (item.kind + item.id)}
 					<li>
 						<a
 							href="{resolve('/(app)/w/[workspace]/interactions/[id=uuid]', {
 								workspace: item.workspaceKey,
 								id: item.interactionId
-							})}#comment-{item.commentId}"
+							})}{anchor(item)}"
 							class="flex gap-2 px-3 py-2 text-sm focus-ring hover:bg-surface-muted"
 							onclick={() => {
 								open = false;
 
 								if (item.readAt === null) {
-									void mentions.markRead(item.id);
+									void inbox.markRead(item);
 								}
 							}}
 						>
@@ -94,7 +102,11 @@
 							></span>
 							<span class="min-w-0 flex-1">
 								<span class="block">
-									<span class="font-medium">{item.authorName}</span> упомянул(а) вас
+									{#if item.kind === 'mention'}
+										<span class="font-medium">{item.authorName}</span> упомянул(а) вас
+									{:else}
+										<span class="font-medium">Новое дело с сайта</span> назначено вам
+									{/if}
 								</span>
 								<span class="block truncate text-muted-foreground">{item.interactionTitle}</span>
 								<span class="block text-xs text-faint">

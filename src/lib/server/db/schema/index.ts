@@ -1,6 +1,7 @@
 // Barrel for the Drizzle schema. Every table module gets re-exported here so
 // that `drizzle()` and drizzle-kit see the whole schema through one import.
 export * from './api';
+export * from './application-notices';
 export * from './audit';
 export * from './auth';
 export * from './directory';

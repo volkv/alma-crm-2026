@@ -45,7 +45,7 @@ import { actorScopeFilter, requirePermission } from '../rbac';
 import { getSetting } from '../settings';
 import { deliverDigest } from './digest';
 import { deliverLicenseNotice, readLicenseEntry } from './license-watch';
-import { deliverMentionNotice, readMentionDelivery } from './mention';
+import { deliverInboxNotice, readInboxDelivery } from './inbox';
 import { deliverStageEnterNotice, readStageEnterDelivery } from './stage-enter';
 import { deliverStuckNotice, readStuckEntry } from './watch';
 
@@ -205,8 +205,8 @@ export async function retryNotificationDelivery(
 	}
 
 	const status =
-		row.kind === 'mention'
-			? await retryMention(ctx, row.id)
+		row.kind === 'mention' || row.kind === 'site_application'
+			? await retryInbox(ctx, row.id)
 			: row.kind === 'stage_entered'
 				? await retryStageEnter(ctx, row.id)
 				: row.kind === 'daily_digest'
@@ -347,27 +347,28 @@ async function retryDigest(
 }
 
 /**
- * Повтор письма об упоминании. Адресат проверяется заново, как и в цикле:
- * потерял доступ к делу — письма нет, строка получает причину.
+ * Повтор письма колокольчика: об упоминании или о новом деле с сайта. Адресат
+ * проверяется заново, как и в цикле: потерял доступ к делу — письма нет,
+ * строка получает причину.
  */
-async function retryMention(
+async function retryInbox(
 	ctx: ActorContext,
 	deliveryId: string
 ): Promise<NotificationDeliveryStatus> {
-	const delivery = await readMentionDelivery(deliveryId);
+	const delivery = await readInboxDelivery(deliveryId);
 
 	if (delivery === null) {
-		throw new Error('Строка письма об упоминании без упоминания: проверка таблицы нарушена');
+		throw new Error('Строка письма колокольчика пропала между чтением и повтором');
 	}
 
-	const status = await deliverMentionNotice(ctx, delivery);
+	const status = await deliverInboxNotice(ctx, delivery);
 
 	if (status === 'sent') {
 		await recordAuditEvent(ctx, {
 			type: 'notifications.sent',
 			outcome: 'success',
 			subject: { type: 'interaction', id: delivery.interactionId },
-			details: { channelKey: delivery.channel, kindKey: 'mention', sentCount: 1 }
+			details: { channelKey: delivery.channel, kindKey: delivery.kind, sentCount: 1 }
 		});
 	}
 

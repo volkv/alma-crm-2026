@@ -12,8 +12,6 @@
  * текст на куски, сервер достаёт из текста адресатов. Список адресатов от
  * браузера сервер не принимает вовсе — только текст, который он разбирает сам.
  */
-import { z } from 'zod';
-import { id } from './common';
 
 /**
  * Токен упоминания. Подпись — без скобок и перевода строки, идентификатор —
@@ -71,51 +69,3 @@ export function mentionToken(name: string, userId: string): string {
 
 	return `@[${label.slice(0, 120)}](${userId})`;
 }
-
-/**
- * Колокольчик текущего пользователя: сколько непрочитанных и последние
- * упоминания. Схема — для браузера: ответ приезжает JSON, и даты в нём
- * строками.
- */
-export const mentionInboxSchema = z.object({
-	unread: z.number().int().nonnegative(),
-	items: z.array(
-		z.object({
-			id: z.uuid(),
-			commentId: z.uuid(),
-			interactionId: z.uuid(),
-			/** Пространство дела: ссылка на карточку живёт под ним. */
-			workspaceKey: z.string(),
-			interactionTitle: z.string(),
-			/** Кто упомянул — автор комментария. */
-			authorName: z.string(),
-			createdAt: z.coerce.date(),
-			readAt: z.coerce.date().nullable()
-		})
-	)
-});
-
-export type MentionInbox = z.output<typeof mentionInboxSchema>;
-export type MentionView = MentionInbox['items'][number];
-
-/**
- * Что отметить прочитанным: одно упоминание (щелчок в колокольчике), все
- * упоминания в деле (карточка открыта) или всё сразу.
- */
-export const markMentionsReadSchema = z.discriminatedUnion(
-	'scope',
-	[
-		z.object({
-			scope: z.literal('mention'),
-			mentionId: id('Некорректный идентификатор упоминания')
-		}),
-		z.object({
-			scope: z.literal('interaction'),
-			interactionId: id('Некорректный идентификатор взаимодействия')
-		}),
-		z.object({ scope: z.literal('all') })
-	],
-	{ error: 'Не указано, что отметить прочитанным' }
-);
-
-export type MarkMentionsReadInput = z.output<typeof markMentionsReadSchema>;

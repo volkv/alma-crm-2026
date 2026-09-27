@@ -17,6 +17,7 @@ import {
 	inArray,
 	isNotNull,
 	isNull,
+	ne,
 	or,
 	sql,
 	type SQL
@@ -76,6 +77,8 @@ import { requirePermission, workspaceFilter } from '../rbac';
 import { buildProgress, isStale } from '../stages/status';
 import { readActiveRevisionForWorkspace } from '../stages/process';
 import { assertInteractionVisible, interactionScopeFilter } from './access';
+import { listMyDayInteractionIds } from './my-day';
+import { listStaleInteractionIds } from './overview';
 
 /** Отбор по вузу, направлению, программе и продукту: поля общие у списка и у доски. */
 export type InteractionAttributeQuery = {
@@ -198,8 +201,19 @@ export function interactionAttributeConditions(query: InteractionAttributeQuery)
 	return conditions;
 }
 
-/** Условия выборки списка. Одни и те же для страницы и для счётчика. */
-function listConditions(ctx: ActorContext, query: InteractionListQuery): SQL[] {
+/**
+ * Условия выборки списка. Одни и те же для страницы и для счётчика.
+ *
+ * `preselected` — дела, заранее отобранные правилом приложения: раздел «Моего
+ * дня» (`query.day`) и тишина (`state=stale`). Оба правила считаются в
+ * приложении — с порогами из настроек и нормой из слепка стадии, — и второе их
+ * описание на SQL однажды разошлось бы с главной. `null` — такого отбора нет.
+ */
+function listConditions(
+	ctx: ActorContext,
+	query: InteractionListQuery,
+	preselected: readonly string[] | null
+): SQL[] {
 	const conditions: SQL[] = [interactionScopeFilter(ctx), ...interactionAttributeConditions(query)];
 
 	if (query.status !== null) {
@@ -249,6 +263,36 @@ function listConditions(ctx: ActorContext, query: InteractionListQuery): SQL[] {
 
 	if (query.overdue) {
 		conditions.push(eq(stageEntryStatus.isOverdue, true));
+	}
+
+	// Состояния — те же правила, что у плиток главной (`overview.ts`); тишину
+	// отбирает `preselected`.
+	if (query.state === 'paused') {
+		conditions.push(eq(stageEntryStatus.isPaused, true));
+	} else if (query.state === 'blocked') {
+		conditions.push(
+			exists(
+				getDb()
+					.select({ one: sql`1` })
+					.from(blockers)
+					.where(and(eq(blockers.interactionId, interactions.id), isNull(blockers.resolvedAt)))
+			)
+		);
+	}
+
+	if (query.closedWithin !== null) {
+		// Закрытая запись больше не меняется, и её последнее событие — это
+		// закрытие: то же правило, что у плитки «Завершённые» (`overview.ts`).
+		conditions.push(
+			ne(interactions.status, 'active'),
+			sql`${interactions.lastActivityAt} >= now() - make_interval(days => ${query.closedWithin})`
+		);
+	}
+
+	if (preselected !== null) {
+		conditions.push(
+			preselected.length === 0 ? sql`false` : inArray(interactions.id, [...preselected])
+		);
 	}
 
 	if (query.q !== null) {
@@ -390,6 +434,26 @@ export async function chooseWorkspaceForWork(
 	return chosen === undefined ? null : { id: chosen.id, key: chosen.key };
 }
 
+/**
+ * Дела, отобранные правилами приложения (`listConditions`): раздел «Моего дня»
+ * и тишина. Оба заданы — пересечение.
+ */
+async function preselectIds(
+	ctx: ActorContext,
+	query: InteractionListQuery
+): Promise<string[] | null> {
+	const [day, stale] = await Promise.all([
+		query.day === null ? null : listMyDayInteractionIds(ctx, query.day),
+		query.state === 'stale' ? listStaleInteractionIds(ctx) : null
+	]);
+
+	if (day === null) {
+		return stale;
+	}
+
+	return stale === null ? day : day.filter((id) => stale.includes(id));
+}
+
 export async function listInteractions(
 	ctx: ActorContext,
 	query: InteractionListQuery
@@ -397,7 +461,7 @@ export async function listInteractions(
 	requirePermission(ctx, 'interactions.read');
 
 	const db = getDb();
-	const where = and(...listConditions(ctx, query));
+	const where = and(...listConditions(ctx, query, await preselectIds(ctx, query)));
 
 	const page = db
 		.select({

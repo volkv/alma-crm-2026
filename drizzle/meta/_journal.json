@@ -281,6 +281,13 @@
       "when": 1790539344186,
       "tag": "0040_interaction_terms",
       "breakpoints": true
+    },
+    {
+      "idx": 41,
+      "version": "7",
+      "when": 1790544904084,
+      "tag": "0041_application_notices",
+      "breakpoints": true
     }
   ]
 }

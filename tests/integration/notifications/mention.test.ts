@@ -19,8 +19,8 @@ import {
 } from '$lib/server/db/schema';
 import { ValidationError } from '$lib/server/errors';
 import { closeLiveBus } from '$lib/server/live/bus';
-import { listMentionInbox } from '$lib/server/mentions';
-import { MENTION_ACCESS_LOST } from '$lib/server/notifications/mention';
+import { listInbox } from '$lib/server/inbox';
+import { INBOX_ACCESS_LOST } from '$lib/server/notifications/inbox';
 import { runNotificationCycle } from '$lib/server/notifications/watch';
 import { removeWorkspaceMember } from '$lib/server/rbac/workspaces';
 import { getRedis } from '$lib/server/redis';
@@ -152,14 +152,19 @@ describe('упоминание в комментарии', () => {
 		expect(toLead).toHaveLength(1);
 		expect(toLead[0]).toMatchObject({
 			status: 'skipped',
-			lastError: MENTION_ACCESS_LOST,
+			lastError: INBOX_ACCESS_LOST,
 			nextNotifyAt: null
 		});
 
 		// Колокольчик: у адресата одно непрочитанное упоминание от автора.
-		const inbox = await listMentionInbox(await sessionActor(admin));
+		const inbox = await listInbox(await sessionActor(admin));
 
 		expect(inbox.unread).toBe(1);
-		expect(inbox.items[0]).toMatchObject({ interactionId, authorName: 'Ведущий', readAt: null });
+		expect(inbox.items[0]).toMatchObject({
+			kind: 'mention',
+			interactionId,
+			authorName: 'Ведущий',
+			readAt: null
+		});
 	});
 });

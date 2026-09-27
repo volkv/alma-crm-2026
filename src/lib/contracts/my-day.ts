@@ -26,6 +26,26 @@ export const MY_DAY_KINDS = [
 
 export type MyDayKind = (typeof MY_DAY_KINDS)[number];
 
+/**
+ * Разделы о делах — у них есть список с тем же набором (`day` в адресе
+ * списка). Лицензия — строка об организации, а не о деле, и её в списке дел
+ * нет.
+ */
+export const MY_DAY_INTERACTION_KINDS = [
+	'overdue',
+	'due_soon',
+	'blocker',
+	'stuck',
+	'waiting',
+	'application'
+] as const satisfies readonly MyDayKind[];
+
+export type MyDayInteractionKind = (typeof MY_DAY_INTERACTION_KINDS)[number];
+
+export function isMyDayInteractionKind(kind: MyDayKind): kind is MyDayInteractionKind {
+	return (MY_DAY_INTERACTION_KINDS as readonly MyDayKind[]).includes(kind);
+}
+
 export const MY_DAY_SECTIONS: Record<MyDayKind, { title: string; action: string }> = {
 	overdue: {
 		title: 'Просрочены стадии',
