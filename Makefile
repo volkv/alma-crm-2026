@@ -15,10 +15,20 @@ INFRA := postgres redis keycloak gotenberg mailpit minio mock-cms mock-lms
 # имитаторы систем заказчика, их исходники лежат в `mocks/`.
 BUILT := mock-cms mock-lms
 
-.PHONY: up down upgrade infra db dev
+.PHONY: up down upgrade deps infra db dev
 
-## up — поднять инфраструктуру, применить миграции и запустить dev-сервер
-up: infra db dev
+## up — поставить зависимости, поднять инфраструктуру, применить миграции и запустить dev-сервер
+up: deps infra db dev
+
+## deps — зависимости из lock-файла
+#
+# Ставятся, только когда `package.json` или `pnpm-lock.yaml` новее прошлой
+# установки: повторный `make up` не ходит в реестр.
+deps: node_modules/.modules.yaml
+
+node_modules/.modules.yaml: package.json pnpm-lock.yaml
+	pnpm install --frozen-lockfile
+	@touch $@
 
 ## down — погасить все контейнеры стека
 #
@@ -50,7 +60,7 @@ infra: .env
 # Тот же порядок, что у контейнера приложения (`Dockerfile`, CMD): сначала
 # схема и каталог прав, потом сид. `--if-demo` сам смотрит на DEMO_MODE, так
 # что вызов безопасен и при выключенной демонстрации.
-db:
+db: deps
 	pnpm run db:migrate
 	pnpm run db:seed --if-demo
 
@@ -59,7 +69,7 @@ db:
 # Vite зовётся через node, а не через `pnpm dev`: на Windows `pnpm` — это
 # батник, и Ctrl+C уводит терминал в запрос cmd.exe «Terminate batch job
 # (Y/N)?». Без шима сигнал доходит до самого Vite, и он просто выходит.
-dev:
+dev: deps
 	node node_modules/vite/bin/vite.js dev
 
 # Конфигурация читается из `.env`; значения шаблона уже совпадают со стендом.
