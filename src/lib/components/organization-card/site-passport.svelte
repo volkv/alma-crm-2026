@@ -13,7 +13,11 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { actionEnhance } from '$lib/components/interactions/action-enhance';
 	import StatusBadge from '$lib/components/status-badge.svelte';
-	import type { ContactCandidate, SiteReport } from '$lib/contracts/enrichment';
+	import {
+		candidateUnitLabel,
+		type ContactCandidate,
+		type SiteReport
+	} from '$lib/contracts/enrichment';
 	import {
 		normalizePersonName,
 		splitPersonName,
@@ -331,7 +335,11 @@
 											{#if candidate.post}
 												<p class="break-words">{candidate.post}</p>
 											{/if}
-											<p class="text-xs break-words text-muted-foreground">{candidate.unit}</p>
+											{#if candidateUnitLabel(candidate)}
+												<p class="text-xs break-words text-muted-foreground">
+													{candidateUnitLabel(candidate)}
+												</p>
+											{/if}
 											{#if candidate.phone}
 												<p class="text-xs break-all text-muted-foreground">{candidate.phone}</p>
 											{/if}

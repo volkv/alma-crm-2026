@@ -203,6 +203,19 @@ export const contactCandidateSchema = z.object({
 
 export type ContactCandidate = z.infer<typeof contactCandidateSchema>;
 
+/**
+ * Подразделение кандидата для показа: у строки руководства («Проректор по
+ * АХР») подразделение и есть должность, и второй раз его не пишут.
+ */
+export function candidateUnitLabel(
+	candidate: Pick<ContactCandidate, 'unit' | 'post'>
+): string | null {
+	return candidate.post !== null &&
+		candidate.post.toLocaleLowerCase('ru').includes(candidate.unit.toLocaleLowerCase('ru'))
+		? null
+		: candidate.unit;
+}
+
 /** Реализуемая программа из `/sveden/education` с кодом направления. */
 export const programCandidateSchema = z.object({
 	/** Код специальности или направления подготовки: `09.03.01`. */

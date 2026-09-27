@@ -230,9 +230,15 @@ function splitNameVariants(value: string): string[] {
 const LEGAL_FORM_PREFIX = /^(Ф?Г[АБК]?(ОУ|У)|[АЧН]?НОУ|АНО|ЧОУ|ОУ|МБОУ|МАОУ|ГАПОУ|ГБПОУ)(\s|$)/u;
 
 /**
+ * Аббревиатура: одно слово, в котором хотя бы две заглавные, — «ВолгГТУ»,
+ * «СПбПУ». Так вуз зовут в работе и в списках.
+ */
+const ABBREVIATION = /^[\p{L}\d-]*\p{Lu}[\p{L}\d-]*\p{Lu}[\p{L}\d-]*$/u;
+
+/**
  * Краткое наименование с сайта: одно предложенное и остальные написания.
- * Предлагается первое без организационно-правовой формы; если такого нет —
- * первое как есть.
+ * Предлагается аббревиатура, если сайт её дал; иначе — первое написание без
+ * организационно-правовой формы; если нет и такого — первое как есть.
  */
 function shortNameOffer(value: string | null | undefined, fetchedAt: string) {
 	const variants = splitNameVariants(value ?? '');
@@ -242,7 +248,8 @@ function shortNameOffer(value: string | null | undefined, fetchedAt: string) {
 		return undefined;
 	}
 
-	const chosen = variants.find((variant) => !LEGAL_FORM_PREFIX.test(variant)) ?? first;
+	const plain = variants.filter((variant) => !LEGAL_FORM_PREFIX.test(variant));
+	const chosen = plain.find((variant) => ABBREVIATION.test(variant)) ?? plain[0] ?? first;
 	const others = variants.filter((variant) => variant !== chosen);
 
 	return {

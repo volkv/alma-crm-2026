@@ -14,4 +14,9 @@ export type DirectoryMessage = {
 	conflictsWith?: LookupOption;
 	/** Куда ведёт ссылка на неё. */
 	conflictHref?: ResolvedPathname;
+	/**
+	 * Похожие записи, из-за которых действие остановилось на вопрос, а не на
+	 * отказ: форму можно отправить ещё раз с подтверждением.
+	 */
+	duplicates?: { label: string; href: ResolvedPathname; reason: string }[];
 };

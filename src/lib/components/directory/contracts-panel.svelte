@@ -15,6 +15,7 @@
 	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
+	import { returnPathOf } from '$lib/components/directory/query';
 	import { toLookupOptions } from '$lib/components/directory/labels';
 	import { describeActionFailure } from '$lib/components/interactions/action-enhance';
 	import { rebaseDraft } from '$lib/components/interactions/rebase-draft';
@@ -87,21 +88,8 @@
 
 	const productOptions = $derived(toLookupOptions(products));
 
-	/**
-	 * Дело, из которого пришли завести договор. Берётся только путь этого же
-	 * приложения: адрес возврата приходит в строке запроса, и ссылка наружу
-	 * по нему была бы открытым перенаправлением.
-	 */
-	const returnPath = $derived.by(() => {
-		const value = page.url.searchParams.get('return');
-
-		return value !== null &&
-			value.startsWith('/') &&
-			!value.startsWith('//') &&
-			!value.includes('\\')
-			? value
-			: null;
-	});
+	/** Дело, из которого пришли завести договор (`returnPathOf`). */
+	const returnPath = $derived(returnPathOf(page.url));
 
 	/**
 	 * Статусы передачи в форме позиции: закрытый выбор, а у позиции, которой

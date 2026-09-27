@@ -26,6 +26,7 @@
 	import Board from '$lib/components/interactions/board.svelte';
 	import FilterBar from '$lib/components/filters/filter-bar.svelte';
 	import type { StripFilter } from '$lib/components/filters/filter-strip.svelte';
+	import ActiveSlices, { type ActiveSlice } from '$lib/components/filters/active-slices.svelte';
 	import OwnerFilter from '$lib/components/interactions/owner-filter.svelte';
 	import { toTimelineStages } from '$lib/components/interactions/timeline';
 	import { filterHref } from '$lib/components/directory/query';
@@ -406,6 +407,45 @@
 	});
 
 	/**
+	 * Срезы, на которые ведут числа главной, — меткой над списком: в ряду
+	 * отборов они стоят последними и на узком экране уходят в «Ещё фильтры».
+	 */
+	const activeSlices = $derived.by((): ActiveSlice[] => {
+		if (data.view !== 'table') {
+			return [];
+		}
+
+		const slices: ActiveSlice[] = [];
+		const { day, state, closedWithin } = data.filters;
+
+		if (day !== null) {
+			slices.push({
+				key: 'day',
+				label: `Мой день: ${MY_DAY_SECTIONS[day].title.toLowerCase()}`,
+				removeHref: filtersHref(page.url, workspace, { day: null })
+			});
+		}
+
+		if (state !== null) {
+			slices.push({
+				key: 'state',
+				label: `Состояние: ${INTERACTION_LIST_STATE_LABELS[state].toLowerCase()}`,
+				removeHref: filtersHref(page.url, workspace, { state: null })
+			});
+		}
+
+		if (closedWithin !== null) {
+			slices.push({
+				key: 'closed',
+				label: `Закрыты за ${pluralize(closedWithin, ['день', 'дня', 'дней'])}`,
+				removeHref: filtersHref(page.url, workspace, { closedWithin: null })
+			});
+		}
+
+		return slices;
+	});
+
+	/**
 	 * Представление живёт в адресе рядом с фильтрами: отобранный набор один, и
 	 * ссылка на него должна переносить и способ, которым на него смотрят.
 	 *
@@ -618,6 +658,8 @@
 			/>
 		{/snippet}
 	</FilterBar>
+
+	<ActiveSlices slices={activeSlices} testId="interactions-slices" />
 
 	<!-- `data-tour` — метка подсказок: рамка встаёт вокруг списка целиком —
 		и таблицы, и доски (`$lib/onboarding/screens`). -->

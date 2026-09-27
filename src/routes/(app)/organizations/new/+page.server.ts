@@ -12,7 +12,7 @@ import { actorFromEvent } from '$lib/server/actor';
 import { passportAvailability } from '$lib/server/enrichment/access';
 import { resolveAcceptance } from '$lib/server/enrichment/passports';
 import { createFromRegistry, searchRegistryCandidates } from '$lib/server/enrichment/pick';
-import { findOrganizationByInn } from '$lib/server/directory/read';
+import { findOrganizationByInn, findPossibleDuplicates } from '$lib/server/directory/read';
 import { createOrganization } from '$lib/server/directory/write';
 import { ConflictError, ValidationError } from '$lib/server/errors';
 import { toActionFailure, toPageError } from '$lib/server/http';
@@ -134,6 +134,28 @@ export const actions: Actions = {
 		}
 
 		const ctx = actorFromEvent(event);
+
+		// Похожая организация — вопрос, а не запрет: форма возвращается со ссылками
+		// на неё и кнопкой «Создать всё равно», которая присылает подтверждение.
+		if (formData.get('confirmDuplicate') !== 'yes') {
+			const duplicates = await findPossibleDuplicates(ctx, form.data);
+
+			if (duplicates.length > 0) {
+				return message(
+					form,
+					{
+						text: 'Похоже, эта организация уже есть в справочнике',
+						duplicates: duplicates.map((duplicate) => ({
+							label: duplicate.label,
+							href: resolve('/(app)/organizations/[id=uuid]', { id: duplicate.id }),
+							reason: duplicate.reason === 'ogrn' ? 'тот же ОГРН' : 'тот же сайт'
+						}))
+					},
+					{ status: 409 }
+				);
+			}
+		}
+
 		let created;
 
 		try {

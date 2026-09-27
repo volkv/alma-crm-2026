@@ -1,4 +1,4 @@
-import { fail, redirect } from '@sveltejs/kit';
+import { error, fail, redirect } from '@sveltejs/kit';
 import { resolve } from '$app/paths';
 import {
 	catalogListQuerySchema,
@@ -43,6 +43,7 @@ import { peekSiteReport, siteWarnings } from '$lib/server/enrichment';
 import type { ActorContext } from '$lib/server/actor';
 import { addSiteContactSchema } from '$lib/contracts/organization-card';
 import { formatIsoDay } from '$lib/format';
+import { NotFoundError } from '$lib/server/errors';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import { getSetting } from '$lib/server/settings';
@@ -159,10 +160,20 @@ export const load: PageServerLoad = async (event) => {
 					: { enabled: availability.enabled, remaining: availability.remaining },
 			sitePassport
 		};
-	} catch (error) {
-		toPageError(error);
+	} catch (cause) {
+		// Организация, которой человек не видит, — чаще всего вуз, ответственность
+		// за который передали коллеге. Отказ называет это, не говоря, есть ли
+		// организация и чья она, — так же, как отвечает на несуществующую.
+		if (cause instanceof NotFoundError) {
+			error(404, { message: ORGANIZATION_UNAVAILABLE });
+		}
+
+		toPageError(cause);
 	}
 };
+
+const ORGANIZATION_UNAVAILABLE =
+	'Организация недоступна вам: ответственность передана или нет доступа. Ваши организации — в справочнике';
 
 /**
  * Значение поля формы или «не заполнено».

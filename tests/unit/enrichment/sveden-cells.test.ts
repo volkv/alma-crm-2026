@@ -71,7 +71,7 @@ describe('«Основные сведения» с подписями полей
 		expect(report.fields.email).toBe('rector@prvtu.example.ru');
 	});
 
-	it('краткое наименование — написания через «;», регион — по столице субъекта', () => {
+	it('краткое наименование — аббревиатура из написаний через «;», регион — по столице субъекта', () => {
 		const passport = sitePassport({
 			website: 'https://prvtu.example.ru',
 			fetchedAt: '2026-09-28T08:00:00.000Z',
@@ -82,10 +82,10 @@ describe('«Основные сведения» с подписями полей
 			programs: []
 		});
 
-		expect(passport.fields.shortName?.value).toBe('Приволжский технический университет');
+		expect(passport.fields.shortName?.value).toBe('ПрвТУ');
 		expect(passport.fields.shortName?.variants).toEqual([
 			'ФГБОУ ВО «Приволжский технический университет»',
-			'ПрвТУ'
+			'Приволжский технический университет'
 		]);
 		expect(passport.fields.region?.value).toBe('Волгоградская область');
 	});
@@ -112,6 +112,41 @@ describe('кандидаты из «Структуры»', () => {
 				phone: '(8442)00-81-98',
 				address: '400005, Волгоград, пр. им. Ленина, 28'
 			}
+		]);
+	});
+});
+
+describe('один человек в нескольких строках «Структуры»', () => {
+	const rows = `
+<table>
+<tr itemprop="structOrgUprav">
+	<td itemprop="name">Ученый совет</td>
+	<td itemprop="fio">Петров Пётр Петрович, председатель Ученого совета, ректор</td>
+	<td itemprop="post"></td>
+	<td itemprop="email">council@prvtu.example.ru</td>
+</tr>
+<tr itemprop="structOrgUprav">
+	<td itemprop="name">Ректор</td>
+	<td itemprop="fio">Петров Пётр Петрович</td>
+	<td itemprop="post"></td>
+	<td itemprop="email">rector@prvtu.example.ru</td>
+</tr>
+<tr itemprop="structOrgUprav">
+	<td itemprop="name">Проректор по АХР</td>
+	<td itemprop="fio">Сидоров Иван Ильич</td>
+	<td itemprop="post"></td>
+	<td itemprop="email">ahr@prvtu.example.ru</td>
+</tr>
+</table>`;
+
+	it('склеены в одного кандидата, должность из ФИО и из подразделения — в должности', () => {
+		expect(readStructPage(rows).map(({ unit, name, post }) => ({ unit, name, post }))).toEqual([
+			{
+				unit: 'Ученый совет',
+				name: 'Петров Пётр Петрович',
+				post: 'председатель Ученого совета, ректор'
+			},
+			{ unit: 'Проректор по АХР', name: 'Сидоров Иван Ильич', post: 'Проректор по АХР' }
 		]);
 	});
 });

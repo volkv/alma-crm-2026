@@ -330,13 +330,17 @@
 		}))
 	);
 
-	/** Куда можно перенести записи удаляемой стадии: все остальные стадии. */
+	/**
+	 * Куда можно перенести записи удаляемой стадии: все остальные стадии, с
+	 * номерами, которые у них будут после удаления, — без дыры на месте
+	 * удаляемой.
+	 */
 	const removeTargets = $derived(
 		(shown?.stages ?? [])
 			.filter((stage) => stage.key !== removing?.key)
-			.map((stage) => ({
+			.map((stage, index) => ({
 				value: stage.key,
-				label: `${stageNumbers.get(stage.id)}. ${stage.name}`
+				label: `${index + 1}. ${stage.name}`
 			}))
 	);
 

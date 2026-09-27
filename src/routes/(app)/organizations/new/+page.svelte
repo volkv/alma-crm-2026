@@ -69,7 +69,7 @@
 			novalidate
 			class="flex max-w-3xl flex-col gap-4 rounded-lg border border-border bg-surface p-4 sm:p-6"
 		>
-			<FormAlert message={$message} />
+			<FormAlert message={$message} confirmLabel="Создать всё равно" />
 			<input type="hidden" name="passport" value={JSON.stringify(accepted)} />
 			<OrganizationFields {superform} allowVendor={data.allowVendor} />
 			<FormActions

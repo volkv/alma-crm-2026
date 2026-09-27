@@ -471,7 +471,10 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 				// результат отвергает. Поток, который ещё идёт, шлёт результат без
 				// даты окончания — промежуточный. «Завершили сегодня» — досрочный
 				// итог: так на стенде показывают конец потока, чей план ещё впереди.
-				const today = new Date().toISOString().slice(0, 10);
+				// День — по Москве, как в CRM: по UTC после полуночи МСК было бы «вчера».
+				const today = new Intl.DateTimeFormat('en-CA', { timeZone: 'Europe/Moscow' }).format(
+					new Date()
+				);
 				const finishedOn =
 					body.finish === 'завершили сегодня'
 						? today

@@ -3,6 +3,8 @@ import { personFullName } from '$lib/components/organization-card/model';
 import { fail, message, superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { resolve } from '$app/paths';
+import type { ResolvedPathname } from '$app/types';
+import { safeReturnPath, withReturn } from '$lib/components/directory/query';
 import { createOrganizationSchema, isAffiliationCurrent } from '$lib/contracts/directory';
 import { addSiteContactSchema, normalizePersonName } from '$lib/contracts/organization-card';
 import { formatIsoDay } from '$lib/format';
@@ -133,9 +135,14 @@ export const actions: Actions = {
 			return toActionFailure(error);
 		}
 
+		// Адрес возврата к делу переживает сохранение: карточка покажет
+		// «Вернуться к взаимодействию».
 		redirect(
 			303,
-			`${resolve('/(app)/organizations/[id=uuid]', { id: event.params.id })}?done=updated`
+			withReturn(
+				`${resolve('/(app)/organizations/[id=uuid]', { id: event.params.id })}?done=updated` as ResolvedPathname,
+				safeReturnPath(formData.get('return'))
+			)
 		);
 	}
 };

@@ -26,6 +26,7 @@
 		OrganizationKind
 	} from '$lib/contracts/directory';
 	import {
+		candidateUnitLabel,
 		PASSPORT_FIELDS,
 		type FieldSource,
 		type IssuedPassport,
@@ -806,7 +807,7 @@
 									<div class="min-w-0 flex-1 basis-56">
 										<div>{contact.name}{contact.post ? `, ${contact.post}` : ''}</div>
 										<div class="text-xs text-faint">
-											{[contact.unit, contact.phone, contact.email]
+											{[candidateUnitLabel(contact), contact.phone, contact.email]
 												.filter((part) => part !== null)
 												.join(' · ')}
 										</div>

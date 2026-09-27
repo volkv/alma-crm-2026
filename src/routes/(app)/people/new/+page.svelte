@@ -10,20 +10,32 @@
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
 	import Header from '$lib/components/header.svelte';
-	import { createPersonSchema, type CreatePersonInput } from '$lib/contracts/directory';
+	import FieldSelect from '$lib/components/form/field-select.svelte';
+	import { CONSENT_BASIS_LABELS } from '$lib/components/directory/labels';
+	import {
+		CONSENT_BASES,
+		newPersonSchema,
+		type ConsentBasis,
+		type NewPersonInput
+	} from '$lib/contracts/directory';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
 
-	const superform = superForm<CreatePersonInput, DirectoryMessage>(
+	const superform = superForm<NewPersonInput, DirectoryMessage>(
 		untrack(() => data.form),
 		{
-			validators: zod4Client(createPersonSchema),
+			validators: zod4Client(newPersonSchema),
 			taintedMessage: 'Введённые данные не сохранены. Уйти со страницы?'
 		}
 	);
 
-	const { enhance, submitting, message } = superform;
+	const { form, errors, enhance, submitting, message } = superform;
+
+	const BASIS_OPTIONS = CONSENT_BASES.map((basis) => ({
+		value: basis,
+		label: CONSENT_BASIS_LABELS[basis]
+	}));
 </script>
 
 <svelte:head><title>Новый человек — Альма CRM</title></svelte:head>
@@ -44,6 +56,16 @@
 	>
 		<FormAlert message={$message} />
 		<PersonFields {superform} />
+		<FieldSelect
+			name="basis"
+			label="Основание обработки персональных данных"
+			description="Контакт вуза или компании — обычно исполнение договора с организацией; согласие — если человек дал его сам. Запись ляжет в историю согласий датой заведения."
+			required
+			options={BASIS_OPTIONS}
+			placeholder="Выберите основание"
+			errors={$errors.basis}
+			bind:value={() => $form.basis ?? '', (next) => ($form.basis = next as ConsentBasis)}
+		/>
 		<FormActions
 			submitting={$submitting}
 			submitLabel="Завести человека"

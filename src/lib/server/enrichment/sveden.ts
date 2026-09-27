@@ -342,24 +342,58 @@ function unitName(value: string | null, documents: readonly string[]): string | 
 const STRUCT_ROWS = ['structOrgUprav'] as const;
 
 /**
+ * ФИО с должностью в одной ячейке: «Рудской Андрей Иванович, председатель
+ * Ученого совета, ректор». ФИО — начало до первой запятой, если это два-три
+ * слова с заглавной; остальное — должность.
+ */
+const NAME_WITH_POST = /^(\p{Lu}[\p{Ll}-]+(?:\s+\p{Lu}[\p{Ll}-]+){1,2})\s*,\s*(.+)$/u;
+
+/**
+ * Должность вместо подразделения: вузы заводят руководство отдельными
+ * строками таблицы, и в ячейке подразделения стоит «Ректор СПбПУ» или
+ * «Проректор по АХР».
+ */
+const POST_AS_UNIT =
+	/^(?:(?:первый|исполнительный|главный)\s+)?(?:и\.?\s?о\.?\s+)?(?:ректор|проректор|президент|вице-президент|помощник\s+ректора|советник\s+ректора|заместитель|бухгалтер|инженер|директор|председатель)(?=[\s,.]|$)/iu;
+
+/** Добавляет должность к перечню, если её там ещё нет — хотя бы частью другой. */
+function withPost(posts: string | null, post: string | null): string | null {
+	if (post === null) {
+		return posts;
+	}
+
+	if (posts === null) {
+		return post;
+	}
+
+	return posts.toLocaleLowerCase('ru').includes(post.toLocaleLowerCase('ru'))
+		? posts
+		: `${posts}; ${post}`.slice(0, 1000);
+}
+
+/**
  * Подразделения и их руководители из `/sveden/struct`.
  *
  * Строка без ФИО руководителя кандидатом в контакты не становится, даже с
  * почтой: контакт справочника — человек, и «Попечительский совет» с общим
  * ящиком завести им нельзя, а в списке кандидатов он только сбивает счёт.
- * Повторы одной пары «подразделение — руководитель» (таблица
- * бывает продублирована скрытым блоком для проверяющих) сливаются.
+ *
+ * Один человек — один кандидат: ректор стоит и строкой «Ученый совет», и
+ * строкой «Ректор», директор двух подразделений — двумя строками. Повторы
+ * сливаются по ФИО, должности из остальных строк дописываются к первой — с
+ * подразделением, если оно своё. Должность из ячейки ФИО и из ячейки
+ * подразделения («Проректор по АХР») переезжает в должность.
  */
 export function readStructPage(html: string): ContactCandidate[] {
 	const contacts: ContactCandidate[] = [];
-	const seen = new Set<string>();
+	const byName = new Map<string, ContactCandidate>();
 
 	for (const row of readItems(html, STRUCT_ROWS)) {
 		const unit = unitName(property(row, 'name'), propertyValues(row, 'divisionClauseDocLink'));
-		const name = meaningful(property(row, 'fio'));
+		const cell = meaningful(property(row, 'fio'));
 		const reach = [property(row, 'email'), property(row, 'telephone')]
-			.map((cell) => meaningful(cell))
-			.filter((cell) => cell !== null)
+			.map((value) => meaningful(value))
+			.filter((value) => value !== null)
 			.join('; ');
 		const phone = phonesIn(reach)[0] ?? null;
 		// Ячейка, в которой не нашлось ни адреса, ни номера («priem[at]vuz.ru»),
@@ -367,29 +401,45 @@ export function readStructPage(html: string): ContactCandidate[] {
 		const email =
 			emailsIn(reach)[0] ?? (phone === null ? meaningful(property(row, 'email')) : null);
 
-		if (unit === null || name === null) {
+		if (unit === null || cell === null) {
 			continue;
 		}
 
-		const key = `${unit}\u0000${name}`.toLocaleLowerCase('ru');
+		const split = NAME_WITH_POST.exec(cell);
+		const name = split?.[1] ?? cell;
+		const unitIsPost = POST_AS_UNIT.test(unit);
+		const post = withPost(
+			withPost(split?.[2] ?? null, meaningful(property(row, 'post'))),
+			unitIsPost ? unit : null
+		);
+		const key = name.replace(/\s+/g, ' ').toLocaleLowerCase('ru');
+		const known = byName.get(key);
 
-		if (seen.has(key)) {
+		if (known !== undefined) {
+			const ownUnit =
+				!unitIsPost && unit.toLocaleLowerCase('ru') !== known.unit.toLocaleLowerCase('ru');
+
+			known.post = withPost(known.post, ownUnit ? `${post ?? 'руководитель'} (${unit})` : post);
+			known.email ??= email;
+			known.phone ??= phone;
 			continue;
 		}
 
-		seen.add(key);
-		contacts.push({
+		if (contacts.length >= CONTACT_CANDIDATES_MAX) {
+			continue;
+		}
+
+		const candidate: ContactCandidate = {
 			unit,
 			name,
-			post: meaningful(property(row, 'post')),
+			post,
 			email,
 			phone,
 			address: meaningful(property(row, 'addressStr'))
-		});
+		};
 
-		if (contacts.length >= CONTACT_CANDIDATES_MAX) {
-			break;
-		}
+		byName.set(key, candidate);
+		contacts.push(candidate);
 	}
 
 	return contacts;

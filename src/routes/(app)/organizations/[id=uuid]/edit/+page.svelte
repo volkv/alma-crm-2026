@@ -4,6 +4,8 @@
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { goto } from '$app/navigation';
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
+	import { returnPathOf, withReturn } from '$lib/components/directory/query';
 	import FormAlert from '$lib/components/directory/form-alert.svelte';
 	import type { DirectoryMessage } from '$lib/components/directory/messages';
 	import OrganizationFields from '$lib/components/directory/organization-fields.svelte';
@@ -17,8 +19,12 @@
 
 	let { data }: PageProps = $props();
 
+	/** Карточка — с адресом возврата к делу, если пришли из него. */
 	const cardHref = $derived(
-		resolve('/(app)/organizations/[id=uuid]', { id: data.organization.id })
+		withReturn(
+			resolve('/(app)/organizations/[id=uuid]', { id: data.organization.id }),
+			returnPathOf(page.url)
+		)
 	);
 
 	const superform = superForm<CreateOrganizationInput, DirectoryMessage>(
@@ -60,6 +66,9 @@
 	>
 		<FormAlert message={$message} />
 		<input type="hidden" name="passport" value={JSON.stringify(accepted)} />
+		{#if returnPathOf(page.url) !== null}
+			<input type="hidden" name="return" value={returnPathOf(page.url)} />
+		{/if}
 		<OrganizationFields {superform} allowVendor={data.allowVendor} />
 		<FormActions
 			submitting={$submitting}

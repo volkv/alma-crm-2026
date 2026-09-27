@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { page } from '$app/state';
 	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import LockIcon from '@lucide/svelte/icons/lock';
 	import ArchiveIcon from '@lucide/svelte/icons/archive';
@@ -14,6 +15,7 @@
 	import ContractsPanel from '$lib/components/directory/contracts-panel.svelte';
 	import Flash from '$lib/components/directory/flash.svelte';
 	import { SITE_KIND_LABELS } from '$lib/components/directory/labels';
+	import { returnPathOf, withReturn } from '$lib/components/directory/query';
 	import ContactsList from '$lib/components/organization-card/contacts-list.svelte';
 	import OrganizationFacts from '$lib/components/organization-card/organization-facts.svelte';
 	import RequisitesPanel from '$lib/components/organization-card/requisites-panel.svelte';
@@ -214,7 +216,10 @@
 			{:else}
 				<Button
 					variant="outline"
-					href={resolve('/(app)/organizations/[id=uuid]/edit', { id: data.organization.id })}
+					href={withReturn(
+						resolve('/(app)/organizations/[id=uuid]/edit', { id: data.organization.id }),
+						returnPathOf(page.url)
+					)}
 				>
 					<PencilIcon aria-hidden="true" />
 					Изменить

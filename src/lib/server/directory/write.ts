@@ -19,6 +19,7 @@ import type {
 	DirectionView,
 	CreateOrganizationInput,
 	CreatePersonInput,
+	NewPersonInput,
 	CreateProductInput,
 	CreateProgramInput,
 	CreateProgramVersionInput,
@@ -41,6 +42,7 @@ import type {
 	UpdateSiteInput
 } from '$lib/contracts/directory';
 import type { PassportProvenance } from '$lib/contracts/enrichment';
+import { formatIsoDay } from '$lib/format';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { invalidateDirectoryOptions } from '../cache/directory';
@@ -65,6 +67,7 @@ type Executor = Tx | ReturnType<typeof getDb>;
 import { ConflictError, ForbiddenError, NotFoundError, ValidationError } from '../errors';
 import { assertPersonVisible } from '../people/access';
 import { contactColumns, decryptContacts } from '../people/pii';
+import { recordProcessingBasis } from '../people/consents';
 import { withPiiTrace } from '../people/pii-trace';
 import { toPersonView } from '../people/serialize';
 import { requirePermission, scopeFilter, type PermissionDenial } from '../rbac';
@@ -583,6 +586,28 @@ export async function createPerson(
 	return written(
 		withPiiTrace(ctx, () => (tx === undefined ? withTransaction(ctx, write) : write(tx)), tx)
 	);
+}
+
+/**
+ * Человек из формы «Новый человек»: запись и основание обработки его данных —
+ * одной транзакцией, как у физлица из формы дела. Версия текста — день
+ * записи: подписанного текста у выбора в форме нет, есть дата, когда
+ * сотрудник его сделал.
+ */
+export async function createPersonWithBasis(
+	ctx: ActorContext,
+	input: NewPersonInput
+): Promise<PersonView> {
+	const { basis, ...person } = input;
+
+	return withTransaction(ctx, async (tx) => {
+		const created = await createPerson(ctx, person, tx);
+		const day = formatIsoDay();
+
+		await recordProcessingBasis(ctx, tx, created.id, { basis, textVersion: day, givenAt: day });
+
+		return created;
+	});
 }
 
 /**

@@ -3,9 +3,9 @@ import { z } from 'zod';
 import { fail, message, superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { resolve } from '$app/paths';
-import { createPersonSchema } from '$lib/contracts/directory';
+import { newPersonSchema } from '$lib/contracts/directory';
 import { actorFromEvent } from '$lib/server/actor';
-import { createPerson } from '$lib/server/directory/write';
+import { createPersonWithBasis } from '$lib/server/directory/write';
 import { ConflictError, ValidationError } from '$lib/server/errors';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { requirePermission } from '$lib/server/rbac';
@@ -18,12 +18,12 @@ export const load: PageServerLoad = async (event) => {
 		toPageError(error);
 	}
 
-	return { form: await superValidate(zod4(createPersonSchema)) };
+	return { form: await superValidate(zod4(newPersonSchema)) };
 };
 
 export const actions: Actions = {
 	default: async (event) => {
-		const form = await superValidate(event.request, zod4(createPersonSchema));
+		const form = await superValidate(event.request, zod4(newPersonSchema));
 
 		if (!form.valid) {
 			return fail(400, { form });
@@ -32,7 +32,7 @@ export const actions: Actions = {
 		let created;
 
 		try {
-			created = await createPerson(actorFromEvent(event), form.data);
+			created = await createPersonWithBasis(actorFromEvent(event), form.data);
 		} catch (error) {
 			if (error instanceof ConflictError || error instanceof ValidationError) {
 				return message(

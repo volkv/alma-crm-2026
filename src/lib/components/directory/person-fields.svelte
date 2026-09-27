@@ -4,10 +4,15 @@
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
-	import type { CreatePersonInput } from '$lib/contracts/directory';
+	import type { CreatePersonInput, NewPersonInput } from '$lib/contracts/directory';
 
 	/** Поля человека. Почта и телефон — персональные данные, о чём форма и говорит. */
-	let { superform }: { superform: SuperForm<CreatePersonInput> } = $props();
+	let {
+		superform
+	}: {
+		/** Форма карточки человека или форма нового человека — с основанием обработки. */
+		superform: SuperForm<CreatePersonInput> | SuperForm<NewPersonInput>;
+	} = $props();
 
 	// Набор сторов у формы один на всё её время жизни: берём его один раз.
 	const { form, errors } = untrack(() => superform);

@@ -555,6 +555,70 @@ export async function findOrganizationByInn(
 	return row ?? null;
 }
 
+/**
+ * Хост сайта без схемы, `www.`, порта и пути: «https://www.vstu.ru/sveden» и
+ * «vstu.ru» — один и тот же сайт.
+ */
+export function websiteHost(website: string): string | null {
+	const host = website
+		.trim()
+		.replace(/^[a-z][a-z\d+.-]*:\/\//i, '')
+		.replace(/[/:?#].*$/, '')
+		.replace(/^www\./i, '')
+		.toLowerCase();
+
+	return host === '' ? null : host;
+}
+
+/** Та же нормализация хоста — выражением в базе. */
+const storedWebsiteHost = sql<string>`lower(regexp_replace(regexp_replace(regexp_replace(${organizations.website}, '^[a-z][a-z0-9+.-]*://', '', 'i'), '[/:?#].*$', ''), '^www\.', '', 'i'))`;
+
+export type PossibleDuplicate = LookupOption & { reason: 'ogrn' | 'website' };
+
+/**
+ * Видимые организации, похожие на заводимую: тот же ОГРН или тот же сайт.
+ * Это не запрет, а подсказка — у филиала и головного вуза сайт бывает общий;
+ * ИНН сюда не входит: его совпадение справочник не пропускает вовсе.
+ */
+export async function findPossibleDuplicates(
+	ctx: ActorContext,
+	candidate: { ogrn: string | null; website: string | null }
+): Promise<PossibleDuplicate[]> {
+	requirePermission(ctx, 'organizations.read');
+
+	const host = candidate.website === null ? null : websiteHost(candidate.website);
+	const matches: SQL[] = [];
+
+	if (candidate.ogrn !== null) {
+		matches.push(eq(organizations.ogrn, candidate.ogrn));
+	}
+
+	if (host !== null) {
+		matches.push(eq(storedWebsiteHost, host));
+	}
+
+	if (matches.length === 0) {
+		return [];
+	}
+
+	const rows = await getDb()
+		.select({
+			id: organizations.id,
+			label: organizations.shortName,
+			ogrn: organizations.ogrn
+		})
+		.from(organizations)
+		.where(and(or(...matches), scopeFilter(ctx, organizations.id)))
+		.orderBy(asc(organizations.shortName))
+		.limit(5);
+
+	return rows.map((row) => ({
+		id: row.id,
+		label: row.label,
+		reason: candidate.ogrn !== null && row.ogrn === candidate.ogrn ? 'ogrn' : 'website'
+	}));
+}
+
 export async function getSite(
 	ctx: ActorContext,
 	id: string,

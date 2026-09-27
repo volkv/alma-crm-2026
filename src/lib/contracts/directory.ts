@@ -235,6 +235,20 @@ const personFields = {
 };
 
 export const createPersonSchema = z.object(personFields);
+
+/**
+ * Новый человек из формы справочника — с основанием обработки его данных:
+ * без основания данные человека лежали бы в системе ни на чём. Основание не
+ * выбрано заранее (`null` до выбора): его выбирает сотрудник, а не форма.
+ */
+export const newPersonSchema = createPersonSchema.extend({
+	basis: z
+		.enum(CONSENT_BASES)
+		.nullable()
+		.refine((value) => value !== null, {
+			error: 'Выберите основание обработки персональных данных'
+		})
+});
 export const updatePersonSchema = createPersonSchema.extend({
 	id: id('Некорректный идентификатор человека')
 });
@@ -716,6 +730,7 @@ export type OrganizationListQuery = z.output<typeof organizationListQuerySchema>
 export type CreateSiteInput = z.output<typeof createSiteSchema>;
 export type UpdateSiteInput = z.output<typeof updateSiteSchema>;
 export type CreatePersonInput = z.output<typeof createPersonSchema>;
+export type NewPersonInput = z.output<typeof newPersonSchema>;
 export type UpdatePersonInput = z.output<typeof updatePersonSchema>;
 export type RecordConsentInput = z.output<typeof recordConsentSchema>;
 export type WithdrawConsentInput = z.output<typeof withdrawConsentSchema>;

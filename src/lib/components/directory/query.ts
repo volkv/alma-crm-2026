@@ -80,3 +80,37 @@ export function toggledFilterHref(url: URL, param: string, value: string): Resol
 
 	return filterHref(url, param, next.join(','));
 }
+
+/**
+ * Адрес возврата из `?return=` — дело, из которого пришли в справочник.
+ * Берётся только путь этого же приложения: адрес приходит в строке запроса, и
+ * ссылка наружу по нему была бы открытым перенаправлением.
+ */
+export function returnPathOf(url: URL): string | null {
+	return safeReturnPath(url.searchParams.get('return'));
+}
+
+/** Адрес возврата из поля формы — с той же проверкой, что и из адреса. */
+export function safeReturnPath(value: unknown): string | null {
+	return typeof value === 'string' &&
+		value.startsWith('/') &&
+		!value.startsWith('//') &&
+		!value.includes('\\')
+		? value
+		: null;
+}
+
+/**
+ * Путь справочника с тем же адресом возврата: переход между карточкой и её
+ * формой не должен терять дорогу назад к делу.
+ */
+export function withReturn(path: ResolvedPathname, returnPath: string | null): ResolvedPathname {
+	if (returnPath === null) {
+		return path;
+	}
+
+	const [base, hash] = path.split('#', 2);
+	const separator = base.includes('?') ? '&' : '?';
+
+	return `${base}${separator}return=${encodeURIComponent(returnPath)}${hash === undefined ? '' : `#${hash}`}` as ResolvedPathname;
+}

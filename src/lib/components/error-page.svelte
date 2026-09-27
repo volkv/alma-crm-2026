@@ -72,6 +72,8 @@
 	}
 </script>
 
+<svelte:head><title>{title} — Альма CRM</title></svelte:head>
+
 <div
 	class="flex flex-col items-center justify-center gap-5 px-4 py-16 text-center"
 	data-slot="error-page"
