@@ -1,12 +1,15 @@
 <script lang="ts">
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+	import UserPenIcon from '@lucide/svelte/icons/user-pen';
 	import { resolve } from '$app/paths';
 	import {
 		SITE_APPLICATION_STATUS_LABELS,
 		type SiteApplicationView
 	} from '$lib/contracts/interactions';
+	import { Button } from '$lib/components/ui/button/index.js';
 	import { formatDateTime } from '$lib/format';
 	import { headerFactsFor } from '$lib/platform/card-ui-registry';
+	import { getCardCommands } from './commands.svelte';
 	import { isCurrentState } from './stage-look';
 	import type { CardModel } from './model';
 	import QuietNote from './quiet-note.svelte';
@@ -67,6 +70,16 @@
 	 */
 	const facts = $derived(headerFactsFor(model.modules, model.shape));
 
+	const commands = getCardCommands();
+
+	/**
+	 * Смена ответственного — та же команда, что в меню «Ещё», но у самого
+	 * имени: здесь её ищут. Без права или на закрытом деле кнопки нет.
+	 */
+	const reassign = $derived(
+		model.secondary.find((entry) => entry.key === 'responsible' && entry.allowed) ?? null
+	);
+
 	const DELIVERY_LABELS: Record<NonNullable<SiteApplicationView['delivery']>, string> = {
 		delivered: 'доставлено',
 		waiting: 'новый статус ждёт отправки',
@@ -101,7 +114,22 @@
 	<div class="min-w-0 {hide}">
 		<dt class="text-xs text-muted-foreground">Ответственный</dt>
 		<dd class="mt-0.5 text-sm font-medium break-words">
-			{model.responsible ?? 'не назначен'}
+			<span class="inline-flex max-w-full items-center gap-1">
+				<span class="min-w-0 break-words">{model.responsible ?? 'не назначен'}</span>
+				{#if reassign !== null}
+					{@const command = reassign.command}
+					<Button
+						variant="ghost"
+						size="icon-xs"
+						class="shrink-0 text-muted-foreground"
+						aria-label="Сменить ответственного"
+						title="Сменить ответственного"
+						onclick={() => commands.open(command)}
+					>
+						<UserPenIcon aria-hidden="true" />
+					</Button>
+				{/if}
+			</span>
 			{#if model.waitingFor !== null}
 				<span class="block text-xs font-normal text-muted-foreground">
 					ход за стороной: {model.waitingFor}
