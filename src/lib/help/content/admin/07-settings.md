@@ -50,7 +50,7 @@ summary: Что настраивается из интерфейса, что з�
 ([#external-sources](/settings/general#external-sources)) — выключатель обращений к
 ЕГРЮЛ через Dadata и к разделу «Сведения об образовательной организации» на сайте вуза,
 и суточная квота на сотрудника. Ключ API и адрес сервиса Dadata задаются не здесь, а в
-панели [«Dadata»](/settings/integrations#dadata) раздела «Интеграции» — см.
+группе [«Справочные сервисы»](/settings/integrations?tab=reference) раздела «Интеграции» — см.
 [«Интеграции»](/help/admin/integrations).
 
 ## Профиль и ключи

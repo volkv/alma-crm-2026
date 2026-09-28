@@ -38,6 +38,8 @@ import {
 	type DadataSettingsView,
 	type DeliverySettings,
 	type ExchangeSettings,
+	type ExchangeCmsFormInput,
+	type ExchangeLmsFormInput,
 	type ExchangeSettingsFormInput,
 	type ExchangeSettingsView,
 	type LmsSettings,
@@ -325,29 +327,46 @@ export async function getExchangeSettingsView(ctx: ActorContext): Promise<Exchan
 	return toExchangeView(await getExchangeSettings());
 }
 
-export async function setExchangeSettings(
+/** Половина подключений обмена: сайт (CMS) или система обучения. */
+type ExchangeHalf = 'cms' | 'lms';
+
+/** Половина CMS из формы; пустой секрет — оставить прежний. */
+function cmsFromForm(input: ExchangeCmsFormInput, current: ExchangeSettings['cms']) {
+	return {
+		instance: input.cmsInstance,
+		statusUrl: input.cmsStatusUrl === '' ? null : input.cmsStatusUrl,
+		// Пустое поле секрета означает «оставить прежний»: показать сохранённый
+		// нельзя, и требовать набирать его заново ради смены адреса значило бы
+		// заставлять хранить его в переписке.
+		secret: input.cmsSecret ?? current.secret,
+		defaultOwnerUserId: input.cmsDefaultOwnerUserId
+	};
+}
+
+/** Половина системы обучения из формы; пустой секрет — оставить прежний. */
+function lmsFromForm(input: ExchangeLmsFormInput, current: ExchangeSettings['lms']) {
+	return {
+		instance: input.lmsInstance,
+		groupsUrl: input.lmsGroupsUrl === '' ? null : input.lmsGroupsUrl,
+		secret: input.lmsSecret ?? current.secret
+	};
+}
+
+/**
+ * Запись подключений обмена. `halves` — какие половины прислала форма:
+ * проверяются только они, а вторая половина переписывается из базы как есть.
+ * Иначе правка адреса сайта спотыкалась бы о настройку системы обучения,
+ * которую в этой форме даже не видно.
+ */
+async function saveExchangeSettings(
 	ctx: ActorContext,
-	input: ExchangeSettingsFormInput
+	halves: readonly ExchangeHalf[],
+	build: (current: ExchangeSettings) => unknown
 ): Promise<ExchangeSettingsView> {
 	await requirePermission(ctx, 'integrations.manage_endpoints', { type: 'settings.updated' });
 
 	const current = await getExchangeSettings();
-	const parsed = exchangeSettingsSchema.safeParse({
-		cms: {
-			instance: input.cmsInstance,
-			statusUrl: input.cmsStatusUrl === '' ? null : input.cmsStatusUrl,
-			// Пустое поле секрета означает «оставить прежний»: показать сохранённый
-			// нельзя, и требовать набирать его заново ради смены адреса значило бы
-			// заставлять хранить его в переписке.
-			secret: input.cmsSecret ?? current.cms.secret,
-			defaultOwnerUserId: input.cmsDefaultOwnerUserId
-		},
-		lms: {
-			instance: input.lmsInstance,
-			groupsUrl: input.lmsGroupsUrl === '' ? null : input.lmsGroupsUrl,
-			secret: input.lmsSecret ?? current.lms.secret
-		}
-	});
+	const parsed = exchangeSettingsSchema.safeParse(build(current));
 
 	if (!parsed.success) {
 		throw new ValidationError(
@@ -356,13 +375,20 @@ export async function setExchangeSettings(
 		);
 	}
 
-	// Куда ведут адреса подключений, схема не знает. Ключ заявки в адресе
-	// карточки на проверку не влияет — на его место встаёт любая строка.
-	for (const [address, what] of [
-		[parsed.data.cms.statusUrl?.replace('{externalId}', 'x') ?? null, 'карточки заявки'],
-		[parsed.data.lms.groupsUrl, 'учебных групп']
-	] as const) {
-		if (address === null) {
+	const checks: { half: ExchangeHalf; address: string | null; what: string }[] = [
+		// Ключ заявки в адресе карточки на проверку не влияет — на его место
+		// встаёт любая строка.
+		{
+			half: 'cms',
+			address: parsed.data.cms.statusUrl?.replace('{externalId}', 'x') ?? null,
+			what: 'карточки заявки'
+		},
+		{ half: 'lms', address: parsed.data.lms.groupsUrl, what: 'учебных групп' }
+	];
+
+	// Куда ведут адреса подключений, схема не знает.
+	for (const { half, address, what } of checks) {
+		if (address === null || !halves.includes(half)) {
 			continue;
 		}
 
@@ -376,13 +402,21 @@ export async function setExchangeSettings(
 	// Адрес без секрета — это исходящее сообщение, которое получатель обязан
 	// отвергнуть: подпись у него проверить нечем. Сказать об этом здесь честнее,
 	// чем показывать сотруднику настроенный обмен и очередь отказов.
-	if (parsed.data.cms.statusUrl !== null && parsed.data.cms.secret === null) {
+	if (
+		halves.includes('cms') &&
+		parsed.data.cms.statusUrl !== null &&
+		parsed.data.cms.secret === null
+	) {
 		throw new ValidationError('Обмен с CMS настроен не до конца', [
 			'Укажите секрет подписи: без него получатель отвергнет сообщение как неподписанное'
 		]);
 	}
 
-	if (parsed.data.lms.groupsUrl !== null && parsed.data.lms.secret === null) {
+	if (
+		halves.includes('lms') &&
+		parsed.data.lms.groupsUrl !== null &&
+		parsed.data.lms.secret === null
+	) {
 		throw new ValidationError('Обмен с системой обучения настроен не до конца', [
 			'Укажите секрет подписи: без него получатель отвергнет заявку как неподписанную'
 		]);
@@ -391,6 +425,39 @@ export async function setExchangeSettings(
 	await writeSetting(ctx, INTEGRATION_SETTING_KEYS.exchange, parsed.data);
 
 	return toExchangeView(parsed.data);
+}
+
+/** Обе половины подключений обмена сразу. */
+export async function setExchangeSettings(
+	ctx: ActorContext,
+	input: ExchangeSettingsFormInput
+): Promise<ExchangeSettingsView> {
+	return saveExchangeSettings(ctx, ['cms', 'lms'], (current) => ({
+		cms: cmsFromForm(input, current.cms),
+		lms: lmsFromForm(input, current.lms)
+	}));
+}
+
+/** Только половина сайта (CMS): половина системы обучения и её секрет не меняются. */
+export async function setExchangeCmsSettings(
+	ctx: ActorContext,
+	input: ExchangeCmsFormInput
+): Promise<ExchangeSettingsView> {
+	return saveExchangeSettings(ctx, ['cms'], (current) => ({
+		cms: cmsFromForm(input, current.cms),
+		lms: current.lms
+	}));
+}
+
+/** Только половина системы обучения: половина сайта и её секрет не меняются. */
+export async function setExchangeLmsSettings(
+	ctx: ActorContext,
+	input: ExchangeLmsFormInput
+): Promise<ExchangeSettingsView> {
+	return saveExchangeSettings(ctx, ['lms'], (current) => ({
+		cms: current.cms,
+		lms: lmsFromForm(input, current.lms)
+	}));
 }
 
 /* ------------------------------------------------------------------ */

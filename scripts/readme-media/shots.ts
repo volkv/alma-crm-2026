@@ -11,6 +11,7 @@
 import { seedId } from '../seed/ids.ts';
 import type { Page } from '@playwright/test';
 import type { Frame } from './capture.ts';
+import { mailboxSnapshot, mailpitView, waitForNewMail } from './mailpit.ts';
 
 /**
  * Взаимодействие, которое показывают на карточке.
@@ -31,6 +32,28 @@ const DEMO_HISTORY_INTERACTION = seedId('interaction', 'batse-kontrol');
  * пункты с кнопкой действия и подтверждение стадии, — а шаг вперёд заперт.
  */
 const DEMO_STAGE_INTERACTION = seedId('interaction', 'sivt-prepod');
+
+/**
+ * Взаимодействие на стадии «Коммуникация и сверка программ» с двумя программами:
+ * у каждой в наборе есть материал, и письмо вузу уходит с двумя вложениями.
+ */
+const DEMO_OFFER_INTERACTION = seedId('interaction', 'pupi-ai');
+
+/** Тема тестового письма с описанием программ — по ней кадр узнаёт его в ловушке. */
+const TEST_OFFER_SUBJECT = '[Тест] Информация о программах';
+
+/**
+ * Открыть окно «Отправить описание программ» кнопкой панели «Программы и
+ * продукты» и дождаться, что письмо собрано: получатели и превью приходят с
+ * сервера уже после открытия.
+ */
+async function openProgramOffer(page: Page): Promise<void> {
+	await page.getByRole('button', { name: 'Отправить информацию о программах' }).click();
+
+	const dialog = page.getByRole('dialog');
+
+	await dialog.getByTitle('Превью письма').waitFor({ state: 'visible', timeout: 20_000 });
+}
 
 /**
  * Вуз с настоящим сайтом: у СПбПУ (и ещё у четырёх вузов стенда) домен
@@ -289,6 +312,49 @@ export const SHOTS: readonly Frame[] = [
 		waitFor: 'Следующий шаг'
 	},
 	{
+		name: 'program-offer',
+		path: `/interactions/${DEMO_OFFER_INTERACTION}`,
+		role: 'manager',
+		caption:
+			'«Отправить описание программ» из карточки: получатели с контактом дела, почтовая ловушка стенда, вложения и превью письма',
+		waitFor: 'Письмо попадёт в почтовую ловушку стенда',
+		// Окно уже рабочего: модалка стоит посреди экрана, и в широком окне от
+		// снимка остались бы поля шире самой модалки.
+		viewport: { width: 1100, height: 1200 },
+		prepare: async (page) => {
+			// Письмо не отправляется: кадр показывает окно до нажатия кнопок.
+			await openProgramOffer(page);
+			await page.getByRole('dialog').getByTitle('Превью письма').scrollIntoViewIfNeeded();
+		}
+	},
+	{
+		name: 'program-offer-email',
+		path: `/interactions/${DEMO_OFFER_INTERACTION}`,
+		role: 'manager',
+		caption:
+			'Письмо с описанием программ в почтовом ящике стенда (Mailpit): обращение, программы дела, материалы во вложении',
+		waitFor: 'Информация о программах',
+		fullPage: true,
+		prepare: async (page) => {
+			// Ловушка проверяется до нажатия: без Mailpit кадр падает сразу и ничего
+			// не отправляет.
+			const before = await mailboxSnapshot();
+
+			// «Тестовое письмо себе» уходит на почту снимающего и в деле следа не
+			// оставляет — только запись в журнале действий: пункт чек-листа не
+			// закрывается, в ленте ничего не появляется, и стенд после кадра прежний.
+			await openProgramOffer(page);
+			await page.getByRole('button', { name: 'Тестовое письмо себе' }).click();
+
+			const id = await waitForNewMail(before, TEST_OFFER_SUBJECT);
+
+			// Карточка снята в рабочем окне, письмо — в узком: ширина письма 600
+			// пикселей, и в окне 1920 от снимка остались бы одни поля.
+			await page.setViewportSize({ width: 760, height: 900 });
+			await page.goto(mailpitView(id), { waitUntil: 'load' });
+		}
+	},
+	{
 		name: 'interaction-history',
 		path: `/interactions/${DEMO_HISTORY_INTERACTION}`,
 		role: 'manager',
@@ -322,7 +388,7 @@ export const SHOTS: readonly Frame[] = [
 		name: 'integrations',
 		path: '/settings/integrations',
 		role: 'admin',
-		caption: 'Интеграции: подписки на события и подключения обмена',
+		caption: 'Интеграции: сводка по системам и подключения по группам',
 		waitFor: 'Интеграции',
 		fullPage: true
 	},

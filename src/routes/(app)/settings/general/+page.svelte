@@ -379,10 +379,10 @@
 					Ключ Dadata не задан: при включённых источниках читается только раздел «Сведения» на
 					сайтах вузов.
 				{/if}
-				Ключ API и адрес сервиса Dadata задаются на странице
+				Ключ API и адрес сервиса Dadata задаются в разделе «Интеграции», группа
 				<a
 					class="underline underline-offset-2"
-					href="{resolve('/(app)/settings/integrations')}#dadata">«Интеграции» в панели Dadata</a
+					href="{resolve('/(app)/settings/integrations')}?tab=reference">«Справочные сервисы»</a
 				>.
 			</p>
 			<FormActions submitting={$enrichmentSubmitting} submitLabel="Сохранить" />

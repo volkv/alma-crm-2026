@@ -361,7 +361,7 @@ export const HELP_SHOTS: readonly Frame[] = [
 		name: 'admin/integrations-1',
 		path: '/settings/integrations',
 		role: 'admin',
-		caption: 'Интеграции: подписки на события, обмен и система обучения',
+		caption: 'Интеграции: плитки групп и подключение сайта',
 		waitFor: 'Интеграции'
 	},
 	{
@@ -373,11 +373,10 @@ export const HELP_SHOTS: readonly Frame[] = [
 	},
 	{
 		name: 'admin/exchange-2',
-		path: '/settings/integrations',
+		path: '/settings/integrations?tab=cms',
 		role: 'admin',
-		caption: 'Подключения обмена: экземпляры CMS и системы обучения, приём заявок',
-		waitFor: 'Обмен с CMS и системой обучения',
-		prepare: scrollTo('Обмен с CMS и системой обучения')
+		caption: 'Группа «Сайт (CMS)»: входящий адрес заявок, экземпляр и ответственный',
+		waitFor: 'Обмен с сайтом'
 	},
 	{
 		name: 'admin/audit-1',

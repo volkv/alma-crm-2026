@@ -674,3 +674,27 @@ export const exchangeSettingsFormSchema = z.object({
 });
 
 export type ExchangeSettingsFormInput = z.output<typeof exchangeSettingsFormSchema>;
+
+/**
+ * Половина обмена, которую видит сайт (CMS): экземпляр, адрес карточки заявки,
+ * секрет подписи и ответственный за входящие. Сохраняется отдельно от половины
+ * системы обучения — на экране это разные системы, и правка одной не должна
+ * переписывать другую.
+ */
+export const exchangeCmsFormSchema = exchangeSettingsFormSchema.pick({
+	cmsInstance: true,
+	cmsStatusUrl: true,
+	cmsSecret: true,
+	cmsDefaultOwnerUserId: true
+});
+
+export type ExchangeCmsFormInput = z.output<typeof exchangeCmsFormSchema>;
+
+/** Половина обмена системы обучения: экземпляр, адрес учебных групп и секрет. */
+export const exchangeLmsFormSchema = exchangeSettingsFormSchema.pick({
+	lmsInstance: true,
+	lmsGroupsUrl: true,
+	lmsSecret: true
+});
+
+export type ExchangeLmsFormInput = z.output<typeof exchangeLmsFormSchema>;

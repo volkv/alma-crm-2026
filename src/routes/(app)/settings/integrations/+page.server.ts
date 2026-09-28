@@ -6,7 +6,8 @@ import { id } from '$lib/contracts/common';
 import {
 	dadataSettingsFormSchema,
 	deliverySettingsSchema,
-	exchangeSettingsFormSchema,
+	exchangeCmsFormSchema,
+	exchangeLmsFormSchema,
 	lmsSettingsFormSchema,
 	webhookFormSchema,
 	type DadataSettingsView
@@ -28,7 +29,8 @@ import {
 	getLmsSettingsView,
 	setDadataSettings,
 	setDeliverySettings,
-	setExchangeSettings,
+	setExchangeCmsSettings,
+	setExchangeLmsSettings,
 	setLmsSettings
 } from '$lib/server/integrations/settings';
 import {
@@ -63,7 +65,8 @@ const FORM_IDS = {
 	webhook: 'webhook',
 	lms: 'lms-settings',
 	delivery: 'delivery-settings',
-	exchange: 'exchange-settings',
+	exchangeCms: 'exchange-cms-settings',
+	exchangeLms: 'exchange-lms-settings',
 	dadata: 'dadata-settings'
 } as const;
 
@@ -120,18 +123,24 @@ export const load: PageServerLoad = async (event) => {
 		deliveryForm: await superValidate(delivery, zod4(deliverySettingsSchema), {
 			id: FORM_IDS.delivery
 		}),
-		exchangeForm: await superValidate(
+		exchangeCmsForm: await superValidate(
 			{
 				cmsInstance: exchange.cms.instance,
 				cmsStatusUrl: exchange.cms.statusUrl ?? '',
 				cmsSecret: null,
-				cmsDefaultOwnerUserId: exchange.cms.defaultOwnerUserId,
+				cmsDefaultOwnerUserId: exchange.cms.defaultOwnerUserId
+			},
+			zod4(exchangeCmsFormSchema),
+			{ id: FORM_IDS.exchangeCms }
+		),
+		exchangeLmsForm: await superValidate(
+			{
 				lmsInstance: exchange.lms.instance,
 				lmsGroupsUrl: exchange.lms.groupsUrl ?? '',
 				lmsSecret: null
 			},
-			zod4(exchangeSettingsFormSchema),
-			{ id: FORM_IDS.exchange }
+			zod4(exchangeLmsFormSchema),
+			{ id: FORM_IDS.exchangeLms }
 		),
 		dadataForm: await superValidate(
 			{ baseUrl: dadata.customBaseUrl ? dadata.baseUrl : '', apiKey: null },
@@ -315,18 +324,43 @@ export const actions: Actions = {
 		}
 	},
 
-	exchange: async (event) => {
-		const form = await superValidate(event.request, zod4(exchangeSettingsFormSchema), {
-			id: FORM_IDS.exchange
+	/**
+	 * Подключение сайта (CMS). Половина системы обучения не приходит с формой и
+	 * не меняется: сервис берёт её из базы как есть.
+	 */
+	exchangeCms: async (event) => {
+		const form = await superValidate(event.request, zod4(exchangeCmsFormSchema), {
+			id: FORM_IDS.exchangeCms
 		});
 
 		const cmsSecret = form.data.cmsSecret;
-		const lmsSecret = form.data.lmsSecret;
 
-		// Секреты не возвращаются в браузер ни при каком исходе: ответ действия
+		// Секрет не возвращается в браузер ни при каком исходе: ответ действия
 		// перерисовывает форму её же данными, и секрет подписи оказался бы в
 		// разметке ответа, хотя на экране его не показывают даже сохранённым.
 		form.data.cmsSecret = null;
+
+		if (!form.valid) {
+			return fail(400, { form });
+		}
+
+		try {
+			await setExchangeCmsSettings(actorFromEvent(event), { ...form.data, cmsSecret });
+		} catch (failure) {
+			return asFormError(form, failure);
+		}
+
+		return message(form, 'Подключение сайта сохранено');
+	},
+
+	/** Обмен учебными группами: половина сайта не меняется. */
+	exchangeLms: async (event) => {
+		const form = await superValidate(event.request, zod4(exchangeLmsFormSchema), {
+			id: FORM_IDS.exchangeLms
+		});
+
+		const lmsSecret = form.data.lmsSecret;
+
 		form.data.lmsSecret = null;
 
 		if (!form.valid) {
@@ -334,12 +368,12 @@ export const actions: Actions = {
 		}
 
 		try {
-			await setExchangeSettings(actorFromEvent(event), { ...form.data, cmsSecret, lmsSecret });
+			await setExchangeLmsSettings(actorFromEvent(event), { ...form.data, lmsSecret });
 		} catch (failure) {
 			return asFormError(form, failure);
 		}
 
-		return message(form, 'Подключения обмена сохранены');
+		return message(form, 'Обмен учебными группами сохранён');
 	},
 
 	dadata: async (event) => {
