@@ -35,9 +35,15 @@
 <ContextSection title="Сроки">
 	{#snippet action()}
 		{#if onEditPlan !== null}
-			<Button size="xs" variant="outline" onclick={onEditPlan}>
+			<Button
+				size="xs"
+				variant="outline"
+				onclick={onEditPlan}
+				title="Изменить план"
+				aria-label="Изменить план"
+			>
 				<PencilIcon aria-hidden="true" />
-				Изменить план
+				Изменить
 			</Button>
 		{/if}
 	{/snippet}

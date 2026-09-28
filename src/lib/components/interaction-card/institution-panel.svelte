@@ -80,14 +80,26 @@
 		{#snippet action()}
 			<div class="flex flex-wrap gap-1.5">
 				{#if onCompose !== null}
-					<Button size="xs" variant="outline" onclick={() => onCompose('parties')}>
-						Сменить сторону
+					<Button
+						size="xs"
+						variant="outline"
+						onclick={() => onCompose('parties')}
+						title="Сменить сторону"
+						aria-label="Сменить сторону"
+					>
+						Сменить
 					</Button>
 				{/if}
 				{#if onEditPlan !== null}
-					<Button size="xs" variant="outline" onclick={onEditPlan}>
+					<Button
+						size="xs"
+						variant="outline"
+						onclick={onEditPlan}
+						title="Изменить план"
+						aria-label="Изменить план"
+					>
 						<PencilIcon aria-hidden="true" />
-						Изменить план
+						Изменить
 					</Button>
 				{/if}
 			</div>
@@ -104,15 +116,22 @@
 				<!-- Подразделение — одна из площадок стороны: его выбирают в
 					составе дела, и оно закрывает пункт «Найдено профильное
 					подразделение». -->
-				<div class="flex flex-wrap items-center gap-x-2 gap-y-1">
+				<div class="mt-1 flex flex-wrap items-center gap-x-2 gap-y-1">
 					<p class="text-xs text-muted-foreground">
 						{institution.sites.length > 0
 							? `Площадки: ${institution.sites.map((site) => site.name).join(', ')}`
 							: 'Подразделение и площадки не выбраны'}
 					</p>
 					{#if onCompose !== null}
-						<Button size="xs" variant="outline" onclick={() => onCompose('parties')}>
-							Выбрать площадки
+						<Button
+							size="xs"
+							variant="outline"
+							class="ml-auto"
+							onclick={() => onCompose('parties')}
+							title="Выбрать площадки"
+							aria-label="Выбрать площадки"
+						>
+							Выбрать
 						</Button>
 					{/if}
 				</div>

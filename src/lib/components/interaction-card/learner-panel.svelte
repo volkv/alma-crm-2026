@@ -90,14 +90,26 @@
 		{#snippet action()}
 			<div class="flex flex-wrap gap-1.5">
 				{#if onCompose !== null}
-					<Button size="xs" variant="outline" onclick={() => onCompose('parties')}>
-						Сменить сторону
+					<Button
+						size="xs"
+						variant="outline"
+						onclick={() => onCompose('parties')}
+						title="Сменить сторону"
+						aria-label="Сменить сторону"
+					>
+						Сменить
 					</Button>
 				{/if}
 				{#if onEditPlan !== null}
-					<Button size="xs" variant="outline" onclick={onEditPlan}>
+					<Button
+						size="xs"
+						variant="outline"
+						onclick={onEditPlan}
+						title="Изменить план"
+						aria-label="Изменить план"
+					>
 						<PencilIcon aria-hidden="true" />
-						Изменить план
+						Изменить
 					</Button>
 				{/if}
 			</div>

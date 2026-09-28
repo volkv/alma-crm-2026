@@ -54,14 +54,26 @@
 	<ContextSection title="Договор и позиции">
 		{#snippet action()}
 			{#if createHref !== null}
-				<Button size="xs" variant="outline" href={createHref}>
+				<Button
+					size="xs"
+					variant="outline"
+					href={createHref}
+					title="Создать договор"
+					aria-label="Создать договор"
+				>
 					<PlusIcon aria-hidden="true" />
-					Создать договор
+					Создать
 				</Button>
 			{:else if onEdit !== null}
-				<Button size="xs" variant="outline" onclick={onEdit}>
+				<Button
+					size="xs"
+					variant="outline"
+					onclick={onEdit}
+					title={contract === null ? 'Выбрать договор' : 'Изменить договор и позиции'}
+					aria-label={contract === null ? 'Выбрать договор' : 'Изменить договор и позиции'}
+				>
 					<PencilIcon aria-hidden="true" />
-					{contract === null ? 'Выбрать договор' : 'Изменить'}
+					{contract === null ? 'Выбрать' : 'Изменить'}
 				</Button>
 			{/if}
 		{/snippet}

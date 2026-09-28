@@ -1,37 +1,47 @@
 <script lang="ts">
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
+	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import { resolve } from '$app/paths';
+	import CopyableValue from '$lib/components/copyable-value.svelte';
 	import ExternalLink from '$lib/components/external-link.svelte';
+	import { Button } from '$lib/components/ui/button/index.js';
 	import type { OrganizationView } from '$lib/contracts/directory';
 
 	/**
-	 * Реквизиты стороны: регион и ИНН — на виду, по ним стороны различают;
-	 * полное юрнаименование, КПП, ОГРН и сайт — по раскрытию, их читают по
-	 * случаю, а шесть строк юрнаименования отодвигали всё остальное. Правят их
-	 * в справочнике — туда и ссылка.
+	 * Реквизиты стороны: регион, ИНН и сайт — на виду, по ним стороны различают
+	 * и открывают; полное юрнаименование, КПП и ОГРН — по раскрытию, их читают
+	 * по случаю, а шесть строк юрнаименования отодвигали всё остальное. Реквизиты
+	 * копируются по одному — для письма или договора. Правят их в справочнике —
+	 * туда и кнопка.
 	 */
 	let { organization }: { organization: OrganizationView } = $props();
 
-	const summary = $derived(
-		[organization.region, organization.inn ? `ИНН ${organization.inn}` : null]
-			.filter((part) => part !== null)
-			.join(' · ')
-	);
+	const website = $derived(organization.website || null);
 
-	const rows = $derived(
+	const codes = $derived(
 		[
-			['Полное наименование', organization.legalName],
 			['КПП', organization.kpp],
-			['ОГРН', organization.ogrn],
-			['Сайт', organization.website]
+			['ОГРН', organization.ogrn]
 		].filter((row): row is [string, string] => row[1] !== null && row[1] !== '')
 	);
 </script>
 
-{#if summary !== ''}
-	<p class="text-xs text-muted-foreground tabular-nums">{summary}</p>
+{#if organization.region || organization.inn || website}
+	<p
+		class="flex flex-wrap items-center gap-x-1 text-xs text-muted-foreground tabular-nums [&>*+*]:before:mr-1 [&>*+*]:before:content-['·']"
+	>
+		{#if organization.region}
+			<span>{organization.region}</span>
+		{/if}
+		{#if organization.inn}
+			<span>ИНН <CopyableValue value={organization.inn} label="ИНН" floating /></span>
+		{/if}
+		{#if website}
+			<span class="min-w-0 break-all"><ExternalLink href={website} /></span>
+		{/if}
+	</p>
 {/if}
-<details class="group text-xs">
+<details class="group mt-1 text-xs">
 	<summary
 		class="flex w-fit list-none items-center gap-1 rounded-sm text-link focus-ring hover:text-link-hover hover:underline [&::-webkit-details-marker]:hidden"
 	>
@@ -41,23 +51,34 @@
 		/>
 		Реквизиты
 	</summary>
-	<dl class="mt-1.5 flex flex-col gap-1.5">
-		{#each rows as [label, value] (label)}
-			<div class="flex min-w-0 flex-col">
-				<dt class="text-muted-foreground">{label}</dt>
-				<dd class="break-words">
-					{#if label === 'Сайт'}
-						<ExternalLink href={value} />
-					{:else}
-						{value}
-					{/if}
-				</dd>
+	<dl class="mt-2 flex flex-col gap-2.5">
+		<div class="flex min-w-0 flex-col gap-0.5">
+			<dt class="text-muted-foreground">Полное наименование</dt>
+			<dd class="break-words">
+				<CopyableValue value={organization.legalName} label="Полное наименование" />
+			</dd>
+		</div>
+		{#if codes.length > 0}
+			<div class="flex flex-wrap gap-x-8 gap-y-2.5">
+				{#each codes as [label, value] (label)}
+					<div class="flex min-w-0 flex-col gap-0.5">
+						<dt class="text-muted-foreground">{label}</dt>
+						<dd class="tabular-nums">
+							<CopyableValue {value} {label} />
+						</dd>
+					</div>
+				{/each}
 			</div>
-		{/each}
+		{/if}
 	</dl>
-	<a
-		class="mt-1.5 inline-block rounded-sm text-link focus-ring hover:text-link-hover hover:underline"
+	<Button
+		size="xs"
+		variant="outline"
+		class="mt-2.5"
 		href={resolve('/(app)/organizations/[id=uuid]/edit', { id: organization.id })}
-		>Изменить реквизиты в справочнике</a
+		title="Изменить реквизиты в справочнике"
 	>
+		<PencilIcon />
+		Изменить
+	</Button>
 </details>

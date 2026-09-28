@@ -13,11 +13,14 @@
 	let {
 		value,
 		label,
+		floating = false,
 		class: className
 	}: {
 		value: string | null;
 		/** Что копируется — для подписи кнопки и уведомления: «ИНН». */
 		label: string;
+		/** Кнопка всплывает поверх соседнего текста и не занимает места — для значения посреди строки. */
+		floating?: boolean;
 		class?: string;
 	} = $props();
 
@@ -31,11 +34,21 @@
 {#if value === null}
 	<span class={className}>—</span>
 {:else if canHover.current}
-	<span class={cn('group/copy inline-flex max-w-full items-start gap-1', className)}>
+	<span
+		class={cn(
+			'group/copy inline-flex max-w-full items-start gap-1',
+			floating && 'relative',
+			className
+		)}
+	>
 		<span class="min-w-0 break-words">{value}</span>
 		<button
 			type="button"
-			class="-my-0.5 shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover/copy:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-ring"
+			class={cn(
+				'-my-0.5 shrink-0 rounded p-0.5 text-muted-foreground opacity-0 transition-opacity group-hover/copy:opacity-100 hover:text-foreground focus-visible:opacity-100 focus-visible:outline-2 focus-visible:outline-ring',
+				floating &&
+					'absolute top-1/2 left-full my-0 ml-0.5 -translate-y-1/2 bg-popover shadow-sm ring-1 ring-foreground/10'
+			)}
 			aria-label="Копировать: {label}"
 			title="Копировать"
 			onclick={copy}

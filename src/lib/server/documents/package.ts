@@ -198,7 +198,7 @@ function studyPeriod(source: PackageSource, issues: Issues): TemplateData {
 	const { academicPeriodStart: start, academicPeriodEnd: end } = source.interaction;
 
 	if (start === null || end === null) {
-		issues.record.push('Заполните период обучения: «Изменить план» в панели «Сроки»');
+		issues.record.push('Заполните период обучения: «Изменить» в панели «Сроки»');
 		issues.fixes.add('plan');
 
 		return {};
@@ -320,7 +320,7 @@ const BUILDERS: Record<DocumentTemplateKey, Builder> = {
 		const { agreementPeriodStart: start, agreementPeriodEnd: end } = source.interaction;
 
 		if (start === null || end === null) {
-			issues.record.push('Заполните срок соглашения: «Изменить план» в панели «Сроки»');
+			issues.record.push('Заполните срок соглашения: «Изменить» в панели «Сроки»');
 			issues.fixes.add('plan');
 		}
 
