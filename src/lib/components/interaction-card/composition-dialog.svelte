@@ -9,7 +9,6 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import * as Select from '$lib/components/ui/select/index.js';
-	import * as Tabs from '$lib/components/ui/tabs/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
@@ -34,23 +33,20 @@
 		type PartyRole
 	} from '$lib/contracts/interactions';
 	import { formatDate } from '$lib/format';
-	import {
-		COMPOSITION_SECTIONS,
-		getCardCommands,
-		type CompositionSection
-	} from './commands.svelte';
+	import { getCardCommands, type CompositionSection } from './commands.svelte';
 	import { cardLiveUrl, LiveActivity } from './live.svelte';
 	import type { CounterpartyShape } from './model';
 	import SiteOffersSection from './site-offers-section.svelte';
 	import { SITE_POLL_ATTEMPTS, SITE_POLL_INTERVAL_MS } from './site-offers';
 
 	/**
-	 * «Изменить состав»: стороны дела, программы с версиями и продукты — на
-	 * месте, из карточки. Открывается на нужном разделе из блока правой
-	 * колонки или по ссылке `?compose=parties` (так ведёт отказ пакета
+	 * Состав дела на месте, из карточки, — двумя отдельными диалогами:
+	 * «Стороны» и «Программы и продукты». Какой открыть, решает кнопка блока
+	 * правой колонки или ссылка `?compose=parties` (так ведёт отказ пакета
 	 * документов, которому не хватило стороны).
 	 *
-	 * Форма присылает итоговые списки целиком — так их и пишет сервер. То, что
+	 * Форма присылает итоговые списки целиком — так их и пишет сервер; раздел,
+	 * которого диалог не показывает, уходит таким, каким был в записи. То, что
 	 * от состава зависит в договоре, форма пересчитывает сама и называет до
 	 * сохранения: смена основной стороны снимает договор (он принадлежит ей),
 	 * снятый продукт уводит свою позицию договора. Потоки, заявленные по снятой
@@ -707,8 +703,20 @@
 		onconflict: (message) => (conflict = message)
 	});
 
-	const isSection = (value: string): value is CompositionSection =>
-		(COMPOSITION_SECTIONS as readonly string[]).includes(value);
+	const heading = $derived(
+		section === 'parties'
+			? {
+					title: 'Стороны',
+					description: 'Стороны дела и подразделение. Правка попадёт в ленту вместе с причиной.',
+					reason: 'Например: заказчиком подготовки стала другая компания'
+				}
+			: {
+					title: 'Программы и продукты',
+					description:
+						'Программы с версиями и продукты дела. Правка попадёт в ленту вместе с причиной.',
+					reason: 'Например: работа идёт по новой версии программы'
+				}
+	);
 </script>
 
 {#snippet sitePicker(party: DraftParty)}
@@ -854,8 +862,8 @@
 
 <FormDialog
 	bind:open={open.get, open.set}
-	title="Изменить состав"
-	description="Стороны дела, программы и продукты. Правка попадёт в ленту вместе с причиной."
+	title={heading.title}
+	description={heading.description}
 	{dirty}
 	width="xl"
 >
@@ -872,20 +880,8 @@
 			<StaleNotice message={conflict} onrefreshed={rebase} />
 		{/if}
 
-		<Tabs.Root
-			bind:value={
-				() => section,
-				(value: string) => {
-					if (isSection(value)) section = value;
-				}
-			}
-		>
-			<Tabs.List variant="line" aria-label="Разделы состава">
-				<Tabs.Trigger value="parties">Стороны</Tabs.Trigger>
-				<Tabs.Trigger value="offering">Программы и продукты</Tabs.Trigger>
-			</Tabs.List>
-
-			<Tabs.Content value="parties" class="flex flex-col gap-4 pt-3">
+		{#if section === 'parties'}
+			<div class="flex flex-col gap-4">
 				<ul class="flex flex-col divide-y divide-border rounded-lg border border-border">
 					{#each draft.parties as party, index (`${party.organizationId}:${index}`)}
 						<li class="flex flex-col gap-2 p-3">
@@ -1067,9 +1063,9 @@
 						</Button>
 					{/if}
 				</div>
-			</Tabs.Content>
-
-			<Tabs.Content value="offering" class="flex flex-col gap-5 pt-3">
+			</div>
+		{:else}
+			<div class="flex flex-col gap-5">
 				<fieldset class="flex flex-col gap-2">
 					<legend class="mb-1 text-sm font-medium">Образовательные программы</legend>
 					{#if draft.programs.length === 0}
@@ -1267,8 +1263,8 @@
 						программе: он останется в деле, но перестанет засчитываться стадиям.
 					</InlineHint>
 				{/if}
-			</Tabs.Content>
-		</Tabs.Root>
+			</div>
+		{/if}
 
 		<div class="flex flex-col gap-1.5">
 			<Label for="card-composition-reason">Причина правки</Label>
@@ -1276,7 +1272,7 @@
 				id="card-composition-reason"
 				name="reason"
 				rows={2}
-				placeholder="Например: заказчиком подготовки стала другая компания"
+				placeholder={heading.reason}
 				bind:value={reason}
 			/>
 		</div>

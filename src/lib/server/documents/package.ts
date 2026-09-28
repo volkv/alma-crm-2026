@@ -144,8 +144,7 @@ function requisites(organization: OrganizationRow, role: string, issues: Issues)
 		.join(', ');
 }
 
-const NO_OPERATOR =
-	'Добавьте оператора стороной взаимодействия: «Изменить состав» → «Стороны» в карточке дела';
+const NO_OPERATOR = 'Добавьте оператора стороной взаимодействия: диалог «Стороны» в карточке дела';
 
 /** Подписант оператора из формы; не назван — поле формы, а не данные дела. */
 function operatorSigner(source: PackageSource, issues: Issues): string {
@@ -186,7 +185,9 @@ function counterpartySigner(source: PackageSource, issues: Issues): string {
 
 function programs(source: PackageSource, issues: Issues): { name: string }[] {
 	if (source.interaction.programs.length === 0) {
-		issues.record.push('Добавьте образовательные программы: «Изменить состав» в карточке дела');
+		issues.record.push(
+			'Добавьте образовательные программы: диалог «Программы и продукты» в карточке дела'
+		);
 		issues.fixes.add('parties');
 	}
 
@@ -326,7 +327,7 @@ const BUILDERS: Record<DocumentTemplateKey, Builder> = {
 
 		if (source.customer === null) {
 			issues.record.push(
-				'Добавьте заказчика подготовки стороной взаимодействия: «Изменить состав» → «Стороны» в карточке дела'
+				'Добавьте заказчика подготовки стороной взаимодействия: диалог «Стороны» в карточке дела'
 			);
 			issues.fixes.add('parties');
 		}

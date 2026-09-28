@@ -378,13 +378,12 @@ export const SHOTS: readonly Frame[] = [
 		// в карточку без параметров, и диалог по `?compose=` не открылся бы.
 		path: `/w/b2b/interactions/${DEMO_INTERACTION}?compose=offering`,
 		role: 'manager',
-		caption:
-			'«Изменить состав» на карточке: стороны, подразделение, программы с версиями и продукты',
+		caption: '«Программы и продукты» на карточке: программы с версиями и продукты',
 		waitFor: 'Все стадии процесса',
 		prepare: async (page) => {
 			await page
 				.getByRole('dialog')
-				.getByText('Изменить состав')
+				.getByText('Программы и продукты')
 				.first()
 				.waitFor({ state: 'visible', timeout: 20_000 });
 		}
