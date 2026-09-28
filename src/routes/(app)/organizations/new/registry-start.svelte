@@ -262,7 +262,7 @@
 			</div>
 		{:else if candidates !== null}
 			<ul class="flex flex-col divide-y divide-border rounded-md border border-border">
-				{#each candidates as candidate (`${candidate.inn}:${candidate.kpp}`)}
+				{#each candidates as candidate, index (`${candidate.inn}:${candidate.kpp}:${index}`)}
 					{@const busy = creating !== null && creating === candidate.token}
 					{@const kindHint = guessed(candidate)}
 					{@const statusNote = STATUS_NOTES[candidate.status]}

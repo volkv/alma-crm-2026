@@ -474,7 +474,7 @@
 							</p>
 						{:else if candidates !== null && candidates.length > 0}
 							<ul class="max-h-72 overflow-y-auto py-1">
-								{#each candidates as candidate (`${candidate.inn}:${candidate.kpp}`)}
+								{#each candidates as candidate, index (`${candidate.inn}:${candidate.kpp}:${index}`)}
 									{@const candidateNotes = notes(candidate)}
 									{@const busy = creating !== null && creating === candidate.token}
 									<li>
