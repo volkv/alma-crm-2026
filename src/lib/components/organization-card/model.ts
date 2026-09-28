@@ -25,6 +25,7 @@ export const PASSPORT_FIELD_LABELS: Record<PassportField, string> = {
 export const PASSPORT_SOURCE_LABELS: Record<FieldSource, string> = {
 	dadata: 'ЕГРЮЛ (Dadata)',
 	sveden: 'сайт вуза, раздел «Сведения»',
+	monitoring: 'мониторинг вузов Минобрнауки',
 	guess: 'догадка по выписке'
 };
 

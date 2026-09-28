@@ -6,8 +6,9 @@
  * карточку. Здесь карточки нет: сотрудник заполняет взаимодействие, и нужной
  * организации в справочнике просто не оказалось. Поэтому выбранная строка
  * реестра заводится сразу — с реквизитами из выписки, видом по полю, в котором
- * её выбрали, и догадками об уровне образования и сайте. Происхождение каждого
- * значения пишется в журнал тем же событием, что и приёмка паспорта.
+ * её выбрали, догадкой об уровне образования и сайтом, если его нашли источники
+ * сайта (`website/`). Происхождение каждого значения пишется в журнал тем же
+ * событием, что и приёмка паспорта.
  *
  * Браузер реквизитов не присылает. Каждая строка реестра уходит в него под
  * номером выданного паспорта (`passports.ts`), и заводит организацию сервер из
@@ -34,7 +35,7 @@ import { requirePermission } from '../rbac';
 import { guessEducationLevel, guessKind } from './classify';
 import { queryRegistry, registryPassport } from './index';
 import { issuePassport, readIssuedPassport } from './passports';
-import { siteFromEmails } from './sveden';
+import { normalizeWebsite } from './sveden';
 
 const TAKEN =
 	'Организация с этим ИНН уже есть в справочнике, но вне вашей области доступа или в архиве';
@@ -76,7 +77,7 @@ export async function searchRegistryCandidates(
 							await issuePassport(
 								ctx,
 								'live',
-								registryPassport(answer.query, [entity], answer.fetchedAt)
+								await registryPassport(answer.query, [entity], answer.fetchedAt)
 							)
 						).token
 					: null;
@@ -116,6 +117,13 @@ export async function createFromRegistry(
 
 	const { via, passport } = await readIssuedPassport(ctx, token);
 	const entity = passport.entity;
+	// Сайт — тот, что паспорт предложил при поиске (`website/`): второй раз
+	// источники не спрашиваются, и в карточку попадает то, что сотрудник видел в
+	// строке реестра. Адрес ещё раз приводится к origin: номер мог принадлежать
+	// паспорту из загруженного снимка, а из-за непригодного сайта заведение
+	// отказывать не должно — поле просто останется пустым, и сайт введут вручную.
+	const offeredWebsite = passport.fields.website;
+	const website = offeredWebsite === undefined ? null : normalizeWebsite(offeredWebsite.value);
 
 	if (entity === null || entity.inn === null) {
 		throw new ValidationError('Строка реестра устарела: повторите поиск');
@@ -147,7 +155,7 @@ export async function createFromRegistry(
 		kpp: entity.kpp,
 		ogrn: entity.ogrn,
 		region: entity.region?.slice(0, 200) ?? null,
-		website: siteFromEmails(entity.emails),
+		website,
 		notes: null,
 		isActive: true,
 		externalSource: null,
@@ -172,14 +180,25 @@ export async function createFromRegistry(
 		['kpp', 'dadata'],
 		['ogrn', 'dadata'],
 		['region', 'dadata'],
-		['educationLevel', 'guess'],
-		['website', 'guess']
+		['educationLevel', 'guess']
 	];
 	// Вид в происхождение не попадает: его выбрал сотрудник полем формы, а не
 	// источник.
 	const provenance: PassportProvenance[] = sources
 		.filter(([field]) => input[field] !== null)
 		.map(([field, source]) => ({ field, source, fetchedAt, via }));
+
+	// У сайта свои источник и дата: справочник вузов датирует ответ днём
+	// выгрузки, а не моментом ответа реестра. Адрес, который пришлось поправить,
+	// источнику уже не принадлежит — как и поле, поправленное человеком.
+	if (offeredWebsite !== undefined && input.website === offeredWebsite.value) {
+		provenance.push({
+			field: 'website',
+			source: offeredWebsite.source,
+			fetchedAt: offeredWebsite.fetchedAt,
+			via
+		});
+	}
 
 	const created = await createOrganization(ctx, input, undefined, provenance);
 

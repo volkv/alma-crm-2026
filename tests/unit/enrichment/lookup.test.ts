@@ -227,8 +227,8 @@ describe('раздел «Сведения об образовательной о
 describe('паспорт по ответу реестра', () => {
 	const fetchedAt = '2026-09-24T09:00:00.000Z';
 
-	it('реквизиты — из ЕГРЮЛ, вид и сайт — догадка, у каждого значения дата', () => {
-		const passport = registryPassport('7802084569', [entity], fetchedAt);
+	it('реквизиты — из ЕГРЮЛ, вид и сайт — догадка, у каждого значения дата', async () => {
+		const passport = await registryPassport('7802084569', [entity], fetchedAt);
 
 		expect(passport.fields.inn).toEqual({ value: '7802084569', source: 'dadata', fetchedAt });
 		expect(passport.fields.legalName?.source).toBe('dadata');
@@ -245,15 +245,15 @@ describe('паспорт по ответу реестра', () => {
 		});
 	});
 
-	it('пустое значение источника не предлагается стереть поле карточки', () => {
-		const passport = registryPassport('x', [{ ...entity, kpp: null, emails: [] }], fetchedAt);
+	it('пустое значение источника не предлагается стереть поле карточки', async () => {
+		const passport = await registryPassport('x', [{ ...entity, kpp: null, emails: [] }], fetchedAt);
 
 		expect(passport.fields.kpp).toBeUndefined();
 		expect(passport.fields.website).toBeUndefined();
 	});
 
-	it('о ликвидации и филиале говорят прямо', () => {
-		const { warnings } = registryPassport(
+	it('о ликвидации и филиале говорят прямо', async () => {
+		const { warnings } = await registryPassport(
 			'x',
 			[{ ...entity, status: 'liquidated', isBranch: true }],
 			fetchedAt

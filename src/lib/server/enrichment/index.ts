@@ -39,7 +39,8 @@ import { consumeQuota, requireEnabled } from './access';
 import { guessEducationLevel, guessKind } from './classify';
 import { DadataError, DADATA_NOT_CONFIGURED, findParties, isDadataConfigured } from './dadata';
 import { issuePassport } from './passports';
-import { fetchSiteReport, normalizeWebsite, siteFromEmails } from './sveden';
+import { fetchSiteReport, normalizeWebsite } from './sveden';
+import { findWebsite, type WebsiteFinding } from './website';
 
 /** Состояния ЕГРЮЛ, о которых сотруднику говорят отдельно. */
 const STATUS_WARNINGS: Record<string, string> = {
@@ -91,14 +92,16 @@ function compact(
  * Паспорт по ответу реестра.
  *
  * Реквизиты — ИНН, КПП, ОГРН, регион, наименования — как их отдал ЕГРЮЛ. Вид
- * организации и уровень образования угаданы по ОКВЭД и названию, сайт — по
- * домену почты из выписки; все три помечены догадкой.
+ * организации и уровень образования угаданы по ОКВЭД и названию и помечены
+ * догадкой. Сайта в ЕГРЮЛ нет: его ищет цепочка источников (`website/`), и у
+ * значения тот источник, который ответил, — справочник вузов или догадка по
+ * почте. Не ответил никто — поля нет: паспорт без сайта всё равно паспорт.
  */
-export function registryPassport(
+export async function registryPassport(
 	query: string,
 	entities: readonly LegalEntity[],
 	fetchedAt: string
-): OrganizationPassport {
+): Promise<OrganizationPassport> {
 	const [entity, ...others] = entities;
 
 	if (entity === undefined) {
@@ -108,6 +111,7 @@ export function registryPassport(
 	const kind = guessKind(entity.legalName, entity.okved);
 	const educationLevel =
 		kind === 'educational_institution' ? guessEducationLevel(entity.legalName, entity.okved) : null;
+	const website = await findWebsite(entity);
 
 	return {
 		version: 1,
@@ -123,10 +127,17 @@ export function registryPassport(
 			kpp: valueOf(entity.kpp, 'dadata', fetchedAt),
 			ogrn: valueOf(entity.ogrn, 'dadata', fetchedAt),
 			region: valueOf(entity.region, 'dadata', fetchedAt),
-			website: valueOf(siteFromEmails(entity.emails), 'guess', fetchedAt)
+			website:
+				website === null
+					? undefined
+					: {
+							value: website.website,
+							source: website.source,
+							fetchedAt: website.fetchedAt ?? fetchedAt
+						}
 		}),
 		site: null,
-		warnings: registryWarnings(entity, others, kind)
+		warnings: registryWarnings(entity, others, kind, website)
 	};
 }
 
@@ -134,7 +145,8 @@ export function registryPassport(
 export function registryWarnings(
 	entity: LegalEntity,
 	others: readonly LegalEntity[],
-	kind: string
+	kind: string,
+	website: WebsiteFinding | null
 ): string[] {
 	const warnings: string[] = [];
 	const statusWarning = STATUS_WARNINGS[entity.status];
@@ -159,10 +171,10 @@ export function registryWarnings(
 		);
 	}
 
-	if (siteFromEmails(entity.emails) !== null) {
-		warnings.push(
-			'Сайт в ЕГРЮЛ не хранится и угадан по домену почты из выписки: проверьте его, прежде чем читать раздел «Сведения»'
-		);
+	// Насколько верить сайту, знает тот источник, который его дал: догадка по
+	// почте и выгрузка мониторинга ошибаются по-разному.
+	if (website !== null && website.note !== null) {
+		warnings.push(website.note);
 	}
 
 	return warnings;
@@ -515,7 +527,11 @@ export async function lookupRegistry(ctx: ActorContext, raw: string): Promise<Is
 		throw new NotFoundError(notFoundMessage(kind));
 	}
 
-	return issuePassport(ctx, 'live', registryPassport(query, answer.entities, answer.fetchedAt));
+	return issuePassport(
+		ctx,
+		'live',
+		await registryPassport(query, answer.entities, answer.fetchedAt)
+	);
 }
 
 /**
@@ -530,8 +546,8 @@ export async function suggestRegistry(ctx: ActorContext, raw: string): Promise<I
 	const { query, entities, fetchedAt } = await queryRegistry(ctx, raw);
 
 	return Promise.all(
-		entities.map((entity) =>
-			issuePassport(ctx, 'live', registryPassport(query, [entity], fetchedAt))
+		entities.map(async (entity) =>
+			issuePassport(ctx, 'live', await registryPassport(query, [entity], fetchedAt))
 		)
 	);
 }

@@ -72,10 +72,14 @@ export const LEGAL_STATUSES = [
 export type LegalStatus = (typeof LEGAL_STATUSES)[number];
 
 /**
- * Откуда взялось значение: выписка ЕГРЮЛ через Dadata, раздел `/sveden` сайта
- * или догадка (вид организации по ОКВЭД, сайт по домену почты).
+ * Откуда взялось значение: выписка ЕГРЮЛ через Dadata, раздел `/sveden` сайта,
+ * снимок мониторинга вузов Минобрнауки (сайт по ИНН) или догадка (вид
+ * организации по ОКВЭД, сайт по домену почты).
+ *
+ * Источник хранится строкой — в копии паспорта и в подробностях журнала, — а не
+ * перечислением базы: новый источник миграции не требует.
  */
-export const FIELD_SOURCES = ['dadata', 'sveden', 'guess'] as const;
+export const FIELD_SOURCES = ['dadata', 'sveden', 'monitoring', 'guess'] as const;
 
 export type FieldSource = (typeof FIELD_SOURCES)[number];
 

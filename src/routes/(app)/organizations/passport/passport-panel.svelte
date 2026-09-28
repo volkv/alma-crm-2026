@@ -82,6 +82,7 @@
 	const SOURCE_LABELS: Record<FieldSource, string> = {
 		dadata: 'ЕГРЮЛ (Dadata)',
 		sveden: 'сайт, раздел «Сведения»',
+		monitoring: 'мониторинг вузов',
 		guess: 'догадка'
 	};
 
