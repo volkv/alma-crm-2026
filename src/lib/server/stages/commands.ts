@@ -1059,7 +1059,15 @@ export async function markChecklistItemIn(
 	});
 }
 
-export async function setStageResult(ctx: ActorContext, input: SetStageResultInput): Promise<void> {
+/**
+ * Результат стадии и файлы к нему: протокол встречи, подписанный скан. Файлы
+ * ложатся на ту же запись стадии, что и вложения перехода, — «чем подтверждён
+ * результат» остаётся вопросом к стадии.
+ */
+export async function setStageResult(
+	ctx: ActorContext,
+	input: SetStageResultInput & TransitionAttachments
+): Promise<void> {
 	requirePermission(ctx, 'stages.transition');
 
 	await withTransaction(ctx, async (tx) => {
@@ -1071,6 +1079,8 @@ export async function setStageResult(ctx: ActorContext, input: SetStageResultInp
 			.set({ resultText: input.resultText, updatedAt: now })
 			.where(eq(stageEntries.id, entry.id));
 
+		await attachDocuments(tx, input.interactionId, entry.id, input.documentIds ?? []);
+
 		await touchInteraction(tx, input.interactionId);
 		publishAfterCommit(tx, input.interactionId, { type: 'interaction.changed' });
 
@@ -1080,7 +1090,7 @@ export async function setStageResult(ctx: ActorContext, input: SetStageResultInp
 				type: 'interactions.result_recorded',
 				outcome: 'success',
 				subject: { type: 'interaction', id: input.interactionId },
-				details: { stageEntryId: entry.id }
+				details: { stageEntryId: entry.id, documentCount: (input.documentIds ?? []).length }
 			},
 			tx
 		);

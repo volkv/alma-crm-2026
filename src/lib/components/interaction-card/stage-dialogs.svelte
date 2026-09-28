@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { enhance } from '$app/forms';
+	import { resolve } from '$app/paths';
 	import * as Select from '$lib/components/ui/select/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
@@ -348,25 +349,57 @@
 	description={entry === null
 		? undefined
 		: `Стадия: ${entry.snapshot.name}. Что получилось на ней.`}
-	dirty={resultText !== (entry?.resultText ?? '')}
+	dirty={resultText !== (entry?.resultText ?? '') || attached.length > 0}
+	discardDescription="Набранный результат и выбранные вложения пропадут."
 >
 	<form
 		id="card-result-form"
 		method="POST"
 		action="?/result"
+		enctype="multipart/form-data"
 		use:enhance={entryCommand}
-		class="flex flex-col gap-2"
+		class="flex flex-col gap-4"
 	>
 		<input type="hidden" name="stageEntryId" value={entryId} />
 		{@render staleNotice()}
-		<Label for="card-result-text">Результат стадии</Label>
-		<Textarea
-			id="card-result-text"
-			name="resultText"
-			rows={4}
-			placeholder="Что получилось на этой стадии"
-			bind:value={resultText}
-		/>
+		<div class="flex flex-col gap-1.5">
+			<Label for="card-result-text">Результат стадии</Label>
+			<Textarea
+				id="card-result-text"
+				name="resultText"
+				rows={4}
+				placeholder="Что получилось на этой стадии"
+				bind:value={resultText}
+			/>
+		</div>
+
+		{#if canAttach}
+			<FileDropzone
+				id="card-result-files"
+				name="files"
+				label="Вложения"
+				multiple
+				description="Протокол, скан, фото — до десяти файлов. Они останутся на этой стадии и в документах взаимодействия."
+				onchoose={(names) => (attached = names)}
+			/>
+		{/if}
+
+		{#if entry !== null && entry.documents.length > 0}
+			<div class="flex flex-col gap-1.5 text-sm">
+				<span class="text-muted-foreground">Уже приложено к стадии</span>
+				<ul class="flex flex-col gap-1">
+					{#each entry.documents as document (document.id)}
+						<li>
+							<a
+								class="underline-offset-2 hover:underline"
+								href={resolve('/(app)/documents/[id=uuid]', { id: document.id })}
+								>{document.title}</a
+							>
+						</li>
+					{/each}
+				</ul>
+			</div>
+		{/if}
 	</form>
 
 	{#snippet footer({ close })}

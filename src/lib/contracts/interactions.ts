@@ -1419,7 +1419,7 @@ export type StageEntryView = {
 	 * считает сервер при чтении, у закрытой — сохранённый при выходе.
 	 */
 	facts: Record<string, ChecklistFact>;
-	/** Файлы, приложенные к этой записи стадии вместе с переходом. */
+	/** Файлы, приложенные к этой записи стадии переходом или результатом. */
 	documents: { id: string; title: string; mime: string; sizeBytes: number }[];
 	dueAt: Date;
 	pausedSeconds: number;

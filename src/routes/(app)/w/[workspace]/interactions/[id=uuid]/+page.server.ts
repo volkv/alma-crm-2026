@@ -351,7 +351,13 @@ const core = {
 
 		if (!parsed.ok) return parsed.failure;
 
-		return run(() => setStageResult(actorFromEvent(event), parsed.data));
+		const attached = await attach(event, data);
+
+		if (!attached.ok) return attached.failure;
+
+		return run(() =>
+			setStageResult(actorFromEvent(event), { ...parsed.data, documentIds: attached.documentIds })
+		);
 	},
 
 	confirm: async (event) => {

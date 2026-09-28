@@ -6,8 +6,8 @@
 import { and, eq, isNull } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import type { ProcessRevisionView } from '$lib/contracts/interactions';
-import { auditEvents, processRevisions, stageEntries } from '$lib/server/db/schema';
-import { ConflictError, ForbiddenError } from '$lib/server/errors';
+import { auditEvents, documents, processRevisions, stageEntries } from '$lib/server/db/schema';
+import { ConflictError, ForbiddenError, ValidationError } from '$lib/server/errors';
 import { getInteractionSummary } from '$lib/server/interactions/summary';
 import {
 	advanceStage,
@@ -920,5 +920,57 @@ describe('журнал действий', () => {
 		// Черновика после отказа не появилось: у группы осталась одна редакция.
 		const revisions = await database.db.select({ id: processRevisions.id }).from(processRevisions);
 		expect(revisions).toHaveLength(1);
+	});
+});
+
+describe('результат стадии', () => {
+	/** Строка документа без файла: хранилище для связи с записью стадии ни при чём. */
+	async function insertDocument(interactionId: string | null, title: string): Promise<string> {
+		const [row] = await database.db
+			.insert(documents)
+			.values({
+				interactionId,
+				kind: 'stage_attachment',
+				title,
+				filePath: `files/${crypto.randomUUID()}`,
+				mime: 'application/pdf',
+				sizeBytes: 64,
+				sha256: crypto.randomUUID().replaceAll('-', '').repeat(2)
+			})
+			.returning({ id: documents.id });
+
+		return row.id;
+	}
+
+	it('прикладывает файлы к записи стадии и не берёт чужие', async () => {
+		const fixture = await createFixture();
+		const stageEntryId = await openEntryId(fixture.ctx, fixture.interactionId);
+		const protocol = await insertDocument(fixture.interactionId, 'Протокол встречи.pdf');
+
+		await setStageResult(fixture.ctx, {
+			interactionId: fixture.interactionId,
+			stageEntryId,
+			resultText: 'Договорились о сроках',
+			documentIds: [protocol]
+		});
+
+		const status = await getInteractionStatus(fixture.ctx, fixture.interactionId);
+		expect(status.current?.resultText).toBe('Договорились о сроках');
+		expect(status.current?.documents.map((document) => document.id)).toEqual([protocol]);
+
+		const foreign = await insertDocument(null, 'Типовая форма.pdf');
+
+		await expect(
+			setStageResult(fixture.ctx, {
+				interactionId: fixture.interactionId,
+				stageEntryId,
+				resultText: 'Другой текст',
+				documentIds: [foreign]
+			})
+		).rejects.toBeInstanceOf(ValidationError);
+
+		// Отказ откатывает и текст: результат и вложения пишутся одной транзакцией.
+		const after = await getInteractionStatus(fixture.ctx, fixture.interactionId);
+		expect(after.current?.resultText).toBe('Договорились о сроках');
 	});
 });
