@@ -22,10 +22,8 @@
 	 * самодокументированной системы: что бы человек ни открыл, объяснение
 	 * находится в одном и том же месте, а не там, где его успели положить.
 	 *
-	 * Точка-напоминание горит, пока подсказки этого экрана на этом устройстве не
-	 * смотрели. Признак лежит в браузере, и до гидратации его не прочитать,
-	 * поэтому тур до тех пор отвечает «смотрели»: точка, мелькнувшая на долю
-	 * секунды после загрузки страницы, — не напоминание, а рябь.
+	 * К непройденному туру экрана зовёт не этот значок, а кнопка тура рядом с
+	 * ним (`screen-tour-button.svelte`); здесь тот же тур — пунктом меню.
 	 */
 
 	const tour = getOnboardingTour();
@@ -35,7 +33,6 @@
 	/** Экран реестра, на котором человек стоит; `null` — экран вне подсказок. */
 	const screen = $derived(screenForPath(page.url.pathname));
 	const screenSteps = $derived(screen === null ? 0 : tour.screenLength(screen));
-	const unseen = $derived(screen !== null && !tour.screenSeen(screen.id));
 
 	// Образцы записей спрашиваются, когда меню открыли: числа шагов полного тура
 	// зависят от того, какие карточки этой сессии разрешено открыть.
@@ -58,10 +55,6 @@
 				data-tour="help-menu"
 			>
 				<CircleQuestionMarkIcon aria-hidden="true" />
-				{#if unseen}
-					<span class="absolute top-0.5 right-0.5 size-1.5 rounded-full bg-link" aria-hidden="true"
-					></span>
-				{/if}
 			</Button>
 		{/snippet}
 	</DropdownMenu.Trigger>
@@ -70,7 +63,7 @@
 			<DropdownMenu.Label>Этот экран: {screen.title}</DropdownMenu.Label>
 			<DropdownMenu.Item onSelect={() => tour.startScreen(screen, page.url.pathname)}>
 				<CompassIcon aria-hidden="true" />
-				<span class="min-w-0 flex-1 truncate">Подсказки по этому экрану</span>
+				<span class="min-w-0 flex-1 truncate">Тур по этому экрану</span>
 				<span class="shrink-0 text-xs text-faint">
 					{pluralize(screenSteps, ['шаг', 'шага', 'шагов'])}
 				</span>

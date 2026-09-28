@@ -183,7 +183,11 @@
 	</dl>
 
 	{#if model.stages.length > 0}
-		<div class="flex flex-col gap-2 border-t border-border pt-4" data-slot="card-process">
+		<div
+			class="flex flex-col gap-2 border-t border-border pt-4"
+			data-slot="card-process"
+			data-tour="interaction-stages"
+		>
 			{#if model.stage !== null}
 				<dl class="flex flex-wrap items-start justify-between gap-x-6 gap-y-2">
 					<div class="min-w-0">

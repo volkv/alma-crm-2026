@@ -100,6 +100,7 @@
 		dragging && 'opacity-50'
 	)}
 	data-slot="board-card"
+	data-tour="interactions-board-card"
 	data-card-state={card.state}
 	draggable={draggable ? 'true' : 'false'}
 	ondragstart={start}

@@ -260,7 +260,11 @@
 		{/each}
 
 		{#if hidden.length > 0}
-			{@render more(hiddenActive, false)}
+			<!-- Метка подсказок — на обёртке настоящей воронки, а не в сниппете: тот
+				же сниппет рисует и невидимую мерку ниже. -->
+			<span class="flex shrink-0" data-tour="filters-more">
+				{@render more(hiddenActive, false)}
+			</span>
 		{/if}
 
 		{#if trailing}

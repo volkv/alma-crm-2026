@@ -92,6 +92,7 @@
 			role="group"
 			aria-label="Ответственные"
 			data-testid="interactions-filter-owner"
+			data-tour="interactions-owners"
 		>
 			{#each visible as option (option.value)}
 				{@const active = selected.includes(option.value)}

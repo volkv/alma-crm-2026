@@ -156,6 +156,7 @@
 							href={clearHref}
 							aria-label="Сбросить фильтры"
 							data-testid="{testId}-filter-clear"
+							data-tour="filters-clear"
 						>
 							<FunnelXIcon aria-hidden="true" />
 						</Button>

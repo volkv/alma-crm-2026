@@ -8,8 +8,8 @@
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import { Progress } from '$lib/components/ui/progress/index.js';
 	import { pluralize } from '$lib/format';
-	import { screenForPath } from '$lib/onboarding/screens';
-	import { tourMinutes } from '$lib/onboarding/tours';
+	import { matchesQuery, screenForPath, withQuery } from '$lib/onboarding/screens';
+	import { tourMinutes, type TourStop, type TourStopScreen } from '$lib/onboarding/tours';
 	import type { OnboardingTour } from '$lib/onboarding/tour.svelte';
 
 	/**
@@ -71,12 +71,42 @@
 	const isLast = $derived(tour.index === total - 1);
 	/** Карточка по центру и без рамки: приветствие и финал не о конкретном блоке. */
 	const centered = $derived(stop !== null && stop.target === null);
-	/** Стоит ли человек на экране, которому принадлежит остановка. */
-	const onScreen = $derived(
+	/** Открыт ли экран остановки — без оглядки на параметры адреса. */
+	const onScreenPath = $derived(
 		stop === null || stop.screen === null
 			? true
 			: screenForPath(page.url.pathname)?.id === stop.screen.id
 	);
+	/**
+	 * Стоит ли человек там, где остановку показывают: на её экране и в её
+	 * режиме — доска или таблица, включённый фильтр (`TourStep.query`).
+	 */
+	const onScreen = $derived(onScreenPath && matchesQuery(page.url, stop?.query ?? null));
+
+	/**
+	 * Куда вести ради остановки. Уже на её экране меняются только параметры
+	 * шага — отбор, который человек выставил сам, остаётся; с другого экрана —
+	 * адрес экрана с параметрами шага.
+	 */
+	function stopHref(current: TourStop, screen: TourStopScreen): string {
+		return onScreenPath
+			? withQuery(page.url.pathname, page.url.search, current.query)
+			: withQuery(screen.href, '', current.query);
+	}
+
+	function goToStop(current: TourStop, screen: TourStopScreen): void {
+		navigating = screen.title;
+		// Реестр хранит обычные пути приложения, и идентификатор записи в них уже
+		// подставлен, поэтому `resolve()` только добавляет базовый путь.
+		// Приведение — то же, что в навигации оболочки: разбирать объединение всех
+		// маршрутов ради одной ветви незачем. Смена режима на том же экране не
+		// копит историю и не прокручивает страницу к началу.
+		void goto(resolve(stopHref(current, screen) as Pathname & '/'), {
+			replaceState: onScreenPath,
+			noScroll: onScreenPath,
+			keepFocus: true
+		});
+	}
 
 	function element(): HTMLElement | null {
 		const target = tour.stop?.target ?? null;
@@ -198,12 +228,7 @@
 			return;
 		}
 
-		navigating = current.screen.title;
-		// Реестр хранит обычные пути приложения, и идентификатор записи в них уже
-		// подставлен, поэтому `resolve()` только добавляет базовый путь.
-		// Приведение — то же, что в навигации оболочки: разбирать объединение всех
-		// маршрутов ради одной ветви незачем.
-		void goto(resolve(current.screen.href as Pathname & '/'));
+		goToStop(current, current.screen);
 	}
 
 	// Первый вход: признаки «показано» лежат в браузере, и прочитать их можно
@@ -251,8 +276,7 @@
 		}
 
 		navigatedFor = current.id;
-		navigating = current.screen.title;
-		void goto(resolve(current.screen.href as Pathname & '/'));
+		goToStop(current, current.screen);
 	});
 
 	$effect(() => {

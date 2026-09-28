@@ -160,22 +160,29 @@
 		{#if panel === 'terms'}
 			<TermsPanel interaction={source.interaction} {shape} onEditPlan={editPlan} />
 		{:else if panel === 'documents'}
-			<DocumentsPanel
-				documents={source.interaction.documents}
-				{supersessions}
-				templates={packageTemplates(
-					offeredTemplates(source.card.templates, model.modules),
-					source.card.counterpartyKind
-				)}
-				counterpartyKind={source.card.counterpartyKind}
-				canUpload={can.upload}
-				canGenerate={can.generate}
-				canSend={can.edit}
-			/>
+			<!-- Обёртки несут метки подсказок: тур показывает документы дела и
+				первую панель модуля. `empty:hidden` — панель, которой сейчас нечего
+				показать, не оставляет лишнего зазора в колонке. -->
+			<div class="empty:hidden" data-tour="interaction-documents">
+				<DocumentsPanel
+					documents={source.interaction.documents}
+					{supersessions}
+					templates={packageTemplates(
+						offeredTemplates(source.card.templates, model.modules),
+						source.card.counterpartyKind
+					)}
+					counterpartyKind={source.card.counterpartyKind}
+					canUpload={can.upload}
+					canGenerate={can.generate}
+					canSend={can.edit}
+				/>
+			</div>
 		{:else}
 			{@const Panel = cardPanelComponent(panel)}
 			{#if Panel !== null}
-				<Panel {source} {model} {can} {supersessions} data={moduleDataOf(panel)} />
+				<div class="empty:hidden" data-tour="interaction-module">
+					<Panel {source} {model} {can} {supersessions} data={moduleDataOf(panel)} />
+				</div>
 			{/if}
 		{/if}
 	{/each}

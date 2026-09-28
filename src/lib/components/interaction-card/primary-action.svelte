@@ -285,7 +285,7 @@
 {/snippet}
 
 {#snippet actionRow(item: OpenAction)}
-	<div class="flex flex-col gap-1.5">
+	<div class="flex flex-col gap-1.5" data-tour="interaction-move">
 		<div class="flex flex-wrap items-center gap-2">
 			<Button
 				size="lg"
@@ -420,7 +420,10 @@
 		{/if}
 
 		{#if action.blockers.length > 0 || required.length > 0 || action.otherReasons.length > 0}
-			<ul class="flex flex-col divide-y divide-border rounded-lg border border-border px-3">
+			<ul
+				class="flex flex-col divide-y divide-border rounded-lg border border-border px-3"
+				data-tour="interaction-checklist"
+			>
 				{#each action.blockers as blocker (blocker.id)}
 					{@render blockerRow(blocker, true)}
 				{/each}

@@ -22,6 +22,7 @@ import {
 	screenById,
 	screenHelpHref,
 	screenHref,
+	type TourQuery,
 	type TourSamples,
 	type TourScreen
 } from './screens';
@@ -55,6 +56,8 @@ export type TourStop = {
 	link: { href: string; label: string } | null;
 	/** Карта экранов тура списком; есть только у приветствия. */
 	map: readonly string[] | null;
+	/** Параметры адреса, которые шаг выставляет сам (`TourStep.query`); `null` — адрес безразличен. */
+	query: TourQuery | null;
 };
 
 /** Шаг по элементу оболочки: он есть на каждой странице и экрана не имеет. */
@@ -92,9 +95,15 @@ export const SHELL_STEPS: readonly ShellStep[] = [
 		target: 'inbox'
 	},
 	{
+		id: 'screen-tour',
+		title: 'Тур по этому экрану',
+		body: 'Значок компаса есть на каждой странице с подсказками и проводит по ней одной: вступление и главные элементы, без переходов. Пока тур экрана не пройден, от значка расходятся волны; пройдёте его до конца или закроете — волны гаснут. Этот обход — те же туры экранов подряд: экран, пройденный здесь, звать к себе больше не будет.',
+		target: 'screen-tour'
+	},
+	{
 		id: 'help-menu',
 		title: 'Подсказки всегда здесь',
-		body: 'Значок «?» открывает подсказки по тому экрану, на котором вы стоите, этот тур целиком и статью справки об экране. Он стоит в шапке каждой страницы — искать подсказки не нужно.',
+		body: 'Значок «?» открывает тур по экрану, этот обход целиком и статью справки об экране, а ещё все руководства и быстрый поиск. Он стоит в шапке каждой страницы — искать подсказки не нужно.',
 		target: 'help-menu'
 	},
 	{
@@ -261,7 +270,8 @@ function screenStops(
 			target: INTRO_TARGET,
 			hint: null,
 			link: steps.length === 0 ? link : null,
-			map: null
+			map: null,
+			query: null
 		},
 		...steps.map((step, index) => ({
 			id: `${screen.id}:${step.id}`,
@@ -272,7 +282,8 @@ function screenStops(
 			target: step.target,
 			hint: step.hint ?? null,
 			link: index === steps.length - 1 ? link : null,
-			map: null
+			map: null,
+			query: step.query ?? null
 		}))
 	];
 
@@ -307,7 +318,8 @@ export function fullTourFor(
 			target: null,
 			hint: null,
 			link: null,
-			map: screens.map((entry) => entry.screen.title)
+			map: screens.map((entry) => entry.screen.title),
+			query: null
 		},
 		...SHELL_STEPS.map((step) => ({
 			id: `shell:${step.id}`,
@@ -318,7 +330,8 @@ export function fullTourFor(
 			target: step.target,
 			hint: step.hint ?? null,
 			link: null,
-			map: null
+			map: null,
+			query: null
 		})),
 		...screens.flatMap((entry) => screenStops(entry.screen, entry.href, permissions, false)),
 		{
@@ -330,7 +343,8 @@ export function fullTourFor(
 			target: null,
 			hint: null,
 			link: { href: '/help', label: 'Открыть справку' },
-			map: null
+			map: null,
+			query: null
 		}
 	];
 }

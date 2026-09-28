@@ -75,7 +75,43 @@ export type TourStep = {
 	hint?: string;
 	/** Право, без которого шага не будет: элемент под ним тоже не отрисован. */
 	permission?: PermissionKey;
+	/**
+	 * Параметры адреса, в которых шаг показывают: `{ view: 'board' }` — на доске,
+	 * `{ overdue: 'true' }` — с включённым фильтром. `null` снимает параметр.
+	 * Тур выставляет их сам, остальной адрес не трогает: так тур проводит по
+	 * режимам экрана, не прося человека переключать их.
+	 */
+	query?: TourQuery;
 };
+
+/** Параметры адреса шага: значение ставится, `null` — параметр снимается. */
+export type TourQuery = Readonly<Record<string, string | null>>;
+
+/** Совпадает ли адрес с параметрами шага. Без параметров подходит любой. */
+export function matchesQuery(url: URL, query: TourQuery | null): boolean {
+	if (query === null) {
+		return true;
+	}
+
+	return Object.entries(query).every(([key, value]) => url.searchParams.get(key) === value);
+}
+
+/** Адрес с параметрами шага поверх остальных: путь и чужие параметры не меняются. */
+export function withQuery(pathname: string, search: string, query: TourQuery | null): string {
+	const params = new URLSearchParams(search);
+
+	for (const [key, value] of Object.entries(query ?? {})) {
+		if (value === null) {
+			params.delete(key);
+		} else {
+			params.set(key, value);
+		}
+	}
+
+	const rest = params.toString();
+
+	return rest === '' ? pathname : `${pathname}?${rest}`;
+}
 
 export type TourScreen = {
 	/** Идентификатор экрана: по нему его зовут туры и признак «смотрели». */

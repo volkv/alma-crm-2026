@@ -342,6 +342,7 @@
 			<nav
 				bind:this={stagesEl}
 				aria-label="Стадии доски"
+				data-tour="interactions-board-stages"
 				class="-mx-1 flex min-w-0 [scrollbar-width:none] gap-1.5 overflow-x-auto px-1 py-0.5 sm:flex-1 [&::-webkit-scrollbar]:hidden"
 				style:mask-image={stagesMask}
 				onscroll={measureStages}

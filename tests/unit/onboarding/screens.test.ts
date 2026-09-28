@@ -16,10 +16,12 @@ import { navSections, visibleSections, type NavWorkspace } from '$lib/nav';
 import {
 	INTRO_TARGET,
 	isScreenPath,
+	matchesQuery,
 	screenForPath,
 	screenHref,
 	TOUR_SAMPLES_PATH,
 	TOUR_SCREENS,
+	withQuery,
 	type TourSamples
 } from '$lib/onboarding/screens';
 import {
@@ -500,5 +502,15 @@ describe('признаки на устройстве', () => {
 	it('образцы спрашиваются у маршрута приложения', () => {
 		expect(TOUR_SAMPLES_PATH).toBe('/tour/samples');
 		expect(appRoutes()).not.toContain(TOUR_SAMPLES_PATH);
+	});
+
+	it('режим шага меняет только свои параметры адреса, отбор человека остаётся', () => {
+		const query = { view: 'table', overdue: null };
+		const href = withQuery('/w/b2b/interactions', '?owner=u1&overdue=true&view=board', query);
+
+		expect(href).toBe('/w/b2b/interactions?owner=u1&view=table');
+		expect(matchesQuery(new URL(`http://x${href}`), query)).toBe(true);
+		expect(matchesQuery(new URL('http://x/w/b2b/interactions?view=board'), query)).toBe(false);
+		expect(matchesQuery(new URL('http://x/w/b2b/interactions?any=1'), null)).toBe(true);
 	});
 });

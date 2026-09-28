@@ -590,7 +590,7 @@ export const SHOTS: readonly Frame[] = [
 		prepare: async (page) => {
 			await page.getByRole('button', { name: 'Подсказки и справка' }).click();
 			await page
-				.getByRole('menuitem', { name: 'Подсказки по этому экрану' })
+				.getByRole('menuitem', { name: 'Тур по этому экрану' })
 				.waitFor({ state: 'visible', timeout: 20_000 });
 		}
 	}

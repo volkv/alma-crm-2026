@@ -1,6 +1,7 @@
 <script lang="ts">
 	import type { Snippet } from 'svelte';
 	import HelpMenu from '$lib/components/onboarding/help-menu.svelte';
+	import ScreenTourButton from '$lib/components/onboarding/screen-tour-button.svelte';
 	import ThemeToggle from '$lib/components/app-shell/theme-toggle.svelte';
 	import InboxBell from '$lib/components/app-shell/inbox-bell.svelte';
 
@@ -115,16 +116,17 @@
 			если их несколько, ряд лучше переложить в две строки у правого края,
 			чем растащить страницу вбок.
 
-			Без кнопок страницы на телефоне ряда нет вовсе: пустой, он всё равно
-			переносился на свою строку и добавлял под заголовок пустую полосу. -->
+			На телефоне в ряду, кроме кнопок страницы, стоит только кнопка тура по
+			экрану: она про эту страницу, а нижняя панель держит то, что про систему. -->
 		<div
-			class="flex-wrap items-center justify-end gap-2 justify-self-end md:max-w-[36rem] md:self-center {ICON_ONLY_ON_PHONE} {actions
-				? 'flex'
-				: 'hidden md:flex'}"
+			class="flex flex-wrap items-center justify-end gap-2 justify-self-end md:max-w-[36rem] md:self-center {ICON_ONLY_ON_PHONE}"
 		>
 			{#if actions}
 				{@render actions()}
 			{/if}
+			<div class="flex items-center md:hidden">
+				<ScreenTourButton />
+			</div>
 			<!-- Справка и тема — не про эту страницу, а про систему вокруг неё, но
 				стоят они здесь: до них должно быть одно нажатие с любого экрана, а
 				единственная полоса, которая есть на каждом экране, теперь эта. На
@@ -136,6 +138,9 @@
 				<!-- Колокольчик упоминаний — первым: это единственный значок ряда,
 					который говорит о чём-то новом для человека, а не о системе. -->
 				<InboxBell />
+				<!-- Тур по экрану — между колокольчиком и справкой: он тоже зовёт к
+					себе (волнами, пока тур экрана не пройден), а справка — нет. -->
+				<ScreenTourButton />
 				<HelpMenu />
 				<!-- Обёртка несёт метку тура: рамка обводит кнопку целиком. -->
 				<div data-tour="theme-toggle" class="flex shrink-0 items-center">
