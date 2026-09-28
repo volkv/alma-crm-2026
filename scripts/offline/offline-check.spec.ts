@@ -342,12 +342,13 @@ test.describe.serial('без интернета: полный проход', { t
 		note(`CRM → имитатор LMS: группа заведена (${requestExternalId})`);
 
 		// «Поток закончился, вот числа»: имитатор подписывает результат и сам
-		// отправляет его в CRM.
+		// отправляет его в CRM. План потока ещё впереди, а дату окончания позже
+		// дня отправки CRM не принимает — поэтому итог досрочный, сегодняшним днём.
 		const result = await page.request.post('/mock-lms/__send-result', {
 			headers: CONTROL_HEADERS,
 			data: {
 				requestExternalId,
-				finishedOn: '2027-05-20',
+				finish: 'завершили сегодня',
 				counters: { enrolled: 30, completed: 27, expelled: 2 }
 			}
 		});
@@ -369,15 +370,18 @@ test.describe.serial('без интернета: полный проход', { t
 	test('отчёт выгружается в XLSX и PDF (Gotenberg)', async () => {
 		const { page } = sessions.manager;
 
-		// Прежний адрес уводит в отчёт первого доступного пространства.
 		await page.goto('/reports');
-		await expect(page.getByRole('heading', { name: /^Отчёт по взаимодействиям — / })).toBeVisible();
+		await waitForHydration(page);
+		await expect(page.getByRole('heading', { name: 'Отчёты по взаимодействиям' })).toBeVisible();
 
 		const rows = Number(await page.getByTestId('report-row-count').textContent());
 
 		expect(rows).toBeGreaterThan(0);
 
 		async function download(format: 'xlsx' | 'pdf'): Promise<{ name: string; body: Buffer }> {
+			// Форматы выгрузки — в меню одной кнопки.
+			await page.getByTestId('report-export').click();
+
 			const [event] = await Promise.all([
 				page.waitForEvent('download', { timeout: 90_000 }),
 				page.getByTestId(`report-export-${format}`).click()
