@@ -81,7 +81,7 @@ export default defineConfig({
 			GOTENBERG_URL: 'http://localhost:3001',
 			// Почта уведомлений: Mailpit из `docker-compose.yml`, опубликованный на
 			// 1025, — его поднимает `e2e/stack.ts`. Письмо уходит по-настоящему.
-			SMTP_URL: 'smtp://localhost:1025',
+			SMTP_URL: 'smtp://127.0.0.1:1025',
 			SMTP_FROM: 'lct-crm@e2e.local',
 			// Потолок тела запроса у adapter-node: тот же, что в compose. С его
 			// умолчанием (512K) загрузка обычного скана отваливается с 413.
