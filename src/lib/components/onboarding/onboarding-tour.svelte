@@ -3,13 +3,18 @@
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import type { Pathname } from '$app/types';
-	import ListIcon from '@lucide/svelte/icons/list';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import { Progress } from '$lib/components/ui/progress/index.js';
 	import { pluralize } from '$lib/format';
 	import { matchesQuery, screenForPath, withQuery } from '$lib/onboarding/screens';
-	import { tourMinutes, type TourStop, type TourStopScreen } from '$lib/onboarding/tours';
+	import {
+		NAV_WORKSPACES_TARGET,
+		navLinkHref,
+		navLinkTarget,
+		tourMinutes,
+		type TourStop,
+		type TourStopScreen
+	} from '$lib/onboarding/tours';
 	import type { OnboardingTour } from '$lib/onboarding/tour.svelte';
 
 	/**
@@ -47,8 +52,6 @@
 	let anchor = $state<{ top: number; left: number } | null>(null);
 	/** Есть ли элемент остановки на этом экране. */
 	let found = $state(false);
-	/** Открыто ли оглавление: пока да, Esc принадлежит ему, а не туру. */
-	let chaptersOpen = $state(false);
 	/** Название экрана, на который тур сейчас переходит; `null` — никуда. */
 	let navigating = $state<string | null>(null);
 	/**
@@ -64,6 +67,8 @@
 	 * его обратно силой — иначе уйти из тура было бы нельзя.
 	 */
 	let navigatedFor = '';
+	/** Остановка, пункт меню которой уже докручивали на экран: второй раз не крутим. */
+	let navScrolledFor = '';
 
 	const stop = $derived(tour.stop);
 	const total = $derived(tour.stops.length);
@@ -71,11 +76,17 @@
 	const isLast = $derived(tour.index === total - 1);
 	/** Карточка по центру и без рамки: приветствие и финал не о конкретном блоке. */
 	const centered = $derived(stop !== null && stop.target === null);
-	/** Открыт ли экран остановки — без оглядки на параметры адреса. */
+	/**
+	 * Открыт ли экран остановки — без оглядки на параметры адреса. Раздел
+	 * знакомства — это страница пункта меню, экрана реестра у неё может и не
+	 * быть (страницы модулей), поэтому он сверяется по адресу.
+	 */
 	const onScreenPath = $derived(
 		stop === null || stop.screen === null
 			? true
-			: screenForPath(page.url.pathname)?.id === stop.screen.id
+			: stop.kind === 'section'
+				? page.url.pathname === stop.screen.href
+				: screenForPath(page.url.pathname)?.id === stop.screen.id
 	);
 	/**
 	 * Стоит ли человек там, где остановку показывают: на её экране и в её
@@ -108,24 +119,87 @@
 		});
 	}
 
-	function element(): HTMLElement | null {
+	/** Узлы, которые может обозначать цель остановки, — ещё без проверки, видны ли они. */
+	function candidates(target: string): HTMLElement[] {
+		const href = navLinkHref(target);
+		const selector =
+			href !== null
+				? `[data-nav-href="${CSS.escape(href)}"]`
+				: target === NAV_WORKSPACES_TARGET
+					? '[data-nav-group-id^="workspace:"]'
+					: `[data-tour="${CSS.escape(target)}"]`;
+
+		return [...document.querySelectorAll<HTMLElement>(selector)];
+	}
+
+	/**
+	 * Виден ли узел. Одна метка стоит в двух местах сразу: поиск, справку и тему
+	 * держат и меню разделов, и нижняя панель телефона, а видно всегда одно из
+	 * двух. Пункт свёрнутой группы меню в разметке остаётся, но его список сжат
+	 * до нулевой высоты — рамка вокруг него обвела бы пустоту.
+	 */
+	function shown(node: HTMLElement): boolean {
+		const list = node.closest<HTMLElement>('[data-nav-list]');
+
+		return node.getClientRects().length > 0 && (list === null || list.clientHeight > 0);
+	}
+
+	/**
+	 * Что обвести. Обычно один узел — первый показанный; секции пространств —
+	 * все сразу, одной рамкой: они о том, что направлений несколько.
+	 */
+	function elements(): HTMLElement[] {
 		const target = tour.stop?.target ?? null;
 
 		if (target === null) {
-			return null;
+			return [];
 		}
 
-		// Одна метка стоит в двух местах сразу: поиск, справку и тему держат и
-		// меню разделов, и нижняя панель телефона, а видно всегда одно из двух.
-		// Поэтому первый показанный узел, а не первый в разметке: рамка обязана
-		// встать вокруг того, что на экране.
-		for (const node of document.querySelectorAll<HTMLElement>(`[data-tour="${target}"]`)) {
-			if (node.getClientRects().length > 0) {
-				return node;
+		const visible = candidates(target).filter(shown);
+
+		return target === NAV_WORKSPACES_TARGET ? visible : visible.slice(0, 1);
+	}
+
+	function element(): HTMLElement | null {
+		return elements()[0] ?? null;
+	}
+
+	/**
+	 * Раскрыть свёрнутую группу меню, в которой стоит пункт остановки, — той же
+	 * кнопкой заголовка, что и человек. Иначе знакомство показывало бы пункт,
+	 * которого не видно.
+	 */
+	function revealNavLink(): void {
+		const href = navLinkHref(tour.stop?.target ?? '');
+
+		if (href === null) {
+			return;
+		}
+
+		for (const node of candidates(navLinkTarget(href))) {
+			const list = node.closest<HTMLElement>('[data-nav-list]');
+
+			// Только свёрнутую: пока группа раскрывается, высота списка ещё нулевая,
+			// и второе нажатие свернуло бы её обратно.
+			if (node.getClientRects().length > 0 && list !== null) {
+				document
+					.querySelector<HTMLButtonElement>(
+						`[aria-controls="${CSS.escape(list.id)}"][aria-expanded="false"]`
+					)
+					?.click();
 			}
 		}
+	}
 
-		return null;
+	/** Рамка вокруг нескольких узлов — по их общим границам. */
+	function union(nodes: readonly HTMLElement[]): DOMRect {
+		const rects = nodes.map((node) => node.getBoundingClientRect());
+		const top = Math.min(...rects.map((rect) => rect.top));
+		const left = Math.min(...rects.map((rect) => rect.left));
+		const bottom = Math.max(...rects.map((rect) => rect.bottom));
+		const right = Math.max(...rects.map((rect) => rect.right));
+
+		return new DOMRect(left, top, right - left, bottom - top);
 	}
 
 	/** Просил ли человек систему не двигать: настройка устройства, а не наша. */
@@ -170,6 +244,29 @@
 		}
 
 		const size = card.getBoundingClientRect();
+
+		// Пункт меню и секции пространств — узкий столбец у левого края: под ним
+		// карточка закрыла бы соседние пункты, о которых речь пойдёт дальше.
+		// Справа от меню ей место есть всегда, кроме совсем узкого экрана.
+		const beside = tour.stop?.target ?? '';
+		const right = target.right + PADDING + GAP;
+
+		if (
+			(navLinkHref(beside) !== null || beside === NAV_WORKSPACES_TARGET) &&
+			right + size.width <= window.innerWidth - EDGE
+		) {
+			const top = Math.min(
+				Math.max(target.top - PADDING, EDGE),
+				Math.max(window.innerHeight - size.height - EDGE, EDGE)
+			);
+
+			if (anchor === null || anchor.top !== top || anchor.left !== right) {
+				anchor = { top, left: right };
+			}
+
+			return;
+		}
+
 		const below = target.bottom + GAP + PADDING;
 		const above = target.top - PADDING - GAP - size.height;
 		const bottomLimit = Math.max(window.innerHeight - size.height - EDGE, EDGE);
@@ -189,13 +286,13 @@
 
 	/** Один пересчёт рамки и карточки по текущему положению элемента. */
 	function sync(): void {
-		const target = element();
+		const nodes = elements();
 
-		if (found !== (target !== null)) {
-			found = target !== null;
+		if (found !== nodes.length > 0) {
+			found = nodes.length > 0;
 		}
 
-		if (target === null) {
+		if (nodes.length === 0) {
 			if (frame !== null) {
 				frame = null;
 			}
@@ -205,7 +302,22 @@
 			return;
 		}
 
-		const rect = target.getBoundingClientRect();
+		const rect = union(nodes);
+
+		// Пункт меню находится, когда его группа уже раскрылась, — к этому
+		// моменту первая прокрутка остановки прошла мимо. Докручиваем его в меню
+		// один раз, если он за краем экрана.
+		const stopId = tour.stop?.id ?? '';
+
+		if (
+			navScrolledFor !== stopId &&
+			navLinkHref(tour.stop?.target ?? '') !== null &&
+			(rect.top < 0 || rect.bottom > window.innerHeight)
+		) {
+			navScrolledFor = stopId;
+			nodes[0]?.scrollIntoView({ block: 'nearest', behavior: 'auto' });
+		}
+
 		const next = {
 			top: rect.top - PADDING,
 			left: rect.left - PADDING,
@@ -303,7 +415,16 @@
 		// элементом покадрово, и пока страница едет, она едет вместе с ней. Кому
 		// движение мешает, тому шаг встаёт сразу.
 		const handle = requestAnimationFrame(() => {
-			element()?.scrollIntoView({ block: 'center', behavior: reducedMotion() ? 'auto' : 'smooth' });
+			revealNavLink();
+
+			// Пункт меню докручивается только внутри меню: по центру его ставила бы
+			// прокрутка и самой страницы, которую знакомство как раз открыло.
+			const inNav = navLinkHref(tour.stop?.target ?? '') !== null;
+
+			element()?.scrollIntoView({
+				block: inNav ? 'nearest' : 'center',
+				behavior: reducedMotion() ? 'auto' : 'smooth'
+			});
 
 			// Фокус уходит на первую кнопку карточки, а не на саму карточку: контур
 			// вокруг всего диалога после программного фокуса читался как лишняя
@@ -317,19 +438,14 @@
 
 	function onWindowKeydown(event: KeyboardEvent): void {
 		// Esc убирает подсказки: они не должны стоять между человеком и работой,
-		// за которой он пришёл. Открытое оглавление забирает Esc себе — иначе
-		// закрытие списка экранов уносило бы с собой весь тур.
-		if (tour.open && !chaptersOpen && event.key === 'Escape') {
+		// за которой он пришёл.
+		if (tour.open && event.key === 'Escape') {
 			event.preventDefault();
 			tour.close();
 		}
 	}
 
 	function onCardKeydown(event: KeyboardEvent): void {
-		if (chaptersOpen) {
-			return;
-		}
-
 		if (event.key === 'ArrowRight') {
 			event.preventDefault();
 			tour.next();
@@ -403,15 +519,6 @@
 			<h2 id={TITLE_ID} class="text-base font-semibold">{stop.title}</h2>
 			<p class="text-sm text-muted-foreground">{stop.body}</p>
 
-			{#if stop.map !== null}
-				<p class="mt-1 text-xs font-medium">Тур пройдёт по экранам вашей роли:</p>
-				<ul class="max-h-48 list-inside list-disc overflow-y-auto text-xs text-muted-foreground">
-					{#each stop.map as title (title)}
-						<li>{title}</li>
-					{/each}
-				</ul>
-			{/if}
-
 			<p class="text-xs text-faint">
 				{pluralize(total, ['шаг', 'шага', 'шагов'])} · примерно {pluralize(tourMinutes(total), [
 					'минута',
@@ -420,51 +527,20 @@
 				])}
 			</p>
 
-			{#if tour.samplesFailed}
-				<p class="text-xs text-warning-soft-foreground">
-					Список записей не ответил — экраны с открытой карточкой в этот тур не попали.
-				</p>
-			{/if}
-
 			<div class="mt-2 flex items-center justify-between gap-2">
 				<Button variant="ghost" size="sm" onclick={() => tour.close()}>Позже</Button>
-				<Button size="sm" onclick={() => tour.next()}>Начать тур</Button>
+				<Button size="sm" onclick={() => tour.next()}>Начать знакомство</Button>
 			</div>
 		{:else}
-			<div class="flex items-center justify-between gap-2">
-				<p class="min-w-0 truncate text-xs text-muted-foreground">
-					{#if stop.screen !== null}
-						{stop.screen.title} · шаг {stop.screen.position} из {stop.screen.total}
-					{:else if stop.kind === 'shell'}
-						Оболочка системы
-					{/if}
-				</p>
-				{#if tour.chapters.length > 0}
-					<DropdownMenu.Root bind:open={chaptersOpen}>
-						<DropdownMenu.Trigger>
-							{#snippet child({ props })}
-								<Button {...props} variant="ghost" size="sm" class="shrink-0 gap-1.5 text-xs">
-									<ListIcon aria-hidden="true" />
-									Оглавление
-								</Button>
-							{/snippet}
-						</DropdownMenu.Trigger>
-						<DropdownMenu.Content align="end" class="max-h-72 w-56 overflow-y-auto">
-							<!-- Общий счёт по всему туру («шаг 7 из 64») стоит только здесь: строкой в
-								самой карточке он спорил со счётом по экрану через строку ниже — оба
-								назывались «шаг N из M» про разные вещи. -->
-							<DropdownMenu.Label>
-								Экраны тура · шаг {tour.index + 1} из {total}
-							</DropdownMenu.Label>
-							{#each tour.chapters as chapter (chapter.screenId)}
-								<DropdownMenu.Item onSelect={() => tour.goToScreen(chapter.screenId)}>
-									{chapter.title}
-								</DropdownMenu.Item>
-							{/each}
-						</DropdownMenu.Content>
-					</DropdownMenu.Root>
+			<!-- Знакомство считает шаги насквозь: его разделы — не экраны со своими
+				шагами, а один обход. У тура экрана счёт — внутри экрана. -->
+			<p class="min-w-0 truncate text-xs text-muted-foreground">
+				{#if stop.kind === 'shell' || stop.kind === 'section' || stop.kind === 'finish'}
+					Знакомство · шаг {tour.index} из {total - 1}
+				{:else if stop.screen !== null}
+					{stop.screen.title} · шаг {stop.screen.position} из {stop.screen.total}
 				{/if}
-			</div>
+			</p>
 
 			<Progress value={tour.index + 1} max={total} aria-label="Прогресс по туру" />
 

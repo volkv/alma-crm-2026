@@ -33,14 +33,6 @@
 	/** Экран реестра, на котором человек стоит; `null` — экран вне подсказок. */
 	const screen = $derived(screenForPath(page.url.pathname));
 	const screenSteps = $derived(screen === null ? 0 : tour.screenLength(screen));
-
-	// Образцы записей спрашиваются, когда меню открыли: числа шагов полного тура
-	// зависят от того, какие карточки этой сессии разрешено открыть.
-	$effect(() => {
-		if (open) {
-			tour.prepare();
-		}
-	});
 </script>
 
 <DropdownMenu.Root bind:open>
@@ -70,12 +62,12 @@
 			</DropdownMenu.Item>
 		{/if}
 
-		{#if tour.fullLength > 0}
-			<DropdownMenu.Item onSelect={() => tour.startFull()}>
+		{#if tour.guideLength > 0}
+			<DropdownMenu.Item onSelect={() => tour.startGuide()}>
 				<SparklesIcon aria-hidden="true" />
-				<span class="min-w-0 flex-1 truncate">Полный тур по системе</span>
+				<span class="min-w-0 flex-1 truncate">Знакомство с системой</span>
 				<span class="shrink-0 text-xs text-faint">
-					{pluralize(tour.fullLength, ['шаг', 'шага', 'шагов'])}
+					{pluralize(tour.guideLength, ['шаг', 'шага', 'шагов'])}
 				</span>
 			</DropdownMenu.Item>
 		{/if}

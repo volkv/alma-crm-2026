@@ -47,12 +47,12 @@
 	}
 
 	/**
-	 * Полный обход системы — не адрес, а действие, поэтому в списке
-	 * разделов (`$lib/nav`) его нет: он встаёт в разметке сразу под «Журналом»,
-	 * в той же группе, что и справка: сюда ходят по поводу, а не каждый день.
-	 * Роли без тура пункта не видят: меню не предлагает действие, которое
-	 * ничего не делает. Журнал закрыт правом, и тому, кому он не
-	 * открыт, пункт встаёт после «Справки» — концом той же группы.
+	 * Знакомство с системой — не адрес, а действие, поэтому в списке разделов
+	 * (`$lib/nav`) его нет: оно встаёт в разметке сразу под «Журналом», в той
+	 * же группе, что и справка: сюда ходят по поводу, а не каждый день. Кому
+	 * знакомить не с чем, пункта не видит: меню не предлагает действие, которое
+	 * ничего не делает. Журнал закрыт правом, и тому, кому он не открыт, пункт
+	 * встаёт после «Справки» — концом той же группы.
 	 */
 	const tour = getOnboardingTour();
 
@@ -60,7 +60,7 @@
 	const helpHref = resolve('/(app)/help');
 	/** Пункт, после которого встаёт тур; `null` — показывать его нечего. */
 	const tourAfter = $derived.by(() => {
-		if (tour.fullLength === 0) {
+		if (tour.guideLength === 0) {
 			return null;
 		}
 
@@ -96,6 +96,7 @@
 			role="group"
 			aria-labelledby={headingId}
 			data-nav-group={collapsed ? undefined : group.id}
+			data-nav-group-id={group.id}
 			class="flex flex-col gap-0.5"
 		>
 			<!-- Заголовок группы набран не так, как её пункты, а во всём сразу:
@@ -154,6 +155,7 @@
 						{@const active = isActive(link.href)}
 						<a
 							href={link.href}
+							data-nav-href={link.href}
 							title={collapsed ? link.label : undefined}
 							aria-current={active ? 'page' : undefined}
 							onclick={onnavigate}
@@ -173,9 +175,9 @@
 						{#if link.href === tourAfter}
 							<button
 								type="button"
-								title={collapsed ? 'Тур по системе' : undefined}
+								title={collapsed ? 'Знакомство с системой' : undefined}
 								onclick={() => {
-									tour.startFull();
+									tour.startGuide();
 									onnavigate?.();
 								}}
 								class={cn(
@@ -185,7 +187,7 @@
 							>
 								<SparklesIcon class="size-4 shrink-0" aria-hidden="true" />
 								{#if !collapsed}
-									<span class="truncate">Тур по системе</span>
+									<span class="truncate">Знакомство с системой</span>
 								{/if}
 							</button>
 						{/if}

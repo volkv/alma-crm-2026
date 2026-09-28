@@ -162,29 +162,28 @@ export type Shot = {
 export const VIEWPORT = { width: 1920, height: 1200 } as const;
 
 /**
- * Заголовок вступления «Сводки» в подсказках.
+ * Заголовок первого раздела знакомства — пространств.
  *
- * Кадр тура снимается не на первой карточке: сначала приветствие, потом шаги
- * оболочки, и только за ними идёт первый экран. Скрипт жмёт «Далее», пока не
+ * Кадр знакомства снимается не на первой карточке: сначала приветствие, потом
+ * шаги оболочки, и только за ними идут разделы. Скрипт жмёт «Далее», пока не
  * увидит этот заголовок, — считать шаги оболочки числом значило бы чинить кадр
  * каждый раз, когда в шапке что-то прибавится.
  */
-/** Заголовок вступления «Сводки» — первого экрана полного тура каждой роли. */
-export const HOME_INTRO = 'Сводка: с чего начинают день';
+export const GUIDE_WORKSPACES = 'Пространства — направления работы';
 
 /**
- * Довести полный тур до вступления «Сводки»: приветствие → «Начать тур» →
- * шаги оболочки. Кадр тура снимают и README, и справка — один и тот же путь.
+ * Довести знакомство до пространств: приветствие → «Начать знакомство» →
+ * шаги оболочки. Кадр снимают и README, и справка — один и тот же путь.
  */
-export async function reachHomeIntro(page: Page): Promise<void> {
+export async function reachGuideWorkspaces(page: Page): Promise<void> {
 	const tour = page.getByTestId('onboarding-tour');
 
 	await tour.waitFor({ state: 'visible', timeout: 20_000 });
-	await tour.getByRole('button', { name: 'Начать тур' }).click();
+	await tour.getByRole('button', { name: 'Начать знакомство' }).click();
 
-	const intro = tour.getByRole('heading', { name: HOME_INTRO });
+	const intro = tour.getByRole('heading', { name: GUIDE_WORKSPACES });
 
-	// Предел на случай, если тур до «Сводки» почему-то не доходит: молчаливый
+	// Предел на случай, если знакомство до пространств почему-то не доходит: молчаливый
 	// бесконечный цикл в скрипте съёмки хуже честно не снятого кадра.
 	for (let step = 0; step < 12 && (await intro.count()) === 0; step += 1) {
 		await tour.getByRole('button', { name: 'Далее' }).click();
@@ -576,16 +575,16 @@ export const SHOTS: readonly Frame[] = [
 		name: 'onboarding',
 		path: '/',
 		role: 'manager',
-		caption: 'Полный тур: карточка шага с полосой прогресса и оглавлением',
-		waitFor: HOME_INTRO,
+		caption: 'Знакомство: секции пространств в меню и карточка шага с полосой прогресса',
+		waitFor: GUIDE_WORKSPACES,
 		tour: true,
-		prepare: reachHomeIntro
+		prepare: reachGuideWorkspaces
 	},
 	{
 		name: 'help-menu',
 		path: '/interactions?view=table',
 		role: 'manager',
-		caption: 'Значок «?» в шапке: подсказки по экрану, полный тур и статья справки',
+		caption: 'Значок «?» в шапке: тур по экрану, знакомство и статья справки',
 		waitFor: 'Этот экран: Взаимодействия',
 		prepare: async (page) => {
 			await page.getByRole('button', { name: 'Подсказки и справка' }).click();

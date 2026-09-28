@@ -712,36 +712,36 @@ API, модули только объявляют владение — каки�
 
 ## Как найти
 
-| Вопрос                                         | Файл                                                                                           | Что смотреть                                                      |
-| ---------------------------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
-| правило перехода между стадиями                | `src/lib/server/stages/transitions.ts`                                                         | `evaluateTransition`, `transitionPermission`                      |
-| выполнение перехода, блокировки                | `src/lib/server/stages/commands.ts`                                                            | `moveStage`, `lockInteraction`                                    |
-| заведение пространства, порядок, назначение    | `src/lib/server/stages/process.ts`                                                             | `createWorkspace`, `reorderWorkspaces`, `assignWorkspaceWorkflow` |
-| проверка права                                 | `src/lib/server/rbac/index.ts`                                                                 | `can`, `requirePermission`                                        |
-| каталог прав и роли по умолчанию               | `src/lib/server/rbac/permissions.ts`                                                           | `PERMISSIONS`, `DEFAULT_ROLES`                                    |
-| сужение выборки по области доступа             | `src/lib/server/rbac/index.ts`                                                                 | `scopeFilter`                                                     |
-| то же для взаимодействий и документов          | `src/lib/server/interactions/access.ts`                                                        | `interactionScopeFilter`, `assertInteractionVisible`              |
-| адаптер LMS                                    | `src/lib/server/integrations/lms/moodle.ts`                                                    | `createMoodleClient`, `MoodleError`                               |
-| что адаптер делает с ответами                  | `src/lib/server/integrations/lms/sync.ts`                                                      | `collectRows`, `syncLms`                                          |
-| подпись вебхука                                | `src/lib/server/integrations/delivery.ts`                                                      | `signPayload`, `verifySignature`, `postWebhook`                   |
-| журнал: запись и выгрузка                      | `src/lib/server/audit/index.ts`                                                                | `recordAuditEvent`, `exportAuditEvents`                           |
-| журнал: словарь событий и правила подробностей | `src/lib/contracts/audit.ts`                                                                   | `AUDIT_EVENT_TYPES`, `validateAuditDetails`                       |
-| отчёт: адрес, строки, форматы                  | `src/lib/server/reports/query.ts`                                                              | `readReportQuery`, `buildReport`, `writers/`                      |
-| приём заявки с сайта                           | `src/lib/server/integrations/exchange/intake.ts`                                               | `receiveApplication`                                              |
-| справка: статьи и их порядок                   | `src/lib/help/index.ts`                                                                        | `helpPages`, `findHelpPage`                                       |
-| подсказки: реестр экранов и туры по ролям      | `src/lib/onboarding/screens.ts`, `tours.ts`                                                    | `TOUR_SCREENS`, `fullTourFor`, `screenTourFor`, `isScreenPath`    |
-| кэш чтений: механика и поколения               | `src/lib/server/cache/region.ts`                                                               | `cached`, `bumpEpoch`, `scopeKey`                                 |
-| наблюдатель зависших взаимодействий            | `src/lib/server/notifications/watch.ts`                                                        | `runNotificationCycle`, `readStuckEntry`                          |
-| наблюдатель сроков лицензий и продление        | `src/lib/server/notifications/license-watch.ts`, `src/lib/server/directory/license-renewal.ts` | `runLicenseWatch`, `startLicenseRenewal`, `licenseResponsible`    |
-| шифрование контактов                           | `src/lib/server/people/pii.ts`                                                                 | `contactColumns`, запись и чтение шифртекста                      |
-| замер времени ответа                           | `src/lib/server/hooks/server-timing.ts`                                                        | `serverTiming`, `trackDatabaseQuery`                              |
-| вход: обмен кода на токены                     | `src/lib/server/auth/oidc.ts`                                                                  | `authorizationUrl`, `exchangeCode`                                |
-| маскирование персональных данных               | `src/lib/server/people/serialize.ts`                                                           | `toPersonView`                                                    |
-| след просмотра персональных данных             | `src/lib/server/people/pii-trace.ts`                                                           | `withPiiTrace`, `notePiiView`                                     |
-| обёртка эндпоинта API                          | `src/lib/server/api/handler.ts`                                                                | `apiHandler`                                                      |
-| граница транзакции                             | `src/lib/server/db/transaction.ts`                                                             | `withTransaction`                                                 |
-| модули установки, каталог панелей              | `crm.config.ts`, `src/lib/platform/registry.ts`                                                | `INSTALLED_MODULES`, `PANEL_CATALOG`, `visiblePanels`             |
-| модули пространства: чтение и переключение     | `src/lib/server/platform/workspace-modules.ts`                                                 | `readActiveModules`, `setWorkspaceModule`, `assertModuleActive`   |
+| Вопрос                                            | Файл                                                                                           | Что смотреть                                                      |
+| ------------------------------------------------- | ---------------------------------------------------------------------------------------------- | ----------------------------------------------------------------- |
+| правило перехода между стадиями                   | `src/lib/server/stages/transitions.ts`                                                         | `evaluateTransition`, `transitionPermission`                      |
+| выполнение перехода, блокировки                   | `src/lib/server/stages/commands.ts`                                                            | `moveStage`, `lockInteraction`                                    |
+| заведение пространства, порядок, назначение       | `src/lib/server/stages/process.ts`                                                             | `createWorkspace`, `reorderWorkspaces`, `assignWorkspaceWorkflow` |
+| проверка права                                    | `src/lib/server/rbac/index.ts`                                                                 | `can`, `requirePermission`                                        |
+| каталог прав и роли по умолчанию                  | `src/lib/server/rbac/permissions.ts`                                                           | `PERMISSIONS`, `DEFAULT_ROLES`                                    |
+| сужение выборки по области доступа                | `src/lib/server/rbac/index.ts`                                                                 | `scopeFilter`                                                     |
+| то же для взаимодействий и документов             | `src/lib/server/interactions/access.ts`                                                        | `interactionScopeFilter`, `assertInteractionVisible`              |
+| адаптер LMS                                       | `src/lib/server/integrations/lms/moodle.ts`                                                    | `createMoodleClient`, `MoodleError`                               |
+| что адаптер делает с ответами                     | `src/lib/server/integrations/lms/sync.ts`                                                      | `collectRows`, `syncLms`                                          |
+| подпись вебхука                                   | `src/lib/server/integrations/delivery.ts`                                                      | `signPayload`, `verifySignature`, `postWebhook`                   |
+| журнал: запись и выгрузка                         | `src/lib/server/audit/index.ts`                                                                | `recordAuditEvent`, `exportAuditEvents`                           |
+| журнал: словарь событий и правила подробностей    | `src/lib/contracts/audit.ts`                                                                   | `AUDIT_EVENT_TYPES`, `validateAuditDetails`                       |
+| отчёт: адрес, строки, форматы                     | `src/lib/server/reports/query.ts`                                                              | `readReportQuery`, `buildReport`, `writers/`                      |
+| приём заявки с сайта                              | `src/lib/server/integrations/exchange/intake.ts`                                               | `receiveApplication`                                              |
+| справка: статьи и их порядок                      | `src/lib/help/index.ts`                                                                        | `helpPages`, `findHelpPage`                                       |
+| подсказки: реестр экранов, знакомство, тур экрана | `src/lib/onboarding/screens.ts`, `tours.ts`                                                    | `TOUR_SCREENS`, `guideFor`, `screenTourFor`, `isScreenPath`       |
+| кэш чтений: механика и поколения                  | `src/lib/server/cache/region.ts`                                                               | `cached`, `bumpEpoch`, `scopeKey`                                 |
+| наблюдатель зависших взаимодействий               | `src/lib/server/notifications/watch.ts`                                                        | `runNotificationCycle`, `readStuckEntry`                          |
+| наблюдатель сроков лицензий и продление           | `src/lib/server/notifications/license-watch.ts`, `src/lib/server/directory/license-renewal.ts` | `runLicenseWatch`, `startLicenseRenewal`, `licenseResponsible`    |
+| шифрование контактов                              | `src/lib/server/people/pii.ts`                                                                 | `contactColumns`, запись и чтение шифртекста                      |
+| замер времени ответа                              | `src/lib/server/hooks/server-timing.ts`                                                        | `serverTiming`, `trackDatabaseQuery`                              |
+| вход: обмен кода на токены                        | `src/lib/server/auth/oidc.ts`                                                                  | `authorizationUrl`, `exchangeCode`                                |
+| маскирование персональных данных                  | `src/lib/server/people/serialize.ts`                                                           | `toPersonView`                                                    |
+| след просмотра персональных данных                | `src/lib/server/people/pii-trace.ts`                                                           | `withPiiTrace`, `notePiiView`                                     |
+| обёртка эндпоинта API                             | `src/lib/server/api/handler.ts`                                                                | `apiHandler`                                                      |
+| граница транзакции                                | `src/lib/server/db/transaction.ts`                                                             | `withTransaction`                                                 |
+| модули установки, каталог панелей                 | `crm.config.ts`, `src/lib/platform/registry.ts`                                                | `INSTALLED_MODULES`, `PANEL_CATALOG`, `visiblePanels`             |
+| модули пространства: чтение и переключение        | `src/lib/server/platform/workspace-modules.ts`                                                 | `readActiveModules`, `setWorkspaceModule`, `assertModuleActive`   |
 
 ## Масштабирование
 

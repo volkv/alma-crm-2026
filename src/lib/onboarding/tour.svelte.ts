@@ -1,18 +1,18 @@
 /**
  * Состояние подсказок.
  *
- * **Где лежат признаки «показано».** В `localStorage` браузера: один на полный
- * тур учётной записи и её роли и по одному на каждый экран, тур которого
- * человек прошёл до конца или пропустил. Своей таблицы под настройки человека в системе нет, а
- * заводить миграцию ради подсказки — это столбцы, которые ничего не решают,
- * зато едут во все среды. Плата известна и названа в справке: признак
- * принадлежит устройству, и с другого браузера подсказки покажутся заново. На
- * публичном стенде это оказывается не платой, а тем, что нужно: учётная запись
- * там общая, и признак на стороне сервера первый же посетитель израсходовал бы
- * на всех остальных.
+ * **Где лежат признаки «показано».** В `localStorage` браузера: один —
+ * «знакомство предлагали» — на учётную запись и её роль и по одному на каждый
+ * экран, тур которого человек прошёл до конца или пропустил. Своей таблицы
+ * под настройки человека в системе нет, а заводить миграцию ради подсказки —
+ * это столбцы, которые ничего не решают, зато едут во все среды. Плата
+ * известна и названа в справке: признак принадлежит устройству, и с другого
+ * браузера подсказки покажутся заново. На публичном стенде это оказывается не
+ * платой, а тем, что нужно: учётная запись там общая, и признак на стороне
+ * сервера первый же посетитель израсходовал бы на всех остальных.
  *
- * Роль входит в ключ, потому что тур у ролей разный: человек, которому подняли
- * права, увидит подсказки своей новой работы.
+ * Роль входит в ключ, потому что меню у ролей разное: человеку, которому
+ * подняли права, покажут его новые разделы.
  *
  * Само состояние — обычный контекст компонента, а не модульная переменная: на
  * сервере модуль один на все запросы, и открытый тур одного человека оказался
@@ -21,31 +21,17 @@
 import { getContext, setContext } from 'svelte';
 import { browser } from '$app/environment';
 import type { SessionUser } from '$lib/server/auth/types';
-import { TOUR_SAMPLES_PATH, type TourSamples, type TourScreen } from './screens';
-import { onboardingScreenKey, onboardingStorageKey } from './storage';
-import {
-	fullTourFor,
-	hasRoleTour,
-	screenTourFor,
-	tourChapters,
-	type TourChapter,
-	type TourStop
-} from './tours';
+import type { TourScreen } from './screens';
+import { guideStorageKey, onboardingScreenKey, onboardingStorageKey } from './storage';
+import { guideFor, screenTourFor, type GuideLink, type TourStop } from './tours';
 
 export type OnboardingTour = {
 	readonly stops: readonly TourStop[];
 	readonly open: boolean;
 	readonly index: number;
 	readonly stop: TourStop | null;
-	/** Оглавление полного тура; у тура экрана оно пустое. */
-	readonly chapters: readonly TourChapter[];
-	/** Сколько остановок в полном туре этой роли. Ноль — показывать нечего. */
-	readonly fullLength: number;
-	/**
-	 * Список записей не ответил, и экраны карточек в тур не попали. Карточка
-	 * говорит об этом вслух: молча укоротившийся тур выглядел бы правильным.
-	 */
-	readonly samplesFailed: boolean;
+	/** Сколько остановок в знакомстве для этого меню. Ноль — показывать нечего. */
+	readonly guideLength: number;
 	/** Сколько остановок в туре этого экрана при текущих правах. */
 	screenLength(screen: TourScreen): number;
 	/**
@@ -57,50 +43,41 @@ export type OnboardingTour = {
 	screenSeen(screenId: string): boolean;
 	/** Прочитать признаки экранов из браузера. Зовётся оболочкой после гидратации. */
 	syncSeen(): void;
-	/** Спросить образцы записей заранее: зовётся, когда открывают меню «?». */
-	prepare(): void;
-	/** Показать полный тур, если этот человек его ещё не видел. */
+	/** Предложить знакомство, если этому человеку его ещё не предлагали. */
 	autoStart(): void;
-	/** Полный тур по просьбе человека. */
-	startFull(): void;
+	/** Знакомство по просьбе человека. */
+	startGuide(): void;
 	/** Тур текущего экрана: вступление и его элементы. */
 	startScreen(screen: TourScreen, href: string): void;
-	/** Перейти к вступлению экрана из оглавления. */
-	goToScreen(screenId: string): void;
 	next(): void;
 	back(): void;
-	/** Закрыть подсказки и запомнить, что полный тур человеку уже предлагали. */
+	/** Закрыть подсказки; у знакомства — запомнить, что его уже предлагали. */
 	close(): void;
 };
 
-export function createOnboardingTour(user: () => SessionUser | null): OnboardingTour {
+export function createOnboardingTour(
+	user: () => SessionUser | null,
+	/** Меню, которое видит человек: из него собирается знакомство. */
+	links: () => readonly GuideLink[]
+): OnboardingTour {
 	let open = $state(false);
 	let index = $state(0);
-	let mode = $state<'full' | 'screen'>('full');
+	let mode = $state<'guide' | 'screen'>('guide');
 	/** Тур экрана держит свой список остановок: он зависит от открытого адреса. */
 	let ownStops = $state<readonly TourStop[]>([]);
-	let samples = $state<TourSamples | null>(null);
-	let samplesFailed = $state(false);
 	/**
 	 * Экраны, тур которых на этом устройстве прошли или пропустили. Список, а не
 	 * множество: он заменяется целиком, а не правится, и длиной он в десятки —
 	 * реактивная коллекция здесь была бы лишним слоем.
 	 */
 	let seen = $state<readonly string[]>([]);
-	/** Прочитаны ли признаки из браузера: до этого точек-напоминаний нет. */
+	/** Прочитаны ли признаки из браузера: до этого волн на кнопке тура нет. */
 	let seenKnown = $state(false);
-	/** Кому в этой загрузке страницы тур уже предлагали: второй раз не предлагаем. */
+	/** Кому в этой загрузке страницы знакомство уже предлагали: второй раз не предлагаем. */
 	let offeredTo = $state<string | null>(null);
-	/** Запрос образцов идёт один на загрузку страницы. */
-	let pending: Promise<void> | null = null;
 
-	const fullStops = $derived.by(() => {
-		const account = user();
-
-		return account === null ? [] : fullTourFor(account.roleId, account.permissions, samples);
-	});
-
-	const stops = $derived(mode === 'full' ? fullStops : ownStops);
+	const guideStops = $derived(user() === null ? [] : guideFor(links()));
+	const stops = $derived(mode === 'guide' ? guideStops : ownStops);
 
 	/** Признаки экранов, лежащие в браузере у этой учётной записи и роли. */
 	function readSeen(): string[] {
@@ -124,7 +101,7 @@ export function createOnboardingTour(user: () => SessionUser | null): Onboarding
 		return ids;
 	}
 
-	function markFullSeen(): void {
+	function markGuideSeen(): void {
 		const account = user();
 
 		if (account === null) {
@@ -132,8 +109,8 @@ export function createOnboardingTour(user: () => SessionUser | null): Onboarding
 		}
 
 		// Значение — момент показа: читается только его наличие, но по нему видно,
-		// когда подсказки закрыли, если человек спросит, почему их больше нет.
-		localStorage.setItem(onboardingStorageKey(account.id, account.roleId), String(Date.now()));
+		// когда знакомство закрыли, если человек спросит, почему его больше нет.
+		localStorage.setItem(guideStorageKey(account.id, account.roleId), String(Date.now()));
 	}
 
 	function markScreenSeen(screenId: string): void {
@@ -151,78 +128,55 @@ export function createOnboardingTour(user: () => SessionUser | null): Onboarding
 	}
 
 	/**
+	 * Экран, тур которого идёт на этой остановке. Раздел знакомства страницу
+	 * открывает, но о ней не рассказывает, — её тур этим не пройден.
+	 */
+	function tourScreenOf(stop: TourStop | undefined): string | null {
+		return stop !== undefined && (stop.kind === 'intro' || stop.kind === 'step')
+			? (stop.screen?.id ?? null)
+			: null;
+	}
+
+	/**
 	 * Перевести тур на остановку. Экран, с последнего шага которого ушли
-	 * вперёд, считается пройденным: полный тур — это туры экранов подряд, и
-	 * пройденный в нём экран больше не зовёт к себе волнами. Шаг назад и прыжок
-	 * по оглавлению экран не закрывают — его ещё не дослушали.
+	 * вперёд, считается пройденным и больше не зовёт к себе волнами. Шаг назад
+	 * экран не закрывает — его ещё не дослушали.
 	 */
 	function show(next: number): void {
-		const left = stops[index]?.screen ?? null;
-		const entered = stops[next]?.screen ?? null;
+		const left = tourScreenOf(stops[index]);
 
-		if (open && next === index + 1 && left !== null && entered?.id !== left.id) {
-			markScreenSeen(left.id);
+		if (open && next === index + 1 && left !== null && tourScreenOf(stops[next]) !== left) {
+			markScreenSeen(left);
 		}
 
 		index = next;
 	}
 
 	function close(): void {
-		// Признак «полный тур предлагали» ставит только полный тур: закрытая
-		// подсказка по одному экрану не должна отменять первый обход системы.
-		if (mode === 'full') {
-			markFullSeen();
+		// Признак «знакомство предлагали» ставит только знакомство: закрытый тур
+		// одного экрана не должен отменять первое знакомство с системой.
+		if (mode === 'guide') {
+			markGuideSeen();
 		}
 
 		// Закрыть тур посреди экрана — значит пропустить тур этого экрана: он
-		// больше не зовёт к себе. Экраны полного тура, до которых не дошли,
-		// продолжают звать — каждый на своей странице.
-		const current = stops[index]?.screen ?? null;
+		// больше не зовёт к себе.
+		const current = tourScreenOf(stops[index]);
 
 		if (open && current !== null) {
-			markScreenSeen(current.id);
+			markScreenSeen(current);
 		}
 
 		open = false;
 	}
 
-	/**
-	 * Спросить у сервера, какие записи туру разрешено открыть. Запрос один на
-	 * загрузку страницы: платить за него на каждом переходе незачем — нужен он
-	 * тому, кто открыл подсказки, и один раз.
-	 */
-	function loadSamples(): Promise<void> {
-		if (pending !== null) {
-			return pending;
-		}
-
-		pending = fetch(TOUR_SAMPLES_PATH, { headers: { accept: 'application/json' } })
-			.then(async (response) => {
-				if (!response.ok) {
-					throw new Error(`Образцы записей: сервер ответил ${response.status}`);
-				}
-
-				samples = (await response.json()) as TourSamples;
-				samplesFailed = false;
-			})
-			.catch(() => {
-				// Отказ не прячется: тур покажет то, что может, и скажет карточкой,
-				// что экраны с записями в него не попали.
-				samples = null;
-				samplesFailed = true;
-			});
-
-		return pending;
-	}
-
-	/** Открыть полный тур, когда образцы записей уже спрошены. */
-	function openFull(): void {
-		if (fullStops.length === 0) {
+	function openGuide(): void {
+		if (guideStops.length === 0) {
 			return;
 		}
 
-		mode = 'full';
-		show(0);
+		mode = 'guide';
+		index = 0;
 		open = true;
 	}
 
@@ -239,14 +193,8 @@ export function createOnboardingTour(user: () => SessionUser | null): Onboarding
 		get stop() {
 			return stops[index] ?? null;
 		},
-		get chapters() {
-			return mode === 'full' ? tourChapters(stops) : [];
-		},
-		get fullLength() {
-			return fullStops.length;
-		},
-		get samplesFailed() {
-			return samplesFailed;
+		get guideLength() {
+			return guideStops.length;
 		},
 		screenLength(screen: TourScreen) {
 			const account = user();
@@ -264,11 +212,6 @@ export function createOnboardingTour(user: () => SessionUser | null): Onboarding
 			seen = readSeen();
 			seenKnown = true;
 		},
-		prepare() {
-			if (browser) {
-				void loadSamples();
-			}
-		},
 		autoStart() {
 			const account = user();
 
@@ -280,19 +223,13 @@ export function createOnboardingTour(user: () => SessionUser | null): Onboarding
 
 			offeredTo = account.id;
 
-			if (!hasRoleTour(account.roleId)) {
+			if (localStorage.getItem(guideStorageKey(account.id, account.roleId)) !== null) {
 				return;
 			}
 
-			if (localStorage.getItem(onboardingStorageKey(account.id, account.roleId)) !== null) {
-				return;
-			}
-
-			void loadSamples().then(openFull);
+			openGuide();
 		},
-		startFull() {
-			void loadSamples().then(openFull);
-		},
+		startGuide: openGuide,
 		startScreen(screen: TourScreen, href: string) {
 			const account = user();
 
@@ -308,17 +245,8 @@ export function createOnboardingTour(user: () => SessionUser | null): Onboarding
 
 			mode = 'screen';
 			ownStops = built;
-			show(0);
+			index = 0;
 			open = true;
-		},
-		goToScreen(screenId: string) {
-			const position = stops.findIndex(
-				(stop) => stop.kind === 'intro' && stop.screen?.id === screenId
-			);
-
-			if (position !== -1) {
-				show(position);
-			}
 		},
 		next() {
 			if (index + 1 < stops.length) {

@@ -307,7 +307,6 @@ export const ADMIN_SCREENS: readonly TourScreen[] = [
 		id: 'settings-workspace-group',
 		title: 'Пространство',
 		route: '/settings/workspaces/[key]',
-		sample: 'workspace',
 		permission: 'stages.configure',
 		help: HELP_WORKSPACES,
 		intro: {

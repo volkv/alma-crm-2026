@@ -18,21 +18,21 @@ import {
 	isScreenPath,
 	matchesQuery,
 	screenForPath,
-	screenHref,
-	TOUR_SAMPLES_PATH,
 	TOUR_SCREENS,
-	withQuery,
-	type TourSamples
+	withQuery
 } from '$lib/onboarding/screens';
 import {
-	fullTourFor,
-	hasRoleTour,
-	ROLE_TOURS,
+	guideFor,
+	NAV_WORKSPACES_TARGET,
+	navLinkHref,
 	screenTourFor,
-	SHELL_STEPS,
-	tourChapters
+	SHELL_STEPS
 } from '$lib/onboarding/tours';
-import { onboardingScreenKey, onboardingStorageKey } from '$lib/onboarding/storage';
+import {
+	guideStorageKey,
+	onboardingScreenKey,
+	onboardingStorageKey
+} from '$lib/onboarding/storage';
 import { DEFAULT_ROLES } from '$lib/server/rbac/permissions';
 
 /** Пространства стенда: меню собирается из базы, и подсказки — по нему же. */
@@ -151,18 +151,6 @@ function helpArticles(): Map<string, string> {
 	return articles;
 }
 
-const FULL_SAMPLES: TourSamples = {
-	workspace: 'b2b',
-	interaction: '2f0b0d3c-0000-4000-8000-000000000001',
-	organization: '2f0b0d3c-0000-4000-8000-000000000002',
-	person: '2f0b0d3c-0000-4000-8000-000000000003',
-	program: '2f0b0d3c-0000-4000-8000-000000000004',
-	product: '2f0b0d3c-0000-4000-8000-000000000005',
-	direction: '2f0b0d3c-0000-4000-8000-000000000006',
-	document: '2f0b0d3c-0000-4000-8000-000000000007',
-	dataSnapshot: '2f0b0d3c-0000-4000-8000-000000000008'
-};
-
 describe('реестр экранов', () => {
 	it('покрывает каждый экран приложения и не выдумывает своих', () => {
 		const routes = appRoutes().filter((route) => !WITHOUT_SCREEN.includes(route));
@@ -182,26 +170,6 @@ describe('реестр экранов', () => {
 			expect(new Set(screen.steps.map((step) => step.id)).size, screen.id).toBe(
 				screen.steps.length
 			);
-		}
-	});
-
-	it('даёт образец каждому экрану записи и никому больше', () => {
-		for (const screen of TOUR_SCREENS) {
-			// Пространство в пути — не открываемая запись, а сегмент адреса:
-			// образца экрана оно не требует, но без ключа адрес не собирается.
-			const hasRecord = screen.route.replaceAll('[workspace]', '').includes('[');
-			const hasWorkspace = screen.route.includes('[workspace]');
-
-			if (screen.sample !== undefined) {
-				expect(hasRecord, screen.id).toBe(true);
-			}
-
-			if (screen.sample !== undefined || hasWorkspace) {
-				expect(screenHref(screen, FULL_SAMPLES), screen.id).not.toBeNull();
-				expect(screenHref(screen, null), screen.id).toBeNull();
-			} else {
-				expect(screenHref(screen, null), screen.id).toBe(screen.route);
-			}
 		}
 	});
 });
@@ -327,125 +295,75 @@ describe('метки в разметке', () => {
 	});
 });
 
-describe('полный тур роли', () => {
+describe('знакомство', () => {
 	const HUMAN_ROLES = DEFAULT_ROLES.map((role) => role.id).filter((id) => id !== 'service');
 
-	it('заведён каждой роли человека и только ей', () => {
-		expect([...Object.keys(ROLE_TOURS)].sort()).toEqual([...HUMAN_ROLES].sort());
-		// `service` — ключи обмена: войти этой ролью нельзя, и показывать ей нечего.
-		expect(hasRoleTour('service')).toBe(false);
-		expect(hasRoleTour('auditor')).toBe(false);
-	});
+	/** Меню роли так, как его видит знакомство. */
+	const menuOf = (roleId: string) => visibleSections(MENU, permissionsOf(roleId));
 
-	it('доходит до каждого раздела, который роль видит в меню', () => {
-		for (const roleId of Object.keys(ROLE_TOURS)) {
-			const permissions = permissionsOf(roleId);
-			const stops = fullTourFor(roleId, permissions, FULL_SAMPLES);
-			const screens = tourChapters(stops).map((chapter) => chapter.screenId);
-
-			for (const section of visibleSections(MENU, permissions)) {
-				// Сопоставление по образцу маршрута, а не по строке: у секции
-				// пространства в адресе стоит ключ, а у экрана — параметр. Тур
-				// объясняет раздел один раз: показать одно и то же дважды, по разу
-				// на направление, значило бы утомить ради полноты.
-				const covered = screens.some((id) => {
-					const screen = TOUR_SCREENS.find((candidate) => candidate.id === id);
-
-					if (screen === undefined) {
-						return false;
-					}
-
-					return (
-						isScreenPath(screen, section.href) ||
-						(section.href !== '/' && screen.route.startsWith(`${section.href}/`))
-					);
-				});
-
-				expect(covered, `${roleId} → ${section.href}`).toBe(true);
-			}
-		}
-	});
-
-	it('не обещает роли экран, которого ей не откроют', () => {
-		for (const roleId of Object.keys(ROLE_TOURS)) {
-			const permissions = permissionsOf(roleId);
-			const stops = fullTourFor(roleId, permissions, FULL_SAMPLES);
-
-			for (const chapter of tourChapters(stops)) {
-				const screen = TOUR_SCREENS.find((candidate) => candidate.id === chapter.screenId);
-				const required = screen?.permission;
-
-				expect(
-					required === undefined || permissions.has(required),
-					`${roleId} → ${chapter.screenId}`
-				).toBe(true);
-			}
-		}
-	});
-
-	it('начинается приветствием с картой и кончается финалом', () => {
-		const stops = fullTourFor('manager', permissionsOf('manager'), FULL_SAMPLES);
-		const chapters = tourChapters(stops);
+	it('начинается приветствием и оболочкой, кончается финалом', () => {
+		const stops = guideFor(menuOf('manager'));
 
 		expect(stops[0].kind).toBe('welcome');
-		expect(stops[0].map).toEqual(chapters.map((chapter) => chapter.title));
-		expect(stops[stops.length - 1].kind).toBe('finish');
-		// Оболочка идёт сразу за приветствием: дальше тур ею пользуется.
 		expect(stops.slice(1, 1 + SHELL_STEPS.length).map((stop) => stop.kind)).toEqual(
 			SHELL_STEPS.map(() => 'shell')
 		);
+		expect(stops[stops.length - 1].kind).toBe('finish');
 	});
 
-	it('шаг, закрытый правом, из тура выпадает', () => {
-		const lead = permissionsOf('lead');
-		const manager = permissionsOf('manager');
-		const withReassign = fullTourFor('lead', lead, FULL_SAMPLES);
-		const withoutReassign = fullTourFor('manager', manager, FULL_SAMPLES);
+	it('первым разделом показывает пространства и называет каждое', () => {
+		for (const roleId of HUMAN_ROLES) {
+			const stops = guideFor(menuOf(roleId));
+			const workspaces = stops[1 + SHELL_STEPS.length];
 
-		expect(lead.has('interactions.reassign')).toBe(true);
-		expect(manager.has('interactions.reassign')).toBe(false);
-		expect(withReassign.some((stop) => stop.id === 'interactions:reassign')).toBe(true);
-		expect(withoutReassign.some((stop) => stop.id === 'interactions:reassign')).toBe(false);
-	});
+			expect(workspaces.target, roleId).toBe(NAV_WORKSPACES_TARGET);
 
-	it('без образца записи экран карточки выпадает вместе со своими шагами', () => {
-		const permissions = permissionsOf('manager');
-		const withSamples = fullTourFor('manager', permissions, FULL_SAMPLES);
-		const withoutSamples = fullTourFor('manager', permissions, {
-			...FULL_SAMPLES,
-			interaction: null
-		});
-
-		const card = TOUR_SCREENS.find((screen) => screen.id === 'interaction');
-
-		if (card === undefined) {
-			throw new Error('Экран карточки взаимодействия пропал из реестра');
+			for (const workspace of NAV_WORKSPACES) {
+				expect(workspaces.body, roleId).toContain(`«${workspace.name}»`);
+			}
 		}
-
-		expect(tourChapters(withSamples).some((chapter) => chapter.screenId === 'interaction')).toBe(
-			true
-		);
-		expect(tourChapters(withoutSamples).some((chapter) => chapter.screenId === 'interaction')).toBe(
-			false
-		);
-		// Вступление плюс шаги экрана, открытые роли, — ровно столько остановок и пропадает.
-		const shownSteps = card.steps.filter(
-			(step) => step.permission === undefined || permissions.has(step.permission)
-		);
-
-		expect(withSamples.length - withoutSamples.length).toBe(shownSteps.length + 1);
-		// Карта приветствия и число остановок пересчитываются вместе с туром.
-		expect(withoutSamples[0].map).toEqual(
-			tourChapters(withoutSamples).map((chapter) => chapter.title)
-		);
 	});
 
-	it('нумерует остановки внутри экрана', () => {
-		const stops = fullTourFor('manager', permissionsOf('manager'), FULL_SAMPLES);
-		const home = stops.filter((stop) => stop.screen?.id === 'home');
+	it('показывает только пункты меню, которые роль видит, и открывает их страницы', () => {
+		for (const roleId of HUMAN_ROLES) {
+			const menu = menuOf(roleId);
+			const hrefs = new Set(menu.map((link) => link.href));
 
-		expect(home.map((stop) => stop.screen?.position)).toEqual([1, 2, 3]);
-		expect(new Set(home.map((stop) => stop.screen?.total))).toEqual(new Set([3]));
+			for (const stop of guideFor(menu).filter((candidate) => candidate.kind === 'section')) {
+				if (stop.target === NAV_WORKSPACES_TARGET) {
+					continue;
+				}
+
+				const href = navLinkHref(stop.target ?? '');
+
+				expect(href !== null && hrefs.has(href), `${roleId} → ${stop.id}`).toBe(true);
+				expect(stop.screen?.href, `${roleId} → ${stop.id}`).toBe(href);
+			}
+		}
+	});
+
+	it('администратору показывает настройки пространств и процессов раньше взаимодействий', () => {
+		const ids = guideFor(menuOf('admin')).map((stop) => stop.id);
+		const at = (id: string) => ids.indexOf(`guide:${id}`);
+
+		expect(at('workspaces')).toBeGreaterThan(0);
+		expect(at('settings-workspaces')).toBeGreaterThan(at('workspaces'));
+		expect(at('settings-workflows')).toBeGreaterThan(at('settings-workspaces'));
+		expect(at('interactions')).toBeGreaterThan(at('settings-workflows'));
+		expect(at('organizations')).toBeGreaterThan(at('interactions'));
+		expect(at('data')).toBe(ids.length - 2);
+	});
+
+	it('менеджеру настроек не показывает', () => {
+		const ids = guideFor(menuOf('manager')).map((stop) => stop.id);
+
+		expect(ids).not.toContain('guide:settings-workspaces');
+		expect(ids).not.toContain('guide:users');
+		expect(ids).toContain('guide:interactions');
+	});
+
+	it('без разделов в меню знакомить не с чем', () => {
+		expect(guideFor([])).toEqual([]);
 	});
 });
 
@@ -489,19 +407,17 @@ describe('признаки на устройстве', () => {
 		expect(onboardingScreenKey('u1', 'manager', 'reports')).toBe(
 			'lct-crm:onboarding:u1:manager:screen:reports'
 		);
-		// Ключ экрана начинается с ключа полного тура: очистка одной учётной
-		// записи уносит и её экраны.
+		// Все ключи начинаются с ключа учётной записи и роли: очистка одной
+		// учётной записи уносит и знакомство, и её экраны.
 		expect(
 			onboardingScreenKey('u1', 'manager', 'reports').startsWith(
 				onboardingStorageKey('u1', 'manager')
 			)
 		).toBe(true);
 		expect(onboardingStorageKey('u1', 'admin')).not.toBe(onboardingStorageKey('u1', 'manager'));
-	});
-
-	it('образцы спрашиваются у маршрута приложения', () => {
-		expect(TOUR_SAMPLES_PATH).toBe('/tour/samples');
-		expect(appRoutes()).not.toContain(TOUR_SAMPLES_PATH);
+		// Знакомство — свой признак, не прежнего полного тура: закрывшим старый тур
+		// его предложат заново.
+		expect(guideStorageKey('u1', 'manager')).toBe('lct-crm:onboarding:u1:manager:guide');
 	});
 
 	it('режим шага меняет только свои параметры адреса, отбор человека остаётся', () => {

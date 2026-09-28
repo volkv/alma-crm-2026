@@ -16,12 +16,12 @@
 import { seedId } from '../seed/ids.ts';
 import type { Frame } from './capture.ts';
 import {
-	HOME_INTRO,
+	GUIDE_WORKSPACES,
 	LEAD_IN_CARD,
 	LEAD_WITH_MENTION,
 	colleagueInCard,
 	openInbox,
-	reachHomeIntro,
+	reachGuideWorkspaces,
 	unreadMention
 } from './shots.ts';
 
@@ -110,10 +110,10 @@ export const HELP_SHOTS: readonly Frame[] = [
 		name: 'user/start-3',
 		path: '/',
 		role: 'manager',
-		caption: 'Полный тур: карточка вступления «Сводки» с полосой прогресса и оглавлением',
-		waitFor: HOME_INTRO,
+		caption: 'Знакомство: секции пространств в меню и карточка шага с полосой прогресса',
+		waitFor: GUIDE_WORKSPACES,
 		tour: true,
-		prepare: reachHomeIntro
+		prepare: reachGuideWorkspaces
 	},
 	{
 		name: 'user/interactions-1',

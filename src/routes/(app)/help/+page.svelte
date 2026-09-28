@@ -29,10 +29,10 @@
 	{#snippet actions()}
 		<!-- Кнопки, которая ничего не делает, здесь нет: роли без подсказок их не
 			увидит и не нажмёт. -->
-		{#if tour.fullLength > 0}
-			<Button variant="outline" onclick={() => tour.startFull()}>
+		{#if tour.guideLength > 0}
+			<Button variant="outline" onclick={() => tour.startGuide()}>
 				<LifeBuoyIcon aria-hidden="true" />
-				Полный тур по системе
+				Знакомство с системой
 			</Button>
 		{/if}
 		<Button variant="outline" href={resolve('/(app)/help/print')} data-tour="help-print">

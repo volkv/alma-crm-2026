@@ -152,7 +152,6 @@ export const USER_SCREENS: readonly TourScreen[] = [
 		id: 'interaction',
 		title: 'Карточка взаимодействия',
 		route: '/w/[workspace]/interactions/[id=uuid]',
-		sample: 'interaction',
 		permission: 'interactions.read',
 		help: HELP_INTERACTION,
 		intro: {
@@ -321,7 +320,6 @@ export const USER_SCREENS: readonly TourScreen[] = [
 		id: 'organization',
 		title: 'Карточка организации',
 		route: '/organizations/[id=uuid]',
-		sample: 'organization',
 		permission: 'organizations.read',
 		help: HELP_DIRECTORY,
 		intro: {
@@ -574,7 +572,6 @@ export const USER_SCREENS: readonly TourScreen[] = [
 		id: 'person',
 		title: 'Карточка человека',
 		route: '/people/[id=uuid]',
-		sample: 'person',
 		permission: 'people.read',
 		help: HELP_DIRECTORY,
 		intro: {
@@ -670,7 +667,6 @@ export const USER_SCREENS: readonly TourScreen[] = [
 		id: 'program',
 		title: 'Карточка программы',
 		route: '/programs/[id=uuid]',
-		sample: 'program',
 		permission: 'programs.read',
 		help: HELP_PROGRAMS,
 		intro: {
@@ -746,7 +742,6 @@ export const USER_SCREENS: readonly TourScreen[] = [
 		id: 'product',
 		title: 'Карточка продукта',
 		route: '/products/[id=uuid]',
-		sample: 'product',
 		permission: 'products.read',
 		help: HELP_PROGRAMS,
 		intro: {
@@ -816,7 +811,6 @@ export const USER_SCREENS: readonly TourScreen[] = [
 		id: 'direction',
 		title: 'Карточка направления',
 		route: '/directions/[id=uuid]',
-		sample: 'direction',
 		permission: 'directions.read',
 		help: HELP_PROGRAMS,
 		intro: {
@@ -894,7 +888,6 @@ export const USER_SCREENS: readonly TourScreen[] = [
 		id: 'data-snapshot',
 		title: 'Снимок данных',
 		route: '/data/[id=uuid]',
-		sample: 'dataSnapshot',
 		permission: 'stats.read',
 		help: HELP_DATA,
 		intro: {
@@ -1153,7 +1146,6 @@ export const USER_SCREENS: readonly TourScreen[] = [
 		id: 'document',
 		title: 'Карточка документа',
 		route: '/documents/[id=uuid]',
-		sample: 'document',
 		permission: 'documents.read',
 		help: HELP_DOCUMENTS,
 		intro: {
@@ -1187,7 +1179,7 @@ export const USER_SCREENS: readonly TourScreen[] = [
 		route: '/help',
 		intro: {
 			title: 'Справка',
-			body: 'Два руководства — пользователя и администратора: как устроена работа и как устроена система. Кнопка «Версия для печати» собирает их одним документом, а «Полный тур по системе» возвращает этот тур. Открывается из меню и из значка «?» в шапке.'
+			body: 'Два руководства — пользователя и администратора: как устроена работа и как устроена система. Кнопка «Версия для печати» собирает их одним документом, а «Знакомство с системой» заново проводит по разделам. Открывается из меню и из значка «?» в шапке.'
 		},
 		steps: [
 			{
@@ -1211,7 +1203,7 @@ export const USER_SCREENS: readonly TourScreen[] = [
 		help: HELP_START,
 		intro: {
 			title: 'Профиль',
-			body: 'Учётная запись, под которой вы вошли: имя, почта и роль приходят из каталога учётных записей при каждом входе, и менять их надо там же. Здесь же кнопка «Завершить все сессии» и «Полный тур по системе». Открывается из карточки учётной записи внизу меню — там же, где написаны имя и роль.'
+			body: 'Учётная запись, под которой вы вошли: имя, почта и роль приходят из каталога учётных записей при каждом входе, и менять их надо там же. Здесь же кнопка «Завершить все сессии» и «Знакомство с системой». Открывается из карточки учётной записи внизу меню — там же, где написаны имя и роль.'
 		},
 		steps: [
 			{
