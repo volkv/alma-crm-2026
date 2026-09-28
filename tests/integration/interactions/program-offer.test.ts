@@ -2,9 +2,11 @@
  * Описание программ вузу письмом из карточки дела.
  *
  * Держит один инвариант: письмо уходит только контактному лицу основной
- * стороны этого дела, а настоящая отправка оставляет в деле след без адресов
- * и сама закрывает пункт «Отправлено описание программ». Почтовый сервер
- * заменён приёмником в памяти: проверяется, что и кому передано, а не SMTP.
+ * стороны этого дела; нажатие отвечает «поставлено в отправку», не трогая
+ * почты, а письма уходят обработчиком очереди, который оставляет в деле след
+ * без адресов и сам закрывает пункт «Отправлено описание программ». Почтовый
+ * сервер заменён приёмником в памяти: проверяется, что и кому передано, а не
+ * SMTP.
  */
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,11 +14,14 @@ import {
 	affiliations,
 	interactionChanges,
 	interactionParties,
+	outboundMailJobs,
 	programOfferSends
 } from '$lib/server/db/schema';
 import { addProgramMaterials } from '$lib/server/directory/program-materials';
 import { ValidationError } from '$lib/server/errors';
+import { listInbox } from '$lib/server/inbox';
 import { sendProgramOffer } from '$lib/server/interactions/program-offer';
+import { runOutboundMailCycle } from '$lib/server/mail/queue';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import {
 	insertOrganization,
@@ -117,16 +122,18 @@ describe('описание программ вузу', () => {
 		expect(before?.snapshot.key).toBe('communication');
 		expect(before?.facts.offer_sent?.done).toBe(false);
 
-		// Контакт другой организации — отказ всей отправки, письмо не уходит.
+		// Контакт другой организации — отказ всей отправки, в очередь ничего не встаёт.
 		await expect(
 			sendProgramOffer(ctx, { interactionId, recipientIds: [strangerId], test: false })
 		).rejects.toBeInstanceOf(ValidationError);
-		expect(sendMail).not.toHaveBeenCalled();
+		expect(await database.db.select().from(outboundMailJobs)).toHaveLength(0);
 
 		// Тестовое письмо себе — только журнал: в деле следа нет.
 		await expect(
 			sendProgramOffer(ctx, { interactionId, recipientIds: [contactId], test: true })
-		).resolves.toMatchObject({ status: 'sent', test: true });
+		).resolves.toStrictEqual({ status: 'queued', test: true });
+		expect(sendMail).not.toHaveBeenCalled();
+		await expect(runOutboundMailCycle()).resolves.toMatchObject({ processed: 1 });
 		expect(sendMail).toHaveBeenCalledTimes(1);
 		expect(await database.db.select().from(programOfferSends)).toHaveLength(0);
 
@@ -138,8 +145,30 @@ describe('описание программ вузу', () => {
 			test: false
 		});
 
-		expect(outcome).toStrictEqual({ status: 'sent', test: false, sentCount: 1, failed: [] });
+		// Ответ — сразу и без почты: письмо ждёт обработчика, следа в деле ещё нет.
+		expect(outcome).toStrictEqual({ status: 'queued', test: false });
+		expect(sendMail).not.toHaveBeenCalled();
+		expect(await database.db.select().from(programOfferSends)).toHaveLength(0);
+
+		const [job] = await database.db
+			.select()
+			.from(outboundMailJobs)
+			.where(eq(outboundMailJobs.test, false));
+
+		expect(job.status).toBe('queued');
+		// В задании — идентификаторы, а не адреса и ФИО.
+		expect(JSON.stringify(job)).not.toContain('prorector@vuz.example');
+		expect(JSON.stringify(job)).not.toContain('Иванова');
+
+		await expect(runOutboundMailCycle()).resolves.toMatchObject({ processed: 1 });
 		expect(sendMail).toHaveBeenCalledTimes(1);
+
+		const [done] = await database.db
+			.select()
+			.from(outboundMailJobs)
+			.where(eq(outboundMailJobs.id, job.id));
+
+		expect(done).toMatchObject({ status: 'sent', sentCount: 1, failedCount: 0 });
 
 		const [mail] = sendMail.mock.calls[0] as unknown as [
 			{ to: { address: string }[]; attachments: { filename: string }[]; html: string }
@@ -173,5 +202,18 @@ describe('описание программ вузу', () => {
 
 		expect(after?.facts.offer_sent?.done).toBe(true);
 		expect(after?.facts.offer_sent?.evidence).toMatch(/^Отправлено .+ — 1 получатель$/);
+
+		// Сервер не принял ни одного письма — окна уже нет, и об этом говорит
+		// колокольчик отправителя.
+		sendMail.mockRejectedValueOnce(new Error('connect ECONNREFUSED 127.0.0.1:1025'));
+		await sendProgramOffer(ctx, { interactionId, recipientIds: [contactId], test: false });
+		await runOutboundMailCycle();
+
+		const inbox = await listInbox(ctx);
+
+		expect(inbox.items).toContainEqual(
+			expect.objectContaining({ kind: 'mail', status: 'failed', interactionId, readAt: null })
+		);
+		expect(await database.db.select().from(programOfferSends)).toHaveLength(1);
 	});
 });

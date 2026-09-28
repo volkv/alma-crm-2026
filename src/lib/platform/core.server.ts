@@ -78,6 +78,17 @@ export { canUserSeeInteraction, listInteractionViewers } from '$lib/server/live/
 // Письма людям вне системы: песочница, отправка и шаблон приглашения на встречу.
 export { outboundMailPolicy, sendOutboundMail } from '$lib/server/mail/outbound';
 export { meetingInviteEmail, type MeetingMailKind } from '$lib/server/mail/meeting-invite';
+// Письма вузу уходят в фоне: модуль ставит задание в своей транзакции, а
+// обработчик вида (`mail` в `defineCardServer`) шлёт письма после фиксации.
+export {
+	enqueueOutboundMail,
+	payloadIds,
+	readOutboundMailInFlight,
+	singleMailResult,
+	type OutboundMailHandler,
+	type OutboundMailJob,
+	type OutboundMailResult
+} from '$lib/server/mail/queue';
 
 // Файлы.
 export { contentDisposition } from '$lib/server/documents/filename';

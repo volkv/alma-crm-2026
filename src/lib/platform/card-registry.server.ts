@@ -12,6 +12,7 @@ import { error, type RequestEvent } from '@sveltejs/kit';
 import type { InteractionView } from '$lib/contracts/interactions';
 import { actorFromEvent, type ActorContext } from '$lib/server/actor';
 import { toActionFailure, toPageError } from '$lib/server/http';
+import type { OutboundMailHandler } from '$lib/server/mail/queue';
 import { assertModuleActive } from '$lib/server/platform/workspace-modules';
 import type { CardActionHandler, CardRouteParams, CardServerPart } from './card.server';
 import { isModuleKey, type ModuleKey } from './registry';
@@ -119,4 +120,31 @@ export async function loadModuleCardData(
 	);
 
 	return Object.fromEntries(loaded);
+}
+
+/**
+ * Обработчик письма модуля по виду задания очереди (`<модуль>:<вид>`);
+ * `null` — такого модуля или вида в установке нет.
+ *
+ * Обработчик обёрнут той же проверкой, что действия карточки: модуль, который
+ * выключили в пространстве дела между нажатием и отправкой, писем от своего
+ * имени больше не шлёт.
+ */
+export function moduleMailHandler(kind: string): OutboundMailHandler | null {
+	const separator = kind.indexOf(':');
+	const part = separator < 0 ? undefined : PARTS_BY_KEY.get(kind.slice(0, separator));
+	const handler = part?.mail?.[kind.slice(separator + 1)];
+
+	if (part === undefined || handler === undefined) {
+		return null;
+	}
+
+	return {
+		auditType: handler.auditType,
+		deliver: async (ctx, job) => {
+			await assertModuleActive(ctx, job.interactionId, part.key);
+
+			return handler.deliver(ctx, job);
+		}
+	};
 }

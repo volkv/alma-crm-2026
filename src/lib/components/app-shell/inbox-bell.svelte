@@ -8,9 +8,11 @@
 	import { inbox } from './inbox.svelte';
 
 	/**
-	 * Колокольчик: где меня упомянули и какие новые дела с сайта мне назначены.
+	 * Колокольчик: где меня упомянули, какие новые дела с сайта мне назначены и
+	 * какие мои письма вузу ушли не всем или не ушли (письма уходят в фоне, и
+	 * окна, которое сказало бы об этом, к тому времени уже нет).
 	 *
-	 * Число — непрочитанные строки обоих видов в делах, которые человек видит
+	 * Число — непрочитанные строки всех видов в делах, которые человек видит
 	 * сейчас. Строка ведёт в карточку (упоминание — к самому комментарию) и
 	 * сразу отмечается прочитанной; открытая карточка отмечает прочитанными все
 	 * свои строки. Текста комментария здесь нет: что сказали — видно в ленте
@@ -31,6 +33,13 @@
 	/** Упоминание ведёт сразу к своему комментарию, новое дело — в карточку. */
 	function anchor(item: InboxItem): string {
 		return item.kind === 'mention' ? `#comment-${item.commentId}` : '';
+	}
+
+	/** Исход письма вузу одной фразой: сколько ушло из скольких — или что не ушло. */
+	function mailOutcome(item: Extract<InboxItem, { kind: 'mail' }>): string {
+		return item.status === 'partial'
+			? `ушло не всем: ${item.sentCount} из ${item.sentCount + item.failedCount}`
+			: 'не отправлено';
 	}
 </script>
 
@@ -82,7 +91,7 @@
 		{:else if inbox.current.items.length === 0}
 			<p class="px-3 pb-3 text-sm text-muted-foreground">
 				Новых нет. Здесь появятся упоминания — коллеги зовут в обсуждение через «@» в комментарии к
-				делу — и новые дела с сайта, назначенные вам.
+				делу, — новые дела с сайта, назначенные вам, и ваши письма вузу, которые не ушли.
 			</p>
 		{:else}
 			<ul class="flex max-h-96 flex-col overflow-y-auto pb-1">
@@ -112,12 +121,18 @@
 								<span class="block">
 									{#if item.kind === 'mention'}
 										<span class="font-medium">{item.authorName}</span> упомянул(а) вас
+									{:else if item.kind === 'mail'}
+										<span class="font-medium">{item.label}</span>
+										{mailOutcome(item)}
 									{:else}
 										<span class="font-medium">Новое дело с сайта</span> назначено вам
 									{/if}
 								</span>
 								{#if item.kind === 'mention' && item.excerpt !== ''}
 									<span class="line-clamp-2 block text-foreground/80">«{item.excerpt}»</span>
+								{/if}
+								{#if item.kind === 'mail' && item.reason !== null}
+									<span class="line-clamp-2 block text-foreground/80">{item.reason}</span>
 								{/if}
 								<span class="block truncate text-muted-foreground">{item.interactionTitle}</span>
 								<span class="block text-xs text-faint">

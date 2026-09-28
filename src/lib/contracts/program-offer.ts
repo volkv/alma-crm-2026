@@ -10,6 +10,7 @@
  */
 import { z } from 'zod';
 import { id } from './common';
+import type { OutboundMailInFlightView } from './outbound-mail';
 
 /**
  * Поле истории дела, которым отправка ложится в ленту карточки: значение —
@@ -77,15 +78,14 @@ export type ProgramOfferDraftView = {
 	policy: { allowed: boolean; sandboxed: boolean; reason: string | null };
 	/** Последняя отправка по делу; `null` — описание ещё не отправляли. */
 	lastSent: { sentAt: string; recipientCount: number } | null;
+	/** Отправка, которая ещё идёт в фоне; `null` — ничего не ждёт. */
+	inFlight: OutboundMailInFlightView;
 };
 
-/** Исход отправки. Отказ до соединения и неудача сервера различаются, как у почты. */
+/**
+ * Исход нажатия. Письма уходят в фоне (`mail/queue.ts`): `queued` — задание
+ * поставлено, след в деле появится, когда письма уйдут, а неудачу отправитель
+ * увидит в колокольчике. `refused` — почта установки закрыта, ставить нечего.
+ */
 export type ProgramOfferOutcome =
-	| {
-			status: 'sent';
-			test: boolean;
-			sentCount: number;
-			/** Кому не ушло, когда ушло не всем: роль и причина словами. */
-			failed: { affiliationId: string; error: string }[];
-	  }
-	| { status: 'refused' | 'failed'; test: boolean; error: string };
+	{ status: 'queued'; test: boolean } | { status: 'refused'; test: boolean; error: string };

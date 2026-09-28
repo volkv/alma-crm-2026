@@ -11,6 +11,7 @@
 import { z } from 'zod';
 import { id } from './common';
 import type { DocumentTemplateKey } from './documents';
+import type { OutboundMailInFlightView } from './outbound-mail';
 
 /**
  * Поле истории дела, которым отправка ложится в ленту карточки: значение —
@@ -81,19 +82,16 @@ export type PackageSendDraftView = {
 	policy: { allowed: boolean; sandboxed: boolean; reason: string | null };
 	/** Последняя отправка пакета по делу; `null` — ещё не отправляли. */
 	lastSent: { sentAt: string; recipientCount: number; documentCount: number } | null;
+	/** Отправка пакета, которая ещё идёт в фоне; `null` — ничего не ждёт. */
+	inFlight: OutboundMailInFlightView;
 };
 
 /**
- * Исход отправки. `checklistMarked` — отмечен ли отправкой пункт «Пакет
- * отправлен» открытой стадии: у дела на другой стадии или без права менять
- * чек-лист письмо уходит, а пункт остаётся как был.
+ * Исход нажатия. Письма уходят в фоне (`mail/queue.ts`): `queued` — задание
+ * поставлено; когда письма уйдут, в ленте появится запись, а пункт «Пакет
+ * отправлен» открытой стадии отметится сам (у дела на другой стадии или без
+ * права менять чек-лист пункт остаётся как был). Неудачу отправитель увидит в
+ * колокольчике. `refused` — почта установки закрыта, ставить нечего.
  */
 export type PackageSendOutcome =
-	| {
-			status: 'sent';
-			test: boolean;
-			sentCount: number;
-			failed: { affiliationId: string; error: string }[];
-			checklistMarked: boolean;
-	  }
-	| { status: 'refused' | 'failed'; test: boolean; error: string };
+	{ status: 'queued'; test: boolean } | { status: 'refused'; test: boolean; error: string };

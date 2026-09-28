@@ -1,6 +1,12 @@
 /**
- * Колокольчик сотрудника: упоминания в комментариях и новые дела с сайта,
- * назначенные ему, — одним списком, свежие сверху.
+ * Колокольчик сотрудника: упоминания в комментариях, новые дела с сайта,
+ * назначенные ему, и его письма вузу, которые ушли не всем или не ушли, —
+ * одним списком, свежие сверху.
+ *
+ * Строка о письме — само задание очереди писем (`mail/queue.ts`): отдельной
+ * таблицы уведомлений ему не нужно, у задания уже есть отправитель, дело,
+ * исход и причина. Своего письма о неудаче нет: письмо уходит вузу, а не
+ * сотруднику, и сказать ему «почта не работает» почтой было бы странно.
  *
  * Строки обоих видов ставятся той же транзакцией, что их причина: упоминание —
  * вместе с комментарием (`mentions/index.ts`), новое дело — вместе с приёмом
@@ -9,10 +15,14 @@
  * почтовый сервер отвечает до пяти секунд, и держать на нём транзакцию приёма
  * нельзя.
  */
-import { and, count, desc, eq, isNull, sql } from 'drizzle-orm';
+import { and, count, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import type { Inbox, InboxItem, MarkInboxReadInput } from '$lib/contracts/inbox';
 import { mentionExcerpt } from '$lib/contracts/mentions';
 import { NOTIFICATION_CHANNELS } from '$lib/contracts/notifications';
+import {
+	OUTBOUND_MAIL_NOTICE_STATUSES,
+	type OutboundMailStatus
+} from '$lib/contracts/outbound-mail';
 import type { ActorContext } from '../actor';
 import { getConfig } from '../config';
 import { getDb } from '../db';
@@ -22,6 +32,7 @@ import {
 	comments,
 	interactions,
 	notificationDeliveries,
+	outboundMailJobs,
 	users,
 	workspaces
 } from '../db/schema';
@@ -113,54 +124,87 @@ export async function listInbox(ctx: ActorContext): Promise<Inbox> {
 	const scope = interactionScopeFilter(ctx);
 	const mentionsVisible = and(eq(commentMentions.userId, userId), scope);
 	const noticesVisible = and(eq(applicationNotices.userId, userId), scope);
+	const mailVisible = and(
+		eq(outboundMailJobs.senderUserId, userId),
+		inArray(outboundMailJobs.status, [...OUTBOUND_MAIL_NOTICE_STATUSES]),
+		scope
+	);
 
-	const [[mentionUnread], [noticeUnread], mentionRows, noticeRows] = await Promise.all([
-		db
-			.select({ value: count() })
-			.from(commentMentions)
-			.innerJoin(interactions, eq(interactions.id, commentMentions.interactionId))
-			.where(and(mentionsVisible, isNull(commentMentions.readAt))),
-		db
-			.select({ value: count() })
-			.from(applicationNotices)
-			.innerJoin(interactions, eq(interactions.id, applicationNotices.interactionId))
-			.where(and(noticesVisible, isNull(applicationNotices.readAt))),
-		db
-			.select({
-				id: commentMentions.id,
-				commentId: commentMentions.commentId,
-				interactionId: commentMentions.interactionId,
-				workspaceKey: workspaces.key,
-				interactionTitle: interactions.title,
-				authorName: users.fullName,
-				body: comments.body,
-				createdAt: commentMentions.createdAt,
-				readAt: commentMentions.readAt
-			})
-			.from(commentMentions)
-			.innerJoin(interactions, eq(interactions.id, commentMentions.interactionId))
-			.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
-			.innerJoin(comments, eq(comments.id, commentMentions.commentId))
-			.innerJoin(users, eq(users.id, comments.authorId))
-			.where(mentionsVisible)
-			.orderBy(desc(commentMentions.createdAt))
-			.limit(INBOX_LIMIT),
-		db
-			.select({
-				id: applicationNotices.id,
-				interactionId: applicationNotices.interactionId,
-				workspaceKey: workspaces.key,
-				interactionTitle: interactions.title,
-				createdAt: applicationNotices.createdAt,
-				readAt: applicationNotices.readAt
-			})
-			.from(applicationNotices)
-			.innerJoin(interactions, eq(interactions.id, applicationNotices.interactionId))
-			.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
-			.where(noticesVisible)
-			.orderBy(desc(applicationNotices.createdAt))
-			.limit(INBOX_LIMIT)
-	]);
+	const [[mentionUnread], [noticeUnread], [mailUnread], mentionRows, noticeRows, mailRows] =
+		await Promise.all([
+			db
+				.select({ value: count() })
+				.from(commentMentions)
+				.innerJoin(interactions, eq(interactions.id, commentMentions.interactionId))
+				.where(and(mentionsVisible, isNull(commentMentions.readAt))),
+			db
+				.select({ value: count() })
+				.from(applicationNotices)
+				.innerJoin(interactions, eq(interactions.id, applicationNotices.interactionId))
+				.where(and(noticesVisible, isNull(applicationNotices.readAt))),
+			db
+				.select({ value: count() })
+				.from(outboundMailJobs)
+				.innerJoin(interactions, eq(interactions.id, outboundMailJobs.interactionId))
+				.where(and(mailVisible, isNull(outboundMailJobs.noticeReadAt))),
+			db
+				.select({
+					id: commentMentions.id,
+					commentId: commentMentions.commentId,
+					interactionId: commentMentions.interactionId,
+					workspaceKey: workspaces.key,
+					interactionTitle: interactions.title,
+					authorName: users.fullName,
+					body: comments.body,
+					createdAt: commentMentions.createdAt,
+					readAt: commentMentions.readAt
+				})
+				.from(commentMentions)
+				.innerJoin(interactions, eq(interactions.id, commentMentions.interactionId))
+				.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
+				.innerJoin(comments, eq(comments.id, commentMentions.commentId))
+				.innerJoin(users, eq(users.id, comments.authorId))
+				.where(mentionsVisible)
+				.orderBy(desc(commentMentions.createdAt))
+				.limit(INBOX_LIMIT),
+			db
+				.select({
+					id: applicationNotices.id,
+					interactionId: applicationNotices.interactionId,
+					workspaceKey: workspaces.key,
+					interactionTitle: interactions.title,
+					createdAt: applicationNotices.createdAt,
+					readAt: applicationNotices.readAt
+				})
+				.from(applicationNotices)
+				.innerJoin(interactions, eq(interactions.id, applicationNotices.interactionId))
+				.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
+				.where(noticesVisible)
+				.orderBy(desc(applicationNotices.createdAt))
+				.limit(INBOX_LIMIT),
+			db
+				.select({
+					id: outboundMailJobs.id,
+					interactionId: outboundMailJobs.interactionId,
+					workspaceKey: workspaces.key,
+					interactionTitle: interactions.title,
+					label: outboundMailJobs.label,
+					status: outboundMailJobs.status,
+					sentCount: outboundMailJobs.sentCount,
+					failedCount: outboundMailJobs.failedCount,
+					reason: outboundMailJobs.lastError,
+					// Строка встаёт в список моментом исхода: неудача — новость тогда,
+					// когда случилась, а не когда нажали «Отправить».
+					createdAt: sql<Date>`coalesce(${outboundMailJobs.finishedAt}, ${outboundMailJobs.createdAt})`,
+					readAt: outboundMailJobs.noticeReadAt
+				})
+				.from(outboundMailJobs)
+				.innerJoin(interactions, eq(interactions.id, outboundMailJobs.interactionId))
+				.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
+				.where(mailVisible)
+				.orderBy(desc(outboundMailJobs.createdAt))
+				.limit(INBOX_LIMIT)
+		]);
 
 	const items: InboxItem[] = [
 		...mentionRows.map(({ body, ...row }) => ({
@@ -168,12 +212,17 @@ export async function listInbox(ctx: ActorContext): Promise<Inbox> {
 			...row,
 			excerpt: mentionExcerpt(body)
 		})),
-		...noticeRows.map((row) => ({ kind: 'application' as const, ...row }))
+		...noticeRows.map((row) => ({ kind: 'application' as const, ...row })),
+		...mailRows.flatMap(({ status, createdAt, ...row }) =>
+			isNoticeStatus(status)
+				? [{ kind: 'mail' as const, ...row, status, createdAt: new Date(createdAt) }]
+				: []
+		)
 	]
 		.sort((left, right) => right.createdAt.getTime() - left.createdAt.getTime())
 		.slice(0, INBOX_LIMIT);
 
-	return { unread: mentionUnread.value + noticeUnread.value, items };
+	return { unread: mentionUnread.value + noticeUnread.value + mailUnread.value, items };
 }
 
 /**
@@ -220,6 +269,31 @@ export async function markInboxRead(ctx: ActorContext, input: MarkInboxReadInput
 		return marked.length;
 	};
 
+	// Только законченные неудачи: отправка, которая ещё идёт, прочитанной не
+	// становится оттого, что человек открыл карточку, — иначе неудача, случившаяся
+	// минутой позже, пришла бы в колокольчик уже прочитанной.
+	const markMail = async (): Promise<number> => {
+		const conditions = [
+			eq(outboundMailJobs.senderUserId, userId),
+			inArray(outboundMailJobs.status, [...OUTBOUND_MAIL_NOTICE_STATUSES]),
+			isNull(outboundMailJobs.noticeReadAt)
+		];
+
+		if (input.scope === 'mail') {
+			conditions.push(eq(outboundMailJobs.id, input.id));
+		} else if (input.scope === 'interaction') {
+			conditions.push(eq(outboundMailJobs.interactionId, input.interactionId));
+		}
+
+		const marked = await db
+			.update(outboundMailJobs)
+			.set({ noticeReadAt: sql`now()`, updatedAt: sql`now()` })
+			.where(and(...conditions))
+			.returning({ id: outboundMailJobs.id });
+
+		return marked.length;
+	};
+
 	if (input.scope === 'mention') {
 		return markMentions();
 	}
@@ -228,7 +302,17 @@ export async function markInboxRead(ctx: ActorContext, input: MarkInboxReadInput
 		return markNotices();
 	}
 
-	const [mentions, notices] = await Promise.all([markMentions(), markNotices()]);
+	if (input.scope === 'mail') {
+		return markMail();
+	}
 
-	return mentions + notices;
+	const [mentions, notices, mail] = await Promise.all([markMentions(), markNotices(), markMail()]);
+
+	return mentions + notices + mail;
+}
+
+function isNoticeStatus(
+	status: OutboundMailStatus
+): status is (typeof OUTBOUND_MAIL_NOTICE_STATUSES)[number] {
+	return (OUTBOUND_MAIL_NOTICE_STATUSES as readonly OutboundMailStatus[]).includes(status);
 }

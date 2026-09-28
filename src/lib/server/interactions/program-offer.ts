@@ -10,6 +10,10 @@
  * из контактов стороны можно написать, решает `contact-addressees.ts`, общий
  * с приглашением на встречу.
  *
+ * Письма уходят в фоне: нажатие ставит задание в общую очередь писем вузу
+ * (`mail/queue.ts`), окно получает ответ сразу, а обработчик
+ * ({@link programOfferMail}) шлёт письма после фиксации.
+ *
  * Каждому получателю — своё письмо: обращение по имени, и адреса коллег друг
  * другу не раскрываются. След отправки — строка `program_offer_sends` с одними
  * идентификаторами и запись в истории дела для ленты; тестовое письмо себе
@@ -17,7 +21,6 @@
  */
 import { and, desc, eq, inArray, isNull, sql } from 'drizzle-orm';
 import { PROGRAM_LEVEL_LABELS } from '$lib/components/directory/labels';
-import type { AffiliationView } from '$lib/contracts/directory';
 import type { InteractionView } from '$lib/contracts/interactions';
 import {
 	PROGRAM_OFFER_CHANGE_FIELD,
@@ -52,13 +55,24 @@ import {
 	type OutboundAttachment
 } from '../mail/outbound';
 import { programOfferEmail, type ProgramOfferFacts } from '../mail/program-offer';
+import {
+	enqueueOutboundMail,
+	payloadIds,
+	PROGRAM_OFFER_MAIL_KIND,
+	readOutboundMailInFlight,
+	singleMailResult,
+	type OutboundMailHandler,
+	type OutboundMailJob,
+	type OutboundMailResult
+} from '../mail/queue';
 import { requirePermission } from '../rbac';
 import {
 	contactGreetingName,
 	contactPersonName,
 	contactUnavailableReason,
 	readCaseContacts,
-	resolveCaseContacts
+	resolveCaseContacts,
+	type CaseContactAddressee
 } from './contact-addressees';
 import { getInteraction } from './read';
 
@@ -195,10 +209,11 @@ export async function readProgramOfferDraft(
 	const sender = senderOf(ctx);
 	const interaction = await getInteraction(ctx, interactionId);
 	const primary = primaryParty(interaction);
-	const [contacts, content, lastSent] = await Promise.all([
+	const [contacts, content, lastSent, inFlight] = await Promise.all([
 		readCaseContacts(ctx, interaction),
 		readOfferContent(interaction, sender),
-		readLastSent(interaction.id)
+		readLastSent(interaction.id),
+		readOutboundMailInFlight(interaction.id, PROGRAM_OFFER_MAIL_KIND)
 	]);
 
 	const today = formatIsoDay();
@@ -260,17 +275,17 @@ export async function readProgramOfferDraft(
 		attachmentsLimitBytes: MAX_OUTBOUND_ATTACHMENTS_BYTES,
 		sender: { name: sender.name, email: sender.email },
 		policy: { allowed: policy.allowed, sandboxed: policy.sandboxed, reason: policy.reason },
-		lastSent
+		lastSent,
+		inFlight
 	};
 }
 
 /**
- * Файлы вложений. Размер сверяется до чтения: письмо, которое почтовый сервер
- * всё равно отбил бы, не должно тянуть из хранилища двадцать мегабайт.
+ * Вложения помещаются в одно письмо. Сверяется по размеру из справочника, до
+ * чтения из хранилища: письмо, которое почтовый сервер всё равно отбил бы, не
+ * должно ни вставать в очередь, ни тянуть двадцать мегабайт.
  */
-async function readAttachments(
-	materials: readonly ProgramMaterial[]
-): Promise<OutboundAttachment[]> {
+function assertAttachmentsFit(materials: readonly ProgramMaterial[]): void {
 	const total = materials.reduce((sum, material) => sum + material.sizeBytes, 0);
 
 	if (total > MAX_OUTBOUND_ATTACHMENTS_BYTES) {
@@ -278,6 +293,13 @@ async function readAttachments(
 			'Уберите часть материалов с карточек программ или отправьте их отдельно'
 		]);
 	}
+}
+
+/** Файлы вложений — читаются обработчиком, в момент отправки. */
+async function readAttachments(
+	materials: readonly ProgramMaterial[]
+): Promise<OutboundAttachment[]> {
+	assertAttachmentsFit(materials);
 
 	return Promise.all(
 		materials.map(async (material) => ({
@@ -288,18 +310,19 @@ async function readAttachments(
 	);
 }
 
-type Addressee = { contact: AffiliationView; email: string };
-
 /**
- * Получатели настоящей отправки: только контакты основной стороны этого дела,
- * у которых сейчас можно прочитать почту. Закрытый адрес — отказ всей отправки:
- * описание программ без адресата не имеет смысла.
+ * Получатели настоящей отправки: только контакты основной стороны этого дела.
+ * Чужой контакт — отказ всей отправки. `strict` — при нажатии: закрытый адрес
+ * тоже отказ, человек видит это в окне. В обработчике адрес мог закрыться
+ * между нажатием и отправкой — такому получателю письмо просто не уходит, а
+ * исход называет причину.
  */
 async function resolveAddressees(
 	ctx: ActorContext,
 	interaction: InteractionView,
-	recipientIds: readonly string[]
-): Promise<Addressee[]> {
+	recipientIds: readonly string[],
+	strict: boolean
+): Promise<CaseContactAddressee[]> {
 	if (recipientIds.length === 0) {
 		throw new ValidationError('Отметьте хотя бы одного получателя');
 	}
@@ -311,15 +334,17 @@ async function resolveAddressees(
 		'interactions.program_offer_sent'
 	);
 
-	return resolved.map(({ contact, email, reason }) => {
-		if (email === null) {
-			throw new ValidationError(`Письмо не отправить: ${contactPersonName(contact.person)}`, [
-				reason
-			]);
+	if (strict) {
+		for (const { contact, email, reason } of resolved) {
+			if (email === null) {
+				throw new ValidationError(`Письмо не отправить: ${contactPersonName(contact.person)}`, [
+					reason
+				]);
+			}
 		}
+	}
 
-		return { contact, email };
-	});
+	return resolved;
 }
 
 /** Открытая запись стадии дела; `null` — дело ни на какой стадии не стоит. */
@@ -333,22 +358,26 @@ async function openEntryId(executor: Tx, interactionId: string): Promise<string 
 	return row?.id ?? null;
 }
 
+function auditTypeOf(test: boolean) {
+	return test ? 'interactions.program_offer_tested' : 'interactions.program_offer_sent';
+}
+
 /**
- * Тестовое письмо себе или письма выбранным контактам.
+ * Тестовое письмо себе или письма выбранным контактам — постановкой в
+ * очередь. Окно получает ответ сразу, письма уходят в фоне
+ * ({@link programOfferMail}).
  *
- * Отказы, которые видны без почтового сервера (прав нет, получатель чужой,
- * вложения не помещаются, почта установки закрыта), — исключения и ответ 4xx.
- * Исход разговора с сервером — значение: ушло всем, ушло не всем, не ушло.
- * След в деле пишется, если ушло хоть одному, и называет только тех, кому ушло.
+ * Всё, что видно без почтового сервера (прав нет, получатель чужой, вложения
+ * не помещаются), — исключения и ответ 4xx, как и раньше; закрытая почта
+ * установки — исход `refused`. Задание несёт только идентификаторы ролей:
+ * адреса обработчик подставит заново.
  */
 export async function sendProgramOffer(
 	ctx: ActorContext,
 	input: SendProgramOfferInput
 ): Promise<ProgramOfferOutcome> {
-	const type = input.test ? 'interactions.program_offer_tested' : 'interactions.program_offer_sent';
-
 	await requirePermission(ctx, 'interactions.write', {
-		type,
+		type: auditTypeOf(input.test),
 		subject: { type: 'interaction', id: input.interactionId }
 	});
 
@@ -369,22 +398,68 @@ export async function sendProgramOffer(
 		};
 	}
 
-	const addressees = input.test
-		? []
-		: await resolveAddressees(ctx, interaction, input.recipientIds);
-	const content = await readOfferContent(interaction, sender);
-	const attachments = await readAttachments(content.materials);
+	if (!input.test) {
+		await resolveAddressees(ctx, interaction, input.recipientIds, true);
+	}
+
+	assertAttachmentsFit((await readOfferContent(interaction, sender)).materials);
+
+	await withTransaction(ctx, (tx) =>
+		enqueueOutboundMail(ctx, tx, {
+			kind: PROGRAM_OFFER_MAIL_KIND,
+			label: input.test ? 'Тестовое описание программ' : 'Описание программ',
+			interactionId: interaction.id,
+			test: input.test,
+			// У тестового — чьё обращение показать, как в превью.
+			payload: { recipientIds: input.recipientIds }
+		})
+	);
+
+	return { status: 'queued', test: input.test };
+}
+
+/**
+ * Обработчик очереди: письма уходят по одному, от имени отправителя и по его
+ * действующим правам. Дело, программы, материалы и адреса читаются в момент
+ * отправки: за время ожидания их могли поправить.
+ *
+ * След в деле — строка `program_offer_sends` (по ней закрывается пункт
+ * правилом `offer_sent`) и запись истории для ленты — пишется, если ушло хоть
+ * одному, и называет только тех, кому ушло. Тестовое письмо себе оставляет
+ * только журнал.
+ */
+async function deliverProgramOffer(
+	ctx: ActorContext,
+	job: OutboundMailJob
+): Promise<OutboundMailResult> {
 	const audit = {
-		type,
-		subject: { type: 'interaction', id: interaction.id }
+		type: auditTypeOf(job.test),
+		subject: { type: 'interaction', id: job.interactionId }
 	} as const;
 
-	if (input.test) {
+	await requirePermission(ctx, 'interactions.write', audit);
+
+	const recipientIds = payloadIds(job, 'recipientIds');
+	const sender = senderOf(ctx);
+	const interaction = await getInteraction(ctx, job.interactionId);
+
+	if (interaction.programs.length === 0) {
+		throw new ValidationError(NO_PROGRAMS);
+	}
+
+	const content = await readOfferContent(interaction, sender);
+	const attachments = await readAttachments(content.materials);
+	const details = {
+		mailJobId: job.id,
+		attachmentCount: attachments.length,
+		programCount: content.facts.programs.length
+	};
+
+	if (job.test) {
 		// Обращение в тестовом письме — того, кого окно показывало в превью, если
 		// его имя можно прочитать; иначе обезличенное «Здравствуйте!».
-		const contacts =
-			input.recipientIds.length === 0 ? null : await readCaseContacts(ctx, interaction);
-		const shown = contacts?.find((contact) => contact.id === input.recipientIds[0]);
+		const contacts = recipientIds.length === 0 ? null : await readCaseContacts(ctx, interaction);
+		const shown = contacts?.find((contact) => contact.id === recipientIds[0]);
 		const email = programOfferEmail({
 			...content.facts,
 			recipientName: shown === undefined ? null : contactGreetingName(shown.person),
@@ -401,22 +476,26 @@ export async function sendProgramOffer(
 		await recordAuditEvent(ctx, {
 			...audit,
 			outcome: outcome.status === 'sent' ? 'success' : 'failure',
-			details: { attachmentCount: attachments.length, programCount: content.facts.programs.length }
+			details
 		});
 
-		return outcome.status === 'sent'
-			? { status: 'sent', test: true, sentCount: 1, failed: [] }
-			: { status: outcome.status, test: true, error: outcome.error };
+		return singleMailResult(outcome);
 	}
 
-	const sent: Addressee[] = [];
-	const failed: { affiliationId: string; error: string }[] = [];
+	const addressees = await resolveAddressees(ctx, interaction, recipientIds, false);
+	const sent: CaseContactAddressee[] = [];
+	const failed: string[] = [];
 	let refused: string | null = null;
 
 	// По одному письму: у каждого своё обращение, и адреса коллег не
 	// раскрываются друг другу. Отказ до соединения (песочница, размер) одинаков
 	// для всех — после первого остальных не пробуем.
 	for (const addressee of addressees) {
+		if (addressee.email === null) {
+			failed.push(`${contactPersonName(addressee.contact.person)} — ${addressee.reason}`);
+			continue;
+		}
+
 		const email = programOfferEmail({
 			...content.facts,
 			recipientName: contactGreetingName(addressee.contact.person),
@@ -437,26 +516,25 @@ export async function sendProgramOffer(
 			refused = outcome.error;
 			break;
 		} else {
-			failed.push({ affiliationId: addressee.contact.id, error: outcome.error });
+			failed.push(`${contactPersonName(addressee.contact.person)} — ${outcome.error}`);
 		}
 	}
 
-	const details = {
-		recipientCount: sent.length,
-		attachmentCount: attachments.length,
-		programCount: content.facts.programs.length
+	const result: OutboundMailResult = {
+		sentCount: sent.length,
+		failedCount: failed.length,
+		refused,
+		error: failed[0] ?? null
 	};
 
 	if (sent.length === 0) {
-		await recordAuditEvent(ctx, { ...audit, outcome: 'failure', details });
+		await recordAuditEvent(ctx, {
+			...audit,
+			outcome: 'failure',
+			details: { ...details, recipientCount: 0 }
+		});
 
-		return refused !== null
-			? { status: 'refused', test: false, error: refused }
-			: {
-					status: 'failed',
-					test: false,
-					error: failed[0]?.error ?? 'Почтовый сервер не принял ни одного письма'
-				};
+		return result;
 	}
 
 	await withTransaction(ctx, async (tx) => {
@@ -509,15 +587,25 @@ export async function sendProgramOffer(
 
 		await recordAuditEvent(
 			ctx,
-			{ ...audit, outcome: 'success', details: { ...details, sendId: row.id } },
+			{
+				...audit,
+				outcome: 'success',
+				details: { ...details, recipientCount: sent.length, sendId: row.id }
+			},
 			tx
 		);
 
 		publishAfterCommit(tx, interaction.id, { type: 'interaction.changed' });
 	});
 
-	return { status: 'sent', test: false, sentCount: sent.length, failed };
+	return result;
 }
+
+/** Описание программ в очереди писем: кто его отправляет. */
+export const programOfferMail: OutboundMailHandler = {
+	auditType: (job) => auditTypeOf(job.test),
+	deliver: deliverProgramOffer
+};
 
 /** Строка ленты: сколько получателей и вложений, без имён. */
 function offerText(recipients: number, attachments: number): string {

@@ -38,6 +38,8 @@ import { buildMeetingInvite, nextMeetingIdentity } from './server/ics';
 import {
 	cancelMeeting,
 	isUpcoming,
+	meetingCancelMail,
+	meetingInviteMail,
 	meetingText,
 	readMeeting,
 	recordMeeting,
@@ -137,12 +139,22 @@ async function outcomeOf(action: () => Promise<Record<string, unknown>>) {
 }
 
 export default defineCardServer(meetings, {
+	/**
+	 * Письма «Встреч» в общей очереди ядра: приглашение (и перенос) и отмена.
+	 * Действия ниже их только ставят, а уходят они в фоне.
+	 */
+	mail: {
+		invite: meetingInviteMail,
+		cancel: meetingCancelMail
+	},
+
 	actions: {
 		/**
 		 * Назначить встречу и разослать приглашение письмом — основной путь
 		 * диалога. Встреча, которая ещё впереди, так переносится: участникам
 		 * уходит обновление того же события. С `test` письмо уходит только тому,
-		 * кто нажал, и встреча не сохраняется.
+		 * кто нажал, и встреча не сохраняется. Ответ приходит сразу: письма
+		 * встают в очередь, а встреча ложится в дело, когда они ушли.
 		 */
 		meetingInvite: async (event) => {
 			const ctx = actorFromEvent(event);
@@ -173,7 +185,10 @@ export default defineCardServer(meetings, {
 			);
 		},
 
-		/** Отменить встречу, которая ещё впереди: отмена в календари приглашённых и отметка в деле. */
+		/**
+		 * Отменить встречу, которая ещё впереди: отметка в деле сразу, отмена в
+		 * календари приглашённых — письмами в фоне.
+		 */
 		meetingCancel: async (event) =>
 			outcomeOf(() => cancelMeeting(actorFromEvent(event), event.params.id)),
 

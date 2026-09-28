@@ -113,6 +113,9 @@ export const DEMO_DATA_TABLES = [
 	'application_notices',
 	// Отправки описания программ вузу: след дела, уходит вместе с делами.
 	'program_offer_sends',
+	// Очередь писем вузу: задания и строки колокольчика о неушедших письмах
+	// ссылаются на дела и уходят вместе с ними.
+	'outbound_mail_jobs',
 	// Документы
 	'documents',
 	'stage_entry_documents',

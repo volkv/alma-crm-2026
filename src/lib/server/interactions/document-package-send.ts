@@ -14,6 +14,10 @@
  * редакции документов по шаблонам в PDF. Заменённая редакция, чужой документ
  * или DOCX — отказ всей отправки, а не молчаливый пропуск.
  *
+ * Письма уходят в фоне: нажатие ставит задание в общую очередь писем вузу
+ * (`mail/queue.ts`), окно получает ответ сразу, а обработчик
+ * ({@link documentPackageMail}) шлёт письма после фиксации и ставит отметку.
+ *
  * След — строка истории дела с идентификаторами получателей и документов с
  * хешами, без адресов и имён; тестовое письмо себе оставляет только журнал.
  */
@@ -52,6 +56,16 @@ import {
 	type OutboundAttachment
 } from '../mail/outbound';
 import { documentPackageEmail, type DocumentPackageFacts } from '../mail/document-package';
+import {
+	enqueueOutboundMail,
+	PACKAGE_SEND_MAIL_KIND,
+	payloadIds,
+	readOutboundMailInFlight,
+	singleMailResult,
+	type OutboundMailHandler,
+	type OutboundMailJob,
+	type OutboundMailResult
+} from '../mail/queue';
 import { requirePermission } from '../rbac';
 import { markActionItemsIn } from '../stages/commands';
 import {
@@ -207,10 +221,11 @@ export async function readPackageSendDraft(
 	const sender = senderOf(ctx);
 	const interaction = await getInteraction(ctx, interactionId);
 	const primary = primaryParty(interaction);
-	const [contacts, packageDocuments, lastSent] = await Promise.all([
+	const [contacts, packageDocuments, lastSent, inFlight] = await Promise.all([
 		readCaseContacts(ctx, interaction),
 		readPackageDocuments(interaction.id),
-		readLastSent(interaction.id)
+		readLastSent(interaction.id),
+		readOutboundMailInFlight(interaction.id, PACKAGE_SEND_MAIL_KIND)
 	]);
 
 	const today = formatIsoDay();
@@ -271,19 +286,20 @@ export async function readPackageSendDraft(
 		attachmentsLimitBytes: MAX_OUTBOUND_ATTACHMENTS_BYTES,
 		sender: { name: sender.name, email: sender.email },
 		policy: { allowed: policy.allowed, sandboxed: policy.sandboxed, reason: policy.reason },
-		lastSent
+		lastSent,
+		inFlight
 	};
 }
 
 /**
- * Отмеченные файлы — только из текущего пакета дела. Размер сверяется до
- * чтения из хранилища: письмо, которое сервер всё равно отбил бы, не должно
- * тянуть файлы.
+ * Отмеченные файлы — только из текущего пакета дела. Размер сверяется по
+ * записям документов, до чтения из хранилища: письмо, которое сервер всё
+ * равно отбил бы, не должно ни вставать в очередь, ни тянуть файлы.
  */
 async function chooseDocuments(
 	interactionId: string,
 	documentIds: readonly string[]
-): Promise<{ chosen: PackageDocument[]; attachments: OutboundAttachment[] }> {
+): Promise<PackageDocument[]> {
 	const available = await readPackageDocuments(interactionId);
 
 	if (available.length === 0) {
@@ -312,37 +328,47 @@ async function chooseDocuments(
 		]);
 	}
 
-	const attachments = await Promise.all(
+	return chosen;
+}
+
+/** Файлы вложений — читаются обработчиком, в момент отправки. */
+async function readAttachments(chosen: readonly PackageDocument[]): Promise<OutboundAttachment[]> {
+	return Promise.all(
 		chosen.map(async (document) => ({
 			filename: document.fileName,
 			content: await readStoredFile(document.filePath),
 			contentType: PDF_MIME
 		}))
 	);
+}
 
-	return { chosen, attachments };
+function auditOf(test: boolean, interactionId: string) {
+	return {
+		type: test ? 'interactions.document_package_tested' : 'interactions.document_package_sent',
+		subject: { type: 'interaction', id: interactionId }
+	} as const;
 }
 
 /**
- * Тестовое письмо себе или письма выбранным контактам.
+ * Тестовое письмо себе или письма выбранным контактам — постановкой в
+ * очередь. Окно получает ответ сразу, письма уходят в фоне
+ * ({@link documentPackageMail}).
  *
  * Отказы, видные без почтового сервера (права, чужой получатель или файл,
- * размер, закрытая почта), — исключения и ответ 4xx. Исход разговора с
- * сервером — значение. След в деле и отметка пункта — если ушло хоть одному.
+ * размер), — исключения и ответ 4xx, как и раньше; закрытая почта установки —
+ * исход `refused`. Задание несёт только идентификаторы ролей и документов.
  */
 export async function sendDocumentPackage(
 	ctx: ActorContext,
 	input: SendDocumentPackageInput
 ): Promise<PackageSendOutcome> {
-	const type = input.test
-		? 'interactions.document_package_tested'
-		: 'interactions.document_package_sent';
-	const audit = { type, subject: { type: 'interaction', id: input.interactionId } } as const;
+	const audit = auditOf(input.test, input.interactionId);
 
 	await requirePermission(ctx, 'interactions.write', audit);
 	await requirePermission(ctx, 'documents.read', audit);
 
-	const sender = senderOf(ctx);
+	senderOf(ctx);
+
 	const interaction = await getInteraction(ctx, input.interactionId);
 	const policy = outboundMailPolicy();
 
@@ -360,7 +386,7 @@ export async function sendDocumentPackage(
 
 	const addressees = input.test
 		? []
-		: await resolveCaseContacts(ctx, interaction, input.recipientIds, type);
+		: await resolveCaseContacts(ctx, interaction, input.recipientIds, audit.type);
 
 	for (const addressee of addressees) {
 		if (addressee.email === null) {
@@ -371,13 +397,48 @@ export async function sendDocumentPackage(
 		}
 	}
 
-	const { chosen, attachments } = await chooseDocuments(interaction.id, input.documentIds);
-	const details = { attachmentCount: attachments.length };
+	await chooseDocuments(interaction.id, input.documentIds);
 
-	if (input.test) {
-		const contacts =
-			input.recipientIds.length === 0 ? null : await readCaseContacts(ctx, interaction);
-		const shown = contacts?.find((contact) => contact.id === input.recipientIds[0]);
+	await withTransaction(ctx, (tx) =>
+		enqueueOutboundMail(ctx, tx, {
+			kind: PACKAGE_SEND_MAIL_KIND,
+			label: input.test ? 'Тестовый пакет документов' : 'Пакет документов',
+			interactionId: interaction.id,
+			test: input.test,
+			payload: { recipientIds: input.recipientIds, documentIds: input.documentIds }
+		})
+	);
+
+	return { status: 'queued', test: input.test };
+}
+
+/**
+ * Обработчик очереди: письма уходят по одному, от имени отправителя и по его
+ * действующим правам. Пакет и адреса читаются в момент отправки: файл,
+ * заменённый новой редакцией за время ожидания, — отказ всей отправки, а не
+ * письмо со старой редакцией.
+ *
+ * След в деле и отметка пункта — если ушло хоть одному.
+ */
+async function deliverDocumentPackage(
+	ctx: ActorContext,
+	job: OutboundMailJob
+): Promise<OutboundMailResult> {
+	const audit = auditOf(job.test, job.interactionId);
+
+	await requirePermission(ctx, 'interactions.write', audit);
+	await requirePermission(ctx, 'documents.read', audit);
+
+	const recipientIds = payloadIds(job, 'recipientIds');
+	const sender = senderOf(ctx);
+	const interaction = await getInteraction(ctx, job.interactionId);
+	const chosen = await chooseDocuments(interaction.id, payloadIds(job, 'documentIds'));
+	const attachments = await readAttachments(chosen);
+	const details = { mailJobId: job.id, attachmentCount: attachments.length };
+
+	if (job.test) {
+		const contacts = recipientIds.length === 0 ? null : await readCaseContacts(ctx, interaction);
+		const shown = contacts?.find((contact) => contact.id === recipientIds[0]);
 		const email = documentPackageEmail(
 			packageFacts(
 				interaction,
@@ -401,19 +462,22 @@ export async function sendDocumentPackage(
 			details
 		});
 
-		return outcome.status === 'sent'
-			? { status: 'sent', test: true, sentCount: 1, failed: [], checklistMarked: false }
-			: { status: outcome.status, test: true, error: outcome.error };
+		return singleMailResult(outcome);
 	}
 
+	const addressees = await resolveCaseContacts(ctx, interaction, recipientIds, audit.type);
 	const sent: { affiliationId: string; personId: string }[] = [];
-	const failed: { affiliationId: string; error: string }[] = [];
+	const failed: string[] = [];
 	let refused: string | null = null;
 
 	// По одному письму: у каждого своё обращение, и адреса коллег не
-	// раскрываются друг другу. Отказ до соединения одинаков для всех.
+	// раскрываются друг другу. Отказ до соединения одинаков для всех. Адрес,
+	// закрывшийся за время ожидания, — письмо не уходит только этому человеку.
 	for (const addressee of addressees) {
-		if (addressee.email === null) continue;
+		if (addressee.email === null) {
+			failed.push(`${contactPersonName(addressee.contact.person)} — ${addressee.reason}`);
+			continue;
+		}
 
 		const email = documentPackageEmail(
 			packageFacts(
@@ -439,20 +503,25 @@ export async function sendDocumentPackage(
 			refused = outcome.error;
 			break;
 		} else {
-			failed.push({ affiliationId: addressee.contact.id, error: outcome.error });
+			failed.push(`${contactPersonName(addressee.contact.person)} — ${outcome.error}`);
 		}
 	}
 
-	if (sent.length === 0) {
-		await recordAuditEvent(ctx, { ...audit, outcome: 'failure', details });
+	const result: OutboundMailResult = {
+		sentCount: sent.length,
+		failedCount: failed.length,
+		refused,
+		error: failed[0] ?? null
+	};
 
-		return refused !== null
-			? { status: 'refused', test: false, error: refused }
-			: {
-					status: 'failed',
-					test: false,
-					error: failed[0]?.error ?? 'Почтовый сервер не принял ни одного письма'
-				};
+	if (sent.length === 0) {
+		await recordAuditEvent(ctx, {
+			...audit,
+			outcome: 'failure',
+			details: { ...details, recipientCount: 0 }
+		});
+
+		return result;
 	}
 
 	const trace: SendTrace = {
@@ -463,7 +532,7 @@ export async function sendDocumentPackage(
 		}))
 	};
 
-	const checklistMarked = await withTransaction(ctx, async (tx) => {
+	await withTransaction(ctx, async (tx) => {
 		// Блокировка — как у любой записи в дело. Письма уже ушли: отказ сейчас
 		// оставил бы их без следа, поэтому область проверена чтением дела выше.
 		await tx
@@ -491,22 +560,35 @@ export async function sendDocumentPackage(
 
 		// Пункт «Пакет отправлен» — ручной: его отмечает и человек, если пакет
 		// ушёл мимо системы. Здесь отметку ставит сама отправка, от имени того,
-		// кто нажал, — и только при праве менять чек-лист.
+		// кто нажал, — и только при праве менять чек-лист. Нет такого пункта на
+		// открытой стадии или права — письмо ушло, пункт остаётся как был.
 		const marked = await markActionItemsIn(ctx, tx, interaction.id, SEND_ACTION);
 
 		await recordAuditEvent(
 			ctx,
-			{ ...audit, outcome: 'success', details: { ...details, recipientCount: sent.length } },
+			{
+				...audit,
+				outcome: 'success',
+				details: {
+					...details,
+					recipientCount: sent.length,
+					checklistItemCount: marked ? 1 : 0
+				}
+			},
 			tx
 		);
 
 		publishAfterCommit(tx, interaction.id, { type: 'interaction.changed' });
-
-		return marked;
 	});
 
-	return { status: 'sent', test: false, sentCount: sent.length, failed, checklistMarked };
+	return result;
 }
+
+/** Пакет документов в очереди писем: кто его отправляет. */
+export const documentPackageMail: OutboundMailHandler = {
+	auditType: (job) => auditOf(job.test, job.interactionId).type,
+	deliver: deliverDocumentPackage
+};
 
 /** Строка ленты: сколько получателей и файлов, без имён. */
 function sentText(recipients: number, files: number): string {

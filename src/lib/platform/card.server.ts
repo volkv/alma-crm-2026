@@ -1,6 +1,7 @@
 /**
  * Серверная часть карточки взаимодействия, которую приносит модуль: действия
- * форм, файлы по ссылке из карточки и загрузка своих данных.
+ * форм, файлы по ссылке из карточки, загрузка своих данных и обработчики
+ * писем вузу, которые модуль ставит в общую очередь.
  *
  * Здесь только объявление и типы — без `import.meta.glob`. Модули собирает
  * `card-registry.server.ts`: он же оборачивает каждое действие и файл проверкой
@@ -9,6 +10,7 @@
 import type { ActionFailure, RequestEvent } from '@sveltejs/kit';
 import type { InteractionView } from '$lib/contracts/interactions';
 import type { ActorContext } from '$lib/server/actor';
+import type { OutboundMailHandler } from '$lib/server/mail/queue';
 import type { ModuleManifest } from './define';
 
 /** Значение, которым список формы обозначает «ничего не выбрано». */
@@ -43,10 +45,18 @@ export type CardLoad = (input: {
 	interaction: InteractionView;
 }) => Promise<unknown>;
 
+/**
+ * Письма вузу, которые модуль ставит в общую очередь (`mail/queue.ts`): вид
+ * письма → обработчик. Вид в очереди — `<модуль>:<вид>`, и найти обработчик
+ * по нему очередь просит реестр.
+ */
+export type CardMailHandlers = Record<string, OutboundMailHandler>;
+
 export type CardServer = {
 	actions: Record<string, CardActionHandler>;
 	files: Record<string, CardFileHandler>;
 	load: CardLoad | null;
+	mail?: CardMailHandlers;
 };
 
 export type CardServerPart<K extends string = string> = CardServer & { key: K };

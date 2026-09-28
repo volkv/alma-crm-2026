@@ -3,13 +3,16 @@
  *
  * Держит один инвариант: письмо с событием календаря уходит только контакту
  * основной стороны этого дела, коллеге, который видит дело, и копией
- * ответственному; встреча сохраняется со списком приглашённых, перенос
- * обновляет то же событие, а отмена уходит тем же людям. Почтовый сервер
- * заменён приёмником в памяти: проверяется, что и кому передано, а не SMTP.
+ * ответственному; нажатие только ставит письма в очередь, а обработчик
+ * очереди отправляет их и сохраняет встречу со списком приглашённых; перенос
+ * обновляет то же событие, а отмена ложится в дело сразу и уходит тем же
+ * людям. Почтовый сервер заменён приёмником в памяти: проверяется, что и кому
+ * передано, а не SMTP.
  */
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
 import { affiliations } from '$lib/server/db/schema';
 import { ValidationError } from '$lib/server/errors';
+import { runOutboundMailCycle } from '$lib/server/mail/queue';
 import { readModuleFact } from '$lib/server/platform/module-facts';
 import {
 	cancelMeeting,
@@ -133,7 +136,17 @@ describe('приглашение на встречу', () => {
 
 		const invited = await sendMeetingInvite(ctx, request);
 
-		expect(invited).toMatchObject({ status: 'sent', kind: 'invite', sentCount: 3, failed: [] });
+		// Ответ — сразу и без почты; встреча ляжет в дело, когда письма уйдут.
+		expect(invited).toStrictEqual({
+			status: 'queued',
+			kind: 'invite',
+			test: false,
+			recorded: false
+		});
+		expect(sendMail).not.toHaveBeenCalled();
+		expect(await readMeeting(interactionId)).toBeNull();
+
+		await expect(runOutboundMailCycle()).resolves.toMatchObject({ processed: 1 });
 		expect(sentMails().flatMap((mail) => mail.to.map((to) => to.address))).toStrictEqual([
 			'prorector@vuz.example',
 			'kollega@example.org',
@@ -169,17 +182,25 @@ describe('приглашение на встречу', () => {
 			start: new Date(request.start.getTime() + 60 * 60 * 1000)
 		});
 
-		expect(moved).toMatchObject({ status: 'sent', kind: 'update', sentCount: 3 });
+		expect(moved).toMatchObject({ status: 'queued', kind: 'update' });
+		await runOutboundMailCycle();
+		expect(sentMails()).toHaveLength(3);
 		expect(unfold(sentMails()[0].icalEvent?.content)).toContain('SEQUENCE:1');
 		expect((await readMeeting(interactionId))?.uid).toBe(saved?.uid);
 
 		sendMail.mockClear();
 
 		expect(await cancelMeeting(ctx, interactionId)).toMatchObject({
-			status: 'sent',
+			status: 'queued',
 			kind: 'cancel',
-			sentCount: 3
+			recorded: true
 		});
+		// Отмена — решение по делу: оно в деле сразу, письма догоняют.
+		expect((await readMeeting(interactionId))?.cancelled).toBe(true);
+		expect(sendMail).not.toHaveBeenCalled();
+
+		await runOutboundMailCycle();
+		expect(sentMails()).toHaveLength(3);
 
 		const cancel = unfold(sentMails()[0].icalEvent?.content);
 

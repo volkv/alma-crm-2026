@@ -3,7 +3,6 @@
 	import { toast } from 'svelte-sonner';
 	import MailIcon from '@lucide/svelte/icons/mail';
 	import SendIcon from '@lucide/svelte/icons/send';
-	import { invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -29,8 +28,11 @@
 	 * письмо, в песочнице без скриптов.
 	 *
 	 * «Тестовое письмо себе» уходит на почту того, кто нажал, и в деле ничего не
-	 * меняет. «Отправить контактам» — каждому отмеченному своё письмо; после
-	 * отправки пункт чек-листа закрывается сам, а в ленте появляется запись.
+	 * меняет. «Отправить контактам» — каждому отмеченному своё письмо. Почтового
+	 * сервера окно не ждёт: письма встают в очередь и уходят в фоне, окно сразу
+	 * закрывается. Когда письма уйдут, в ленте появится запись, а пункт
+	 * чек-листа закроется сам — живая карточка перечитается; не ушло — строка в
+	 * колокольчике.
 	 */
 	let {
 		interaction,
@@ -131,11 +133,6 @@
 		draft === null || noPrograms || tooLarge || !draft.policy.allowed || sending !== null
 	);
 
-	/** Имя получателя по роли — для сообщения о тех, кому не ушло. */
-	function recipientName(id: string): string {
-		return draft?.recipients.find((recipient) => recipient.affiliationId === id)?.name ?? id;
-	}
-
 	async function send(test: boolean) {
 		sending = test ? 'test' : 'contacts';
 		refusal = null;
@@ -155,30 +152,22 @@
 
 			const outcome = (await response.json()) as ProgramOfferOutcome;
 
-			if (outcome.status !== 'sent') {
+			if (outcome.status !== 'queued') {
 				refusal = outcome.error;
 				return;
 			}
 
 			if (outcome.test) {
-				toast.success(`Тестовое письмо отправлено на ${draft?.sender.email ?? 'вашу почту'}`);
+				// Окно остаётся открытым: после теста обычно отправляют по-настоящему.
+				toast.success(`Тестовое письмо отправляется на ${draft?.sender.email ?? 'вашу почту'}`);
 				return;
 			}
 
-			const sent = `Описание программ отправлено: ${pluralize(outcome.sentCount, ['получатель', 'получателя', 'получателей'])}`;
-
-			if (outcome.failed.length > 0) {
-				toast.warning(sent, {
-					description: `Не ушло: ${outcome.failed
-						.map((item) => `${recipientName(item.affiliationId)} — ${item.error}`)
-						.join('; ')}`
-				});
-			} else {
-				toast.success(sent);
-			}
-
+			toast.success(
+				`Описание программ отправляется: ${pluralize(selected.length, ['получатель', 'получателя', 'получателей'])}`,
+				{ description: 'Появится в ленте, когда уйдёт. Если не уйдёт — скажет колокольчик.' }
+			);
 			commands.close();
-			await invalidateAll();
 		} catch {
 			refusal = 'Письмо не отправлено: нет связи с сервером';
 		} finally {
@@ -229,6 +218,13 @@
 					Уже отправляли {formatDateTime(draft.lastSent.sentAt)} — {pluralize(
 						draft.lastSent.recipientCount,
 						['получатель', 'получателя', 'получателей']
+					)}.
+				</p>
+			{/if}
+			{#if draft.inFlight !== null}
+				<p class="text-xs text-muted-foreground">
+					Предыдущее описание ещё отправляется — поставлено {formatDateTime(
+						draft.inFlight.queuedAt
 					)}.
 				</p>
 			{/if}

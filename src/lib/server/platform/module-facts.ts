@@ -102,10 +102,16 @@ export async function recordModuleFactIn(
 /**
  * Факт модуля своей транзакцией — под блокировкой дела и с событием журнала.
  * `auditDetails` дополняют подробности события — например, числом получателей.
+ * `alongside` — что ещё должно лечь той же транзакцией: отмена встречи ставит
+ * в ней письма об отмене в очередь, и откатиться они могут только вместе.
  */
 export async function recordModuleFact(
 	ctx: ActorContext,
-	input: FactInput & { auditType: AuditEventType; auditDetails?: AuditDetails }
+	input: FactInput & {
+		auditType: AuditEventType;
+		auditDetails?: AuditDetails;
+		alongside?: (tx: Tx) => Promise<void>;
+	}
 ): Promise<void> {
 	requirePermission(ctx, 'interactions.write');
 
@@ -136,5 +142,7 @@ export async function recordModuleFact(
 			},
 			tx
 		);
+
+		await input.alongside?.(tx);
 	});
 }

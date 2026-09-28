@@ -2,9 +2,10 @@
  * Пакет документов вузу письмом из карточки дела.
  *
  * Держит один инвариант: письмо уносит только текущие редакции документов
- * пакета этого дела и только контактному лицу основной стороны, а настоящая
- * отправка сама отмечает пункт «Пакет документов отправлен» — тестовое письмо
- * себе его не трогает. Почтовый сервер заменён приёмником в памяти.
+ * пакета этого дела и только контактному лицу основной стороны; нажатие
+ * ставит его в очередь, не трогая почты, а обработчик очереди отправляет и сам
+ * отмечает пункт «Пакет документов отправлен» — тестовое письмо себе его не
+ * трогает. Почтовый сервер заменён приёмником в памяти.
  */
 import { eq } from 'drizzle-orm';
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from 'vitest';
@@ -12,11 +13,13 @@ import {
 	affiliations,
 	documents,
 	interactionChanges,
-	interactionParties
+	interactionParties,
+	outboundMailJobs
 } from '$lib/server/db/schema';
 import { promoteBlob, stageBlob } from '$lib/server/documents/storage';
 import { ValidationError } from '$lib/server/errors';
 import { sendDocumentPackage } from '$lib/server/interactions/document-package-send';
+import { runOutboundMailCycle } from '$lib/server/mail/queue';
 import { getInteractionStatus } from '$lib/server/stages/status';
 import { insertPerson, startTestDatabase, testActor, type TestDatabase } from '../helpers/db';
 import {
@@ -127,7 +130,7 @@ describe('пакет документов вузу', () => {
 				test: false
 			})
 		).rejects.toBeInstanceOf(ValidationError);
-		expect(sendMail).not.toHaveBeenCalled();
+		expect(await database.db.select().from(outboundMailJobs)).toHaveLength(0);
 
 		// Тестовое себе — пункт не трогает.
 		await expect(
@@ -137,7 +140,9 @@ describe('пакет документов вузу', () => {
 				documentIds: [current],
 				test: true
 			})
-		).resolves.toMatchObject({ status: 'sent', test: true, checklistMarked: false });
+		).resolves.toStrictEqual({ status: 'queued', test: true });
+		await runOutboundMailCycle();
+		expect(sendMail).toHaveBeenCalledTimes(1);
 		expect(
 			(await getInteractionStatus(ctx, interactionId)).current?.checklistState.package_sent
 		).not.toBe(true);
@@ -151,13 +156,15 @@ describe('пакет документов вузу', () => {
 			test: false
 		});
 
-		expect(outcome).toStrictEqual({
-			status: 'sent',
-			test: false,
-			sentCount: 1,
-			failed: [],
-			checklistMarked: true
-		});
+		// Ответ — сразу и без почты; пункт отметит обработчик, когда письмо уйдёт.
+		expect(outcome).toStrictEqual({ status: 'queued', test: false });
+		expect(sendMail).not.toHaveBeenCalled();
+		expect(
+			(await getInteractionStatus(ctx, interactionId)).current?.checklistState.package_sent
+		).not.toBe(true);
+
+		await expect(runOutboundMailCycle()).resolves.toMatchObject({ processed: 1 });
+		expect(sendMail).toHaveBeenCalledTimes(1);
 
 		const [mail] = sendMail.mock.calls[0] as unknown as [
 			{ to: { address: string }[]; attachments: { filename: string }[] }

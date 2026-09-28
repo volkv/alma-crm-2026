@@ -16,10 +16,9 @@
 	import FormDialog from '$lib/components/form-dialog.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import type { StageEntryView } from '$lib/contracts/interactions';
-	import { pluralize } from '$lib/format';
 	import { getCardCommands, type CardCommand } from '$lib/platform/card';
 	import type { CardDialogProps } from '$lib/platform/card-ui';
-	import type { MeetingMissedRecipient, MeetingSendOutcome, MeetingsCardData } from '../data';
+	import type { MeetingSendOutcome, MeetingsCardData } from '../data';
 
 	/**
 	 * Назначение встречи и приглашение участникам письмом.
@@ -30,6 +29,8 @@
 	 * показывают его приглашением с кнопками ответа. Встреча, которая ещё
 	 * впереди, так переносится — участникам уходит обновление того же события.
 	 * «Тест себе» — то же письмо только тому, кто нажал; встреча не сохраняется.
+	 * Почтового сервера окно не ждёт: письма уходят в фоне, встреча ложится в
+	 * дело, когда они ушли, а кому не ушло — скажет колокольчик.
 	 *
 	 * Участники — контакты основной стороны и коллеги, которые видят дело;
 	 * отметка уходит идентификатором, а адрес подставляет сервер по
@@ -192,19 +193,18 @@
 			.join(': ');
 	}
 
-	function missedText(items: readonly MeetingMissedRecipient[]): string {
-		return items.map((item) => `${item.name} — ${item.reason}`).join('; ');
-	}
-
-	const SENT_TITLE: Record<'invite' | 'update' | 'cancel', string> = {
-		invite: 'Приглашение отправлено',
-		update: 'Обновление встречи отправлено',
-		cancel: 'Встреча отменена, отмена отправлена'
+	const QUEUED_TITLE: Record<'invite' | 'update' | 'cancel', string> = {
+		invite: 'Приглашение отправляется',
+		update: 'Обновление встречи отправляется',
+		cancel: 'Встреча отменена, участникам уходит отмена'
 	};
 
-	/** Итог отправки: сколько ушло, кому не ушло и почему. */
+	/**
+	 * Итог нажатия. Письма уходят в фоне: окно не ждёт почтового сервера и
+	 * закрывается сразу; кому не ушло, скажет колокольчик.
+	 */
 	function report(outcome: MeetingSendOutcome) {
-		if (outcome.status !== 'sent') {
+		if (outcome.status === 'refused') {
 			if (outcome.recorded) {
 				toast.warning('Встреча отменена в деле, письма об отмене не ушли', {
 					description: `${outcome.error}. Предупредите участников сами.`
@@ -218,20 +218,17 @@
 		}
 
 		if (outcome.test) {
-			toast.success('Тестовое приглашение отправлено вам на почту');
+			toast.success('Тестовое приглашение отправляется вам на почту');
 
 			return;
 		}
 
-		const title = `${SENT_TITLE[outcome.kind]}: ${pluralize(outcome.sentCount, ['получатель', 'получателя', 'получателей'])}`;
-		const missed = [...outcome.failed, ...outcome.skipped];
-
-		if (missed.length > 0) {
-			toast.warning(title, { description: `Не ушло: ${missedText(missed)}` });
-		} else {
-			toast.success(title);
-		}
-
+		toast.success(QUEUED_TITLE[outcome.kind], {
+			description:
+				outcome.kind === 'cancel'
+					? 'Кому отмена не уйдёт, скажет колокольчик — предупредите их сами.'
+					: 'Встреча появится в деле, когда письма уйдут. Если не уйдут — скажет колокольчик.'
+		});
 		commands.close();
 	}
 

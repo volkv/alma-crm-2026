@@ -4,7 +4,6 @@
 	import FileSignatureIcon from '@lucide/svelte/icons/file-pen-line';
 	import MailIcon from '@lucide/svelte/icons/mail';
 	import SendIcon from '@lucide/svelte/icons/send';
-	import { invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -34,8 +33,10 @@
 	 *
 	 * «Отправить тестовое себе» уходит на почту того, кто нажал, и в деле
 	 * ничего не меняет. «Отправить контактным лицам» — каждому отмеченному своё
-	 * письмо; после отправки пункт «Пакет документов отправлен» отмечается сам,
-	 * в ленте появляется запись.
+	 * письмо. Почтового сервера окно не ждёт: письма встают в очередь и уходят в
+	 * фоне, окно сразу закрывается. Когда письма уйдут, пункт «Пакет документов
+	 * отправлен» отметится сам и в ленте появится запись — живая карточка
+	 * перечитается; не ушло — строка в колокольчике.
 	 */
 	let {
 		interaction,
@@ -147,10 +148,6 @@
 		draft === null || files.length === 0 || tooLarge || !draft.policy.allowed || sending !== null
 	);
 
-	function recipientName(id: string): string {
-		return draft?.recipients.find((recipient) => recipient.affiliationId === id)?.name ?? id;
-	}
-
 	function openPackage() {
 		commands.open({ kind: 'package', templates: [...templates], counterpartyKind });
 	}
@@ -173,38 +170,25 @@
 
 			const outcome = (await response.json()) as PackageSendOutcome;
 
-			if (outcome.status !== 'sent') {
+			if (outcome.status !== 'queued') {
 				refusal = outcome.error;
 				return;
 			}
 
 			if (outcome.test) {
-				toast.success(`Тестовое письмо отправлено на ${draft?.sender.email ?? 'вашу почту'}`);
+				// Окно остаётся открытым: после теста обычно отправляют по-настоящему.
+				toast.success(`Тестовое письмо отправляется на ${draft?.sender.email ?? 'вашу почту'}`);
 				return;
 			}
 
-			const sent = `Пакет документов отправлен: ${pluralize(outcome.sentCount, ['получатель', 'получателя', 'получателей'])}`;
-			const marked = outcome.checklistMarked
-				? 'Пункт «Пакет документов отправлен» отмечен.'
-				: undefined;
-
-			if (outcome.failed.length > 0) {
-				toast.warning(sent, {
-					description: [
-						`Не ушло: ${outcome.failed
-							.map((item) => `${recipientName(item.affiliationId)} — ${item.error}`)
-							.join('; ')}`,
-						marked
-					]
-						.filter(Boolean)
-						.join(' ')
-				});
-			} else {
-				toast.success(sent, { description: marked });
-			}
-
+			toast.success(
+				`Пакет документов отправляется: ${pluralize(recipients.length, ['получатель', 'получателя', 'получателей'])}`,
+				{
+					description:
+						'Появится в ленте, когда уйдёт, и пункт «Пакет документов отправлен» отметится сам. Если не уйдёт — скажет колокольчик.'
+				}
+			);
 			commands.close();
-			await invalidateAll();
 		} catch {
 			refusal = 'Письмо не отправлено: нет связи с сервером';
 		} finally {
@@ -239,6 +223,11 @@
 						draft.lastSent.recipientCount,
 						['получатель', 'получателя', 'получателей']
 					)}, {pluralize(draft.lastSent.documentCount, ['файл', 'файла', 'файлов'])}.
+				</p>
+			{/if}
+			{#if draft.inFlight !== null}
+				<p class="text-xs text-muted-foreground">
+					Предыдущий пакет ещё отправляется — поставлен {formatDateTime(draft.inFlight.queuedAt)}.
 				</p>
 			{/if}
 
