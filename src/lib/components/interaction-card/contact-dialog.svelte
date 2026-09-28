@@ -524,7 +524,7 @@
 	title="Контактное лицо"
 	description="Человек {whose}, с которым ведётся работа, и как с ним связываться. Смена контакта попадёт в ленту вместе с причиной."
 	{dirty}
-	width={mode === 'create' ? 'lg' : 'md'}
+	width={mode === 'create' ? 'xl' : 'lg'}
 >
 	<form id="card-contact-form" class="flex flex-col gap-4" novalidate onsubmit={save}>
 		{#if conflict !== null}
