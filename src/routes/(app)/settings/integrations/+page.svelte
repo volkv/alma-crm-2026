@@ -253,7 +253,7 @@
 	<Card.Content class="flex flex-col gap-4">
 		{#if data.webhooks.length === 0}
 			<p class="text-sm text-muted-foreground">
-				Подписок ещё нет. Заведите первую, когда внешней системе понадобится узнавать о событиях без
+				Подписок ещё нет. Создайте первую, когда внешней системе понадобится узнавать о событиях без
 				опроса API.
 			</p>
 		{/if}
@@ -639,7 +639,7 @@
 <FormDialog
 	bind:open={editorOpen}
 	width="xl"
-	title={$webhook.id === null ? 'Новая подписка' : 'Подписка'}
+	title={$webhook.id === null ? 'Создать подписку' : 'Подписка'}
 	description="Адрес принимает POST с телом события. По http принимает только адрес на этой же машине — остальным нужен https."
 >
 	{#if $webhookErrors._errors}
@@ -728,7 +728,7 @@
 		<FormActions
 			form="webhook-form"
 			submitting={$webhookSubmitting}
-			submitLabel={$webhook.id === null ? 'Завести подписку' : 'Сохранить'}
+			submitLabel={$webhook.id === null ? 'Создать подписку' : 'Сохранить'}
 			oncancel={close}
 			class="border-t-0 pt-0"
 		/>

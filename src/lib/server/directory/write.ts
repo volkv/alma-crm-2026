@@ -521,7 +521,7 @@ export async function updateSite(ctx: ActorContext, input: UpdateSiteInput): Pro
 	// организация» ссылаются роли людей, и перенос сделал бы эти ссылки ложью.
 	if (fields.organizationId !== before.organizationId) {
 		throw new ValidationError('Площадку нельзя перенести в другую организацию', [
-			'Заведите площадку в нужной организации и закройте прежнюю'
+			'Добавьте площадку в нужной организации и закройте прежнюю'
 		]);
 	}
 

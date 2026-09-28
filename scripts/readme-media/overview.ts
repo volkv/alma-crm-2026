@@ -568,7 +568,7 @@ async function removalPreview(page: Page): Promise<void> {
  */
 async function flexibility(page: Page): Promise<void> {
 	await visit(page, '/settings/workflows', 'Процессы');
-	await press(page, page.getByRole('button', { name: 'Завести процесс' }));
+	await press(page, page.getByRole('button', { name: 'Создать процесс' }));
 
 	const dialog = page.getByRole('dialog');
 

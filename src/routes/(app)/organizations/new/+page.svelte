@@ -34,14 +34,14 @@
 	let accepted = $state<PassportAcceptance>([]);
 </script>
 
-<svelte:head><title>Новая организация — Альма CRM</title></svelte:head>
+<svelte:head><title>Добавить организацию — Альма CRM</title></svelte:head>
 
-<Header title="Новая организация" />
+<Header title="Добавить организацию" />
 
 <Breadcrumbs
 	items={[
 		{ label: 'Организации', href: resolve('/organizations') },
-		{ label: 'Новая организация' }
+		{ label: 'Добавить организацию' }
 	]}
 />
 

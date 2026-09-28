@@ -212,7 +212,7 @@
 <Dialog.Root bind:open={createOpen}>
 	<Dialog.Content>
 		<Dialog.Header>
-			<Dialog.Title>Новый ключ доступа</Dialog.Title>
+			<Dialog.Title>Создать ключ доступа</Dialog.Title>
 			<Dialog.Description>
 				Назовите ключ так, чтобы через полгода было понятно, кто им ходит: «Выгрузка в 1С», а не
 				«ключ 2».

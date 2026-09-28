@@ -50,7 +50,7 @@
 	 * несколько раз. Почта и телефон кандидатов в диалоге не показываются:
 	 * они ложатся в карточку человека зашифрованными.
 	 *
-	 * Нужного человека нет нигде — вкладка «Новый человек»: ФИО, должность,
+	 * Нужного человека нет нигде — вкладка «Добавить нового»: ФИО, должность,
 	 * роль и срок полномочий, почта и телефон. Без права заводить людей ни
 	 * вкладки, ни блока с сайта нет.
 	 *
@@ -534,12 +534,12 @@
 		{#if canCreate}
 			<SegmentedControl.Root
 				size="sm"
-				aria-label="Выбрать из контактов или завести нового"
+				aria-label="Выбрать из контактов или добавить нового"
 				value={mode}
 				onValueChange={(value) => (mode = value as Mode)}
 			>
 				<SegmentedControl.Item value="pick">Из контактов {whose}</SegmentedControl.Item>
-				<SegmentedControl.Item value="create">Новый человек</SegmentedControl.Item>
+				<SegmentedControl.Item value="create">Добавить нового</SegmentedControl.Item>
 			</SegmentedControl.Root>
 		{/if}
 
@@ -666,7 +666,7 @@
 							class="rounded-sm text-foreground underline underline-offset-2 focus-ring"
 							onclick={() => (mode = 'create')}
 						>
-							Заведите его здесь
+							Добавьте его здесь
 						</button>
 					</p>
 				{/if}
@@ -778,7 +778,7 @@
 					adding !== null ||
 					(mode === 'pick' && contactId === initialId && !channelChanged)}
 			>
-				{mode === 'create' ? 'Завести и сделать контактом' : 'Сохранить'}
+				{mode === 'create' ? 'Добавить и сделать контактом' : 'Сохранить'}
 			</Button>
 		</div>
 	{/snippet}

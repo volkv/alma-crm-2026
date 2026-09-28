@@ -126,7 +126,7 @@
 		{#if data.canWrite}
 			<Button href={resolve('/(app)/people/new')}>
 				<PlusIcon aria-hidden="true" />
-				Новый человек
+				Добавить контакт
 			</Button>
 		{/if}
 	{/snippet}
@@ -173,7 +173,7 @@
 		emptyAction={data.filtered ? resetFilters : undefined}
 		emptyDescription={data.filtered
 			? 'Смягчите условия или очистите поиск.'
-			: 'Заведите человека — дальше ему назначают роль в организации.'}
+			: 'Добавьте человека — дальше ему назначают роль в организации.'}
 		onopen={open}
 	/>
 </div>

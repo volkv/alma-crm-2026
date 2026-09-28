@@ -95,7 +95,7 @@
 		<Card.Action>
 			<Button size="sm" onclick={() => (createOpen = true)}>
 				<PlusIcon aria-hidden="true" />
-				Завести процесс
+				Создать процесс
 			</Button>
 		</Card.Action>
 	</Card.Header>
@@ -110,7 +110,7 @@
 		{#if data.workflows.length === 0}
 			<EmptyState
 				title="Процессов нет"
-				description="Заведите первый процесс: стадии и переходы вы опишете черновиком в редакторе."
+				description="Создайте первый процесс: стадии и переходы вы опишете черновиком в редакторе."
 			/>
 		{:else}
 			<div class="overflow-x-auto">
@@ -200,7 +200,7 @@
 <Dialog.Root bind:open={createOpen}>
 	<Dialog.Content>
 		<Dialog.Header>
-			<Dialog.Title>Новый процесс</Dialog.Title>
+			<Dialog.Title>Создать процесс</Dialog.Title>
 			<Dialog.Description>
 				Описание работы: стадии, нормативы, чек-листы и переходы. Пустой процесс описывают в
 				редакторе, копия сразу получает стадии, переходы и состав карточки образца — их правят
@@ -269,7 +269,7 @@
 			/>
 			<FormActions
 				submitting={$createSubmitting}
-				submitLabel="Завести процесс"
+				submitLabel="Создать процесс"
 				oncancel={() => (createOpen = false)}
 			/>
 		</form>

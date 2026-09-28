@@ -987,7 +987,7 @@ export function validateProcessDraft(
 		// записями совсем другой работы, и никакой отчёт этого не покажет.
 		if (context.archivedKeys.has(stage.key)) {
 			issues.push(
-				`Ключ «${stage.key}» уже был в этом процессе и снят: заведите стадию под другим ключом`
+				`Ключ «${stage.key}» уже был в этом процессе и снят: создайте стадию под другим ключом`
 			);
 		}
 	}
@@ -1689,7 +1689,7 @@ export async function assignWorkspaceWorkflow(
 
 		if (workspace.workflowId !== null && (await countInteractions(tx, workspace.id)) > 0) {
 			throw new ConflictError(
-				`В пространстве «${workspace.name}» уже есть взаимодействия: сменить процесс им нечем — ключи стадий нового процесса ничего не значат для записей старого. Заведите новое пространство`
+				`В пространстве «${workspace.name}» уже есть взаимодействия: сменить процесс им нечем — ключи стадий нового процесса ничего не значат для записей старого. Создайте новое пространство`
 			);
 		}
 
@@ -1972,7 +1972,7 @@ async function readCopySource(
 
 	if (active === null) {
 		throw new ValidationError('Копировать нечего', [
-			`В процессе «${source.name}» ещё нет стадий: заведите новый процесс пустым`
+			`В процессе «${source.name}» ещё нет стадий: создайте новый процесс пустым`
 		]);
 	}
 

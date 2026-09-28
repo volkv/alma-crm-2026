@@ -45,7 +45,7 @@
 			</Button>
 			<Button href={resolve('/(app)/programs/[id=uuid]/versions/new', { id: data.program.id })}>
 				<PlusIcon aria-hidden="true" />
-				Новая версия
+				Добавить версию
 			</Button>
 		{/if}
 	{/snippet}

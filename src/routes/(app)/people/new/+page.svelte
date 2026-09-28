@@ -38,12 +38,12 @@
 	}));
 </script>
 
-<svelte:head><title>Новый человек — Альма CRM</title></svelte:head>
+<svelte:head><title>Добавить контакт — Альма CRM</title></svelte:head>
 
-<Header title="Новый человек" />
+<Header title="Добавить контакт" />
 
 <Breadcrumbs
-	items={[{ label: 'Контакты', href: resolve('/(app)/people') }, { label: 'Новый человек' }]}
+	items={[{ label: 'Контакты', href: resolve('/(app)/people') }, { label: 'Добавить контакт' }]}
 />
 
 <div class="p-4 sm:px-9 sm:py-6">
@@ -68,7 +68,7 @@
 		/>
 		<FormActions
 			submitting={$submitting}
-			submitLabel="Завести человека"
+			submitLabel="Добавить контакт"
 			oncancel={() => goto(resolve('/(app)/people'))}
 		/>
 	</form>

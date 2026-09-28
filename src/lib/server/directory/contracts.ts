@@ -608,7 +608,7 @@ export async function saveContract(
 		// взаимодействия, и перенос сделал бы эти ссылки ложью.
 		if (before.organizationId !== input.organizationId) {
 			throw new ValidationError('Договор нельзя перенести к другому контрагенту', [
-				'Заведите договор в карточке нужного контрагента'
+				'Создайте договор в карточке нужного контрагента'
 			]);
 		}
 	}
@@ -693,7 +693,7 @@ export async function saveContractItem(
 
 	if (existing !== null && existing.productId !== input.productId) {
 		throw new ValidationError('Продукт позиции договора изменить нельзя', [
-			'Заведите позицию по нужному продукту: условия по прежнему продукту останутся на месте'
+			'Добавьте позицию по нужному продукту: условия по прежнему продукту останутся на месте'
 		]);
 	}
 

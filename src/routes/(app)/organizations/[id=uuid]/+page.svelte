@@ -78,7 +78,7 @@
 	 */
 	const startBlocked = $derived.by((): string | null => {
 		if (!data.organization.isActive) {
-			return 'Организация в архиве: верните её, чтобы завести по ней работу.';
+			return 'Организация в архиве: верните её, чтобы начать по ней работу.';
 		}
 
 		if (startTargets.length === 0) {
@@ -246,7 +246,7 @@
 			<div class="flex items-center gap-1" data-tour="organization-primary">
 				<Button href={startHref(main.key)} title="В пространстве «{main.name}»">
 					<PlusIcon aria-hidden="true" />
-					Завести взаимодействие
+					Создать взаимодействие
 				</Button>
 				{#if others.length > 0}
 					<DropdownMenu.Root>
@@ -256,7 +256,7 @@
 									{...props}
 									variant="outline"
 									size="icon"
-									aria-label="Завести взаимодействие в другом пространстве"
+									aria-label="Создать взаимодействие в другом пространстве"
 								>
 									<ChevronDownIcon aria-hidden="true" />
 								</Button>
@@ -264,7 +264,7 @@
 						</DropdownMenu.Trigger>
 						<DropdownMenu.Content align="end" class="w-64">
 							<DropdownMenu.Group>
-								<DropdownMenu.GroupHeading>Завести в пространстве</DropdownMenu.GroupHeading>
+								<DropdownMenu.GroupHeading>Создать в пространстве</DropdownMenu.GroupHeading>
 								<DropdownMenu.Item>
 									{#snippet child({ props })}
 										<a {...props} href={startHref(main.key)}>«{main.name}» — основное</a>

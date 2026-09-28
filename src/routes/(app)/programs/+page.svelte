@@ -137,7 +137,7 @@
 		{#if data.canWrite}
 			<Button href={resolve('/(app)/programs/new')}>
 				<PlusIcon aria-hidden="true" />
-				Новая программа
+				Добавить программу
 			</Button>
 		{/if}
 	{/snippet}
@@ -178,7 +178,7 @@
 		emptyAction={data.filtered ? resetFilters : undefined}
 		emptyDescription={data.filtered
 			? 'Смягчите условия или очистите поиск.'
-			: 'Заведите программу — на неё ссылаются взаимодействия и отчёты.'}
+			: 'Добавьте программу — на неё ссылаются взаимодействия и отчёты.'}
 		onopen={open}
 	/>
 </div>

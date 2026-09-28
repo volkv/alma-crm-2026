@@ -30,15 +30,15 @@
 	const { enhance, submitting, message } = superform;
 </script>
 
-<svelte:head><title>Новая площадка — Альма CRM</title></svelte:head>
+<svelte:head><title>Добавить площадку — Альма CRM</title></svelte:head>
 
-<Header title="Новая площадка" description={data.organization.shortName} />
+<Header title="Добавить площадку" description={data.organization.shortName} />
 
 <Breadcrumbs
 	items={[
 		{ label: 'Организации', href: resolve('/(app)/organizations') },
 		{ label: data.organization.shortName, href: cardHref },
-		{ label: 'Новая площадка' }
+		{ label: 'Добавить площадку' }
 	]}
 />
 

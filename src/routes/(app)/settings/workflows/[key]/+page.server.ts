@@ -126,7 +126,7 @@ async function readDraftDefinition(
 	const { draft } = await getWorkflow(ctx, workflowKey);
 
 	if (draft === null) {
-		throw new ConflictError('У процесса нет черновика изменений: сначала заведите его');
+		throw new ConflictError('У процесса нет черновика изменений: сначала создайте его');
 	}
 
 	return processDefinition(draft);
@@ -259,7 +259,7 @@ export const actions: Actions = {
 				return setError(
 					form,
 					'key',
-					'Ключ существующей стадии изменить нельзя: удалите стадию с правилом переноса и заведите новую'
+					'Ключ существующей стадии изменить нельзя: удалите стадию с правилом переноса и создайте новую'
 				);
 			}
 

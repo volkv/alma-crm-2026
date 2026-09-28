@@ -158,7 +158,7 @@
 		{#if data.canWrite}
 			<Button href={resolve('/organizations/new')}>
 				<PlusIcon aria-hidden="true" />
-				Новая организация
+				Добавить организацию
 			</Button>
 		{/if}
 	{/snippet}
@@ -199,7 +199,7 @@
 		emptyAction={data.filtered ? resetFilters : undefined}
 		emptyDescription={data.filtered
 			? 'Смягчите условия или очистите поиск.'
-			: 'Заведите первую организацию — с неё начинается взаимодействие.'}
+			: 'Добавьте первую организацию — с неё начинается взаимодействие.'}
 		onopen={open}
 	/>
 </div>

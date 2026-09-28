@@ -741,7 +741,7 @@
 			</p>
 			{#if (primarySites?.length ?? 0) === 0}
 				<p class="text-xs text-muted-foreground">
-					У организации ещё нет площадок: импортируйте подразделение с сайта или заведите его ниже.
+					У организации ещё нет площадок: импортируйте подразделение с сайта или добавьте его ниже.
 				</p>
 			{:else if siteMatches.length === 0}
 				<p class="text-xs text-muted-foreground">Среди площадок организации не нашлось</p>
@@ -806,7 +806,7 @@
 
 {#snippet newSite(organizationId: string)}
 	<div class="flex flex-col gap-1.5" data-slot="new-site">
-		<p class="text-xs font-medium">Новая площадка</p>
+		<p class="text-xs font-medium">Добавить площадку</p>
 		<div class="flex flex-wrap items-end gap-2">
 			<Input
 				class="min-w-0 flex-1 basis-48"
@@ -843,7 +843,7 @@
 				onclick={() => createSite(organizationId)}
 			>
 				<PlusIcon aria-hidden="true" />
-				{creatingSite ? 'Заводим…' : 'Завести и отметить'}
+				{creatingSite ? 'Добавляем…' : 'Добавить и отметить'}
 			</Button>
 		</div>
 		{#if newSiteError !== null}

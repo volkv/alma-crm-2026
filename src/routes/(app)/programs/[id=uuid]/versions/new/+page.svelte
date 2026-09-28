@@ -32,15 +32,15 @@
 	const { enhance, submitting, message } = superform;
 </script>
 
-<svelte:head><title>Новая версия программы — Альма CRM</title></svelte:head>
+<svelte:head><title>Добавить версию программы — Альма CRM</title></svelte:head>
 
-<Header title="Новая версия" description={data.program.name} />
+<Header title="Добавить версию" description={data.program.name} />
 
 <Breadcrumbs
 	items={[
 		{ label: 'Программы', href: resolve('/(app)/programs') },
 		{ label: data.program.code, href: cardHref },
-		{ label: 'Новая версия' }
+		{ label: 'Добавить версию' }
 	]}
 />
 

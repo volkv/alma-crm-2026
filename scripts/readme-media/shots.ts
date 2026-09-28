@@ -363,9 +363,9 @@ export const SHOTS: readonly Frame[] = [
 		caption: 'Новый процесс с нуля: название, ключ из названия, пустой или копией действующего',
 		waitFor: 'Пустой — стадии опишу в редакторе',
 		prepare: async (page) => {
-			// Процесс не заводится: кадр показывает диалог до нажатия «Завести», и
+			// Процесс не заводится: кадр показывает диалог до нажатия «Создать», и
 			// стенд после съёмки остаётся прежним.
-			await page.getByRole('button', { name: 'Завести процесс' }).click();
+			await page.getByRole('button', { name: 'Создать процесс' }).click();
 			await page
 				.getByRole('dialog')
 				.getByLabel('Название')

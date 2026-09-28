@@ -167,7 +167,7 @@ export async function createFromRegistry(
 	// редко, но записывать в справочник то, чего не пропустила бы форма, нельзя.
 	if (!parsed.success) {
 		throw new ValidationError(
-			'Выписка из реестра не проходит проверку карточки: заведите организацию в справочнике вручную',
+			'Выписка из реестра не проходит проверку карточки: добавьте организацию в справочник вручную',
 			parsed.error.issues.slice(0, 5).map((issue) => `${issue.path.join('.')}: ${issue.message}`)
 		);
 	}

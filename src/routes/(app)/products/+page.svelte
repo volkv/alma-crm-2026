@@ -98,7 +98,7 @@
 		{#if data.canWrite}
 			<Button href={resolve('/(app)/products/new')}>
 				<PlusIcon aria-hidden="true" />
-				Новый продукт
+				Добавить продукт
 			</Button>
 		{/if}
 	{/snippet}
@@ -138,7 +138,7 @@
 		emptyAction={data.filtered ? resetFilters : undefined}
 		emptyDescription={data.filtered
 			? 'Смягчите условия или очистите поиск.'
-			: 'Заведите продукт — на него ссылаются взаимодействия.'}
+			: 'Добавьте продукт — на него ссылаются взаимодействия.'}
 		onopen={open}
 	/>
 </div>

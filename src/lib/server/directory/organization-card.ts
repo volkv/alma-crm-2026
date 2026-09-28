@@ -515,7 +515,7 @@ export async function siteContactDraft(
 
 	if (parts === null) {
 		throw new ValidationError(
-			`На сайте вместо ФИО одно слово («${candidate.name}»): заведите человека вручную`
+			`На сайте вместо ФИО одно слово («${candidate.name}»): добавьте человека вручную`
 		);
 	}
 
@@ -562,7 +562,7 @@ export async function siteContactDraft(
 
 	if (!person.success) {
 		throw new ValidationError(
-			'Кандидата не завести автоматически: заведите человека вручную',
+			'Кандидата не добавить автоматически: добавьте человека вручную',
 			person.error.issues.map((issue) => issue.message)
 		);
 	}

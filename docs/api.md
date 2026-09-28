@@ -218,7 +218,7 @@ curl -sS -X POST "$BASE/v1/interactions" \
 | Метод и путь                               | Право                 | Что делает                                                                                                                                                                                                             |
 | ------------------------------------------ | --------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `GET /v1/organizations`                    | `organizations.read`  | страница списка, фильтр `kind`, поиск `q`                                                                                                                                                                              |
-| `POST /v1/organizations`                   | `organizations.write` | завести организацию; с `Idempotency-Key`                                                                                                                                                                               |
+| `POST /v1/organizations`                   | `organizations.write` | создать организацию; с `Idempotency-Key`                                                                                                                                                                               |
 | `GET /v1/organizations/{id}`               | `organizations.read`  | карточка организации                                                                                                                                                                                                   |
 | `PUT /v1/organizations/{id}`               | `organizations.write` | изменить организацию: замена целиком, тело — как при заведении                                                                                                                                                         |
 | `GET /v1/organizations/{id}/interactions`  | `interactions.read`   | взаимодействия, где организация — сторона; вуз вне области даёт ноль                                                                                                                                                   |
@@ -237,7 +237,7 @@ curl -sS -X POST "$BASE/v1/interactions" \
 | Метод и путь                          | Право          | Что делает                                                                       |
 | ------------------------------------- | -------------- | -------------------------------------------------------------------------------- |
 | `GET /v1/people`                      | `people.read`  | страница списка людей, фильтр по организации, поиск по ФИО                       |
-| `POST /v1/people`                     | `people.write` | завести человека без роли; с `Idempotency-Key`                                   |
+| `POST /v1/people`                     | `people.write` | создать человека без роли; с `Idempotency-Key`                                   |
 | `GET /v1/people/{id}`                 | `people.read`  | карточка человека                                                                |
 | `PUT /v1/people/{id}`                 | `people.write` | изменить человека: замена целиком, тело — как при заведении; + `people.read_pii` |
 | `POST /v1/contacts`                   | `people.write` | добавить роль человека в организации; с `Idempotency-Key`                        |
@@ -248,11 +248,11 @@ curl -sS -X POST "$BASE/v1/interactions" \
 | Метод и путь                                | Право               | Что делает                                                                                       |
 | ------------------------------------------- | ------------------- | ------------------------------------------------------------------------------------------------ |
 | `GET /v1/programs`                          | `programs.read`     | каталог программ: фильтр состояния, поиск по коду и названию                                     |
-| `POST /v1/programs`                         | `programs.write`    | завести образовательную программу; с `Idempotency-Key`                                           |
+| `POST /v1/programs`                         | `programs.write`    | создать образовательную программу; с `Idempotency-Key`                                           |
 | `GET /v1/programs/{id}`                     | `programs.read`     | карточка программы вместе с историей версий                                                      |
 | `PUT /v1/programs/{id}`                     | `programs.write`    | изменить программу: замена целиком, тело — как при заведении                                     |
 | `GET /v1/products`                          | `products.read`     | каталог продуктов                                                                                |
-| `POST /v1/products`                         | `products.write`    | завести продукт; с `Idempotency-Key`                                                             |
+| `POST /v1/products`                         | `products.write`    | создать продукт; с `Idempotency-Key`                                                             |
 | `GET /v1/products/{id}`                     | `products.read`     | карточка продукта вместе с кратким наименованием вендора                                         |
 | `PUT /v1/products/{id}`                     | `products.write`    | изменить продукт: замена целиком, тело — как при заведении                                       |
 | `GET /v1/directions`                        | `directions.read`   | **действующие** ИТ-направления в порядке интерфейса; архивные не отдаются, страницами не режется |

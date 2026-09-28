@@ -305,7 +305,7 @@
 		</div>
 		{#if returnPath !== null}
 			<p class="basis-full text-xs text-muted-foreground">
-				Заведите договор и его позиции, затем вернитесь к взаимодействию: там договор выбирают
+				Создайте договор и его позиции, затем вернитесь к взаимодействию: там договор выбирают
 				вместе с нужными позициями.
 			</p>
 		{/if}
@@ -328,7 +328,7 @@
 			{/if}
 
 			<p class="text-xs font-medium">
-				{editingContract.contract === null ? 'Новый договор' : 'Изменение договора'}
+				{editingContract.contract === null ? 'Создать договор' : 'Изменение договора'}
 			</p>
 
 			<div class="grid gap-3 sm:grid-cols-2">
@@ -472,12 +472,12 @@
 							{/if}
 
 							<p class="text-xs font-medium">
-								{current === null ? 'Новая позиция договора' : 'Изменение позиции договора'}
+								{current === null ? 'Добавить позицию договора' : 'Изменение позиции договора'}
 							</p>
 
 							{#if products.length === 0}
 								<InlineHint tone="warning">
-									Справочник продуктов пуст: позицию не на что завести.
+									Справочник продуктов пуст: позицию не на что добавить.
 								</InlineHint>
 							{/if}
 

@@ -368,17 +368,17 @@ exists (
 
 ### Вузы, площадки, контакты организаций
 
-| Действие                                | Право                 | Роли    | Область | Канал                                                                                                                                  |
-| --------------------------------------- | --------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Список вузов                            | `organizations.read`  | все     | own     | `/organizations` load; `GET /api/v1/organizations`                                                                                     |
-| Карточка вуза                           | `organizations.read`  | все     | own     | `/organizations/[id]` load; `GET /api/v1/organizations/[id]`                                                                           |
-| Создать вуз                             | `organizations.write` | все     | —       | `/organizations/new` action `default`                                                                                                  |
-| Изменить, архивировать вуз              | `organizations.write` | все     | own     | `/organizations/[id]/edit`, actions `archive`, `restore`                                                                               |
-| Завести вендора, сменить вид на вендора | `organizations.write` | `admin` | всё     | `/organizations/new`, `/organizations/[id]/edit`: остальным вид не предлагается, сервис отказывает `ForbiddenError` с записью в журнал |
-| Площадки                                | `organizations.write` | все     | own     | `/organizations/[id]/sites/*`                                                                                                          |
-| Подсказка вузов и площадок              | `organizations.read`  | все     | own     | `GET /w/[workspace]/interactions/lookup?kind=organizations\|sites`                                                                     |
-| Договоры и их позиции                   | `organizations.read`  | все     | own     | блок карточки вуза; `GET /api/v1/contracts`                                                                                            |
-| Завести и править договор               | `organizations.write` | все     | own     | actions `saveContract`, `saveContractItem` карточки вуза                                                                               |
+| Действие                                 | Право                 | Роли    | Область | Канал                                                                                                                                  |
+| ---------------------------------------- | --------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------- |
+| Список вузов                             | `organizations.read`  | все     | own     | `/organizations` load; `GET /api/v1/organizations`                                                                                     |
+| Карточка вуза                            | `organizations.read`  | все     | own     | `/organizations/[id]` load; `GET /api/v1/organizations/[id]`                                                                           |
+| Создать вуз                              | `organizations.write` | все     | —       | `/organizations/new` action `default`                                                                                                  |
+| Изменить, архивировать вуз               | `organizations.write` | все     | own     | `/organizations/[id]/edit`, actions `archive`, `restore`                                                                               |
+| Добавить вендора, сменить вид на вендора | `organizations.write` | `admin` | всё     | `/organizations/new`, `/organizations/[id]/edit`: остальным вид не предлагается, сервис отказывает `ForbiddenError` с записью в журнал |
+| Площадки                                 | `organizations.write` | все     | own     | `/organizations/[id]/sites/*`                                                                                                          |
+| Подсказка вузов и площадок               | `organizations.read`  | все     | own     | `GET /w/[workspace]/interactions/lookup?kind=organizations\|sites`                                                                     |
+| Договоры и их позиции                    | `organizations.read`  | все     | own     | блок карточки вуза; `GET /api/v1/contracts`                                                                                            |
+| Создать и править договор                | `organizations.write` | все     | own     | actions `saveContract`, `saveContractItem` карточки вуза                                                                               |
 
 Созданный вуз сразу получает назначение на автора — иначе менеджер завёл бы карточку и тут же
 потерял её из виду. Оператор и вендор назначения не получают (раздел 1), поэтому вендора заводит
@@ -515,11 +515,11 @@ exists (
 | ------------------------------------- | ------------------- | ------- | ------- | ----------------------------------- |
 | Посмотреть процесс своей карточки     | `interactions.read` | все     | own     | карточка взаимодействия             |
 | Список пространств, порядок, процессы | `stages.configure`  | `admin` | всё     | `/settings/workspaces` load         |
-| Завести и переименовать пространство  | `stages.configure`  | `admin` | всё     | actions `create`, `rename`          |
+| Создать и переименовать пространство  | `stages.configure`  | `admin` | всё     | actions `create`, `rename`          |
 | Назначить процесс пространству        | `stages.configure`  | `admin` | всё     | action `assign`                     |
 | Порядок пространств в меню            | `stages.configure`  | `admin` | всё     | action `reorder`                    |
 | Список процессов                      | `stages.configure`  | `admin` | всё     | `/settings/workflows` load          |
-| Завести процесс                       | `stages.configure`  | `admin` | всё     | action `create`                     |
+| Создать процесс                       | `stages.configure`  | `admin` | всё     | action `create`                     |
 | Черновик изменений                    | `stages.configure`  | `admin` | всё     | `/settings/workflows/[key]` actions |
 | Применить изменения ко всем           | `stages.configure`  | `admin` | всё     | action `publish`                    |
 | Переименование существующей стадии    | `stages.configure`  | `admin` | всё     | action `stage`                      |

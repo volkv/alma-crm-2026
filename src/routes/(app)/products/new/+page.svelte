@@ -26,12 +26,12 @@
 	const { enhance, submitting, message } = superform;
 </script>
 
-<svelte:head><title>Новый продукт — Альма CRM</title></svelte:head>
+<svelte:head><title>Добавить продукт — Альма CRM</title></svelte:head>
 
-<Header title="Новый продукт" />
+<Header title="Добавить продукт" />
 
 <Breadcrumbs
-	items={[{ label: 'Продукты', href: resolve('/(app)/products') }, { label: 'Новый продукт' }]}
+	items={[{ label: 'Продукты', href: resolve('/(app)/products') }, { label: 'Добавить продукт' }]}
 />
 
 <div class="p-4 sm:px-9 sm:py-6">

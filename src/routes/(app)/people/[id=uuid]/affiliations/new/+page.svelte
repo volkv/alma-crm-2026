@@ -32,15 +32,15 @@
 	const { enhance, submitting, message } = superform;
 </script>
 
-<svelte:head><title>Новая роль — Альма CRM</title></svelte:head>
+<svelte:head><title>Добавить роль — Альма CRM</title></svelte:head>
 
-<Header title="Новая роль" description={fullName} />
+<Header title="Добавить роль" description={fullName} />
 
 <Breadcrumbs
 	items={[
 		{ label: 'Контакты', href: resolve('/(app)/people') },
 		{ label: fullName, href: cardHref },
-		{ label: 'Новая роль' }
+		{ label: 'Добавить роль' }
 	]}
 />
 
@@ -52,7 +52,7 @@
 				description="Роль связывает человека с организацией, поэтому сначала заводят организацию."
 			>
 				{#snippet action()}
-					<Button href={resolve('/(app)/organizations/new')}>Завести организацию</Button>
+					<Button href={resolve('/(app)/organizations/new')}>Добавить организацию</Button>
 				{/snippet}
 			</EmptyState>
 		</div>

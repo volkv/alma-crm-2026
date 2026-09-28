@@ -26,14 +26,14 @@
 	const { enhance, submitting, message } = superform;
 </script>
 
-<svelte:head><title>Новое направление — Альма CRM</title></svelte:head>
+<svelte:head><title>Добавить направление — Альма CRM</title></svelte:head>
 
-<Header title="Новое направление" />
+<Header title="Добавить направление" />
 
 <Breadcrumbs
 	items={[
 		{ label: 'Направления', href: resolve('/(app)/directions') },
-		{ label: 'Новое направление' }
+		{ label: 'Добавить направление' }
 	]}
 />
 

@@ -119,7 +119,7 @@
 		{#if data.canWrite}
 			<Button href={resolve('/(app)/directions/new')}>
 				<PlusIcon aria-hidden="true" />
-				Новое направление
+				Добавить направление
 			</Button>
 		{/if}
 	{/snippet}
@@ -160,7 +160,7 @@
 		emptyAction={data.filtered ? resetFilters : undefined}
 		emptyDescription={data.filtered
 			? 'Смягчите условия или очистите поиск.'
-			: 'Заведите направление — по нему назначают ответственных и собирают отчёт.'}
+			: 'Добавьте направление — по нему назначают ответственных и собирают отчёт.'}
 		onopen={open}
 	/>
 </div>

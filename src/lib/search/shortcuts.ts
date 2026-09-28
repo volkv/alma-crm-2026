@@ -38,7 +38,7 @@ export const SEARCH_SHORTCUTS: readonly SearchShortcut[] = [
 	},
 	{
 		href: '/organizations/new',
-		label: 'Новая организация',
+		label: 'Добавить организацию',
 		section: 'Организации',
 		keywords: ['завести', 'создать', 'добавить', 'вуз', 'контрагент'],
 		icon: BuildingIcon,

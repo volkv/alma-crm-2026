@@ -42,15 +42,15 @@
 	);
 </script>
 
-<svelte:head><title>Новый контакт — Альма CRM</title></svelte:head>
+<svelte:head><title>Добавить контакт — Альма CRM</title></svelte:head>
 
-<Header title="Новый контакт" description={data.organization.shortName} />
+<Header title="Добавить контакт" description={data.organization.shortName} />
 
 <Breadcrumbs
 	items={[
 		{ label: 'Организации', href: resolve('/(app)/organizations') },
 		{ label: data.organization.shortName, href: cardHref },
-		{ label: 'Новый контакт' }
+		{ label: 'Добавить контакт' }
 	]}
 />
 
@@ -62,7 +62,7 @@
 				description="Контакт — это роль человека в организации, поэтому сначала заводят человека."
 			>
 				{#snippet action()}
-					<Button href={newPersonHref}>Завести человека</Button>
+					<Button href={newPersonHref}>Добавить человека</Button>
 				{/snippet}
 			</EmptyState>
 		</div>
@@ -83,7 +83,7 @@
 			/>
 			<p class="-mt-2 text-xs text-muted-foreground">
 				Нужного человека нет в списке?
-				<a class="text-link hover:text-link-hover" href={newPersonHref}>Завести нового</a> — после сохранения
+				<a class="text-link hover:text-link-hover" href={newPersonHref}>Добавить нового</a> — после сохранения
 				он вернётся в эту форму выбранным.
 			</p>
 			<FormActions

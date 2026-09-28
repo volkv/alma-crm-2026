@@ -156,7 +156,7 @@ export async function importSiteUnit(
 	// в справочник не пишется и отсюда.
 	if (!parsed.success) {
 		throw new ValidationError(
-			'Подразделение с сайта не проходит проверку площадки: заведите его вручную',
+			'Подразделение с сайта не проходит проверку площадки: добавьте его вручную',
 			parsed.error.issues.map((issue) => issue.message)
 		);
 	}

@@ -155,13 +155,13 @@
 			} = await response.json().catch(() => ({}));
 
 			if (!response.ok || result.item === undefined) {
-				error = result.error ?? 'Не удалось завести контрагента';
+				error = result.error ?? 'Не удалось добавить контрагента';
 				return;
 			}
 
 			oncreated(result.item, result.contactAffiliationId ?? null);
 		} catch {
-			error = 'Не удалось завести контрагента: нет связи с сервером';
+			error = 'Не удалось добавить контрагента: нет связи с сервером';
 		} finally {
 			saving = false;
 		}
@@ -170,7 +170,7 @@
 
 <section
 	class="flex flex-col gap-3 border-t border-border bg-surface-muted p-3"
-	aria-label={individual ? 'Новое физическое лицо' : 'Новая организация'}
+	aria-label={individual ? 'Добавить физическое лицо' : 'Добавить организацию'}
 >
 	<p class="text-xs text-muted-foreground">
 		{#if individual}
@@ -280,7 +280,7 @@
 			{#if saving}
 				<LoaderIcon class="animate-spin" aria-hidden="true" />
 			{/if}
-			{individual ? 'Завести человека' : 'Завести организацию'}
+			{individual ? 'Добавить человека' : 'Добавить организацию'}
 		</Button>
 	</div>
 </section>

@@ -278,7 +278,7 @@ export async function receiveLearningGroupResult(
 
 			if (group === undefined) {
 				throw new NotFoundError(
-					`Учебной группы ${message.data.groupExternalId} в системе нет: сначала заведите её заявкой из карточки`
+					`Учебной группы ${message.data.groupExternalId} в системе нет: сначала создайте её заявкой из карточки`
 				);
 			}
 
