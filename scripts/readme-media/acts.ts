@@ -13,7 +13,6 @@ import type { Browser, Locator, Page } from '@playwright/test';
 
 import {
 	BASE_URL,
-	FRAME,
 	WAIT,
 	beat,
 	drawScan,
@@ -67,8 +66,6 @@ const STAND = {
 		query: 'ведение занятий',
 		stage: 'Ведение занятий'
 	},
-	/** Стадия отчёта, по столбцу которой идёт клик в сцене отчёта. */
-	narrowed: { stage: 'Корректировка документов', funnelIndex: 4 },
 	/** Вуз, которого руководитель передаёт другому менеджеру. */
 	institution: { query: 'МТУСИ', name: 'МТУСИ' },
 	/**
@@ -358,11 +355,16 @@ async function narrowByFunnel(page: Page, stage: string, likely: number): Promis
 	throw new Error(`Клик по воронке не сузил отчёт до стадии «${stage}»`);
 }
 
-/** Переименовать стадию черновика: диалог стадии, поле названия, сохранение. */
+/**
+ * Переименовать стадию черновика: диалог стадии, поле названия, сохранение.
+ *
+ * Форму стадии открывает её название в строке таблицы — первая кнопка
+ * строки; вторая, значок корзины, удаляет стадию.
+ */
 async function renameStage(page: Page, key: string, name: string): Promise<void> {
 	const row = page.getByRole('row').filter({ hasText: key });
 
-	await press(page, row.getByRole('button', { name: 'Изменить' }));
+	await press(page, row.getByRole('button').first());
 
 	const dialog = page.getByRole('dialog');
 
@@ -378,10 +380,7 @@ async function renameStage(page: Page, key: string, name: string): Promise<void>
 
 	await press(page, dialog.getByRole('button', { name: 'Сохранить стадию' }));
 	await dialog.waitFor({ state: 'hidden', timeout: WAIT });
-	await page
-		.getByRole('cell', { name, exact: true })
-		.first()
-		.waitFor({ state: 'visible', timeout: WAIT });
+	await row.getByRole('button', { name, exact: true }).waitFor({ state: 'visible', timeout: WAIT });
 }
 
 /**
@@ -405,11 +404,52 @@ async function transition(page: Page, label: string, reason: string): Promise<vo
 }
 
 /**
+ * Открыть отчёт, если проход ещё не на нём.
+ *
+ * Сцены отчёта идут подряд — общий реестр, клик по столбцу, выгрузка, — и
+ * повторное открытие той же страницы выглядело бы в кадре как сбой.
+ */
+async function openReports(page: Page): Promise<void> {
+	if (new URL(page.url()).pathname === '/reports' && page.url().startsWith(BASE_URL)) {
+		return;
+	}
+
+	await visit(page, '/reports', 'Отчёты по взаимодействиям');
+}
+
+/**
+ * Отчёт общий: число строк по всем делам, которые видит смотрящий, фильтр
+ * пространств и воронка своя у каждого процесса, подписанная его названием.
+ *
+ * Снимать стоит ролью, которая работает в двух пространствах: у неё воронок
+ * две, и видно, что числа стадий разных процессов не складываются.
+ */
+export async function reportFunnels(page: Page): Promise<void> {
+	await openReports(page);
+	await pointAt(page, page.getByTestId('report-row-count').first());
+	await beat(page, 0.8);
+	await pointAt(page, page.getByTestId('report-filter-workspace').first());
+	await beat(page, 0.8);
+
+	const funnels = page.getByText(/^Распределение по стадиям на дату среза — /u);
+
+	await pointAt(page, funnels.first());
+	await beat(page, 1);
+
+	if ((await funnels.count()) > 1) {
+		await pointAt(page, funnels.nth(1));
+		await beat(page, 1.2);
+	}
+
+	await scroll(page, -2000, 6);
+}
+
+/**
  * Число отчёта раскрывается до подтверждения: столбец воронки, строка отчёта,
  * карточка и раскрытое «Сделано на стадии» с отметкой по документу.
  */
 export async function traceNumber(page: Page): Promise<void> {
-	await visit(page, '/reports', 'Отчёты по взаимодействиям');
+	await openReports(page);
 	await scroll(page, 560);
 	await narrowByFunnel(page, STAND.signed.stage, STAND.signed.funnelIndex);
 	await beat(page, 0.8);
@@ -428,6 +468,9 @@ export async function traceNumber(page: Page): Promise<void> {
 	// подписан «Документ с отметкой «Утверждён»»
 	// (`src/lib/components/interaction-card/model.ts`), а не «Подтверждено…».
 	await press(page, page.locator('[data-slot="card-action-done"] summary'));
+	// Раскрытый блок растёт вниз, за край окна: подтверждение подтягивается к
+	// середине кадра, а не остаётся у нижней кромки.
+	await scroll(page, 240);
 	await pointAt(page, page.getByText('Документ с отметкой').first());
 	await beat(page, 1.4);
 }
@@ -468,7 +511,7 @@ export async function showApplicationLog(page: Page, stand: Stand): Promise<void
 
 	// Снимок статуса уходит фоновым проходом очереди, а не в той же
 	// транзакции: журнал перечитывается, пока он не уедет.
-	for (let attempt = 0; attempt < 4; attempt += 1) {
+	for (let attempt = 0; attempt < 10; attempt += 1) {
 		if ((await page.locator('table').getByText('Отправлено').count()) > 0) {
 			break;
 		}
@@ -478,12 +521,14 @@ export async function showApplicationLog(page: Page, stand: Stand): Promise<void
 		await hydrated(page);
 	}
 
-	await beat(page, 1);
+	await beat(page, 0.6);
 
-	// Таблица журнала шире окна: правые колонки — попытки и ответ
-	// получателя — показываются прокруткой вбок.
-	await page.mouse.move(FRAME.width / 2, 330);
-	await page.mouse.wheel(500, 0);
+	// Над журналом стоят блоки стенда: обе строки обмена — пришедшая заявка и
+	// ушедший снимок статуса — видны после прокрутки к таблице.
+	await scroll(page, 300);
+	await pointAt(page, page.locator('table').getByText('application.submitted').first());
+	await beat(page, 0.8);
+	await pointAt(page, page.locator('table').getByText('Отправлено').first());
 	await beat(page, 1.2);
 }
 
@@ -500,13 +545,43 @@ export async function openApplication(page: Page, stand: Stand): Promise<void> {
 }
 
 /**
- * Вторая сторона обмена: карточка заявки на сайте со снимком статуса, который
- * прислала CRM.
+ * Вторая сторона обмена: карточка своей заявки на странице имитатора сайта —
+ * то, что видит заявитель, — со снимком статуса, который прислала CRM.
  */
-export async function showSiteSide(page: Page): Promise<void> {
-	await visit(page, '/mock-cms/', 'Имитатор CMS сайта', { standalone: true });
-	await scroll(page, 420);
+export async function showSiteSide(page: Page, stand: Stand): Promise<void> {
+	await visit(page, `/mock-cms/?application=${stand.externalId}`, `Заявка ${stand.externalId}`, {
+		standalone: true
+	});
+	await pointAt(page, page.getByText('Статус на сайте', { exact: true }).first());
 	await beat(page, 1.2);
+}
+
+/**
+ * Менеджер узнаёт о новом деле с сайта колокольчиком в шапке и открывает
+ * карточку строкой уведомления — тем же нажатием, что и человек.
+ *
+ * Строка ищется по названию дела: колокольчик может нести и другие
+ * непрочитанные — упоминания или прежние заявки.
+ */
+async function arriveFromInbox(page: Page, stand: Stand): Promise<void> {
+	await visit(page, '/', 'Мой день');
+
+	const bell = page.getByRole('button', { name: /^Уведомления: \d/u }).first();
+
+	await press(page, bell);
+
+	const item = page
+		.getByRole('link')
+		.filter({ hasText: 'Новое дело с сайта' })
+		.filter({ hasText: stand.title })
+		.first();
+
+	await pointAt(page, item);
+	await beat(page, 1.2);
+	await press(page, item);
+	await page.waitForURL(/\/interactions\/[0-9a-f-]{36}/u, { timeout: WAIT });
+	await hydrated(page);
+	await page.getByText('Все стадии процесса').first().waitFor({ state: 'visible', timeout: WAIT });
 }
 
 /**
@@ -517,17 +592,31 @@ export async function showSiteSide(page: Page): Promise<void> {
  * Возвращает страницу руководителя: он остаётся в той же карточке до конца
  * сцены, и проход может продолжить с ним.
  */
-export async function workTheCard(page: Page, stand: Stand, crew: Crew): Promise<Page> {
+export async function workTheCard(
+	page: Page,
+	stand: Stand,
+	crew: Crew,
+	options: { viaInbox?: boolean } = {}
+): Promise<Page> {
 	const address = `/interactions/${stand.interactionId}`;
 	// Руководитель открывает дело вместе с менеджером, а не до сцены: его
 	// аватарка появляется в кадре так же, как её увидел бы человек.
 	const [lead] = await Promise.all([
 		crew.join('lead', address),
-		visit(page, address, 'Все стадии процесса')
+		options.viaInbox === true
+			? arriveFromInbox(page, stand)
+			: visit(page, address, 'Все стадии процесса')
 	]);
 
 	await colleagueInCard(page);
 	await pointAt(page, page.locator('[data-slot="card-presence"]'));
+
+	if (options.viaInbox === true) {
+		// Какой статус видит заявитель на сайте и дошёл ли он: журнал обмена
+		// открыт администратору, менеджеру — эта строка в фактах карточки.
+		await pointAt(page, page.locator('[data-slot="site-application"]'));
+		await beat(page, 1);
+	}
 
 	const stage = await page.getByText(FIRST_STAGE).first().isVisible();
 
@@ -595,9 +684,11 @@ export async function workTheCard(page: Page, stand: Stand, crew: Crew): Promise
 
 	await press(page, dialog.getByRole('button', { name: 'Подтвердить' }));
 
-	// Признак того, что переход состоялся, — чек-лист новой стадии: её
-	// название есть на карточке и до перехода, в цепочке стадий.
+	// Признак того, что переход состоялся, — чек-лист новой стадии в
+	// «Следующем шаге»: её название есть на карточке и до перехода, в цепочке
+	// стадий, а пункты — в свёрнутом списке всех стадий.
 	await page
+		.locator('[data-slot="card-action"]')
 		.getByText('Отправлено описание программ')
 		.first()
 		.waitFor({ state: 'visible', timeout: WAIT });
@@ -629,7 +720,7 @@ export async function renameLiveStage(page: Page, stand: Stand): Promise<void> {
 
 	await press(page, page.getByRole('button', { name: 'Черновик изменений' }));
 	await page
-		.getByText('Черновик изменений — копия действующего процесса.')
+		.getByText('Стадии и переходы правятся в черновике')
 		.first()
 		.waitFor({ state: 'visible', timeout: WAIT });
 	await beat(page, 1);
@@ -652,7 +743,7 @@ export async function renameLiveStage(page: Page, stand: Stand): Promise<void> {
 
 	await press(page, dialog.getByRole('button', { name: 'Применить ко всем' }));
 	await page
-		.getByText('Действующий процесс открыт только на чтение')
+		.getByText('Стадии и переходы действующего процесса открыты только на чтение')
 		.first()
 		.waitFor({ state: 'visible', timeout: WAIT });
 
@@ -761,6 +852,9 @@ export async function runLearningGroup(page: Page): Promise<string> {
 	// своей страницы, тем же триггером, что и по расписанию.
 	await visit(page, '/mock-lms/', 'Имитатор системы обучения', { standalone: true });
 	await page.locator('input[name="groupExternalId"]').fill(group);
+	// План потока ещё впереди, а итог с датой окончания позже дня отправки CRM
+	// не принимает: поток завершён досрочно, сегодняшним днём.
+	await page.locator('select[name="finish"]').selectOption('завершили сегодня');
 	await beat(page, 0.5);
 	await press(page, page.getByRole('button', { name: 'Отправить результат в CRM' }));
 	await beat(page, 1);
@@ -784,59 +878,63 @@ export async function runLearningGroup(page: Page): Promise<string> {
 }
 
 /**
- * Отчёт: срез, клик по столбцу, движение, вид PDF «Целиком», выгрузки XLSX и
- * PDF и открытый скачанный PDF.
+ * Отчёт: движение с правилом подсчёта, меню выгрузки, PDF (и XLSX, если его
+ * называет закадр) — и открытый скачанный PDF.
  */
-export async function reportAndExport(page: Page, crew: Crew): Promise<void> {
-	await visit(page, '/reports', 'Отчёты по взаимодействиям');
-	await pointAt(page, page.getByTestId('report-row-count').first());
-	await beat(page, 1);
-
-	await scroll(page, 560);
-	await narrowByFunnel(page, STAND.narrowed.stage, STAND.narrowed.funnelIndex);
-	await scroll(page, -560);
-	await pointAt(page, page.getByTestId('report-row-count').first());
-	await beat(page, 1.2);
-
-	await press(page, page.getByRole('link', { name: 'Движение', exact: true }));
+export async function reportAndExport(
+	page: Page,
+	crew: Crew,
+	options: { xlsx: boolean }
+): Promise<void> {
+	await openReports(page);
+	await press(page, page.getByTestId('report-mode-movement'));
+	await page.waitForURL(/mode=movement/u, { timeout: WAIT });
 	await hydrated(page);
-	await page
-		.getByText('Каждая строка — один переход')
-		.first()
-		.waitFor({ state: 'visible', timeout: WAIT });
-	await scroll(page, 420);
+	// Правило подсчёта свёрнуто под «Как считается»: раскрытое, оно словами
+	// говорит, чем движение отличается от среза.
+	await press(page, page.getByTestId('report-method-toggle'));
+	await pointAt(page, page.getByText('Каждая строка — один переход').first());
 	await beat(page, 1.2);
-	await scroll(page, -420);
-
-	// PDF бывает сводкой или целиком: переключатель стоит вплотную к кнопке и
-	// меняет только её ссылку. «Целиком» выключен, когда в выборке больше
-	// строк, чем берёт полный PDF, — тогда сцена молча остаётся на «Сводке»,
-	// а не спотыкается о недоступную кнопку.
-	const fullLayout = page.getByTestId('report-pdf-layout-full');
-
-	if (await fullLayout.isEnabled()) {
-		await press(page, fullLayout);
-		await beat(page, 0.6);
-	}
 
 	const saved = new Map<string, string>();
 
-	// Имя формата — то же, что в `data-testid="report-export-{format}"`
-	// (`src/routes/(app)/reports/+page.svelte`): подпись кнопки у PDF теперь
-	// несёт вид («PDF · целиком»), и по видимому тексту её не найти.
-	for (const format of ['xlsx', 'pdf'] as const) {
+	// Форматы — пункты меню одной кнопки «Выгрузить»
+	// (`src/lib/components/reports/export-menu.svelte`). PDF бывает сводкой или
+	// целиком; «целиком» выключен, когда в выборке больше строк, чем берёт
+	// полный PDF, — тогда выгружается сводка. XLSX выгружается, когда о нём
+	// говорит закадр: короткому ролику хватает PDF.
+	const exports = [
+		...(options.xlsx ? [{ key: 'xlsx', item: 'report-export-xlsx', fallback: null }] : []),
+		{ key: 'pdf', item: 'report-export-pdf-full', fallback: 'report-export-pdf' }
+	] as const;
+
+	for (const [index, format] of exports.entries()) {
+		await press(page, page.getByTestId('report-export'));
+
+		const full = page.getByTestId(format.item);
+
+		await full.waitFor({ state: 'visible', timeout: WAIT });
+
+		if (index === 0) {
+			// Меню показывается целиком один раз: пять пунктов с подсказками —
+			// это и есть ответ на вопрос «в чём можно выгрузить».
+			await beat(page, 1.2);
+		}
+
+		const disabled = (await full.getAttribute('aria-disabled')) === 'true';
+		const target = disabled && format.fallback !== null ? page.getByTestId(format.fallback) : full;
 		const download = page.waitForEvent('download', { timeout: WAIT });
 
-		await press(page, page.getByTestId(`report-export-${format}`));
+		await press(page, target);
 
 		const file = await download;
 		// Имя даём своё: у выгрузки его назначает заголовок ответа, и
 		// показывать в ролике надо не имя файла, а сам файл.
-		const target = path.join(crew.work, `report.${format}`);
+		const saveTo = path.join(crew.work, `report.${format.key}`);
 
-		await file.saveAs(target);
-		saved.set(format, target);
-		console.log(`выгрузка ${format.toUpperCase()}: ${target}`);
+		await file.saveAs(saveTo);
+		saved.set(format.key, saveTo);
+		console.log(`выгрузка ${format.key.toUpperCase()}: ${saveTo}`);
 		await beat(page, 0.6);
 	}
 
@@ -907,7 +1005,7 @@ export async function restorePass(
 			await hydrated(page);
 			await page.getByRole('button', { name: 'Черновик изменений' }).click();
 			await page
-				.getByText('Черновик изменений — копия действующего процесса.')
+				.getByText('Стадии и переходы правятся в черновике')
 				.first()
 				.waitFor({ state: 'visible', timeout: WAIT });
 
@@ -920,7 +1018,7 @@ export async function restorePass(
 			await dialog.waitFor({ state: 'visible', timeout: WAIT });
 			await dialog.getByRole('button', { name: 'Применить ко всем' }).click();
 			await page
-				.getByText('Действующий процесс открыт только на чтение')
+				.getByText('Стадии и переходы действующего процесса открыты только на чтение')
 				.first()
 				.waitFor({ state: 'visible', timeout: WAIT });
 

@@ -4,10 +4,10 @@
  *
  * Скринкаст показа (`screencast.ts`) рассказывает одну историю за три минуты и
  * поэтому оставляет за кадром половину продукта: карточку вуза с паспортом из
- * официальных источников, пакет документов и отметку подписанного экземпляра,
- * список слушателей потока, удаление стадии с переносом записей, пространства,
- * данные об обучении, карту автоматизации, повтор обмена без дубля и
- * самодиагностику. Обзор идёт тем же проходом и теми же действиями
+ * официальных источников, пакет документов и скан подписанного экземпляра с
+ * отметкой, список слушателей потока, удаление стадии с переносом записей,
+ * новый процесс и модули пространства, данные об обучении, карту
+ * автоматизации, сбой и восстановление обмена и статус системы. Обзор идёт тем же проходом и теми же действиями
  * (`acts.ts`), но между ними показывает всё это — тоже вживую и тоже честно:
  * ничего не подделывается, внешние стороны отвечают со своих страниц.
  *
@@ -17,8 +17,9 @@
  * по сценам с таймкодами, готовый для диктора.
  *
  * Стенд общий. Всё, что обзор меняет обратимо, — стадию и название заявки,
- * ответственного за вуз, название стадии процесса — он возвращает сам, тем же
- * интерфейсом; что остаётся до ночного сброса — `docs/readme-media.md`.
+ * ответственного за вуз, название стадии процесса, доступность имитатора
+ * сайта — он возвращает сам, тем же интерфейсом; что остаётся до ночного
+ * сброса — `docs/readme-media.md`.
  *
  * ```
  * export MEDIA_BASE_URL=https://alma.volkv.com
@@ -41,6 +42,7 @@ import {
 	openOrganization,
 	renameLiveStage,
 	reportAndExport,
+	reportFunnels,
 	restorePass,
 	runLearningGroup,
 	showApplicationLog,
@@ -88,9 +90,10 @@ const FILE = 'overview-draft.mp4';
  *
  * `retitled` — прежнее название заявки: руководитель переименовывает её, чтобы
  * показать отказ сохранения поверх чужой правки, и название возвращается
- * после записи.
+ * после записи. `cmsDown` — имитатор сайта сделан недоступным в сцене сбоя
+ * обмена и ещё не возвращён.
  */
-type OverviewStand = Stand & { retitled: string | null };
+type OverviewStand = Stand & { retitled: string | null; cmsDown: boolean };
 
 /** Вуз, на котором показана карточка организации: у него настоящий сайт и ИНН в ЕГРЮЛ. */
 const PARTNER = {
@@ -105,18 +108,26 @@ const MEETING = {
 	query: 'встреча с подразделением',
 	expected: 'встреча с подразделением',
 	/** Кого из контактов вуза зовут на встречу. */
-	invitees: ['Кузьмина Наталья', 'Щербак Антон Валентинович'],
+	invitees: ['Щербак Антон Валентинович', 'Эльдарова Замира Руслановна'],
 	location: 'МТУСИ, Авиамоторная ул., 8а, ауд. 214',
 	/** Дата и время встречи — значение поля `datetime-local`. */
 	start: '2026-10-06T11:00'
 } as const;
 
-/** Подписанный экземпляр, который менеджер загружает в дело. */
+/**
+ * Скан подписанного экземпляра: менеджер загружает его новой редакцией
+ * собранного соглашения — отдельно загруженный файл стадию подписания не
+ * закрыл бы.
+ */
 const SIGNED_COPY = {
-	title: 'Соглашение о сотрудничестве — подписанный экземпляр',
-	kind: 'Соглашение',
+	/** Пункт «Что загружаете»: новая редакция PDF собранного соглашения. */
+	target: /^Новая редакция: Соглашение .* · PDF · /u,
+	change: 'подписанный сторонами скан',
 	note: 'подписано обеими сторонами'
 } as const;
+
+/** Новый процесс, который администратор начинает заводить и не заводит. */
+const NEW_WORKFLOW = 'Корпоративные продажи';
 
 /** Стадия, которую администратор удаляет в черновике, чтобы увидеть перенос записей. */
 const REMOVED_STAGE = { key: 'contact_search', name: 'Поиск контактных лиц' } as const;
@@ -170,22 +181,40 @@ async function retitle(page: Page, title: string, reason: string): Promise<void>
 }
 
 /**
- * Сводка «Мой день»: что требует внимания сегодня, по разделам, с подсказкой
- * следующего шага у каждой строки.
+ * Сводка «Мой день»: счётчики разделов, раздел с подсказкой, что сделать, и
+ * переход в список с тем же числом дел и меткой среза над ним.
  */
 async function myDay(page: Page): Promise<void> {
 	await visit(page, '/', 'Мой день');
-	await pointAt(page, page.getByText('Мой день', { exact: true }).first());
-	await beat(page, 0.8);
-	await pointAt(page, page.getByText('Просрочены стадии').first());
+	await pointAt(page, page.locator('[data-slot="day-counters"]'));
+	await beat(page, 1);
+
+	// Плитка счётчика — якорь к своему разделу ниже.
+	await press(page, page.locator('[data-slot="day-counters"] a').first());
 	await beat(page, 0.6);
-	await pointAt(page, page.getByText(/^→ /u).first());
-	await beat(page, 1);
-	await scroll(page, 420);
-	await pointAt(page, page.getByText('Стоят помехи').first());
-	await beat(page, 1);
-	await scroll(page, 520);
+
+	const section = page.locator('[data-slot="day-card"]').first();
+
+	await pointAt(page, section.locator('header p'));
 	await beat(page, 1.2);
+
+	// В список ведёт ссылка раздела: одна «Все N в списке» или по ссылке на
+	// часть каждого пространства — первая из них.
+	const list = section.locator('footer a').first();
+
+	await pointAt(page, list);
+	await beat(page, 0.6);
+	await press(page, list);
+	await page.waitForURL(/[?&]day=/u, { timeout: WAIT });
+	await hydrated(page);
+
+	const slice = page.getByText(/^Мой день: /u).first();
+
+	await slice.waitFor({ state: 'visible', timeout: WAIT });
+	await pointAt(page, slice);
+	await beat(page, 1.4);
+	await scroll(page, 420);
+	await beat(page, 0.8);
 }
 
 /**
@@ -239,6 +268,25 @@ async function partnerCard(page: Page): Promise<void> {
 
 	await pointAt(page, page.getByText('Сведения с сайта вуза').first());
 	await beat(page, 0.6);
+
+	// Раздел «Сведения» читается кнопкой и держится в кэше сутки: на свежем
+	// стенде его читают в кадре, после — показывают прочитанное.
+	const read = page.getByRole('button', { name: 'Прочитать «Сведения» на сайте' });
+
+	if ((await read.count()) > 0) {
+		await press(page, read);
+		await page
+			.getByText('Кандидаты в контакты')
+			.first()
+			.waitFor({ state: 'attached', timeout: WAIT });
+	}
+
+	await pointAt(page, page.getByText(/^Сайт https?:\/\/.+, прочитан /u).first());
+	await beat(page, 1);
+
+	// Кандидаты в контакты свёрнуты под строкой рекомендаций: раскрываются
+	// тем же нажатием, что и у человека.
+	await press(page, page.locator('[aria-controls="org-site-details"]').first());
 	await pointAt(page, page.getByText(/^Источник: https?:\/\//u).first());
 	await beat(page, 1);
 	await pointAt(page, page.getByRole('button', { name: 'Добавить в контакты' }).nth(1));
@@ -288,8 +336,9 @@ async function partnerCard(page: Page): Promise<void> {
 }
 
 /**
- * Документы дела: пакет по шаблону, подписанный экземпляр с отметкой
- * «Утверждён» и приглашение на встречу файлом календаря.
+ * Документы дела: пакет по шаблону, скан подписанного экземпляра новой
+ * редакцией собранного соглашения с отметкой «Утверждён», повторная сборка,
+ * которая подписанное не трогает, и приглашение на встречу файлом календаря.
  */
 async function documents(page: Page, crew: Crew): Promise<void> {
 	await openInteraction(page, MEETING.query, MEETING.expected);
@@ -338,19 +387,24 @@ async function documents(page: Page, crew: Crew): Promise<void> {
 	const upload = page.getByRole('dialog');
 
 	await upload.waitFor({ state: 'visible', timeout: WAIT });
-	await upload.locator('#card-document-title').fill(SIGNED_COPY.title);
-	await press(page, upload.locator('#card-document-kind'));
-	await press(page, page.getByRole('option', { name: SIGNED_COPY.kind, exact: true }));
+	await press(page, upload.locator('#card-upload-target'));
+	await press(page, page.getByRole('option', { name: SIGNED_COPY.target }));
+	await pointAt(page, upload.getByText(/^Скан подписанного экземпляра собранного документа/u));
+	await beat(page, 1.4);
+	await upload.locator('#card-upload-note').fill(SIGNED_COPY.change);
 	await upload.locator('#card-document-file').setInputFiles(scan);
 	await beat(page, 0.6);
 	await press(page, upload.getByRole('button', { name: 'Загрузить', exact: true }));
 	await upload.waitFor({ state: 'hidden', timeout: WAIT });
 	await beat(page, 0.6);
 
-	await press(
-		page,
-		page.getByRole('button', { name: `Действия с «${SIGNED_COPY.title}»` }).first()
-	);
+	// Скан встал на место PDF-редакции: строка с пометкой «Скан» — та же
+	// бумага, и отметку ставят на ней.
+	const scanned = page.locator('li').filter({ hasText: 'Скан, загружен' }).first();
+
+	await pointAt(page, scanned);
+	await beat(page, 0.8);
+	await press(page, scanned.getByRole('button', { name: /^Действия с «/u }));
 	await press(page, page.getByRole('menuitem', { name: 'Поставить отметку' }));
 
 	const mark = page.getByRole('dialog');
@@ -359,10 +413,29 @@ async function documents(page: Page, crew: Crew): Promise<void> {
 	await press(page, mark.locator('#card-mark-fact'));
 	await press(page, page.getByRole('option', { name: 'Утверждён', exact: true }));
 	await mark.locator('#card-mark-note').fill(SIGNED_COPY.note);
-	await beat(page, 1.2);
+	await beat(page, 1);
 	await press(page, mark.getByRole('button', { name: 'Поставить отметку' }));
 	await mark.waitFor({ state: 'hidden', timeout: WAIT });
-	await beat(page, 0.8);
+	await pointAt(
+		page,
+		page
+			.locator('[data-slot="status-badge"]')
+			.filter({ hasText: `Утверждён: ${SIGNED_COPY.note}` })
+			.first()
+	);
+	await beat(page, 1);
+
+	// Повторная сборка: подписанное соглашение в ней не отмечено и
+	// пересобирается только явным выбором. Диалог закрывается без сборки.
+	await press(page, page.getByRole('button', { name: 'Собрать пакет документов' }));
+
+	const again = page.getByRole('dialog');
+
+	await again.waitFor({ state: 'visible', timeout: WAIT });
+	await pointAt(page, again.getByText(/^Подписан — пересборка создаст/u).first());
+	await beat(page, 1.6);
+	await press(page, again.getByRole('button', { name: 'Отмена', exact: true }));
+	await again.waitFor({ state: 'hidden', timeout: WAIT });
 
 	await page.getByRole('button', { name: 'Ещё', exact: true }).click();
 	await press(page, page.getByRole('menuitem', { name: 'Пригласить на встречу' }));
@@ -381,7 +454,7 @@ async function documents(page: Page, crew: Crew): Promise<void> {
 
 	const download = page.waitForEvent('download', { timeout: WAIT });
 
-	await press(page, meeting.getByText('Скачать приглашение (.ics)'));
+	await press(page, meeting.getByRole('button', { name: /скачать приглашение \(\.ics\)/u }));
 
 	// Приглашение открывается как текст: браузер показывает календарный файл
 	// только скачиванием, а в ролике важно, что внутри — дата, место,
@@ -399,9 +472,19 @@ async function roster(page: Page, group: string, crew: Crew): Promise<void> {
 
 	await writeFile(file, `${ROSTER}\n`, 'utf8');
 
-	const item = page.locator('li').filter({ hasText: group });
+	// Кнопка списка названа номером потока, а не ключом группы: номер
+	// читается из заголовка потока «Поток N · группа <ключ>».
+	const text = await page.locator('main').innerText();
+	const flow = new RegExp(`Поток\\s+(\\d+)\\s+·\\s+группа\\s+${group}(?!\\S)`, 'u').exec(text);
 
-	await press(page, item.getByRole('button', { name: 'Слушатели…' }).first());
+	if (flow === null) {
+		throw new Error(`На карточке нет потока группы ${group}`);
+	}
+
+	await press(
+		page,
+		page.getByRole('button', { name: new RegExp(`^Слушатели потока ${flow[1]} — `, 'u') })
+	);
 
 	const dialog = page.getByRole('dialog');
 
@@ -431,14 +514,14 @@ async function removalPreview(page: Page): Promise<void> {
 	await visit(page, '/settings/workflows/b2b', 'Процесс');
 	await press(page, page.getByRole('button', { name: 'Черновик изменений' }));
 	await page
-		.getByText('Черновик изменений — копия действующего процесса.')
+		.getByText('Стадии и переходы правятся в черновике')
 		.first()
 		.waitFor({ state: 'visible', timeout: WAIT });
 	await beat(page, 0.6);
 
 	const row = page.getByRole('row').filter({ hasText: REMOVED_STAGE.key });
 
-	await press(page, row.getByRole('button', { name: 'Удалить' }));
+	await press(page, row.getByRole('button', { name: /^Удалить стадию/u }));
 
 	const remove = page.getByRole('dialog');
 
@@ -447,7 +530,7 @@ async function removalPreview(page: Page): Promise<void> {
 	await beat(page, 1.2);
 	await pointAt(page, remove.getByText('Куда перенести записи').first());
 	await beat(page, 0.6);
-	await press(page, remove.getByRole('button', { name: 'Удалить стадию' }));
+	await press(page, remove.getByRole('button', { name: 'Удалить стадию', exact: true }));
 	await remove.waitFor({ state: 'hidden', timeout: WAIT });
 
 	await scroll(page, -1200);
@@ -477,21 +560,62 @@ async function removalPreview(page: Page): Promise<void> {
 	await beat(page, 0.6);
 }
 
-/** Роли и пространства: матрица прав из базы, состав пространств и карточка B2C. */
-async function rolesAndSpaces(page: Page): Promise<void> {
+/**
+ * Гибкость без кода: диалог нового процесса — ключ из названия, пустой или
+ * копией действующего — и модули пространства с тем, что каждый даёт и что
+ * выключить нельзя. Процесс не заводится: стенд общий, а заведённый процесс
+ * удалить нечем.
+ */
+async function flexibility(page: Page): Promise<void> {
+	await visit(page, '/settings/workflows', 'Процессы');
+	await press(page, page.getByRole('button', { name: 'Завести процесс' }));
+
+	const dialog = page.getByRole('dialog');
+
+	await dialog.waitFor({ state: 'visible', timeout: WAIT });
+
+	const name = dialog.getByLabel('Название');
+
+	await pointAt(page, name);
+	await name.pressSequentially(NEW_WORKFLOW, { delay: 40 });
+	await pointAt(page, dialog.getByLabel('Ключ'));
+	await beat(page, 0.8);
+
+	await press(page, dialog.getByLabel('С чего начать'));
+	await pointAt(page, page.getByRole('option', { name: /^Копия «/u }).first());
+	await beat(page, 1.2);
+	await page.keyboard.press('Escape');
+	await beat(page, 0.4);
+	await press(page, dialog.getByRole('button', { name: 'Отмена', exact: true }));
+	await dialog.waitFor({ state: 'hidden', timeout: WAIT });
+
+	await visit(page, '/settings/workspaces/b2b', 'Модули');
+	await pointAt(page, page.getByText(/— стадий: \d+/u).first());
+	await beat(page, 0.6);
+
+	const modules = page.locator('[data-tour="workspace-modules"]');
+
+	await pointAt(page, modules.getByText('Модуль добавляет пространству панели карточки').first());
+	await beat(page, 0.8);
+	await pointAt(page, modules.getByText('Оплата', { exact: true }).first());
+	await beat(page, 0.6);
+	await pointAt(page, modules.getByText(/не выбраны в составе карточки процесса/u).first());
+	await beat(page, 1.2);
+	await pointAt(
+		page,
+		modules.getByText('Выключить нельзя, пока стадии процесса его требуют.').first()
+	);
+	await beat(page, 1.4);
+	await pointAt(page, page.getByText('Сотрудники', { exact: true }).first());
+	await beat(page, 1.2);
+}
+
+/** Матрица прав из базы и карточка коммерческого обучения со стоимостью и оплатой. */
+async function rolesAndB2c(page: Page): Promise<void> {
 	await visit(page, '/settings/roles', 'Роли и права');
 	await beat(page, 0.8);
 	await scroll(page, 520);
 	await beat(page, 1.2);
-
-	await visit(page, '/settings/workspaces', 'Пространства');
-	await pointAt(
-		page,
-		page.locator('main').getByText('Коммерческое обучение', { exact: true }).first()
-	);
-	await beat(page, 0.8);
-	await scroll(page, 480);
-	await beat(page, 1);
 
 	await visit(page, '/w/b2c/interactions?view=table', 'Взаимодействия');
 	await beat(page, 0.6);
@@ -500,7 +624,7 @@ async function rolesAndSpaces(page: Page): Promise<void> {
 	await hydrated(page);
 	await page.getByText('Все стадии процесса').first().waitFor({ state: 'visible', timeout: WAIT });
 	await beat(page, 1);
-	await scroll(page, 520);
+	await pointAt(page, page.getByText('Стоимость и оплата', { exact: true }).first());
 	await beat(page, 1.4);
 }
 
@@ -517,32 +641,67 @@ async function learningData(page: Page): Promise<void> {
 	await beat(page, 1.2);
 }
 
+/** Строка имитатора сайта в блоке «Демо: отказ и восстановление обмена». */
+function cmsSwitch(page: Page) {
+	return page
+		.locator('section')
+		.filter({ has: page.getByRole('heading', { name: 'Демо: отказ и восстановление обмена' }) })
+		.locator('li')
+		.filter({ hasText: 'Имитатор CMS' });
+}
+
 /**
- * Повторная подача той же заявки: второе событие в журнале, взаимодействие —
- * то же. Затем самодиагностика связей.
+ * Сбой и восстановление обмена: имитатор сайта недоступен, снимок статуса по
+ * новой заявке встаёт в очередь повторов; имитатор вернули — повтор доставляет
+ * то же сообщение той же строкой. Затем — «Статус системы».
  */
-async function exchangeTwice(page: Page, stand: Stand): Promise<void> {
+async function exchangeOutage(page: Page, stand: OverviewStand): Promise<void> {
 	await visit(page, '/exchange', 'Внешние системы');
 
-	const first = stand.externalId;
+	const cms = cmsSwitch(page);
+
+	await press(page, cms.getByRole('button', { name: 'Сделать недоступным' }));
+	stand.cmsDown = true;
+	await cms.getByText(/^недоступен/u).waitFor({ state: 'visible', timeout: WAIT });
+	await pointAt(page, cms.getByText(/^недоступен/u));
+	await beat(page, 0.8);
 
 	await submitApplication(page, stand);
-
-	if (stand.externalId !== first) {
-		throw new Error(
-			`Повторная подача пришла с другим ключом (${stand.externalId}, а было ${first}): показывать нечего`
-		);
-	}
-
 	await visit(page, `/exchange?q=${stand.externalId}`, 'Внешние системы');
 
-	const submitted = page.locator('table').getByText('application.submitted');
+	// Снимок статуса уходит фоновым проходом очереди: журнал перечитывается,
+	// пока строка не встанет в повтор.
+	const failed = page.locator('table').getByText('Повтор назначен');
 
-	await submitted.nth(1).waitFor({ state: 'visible', timeout: WAIT });
-	await pointAt(page, submitted.first());
+	for (let attempt = 0; attempt < 8 && (await failed.count()) === 0; attempt += 1) {
+		await beat(page, 1);
+		await page.reload({ waitUntil: 'load' });
+		await hydrated(page);
+	}
+
+	await pointAt(page, failed.first());
+	await beat(page, 1.4);
+
+	await press(page, cmsSwitch(page).getByRole('button', { name: 'Вернуть сейчас' }));
+	await cmsSwitch(page)
+		.getByText('доступен', { exact: true })
+		.waitFor({ state: 'visible', timeout: WAIT });
+	stand.cmsDown = false;
 	await beat(page, 0.6);
-	await pointAt(page, submitted.nth(1));
-	await beat(page, 1);
+
+	// Фоновый повтор мог успеть раньше нажатия — тогда строка уже доставлена,
+	// и нажимать нечего: итог тот же, попыток у строки больше одной.
+	const retry = page.locator('table').getByRole('button', { name: 'Повторить' });
+
+	if ((await retry.count()) > 0) {
+		await press(page, retry.first());
+	}
+
+	const delivered = page.locator('table').getByText('Отправлено').first();
+
+	await delivered.waitFor({ state: 'visible', timeout: WAIT });
+	await pointAt(page, delivered);
+	await beat(page, 1.4);
 
 	await visit(page, '/settings/health', 'Статус системы');
 	await beat(page, 0.6);
@@ -558,7 +717,7 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 		role: 'manager',
 		caption: 'Титульная карточка',
 		narration: [
-			'Система контроля взаимодействия с учебными заведениями — полный обзор стенда.',
+			'Альма CRM — система контроля взаимодействия с учебными заведениями. Полный обзор стенда.',
 			'Решение команды Wine Coding Team.'
 		],
 		play: async (page) => {
@@ -571,9 +730,9 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 		role: 'manager',
 		caption: 'Сводка менеджера «Мой день»',
 		narration: [
-			'День менеджера начинается со сводки «Мой день».',
-			'В ней только то, что требует внимания сегодня: просроченные стадии, сроки на сегодня и завтра, помехи, ожидание контрагента, новые заявки и лицензии к продлению.',
-			'У каждой строки сказано, что сделать дальше.',
+			'День менеджера начинается со сводки «Мой день»: просроченные стадии, сроки на сегодня и завтра, помехи, ожидание стороны, новые заявки с сайта и лицензии к продлению.',
+			'У каждого раздела сказано, что сделать дальше.',
+			'Раздел ведёт в список ровно с тем же числом дел, и над списком видно, какой это срез.',
 			'Тот же список каждое утро приходит сотруднику письмом.'
 		],
 		play: myDay
@@ -581,35 +740,36 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 	{
 		name: 'intake',
 		role: 'admin',
-		caption: 'Заявка с сайта: триггер имитатора, взаимодействие, статус обратно на сайт',
+		caption: 'Заявка с сайта: триггер имитатора, дело, статус обратно на сайт',
 		narration: [
-			'Заявка с сайта приходит по объявленному контракту обмена.',
-			'Кнопка стенда жмёт тот же триггер имитатора сайта, что и посетитель, отправивший форму.',
+			'Заявка с сайта приходит по объявленному контракту обмена: кнопка стенда жмёт тот же триггер имитатора, что и посетитель сайта.',
 			'Журнал обмена показывает обе стороны: что пришло, что ушло и чем ответил получатель.',
-			'Заявка сразу стала взаимодействием — с учебным заведением, контактным лицом и ответственным.',
-			'А на сайт вернулся снимок статуса: заявитель видит, что происходит с его обращением.'
+			'Заявка сразу стала делом — с учебным заведением, контактным лицом и ответственным.',
+			'На сайт вернулся снимок статуса: заявитель видит, что с обращением, а внутренние комментарии сотрудников туда не уходят.'
 		],
 		play: async (page, stand) => {
 			await visit(page, '/exchange', 'Внешние системы');
 			await submitApplication(page, stand);
 			await showApplicationLog(page, stand);
 			await openApplication(page, stand);
-			await showSiteSide(page);
+			await showSiteSide(page, stand);
 		}
 	},
 	{
 		name: 'work',
 		role: 'manager',
-		caption: 'Карточка: кто в деле, закрытый шаг с причинами, переход с файлом, живой комментарий',
+		caption:
+			'Колокольчик нового дела, карточка: чего не хватает, пункт-факт, переход с файлом, живой комментарий',
 		narration: [
-			'Карточка читается сверху вниз: кто сейчас в деле, факты, полоса из четырнадцати стадий и одно главное действие.',
-			'Шаг вперёд закрыт, и под кнопкой сказано почему: не отмечены обязательные пункты стадии.',
-			'Менеджер отмечает их прямо здесь — и переход открывается.',
+			'Ответственный узнаёт о новом деле колокольчиком и письмом — без данных заявителя.',
+			'Карточка читается сверху вниз: кто сейчас в деле, факты, какой статус видит заявитель на сайте, полоса из четырнадцати стадий и одно главное действие.',
+			'Шаг вперёд заперт, и под кнопкой сказано, чего не хватает.',
+			'Один пункт закрывают данные дела — профильное подразделение, выбранное в составе; другой менеджер отмечает галочкой, и переход открывается.',
 			'Переход просит итог стадии: комментарий и файл остаются в истории, на той стадии, где их приложили.',
 			'Руководитель открыл ту же карточку, и его комментарий с упоминанием приходит без перезагрузки.'
 		],
 		play: async (page, stand, crew) => {
-			await workTheCard(page, stand, crew);
+			await workTheCard(page, stand, crew, { viaInbox: true });
 		}
 	},
 	{
@@ -644,11 +804,11 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 	{
 		name: 'documents',
 		role: 'manager',
-		caption: 'Пакет документов, подписанный экземпляр с отметкой «Утверждён», приглашение .ics',
+		caption: 'Пакет документов, скан новой редакцией с отметкой «Утверждён», приглашение .ics',
 		narration: [
-			'Пакет документов собирается по шаблонам из данных карточек, в DOCX и PDF.',
-			'Чего не хватает, система называет у каждого документа: здесь для сублицензии не выбран договор.',
-			'Подписанный экземпляр загружается в дело, и отметка «Утверждён» становится фактом — именно ею подтверждается стадия подписания.',
+			'Пакет документов собирается по шаблонам процесса из данных дела, в DOCX и PDF; чего не хватает, система называет у каждого документа.',
+			'Скан подписанного экземпляра встаёт новой редакцией собранного соглашения, а не отдельным файлом, и именно отметка «Утверждён» на нём закроет стадию подписания.',
+			'Повторная сборка даёт новую редакцию, а утверждённое без явного согласия не пересобирается.',
 			'Со стадии встречи карточка приглашает контакты вуза файлом календаря, с повесткой по чек-листу стадии.'
 		],
 		play: (page, _stand, crew) => documents(page, crew)
@@ -676,7 +836,7 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 		narration: [
 			'Процесс — настройка, а не код.',
 			'В черновике администратор удаляет стадию и выбирает, куда переедут записи, которые на ней стоят.',
-			'До применения предпросмотр называет числа: сколько записей переедет и на какую стадию.',
+			'До применения предпросмотр называет числа: сколько дел переедет и на какую стадию.',
 			'Стенд общий, поэтому этот черновик отменяем и применяем другое изменение — переименование стадии.',
 			'Применили ко всем — и работа продолжается там же, где стояла, уже под новым названием.'
 		],
@@ -686,14 +846,27 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 		}
 	},
 	{
+		name: 'flexibility',
+		role: 'admin',
+		caption:
+			'Гибкость: новое направление без кода — процесс с нуля или копией, модули пространства',
+		narration: [
+			'Заказчик назвал главным в интерфейсе удобство и гибкость и допустил монолит с включаемыми модулями — так и сделано.',
+			'Новое направление заводится без кода: процесс — с нуля или копией действующего, ключи предлагаются из названия.',
+			'Пространство получает свой процесс, состав сотрудников и модули: договоры и лицензии, оплата, обучение, встречи.',
+			'Панели модуля появляются в карточке, когда их выбрал процесс.',
+			'Модуль, который нужен стадиям процесса, выключить нельзя — это написано рядом с переключателем.'
+		],
+		play: flexibility
+	},
+	{
 		name: 'handover',
 		role: 'lead',
 		caption: 'Вход через каталог и передача вуза другому менеджеру',
 		signsIn: true,
 		narration: [
 			'Вход идёт через общий каталог учётных записей: своих паролей в системе нет, роль приходит вместе со входом.',
-			'Руководитель ведёт свою область и видит работу подчинённых.',
-			'Он передаёт вуз другому менеджеру — вместе с вузом уходят незакрытые взаимодействия и право их видеть.'
+			'Руководитель передаёт вуз другому менеджеру — вместе с вузом уходят незакрытые взаимодействия и право их видеть.'
 		],
 		play: handOver
 	},
@@ -709,13 +882,12 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 	{
 		name: 'roles',
 		role: 'admin',
-		caption: 'Матрица прав, пространства и карточка коммерческого обучения',
+		caption: 'Матрица прав и карточка коммерческого обучения',
 		narration: [
 			'Что может каждая роль, матрица читает прямо из базы — так же, как сервер проверяет каждый запрос.',
-			'Работа разделена на пространства: «Работа с ВУЗ» и «Коммерческое обучение», у каждого свой процесс и свой состав сотрудников.',
-			'Карточку коммерческого обучения собирает её процесс: пять стадий, оплата, слушатели и документ об обучении.'
+			'Карточку коммерческого обучения собирает её процесс: пять стадий, стоимость и оплата, слушатели и документ об обучении.'
 		],
-		play: rolesAndSpaces
+		play: rolesAndB2c
 	},
 	{
 		name: 'reports',
@@ -723,16 +895,19 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 		// число, после передачи вуза в области менеджера больше не лежит, а
 		// руководитель видит работу всех своих подчинённых.
 		role: 'lead',
-		caption: 'Отчёт: от числа к делу и подтверждению, срез и движение, выгрузки',
+		caption:
+			'Отчёт: общий реестр, воронки по процессам, от числа к делу, срез и движение, выгрузки',
 		narration: [
-			'Любое число отчёта раскрывается до факта: клик по столбцу воронки сужает тот же отчёт до строк, из которых оно собрано, а строка ведёт в карточку — к подтверждению стадии.',
-			'Отчёт отвечает на два вопроса и не смешивает их: срез — где работа стоит на дату, движение — что случилось за период.',
-			'Фильтры и колонки живут в адресной строке, и отчёт отправляют ссылкой.',
-			'Выгрузка — та же ссылка с другим расширением: XLSX, XLS, PDF и JSON собираются из одного снимка, и числа совпадают с экраном.'
+			'Отчёт общий: реестр по всем делам, которые видит смотрящий, с фильтром пространств.',
+			'Воронка своя у каждого процесса и подписана им: числа стадий разных процессов не складываются.',
+			'Клик по столбцу сужает тот же отчёт до пространства и стадии, строка ведёт в карточку — к подтверждению стадии.',
+			'Срез — где работа стоит на дату, движение — что случилось за период; фильтры и колонки живут в адресной строке.',
+			'XLSX, XLS, PDF и JSON собираются из одного снимка, и числа совпадают с экраном.'
 		],
 		play: async (page, _stand, crew) => {
+			await reportFunnels(page);
 			await traceNumber(page);
-			await reportAndExport(page, crew);
+			await reportAndExport(page, crew, { xlsx: true });
 		}
 	},
 	{
@@ -748,9 +923,9 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 	{
 		name: 'automation',
 		role: 'manager',
-		caption: 'Карта автоматизации: 14 шагов процесса',
+		caption: 'Карта автоматизации: 14 шагов, 32 пункта',
 		narration: [
-			'Карта автоматизации проходит все четырнадцать шагов процесса: что система делает сама, где помогает сотруднику, а где без доказательства дальше не пройти, — со ссылкой на экран и статью справки.'
+			'Карта автоматизации проходит все четырнадцать шагов: тридцать два пункта — в десяти результат появляется сам, в десяти система готовит данные за человека, в двенадцати не пускает дальше без доказательства или сама поднимает тревогу.'
 		],
 		play: async (page) => {
 			await visit(page, '/help/user/automation', 'Карта автоматизации');
@@ -764,13 +939,13 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 	{
 		name: 'exchange',
 		role: 'admin',
-		caption: 'Повторная подача заявки без дубля и самодиагностика связей',
+		caption: 'Сбой и восстановление обмена, статус системы',
 		narration: [
-			'Повторная подача той же заявки дубля не создаёт: в журнале два события, а взаимодействие одно.',
-			'Исходящие сообщения подписаны, временные отказы повторяются, и повтор тоже не создаёт дубля.',
-			'Самодиагностика показывает, с чем система соединяется и отвечает ли это прямо сейчас.'
+			'Сбой обмена показывается вживую: администратор делает имитатор сайта недоступным, и снимок статуса по новой заявке встаёт в очередь повторов.',
+			'Имитатор вернулся — сам через пять минут или кнопкой, — и повтор доставляет то же сообщение: растут попытки той же строки, дубля нет.',
+			'Экран «Статус системы» показывает, с чем система соединяется и отвечает ли это прямо сейчас.'
 		],
-		play: exchangeTwice
+		play: exchangeOutage
 	},
 	{
 		name: 'api',
@@ -805,10 +980,24 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 ];
 
 /**
- * Вернуть стенд: сначала название заявки — его вернуть может руководитель при
+ * Вернуть стенд: сначала имитатор сайта, если сцена сбоя оборвалась, пока он
+ * был недоступен, затем название заявки — его вернуть может руководитель при
  * любом ответственном, — затем общее для проходов (`restorePass`).
  */
 async function restore(browser: Browser, stand: OverviewStand, storage: Sessions): Promise<void> {
+	if (stand.cmsDown) {
+		await withRole(browser, storage, 'admin', async (page) => {
+			await page.goto(`${BASE_URL}/exchange`, { waitUntil: 'load' });
+			await hydrated(page);
+			await cmsSwitch(page).getByRole('button', { name: 'Вернуть сейчас' }).click();
+			await cmsSwitch(page)
+				.getByText('доступен', { exact: true })
+				.waitFor({ state: 'visible', timeout: WAIT });
+
+			console.log('имитатор сайта возвращён');
+		});
+	}
+
 	const title = stand.retitled;
 
 	if (title !== null) {
@@ -853,7 +1042,7 @@ function voiceover(marks: readonly Mark<OverviewStand>[], total: number): string
 	].join('\n');
 }
 
-const stand: OverviewStand = { ...freshStand(), retitled: null };
+const stand: OverviewStand = { ...freshStand(), retitled: null, cmsDown: false };
 const marks = await film({
 	scenes: SCENES,
 	stand,

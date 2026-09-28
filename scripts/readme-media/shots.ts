@@ -26,6 +26,13 @@ const DEMO_INTERACTION = seedId('interaction', 'szpu-vo');
 const DEMO_HISTORY_INTERACTION = seedId('interaction', 'batse-kontrol');
 
 /**
+ * Взаимодействие на стадии «Обучение преподавателей»: у её чек-листа есть всё,
+ * чем закрываются пункты, — факты, которые закроются данными дела, ручные
+ * пункты с кнопкой действия и подтверждение стадии, — а шаг вперёд заперт.
+ */
+const DEMO_STAGE_INTERACTION = seedId('interaction', 'sivt-prepod');
+
+/**
  * Вуз с настоящим сайтом: у СПбПУ (и ещё у четырёх вузов стенда) домен
  * настоящий, а не вымышленный, поэтому раздел «Сведения с сайта» на нём
  * действительно читается (`scripts/seed/directory.ts`).
@@ -272,6 +279,14 @@ export const SHOTS: readonly Frame[] = [
 			await unreadMention(page);
 			await openInbox(page);
 		}
+	},
+	{
+		name: 'interaction-stage',
+		path: `/interactions/${DEMO_STAGE_INTERACTION}`,
+		role: 'manager',
+		caption:
+			'Чек-лист стадии в «Следующем шаге»: пункты-факты закроются данными дела, у остальных — кнопка действия, шаг вперёд заперт до выполнения',
+		waitFor: 'Следующий шаг'
 	},
 	{
 		name: 'interaction-history',
