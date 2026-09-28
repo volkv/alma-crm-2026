@@ -6,6 +6,7 @@
 	import FieldDate from '$lib/components/form/field-date.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
+	import FormGrid from '$lib/components/form/form-grid.svelte';
 	import type {
 		AffiliationRoleKind,
 		CreateAffiliationInput,
@@ -81,7 +82,7 @@
 	/>
 {/if}
 
-<div class="grid gap-4 sm:grid-cols-2">
+<FormGrid>
 	<FieldInput
 		name="position"
 		label="Должность"
@@ -98,9 +99,9 @@
 		errors={$errors.roleKind}
 		bind:value={() => $form.roleKind, (next) => ($form.roleKind = next as AffiliationRoleKind)}
 	/>
-</div>
+</FormGrid>
 
-<div class="grid gap-4 sm:grid-cols-2">
+<FormGrid>
 	<FieldDate
 		name="validFrom"
 		label="Полномочия с"
@@ -117,7 +118,7 @@
 		errors={$errors.validTo}
 		bind:value={() => $form.validTo ?? '', (next) => ($form.validTo = next || null)}
 	/>
-</div>
+</FormGrid>
 
 <FieldInput
 	name="channel"

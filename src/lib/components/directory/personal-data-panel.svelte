@@ -86,7 +86,7 @@
 		{/if}
 	</header>
 
-	<div class="flex flex-col gap-6 p-4 sm:p-6">
+	<div class="flex flex-col gap-form-section p-4 sm:p-6">
 		{#if anonymized}
 			<InlineHint tone="info">
 				Данные этого человека уничтожены: фамилия, имя и контакты стёрты, а запись оставлена ради
@@ -101,7 +101,7 @@
 					use:enhance
 					class="flex flex-wrap items-end gap-3"
 				>
-					<div class="flex flex-col gap-1.5">
+					<div class="flex flex-col gap-field">
 						<Label for="retentionUntil">Хранить до</Label>
 						<DateField id="retentionUntil" name="retentionUntil" bind:value={retentionUntil} />
 					</div>
@@ -181,7 +181,7 @@
 					use:enhance
 					class="flex flex-wrap items-end gap-3"
 				>
-					<div class="flex min-w-52 flex-col gap-1.5">
+					<div class="flex min-w-52 flex-col gap-field">
 						<Label for="consentBasis">Основание</Label>
 						<Select.Root type="single" name="basis" bind:value={basis}>
 							<Select.Trigger id="consentBasis" class="w-full">
@@ -194,11 +194,11 @@
 							</Select.Content>
 						</Select.Root>
 					</div>
-					<div class="flex flex-col gap-1.5">
+					<div class="flex flex-col gap-field">
 						<Label for="textVersion">Версия текста</Label>
 						<Input id="textVersion" name="textVersion" placeholder="2026-09-01" />
 					</div>
-					<div class="flex flex-col gap-1.5">
+					<div class="flex flex-col gap-field">
 						<Label for="givenAt">Получено</Label>
 						<DateField id="givenAt" name="givenAt" bind:value={givenAt} />
 					</div>

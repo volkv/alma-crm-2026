@@ -39,7 +39,7 @@
 	);
 </script>
 
-<div class="flex min-w-0 flex-col gap-1.5" data-slot="form-field">
+<div class="flex min-w-0 flex-col gap-field" data-slot="form-field">
 	<Label for={name}>
 		{label}
 		{#if required}

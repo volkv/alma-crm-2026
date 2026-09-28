@@ -535,10 +535,10 @@
 		action={uploadTarget === '' ? '?/upload' : '?/uploadRevision'}
 		enctype="multipart/form-data"
 		use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
-		class="flex flex-col gap-3"
+		class="flex flex-col gap-form"
 	>
 		{#if revisionTargets.length > 0}
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-upload-target">Что загружаете</Label>
 				<Select.Root type="single" bind:value={uploadTarget}>
 					<Select.Trigger id="card-upload-target" class="w-full">
@@ -571,7 +571,7 @@
 
 		{#if uploadTarget !== ''}
 			<input type="hidden" name="supersedesId" value={uploadTarget} />
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-upload-note">Что изменилось</Label>
 				<Input
 					id="card-upload-note"
@@ -582,7 +582,7 @@
 				/>
 			</div>
 		{:else}
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-document-title">Название</Label>
 				<Input
 					id="card-document-title"
@@ -591,7 +591,7 @@
 					bind:value={uploadTitle}
 				/>
 			</div>
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-document-kind">Вид документа</Label>
 				<Select.Root type="single" name="kind" bind:value={uploadKind}>
 					<Select.Trigger id="card-document-kind" class="w-full">
@@ -642,7 +642,7 @@
 		action="?/uploadRevision"
 		enctype="multipart/form-data"
 		use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
-		class="flex flex-col gap-3"
+		class="flex flex-col gap-form"
 	>
 		<input type="hidden" name="supersedesId" value={revisionOf?.id ?? ''} />
 		{#if revisionOf?.templateKey != null}
@@ -659,7 +659,7 @@
 			required
 			onchoose={(names) => (revisionChosen = names)}
 		/>
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-col gap-field">
 			<Label for="card-revision-note">Что изменилось</Label>
 			<Textarea
 				id="card-revision-note"
@@ -692,10 +692,10 @@
 		method="POST"
 		action="?/markDocument"
 		use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
-		class="flex flex-col gap-3"
+		class="flex flex-col gap-form"
 	>
 		{#if markCommand === null || markCommand.documentId === null}
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-mark-document">Документ</Label>
 				<Select.Root
 					type="single"
@@ -749,7 +749,7 @@
 		<input type="hidden" name="documentId" value={markDocumentId} />
 
 		{#if markDocument !== null}
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-mark-fact">Отметка</Label>
 				<Select.Root
 					type="single"
@@ -773,7 +773,7 @@
 				{/if}
 			</div>
 
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-mark-at">Дата отметки</Label>
 				<DateField
 					id="card-mark-at"
@@ -788,7 +788,7 @@
 				</p>
 			</div>
 
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-mark-note">Комментарий</Label>
 				<Input
 					id="card-mark-note"
@@ -827,7 +827,7 @@
 		action="?/package"
 		novalidate
 		use:enhance={packageSubmit}
-		class="flex flex-col gap-3"
+		class="flex flex-col gap-form"
 	>
 		<fieldset class="flex flex-col gap-2">
 			<legend class="mb-1 text-sm font-medium">Документы</legend>
@@ -898,7 +898,7 @@
 			<p class="text-xs text-muted-foreground">{packageDefaultsError}</p>
 		{/if}
 
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-col gap-field">
 			<Label for="card-package-city">
 				Город подписания
 				{@render requiredMark()}
@@ -914,7 +914,7 @@
 			/>
 			{@render fieldError('card-package-city-error', packageErrors.city)}
 		</div>
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-col gap-field">
 			<Label for="card-package-operator-signer">
 				Подписант оператора
 				{@render requiredMark()}
@@ -933,7 +933,7 @@
 			{@render fieldError('card-package-operator-signer-error', packageErrors.operatorSigner)}
 		</div>
 		{#if needsCounterpartySigner}
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-package-counterparty-signer">
 					Подписант контрагента
 					{@render requiredMark()}

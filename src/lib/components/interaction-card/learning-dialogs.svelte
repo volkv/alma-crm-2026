@@ -383,7 +383,7 @@
 		endsOn !== (interaction.academicPeriodEnd ?? '')}
 	width="lg"
 >
-	<div class="flex flex-col gap-3">
+	<div class="flex flex-col gap-form-section">
 		{#if exchange.issue !== null}
 			<InlineHint tone="warning">{exchange.issue}</InlineHint>
 		{/if}
@@ -407,9 +407,9 @@
 				onfailure: (refusal) => (sendRefusal = refusal),
 				onsuccess: () => commands.close()
 			})}
-			class="grid items-end gap-3 sm:grid-cols-2"
+			class="grid items-end gap-form sm:grid-cols-2"
 		>
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-program">Программа</Label>
 				{#if exchange.programs.length === 1}
 					<p id="card-program" class="text-sm">{offeringLabel(exchange.programs[0])}</p>
@@ -433,7 +433,7 @@
 				{/if}
 				<input type="hidden" name="programId" value={effectiveProgramId} />
 			</div>
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-purpose">Для кого обучение</Label>
 				<Select.Root type="single" bind:value={purpose}>
 					<Select.Trigger id="card-purpose" class="w-full">
@@ -482,7 +482,7 @@
 					{/each}
 				</fieldset>
 			{/if}
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-stream-number">Номер потока</Label>
 				<Input
 					id="card-stream-number"
@@ -505,7 +505,7 @@
 						`Порядковый номер потока в этом деле, от 1 до ${STREAM_NUMBER_MAX}: по нему поток узнают в системе обучения.`}
 				</p>
 			</div>
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-planned-seats">Мест в потоке</Label>
 				<Input
 					id="card-planned-seats"
@@ -515,11 +515,11 @@
 					bind:value={plannedSeats}
 				/>
 			</div>
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-starts-on">Начало занятий</Label>
 				<DateField id="card-starts-on" name="startsOn" max={endsOn} bind:value={startsOn} />
 			</div>
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-ends-on">Окончание</Label>
 				<DateField id="card-ends-on" name="endsOn" min={startsOn} bind:value={endsOn} />
 			</div>
@@ -556,9 +556,9 @@
 		method="POST"
 		action="?/completeGroup"
 		use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
-		class="flex flex-col gap-3"
+		class="flex flex-col gap-form"
 	>
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-col gap-field">
 			<Label for="card-complete-group">Поток</Label>
 			<Select.Root type="single" bind:value={completeGroupId}>
 				<Select.Trigger id="card-complete-group" class="w-full">
@@ -577,7 +577,7 @@
 			</Select.Root>
 			<input type="hidden" name="learningGroupId" value={completeGroupId} />
 		</div>
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-col gap-field">
 			<Label for="card-complete-comment">
 				{completingInterim
 					? 'Почему обучение завершено без финального итога'
@@ -592,7 +592,7 @@
 			/>
 		</div>
 		{#if completing !== null && completingPlannedEnd !== null}
-			<div class="flex flex-col gap-1">
+			<div class="flex flex-col gap-field">
 				<Label class="flex items-center gap-2 font-normal">
 					<Checkbox
 						checked={completeEarly}
@@ -633,7 +633,7 @@
 	description="Поимённый список группы: загружается файлом, передаётся в систему обучения кнопкой. Люди узнаются по почте — второй записи об одном человеке загрузка не заводит. Попал не в тот поток — «Убрать» и загрузите в нужный: до передачи в LMS он там и не появится."
 	width="xl"
 >
-	<div class="flex flex-col gap-4">
+	<div class="flex flex-col gap-form-section">
 		{#if rosterRefusal !== null}
 			<Alert.Root variant="destructive">
 				<TriangleAlertIcon aria-hidden="true" />
@@ -750,7 +750,7 @@
 				action="?/rosterPreview"
 				enctype="multipart/form-data"
 				use:enhance={rosterEnhance}
-				class="flex flex-col gap-3"
+				class="flex flex-col gap-form"
 			>
 				<input type="hidden" name="learningGroupId" value={rosterGroup.id} />
 				<FileDropzone

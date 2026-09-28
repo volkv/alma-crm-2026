@@ -198,7 +198,7 @@
 						uploading = false;
 					};
 				}}
-				class="flex flex-col gap-3 border-t border-border p-4 sm:p-6"
+				class="flex flex-col gap-form border-t border-border p-4 sm:p-6"
 			>
 				<FileDropzone
 					id="programMaterials"

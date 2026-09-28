@@ -175,17 +175,19 @@
 					await update();
 				};
 			}}
-			class="flex flex-col gap-3"
+			class="flex flex-col gap-form"
 		>
 			<input type="hidden" name="messageId" value={message.id} />
-			<Label for="reason-{message.id}">Как разобрали</Label>
-			<Textarea
-				id="reason-{message.id}"
-				name="reason"
-				rows={3}
-				required
-				placeholder="Например: статус перенесён в CMS вручную"
-			/>
+			<div class="flex min-w-0 flex-col gap-field">
+				<Label for="reason-{message.id}">Как разобрали</Label>
+				<Textarea
+					id="reason-{message.id}"
+					name="reason"
+					rows={3}
+					required
+					placeholder="Например: статус перенесён в CMS вручную"
+				/>
+			</div>
 			<div class="flex justify-end gap-2">
 				<Button type="button" variant="outline" onclick={() => (dismissOpen = false)}>
 					Отмена

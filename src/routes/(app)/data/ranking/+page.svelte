@@ -213,9 +213,9 @@
 					action="?/weights"
 					use:weightsEnhance
 					novalidate
-					class="flex flex-col gap-4"
+					class="flex flex-col gap-form"
 				>
-					<div class="grid gap-4 sm:grid-cols-2 lg:grid-cols-3">
+					<div class="grid gap-form sm:grid-cols-2 lg:grid-cols-3">
 						{#each WEIGHT_FIELDS as field (field.name)}
 							<FormField
 								name={field.name}

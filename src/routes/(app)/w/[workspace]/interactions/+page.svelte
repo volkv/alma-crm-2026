@@ -772,13 +772,13 @@
 					await update();
 				};
 			}}
-			class="flex flex-col gap-4"
+			class="flex flex-col gap-form"
 		>
 			{#each assignIds as id (id)}
 				<input type="hidden" name="interactionId" value={id} />
 			{/each}
 
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="assignUserId">Ответственный</Label>
 				<Select.Root type="single" name="userId" bind:value={assignUserId}>
 					<Select.Trigger id="assignUserId" class="w-full">{assignUserName}</Select.Trigger>

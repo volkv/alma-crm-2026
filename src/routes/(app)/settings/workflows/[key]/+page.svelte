@@ -30,6 +30,7 @@
 	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import FormField from '$lib/components/form/form-field.svelte';
+	import FormGrid from '$lib/components/form/form-grid.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import KeyValue from '$lib/components/key-value.svelte';
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
@@ -974,7 +975,7 @@
 		action="?/stage"
 		use:stageEnhance
 		novalidate
-		class="flex flex-col gap-6"
+		class="flex flex-col gap-form"
 	>
 		<input type="hidden" name="originalKey" value={$stageData.originalKey} />
 
@@ -986,7 +987,7 @@
 			bind:value={() => $stageData.name, renameStage}
 			errors={$stageErrors.name}
 		/>
-		<div class="grid gap-x-4 gap-y-6 sm:grid-cols-2">
+		<FormGrid>
 			{@render numberField({
 				name: 'slaDays',
 				label: 'Норматив, дней',
@@ -1005,8 +1006,8 @@
 				errors: $stageErrors.staleAfterDays,
 				onchange: (next) => ($stageData.staleAfterDays = next)
 			})}
-		</div>
-		<div class="grid gap-x-4 gap-y-6 sm:grid-cols-2">
+		</FormGrid>
+		<FormGrid>
 			{@render numberField({
 				name: 'position',
 				label: 'Позиция в процессе',
@@ -1026,10 +1027,10 @@
 				bind:value={$stageData.category}
 				errors={$stageErrors.category}
 			/>
-		</div>
-		<fieldset class="flex min-w-0 flex-col gap-6">
+		</FormGrid>
+		<fieldset class="flex min-w-0 flex-col gap-form">
 			<legend class="mb-3 text-sm font-medium">Что требуется на шаге вперёд</legend>
-			<div class="flex flex-col gap-3">
+			<div class="flex flex-col gap-form">
 				{@render checkboxField({
 					name: 'requiresResult',
 					label: 'Записан результат стадии',
@@ -1085,7 +1086,7 @@
 				errors={$stageErrors.requiresDocumentTemplate}
 			/>
 			{#if $stageData.requiresLmsData}
-				<fieldset class="flex min-w-0 flex-col gap-3">
+				<fieldset class="flex min-w-0 flex-col gap-form">
 					<legend class="mb-3 text-sm">Итог каких групп засчитывается</legend>
 					{#each LEARNING_PURPOSES as purpose (purpose)}
 						<Label class="flex items-center gap-2 font-normal">
@@ -1128,7 +1129,7 @@
 			bind:value={$stageData.onEnterNotify}
 			errors={$stageErrors.onEnterNotify}
 		/>
-		<fieldset class="flex min-w-0 flex-col gap-3">
+		<fieldset class="flex min-w-0 flex-col gap-form">
 			<legend class="mb-3 text-sm font-medium">Место в процессе</legend>
 			{@render checkboxField({
 				name: 'isFinal',
@@ -1203,7 +1204,7 @@
 					{#if expanded}
 						<div
 							id="checklist-item-{index}"
-							class="flex min-w-0 flex-col gap-5 border-t border-border px-3 pt-4 pb-4"
+							class="flex min-w-0 flex-col gap-form border-t border-border px-3 pt-4 pb-4"
 						>
 							<FieldInput
 								name="checklist-label-{index}"
@@ -1268,7 +1269,7 @@
 		<!-- Ключ — техническое имя стадии: по нему хранятся отметки чек-листа,
 			слепки пройденных стадий и сопоставление при изменении процесса. Людям,
 			ведущим дела, он не виден, поэтому стоит последним. -->
-		<fieldset class="flex min-w-0 flex-col gap-3 border-t border-border pt-4">
+		<fieldset class="flex min-w-0 flex-col gap-form border-t border-border pt-4">
 			<legend class="sr-only">Технические сведения</legend>
 			{#if $stageData.originalKey === ''}
 				<FieldInput
@@ -1338,7 +1339,7 @@
 		action="?/transition"
 		use:transitionEnhance
 		novalidate
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-form"
 	>
 		<input type="hidden" name="originalFromKey" value={$transitionData.originalFromKey} />
 		<input type="hidden" name="originalToKey" value={$transitionData.originalToKey} />
@@ -1419,7 +1420,7 @@
 		method="POST"
 		action="?/deleteStage"
 		use:enhance={submitThen(() => (removeOpen = false))}
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-form"
 	>
 		<input type="hidden" name="key" value={removing?.key ?? ''} />
 

@@ -222,7 +222,13 @@
 		{/if}
 
 		<!-- novalidate: проверяет схема и говорит по-русски, а не браузер на своём языке. -->
-		<form method="POST" action="?/create" use:createEnhance novalidate class="flex flex-col gap-4">
+		<form
+			method="POST"
+			action="?/create"
+			use:createEnhance
+			novalidate
+			class="flex flex-col gap-form"
+		>
 			<FieldInput
 				name="name"
 				label="Название"

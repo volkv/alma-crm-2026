@@ -5,6 +5,7 @@
 	import { Button } from '$lib/components/ui/button/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
+	import FormGrid from '$lib/components/form/form-grid.svelte';
 	import {
 		CONSENT_BASIS_LABELS,
 		EDUCATION_LEVEL_LABELS,
@@ -169,7 +170,7 @@
 </script>
 
 <section
-	class="flex flex-col gap-3 border-t border-border bg-surface-muted p-3"
+	class="flex flex-col gap-form border-t border-border bg-surface-muted p-3"
 	aria-label={individual ? 'Добавить физическое лицо' : 'Добавить организацию'}
 >
 	<p class="text-xs text-muted-foreground">
@@ -182,31 +183,31 @@
 	</p>
 
 	{#if individual}
-		<div class="grid gap-3 sm:grid-cols-3">
-			<div class="flex flex-col gap-1.5">
+		<FormGrid cols={3}>
+			<div class="flex flex-col gap-field">
 				<Label for="{idPrefix}-last">Фамилия</Label>
 				<Input id="{idPrefix}-last" bind:value={person.lastName} />
 			</div>
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="{idPrefix}-first">Имя</Label>
 				<Input id="{idPrefix}-first" bind:value={person.firstName} />
 			</div>
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="{idPrefix}-middle">Отчество</Label>
 				<Input id="{idPrefix}-middle" bind:value={person.middleName} />
 			</div>
-		</div>
-		<div class="grid gap-3 sm:grid-cols-2">
-			<div class="flex flex-col gap-1.5">
+		</FormGrid>
+		<FormGrid>
+			<div class="flex flex-col gap-field">
 				<Label for="{idPrefix}-email">Почта</Label>
 				<Input id="{idPrefix}-email" type="email" bind:value={person.email} />
 			</div>
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="{idPrefix}-phone">Телефон</Label>
 				<Input id="{idPrefix}-phone" type="tel" bind:value={person.phone} />
 			</div>
-		</div>
-		<div class="flex flex-col gap-1.5">
+		</FormGrid>
+		<div class="flex flex-col gap-field">
 			<Label for="{idPrefix}-basis">Основание обработки персональных данных</Label>
 			<Select.Root
 				type="single"
@@ -225,27 +226,27 @@
 			</Select.Root>
 		</div>
 	{:else}
-		<div class="grid gap-3 sm:grid-cols-2">
-			<div class="flex flex-col gap-1.5">
+		<FormGrid>
+			<div class="flex flex-col gap-field">
 				<Label for="{idPrefix}-short">Краткое наименование</Label>
 				<Input id="{idPrefix}-short" bind:value={organization.shortName} />
 			</div>
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="{idPrefix}-inn">ИНН</Label>
 				<Input id="{idPrefix}-inn" inputmode="numeric" bind:value={organization.inn} />
 			</div>
-		</div>
-		<div class="flex flex-col gap-1.5">
+		</FormGrid>
+		<div class="flex flex-col gap-field">
 			<Label for="{idPrefix}-legal">Полное наименование</Label>
 			<Input id="{idPrefix}-legal" bind:value={organization.legalName} />
 		</div>
-		<div class="grid gap-3 sm:grid-cols-2">
-			<div class="flex flex-col gap-1.5">
+		<FormGrid>
+			<div class="flex flex-col gap-field">
 				<Label for="{idPrefix}-region">Регион</Label>
 				<Input id="{idPrefix}-region" bind:value={organization.region} />
 			</div>
 			{#if kind === 'educational_institution'}
-				<div class="flex flex-col gap-1.5">
+				<div class="flex flex-col gap-field">
 					<Label for="{idPrefix}-level">Уровень образования</Label>
 					<Select.Root
 						type="single"
@@ -267,7 +268,7 @@
 					</Select.Root>
 				</div>
 			{/if}
-		</div>
+		</FormGrid>
 	{/if}
 
 	{#if error !== null}

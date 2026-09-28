@@ -813,7 +813,7 @@
 {/snippet}
 
 {#snippet newSite(organizationId: string)}
-	<div class="flex flex-col gap-1.5" data-slot="new-site">
+	<div class="flex flex-col gap-field" data-slot="new-site">
 		<p class="text-xs font-medium">Добавить площадку</p>
 		<div class="flex flex-wrap items-end gap-2">
 			<Input
@@ -872,7 +872,7 @@
 		method="POST"
 		action="?/compose"
 		use:enhance={submit}
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-form"
 	>
 		<input type="hidden" name="editVersion" value={editVersion} />
 		<input type="hidden" name="composition" value={payload} />
@@ -1015,7 +1015,7 @@
 						<InlineHint tone="warning">{operator.reason}</InlineHint>
 					{/if}
 					<div class="flex flex-wrap items-end gap-2">
-						<div class="flex flex-col gap-1.5">
+						<div class="flex flex-col gap-field">
 							<Label for="card-composition-role">Другая сторона в роли</Label>
 							<Select.Root
 								type="single"
@@ -1065,7 +1065,7 @@
 				</div>
 			</div>
 		{:else}
-			<div class="flex flex-col gap-5">
+			<div class="flex flex-col gap-form-section">
 				<fieldset class="flex flex-col gap-2">
 					<legend class="mb-1 text-sm font-medium">Образовательные программы</legend>
 					{#if draft.programs.length === 0}
@@ -1266,7 +1266,7 @@
 			</div>
 		{/if}
 
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-col gap-field">
 			<Label for="card-composition-reason">Причина правки</Label>
 			<Textarea
 				id="card-composition-reason"

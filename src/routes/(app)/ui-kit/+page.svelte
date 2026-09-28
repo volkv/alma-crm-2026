@@ -52,6 +52,8 @@
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FileDropzone from '$lib/components/form/file-dropzone.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
+	import FormGrid from '$lib/components/form/form-grid.svelte';
+	import FormStack from '$lib/components/form/form-stack.svelte';
 	import { formatDate, formatNumber } from '$lib/format';
 
 	import { showcaseOrganizationSchema } from './schema';
@@ -705,32 +707,32 @@
 		<h2 class="text-sm font-semibold tracking-tight">Поля и переключатели</h2>
 		<Card.Root size="sm">
 			<Card.Content class="gap-4">
-				<div class="grid gap-4 sm:grid-cols-2">
-					<div class="flex flex-col gap-1.5">
+				<FormGrid>
+					<div class="flex flex-col gap-field">
 						<Label for="kit-input">Обычное поле</Label>
 						<Input id="kit-input" placeholder="Введите значение" />
 					</div>
-					<div class="flex flex-col gap-1.5">
+					<div class="flex flex-col gap-field">
 						<Label for="kit-input-invalid">Поле с ошибкой</Label>
 						<Input id="kit-input-invalid" value="не подходит" aria-invalid="true" />
 						<p class="text-xs text-danger-soft-foreground">Значение не подходит</p>
 					</div>
-					<div class="flex flex-col gap-1.5">
+					<div class="flex flex-col gap-field">
 						<Label for="kit-disabled">Отключённое поле</Label>
 						<Input id="kit-disabled" value="Только чтение" disabled />
 					</div>
-					<div class="flex flex-col gap-1.5">
+					<div class="flex flex-col gap-field">
 						<Label for="kit-textarea">Многострочное поле</Label>
 						<Textarea id="kit-textarea" rows={2} placeholder="Комментарий" />
 					</div>
-					<div class="flex flex-col gap-1.5">
+					<div class="flex flex-col gap-field">
 						<Label for="kit-date">Дата</Label>
 						<!-- Дата пишется и читается как 12.09.2026 и выбирается тем же
 							всплывающим слоем, что и остальные списки продукта: нативный
 							`type="date"` рисовал бы её порядком полей локали браузера. -->
 						<DateField id="kit-date" bind:value={kitDate} />
 					</div>
-				</div>
+				</FormGrid>
 				<div class="flex flex-wrap items-center gap-6">
 					<Label class="gap-2">
 						<Checkbox bind:checked={checkboxOn} />
@@ -979,81 +981,87 @@
 			<Card.Content>
 				<!-- The schema validates, in Russian, on both sides; browser bubbles would say
 				     something else in a language the page does not control. -->
-				<form method="POST" use:enhance novalidate class="flex flex-col gap-4">
-					{#if $formMessage}
-						<Alert.Root>
-							<Alert.Title>{$formMessage}</Alert.Title>
-						</Alert.Root>
-					{/if}
-					<FieldInput
-						name="name"
-						label="Название"
-						description="Полное название, как в документах."
-						required
-						bind:value={$form.name}
-						errors={$errors.name}
-					/>
-					<FieldInput
-						name="shortName"
-						label="Краткое название"
-						placeholder="СевУПИ-1"
-						bind:value={$form.shortName}
-						errors={$errors.shortName}
-					/>
-					<FieldSelect
-						name="region"
-						label="Регион"
-						required
-						options={REGIONS.map((region) => ({ value: region, label: region }))}
-						bind:value={$form.region}
-						errors={$errors.region}
-					/>
-					<FieldInput
-						name="site"
-						label="Сайт"
-						type="url"
-						placeholder="https://example.org"
-						required
-						bind:value={$form.site}
-						errors={$errors.site}
-					/>
-					<FieldInput
-						name="email"
-						label="E-mail контактного лица"
-						type="email"
-						placeholder="name@example.org"
-						required
-						bind:value={$form.email}
-						errors={$errors.email}
-					/>
-					<FieldDate
-						name="agreedOn"
-						label="Дата подписания"
-						description="Необязательно; пустое поле означает «не подписано»."
-						bind:value={() => $form.agreedOn ?? '', (next) => ($form.agreedOn = next || null)}
-						errors={$errors.agreedOn}
-					/>
-					<FieldTextarea
-						name="comment"
-						label="Комментарий"
-						bind:value={$form.comment}
-						errors={$errors.comment}
-					/>
-					<!-- Форма витрины ничего не отправляет, но выбор файла должен быть виден
-						рядом с остальными полями: файлы можно перетащить, чужой формат
-						отбрасывается с подсказкой, выбранное видно списком. -->
-					<FileDropzone
-						id="uiKitDropzone"
-						label="Материалы"
-						description="PDF или DOCX, до 10 файлов за раз."
-						accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
-						multiple
-					/>
-					<FormActions
-						submitting={$submitting}
-						submitLabel="Сохранить организацию"
-						oncancel={() => toast('Отменено')}
-					/>
+				<form method="POST" use:enhance novalidate>
+					<FormStack>
+						{#if $formMessage}
+							<Alert.Root>
+								<Alert.Title>{$formMessage}</Alert.Title>
+							</Alert.Root>
+						{/if}
+						<FormGrid>
+							<FieldInput
+								name="name"
+								label="Название"
+								description="Полное название, как в документах."
+								required
+								bind:value={$form.name}
+								errors={$errors.name}
+							/>
+							<FieldInput
+								name="shortName"
+								label="Краткое название"
+								placeholder="СевУПИ-1"
+								bind:value={$form.shortName}
+								errors={$errors.shortName}
+							/>
+						</FormGrid>
+						<FormGrid>
+							<FieldSelect
+								name="region"
+								label="Регион"
+								required
+								options={REGIONS.map((region) => ({ value: region, label: region }))}
+								bind:value={$form.region}
+								errors={$errors.region}
+							/>
+							<FieldInput
+								name="site"
+								label="Сайт"
+								type="url"
+								placeholder="https://example.org"
+								required
+								bind:value={$form.site}
+								errors={$errors.site}
+							/>
+						</FormGrid>
+						<FieldInput
+							name="email"
+							label="E-mail контактного лица"
+							type="email"
+							placeholder="name@example.org"
+							required
+							bind:value={$form.email}
+							errors={$errors.email}
+						/>
+						<FieldDate
+							name="agreedOn"
+							label="Дата подписания"
+							description="Необязательно; пустое поле означает «не подписано»."
+							bind:value={() => $form.agreedOn ?? '', (next) => ($form.agreedOn = next || null)}
+							errors={$errors.agreedOn}
+						/>
+						<FieldTextarea
+							name="comment"
+							label="Комментарий"
+							bind:value={$form.comment}
+							errors={$errors.comment}
+						/>
+						<!-- Форма витрины ничего не отправляет, но выбор файла должен быть виден
+							рядом с остальными полями: файлы можно перетащить, чужой формат
+							отбрасывается с подсказкой, выбранное видно списком. -->
+						<FileDropzone
+							id="uiKitDropzone"
+							label="Материалы"
+							description="PDF или DOCX, до 10 файлов за раз."
+							accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+							multiple
+						/>
+						<FormActions
+							submitting={$submitting}
+							submitLabel="Сохранить организацию"
+							oncancel={() => toast('Отменено')}
+						/>
+					</FormStack>
 				</form>
 			</Card.Content>
 		</Card.Root>
@@ -1075,7 +1083,7 @@
 	description="Витрина раскладки: длинная форма, прибитая панель кнопок и вопрос о несохранённом вводе."
 	dirty={dialogNote.trim() !== ''}
 >
-	<form id="ui-kit-dialog-form" class="flex flex-col gap-4">
+	<form id="ui-kit-dialog-form" class="flex flex-col gap-form">
 		<FieldInput name="uiKitDialogStage" label="Стадия" bind:value={dialogStage} />
 		<FieldTextarea
 			name="uiKitDialogNote"

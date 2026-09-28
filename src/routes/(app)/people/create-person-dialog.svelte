@@ -81,7 +81,7 @@
 	dirty={$tainted !== undefined}
 	onclose={clear}
 >
-	<form id={FORM_ID} method="POST" {action} use:enhance novalidate class="flex flex-col gap-4">
+	<form id={FORM_ID} method="POST" {action} use:enhance novalidate class="flex flex-col gap-form">
 		<FormAlert message={$message} />
 		<PersonFields {superform} />
 		<FieldSelect

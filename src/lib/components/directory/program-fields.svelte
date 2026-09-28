@@ -4,6 +4,7 @@
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
+	import FormGrid from '$lib/components/form/form-grid.svelte';
 	import {
 		PROGRAM_DESCRIPTION_MAX_LENGTH,
 		type CreateProgramInput,
@@ -19,7 +20,7 @@
 	const { form, errors } = untrack(() => superform);
 </script>
 
-<div class="grid gap-4 sm:grid-cols-2">
+<FormGrid>
 	<FieldInput
 		name="code"
 		label="Код программы"
@@ -37,7 +38,7 @@
 			() => $form.directionCode ?? '', (next) => ($form.directionCode = next.trim() || null)
 		}
 	/>
-</div>
+</FormGrid>
 
 <FieldInput name="name" label="Название" required errors={$errors.name} bind:value={$form.name} />
 
@@ -56,7 +57,7 @@
 	}
 />
 
-<div class="grid gap-4 sm:grid-cols-2">
+<FormGrid>
 	<FieldSelect
 		name="level"
 		label="Уровень"
@@ -73,7 +74,7 @@
 		errors={$errors.status}
 		bind:value={() => $form.status, (next) => ($form.status = next as LifecycleStatus)}
 	/>
-</div>
+</FormGrid>
 
 <!-- Пустое поле — это «приоритет не назначен», а не ноль: такие программы
      идут в списке после всех, кому его проставили. -->

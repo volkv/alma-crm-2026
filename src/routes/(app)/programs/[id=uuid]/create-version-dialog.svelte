@@ -69,7 +69,7 @@
 		action="?/createVersion"
 		use:enhance
 		novalidate
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-form"
 	>
 		<FormAlert message={$message} />
 		<InlineHint>

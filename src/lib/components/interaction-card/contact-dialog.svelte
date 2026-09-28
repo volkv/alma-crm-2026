@@ -16,6 +16,7 @@
 	import FieldDate from '$lib/components/form/field-date.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
+	import FormGrid from '$lib/components/form/form-grid.svelte';
 	import FormDialog from '$lib/components/form-dialog.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StaleNotice from '$lib/components/interactions/stale-notice.svelte';
@@ -526,7 +527,7 @@
 	{dirty}
 	width={mode === 'create' ? 'xl' : 'lg'}
 >
-	<form id="card-contact-form" class="flex flex-col gap-4" novalidate onsubmit={save}>
+	<form id="card-contact-form" class="flex flex-col gap-form" novalidate onsubmit={save}>
 		{#if conflict !== null}
 			<StaleNotice message={conflict} onrefreshed={rebase} />
 		{/if}
@@ -676,7 +677,7 @@
 				<InlineHint tone="warning">{formError}</InlineHint>
 			{/if}
 
-			<div class="grid gap-3 sm:grid-cols-2">
+			<FormGrid cols={2}>
 				<FieldInput
 					name="new-contact-lastName"
 					label="Фамилия"
@@ -745,7 +746,7 @@
 					bind:value={contact.phone}
 				/>
 				<div class="sm:col-span-2">{@render channelField()}</div>
-			</div>
+			</FormGrid>
 			<p class="text-xs text-muted-foreground">
 				Почта и телефон — персональные данные: хранятся зашифрованными, без права на них в карточке
 				видны скрытыми. Человек и его роль появятся и в карточке вуза.
@@ -755,7 +756,7 @@
 		<!-- Причина — у смены контакта: первое назначение ничего не отменяет,
 			и объяснять в нём нечего. -->
 		{#if party.contactAffiliationId !== null}
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-contact-reason">Причина правки</Label>
 				<Textarea
 					id="card-contact-reason"

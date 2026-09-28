@@ -456,6 +456,7 @@ Tailwind 4 настраивается в CSS, `tailwind.config.js` нет. В `s
 | Роли цвета  | главное действие `primary`, `primary-hover`, `primary-active`, `primary-foreground`; ссылка `link`, `link-hover`, `link-foreground`; выбранное `selection`, `selection-foreground`, `selection-border` (`design.md`, «Роли цвета») |
 | Статусы     | `success`, `warning`, `danger`, `info` — у каждого `*-soft` и `*-soft-foreground`                                                                                                                                                  |
 | Плотность   | `h-row` (36px, строка таблицы), `h-control` (32px, контрол)                                                                                                                                                                        |
+| Ритм формы  | `gap-field` (8px, внутри поля), `gap-form` (24px, между полями), `gap-form-section` (32px, между группами полей)                                                                                                                   |
 | Радиусы     | `rounded-sm` / `rounded-md` / `rounded-lg`, `rounded-xl` для карточек, `rounded-4xl` — пилюля                                                                                                                                      |
 | Тени        | две ступени: `shadow-xs`/`shadow-sm` — на холсте, `shadow-md`/`shadow-lg` — поверх страницы                                                                                                                                        |
 
@@ -467,6 +468,14 @@ Tailwind 4 настраивается в CSS, `tailwind.config.js` нет. В `s
 - **Имена `background`, `card`, `popover`, `accent`, `muted`, `input`, `destructive`** оставлены
   ради вендоренных примитивов и являются псевдонимами той же шкалы. `accent` там — нейтральная
   подсветка при наведении; фирменный акцент называется `primary`.
+- **Расстояния в формах — только ритм формы.** Поле собирается `FormField` (или `FieldInput`,
+  `FieldSelect`, `FieldTextarea`, `FieldDate`) — отступ внутри поля он ставит сам. Поля между
+  собой раскладывают `form/FormStack` (столбиком, `gap="section"` — между группами) и
+  `form/FormGrid` (`cols` 2 или 3); сам `<form>` или `<fieldset>` — классами
+  `flex flex-col gap-form`. Числовые `gap-*` и `space-y-*` между полями и голая пара `Label` +
+  `Input` без обёртки — ошибка: из-за них поля слипались на одних экранах и расползались на
+  других. Поправить ритм везде — поменять `--spacing-field`, `--spacing-form`,
+  `--spacing-form-section` в `src/app.css`.
 - **Базовый размер текста — 14px** (`text-sm` на `body`), 12px (`text-xs`) — для подписей,
   20px (`text-xl`) — для `<h1>`. Шрифт — Inter Variable из `@fontsource-variable/inter`, лежит в
   сборке, в сеть за ним никто не ходит. Цифры везде моноширинные (`font-variant-numeric:

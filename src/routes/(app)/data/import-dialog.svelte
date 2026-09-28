@@ -8,6 +8,7 @@
 	import FieldSelect, { type FieldOption } from '$lib/components/form/field-select.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FileDropzone from '$lib/components/form/file-dropzone.svelte';
+	import FormGrid from '$lib/components/form/form-grid.svelte';
 	import WizardSteps from '$lib/components/stats/wizard-steps.svelte';
 	import {
 		STAT_FILE_FORMATS_HINT,
@@ -104,7 +105,7 @@
 			method="POST"
 			action="?/importFile"
 			enctype="multipart/form-data"
-			class="flex flex-col gap-4"
+			class="flex flex-col gap-form"
 			novalidate
 			use:enhance={() => {
 				submitting = true;
@@ -152,7 +153,7 @@
 				onchoose={(names) => (fileChosen = names.length > 0)}
 			/>
 
-			<div class="grid gap-4 sm:grid-cols-2">
+			<FormGrid>
 				<FieldSelect
 					name="source"
 					label="Источник"
@@ -168,9 +169,9 @@
 					bind:value={values.mode}
 					required
 				/>
-			</div>
+			</FormGrid>
 
-			<div class="grid gap-4 sm:grid-cols-3">
+			<FormGrid cols={3}>
 				<FieldSelect
 					name="periodKind"
 					label="Вид периода"
@@ -192,7 +193,7 @@
 					bind:value={values.periodEnd}
 					required
 				/>
-			</div>
+			</FormGrid>
 
 			<FieldTextarea
 				name="note"

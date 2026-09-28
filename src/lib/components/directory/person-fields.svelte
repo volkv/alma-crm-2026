@@ -3,6 +3,7 @@
 	import type { SuperForm } from 'sveltekit-superforms';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
+	import FormGrid from '$lib/components/form/form-grid.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import type { CreatePersonInput, NewPersonInput } from '$lib/contracts/directory';
 
@@ -18,7 +19,7 @@
 	const { form, errors } = untrack(() => superform);
 </script>
 
-<div class="grid gap-4 sm:grid-cols-3">
+<FormGrid cols={3}>
 	<FieldInput
 		name="lastName"
 		label="Фамилия"
@@ -39,9 +40,9 @@
 		errors={$errors.middleName}
 		bind:value={() => $form.middleName ?? '', (next) => ($form.middleName = next.trim() || null)}
 	/>
-</div>
+</FormGrid>
 
-<div class="grid gap-4 sm:grid-cols-2">
+<FormGrid>
 	<FieldInput
 		name="email"
 		label="Электронная почта"
@@ -56,7 +57,7 @@
 		errors={$errors.phone}
 		bind:value={() => $form.phone ?? '', (next) => ($form.phone = next.trim() || null)}
 	/>
-</div>
+</FormGrid>
 
 <InlineHint>
 	Контакты — персональные данные: без права «Просмотр контактов людей без маскирования» они

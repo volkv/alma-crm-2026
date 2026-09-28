@@ -87,7 +87,7 @@
 
 	<form
 		method="POST"
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-form"
 		use:enhance={() => {
 			submitting = true;
 

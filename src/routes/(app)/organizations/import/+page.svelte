@@ -84,7 +84,7 @@
 		data-tour="organizations-import-form"
 		method="POST"
 		enctype="multipart/form-data"
-		class="flex max-w-3xl flex-col gap-4 rounded-lg border border-border bg-surface p-4 sm:p-6"
+		class="flex max-w-3xl flex-col gap-form rounded-lg border border-border bg-surface p-4 sm:p-6"
 		novalidate
 		use:enhance={() => {
 			submitting = true;
@@ -95,7 +95,7 @@
 			};
 		}}
 	>
-		<fieldset class="flex flex-col gap-2" data-tour="organizations-import-kind">
+		<fieldset class="flex flex-col gap-form" data-tour="organizations-import-kind">
 			<legend class="mb-2 text-sm font-medium">Что описывает файл</legend>
 			<RadioGroup.Root name="kind" bind:value={kind}>
 				{#each data.kinds as option (option)}

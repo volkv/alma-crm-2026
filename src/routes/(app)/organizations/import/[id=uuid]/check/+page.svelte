@@ -193,9 +193,11 @@
 				</Card.Description>
 			</Card.Header>
 			<Card.Content>
-				<form method="POST" action="?/reject" class="flex flex-col gap-2" use:enhance={submit}>
-					<Label for="reason">Причина</Label>
-					<Textarea id="reason" name="reason" rows={2} placeholder="Что не так с файлом" />
+				<form method="POST" action="?/reject" class="flex flex-col gap-form" use:enhance={submit}>
+					<div class="flex flex-col gap-field">
+						<Label for="reason">Причина</Label>
+						<Textarea id="reason" name="reason" rows={2} placeholder="Что не так с файлом" />
+					</div>
 					<div>
 						<Button type="submit" variant="outline" disabled={submitting}>
 							<XIcon aria-hidden="true" />

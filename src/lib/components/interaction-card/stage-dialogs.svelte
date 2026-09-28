@@ -10,6 +10,7 @@
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FileDropzone from '$lib/components/form/file-dropzone.svelte';
+	import FormGrid from '$lib/components/form/form-grid.svelte';
 	import FormDialog from '$lib/components/form-dialog.svelte';
 	import { actionEnhance } from '$lib/components/interactions/action-enhance';
 	import {
@@ -233,7 +234,7 @@
 		enctype="multipart/form-data"
 		novalidate
 		use:enhance={actionEnhance({ validate: validateReason, onsuccess: () => commands.close() })}
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-form"
 	>
 		<input type="hidden" name="fromStageId" value={stageId} />
 		<input type="hidden" name="toStageId" value={transition?.toStageId ?? ''} />
@@ -288,12 +289,12 @@
 		method="POST"
 		action="?/pause"
 		use:enhance={entryCommand}
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-form"
 	>
 		<input type="hidden" name="stageEntryId" value={entryId} />
 		{@render staleNotice()}
 
-		<div class="flex flex-col gap-1.5 text-sm">
+		<div class="flex flex-col gap-field text-sm">
 			<Label for="card-pause-reason">Причина</Label>
 			<Select.Root
 				type="single"
@@ -311,7 +312,7 @@
 			</Select.Root>
 		</div>
 
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-col gap-field">
 			<Label for="card-pause-note">Чего ждём</Label>
 			<Textarea
 				id="card-pause-note"
@@ -323,7 +324,7 @@
 			/>
 		</div>
 
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-col gap-field">
 			<Label for="card-pause-next">Следующий шаг</Label>
 			<Textarea
 				id="card-pause-next"
@@ -358,11 +359,11 @@
 		action="?/result"
 		enctype="multipart/form-data"
 		use:enhance={entryCommand}
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-form"
 	>
 		<input type="hidden" name="stageEntryId" value={entryId} />
 		{@render staleNotice()}
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-col gap-field">
 			<Label for="card-result-text">Результат стадии</Label>
 			<Textarea
 				id="card-result-text"
@@ -385,7 +386,7 @@
 		{/if}
 
 		{#if entry !== null && entry.documents.length > 0}
-			<div class="flex flex-col gap-1.5 text-sm">
+			<div class="flex flex-col gap-field text-sm">
 				<span class="text-muted-foreground">Уже приложено к стадии</span>
 				<ul class="flex flex-col gap-1">
 					{#each entry.documents as document (document.id)}
@@ -420,12 +421,12 @@
 		method="POST"
 		action="?/confirm"
 		use:enhance={entryCommand}
-		class="flex flex-col gap-3"
+		class="flex flex-col gap-form"
 	>
 		<input type="hidden" name="stageEntryId" value={entryId} />
 		{@render staleNotice()}
 
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-col gap-field">
 			<Label for="card-confirm-kind">Чем подтверждаем</Label>
 			<Select.Root
 				type="single"
@@ -464,14 +465,14 @@
 				</p>
 			{/if}
 		{:else if confirmKind === 'lms_record'}
-			<div class="grid gap-2 sm:grid-cols-2">
+			<FormGrid cols={2}>
 				<Input name="source" aria-label="Система обучения" placeholder="Например, moodle" />
 				<Input
 					name="recordId"
 					aria-label="Идентификатор записи"
 					placeholder="Идентификатор записи"
 				/>
-			</div>
+			</FormGrid>
 		{/if}
 	</form>
 
@@ -496,11 +497,11 @@
 		method="POST"
 		action="?/raiseBlocker"
 		use:enhance={entryCommand}
-		class="flex flex-col gap-3"
+		class="flex flex-col gap-form"
 	>
 		<input type="hidden" name="stageEntryId" value={entryId} />
 		{@render staleNotice()}
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-col gap-field">
 			<Label for="card-blocker-reason">Причина</Label>
 			<Select.Root type="single" name="reasonCode" bind:value={reasonCode}>
 				<Select.Trigger id="card-blocker-reason" class="w-full">
@@ -513,7 +514,7 @@
 				</Select.Content>
 			</Select.Root>
 		</div>
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-col gap-field">
 			<Label for="card-blocker-description">Что мешает</Label>
 			<Textarea
 				id="card-blocker-description"
@@ -560,7 +561,7 @@
 		method="POST"
 		action="?/complete"
 		use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
-		class="flex flex-col gap-1.5"
+		class="flex flex-col gap-field"
 	>
 		<input type="hidden" name="revision" value={revision} />
 		{#if closing.complete.requiresForce}
@@ -598,7 +599,7 @@
 		method="POST"
 		action="?/cancel"
 		use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
-		class="flex flex-col gap-1.5"
+		class="flex flex-col gap-field"
 	>
 		<input type="hidden" name="revision" value={revision} />
 		<Label for="card-cancel-reason">Причина</Label>

@@ -46,7 +46,7 @@
 		method="POST"
 		use:enhance
 		novalidate
-		class="flex max-w-3xl flex-col gap-4 rounded-lg border border-border bg-surface p-4 sm:p-6"
+		class="flex max-w-3xl flex-col gap-form rounded-lg border border-border bg-surface p-4 sm:p-6"
 	>
 		<FormAlert message={$message} />
 		<ProgramFields {superform} />

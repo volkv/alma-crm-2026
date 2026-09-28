@@ -10,6 +10,7 @@
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import DateField from '$lib/components/form/date-field.svelte';
+	import FormGrid from '$lib/components/form/form-grid.svelte';
 	import FormDialog from '$lib/components/form-dialog.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import { NO_OPTION } from '$lib/components/directory/labels';
@@ -226,7 +227,7 @@
 		method="POST"
 		action="?/resolveBlocker"
 		use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
-		class="flex flex-col gap-1.5"
+		class="flex flex-col gap-field"
 	>
 		<input type="hidden" name="blockerId" value={resolving?.blockerId ?? ''} />
 		<Label for="card-blocker-resolution">Как решено</Label>
@@ -255,7 +256,7 @@
 		method="POST"
 		action="?/assign"
 		use:enhance={actionEnhance({ onsuccess: () => commands.close() })}
-		class="flex flex-col gap-1.5"
+		class="flex flex-col gap-field"
 	>
 		<Label for="card-owner">Ответственный</Label>
 		<Select.Root type="single" name="userId" bind:value={ownerUserId}>
@@ -294,20 +295,20 @@
 		method="POST"
 		action="?/update"
 		use:enhance={recordCommand}
-		class="flex flex-col gap-3"
+		class="flex flex-col gap-form"
 	>
 		<input type="hidden" name="editVersion" value={editVersion} />
 		{#if conflict !== null}
 			<StaleNotice message={conflict} onrefreshed={rebase} />
 		{/if}
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-col gap-field">
 			<Label for="card-plan-title">Название</Label>
 			<Input id="card-plan-title" name="title" required bind:value={plan.title} />
 		</div>
 
-		<div class="grid gap-3 sm:grid-cols-2">
+		<FormGrid cols={2}>
 			{#if shape === 'institution'}
-				<div class="flex flex-col gap-1.5">
+				<div class="flex flex-col gap-field">
 					<Label for="card-agreement-start">Соглашение: с</Label>
 					<DateField
 						id="card-agreement-start"
@@ -316,7 +317,7 @@
 						bind:value={plan.agreementPeriodStart}
 					/>
 				</div>
-				<div class="flex flex-col gap-1.5">
+				<div class="flex flex-col gap-field">
 					<Label for="card-agreement-end">Соглашение: по</Label>
 					<DateField
 						id="card-agreement-end"
@@ -329,7 +330,7 @@
 				<input type="hidden" name="agreementPeriodStart" value={plan.agreementPeriodStart} />
 				<input type="hidden" name="agreementPeriodEnd" value={plan.agreementPeriodEnd} />
 			{/if}
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-academic-start">
 					{shape === 'institution' ? 'Учебный период' : 'Период обучения'}: с
 				</Label>
@@ -340,7 +341,7 @@
 					bind:value={plan.academicPeriodStart}
 				/>
 			</div>
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-academic-end">
 					{shape === 'institution' ? 'Учебный период' : 'Период обучения'}: по
 				</Label>
@@ -351,9 +352,9 @@
 					bind:value={plan.academicPeriodEnd}
 				/>
 			</div>
-		</div>
+		</FormGrid>
 
-		<div class="flex flex-col gap-1.5">
+		<div class="flex flex-col gap-field">
 			<Label for="card-plan-reason">Причина правки</Label>
 			<Textarea
 				id="card-plan-reason"
@@ -405,13 +406,13 @@
 			method="POST"
 			action="?/contract"
 			use:enhance={recordCommand}
-			class="flex flex-col gap-3"
+			class="flex flex-col gap-form"
 		>
 			<input type="hidden" name="editVersion" value={editVersion} />
 			{#if conflict !== null}
 				<StaleNotice message={conflict} onrefreshed={rebase} />
 			{/if}
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-contract">Договор контрагента</Label>
 				<Select.Root type="single" name="contractId" bind:value={contractId}>
 					<Select.Trigger id="card-contract" class="w-full">{contractLabel}</Select.Trigger>
@@ -462,7 +463,7 @@
 				{/if}
 			{/if}
 
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-contract-reason">Причина правки</Label>
 				<Textarea
 					id="card-contract-reason"

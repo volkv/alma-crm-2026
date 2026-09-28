@@ -983,7 +983,7 @@
 		action="?/exchangeCms"
 		use:cmsEnhance
 		novalidate
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-form"
 	>
 		<FieldInput
 			name="cmsInstance"
@@ -1049,7 +1049,7 @@
 		action="?/lms"
 		use:lmsEnhance
 		novalidate
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-form"
 	>
 		<FieldInput
 			name="baseUrl"
@@ -1112,7 +1112,7 @@
 		action="?/exchangeLms"
 		use:groupsEnhance
 		novalidate
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-form"
 	>
 		<FieldInput
 			name="lmsInstance"
@@ -1168,7 +1168,7 @@
 		action="?/delivery"
 		use:deliveryEnhance
 		novalidate
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-form"
 	>
 		{@render numberField({
 			name: 'intervalSeconds',
@@ -1203,7 +1203,7 @@
 		action="?/dadata"
 		use:dadataEnhance
 		novalidate
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-form"
 	>
 		<FieldInput
 			name="apiKey"
@@ -1270,7 +1270,7 @@
 		action="?/webhook"
 		use:webhookEnhance
 		novalidate
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-form"
 	>
 		<FieldInput
 			name="name"

@@ -102,7 +102,7 @@
 	title="Загрузить оплаты с сайта"
 	description="Файл выгрузки сайта → проверка записей → загрузка. Стадии дел загрузка не меняет."
 >
-	<div class="flex flex-col gap-4">
+	<div class="flex flex-col gap-form">
 		<InlineHint tone="info">{PAYMENTS_ASSUMPTION}</InlineHint>
 
 		<!-- Образцы выгрузки: те же колонки, что ждёт разбор, и курсы из
@@ -138,7 +138,7 @@
 			action="?/paymentsPreview"
 			enctype="multipart/form-data"
 			use:enhance={submit}
-			class="flex flex-col gap-3"
+			class="flex flex-col gap-form"
 		>
 			<FileDropzone
 				id="exchange-payments-file"

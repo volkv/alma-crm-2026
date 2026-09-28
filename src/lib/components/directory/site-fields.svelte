@@ -3,6 +3,7 @@
 	import type { SuperForm } from 'sveltekit-superforms';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
+	import FormGrid from '$lib/components/form/form-grid.svelte';
 	import type { CreateSiteInput, SiteKind } from '$lib/contracts/directory';
 	import { SITE_KIND_OPTIONS } from './labels';
 
@@ -19,7 +20,7 @@
 
 <input type="hidden" name="organizationId" value={$form.organizationId} />
 
-<div class="grid gap-4 sm:grid-cols-2">
+<FormGrid>
 	<FieldInput
 		name="name"
 		label="Название площадки"
@@ -36,9 +37,9 @@
 		errors={$errors.kind}
 		bind:value={() => $form.kind, (next) => ($form.kind = next as SiteKind)}
 	/>
-</div>
+</FormGrid>
 
-<div class="grid gap-4 sm:grid-cols-2">
+<FormGrid>
 	<FieldInput
 		name="address"
 		label="Адрес"
@@ -51,4 +52,4 @@
 		errors={$errors.region}
 		bind:value={() => $form.region ?? '', (next) => ($form.region = next.trim() || null)}
 	/>
-</div>
+</FormGrid>

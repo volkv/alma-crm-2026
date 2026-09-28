@@ -4,6 +4,7 @@
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
+	import FormGrid from '$lib/components/form/form-grid.svelte';
 	import type {
 		CreateOrganizationInput,
 		EducationLevel,
@@ -63,7 +64,7 @@
 	 не может случайно вернуть организацию в работу. -->
 <input type="hidden" name="isActive" value={$form.isActive ? 'true' : 'false'} />
 
-<div class="grid gap-4 sm:grid-cols-2">
+<FormGrid>
 	<FieldSelect
 		name="kind"
 		label="Тип организации"
@@ -86,7 +87,7 @@
 			}
 		/>
 	{/if}
-</div>
+</FormGrid>
 
 <FieldInput
 	name="legalName"
@@ -106,7 +107,7 @@
 	bind:value={$form.shortName}
 />
 
-<div class="grid gap-4 sm:grid-cols-3">
+<FormGrid cols={3}>
 	<FieldInput
 		name="inn"
 		label="ИНН"
@@ -126,9 +127,9 @@
 		errors={$errors.ogrn}
 		bind:value={() => $form.ogrn ?? '', (next) => ($form.ogrn = next.trim() || null)}
 	/>
-</div>
+</FormGrid>
 
-<div class="grid gap-4 sm:grid-cols-2">
+<FormGrid>
 	<FieldInput
 		name="region"
 		label="Регион"
@@ -143,7 +144,7 @@
 		errors={$errors.website}
 		bind:value={() => $form.website ?? '', (next) => ($form.website = next.trim() || null)}
 	/>
-</div>
+</FormGrid>
 
 <FieldTextarea
 	name="notes"

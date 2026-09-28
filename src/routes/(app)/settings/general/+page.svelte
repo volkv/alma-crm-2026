@@ -17,6 +17,7 @@
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import FormField from '$lib/components/form/form-field.svelte';
+	import FormGrid from '$lib/components/form/form-grid.svelte';
 	import { settingSchemas } from '$lib/contracts/settings';
 	import { NOTIFICATION_CHANNEL_LABELS } from '$lib/contracts/notifications';
 	import {
@@ -186,7 +187,13 @@
 	<Card.Content>
 		{@render formErrors($bannerErrors._errors)}
 		<!-- novalidate: проверяет схема и говорит по-русски, а не браузер на своём языке. -->
-		<form method="POST" action="?/banner" use:bannerEnhance novalidate class="flex flex-col gap-4">
+		<form
+			method="POST"
+			action="?/banner"
+			use:bannerEnhance
+			novalidate
+			class="flex flex-col gap-form"
+		>
 			<FieldInput
 				name="title"
 				label="Заголовок"
@@ -223,9 +230,9 @@
 			action="?/session"
 			use:sessionEnhance
 			novalidate
-			class="flex flex-col gap-4"
+			class="flex flex-col gap-form"
 		>
-			<div class="grid gap-4 sm:grid-cols-2">
+			<FormGrid>
 				{@render numberField({
 					name: 'idleMinutes',
 					label: 'Бездействие, минут',
@@ -242,7 +249,7 @@
 					errors: $sessionErrors.absoluteHours,
 					onchange: (next) => ($sessionData.absoluteHours = next)
 				})}
-			</div>
+			</FormGrid>
 			<FormActions submitting={$sessionSubmitting} submitLabel="Сохранить сроки" />
 		</form>
 	</Card.Content>
@@ -273,9 +280,9 @@
 			action="?/stuckWatch"
 			use:stuckEnhance
 			novalidate
-			class="flex flex-col gap-4"
+			class="flex flex-col gap-form"
 		>
-			<div class="grid gap-4 sm:grid-cols-2">
+			<FormGrid>
 				{@render numberField({
 					name: 'thresholdDays',
 					label: 'Порог зависания, дней',
@@ -292,13 +299,13 @@
 					errors: $stuckErrors.licenseWarningDays,
 					onchange: (next) => ($stuckData.licenseWarningDays = next)
 				})}
-			</div>
-			<div class="flex flex-col gap-2">
+			</FormGrid>
+			<div class="flex flex-col gap-form">
 				<Label class="flex items-center gap-2 font-normal">
 					<Checkbox name="digestEnabled" bind:checked={$stuckData.digestEnabled} />
 					Присылать утреннюю сводку «Мой день»
 				</Label>
-				<div class="grid gap-4 sm:grid-cols-2">
+				<FormGrid>
 					{@render numberField({
 						name: 'digestHour',
 						label: 'Час сводки',
@@ -307,13 +314,13 @@
 						errors: $stuckErrors.digestHour,
 						onchange: (next) => ($stuckData.digestHour = next)
 					})}
-				</div>
+				</FormGrid>
 				<p class="text-xs text-muted-foreground">
 					Одна сводка на сотрудника, день и канал; у кого на сегодня дел нет, тому она не приходит.
 					Приложение, которое в этот час не работало, отправит сводку первым проходом после.
 				</p>
 			</div>
-			<fieldset class="flex flex-col gap-2">
+			<fieldset class="flex flex-col gap-form">
 				<legend class="text-sm font-medium">Каналы</legend>
 				<Label class="flex items-center gap-2 font-normal">
 					<Checkbox name="email" bind:checked={$stuckData.email} />
@@ -358,13 +365,13 @@
 			action="?/enrichment"
 			use:enrichmentEnhance
 			novalidate
-			class="flex flex-col gap-4"
+			class="flex flex-col gap-form"
 		>
 			<Label class="flex items-center gap-2 font-normal">
 				<Checkbox name="enabled" bind:checked={$enrichmentData.enabled} />
 				Разрешить обращения к внешним источникам
 			</Label>
-			<div class="grid gap-4 sm:grid-cols-2">
+			<FormGrid>
 				{@render numberField({
 					name: 'dailyQuota',
 					label: 'Обращений на сотрудника в сутки',
@@ -373,7 +380,7 @@
 					errors: $enrichmentErrors.dailyQuota,
 					onchange: (next) => ($enrichmentData.dailyQuota = next)
 				})}
-			</div>
+			</FormGrid>
 			<p class="text-xs text-muted-foreground">
 				{#if !data.dadataConfigured}
 					Ключ Dadata не задан: при включённых источниках читается только раздел «Сведения» на
@@ -440,13 +447,13 @@
 				action="?/demoSchedule"
 				use:demoScheduleEnhance
 				novalidate
-				class="flex flex-col gap-4 border-t border-border pt-4"
+				class="flex flex-col gap-form border-t border-border pt-4"
 			>
 				<Label class="flex items-center gap-2 font-normal">
 					<Checkbox name="enabled" bind:checked={$demoScheduleData.enabled} />
 					Сбрасывать стенд ежедневно
 				</Label>
-				<div class="grid gap-4 sm:grid-cols-2">
+				<FormGrid>
 					{@render numberField({
 						name: 'hour',
 						label: 'Час сброса',
@@ -456,7 +463,7 @@
 						errors: $demoScheduleErrors.hour,
 						onchange: (next) => ($demoScheduleData.hour = next)
 					})}
-				</div>
+				</FormGrid>
 				<p class="text-xs text-muted-foreground">
 					Сброс проходит один раз в сутки, не раньше назначенного часа: приложение, которое в этот
 					час не работало, сбросит стенд при первой возможности. Пока расписание включено, об этом

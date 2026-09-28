@@ -13,6 +13,7 @@
 	import FieldDate from '$lib/components/form/field-date.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
+	import FormGrid from '$lib/components/form/form-grid.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { returnPathOf } from '$lib/components/directory/query';
@@ -316,7 +317,7 @@
 			method="POST"
 			action="?/saveContract"
 			use:enhance={save}
-			class="flex flex-col gap-3 border-b border-border px-4 py-3"
+			class="flex flex-col gap-form border-b border-border px-4 py-3"
 			data-testid="contract-form"
 		>
 			{#if editingContract.contract !== null}
@@ -331,12 +332,12 @@
 				{editingContract.contract === null ? 'Создать договор' : 'Изменение договора'}
 			</p>
 
-			<div class="grid gap-3 sm:grid-cols-2">
+			<FormGrid>
 				<FieldInput name="number" label="Номер договора" required bind:value={number} />
 				<FieldSelect name="status" label="Состояние" options={STATUS_OPTIONS} bind:value={status} />
 				<FieldDate name="signedOn" label="Подписан" max={validUntil} bind:value={signedOn} />
 				<FieldDate name="validUntil" label="Действует до" min={signedOn} bind:value={validUntil} />
-			</div>
+			</FormGrid>
 
 			<div class="flex justify-end gap-2">
 				<Button type="button" variant="ghost" size="sm" onclick={() => (open = null)}>
@@ -455,7 +456,7 @@
 							method="POST"
 							action="?/saveContractItem"
 							use:enhance={save}
-							class="flex flex-col gap-3 rounded-md border border-border p-3"
+							class="flex flex-col gap-form rounded-md border border-border p-3"
 							data-testid="contract-item-form"
 						>
 							<input type="hidden" name="contractId" value={contract.id} />
@@ -481,7 +482,7 @@
 								</InlineHint>
 							{/if}
 
-							<div class="grid gap-3 sm:grid-cols-2">
+							<FormGrid>
 								{#if current === null}
 									<FieldSelect
 										name="productId"
@@ -491,7 +492,7 @@
 										bind:value={productId}
 									/>
 								{:else}
-									<div class="flex flex-col gap-1.5">
+									<div class="flex flex-col gap-field">
 										<span class="text-sm font-medium">Продукт</span>
 										<p class="text-sm">{current.productCode} — {current.productName}</p>
 									</div>
@@ -516,7 +517,7 @@
 									min={licenseSignedAt}
 									bind:value={licenseUntil}
 								/>
-							</div>
+							</FormGrid>
 
 							<div class="flex justify-end gap-2">
 								<Button type="button" variant="ghost" size="sm" onclick={() => (open = null)}>

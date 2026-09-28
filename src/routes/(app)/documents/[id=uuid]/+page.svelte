@@ -216,7 +216,7 @@
 					use:enhance
 					class="mt-4 flex flex-wrap items-end gap-3 border-t border-border pt-4"
 				>
-					<div class="flex min-w-48 flex-col gap-1.5">
+					<div class="flex min-w-48 flex-col gap-field">
 						<Label for="markFact">Отметка</Label>
 						<Select.Root
 							type="single"
@@ -233,7 +233,7 @@
 							</Select.Content>
 						</Select.Root>
 					</div>
-					<div class="flex min-w-48 flex-col gap-1.5">
+					<div class="flex min-w-48 flex-col gap-field">
 						<Label for="markAt">Дата отметки</Label>
 						<DateField
 							id="markAt"
@@ -244,7 +244,7 @@
 							describedBy="markAtHint"
 						/>
 					</div>
-					<div class="flex min-w-64 flex-1 flex-col gap-1.5">
+					<div class="flex min-w-64 flex-1 flex-col gap-field">
 						<Label for="markNote">Комментарий</Label>
 						<Input
 							id="markNote"
@@ -333,7 +333,7 @@
 					description="Название, вид и взаимодействие останутся прежними — меняется только файл."
 					required
 				/>
-				<div class="flex min-w-60 flex-1 flex-col gap-1.5">
+				<div class="flex min-w-60 flex-1 flex-col gap-field">
 					<Label for="revisionNote">Что изменилось</Label>
 					<Input
 						id="revisionNote"

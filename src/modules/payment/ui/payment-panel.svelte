@@ -83,9 +83,9 @@
 	{/snippet}
 
 	{#if editing && terms !== null}
-		<form method="POST" action="?/setPrice" use:enhance={submit} class="flex flex-col gap-2">
+		<form method="POST" action="?/setPrice" use:enhance={submit} class="flex flex-col gap-form">
 			<input type="hidden" name="version" value={terms.version} />
-			<div class="flex flex-col gap-1.5">
+			<div class="flex flex-col gap-field">
 				<Label for="card-price">Стоимость, ₽</Label>
 				<Input
 					id="card-price"

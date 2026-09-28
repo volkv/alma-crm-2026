@@ -52,7 +52,7 @@
 		action="?/create"
 		use:enhance
 		novalidate
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-form"
 	>
 		<FormAlert message={$message} />
 		<DirectionFields {superform} />

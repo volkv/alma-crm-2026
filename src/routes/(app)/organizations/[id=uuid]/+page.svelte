@@ -450,7 +450,7 @@
 							     уходит скрытым `input`. Сотрудника не сторожит `required`:
 							     нативную проверку браузер пишет по-английски, а отказ «Не
 							     выбран сотрудник» приходит с сервера и на русском. -->
-							<div class="flex flex-col gap-1 text-xs">
+							<div class="flex flex-col gap-field text-xs">
 								<Label for="assignUserId" class="text-xs font-medium">Сотрудник</Label>
 								<input type="hidden" name="userId" value={assignUser?.id ?? ''} />
 								<Select.Root type="single" bind:value={assignUserId}>
@@ -465,7 +465,7 @@
 								</Select.Root>
 							</div>
 
-							<div class="flex flex-col gap-1 text-xs">
+							<div class="flex flex-col gap-field text-xs">
 								<Label for="assignDirectionId" class="text-xs font-medium">Направление</Label>
 								<input type="hidden" name="directionId" value={assignDirection?.id ?? ''} />
 								<Select.Root type="single" bind:value={assignDirectionId}>

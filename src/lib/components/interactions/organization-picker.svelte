@@ -337,7 +337,7 @@
 	}
 </script>
 
-<div class="flex flex-col gap-1.5" data-slot="organization-picker">
+<div class="flex flex-col gap-field" data-slot="organization-picker">
 	{#if value !== null}
 		<div
 			class="flex items-center gap-2 rounded-md border border-border bg-surface-muted px-2.5 py-1.5"

@@ -170,7 +170,7 @@
 					     `input`. `required` здесь не ставим — нативную проверку браузер
 					     пишет по-английски, а отказ «Не выбран продукт» приходит с
 					     сервера и на русском. -->
-					<div class="flex flex-col gap-1 text-xs">
+					<div class="flex flex-col gap-field text-xs">
 						<Label for="linkProductId" class="text-xs font-medium">Продукт</Label>
 						<input type="hidden" name="productId" value={linkProduct?.id ?? ''} />
 						<Select.Root type="single" bind:value={linkProductId}>
