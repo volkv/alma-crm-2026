@@ -26,12 +26,12 @@
 	/**
 	 * Главное действие карточки и всё, что ему мешает, — в одном месте.
 	 *
-	 * Блок читается сверху вниз: «Следующий шаг», сколько осталось, сами
-	 * условия и только потом кнопка. Доступная кнопка залита главным цветом и
-	 * стоит сразу под заголовком; недоступная — сплошная, в виде «отключено», и
-	 * рядом словами сказано, что её держит. Список условий и есть чек-лист
-	 * стадии: пункт отмечают прямо здесь, и нигде больше на карточке он не
-	 * повторяется. Остальные команды — в меню «Ещё»: они нужны реже, и ряд из
+	 * Блок читается сверху вниз: «Следующий шаг», сколько осталось, условия,
+	 * необязательные пункты и в самом низу кнопка. Доступная кнопка залита
+	 * главным цветом; недоступная — сплошная, в виде «отключено», и рядом
+	 * словами сказано, что её держит. Список условий и есть чек-лист стадии:
+	 * пункт отмечают прямо здесь, сделанный остаётся на своём месте, и нигде
+	 * больше на карточке он не повторяется. Остальные команды — в меню «Ещё»: они нужны реже, и ряд из
 	 * шести кнопок равного веса не говорил, какая из них главная.
 	 *
 	 * Отметка пункта отвечает сразу, не дожидаясь сервера: это самое частое
@@ -80,14 +80,15 @@
 	);
 	let forms = $state<Record<string, HTMLFormElement | null>>({});
 
-	// Списки собираются по ответу сервера, а не по отметке в пути: пункт
-	// переезжает в «сделано», когда отметку приняли, и форма, которую сейчас
-	// отправляют, не пропадает из разметки на полпути.
-	const missing = $derived(open?.requirements.filter((item) => item.required && !item.done) ?? []);
-	const optional = $derived(
-		open?.requirements.filter((item) => !item.required && !item.done) ?? []
-	);
+	// Пункты стоят на своих местах и сделанными: отмеченный не уезжает из
+	// списка, и чек-лист не прыгает под рукой. Счёт — по ответу сервера.
+	const required = $derived(open?.requirements.filter((item) => item.required) ?? []);
+	const optional = $derived(open?.requirements.filter((item) => !item.required) ?? []);
+	const missing = $derived(required.filter((item) => !item.done));
 	const done = $derived(open?.requirements.filter((item) => item.done) ?? []);
+	const optionalLeft = $derived(
+		optional.some((item) => !item.done) || (open?.softBlockers.length ?? 0) > 0
+	);
 
 	/**
 	 * Что держит главную кнопку — одной строкой над условиями. Снятие паузы
@@ -120,12 +121,6 @@
 
 		return 'Недоступно — причина выше';
 	});
-	/**
-	 * Доступную кнопку и снятие паузы ставят сразу под заголовок: их не держат
-	 * условия. Недоступный переход — после условий, которые его держат.
-	 */
-	const buttonFirst = $derived(open !== null && (open.allowed || open.kind === 'resume'));
-
 	async function toggle(item: Requirement, next: boolean) {
 		checked = { ...checked, [item.key]: next };
 		await tick();
@@ -212,13 +207,31 @@
 {/snippet}
 
 {#snippet requirementRow(item: Requirement)}
-	<li class="flex flex-wrap items-start gap-x-3 gap-y-1.5 py-2">
+	<li class="flex flex-wrap items-start gap-x-3 gap-y-1.5 py-2" data-done={item.done || undefined}>
 		<div class="flex min-w-0 flex-1 basis-56 items-start gap-2.5">
 			{#if item.close === 'check'}
 				{@render checkbox(item)}
 				<div class="min-w-0">
-					<label for="{id}-{item.key}" class="text-sm">{item.label}</label>
-					{@render explanation(item)}
+					<label for="{id}-{item.key}" class="text-sm {item.done ? 'text-muted-foreground' : ''}"
+						>{item.label}</label
+					>
+					{#if item.done}
+						{#if item.note}
+							<p class="text-xs break-words text-muted-foreground">{item.note}</p>
+						{/if}
+					{:else}
+						{@render explanation(item)}
+					{/if}
+				</div>
+			{:else if item.done}
+				<CheckIcon class="mt-0.5 size-4 shrink-0 text-success" aria-hidden="true" />
+				<div class="min-w-0">
+					<p class="text-sm text-muted-foreground">{item.label}</p>
+					{#if item.doneNote}
+						<p class="text-xs break-words whitespace-pre-line text-muted-foreground">
+							{item.doneNote}
+						</p>
+					{/if}
 				</div>
 			{:else}
 				{#if item.close === 'fact'}
@@ -237,7 +250,7 @@
 				</div>
 			{/if}
 		</div>
-		{#if item.cta && item.command}
+		{#if item.cta && item.command && !item.done}
 			{@const command = item.command}
 			<Button size="sm" variant="outline" onclick={() => runCommand(command)}>
 				{item.cta}
@@ -402,20 +415,16 @@
 			</p>
 		{/if}
 
-		{#if buttonFirst}
-			{@render actionRow(action)}
-		{/if}
-
 		{#if left !== null}
 			<p class="text-sm font-medium" data-slot="card-action-left">{left}</p>
 		{/if}
 
-		{#if action.blockers.length > 0 || missing.length > 0 || action.otherReasons.length > 0}
+		{#if action.blockers.length > 0 || required.length > 0 || action.otherReasons.length > 0}
 			<ul class="flex flex-col divide-y divide-border rounded-lg border border-border px-3">
 				{#each action.blockers as blocker (blocker.id)}
 					{@render blockerRow(blocker, true)}
 				{/each}
-				{#each missing as item (item.key)}
+				{#each required as item (item.key)}
 					{@render requirementRow(item)}
 				{/each}
 				{#each action.otherReasons as reason (reason)}
@@ -424,14 +433,12 @@
 			</ul>
 		{/if}
 
-		{#if !buttonFirst}
-			{@render actionRow(action)}
-		{/if}
-
 		{#if optional.length > 0 || action.softBlockers.length > 0}
-			<div class="flex flex-col gap-0.5">
-				<p class="text-xs text-muted-foreground">Переходу не мешает, но не сделано:</p>
-				<ul class="flex flex-col divide-y divide-border">
+			<div class="flex flex-col gap-1">
+				<p class="text-xs text-muted-foreground">
+					{optionalLeft ? 'Переходу не мешает, но не сделано:' : 'Необязательные пункты:'}
+				</p>
+				<ul class="flex flex-col divide-y divide-border rounded-lg border border-border px-3">
 					{#each action.softBlockers as blocker (blocker.id)}
 						{@render blockerRow(blocker, false)}
 					{/each}
@@ -442,41 +449,6 @@
 			</div>
 		{/if}
 
-		{#if done.length > 0}
-			<details class="group text-sm" data-slot="card-action-done">
-				<summary
-					class="w-fit cursor-pointer rounded-sm text-xs text-muted-foreground focus-ring hover:text-foreground"
-				>
-					Сделано на стадии: {done.length}
-				</summary>
-				<ul class="mt-1 flex flex-col gap-1">
-					{#each done as item (item.key)}
-						<li class="flex items-start gap-2">
-							{#if item.close === 'check'}
-								{@render checkbox(item)}
-								<div class="min-w-0">
-									<label for="{id}-{item.key}" class="text-muted-foreground">
-										{item.label}
-									</label>
-									{#if item.note}
-										<p class="text-xs break-words text-muted-foreground">{item.note}</p>
-									{/if}
-								</div>
-							{:else}
-								<CheckIcon class="mt-0.5 size-4 shrink-0 text-success" aria-hidden="true" />
-								<div class="min-w-0">
-									<p class="text-muted-foreground">{item.label}</p>
-									{#if item.doneNote}
-										<p class="text-xs break-words whitespace-pre-line text-muted-foreground">
-											{item.doneNote}
-										</p>
-									{/if}
-								</div>
-							{/if}
-						</li>
-					{/each}
-				</ul>
-			</details>
-		{/if}
+		{@render actionRow(action)}
 	{/if}
 </section>

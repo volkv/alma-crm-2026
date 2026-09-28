@@ -122,29 +122,6 @@ export function standSummary(stand: Stand): Record<string, string> {
 }
 
 /**
- * Открыть «Сделано на стадии», если оно есть и ещё закрыто.
- *
- * Отмеченный пункт чек-листа уезжает туда из списка того, что осталось
- * сделать (`$lib/components/interaction-card/primary-action.svelte`), и без
- * этого шага снять его же отметку было бы нечем — блок свёрнут `<details>`, и
- * до раскрытия его пункты не видны браузеру. Раскрытие идёт один раз: клик по
- * уже открытому блоку его закрыл бы.
- */
-async function openDoneItems(page: Page): Promise<void> {
-	const details = page.locator('[data-slot="card-action-done"]');
-
-	if ((await details.count()) === 0) {
-		return;
-	}
-
-	const isOpen = await details.evaluate((element) => (element as HTMLDetailsElement).open);
-
-	if (!isOpen) {
-		await details.locator('summary').click();
-	}
-}
-
-/**
  * Привести пункт чек-листа к нужному состоянию.
  *
  * Именно привести, а не «нажать»: чек-лист принадлежит стадии и переживает
@@ -159,8 +136,6 @@ async function setChecklistItem(
 	done: boolean,
 	options: { shown?: boolean } = {}
 ): Promise<void> {
-	await openDoneItems(page);
-
 	const toggle = page.getByRole('checkbox', { name: item });
 
 	await toggle.waitFor({ state: 'visible', timeout: WAIT });
@@ -199,8 +174,8 @@ async function setDepartment(
 		}
 	};
 
-	// Кнопка стоит у пункта, пока он открыт; закрытый пункт уезжает в
-	// «Сделано на стадии» без кнопки, и сторона открывается сразу в панели.
+	// Кнопка стоит у пункта, пока он открыт; у закрытого пункта кнопки нет, и
+	// сторона открывается сразу в панели.
 	const reveal = page
 		.locator('[data-slot="card-action"] li')
 		.filter({ hasText: FIRST_STAGE_DEPARTMENT_ITEM })
@@ -446,7 +421,7 @@ export async function reportFunnels(page: Page): Promise<void> {
 
 /**
  * Число отчёта раскрывается до подтверждения: столбец воронки, строка отчёта,
- * карточка и раскрытое «Сделано на стадии» с отметкой по документу.
+ * карточка и закрытый пункт чек-листа с отметкой по документу.
  */
 export async function traceNumber(page: Page): Promise<void> {
 	await openReports(page);
@@ -461,15 +436,13 @@ export async function traceNumber(page: Page): Promise<void> {
 	await page.waitForURL(/\/interactions\/[0-9a-f-]{36}/u, { timeout: WAIT });
 	await hydrated(page);
 
-	// Подтверждение стоит в «Сделано на стадии»: пункт закрыт, поэтому
-	// свёрнут — раскрываем тем же движением, что и человек. Стадия
+	// Подтверждение — закрытый пункт чек-листа, отмеченный галочкой. Стадия
 	// «Подписание соглашения» требует отметки по документу
 	// (`requiresDocumentMark`, не общего `confirmation`), поэтому пункт
 	// подписан «Документ с отметкой «Утверждён»»
 	// (`src/lib/components/interaction-card/model.ts`), а не «Подтверждено…».
-	await press(page, page.locator('[data-slot="card-action-done"] summary'));
-	// Раскрытый блок растёт вниз, за край окна: подтверждение подтягивается к
-	// середине кадра, а не остаётся у нижней кромки.
+	// Подтверждение подтягивается к середине кадра, а не остаётся у нижней
+	// кромки.
 	await scroll(page, 240);
 	await pointAt(page, page.getByText('Документ с отметкой').first());
 	await beat(page, 1.4);
@@ -801,7 +774,7 @@ export async function showHandedOver(page: Page): Promise<void> {
 
 /**
  * Поток в систему обучения: «Заявить поток» → «Отправить в LMS», результат со
- * страницы имитатора и раскрытое «Сделано на стадии» на карточке.
+ * страницы имитатора и закрытый пункт чек-листа на карточке.
  *
  * Возвращает ключ заведённой группы: по нему проход может продолжить работу с
  * этим потоком на той же карточке.
@@ -868,9 +841,7 @@ export async function runLearningGroup(page: Page): Promise<string> {
 		.waitFor({ state: 'visible', timeout: WAIT });
 	await beat(page, 1);
 
-	// Подтверждение стадии — тем же путём, что и в `traceNumber`: пункт
-	// «Сделано на стадии» свёрнут, пока его не раскрыли.
-	await press(page, page.locator('[data-slot="card-action-done"] summary'));
+	// Подтверждение стадии — закрытый пункт чек-листа, как и в `traceNumber`.
 	await pointAt(page, page.getByText('записью в системе обучения').first());
 	await beat(page, 1.4);
 

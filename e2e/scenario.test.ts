@@ -831,7 +831,7 @@ test.describe.serial('сквозной сценарий: от заявки до 
 		// И стадия подтверждена именно ими: не отметкой ответственного, а
 		// записью в системе обучения — тем подключением, откуда пришёл результат.
 		const confirmation = manager
-			.locator('[data-slot="card-action-done"] li')
+			.locator('[data-slot="card-action"] li[data-done]')
 			.filter({ hasText: 'записью в системе обучения' });
 
 		await expect(confirmation).toContainText('Подтверждено');
