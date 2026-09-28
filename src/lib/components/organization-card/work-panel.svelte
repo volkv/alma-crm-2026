@@ -107,7 +107,7 @@
 										{:else}
 											{item.stage?.name ?? 'без стадии'}
 										{/if}
-										· {item.ownerName}
+										· {item.ownerName ?? 'ответственный не назначен'}
 									</p>
 								</div>
 								<div class="flex shrink-0 flex-wrap items-center gap-1.5">

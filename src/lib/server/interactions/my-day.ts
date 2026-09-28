@@ -60,6 +60,7 @@ type InteractionRow = {
 	title: string;
 	createdAt: Date;
 	externalSource: string | null;
+	ownerUserId: string | null;
 	stageName: string | null;
 	dueAt: Date | null;
 	isOverdue: boolean | null;
@@ -85,6 +86,7 @@ async function readInteractions(ctx: ActorContext): Promise<InteractionRow[]> {
 				title: interactions.title,
 				createdAt: interactions.createdAt,
 				externalSource: interactions.externalSource,
+				ownerUserId: interactions.ownerUserId,
 				stageName: sql<string | null>`${stageEntries.stageSnapshot} ->> 'name'`,
 				dueAt: stageEntryStatus.dueAt,
 				isOverdue: stageEntryStatus.isOverdue,
@@ -136,6 +138,15 @@ function classify(
 	now: Date,
 	thresholdDays: number
 ): { kind: MyDayKind; detail: string } | null {
+	// Дело без ответственного видят его автор и руководитель: у обоих первое
+	// дело с ним — назначить, кто поведёт.
+	if (row.ownerUserId === null) {
+		return {
+			kind: 'unassigned',
+			detail: `${stagePrefix(row)}заведено ${formatDate(row.createdAt)}`
+		};
+	}
+
 	if (row.isOverdue === true && row.dueAt !== null) {
 		const late = -daysUntil(row.dueAt, now);
 

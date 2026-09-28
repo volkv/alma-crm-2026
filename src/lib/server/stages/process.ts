@@ -152,6 +152,9 @@ function toTransitionView(row: typeof stageTransitions.$inferSelect): StageTrans
  * уже пройденной стадии обязаны остаться такими, какими их видел исполнитель.
  * Собирается из стадии, а не из представления, — снимок делают и там, где
  * представления не строят.
+ *
+ * Чек-лист первой стадии дополняется системным пунктом «Назначить
+ * ответственного» (`withOwnerItem`).
  */
 export function stageSnapshot(stage: {
 	key: string;
@@ -183,8 +186,51 @@ export function stageSnapshot(stage: {
 		requiresDocumentTemplate: stage.requiresDocumentTemplate,
 		lmsGroupPurposes: stage.lmsGroupPurposes,
 		isFinal: stage.isFinal,
-		checklist: stage.checklist
+		checklist: stage.position === 1 ? withOwnerItem(stage.checklist) : stage.checklist
 	};
+}
+
+/** Ключ системного пункта: не совпадёт с пунктом процесса, у тех ключи без префикса. */
+const OWNER_CHECKLIST_KEY = 'system:owner_assigned';
+
+/**
+ * Пункт «Назначить ответственного» на первой стадии любого процесса.
+ *
+ * Дело заводят раньше, чем под него находится исполнитель, и первая стадия —
+ * место, где об этом напоминают. Пункт — факт (`responsible_assigned`): его
+ * закрывает назначение, а не галочка, и он **необязательный** — дело без
+ * ответственного идёт по процессу, пункт только напоминает. Кнопка рядом
+ * открывает ту же смену ответственного, что меню карточки.
+ *
+ * Системный — значит, не правкой каждого шаблона: снимок первой стадии
+ * получает его сам. Если процесс уже объявил пункт с этим правилом, второго не
+ * добавляется, а объявленный становится необязательным и получает ту же кнопку:
+ * держать переход на ответственном больше нельзя, раз дело без него заводится.
+ */
+function withOwnerItem(checklist: StageSnapshot['checklist']): StageSnapshot['checklist'] {
+	const declared = checklist.some(
+		(item) => isFactItem(item) && item.completion.rule === 'responsible_assigned'
+	);
+
+	if (declared) {
+		return checklist.map((item) =>
+			isFactItem(item) && item.completion.rule === 'responsible_assigned'
+				? { ...item, required: false, action: item.action ?? 'assign' }
+				: item
+		);
+	}
+
+	return [
+		...checklist,
+		{
+			key: OWNER_CHECKLIST_KEY,
+			label: 'Назначить ответственного',
+			required: false,
+			help: 'Дело можно вести и без ответственного, но отвечать за срок некому. Пункт закроется сам, когда ответственный будет назначен.',
+			completion: { kind: 'fact', rule: 'responsible_assigned' },
+			action: 'assign'
+		}
+	];
 }
 
 /**
@@ -2327,7 +2373,8 @@ async function readMoves(
 		.innerJoin(interactions, eq(interactions.id, stageEntries.interactionId))
 		.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
 		.innerJoin(stages, eq(stages.id, stageEntries.stageId))
-		.innerJoin(users, eq(users.id, interactions.ownerUserId))
+		// Дело без ответственного тоже переезжает — и в предпросмотре обязано быть.
+		.leftJoin(users, eq(users.id, interactions.ownerUserId))
 		.where(
 			and(
 				isNull(stageEntries.leftAt),

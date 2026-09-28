@@ -19,6 +19,7 @@
  * именно этот объект и в базу не ходят.
  */
 import { z } from 'zod';
+import { NO_OPTION } from './common';
 import { INTERACTION_STATUSES, type InteractionStatus } from './interactions';
 import { ORGANIZATION_KINDS, type OrganizationKind } from './directory';
 
@@ -450,6 +451,11 @@ const multiUuid = multiValue.transform((items) =>
 	items.filter((item) => z.uuid().safeParse(item).success)
 );
 
+/** Ответственные: идентификаторы людей и `none` — «без ответственного». */
+const ownerChoice = multiValue.transform((items) =>
+	items.filter((item) => item === NO_OPTION || z.uuid().safeParse(item).success)
+);
+
 const flag = z
 	.union([z.string(), z.boolean()])
 	.default(false)
@@ -470,8 +476,8 @@ export const reportQuerySchema = z.object({
 	dir: multiUuid,
 	prog: multiUuid,
 	prod: multiUuid,
-	/** Ответственный за взаимодействие — тот, кто ведёт его сейчас. */
-	owner: multiUuid,
+	/** Ответственный за взаимодействие — тот, кто ведёт его сейчас; `none` — не назначен. */
+	owner: ownerChoice,
 	/** Ответственный за вуз по назначениям, действовавшим на момент `T`. */
 	assignee: multiUuid,
 	/** Стадия — по ключу; в движении бьёт и по «откуда», и по «куда». */

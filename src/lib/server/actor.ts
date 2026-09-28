@@ -28,6 +28,11 @@ import { clientAddress } from './http';
  * подчинённые: руководитель видит работу подчинённых только в тех
  * направлениях, где работает сам. Набор, как и множество людей, собирается на
  * каждом запросе, поэтому исключение из пространства гасит доступ сразу.
+ *
+ * `seesUnassigned` — видит ли вызывающий дела своих пространств, у которых ещё
+ * нет ответственного. Руководителю — да: разбирать эту очередь и есть его
+ * работа. Менеджеру — нет: из неназначенных ему видны те, что он завёл сам, и
+ * те, чья основная сторона закреплена за ним (`interactions/access.ts`).
  */
 export type AccessScope =
 	| { kind: 'all' }
@@ -35,6 +40,7 @@ export type AccessScope =
 			kind: 'delegated';
 			userIds: ReadonlySet<string>;
 			workspaceIds: ReadonlySet<string>;
+			seesUnassigned: boolean;
 	  };
 
 export type ActorContext = {
@@ -52,7 +58,8 @@ export type ActorContext = {
 export const NO_ACCESS: AccessScope = {
 	kind: 'delegated',
 	userIds: new Set(),
-	workspaceIds: new Set()
+	workspaceIds: new Set(),
+	seesUnassigned: false
 };
 
 /**

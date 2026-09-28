@@ -173,7 +173,7 @@
 
 	<p class="flex items-center gap-1.5 text-xs text-muted-foreground">
 		<UserRoundIcon class="size-3.5 shrink-0" aria-hidden="true" />
-		<span class="truncate">{card.ownerName}</span>
+		<span class="truncate">{card.ownerName ?? 'Ответственный не назначен'}</span>
 	</p>
 
 	<div class="flex flex-wrap items-center gap-1">

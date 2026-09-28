@@ -340,7 +340,8 @@ id-токен проверяется по ключам realm (`auth/oidc.ts::exc
 - **область** — «какие строки видно»: `scopeFilter(ctx, column)` отдаёт SQL, пригодный для `and(...)`
   (`true` при полном доступе, `false` при пустой области — не `in ()`). Для взаимодействия область
   считается через стороны процесса: `interactionScopeFilter` в `interactions/access.ts` — это
-  `exists(...)` по `interaction_parties`, а `assertInteractionVisible` отдаёт `NotFoundError`, а не
+  `exists(...)` по `interaction_parties` или владелец в области; дело без ответственного видят ещё
+  его автор и руководитель пространства (`seesUnassigned`, `docs/access-matrix.md`), а `assertInteractionVisible` отдаёт `NotFoundError`, а не
   403, чтобы перебором идентификаторов нельзя было узнать, что существует за границей области.
   Документы наследуют ту же проверку (`documents/read.ts::assertInteractionAccessible`).
 

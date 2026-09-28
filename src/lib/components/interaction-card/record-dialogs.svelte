@@ -94,7 +94,8 @@
 	);
 
 	let resolution = $state('');
-	let ownerUserId = $state(untrack(() => interaction.ownerUserId));
+	// Пустая строка — ответственный ещё не выбран: у дела его может не быть.
+	let ownerUserId = $state(untrack(() => interaction.ownerUserId ?? ''));
 	let plan = $state(untrack(() => planOf(interaction)));
 	/** План, каким он был при открытии диалога: от него считается, что тронуто. */
 	let planBase = $state(untrack(() => planOf(interaction)));
@@ -135,7 +136,7 @@
 			if (current === null) return;
 
 			resolution = '';
-			ownerUserId = interaction.ownerUserId;
+			ownerUserId = interaction.ownerUserId ?? '';
 			planBase = planOf(interaction);
 			plan = { ...planBase };
 			planReason = '';
@@ -242,8 +243,12 @@
 
 <FormDialog
 	bind:open={assignOpen.get, assignOpen.set}
-	title="Передать другому сотруднику"
-	description="Сейчас отвечает: {interaction.ownerName}. Смена попадёт в ленту записи."
+	title={interaction.ownerName === null
+		? 'Назначить ответственного'
+		: 'Передать другому сотруднику'}
+	description={interaction.ownerName === null
+		? 'Ответственный ещё не назначен. Назначение попадёт в ленту записи.'
+		: `Сейчас отвечает: ${interaction.ownerName}. Смена попадёт в ленту записи.`}
 >
 	<form
 		id="card-assign-form"
@@ -269,7 +274,7 @@
 			<Button
 				type="submit"
 				form="card-assign-form"
-				disabled={ownerUserId === interaction.ownerUserId}
+				disabled={ownerUserId === '' || ownerUserId === interaction.ownerUserId}
 			>
 				Назначить
 			</Button>

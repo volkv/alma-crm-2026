@@ -126,7 +126,7 @@ export async function buildApplicationStatus(
 			ownerName: users.fullName
 		})
 		.from(interactions)
-		.innerJoin(users, eq(users.id, interactions.ownerUserId))
+		.leftJoin(users, eq(users.id, interactions.ownerUserId))
 		.where(eq(interactions.id, interactionId))
 		.limit(1);
 
@@ -162,7 +162,10 @@ export async function buildApplicationStatus(
 						name: entry.snapshot.name,
 						position: entry.snapshot.position
 					},
-		responsible: { userId: interaction.ownerUserId, name: interaction.ownerName },
+		responsible:
+			interaction.ownerUserId === null || interaction.ownerName === null
+				? null
+				: { userId: interaction.ownerUserId, name: interaction.ownerName },
 		dueAt: entry?.dueAt.toISOString() ?? null,
 		updatedAt: interaction.updatedAt.toISOString()
 	});
@@ -284,7 +287,7 @@ export async function buildLearningGroupRequest(
 			startsOn: typeof seed.startsOn === 'string' ? seed.startsOn : null,
 			endsOn: typeof seed.endsOn === 'string' ? seed.endsOn : null
 		},
-		responsible: { userId: interaction.ownerUserId },
+		responsible: interaction.ownerUserId === null ? null : { userId: interaction.ownerUserId },
 		// Ссылки на файлы v1 не возит: получатель забирает их сам по ключу
 		// объекта (`GET /v1/exchange/files/{ключ}`), а какие именно документы
 		// нужны системе обучения, контракт заказчика ещё не называет.

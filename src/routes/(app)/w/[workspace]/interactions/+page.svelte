@@ -191,7 +191,8 @@
 			accessorKey: 'ownerName',
 			header: 'Ответственный',
 			meta: { title: 'Ответственный' },
-			enableSorting: false
+			enableSorting: false,
+			cell: ({ row }) => row.original.ownerName ?? 'не назначен'
 		},
 		{
 			accessorKey: 'lastActivityAt',
@@ -681,6 +682,7 @@
 				options={data.filterOptions.owners}
 				selected={data.filters.owner}
 				currentUser={data.user ?? null}
+				hasUnassigned={data.filterOptions.hasUnassigned}
 				ontoggle={(value) => toggleAttr('owner', value)}
 			/>
 		{/snippet}

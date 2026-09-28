@@ -251,7 +251,12 @@ async function assertContractAllowed(
 	}
 }
 
-async function assertOwnerExists(tx: Tx, ownerUserId: string): Promise<void> {
+/** Ответственный, если он назван, — действующий пользователь. Пусто — не назначен. */
+async function assertOwnerExists(tx: Tx, ownerUserId: string | null): Promise<void> {
+	if (ownerUserId === null) {
+		return;
+	}
+
 	const [owner] = await tx
 		.select({ id: users.id })
 		.from(users)
@@ -378,6 +383,9 @@ export async function createInteractionIn(
 			academicPeriodStart: definition.academicPeriodStart,
 			academicPeriodEnd: definition.academicPeriodEnd,
 			ownerUserId: definition.ownerUserId,
+			// Автор — человек, от чьего имени завели запись; у сайта и фоновой задачи
+			// автора нет.
+			createdByUserId: firstEdit(editor).editedBy,
 			externalSource: definition.externalSource,
 			externalId: definition.externalId,
 			...firstEdit(editor)
@@ -455,8 +463,13 @@ export async function createStaffInteractionIn(
 	}
 
 	const { ownerUserId } = parseCreate(input);
-	await assertOwnerExists(tx, ownerUserId);
-	await assertMayWorkIn(tx, ownerUserId, workspace);
+
+	// Ответственного можно не называть: дело часто заводят раньше, чем под него
+	// находится исполнитель. Названный же обязан работать в пространстве.
+	if (ownerUserId !== null) {
+		await assertOwnerExists(tx, ownerUserId);
+		await assertMayWorkIn(tx, ownerUserId, workspace);
+	}
 
 	return createInteractionIn(ctx, tx, workspaceKey, input, editorOf(ctx));
 }
@@ -567,7 +580,9 @@ export async function updateInteraction(
 				.from(workspaces)
 				.where(eq(workspaces.id, before.workspaceId));
 
-			await assertMayWorkIn(tx, definition.ownerUserId, workspace);
+			if (definition.ownerUserId !== null) {
+				await assertMayWorkIn(tx, definition.ownerUserId, workspace);
+			}
 		}
 
 		const previousParties = await tx
@@ -753,7 +768,8 @@ export async function updateInteraction(
 					type: 'interactions.owner_changed',
 					outcome: 'success',
 					subject: { type: 'interaction', id: definition.id },
-					details: { userId: definition.ownerUserId }
+					// Снятый ответственный — пустое значение: дело осталось без него.
+					details: { userId: definition.ownerUserId ?? undefined }
 				},
 				tx
 			);

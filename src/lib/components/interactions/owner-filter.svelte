@@ -1,8 +1,10 @@
 <script lang="ts">
+	import UserRoundXIcon from '@lucide/svelte/icons/user-round-x';
 	import { MediaQuery } from 'svelte/reactivity';
 	import * as Avatar from '$lib/components/ui/avatar/index.js';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
 	import * as Tooltip from '$lib/components/ui/tooltip/index.js';
+	import { NO_OPTION } from '$lib/contracts/common';
 	import type { InteractionFilterOption } from '$lib/contracts/interactions';
 	import { initials } from '$lib/format';
 	import { cn } from '$lib/utils.js';
@@ -21,18 +23,26 @@
 	 * Остальные варианты — только те, у кого в пространстве есть
 	 * взаимодействия (`readInteractionFilterOptions`). Когда выбирать не из
 	 * кого, кроме одного человека, ряда нет.
+	 *
+	 * Если в пространстве есть дела без ответственного, в ряду стоит и
+	 * «Без ответственного» (значение `none`): разобрать эту очередь — частая
+	 * работа руководителя.
 	 */
 	let {
 		options,
 		selected,
 		currentUser,
+		hasUnassigned = false,
 		ontoggle
 	}: {
 		options: readonly InteractionFilterOption[];
 		selected: readonly string[];
 		currentUser: { id: string; fullName: string } | null;
+		hasUnassigned?: boolean;
 		ontoggle: (value: string) => void;
 	} = $props();
+
+	const UNASSIGNED: InteractionFilterOption = { value: NO_OPTION, label: 'Без ответственного' };
 
 	/**
 	 * Сколько аватарок видно в ряду; остальные — в меню «+N». На телефоне ряд
@@ -47,6 +57,7 @@
 	const currentUserId = $derived(currentUser?.id ?? null);
 	const ordered = $derived([
 		...(currentUser === null ? [] : [{ value: currentUser.id, label: currentUser.fullName }]),
+		...(hasUnassigned ? [UNASSIGNED] : []),
 		...options.filter((option) => option.value !== currentUserId)
 	]);
 	const visible = $derived(ordered.slice(0, visibleCount));
@@ -104,7 +115,11 @@
 											option.value === currentUserId && 'bg-selection text-selection-foreground'
 										)}
 									>
-										{initials(option.label)}
+										{#if option.value === NO_OPTION}
+											<UserRoundXIcon class="size-4" aria-hidden="true" />
+										{:else}
+											{initials(option.label)}
+										{/if}
 									</Avatar.Fallback>
 								</Avatar.Root>
 							</button>
@@ -144,7 +159,13 @@
 									closeOnSelect={false}
 								>
 									<Avatar.Root size="sm">
-										<Avatar.Fallback class="font-medium">{initials(option.label)}</Avatar.Fallback>
+										<Avatar.Fallback class="font-medium">
+											{#if option.value === NO_OPTION}
+												<UserRoundXIcon class="size-3.5" aria-hidden="true" />
+											{:else}
+												{initials(option.label)}
+											{/if}
+										</Avatar.Fallback>
 									</Avatar.Root>
 									<span class="truncate">{option.label}</span>
 								</DropdownMenu.CheckboxItem>

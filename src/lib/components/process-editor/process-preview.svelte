@@ -98,7 +98,7 @@
 									{move.title}
 								</a>
 								<span class="text-xs text-muted-foreground">
-									{move.ownerName} · «{move.fromStageName}» →
+									{move.ownerName ?? 'без ответственного'} · «{move.fromStageName}» →
 									{#if move.toStageName === null}
 										<span class="text-danger">куда — не указано</span>
 									{:else}

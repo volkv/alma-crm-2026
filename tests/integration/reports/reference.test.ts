@@ -78,7 +78,8 @@ function delegatedActor(userIds: readonly string[], workspaceIds: readonly strin
 	const scope = {
 		kind: 'delegated' as const,
 		userIds: new Set(userIds),
-		workspaceIds: new Set(workspaceIds)
+		workspaceIds: new Set(workspaceIds),
+		seesUnassigned: false
 	};
 	const base = testActor({ roleId: 'manager' });
 

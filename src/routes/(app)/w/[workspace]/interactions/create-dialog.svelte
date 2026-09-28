@@ -3,6 +3,7 @@
 	import { superForm } from 'sveltekit-superforms';
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import * as Alert from '$lib/components/ui/alert/index.js';
+	import { Button } from '$lib/components/ui/button/index.js';
 	import * as SegmentedControl from '$lib/components/ui/segmented-control/index.js';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
@@ -19,8 +20,10 @@
 	import type { PageData } from './$types';
 
 	/**
-	 * Окно «Создать взаимодействие». Спрашивает минимум: название,
-	 * ответственного и сторону, у вуза ещё компанию-заказчика. Площадки,
+	 * Окно «Создать взаимодействие». Спрашивает минимум: название и сторону,
+	 * у вуза ещё компанию-заказчика. Ответственного по умолчанию нет: дело часто
+	 * заводят раньше, чем под него находится исполнитель, — поле раскрывается
+	 * ссылкой «Назначить ответственного», а позже его назначают с карточки. Площадки,
 	 * контакты, сроки, программы, продукты и договор дополняют в карточке по
 	 * ходу процесса. После создания — сразу в карточку новой записи (переход
 	 * делает сервер).
@@ -121,6 +124,8 @@
 	// У физического лица контакт дела — он сам: полем его не выбирают, он
 	// подставляется.
 	let contactAffiliationId = $state<string | null>(null);
+	// Поле ответственного раскрывают по ссылке: по умолчанию дело заводится без него.
+	let assigning = $state(false);
 
 	/** Есть ли что терять: крестик тогда спросит подтверждение. */
 	const dirty = $derived(
@@ -183,6 +188,13 @@
 		institution = null;
 		customer = null;
 		contactAffiliationId = null;
+		assigning = false;
+	}
+
+	/** Передумали назначать: дело заведётся без ответственного. */
+	function dropOwner() {
+		assigning = false;
+		$form.ownerUserId = null;
 	}
 
 	// Стороны взаимодействия собираются из выбранных организаций: контракт ждёт
@@ -224,7 +236,7 @@
 <CreateDialog
 	bind:open
 	title="Новое взаимодействие"
-	description="С кем ведётся работа и кто за неё отвечает. Остальное дополняют в карточке по ходу процесса."
+	description="С кем ведётся работа. Ответственного и остальное дополняют в карточке по ходу процесса."
 	formId="create-interaction-form"
 	submitLabel="Создать взаимодействие"
 	submitting={$submitting}
@@ -261,17 +273,40 @@
 			errors={$errors.title}
 		/>
 
-		<FieldSelect
-			name="ownerUserId"
-			label="Ответственный"
-			required
-			options={create.users.map((user) => ({
-				value: user.id,
-				label: `${user.name} — ${user.roleName}`
-			}))}
-			bind:value={$form.ownerUserId}
-			errors={$errors.ownerUserId}
-		/>
+		{#if assigning}
+			<div class="flex flex-col gap-1">
+				<FieldSelect
+					name="ownerUserId"
+					label="Ответственный"
+					options={create.users.map((user) => ({
+						value: user.id,
+						label: `${user.name} — ${user.roleName}`
+					}))}
+					bind:value={
+						() => $form.ownerUserId ?? '', (next) => ($form.ownerUserId = next === '' ? null : next)
+					}
+					errors={$errors.ownerUserId}
+				/>
+				<Button variant="link" size="sm" class="h-auto self-start px-0" onclick={dropOwner}>
+					Не назначать сейчас
+				</Button>
+			</div>
+		{:else}
+			<div class="flex flex-col gap-0.5">
+				<Button
+					variant="link"
+					size="sm"
+					class="h-auto self-start px-0"
+					data-testid="create-assign-owner"
+					onclick={() => (assigning = true)}
+				>
+					Назначить ответственного
+				</Button>
+				<p class="text-xs text-muted-foreground">
+					Можно и позже, с карточки: дело заведётся без ответственного.
+				</p>
+			</div>
+		{/if}
 
 		{#if kindOptions.length > 1}
 			<SegmentedControl.Root

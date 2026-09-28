@@ -166,6 +166,13 @@ async function markLearningChecklist(
 		.from(interactions)
 		.where(eq(interactions.id, interactionId))
 		.limit(1);
+
+	// Отметку ставит ответственный; у дела без него отмечать не от чьего имени —
+	// итог сохранён, а пункты человек отметит сам, когда дело кому-то назначат.
+	if (interaction.ownerUserId === null) {
+		return [];
+	}
+
 	const owner = await ownerActor(ctx, interaction.ownerUserId);
 
 	for (const item of due) {

@@ -9,7 +9,7 @@ export type MyDayTone = 'danger' | 'warning' | 'info' | 'neutral';
  *
  * Полное название раздела и подсказка к действию — в контракте
  * (`$lib/contracts/my-day`), их же читает утреннее письмо. Здесь только то,
- * что нужно экрану и чего в письме нет: счётчик в ряд из семи не вмещает
+ * что нужно экрану и чего в письме нет: счётчик в ряд из восьми не вмещает
  * «Срок стадии сегодня или завтра».
  *
  * Тон — по срочности, а не по разделу: красным горит только то, что уже
@@ -18,6 +18,7 @@ export type MyDayTone = 'danger' | 'warning' | 'info' | 'neutral';
  * котором видно тревожное.
  */
 export const MY_DAY_KIND_VIEW: Record<MyDayKind, { short: string; tone: MyDayTone }> = {
+	unassigned: { short: 'Без ответственного', tone: 'warning' },
 	overdue: { short: 'Просрочено', tone: 'danger' },
 	due_soon: { short: 'Срок до завтра', tone: 'warning' },
 	blocker: { short: 'Помехи', tone: 'warning' },

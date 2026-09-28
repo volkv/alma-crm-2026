@@ -256,7 +256,8 @@ const MANAGER_CHAIN_DEPTH = 16;
  *
  * `admin` видит всё. `lead` — себя и своих подчинённых на любую глубину:
  * замыкание считается рекурсивным CTE по `users.manager_user_id`, один раз при
- * сборке пользователя. `manager` — только себя. Незнакомая роль получает
+ * сборке пользователя, и вдобавок дела своих пространств без ответственного.
+ * `manager` — только себя. Незнакомая роль получает
  * область «только свои записи»: это безопасный исход, а не догадка о том, что
  * роль имела в виду.
  *
@@ -280,7 +281,7 @@ async function accessScopeFor(role: { id: string }, userId: string): Promise<Acc
 		loadWorkspaceIds(userId)
 	]);
 
-	return { kind: 'delegated', userIds, workspaceIds };
+	return { kind: 'delegated', userIds, workspaceIds, seesUnassigned: role.id === 'lead' };
 }
 
 /** Сам руководитель и его подчинённые на любую глубину. */

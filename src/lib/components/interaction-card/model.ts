@@ -748,6 +748,8 @@ function checklistCommand(
 		}
 		case 'plan':
 			return make({ kind: 'plan' });
+		case 'assign':
+			return make({ kind: 'assign' });
 		case 'contract':
 			return make({ kind: 'contract' });
 		case 'party':
@@ -1251,7 +1253,8 @@ function buildSecondary(source: CardSource, action: CardAction): SecondaryAction
 
 	result.push({
 		key: 'responsible',
-		label: 'Передать другому сотруднику',
+		label:
+			interaction.ownerUserId === null ? 'Назначить ответственного' : 'Передать другому сотруднику',
 		allowed: can('set_responsible'),
 		reason: can('set_responsible') ? null : 'Нет права менять ответственного',
 		tone: 'default',

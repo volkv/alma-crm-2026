@@ -9,12 +9,13 @@
  */
 
 /**
- * Разделы в том порядке, в каком их читают: просрочку уже не вернуть, срок
- * «сегодня» ещё можно успеть, помеха сама не рассосётся, а новая заявка ждёт
- * первого шага. Взаимодействие попадает в один раздел — первый подходящий:
+ * Разделы в том порядке, в каком их читают: дело без ответственного некому
+ * вести — его раздают первым, просрочку уже не вернуть, срок «сегодня» ещё
+ * можно успеть, помеха сама не рассосётся, а новая заявка ждёт первого шага. Взаимодействие попадает в один раздел — первый подходящий:
  * одна и та же запись тремя строками превращает список дел в отчёт.
  */
 export const MY_DAY_KINDS = [
+	'unassigned',
 	'overdue',
 	'due_soon',
 	'blocker',
@@ -32,6 +33,7 @@ export type MyDayKind = (typeof MY_DAY_KINDS)[number];
  * нет.
  */
 export const MY_DAY_INTERACTION_KINDS = [
+	'unassigned',
 	'overdue',
 	'due_soon',
 	'blocker',
@@ -47,6 +49,10 @@ export function isMyDayInteractionKind(kind: MyDayKind): kind is MyDayInteractio
 }
 
 export const MY_DAY_SECTIONS: Record<MyDayKind, { title: string; action: string }> = {
+	unassigned: {
+		title: 'Без ответственного',
+		action: 'Назначьте ответственного на карточке дела'
+	},
 	overdue: {
 		title: 'Просрочены стадии',
 		action: 'Переведите на следующую стадию или поставьте паузу с причиной'

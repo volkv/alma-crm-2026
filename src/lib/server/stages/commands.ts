@@ -139,7 +139,7 @@ function actingUserId(ctx: ActorContext): string {
 	return ctx.user.id;
 }
 
-type LockedInteraction = { id: string; workspaceId: string; ownerUserId: string };
+type LockedInteraction = { id: string; workspaceId: string; ownerUserId: string | null };
 
 /** Кто выполняет запрос: транзакция команды или общий пул для чтения. */
 type Executor = Tx | ReturnType<typeof getDb>;

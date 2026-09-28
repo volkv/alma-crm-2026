@@ -358,5 +358,7 @@ export function scopeFingerprint(ctx: ActorContext): string {
 	const people = [...ctx.scope.userIds].sort().join(',');
 	const places = [...ctx.scope.workspaceIds].sort().join(',');
 
-	return `users:${people}|workspaces:${places}`;
+	const unassigned = ctx.scope.seesUnassigned ? '|unassigned' : '';
+
+	return `users:${people}|workspaces:${places}${unassigned}`;
 }

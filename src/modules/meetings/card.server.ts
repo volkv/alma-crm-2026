@@ -231,6 +231,14 @@ export default defineCardServer(meetings, {
 					error(400, 'Встреча по делу ещё не назначена: сначала назначьте её в диалоге');
 				}
 
+				// Организатор приглашения — ответственный: без него звать некому от имени дела.
+				if (interaction.ownerUserId === null) {
+					error(
+						400,
+						'У дела не назначен ответственный: назначьте его, чтобы разослать приглашение'
+					);
+				}
+
 				const organizerEmail = await findOwnerEmail(interaction.ownerUserId);
 
 				if (organizerEmail === null) {
@@ -286,7 +294,7 @@ export default defineCardServer(meetings, {
 					location: meeting.location,
 					start: meeting.start,
 					durationMinutes: meeting.durationMinutes,
-					organizer: { name: interaction.ownerName, email: organizerEmail },
+					organizer: { name: interaction.ownerName ?? '', email: organizerEmail },
 					attendeesWithEmail,
 					attendeeNamesWithoutEmail,
 					generatedAt

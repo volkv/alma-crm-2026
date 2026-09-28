@@ -42,7 +42,12 @@ async function readPartyNames(partyIds: string[]): Promise<Map<string, string>> 
  * стадию тоже, — но вопрос «кто этим занимался» после завершения задают чаще,
  * чем до: отвечает владелец записи.
  */
-async function readOwner(ownerUserId: string): Promise<{ id: string; name: string }> {
+async function readOwner(ownerUserId: string | null): Promise<{ id: string; name: string } | null> {
+	// Дело закрыли, так и не назначив ответственного: отвечать некому.
+	if (ownerUserId === null) {
+		return null;
+	}
+
 	const [owner] = await getDb()
 		.select({ id: users.id, name: users.fullName })
 		.from(users)

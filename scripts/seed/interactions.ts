@@ -177,7 +177,13 @@ type InteractionSeed = CounterpartySeed & {
 	title: string;
 	programs: readonly string[];
 	products?: readonly string[];
+	/**
+	 * Кто ведёт дело на стенде; у дела без ответственного (`unassigned`) — кто
+	 * его завёл: от его имени идёт заливка.
+	 */
 	owner: OwnerKey;
+	/** Дело без ответственного: завели, а исполнителя ещё не назначили. */
+	unassigned?: true;
 	/** Стадия, на которой взаимодействие стоит сейчас. */
 	stage: string;
 	/** Сколько дней назад взаимодействие завели. */
@@ -2371,6 +2377,40 @@ const B2B_EXTRA: readonly InteractionSeed[] = [
 		lastActivityDaysAgo: 18,
 		agreement: ['2026-10-01', '2027-09-30'],
 		cancelledWith: 'Юридическая служба вуза отклонила правки без альтернативы, стороны разошлись.'
+	},
+	// Два дела без ответственного: завели раньше, чем под них нашёлся исполнитель.
+	// Видны автору и руководителю; на первой стадии висит необязательный пункт
+	// «Назначить ответственного».
+	{
+		key: 'lyceum306-robotics-unassigned',
+		title: 'Лицей № 306 «Гравитон»: робототехника для 9–11 классов',
+		institution: 'lyceum306',
+		contact: 'morozov',
+		customer: 'polarcode',
+		programs: ['school-01'],
+		owner: 'demo-manager',
+		unassigned: true,
+		stage: 'contact_search',
+		startedDaysAgo: 1,
+		sinceDaysAgo: 1,
+		lastActivityDaysAgo: 1,
+		agreement: ['2026-10-01', '2027-06-30'],
+		comments: ['Запрос пришёл на общую почту, исполнителя ещё не выбрали.']
+	},
+	{
+		key: 'vts-networks-unassigned',
+		title: 'ВТС: сетевое администрирование для второго курса',
+		institution: 'vts',
+		contact: 'karpov',
+		customer: 'technosphere',
+		programs: ['spo-02'],
+		owner: 'veresova',
+		unassigned: true,
+		stage: 'contact_search',
+		startedDaysAgo: 2,
+		sinceDaysAgo: 2,
+		lastActivityDaysAgo: 2,
+		agreement: ['2026-10-01', '2027-08-31']
 	}
 ];
 
@@ -2997,7 +3037,7 @@ function toCreateInput(
 		agreementPeriodEnd: seed.agreement[1],
 		academicPeriodStart: seed.academic?.[0] ?? null,
 		academicPeriodEnd: seed.academic?.[1] ?? null,
-		ownerUserId: seedId('user', seed.owner),
+		ownerUserId: seed.unassigned === true ? null : seedId('user', seed.owner),
 		parties: partiesOf(seed),
 		programs: seed.programs.map((program) => {
 			const programId = seedId('program', program);
@@ -3059,6 +3099,8 @@ async function createSeededInteraction(
 				academicPeriodStart: input.academicPeriodStart,
 				academicPeriodEnd: input.academicPeriodEnd,
 				ownerUserId: input.ownerUserId,
+				// Автор — тот, от чьего имени заливается дело, как у формы.
+				createdByUserId: ctx.user?.id ?? null,
 				contractId: input.contractId,
 				// Как у настоящей заявки (`intake.ts`): источник и номер обращения
 				// остаются на деле, а ревизия — последняя применённая заявкой.

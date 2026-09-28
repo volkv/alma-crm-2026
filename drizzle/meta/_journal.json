@@ -290,6 +290,13 @@
       "breakpoints": true
     },
     {
+      "idx": 42,
+      "version": "7",
+      "when": 1790598327242,
+      "tag": "0042_interaction_owner_optional",
+      "breakpoints": true
+    },
+    {
       "idx": 43,
       "version": "7",
       "when": 1790598812760,

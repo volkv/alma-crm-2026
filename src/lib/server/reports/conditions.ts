@@ -21,6 +21,7 @@
  * три тысячи.
  */
 import { and, sql, type SQL } from 'drizzle-orm';
+import { NO_OPTION } from '$lib/contracts/common';
 import type { InteractionStatus } from '$lib/contracts/interactions';
 import type {
 	ReportDocumentRef,
@@ -169,7 +170,19 @@ export function interactionConditions(ctx: ActorContext, query: ReportQuery): SQ
 	}
 
 	if (query.owner.length > 0) {
-		conditions.push(sql`interactions.owner_user_id in ${inList(query.owner)}`);
+		// `none` — дела без ответственного: вместе с людьми через «или».
+		const people = query.owner.filter((value) => value !== NO_OPTION);
+		const alternatives: SQL[] = [];
+
+		if (people.length > 0) {
+			alternatives.push(sql`interactions.owner_user_id in ${inList(people)}`);
+		}
+
+		if (people.length < query.owner.length) {
+			alternatives.push(sql`interactions.owner_user_id is null`);
+		}
+
+		conditions.push(sql`(${sql.join(alternatives, sql` or `)})`);
 	}
 
 	if (query.assignee.length > 0) {
@@ -354,7 +367,7 @@ export type ReportSelection = {
 	status: InteractionStatus;
 	workspaceId: string;
 	workspaceKey: string;
-	ownerUserId: string;
+	ownerUserId: string | null;
 	contractId: string | null;
 	organizationId: string | null;
 	organizationName: string | null;

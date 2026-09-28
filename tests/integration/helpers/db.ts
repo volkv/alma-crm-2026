@@ -340,7 +340,10 @@ export function testActor(options?: {
 			: {
 					kind: 'delegated',
 					userIds: new Set(options.scopeUserIds),
-					workspaceIds: new Set(options.workspaceIds)
+					workspaceIds: new Set(options.workspaceIds),
+					// Как у сессии (`auth/session.ts`): неназначенные дела пространства
+					// видит руководитель.
+					seesUnassigned: roleId === 'lead'
 				};
 
 	return {

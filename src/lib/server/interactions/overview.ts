@@ -96,7 +96,7 @@ export type WorkOverview = {
 /** Строка активного взаимодействия в том объёме, в каком её считают счётчики. */
 type PortfolioRow = {
 	id: string;
-	ownerUserId: string;
+	ownerUserId: string | null;
 	lastActivityAt: Date;
 	snapshot: StageSnapshot | null;
 	isOverdue: boolean | null;

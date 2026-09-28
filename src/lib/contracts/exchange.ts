@@ -403,7 +403,8 @@ export const learningGroupRequestedDataSchema = z.object({
 		startsOn: z.string().nullable(),
 		endsOn: z.string().nullable()
 	}),
-	responsible: z.object({ userId: z.uuid() }),
+	/** `null` — у дела ещё нет ответственного. */
+	responsible: z.object({ userId: z.uuid() }).nullable(),
 	documents: z.array(exchangeAttachmentSchema),
 	/**
 	 * Поимённый список слушателей группы (`2.1`) — полный снимок состава, а не

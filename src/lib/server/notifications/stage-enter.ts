@@ -17,8 +17,8 @@
  * Кому письма не будет — решается двумя проверками, и обе оставляют строку в
  * журнале со статусом «получатель не определён» и причиной словами:
  * - при постановке: адресат — тот самый сотрудник, который двигает дело (о
- *   собственном действии уведомлять незачем), или у ответственного не указан
- *   руководитель;
+ *   собственном действии уведомлять незачем), у дела нет ответственного или у
+ *   ответственного не указан руководитель;
  * - перед отправкой: адресат выключен или больше не видит дело — тем же
  *   правилом, по которому ему открывается карточка (`live/viewers.ts`).
  *
@@ -58,6 +58,10 @@ export const STAGE_ENTER_SELF =
 export const STAGE_ENTER_NO_MANAGER =
 	'У ответственного за дело не указан руководитель: уведомлять некого. Назначьте руководителя в разделе «Пользователи»';
 
+/** Почему письма не будет: у дела ещё нет ответственного. */
+export const STAGE_ENTER_NO_OWNER =
+	'У дела не назначен ответственный: уведомлять некого. Назначьте ответственного на карточке дела';
+
 /** Почему письма не будет: адресат к моменту отправки дела не видит. */
 export const STAGE_ENTER_ACCESS_LOST =
 	'Адресат больше не видит дело: учётная запись выключена или доступ к делу пропал после перехода';
@@ -69,16 +73,20 @@ export type StageEnterFacts = {
 	stageName: string;
 	/** Кого уведомить по настройке стадии; `null` — стадия не уведомляет. */
 	target: StageEnterNotifyTarget | null;
-	/** Ответственный за дело в момент входа. */
-	ownerUserId: string;
+	/** Ответственный за дело в момент входа; `null` — ещё не назначен. */
+	ownerUserId: string | null;
 };
 
 /** Кому адресовано уведомление — или почему его не будет. */
 async function resolveRecipient(
 	tx: Tx,
 	target: StageEnterNotifyTarget,
-	ownerUserId: string
+	ownerUserId: string | null
 ): Promise<string | null> {
+	if (ownerUserId === null) {
+		return null;
+	}
+
 	if (target === 'responsible') {
 		return ownerUserId;
 	}
@@ -119,11 +127,13 @@ export async function queueStageEnterNotice(
 	const recipientUserId = await resolveRecipient(tx, facts.target, facts.ownerUserId);
 	const moverId = ctx.user?.id ?? null;
 	const refusal =
-		recipientUserId === null
-			? STAGE_ENTER_NO_MANAGER
-			: recipientUserId === moverId
-				? STAGE_ENTER_SELF
-				: null;
+		facts.ownerUserId === null
+			? STAGE_ENTER_NO_OWNER
+			: recipientUserId === null
+				? STAGE_ENTER_NO_MANAGER
+				: recipientUserId === moverId
+					? STAGE_ENTER_SELF
+					: null;
 	const message = stageEnteredNotificationMessage(
 		{ interactionId: facts.interactionId, stageName: facts.stageName },
 		getConfig().ORIGIN

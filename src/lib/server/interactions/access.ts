@@ -32,7 +32,11 @@ import { actorScopeFilter, scopeFilter, workspaceFilter } from '../rbac';
  *    взаимодействия несколько (вуз, плательщик, организация-оператор), и если
  *    считать видимость по любой из них, достаточно назначить кому-нибудь
  *    организацию-оператора — и он немедленно увидит все взаимодействия продукта
- *    разом, потому что оператор стоит стороной почти везде.
+ *    разом, потому что оператор стоит стороной почти везде;
+ * 3. **дело без ответственного** — его видит автор (автор в области) и
+ *    руководитель пространства (`seesUnassigned`). Иначе дело, заведённое
+ *    раньше исполнителя, пропадало бы из виду у того, кто его завёл, и у того,
+ *    кто должен его раздать.
  */
 export function interactionScopeFilter(ctx: ActorContext): SQL {
 	if (ctx.scope.kind === 'all') {
@@ -55,7 +59,11 @@ export function interactionScopeFilter(ctx: ActorContext): SQL {
 			)
 		);
 
-	return sql`(${workspaceFilter(ctx, interactions.workspaceId)} and (${actorScopeFilter(ctx, interactions.ownerUserId)} or ${interactions.id} in (${byPrimaryParty})))`;
+	const unassigned = ctx.scope.seesUnassigned
+		? sql`${interactions.ownerUserId} is null`
+		: sql`(${interactions.ownerUserId} is null and ${actorScopeFilter(ctx, interactions.createdByUserId)})`;
+
+	return sql`(${workspaceFilter(ctx, interactions.workspaceId)} and (${actorScopeFilter(ctx, interactions.ownerUserId)} or ${unassigned} or ${interactions.id} in (${byPrimaryParty})))`;
 }
 
 /**
@@ -65,7 +73,7 @@ export function interactionScopeFilter(ctx: ActorContext): SQL {
 export async function assertInteractionVisible(
 	ctx: ActorContext,
 	interactionId: string
-): Promise<{ id: string; workspaceId: string; ownerUserId: string; lastActivityAt: Date }> {
+): Promise<{ id: string; workspaceId: string; ownerUserId: string | null; lastActivityAt: Date }> {
 	const [row] = await getDb()
 		.select({
 			id: interactions.id,

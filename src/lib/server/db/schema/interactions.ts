@@ -582,9 +582,17 @@ export const interactions = pgTable(
 		/** Учебный период, к которому относится взаимодействие. */
 		academicPeriodStart: date(),
 		academicPeriodEnd: date(),
-		ownerUserId: uuid()
-			.notNull()
-			.references(() => users.id, { onDelete: 'restrict' }),
+		/**
+		 * Ответственный. Пустой — дело завели раньше, чем под него нашёлся
+		 * исполнитель; такое дело видят автор, руководители пространства и те, за
+		 * кем закреплена основная сторона (`../../interactions/access`).
+		 */
+		ownerUserId: uuid().references(() => users.id, { onDelete: 'restrict' }),
+		/**
+		 * Кто завёл дело. Пусто у записей, созданных системой без человека, и у
+		 * записей, заведённых до появления столбца.
+		 */
+		createdByUserId: uuid().references(() => users.id, { onDelete: 'set null' }),
 		/**
 		 * Момент последнего события по взаимодействию. Обновляют сервисы; по
 		 * нему считается протухание, потому что оно про тишину вокруг записи,

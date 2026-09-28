@@ -172,7 +172,8 @@ async function readBoardRows(ctx: ActorContext, workspaceId: string, query: Inte
 				)
 		})
 		.from(interactions)
-		.innerJoin(users, eq(users.id, interactions.ownerUserId))
+		// Левое соединение: дело без ответственного на доске остаётся.
+		.leftJoin(users, eq(users.id, interactions.ownerUserId))
 		.innerJoin(
 			stageEntries,
 			and(eq(stageEntries.interactionId, interactions.id), isNull(stageEntries.leftAt))

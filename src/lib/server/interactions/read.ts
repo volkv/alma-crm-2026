@@ -22,7 +22,7 @@ import {
 	sql,
 	type SQL
 } from 'drizzle-orm';
-import type { PageResult } from '$lib/contracts/common';
+import { NO_OPTION, type PageResult } from '$lib/contracts/common';
 import { GENERATED_DOCUMENT_KIND } from '$lib/contracts/documents';
 import { PARTY_ROLE_LABELS } from '$lib/contracts/interactions';
 import type {
@@ -115,7 +115,19 @@ export function interactionAttributeConditions(query: InteractionAttributeQuery)
 	const conditions: SQL[] = [];
 
 	if (query.owner.length > 0) {
-		conditions.push(inArray(interactions.ownerUserId, query.owner));
+		// `none` — «без ответственного»: вместе с людьми через то же «или».
+		const people = query.owner.filter((value) => value !== NO_OPTION);
+		const alternatives: SQL[] = [];
+
+		if (people.length > 0) {
+			alternatives.push(inArray(interactions.ownerUserId, people));
+		}
+
+		if (people.length < query.owner.length) {
+			alternatives.push(isNull(interactions.ownerUserId));
+		}
+
+		conditions.push(or(...alternatives) ?? sql`false`);
 	}
 
 	if (query.org.length > 0) {
@@ -486,7 +498,7 @@ export async function listInteractions(
 			}
 		})
 		.from(interactions)
-		.innerJoin(users, eq(users.id, interactions.ownerUserId))
+		.leftJoin(users, eq(users.id, interactions.ownerUserId))
 		.leftJoin(
 			stageEntries,
 			and(eq(stageEntries.interactionId, interactions.id), isNull(stageEntries.leftAt))
@@ -578,50 +590,61 @@ export async function readInteractionFilterOptions(
 	const db = getDb();
 	const scope = and(interactionScopeFilter(ctx), eq(interactions.workspaceId, workspaceId));
 
-	const [organizationRows, programRows, productRows, programDirectionRows, ownerRows] =
-		await Promise.all([
-			db
-				.selectDistinct({ value: organizations.id, label: organizations.shortName })
-				.from(interactions)
-				.innerJoin(
-					interactionParties,
-					and(
-						eq(interactionParties.interactionId, interactions.id),
-						eq(interactionParties.isPrimary, true)
-					)
+	const [
+		organizationRows,
+		programRows,
+		productRows,
+		programDirectionRows,
+		ownerRows,
+		unassignedRows
+	] = await Promise.all([
+		db
+			.selectDistinct({ value: organizations.id, label: organizations.shortName })
+			.from(interactions)
+			.innerJoin(
+				interactionParties,
+				and(
+					eq(interactionParties.interactionId, interactions.id),
+					eq(interactionParties.isPrimary, true)
 				)
-				.innerJoin(organizations, eq(organizations.id, interactionParties.organizationId))
-				.where(scope)
-				.orderBy(asc(organizations.shortName)),
-			db
-				.selectDistinct({ value: programs.id, label: programs.name })
-				.from(interactions)
-				.innerJoin(interactionPrograms, eq(interactionPrograms.interactionId, interactions.id))
-				.innerJoin(programs, eq(programs.id, interactionPrograms.programId))
-				.where(scope)
-				.orderBy(asc(programs.name)),
-			db
-				.selectDistinct({ value: products.id, label: products.name })
-				.from(interactions)
-				.innerJoin(interactionProducts, eq(interactionProducts.interactionId, interactions.id))
-				.innerJoin(products, eq(products.id, interactionProducts.productId))
-				.where(scope)
-				.orderBy(asc(products.name)),
-			db
-				.selectDistinct({ value: programs.directionId })
-				.from(interactions)
-				.innerJoin(interactionPrograms, eq(interactionPrograms.interactionId, interactions.id))
-				.innerJoin(programs, eq(programs.id, interactionPrograms.programId))
-				.where(and(scope, isNotNull(programs.directionId))),
-			// Продукты уже отобраны выше — направления продукта читаются по ним, а не
-			// вторым проходом по взаимодействиям.
-			db
-				.selectDistinct({ value: users.id, label: users.fullName })
-				.from(interactions)
-				.innerJoin(users, eq(users.id, interactions.ownerUserId))
-				.where(scope)
-				.orderBy(asc(users.fullName))
-		]);
+			)
+			.innerJoin(organizations, eq(organizations.id, interactionParties.organizationId))
+			.where(scope)
+			.orderBy(asc(organizations.shortName)),
+		db
+			.selectDistinct({ value: programs.id, label: programs.name })
+			.from(interactions)
+			.innerJoin(interactionPrograms, eq(interactionPrograms.interactionId, interactions.id))
+			.innerJoin(programs, eq(programs.id, interactionPrograms.programId))
+			.where(scope)
+			.orderBy(asc(programs.name)),
+		db
+			.selectDistinct({ value: products.id, label: products.name })
+			.from(interactions)
+			.innerJoin(interactionProducts, eq(interactionProducts.interactionId, interactions.id))
+			.innerJoin(products, eq(products.id, interactionProducts.productId))
+			.where(scope)
+			.orderBy(asc(products.name)),
+		db
+			.selectDistinct({ value: programs.directionId })
+			.from(interactions)
+			.innerJoin(interactionPrograms, eq(interactionPrograms.interactionId, interactions.id))
+			.innerJoin(programs, eq(programs.id, interactionPrograms.programId))
+			.where(and(scope, isNotNull(programs.directionId))),
+		// Продукты уже отобраны выше — направления продукта читаются по ним, а не
+		// вторым проходом по взаимодействиям.
+		db
+			.selectDistinct({ value: users.id, label: users.fullName })
+			.from(interactions)
+			.innerJoin(users, eq(users.id, interactions.ownerUserId))
+			.where(scope)
+			.orderBy(asc(users.fullName)),
+		db
+			.select({ id: interactions.id })
+			.from(interactions)
+			.where(and(scope, isNull(interactions.ownerUserId)))
+			.limit(1)
+	]);
 
 	const productDirectionRows =
 		productRows.length === 0
@@ -657,7 +680,8 @@ export async function readInteractionFilterOptions(
 		directions: directionRows,
 		programs: programRows,
 		products: productRows,
-		owners: ownerRows
+		owners: ownerRows,
+		hasUnassigned: unassignedRows.length > 0
 	};
 }
 
@@ -993,7 +1017,7 @@ async function buildInteractionBase(interactionId: string): Promise<InteractionB
 		})
 		.from(interactions)
 		.innerJoin(workspaces, eq(workspaces.id, interactions.workspaceId))
-		.innerJoin(users, eq(users.id, interactions.ownerUserId))
+		.leftJoin(users, eq(users.id, interactions.ownerUserId))
 		.where(eq(interactions.id, interactionId))
 		.limit(1);
 

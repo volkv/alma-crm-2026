@@ -1,5 +1,6 @@
 import { resolve } from '$app/paths';
 import type { ResolvedPathname } from '$app/types';
+import { NO_OPTION } from '$lib/contracts/common';
 import {
 	INTERACTION_LIST_STATES,
 	STAGE_CATEGORIES,
@@ -73,11 +74,14 @@ const UUID_PATTERN = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{
  * просто не фильтр: правят ссылку руками не реже, чем ссылку на отчёт.
  */
 function readIds(url: URL, param: ListAttributeParam): string[] {
-	return url.searchParams
-		.getAll(param)
-		.flatMap((value) => value.split(','))
-		.map((value) => value.trim())
-		.filter((value) => UUID_PATTERN.test(value));
+	return (
+		url.searchParams
+			.getAll(param)
+			.flatMap((value) => value.split(','))
+			.map((value) => value.trim())
+			// У ответственного есть ещё «без ответственного» — `none`.
+			.filter((value) => UUID_PATTERN.test(value) || (param === 'owner' && value === NO_OPTION))
+	);
 }
 
 export function readFilters(url: URL): InteractionFilters {

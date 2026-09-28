@@ -80,6 +80,14 @@ scope(admin)   = всё
 как ответственность за вуз ушла другому, — иначе смена ответственного обрывала бы незавершённую
 работу на полуслове.
 
+**Дело без ответственного** (`interactions.owner_user_id is null` — дело завели раньше, чем под него
+нашёлся исполнитель) видят, кроме тех, за кем его основная сторона: **автор** —
+`interactions.created_by_user_id` в области, то есть у менеджера — он сам, — и **руководитель**
+пространства: у его области признак `seesUnassigned` (роль `lead`, `auth/session.ts`), и ему видны
+все неназначенные дела его пространств, а не только заведённые подчинёнными, — раздать их его
+работа. Назначение ответственного (`setResponsible`) переводит дело в обычное правило: после него
+автор и руководитель видят его только по слагаемым выше.
+
 **Область считается по основной стороне взаимодействия, а не по любой.** У взаимодействия сторон
 несколько: вуз, плательщик, организация-оператор (`docs/domain.md`, раздел 2). Если считать
 видимость по любой из них, достаточно назначить кому-нибудь организацию-оператора — и он немедленно
@@ -98,7 +106,12 @@ scope(admin)   = всё
 ```ts
 export type AccessScope =
 	| { kind: 'all' }
-	| { kind: 'delegated'; userIds: ReadonlySet<string>; workspaceIds: ReadonlySet<string> };
+	| {
+			kind: 'delegated';
+			userIds: ReadonlySet<string>;
+			workspaceIds: ReadonlySet<string>;
+			seesUnassigned: boolean;
+	  };
 ```
 
 Вариант `{ kind: 'organizations'; organizationIds }` из `src/lib/server/actor.ts` **удаляется**:
@@ -122,6 +135,8 @@ exists (
 -- interactionScopeFilter(ctx)
 <workspaceFilter по interactions.workspace_id>
   and (interactions.owner_user_id = any(<userIds>)
+       or (interactions.owner_user_id is null
+           and (<seesUnassigned> or interactions.created_by_user_id = any(<userIds>)))
        or exists (select 1 from interaction_parties p
                   where p.interaction_id = interactions.id and p.is_primary
                     and <scopeFilter по p.organization_id>))

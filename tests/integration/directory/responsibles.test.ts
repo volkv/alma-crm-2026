@@ -649,7 +649,7 @@ describe('передача взаимодействий при замене', ()
 	}
 
 	/** Владелец записи прямо из базы: сервисы её могут уже не показывать. */
-	async function ownerOf(interactionId: string): Promise<string> {
+	async function ownerOf(interactionId: string): Promise<string | null> {
 		const [row] = await database.db
 			.select({ ownerUserId: interactions.ownerUserId })
 			.from(interactions)

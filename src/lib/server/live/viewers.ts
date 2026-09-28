@@ -104,7 +104,7 @@ export async function canUserSeeInteraction(
 	return user !== null && (await userSeesInteraction(user, interactionId));
 }
 
-function relationOf(user: SessionUser, ownerUserId: string): LiveRelation {
+function relationOf(user: SessionUser, ownerUserId: string | null): LiveRelation {
 	if (user.id === ownerUserId) {
 		return 'responsible';
 	}

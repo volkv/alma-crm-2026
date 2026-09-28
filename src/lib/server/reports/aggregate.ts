@@ -109,6 +109,9 @@ const DIRECTION_LINKS = sql`
  * скольких записей это касается. Повторов у пары «взаимодействие + значение»
  * нет: у связей многие ко многим составной первичный ключ, а направления
  * склеены через `union`.
+ *
+ * Дела без ответственного в разрезе по ответственным — своей строкой с ключом
+ * `none`: тем же значением их отбирает фильтр отчёта и списка.
  */
 function breakdownFacets(rowId: SQL, keep: SQL): SQL {
 	return sql`
@@ -124,8 +127,8 @@ function breakdownFacets(rowId: SQL, keep: SQL): SQL {
 		union all
 		select
 			'owners',
-			selection."ownerUserId"::text,
-			min(coalesce(owner_user.full_name, selection."ownerUserId"::text)),
+			coalesce(selection."ownerUserId"::text, 'none'),
+			min(coalesce(owner_user.full_name, selection."ownerUserId"::text, 'Без ответственного')),
 			count(*)::integer,
 			${NO_EVENT}
 		from selection

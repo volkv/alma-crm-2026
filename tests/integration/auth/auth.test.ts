@@ -397,7 +397,8 @@ describe('область доступа сессии', () => {
 		expect(manager?.scope).toEqual({
 			kind: 'delegated',
 			userIds: new Set([TEST_USER_IDS.manager]),
-			workspaceIds: new Set(await allWorkspaceIds(database.db))
+			workspaceIds: new Set(await allWorkspaceIds(database.db)),
+			seesUnassigned: false
 		});
 	});
 
@@ -422,7 +423,8 @@ describe('область доступа сессии', () => {
 		expect(lead?.scope).toEqual({
 			kind: 'delegated',
 			userIds: new Set([TEST_USER_IDS.lead, TEST_USER_IDS.manager, deep.id]),
-			workspaceIds: new Set(await allWorkspaceIds(database.db))
+			workspaceIds: new Set(await allWorkspaceIds(database.db)),
+			seesUnassigned: true
 		});
 	});
 
@@ -585,7 +587,8 @@ describe('управление учётными записями', () => {
 		expect(lead?.scope).toEqual({
 			kind: 'delegated',
 			userIds: new Set([TEST_USER_IDS.lead, account.id]),
-			workspaceIds: new Set(await allWorkspaceIds(database.db))
+			workspaceIds: new Set(await allWorkspaceIds(database.db)),
+			seesUnassigned: true
 		});
 	});
 
@@ -673,7 +676,8 @@ describe('назначения и область', () => {
 		expect(manager?.scope).toEqual({
 			kind: 'delegated',
 			userIds: new Set([TEST_USER_IDS.manager]),
-			workspaceIds: new Set(await allWorkspaceIds(database.db))
+			workspaceIds: new Set(await allWorkspaceIds(database.db)),
+			seesUnassigned: false
 		});
 
 		const rows = await database.db

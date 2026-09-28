@@ -11,6 +11,8 @@
 import { z } from 'zod';
 import {
 	id,
+	NO_OPTION,
+	optionalChoiceId,
 	optionalId,
 	optionalIsoDate,
 	optionalText,
@@ -353,7 +355,11 @@ const interactionFields = {
 	/** Учебный период, к которому относится взаимодействие. */
 	academicPeriodStart: optionalIsoDate('Дата начала учебного периода указана неверно'),
 	academicPeriodEnd: optionalIsoDate('Дата окончания учебного периода указана неверно'),
-	ownerUserId: id('Выберите ответственного'),
+	/**
+	 * Ответственный. Необязателен: дело часто появляется раньше, чем под него
+	 * находится исполнитель, — тогда его назначают потом, с карточки.
+	 */
+	ownerUserId: optionalChoiceId('Некорректный идентификатор ответственного'),
 	parties: z
 		.array(interactionPartySchema)
 		.min(1, { error: 'Во взаимодействии должен быть хотя бы один участник' }),
@@ -536,6 +542,20 @@ const multiUuid = z
 			.filter((item) => z.uuid().safeParse(item).success)
 	);
 
+/**
+ * Отбор по ответственным: идентификаторы людей и `none` — «без ответственного».
+ * Выбранные складываются через «или», как и у остальных многозначных отборов.
+ */
+const ownerChoice = z
+	.union([z.string(), z.array(z.string())])
+	.default([])
+	.transform((value) =>
+		(Array.isArray(value) ? value : [value])
+			.flatMap((item) => item.split(','))
+			.map((item) => item.trim())
+			.filter((item) => item === NO_OPTION || z.uuid().safeParse(item).success)
+	);
+
 /** Состояния портфеля, по которым отбирает список. */
 export const INTERACTION_LIST_STATES = ['paused', 'blocked', 'stale'] as const;
 
@@ -596,9 +616,10 @@ export const interactionListQuerySchema = z.object({
 	prod: multiUuid,
 	/**
 	 * Ответственные — несколько сразу, как аватарки над доской. С `ownerUserId`
-	 * складывается через «и»: оба условия сужают один и тот же набор.
+	 * складывается через «и»: оба условия сужают один и тот же набор. Значение
+	 * `none` — дела без ответственного.
 	 */
-	owner: multiUuid,
+	owner: ownerChoice,
 	sort: z.enum(INTERACTION_SORTS).default('-lastActivityAt'),
 	q: searchQuery,
 	...pageQuerySchema.shape
@@ -999,6 +1020,8 @@ export type InteractionFilterOptions = {
 	products: InteractionFilterOption[];
 	/** Ответственные, у которых в пространстве есть хотя бы одно взаимодействие. */
 	owners: InteractionFilterOption[];
+	/** Есть ли в пространстве видимые дела без ответственного: тогда отбор «без ответственного» имеет смысл. */
+	hasUnassigned: boolean;
 };
 export type AdvanceStageInput = z.output<typeof advanceStageSchema>;
 export type ReturnStageInput = z.output<typeof returnStageSchema>;
@@ -1303,7 +1326,8 @@ export type ProcessPreviewMove = {
 	title: string;
 	workspaceKey: string;
 	workspaceName: string;
-	ownerName: string;
+	/** `null` — у дела нет ответственного. */
+	ownerName: string | null;
 	fromStageName: string;
 	/** Куда переедет; `null` — правило переноса не задано, и применить нельзя. */
 	toStageName: string | null;
@@ -1552,8 +1576,9 @@ export type InteractionView = {
 	agreementPeriodEnd: string | null;
 	academicPeriodStart: string | null;
 	academicPeriodEnd: string | null;
-	ownerUserId: string;
-	ownerName: string;
+	/** Ответственный; `null` — ещё не назначен. */
+	ownerUserId: string | null;
+	ownerName: string | null;
 	lastActivityAt: Date;
 	externalSource: string | null;
 	externalId: string | null;
@@ -1604,8 +1629,9 @@ export type InteractionListItem = {
 	id: string;
 	title: string;
 	status: InteractionStatus;
-	ownerUserId: string;
-	ownerName: string;
+	/** Ответственный; `null` — ещё не назначен. */
+	ownerUserId: string | null;
+	ownerName: string | null;
 	lastActivityAt: Date;
 	/** Основные стороны процесса, по одной на роль. */
 	institutionName: string | null;
@@ -1772,7 +1798,8 @@ export type InteractionBoardCard = {
 	organizationName: string | null;
 	/** Программы и продукты взаимодействия: чем именно занимаемся. */
 	offerings: string[];
-	ownerName: string;
+	/** `null` — ответственный не назначен. */
+	ownerName: string | null;
 	stageId: string;
 	dueAt: Date | null;
 	state: BoardCardState;
@@ -1824,8 +1851,8 @@ export const apiInteractionSchema = z.object({
 	id: z.uuid(),
 	title: z.string(),
 	status: z.enum(INTERACTION_STATUSES),
-	ownerUserId: z.uuid(),
-	ownerName: z.string(),
+	ownerUserId: z.uuid().nullable().describe('Ответственный; `null` — ещё не назначен'),
+	ownerName: z.string().nullable(),
 	institutionName: z.string().nullable().describe('Основное учебное заведение взаимодействия'),
 	customerName: z.string().nullable().describe('Компания-заказчик, если она указана'),
 	stageKey: z.string().nullable().describe('Ключ текущей стадии маршрута'),

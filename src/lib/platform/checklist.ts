@@ -50,6 +50,7 @@ const CORE_ACTIONS = [
 	{ key: 'mark', label: 'Отметить документ', module: null },
 	{ key: 'package', label: 'Собрать пакет документов', module: null },
 	{ key: 'plan', label: 'Изменить план', module: null },
+	{ key: 'assign', label: 'Назначить ответственного', module: null },
 	{ key: 'contract', label: 'Выбрать договор и позиции', module: 'contracts' },
 	{ key: 'party', label: 'Открыть сторону', module: null },
 	{ key: 'contact', label: 'Указать контакт и канал связи', module: null },
