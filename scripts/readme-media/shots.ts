@@ -202,15 +202,15 @@ export async function colleagueInCard(page: Page): Promise<void> {
 /** Дождаться числа на колокольчике: упоминание дошло до шапки. */
 export async function unreadMention(page: Page): Promise<void> {
 	await page
-		.getByRole('button', { name: /^Упоминания: \d/ })
+		.getByRole('button', { name: /^Уведомления: \d/ })
 		.first()
 		.waitFor({ state: 'visible', timeout: 20_000 });
 }
 
-/** Колокольчик открыт: кто упомянул и в каком деле. */
-export async function openMentions(page: Page): Promise<void> {
+/** Колокольчик «Уведомления» открыт: кто упомянул и в каком деле. */
+export async function openInbox(page: Page): Promise<void> {
 	await page
-		.getByRole('button', { name: /^Упоминания: / })
+		.getByRole('button', { name: /^Уведомления: / })
 		.first()
 		.click();
 	await page.getByText('упомянул(а) вас').first().waitFor({ state: 'visible', timeout: 20_000 });
@@ -251,7 +251,7 @@ export const SHOTS: readonly Frame[] = [
 		path: `/interactions/${DEMO_INTERACTION}`,
 		role: 'manager',
 		caption:
-			'Карточка: кто сейчас в деле и у кого доступ, факты и стадии, главное действие с условиями, колокольчик упоминаний',
+			'Карточка: кто сейчас в деле и у кого доступ, факты и стадии, главное действие с условиями, колокольчик уведомлений',
 		waitFor: 'Все стадии процесса',
 		companion: LEAD_WITH_MENTION,
 		prepare: async (page) => {
@@ -260,17 +260,17 @@ export const SHOTS: readonly Frame[] = [
 		}
 	},
 	{
-		name: 'mentions',
+		name: 'inbox',
 		path: `/interactions/${DEMO_INTERACTION}`,
 		role: 'manager',
 		caption:
-			'Колокольчик в шапке: кто упомянул, в каком деле и когда — переход прямо к комментарию',
+			'Колокольчик «Уведомления» в шапке: кто упомянул, в каком деле и когда — переход прямо к комментарию',
 		waitFor: 'Все стадии процесса',
 		companion: LEAD_WITH_MENTION,
 		prepare: async (page) => {
 			await colleagueInCard(page);
 			await unreadMention(page);
-			await openMentions(page);
+			await openInbox(page);
 		}
 	},
 	{
@@ -324,7 +324,7 @@ export const SHOTS: readonly Frame[] = [
 		path: '/reports?mode=movement',
 		role: 'manager',
 		caption: 'Отчёт в режиме движения: события периода по видам',
-		waitFor: 'Каждая строка — один переход'
+		waitFor: 'Динамика переходов'
 	},
 	{
 		name: 'settings-process',
@@ -340,6 +340,49 @@ export const SHOTS: readonly Frame[] = [
 		caption: 'Стадии действующего процесса и черновик изменений',
 		waitFor: 'Черновик изменений',
 		fullPage: true
+	},
+	{
+		name: 'workflow-new',
+		path: '/settings/workflows',
+		role: 'admin',
+		caption: 'Новый процесс с нуля: название, ключ из названия, пустой или копией действующего',
+		waitFor: 'Пустой — стадии опишу в редакторе',
+		prepare: async (page) => {
+			// Процесс не заводится: кадр показывает диалог до нажатия «Завести», и
+			// стенд после съёмки остаётся прежним.
+			await page.getByRole('button', { name: 'Завести процесс' }).click();
+			await page
+				.getByRole('dialog')
+				.getByLabel('Название')
+				.pressSequentially('Корпоративные продажи', { delay: 20 });
+		}
+	},
+	{
+		name: 'composition',
+		// Адрес сразу с пространством: короткий `/interactions/<id>` перенаправляет
+		// в карточку без параметров, и диалог по `?compose=` не открылся бы.
+		path: `/w/b2b/interactions/${DEMO_INTERACTION}?compose=offering`,
+		role: 'manager',
+		caption:
+			'«Изменить состав» на карточке: стороны, подразделение, программы с версиями и продукты',
+		waitFor: 'Все стадии процесса',
+		prepare: async (page) => {
+			await page
+				.getByRole('dialog')
+				.getByText('Изменить состав')
+				.first()
+				.waitFor({ state: 'visible', timeout: 20_000 });
+		}
+	},
+	{
+		name: 'workspace-modules',
+		path: '/settings/workspaces/b2b',
+		role: 'admin',
+		caption: 'Модули пространства: что подключено, что требует процесс и какие панели он выбрал',
+		waitFor: 'Модули',
+		prepare: async (page) => {
+			await page.locator('[data-tour="workspace-modules"]').scrollIntoViewIfNeeded();
+		}
 	},
 	{
 		name: 'exchange',

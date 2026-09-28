@@ -20,7 +20,7 @@ import {
 	LEAD_IN_CARD,
 	LEAD_WITH_MENTION,
 	colleagueInCard,
-	openMentions,
+	openInbox,
 	reachHomeIntro,
 	unreadMention
 } from './shots.ts';
@@ -159,13 +159,13 @@ export const HELP_SHOTS: readonly Frame[] = [
 		name: 'user/interaction-5',
 		path: `/interactions/${DEMO_INTERACTION}`,
 		role: 'manager',
-		caption: 'Колокольчик упоминаний: кто упомянул, в каком деле, когда',
+		caption: 'Колокольчик «Уведомления»: кто упомянул, в каком деле, когда',
 		waitFor: 'Все стадии процесса',
 		companion: LEAD_WITH_MENTION,
 		prepare: async (page) => {
 			await colleagueInCard(page);
 			await unreadMention(page);
-			await openMentions(page);
+			await openInbox(page);
 		}
 	},
 	{
@@ -177,7 +177,7 @@ export const HELP_SHOTS: readonly Frame[] = [
 		prepare: async (page) => {
 			// Вкладок «Стадия»/«История» больше нет: та же картина — фильтр ленты
 			// событий, сужающий её до переходов.
-			await page.getByRole('button', { name: /^Стадии/ }).click();
+			await page.getByRole('radio', { name: /^Стадии/ }).click();
 			await scrollTo('События')(page);
 		}
 	},
@@ -288,7 +288,7 @@ export const HELP_SHOTS: readonly Frame[] = [
 		path: '/reports?mode=movement',
 		role: 'manager',
 		caption: 'Движение: события периода по видам',
-		waitFor: 'Каждая строка — один переход'
+		waitFor: 'Динамика переходов'
 	},
 	{
 		name: 'user/data-1',
@@ -312,7 +312,9 @@ export const HELP_SHOTS: readonly Frame[] = [
 		path: `/interactions/${DEMO_HISTORY_INTERACTION}`,
 		role: 'manager',
 		caption: 'Панель «Система обучения»: заявка на группу и строка потока с результатом',
-		waitFor: 'Система обучения',
+		// Кнопка панели, а не её заголовок: «система обучения» встречается и в
+		// свёрнутых пунктах чек-листа, и первое совпадение по тексту невидимо.
+		waitFor: 'Заявить поток',
 		prepare: scrollTo('Система обучения')
 	},
 	{

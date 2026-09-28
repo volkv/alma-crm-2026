@@ -290,7 +290,7 @@ async function bringCompanion(
 async function readMentions(page: Page, where: string): Promise<void> {
 	const marked = page.waitForResponse(
 		(response) =>
-			response.request().method() === 'POST' && new URL(response.url()).pathname === '/mentions',
+			response.request().method() === 'POST' && new URL(response.url()).pathname === '/inbox',
 		{ timeout: 20_000 }
 	);
 

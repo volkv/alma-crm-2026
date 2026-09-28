@@ -319,7 +319,7 @@ export function coverPage(options: {
 			<dt>Собран</dt><dd>${escapeHtml(options.builtOn)}</dd>
 			<dt>Коммит</dt><dd><code>${escapeHtml(options.commit)}</code></dd>
 			<dt>Версия</dt><dd>${escapeHtml(options.version)}</dd>
-			<dt>Стенд</dt><dd>https://crm.volkv.com</dd>
+			<dt>Стенд</dt><dd>https://alma.volkv.com</dd>
 			<dt>Исходный текст</dt><dd>README.md, docs/ и src/lib/help/content/ репозитория</dd>
 		</dl>
 	</section>

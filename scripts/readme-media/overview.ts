@@ -21,7 +21,7 @@
  * интерфейсом; что остаётся до ночного сброса — `docs/readme-media.md`.
  *
  * ```
- * export MEDIA_BASE_URL=https://crm.volkv.com
+ * export MEDIA_BASE_URL=https://alma.volkv.com
  * export SEED_DEMO_PASSWORD=…          # пароль демонстрационных записей каталога
  * export OVERVIEW_DIR=…                # каталог вне репозитория, куда лечь ролику
  * node scripts/readme-media/overview.ts
@@ -144,7 +144,7 @@ const FINAL_CARD = `
 	<div class="rule"></div>
 	<h1>Стенд открыт</h1>
 	<ul>
-		<li><b class="accent">crm.volkv.com</b> — три роли: менеджер, руководитель, администратор; пароль — на странице входа</li>
+		<li><b class="accent">alma.volkv.com</b> — три роли: менеджер, руководитель, администратор; пароль — на странице входа</li>
 		<li><b class="accent">/help</b> — руководства внутри системы, <b class="accent">/api/docs</b> — описание программного интерфейса</li>
 		<li><b class="accent">github.com/volkv/alma-crm-2026</b> — исходный код и документация</li>
 	</ul>
