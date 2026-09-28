@@ -15,7 +15,7 @@
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import DateField from '$lib/components/form/date-field.svelte';
-	import FileInput from '$lib/components/form/file-input.svelte';
+	import FileDropzone from '$lib/components/form/file-dropzone.svelte';
 	import FormDialog from '$lib/components/form-dialog.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge, { type StatusTone } from '$lib/components/status-badge.svelte';
@@ -753,7 +753,7 @@
 				class="flex flex-col gap-3"
 			>
 				<input type="hidden" name="learningGroupId" value={rosterGroup.id} />
-				<FileInput
+				<FileDropzone
 					id="card-roster-file"
 					name="file"
 					label="Файл списка"

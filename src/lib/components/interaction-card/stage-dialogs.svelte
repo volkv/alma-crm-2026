@@ -8,7 +8,7 @@
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
-	import FileInput from '$lib/components/form/file-input.svelte';
+	import FileDropzone from '$lib/components/form/file-dropzone.svelte';
 	import FormDialog from '$lib/components/form-dialog.svelte';
 	import { actionEnhance } from '$lib/components/interactions/action-enhance';
 	import {
@@ -256,7 +256,7 @@
 		{#if canAttach}
 			<!-- Файл виден на той стадии, где его приложили: «чем подтверждена
 				передача материалов» — вопрос к стадии. -->
-			<FileInput
+			<FileDropzone
 				id="card-transition-files"
 				name="files"
 				label="Вложения"

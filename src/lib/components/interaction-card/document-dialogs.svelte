@@ -11,7 +11,7 @@
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import DateField from '$lib/components/form/date-field.svelte';
-	import FileInput from '$lib/components/form/file-input.svelte';
+	import FileDropzone from '$lib/components/form/file-dropzone.svelte';
 	import FormDialog from '$lib/components/form-dialog.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import { actionEnhance } from '$lib/components/interactions/action-enhance';
@@ -612,7 +612,7 @@
 				{/if}
 			</div>
 		{/if}
-		<FileInput
+		<FileDropzone
 			id="card-document-file"
 			name="file"
 			label="Файл"
@@ -652,7 +652,7 @@
 				на нём засчитывается стадией.
 			</p>
 		{/if}
-		<FileInput
+		<FileDropzone
 			id="card-revision-file"
 			name="file"
 			label="Файл новой редакции"

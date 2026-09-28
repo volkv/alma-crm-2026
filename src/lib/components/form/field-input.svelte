@@ -10,7 +10,7 @@
 	 * тип атрибута из `svelte/elements` заканчивается на `(string & {})` ради
 	 * подсказок редактора, и вычитание из него ничего не запрещает — `date`,
 	 * `file`, `checkbox` и `range` проезжали в него как обычные строки. У даты,
-	 * файла и выбора свои контролы (`FieldDate`, `FileInput`, `FieldSelect`):
+	 * файла и выбора свои контролы (`FieldDate`, `FileDropzone`, `FieldSelect`):
 	 * нативные браузер рисует сам, своими надписями по-английски.
 	 */
 	type FieldInputType = 'text' | 'email' | 'tel' | 'url' | 'search' | 'number' | 'password';

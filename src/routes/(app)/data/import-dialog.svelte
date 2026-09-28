@@ -7,7 +7,7 @@
 	import FieldDate from '$lib/components/form/field-date.svelte';
 	import FieldSelect, { type FieldOption } from '$lib/components/form/field-select.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
-	import FileInput from '$lib/components/form/file-input.svelte';
+	import FileDropzone from '$lib/components/form/file-dropzone.svelte';
 	import WizardSteps from '$lib/components/stats/wizard-steps.svelte';
 	import {
 		STAT_FILE_FORMATS_HINT,
@@ -142,7 +142,7 @@
 				</Alert.Root>
 			{/if}
 
-			<FileInput
+			<FileDropzone
 				id="data-import-file"
 				name="file"
 				label="Файл выгрузки"

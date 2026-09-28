@@ -51,7 +51,6 @@
 	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
 	import FileDropzone from '$lib/components/form/file-dropzone.svelte';
-	import FileInput from '$lib/components/form/file-input.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import { formatDate, formatNumber } from '$lib/format';
 
@@ -1040,17 +1039,9 @@
 						bind:value={$form.comment}
 						errors={$errors.comment}
 					/>
-					<!-- Форма витрины ничего не отправляет, но контрол выбора файла должен
-						быть виден рядом с остальными полями: он собран сам, а не отдан
-						браузеру. -->
-					<FileInput
-						id="uiKitFile"
-						label="Скан документа"
-						description="PDF или изображение, до 25 МиБ."
-						accept="application/pdf,image/png,image/jpeg"
-					/>
-					<!-- Та же пара пропсов в крупной зоне: файлы можно перетащить, чужой
-						формат отбрасывается с подсказкой, выбранное видно списком. -->
+					<!-- Форма витрины ничего не отправляет, но выбор файла должен быть виден
+						рядом с остальными полями: файлы можно перетащить, чужой формат
+						отбрасывается с подсказкой, выбранное видно списком. -->
 					<FileDropzone
 						id="uiKitDropzone"
 						label="Материалы"
@@ -1093,7 +1084,7 @@
 			rows={4}
 			bind:value={dialogNote}
 		/>
-		<FileInput
+		<FileDropzone
 			id="uiKitDialogFile"
 			label="Вложение"
 			description="Панель кнопок остаётся на месте, сколько бы полей ни было выше."

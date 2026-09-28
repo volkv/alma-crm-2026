@@ -9,7 +9,7 @@
 	import * as RadioGroup from '$lib/components/ui/radio-group/index.js';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
-	import FileInput from '$lib/components/form/file-input.svelte';
+	import FileDropzone from '$lib/components/form/file-dropzone.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
 	import Header from '$lib/components/header.svelte';
@@ -110,7 +110,7 @@
 			</RadioGroup.Root>
 		</fieldset>
 
-		<FileInput
+		<FileDropzone
 			id="file"
 			label="Файл"
 			description="{CATALOG_FILE_FORMATS_HINT} — до 25 МиБ. В таблице первая строка — названия колонок; в JSON — массив записей или объект со списком строк."

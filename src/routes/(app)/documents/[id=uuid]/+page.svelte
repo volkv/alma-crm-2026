@@ -9,7 +9,7 @@
 	import ActionAlert from '$lib/components/directory/action-alert.svelte';
 	import Flash from '$lib/components/directory/flash.svelte';
 	import DateField from '$lib/components/form/date-field.svelte';
-	import FileInput from '$lib/components/form/file-input.svelte';
+	import FileDropzone from '$lib/components/form/file-dropzone.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import KeyValue from '$lib/components/key-value.svelte';
 	import KeyValueRow from '$lib/components/key-value-row.svelte';
@@ -326,7 +326,7 @@
 				use:enhance
 				class="flex flex-wrap items-end gap-3 border-t border-border p-4 sm:p-6"
 			>
-				<FileInput
+				<FileDropzone
 					id="revisionFile"
 					name="file"
 					label="Новая редакция"

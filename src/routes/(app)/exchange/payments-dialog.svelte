@@ -6,7 +6,7 @@
 	import { invalidateAll } from '$app/navigation';
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
-	import FileInput from '$lib/components/form/file-input.svelte';
+	import FileDropzone from '$lib/components/form/file-dropzone.svelte';
 	import FormDialog from '$lib/components/form-dialog.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import StatusBadge, { type StatusTone } from '$lib/components/status-badge.svelte';
@@ -140,7 +140,7 @@
 			use:enhance={submit}
 			class="flex flex-col gap-3"
 		>
-			<FileInput
+			<FileDropzone
 				id="exchange-payments-file"
 				name="file"
 				label="Файл выгрузки"
