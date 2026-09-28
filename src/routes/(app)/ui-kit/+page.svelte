@@ -50,6 +50,7 @@
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
+	import FileDropzone from '$lib/components/form/file-dropzone.svelte';
 	import FileInput from '$lib/components/form/file-input.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
 	import { formatDate, formatNumber } from '$lib/format';
@@ -1047,6 +1048,15 @@
 						label="Скан документа"
 						description="PDF или изображение, до 25 МиБ."
 						accept="application/pdf,image/png,image/jpeg"
+					/>
+					<!-- Та же пара пропсов в крупной зоне: файлы можно перетащить, чужой
+						формат отбрасывается с подсказкой, выбранное видно списком. -->
+					<FileDropzone
+						id="uiKitDropzone"
+						label="Материалы"
+						description="PDF или DOCX, до 10 файлов за раз."
+						accept=".pdf,.docx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document"
+						multiple
 					/>
 					<FormActions
 						submitting={$submitting}

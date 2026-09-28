@@ -426,6 +426,9 @@ export const createInteractionContactSchema = z.object({
 	])
 });
 
+/** Потолок краткого описания программы: около двух абзацев. */
+export const PROGRAM_DESCRIPTION_MAX_LENGTH = 1000;
+
 const programFields = {
 	/** Код программы в номенклатуре оператора; по нему сверяют планы и отчёты. */
 	code: requiredText(50, 'Укажите код программы'),
@@ -433,6 +436,13 @@ const programFields = {
 	level: z.enum(PROGRAM_LEVELS, { error: 'Выберите уровень программы' }),
 	/** Код направления подготовки, например 09.03.01. */
 	directionCode: optionalText(20),
+	/**
+	 * Коротко о программе — абзац-другой, который читают на карточке и
+	 * отправляют вузу вместе с материалами. Полное описание живёт файлами
+	 * (`program_documents`), поэтому потолок невелик: длинный текст здесь —
+	 * признак того, что ему место в приложенном документе.
+	 */
+	description: optionalText(PROGRAM_DESCRIPTION_MAX_LENGTH),
 	/**
 	 * Ручной приоритет показа: 1 — самая важная программа, пусто — приоритет не
 	 * назначен. Ноль сюда не годится: он читался бы как настоящее значение, а
@@ -842,6 +852,8 @@ export type ProgramView = {
 	name: string;
 	level: ProgramLevel;
 	directionCode: string | null;
+	/** Краткое описание; `null` — не заполнено. */
+	description: string | null;
 	/** Ручной приоритет показа; `null` — не назначен. */
 	priority: number | null;
 	status: LifecycleStatus;
@@ -903,6 +915,24 @@ export type ProgramListItem = {
 	program: ProgramView;
 	latestVersion: number | null;
 };
+
+/**
+ * Материал программы в том виде, в каком его показывает карточка. Ключа
+ * хранилища и хеша здесь нет: браузеру они ни к чему, а скачивание идёт
+ * маршрутом карточки по идентификатору документа.
+ */
+export type ProgramMaterialView = {
+	documentId: string;
+	title: string;
+	/** Имя файла при скачивании, с расширением по типу. */
+	fileName: string;
+	mime: string;
+	sizeBytes: number;
+	createdAt: Date;
+};
+
+/** Сколько файлов принимает одна загрузка материалов программы. */
+export const PROGRAM_MATERIAL_MAX_FILES = 10;
 
 /** Программа вместе с историей версий — то, что показывает её карточка. */
 export type ProgramDetail = {

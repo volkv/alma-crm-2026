@@ -40,6 +40,7 @@ import {
 } from '$lib/contracts/interactions';
 import { PAYMENT_CHECKLIST_KEY, type PaymentFactView } from '$lib/contracts/payments';
 import type { ProcessCard } from '$lib/contracts/process-card';
+import { PROGRAM_OFFER_CHANGE_FIELD } from '$lib/contracts/program-offer';
 import { daysUntil, formatDate, formatDateTime, pluralize } from '$lib/format';
 import { checklistAction, moduleActionKey } from '$lib/platform/checklist';
 import { checklistRule } from '$lib/platform/checklist-rules';
@@ -222,6 +223,8 @@ export type CardCommand =
 	| { kind: 'contract' }
 	/** Контактное лицо основной стороны и его канал связи — одним диалогом. */
 	| { kind: 'contact' }
+	/** Письмо контактным лицам основной стороны с описанием программ дела. */
+	| { kind: 'program-offer' }
 	/** `documentKind` — вид, с которым открывается загрузка («Документ об обучении»). */
 	| { kind: 'upload'; documentKind?: UploadedDocumentKind }
 	| { kind: 'revision'; documentId: string }
@@ -751,6 +754,8 @@ function checklistCommand(
 			return make({ kind: 'reveal', target: 'party' });
 		case 'contact':
 			return make({ kind: 'contact' });
+		case 'offer_send':
+			return make({ kind: 'program-offer' });
 		case 'package': {
 			const templates = packageTemplates(
 				offeredTemplates(context.card.templates, context.modules),
@@ -1481,9 +1486,11 @@ export function buildEvents(source: CardSource): CardEvent[] {
 	}
 
 	for (const change of changes) {
-		// Факт модуля (`<модуль>:<факт>`) записан готовой фразой — ею и читается.
+		// Факт модуля (`<модуль>:<факт>`) и отправка описания программ записаны
+		// готовой фразой — ею и читаются.
 		const moduleFactText =
-			moduleByKey(change.field.split(':')[0]) !== undefined && change.field.includes(':')
+			(moduleByKey(change.field.split(':')[0]) !== undefined && change.field.includes(':')) ||
+			change.field === PROGRAM_OFFER_CHANGE_FIELD
 				? (readModuleFactValue(change.newValue)?.text ?? null)
 				: null;
 

@@ -28,6 +28,7 @@
 	import { buildCard, type CardSource } from '$lib/components/interaction-card/model';
 	import Presence from '$lib/components/interaction-card/presence.svelte';
 	import PrimaryAction from '$lib/components/interaction-card/primary-action.svelte';
+	import ProgramOfferDialog from '$lib/components/interaction-card/program-offer-dialog.svelte';
 	import QuietNote from '$lib/components/interaction-card/quiet-note.svelte';
 	import RecordDialogs from '$lib/components/interaction-card/record-dialogs.svelte';
 	import StageDialogs from '$lib/components/interaction-card/stage-dialogs.svelte';
@@ -355,6 +356,7 @@
 {/if}
 {#if primaryParty !== null && can('edit')}
 	<ContactDialog interaction={data.interaction} party={primaryParty} shape={model.shape} />
+	<ProgramOfferDialog interaction={data.interaction} canCompose={data.composition !== null} />
 {/if}
 <DocumentDialogs interaction={data.interaction} supersessions={data.supersessions} />
 <LearningDialogs

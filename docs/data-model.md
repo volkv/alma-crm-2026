@@ -21,7 +21,8 @@
 | `directory-import.ts` | `directory_imports`, `directory_import_rows` — загрузка каталога или вендоров и её строки                                                                                 |
 | `interactions.ts`     | Пространства и их реестры, процессы, редакции процесса, стадии и переходы, взаимодействия, записи стадий, паузы, блокировки, комментарии, договоры                        |
 | `modules.ts`          | `workspace_modules` — модули, включённые пространству (`docs/architecture.md`, «Модули и платформа»)                                                                      |
-| `documents.ts`        | `document_templates`, `documents`, `stage_entry_documents`                                                                                                                |
+| `documents.ts`        | `document_templates`, `documents`, `stage_entry_documents`, `program_documents` — материалы образовательной программы                                                     |
+| `program-offers.ts`   | `program_offer_sends` — отправки описания программ вузу: получатели идентификаторами, без адресов; программы и файлы с хешами                                             |
 | `exchange.ts`         | `exchange_messages`, `learning_groups`, `learning_group_results`                                                                                                          |
 | `api.ts`              | `api_keys`                                                                                                                                                                |
 

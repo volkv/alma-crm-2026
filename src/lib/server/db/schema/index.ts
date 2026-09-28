@@ -12,6 +12,7 @@ export * from './interactions';
 export * from './mentions';
 export * from './modules';
 export * from './notifications';
+export * from './program-offers';
 export * from './settings';
 export * from './stats';
 export * from './terms';

@@ -14,7 +14,8 @@
  * и документация сборки (`scripts/docs-pdf/gotenberg.ts`). Клиент здесь свой,
  * а не переиспользованный: тем двум чужой формат страницы (альбомный отчёт,
  * инструмент без окружения приложения) не подходит, а собирать третий модуль
- * ради одного вызова из каждого — лишняя связность.
+ * ради одного вызова из каждого — лишняя связность. Внутри сида клиент общий:
+ * им же печатаются описания программ (`scripts/seed/program-materials.ts`).
  *
  * Недоступный Gotenberg не должен ронять заливку — этим документом стадия
  * подтверждается, и без него набор встал бы на первом же взаимодействии,
@@ -40,7 +41,7 @@ const PAGE_WIDTH_INCHES = '8.27';
 const PAGE_HEIGHT_INCHES = '11.69';
 
 /** Пометка, обязательная на каждой странице синтетического документа. */
-const DEMO_NOTICE = 'Демонстрационный образец — синтетические данные';
+export const DEMO_NOTICE = 'Демонстрационный образец — синтетические данные';
 
 /** Подписанты, общие для всех документов набора (см. `generateAgreement`). */
 export const OPERATOR_SIGNER = 'директор Школы Орлов В. С.';
@@ -100,7 +101,7 @@ export function syntheticDocumentNumber(interactionId: string, prefix: string): 
 	return `№ ${prefix}-${tail}`;
 }
 
-function escapeHtml(value: string): string {
+export function escapeHtml(value: string): string {
 	return value
 		.replaceAll('&', '&amp;')
 		.replaceAll('<', '&lt;')
@@ -241,8 +242,13 @@ function serviceEndpoint(serviceUrl: string, route: string): URL {
 	return new URL(route, serviceUrl.endsWith('/') ? serviceUrl : `${serviceUrl}/`);
 }
 
-/** Печатает готовую HTML-страницу в PDF. Ходит по сети, транзакции не держит. */
-async function renderHtmlToPdf(html: string): Promise<Buffer> {
+/**
+ * Печатает готовую HTML-страницу в PDF. Ходит по сети, транзакции не держит.
+ * Отказ службы — `DocumentConversionError`: что делать без PDF, решает
+ * вызывающий (`renderSyntheticDocument` ниже, описания программ —
+ * `scripts/seed/program-materials.ts`).
+ */
+export async function renderHtmlToPdf(html: string): Promise<Buffer> {
 	const serviceUrl = getConfig().GOTENBERG_URL;
 	const endpoint = serviceEndpoint(serviceUrl, 'forms/chromium/convert/html');
 

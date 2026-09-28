@@ -130,6 +130,15 @@ export const AUTOMATION_STEPS: readonly AutomationStep[] = [
 				result: 'Места за учебный год с разложением формулы по слагаемым',
 				screen: 'data-ranking',
 				status: 'ready'
+			},
+			{
+				kind: 'assist',
+				title: 'Описание программ вузу в один клик: письмо с материалами программ контактным лицам',
+				result:
+					'Пункт «Отправлено описание программ» закрывается сам, в ленте дела — запись об отправке, в журнале — кому и что ушло',
+				screen: 'interactions',
+				where: CARD,
+				status: 'ready'
 			}
 		]
 	},

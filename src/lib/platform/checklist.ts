@@ -53,6 +53,9 @@ const CORE_ACTIONS = [
 	{ key: 'contract', label: 'Выбрать договор и позиции', module: 'contracts' },
 	{ key: 'party', label: 'Открыть сторону', module: null },
 	{ key: 'contact', label: 'Указать контакт и канал связи', module: null },
+	// Письмо вузу с описанием программ дела и их материалами: отправка оставляет
+	// в деле след, по которому пункт с правилом `offer_sent` закрывается сам.
+	{ key: 'offer_send', label: 'Отправить описание программ', module: null },
 	{ key: 'send_group', label: 'Заявить поток', module: 'learning' },
 	{ key: 'complete_group', label: 'Отметить завершение обучения', module: 'learning' }
 ] as const satisfies readonly ChecklistActionSpec[];

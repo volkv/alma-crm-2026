@@ -169,6 +169,10 @@ export const apiProgramSchema = z.object({
 	name: z.string(),
 	level: z.enum(PROGRAM_LEVELS),
 	directionCode: z.string().nullable().describe('Код направления подготовки, например `09.03.01`'),
+	description: z
+		.string()
+		.nullable()
+		.describe('Краткое описание программы, до 1000 символов; `null` — не заполнено'),
 	priority: z
 		.number()
 		.int()

@@ -3,7 +3,13 @@
 	import type { SuperForm } from 'sveltekit-superforms';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
-	import type { CreateProgramInput, LifecycleStatus, ProgramLevel } from '$lib/contracts/directory';
+	import FieldTextarea from '$lib/components/form/field-textarea.svelte';
+	import {
+		PROGRAM_DESCRIPTION_MAX_LENGTH,
+		type CreateProgramInput,
+		type LifecycleStatus,
+		type ProgramLevel
+	} from '$lib/contracts/directory';
 	import { LIFECYCLE_STATUS_OPTIONS, PROGRAM_LEVEL_OPTIONS } from './labels';
 
 	/** Поля образовательной программы. Версии заводятся отдельно, из карточки. */
@@ -34,6 +40,21 @@
 </div>
 
 <FieldInput name="name" label="Название" required errors={$errors.name} bind:value={$form.name} />
+
+<!-- Абзац-другой для карточки и письма вузу; подробное описание прикладывают
+     файлами в блоке «Материалы» карточки. Пробелы по краям срезает контракт при
+     разборе, а не поле на каждом нажатии: иначе перенос строки между абзацами
+     исчезал бы, едва его набрали. -->
+<FieldTextarea
+	name="description"
+	label="Описание"
+	rows={4}
+	description="Коротко, до {PROGRAM_DESCRIPTION_MAX_LENGTH} символов. Полное описание прикладывают файлами на карточке программы."
+	errors={$errors.description}
+	bind:value={
+		() => $form.description ?? '', (next) => ($form.description = next === '' ? null : next)
+	}
+/>
 
 <div class="grid gap-4 sm:grid-cols-2">
 	<FieldSelect

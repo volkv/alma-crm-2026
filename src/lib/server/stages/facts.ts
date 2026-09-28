@@ -16,7 +16,7 @@
  * сохранённый при выходе (`commands.ts`), и не пересчитывается: история
  * стадии — это то, что было, когда с неё ушли, а не то, что есть сейчас.
  */
-import { and, eq, gt, inArray, isNotNull, or, sql } from 'drizzle-orm';
+import { and, desc, eq, gt, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import type { ChecklistFact, ChecklistState, StageSnapshot } from '$lib/contracts/interactions';
 import { isFactItem } from '$lib/contracts/interactions';
 import { CONTRACT_DOCUMENT_KIND, CONTRACT_DOCUMENT_TEMPLATES } from '$lib/contracts/documents';
@@ -38,6 +38,7 @@ import {
 	learningGroupResults,
 	learningGroups,
 	products,
+	programOfferSends,
 	programs,
 	programVersions,
 	sites,
@@ -202,6 +203,41 @@ const programVersionNew: Evaluate = async (executor, entries) => {
 			];
 		})
 	);
+};
+
+/**
+ * Описание программ ушло контактным лицам письмом из карточки
+ * (`program_offer_sends`). Засчитывается любая отправка по делу, а не только
+ * после входа на стадию: письмо, отправленное на шаг раньше, вуз уже получил,
+ * и требовать второе ради галочки — лишнее письмо живому человеку. Возврат на
+ * стадию тоже не открывает пункт заново: изменились программы — это видно по
+ * дате отправки у пункта, и письмо отправляют ещё раз той же кнопкой.
+ */
+const offerSent: Evaluate = async (executor, entries) => {
+	const rows = await executor
+		.select({
+			interactionId: programOfferSends.interactionId,
+			sentAt: programOfferSends.sentAt,
+			recipientCount: sql<number>`jsonb_array_length(${programOfferSends.recipients})::int`
+		})
+		.from(programOfferSends)
+		.where(inArray(programOfferSends.interactionId, interactionIds(entries)))
+		.orderBy(desc(programOfferSends.sentAt));
+
+	const answers = new Map<string, ChecklistFact>();
+
+	for (const row of rows) {
+		if (!answers.has(row.interactionId)) {
+			answers.set(
+				row.interactionId,
+				done(
+					`Отправлено ${formatDate(row.sentAt)} — ${pluralize(row.recipientCount, ['получатель', 'получателя', 'получателей'])}`
+				)
+			);
+		}
+	}
+
+	return byInteraction(entries, answers);
 };
 
 /**
@@ -513,6 +549,7 @@ const EVALUATORS: Record<ChecklistRuleKey, Evaluate> = {
 	responsible_assigned: responsibleAssigned,
 	stage_result: stageResult,
 	program_version_new: programVersionNew,
+	offer_sent: offerSent,
 	licenses_issued: licensesIssued,
 	handover_act_approved: handoverActApproved,
 	teachers_group_formed: teachersGroupFormed,

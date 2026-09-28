@@ -895,6 +895,7 @@ function toProgramView(row: typeof programs.$inferSelect): ProgramView {
 		name: row.name,
 		level: row.level,
 		directionCode: row.directionCode,
+		description: row.description,
 		priority: row.priority,
 		status: row.status
 	};

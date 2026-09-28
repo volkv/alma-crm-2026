@@ -111,10 +111,14 @@ export const DEMO_DATA_TABLES = [
 	'comment_mentions',
 	// Уведомления о новых делах с сайта: уходят вместе с делами.
 	'application_notices',
+	// Отправки описания программ вузу: след дела, уходит вместе с делами.
+	'program_offer_sends',
 	// Документы
 	'documents',
 	'stage_entry_documents',
 	'document_contract_items',
+	// Материалы программ: связь уходит вместе с документами и программами.
+	'program_documents',
 	// Договоры
 	'contracts',
 	'contract_items',

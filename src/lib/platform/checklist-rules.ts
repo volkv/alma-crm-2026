@@ -53,6 +53,11 @@ export const CHECKLIST_RULES = [
 		module: null
 	},
 	{
+		key: 'offer_sent',
+		label: 'Описание программ отправлено контактам письмом из карточки',
+		module: null
+	},
+	{
 		key: 'licenses_issued',
 		label: 'По каждому продукту дела выбрана позиция договора с датой лицензии',
 		module: 'contracts'

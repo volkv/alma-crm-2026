@@ -41,6 +41,7 @@ registerRoute({
 				name: 'Информатика и вычислительная техника',
 				level: 'bachelor',
 				directionCode: '09.03.01',
+				description: 'Разработка программного обеспечения и вычислительных систем.',
 				priority: 1,
 				status: 'active'
 			}
@@ -65,6 +66,7 @@ registerRoute({
 		name: 'Информатика и вычислительная техника',
 		level: 'bachelor',
 		directionCode: '09.03.01',
+		description: 'Разработка программного обеспечения и вычислительных систем.',
 		priority: 1,
 		status: 'active'
 	},
@@ -74,6 +76,7 @@ registerRoute({
 		name: 'Информатика и вычислительная техника',
 		level: 'bachelor',
 		directionCode: '09.03.01',
+		description: 'Разработка программного обеспечения и вычислительных систем.',
 		priority: 1,
 		status: 'active'
 	}

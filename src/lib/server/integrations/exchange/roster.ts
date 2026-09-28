@@ -103,7 +103,7 @@ const SYNONYMS: FieldSynonyms<RosterField> = {
  * файл не говорит; роль закрытым списком — «другое», а должность называет,
  * откуда связь взялась.
  */
-const LEARNER_POSITION = 'Слушатель учебной группы';
+export const LEARNER_POSITION = 'Слушатель учебной группы';
 
 /** Основание обработки данных слушателя: договор с вузом, как у импорта каталога. */
 const ROSTER_CONSENT_BASIS = 'contract';

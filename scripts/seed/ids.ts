@@ -30,6 +30,7 @@ export type SeedKind =
 	| 'responsible'
 	| 'program'
 	| 'program-version'
+	| 'program-material'
 	| 'product'
 	| 'contract'
 	| 'contract-item'

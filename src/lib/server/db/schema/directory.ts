@@ -337,6 +337,11 @@ export const programs = pgTable(
 		level: programLevelEnum().notNull(),
 		/** Код направления подготовки, например 09.03.01. */
 		directionCode: text(),
+		/**
+		 * Краткое описание для карточки и письма вузу. Длину держит контракт
+		 * формы; полное описание — файлами программы (`program_documents`).
+		 */
+		description: text(),
 		/** ИТ-направление продукта — разрез ответственности, а не код ФГОС. */
 		directionId: uuid().references(() => directions.id, { onDelete: 'restrict' }),
 		/**

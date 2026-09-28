@@ -30,6 +30,7 @@ import {
 	processStageKeys,
 	productDirections,
 	products,
+	programDocuments,
 	programs,
 	programVersions,
 	rolePermissions,
@@ -474,12 +475,14 @@ describe('сид', () => {
 		// DOCX и PDF, к одному делу приложен скан и его вторая редакция, у каждого
 		// дела, прошедшего подписание, лежит подписанный экземпляр с отметкой
 		// «Утверждён», а у завершённого обучения лица — документ об обучении.
+		// Сверх документов дел — по описанию в PDF у каждой программы.
 		await expect(countRows(documents)).resolves.toBe(
 			INTERACTION_SEED_SIZES.documents * 2 +
 				INTERACTION_SEED_SIZES.scans +
 				INTERACTION_SEED_SIZES.signedAgreements +
 				INTERACTION_SEED_SIZES.handoverActs * 2 +
-				INTERACTION_SEED_SIZES.trainingDocuments
+				INTERACTION_SEED_SIZES.trainingDocuments +
+				DIRECTORY_SEED_SIZES.programMaterials
 		);
 
 		// Отметка «Утверждён» стоит ровно на них: стадии подписания и передачи
@@ -695,6 +698,7 @@ describe('сид', () => {
 		);
 		await expect(countRows(learningGroupLearners)).resolves.toBe(ROSTER_SEED_SIZES.learners);
 		await expect(countRows(programVersions)).resolves.toBe(DIRECTORY_SEED_SIZES.programVersions);
+		await expect(countRows(programDocuments)).resolves.toBe(DIRECTORY_SEED_SIZES.programMaterials);
 		// По записи на роль от подготовки прогона плюс семь от сида: три
 		// демонстрационные, два сотрудника, администратор стенда и машинный
 		// субъект обмена.

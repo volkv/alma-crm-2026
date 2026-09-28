@@ -1,4 +1,5 @@
 <script lang="ts">
+	import MailIcon from '@lucide/svelte/icons/mail';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import UserPenIcon from '@lucide/svelte/icons/user-pen';
@@ -173,5 +174,24 @@
 			{/if}
 		{/snippet}
 		<OfferingList {interaction} />
+		<!-- Письмо вузу с описанием этих программ: то же окно, что у пункта
+			«Отправлено описание программ». Без программ описывать нечего — кнопка
+			видна, но выключена и говорит почему. -->
+		{#if canEdit && institution !== null && institution.isPrimary}
+			<div class="mt-3 flex flex-col items-start gap-1">
+				<Button
+					size="sm"
+					variant="outline"
+					disabled={interaction.programs.length === 0}
+					onclick={() => commands.open({ kind: 'program-offer' })}
+				>
+					<MailIcon aria-hidden="true" />
+					Отправить информацию о программах
+				</Button>
+				{#if interaction.programs.length === 0}
+					<p class="text-xs text-muted-foreground">Сначала добавьте в дело программы.</p>
+				{/if}
+			</div>
+		{/if}
 	</ContextSection>
 </div>

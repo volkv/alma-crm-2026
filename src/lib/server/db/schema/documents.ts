@@ -27,6 +27,7 @@ import {
 	type DocumentTemplateVariable
 } from '$lib/contracts/documents';
 import { users } from './auth';
+import { programs } from './directory';
 import { contractItems, interactions, stageEntries } from './interactions';
 import { createdAt, timestamps } from './shared';
 
@@ -167,6 +168,31 @@ export const documentContractItems = pgTable(
 		...createdAt
 	},
 	(table) => [primaryKey({ columns: [table.documentId, table.contractItemId] })]
+);
+
+/**
+ * Материалы образовательной программы: файлы с её полным описанием, которые
+ * показывает карточка и которые уходят вузу вложением.
+ *
+ * Файл — обычная строка `documents` без взаимодействия, а принадлежность
+ * программе живёт здесь, связью: так хранилище, проверка содержимого, хеш и
+ * скачивание остаются одними на все документы системы. Убрать материал из
+ * программы — значит снять связь; сама строка документа остаётся, потому что
+ * документы поштучно не удаляются (см. `documents.supersedes_id`), а письмо,
+ * отправленное с этим файлом, должно и дальше ссылаться на то, что ушло.
+ */
+export const programDocuments = pgTable(
+	'program_documents',
+	{
+		programId: uuid()
+			.notNull()
+			.references((): AnyPgColumn => programs.id, { onDelete: 'cascade' }),
+		documentId: uuid()
+			.notNull()
+			.references((): AnyPgColumn => documents.id, { onDelete: 'cascade' }),
+		...createdAt
+	},
+	(table) => [primaryKey({ columns: [table.programId, table.documentId] })]
 );
 
 export const stageEntryDocumentsRelations = relations(stageEntryDocuments, ({ one }) => ({

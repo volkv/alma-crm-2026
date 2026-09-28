@@ -34,6 +34,7 @@ import { seedInteractions } from './interactions';
 import { seedLoad, type LoadSeedReport } from './load';
 import { seedLoadMembers } from './load-members';
 import { seedProcesses } from './process';
+import { seedProgramMaterials } from './program-materials';
 import { seedSettings } from './settings';
 import { seedStats } from './stats';
 import { seedUsers, type SeededUsers } from './users';
@@ -76,6 +77,9 @@ export async function seedAll(): Promise<SeedReport> {
 		return { users: seededUsers, exchangeKeys: keys };
 	});
 
+	// Описания программ в PDF — после фиксации справочника: печать и хранилище
+	// ходят по сети, и транзакции справочников ждать их незачем.
+	await seedProgramMaterials({ authorUserId: users.employees[0] });
 	await seedInteractions();
 
 	return { users, exchangeKeys };
@@ -151,6 +155,7 @@ const REPORTED_TABLES: Record<string, PgTable> = {
 	affiliations: schema.affiliations,
 	programs: schema.programs,
 	program_versions: schema.programVersions,
+	program_documents: schema.programDocuments,
 	products: schema.products,
 	directions: schema.directions,
 	organization_responsibles: schema.organizationResponsibles,

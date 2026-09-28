@@ -68,4 +68,17 @@ describe('почта в конфигурации', () => {
 	it('роняет старт на обратном адресе, который не адрес', () => {
 		expect(() => parseConfig({ ...completeEnv, SMTP_FROM: 'lct-crm' })).toThrowError(/SMTP_FROM/);
 	});
+
+	it('держит письма наружу в песочнице, пока их явно не выпустили', () => {
+		expect(parseConfig(completeEnv).MAIL_EXTERNAL_DELIVERY).toBe(false);
+		expect(parseConfig({ ...completeEnv, MAIL_EXTERNAL_DELIVERY: '' }).MAIL_EXTERNAL_DELIVERY).toBe(
+			false
+		);
+		expect(
+			parseConfig({ ...completeEnv, MAIL_EXTERNAL_DELIVERY: 'true' }).MAIL_EXTERNAL_DELIVERY
+		).toBe(true);
+		expect(() => parseConfig({ ...completeEnv, MAIL_EXTERNAL_DELIVERY: 'yes' })).toThrowError(
+			/MAIL_EXTERNAL_DELIVERY/
+		);
+	});
 });

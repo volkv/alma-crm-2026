@@ -360,6 +360,23 @@ export const GENERATED_DOCUMENT_KIND = 'generated';
 export const STAGE_ATTACHMENT_DOCUMENT_KIND = 'stage_attachment';
 
 /**
+ * Метка вида для материала образовательной программы — файла с её полным
+ * описанием. Его загружают на карточке программы, а не выбирают вид из
+ * справочника, поэтому вид ставит приложение — как и у вложения к переходу.
+ */
+export const PROGRAM_MATERIAL_DOCUMENT_KIND = 'program_description';
+
+/**
+ * Что принимаем материалом программы: PDF и DOCX. Материал уходит вузу
+ * вложением письма и открывается у получателя без особых программ; таблица
+ * или архив в роли «описания программы» — это уже не описание.
+ */
+export const PROGRAM_MATERIAL_MIME_TYPES = [
+	'application/pdf',
+	'application/vnd.openxmlformats-officedocument.wordprocessingml.document'
+] as const satisfies readonly (typeof ALLOWED_DOCUMENT_MIME_TYPES)[number][];
+
+/**
  * Вид документа в списке: загружен человеком или собран по шаблону.
  *
  * У загруженного файла в `documents.kind` лежит вид, который назвал человек
@@ -402,7 +419,9 @@ export type UploadedDocumentKind = (typeof UPLOADED_DOCUMENT_KINDS)[number];
 
 /** Виды, которые ставит само приложение: их не выбирают руками. */
 export type SystemDocumentKind =
-	typeof GENERATED_DOCUMENT_KIND | typeof STAGE_ATTACHMENT_DOCUMENT_KIND;
+	| typeof GENERATED_DOCUMENT_KIND
+	| typeof STAGE_ATTACHMENT_DOCUMENT_KIND
+	| typeof PROGRAM_MATERIAL_DOCUMENT_KIND;
 
 /**
  * Русские названия видов. Виды, которые ставит приложение, стоят в том же ряду:
@@ -420,7 +439,8 @@ export const DOCUMENT_KIND_LABELS: Record<UploadedDocumentKind | SystemDocumentK
 	certificate: 'Документ об обучении',
 	other: 'Другое',
 	generated: 'Собран по шаблону',
-	stage_attachment: 'Вложение к переходу'
+	stage_attachment: 'Вложение к переходу',
+	program_description: 'Материал программы'
 };
 
 /**

@@ -271,6 +271,7 @@ export async function listPrograms(
 				name: programs.name,
 				level: programs.level,
 				directionCode: programs.directionCode,
+				description: programs.description,
 				priority: programs.priority,
 				status: programs.status
 			})
@@ -892,6 +893,7 @@ export async function listProgramRows(
 				name: programs.name,
 				level: programs.level,
 				directionCode: programs.directionCode,
+				description: programs.description,
 				priority: programs.priority,
 				status: programs.status,
 				latestVersion: latestVersionExpression
@@ -947,6 +949,7 @@ export async function getProgram(ctx: ActorContext, id: string): Promise<Program
 			name: programs.name,
 			level: programs.level,
 			directionCode: programs.directionCode,
+			description: programs.description,
 			priority: programs.priority,
 			status: programs.status
 		})
