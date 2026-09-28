@@ -26,6 +26,7 @@ import {
 	changeInteractionContactSchema,
 	type ChangeInteractionContactDraft
 } from '$lib/contracts/interactions';
+import type { SiteSourceView } from '$lib/contracts/organization-card';
 import { formatIsoDay } from '$lib/format';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
@@ -339,8 +340,15 @@ export async function createInteractionContact(
 export type NewContactOptions = {
 	/** Право заводить людей: без него кнопки создания нет. */
 	canCreate: boolean;
-	/** Кандидаты из уже прочитанного паспорта организации стороны. */
+	/** Кандидаты с сайта организации стороны, которых ещё нет в её контактах. */
 	candidates: SiteContactCandidate[];
+	/**
+	 * Прочитан ли сайт: пока читается, диалог спросит ещё раз; `null` — блока
+	 * «с сайта» нет (не вуз или нет права заводить людей).
+	 */
+	source: SiteSourceView | null;
+	/** Сколько людей на сайте всего — вместе с уже заведёнными. */
+	total: number;
 };
 
 export async function newContactOptions(
@@ -350,13 +358,10 @@ export async function newContactOptions(
 	requirePermission(ctx, 'interactions.write');
 
 	if (!can(ctx, 'people.write')) {
-		return { canCreate: false, candidates: [] };
+		return { canCreate: false, candidates: [], source: null, total: 0 };
 	}
 
 	const organizationId = await partyOrganizationId(ctx, ref);
 
-	return {
-		canCreate: true,
-		candidates: await listSiteContactCandidates(ctx, organizationId)
-	};
+	return { canCreate: true, ...(await listSiteContactCandidates(ctx, organizationId)) };
 }

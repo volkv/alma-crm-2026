@@ -7,11 +7,14 @@
  * раздела. Поэтому у вуза, в отличие от произвольной организации, реквизиты,
  * подразделения и программы можно прочитать с его же сайта.
  *
- * Читаются три подраздела:
+ * Читаются четыре подраздела:
  * - `/sveden/common` — наименование, дата создания, адрес, телефон, почта,
  *   учредитель, руководитель. Сам факт размеченной страницы — ещё и
  *   доказательство, что домен принадлежит образовательной организации;
- * - `/sveden/struct` — подразделения и их руководители: кандидаты в контакты;
+ * - `/sveden/struct` — подразделения (кандидаты в площадки, и с руководителем,
+ *   и без) и их руководители (кандидаты в контакты);
+ * - `/sveden/managers` — «Руководство»: ректор, проректоры, руководители
+ *   филиалов — тоже кандидаты в контакты, с подписью «Руководство»;
  * - `/sveden/education/eduop` (или сам `/sveden/education`, если перечень лежит
  *   прямо на нём) — реализуемые программы с кодами направлений.
  *
@@ -23,20 +26,37 @@
  * списка разрешённых узлов: иначе первый же `Location` увёл бы запрос внутрь
  * сети развёртывания или к CMS заказчика.
  */
+import { request as httpsRequest } from 'node:https';
+import { Readable } from 'node:stream';
 import { publicTargetIssue } from '../integrations/outbound';
-import { firstProperty, property, propertyValues, readItems, readMicrodata } from './microdata';
+import {
+	firstProperty,
+	property,
+	propertyValues,
+	readItems,
+	readMicrodata,
+	type Microdata
+} from './microdata';
 import {
 	CONTACT_CANDIDATES_MAX,
+	MANAGEMENT_UNIT,
+	normalizeUnitName,
 	PROGRAM_CANDIDATES_MAX,
+	UNIT_CANDIDATES_MAX,
 	type ContactCandidate,
 	type ProgramCandidate,
 	type SiteReport,
 	type SvedenReport,
-	type SvedenSection
+	type SvedenSection,
+	type UnitCandidate
 } from '$lib/contracts/enrichment';
 
-/** Сколько ждём одну страницу: это не наш сервис, и торопить его нечем. */
-export const SVEDEN_TIMEOUT_MS = 10_000;
+/**
+ * Сколько ждём одну страницу вместе с телом: это не наш сервис, и торопить его
+ * нечем. Сайты вузов бывают медленными — БУКЭП отдаёт первый байт через 5–6 с,
+ * а страницу дочитывает ещё дольше, и 10 с на неё не хватало.
+ */
+export const SVEDEN_TIMEOUT_MS = 25_000;
 
 /**
  * Потолок страницы. Перечень программ крупного вуза весит и 15 МиБ — вместе
@@ -55,11 +75,25 @@ const REDIRECT_MAX = 4;
  * У `common` путь бывает и `/sveden/`, и статическим `.html`. У `education`
  * перечень программ чаще лежит во вложенном `eduop`, а сам `/sveden/education`
  * оказывается меню со ссылками — поэтому `eduop` спрашивается первым.
+ *
+ * «Руководство» до 2023 года жило вместе с педагогическим составом на
+ * `/sveden/employees` и размечено там теми же `rucovodstvo*`; отдельный
+ * `/sveden/managers` появился позже и спрашивается первым.
  */
+// У каждого пути — двойник со слешем в конце: сайты на «Битриксе» отдают
+// `/sveden/common` как 404 без перенаправления, а раздел живёт на
+// `/sveden/common/` (Институт бизнеса и дизайна, `ibisedu.ru`). Двойник
+// запрашивается, только если путь без слеша не дал разметки.
 export const SVEDEN_PATHS = {
-	common: ['/sveden/common', '/sveden/', '/sveden/common.html'],
-	struct: ['/sveden/struct'],
-	education: ['/sveden/education/eduop', '/sveden/education']
+	common: ['/sveden/common', '/sveden/common/', '/sveden/', '/sveden/common.html'],
+	struct: ['/sveden/struct', '/sveden/struct/'],
+	managers: ['/sveden/managers', '/sveden/managers/', '/sveden/employees', '/sveden/employees/'],
+	education: [
+		'/sveden/education/eduop',
+		'/sveden/education/eduop/',
+		'/sveden/education',
+		'/sveden/education/'
+	]
 } as const;
 
 /**
@@ -179,13 +213,29 @@ export function redirectTarget(siteHost: string, current: string, location: stri
 		return null;
 	}
 
-	if (next.protocol === 'http:') {
-		next.protocol = 'https:';
-	}
-
-	const target = next.toString();
+	const target = secureUrl(next.toString());
 
 	return target === current ? null : target;
+}
+
+/** Тот же сайт с `www.` или без него: `https://www.bsuedu.ru` ↔ `https://bsuedu.ru`. */
+export function wwwTwin(origin: string): string {
+	const url = new URL(origin);
+
+	url.hostname = url.hostname.startsWith('www.') ? url.hostname.slice(4) : `www.${url.hostname}`;
+
+	return url.origin;
+}
+
+/** Тот же адрес по `https`: по `http` наружу сервер не ходит. */
+export function secureUrl(raw: string): string {
+	const url = new URL(raw);
+
+	if (url.protocol === 'http:') {
+		url.protocol = 'https:';
+	}
+
+	return url.toString();
 }
 
 /** Написания одного и того же свойства: разметку расставляли руками. */
@@ -341,6 +391,230 @@ function unitName(value: string | null, documents: readonly string[]): string | 
 /** Строки таблицы органов управления и подразделений. */
 const STRUCT_ROWS = ['structOrgUprav'] as const;
 
+type RowData = ReturnType<typeof readMicrodata>;
+
+/**
+ * Почта и телефон строки таблицы: вузы пишут их в одну ячейку как придётся,
+ * поэтому обе ячейки читаются вместе и раскладываются по видам.
+ */
+function reachOf(row: RowData): { email: string | null; phone: string | null } {
+	const reach = [property(row, 'email'), property(row, 'telephone')]
+		.map((value) => meaningful(value))
+		.filter((value) => value !== null)
+		.join('; ');
+	const phone = phonesIn(reach)[0] ?? null;
+	// Ячейка, в которой не нашлось ни адреса, ни номера («priem[at]vuz.ru»),
+	// остаётся почтой как есть: карточка человека покажет её на проверку.
+	const email = emailsIn(reach)[0] ?? (phone === null ? meaningful(property(row, 'email')) : null);
+
+	return { email, phone };
+}
+
+/**
+ * Адрес страницы подразделения из ячейки `site`: первая ссылка `http(s)`.
+ * Ячейку заполняли руками — «нет», «www.vuz.ru/kaf», две ссылки подряд, — а
+ * на экран уходит только то, что точно адрес: остальное — не значение.
+ */
+function unitSite(value: string | null): string | null {
+	const found = /https?:\/\/[^\s<>"']+/i.exec(value ?? '')?.[0];
+
+	if (found === undefined) {
+		return null;
+	}
+
+	try {
+		return new URL(found).toString().slice(0, 1000);
+	} catch {
+		return null;
+	}
+}
+
+/**
+ * Подразделения из `/sveden/struct` — кандидаты в площадки организации.
+ *
+ * В отличие от кандидатов в контакты, строка без ФИО руководителя здесь
+ * остаётся: карточке дела нужна кафедра, с которой идёт работа, даже если
+ * сайт не назвал её заведующего. Отбрасываются строки руководства
+ * («Ректор», «Проректор по АХР»): это должность, а не подразделение, — и
+ * повторы названия (сверка — `normalizeUnitName`, как и со справочником).
+ */
+export function readStructUnits(html: string): UnitCandidate[] {
+	const units: UnitCandidate[] = [];
+	const seen = new Set<string>();
+
+	for (const row of readItems(html, STRUCT_ROWS)) {
+		const name = unitName(property(row, 'name'), propertyValues(row, 'divisionClauseDocLink'));
+
+		if (name === null || POST_AS_UNIT.test(name)) {
+			continue;
+		}
+
+		const key = normalizeUnitName(name);
+
+		if (key === '' || seen.has(key) || units.length >= UNIT_CANDIDATES_MAX) {
+			continue;
+		}
+
+		seen.add(key);
+		units.push({
+			name,
+			address: meaningful(property(row, 'addressStr')),
+			...reachOf(row),
+			site: unitSite(property(row, 'site'))
+		});
+	}
+
+	return units;
+}
+
+/**
+ * Строки подраздела «Руководство»: руководитель, его заместители и
+ * руководители филиалов — у каждой свой `itemprop` по приказу Рособрнадзора.
+ */
+const MANAGER_ROWS = ['rucovodstvo', 'rucovodstvoZam', 'rucovodstvoFil'] as const;
+
+/**
+ * Люди из «Руководства» — кандидаты в контакты с подписью `MANAGEMENT_UNIT`.
+ *
+ * Строка с несколькими ФИО — это не строка, а контейнер: вузы размечают
+ * `rucovodstvo` и всю таблицу целиком, и тогда внутри лежат ячейки всех
+ * заместителей; её люди придут своими строками. У руководителя филиала
+ * должность дополняется названием филиала — иначе «директор» ничего не
+ * говорит. Повторы сливаются по ФИО, как и в «Структуре».
+ */
+export function readManagersPage(html: string): ContactCandidate[] {
+	const contacts: ContactCandidate[] = [];
+	const byName = new Map<string, ContactCandidate>();
+
+	const rows = readItems(html, MANAGER_ROWS);
+
+	for (const row of rows.length > 0 && rows.some(hasManagerName) ? rows : looseManagerRows(html)) {
+		const cells = propertyValues(row, 'fio');
+		const cell = cells.length === 1 ? meaningful(cells[0]) : null;
+
+		if (cell === null) {
+			continue;
+		}
+
+		const split = NAME_WITH_POST.exec(cell);
+		const name = split?.[1] ?? cell;
+		const branch = meaningful(property(row, 'nameFil'));
+		const ownPost = withPost(split?.[2] ?? null, meaningful(property(row, 'post')));
+		const post = branch === null ? ownPost : `${ownPost ?? 'руководитель'} (${branch})`;
+		const { email, phone } = reachOf(row);
+		const key = name.replace(/\s+/g, ' ').toLocaleLowerCase('ru');
+		const known = byName.get(key);
+
+		if (known !== undefined) {
+			known.post = withPost(known.post, post);
+			known.email ??= email;
+			known.phone ??= phone;
+			continue;
+		}
+
+		if (contacts.length >= CONTACT_CANDIDATES_MAX) {
+			continue;
+		}
+
+		const candidate: ContactCandidate = {
+			unit: MANAGEMENT_UNIT,
+			name,
+			post,
+			email,
+			phone,
+			address: null
+		};
+
+		byName.set(key, candidate);
+		contacts.push(candidate);
+	}
+
+	return contacts;
+}
+
+function hasManagerName(row: Microdata): boolean {
+	return propertyValues(row, 'fio').length > 0;
+}
+
+/**
+ * Строки «Руководства», когда контейнер размечен мимо: у ИБИС `itemprop=
+ * "rucovodstvo"` стоит на пустом `<br>`, а ФИО, должности, телефоны и почта
+ * лежат рядом, вне него. Тогда поля страницы собираются по порядку — n-е ФИО с
+ * n-й должностью. Телефон и почта берутся, только если их столько же, сколько
+ * ФИО: иначе порядок уже ничего не говорит, и чужой номер хуже пустого.
+ */
+function looseManagerRows(html: string): Microdata[] {
+	const page = readMicrodata(html);
+	const names = propertyValues(page, 'fio');
+	const posts = propertyValues(page, 'post');
+
+	if (names.length === 0 || posts.length !== names.length) {
+		return [];
+	}
+
+	const aligned = (name: string): string[] | null => {
+		const values = propertyValues(page, name);
+
+		return values.length === names.length ? values : null;
+	};
+	const phones = aligned('telephone');
+	const emails = aligned('email');
+
+	return names.map((name, index) => {
+		const properties = new Map<string, string[]>([
+			['fio', [name]],
+			['post', [posts[index]]]
+		]);
+
+		if (phones !== null) {
+			properties.set('telephone', [phones[index]]);
+		}
+
+		if (emails !== null) {
+			properties.set('email', [emails[index]]);
+		}
+
+		return { properties, types: new Set<string>() };
+	});
+}
+
+/**
+ * Один список кандидатов из «Руководства» и «Структуры».
+ *
+ * «Руководство» идёт первым: ректор и проректоры — те, кого ищут чаще всего, и
+ * потолок списка не должен отрезать их ради сотой кафедры. Человек из обоих
+ * подразделов остаётся одним кандидатом — из «Руководства», — а недостающие
+ * почта и телефон берутся из его строки «Структуры».
+ */
+export function mergeContactCandidates(
+	managers: readonly ContactCandidate[],
+	struct: readonly ContactCandidate[]
+): ContactCandidate[] {
+	const contacts = managers.map((candidate) => ({ ...candidate }));
+	const byName = new Map(
+		contacts.map((candidate) => [
+			candidate.name.replace(/\s+/g, ' ').toLocaleLowerCase('ru'),
+			candidate
+		])
+	);
+
+	for (const candidate of struct) {
+		const known = byName.get(candidate.name.replace(/\s+/g, ' ').toLocaleLowerCase('ru'));
+
+		if (known !== undefined) {
+			known.email ??= candidate.email;
+			known.phone ??= candidate.phone;
+			continue;
+		}
+
+		if (contacts.length < CONTACT_CANDIDATES_MAX) {
+			contacts.push({ ...candidate });
+		}
+	}
+
+	return contacts;
+}
+
 /**
  * ФИО с должностью в одной ячейке: «Рудской Андрей Иванович, председатель
  * Ученого совета, ректор». ФИО — начало до первой запятой, если это два-три
@@ -391,15 +665,7 @@ export function readStructPage(html: string): ContactCandidate[] {
 	for (const row of readItems(html, STRUCT_ROWS)) {
 		const unit = unitName(property(row, 'name'), propertyValues(row, 'divisionClauseDocLink'));
 		const cell = meaningful(property(row, 'fio'));
-		const reach = [property(row, 'email'), property(row, 'telephone')]
-			.map((value) => meaningful(value))
-			.filter((value) => value !== null)
-			.join('; ');
-		const phone = phonesIn(reach)[0] ?? null;
-		// Ячейка, в которой не нашлось ни адреса, ни номера («priem[at]vuz.ru»),
-		// остаётся почтой как есть: карточка человека покажет её на проверку.
-		const email =
-			emailsIn(reach)[0] ?? (phone === null ? meaningful(property(row, 'email')) : null);
+		const { email, phone } = reachOf(row);
 
 		if (unit === null || cell === null) {
 			continue;
@@ -587,7 +853,87 @@ async function readBody(response: Response): Promise<{ body: Uint8Array; truncat
 	return { body, truncated };
 }
 
-type Fetched = { url: string; html: string; truncated: boolean };
+type Fetched = { url: string; html: string; truncated: boolean; insecure: boolean };
+
+/**
+ * Отказ проверки сертификата, а не сети: сайт ответил бы, но его сертификат
+ * истёк, самоподписан, выписан на другое имя или выдан центром, которого среда
+ * не знает (центр Минцифры — у многих вузов).
+ */
+const CERTIFICATE_ERRORS = new Set([
+	'CERT_HAS_EXPIRED',
+	'CERT_NOT_YET_VALID',
+	'DEPTH_ZERO_SELF_SIGNED_CERT',
+	'SELF_SIGNED_CERT_IN_CHAIN',
+	'UNABLE_TO_VERIFY_LEAF_SIGNATURE',
+	'UNABLE_TO_GET_ISSUER_CERT',
+	'UNABLE_TO_GET_ISSUER_CERT_LOCALLY',
+	'ERR_TLS_CERT_ALTNAME_INVALID'
+]);
+
+export function isCertificateError(error: unknown): boolean {
+	const cause = (error as { cause?: { code?: unknown } } | null)?.cause;
+	const code = cause?.code ?? (error as { code?: unknown } | null)?.code;
+
+	return typeof code === 'string' && CERTIFICATE_ERRORS.has(code);
+}
+
+/** Статусы, у ответа с которыми тела быть не может: `Response` иначе бросит. */
+const NULL_BODY_STATUSES = new Set([204, 205, 304]);
+
+/**
+ * Тот же заход без проверки сертификата — только для чтения раздела `/sveden`
+ * после отказа проверки (`isCertificateError`).
+ *
+ * Упрощение для хакатона: раздел — открытые сведения, мы их только читаем и
+ * ничего сайту не отправляем, поэтому истёкший сертификат вуза не повод
+ * оставлять карточку пустой. Цена — страницу могли подменить по дороге; отчёт
+ * помечается (`insecureTls`), и паспорт об этом говорит. Правило исходящих
+ * адресов проверено до захода, как и для обычного запроса. Интеграции (CMS,
+ * система обучения, вебхуки) так не ходят никогда. В рабочей эксплуатации
+ * центр Минцифры кладётся в доверенные среды (`NODE_EXTRA_CA_CERTS`), и
+ * запасной заход остаётся для по-настоящему сломанных сертификатов.
+ */
+function fetchWithoutCertificateCheck(url: string): Promise<Response> {
+	return new Promise((resolve, reject) => {
+		const request = httpsRequest(
+			url,
+			{
+				method: 'GET',
+				headers: { accept: 'text/html,application/xhtml+xml', 'accept-encoding': 'identity' },
+				rejectUnauthorized: false,
+				signal: AbortSignal.timeout(SVEDEN_TIMEOUT_MS)
+			},
+			(incoming) => {
+				const headers = new Headers();
+
+				for (const [name, value] of Object.entries(incoming.headers)) {
+					if (value !== undefined) {
+						headers.set(name, Array.isArray(value) ? value.join(', ') : value);
+					}
+				}
+
+				const status = incoming.statusCode ?? 502;
+
+				if (NULL_BODY_STATUSES.has(status) || status < 200 || status > 599) {
+					incoming.resume();
+					resolve(
+						new Response(null, { status: status < 200 || status > 599 ? 502 : status, headers })
+					);
+
+					return;
+				}
+
+				resolve(
+					new Response(Readable.toWeb(incoming) as ReadableStream<Uint8Array>, { status, headers })
+				);
+			}
+		);
+
+		request.on('error', reject);
+		request.end();
+	});
+}
 
 /**
  * Один заход по адресу с ручной отработкой перенаправлений.
@@ -597,7 +943,13 @@ type Fetched = { url: string; html: string; truncated: boolean };
  * проверяется следующий, а итог подраздела скажет, что он не открылся.
  */
 async function fetchPage(target: string, siteHost: string): Promise<Fetched | null> {
-	let url = target;
+	// Первый заход повышается до `https` так же, как переход (`redirectTarget`):
+	// сайт в карточке часто записан с `http://` — так его отдаёт и мониторинг
+	// вузов, — а по `http` наружу сервер не ходит, и раздел отказал бы, не
+	// начавшись. КФУ: `http://www.kpfu.ru/sveden/common` читается только как
+	// `https://…` → `http://sveden.kpfu.ru/common/` → `https://sveden.kpfu.ru/common/`.
+	let url = secureUrl(target);
+	let insecure = false;
 
 	for (let hop = 0; hop <= REDIRECT_MAX; hop += 1) {
 		// Проверяется каждый переход, а не только первый: `Location` — это новый
@@ -614,8 +966,17 @@ async function fetchPage(target: string, siteHost: string): Promise<Fetched | nu
 				redirect: 'manual',
 				signal: AbortSignal.timeout(SVEDEN_TIMEOUT_MS)
 			});
-		} catch {
-			return null;
+		} catch (error) {
+			if (!isCertificateError(error)) {
+				return null;
+			}
+
+			try {
+				response = await fetchWithoutCertificateCheck(url);
+				insecure = true;
+			} catch {
+				return null;
+			}
 		}
 
 		if (response.status >= 300 && response.status < 400) {
@@ -652,9 +1013,17 @@ async function fetchPage(target: string, siteHost: string): Promise<Fetched | nu
 			return null;
 		}
 
-		const { body, truncated } = await readBody(response);
+		// Таймаут запроса действует и на чтение тела: медленный сайт отдаёт
+		// заголовки вовремя, а страницу — уже за пределом, и ошибка прилетает
+		// отсюда, а не из `fetch`. Раздел тогда не прочитан, а не весь отчёт
+		// сорван исключением.
+		try {
+			const { body, truncated } = await readBody(response);
 
-		return { url, html: decodeBody(body, contentType), truncated };
+			return { url, html: decodeBody(body, contentType), truncated, insecure };
+		} catch {
+			return null;
+		}
 	}
 
 	return null;
@@ -672,18 +1041,34 @@ async function readSection<TValue>(
 	paths: readonly string[],
 	parse: (page: Fetched) => TValue,
 	isFound: (value: TValue) => boolean
-): Promise<{ section: SvedenSection; value: TValue | null }> {
+): Promise<{ section: SvedenSection; value: TValue | null; insecure: boolean }> {
 	const siteHost = new URL(origin).hostname;
 	let first: { section: SvedenSection; value: TValue } | null = null;
+	let insecure = false;
+	let opened = false;
 
-	for (const path of paths) {
-		const target = new URL(path, origin).toString();
+	// Двойник с `www` или без него — только если с исходного адреса не открылась
+	// ни одна страница: у БелГУ сертификат выписан на `bsuedu.ru`, а
+	// `www.bsuedu.ru` из мониторинга не отвечает вовсе. Двойник — тот же сайт
+	// организации (`withinSite`), и правило исходящих адресов проверяет его так же.
+	const attempts = [origin, wwwTwin(origin)].flatMap((base) =>
+		paths.map((path) => ({ base, target: new URL(path, base).toString() }))
+	);
+
+	for (const { base, target } of attempts) {
+		if (base !== origin && opened) {
+			break;
+		}
+
 		const page = await fetchPage(target, siteHost);
 
 		if (page === null) {
 			continue;
 		}
 
+		opened = true;
+
+		insecure ||= page.insecure;
 		const value = parse(page);
 		const found = isFound(value);
 		const section: SvedenSection = {
@@ -694,14 +1079,14 @@ async function readSection<TValue>(
 		};
 
 		if (found) {
-			return { section, value };
+			return { section, value, insecure };
 		}
 
 		first ??= { section, value };
 	}
 
-	return (
-		first ?? {
+	return {
+		...(first ?? {
 			section: {
 				url: new URL(paths[0], origin).toString(),
 				found: false,
@@ -709,12 +1094,13 @@ async function readSection<TValue>(
 				problem: 'Страница не открылась или увела за пределы сайта организации'
 			},
 			value: null
-		}
-	);
+		}),
+		insecure
+	};
 }
 
 /**
- * Раздел `/sveden` по сайту организации: три подраздела параллельно.
+ * Раздел `/sveden` по сайту организации: четыре подраздела параллельно.
  *
  * `null` — адрес сайта не разбирается, идти некуда.
  */
@@ -728,14 +1114,22 @@ export async function fetchSiteReport(
 		return null;
 	}
 
-	const [common, struct, education] = await Promise.all([
+	const [common, struct, managers, education] = await Promise.all([
 		readSection(
 			origin,
 			SVEDEN_PATHS.common,
 			(page) => readSvedenPage(page.url, page.html),
 			(report) => report.found
 		),
-		readSection(origin, SVEDEN_PATHS.struct, (page) => readStructPage(page.html), notEmpty),
+		// «Структура» найдена, если на ней есть хоть одно подразделение: кафедры
+		// без названных заведующих — тоже сведения для карточки дела.
+		readSection(
+			origin,
+			SVEDEN_PATHS.struct,
+			(page) => ({ contacts: readStructPage(page.html), units: readStructUnits(page.html) }),
+			(value) => value.contacts.length > 0 || value.units.length > 0
+		),
+		readSection(origin, SVEDEN_PATHS.managers, (page) => readManagersPage(page.html), notEmpty),
 		readSection(origin, SVEDEN_PATHS.education, (page) => readEducationPage(page.html), notEmpty)
 	]);
 
@@ -744,9 +1138,12 @@ export async function fetchSiteReport(
 		fetchedAt,
 		common: common.value ?? emptyCommon(common.section.url, common.section.problem),
 		struct: struct.section,
+		managers: managers.section,
 		education: education.section,
-		contacts: struct.value ?? [],
-		programs: education.value ?? []
+		contacts: mergeContactCandidates(managers.value ?? [], struct.value?.contacts ?? []),
+		units: struct.value?.units ?? [],
+		programs: education.value ?? [],
+		insecureTls: [common, struct, managers, education].some((section) => section.insecure)
 	};
 }
 

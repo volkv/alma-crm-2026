@@ -73,8 +73,10 @@ const report: SiteReport = {
 		problem: null
 	},
 	struct: section('struct'),
+	managers: section('managers'),
 	education: section('education'),
 	contacts: [],
+	units: [],
 	programs: []
 };
 

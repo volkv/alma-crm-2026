@@ -1,13 +1,16 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
 	import { toast } from 'svelte-sonner';
-	import UserPlusIcon from '@lucide/svelte/icons/user-plus';
+	import DownloadIcon from '@lucide/svelte/icons/download';
+	import LibraryIcon from '@lucide/svelte/icons/library';
+	import SearchIcon from '@lucide/svelte/icons/search';
 	import { invalidateAll } from '$app/navigation';
 	import { resolve } from '$app/paths';
 	import { page } from '$app/state';
-	import * as Select from '$lib/components/ui/select/index.js';
+	import * as RadioGroup from '$lib/components/ui/radio-group/index.js';
 	import * as SegmentedControl from '$lib/components/ui/segmented-control/index.js';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { Input } from '$lib/components/ui/input/index.js';
 	import { Label } from '$lib/components/ui/label/index.js';
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import FieldDate from '$lib/components/form/field-date.svelte';
@@ -19,9 +22,12 @@
 	import { AFFILIATION_ROLE_OPTIONS, NO_OPTION } from '$lib/components/directory/labels';
 	import { newOrganizationContactSchema } from '$lib/contracts/directory';
 	import type { InteractionPartyView, InteractionView } from '$lib/contracts/interactions';
+	import type { SiteSourceView } from '$lib/contracts/organization-card';
 	import { formatIsoDay } from '$lib/format';
 	import { getCardCommands } from './commands.svelte';
 	import type { CounterpartyShape } from './model';
+	import SiteOffersSection from './site-offers-section.svelte';
+	import { SITE_POLL_ATTEMPTS, SITE_POLL_INTERVAL_MS } from './site-offers';
 
 	/**
 	 * Контактное лицо основной стороны: человек из действующих ролей её
@@ -35,11 +41,18 @@
 	 * Список — те же подсказки, что у формы заведения записи, и читается он при
 	 * каждом открытии: роль могли завести в карточке вуза минуту назад.
 	 *
-	 * Нужного человека нет — вкладка «Новый человек»: ФИО, должность, роль и
-	 * срок полномочий, почта и телефон. Сервер заводит человека и роль тем же
-	 * созданием контакта, что у карточки вуза, и сразу делает его контактом
-	 * стороны. Если паспорт вуза уже прочитан, его руководители подразделений
-	 * стоят там же — одним щелчком. Без права заводить людей вкладки нет.
+	 * Выбор — поиском по одной строке в двух блоках: «В справочнике» — уже
+	 * заведённые люди организации, ниже, отдельно, «С сайта вуза» — люди из
+	 * «Руководства» и «Структуры» сайта, которых в справочнике ещё нет, с
+	 * кнопкой «Импортировать»: сервер заводит человека тем же созданием
+	 * контакта, что у карточки вуза, и сразу делает его контактом стороны.
+	 * Сайт ещё читается — блок говорит об этом и переспрашивает сервер
+	 * несколько раз. Почта и телефон кандидатов в диалоге не показываются:
+	 * они ложатся в карточку человека зашифрованными.
+	 *
+	 * Нужного человека нет нигде — вкладка «Новый человек»: ФИО, должность,
+	 * роль и срок полномочий, почта и телефон. Без права заводить людей ни
+	 * вкладки, ни блока с сайта нет.
 	 *
 	 * Как у плана, диалог несёт версию записи, с которой его открыли, и причину
 	 * правки для ленты: отказ 409 оставляет выбор и ввод в диалоге.
@@ -67,7 +80,19 @@
 	);
 
 	type Option = { id: string; label: string };
-	type Candidate = { unit: string; name: string; position: string };
+	type Candidate = {
+		unit: string;
+		name: string;
+		position: string;
+		fromManagement: boolean;
+		siteId: string | null;
+	};
+	type Offers = {
+		canCreate: boolean;
+		candidates: Candidate[];
+		source: SiteSourceView | null;
+		total: number;
+	};
 	type Mode = 'pick' | 'create';
 
 	/** Поля нового человека так, как их держит форма: строки, пустая — «нет». */
@@ -99,6 +124,13 @@
 
 	let options = $state<Option[]>([]);
 	let candidates = $state<Candidate[]>([]);
+	/** Состояние отчёта сайта; `null` — блока «С сайта вуза» нет. */
+	let source = $state<SiteSourceView | null>(null);
+	let candidatesTotal = $state(0);
+	/** Повторные вопросы кончились, а сайт всё ещё читается. */
+	let candidatesExhausted = $state(false);
+	/** Поиск по одной строке в обоих блоках. */
+	let query = $state('');
 	let canCreate = $state(false);
 	let loading = $state(false);
 	let loadFailed = $state(false);
@@ -176,37 +208,84 @@
 		contactId !== initialId || reason.trim() !== '' || contactTouched || channelChanged
 	);
 
-	async function loadOptions() {
+	/**
+	 * Номер открытия диалога: ответ, пришедший после закрытия или повторного
+	 * открытия, не должен перетирать то, что показано сейчас.
+	 */
+	let generation = 0;
+	let pollTimer: ReturnType<typeof setTimeout> | undefined;
+
+	const offersUrl = $derived(`${createUrl}?partyId=${encodeURIComponent(party.id)}`);
+
+	function applyOffers(offers: Offers) {
+		canCreate = offers.canCreate;
+		candidates = offers.candidates;
+		source = offers.source;
+		candidatesTotal = offers.total;
+	}
+
+	/** Сайт ещё читается — спросить ещё раз, но не больше `SITE_POLL_ATTEMPTS` раз. */
+	function schedulePoll(current: number, attempt: number) {
+		if (source?.state !== 'warming') return;
+
+		if (attempt >= SITE_POLL_ATTEMPTS) {
+			candidatesExhausted = true;
+			return;
+		}
+
+		pollTimer = setTimeout(() => void pollOffers(current, attempt + 1), SITE_POLL_INTERVAL_MS);
+	}
+
+	/** Повторный вопрос о кандидатах с сайта: сбой оставляет показанное как было. */
+	async function pollOffers(current: number, attempt: number) {
+		try {
+			const response = await fetch(offersUrl);
+
+			if (current !== generation || !response.ok) return;
+
+			const offers: Offers = await response.json();
+
+			if (current !== generation) return;
+
+			applyOffers(offers);
+			schedulePoll(current, attempt);
+		} catch {
+			// Нет связи — блок остаётся «подтягиваем», форма работает без него.
+		}
+	}
+
+	async function loadOptions(current: number) {
 		loading = true;
 		loadFailed = false;
 
 		try {
-			const [list, extra] = await Promise.all([
-				fetch(lookupUrl),
-				fetch(`${createUrl}?partyId=${encodeURIComponent(party.id)}`)
-			]);
+			const [list, extra] = await Promise.all([fetch(lookupUrl), fetch(offersUrl)]);
+
+			if (current !== generation) return;
 
 			if (!list.ok || !extra.ok) {
 				loadFailed = true;
 				options = [];
-				candidates = [];
-				canCreate = false;
+				applyOffers({ canCreate: false, candidates: [], source: null, total: 0 });
 				return;
 			}
 
 			const body: { items?: Option[] } = await list.json();
-			const more: { canCreate: boolean; candidates: Candidate[] } = await extra.json();
+			const offers: Offers = await extra.json();
+
+			if (current !== generation) return;
 
 			options = body.items ?? [];
-			canCreate = more.canCreate;
-			candidates = more.candidates;
+			applyOffers(offers);
+			schedulePoll(current, 1);
 		} catch {
+			if (current !== generation) return;
+
 			loadFailed = true;
 			options = [];
-			candidates = [];
-			canCreate = false;
+			applyOffers({ canCreate: false, candidates: [], source: null, total: 0 });
 		} finally {
-			loading = false;
+			if (current === generation) loading = false;
 		}
 	}
 
@@ -215,6 +294,7 @@
 		if (!open) return;
 
 		untrack(() => {
+			generation += 1;
 			mode = 'pick';
 			contactId = party.contactAffiliationId ?? NO_OPTION;
 			contact = emptyContact();
@@ -225,9 +305,37 @@
 			editVersion = interaction.editVersion;
 			conflict = null;
 			adding = null;
-			void loadOptions();
+			query = '';
+			candidatesExhausted = false;
+			void loadOptions(generation);
 		});
+
+		return () => {
+			generation += 1;
+			clearTimeout(pollTimer);
+		};
 	});
+
+	function matches(text: string): boolean {
+		const wanted = query.trim().toLocaleLowerCase('ru').replace(/ё/g, 'е');
+
+		return wanted === '' || text.toLocaleLowerCase('ru').replace(/ё/g, 'е').includes(wanted);
+	}
+
+	/** Люди справочника по поиску; выбранный виден всегда — выбор не прячется. */
+	const choiceMatches = $derived(
+		choices.filter((option) => option.id === contactId || matches(option.label))
+	);
+
+	const candidateMatches = $derived(
+		candidates.filter((candidate) => matches(`${candidate.name} ${candidate.position}`))
+	);
+
+	/** Переключение выбора: канал записан у прежнего человека, у выбранного он свой. */
+	function selectContact(next: string) {
+		contactId = next;
+		channel = next === initialId ? (party.contactChannel ?? '') : '';
+	}
 
 	/** Карточка перечитана после отказа: форма встаёт на свежую версию, ввод остаётся. */
 	function rebase() {
@@ -436,30 +544,112 @@
 		{/if}
 
 		{#if mode === 'pick'}
-			<div class="flex flex-col gap-1.5">
-				<Label for="card-contact">Контактное лицо</Label>
-				<Select.Root
-					type="single"
-					bind:value={
-						() => contactId,
-						(next) => {
-							contactId = next;
-							// Канал записан у прежнего человека: у выбранного он свой.
-							channel = next === initialId ? (party.contactChannel ?? '') : '';
-						}
-					}
-					disabled={loading}
-				>
-					<Select.Trigger id="card-contact" class="w-full">
-						{loading ? 'Загружаем список…' : chosenLabel}
-					</Select.Trigger>
-					<Select.Content>
-						<Select.Item value={NO_OPTION} label="Не выбрано" />
-						{#each choices as option (option.id)}
-							<Select.Item value={option.id} label={option.label} />
-						{/each}
-					</Select.Content>
-				</Select.Root>
+			<div class="flex flex-col gap-2">
+				<Label for="card-contact-search">Контактное лицо</Label>
+				<div class="relative">
+					<SearchIcon
+						class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+						aria-hidden="true"
+					/>
+					<Input
+						id="card-contact-search"
+						type="search"
+						class="pl-8"
+						autocomplete="off"
+						placeholder="Найти по ФИО или должности"
+						disabled={loading}
+						bind:value={query}
+						onkeydown={(event) => {
+							// Enter в поиске не сохраняет выбор.
+							if (event.key === 'Enter') event.preventDefault();
+						}}
+					/>
+				</div>
+				<p class="text-xs text-muted-foreground">Выбрано: {chosenLabel}</p>
+
+				<section class="flex flex-col gap-1.5" aria-label="Люди в справочнике">
+					<p class="flex items-center gap-1.5 text-xs font-medium">
+						<LibraryIcon class="size-3.5" aria-hidden="true" />
+						В справочнике
+					</p>
+					{#if loading}
+						<p class="text-xs text-muted-foreground">Загружаем список…</p>
+					{:else}
+						<RadioGroup.Root
+							value={contactId}
+							onValueChange={selectContact}
+							aria-label="Контактное лицо из справочника"
+							class="flex max-h-48 flex-col gap-1.5 overflow-y-auto"
+						>
+							<div class="flex items-center gap-2">
+								<RadioGroup.Item value={NO_OPTION} id="card-contact-none" />
+								<Label for="card-contact-none" class="font-normal">Не выбрано</Label>
+							</div>
+							{#each choiceMatches as option (option.id)}
+								<div class="flex items-start gap-2">
+									<RadioGroup.Item value={option.id} id="card-contact-{option.id}" class="mt-0.5" />
+									<Label for="card-contact-{option.id}" class="font-normal break-words">
+										{option.label}
+									</Label>
+								</div>
+							{/each}
+						</RadioGroup.Root>
+						{#if choices.length === 0}
+							<p class="text-xs text-muted-foreground">У {whose} пока нет действующих контактов</p>
+						{:else if choiceMatches.length === 0 && query.trim() !== ''}
+							<p class="text-xs text-muted-foreground">Среди контактов {whose} не нашлось</p>
+						{/if}
+					{/if}
+				</section>
+
+				{#if canCreate && source !== null && !loading}
+					<SiteOffersSection
+						{source}
+						kind="people"
+						total={candidatesTotal}
+						shown={candidates.length}
+						exhausted={candidatesExhausted}
+						hint="Люди из «Руководства» и «Структуры» сайта, которых нет в справочнике. «Импортировать» заведёт человека и сразу сделает его контактным лицом."
+					>
+						{#if candidateMatches.length === 0}
+							<p class="px-3 py-2 text-xs text-muted-foreground">С сайта по запросу никого</p>
+						{:else}
+							<ul class="flex max-h-56 flex-col divide-y divide-border overflow-y-auto">
+								{#each candidateMatches as candidate, index (`${candidate.unit}\u0000${candidate.name}\u0000${index}`)}
+									<li
+										class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-1.5"
+									>
+										<div class="min-w-0 flex-1 basis-48 text-sm">
+											<p class="font-medium break-words">{candidate.name}</p>
+											<p class="text-xs break-words text-muted-foreground">{candidate.position}</p>
+											{#if candidate.fromManagement}
+												<p class="text-xs text-faint">Руководство вуза</p>
+											{:else if candidate.siteId !== null}
+												<p class="text-xs text-faint">Подразделение уже в справочнике</p>
+											{/if}
+										</div>
+										<Button
+											type="button"
+											size="xs"
+											variant="outline"
+											disabled={adding !== null || saving}
+											onclick={() => addCandidate(candidate)}
+										>
+											<DownloadIcon aria-hidden="true" />
+											{adding === `${candidate.unit}\u0000${candidate.name}`
+												? 'Импортируем…'
+												: 'Импортировать'}
+										</Button>
+									</li>
+								{/each}
+							</ul>
+						{/if}
+					</SiteOffersSection>
+				{/if}
+
+				{#if formError !== null}
+					<InlineHint tone="warning">{formError}</InlineHint>
+				{/if}
 				{#if loadFailed}
 					<InlineHint tone="warning"
 						>Список людей не загрузился: закройте диалог и откройте снова.</InlineHint
@@ -482,38 +672,6 @@
 				{/if}
 			</div>
 		{:else}
-			{#if candidates.length > 0}
-				<div class="flex flex-col gap-2" data-slot="passport-candidates">
-					<h3 class="section-overline">Из паспорта вуза · {candidates.length}</h3>
-					<p class="text-xs text-faint">
-						Руководители подразделений с сайта вуза. Источник и дата запишутся в примечание
-						человека.
-					</p>
-					<ul class="flex max-h-48 flex-col divide-y divide-border overflow-y-auto">
-						{#each candidates as candidate (`${candidate.unit}\u0000${candidate.name}`)}
-							<li class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 py-1.5">
-								<div class="min-w-0 flex-1 basis-48 text-sm">
-									<p class="font-medium break-words">{candidate.name}</p>
-									<p class="text-xs break-words text-muted-foreground">{candidate.position}</p>
-								</div>
-								<Button
-									type="button"
-									size="xs"
-									variant="outline"
-									disabled={adding !== null || saving}
-									onclick={() => addCandidate(candidate)}
-								>
-									<UserPlusIcon aria-hidden="true" />
-									{adding === `${candidate.unit}\u0000${candidate.name}`
-										? 'Добавляем…'
-										: 'Сделать контактом'}
-								</Button>
-							</li>
-						{/each}
-					</ul>
-				</div>
-			{/if}
-
 			{#if formError !== null}
 				<InlineHint tone="warning">{formError}</InlineHint>
 			{/if}

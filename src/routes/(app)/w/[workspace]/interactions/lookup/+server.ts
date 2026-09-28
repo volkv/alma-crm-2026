@@ -15,6 +15,7 @@ import {
 	registryPickSchema
 } from '$lib/contracts/enrichment';
 import { individualCounterpartySchema } from '$lib/contracts/interactions';
+import { importSiteUnitSchema } from '$lib/contracts/organization-card';
 import { formatIsoDay } from '$lib/format';
 import { actorFromEvent, type ActorContext } from '$lib/server/actor';
 import { listOrganizationContracts } from '$lib/server/directory/contracts';
@@ -24,6 +25,7 @@ import {
 	listSites,
 	lookupOrganizations
 } from '$lib/server/directory/read';
+import { importSiteUnit, listSiteUnitOffers } from '$lib/server/directory/site-offers';
 import { createOrganization, createSite } from '$lib/server/directory/write';
 import { EnrichmentRefusal } from '$lib/server/enrichment/access';
 import { DadataError } from '$lib/server/enrichment/dadata';
@@ -35,8 +37,10 @@ import type { RequestHandler } from './$types';
 /**
  * Подсказки для формы взаимодействия: организации по поиску, их площадки,
  * контактные лица и договоры; организации из реестра (ЕГРЮЛ), если в
- * справочнике нужной нет, и `POST` — завести контрагента, которого в
- * справочнике нет: строку реестра, организацию вручную или физическое лицо.
+ * справочнике нужной нет; подразделения с сайта вуза, которых нет среди его
+ * площадок (`site-units`), и `POST` — завести контрагента, которого в
+ * справочнике нет: строку реестра, организацию вручную или физическое лицо, —
+ * или площадку: вручную или подразделением с сайта.
  *
  * Маршрут лежит внутри оболочки приложения, а не в `/api`: это подсказка для
  * страницы, она ходит с сессией и правами того, кто заполняет форму. Публичный
@@ -63,7 +67,7 @@ const lookupQuerySchema = z.discriminatedUnion(
 		}),
 		z.object({ kind: z.literal('registry'), ...registryPickQuerySchema.shape }),
 		z.object({
-			kind: z.enum(['sites', 'contacts', 'contracts']),
+			kind: z.enum(['sites', 'site-units', 'contacts', 'contracts']),
 			organizationId: id('Не указана организация или её идентификатор некорректен')
 		})
 	],
@@ -108,6 +112,13 @@ export const GET: RequestHandler = async (event) => {
 		// собирается из тех же полей, что показывает карточка контрагента.
 		if (query.data.kind === 'contracts') {
 			return json({ items: await listOrganizationContracts(ctx, query.data.organizationId) });
+		}
+
+		// Подразделения с сайта — из прогретого отчёта; пока он читается, ответ
+		// говорит об этом, и форма спросит ещё раз. Без права править
+		// организации блока нет: `null`.
+		if (query.data.kind === 'site-units') {
+			return json({ offers: await listSiteUnitOffers(ctx, query.data.organizationId) });
 		}
 
 		if (query.data.kind === 'sites') {
@@ -175,7 +186,8 @@ const createBodySchema = z.union([
 	registryPickSchema,
 	z.object({ create: z.literal('organization'), organization: createOrganizationSchema }),
 	z.object({ create: z.literal('individual'), person: individualCounterpartySchema }),
-	z.object({ create: z.literal('site'), site: createSiteSchema })
+	z.object({ create: z.literal('site'), site: createSiteSchema }),
+	z.object({ create: z.literal('site-unit'), unit: importSiteUnitSchema })
 ]);
 
 /**
@@ -229,6 +241,14 @@ export const POST: RequestHandler = async (event) => {
 			const created = await createSite(ctx, request.site);
 
 			return json({ item: { id: created.id, label: created.name } });
+		}
+
+		// Подразделение с сайта — по названию, а данные сервер берёт из своего
+		// отчёта сайта: подменить адрес или название браузером нельзя.
+		if (request.create === 'site-unit') {
+			const { created: _created, ...item } = await importSiteUnit(ctx, request.unit);
+
+			return json({ item });
 		}
 
 		const created = await createIndividualCounterparty(ctx, request.person);

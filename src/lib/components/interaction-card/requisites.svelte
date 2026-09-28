@@ -1,6 +1,7 @@
 <script lang="ts">
 	import ChevronRightIcon from '@lucide/svelte/icons/chevron-right';
 	import { resolve } from '$app/paths';
+	import ExternalLink from '$lib/components/external-link.svelte';
 	import type { OrganizationView } from '$lib/contracts/directory';
 
 	/**
@@ -44,7 +45,13 @@
 		{#each rows as [label, value] (label)}
 			<div class="flex min-w-0 flex-col">
 				<dt class="text-muted-foreground">{label}</dt>
-				<dd class="break-words">{value}</dd>
+				<dd class="break-words">
+					{#if label === 'Сайт'}
+						<ExternalLink href={value} />
+					{:else}
+						{value}
+					{/if}
+				</dd>
 			</div>
 		{/each}
 	</dl>

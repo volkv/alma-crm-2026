@@ -23,6 +23,8 @@
 		splitPersonName,
 		type ProgramMatchResult
 	} from '$lib/contracts/organization-card';
+	import ExternalLink from '$lib/components/external-link.svelte';
+	import LinkedText from '$lib/components/linked-text.svelte';
 	import { formatDateTime, pluralize } from '$lib/format';
 
 	/**
@@ -36,8 +38,8 @@
 	 * вуза — раскрытием.
 	 *
 	 * Чтение — то же действие, что в форме правки: та же квота и тот же кэш на
-	 * сутки, поэтому повторное нажатие в течение суток ничего не стоит. Если
-	 * раздел уже читали в эти сутки, он приходит с загрузкой карточки (`initial`)
+	 * неделю, поэтому повторное нажатие в течение недели ничего не стоит. Если
+	 * раздел уже читали (кнопкой или прогревом из карточки дела), он приходит с загрузкой карточки (`initial`)
 	 * и виден сразу. В
 	 * реквизиты карточка отсюда ничего не пишет; контакт заводится только
 	 * нажатием «Добавить в контакты», и данные кандидата сервер берёт из своей
@@ -175,13 +177,13 @@
 				{#if blocked !== null}
 					{blocked}
 				{:else if site !== null}
-					Сайт <span class="break-all">{site.website}</span>, прочитан {formatDateTime(
+					Сайт <ExternalLink class="break-all" href={site.website} />, прочитан {formatDateTime(
 						site.fetchedAt
 					)}.
 				{:else}
 					Руководители подразделений и программы из раздела «Сведения об образовательной
 					организации». Обращений к внешним источникам на сегодня осталось: {reading?.remaining ??
-						0}; ответ живёт в кэше сутки.
+						0}.
 				{/if}
 			</p>
 		</div>
@@ -234,7 +236,7 @@
 				<Alert.Description>
 					<ul class="list-disc pl-4">
 						{#each warnings as warning (warning)}
-							<li>{warning}</li>
+							<li><LinkedText text={warning} /></li>
 						{/each}
 					</ul>
 				</Alert.Description>
@@ -305,7 +307,7 @@
 							<Alert.Description>
 								<ul class="list-disc pl-4">
 									{#each warnings as warning (warning)}
-										<li>{warning}</li>
+										<li><LinkedText text={warning} /></li>
 									{/each}
 								</ul>
 							</Alert.Description>
@@ -323,7 +325,7 @@
 							</p>
 						{:else}
 							<p class="text-xs text-faint">
-								Источник: <span class="break-all">{site.struct.url}</span>. Источник и дата
+								Источник: <ExternalLink class="break-all" href={site.struct.url} />. Источник и дата
 								запишутся в примечание человека.
 							</p>
 							<ul class="flex flex-col divide-y divide-border">

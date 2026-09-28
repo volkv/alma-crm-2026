@@ -2,7 +2,7 @@
  * Карточка организации сверх справочника: откуда реквизиты, какая работа идёт
  * по пространствам и как кандидат с сайта вуза становится контактом.
  */
-import { and, asc, desc, eq } from 'drizzle-orm';
+import { and, asc, desc, eq, isNotNull, or } from 'drizzle-orm';
 import { z } from 'zod';
 import {
 	affiliationPositionSchema,
@@ -15,8 +15,11 @@ import {
 } from '$lib/contracts/directory';
 import {
 	FIELD_SOURCES,
+	MANAGEMENT_UNIT,
+	normalizeUnitName,
 	PASSPORT_FIELDS,
 	PASSPORT_VIA,
+	type ContactCandidate,
 	type FieldSource,
 	type PassportField,
 	type PassportVia
@@ -26,20 +29,30 @@ import {
 	normalizePersonName,
 	roleKindFromPost,
 	splitPersonName,
-	type AddSiteContactInput
+	type AddSiteContactInput,
+	type SiteSourceView
 } from '$lib/contracts/organization-card';
 import { formatDateTime, formatIsoDay } from '$lib/format';
 import type { ActorContext } from '../actor';
 import { invalidateDirectoryOptions } from '../cache/directory';
 import { getDb } from '../db';
-import { auditEvents, directoryImportRows, directoryImports } from '../db/schema';
+import {
+	affiliations as affiliationsTable,
+	auditEvents,
+	directoryImportRows,
+	directoryImports,
+	people
+} from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
-import { lookupSite, peekSiteReport } from '../enrichment';
+import { lookupSite } from '../enrichment';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
 import { listInteractions } from '../interactions/read';
 import { recordProcessingBasis } from '../people/consents';
+import { hashEmail, hashPhone } from '../people/pii';
 import { can, requirePermission } from '../rbac';
-import { getOrganization, listAffiliations } from './read';
+import { currentAffiliationFilter } from './affiliation-current';
+import { getOrganization, listAffiliations, listSites } from './read';
+import { siteSourceOf } from './site-offers';
 import { createAffiliation, createPerson } from './write';
 
 /* ------------------------------------------------------------------------- *
@@ -316,51 +329,160 @@ export type SiteContactCandidate = {
 	name: string;
 	/** Должность, с которой он ляжет в роль. */
 	position: string;
+	/** Из подраздела «Руководство», а не из «Структуры». */
+	fromManagement: boolean;
+	/**
+	 * Площадка организации, к которой ляжет его роль: подразделение с тем же
+	 * названием уже в справочнике; `null` — не заведено.
+	 */
+	siteId: string | null;
 };
 
 /**
- * Кандидаты в контакты из уже прочитанного паспорта организации: только из
- * кэша, наружу чтение не ходит и квоты не тратит. Не прочитан паспорт, нет
- * сайта или права читать паспорт — список пуст: предлагать нечего. Кандидаты
- * с ФИО из одного слова и те, кто уже в действующих контактах, не предлагаются.
+ * Кандидаты с сайта и в каком состоянии отчёт, из которого они взяты.
+ * `source: null` — блока «с сайта» нет: организация не учебное заведение
+ * (раздела `/sveden` у неё не бывает) или заводить людей некому.
  */
-export async function listSiteContactCandidates(
-	ctx: ActorContext,
-	organizationId: string
-): Promise<SiteContactCandidate[]> {
-	if (!can(ctx, 'people.write') || !can(ctx, 'organizations.write')) {
-		return [];
+export type SiteContactOffers = {
+	source: SiteSourceView | null;
+	/** Сколько людей на сайте всего — вместе с уже заведёнными. */
+	total: number;
+	candidates: SiteContactCandidate[];
+};
+
+type ContactHashes = { emails: Set<string>; phones: Set<string> };
+
+/**
+ * Ключи сравнения почты и телефона действующих контактов организации — без
+ * самих контактов: сверке кандидата с сайта хватает совпадения, а
+ * расшифровывать ради неё персональные данные незачем.
+ */
+async function activeContactHashes(organizationId: string): Promise<ContactHashes> {
+	const rows = await getDb()
+		.select({ emailHash: people.emailHash, phoneHash: people.phoneHash })
+		.from(affiliationsTable)
+		.innerJoin(people, eq(people.id, affiliationsTable.personId))
+		.where(
+			and(
+				eq(affiliationsTable.organizationId, organizationId),
+				currentAffiliationFilter(),
+				or(isNotNull(people.emailHash), isNotNull(people.phoneHash))
+			)
+		);
+
+	return {
+		emails: new Set(rows.flatMap((row) => (row.emailHash === null ? [] : [row.emailHash]))),
+		phones: new Set(rows.flatMap((row) => (row.phoneHash === null ? [] : [row.phoneHash])))
+	};
+}
+
+/**
+ * Кандидат уже в действующих контактах: по ФИО или — если сайт их дал — по
+ * почте и телефону. Почта с сайта бывает общей для кафедры, но и тогда её
+ * владелец уже в справочнике, и второй контакт на тот же ящик не нужен.
+ */
+function alreadyContact(
+	candidate: Pick<ContactCandidate, 'name' | 'email' | 'phone'>,
+	contacts: readonly AffiliationView[],
+	hashes: ContactHashes,
+	today: string
+): boolean {
+	if (sameActiveContact(contacts, candidate.name, today) !== undefined) {
+		return true;
 	}
 
-	const organization = await getOrganization(ctx, organizationId);
+	const email = candidate.email === null ? null : hashEmail(candidate.email);
+	const phone = candidate.phone === null ? null : hashPhone(candidate.phone);
 
-	if (organization.website === null) {
-		return [];
-	}
-
-	const site = await peekSiteReport(ctx, organization.website);
-
-	if (site === null) {
-		return [];
-	}
-
-	const contacts = await listAffiliations(ctx, organizationId);
-	const today = formatIsoDay();
-
-	return site.contacts.flatMap((row) =>
-		splitPersonName(row.name) === null || sameActiveContact(contacts, row.name, today) !== undefined
-			? []
-			: [{ unit: row.unit, name: row.name, position: positionOf(row.post, row.unit) }]
+	return (
+		(email !== null && hashes.emails.has(email)) || (phone !== null && hashes.phones.has(phone))
 	);
 }
 
 /**
- * Кандидат из подраздела «Структура» — человеком и его ролью в организации,
- * ещё не записанными.
+ * Площадки организации по названию в виде для сверки — чтобы роль кандидата
+ * легла к его подразделению, если оно уже заведено. Без права видеть
+ * организации площадок нет: роль ляжет без подразделения.
+ */
+async function sitesByName(
+	ctx: ActorContext,
+	organizationId: string
+): Promise<Map<string, string>> {
+	if (!can(ctx, 'organizations.read')) {
+		return new Map();
+	}
+
+	return new Map(
+		(await listSites(ctx, organizationId)).map((site) => [normalizeUnitName(site.name), site.id])
+	);
+}
+
+/**
+ * Кандидаты в контакты из отчёта сайта организации: только из кэша, наружу
+ * чтение не ходит и квоты не тратит; отчёта нет — его прогревают в фоне, и
+ * состояние говорит «читается». Без права заводить людей и править
+ * организации предлагать некому, у организации не вуза раздела нет — блока
+ * нет вовсе. Кандидаты с ФИО из одного
+ * слова и те, кто уже в действующих контактах (по ФИО, почте или телефону),
+ * не предлагаются.
+ */
+export async function listSiteContactCandidates(
+	ctx: ActorContext,
+	organizationId: string
+): Promise<SiteContactOffers> {
+	if (!can(ctx, 'people.write') || !can(ctx, 'organizations.write')) {
+		return { source: null, total: 0, candidates: [] };
+	}
+
+	const organization = await getOrganization(ctx, organizationId);
+
+	if (organization.kind !== 'educational_institution') {
+		return { source: null, total: 0, candidates: [] };
+	}
+
+	const { source, report } = await siteSourceOf(organization.website);
+
+	if (report === null) {
+		return { source, total: 0, candidates: [] };
+	}
+
+	if (report.contacts.length === 0 && !report.struct.found && report.managers?.found !== true) {
+		return { source: { ...source, state: 'unreadable' }, total: 0, candidates: [] };
+	}
+
+	const [contacts, hashes, sites] = await Promise.all([
+		listAffiliations(ctx, organizationId),
+		activeContactHashes(organizationId),
+		sitesByName(ctx, organizationId)
+	]);
+	const today = formatIsoDay();
+
+	return {
+		source,
+		total: report.contacts.length,
+		candidates: report.contacts.flatMap((row) =>
+			splitPersonName(row.name) === null || alreadyContact(row, contacts, hashes, today)
+				? []
+				: [
+						{
+							unit: row.unit,
+							name: row.name,
+							position: positionOf(row.post, row.unit),
+							fromManagement: row.unit === MANAGEMENT_UNIT,
+							siteId: sites.get(normalizeUnitName(row.unit)) ?? null
+						}
+					]
+		)
+	};
+}
+
+/**
+ * Кандидат из подразделов «Структура» и «Руководство» — человеком и его ролью
+ * в организации, ещё не записанными.
  *
  * Данные кандидата сервер берёт не из формы, а из раздела `/sveden` той
- * организации, чей сайт стоит в карточке (`lookupSite` — ответ живёт в кэше
- * сутки, повторное чтение квоту не тратит). Форма называет только, кого
+ * организации, чей сайт стоит в карточке (`lookupSite` — отчёт живёт в кэше
+ * неделю, повторное чтение квоту не тратит). Форма называет только, кого
  * добавить; кем он был на сайте и когда сайт прочитан, подделать браузером
  * нельзя. Источник и дата остаются в примечании человека.
  */
@@ -397,13 +519,13 @@ export async function siteContactDraft(
 		);
 	}
 
-	const existing = sameActiveContact(
-		await listAffiliations(ctx, organizationId),
-		candidate.name,
-		formatIsoDay()
-	);
+	const [contacts, hashes, sites] = await Promise.all([
+		listAffiliations(ctx, organizationId),
+		activeContactHashes(organizationId),
+		sitesByName(ctx, organizationId)
+	]);
 
-	if (existing !== undefined) {
+	if (alreadyContact(candidate, contacts, hashes, formatIsoDay())) {
 		throw new ConflictError(`${candidate.name} уже в контактах организации`);
 	}
 
@@ -422,7 +544,9 @@ export async function siteContactDraft(
 			: null;
 	const notes = [
 		`Из раздела «Сведения об образовательной организации» сайта ${site.website} (${site.struct.url}), прочитан ${formatDateTime(site.fetchedAt)}.`,
-		`Подразделение: ${candidate.unit}.`,
+		candidate.unit === MANAGEMENT_UNIT
+			? 'Из подраздела «Руководство».'
+			: `Подразделение: ${candidate.unit}.`,
 		candidate.address === null ? null : `Адрес подразделения: ${candidate.address}.`,
 		candidate.email !== null && email === null
 			? `Почта на сайте записана как «${candidate.email}» — проверьте адрес.`
@@ -446,7 +570,11 @@ export async function siteContactDraft(
 	return {
 		person: person.data,
 		role: {
-			siteId: null,
+			// Подразделение, уже заведённое площадкой, становится площадкой роли.
+			// Незаведённое само не заводится: «Ученый совет» и «Ректорат» в
+			// «Структуре» — органы управления, а не площадки, и решает это
+			// сотрудник, импортируя подразделение в «Составе» дела.
+			siteId: sites.get(normalizeUnitName(candidate.unit)) ?? null,
 			position: positionOf(candidate.post, candidate.unit),
 			roleKind: roleKindFromPost(candidate.post),
 			isPrimary: false,

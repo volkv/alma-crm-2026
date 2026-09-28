@@ -16,6 +16,8 @@
 	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
 	import { Input } from '$lib/components/ui/input/index.js';
 	import StatusBadge from '$lib/components/status-badge.svelte';
+	import ExternalLink from '$lib/components/external-link.svelte';
+	import LinkedText from '$lib/components/linked-text.svelte';
 	import {
 		EDUCATION_LEVEL_LABELS,
 		ORGANIZATION_KIND_LABELS
@@ -649,7 +651,7 @@
 				<Alert.Description>
 					<ul class="list-disc pl-4">
 						{#each passport.warnings as warning (warning)}
-							<li>{warning}</li>
+							<li><LinkedText text={warning} /></li>
 						{/each}
 					</ul>
 				</Alert.Description>
@@ -777,7 +779,7 @@
 			{@const site = passport.site}
 			<div class="flex flex-col gap-2 text-sm">
 				<div class="text-muted-foreground">
-					Сайт {site.website}, прочитан {formatDateTime(site.fetchedAt)}.
+					Сайт <ExternalLink href={site.website} />, прочитан {formatDateTime(site.fetchedAt)}.
 					{#if site.common.found && site.common.fields.address}
 						Адрес по разделу: {site.common.fields.address}.
 					{/if}

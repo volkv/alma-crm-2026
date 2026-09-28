@@ -28,6 +28,7 @@ import { fields, parse, run, text } from '$lib/server/forms';
 import { listOrganizationContracts } from '$lib/server/directory/contracts';
 import { getOrganization } from '$lib/server/directory/read';
 import { DocumentConversionError } from '$lib/server/documents/errors';
+import { warmSiteReport } from '$lib/server/enrichment/warm';
 import { NotFoundError } from '$lib/server/errors';
 import { generateDocumentPackage } from '$lib/server/documents/package';
 import { listInteractionSupersessions } from '$lib/server/documents/read';
@@ -149,6 +150,14 @@ export const load: PageServerLoad = async (event) => {
 			// Заявка с сайта: ключ и какой статус видит заявитель.
 			readSiteApplication(interaction)
 		]);
+		// Подразделения и люди вуза «с сайта» в формах состава и контакта берутся
+		// из отчёта раздела «Сведения». Нет его в кэше — сервер читает сайт в
+		// фоне, не задерживая карточку: к открытию диалога он чаще всего уже
+		// прочитан. Только тем, кто правит запись, — остальным формы не нужны.
+		if (canEdit && counterparty?.kind === 'educational_institution') {
+			warmSiteReport(counterparty.website);
+		}
+
 		// Свои данные действующих модулей — для их панелей и диалогов; данные
 		// выключенного модуля не читаются.
 		const moduleData = await loadModuleCardData(event, ctx, interaction, modules.active);

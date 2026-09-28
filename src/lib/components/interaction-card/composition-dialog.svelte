@@ -1,4 +1,6 @@
 <script lang="ts">
+	import DownloadIcon from '@lucide/svelte/icons/download';
+	import LibraryIcon from '@lucide/svelte/icons/library';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import SearchIcon from '@lucide/svelte/icons/search';
 	import XIcon from '@lucide/svelte/icons/x';
@@ -21,6 +23,8 @@
 	import { SITE_KIND_LABELS } from '$lib/components/directory/labels';
 	import { SITE_KINDS, type LookupOption, type SiteKind } from '$lib/contracts/directory';
 	import type { LearningGroupView } from '$lib/contracts/exchange';
+	import { normalizeUnitName } from '$lib/contracts/enrichment';
+	import type { SiteUnitOffer, SiteUnitOffers } from '$lib/contracts/organization-card';
 	import {
 		PARTY_ROLE_LABELS,
 		PARTY_ROLES,
@@ -37,6 +41,8 @@
 	} from './commands.svelte';
 	import { cardLiveUrl, LiveActivity } from './live.svelte';
 	import type { CounterpartyShape } from './model';
+	import SiteOffersSection from './site-offers-section.svelte';
+	import { SITE_POLL_ATTEMPTS, SITE_POLL_INTERVAL_MS } from './site-offers';
 
 	/**
 	 * «Изменить состав»: стороны дела, программы с версиями и продукты — на
@@ -181,6 +187,8 @@
 			newSiteName = '';
 			newSiteKind = 'department';
 			newSiteError = null;
+			siteQuery = '';
+			importError = null;
 		});
 	});
 
@@ -212,15 +220,34 @@
 	let primarySites = $state<LookupOption[] | null>(null);
 	let sitesError = $state<string | null>(null);
 
+	/**
+	 * Подразделения с сайта вуза, которых нет среди его площадок; `null` —
+	 * блока нет (не вуз, нет права заводить площадки или ещё не спросили).
+	 * Пока сервер читает сайт, ответ говорит «читается», и диалог спрашивает
+	 * ещё раз — ограниченное число раз (`SITE_POLL_ATTEMPTS`).
+	 */
+	let unitOffers = $state<SiteUnitOffers | null>(null);
+	let unitsError = $state<string | null>(null);
+	let unitsExhausted = $state(false);
+	/** Подразделение с сайта, которое сейчас заводят, — его название. */
+	let importing = $state<string | null>(null);
+	let importError = $state<string | null>(null);
+	/** Поиск по площадкам: одна строка на оба блока — справочник и сайт. */
+	let siteQuery = $state('');
+
 	$effect(() => {
 		const organizationId = commands.composition === null ? null : primaryOrganizationId;
 
 		primarySites = null;
 		sitesError = null;
+		unitOffers = null;
+		unitsError = null;
+		unitsExhausted = false;
 
 		if (organizationId === null) return;
 
 		let current = true;
+		let timer: ReturnType<typeof setTimeout> | undefined;
 
 		loadSites(organizationId).then(
 			(items) => {
@@ -233,10 +260,115 @@
 			}
 		);
 
+		const poll = (attempt: number) => {
+			loadUnitOffers(organizationId).then(
+				(offers) => {
+					if (!current) return;
+
+					unitOffers = offers;
+
+					if (offers?.source.state !== 'warming') return;
+
+					if (attempt < SITE_POLL_ATTEMPTS) {
+						timer = setTimeout(() => poll(attempt + 1), SITE_POLL_INTERVAL_MS);
+					} else {
+						unitsExhausted = true;
+					}
+				},
+				(failure: unknown) => {
+					if (current) {
+						unitsError = `Сведения с сайта не загрузились: ${failure instanceof Error ? failure.message : String(failure)}`;
+					}
+				}
+			);
+		};
+
+		poll(1);
+
 		return () => {
 			current = false;
+			clearTimeout(timer);
 		};
 	});
+
+	async function loadUnitOffers(organizationId: string): Promise<SiteUnitOffers | null> {
+		const response = await fetch(
+			`${lookupPath}?kind=site-units&organizationId=${encodeURIComponent(organizationId)}`
+		);
+
+		if (!response.ok) {
+			throw new Error(`сервер ответил ${response.status}`);
+		}
+
+		const body: { offers: SiteUnitOffers | null } = await response.json();
+
+		return body.offers;
+	}
+
+	function matchesQuery(name: string): boolean {
+		const text = normalizeUnitName(siteQuery);
+
+		return text === '' || normalizeUnitName(name).includes(text);
+	}
+
+	/** Площадки справочника по поиску; отмеченные видны всегда — выбор не прячется. */
+	const siteMatches = $derived(
+		(primarySites ?? []).filter(
+			(site) => matchesQuery(site.label) || (primary?.siteIds.includes(site.id) ?? false)
+		)
+	);
+
+	const unitMatches = $derived((unitOffers?.units ?? []).filter((unit) => matchesQuery(unit.name)));
+
+	/** Адрес, почта и телефон подразделения одной строкой — чтобы отличить однофамильцев. */
+	function unitDetails(unit: SiteUnitOffer): string {
+		return [unit.address, unit.email, unit.phone].filter((part) => part !== null).join(' · ');
+	}
+
+	/**
+	 * Подразделение с сайта — площадкой вида «Подразделение», сразу отмеченной.
+	 * Данные площадки сервер берёт из своего отчёта сайта; форма называет
+	 * только название. Уже заведённое сервер не заводит второй раз, а отдаёт.
+	 */
+	async function importUnit(organizationId: string, unit: SiteUnitOffer) {
+		if (importing !== null) return;
+
+		importing = unit.name;
+		importError = null;
+
+		try {
+			const response = await fetch(lookupPath, {
+				method: 'POST',
+				headers: { 'content-type': 'application/json' },
+				body: JSON.stringify({ create: 'site-unit', unit: { organizationId, name: unit.name } })
+			});
+			const body: { item?: LookupOption; error?: string } = await response.json().catch(() => ({}));
+
+			if (!response.ok || body.item === undefined) {
+				importError = body.error ?? `Подразделение не заведено: сервер ответил ${response.status}`;
+				return;
+			}
+
+			const site = body.item;
+
+			if (!(primarySites ?? []).some((known) => known.id === site.id)) {
+				primarySites = [...(primarySites ?? []), site];
+			}
+
+			toggleSite(site.id, true);
+
+			if (unitOffers !== null) {
+				unitOffers = {
+					...unitOffers,
+					units: unitOffers.units.filter((offer) => offer.name !== unit.name)
+				};
+			}
+		} catch {
+			importError = 'Подразделение не заведено: нет связи с сервером';
+		} finally {
+			importing = null;
+		}
+	}
 
 	async function loadSites(organizationId: string): Promise<LookupOption[]> {
 		const response = await fetch(
@@ -579,6 +711,99 @@
 		(COMPOSITION_SECTIONS as readonly string[]).includes(value);
 </script>
 
+{#snippet sitePicker(party: DraftParty)}
+	<fieldset class="flex flex-col gap-2" data-slot="site-picker">
+		<legend class="mb-1 text-xs text-muted-foreground">Подразделение и площадки</legend>
+		{#if (primarySites?.length ?? 0) > 0 || (unitOffers?.units.length ?? 0) > 0}
+			<div class="relative">
+				<SearchIcon
+					class="pointer-events-none absolute top-1/2 left-2.5 size-4 -translate-y-1/2 text-muted-foreground"
+					aria-hidden="true"
+				/>
+				<Input
+					type="search"
+					class="pl-8"
+					placeholder="Найти подразделение: кафедра, институт, факультет"
+					aria-label="Найти подразделение"
+					bind:value={siteQuery}
+					onkeydown={(event) => {
+						// Enter в поиске не отправляет весь состав.
+						if (event.key === 'Enter') event.preventDefault();
+					}}
+				/>
+			</div>
+		{/if}
+
+		<section class="flex flex-col gap-1.5" aria-label="Площадки в справочнике">
+			<p class="flex items-center gap-1.5 text-xs font-medium">
+				<LibraryIcon class="size-3.5" aria-hidden="true" />
+				В справочнике
+			</p>
+			{#if (primarySites?.length ?? 0) === 0}
+				<p class="text-xs text-muted-foreground">
+					У организации ещё нет площадок: импортируйте подразделение с сайта или заведите его ниже.
+				</p>
+			{:else if siteMatches.length === 0}
+				<p class="text-xs text-muted-foreground">Среди площадок организации не нашлось</p>
+			{:else}
+				<div class="flex max-h-48 flex-col gap-1.5 overflow-y-auto">
+					{#each siteMatches as site (site.id)}
+						<Label class="flex items-center gap-2 font-normal">
+							<Checkbox
+								checked={party.siteIds.includes(site.id)}
+								onCheckedChange={(checked) => toggleSite(site.id, checked === true)}
+							/>
+							{site.label}
+						</Label>
+					{/each}
+				</div>
+			{/if}
+		</section>
+
+		{#if unitsError !== null}
+			<p class="text-xs text-destructive" role="alert">{unitsError}</p>
+		{:else if unitOffers !== null}
+			<SiteOffersSection
+				source={unitOffers.source}
+				kind="units"
+				total={unitOffers.total}
+				shown={unitOffers.units.length}
+				exhausted={unitsExhausted}
+				hint="Подразделения из «Структуры» сайта, которых нет в справочнике. «Импортировать» заведёт площадку и отметит её."
+				error={importError}
+			>
+				{#if unitMatches.length === 0}
+					<p class="px-3 py-2 text-xs text-muted-foreground">С сайта по запросу ничего</p>
+				{:else}
+					<ul class="flex max-h-56 flex-col divide-y divide-border overflow-y-auto">
+						{#each unitMatches as unit, index (`${unit.name}\u0000${index}`)}
+							{@const details = unitDetails(unit)}
+							<li class="flex flex-wrap items-center justify-between gap-x-3 gap-y-1 px-3 py-1.5">
+								<div class="min-w-0 flex-1 basis-48">
+									<p class="text-sm break-words">{unit.name}</p>
+									{#if details !== ''}
+										<p class="text-xs break-words text-muted-foreground">{details}</p>
+									{/if}
+								</div>
+								<Button
+									type="button"
+									size="xs"
+									variant="outline"
+									disabled={importing !== null}
+									onclick={() => importUnit(party.organizationId, unit)}
+								>
+									<DownloadIcon aria-hidden="true" />
+									{importing === unit.name ? 'Импортируем…' : 'Импортировать'}
+								</Button>
+							</li>
+						{/each}
+					</ul>
+				{/if}
+			</SiteOffersSection>
+		{/if}
+	</fieldset>
+{/snippet}
+
 {#snippet newSite(organizationId: string)}
 	<div class="flex flex-col gap-1.5" data-slot="new-site">
 		<p class="text-xs font-medium">Новая площадка</p>
@@ -724,25 +949,8 @@
 							{#if party.isPrimary && party.partyRole !== 'operator'}
 								{#if sitesError !== null}
 									<p class="text-xs text-destructive" role="alert">{sitesError}</p>
-								{:else if primarySites !== null && primarySites.length > 0}
-									<fieldset class="flex flex-col gap-1.5">
-										<legend class="mb-1 text-xs text-muted-foreground">
-											Подразделение и площадки
-										</legend>
-										{#each primarySites as site (site.id)}
-											<Label class="flex items-center gap-2 font-normal">
-												<Checkbox
-													checked={party.siteIds.includes(site.id)}
-													onCheckedChange={(checked) => toggleSite(site.id, checked === true)}
-												/>
-												{site.label}
-											</Label>
-										{/each}
-									</fieldset>
 								{:else if primarySites !== null}
-									<p class="text-xs text-muted-foreground">
-										У организации ещё нет площадок: заведите подразделение ниже.
-									</p>
+									{@render sitePicker(party)}
 								{/if}
 								{#if primarySites !== null}
 									{@render newSite(party.organizationId)}

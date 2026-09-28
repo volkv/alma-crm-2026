@@ -5,11 +5,14 @@ import { legalStatus, readSuggestions, toLegalEntity } from '$lib/server/enrichm
 import { registryPassport } from '$lib/server/enrichment';
 import {
 	charsetOf,
+	isCertificateError,
 	normalizeWebsite,
 	readSvedenPage,
 	redirectTarget,
+	secureUrl,
 	siteFromEmails,
-	withinSite
+	withinSite,
+	wwwTwin
 } from '$lib/server/enrichment/sveden';
 
 /**
@@ -175,6 +178,23 @@ describe('поиск сайта', () => {
 		expect(
 			redirectTarget('mospolytech.ru', from, 'http://mospolytech.ru/sveden/struct')
 		).toBeNull();
+	});
+
+	it('двойник сайта — с www или без него', () => {
+		expect(wwwTwin('https://www.bsuedu.ru')).toBe('https://bsuedu.ru');
+		expect(wwwTwin('https://bsuedu.ru')).toBe('https://www.bsuedu.ru');
+	});
+
+	it('отказ проверки сертификата отличается от сетевого сбоя', () => {
+		expect(isCertificateError({ cause: { code: 'CERT_HAS_EXPIRED' } })).toBe(true);
+		expect(isCertificateError({ cause: { code: 'UNABLE_TO_VERIFY_LEAF_SIGNATURE' } })).toBe(true);
+		expect(isCertificateError({ cause: { code: 'ECONNREFUSED' } })).toBe(false);
+		expect(isCertificateError(new Error('timeout'))).toBe(false);
+	});
+
+	it('первый заход по сайту с http:// тоже идёт по https', () => {
+		expect(secureUrl('http://www.kpfu.ru/sveden/common')).toBe('https://www.kpfu.ru/sveden/common');
+		expect(secureUrl('https://kpfu.ru/sveden/')).toBe('https://kpfu.ru/sveden/');
 	});
 });
 

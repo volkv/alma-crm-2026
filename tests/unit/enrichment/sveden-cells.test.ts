@@ -77,8 +77,10 @@ describe('«Основные сведения» с подписями полей
 			fetchedAt: '2026-09-28T08:00:00.000Z',
 			common: report,
 			struct: { url: '', found: false, truncated: false, problem: null },
+			managers: null,
 			education: { url: '', found: false, truncated: false, problem: null },
 			contacts: [],
+			units: [],
 			programs: []
 		});
 

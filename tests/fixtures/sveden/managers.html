@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ru">
+	<head>
+		<meta charset="utf-8" />
+		<title>Руководство</title>
+	</head>
+	<body>
+		<h2>Руководитель образовательной организации</h2>
+		<table class="table">
+			<tbody>
+				<tr itemprop="rucovodstvo">
+					<td itemprop="fio">Орлов Николай Андреевич</td>
+					<td itemprop="post">Ректор</td>
+					<td itemprop="telephone">+7 (000) 000-10-01</td>
+					<td itemprop="email">rector@university.example.org</td>
+				</tr>
+			</tbody>
+		</table>
+
+		<h2>Заместители руководителя</h2>
+		<!-- Вся таблица размечена ещё и как `rucovodstvo`: внутри — ячейки всех заместителей. -->
+		<table class="table" itemprop="rucovodstvo">
+			<tbody>
+				<tr itemprop="rucovodstvoZam">
+					<td itemprop="fio">Белова Ирина Сергеевна, первый проректор</td>
+					<td itemprop="post"></td>
+					<td itemprop="telephone">+7 (000) 000-10-02</td>
+					<td itemprop="email">prorector@university.example.org</td>
+				</tr>
+				<tr itemprop="rucovodstvoZam">
+					<td itemprop="fio">Кузнецова Анна Павловна</td>
+					<td itemprop="post">Проректор по учебной работе</td>
+					<td itemprop="telephone">нет</td>
+					<td itemprop="email">нет</td>
+				</tr>
+				<tr itemprop="rucovodstvoZam">
+					<td itemprop="fio">отсутствует</td>
+					<td itemprop="post">Проректор по науке</td>
+					<td itemprop="telephone"></td>
+					<td itemprop="email"></td>
+				</tr>
+			</tbody>
+		</table>
+
+		<h2>Руководители филиалов</h2>
+		<table class="table">
+			<tbody>
+				<tr itemprop="rucovodstvoFil">
+					<td itemprop="nameFil">Северный филиал</td>
+					<td itemprop="fio">Громов Павел Ильич</td>
+					<td itemprop="post">директор</td>
+					<td itemprop="telephone">(000) 000-20-01</td>
+					<td itemprop="email">north@university.example.org</td>
+				</tr>
+			</tbody>
+		</table>
+	</body>
+</html>

@@ -36,6 +36,7 @@ import { guessEducationLevel, guessKind } from './classify';
 import { queryRegistry, registryPassport } from './index';
 import { issuePassport, readIssuedPassport } from './passports';
 import { normalizeWebsite } from './sveden';
+import { warmSiteReport } from './warm';
 
 const TAKEN =
 	'Организация с этим ИНН уже есть в справочнике, но вне вашей области доступа или в архиве';
@@ -201,6 +202,13 @@ export async function createFromRegistry(
 	}
 
 	const created = await createOrganization(ctx, input, undefined, provenance);
+
+	// Вуз заведён из поля формы дела, и следующим шагом сотрудник выберет его
+	// подразделение и контакт: раздел «Сведения» читается сразу, в фоне, чтобы
+	// к открытию «Состава» кандидаты с сайта уже лежали в кэше.
+	if (created.kind === 'educational_institution') {
+		warmSiteReport(created.website);
+	}
 
 	return { id: created.id, label: created.shortName, created: true };
 }

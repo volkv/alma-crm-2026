@@ -32,7 +32,7 @@ import {
 	type SiteReport
 } from '$lib/contracts/enrichment';
 import type { ActorContext } from '../actor';
-import { cached, peekCached, type CacheRegion } from '../cache/region';
+import { cached, peekCached, storeCached, type CacheRegion } from '../cache/region';
 import { NotFoundError, ValidationError } from '../errors';
 import { requirePermission } from '../rbac';
 import { consumeQuota, requireEnabled } from './access';
@@ -52,12 +52,28 @@ const STATUS_WARNINGS: Record<string, string> = {
 };
 
 /**
- * Ответы источников живут сутки. Реквизиты вуза меняются реже, чем раз в год,
+ * Ответы реестра живут сутки. Реквизиты вуза меняются реже, чем раз в год,
  * а лимит подсказок у поставщика общий на стенд. Перепроверки по расписанию нет
  * намеренно: паспорт спрашивают, когда заводят или правят карточку, и держать
  * его свежим без человека, который на него смотрит, незачем.
  */
 const ENRICHMENT_CACHE: CacheRegion = { name: 'enrichment', ttlSeconds: 24 * 60 * 60 };
+
+/**
+ * Отчёт сайта живёт неделю. Его читают не только по кнопке: формы карточки
+ * дела предлагают подразделения и людей с сайта из этого же отчёта, и прогрев
+ * (`warm.ts`) заходит на сайт сам — раз в неделю на вуз, а не на каждое
+ * открытие карточки. Подразделения и руководство вуза меняются раз в семестр.
+ * Имя области то же, что у реестра: ключи отчётов лежат рядом, как и лежали.
+ */
+export const SITE_REPORT_CACHE: CacheRegion = { name: 'enrichment', ttlSeconds: 7 * 24 * 60 * 60 };
+
+/**
+ * Сайт, на котором не прочиталось ничего, — чаще всего сбой на стороне вуза или
+ * сети, а не отсутствие раздела. Неделю держать такой ответ значило бы неделю
+ * показывать «раздел не прочитался», поэтому он живёт час.
+ */
+const UNREADABLE_SITE_TTL_SECONDS = 60 * 60;
 
 function valueOf(
 	value: string | null | undefined,
@@ -450,15 +466,25 @@ export function sitePassport(report: SiteReport): OrganizationPassport {
 export function siteWarnings(report: SiteReport): string[] {
 	const warnings: string[] = [];
 
+	if (report.insecureTls === true) {
+		warnings.push(
+			'Сертификат сайта не прошёл проверку (истёк или выдан неизвестным центром): сведения прочитаны без неё — сверьте их с сайтом'
+		);
+	}
+
 	if (!report.common.found) {
 		warnings.push(
 			`«Основные сведения» по адресу ${report.common.url} не прочитались: что сайт принадлежит образовательной организации, ничем не подтверждено`
 		);
 	}
 
+	// Кандидаты в контакты приходят и из «Руководства»: без «Структуры» их нет,
+	// только если не прочиталось и оно.
 	if (!report.struct.found) {
 		warnings.push(
-			'Подраздел «Структура и органы управления» не прочитался: кандидатов в контакты нет'
+			report.managers?.found === true
+				? 'Подраздел «Структура и органы управления» не прочитался: подразделений нет, кандидаты — только из «Руководства»'
+				: 'Подраздел «Структура и органы управления» не прочитался: кандидатов в контакты нет'
 		);
 	}
 
@@ -574,15 +600,17 @@ export async function lookupSite(ctx: ActorContext, website: string): Promise<Is
 		throw new ValidationError('Адрес сайта в карточке не разбирается');
 	}
 
-	const report = await cached<SiteReport | null>(
-		ENRICHMENT_CACHE,
-		siteCacheKey(origin),
+	// Кнопку нажимают, чтобы прочитать сайт сейчас: «Перечитать», вернувшее
+	// прежний отчёт из кэша, выглядело бы как неработающая кнопка — особенно
+	// когда в кэше лежит неудачное чтение. Кэш нужен прогреву и формам.
+	const report = await cachedSiteReport(
+		origin,
 		async () => {
 			await consumeQuota(ctx, settings.dailyQuota);
 
 			return fetchSiteReport(origin, new Date().toISOString());
 		},
-		(stored) => stored as SiteReport | null
+		{ fresh: true }
 	);
 
 	if (report === null) {
@@ -597,20 +625,68 @@ export async function lookupSite(ctx: ActorContext, website: string): Promise<Is
  * разобранные поля, и после исправления разбора прочитанное раньше должно
  * читаться заново, а не дожидаться суток.
  */
-const SITE_REPORT_VERSION = 2;
+const SITE_REPORT_VERSION = 3;
 
-function siteCacheKey(origin: string): string {
+/** Ключ отчёта по происхождению сайта (`normalizeWebsite`). */
+export function siteCacheKey(origin: string): string {
 	return `site:v${SITE_REPORT_VERSION}:${cacheKey(origin.toLowerCase())}`;
 }
 
 /**
- * Отчёт сайта, если его уже читали в пределах суток, — без обращения к сайту и
- * без списания квоты.
+ * Не прочитались «Основные сведения» — такой ответ живёт недолго. Без них
+ * принадлежность сайта вузу ничем не подтверждена, а чаще всего это сбой
+ * медленного сайта, а не отсутствие раздела: неделю показывать его незачем.
+ */
+export function isUnreadableSite(report: SiteReport): boolean {
+	return !report.common.found;
+}
+
+/**
+ * Отчёт сайта из кэша или собранный заново — общий шаг чтения по кнопке и
+ * фонового прогрева. Собирает вызывающий: кнопка списывает квоту сотрудника,
+ * прогрев — нет. Срок записи зависит от того, что прочиталось.
+ */
+export async function cachedSiteReport(
+	origin: string,
+	build: () => Promise<SiteReport | null>,
+	options: { fresh?: boolean } = {}
+): Promise<SiteReport | null> {
+	const key = siteCacheKey(origin);
+
+	if (options.fresh !== true) {
+		const known = await peekCached<SiteReport | null>(
+			SITE_REPORT_CACHE,
+			key,
+			(stored) => stored as SiteReport | null
+		);
+
+		if (known !== undefined) {
+			return known;
+		}
+	}
+
+	const report = await build();
+
+	await storeCached(
+		SITE_REPORT_CACHE,
+		key,
+		report,
+		report !== null && isUnreadableSite(report)
+			? UNREADABLE_SITE_TTL_SECONDS
+			: SITE_REPORT_CACHE.ttlSeconds
+	);
+
+	return report;
+}
+
+/**
+ * Отчёт сайта, если его уже читали в пределах срока кэша, — без обращения к
+ * сайту и без списания квоты.
  *
  * Карточка вуза показывает прочитанный раздел сразу, не заставляя нажимать
  * «Прочитать» ради того, что уже лежит в кэше. Право — то же, что на само
  * чтение; выключенные источники не мешают: наружу этот вызов не ходит. Ключ —
- * тот же `siteCacheKey`, под которым отчёт кладёт `lookupSite` через `cached`.
+ * тот же `siteCacheKey`, под которым отчёт кладут `lookupSite` и прогрев.
  */
 export async function peekSiteReport(
 	ctx: ActorContext,
@@ -624,7 +700,7 @@ export async function peekSiteReport(
 	}
 
 	const report = await peekCached<SiteReport | null>(
-		ENRICHMENT_CACHE,
+		SITE_REPORT_CACHE,
 		siteCacheKey(origin),
 		(stored) => stored as SiteReport | null
 	);

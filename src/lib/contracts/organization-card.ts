@@ -27,6 +27,60 @@ export const addSiteContactSchema = z.object({
 
 export type AddSiteContactInput = z.output<typeof addSiteContactSchema>;
 
+/* ------------------------------------------------------------------------- *
+ * «С сайта вуза» в формах карточки дела.
+ * ------------------------------------------------------------------------- */
+
+/**
+ * Что формы знают об отчёте сайта: прочитан (`ready`), читается в фоне
+ * (`warming`), сайта нет (`no_site`), источники выключены (`disabled`) или
+ * сайт прочитан, но нужного подраздела на нём не нашлось (`unreadable`).
+ */
+export const SITE_SOURCE_STATES = [
+	'ready',
+	'warming',
+	'no_site',
+	'disabled',
+	'unreadable'
+] as const;
+
+export type SiteSourceState = (typeof SITE_SOURCE_STATES)[number];
+
+export type SiteSourceView = {
+	state: SiteSourceState;
+	/** Когда сайт прочитан; `null` — не прочитан. */
+	fetchedAt: string | null;
+};
+
+/**
+ * Подразделение с сайта, которого ещё нет среди площадок организации. Почта
+ * и телефон — общие подразделения, а не человека: персональными данными они
+ * не являются и показываются как есть.
+ */
+export type SiteUnitOffer = {
+	name: string;
+	address: string | null;
+	email: string | null;
+	phone: string | null;
+	site: string | null;
+};
+
+/** Подразделения с сайта для «Состава»: что предложить и в каком состоянии отчёт. */
+export type SiteUnitOffers = {
+	source: SiteSourceView;
+	/** Сколько подразделений на сайте всего — вместе с уже заведёнными. */
+	total: number;
+	units: SiteUnitOffer[];
+};
+
+/** Какое подразделение с сайта завести площадкой: организация и название, как его прочитал сайт. */
+export const importSiteUnitSchema = z.object({
+	organizationId: z.uuid({ error: 'Не указана организация' }),
+	name: z.string().trim().min(1, 'Не указано подразделение').max(1000)
+});
+
+export type ImportSiteUnitInput = z.output<typeof importSiteUnitSchema>;
+
 /**
  * ФИО в виде для сравнения: регистр, «ё» и точки инициалов не делают двух
  * разных людей. «Иванов И. И.» и «Иванов Иван Иванович» при этом остаются

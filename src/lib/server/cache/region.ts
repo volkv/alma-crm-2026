@@ -156,6 +156,21 @@ export async function cached<TValue>(
 }
 
 /**
+ * Кладёт собранное вручную — для областей, где сборка и запись разнесены:
+ * фоновый прогрев собирает значение без читателя, а срок жизни зависит от
+ * того, что собралось (`ttlSeconds` поверх срока области). Ключ — тот же, что
+ * у `cached` и `peekCached`.
+ */
+export async function storeCached<TValue>(
+	region: CacheRegion,
+	key: string,
+	value: TValue,
+	ttlSeconds: number = region.ttlSeconds
+): Promise<void> {
+	await getRedis().set(entryKey(region, key), JSON.stringify(value), 'EX', ttlSeconds);
+}
+
+/**
  * Только то, что уже собрано, — без сборки.
  *
  * Для экранов, которые показывают готовое, если оно есть, но не вправе сами

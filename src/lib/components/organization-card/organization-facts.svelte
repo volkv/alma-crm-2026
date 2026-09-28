@@ -2,6 +2,7 @@
 	import MailIcon from '@lucide/svelte/icons/mail';
 	import PhoneIcon from '@lucide/svelte/icons/phone';
 	import StatusBadge from '$lib/components/status-badge.svelte';
+	import ExternalLink from '$lib/components/external-link.svelte';
 	import {
 		EDUCATION_LEVEL_LABELS,
 		ORGANIZATION_KIND_LABELS,
@@ -69,12 +70,7 @@
 					<span class="text-faint">не указан</span>
 				{/if}
 				{#if organization.website}
-					<a
-						class="block truncate text-xs text-link underline-offset-2 focus-ring hover:text-link-hover hover:underline"
-						href={organization.website}
-						rel="external noreferrer noopener"
-						target="_blank">{organization.website}</a
-					>
+					<ExternalLink class="block truncate text-xs" href={organization.website} />
 				{/if}
 			</dd>
 		</div>

@@ -208,6 +208,48 @@ export const contactCandidateSchema = z.object({
 export type ContactCandidate = z.infer<typeof contactCandidateSchema>;
 
 /**
+ * Подпись, под которой в кандидаты попадают люди из подраздела «Руководство»
+ * (`/sveden/managers`): своего подразделения у ректора и проректоров в этой
+ * таблице нет, а по подписи сотрудник видит, откуда человек взялся.
+ */
+export const MANAGEMENT_UNIT = 'Руководство';
+
+/**
+ * Подразделение из `/sveden/struct` — **кандидат** в площадки организации.
+ *
+ * Отдельно от кандидатов в контакты: подразделение нужно карточке дела и
+ * тогда, когда руководителя у него на сайте не назвали, — работа идёт с
+ * кафедрой, а не с человеком. Почта и телефон здесь — общие ящик и номер
+ * подразделения, а не сведения о человеке.
+ */
+export const unitCandidateSchema = z.object({
+	name: text,
+	address: nullableText,
+	email: nullableText,
+	phone: nullableText,
+	/** Страница подразделения на сайте вуза, если её указали. */
+	site: nullableText
+});
+
+export type UnitCandidate = z.infer<typeof unitCandidateSchema>;
+
+/**
+ * Название подразделения в виде для сверки со справочником: регистр, «ё»,
+ * кавычки и знаки препинания не делают двух разных кафедр. Сверяются и
+ * площадки, заведённые руками, поэтому правило терпимо к набору, а не
+ * к смыслу: «Кафедра ИБ» и «Кафедра информационной безопасности» остаются
+ * разными.
+ */
+export function normalizeUnitName(value: string): string {
+	return value
+		.toLocaleLowerCase('ru')
+		.replace(/ё/g, 'е')
+		.replace(/[«»"'„“”.,;:()[\]№-]/g, ' ')
+		.replace(/\s+/g, ' ')
+		.trim();
+}
+
+/**
  * Подразделение кандидата для показа: у строки руководства («Проректор по
  * АХР») подразделение и есть должность, и второй раз его не пишут.
  */
@@ -247,17 +289,34 @@ export type SvedenSection = z.infer<typeof svedenSectionSchema>;
 /** Потолки списков: паспорт показывают на экране и загружают файлом. */
 export const CONTACT_CANDIDATES_MAX = 300;
 export const PROGRAM_CANDIDATES_MAX = 600;
+export const UNIT_CANDIDATES_MAX = 400;
 
-/** Что прочиталось на сайте организации. */
+/**
+ * Что прочиталось на сайте организации.
+ *
+ * Подразделения и «Руководство» появились в отчёте позже остального, поэтому у
+ * них умолчания: снимок паспорта, скачанный раньше, загружается как был.
+ */
 export const siteReportSchema = z.object({
 	/** Происхождение сайта, по которому шли: `https://www.spbstu.ru`. */
 	website: text,
 	fetchedAt: moment,
 	common: svedenCommonSchema,
 	struct: svedenSectionSchema,
+	/** Подраздел «Руководство»; `null` — не читали (отчёт старого вида). */
+	managers: svedenSectionSchema.nullable().default(null),
 	education: svedenSectionSchema,
+	/** Руководители подразделений и люди из «Руководства» — одним списком. */
 	contacts: z.array(contactCandidateSchema).max(CONTACT_CANDIDATES_MAX),
-	programs: z.array(programCandidateSchema).max(PROGRAM_CANDIDATES_MAX)
+	/** Подразделения из «Структуры», в том числе без названного руководителя. */
+	units: z.array(unitCandidateSchema).max(UNIT_CANDIDATES_MAX).default([]),
+	programs: z.array(programCandidateSchema).max(PROGRAM_CANDIDATES_MAX),
+	/**
+	 * Хоть одна страница прочитана без проверки сертификата: он у сайта истёк,
+	 * самоподписан или выдан центром, которому среда не доверяет. Нет поля —
+	 * отчёт старого вида или всё прочитано с проверкой.
+	 */
+	insecureTls: z.boolean().optional()
 });
 
 export type SiteReport = z.infer<typeof siteReportSchema>;
