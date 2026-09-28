@@ -1,8 +1,7 @@
 <script lang="ts" module>
-	/** Ширина слоя: та же шкала, что у `Dialog.Content`. */
+	/** Ширина слоя: `lg` — общий минимум всех модалок (как у `Dialog.Content`), `xl` — шире. */
 	const WIDTHS = {
-		md: 'sm:max-w-md',
-		lg: 'sm:max-w-lg',
+		lg: 'sm:max-w-[37rem]',
 		xl: 'sm:max-w-2xl'
 	} as const;
 
@@ -39,7 +38,7 @@
 		title,
 		description,
 		dirty = false,
-		width = 'md',
+		width = 'lg',
 		closeOnlyByButton = false,
 		pinTop = false,
 		titleClass,
