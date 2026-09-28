@@ -1,7 +1,25 @@
 import { Redis } from 'ioredis';
 import { getConfig } from './config';
 
-let client: Redis | undefined;
+/**
+ * Общее соединение живёт на `globalThis` по той же причине, что и пул базы
+ * (`db/index.ts`): в `vite dev` модуль выполняется заново, и каждое выполнение
+ * открывало бы ещё одно соединение, не закрыв прежнее.
+ */
+const CLIENT = Symbol.for('alma-crm.redis.client');
+
+interface Held {
+	url: string;
+	client: Redis;
+}
+
+function held(): Held | undefined {
+	return (globalThis as Record<symbol, Held | undefined>)[CLIENT];
+}
+
+function hold(value: Held | undefined): void {
+	(globalThis as Record<symbol, Held | undefined>)[CLIENT] = value;
+}
 
 /**
  * The shared Redis connection.
@@ -10,12 +28,22 @@ let client: Redis | undefined;
  * `lazyConnect` so that constructing it does not open a socket either.
  */
 export function getRedis(): Redis {
-	client ??= new Redis(getConfig().REDIS_URL, {
+	const url = getConfig().REDIS_URL;
+	const current = held();
+
+	if (current !== undefined && current.url === url) {
+		return current.client;
+	}
+
+	current?.client.disconnect();
+
+	const client = new Redis(url, {
 		lazyConnect: true,
 		// A request must not wait on a dead Redis: surface the failure instead.
 		maxRetriesPerRequest: 2,
 		commandTimeout: 5_000
 	});
+	hold({ url, client });
 	return client;
 }
 
@@ -50,8 +78,8 @@ export function createRedisSubscriber(): Redis {
  * Redis держит процесс Node живым и после того, как работа сделана.
  */
 export async function closeRedis(): Promise<void> {
-	const open = client;
-	client = undefined;
+	const open = held()?.client;
+	hold(undefined);
 
 	if (open === undefined) {
 		return;

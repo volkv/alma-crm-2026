@@ -4,8 +4,35 @@ import { getConfig } from '../config';
 import { trackDatabaseQuery } from '../hooks/server-timing';
 import * as schema from './schema';
 
-let client: postgres.Sql | undefined;
-let database: PostgresJsDatabase<typeof schema> | undefined;
+/** Открытый пул вместе с адресом, под который он открыт. */
+interface Pool {
+	url: string;
+	client: postgres.Sql;
+	database: PostgresJsDatabase<typeof schema> | undefined;
+}
+
+/**
+ * Пул живёт на `globalThis`, а не в переменной модуля. В `vite dev` серверный
+ * модуль выполняется заново — правка схемы, пересборка зависимостей, смена
+ * ветки под запущенным сервером, — и переменная модуля начинается с чистого
+ * листа: каждое выполнение открывало свой пул на `POOL_MAX` соединений, а
+ * прежний никто не закрывал. Четыре перезагрузки съедали сотню соединений
+ * PostgreSQL, и база отказывала всем, вплоть до `psql`. Под `globalThis` новое
+ * выполнение модуля подхватывает уже открытый пул; в собранном приложении модуль
+ * выполняется один раз, и разницы нет.
+ *
+ * Адрес хранится рядом, чтобы процесс, сменивший базу (тесты поднимают свою),
+ * не получил пул к чужой.
+ */
+const POOL = Symbol.for('alma-crm.db.pool');
+
+function heldPool(): Pool | undefined {
+	return (globalThis as Record<symbol, Pool | undefined>)[POOL];
+}
+
+function holdPool(pool: Pool | undefined): void {
+	(globalThis as Record<symbol, Pool | undefined>)[POOL] = pool;
+}
 
 /**
  * Connections in the pool.
@@ -116,16 +143,38 @@ function measure<TSql extends postgres.Sql | postgres.TransactionSql>(sql: TSql)
  */
 const SESSION = { jit: 'off' } as const;
 
+function getPool(): Pool {
+	const url = getConfig().DATABASE_URL;
+	const held = heldPool();
+
+	if (held !== undefined && held.url === url) {
+		return held;
+	}
+
+	if (held !== undefined) {
+		// Пул к прежнему адресу больше никому не нужен; запросы, уже ушедшие
+		// в него, `end` дожидается.
+		void held.client.end();
+	}
+
+	const pool: Pool = {
+		url,
+		client: measure(
+			postgres(url, {
+				max: POOL_MAX,
+				// Fail a stuck connection attempt instead of hanging a request forever.
+				connect_timeout: 10,
+				connection: SESSION
+			})
+		),
+		database: undefined
+	};
+	holdPool(pool);
+	return pool;
+}
+
 function getClient(): postgres.Sql {
-	client ??= measure(
-		postgres(getConfig().DATABASE_URL, {
-			max: POOL_MAX,
-			// Fail a stuck connection attempt instead of hanging a request forever.
-			connect_timeout: 10,
-			connection: SESSION
-		})
-	);
-	return client;
+	return getPool().client;
 }
 
 /**
@@ -136,8 +185,9 @@ function getClient(): postgres.Sql {
  * environment and outlive the build.
  */
 export function getDb(): PostgresJsDatabase<typeof schema> {
-	database ??= drizzle(getClient(), { schema, casing: 'snake_case' });
-	return database;
+	const pool = getPool();
+	pool.database ??= drizzle(pool.client, { schema, casing: 'snake_case' });
+	return pool.database;
 }
 
 /** Cheapest possible round-trip to the database, used by the health endpoint. */
@@ -151,11 +201,10 @@ export async function pingDatabase(): Promise<void> {
  * Node alive long after the work is done.
  */
 export async function closeDatabase(): Promise<void> {
-	const open = client;
-	client = undefined;
-	database = undefined;
+	const open = heldPool();
+	holdPool(undefined);
 
 	if (open !== undefined) {
-		await open.end();
+		await open.client.end();
 	}
 }
