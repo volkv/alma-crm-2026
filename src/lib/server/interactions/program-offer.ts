@@ -6,13 +6,9 @@
  * (`mail/outbound.ts`) живут своими модулями; здесь — факты дела для шаблона,
  * права и след в деле.
  *
- * Адреса получателей в браузер не уходят и из браузера не принимаются. Окно
- * видит контакты стороны именем и должностью, как диалог контактного лица, и
- * присылает идентификаторы ролей; сервер сверяет их с контактами основной
- * стороны этого дела и подставляет адреса сам — по действующему праву на
- * контакты людей, а не по тому, что было на экране. Чтение контактов идёт
- * через справочник (`listAffiliations`) и оставляет след просмотра
- * персональных данных, как любое другое.
+ * Адреса получателей в браузер не уходят и из браузера не принимаются: кому
+ * из контактов стороны можно написать, решает `contact-addressees.ts`, общий
+ * с приглашением на встречу.
  *
  * Каждому получателю — своё письмо: обращение по имени, и адреса коллег друг
  * другу не раскрываются. След отправки — строка `program_offer_sends` с одними
@@ -31,7 +27,7 @@ import {
 	type ProgramOfferRecipientView,
 	type SendProgramOfferInput
 } from '$lib/contracts/program-offer';
-import { formatDate, formatIsoDay, pluralize } from '$lib/format';
+import { formatIsoDay, pluralize } from '$lib/format';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getDb } from '../db';
@@ -45,8 +41,6 @@ import {
 	stageEntries
 } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
-import { listAffiliations } from '../directory/read';
-import { LEARNER_POSITION } from '../integrations/exchange/roster';
 import { listProgramMaterials, type ProgramMaterial } from '../directory/program-materials';
 import { readStoredFile } from '../documents/storage';
 import { ForbiddenError, ValidationError } from '../errors';
@@ -58,7 +52,14 @@ import {
 	type OutboundAttachment
 } from '../mail/outbound';
 import { programOfferEmail, type ProgramOfferFacts } from '../mail/program-offer';
-import { can, requirePermission } from '../rbac';
+import { requirePermission } from '../rbac';
+import {
+	contactGreetingName,
+	contactPersonName,
+	contactUnavailableReason,
+	readCaseContacts,
+	resolveCaseContacts
+} from './contact-addressees';
 import { getInteraction } from './read';
 
 const NO_PROGRAMS = 'В деле нет программ: добавьте их в «Программы и продукты»';
@@ -74,73 +75,8 @@ function senderOf(ctx: ActorContext): Sender {
 	return { id: ctx.user.id, name: ctx.user.fullName, email: ctx.user.email };
 }
 
-function personName(person: AffiliationView['person']): string {
-	return [person.lastName, person.firstName, person.middleName].filter(Boolean).join(' ');
-}
-
-/** Обращение в письме — по имени и отчеству, как принято в деловой переписке. */
-function greetingName(person: AffiliationView['person']): string | null {
-	const name = [person.firstName, person.middleName].filter(Boolean).join(' ').trim();
-
-	return name === '' ? null : name;
-}
-
-/**
- * Почему этому контакту письмо не отправить; `null` — можно. Роль, которая уже
- * закончилась, — человек там больше не работает, и описание программ ему не
- * адресуется, даже если он записан контактным лицом дела.
- */
-function unavailableReason(contact: AffiliationView, today: string): string | null {
-	if (contact.person.anonymizedAt !== null) {
-		return 'Данные человека обезличены';
-	}
-
-	if (contact.validTo !== null && contact.validTo < today) {
-		return `Роль закончилась ${formatDate(contact.validTo)}`;
-	}
-
-	if (contact.person.contactsMasked) {
-		return 'Почта скрыта: нет права видеть контакты людей';
-	}
-
-	if (contact.person.email === null) {
-		return 'Почта не указана в карточке человека';
-	}
-
-	return null;
-}
-
 function primaryParty(interaction: InteractionView) {
 	return interaction.parties.find((party) => party.isPrimary) ?? null;
-}
-
-/**
- * Слушатель учебной группы — связь, которую завёл список группы, а не
- * представитель вуза: описание программ ему не адресуется, а в списке
- * получателей десятки таких строк заслонили бы тех, с кем ведут переговоры.
- * Контактное лицо дела остаётся всегда — его выбрал человек.
- */
-function isOfferAddressee(contact: AffiliationView, caseContactId: string | null): boolean {
-	return (
-		contact.id === caseContactId ||
-		!(contact.roleKind === 'other' && contact.position === LEARNER_POSITION)
-	);
-}
-
-/** Контакты основной стороны; `null` — читать их не из чего или нечем (права). */
-async function readContacts(
-	ctx: ActorContext,
-	interaction: InteractionView
-): Promise<AffiliationView[] | null> {
-	const primary = primaryParty(interaction);
-
-	if (primary === null || !can(ctx, 'people.read')) {
-		return null;
-	}
-
-	const contacts = await listAffiliations(ctx, primary.organizationId);
-
-	return contacts.filter((contact) => isOfferAddressee(contact, primary.contactAffiliationId));
 }
 
 type OfferContent = {
@@ -260,18 +196,18 @@ export async function readProgramOfferDraft(
 	const interaction = await getInteraction(ctx, interactionId);
 	const primary = primaryParty(interaction);
 	const [contacts, content, lastSent] = await Promise.all([
-		readContacts(ctx, interaction),
+		readCaseContacts(ctx, interaction),
 		readOfferContent(interaction, sender),
 		readLastSent(interaction.id)
 	]);
 
 	const today = formatIsoDay();
 	const recipients: ProgramOfferRecipientView[] = (contacts ?? []).map((contact) => {
-		const reason = unavailableReason(contact, today);
+		const reason = contactUnavailableReason(contact, today);
 
 		return {
 			affiliationId: contact.id,
-			name: personName(contact.person),
+			name: contactPersonName(contact.person),
 			position: contact.position,
 			isCaseContact: contact.id === primary?.contactAffiliationId,
 			available: reason === null,
@@ -301,7 +237,8 @@ export async function readProgramOfferDraft(
 	const previewContact = contacts?.find(
 		(contact) => contact.id === previewRecipient?.affiliationId
 	);
-	const previewFor = previewContact === undefined ? null : greetingName(previewContact.person);
+	const previewFor =
+		previewContact === undefined ? null : contactGreetingName(previewContact.person);
 	const email = programOfferEmail({ ...content.facts, recipientName: previewFor, isTest: false });
 	const attachments: ProgramOfferAttachmentView[] = content.materials.map((material) => ({
 		documentId: material.documentId,
@@ -355,8 +292,8 @@ type Addressee = { contact: AffiliationView; email: string };
 
 /**
  * Получатели настоящей отправки: только контакты основной стороны этого дела,
- * у которых сейчас можно прочитать почту. Чужой идентификатор — отказ всей
- * отправки, а не молчаливый пропуск: окно показывало одно, а ушло бы другое.
+ * у которых сейчас можно прочитать почту. Закрытый адрес — отказ всей отправки:
+ * описание программ без адресата не имеет смысла.
  */
 async function resolveAddressees(
 	ctx: ActorContext,
@@ -367,38 +304,22 @@ async function resolveAddressees(
 		throw new ValidationError('Отметьте хотя бы одного получателя');
 	}
 
-	const auditDenied = {
-		type: 'interactions.program_offer_sent',
-		subject: { type: 'interaction', id: interaction.id }
-	} as const;
+	const resolved = await resolveCaseContacts(
+		ctx,
+		interaction,
+		recipientIds,
+		'interactions.program_offer_sent'
+	);
 
-	await requirePermission(ctx, 'people.read', auditDenied);
-	await requirePermission(ctx, 'people.read_pii', auditDenied);
-
-	const contacts = (await readContacts(ctx, interaction)) ?? [];
-	const byId = new Map(contacts.map((contact) => [contact.id, contact]));
-	const today = formatIsoDay();
-	const addressees: Addressee[] = [];
-
-	for (const id of new Set(recipientIds)) {
-		const contact = byId.get(id);
-
-		if (contact === undefined) {
-			throw new ValidationError('Получатель не найден среди контактных лиц основной стороны дела');
-		}
-
-		const reason = unavailableReason(contact, today);
-
-		if (reason !== null || contact.person.email === null) {
-			throw new ValidationError(`Письмо не отправить: ${personName(contact.person)}`, [
-				reason ?? 'Почта не указана в карточке человека'
+	return resolved.map(({ contact, email, reason }) => {
+		if (email === null) {
+			throw new ValidationError(`Письмо не отправить: ${contactPersonName(contact.person)}`, [
+				reason
 			]);
 		}
 
-		addressees.push({ contact, email: contact.person.email });
-	}
-
-	return addressees;
+		return { contact, email };
+	});
 }
 
 /** Открытая запись стадии дела; `null` — дело ни на какой стадии не стоит. */
@@ -461,11 +382,12 @@ export async function sendProgramOffer(
 	if (input.test) {
 		// Обращение в тестовом письме — того, кого окно показывало в превью, если
 		// его имя можно прочитать; иначе обезличенное «Здравствуйте!».
-		const contacts = input.recipientIds.length === 0 ? null : await readContacts(ctx, interaction);
+		const contacts =
+			input.recipientIds.length === 0 ? null : await readCaseContacts(ctx, interaction);
 		const shown = contacts?.find((contact) => contact.id === input.recipientIds[0]);
 		const email = programOfferEmail({
 			...content.facts,
-			recipientName: shown === undefined ? null : greetingName(shown.person),
+			recipientName: shown === undefined ? null : contactGreetingName(shown.person),
 			isTest: true
 		});
 		const outcome = await sendOutboundMail({
@@ -497,11 +419,11 @@ export async function sendProgramOffer(
 	for (const addressee of addressees) {
 		const email = programOfferEmail({
 			...content.facts,
-			recipientName: greetingName(addressee.contact.person),
+			recipientName: contactGreetingName(addressee.contact.person),
 			isTest: false
 		});
 		const outcome = await sendOutboundMail({
-			to: [{ name: personName(addressee.contact.person), email: addressee.email }],
+			to: [{ name: contactPersonName(addressee.contact.person), email: addressee.email }],
 			subject: email.subject,
 			html: email.html,
 			text: email.text,

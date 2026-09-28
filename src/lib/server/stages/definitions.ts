@@ -184,7 +184,7 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			isFinal: false,
 			checklist: [
 				item('meeting_scheduled', 'Встреча назначена', true, {
-					help: 'Назначьте встречу кнопкой: дата и место сохранятся в деле, участникам уйдёт файл для календаря. Отметьте, когда время согласовано с вузом.',
+					help: 'Назначьте встречу кнопкой: участникам уйдёт письмо с приглашением в календарь. Отметьте, когда время согласовано с вузом.',
 					action: 'meetings:invite'
 				}),
 				item('participants_confirmed', 'Состав участников подтверждён', false, {

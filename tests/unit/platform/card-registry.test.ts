@@ -46,6 +46,8 @@ describe('действия модулей в карточке', () => {
 		expect(Object.keys(moduleCardActionHandlers([])).sort()).toEqual([
 			'completeGroup',
 			'contract',
+			'meetingCancel',
+			'meetingInvite',
 			'meetingSchedule',
 			'rosterAddCounterparty',
 			'rosterImport',

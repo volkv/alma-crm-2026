@@ -15,6 +15,12 @@ import { describeMailFailure, mailTransport } from './transport';
 
 export type OutboundAttachment = { filename: string; content: Buffer; contentType: string };
 export type OutboundRecipient = { name: string | null; email: string };
+/**
+ * Событие календаря при письме: клиент получает его и отдельной частью
+ * `text/calendar; method=…` (по ней Gmail и Outlook рисуют кнопки ответа), и
+ * вложением `invite.ics` для остальных.
+ */
+export type OutboundCalendar = { method: 'REQUEST' | 'CANCEL'; content: string };
 export type OutboundMail = {
 	to: OutboundRecipient[];
 	subject: string;
@@ -22,6 +28,7 @@ export type OutboundMail = {
 	text: string;
 	attachments: OutboundAttachment[];
 	replyTo?: string | null;
+	calendar?: OutboundCalendar | null;
 };
 export type OutboundOutcome =
 	| { status: 'sent'; messageId: string }
@@ -125,9 +132,11 @@ export async function sendOutboundMail(mail: OutboundMail): Promise<OutboundOutc
 		};
 	}
 
+	// Событие календаря письмо несёт дважды — частью и вложением.
+	const calendarBytes = mail.calendar ? 2 * Buffer.byteLength(mail.calendar.content) : 0;
 	const attachmentsBytes = mail.attachments.reduce(
 		(total, attachment) => total + attachment.content.byteLength,
-		0
+		calendarBytes
 	);
 
 	if (attachmentsBytes > MAX_OUTBOUND_ATTACHMENTS_BYTES) {
@@ -157,7 +166,16 @@ export async function sendOutboundMail(mail: OutboundMail): Promise<OutboundOutc
 				filename: attachment.filename,
 				content: attachment.content,
 				contentType: attachment.contentType
-			}))
+			})),
+			...(mail.calendar
+				? {
+						icalEvent: {
+							method: mail.calendar.method,
+							filename: 'invite.ics',
+							content: mail.calendar.content
+						}
+					}
+				: {})
 		});
 
 		return { status: 'sent', messageId: typeof info.messageId === 'string' ? info.messageId : '' };

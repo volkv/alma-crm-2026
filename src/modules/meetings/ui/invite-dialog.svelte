@@ -1,6 +1,10 @@
 <script lang="ts">
 	import { untrack } from 'svelte';
-	import CalendarIcon from '@lucide/svelte/icons/calendar';
+	import { toast } from 'svelte-sonner';
+	import CalendarXIcon from '@lucide/svelte/icons/calendar-x';
+	import DownloadIcon from '@lucide/svelte/icons/download';
+	import MailIcon from '@lucide/svelte/icons/mail';
+	import SendIcon from '@lucide/svelte/icons/send';
 	import type { SubmitFunction } from '@sveltejs/kit';
 	import { applyAction, enhance } from '$app/forms';
 	import { resolve } from '$app/paths';
@@ -11,29 +15,35 @@
 	import { Textarea } from '$lib/components/ui/textarea/index.js';
 	import FormDialog from '$lib/components/form-dialog.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
-	import type { AffiliationView } from '$lib/contracts/directory';
 	import type { StageEntryView } from '$lib/contracts/interactions';
+	import { pluralize } from '$lib/format';
 	import { getCardCommands, type CardCommand } from '$lib/platform/card';
 	import type { CardDialogProps } from '$lib/platform/card-ui';
-	import type { MeetingsCardData } from '../data';
+	import type { MeetingMissedRecipient, MeetingSendOutcome, MeetingsCardData } from '../data';
 
 	/**
-	 * Назначение встречи и приглашение файлом календаря.
+	 * Назначение встречи и приглашение участникам письмом.
 	 *
-	 * «Назначить» делает две вещи по очереди: сохраняет дату, длительность и
-	 * место в деле (действие модуля `meetingSchedule`) — встреча видна в ленте и
-	 * у пункта «Встреча назначена», — а затем скачивает файл приглашения
-	 * `meeting.ics` (`card.server.ts`) с участниками и повесткой. Файл, права на
-	 * контакты участников и запись в журнал остаются за сервером, диалог их не
-	 * решает. Сам пункт чек-листа отмечает человек, когда время согласовано:
-	 * отправленное приглашение ещё не согласие.
+	 * «Назначить и отправить приглашение» (действие модуля `meetingInvite`)
+	 * сохраняет дату, длительность и место в деле и отправляет каждому
+	 * участнику письмо с событием календаря: Gmail, Outlook, Apple и Яндекс
+	 * показывают его приглашением с кнопками ответа. Встреча, которая ещё
+	 * впереди, так переносится — участникам уходит обновление того же события.
+	 * «Тест себе» — то же письмо только тому, кто нажал; встреча не сохраняется.
+	 *
+	 * Участники — контакты основной стороны и коллеги, которые видят дело;
+	 * отметка уходит идентификатором, а адрес подставляет сервер по
+	 * действующему праву. Ответственный — организатор: ответы придут ему, и
+	 * копию письма он получает сам.
+	 *
+	 * «Скачать .ics» — запасной путь без писем (почта установки закрыта или
+	 * приглашение рассылают сами): встреча сохраняется (`meetingSchedule`), и
+	 * следом скачивается файл `meeting.ics`. Сам пункт чек-листа отмечает
+	 * человек, когда время согласовано: отправленное приглашение ещё не
+	 * согласие.
 	 *
 	 * Итог встречи не заводит своей сущности: диалог напоминает записать его
 	 * командой «Результат стадии» и сам её открывает.
-	 *
-	 * Контактное лицо дела отмечено участником по умолчанию. Назначенная
-	 * встреча подставляется в поля при следующем открытии: встреча, которая ещё
-	 * впереди, так переносится — участникам уходит обновление того же события.
 	 */
 	let { source, data, workspaceKey }: CardDialogProps = $props();
 
@@ -43,10 +53,13 @@
 	// Данные кладёт `load` модуля (`card.server.ts`): пока модуль действует, он
 	// зовётся на каждой загрузке карточки.
 	const loaded = $derived(data as MeetingsCardData | undefined);
-	/** Контакты основной стороны с почтой — чекбоксами в списке участников. */
 	const contacts = $derived(loaded?.contacts ?? []);
 	/** Нет права видеть людей организации: список пуст поэтому, а не потому что их нет. */
 	const contactsDenied = $derived(loaded?.contactsDenied ?? false);
+	const colleagues = $derived(loaded?.colleagues ?? []);
+	const policy = $derived(
+		loaded?.policy ?? { allowed: false, sandboxed: true, reason: 'Почта установки недоступна' }
+	);
 	/** Назначенная встреча дела; `null` — ещё не назначали. */
 	const saved = $derived(loaded?.meeting ?? null);
 	/** Новое назначение переносит встречу, которая ещё впереди. */
@@ -67,12 +80,6 @@
 			if (!next) commands.close();
 		}
 	};
-
-	function contactName(contact: AffiliationView): string {
-		return [contact.person.lastName, contact.person.firstName, contact.person.middleName]
-			.filter(Boolean)
-			.join(' ');
-	}
 
 	/** Повестка по умолчанию: незакрытые пункты чек-листа текущей стадии. */
 	function defaultAgenda(stage: StageEntryView | null): string {
@@ -95,6 +102,13 @@
 	let location = $state('');
 	let agenda = $state('');
 	let selectedContactIds = $state<string[]>([]);
+	let selectedColleagueIds = $state<string[]>([]);
+	/** Что сейчас уходит на сервер — у той кнопки и надпись «Отправляем…». */
+	let pending = $state<'invite' | 'test' | 'download' | 'cancel' | null>(null);
+	/** Почему не ушло или не сохранилось — словами сервера, у самой формы. */
+	let refusal = $state<string | null>(null);
+	/** Отмена встречи ждёт подтверждения вторым нажатием. */
+	let confirmingCancel = $state(false);
 
 	// Поля заводятся чистыми при каждом открытии — тем, что нужно прямо сейчас, а
 	// не тем, что осталось от прошлого раза.
@@ -114,20 +128,20 @@
 			const preset = loaded?.defaultContactId ?? null;
 			selectedContactIds =
 				preset !== null && contacts.some((contact) => contact.id === preset) ? [preset] : [];
+			selectedColleagueIds = [];
+			pending = null;
+			refusal = null;
+			confirmingCancel = false;
 		});
 	});
 
-	function toggleContact(id: string, checked: boolean) {
-		selectedContactIds = checked
-			? [...new Set([...selectedContactIds, id])]
-			: selectedContactIds.filter((item) => item !== id);
+	function toggle(list: string[], id: string, checked: boolean): string[] {
+		return checked ? [...new Set([...list, id])] : list.filter((item) => item !== id);
 	}
 
-	const hasHiddenEmail = $derived(
+	const hasUnreachable = $derived(
 		contacts.some(
-			(contact) =>
-				selectedContactIds.includes(contact.id) &&
-				(contact.person.contactsMasked || contact.person.email === null)
+			(contact) => selectedContactIds.includes(contact.id) && contact.unavailableReason !== null
 		)
 	);
 
@@ -137,9 +151,9 @@
 
 	/**
 	 * Ссылка на файл: дату, длительность и место сервер берёт у сохранённой
-	 * встречи, из формы — повестка и участники. Строка запроса собрана вручную,
-	 * а не `URLSearchParams`: здесь это одноразовое значение внутри `$derived`,
-	 * а не долгоживущее изменяемое состояние.
+	 * встречи, из формы — повестка и участники-контакты. Строка запроса собрана
+	 * вручную, а не `URLSearchParams`: здесь это одноразовое значение внутри
+	 * `$derived`, а не долгоживущее изменяемое состояние.
 	 */
 	const icsHref = $derived.by(() => {
 		const path = resolve('/(app)/w/[workspace]/interactions/[id=uuid]/files/[module]/[file]', {
@@ -158,37 +172,120 @@
 		return `${path}?${params.join('&')}`;
 	});
 
-	const canDownload = $derived(start !== '' && durationMinutes > 0);
+	const filled = $derived(start !== '' && durationMinutes > 0);
+	const participantCount = $derived(selectedContactIds.length + selectedColleagueIds.length);
+	/** Почему главная кнопка недоступна — словами у самой кнопки; `null` — доступна. */
+	const inviteBlocked = $derived(
+		!policy.allowed
+			? 'Почта не настроена — скачайте файл приглашения и разошлите его сами'
+			: interaction.ownerUserId === null
+				? 'У дела нет ответственного — некому быть организатором'
+				: null
+	);
 
-	/** Почему встречу не сохранили — словами сервера, у самой формы. */
-	let refusal = $state<string | null>(null);
-	let saving = $state(false);
+	function failureText(data: unknown, fallback: string): string {
+		const body = (data ?? {}) as { message?: unknown; issues?: unknown };
+		const issues = Array.isArray(body.issues) ? body.issues.join('; ') : '';
+
+		return [typeof body.message === 'string' ? body.message : fallback, issues]
+			.filter((part) => part !== '')
+			.join(': ');
+	}
+
+	function missedText(items: readonly MeetingMissedRecipient[]): string {
+		return items.map((item) => `${item.name} — ${item.reason}`).join('; ');
+	}
+
+	const SENT_TITLE: Record<'invite' | 'update' | 'cancel', string> = {
+		invite: 'Приглашение отправлено',
+		update: 'Обновление встречи отправлено',
+		cancel: 'Встреча отменена, отмена отправлена'
+	};
+
+	/** Итог отправки: сколько ушло, кому не ушло и почему. */
+	function report(outcome: MeetingSendOutcome) {
+		if (outcome.status !== 'sent') {
+			if (outcome.recorded) {
+				toast.warning('Встреча отменена в деле, письма об отмене не ушли', {
+					description: `${outcome.error}. Предупредите участников сами.`
+				});
+				commands.close();
+			} else {
+				refusal = outcome.error;
+			}
+
+			return;
+		}
+
+		if (outcome.test) {
+			toast.success('Тестовое приглашение отправлено вам на почту');
+
+			return;
+		}
+
+		const title = `${SENT_TITLE[outcome.kind]}: ${pluralize(outcome.sentCount, ['получатель', 'получателя', 'получателей'])}`;
+		const missed = [...outcome.failed, ...outcome.skipped];
+
+		if (missed.length > 0) {
+			toast.warning(title, { description: `Не ушло: ${missedText(missed)}` });
+		} else {
+			toast.success(title);
+		}
+
+		commands.close();
+	}
+
+	/** Отправка приглашения и отмена: исход — значение действия, а не редирект. */
+	const send =
+		(kind: 'invite' | 'cancel'): SubmitFunction =>
+		({ submitter }) => {
+			const test = kind === 'invite' && submitter?.getAttribute('value') === '1';
+
+			pending = kind === 'cancel' ? 'cancel' : test ? 'test' : 'invite';
+			refusal = null;
+
+			return async ({ result, update }) => {
+				pending = null;
+				confirmingCancel = false;
+
+				if (result.type === 'success') {
+					const outcome = result.data as MeetingSendOutcome | undefined;
+
+					if (outcome !== undefined) {
+						if (!outcome.test) {
+							await update();
+						}
+
+						report(outcome);
+					}
+				} else if (result.type === 'failure') {
+					refusal = failureText(result.data, 'Приглашение не отправлено');
+				} else {
+					await applyAction(result);
+				}
+			};
+		};
 
 	/**
 	 * Сохранить встречу и следом скачать приглашение: файл уходит только за
 	 * сохранённой встречей, иначе в календаре участников оказалась бы встреча,
 	 * которой в деле нет.
 	 */
-	const schedule: SubmitFunction = () => {
+	const download: SubmitFunction = () => {
 		const href = icsHref;
 
 		refusal = null;
-		saving = true;
+		pending = 'download';
 
 		return async ({ result, update }) => {
-			saving = false;
+			pending = null;
 
 			if (result.type === 'success') {
 				await update();
 				commands.close();
 				window.location.assign(href);
 			} else if (result.type === 'failure') {
-				const data = (result.data ?? {}) as { message?: unknown; issues?: unknown };
-				const issues = Array.isArray(data.issues) ? data.issues.join('; ') : '';
-
-				refusal = [typeof data.message === 'string' ? data.message : 'Встреча не сохранена', issues]
-					.filter((part) => part !== '')
-					.join(': ');
+				refusal = failureText(result.data, 'Встреча не сохранена');
 			} else {
 				await applyAction(result);
 			}
@@ -199,16 +296,30 @@
 <FormDialog
 	bind:open={opened.get, opened.set}
 	title="Пригласить на встречу"
-	description="Встреча сохранится в деле, участникам — файл для календаря (.ics) с датой, местом и повесткой."
+	description="Встреча сохранится в деле, участникам уйдёт письмо с приглашением в календарь: дата, место и повестка."
 	width="lg"
 >
 	<div class="flex flex-col gap-4">
+		{#if !policy.allowed}
+			<InlineHint tone="warning">
+				Письма не отправить: {policy.reason}. Встречу можно сохранить и скачать файл приглашения
+				(.ics), чтобы разослать его самим.
+			</InlineHint>
+		{:else if policy.sandboxed}
+			<InlineHint tone="info">
+				Письма попадут в почтовую ловушку стенда (Mailpit), наружу не уйдут.
+			</InlineHint>
+		{/if}
+
 		{#if rescheduling}
 			<InlineHint>
 				Встреча уже назначена — поля ниже показывают её. Сохранение перенесёт её: участникам уйдёт
 				обновление того же события календаря, а не вторая встреча.
 			</InlineHint>
+		{:else if saved?.cancelled}
+			<InlineHint>Прошлую встречу отменили — эта будет новой.</InlineHint>
 		{/if}
+
 		<div class="grid gap-3 sm:grid-cols-2">
 			<div class="flex flex-col gap-1.5">
 				<Label for="card-meeting-start">Дата и время (Москва)</Label>
@@ -234,19 +345,27 @@
 				placeholder="Переговорная на 4 этаже или ссылка на видеовстречу"
 				bind:value={location}
 			/>
+			<p class="text-xs text-muted-foreground">
+				Ссылка на видеовстречу станет в письме кнопкой «Подключиться».
+			</p>
+		</div>
+
+		<div class="flex flex-col gap-1">
+			<p class="text-sm font-medium">Организатор</p>
+			<p class="text-sm">
+				{interaction.ownerName ?? 'Ответственный не назначен'}
+				<span class="text-xs text-muted-foreground">
+					· ответственный за дело: участвует всегда, ответы на приглашение и копия письма придут ему
+				</span>
+			</p>
 		</div>
 
 		<fieldset class="flex flex-col gap-2">
-			<legend class="mb-1 text-sm font-medium">Участники</legend>
-			<Label class="flex items-start gap-2 font-normal text-muted-foreground">
-				<Checkbox checked disabled />
-				<span>{interaction.ownerName} — ответственный, организатор, участвует всегда</span>
-			</Label>
+			<legend class="mb-1 text-sm font-medium">Контакты вуза</legend>
 
 			{#if contactsDenied}
 				<InlineHint tone="warning">
-					Контакты стороны скрыты: нет права видеть людей организации. В приглашение попадёт только
-					ответственный.
+					Контакты стороны скрыты: нет права видеть людей организации. Позвать можно коллег.
 				</InlineHint>
 			{:else if contacts.length === 0}
 				<p class="text-xs text-muted-foreground">У стороны не заведено ни одного контакта.</p>
@@ -255,29 +374,58 @@
 					<Label class="flex items-start gap-2 font-normal">
 						<Checkbox
 							checked={selectedContactIds.includes(contact.id)}
-							onCheckedChange={(checked) => toggleContact(contact.id, checked === true)}
+							onCheckedChange={(checked) =>
+								(selectedContactIds = toggle(selectedContactIds, contact.id, checked === true))}
 						/>
 						<span class="flex flex-col gap-0.5">
-							<span>{contactName(contact)} — {contact.position}</span>
-							<span class="text-xs text-muted-foreground">
-								{#if contact.person.contactsMasked}
-									Почта скрыта: в файле останется только имя
-								{:else if contact.person.email}
-									{contact.person.email}
-								{:else}
-									Почта не указана: в файле останется только имя
+							<span>
+								{contact.name}{contact.position ? ` — ${contact.position}` : ''}
+								{#if contact.isCaseContact}
+									<span class="text-xs text-muted-foreground">· контактное лицо дела</span>
 								{/if}
 							</span>
+							{#if contact.unavailableReason !== null}
+								<span class="text-xs text-muted-foreground">
+									{contact.unavailableReason} — приглашение не придёт, в событии останется имя
+								</span>
+							{/if}
 						</span>
 					</Label>
 				{/each}
 			{/if}
 
-			{#if hasHiddenEmail}
+			{#if hasUnreachable}
 				<InlineHint tone="warning">
-					У выбранного участника нет открытой почты: файл назовёт его по имени, без адреса, — на
-					почту приглашение ему не придёт.
+					У отмеченного контакта нет открытой почты: письмо ему не уйдёт, в событии календаря он
+					останется только по имени.
 				</InlineHint>
+			{/if}
+		</fieldset>
+
+		<fieldset class="flex flex-col gap-2">
+			<legend class="mb-1 text-sm font-medium">Коллеги</legend>
+			{#if colleagues.length === 0}
+				<p class="text-xs text-muted-foreground">
+					Дело больше никто не видит — звать из коллег некого.
+				</p>
+			{:else}
+				{#each colleagues as colleague (colleague.userId)}
+					<Label class="flex items-start gap-2 font-normal">
+						<Checkbox
+							checked={selectedColleagueIds.includes(colleague.userId)}
+							onCheckedChange={(checked) =>
+								(selectedColleagueIds = toggle(
+									selectedColleagueIds,
+									colleague.userId,
+									checked === true
+								))}
+						/>
+						<span>{colleague.name}</span>
+					</Label>
+				{/each}
+				<p class="text-xs text-muted-foreground">
+					В списке — сотрудники, которые видят это дело. Файл для скачивания коллег не включает.
+				</p>
 			{/if}
 		</fieldset>
 
@@ -294,35 +442,143 @@
 			«{entry?.resultText ? 'Изменить результат стадии' : 'Записать результат стадии'}».
 		</InlineHint>
 
+		{#if rescheduling}
+			{#if confirmingCancel}
+				<InlineHint tone="warning">
+					<span class="flex flex-1 flex-wrap items-center justify-between gap-2">
+						Отменить встречу? Приглашённым{saved !== null && saved.invitedCount > 0
+							? ` (${saved.invitedCount})`
+							: ''} уйдёт отмена, календари уберут событие.
+						<span class="flex gap-2">
+							<Button
+								type="button"
+								size="sm"
+								variant="outline"
+								onclick={() => (confirmingCancel = false)}
+							>
+								Не отменять
+							</Button>
+							<Button
+								type="submit"
+								size="sm"
+								variant="destructive"
+								form="card-meeting-cancel"
+								disabled={pending !== null}
+							>
+								{pending === 'cancel' ? 'Отменяем…' : 'Да, отменить'}
+							</Button>
+						</span>
+					</span>
+				</InlineHint>
+			{:else}
+				<div>
+					<Button
+						type="button"
+						size="sm"
+						variant="outline"
+						disabled={pending !== null}
+						onclick={() => (confirmingCancel = true)}
+					>
+						<CalendarXIcon aria-hidden="true" />
+						Отменить встречу
+					</Button>
+				</div>
+			{/if}
+		{/if}
+
 		{#if refusal !== null}
 			<InlineHint tone="warning">{refusal}</InlineHint>
 		{/if}
 
 		<form
+			id="card-meeting-invite"
+			method="POST"
+			action="?/meetingInvite"
+			use:enhance={send('invite')}
+			class="hidden"
+		>
+			<input type="hidden" name="start" value={start} />
+			<input type="hidden" name="duration" value={String(durationMinutes)} />
+			<input type="hidden" name="location" value={location} />
+			<input type="hidden" name="agenda" value={agenda} />
+			{#each selectedContactIds as id (id)}
+				<input type="hidden" name="contact" value={id} />
+			{/each}
+			{#each selectedColleagueIds as id (id)}
+				<input type="hidden" name="colleague" value={id} />
+			{/each}
+		</form>
+
+		<form
 			id="card-meeting-schedule"
 			method="POST"
 			action="?/meetingSchedule"
-			use:enhance={schedule}
+			use:enhance={download}
 			class="hidden"
 		>
 			<input type="hidden" name="start" value={start} />
 			<input type="hidden" name="duration" value={String(durationMinutes)} />
 			<input type="hidden" name="location" value={location} />
 		</form>
+
+		<form
+			id="card-meeting-cancel"
+			method="POST"
+			action="?/meetingCancel"
+			use:enhance={send('cancel')}
+			class="hidden"
+		></form>
 	</div>
 
 	{#snippet footer({ close })}
-		<div class="flex flex-wrap justify-end gap-2">
-			<Button type="button" variant="outline" onclick={close}>Закрыть</Button>
-			<Button type="button" variant="outline" onclick={() => commands.open({ kind: 'result' })}>
-				Записать результат стадии
-			</Button>
-			<Button type="submit" form="card-meeting-schedule" disabled={!canDownload || saving}>
-				<CalendarIcon aria-hidden="true" />
-				{rescheduling
-					? 'Перенести и скачать приглашение (.ics)'
-					: 'Назначить и скачать приглашение (.ics)'}
-			</Button>
+		<div class="flex flex-col items-end gap-2">
+			<div class="flex flex-wrap justify-end gap-2">
+				<Button type="button" variant="outline" onclick={close}>Закрыть</Button>
+				<Button type="button" variant="outline" onclick={() => commands.open({ kind: 'result' })}>
+					Записать результат стадии
+				</Button>
+				<Button
+					type="submit"
+					variant="outline"
+					form="card-meeting-schedule"
+					disabled={!filled || pending !== null}
+					title="Сохранить встречу без писем и скачать файл для календаря"
+				>
+					<DownloadIcon aria-hidden="true" />
+					{pending === 'download' ? 'Сохраняем…' : 'Скачать .ics'}
+				</Button>
+				<Button
+					type="submit"
+					variant="outline"
+					form="card-meeting-invite"
+					name="test"
+					value="1"
+					disabled={!filled || inviteBlocked !== null || pending !== null}
+					title="Письмо только вам: так его увидят участники. Встреча не сохранится"
+				>
+					<MailIcon aria-hidden="true" />
+					{pending === 'test' ? 'Отправляем…' : 'Тест себе'}
+				</Button>
+				<Button
+					type="submit"
+					form="card-meeting-invite"
+					disabled={!filled || inviteBlocked !== null || participantCount === 0 || pending !== null}
+				>
+					<SendIcon aria-hidden="true" />
+					{pending === 'invite'
+						? 'Отправляем…'
+						: rescheduling
+							? 'Перенести и отправить обновление'
+							: 'Назначить и отправить приглашение'}
+				</Button>
+			</div>
+			{#if inviteBlocked !== null}
+				<p class="text-xs text-muted-foreground">{inviteBlocked}</p>
+			{:else if participantCount === 0}
+				<p class="text-xs text-muted-foreground">
+					Отметьте хотя бы одного участника: контакт вуза или коллегу.
+				</p>
+			{/if}
 		</div>
 	{/snippet}
 </FormDialog>

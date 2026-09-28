@@ -1,10 +1,11 @@
 /**
- * Приглашение на встречу файлом календаря — RFC 5545, `METHOD:REQUEST`.
+ * Приглашение на встречу файлом календаря — RFC 5545 и iTIP (RFC 5546):
+ * `METHOD:REQUEST` — приглашение или перенос, `METHOD:CANCEL` — отмена.
  *
  * Сборка текста — чистая функция без базы, прав и HTTP: что именно идёт в файл
  * (кого пускать в `ATTENDEE`, а кого — только по имени в повестку), решает
- * файл `meeting.ics` в `card.server.ts` модуля, который знает про права на
- * персональные данные. Здесь только формат: экранирование текста, перенос
+ * серверная часть модуля (`card.server.ts`, `invite.ts`), которая знает про
+ * права на персональные данные. Здесь только формат: экранирование текста, перенос
  * строк по 75 октетам и структура события, — поэтому он проверяется юнит-тестом
  * без testcontainers.
  */
@@ -24,7 +25,15 @@ const encoder = new TextEncoder();
 /** Участник с открытой почтой: попадает в файл свойством `ATTENDEE`. */
 export type MeetingAttendee = { name: string; email: string };
 
+/** `REQUEST` — приглашение или перенос, `CANCEL` — отмена того же события. */
+export type MeetingMethod = 'REQUEST' | 'CANCEL';
+
 export type MeetingInviteInput = {
+	/**
+	 * По умолчанию `REQUEST`. У отмены `UID` тот же, а `SEQUENCE` вызывающий
+	 * берёт на единицу больше последней разосланной редакции.
+	 */
+	method?: MeetingMethod;
 	/** Устойчивый идентификатор события — см. {@link nextMeetingIdentity}. */
 	uid: string;
 	/** Номер редакции события: растёт с каждым переносом той же встречи. */
@@ -151,8 +160,12 @@ function buildDescription(input: MeetingInviteInput): string {
  *
  * `METHOD:REQUEST` — это приглашение, а не запись «для себя»: календарь
  * получателя предложит принять или отклонить, а не просто добавит в сетку.
+ * `METHOD:CANCEL` с тем же `UID` и `STATUS:CANCELLED` убирает событие у тех,
+ * кому его разослали; участники в отмене — те же, иначе календарь не поймёт,
+ * к кому она относится.
  */
 export function buildMeetingInvite(input: MeetingInviteInput): string {
+	const method = input.method ?? 'REQUEST';
 	const start = formatIcsInstant(input.start);
 	const end = formatIcsInstant(new Date(input.start.getTime() + input.durationMinutes * 60_000));
 	const description = buildDescription(input);
@@ -162,7 +175,7 @@ export function buildMeetingInvite(input: MeetingInviteInput): string {
 		'VERSION:2.0',
 		simpleLine('PRODID', PRODID),
 		'CALSCALE:GREGORIAN',
-		'METHOD:REQUEST',
+		`METHOD:${method}`,
 		'BEGIN:VEVENT',
 		simpleLine('UID', input.uid),
 		simpleLine('DTSTAMP', formatIcsInstant(input.generatedAt)),
@@ -176,7 +189,7 @@ export function buildMeetingInvite(input: MeetingInviteInput): string {
 			: []),
 		organizerLine(input.organizer),
 		...input.attendeesWithEmail.map(attendeeLine),
-		'STATUS:CONFIRMED',
+		method === 'CANCEL' ? 'STATUS:CANCELLED' : 'STATUS:CONFIRMED',
 		'TRANSP:OPAQUE',
 		'END:VEVENT',
 		'END:VCALENDAR'
@@ -194,13 +207,19 @@ export type MeetingIdentity = { uid: string; sequence: number };
  * Встреча, которая ещё впереди, при новом назначении **переносится**: `UID`
  * тот же, `SEQUENCE` на единицу больше — календарь получателя обновит событие,
  * а не заведёт рядом второе (RFC 5545, 3.8.7.4). Прошедшая встреча уже
- * состоялась, и новое назначение — это следующая встреча со своим `UID`.
+ * состоялась, и новое назначение — это следующая встреча со своим `UID`. Так
+ * же и после отмены: отменённое событие календари уже убрали, и воскрешать
+ * его тем же `UID` незачем.
  */
 export function nextMeetingIdentity(
-	previous: (MeetingIdentity & { start: Date }) | null,
+	previous: (MeetingIdentity & { start: Date; cancelled?: boolean }) | null,
 	now: Date
 ): MeetingIdentity {
-	if (previous !== null && previous.start.getTime() > now.getTime()) {
+	if (
+		previous !== null &&
+		previous.cancelled !== true &&
+		previous.start.getTime() > now.getTime()
+	) {
 		return { uid: previous.uid, sequence: previous.sequence + 1 };
 	}
 

@@ -12,7 +12,7 @@
  * длительность и место, а не имена и контакты участников.
  */
 import { and, desc, eq, sql } from 'drizzle-orm';
-import type { AuditEventType } from '$lib/contracts/audit';
+import type { AuditDetails, AuditEventType } from '$lib/contracts/audit';
 import {
 	readModuleFactValue,
 	type ModuleFactData,
@@ -99,10 +99,13 @@ export async function recordModuleFactIn(
 	publishAfterCommit(tx, input.interactionId, { type: 'interaction.changed' });
 }
 
-/** Факт модуля своей транзакцией — под блокировкой дела и с событием журнала. */
+/**
+ * Факт модуля своей транзакцией — под блокировкой дела и с событием журнала.
+ * `auditDetails` дополняют подробности события — например, числом получателей.
+ */
 export async function recordModuleFact(
 	ctx: ActorContext,
-	input: FactInput & { auditType: AuditEventType }
+	input: FactInput & { auditType: AuditEventType; auditDetails?: AuditDetails }
 ): Promise<void> {
 	requirePermission(ctx, 'interactions.write');
 
@@ -129,7 +132,7 @@ export async function recordModuleFact(
 				type: input.auditType,
 				outcome: 'success',
 				subject: { type: 'interaction', id: input.interactionId },
-				details: { changedFields: [`${input.module}:${input.fact}`] }
+				details: { ...input.auditDetails, changedFields: [`${input.module}:${input.fact}`] }
 			},
 			tx
 		);

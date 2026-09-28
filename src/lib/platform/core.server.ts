@@ -65,6 +65,20 @@ export { listOrganizationContracts } from '$lib/server/directory/contracts';
 export { withPiiTrace } from '$lib/server/people/pii-trace';
 export { toPersonView } from '$lib/server/people/serialize';
 
+// Кому из контактов стороны и коллег можно написать по делу.
+export {
+	contactGreetingName,
+	contactPersonName,
+	contactUnavailableReason,
+	readCaseContacts,
+	resolveCaseContacts
+} from '$lib/server/interactions/contact-addressees';
+export { canUserSeeInteraction, listInteractionViewers } from '$lib/server/live/viewers';
+
+// Письма людям вне системы: песочница, отправка и шаблон приглашения на встречу.
+export { outboundMailPolicy, sendOutboundMail } from '$lib/server/mail/outbound';
+export { meetingInviteEmail, type MeetingMailKind } from '$lib/server/mail/meeting-invite';
+
 // Файлы.
 export { contentDisposition } from '$lib/server/documents/filename';
 
