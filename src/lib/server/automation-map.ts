@@ -95,7 +95,7 @@ export async function loadAutomationMap(ctx: ActorContext) {
 			result: action.result,
 			status: action.status,
 			where: { label: action.where ?? screen.title, href: open ? screen.href : null },
-			help: screen.help,
+			help: action.help ?? screen.help,
 			count:
 				action.counter === undefined || value === undefined
 					? null

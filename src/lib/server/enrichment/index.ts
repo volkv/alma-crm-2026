@@ -523,7 +523,7 @@ export async function queryRegistry(ctx: ActorContext, raw: string): Promise<Reg
 	const settings = await requireEnabled();
 
 	// Без ключа обращения не будет — и квоту на него тратить нечего.
-	if (!isDadataConfigured()) {
+	if (!(await isDadataConfigured())) {
 		throw new DadataError('not_configured', null, DADATA_NOT_CONFIGURED);
 	}
 

@@ -381,8 +381,128 @@ export type WebhookPayload = z.output<typeof webhookPayloadSchema>;
 export const INTEGRATION_SETTING_KEYS = {
 	lms: 'integrations.lms',
 	delivery: 'integrations.delivery',
-	exchange: 'integrations.exchange'
+	exchange: 'integrations.exchange',
+	dadata: 'integrations.dadata'
 } as const;
+
+/* ------------------------------------------------------------------ */
+/* Dadata: ключ подсказок и адрес сервиса                              */
+/* ------------------------------------------------------------------ */
+
+/** Облачный сервис подсказок: адрес по умолчанию. */
+export const DADATA_CLOUD_ORIGIN = 'https://suggestions.dadata.ru';
+
+/**
+ * Почему адрес сервиса Dadata не годится; `null` — годится.
+ *
+ * Только `https`: по этому адресу уходит ключ, и открытый канал отдал бы его
+ * любому, кто стоит на пути. Учётные данные в адресе не принимаются — ключ
+ * задаётся своим полем. Путь и параметры отбрасывает {@link dadataOrigin}:
+ * пути API строятся от узла.
+ */
+export function dadataBaseUrlIssue(raw: string): string | null {
+	let parsed: URL;
+
+	try {
+		parsed = new URL(raw);
+	} catch {
+		return 'Адрес указывают полностью, вместе с https://';
+	}
+
+	if (parsed.protocol !== 'https:') {
+		return 'Адрес сервиса Dadata принимается только по https: по нему уходит ключ';
+	}
+
+	if (parsed.username !== '' || parsed.password !== '') {
+		return 'Учётные данные в адресе не указывают: ключ задаётся своим полем';
+	}
+
+	return null;
+}
+
+/** Адрес сервиса в каноническом виде — только схема, узел и порт. */
+export function dadataOrigin(raw: string): string {
+	return new URL(raw).origin;
+}
+
+/**
+ * Хранимая настройка Dadata. Ключ лежит зашифрованным (`enc:v1:…`) и
+ * расшифровывается только тем кодом, который идёт в Dadata. `baseUrl` —
+ * `null`, пока действует облачный адрес.
+ */
+export const dadataSettingsSchema = z.object({
+	baseUrl: z
+		.string()
+		.refine((value) => dadataBaseUrlIssue(value) === null, {
+			error: (issue) => dadataBaseUrlIssue(String(issue.input)) ?? 'Адрес не годится'
+		})
+		.nullable()
+		.default(null),
+	apiKey: z.string().max(2000).nullable().default(null),
+	/**
+	 * Маска ключа для экрана, посчитанная при записи: показать ключ на
+	 * странице можно, не расшифровывая его при каждом открытии.
+	 */
+	keyMask: z.string().max(16).nullable().default(null)
+});
+
+export type DadataSettings = z.output<typeof dadataSettingsSchema>;
+
+/**
+ * Маска ключа: `•••• 1a2b`. Короткий ключ маскируется целиком — последние
+ * четыре знака восьмизначного значения уже половина его.
+ */
+export function maskDadataKey(key: string): string {
+	return key.length > 8 ? `•••• ${key.slice(-4)}` : '••••';
+}
+
+/** Откуда действующий ключ: из интерфейса, из окружения сервера или ниоткуда. */
+export const DADATA_KEY_SOURCES = ['settings', 'environment', 'none'] as const;
+
+export type DadataKeySource = (typeof DADATA_KEY_SOURCES)[number];
+
+export const DADATA_KEY_SOURCE_LABELS: Record<DadataKeySource, string> = {
+	settings: 'задан в интерфейсе',
+	environment: 'из окружения сервера',
+	none: 'не задан'
+};
+
+/**
+ * Настройка для экрана. Ключа целиком здесь нет и быть не может: только маска
+ * с последними четырьмя знаками и источник значения.
+ */
+export type DadataSettingsView = {
+	/** Действующий адрес сервиса. */
+	baseUrl: string;
+	/** Адрес задан в интерфейсе, а не облачный по умолчанию. */
+	customBaseUrl: boolean;
+	keySource: DadataKeySource;
+	/** `•••• 1a2b`; `null` — ключа нет. */
+	keyMask: string | null;
+	/** Ключ есть в окружении сервера: удалить ключ из интерфейса — значит вернуться к нему. */
+	environmentKey: boolean;
+};
+
+/**
+ * Форма настройки Dadata. Пустое поле ключа означает «оставить прежний», как
+ * у токена системы обучения; пустой адрес — облачный сервис.
+ */
+export const dadataSettingsFormSchema = z.object({
+	baseUrl: z
+		.string()
+		.trim()
+		.max(2000)
+		.refine((value) => value === '' || dadataBaseUrlIssue(value) === null, {
+			error: (issue) =>
+				(String(issue.input) === '' ? null : dadataBaseUrlIssue(String(issue.input))) ??
+				'Адрес не годится'
+		}),
+	apiKey: optionalText(200).refine((value) => value === null || /^\S+$/.test(value), {
+		error: 'Ключ API — одна строка без пробелов, как в личном кабинете Dadata'
+	})
+});
+
+export type DadataSettingsFormInput = z.output<typeof dadataSettingsFormSchema>;
 
 export const lmsSettingsSchema = z.object({
 	/**

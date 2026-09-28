@@ -1,7 +1,7 @@
 import { error } from '@sveltejs/kit';
 import { actorFromEvent } from '$lib/server/actor';
 import { toActionFailure } from '$lib/server/http';
-import { checkExternalSources, DADATA_HOST, runDiagnostics } from '$lib/server/diagnostics';
+import { checkExternalSources, dadataHost, runDiagnostics } from '$lib/server/diagnostics';
 import { can } from '$lib/server/rbac';
 import type { Actions, PageServerLoad } from './$types';
 import { PERMISSIONS } from '$lib/server/rbac/permissions';
@@ -24,7 +24,7 @@ export const load: PageServerLoad = async (event) => {
 		error(403, `Раздел доступен только с правом «${PERMISSIONS['integrations.manage']}»`);
 	}
 
-	return { report: await runDiagnostics(ctx), dadataHost: DADATA_HOST };
+	return { report: await runDiagnostics(ctx), dadataHost: await dadataHost() };
 };
 
 export const actions: Actions = {

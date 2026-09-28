@@ -24,9 +24,8 @@ import { rebaseEndpoint } from '../auth/oidc';
 import { getConfig } from '../config';
 import { pingDatabase } from '../db';
 import { pingStorage } from '../documents/storage';
-import { isDadataConfigured } from '../enrichment/dadata';
 import { outboundTargetIssue } from '../integrations/outbound';
-import { getExchangeSettings, getLmsSettings } from '../integrations/settings';
+import { getDadataTarget, getExchangeSettings, getLmsSettings } from '../integrations/settings';
 import { requirePermission } from '../rbac';
 import { pingRedis } from '../redis';
 import { getSetting } from '../settings';
@@ -43,8 +42,13 @@ import {
 /** Сколько ждём одну связь. Локальная зависимость, не ответившая за это время, для человека лежит. */
 export const PROBE_TIMEOUT_MS = 2_500;
 
-/** Узел Dadata, к которому ходит поиск реквизитов (`enrichment/dadata.ts`). */
-export const DADATA_HOST = 'suggestions.dadata.ru';
+/**
+ * Узел Dadata, к которому ходит поиск реквизитов: облачный по умолчанию или
+ * коробочная версия из настройки «Интеграции → Dadata».
+ */
+export async function dadataHost(): Promise<string> {
+	return new URL((await getDadataTarget()).origin).host;
+}
 
 const DEFAULT_PORTS: Record<string, number> = {
 	'http:': 80,
@@ -253,7 +257,7 @@ export async function runDiagnostics(ctx: ActorContext): Promise<DiagnosticsRepo
 	const config = getConfig();
 	const smtpUrl = config.SMTP_URL;
 
-	const [database, redis, storage, keycloak, gotenberg, smtp, exchange, lms, enrichment] =
+	const [database, redis, storage, keycloak, gotenberg, smtp, exchange, lms, enrichment, dadata] =
 		await Promise.all([
 			probe(() => pingDatabase()),
 			probe(() => pingRedis()),
@@ -279,7 +283,8 @@ export async function runDiagnostics(ctx: ActorContext): Promise<DiagnosticsRepo
 					}),
 			getExchangeSettings(),
 			getLmsSettings(),
-			getSetting('enrichment')
+			getSetting('enrichment'),
+			getDadataTarget()
 		]);
 
 	const peers = await Promise.all([
@@ -313,8 +318,10 @@ export async function runDiagnostics(ctx: ActorContext): Promise<DiagnosticsRepo
 	};
 	const dadataState: LinkState = !enrichment.enabled
 		? disabled
-		: !isDadataConfigured()
-			? NOT_CONFIGURED('Флаг включён, но DADATA_API_KEY не задан: поиск реквизитов не настроен')
+		: !dadata.hasKey
+			? NOT_CONFIGURED(
+					'Флаг включён, но ключ Dadata не задан ни на странице «Интеграции», ни в окружении сервера: поиск реквизитов не настроен'
+				)
 			: {
 					status: 'not_checked',
 					detail: 'Включено флагом. Выход в интернет проверяется кнопкой ниже',
@@ -382,9 +389,11 @@ export async function runDiagnostics(ctx: ActorContext): Promise<DiagnosticsRepo
 		link(
 			'dadata',
 			'Dadata',
-			'Поиск реквизитов организации по названию или ИНН',
-			'external',
-			`https://${DADATA_HOST}`,
+			dadata.custom
+				? 'Поиск реквизитов организации по названию или ИНН — коробочная версия в сети заказчика'
+				: 'Поиск реквизитов организации по названию или ИНН',
+			dadata.custom ? 'allowed' : 'external',
+			dadata.origin,
 			dadataState
 		),
 		link(
@@ -413,26 +422,32 @@ export type ExternalCheck = {
 };
 
 /**
- * Одна проверка выхода в интернет: разрешается ли имя Dadata и принимает ли
- * узел соединение на 443. Запросов к API нет — ни ключа, ни квоты проверка не
- * тратит. Идёт только по кнопке: открытие страницы наружу не ходит.
+ * Одна проверка связи с Dadata: разрешается ли имя узла из настройки
+ * «Интеграции → Dadata» (по умолчанию облачного) и принимает ли узел
+ * соединение на своём порту (443, если порт не назван). Запросов к API нет —
+ * ни ключа, ни квоты проверка не тратит. Идёт только по кнопке: открытие
+ * страницы наружу не ходит.
  */
 export async function checkExternalSources(ctx: ActorContext): Promise<ExternalCheck> {
 	requirePermission(ctx, 'integrations.manage');
 
+	const target = new URL((await getDadataTarget()).origin);
+	// У адреса IPv6 имя узла приходит в квадратных скобках, а разрешению имён
+	// они не нужны.
+	const host = target.hostname.replace(/^\[|\]$/g, '');
 	let resolved: string | null = null;
 
 	const state = await probe(async (signal) => {
 		try {
-			resolved = (await lookup(DADATA_HOST)).address;
+			resolved = (await lookup(host)).address;
 		} catch (error) {
-			throw new Error(`Имя ${DADATA_HOST} не разрешается: ${failureText(error)}`, {
+			throw new Error(`Имя ${host} не разрешается: ${failureText(error)}`, {
 				cause: error
 			});
 		}
 
-		await tcpConnect(resolved, 443, signal);
+		await tcpConnect(resolved, portOf(target), signal);
 	});
 
-	return { host: DADATA_HOST, resolved, state };
+	return { host: target.host, resolved, state };
 }

@@ -8,6 +8,7 @@ import { resetDemoData } from '$lib/server/demo/reset';
 import { AppError, ForbiddenError } from '$lib/server/errors';
 import { errorIssues, toActionFailure, type ActionErrorPayload } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
+import { hasDadataKey } from '$lib/server/integrations/settings';
 import { getSetting, setSetting } from '$lib/server/settings';
 import {
 	demoScheduleSchema,
@@ -106,7 +107,8 @@ export const load: PageServerLoad = async (event) => {
 		enrichmentForm: await superValidate(enrichment, zod4(enrichmentSchema), {
 			id: FORM_IDS.enrichment
 		}),
-		dadataConfigured: getConfig().DADATA_API_KEY !== null,
+		// Ключ задаётся на странице «Интеграции» (панель Dadata) или окружением сервера.
+		dadataConfigured: await hasDadataKey(),
 		// Вне демонстрационного стенда действия сброса не существует вовсе, и
 		// карточка объясняет это вместо того, чтобы исчезнуть: пропавшая кнопка
 		// не отвечает на вопрос, куда она делась.

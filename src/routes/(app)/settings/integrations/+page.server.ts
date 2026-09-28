@@ -4,10 +4,12 @@ import { fail, message, setError, superValidate, type SuperValidated } from 'sve
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { id } from '$lib/contracts/common';
 import {
+	dadataSettingsFormSchema,
 	deliverySettingsSchema,
 	exchangeSettingsFormSchema,
 	lmsSettingsFormSchema,
-	webhookFormSchema
+	webhookFormSchema,
+	type DadataSettingsView
 } from '$lib/contracts/integrations';
 import { actorFromEvent } from '$lib/server/actor';
 import { getConfig } from '$lib/server/config';
@@ -18,10 +20,13 @@ import { errorIssues, toActionFailure, type ActionErrorPayload } from '$lib/serv
 import { syncLms, readLmsState } from '$lib/server/integrations/lms/sync';
 import { sendTestEvent } from '$lib/server/integrations/pump';
 import {
+	clearDadataKey,
 	clearLmsToken,
+	getDadataSettingsView,
 	getDeliverySettings,
 	getExchangeSettingsView,
 	getLmsSettingsView,
+	setDadataSettings,
 	setDeliverySettings,
 	setExchangeSettings,
 	setLmsSettings
@@ -37,7 +42,8 @@ import type { Actions, PageServerLoad } from './$types';
 import { PERMISSIONS } from '$lib/server/rbac/permissions';
 
 /**
- * Интеграции: подписки на события, подключения обмена и выгрузка из LMS.
+ * Интеграции: подписки на события, подключения обмена, выгрузка из LMS и
+ * подключение к Dadata (ключ подсказок и адрес сервиса).
  *
  * Раздел открыт правом `integrations.manage` — им же открыт журнал обмена, и
  * ради него стенд и показывают. Правка того, что уводит данные на чужой узел, —
@@ -57,7 +63,8 @@ const FORM_IDS = {
 	webhook: 'webhook',
 	lms: 'lms-settings',
 	delivery: 'delivery-settings',
-	exchange: 'exchange-settings'
+	exchange: 'exchange-settings',
+	dadata: 'dadata-settings'
 } as const;
 
 export const load: PageServerLoad = async (event) => {
@@ -67,13 +74,14 @@ export const load: PageServerLoad = async (event) => {
 		error(403, `Раздел доступен только с правом «${PERMISSIONS['integrations.manage']}»`);
 	}
 
-	const [webhooks, lms, delivery, lmsState, exchange, owners] = await Promise.all([
+	const [webhooks, lms, delivery, lmsState, exchange, owners, dadata] = await Promise.all([
 		listWebhooks(ctx),
 		getLmsSettingsView(ctx),
 		getDeliverySettings(),
 		readLmsState(),
 		getExchangeSettingsView(ctx),
-		listIntakeOwners()
+		listIntakeOwners(),
+		getDadataSettingsView(ctx)
 	]);
 
 	const config = getConfig();
@@ -84,6 +92,8 @@ export const load: PageServerLoad = async (event) => {
 		lmsState,
 		exchange,
 		owners,
+		// Ключ Dadata целиком сюда не попадает: только маска и источник.
+		dadata,
 		// Адрес имитатора показывается только тогда, когда развёртывание его
 		// назвало: подсказывать адрес, которого нет, значит врать.
 		lmsHint: config.EXCHANGE_LMS_BASE_URL,
@@ -122,6 +132,11 @@ export const load: PageServerLoad = async (event) => {
 			},
 			zod4(exchangeSettingsFormSchema),
 			{ id: FORM_IDS.exchange }
+		),
+		dadataForm: await superValidate(
+			{ baseUrl: dadata.customBaseUrl ? dadata.baseUrl : '', apiKey: null },
+			zod4(dadataSettingsFormSchema),
+			{ id: FORM_IDS.dadata }
 		)
 	};
 };
@@ -325,6 +340,52 @@ export const actions: Actions = {
 		}
 
 		return message(form, 'Подключения обмена сохранены');
+	},
+
+	dadata: async (event) => {
+		const form = await superValidate(event.request, zod4(dadataSettingsFormSchema), {
+			id: FORM_IDS.dadata
+		});
+
+		const apiKey = form.data.apiKey;
+
+		// Ключ не возвращается в браузер ни при каком исходе: ответ действия
+		// перерисовывает форму её же данными, и ключ оказался бы в разметке.
+		form.data.apiKey = null;
+
+		if (!form.valid) {
+			return fail(400, { form });
+		}
+
+		try {
+			await setDadataSettings(actorFromEvent(event), {
+				baseUrl: form.data.baseUrl === '' ? null : form.data.baseUrl,
+				apiKey
+			});
+		} catch (failure) {
+			return asFormError(form, failure);
+		}
+
+		return message(form, 'Настройки Dadata сохранены');
+	},
+
+	forgetDadataKey: async (event) => {
+		let view: DadataSettingsView;
+
+		try {
+			view = await clearDadataKey(actorFromEvent(event));
+		} catch (failure) {
+			return toActionFailure(failure);
+		}
+
+		return {
+			message:
+				view.keySource === 'environment'
+					? 'Ключ из интерфейса удалён. Действует ключ из окружения сервера, адрес — облачный'
+					: 'Ключ удалён: поиск по ЕГРЮЛ не подключён',
+			issues: [],
+			ok: true
+		};
 	},
 
 	delivery: async (event) => {

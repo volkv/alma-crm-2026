@@ -29,7 +29,7 @@ describe('validateAuditDetails', () => {
 
 	it('отвергает любой ключ, который не является ни ссылкой, ни служебным полем', () => {
 		expect(validateAuditDetails({ comment: 'позвонили в вуз' })).toEqual([
-			'comment: в подробностях допустимы ссылки вида <что-то>Id, имена <что-то>Key, числа <что-то>Count, personIds, provenance и поля route, method, status, demo, mode, periodStart, periodEnd'
+			'comment: в подробностях допустимы ссылки вида <что-то>Id, имена <что-то>Key, числа <что-то>Count, personIds, provenance и поля route, method, status, demo, mode, periodStart, periodEnd, host'
 		]);
 	});
 
@@ -64,7 +64,7 @@ describe('validateAuditDetails', () => {
 		expect(
 			validateAuditDetails({ organizationIds: ['11111111-2222-4333-8444-555555555555'] })
 		).toEqual([
-			'organizationIds: в подробностях допустимы ссылки вида <что-то>Id, имена <что-то>Key, числа <что-то>Count, personIds, provenance и поля route, method, status, demo, mode, periodStart, periodEnd'
+			'organizationIds: в подробностях допустимы ссылки вида <что-то>Id, имена <что-то>Key, числа <что-то>Count, personIds, provenance и поля route, method, status, demo, mode, periodStart, periodEnd, host'
 		]);
 		expect(
 			validateAuditDetails({ organizationId: ['11111111-2222-4333-8444-555555555555'] })

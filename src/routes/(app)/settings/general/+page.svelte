@@ -374,12 +374,17 @@
 					onchange: (next) => ($enrichmentData.dailyQuota = next)
 				})}
 			</div>
-			{#if !data.dadataConfigured}
-				<p class="text-xs text-muted-foreground">
-					Ключ Dadata не задан (<code>DADATA_API_KEY</code>): при включённых источниках читается
-					только раздел «Сведения» на сайтах вузов.
-				</p>
-			{/if}
+			<p class="text-xs text-muted-foreground">
+				{#if !data.dadataConfigured}
+					Ключ Dadata не задан: при включённых источниках читается только раздел «Сведения» на
+					сайтах вузов.
+				{/if}
+				Ключ API и адрес сервиса Dadata задаются на странице
+				<a
+					class="underline underline-offset-2"
+					href="{resolve('/(app)/settings/integrations')}#dadata">«Интеграции» в панели Dadata</a
+				>.
+			</p>
 			<FormActions submitting={$enrichmentSubmitting} submitLabel="Сохранить" />
 		</form>
 	</Card.Content>

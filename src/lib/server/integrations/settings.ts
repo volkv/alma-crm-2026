@@ -25,10 +25,17 @@
 import { eq } from 'drizzle-orm';
 import { z } from 'zod';
 import {
+	DADATA_CLOUD_ORIGIN,
+	dadataOrigin,
+	dadataSettingsSchema,
 	deliverySettingsSchema,
 	exchangeSettingsSchema,
 	INTEGRATION_SETTING_KEYS,
 	lmsSettingsSchema,
+	maskDadataKey,
+	type DadataKeySource,
+	type DadataSettings,
+	type DadataSettingsView,
 	type DeliverySettings,
 	type ExchangeSettings,
 	type ExchangeSettingsFormInput,
@@ -36,6 +43,7 @@ import {
 	type LmsSettings,
 	type LmsSettingsView
 } from '$lib/contracts/integrations';
+import type { AuditDetails } from '$lib/contracts/audit';
 import type { ActorContext } from '../actor';
 import { recordAuditEvent } from '../audit';
 import { getConfig } from '../config';
@@ -43,6 +51,7 @@ import { getDb } from '../db';
 import { appSettings } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { ValidationError } from '../errors';
+import { decryptContact, encryptContact } from '../people/pii';
 import { requirePermission } from '../rbac';
 import { outboundTargetIssue } from './outbound';
 
@@ -109,7 +118,12 @@ export async function getDeliverySettings(): Promise<DeliverySettings> {
  * у общих настроек: настройка, поменянная без следа, ничем не отличается от
  * подменённой.
  */
-async function writeSetting(ctx: ActorContext, key: string, value: unknown): Promise<void> {
+async function writeSetting(
+	ctx: ActorContext,
+	key: string,
+	value: unknown,
+	extra: Pick<AuditDetails, 'mode' | 'host'> = {}
+): Promise<void> {
 	await withTransaction(ctx, async (tx) => {
 		await tx
 			.insert(appSettings)
@@ -123,7 +137,11 @@ async function writeSetting(ctx: ActorContext, key: string, value: unknown): Pro
 		// `subject`: столбец `subject_id` типизирован как ссылка на запись.
 		await recordAuditEvent(
 			ctx,
-			{ type: 'settings.updated', outcome: 'success', details: { changedFields: [key] } },
+			{
+				type: 'settings.updated',
+				outcome: 'success',
+				details: { changedFields: [key], ...extra }
+			},
 			tx
 		);
 	});
@@ -373,4 +391,184 @@ export async function setExchangeSettings(
 	await writeSetting(ctx, INTEGRATION_SETTING_KEYS.exchange, parsed.data);
 
 	return toExchangeView(parsed.data);
+}
+
+/* ------------------------------------------------------------------ */
+/* Dadata                                                              */
+/* ------------------------------------------------------------------ */
+
+const DADATA_SETTINGS_DEFAULT: DadataSettings = dadataSettingsSchema.parse({});
+
+async function getDadataSettings(): Promise<DadataSettings> {
+	return readSetting(
+		INTEGRATION_SETTING_KEYS.dadata,
+		dadataSettingsSchema,
+		DADATA_SETTINGS_DEFAULT
+	);
+}
+
+/** Куда и с каким ключом идти в Dadata. */
+export type DadataConnection = {
+	origin: string;
+	/** Ключ целиком; `null` — не задан нигде. */
+	key: string | null;
+	source: DadataKeySource;
+	/** Адрес задан в интерфейсе, а не облачный: перед заходом проверяется правилом исходящих адресов. */
+	custom: boolean;
+};
+
+/**
+ * Действующее подключение к Dadata. Только для того кода, который
+ * действительно идёт в сервис: ключ здесь расшифрован.
+ *
+ * Ключ из интерфейса перекрывает окружение. Ключ окружения (`DADATA_API_KEY`)
+ * — фолбэк на чтении, а не сид: стенд, у которого настройка пуста или
+ * сброшена, продолжает искать по ЕГРЮЛ ключом из `.env` сервера.
+ *
+ * Ключ окружения уходит только в облачный сервис. Свой адрес действует лишь
+ * вместе с ключом, введённым в интерфейсе, — иначе смена адреса уводила бы
+ * ключ, которого сменивший не знает, на выбранный им узел.
+ */
+export async function getDadataConnection(): Promise<DadataConnection> {
+	const stored = await getDadataSettings();
+
+	if (stored.apiKey !== null) {
+		return {
+			origin: stored.baseUrl ?? DADATA_CLOUD_ORIGIN,
+			key: decryptContact(stored.apiKey),
+			source: 'settings',
+			custom: stored.baseUrl !== null
+		};
+	}
+
+	const key = getConfig().DADATA_API_KEY;
+
+	return {
+		origin: DADATA_CLOUD_ORIGIN,
+		key,
+		source: key === null ? 'none' : 'environment',
+		custom: false
+	};
+}
+
+/**
+ * Куда пойдёт поиск и есть ли с чем — без расшифровки ключа: для диагностики
+ * и для вопроса «подключён ли реестр».
+ */
+export async function getDadataTarget(): Promise<{
+	origin: string;
+	custom: boolean;
+	hasKey: boolean;
+}> {
+	const view = toDadataView(await getDadataSettings());
+
+	return { origin: view.baseUrl, custom: view.customBaseUrl, hasKey: view.keySource !== 'none' };
+}
+
+/** Задан ли ключ хоть где-нибудь. Не расшифровывает ключ. */
+export async function hasDadataKey(): Promise<boolean> {
+	return (await getDadataTarget()).hasKey;
+}
+
+function toDadataView(stored: DadataSettings): DadataSettingsView {
+	const environment = getConfig().DADATA_API_KEY;
+
+	if (stored.apiKey !== null) {
+		const origin = stored.baseUrl ?? DADATA_CLOUD_ORIGIN;
+
+		return {
+			baseUrl: origin,
+			customBaseUrl: stored.baseUrl !== null,
+			keySource: 'settings',
+			keyMask: stored.keyMask ?? '••••',
+			environmentKey: environment !== null
+		};
+	}
+
+	return {
+		baseUrl: DADATA_CLOUD_ORIGIN,
+		customBaseUrl: false,
+		keySource: environment === null ? 'none' : 'environment',
+		keyMask: environment === null ? null : maskDadataKey(environment),
+		environmentKey: environment !== null
+	};
+}
+
+/** Настройка Dadata для экрана: маска ключа и его источник, без ключа. */
+export async function getDadataSettingsView(ctx: ActorContext): Promise<DadataSettingsView> {
+	requirePermission(ctx, 'integrations.manage');
+
+	return toDadataView(await getDadataSettings());
+}
+
+/**
+ * Запись ключа и адреса. Пустой ключ оставляет прежний, пустой адрес —
+ * облачный сервис. Право — как у адреса и токена системы обучения: по адресу
+ * уходит ключ.
+ */
+export async function setDadataSettings(
+	ctx: ActorContext,
+	input: { baseUrl: string | null; apiKey: string | null }
+): Promise<DadataSettingsView> {
+	await requirePermission(ctx, 'integrations.manage_endpoints', { type: 'settings.updated' });
+
+	const current = await getDadataSettings();
+	const requested = input.baseUrl === null ? DADATA_CLOUD_ORIGIN : dadataOrigin(input.baseUrl);
+	const baseUrl = requested === DADATA_CLOUD_ORIGIN ? null : requested;
+
+	if (input.apiKey === null) {
+		if (current.apiKey !== null && baseUrl !== current.baseUrl) {
+			throw new ValidationError('Адрес сервиса Dadata не сохранён', [
+				'При смене адреса введите ключ заново: ключ уходит на этот адрес'
+			]);
+		}
+
+		if (current.apiKey === null && baseUrl !== null) {
+			throw new ValidationError('Адрес сервиса Dadata не сохранён', [
+				'Своему адресу нужен ключ, введённый здесь: ключ из окружения сервера уходит только в облачный сервис'
+			]);
+		}
+	}
+
+	// Коробочная версия стоит в сети заказчика — правило то же, что у CMS и
+	// системы обучения: приватный адрес открывает только список разрешённых
+	// узлов развёртывания.
+	if (baseUrl !== null) {
+		const refusal = await outboundTargetIssue(baseUrl);
+
+		if (refusal !== null) {
+			throw new ValidationError('Адрес сервиса Dadata не годится', [refusal]);
+		}
+	}
+
+	const next = dadataSettingsSchema.parse({
+		baseUrl,
+		apiKey: input.apiKey === null ? current.apiKey : encryptContact(input.apiKey),
+		keyMask: input.apiKey === null ? current.keyMask : maskDadataKey(input.apiKey)
+	});
+
+	await writeSetting(ctx, INTEGRATION_SETTING_KEYS.dadata, next, {
+		mode: input.apiKey === null ? 'key_kept' : 'key_set',
+		host: new URL(requested).host
+	});
+
+	return toDadataView(next);
+}
+
+/**
+ * Удалить ключ, введённый в интерфейсе. Адрес возвращается к облачному: свой
+ * адрес без своего ключа не действует. Ключ окружения, если он есть, снова
+ * становится действующим.
+ */
+export async function clearDadataKey(ctx: ActorContext): Promise<DadataSettingsView> {
+	await requirePermission(ctx, 'integrations.manage_endpoints', { type: 'settings.updated' });
+
+	const next = DADATA_SETTINGS_DEFAULT;
+
+	await writeSetting(ctx, INTEGRATION_SETTING_KEYS.dadata, next, {
+		mode: 'key_removed',
+		host: new URL(DADATA_CLOUD_ORIGIN).host
+	});
+
+	return toDadataView(next);
 }

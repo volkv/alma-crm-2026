@@ -10,6 +10,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import { AUTOMATION_CROSS_CUTTING, AUTOMATION_STEPS, automationScreen } from '$lib/automation-map';
+import { findHelpPage } from '$lib/help';
 import { B2B_PROCESS, B2B_WORKSPACE_KEY } from '$lib/server/stages/definitions';
 
 const APP_ROUTES = fileURLToPath(new URL('../../src/routes/(app)', import.meta.url));
@@ -43,6 +44,13 @@ describe('карта автоматизации', () => {
 
 			expect(existsSync(`${APP_ROUTES}${route}/+page.svelte`), action.title).toBe(true);
 			expect(screen.help, action.title).not.toBeNull();
+
+			// Своя статья пункта должна существовать и называться так, как подписана ссылка.
+			if (action.help !== undefined) {
+				expect(findHelpPage(action.help.section, action.help.page)?.title, action.title).toBe(
+					action.help.title
+				);
+			}
 		}
 	});
 });

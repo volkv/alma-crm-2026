@@ -85,7 +85,7 @@ export async function passportAvailability(ctx: ActorContext): Promise<PassportA
 
 	return {
 		enabled: settings.enabled,
-		registryConfigured: isDadataConfigured(),
+		registryConfigured: await isDadataConfigured(),
 		remaining: Math.max(0, settings.dailyQuota - used),
 		dailyQuota: settings.dailyQuota
 	};

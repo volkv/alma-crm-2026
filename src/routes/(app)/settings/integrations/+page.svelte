@@ -25,12 +25,16 @@
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatDateTime } from '$lib/format';
 	import {
+		DADATA_CLOUD_ORIGIN,
+		DADATA_KEY_SOURCE_LABELS,
+		dadataSettingsFormSchema,
 		deliverySettingsSchema,
 		exchangeSettingsFormSchema,
 		lmsSettingsFormSchema,
 		prefixPattern,
 		webhookFormSchema,
 		WEBHOOK_STATE_LABELS,
+		type DadataSettingsFormInput,
 		type DeliverySettings,
 		type ExchangeSettingsFormInput,
 		type LmsSettingsFormInput,
@@ -95,6 +99,17 @@
 	} = superForm<ExchangeSettingsFormInput, string>(
 		untrack(() => data.exchangeForm),
 		{ validators: zod4Client(exchangeSettingsFormSchema), id: 'exchange-settings' }
+	);
+
+	const {
+		form: dadata,
+		errors: dadataErrors,
+		enhance: dadataEnhance,
+		submitting: dadataSubmitting,
+		message: dadataMessage
+	} = superForm<DadataSettingsFormInput, string>(
+		untrack(() => data.dadataForm),
+		{ validators: zod4Client(dadataSettingsFormSchema), id: 'dadata-settings' }
 	);
 
 	const {
@@ -632,6 +647,98 @@
 					<dd class="font-mono break-all">{data.exchange.lms.groupsUrl ?? 'не задан'}</dd>
 				</div>
 			</dl>
+		{/if}
+	</Card.Content>
+</Card.Root>
+
+<!-- `id="dadata"` — якорь: на панель ссылаются общие настройки и справка. -->
+<Card.Root id="dadata">
+	<Card.Header>
+		<Card.Title>Dadata</Card.Title>
+		<Card.Description>
+			Поиск реквизитов организации в ЕГРЮЛ по названию или ИНН. Включается флагом «Внешние
+			источники» в общих настройках; здесь — ключ API подсказок и адрес сервиса. Ключ целиком не
+			показывается никогда — только последние четыре знака.
+		</Card.Description>
+	</Card.Header>
+	<Card.Content class="flex flex-col gap-4">
+		<dl class="grid gap-2 text-sm sm:grid-cols-2">
+			<div>
+				<dt class="text-muted-foreground">Ключ API</dt>
+				<dd>
+					{#if data.dadata.keyMask !== null}
+						<span class="font-mono">{data.dadata.keyMask}</span>,
+					{/if}
+					{DADATA_KEY_SOURCE_LABELS[data.dadata.keySource]}
+				</dd>
+			</div>
+			<div>
+				<dt class="text-muted-foreground">Адрес сервиса</dt>
+				<dd>
+					<span class="font-mono break-all">{data.dadata.baseUrl}</span>
+					{data.dadata.customBaseUrl ? '(свой)' : '(облачный)'}
+				</dd>
+			</div>
+		</dl>
+
+		{#if data.dadata.keySource === 'settings' && data.dadata.environmentKey}
+			<p class="text-xs text-muted-foreground">
+				В окружении сервера тоже есть ключ: ключ из интерфейса его перекрывает, а после удаления
+				снова начнёт действовать ключ окружения с облачным адресом.
+			</p>
+		{/if}
+
+		{#if $dadataMessage}
+			<Alert.Root><Alert.Description>{$dadataMessage}</Alert.Description></Alert.Root>
+		{/if}
+
+		{#if $dadataErrors._errors}
+			<Alert.Root variant="destructive">
+				<Alert.Description>
+					<ul class="list-inside list-disc">
+						{#each $dadataErrors._errors as issue (issue)}
+							<li>{issue}</li>
+						{/each}
+					</ul>
+				</Alert.Description>
+			</Alert.Root>
+		{/if}
+
+		{#if data.canManageEndpoints}
+			<form
+				method="POST"
+				action="?/dadata"
+				use:dadataEnhance
+				novalidate
+				class="grid gap-4 sm:grid-cols-2"
+			>
+				<FieldInput
+					name="apiKey"
+					label="Ключ API"
+					description={data.dadata.keySource === 'settings'
+						? 'Ключ сохранён. Пустое поле оставит прежний'
+						: 'API key из личного кабинета Dadata; после сохранения показан не будет'}
+					placeholder={data.dadata.keyMask ?? 'Ключ API'}
+					bind:value={() => $dadata.apiKey ?? '', (next) => ($dadata.apiKey = next.trim() || null)}
+					errors={$dadataErrors.apiKey}
+				/>
+				<FieldInput
+					name="baseUrl"
+					label="Адрес сервиса"
+					description="Пусто — облачный сервис. Для коробочной версии в сети заказчика — её внутренний адрес по https, вместе с ключом"
+					placeholder={DADATA_CLOUD_ORIGIN}
+					bind:value={$dadata.baseUrl}
+					errors={$dadataErrors.baseUrl}
+				/>
+				<div class="sm:col-span-2">
+					<FormActions submitting={$dadataSubmitting} submitLabel="Сохранить" />
+				</div>
+			</form>
+			{#if data.dadata.keySource === 'settings'}
+				<form method="POST" action="?/forgetDadataKey" class="border-t border-border pt-4">
+					<Button type="submit" variant="outline">Удалить ключ</Button>
+				</form>
+			{/if}
 		{/if}
 	</Card.Content>
 </Card.Root>

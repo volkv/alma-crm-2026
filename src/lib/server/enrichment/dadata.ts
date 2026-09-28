@@ -7,20 +7,25 @@
  * принимает, но строка запроса попадает в журнал доступа, в `Referer` и в
  * историю посредника, а тело — нет.
  *
- * Адрес сервиса — константа, а не настройка. Сюда уходит ключ, и «настраиваемый
- * адрес, куда отправляется ключ» — это способ увести ключ, а не гибкость.
- * Поэтому проверка исходящих адресов (`integrations/outbound.ts`) здесь не
- * нужна: выбирать адресата некому.
+ * Адрес сервиса и ключ — настройка «Интеграции → Dadata»
+ * (`getDadataConnection`): по умолчанию облачный `suggestions.dadata.ru`, для
+ * коробочной версии в сети заказчика — её внутренний адрес. Сюда уходит ключ,
+ * поэтому свой адрес действует только вместе с ключом, введённым там же, а
+ * ключ окружения уходит только в облако. Свой адрес перед каждым заходом
+ * проверяется правилом исходящих адресов (`integrations/outbound.ts`): имя,
+ * сохранённое годным, к моменту запроса может вести куда угодно.
  *
  * Ответ Dadata описан ровно в тех полях, которыми пользуется черновик карточки:
  * у поставщика их несколько десятков, и объявить все значило бы утверждать, что
  * мы на них полагаемся.
  */
-import { getConfig } from '../config';
 import type { LegalEntity, LegalStatus, LookupQueryKind } from '$lib/contracts/enrichment';
+import { outboundTargetIssue } from '../integrations/outbound';
+import { getDadataConnection, hasDadataKey } from '../integrations/settings';
 
-const SUGGEST_URL = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/suggest/party';
-const FIND_BY_ID_URL = 'https://suggestions.dadata.ru/suggestions/api/4_1/rs/findById/party';
+/** Пути API подсказок: одинаковы у облачного сервиса и у коробочной версии. */
+const SUGGEST_PATH = '/suggestions/api/4_1/rs/suggest/party';
+const FIND_BY_ID_PATH = '/suggestions/api/4_1/rs/findById/party';
 
 /** Сколько ждём подсказки: сервис отвечает за десятки миллисекунд. */
 export const DADATA_TIMEOUT_MS = 10_000;
@@ -40,8 +45,8 @@ export const DADATA_REFUSAL =
 
 /**
  * Отдельный текст для стенда без ключа поставщика: сотруднику — что делать
- * сейчас, без имён переменных окружения; настройку администратор видит в
- * общих настройках и в диагностике.
+ * сейчас, без имён переменных окружения; настройку администратор видит на
+ * странице «Интеграции» и в диагностике.
  */
 export const DADATA_NOT_CONFIGURED =
 	'Поиск по ЕГРЮЛ на этом стенде не подключён: реквизиты введите вручную или загрузите снимок паспорта';
@@ -62,9 +67,9 @@ export class DadataError extends Error {
 	}
 }
 
-/** Задан ли ключ: без него раздел честно говорит, что поиск не настроен. */
-export function isDadataConfigured(): boolean {
-	return getConfig().DADATA_API_KEY !== null;
+/** Задан ли ключ — в интерфейсе или в окружении: без него раздел честно говорит, что поиск не настроен. */
+export async function isDadataConfigured(): Promise<boolean> {
+	return hasDadataKey();
 }
 
 /** Сырая подсказка Dadata — только поля, которыми пользуется черновик. */
@@ -204,11 +209,19 @@ export function readSuggestions(body: unknown): LegalEntity[] {
 	return entities;
 }
 
-async function call(url: string, payload: Record<string, unknown>): Promise<LegalEntity[]> {
-	const key = getConfig().DADATA_API_KEY;
+async function call(path: string, payload: Record<string, unknown>): Promise<LegalEntity[]> {
+	const { origin, key, custom } = await getDadataConnection();
 
 	if (key === null) {
 		throw new DadataError('not_configured', null, DADATA_NOT_CONFIGURED);
+	}
+
+	const url = new URL(path, origin).toString();
+
+	// Свой адрес проверяется в момент запроса, а не только при сохранении:
+	// имя, сохранённое годным, к этому моменту может вести внутрь установки.
+	if (custom && (await outboundTargetIssue(url)) !== null) {
+		throw new DadataError('outbound_refused');
 	}
 
 	let response: Response;
@@ -266,6 +279,6 @@ async function call(url: string, payload: Record<string, unknown>): Promise<Lega
  */
 export async function findParties(query: string, kind: LookupQueryKind): Promise<LegalEntity[]> {
 	return kind === 'inn'
-		? call(FIND_BY_ID_URL, { query, count: SUGGEST_COUNT })
-		: call(SUGGEST_URL, { query, count: SUGGEST_COUNT, type: 'LEGAL' });
+		? call(FIND_BY_ID_PATH, { query, count: SUGGEST_COUNT })
+		: call(SUGGEST_PATH, { query, count: SUGGEST_COUNT, type: 'LEGAL' });
 }

@@ -67,6 +67,11 @@ export type AutomationAction = {
 	screen: string;
 	/** Подпись ссылки «Где это», если название экрана говорит не всё. */
 	where?: string;
+	/**
+	 * Статья справки, если нужна не статья экрана: пункт опирается на
+	 * настройку, описанную в другом разделе.
+	 */
+	help?: NonNullable<TourScreen['help']>;
 	status: AutomationStatus;
 	counter?: AutomationCounter;
 };
@@ -91,6 +96,9 @@ export const AUTOMATION_STEPS: readonly AutomationStep[] = [
 					'Дифф «сейчас в карточке → из ЕГРЮЛ» в форме организации; сотрудник отмечает, что принять',
 				screen: 'organizations',
 				where: 'Организации → «Добавить организацию» → паспорт',
+				// Ключ, адрес сервиса и коробочная версия для закрытого контура
+				// описаны в статье об интеграциях.
+				help: { section: 'admin', page: 'integrations', title: 'Интеграции' },
 				status: 'ready'
 			},
 			{
