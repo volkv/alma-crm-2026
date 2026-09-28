@@ -141,7 +141,8 @@
 			модули и сотрудники пространства настраиваются на его странице — откройте её по названию.
 		</Card.Description>
 		<Card.Action>
-			<Button size="sm" onclick={() => (createOpen = true)}>
+			<!-- `data-tour` — метка подсказок по этому экрану (`$lib/onboarding/screens`). -->
+			<Button data-tour="workspaces-create" size="sm" onclick={() => (createOpen = true)}>
 				<PlusIcon aria-hidden="true" />
 				Создать пространство
 			</Button>

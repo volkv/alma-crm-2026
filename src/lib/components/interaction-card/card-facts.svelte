@@ -124,6 +124,7 @@
 						class="shrink-0 text-muted-foreground"
 						aria-label="Сменить ответственного"
 						title="Сменить ответственного"
+						data-tour="interaction-responsible"
 						onclick={() => commands.open(command)}
 					>
 						<UserPenIcon aria-hidden="true" />

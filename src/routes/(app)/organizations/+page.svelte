@@ -174,7 +174,7 @@
 			</Button>
 		{/if}
 		{#if data.create !== null}
-			<Button onclick={() => (createOpen = true)}>
+			<Button onclick={() => (createOpen = true)} data-tour="organizations-create">
 				<PlusIcon aria-hidden="true" />
 				Добавить организацию
 			</Button>

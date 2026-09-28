@@ -426,8 +426,12 @@ describe('полный тур роли', () => {
 		expect(tourChapters(withoutSamples).some((chapter) => chapter.screenId === 'interaction')).toBe(
 			false
 		);
-		// Вступление плюс шаги экрана — ровно столько остановок и пропадает.
-		expect(withSamples.length - withoutSamples.length).toBe(card.steps.length + 1);
+		// Вступление плюс шаги экрана, открытые роли, — ровно столько остановок и пропадает.
+		const shownSteps = card.steps.filter(
+			(step) => step.permission === undefined || permissions.has(step.permission)
+		);
+
+		expect(withSamples.length - withoutSamples.length).toBe(shownSteps.length + 1);
 		// Карта приветствия и число остановок пересчитываются вместе с туром.
 		expect(withoutSamples[0].map).toEqual(
 			tourChapters(withoutSamples).map((chapter) => chapter.title)

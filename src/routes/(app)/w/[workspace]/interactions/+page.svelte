@@ -580,12 +580,17 @@
 			запись, не существует. Кнопка недоступна и называет причину — иначе
 			форма заполнялась бы целиком и отказывала только при сохранении. -->
 		{#if createBlocked === null && data.create !== null}
-			<Button onclick={() => (createOpen = true)}>
+			<Button data-tour="interactions-create" onclick={() => (createOpen = true)}>
 				<PlusIcon aria-hidden="true" />
 				Создать взаимодействие
 			</Button>
 		{:else if createBlocked !== null}
-			<Button disabled title={createBlocked} aria-describedby="create-blocked">
+			<Button
+				data-tour="interactions-create"
+				disabled
+				title={createBlocked}
+				aria-describedby="create-blocked"
+			>
 				<PlusIcon aria-hidden="true" />
 				Создать взаимодействие
 			</Button>

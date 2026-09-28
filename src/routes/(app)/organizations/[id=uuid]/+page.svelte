@@ -554,11 +554,13 @@
 			class="flex min-w-0 flex-col gap-5 rounded-xl border border-border bg-surface p-4 lg:col-start-2 lg:row-start-1"
 			aria-label="Контекст"
 		>
-			<RequisitesPanel
-				organization={data.organization}
-				passportApplied={data.passportApplied}
-				origin={data.origin}
-			/>
+			<div data-tour="organization-requisites">
+				<RequisitesPanel
+					organization={data.organization}
+					passportApplied={data.passportApplied}
+					origin={data.origin}
+				/>
+			</div>
 
 			<ContactsList
 				fromSite={isInstitution}

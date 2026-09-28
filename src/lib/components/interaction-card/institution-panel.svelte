@@ -183,6 +183,7 @@
 					size="sm"
 					variant="outline"
 					disabled={interaction.programs.length === 0}
+					data-tour="interaction-program-offer"
 					onclick={() => commands.open({ kind: 'program-offer' })}
 				>
 					<MailIcon aria-hidden="true" />

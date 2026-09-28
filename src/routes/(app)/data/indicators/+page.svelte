@@ -174,7 +174,12 @@
 	{#snippet actions()}
 		<!-- Выгрузка всегда про один период: без выбора кнопка выключена, а
 		     причина написана словами ниже, а не спрятана в подсказке мыши. -->
-		<Button variant="outline" href={exportHref} disabled={data.selected === null}>
+		<Button
+			variant="outline"
+			href={exportHref}
+			disabled={data.selected === null}
+			data-tour="data-indicators-export"
+		>
 			<DownloadIcon aria-hidden="true" />
 			Выгрузить отчёт (xlsx)
 		</Button>

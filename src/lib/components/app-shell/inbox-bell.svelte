@@ -51,6 +51,7 @@
 				class="relative text-muted-foreground {className}"
 				aria-label={label}
 				data-slot="inbox-bell"
+				data-tour="inbox"
 			>
 				<BellIcon aria-hidden="true" />
 				{#if unread > 0}

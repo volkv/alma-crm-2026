@@ -617,7 +617,7 @@
 	<div role="presentation" class="min-w-0" data-tour="integrations-webhooks">
 		{@render tileButton(tiles.webhooks)}
 	</div>
-	<div role="presentation" class="min-w-0">
+	<div role="presentation" class="min-w-0" data-tour="integrations-reference">
 		{@render tileButton(tiles.reference)}
 	</div>
 </div>

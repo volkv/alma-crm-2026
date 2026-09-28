@@ -122,7 +122,7 @@
 		</div>
 	</section>
 
-	<section class="rounded-lg border border-border bg-surface">
+	<section class="rounded-lg border border-border bg-surface" data-tour="program-materials">
 		<header class="border-b border-border px-4 py-3">
 			<h2 class="section-title">Материалы</h2>
 			<p class="mt-1 text-xs text-muted-foreground">

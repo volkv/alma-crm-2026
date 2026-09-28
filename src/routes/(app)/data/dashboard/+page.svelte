@@ -175,6 +175,7 @@
 
 		<div class="grid gap-4 xl:grid-cols-2">
 			<Section
+				data-tour="data-dashboard-ranking"
 				title="Топ программ по рейтингу"
 				description="Источник — факты CRM за тот же период, а не снимки: заявки с сайта, потоки, обучающиеся и завершившие по учебным группам системы. {RANKING_FORMULA_NOTE}."
 			>

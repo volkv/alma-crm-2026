@@ -143,7 +143,7 @@
 <Header title="Контакты" description="Люди, с которыми идёт работа, и их роли в организациях.">
 	{#snippet actions()}
 		{#if data.createPerson !== null}
-			<Button onclick={() => (createOpen = true)}>
+			<Button onclick={() => (createOpen = true)} data-tour="people-create">
 				<PlusIcon aria-hidden="true" />
 				Добавить контакт
 			</Button>
