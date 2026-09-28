@@ -205,12 +205,10 @@ describe('реестр экранов', () => {
 });
 
 describe('адрес экрана', () => {
-	it('узнаёт открытую запись и не путает её с формой', () => {
+	it('узнаёт открытую запись и не путает её со списком', () => {
 		const card = screenForPath('/w/b2b/interactions/2f0b0d3c-0000-4000-8000-000000000001');
-		const created = screenForPath('/w/b2b/interactions/new');
 
 		expect(card?.id).toBe('interaction');
-		expect(created?.id).toBe('interaction-new');
 		expect(screenForPath('/w/b2b/interactions')?.id).toBe('interactions');
 	});
 

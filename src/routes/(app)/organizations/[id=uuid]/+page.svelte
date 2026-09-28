@@ -65,11 +65,14 @@
 			.sort((left, right) => right.total - left.total)
 	);
 
-	/** Форма нового взаимодействия с этим вузом, уже подставленным основной стороной. */
+	/**
+	 * Список пространства с открытым окном нового взаимодействия, в котором
+	 * эта организация уже подставлена основной стороной.
+	 */
 	function startHref(workspace: string): ResolvedPathname {
 		// Путь собран `resolve`; добавлена только строка запроса, а её типа в
 		// `ResolvedPathname` нет (тот же приём — `home/links.ts`).
-		return `${resolve('/(app)/w/[workspace]/interactions/new', { workspace })}?organization=${data.organization.id}` as ResolvedPathname;
+		return `${resolve('/(app)/w/[workspace]/interactions', { workspace })}?create&organization=${data.organization.id}` as ResolvedPathname;
 	}
 
 	/**

@@ -41,10 +41,10 @@ export function filterHref(url: URL, param: string, value: string): ResolvedPath
 	return href(url, params);
 }
 
-/** Тот же адрес без указанного параметра. */
-export function withoutParam(url: URL, param: string): ResolvedPathname {
+/** Тот же адрес без указанных параметров. */
+export function withoutParam(url: URL, ...names: string[]): ResolvedPathname {
 	const params = new URLSearchParams(url.searchParams);
-	params.delete(param);
+	for (const name of names) params.delete(name);
 
 	return href(url, params);
 }

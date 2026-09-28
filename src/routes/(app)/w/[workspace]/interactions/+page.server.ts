@@ -19,6 +19,7 @@ import { listInteractions, readInteractionFilterOptions } from '$lib/server/inte
 import { can } from '$lib/server/rbac';
 import { advanceStage, returnStage, setResponsible, skipStage } from '$lib/server/stages/commands';
 import { readWorkflowForWorkspace } from '$lib/server/stages/process';
+import { createAction, loadCreateForm } from './create-form.server';
 import { readFilters } from './filters';
 import { responsibleOptions } from './responsible';
 import { chooseView, VIEW_COOKIE } from './view-preference';
@@ -102,10 +103,13 @@ export const load: PageServerLoad = async (event) => {
 	// Процесс назначен и процесс описан — разные состояния: у назначенного
 	// пустого процесса колонок нет так же, как у отсутствующего, но причина и
 	// исправление другие, и экран обязан назвать именно их.
-	const [workflow, counterpartyKinds] = await Promise.all([
+	// Ответственные нужны и таблице, и окну создания: список собирается один раз.
+	const [workflow, counterpartyKinds, users] = await Promise.all([
 		readWorkflowForWorkspace(getDb(), workspace.id),
-		readWorkspaceCounterpartyKinds(workspace.id)
+		readWorkspaceCounterpartyKinds(workspace.id),
+		responsibleOptions(event)
 	]);
+	const create = await loadCreateForm(event, ctx, workspace, users);
 
 	const common = {
 		filters,
@@ -127,7 +131,9 @@ export const load: PageServerLoad = async (event) => {
 		rememberView,
 		canAssign: can(ctx, 'interactions.reassign'),
 		/** Право двигать стадии: без него доска только показывает. */
-		canTransition: can(ctx, 'stages.transition')
+		canTransition: can(ctx, 'stages.transition'),
+		/** Окно «Создать взаимодействие»; `null` — создать нельзя. */
+		create
 	};
 
 	// Грузится только то, что показано: доска не платит за страницу таблицы, а
@@ -170,9 +176,8 @@ export const load: PageServerLoad = async (event) => {
 		pageSize: table.size
 	});
 
-	const [result, users, filterOptions] = await Promise.all([
+	const [result, filterOptions] = await Promise.all([
 		listInteractions(ctx, query),
-		responsibleOptions(event),
 		readInteractionFilterOptions(ctx, workspace.id)
 	]);
 
@@ -187,6 +192,8 @@ export const load: PageServerLoad = async (event) => {
 };
 
 export const actions: Actions = {
+	create: createAction,
+
 	assign: async (event) => {
 		const data = await event.request.formData();
 

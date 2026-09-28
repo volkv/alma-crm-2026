@@ -6,8 +6,9 @@
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import TableIcon from '@lucide/svelte/icons/table';
 	import UserCogIcon from '@lucide/svelte/icons/user-cog';
+	import { onMount, tick, untrack } from 'svelte';
 	import { enhance } from '$app/forms';
-	import { goto } from '$app/navigation';
+	import { goto, replaceState } from '$app/navigation';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
@@ -29,7 +30,7 @@
 	import ActiveSlices, { type ActiveSlice } from '$lib/components/filters/active-slices.svelte';
 	import OwnerFilter from '$lib/components/interactions/owner-filter.svelte';
 	import { toTimelineStages } from '$lib/components/interactions/timeline';
-	import { filterHref } from '$lib/components/directory/query';
+	import { filterHref, withoutParam } from '$lib/components/directory/query';
 	import {
 		INTERACTION_LIST_STATE_LABELS,
 		INTERACTION_LIST_STATES,
@@ -59,6 +60,7 @@
 		type InteractionFilters,
 		type ListAttributeParam
 	} from './filters';
+	import CreateDialog from './create-dialog.svelte';
 	import { storeView } from './view-preference';
 	import type { PageProps } from './$types';
 
@@ -105,7 +107,7 @@
 			toast.success('Взаимодействие переведено на другую стадию');
 		} else if (form && 'assigned' in form) {
 			toast.success(`Ответственный назначен: ${form.assigned}`);
-		} else if (form && 'message' in form) {
+		} else if (form && 'message' in form && typeof form.message === 'string') {
 			toast.error(form.message);
 		}
 	});
@@ -255,7 +257,27 @@
 	 */
 	const tableShown = $derived(data.view === 'table' && (data.total > 0 || data.isFiltered));
 	let tableApi = $state<SvelteTable<DataTableFeatures, InteractionListItem> | null>(null);
-	const newHref = $derived(resolve('/(app)/w/[workspace]/interactions/new', { workspace }));
+	const lookupPath = $derived(
+		`${resolve('/(app)/w/[workspace]/interactions', { workspace })}/lookup`
+	);
+
+	/**
+	 * Окно создания. С карточки организации сюда ведёт ссылка
+	 * `?create&organization=<id>` — окно открывается сразу, а параметры уходят
+	 * из адреса, чтобы обновление страницы не открывало его снова.
+	 */
+	let createOpen = $state(untrack(() => data.create?.openOnLoad ?? false));
+
+	onMount(async () => {
+		if (!page.url.searchParams.has('create') && !page.url.searchParams.has('organization')) {
+			return;
+		}
+
+		// `replaceState` до отметки готовности маршрутизатора отказывает — ближайший
+		// такт уже за ней (тот же приём — `directory/flash.svelte`).
+		await tick();
+		replaceState(withoutParam(page.url, 'create', 'organization'), page.state);
+	});
 
 	/**
 	 * Почему создать дело нельзя; `null` — можно. Без назначенного или без
@@ -561,12 +583,12 @@
 		<!-- Без описанного процесса заводить нечем: стадии, на которую встанет
 			запись, не существует. Кнопка недоступна и называет причину — иначе
 			форма заполнялась бы целиком и отказывала только при сохранении. -->
-		{#if createBlocked === null}
-			<Button href={newHref}>
+		{#if createBlocked === null && data.create !== null}
+			<Button onclick={() => (createOpen = true)}>
 				<PlusIcon aria-hidden="true" />
 				Создать взаимодействие
 			</Button>
-		{:else}
+		{:else if createBlocked !== null}
 			<Button disabled title={createBlocked} aria-describedby="create-blocked">
 				<PlusIcon aria-hidden="true" />
 				Создать взаимодействие
@@ -575,6 +597,16 @@
 		{/if}
 	{/snippet}
 </Header>
+
+{#if data.create !== null}
+	<CreateDialog
+		bind:open={createOpen}
+		create={data.create}
+		workspaceName={data.workspace.name}
+		counterpartyKinds={data.counterpartyKinds}
+		{lookupPath}
+	/>
+{/if}
 
 <!-- Представление — часть адреса: ссылкой на список делятся вместе с тем,
 	каким его смотрели. Переключатель стоит в конце ряда отборов и у таблицы, и
@@ -691,8 +723,8 @@
 							}`}
 				>
 					{#snippet action()}
-						{#if createBlocked === null}
-							<Button href={newHref}>
+						{#if createBlocked === null && data.create !== null}
+							<Button onclick={() => (createOpen = true)}>
 								<PlusIcon aria-hidden="true" />
 								Создать взаимодействие
 							</Button>

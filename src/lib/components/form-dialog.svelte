@@ -40,6 +40,9 @@
 		description,
 		dirty = false,
 		width = 'md',
+		closeOnlyByButton = false,
+		pinTop = false,
+		titleClass,
 		discardTitle = 'Закрыть без сохранения?',
 		discardDescription = 'Введённое в форме пропадёт: диалог закроется, ничего не сохранив.',
 		class: className,
@@ -53,6 +56,19 @@
 		/** В форме есть несохранённый ввод: закрытие спросит подтверждение. */
 		dirty?: boolean;
 		width?: FormDialogWidth;
+		/**
+		 * Закрывать только крестиком: клик вне слоя и `Esc` окно не трогают.
+		 * Для длинной формы, которую случайный клик не должен прятать.
+		 */
+		closeOnlyByButton?: boolean;
+		/**
+		 * Прибить верхний край окна к постоянной высоте вместо центра экрана.
+		 * Окно, которое растёт по ходу ввода (подсказки поиска, раскрытые
+		 * секции), по центру скачет вверх и вниз; прибитое растёт только вниз.
+		 */
+		pinTop?: boolean;
+		/** Заголовок крупнее обычного — у окна, которое открывает целый сценарий. */
+		titleClass?: string;
 		discardTitle?: string;
 		discardDescription?: string;
 		class?: string;
@@ -82,20 +98,28 @@
 
 <Dialog.Root bind:open={() => open, (next) => (next ? (open = true) : requestClose())}>
 	<Dialog.Content
+		interactOutsideBehavior={closeOnlyByButton ? 'ignore' : 'close'}
+		escapeKeydownBehavior={closeOnlyByButton ? 'ignore' : 'close'}
 		class={cn(
 			'flex max-h-[calc(100vh-4rem)] flex-col gap-0 overflow-hidden p-0',
+			pinTop && 'top-[8vh] max-h-[calc(92vh-2rem)] translate-y-0',
 			WIDTHS[width],
 			className
 		)}
 	>
 		<Dialog.Header class="shrink-0 border-b border-border p-6 pr-12">
-			<Dialog.Title>{title}</Dialog.Title>
+			<Dialog.Title class={titleClass}>{title}</Dialog.Title>
 			{#if description}
 				<Dialog.Description>{description}</Dialog.Description>
 			{/if}
 		</Dialog.Header>
 
-		<div class="min-h-0 flex-1 overflow-y-auto p-6" data-slot="dialog-body">
+		<!-- Место под полосу прокрутки держится всегда: появившись посреди ввода,
+			она сужала бы поля, и форма дёргалась бы вбок. -->
+		<div
+			class="min-h-0 flex-1 [scrollbar-gutter:stable] overflow-y-auto p-6"
+			data-slot="dialog-body"
+		>
 			{@render children()}
 		</div>
 
