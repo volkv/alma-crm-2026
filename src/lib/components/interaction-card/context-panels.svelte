@@ -170,6 +170,7 @@
 				counterpartyKind={source.card.counterpartyKind}
 				canUpload={can.upload}
 				canGenerate={can.generate}
+				canSend={can.edit}
 			/>
 		{:else}
 			{@const Panel = cardPanelComponent(panel)}

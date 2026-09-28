@@ -465,6 +465,19 @@ export async function provideRequiredFacts(
 					title: 'Удостоверение о повышении квалификации'
 				});
 				break;
+			// Собранный по шаблону документ — то, что оставила бы сборка пакета.
+			case 'package_generated':
+				await database.db.insert(documents).values({
+					interactionId,
+					kind: 'generated',
+					templateKey: 'agreement',
+					title: DOCUMENT_TEMPLATE_LABELS.agreement,
+					filePath: `files/${crypto.randomUUID()}`,
+					mime: 'application/pdf',
+					sizeBytes: 64,
+					sha256: crypto.randomUUID().replaceAll('-', '').repeat(2)
+				});
+				break;
 			// Оплату по оферте отмечает `closeRequiredChecklist` — это ручной пункт.
 			case 'contract_concluded':
 				break;

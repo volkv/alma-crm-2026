@@ -1060,6 +1060,64 @@ export async function markChecklistItemIn(
 }
 
 /**
+ * Отметить ручные пункты открытой стадии, у которых стоит это действие, — в
+ * транзакции вызывающего: действие сделано в карточке (пакет документов ушёл
+ * письмом), и пункт, который человек отметил бы сам, отмечается вместе с его
+ * следом. Строку взаимодействия вызывающий уже заблокировал.
+ *
+ * Отказа нет: дело на другой стадии, пункта с таким действием нет, он уже
+ * отмечен или у человека нет права менять чек-лист — отметка не ставится, а
+ * сделанное действие остаётся сделанным. Возвращает, поставлена ли отметка.
+ */
+export async function markActionItemsIn(
+	ctx: ActorContext,
+	tx: Tx,
+	interactionId: string,
+	action: string
+): Promise<boolean> {
+	if (!can(ctx, 'stages.transition')) {
+		return false;
+	}
+
+	const entry = await readOpenEntryRow(tx, interactionId);
+	const keys = (entry?.stageSnapshot.checklist ?? [])
+		.filter((item) => item.action === action && !isFactItem(item))
+		.map((item) => item.key)
+		.filter((key) => entry?.checklistState[key] !== true);
+
+	if (entry === null || keys.length === 0) {
+		return false;
+	}
+
+	await tx
+		.update(stageEntries)
+		.set({
+			checklistState: {
+				...entry.checklistState,
+				...Object.fromEntries(keys.map((key) => [key, true]))
+			},
+			updatedAt: now
+		})
+		.where(eq(stageEntries.id, entry.id));
+
+	await touchInteraction(tx, interactionId);
+	publishAfterCommit(tx, interactionId, { type: 'interaction.changed' });
+
+	await recordAuditEvent(
+		ctx,
+		{
+			type: 'interactions.checklist_changed',
+			outcome: 'success',
+			subject: { type: 'interaction', id: interactionId },
+			details: { stageEntryId: entry.id }
+		},
+		tx
+	);
+
+	return true;
+}
+
+/**
  * Результат стадии и файлы к нему: протокол встречи, подписанный скан. Файлы
  * ложатся на ту же запись стадии, что и вложения перехода, — «чем подтверждён
  * результат» остаётся вопросом к стадии.

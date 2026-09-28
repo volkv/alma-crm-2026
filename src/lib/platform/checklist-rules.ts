@@ -53,6 +53,11 @@ export const CHECKLIST_RULES = [
 		module: null
 	},
 	{
+		key: 'package_generated',
+		label: 'Пакет документов собран по шаблонам после входа на стадию',
+		module: null
+	},
+	{
 		key: 'offer_sent',
 		label: 'Описание программ отправлено контактам письмом из карточки',
 		module: null

@@ -3654,6 +3654,11 @@ async function provideStageFacts(
 			case 'training_document':
 				await uploadTrainingDocument(ctx, interactionId);
 				break;
+			// Пакет на стадии обмена — собранное по шаблону соглашение, как собрал
+			// бы менеджер кнопкой «Собрать пакет документов».
+			case 'package_generated':
+				await generateAgreement(ctx, interactionId);
+				break;
 			case 'stage_result':
 			case 'contract_concluded':
 				break;

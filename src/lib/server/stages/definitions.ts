@@ -213,9 +213,14 @@ export const B2B_PROCESS: ProcessDefinitionInput = {
 			onEnterNotify: null,
 			isFinal: false,
 			checklist: [
-				item('package_sent', 'Пакет документов отправлен', true, {
-					help: 'Соберите пакет по шаблонам, отправьте вузу и отметьте.',
+				item('package_generated', 'Пакет документов собран', true, {
+					help: 'Соберите пакет по шаблонам из данных дела — пункт закроется сам. Чего не хватает, сборка назовёт у каждого документа.',
+					fact: 'package_generated',
 					action: 'package'
+				}),
+				item('package_sent', 'Пакет документов отправлен', true, {
+					help: 'Отправьте пакет вузу письмом из карточки — пункт отметится сам. Ушёл через ЭДО или курьером — отметьте вручную.',
+					action: 'package_send'
 				}),
 				item('package_received', 'Получен ответный пакет', false, {
 					help: 'Загрузите ответные документы вуза в карточку и отметьте.',

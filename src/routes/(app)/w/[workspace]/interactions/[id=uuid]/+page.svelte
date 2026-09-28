@@ -28,6 +28,7 @@
 	import { buildCard, type CardSource } from '$lib/components/interaction-card/model';
 	import Presence from '$lib/components/interaction-card/presence.svelte';
 	import PrimaryAction from '$lib/components/interaction-card/primary-action.svelte';
+	import PackageSendDialog from '$lib/components/interaction-card/package-send-dialog.svelte';
 	import ProgramOfferDialog from '$lib/components/interaction-card/program-offer-dialog.svelte';
 	import QuietNote from '$lib/components/interaction-card/quiet-note.svelte';
 	import RecordDialogs from '$lib/components/interaction-card/record-dialogs.svelte';
@@ -39,6 +40,8 @@
 	import type { InteractionAction } from '$lib/contracts/interactions';
 	import { formatDateTime } from '$lib/format';
 	import { cardDialogs } from '$lib/platform/card-ui-registry';
+	import { offeredTemplates } from '$lib/platform/registry';
+	import { packageTemplates } from '$lib/contracts/documents';
 	import { INTERACTION_STATUS_LABELS } from '../filters';
 	import type { PageProps } from './$types';
 
@@ -359,6 +362,17 @@
 	<ProgramOfferDialog interaction={data.interaction} canCompose={data.composition !== null} />
 {/if}
 <DocumentDialogs interaction={data.interaction} supersessions={data.supersessions} />
+{#if can('edit')}
+	<PackageSendDialog
+		interaction={data.interaction}
+		templates={packageTemplates(
+			offeredTemplates(data.card.templates, model.modules),
+			data.card.counterpartyKind
+		)}
+		counterpartyKind={data.card.counterpartyKind}
+		canGenerate={can('generate_document')}
+	/>
+{/if}
 <LearningDialogs
 	exchange={data.exchange}
 	interaction={data.interaction}

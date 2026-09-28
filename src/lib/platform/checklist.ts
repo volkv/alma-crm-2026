@@ -49,6 +49,9 @@ const CORE_ACTIONS = [
 	{ key: 'upload', label: 'Приложить файл', module: null },
 	{ key: 'mark', label: 'Отметить документ', module: null },
 	{ key: 'package', label: 'Собрать пакет документов', module: null },
+	// Письмо вузу с файлами пакета: отправка контактам сама отмечает ручной
+	// пункт с этим действием, а пакет, ушедший мимо системы, отмечают рукой.
+	{ key: 'package_send', label: 'Отправить пакет документов', module: null },
 	{ key: 'plan', label: 'Изменить план', module: null },
 	{ key: 'assign', label: 'Назначить ответственного', module: null },
 	{ key: 'contract', label: 'Выбрать договор и позиции', module: 'contracts' },

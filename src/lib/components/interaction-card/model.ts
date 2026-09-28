@@ -41,6 +41,7 @@ import {
 import { PAYMENT_CHECKLIST_KEY, type PaymentFactView } from '$lib/contracts/payments';
 import type { ProcessCard } from '$lib/contracts/process-card';
 import { PROGRAM_OFFER_CHANGE_FIELD } from '$lib/contracts/program-offer';
+import { PACKAGE_SEND_CHANGE_FIELD } from '$lib/contracts/document-package-send';
 import { daysUntil, formatDate, formatDateTime, pluralize } from '$lib/format';
 import { checklistAction, moduleActionKey } from '$lib/platform/checklist';
 import { checklistRule } from '$lib/platform/checklist-rules';
@@ -225,6 +226,8 @@ export type CardCommand =
 	| { kind: 'contact' }
 	/** Письмо контактным лицам основной стороны с описанием программ дела. */
 	| { kind: 'program-offer' }
+	/** Письмо контактным лицам основной стороны с файлами собранного пакета. */
+	| { kind: 'package-send' }
 	/** `documentKind` — вид, с которым открывается загрузка («Документ об обучении»). */
 	| { kind: 'upload'; documentKind?: UploadedDocumentKind }
 	| { kind: 'revision'; documentId: string }
@@ -758,6 +761,8 @@ function checklistCommand(
 			return make({ kind: 'contact' });
 		case 'offer_send':
 			return make({ kind: 'program-offer' });
+		case 'package_send':
+			return make({ kind: 'package-send' });
 		case 'package': {
 			const templates = packageTemplates(
 				offeredTemplates(context.card.templates, context.modules),
@@ -1493,7 +1498,8 @@ export function buildEvents(source: CardSource): CardEvent[] {
 		// готовой фразой — ею и читаются.
 		const moduleFactText =
 			(moduleByKey(change.field.split(':')[0]) !== undefined && change.field.includes(':')) ||
-			change.field === PROGRAM_OFFER_CHANGE_FIELD
+			change.field === PROGRAM_OFFER_CHANGE_FIELD ||
+			change.field === PACKAGE_SEND_CHANGE_FIELD
 				? (readModuleFactValue(change.newValue)?.text ?? null)
 				: null;
 

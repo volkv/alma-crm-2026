@@ -93,6 +93,8 @@ export const AUDIT_EVENT_LABELS: Record<AuditEventType, string> = {
 	'interactions.meeting_cancelled': 'Встреча отменена',
 	'interactions.program_offer_sent': 'Описание программ отправлено вузу',
 	'interactions.program_offer_tested': 'Тестовое письмо о программах отправлено себе',
+	'interactions.document_package_sent': 'Пакет документов отправлен вузу',
+	'interactions.document_package_tested': 'Тестовое письмо с пакетом документов отправлено себе',
 	'interactions.completed': 'Взаимодействие завершено',
 	'interactions.cancelled': 'Взаимодействие отменено',
 	'stages.process_published': 'Изменения процесса применены',

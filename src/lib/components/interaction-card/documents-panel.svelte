@@ -3,6 +3,7 @@
 	import EllipsisIcon from '@lucide/svelte/icons/ellipsis';
 	import FileTextIcon from '@lucide/svelte/icons/file-text';
 	import FileSignatureIcon from '@lucide/svelte/icons/file-pen-line';
+	import SendIcon from '@lucide/svelte/icons/send';
 	import UploadIcon from '@lucide/svelte/icons/upload';
 	import { resolve } from '$app/paths';
 	import * as DropdownMenu from '$lib/components/ui/dropdown-menu/index.js';
@@ -43,7 +44,8 @@
 		templates,
 		counterpartyKind,
 		canUpload,
-		canGenerate
+		canGenerate,
+		canSend
 	}: {
 		documents: readonly InteractionDocumentView[];
 		/** Какие из этих файлов уже заменены новой редакцией и когда. */
@@ -56,7 +58,12 @@
 		counterpartyKind: OrganizationKind;
 		canUpload: boolean;
 		canGenerate: boolean;
+		/** Отправить собранный пакет вузу письмом — право на запись в дело. */
+		canSend: boolean;
 	} = $props();
+
+	/** Отправлять есть что: в деле есть документ, собранный по шаблону. */
+	const hasPackage = $derived(documents.some((document) => document.templateKey !== null));
 
 	const commands = getCardCommands();
 
@@ -224,21 +231,37 @@
 		</ul>
 	{/if}
 
-	{#if canGenerate && templates.length > 0}
+	{#if (canGenerate && templates.length > 0) || (canSend && hasPackage)}
 		<div class="flex flex-col gap-1">
-			<Button
-				size="sm"
-				variant="outline"
-				class="self-start"
-				onclick={() =>
-					commands.open({ kind: 'package', templates: [...templates], counterpartyKind })}
-			>
-				<FileSignatureIcon aria-hidden="true" />
-				Собрать пакет документов
-			</Button>
-			<p class="text-xs text-muted-foreground">
-				{templates.map((key) => DOCUMENT_TEMPLATE_LABELS[key]).join(', ')} — DOCX и PDF по данным карточек.
-			</p>
+			<div class="flex flex-wrap gap-2">
+				{#if canGenerate && templates.length > 0}
+					<Button
+						size="sm"
+						variant="outline"
+						onclick={() =>
+							commands.open({ kind: 'package', templates: [...templates], counterpartyKind })}
+					>
+						<FileSignatureIcon aria-hidden="true" />
+						Собрать пакет документов
+					</Button>
+				{/if}
+				{#if canSend && hasPackage}
+					<Button
+						size="sm"
+						variant="outline"
+						onclick={() => commands.open({ kind: 'package-send' })}
+					>
+						<SendIcon aria-hidden="true" />
+						Отправить пакет документов
+					</Button>
+				{/if}
+			</div>
+			{#if canGenerate && templates.length > 0}
+				<p class="text-xs text-muted-foreground">
+					{templates.map((key) => DOCUMENT_TEMPLATE_LABELS[key]).join(', ')} — DOCX и PDF по данным карточек;
+					вузу уходят PDF.
+				</p>
+			{/if}
 		</div>
 	{/if}
 </ContextSection>

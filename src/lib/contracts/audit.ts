@@ -158,6 +158,8 @@ export const AUDIT_EVENT_TYPES = [
 	// адресов и имён: кому именно ушло, хранит сама отправка идентификаторами.
 	'interactions.program_offer_sent',
 	'interactions.program_offer_tested',
+	'interactions.document_package_sent',
+	'interactions.document_package_tested',
 	'interactions.completed',
 	'interactions.cancelled',
 	// Публикация изменённого процесса и перенос записей: две строки одной

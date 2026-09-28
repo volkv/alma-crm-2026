@@ -19,7 +19,11 @@
 import { and, desc, eq, gt, inArray, isNotNull, or, sql } from 'drizzle-orm';
 import type { ChecklistFact, ChecklistState, StageSnapshot } from '$lib/contracts/interactions';
 import { isFactItem } from '$lib/contracts/interactions';
-import { CONTRACT_DOCUMENT_KIND, CONTRACT_DOCUMENT_TEMPLATES } from '$lib/contracts/documents';
+import {
+	CONTRACT_DOCUMENT_KIND,
+	CONTRACT_DOCUMENT_TEMPLATES,
+	GENERATED_DOCUMENT_KIND
+} from '$lib/contracts/documents';
 import { PAYMENT_CHECKLIST_KEY } from '$lib/contracts/payments';
 import { checklistRule, type ChecklistRuleKey } from '$lib/platform/checklist-rules';
 import { formatDate, pluralize } from '$lib/format';
@@ -238,6 +242,47 @@ const offerSent: Evaluate = async (executor, entries) => {
 	}
 
 	return byInteraction(entries, answers);
+};
+
+/**
+ * Пакет собран: после входа на стадию в деле собран по шаблону хотя бы один
+ * документ. Собранное раньше — пакет прошлого круга: вернулись на обмен после
+ * корректировки — значит, пакет собирают заново по исправленным данным.
+ * Какие именно документы собрались, видно в панели «Документы»; у пункта —
+ * названия и дата.
+ */
+const packageGenerated: Evaluate = async (executor, entries) => {
+	const rows = await executor
+		.select({
+			interactionId: documents.interactionId,
+			title: documents.title,
+			createdAt: documents.createdAt
+		})
+		.from(documents)
+		.where(
+			and(
+				inArray(documents.interactionId, interactionIds(entries)),
+				eq(documents.kind, GENERATED_DOCUMENT_KIND)
+			)
+		)
+		.orderBy(desc(documents.createdAt));
+
+	return new Map(
+		entries.map((entry) => {
+			const built = rows.filter(
+				(row) => row.interactionId === entry.interactionId && row.createdAt >= entry.enteredAt
+			);
+			// DOCX и PDF одного документа — одно название.
+			const titles = [...new Set(built.map((row) => row.title))];
+
+			return [
+				entry.id,
+				built.length === 0
+					? NOT_DONE
+					: done(`Собрано ${formatDate(built[0].createdAt)}: ${excerpt(titles.join(', '))}`)
+			];
+		})
+	);
 };
 
 /**
@@ -549,6 +594,7 @@ const EVALUATORS: Record<ChecklistRuleKey, Evaluate> = {
 	responsible_assigned: responsibleAssigned,
 	stage_result: stageResult,
 	program_version_new: programVersionNew,
+	package_generated: packageGenerated,
 	offer_sent: offerSent,
 	licenses_issued: licensesIssued,
 	handover_act_approved: handoverActApproved,
