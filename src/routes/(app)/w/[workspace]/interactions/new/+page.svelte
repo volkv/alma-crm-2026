@@ -6,9 +6,6 @@
 	import * as Alert from '$lib/components/ui/alert/index.js';
 	import * as Card from '$lib/components/ui/card/index.js';
 	import * as SegmentedControl from '$lib/components/ui/segmented-control/index.js';
-	import { Checkbox } from '$lib/components/ui/checkbox/index.js';
-	import { Label } from '$lib/components/ui/label/index.js';
-	import FieldDate from '$lib/components/form/field-date.svelte';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
 	import FormActions from '$lib/components/form/form-actions.svelte';
@@ -17,15 +14,12 @@
 	import Breadcrumbs from '$lib/components/breadcrumbs.svelte';
 	import Header from '$lib/components/header.svelte';
 	import OrganizationPicker from '$lib/components/interactions/organization-picker.svelte';
-	import { NO_OPTION, toLookupOptions, withEmptyOption } from '$lib/components/directory/labels';
-	import type { ContractView, LookupOption, OrganizationKind } from '$lib/contracts/directory';
+	import type { LookupOption, OrganizationKind } from '$lib/contracts/directory';
 	import {
-		CONTRACT_STATUS_LABELS,
 		createInteractionSchema,
 		PARTY_ROLE_LABELS,
 		type CreateInteractionInput
 	} from '$lib/contracts/interactions';
-	import { formatDate } from '$lib/format';
 	import { listPath } from '../filters';
 	import type { PageProps } from './$types';
 
@@ -36,9 +30,9 @@
 	const lookupPath = $derived(`${listHref}/lookup`);
 
 	/**
-	 * С кем ведётся процесс. Вид основной стороны задаёт, какой будет форма:
-	 * у вуза — заказчик подготовки, соглашение и учебный период; у компании и
-	 * физического лица — сроки обучения, у физического лица без договора.
+	 * С кем ведётся процесс. Форма заводит дело с минимумом: сторона, название,
+	 * ответственный, у вуза — ещё компания-заказчик. Площадки, контакты, сроки,
+	 * программы, продукты и договор дополняют в карточке по ходу процесса.
 	 * Какие виды предлагать, решает пространство (с кем оно работает); вид
 	 * организации, пришедшей по ссылке с её карточки, стоит первым.
 	 */
@@ -100,7 +94,7 @@
 		untrack(() => data.form),
 		{
 			validators: zod4Client(createInteractionSchema),
-			// Стороны и программы — вложенные списки: форма едет одним JSON.
+			// Стороны — вложенный список: форма едет одним JSON.
 			dataType: 'json',
 			// Шапка приложения липкая, и без её высоты superforms считает
 			// спрятанную под ней ошибку «уже на экране» и никуда не ведёт.
@@ -109,92 +103,44 @@
 		}
 	);
 
-	// Организация из ссылки с её карточки: подставлена сразу, со своими
-	// площадками, контактами и договорами, и меняется как выбранная вручную.
+	// Организация из ссылки с её карточки: подставлена сразу и меняется как
+	// выбранная вручную.
 	let institution = $state<LookupOption | null>(untrack(() => data.presetInstitution));
 	let customer = $state<LookupOption | null>(null);
-	let institutionSites = $state<LookupOption[]>([]);
-	let institutionContacts = $state<LookupOption[]>([]);
-	let selectedSiteIds = $state<string[]>([]);
+	// У физического лица контакт дела — он сам: полем его не выбирают, он
+	// подставляется.
 	let contactAffiliationId = $state<string | null>(null);
-	let selectedProgramIds = $state<string[]>([]);
-	// Договоры выбранной стороны и выбор по ним: договор один, позиций из него —
-	// сколько угодно.
-	let contracts = $state<ContractView[]>([]);
-	let contractId = $state<string | null>(null);
-	let selectedItemIds = $state<string[]>([]);
-	// Даты в форме — строки: пустое поле это «не указано», и в контракт оно едет
-	// как `null`, а не как пустая строка.
-	let periods = $state({
-		agreementPeriodStart: '',
-		agreementPeriodEnd: '',
-		academicPeriodStart: '',
-		academicPeriodEnd: ''
-	});
 
 	/**
-	 * Тронул ли человек что-то из того, что форма собирает сама. Стороны,
-	 * программы, договор и сроки попадают в поля формы производными — и, будь
-	 * они «правкой», уход с нетронутой формы спрашивал бы подтверждение.
-	 * Поэтому производное помечает форму тронутой, только когда человек
-	 * действительно что-то выбрал; название и ответственного отслеживает сама
-	 * форма.
+	 * Тронул ли человек стороны. Они попадают в поля формы производными — и,
+	 * будь они «правкой», уход с нетронутой формы спрашивал бы подтверждение.
+	 * Название и ответственного отслеживает сама форма.
 	 */
 	const touched = $derived(
-		(institution?.id ?? null) !== (data.presetInstitution?.id ?? null) ||
-			customer !== null ||
-			selectedSiteIds.length > 0 ||
-			contactAffiliationId !== null ||
-			selectedProgramIds.length > 0 ||
-			contractId !== null ||
-			Object.values(periods).some((value) => value !== '')
+		(institution?.id ?? null) !== (data.presetInstitution?.id ?? null) || customer !== null
 	);
 
-	async function loadLookup<TItem>(
-		kind: 'sites' | 'contacts' | 'contracts',
-		organizationId: string
-	): Promise<TItem[]> {
-		const response = await fetch(
-			`${lookupPath}?kind=${kind}&organizationId=${encodeURIComponent(organizationId)}`
-		);
-
-		if (!response.ok) {
-			return [];
-		}
-
-		const body: { items?: TItem[] } = await response.json();
-
-		return body.items ?? [];
-	}
-
 	async function onInstitution(option: LookupOption | null, createdContact: string | null = null) {
-		selectedSiteIds = [];
 		contactAffiliationId = createdContact;
-		// Договор принадлежит контрагенту: сменили вуз — прежний выбор говорит о
-		// чужом обязательстве, и сервер его всё равно отвергнет.
-		contractId = null;
-		selectedItemIds = [];
 
-		if (option === null) {
-			institutionSites = [];
-			institutionContacts = [];
-			contracts = [];
+		if (option === null || counterpartyKind !== 'individual' || createdContact !== null) {
 			return;
 		}
 
-		[institutionSites, institutionContacts, contracts] = await Promise.all([
-			loadLookup<LookupOption>('sites', option.id),
-			loadLookup<LookupOption>('contacts', option.id),
-			counterpartyKind === 'individual' ? [] : loadLookup<ContractView>('contracts', option.id)
-		]);
+		const response = await fetch(
+			`${lookupPath}?kind=contacts&organizationId=${encodeURIComponent(option.id)}`
+		);
 
-		// У физического лица контакт — он сам, и его роль одна: выбирать нечего.
-		if (
-			counterpartyKind === 'individual' &&
-			contactAffiliationId === null &&
-			institutionContacts.length === 1
-		) {
-			contactAffiliationId = institutionContacts[0].id;
+		if (!response.ok) {
+			return;
+		}
+
+		const body: { items?: LookupOption[] } = await response.json();
+		const contacts = body.items ?? [];
+
+		// Роль у физического лица одна — выбирать нечего.
+		if (contactAffiliationId === null && contacts.length === 1) {
+			contactAffiliationId = contacts[0].id;
 		}
 	}
 
@@ -205,44 +151,14 @@
 		counterpartyKind = next;
 		institution = null;
 		customer = null;
-		void onInstitution(null);
-
-		if (next !== 'educational_institution') {
-			periods.agreementPeriodStart = '';
-			periods.agreementPeriodEnd = '';
-		}
+		contactAffiliationId = null;
 	}
 
-	// Площадки, контакты и договоры подставленного вуза подтягиваются в браузере
-	// теми же подсказками, что и после ручного выбора.
 	onMount(() => {
 		if (institution !== null) {
 			void onInstitution(institution);
 		}
 	});
-
-	const contractOptions = $derived(
-		withEmptyOption(
-			contracts.map((contract) => ({
-				value: contract.id,
-				label: `№ ${contract.number} — ${CONTRACT_STATUS_LABELS[contract.status]}`
-			})),
-			'Без договора'
-		)
-	);
-
-	const chosenContract = $derived(contracts.find((contract) => contract.id === contractId) ?? null);
-
-	/**
-	 * Позиции, выбранные по продуктам, которых нет в составе. Позиция добавляет
-	 * к продукту коммерческие условия, а состав задают продукты: сервер такую
-	 * пару отвергнет, и сказать об этом надо до отправки.
-	 */
-	const itemsOutsideProducts = $derived(
-		(chosenContract?.items ?? []).filter(
-			(item) => selectedItemIds.includes(item.id) && !$form.productIds.includes(item.productId)
-		)
-	);
 
 	// Стороны взаимодействия собираются из выбранных организаций: контракт ждёт
 	// список участников с ролями, а форма показывает понятные строки. Оператора
@@ -259,7 +175,7 @@
 				partyRole: isInstitution ? ('educational_institution' as const) : ('customer' as const),
 				isPrimary: true,
 				contactAffiliationId,
-				siteIds: selectedSiteIds
+				siteIds: []
 			});
 		}
 
@@ -276,39 +192,6 @@
 		form.update(($form) => ({ ...$form, parties }), { taint: touched });
 	});
 
-	$effect(() => {
-		const programs = selectedProgramIds.map((programId) => ({
-			programId,
-			programVersionId: null
-		}));
-
-		form.update(($form) => ({ ...$form, programs }), { taint: touched });
-	});
-
-	$effect(() => {
-		const contract = {
-			contractId,
-			contractItemIds: contractId === null ? [] : selectedItemIds
-		};
-
-		form.update(($form) => ({ ...$form, ...contract }), { taint: touched });
-	});
-
-	$effect(() => {
-		const dates = {
-			agreementPeriodStart: periods.agreementPeriodStart || null,
-			agreementPeriodEnd: periods.agreementPeriodEnd || null,
-			academicPeriodStart: periods.academicPeriodStart || null,
-			academicPeriodEnd: periods.academicPeriodEnd || null
-		};
-
-		form.update(($form) => ({ ...$form, ...dates }), { taint: touched });
-	});
-
-	function toggle(list: string[], id: string, checked: boolean): string[] {
-		return checked ? [...new Set([...list, id])] : list.filter((item) => item !== id);
-	}
-
 	// Претензии к сторонам показываются по одной на строку: склеенные в одну
 	// фразу, они читаются как сломанное предложение.
 	const partyErrors = $derived($errors.parties?._errors ?? []);
@@ -320,7 +203,7 @@
 
 <Header
 	title="Новое взаимодействие"
-	description="Кто участвует, какие программы и продукты, кто отвечает и в какие сроки."
+	description="С кем ведётся работа и кто за неё отвечает. Остальное дополняют в карточке по ходу процесса."
 />
 
 <Breadcrumbs
@@ -349,11 +232,28 @@
 		{/if}
 
 		<Card.Root size="sm">
-			<Card.Header>
-				<Card.Title>Стороны</Card.Title>
-				<Card.Description>{PRIMARY_KIND_HINTS[counterpartyKind]}</Card.Description>
-			</Card.Header>
 			<Card.Content class="flex flex-col gap-4">
+				<FieldInput
+					name="title"
+					label="Название"
+					required
+					placeholder="Например: подготовка специалистов по защите информации"
+					bind:value={$form.title}
+					errors={$errors.title}
+				/>
+
+				<FieldSelect
+					name="ownerUserId"
+					label="Ответственный"
+					required
+					options={data.users.map((user) => ({
+						value: user.id,
+						label: `${user.name} — ${user.roleName}`
+					}))}
+					bind:value={$form.ownerUserId}
+					errors={$errors.ownerUserId}
+				/>
+
 				{#if kindOptions.length > 1}
 					<SegmentedControl.Root
 						aria-label="С кем ведётся процесс"
@@ -366,6 +266,8 @@
 						{/each}
 					</SegmentedControl.Root>
 				{/if}
+
+				<p class="text-xs text-muted-foreground">{PRIMARY_KIND_HINTS[counterpartyKind]}</p>
 
 				{#key counterpartyKind}
 					<FormField
@@ -407,34 +309,6 @@
 					</FormField>
 				{/key}
 
-				{#if isInstitution && institutionSites.length > 0}
-					<fieldset class="flex flex-col gap-2">
-						<legend class="text-sm font-medium">Площадки</legend>
-						{#each institutionSites as site (site.id)}
-							<Label class="flex items-center gap-2 font-normal">
-								<Checkbox
-									checked={selectedSiteIds.includes(site.id)}
-									onCheckedChange={(checked) =>
-										(selectedSiteIds = toggle(selectedSiteIds, site.id, checked === true))}
-								/>
-								{site.label}
-							</Label>
-						{/each}
-					</fieldset>
-				{/if}
-
-				{#if institutionContacts.length > 0 && counterpartyKind !== 'individual'}
-					<FieldSelect
-						name="contactAffiliationId"
-						label={isInstitution ? 'Контактное лицо вуза' : 'Контактное лицо компании'}
-						options={toLookupOptions(institutionContacts, 'Не выбрано')}
-						bind:value={
-							() => contactAffiliationId ?? NO_OPTION,
-							(next) => (contactAffiliationId = next === NO_OPTION ? null : next)
-						}
-					/>
-				{/if}
-
 				{#if isInstitution}
 					<FormField name="customer" label={PARTY_ROLE_LABELS.customer}>
 						{#snippet control({ id, describedBy, invalid })}
@@ -454,199 +328,17 @@
 						{/snippet}
 					</FormField>
 				{/if}
-			</Card.Content>
-		</Card.Root>
-
-		<Card.Root size="sm">
-			<Card.Header>
-				<Card.Title>Взаимодействие</Card.Title>
-			</Card.Header>
-			<Card.Content class="flex flex-col gap-4">
-				<FieldInput
-					name="title"
-					label="Название"
-					required
-					placeholder="Например: подготовка специалистов по защите информации"
-					bind:value={$form.title}
-					errors={$errors.title}
-				/>
 
 				<!-- Пространство не выбирают в форме: запись заводят внутри него, и
 					его имя стоит в заголовке. Подсказка называет место словами —
 					иначе «куда именно она встанет» остаётся догадкой. -->
 				<InlineHint tone="info">
 					Запись встанет в пространство «{data.workspace.name}» на первую стадию действующей
-					редакции его процесса.
+					редакции его процесса. Площадки, контакты, сроки, программы, продукты и договор заполняют
+					в карточке.
 				</InlineHint>
-
-				<FieldSelect
-					name="ownerUserId"
-					label="Ответственный"
-					required
-					options={data.users.map((user) => ({
-						value: user.id,
-						label: `${user.name} — ${user.roleName}`
-					}))}
-					bind:value={$form.ownerUserId}
-					errors={$errors.ownerUserId}
-				/>
-
-				<div class="grid gap-4 sm:grid-cols-2">
-					{#if isInstitution}
-						<FieldDate
-							name="agreementPeriodStart"
-							label="Соглашение: с"
-							max={periods.agreementPeriodEnd}
-							bind:value={periods.agreementPeriodStart}
-							errors={$errors.agreementPeriodStart}
-						/>
-						<FieldDate
-							name="agreementPeriodEnd"
-							label="Соглашение: по"
-							min={periods.agreementPeriodStart}
-							bind:value={periods.agreementPeriodEnd}
-							errors={$errors.agreementPeriodEnd}
-						/>
-					{/if}
-					<FieldDate
-						name="academicPeriodStart"
-						label={isInstitution ? 'Учебный период: с' : 'Период обучения: с'}
-						max={periods.academicPeriodEnd}
-						bind:value={periods.academicPeriodStart}
-						errors={$errors.academicPeriodStart}
-					/>
-					<FieldDate
-						name="academicPeriodEnd"
-						label={isInstitution ? 'Учебный период: по' : 'Период обучения: по'}
-						min={periods.academicPeriodStart}
-						bind:value={periods.academicPeriodEnd}
-						errors={$errors.academicPeriodEnd}
-					/>
-				</div>
 			</Card.Content>
 		</Card.Root>
-
-		<Card.Root size="sm">
-			<Card.Header>
-				<Card.Title>Программы и продукты</Card.Title>
-				<Card.Description>
-					{isInstitution
-						? 'Что именно передаётся учебному заведению.'
-						: counterpartyKind === 'individual'
-							? 'Чему учится слушатель.'
-							: 'Чему учатся сотрудники компании.'}
-				</Card.Description>
-			</Card.Header>
-			<Card.Content class="grid gap-4 sm:grid-cols-2">
-				<fieldset class="flex flex-col gap-2">
-					<legend class="text-sm font-medium">Образовательные программы</legend>
-					{#if data.programs.length === 0}
-						<p class="text-xs text-muted-foreground">Справочник программ пока пуст.</p>
-					{/if}
-					{#each data.programs as program (program.id)}
-						<Label class="flex items-start gap-2 font-normal">
-							<Checkbox
-								checked={selectedProgramIds.includes(program.id)}
-								onCheckedChange={(checked) =>
-									(selectedProgramIds = toggle(selectedProgramIds, program.id, checked === true))}
-							/>
-							<span>{program.code} — {program.name}</span>
-						</Label>
-					{/each}
-				</fieldset>
-
-				<fieldset class="flex flex-col gap-2">
-					<legend class="text-sm font-medium">Продукты</legend>
-					{#if data.products.length === 0}
-						<p class="text-xs text-muted-foreground">Справочник продуктов пока пуст.</p>
-					{/if}
-					{#each data.products as product (product.id)}
-						<Label class="flex items-start gap-2 font-normal">
-							<Checkbox
-								checked={$form.productIds.includes(product.id)}
-								onCheckedChange={(checked) =>
-									($form.productIds = toggle($form.productIds, product.id, checked === true))}
-							/>
-							<span>{product.code} — {product.name}</span>
-						</Label>
-					{/each}
-				</fieldset>
-			</Card.Content>
-		</Card.Root>
-
-		{#if counterpartyKind !== 'individual'}
-			<Card.Root size="sm">
-				<Card.Header>
-					<Card.Title>Договор</Card.Title>
-					<Card.Description>
-						По какому обязательству идёт работа и какие его позиции в ней участвуют. Договоры ведут
-						в карточке контрагента: здесь их только выбирают.
-					</Card.Description>
-				</Card.Header>
-				<Card.Content class="flex flex-col gap-4">
-					{#if institution === null}
-						<p class="text-xs text-muted-foreground">
-							Сначала выберите {isInstitution ? 'учебное заведение' : 'компанию'}: договор
-							принадлежит ей.
-						</p>
-					{:else if contracts.length === 0}
-						<p class="text-xs text-muted-foreground">
-							У выбранного контрагента договоров пока нет: их заводят на его карточке.
-						</p>
-					{:else}
-						<FieldSelect
-							name="contractId"
-							label="Договор контрагента"
-							options={contractOptions}
-							errors={$errors.contractId}
-							bind:value={
-								() => contractId ?? NO_OPTION,
-								(next) => {
-									contractId = next === NO_OPTION ? null : next;
-									selectedItemIds = [];
-								}
-							}
-						/>
-
-						{#if chosenContract !== null}
-							<fieldset class="flex flex-col gap-2">
-								<legend class="text-sm font-medium">Позиции договора</legend>
-								{#if chosenContract.items.length === 0}
-									<p class="text-xs text-muted-foreground">
-										В договоре нет позиций: коммерческие условия по продуктам не записаны.
-									</p>
-								{/if}
-								{#each chosenContract.items as item (item.id)}
-									<Label class="flex items-start gap-2 font-normal">
-										<Checkbox
-											checked={selectedItemIds.includes(item.id)}
-											onCheckedChange={(checked) =>
-												(selectedItemIds = toggle(selectedItemIds, item.id, checked === true))}
-										/>
-										<span class="flex flex-col gap-0.5">
-											<span>{item.productCode} — {item.productName}</span>
-											<span class="text-xs text-muted-foreground">
-												Статус по передаче: {item.transferStatus}{item.licenseUntil === null
-													? ''
-													: ` · лицензия до ${formatDate(item.licenseUntil)}`}
-											</span>
-										</span>
-									</Label>
-								{/each}
-							</fieldset>
-
-							{#if itemsOutsideProducts.length > 0}
-								<InlineHint tone="warning">
-									Позиция описывает продукт, которого нет в составе: отметьте {itemsOutsideProducts
-										.map((item) => `«${item.productName}»`)
-										.join(', ')} среди продуктов или снимите позицию.
-								</InlineHint>
-							{/if}
-						{/if}
-					{/if}
-				</Card.Content>
-			</Card.Root>
-		{/if}
 
 		<FormActions
 			submitting={$submitting}

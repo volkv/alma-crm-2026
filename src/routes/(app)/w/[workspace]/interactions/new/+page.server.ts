@@ -2,19 +2,10 @@ import { error, redirect } from '@sveltejs/kit';
 import { fail, message, superValidate } from 'sveltekit-superforms';
 import { zod4 } from 'sveltekit-superforms/adapters';
 import { id } from '$lib/contracts/common';
-import {
-	catalogListQuerySchema,
-	type LookupOption,
-	type OrganizationKind
-} from '$lib/contracts/directory';
+import type { LookupOption, OrganizationKind } from '$lib/contracts/directory';
 import { createInteractionSchema } from '$lib/contracts/interactions';
 import { actorFromEvent, type ActorContext } from '$lib/server/actor';
-import {
-	getOrganization,
-	listProducts,
-	listPrograms,
-	pickOrganization
-} from '$lib/server/directory/read';
+import { getOrganization, pickOrganization } from '$lib/server/directory/read';
 import { passportAvailability } from '$lib/server/enrichment/access';
 import { toActionFailure, toPageError } from '$lib/server/http';
 import { readWorkspaceCounterpartyKinds } from '$lib/server/interactions/composition';
@@ -22,8 +13,6 @@ import { createInteraction } from '$lib/server/interactions/write';
 import { can, requirePermission } from '$lib/server/rbac';
 import { responsibleOptions } from '../responsible';
 import type { Actions, PageServerLoad } from './$types';
-
-const catalogPage = catalogListQuerySchema.parse({ status: 'active', pageSize: 100 });
 
 const organizationParam = id('Идентификатор организации в ссылке некорректен');
 
@@ -108,9 +97,7 @@ export const load: PageServerLoad = async (event) => {
 		);
 	}
 
-	const [programs, products, users, form, preset, registry, counterpartyKinds] = await Promise.all([
-		listPrograms(ctx, catalogPage),
-		listProducts(ctx, catalogPage),
+	const [users, form, preset, registry, counterpartyKinds] = await Promise.all([
 		responsibleOptions(event),
 		superValidate(zod4(createInteractionSchema)),
 		presetInstitution(ctx, event.url.searchParams.get('organization')),
@@ -124,8 +111,6 @@ export const load: PageServerLoad = async (event) => {
 
 	return {
 		form,
-		programs: programs.items,
-		products: products.items,
 		users,
 		presetInstitution: preset.option,
 		presetKind: preset.kind,
@@ -143,7 +128,7 @@ export const load: PageServerLoad = async (event) => {
 
 export const actions: Actions = {
 	default: async (event) => {
-		// Стороны и программы приезжают вложенными списками, поэтому форма
+		// Стороны приезжают вложенным списком, поэтому форма
 		// отправляется одним JSON, а не парами «поле — значение».
 		const form = await superValidate(event.request, zod4(createInteractionSchema));
 
