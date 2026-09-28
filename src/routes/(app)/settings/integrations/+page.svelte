@@ -5,6 +5,7 @@
 	import { toast } from 'svelte-sonner';
 	import CopyIcon from '@lucide/svelte/icons/copy';
 	import KeyRoundIcon from '@lucide/svelte/icons/key-round';
+	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import RefreshCwIcon from '@lucide/svelte/icons/refresh-cw';
 	import * as Alert from '$lib/components/ui/alert/index.js';
@@ -51,6 +52,7 @@
 	type IssuedSecret = { secret: string; name: string };
 
 	let editorOpen = $state(false);
+	let dadataOpen = $state(false);
 	let issued = $state<IssuedSecret | null>(null);
 
 	const {
@@ -109,8 +111,21 @@
 		message: dadataMessage
 	} = superForm<DadataSettingsFormInput, string>(
 		untrack(() => data.dadataForm),
-		{ validators: zod4Client(dadataSettingsFormSchema), id: 'dadata-settings' }
+		{
+			validators: zod4Client(dadataSettingsFormSchema),
+			id: 'dadata-settings',
+			onUpdated: ({ form: updated }) => {
+				if (updated.valid) {
+					dadataOpen = false;
+				}
+			}
+		}
 	);
+
+	function openDadata() {
+		$dadata.apiKey = null;
+		dadataOpen = true;
+	}
 
 	const {
 		form: delivery,
@@ -660,6 +675,14 @@
 			источники» в общих настройках; здесь — ключ API подсказок и адрес сервиса. Ключ целиком не
 			показывается никогда — только последние четыре знака.
 		</Card.Description>
+		{#if data.canManageEndpoints}
+			<Card.Action>
+				<Button size="sm" variant="outline" onclick={openDadata}>
+					<PencilIcon aria-hidden="true" />
+					Изменить
+				</Button>
+			</Card.Action>
+		{/if}
 	</Card.Header>
 	<Card.Content class="flex flex-col gap-4">
 		<dl class="grid gap-2 text-sm sm:grid-cols-2">
@@ -700,57 +723,70 @@
 		{#if $dadataMessage}
 			<Alert.Root><Alert.Description>{$dadataMessage}</Alert.Description></Alert.Root>
 		{/if}
-
-		{#if $dadataErrors._errors}
-			<Alert.Root variant="destructive">
-				<Alert.Description>
-					<ul class="list-inside list-disc">
-						{#each $dadataErrors._errors as issue (issue)}
-							<li>{issue}</li>
-						{/each}
-					</ul>
-				</Alert.Description>
-			</Alert.Root>
-		{/if}
-
-		{#if data.canManageEndpoints}
-			<form
-				method="POST"
-				action="?/dadata"
-				use:dadataEnhance
-				novalidate
-				class="grid gap-4 sm:grid-cols-2"
-			>
-				<FieldInput
-					name="apiKey"
-					label="Ключ API"
-					description={data.dadata.keySource === 'settings'
-						? 'Ключ сохранён. Пустое поле оставит прежний'
-						: 'API key из личного кабинета Dadata; после сохранения показан не будет'}
-					placeholder={data.dadata.keyMask ?? 'Ключ API'}
-					bind:value={() => $dadata.apiKey ?? '', (next) => ($dadata.apiKey = next.trim() || null)}
-					errors={$dadataErrors.apiKey}
-				/>
-				<FieldInput
-					name="baseUrl"
-					label="Адрес сервиса"
-					description="Пусто — облачный сервис. Для коробочной версии в сети заказчика — её внутренний адрес по https, вместе с ключом"
-					placeholder={DADATA_CLOUD_ORIGIN}
-					bind:value={$dadata.baseUrl}
-					errors={$dadataErrors.baseUrl}
-				/>
-				<div class="sm:col-span-2">
-					<FormActions submitting={$dadataSubmitting} submitLabel="Сохранить" />
-				</div>
-			</form>
-			{#if data.dadata.keySource === 'settings'}
-				<form method="POST" action="?/forgetDadataKey" class="border-t border-border pt-4">
-					<Button type="submit" variant="outline">Удалить ключ</Button>
-				</form>
-			{/if}
-		{/if}
 	</Card.Content>
 </Card.Root>
+
+<FormDialog
+	bind:open={dadataOpen}
+	title="Подключение к Dadata"
+	description="Пустой адрес — облачный сервис. Свой адрес нужен коробочной версии в сети заказчика и сохраняется только вместе с ключом."
+>
+	{#if $dadataErrors._errors}
+		<Alert.Root variant="destructive" class="mb-4">
+			<Alert.Description>
+				<ul class="list-inside list-disc">
+					{#each $dadataErrors._errors as issue (issue)}
+						<li>{issue}</li>
+					{/each}
+				</ul>
+			</Alert.Description>
+		</Alert.Root>
+	{/if}
+
+	<form
+		id="dadata-form"
+		method="POST"
+		action="?/dadata"
+		use:dadataEnhance
+		novalidate
+		class="flex flex-col gap-4"
+	>
+		<FieldInput
+			name="apiKey"
+			label="Ключ API"
+			description={data.dadata.keySource === 'settings'
+				? 'Ключ сохранён. Пустое поле оставит прежний'
+				: 'API key из личного кабинета Dadata; после сохранения показан не будет'}
+			placeholder={data.dadata.keyMask ?? 'Ключ API'}
+			bind:value={() => $dadata.apiKey ?? '', (next) => ($dadata.apiKey = next.trim() || null)}
+			errors={$dadataErrors.apiKey}
+		/>
+		<FieldInput
+			name="baseUrl"
+			label="Адрес сервиса"
+			description="Для коробочной версии — её внутренний адрес по https"
+			placeholder={DADATA_CLOUD_ORIGIN}
+			bind:value={$dadata.baseUrl}
+			errors={$dadataErrors.baseUrl}
+		/>
+	</form>
+
+	{#if data.dadata.keySource === 'settings'}
+		<form method="POST" action="?/forgetDadataKey" class="mt-4 border-t border-border pt-4">
+			<Button type="submit" variant="outline">Удалить ключ</Button>
+		</form>
+	{/if}
+
+	{#snippet footer({ close })}
+		<FormActions
+			form="dadata-form"
+			submitting={$dadataSubmitting}
+			submitLabel="Сохранить"
+			oncancel={close}
+			class="border-t-0 pt-0"
+		/>
+	{/snippet}
+</FormDialog>
 
 <FormDialog
 	bind:open={editorOpen}
