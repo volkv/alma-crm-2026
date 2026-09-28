@@ -286,7 +286,7 @@
       <documentation>Единственный клиент интерфейса.</documentation>
     </element>
     <element xsi:type="archimate:CommunicationNetwork" name="Интернет (TLS 443)" id="id-net-internet">
-      <documentation>Наружу стенд смотрит одним адресом: `https://crm.volkv.com`.</documentation>
+      <documentation>Наружу стенд смотрит одним адресом: `https://alma.volkv.com`.</documentation>
     </element>
     <element xsi:type="archimate:CommunicationNetwork" name="Сеть Docker Compose (внутренняя)" id="id-net-compose">
       <documentation>Имена сервисов вместо адресов; наружу из этой сети не публикуется ничего, кроме приложения и Keycloak, и только на петлевом интерфейсе.</documentation>
