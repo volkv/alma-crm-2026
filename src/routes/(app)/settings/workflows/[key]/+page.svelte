@@ -8,6 +8,7 @@
 	import { zod4Client } from 'sveltekit-superforms/adapters';
 	import { toast } from 'svelte-sonner';
 	import ArrowLeftIcon from '@lucide/svelte/icons/arrow-left';
+	import ChevronDownIcon from '@lucide/svelte/icons/chevron-down';
 	import HistoryIcon from '@lucide/svelte/icons/history';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PlusIcon from '@lucide/svelte/icons/plus';
@@ -245,6 +246,7 @@
 			}))
 		};
 		$stageErrors = {};
+		openChecklistItem = null;
 		stageOpen = true;
 	}
 
@@ -287,16 +289,37 @@
 		return data.preview?.rows.find((row) => row.stageKey === key)?.interactions ?? 0;
 	}
 
+	/**
+	 * Пункты чек-листа свёрнуты в строки, раскрыт один: так список читается
+	 * по названиям, а поля видны только у пункта, который правят.
+	 */
+	let openChecklistItem = $state<number | null>(null);
+
 	/** Новый пункт чек-листа: ключ ему соберёт сервер из названия. */
 	function addChecklistItem() {
 		$stageData.checklist = [
 			...$stageData.checklist,
 			{ key: '', label: '', required: false, help: '', rule: '', action: '' }
 		];
+		openChecklistItem = $stageData.checklist.length - 1;
 	}
 
 	function removeChecklistItem(index: number) {
 		$stageData.checklist = $stageData.checklist.filter((_, position) => position !== index);
+		if (openChecklistItem === index) {
+			openChecklistItem = null;
+		} else if (openChecklistItem !== null && openChecklistItem > index) {
+			openChecklistItem -= 1;
+		}
+	}
+
+	function checklistSummary(item: { rule: string; action: string }): string {
+		const rule = offeredChecklistRules().find((candidate) => candidate.key === item.rule);
+		const action = offeredChecklistActions().find((candidate) => candidate.key === item.action);
+		return [
+			rule ? `Данными: ${rule.label}` : 'Отметкой человека',
+			action ? `кнопка «${action.label}»` : 'без кнопки'
+		].join(' · ');
 	}
 
 	/**
@@ -928,7 +951,7 @@
 
 <FormDialog
 	bind:open={stageOpen}
-	width="lg"
+	width="2xl"
 	title={$stageData.originalKey === '' ? 'Добавить стадию' : 'Стадия процесса'}
 	description="Название и норматив видят все, кто ведёт дела; позиция задаёт место в цепочке, номера расставятся по порядку сами."
 >
@@ -951,7 +974,7 @@
 		action="?/stage"
 		use:stageEnhance
 		novalidate
-		class="flex flex-col gap-4"
+		class="flex flex-col gap-6"
 	>
 		<input type="hidden" name="originalKey" value={$stageData.originalKey} />
 
@@ -963,7 +986,7 @@
 			bind:value={() => $stageData.name, renameStage}
 			errors={$stageErrors.name}
 		/>
-		<div class="grid gap-4 sm:grid-cols-2">
+		<div class="grid gap-x-4 gap-y-6 sm:grid-cols-2">
 			{@render numberField({
 				name: 'slaDays',
 				label: 'Норматив, дней',
@@ -983,7 +1006,7 @@
 				onchange: (next) => ($stageData.staleAfterDays = next)
 			})}
 		</div>
-		<div class="grid gap-4 sm:grid-cols-2">
+		<div class="grid gap-x-4 gap-y-6 sm:grid-cols-2">
 			{@render numberField({
 				name: 'position',
 				label: 'Позиция в процессе',
@@ -1004,33 +1027,35 @@
 				errors={$stageErrors.category}
 			/>
 		</div>
-		<fieldset class="flex flex-col gap-2">
-			<legend class="text-sm font-medium">Что требуется на шаге вперёд</legend>
-			{@render checkboxField({
-				name: 'requiresResult',
-				label: 'Записан результат стадии',
-				checked: $stageData.requiresResult,
-				onchange: (next) => ($stageData.requiresResult = next)
-			})}
-			{@render checkboxField({
-				name: 'requiresConfirmation',
-				label: 'Есть подтверждение: файл, отметка или запись системы обучения',
-				checked: $stageData.requiresConfirmation,
-				onchange: (next) => ($stageData.requiresConfirmation = next)
-			})}
-			{@render checkboxField({
-				name: 'requiresLmsData',
-				label: 'Получены данные системы обучения по взаимодействию',
-				checked: $stageData.requiresLmsData,
-				onchange: (next) => {
-					$stageData.requiresLmsData = next;
-					// Без данных обучения сужать нечего: отмеченные назначения
-					// ушли бы с формой и получили бы отказ.
-					if (!next) {
-						$stageData.lmsGroupPurposes = [];
+		<fieldset class="flex min-w-0 flex-col gap-6">
+			<legend class="mb-3 text-sm font-medium">Что требуется на шаге вперёд</legend>
+			<div class="flex flex-col gap-3">
+				{@render checkboxField({
+					name: 'requiresResult',
+					label: 'Записан результат стадии',
+					checked: $stageData.requiresResult,
+					onchange: (next) => ($stageData.requiresResult = next)
+				})}
+				{@render checkboxField({
+					name: 'requiresConfirmation',
+					label: 'Есть подтверждение: файл, отметка или запись системы обучения',
+					checked: $stageData.requiresConfirmation,
+					onchange: (next) => ($stageData.requiresConfirmation = next)
+				})}
+				{@render checkboxField({
+					name: 'requiresLmsData',
+					label: 'Получены данные системы обучения по взаимодействию',
+					checked: $stageData.requiresLmsData,
+					onchange: (next) => {
+						$stageData.requiresLmsData = next;
+						// Без данных обучения сужать нечего: отмеченные назначения
+						// ушли бы с формой и получили бы отказ.
+						if (!next) {
+							$stageData.lmsGroupPurposes = [];
+						}
 					}
-				}
-			})}
+				})}
+			</div>
 			<FieldSelect
 				name="requiresDocumentMark"
 				label="Отметка по документу дела"
@@ -1060,8 +1085,8 @@
 				errors={$stageErrors.requiresDocumentTemplate}
 			/>
 			{#if $stageData.requiresLmsData}
-				<fieldset class="flex flex-col gap-2">
-					<legend class="mb-1 text-sm">Итог каких групп засчитывается</legend>
+				<fieldset class="flex min-w-0 flex-col gap-3">
+					<legend class="mb-3 text-sm">Итог каких групп засчитывается</legend>
 					{#each LEARNING_PURPOSES as purpose (purpose)}
 						<Label class="flex items-center gap-2 font-normal">
 							<Checkbox
@@ -1103,8 +1128,8 @@
 			bind:value={$stageData.onEnterNotify}
 			errors={$stageErrors.onEnterNotify}
 		/>
-		<fieldset class="flex flex-col gap-2">
-			<legend class="text-sm font-medium">Место в процессе</legend>
+		<fieldset class="flex min-w-0 flex-col gap-3">
+			<legend class="mb-3 text-sm font-medium">Место в процессе</legend>
 			{@render checkboxField({
 				name: 'isFinal',
 				label: 'Финальная: с неё взаимодействие завершают, а не идут дальше',
@@ -1115,8 +1140,8 @@
 		<!-- Чек-лист — список пунктов: название, обязательность, пояснение, чем
 			закрывается и кнопка рядом. Ключ пункта собирает сервер из названия и
 			больше не меняет: по нему в идущих делах хранятся отметки. -->
-		<fieldset class="flex flex-col gap-2">
-			<legend class="text-sm font-medium">Чек-лист</legend>
+		<fieldset class="flex min-w-0 flex-col gap-3">
+			<legend class="mb-1 text-sm font-medium">Чек-лист</legend>
 			<p class="text-xs text-muted-foreground">
 				Что проверить на стадии. Обязательный пункт не пускает дело дальше, пока его не отметят —
 				или, если его закрывают данные дела, пока данных нет: галочкой такой пункт не закрыть.
@@ -1127,23 +1152,44 @@
 				<span class="text-xs text-danger">{$stageErrors.checklist._errors.join('; ')}</span>
 			{/if}
 			{#each $stageData.checklist as item, index (index)}
-				{@const labelErrors = $stageErrors.checklist?.[index]?.label}
-				<div class="flex flex-col gap-1">
-					<div class="flex flex-wrap items-center gap-2">
-						<Input
-							class="min-w-0 flex-1"
-							aria-label="Пункт {index + 1}"
-							aria-invalid={labelErrors !== undefined}
-							placeholder="Например: подтверждён контакт ответственного лица"
-							bind:value={$stageData.checklist[index].label}
-						/>
-						<Label class="flex items-center gap-2 font-normal">
-							<Checkbox
-								checked={item.required}
-								onCheckedChange={(next) => ($stageData.checklist[index].required = next === true)}
+				{@const itemErrors = $stageErrors.checklist?.[index]}
+				{@const expanded = openChecklistItem === index}
+				<!-- Свёрнутый пункт — строка с названием и сводкой; раскрытый — поля
+					пункта. Пункт с ошибкой подсвечен и в свёрнутом виде. -->
+				<div
+					class={[
+						'min-w-0 rounded-lg border',
+						itemErrors ? 'border-destructive' : 'border-border',
+						expanded && 'bg-surface-muted/40'
+					]}
+				>
+					<div class="flex items-center gap-1 pr-1">
+						<button
+							type="button"
+							class="flex min-w-0 flex-1 items-center gap-3 rounded-lg px-3 py-2.5 text-left focus-ring transition-colors hover:bg-surface-muted/60"
+							aria-expanded={expanded}
+							aria-controls="checklist-item-{index}"
+							onclick={() => (openChecklistItem = expanded ? null : index)}
+						>
+							<ChevronDownIcon
+								aria-hidden="true"
+								class={[
+									'size-4 shrink-0 text-muted-foreground transition-transform',
+									!expanded && '-rotate-90'
+								]}
 							/>
-							Обязательный
-						</Label>
+							<span class="flex min-w-0 flex-1 flex-col gap-0.5">
+								<span class="flex min-w-0 items-center gap-2">
+									<span class="truncate text-sm font-medium">
+										{index + 1}. {item.label.trim() || 'Новый пункт'}
+									</span>
+									{#if item.required}
+										<StatusBadge tone="info">Обязательный</StatusBadge>
+									{/if}
+								</span>
+								<span class="truncate text-xs text-muted-foreground">{checklistSummary(item)}</span>
+							</span>
+						</button>
 						<Button
 							variant="ghost"
 							size="icon-sm"
@@ -1154,43 +1200,61 @@
 							<XIcon aria-hidden="true" />
 						</Button>
 					</div>
-					{#if labelErrors}
-						<span class="text-xs text-danger">{labelErrors.join('; ')}</span>
+					{#if expanded}
+						<div
+							id="checklist-item-{index}"
+							class="flex min-w-0 flex-col gap-5 border-t border-border px-3 pt-4 pb-4"
+						>
+							<FieldInput
+								name="checklist-label-{index}"
+								label="Название пункта"
+								required
+								placeholder="Например: подтверждён контакт ответственного лица"
+								bind:value={$stageData.checklist[index].label}
+								errors={itemErrors?.label}
+							/>
+							<Label class="flex items-center gap-2 font-normal">
+								<Checkbox
+									checked={item.required}
+									onCheckedChange={(next) => ($stageData.checklist[index].required = next === true)}
+								/>
+								Обязательный: без него дело дальше не пойдёт
+							</Label>
+							<FieldInput
+								name="checklist-help-{index}"
+								label="Пояснение"
+								placeholder="Что значит сделать пункт: например, «выберите у стороны подразделение»"
+								bind:value={$stageData.checklist[index].help}
+								errors={itemErrors?.help}
+							/>
+							<FieldSelect
+								name="checklist-rule-{index}"
+								label="Чем закрывается"
+								options={[
+									{ value: '', label: 'Отметкой человека' },
+									...offeredChecklistRules().map((rule) => ({
+										value: rule.key,
+										label: `Данными: ${rule.label}`
+									}))
+								]}
+								bind:value={$stageData.checklist[index].rule}
+								errors={itemErrors?.rule}
+							/>
+							<FieldSelect
+								name="checklist-action-{index}"
+								label="Кнопка рядом с пунктом"
+								options={[
+									{ value: '', label: 'Без кнопки' },
+									...offeredChecklistActions().map((action) => ({
+										value: action.key,
+										label: action.label
+									}))
+								]}
+								bind:value={$stageData.checklist[index].action}
+								errors={itemErrors?.action}
+							/>
+						</div>
 					{/if}
-					<Input
-						class="min-w-0"
-						aria-label="Пояснение к пункту {index + 1}"
-						placeholder="Что значит сделать пункт: например, «выберите у стороны подразделение»"
-						bind:value={$stageData.checklist[index].help}
-					/>
-					<div class="grid gap-2 sm:grid-cols-2">
-						<FieldSelect
-							name="checklist-rule-{index}"
-							label="Чем закрывается"
-							options={[
-								{ value: '', label: 'Отметкой человека' },
-								...offeredChecklistRules().map((rule) => ({
-									value: rule.key,
-									label: `Данными: ${rule.label}`
-								}))
-							]}
-							bind:value={$stageData.checklist[index].rule}
-							errors={$stageErrors.checklist?.[index]?.rule}
-						/>
-						<FieldSelect
-							name="checklist-action-{index}"
-							label="Кнопка рядом с пунктом"
-							options={[
-								{ value: '', label: 'Без кнопки' },
-								...offeredChecklistActions().map((action) => ({
-									value: action.key,
-									label: action.label
-								}))
-							]}
-							bind:value={$stageData.checklist[index].action}
-							errors={$stageErrors.checklist?.[index]?.action}
-						/>
-					</div>
 				</div>
 			{/each}
 			<div>
@@ -1204,7 +1268,7 @@
 		<!-- Ключ — техническое имя стадии: по нему хранятся отметки чек-листа,
 			слепки пройденных стадий и сопоставление при изменении процесса. Людям,
 			ведущим дела, он не виден, поэтому стоит последним. -->
-		<fieldset class="flex flex-col gap-2 border-t border-border pt-4">
+		<fieldset class="flex min-w-0 flex-col gap-3 border-t border-border pt-4">
 			<legend class="sr-only">Технические сведения</legend>
 			{#if $stageData.originalKey === ''}
 				<FieldInput

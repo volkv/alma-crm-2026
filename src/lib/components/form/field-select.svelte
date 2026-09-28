@@ -37,8 +37,16 @@
 <FormField {name} {label} {description} {errors} {required}>
 	{#snippet control({ id, describedBy, invalid })}
 		<Select.Root type="single" {name} bind:value>
-			<Select.Trigger {id} class="w-full" aria-invalid={invalid} aria-describedby={describedBy}>
-				{selected?.label ?? placeholder}
+			<!-- Длинная подпись обрезается многоточием, а целиком видна в подсказке:
+				без обрезки текст вылезает из поля поверх соседнего. -->
+			<Select.Trigger
+				{id}
+				class="w-full min-w-0"
+				title={selected?.label}
+				aria-invalid={invalid}
+				aria-describedby={describedBy}
+			>
+				<span class="min-w-0 truncate">{selected?.label ?? placeholder}</span>
 			</Select.Trigger>
 			<Select.Content>
 				{#each options as option (option.value)}

@@ -1,8 +1,9 @@
 <script lang="ts" module>
-	/** Ширина слоя: `lg` — общий минимум всех модалок (как у `Dialog.Content`), `xl` — шире. */
+	/** Ширина слоя: `lg` — общий минимум всех модалок (как у `Dialog.Content`), `xl` — шире, `2xl` — длинные формы со списками. */
 	const WIDTHS = {
 		lg: 'sm:max-w-[37rem]',
-		xl: 'sm:max-w-2xl'
+		xl: 'sm:max-w-2xl',
+		'2xl': 'sm:max-w-3xl'
 	} as const;
 
 	export type FormDialogWidth = keyof typeof WIDTHS;
