@@ -133,7 +133,6 @@
 	{dirty}
 	width="lg"
 	class={WIDTHS[width]}
-	titleClass="text-lg font-semibold"
 	closeOnlyByButton
 	pinTop
 >

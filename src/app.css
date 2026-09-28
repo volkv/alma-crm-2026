@@ -476,6 +476,10 @@ html[data-theme='dark'] {
 	--text-xl--line-height: 1.5rem;
 	--text-2xl: 1.75rem; /* heading-h1 — 28/32, крупные числа сводок */
 	--text-2xl--line-height: 2rem;
+	/* Заголовок модального слоя (утилита `dialog-title`) — body-l полужирным. */
+	--text-dialog-title: var(--text-lg);
+	--text-dialog-title--line-height: var(--text-lg--line-height);
+	--text-dialog-title--font-weight: var(--font-weight-semibold);
 
 	/*
 	 * Surfaces: the app backdrop, the panels on it, recessed areas inside panels,
@@ -675,6 +679,18 @@ html[data-theme='dark'] {
 	color: var(--color-muted-foreground);
 	text-transform: none;
 	letter-spacing: normal;
+}
+
+/*
+ * Заголовок модального слоя — диалога, подтверждения, боковой панели — один
+ * на все: 18/26, полужирный, по эталону окна «Новое взаимодействие». Его
+ * ставят сами примитивы `Dialog.Title`, `AlertDialog.Title`, `Sheet.Title`;
+ * размер и начертание меняются токенами `--text-dialog-title*` в `@theme`.
+ */
+@utility dialog-title {
+	font-size: var(--text-dialog-title);
+	line-height: var(--text-dialog-title--line-height);
+	font-weight: var(--text-dialog-title--font-weight);
 }
 
 @utility focus-ring {

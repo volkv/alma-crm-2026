@@ -42,7 +42,6 @@
 		width = 'lg',
 		closeOnlyByButton = false,
 		pinTop = false,
-		titleClass,
 		discardTitle = 'Закрыть без сохранения?',
 		discardDescription = 'Введённое в форме пропадёт: диалог закроется, ничего не сохранив.',
 		class: className,
@@ -67,8 +66,6 @@
 		 * секции), по центру скачет вверх и вниз; прибитое растёт только вниз.
 		 */
 		pinTop?: boolean;
-		/** Заголовок крупнее обычного — у окна, которое открывает целый сценарий. */
-		titleClass?: string;
 		discardTitle?: string;
 		discardDescription?: string;
 		class?: string;
@@ -108,7 +105,7 @@
 		)}
 	>
 		<Dialog.Header class="shrink-0 border-b border-border p-6 pr-12">
-			<Dialog.Title class={titleClass}>{title}</Dialog.Title>
+			<Dialog.Title>{title}</Dialog.Title>
 			{#if description}
 				<Dialog.Description>{description}</Dialog.Description>
 			{/if}
