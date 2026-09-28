@@ -491,7 +491,7 @@ PNG и PDF, а клик по столбцу воронки не открывае
 сводка по взаимодействию для КАМа и извлечение реквизитов вуза из присланных документов. Ни разу не
 нашли задачи, где модель в закрытом контуре дала бы проверяемую пользу сверх детерминированной
 автоматизации, — и не поставили её ради того, чтобы она была. Сопоставление колонок импорта
-(`/organizations/import`, `/data/new`) сделано детерминированно: словарь синонимов поля и решение по
+(`/organizations/import`, загрузка на `/data`) сделано детерминированно: словарь синонимов поля и решение по
 строке, а не угадывание, — результат воспроизводим и проверяется построчно (`docs/directory.md`,
 «Допущения S4.1a»; `docs/stats.md`). Паспорт организации в форме вуза по той же причине не модель,
 а прямые запросы к ЕГРЮЛ через Dadata и к размеченному разделу `/sveden` сайта из карточки, с
@@ -508,18 +508,18 @@ PNG и PDF, а клик по столбцу воронки не открывае
 замер или команда сборки, у остальных четырнадцати — ручной сценарий или проверки нет. Статусы на текущем коммите: **45 реализовано, 7
 частично, 2 запланировано, 3 не проверено** (оценка интерфейса людьми). Коротко:
 
-| Требование задания                            | Где это                                                                                                                                                                                      |
-| --------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Управляемый процесс взаимодействия            | `/settings/workflows`, `/w/[пространство]/interactions` · `src/lib/server/stages/` · [`docs/workflow.md`](docs/workflow.md)                                                                  |
-| Роли и разграничение видимости                | вход через Keycloak · матрица прав — `/settings/roles` · членство в пространствах — `/settings/workspaces` · `src/lib/server/rbac/` · [`docs/access-matrix.md`](docs/access-matrix.md)       |
-| Двусторонний обмен с CMS и LMS                | `/exchange`, `/api/v1` · `src/lib/server/integrations/exchange/` · [`docs/exchange-contract.md`](docs/exchange-contract.md)                                                                  |
-| Отчёты за период с выбором колонок и форматов | `/reports`, `/reports/export` · `src/lib/server/reports/` · [`docs/reports.md`](docs/reports.md)                                                                                             |
-| Автоматизация 14 шагов процесса               | `/help/user/automation` · `src/lib/automation-map.ts` · [`docs/automation-map.md`](docs/automation-map.md)                                                                                   |
-| Справочники трёх сторон и загрузка таблицей   | `/organizations` (вузы, площадки, договоры), `/people`, `/programs`, `/products`, `/directions`; загрузка — `/organizations/import` и `/data/new` · [`docs/directory.md`](docs/directory.md) |
-| Документы по шаблону и их редакции            | `/documents` · `templates/` · [`docs/documents.md`](docs/documents.md)                                                                                                                       |
-| Журнал действий и персональные данные         | `/audit` · `src/lib/server/audit/` · [`docs/admin.md`](docs/admin.md)                                                                                                                        |
-| Руководства внутри системы                    | `/help`, `/help/print` · `src/lib/help/content/` (24 статьи)                                                                                                                                 |
-| Публичный API и упаковка                      | `/api/docs` · `Dockerfile`, `docker-compose.yml` · [`docs/api.md`](docs/api.md)                                                                                                              |
+| Требование задания                            | Где это                                                                                                                                                                                                   |
+| --------------------------------------------- | --------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Управляемый процесс взаимодействия            | `/settings/workflows`, `/w/[пространство]/interactions` · `src/lib/server/stages/` · [`docs/workflow.md`](docs/workflow.md)                                                                               |
+| Роли и разграничение видимости                | вход через Keycloak · матрица прав — `/settings/roles` · членство в пространствах — `/settings/workspaces` · `src/lib/server/rbac/` · [`docs/access-matrix.md`](docs/access-matrix.md)                    |
+| Двусторонний обмен с CMS и LMS                | `/exchange`, `/api/v1` · `src/lib/server/integrations/exchange/` · [`docs/exchange-contract.md`](docs/exchange-contract.md)                                                                               |
+| Отчёты за период с выбором колонок и форматов | `/reports`, `/reports/export` · `src/lib/server/reports/` · [`docs/reports.md`](docs/reports.md)                                                                                                          |
+| Автоматизация 14 шагов процесса               | `/help/user/automation` · `src/lib/automation-map.ts` · [`docs/automation-map.md`](docs/automation-map.md)                                                                                                |
+| Справочники трёх сторон и загрузка таблицей   | `/organizations` (вузы, площадки, договоры), `/people`, `/programs`, `/products`, `/directions`; загрузка — `/organizations/import` и окно загрузки на `/data` · [`docs/directory.md`](docs/directory.md) |
+| Документы по шаблону и их редакции            | `/documents` · `templates/` · [`docs/documents.md`](docs/documents.md)                                                                                                                                    |
+| Журнал действий и персональные данные         | `/audit` · `src/lib/server/audit/` · [`docs/admin.md`](docs/admin.md)                                                                                                                                     |
+| Руководства внутри системы                    | `/help`, `/help/print` · `src/lib/help/content/` (24 статьи)                                                                                                                                              |
+| Публичный API и упаковка                      | `/api/docs` · `Dockerfile`, `docker-compose.yml` · [`docs/api.md`](docs/api.md)                                                                                                                           |
 
 ## Архитектура
 

@@ -1,5 +1,4 @@
 <script lang="ts">
-	import LandmarkIcon from '@lucide/svelte/icons/landmark';
 	import LoaderIcon from '@lucide/svelte/icons/loader-2';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PlusIcon from '@lucide/svelte/icons/plus';
@@ -33,10 +32,16 @@
 	 */
 
 	let {
-		allowVendor
+		allowVendor,
+		query = $bindable(''),
+		onmanual
 	}: {
 		/** Предлагать ли вид «Вендор»: заводит вендоров только полный доступ. */
 		allowVendor: boolean;
+		/** Набранная строка: по ней окно понимает, есть ли что терять. */
+		query?: string;
+		/** Перейти к ручной форме: набранная строка переезжает в её поля. */
+		onmanual: (typed: string) => void;
 	} = $props();
 
 	const kindOptions = $derived(
@@ -55,7 +60,6 @@
 		unknown: 'Состояние в ЕГРЮЛ не определено'
 	};
 
-	let query = $state('');
 	let candidates = $state<RegistryCandidate[] | null>(null);
 	let loading = $state(false);
 	let error = $state<string | null>(null);
@@ -70,9 +74,6 @@
 	$effect(() => () => clearTimeout(timer));
 
 	const ready = $derived(query.trim().length >= MIN_QUERY);
-	const manualHref = $derived(
-		`${resolve('/organizations/new')}?manual${query.trim() === '' ? '' : `&name=${encodeURIComponent(query.trim())}`}`
-	);
 
 	function oninput(event: Event & { currentTarget: HTMLInputElement }) {
 		query = event.currentTarget.value;
@@ -203,10 +204,7 @@
 	}
 </script>
 
-<section
-	data-tour="organization-new-registry"
-	class="flex max-w-3xl flex-col gap-3 rounded-lg border border-border bg-surface p-4 sm:p-6"
->
+<section class="flex flex-col gap-3">
 	<div class="flex flex-col gap-1">
 		<h2 class="text-base font-medium">Найдите организацию в ЕГРЮЛ</h2>
 		<p class="text-sm text-muted-foreground">
@@ -255,7 +253,7 @@
 						: 'Найти в ЕГРЮЛ не получилось.'}
 					Организацию можно добавить вручную.
 				</p>
-				<Button href={manualHref}>
+				<Button onclick={() => onmanual(query.trim())}>
 					<PencilIcon aria-hidden="true" />
 					Добавить вручную
 				</Button>
@@ -365,11 +363,9 @@
 		{/if}
 	</div>
 
-	<!-- Адрес ручной формы собран через resolve(): к нему дописана только строка
-		 запроса с набранным текстом. -->
-	<p class="flex flex-wrap items-center gap-1.5 text-xs text-muted-foreground">
-		<LandmarkIcon class="size-3.5" aria-hidden="true" />
-		Нет в реестре или нужна своя карточка?
-		<Button variant="link" size="xs" class="h-auto px-0" href={manualHref}>Добавить вручную</Button>
+	<!-- Запасной путь «нет в реестре или нужна своя карточка» — кнопка
+		«Добавить вручную» в панели окна: отправка там одна на окно. -->
+	<p class="text-xs text-muted-foreground">
+		Нет в реестре или нужна своя карточка — добавьте организацию вручную.
 	</p>
 </section>

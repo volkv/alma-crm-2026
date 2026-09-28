@@ -16,13 +16,28 @@
 	import type { StripFilter } from '$lib/components/filters/filter-strip.svelte';
 	import { toLookupOptions } from '$lib/components/directory/labels';
 	import { clearedFiltersHref } from '$lib/components/directory/query';
+	import { openWhenRequested } from '$lib/components/create-dialog/create-dialog.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type { PersonListItem } from '$lib/contracts/directory';
+	import CreatePersonDialog from './create-person-dialog.svelte';
+	import { FOR_ORGANIZATION_PARAM } from './create-params';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	/**
+	 * Окно «Добавить контакт». `?create` (и `&for=<организация>` из формы
+	 * контакта организации) открывает его сразу, а параметры уходят из адреса.
+	 */
+	let createOpen = $state(false);
+
+	openWhenRequested(
+		() => data.createPerson?.openOnLoad ?? false,
+		() => (createOpen = true),
+		FOR_ORGANIZATION_PARAM
+	);
 
 	const masked = $derived(data.rows.some((row) => row.person.contactsMasked));
 
@@ -119,12 +134,16 @@
 	{/if}
 {/snippet}
 
+{#if data.createPerson !== null}
+	<CreatePersonDialog bind:open={createOpen} create={data.createPerson} />
+{/if}
+
 <svelte:head><title>Контакты — Альма CRM</title></svelte:head>
 
 <Header title="Контакты" description="Люди, с которыми идёт работа, и их роли в организациях.">
 	{#snippet actions()}
-		{#if data.canWrite}
-			<Button href={resolve('/(app)/people/new')}>
+		{#if data.createPerson !== null}
+			<Button onclick={() => (createOpen = true)}>
 				<PlusIcon aria-hidden="true" />
 				Добавить контакт
 			</Button>

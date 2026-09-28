@@ -5,6 +5,7 @@ import DatabaseIcon from '@lucide/svelte/icons/database';
 import TrophyIcon from '@lucide/svelte/icons/trophy';
 import UploadIcon from '@lucide/svelte/icons/upload';
 import type { PermissionKey } from '$lib/server/rbac/permissions';
+import { createHref } from '$lib/components/create-dialog/open-param';
 
 /**
  * Страницы внутри разделов, до которых палитра доводит одной строкой.
@@ -37,7 +38,7 @@ export const SEARCH_SHORTCUTS: readonly SearchShortcut[] = [
 		permission: 'directory.import'
 	},
 	{
-		href: '/organizations/new',
+		href: createHref('/organizations'),
 		label: 'Добавить организацию',
 		section: 'Организации',
 		keywords: ['завести', 'создать', 'добавить', 'вуз', 'контрагент'],
@@ -45,7 +46,7 @@ export const SEARCH_SHORTCUTS: readonly SearchShortcut[] = [
 		permission: 'organizations.write'
 	},
 	{
-		href: '/data/new',
+		href: createHref('/data'),
 		label: 'Загрузка данных об обучении',
 		section: 'Данные об обучении',
 		keywords: ['импорт', 'загрузка', 'статистика', 'снимок', 'файл', 'xlsx', 'csv'],

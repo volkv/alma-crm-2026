@@ -4,7 +4,8 @@ import { actorFromEvent } from '$lib/server/actor';
 import { listOrganizationRows } from '$lib/server/directory/read';
 import { toPageError } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
-import type { PageServerLoad } from './$types';
+import { createActions, loadCreateForm } from './create-form.server';
+import type { Actions, PageServerLoad } from './$types';
 
 /**
  * Список организаций. Страница, сортировка, поиск и оба фильтра живут в
@@ -26,16 +27,23 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	try {
-		const result = await listOrganizationRows(ctx, query);
+		const [result, create] = await Promise.all([
+			listOrganizationRows(ctx, query),
+			loadCreateForm(event, ctx)
+		]);
 
 		return {
 			rows: result.items,
 			total: result.total,
 			filtered: query.kind.length > 0 || query.educationLevel.length > 0 || query.q !== null,
-			canWrite: can(ctx, 'organizations.write'),
-			canImport: can(ctx, 'directory.import')
+			canImport: can(ctx, 'directory.import'),
+			// Окно «Новая организация»: `null` — заводить нельзя, кнопки нет.
+			create
 		};
 	} catch (error) {
 		toPageError(error);
 	}
 };
+
+/** Отдельной страницы создания нет: её действия — у окна над списком. */
+export const actions: Actions = createActions;

@@ -4,7 +4,8 @@ import { actorFromEvent } from '$lib/server/actor';
 import { listDirectionRows } from '$lib/server/directory/read';
 import { toPageError } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
-import type { PageServerLoad } from './$types';
+import { createDirectionAction, loadCreateDirectionForm } from './create-form.server';
+import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async (event) => {
 	const table = readTableQuery(event.url);
@@ -20,15 +21,24 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	try {
-		const result = await listDirectionRows(ctx, query);
+		const [result, create] = await Promise.all([
+			listDirectionRows(ctx, query),
+			loadCreateDirectionForm(event, ctx)
+		]);
 
 		return {
 			rows: result.items,
 			total: result.total,
 			filtered: query.state !== null || query.q !== null,
-			canWrite: can(ctx, 'directions.write')
+			canWrite: can(ctx, 'directions.write'),
+			/** Окно «Новое направление»; `null` — заводить нельзя. */
+			create
 		};
 	} catch (error) {
 		toPageError(error);
 	}
+};
+
+export const actions: Actions = {
+	create: createDirectionAction
 };

@@ -25,9 +25,20 @@
 	import Header from '$lib/components/header.svelte';
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import type { ProgramListItem } from '$lib/contracts/directory';
+	import { openWhenRequested } from '$lib/components/create-dialog/create-dialog.svelte';
+	import CreateDialog from './create-dialog.svelte';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	// `?create` в адресе открывает окно сразу — так на него ведут ссылки с
+	// других экранов; параметр затем уходит, чтобы обновление не открыло окно снова.
+	let createOpen = $state(false);
+
+	openWhenRequested(
+		() => data.create?.openOnLoad ?? false,
+		() => (createOpen = true)
+	);
 
 	const columns: ColumnDef<DataTableFeatures, ProgramListItem>[] = [
 		{
@@ -134,14 +145,18 @@
 	description="Образовательные программы оператора: по ним сверяют планы и отчёты. Порядок — ручной приоритет, затем название."
 >
 	{#snippet actions()}
-		{#if data.canWrite}
-			<Button href={resolve('/(app)/programs/new')}>
+		{#if data.create !== null}
+			<Button onclick={() => (createOpen = true)}>
 				<PlusIcon aria-hidden="true" />
 				Добавить программу
 			</Button>
 		{/if}
 	{/snippet}
 </Header>
+
+{#if data.create !== null}
+	<CreateDialog bind:open={createOpen} create={data.create} />
+{/if}
 
 {#snippet resetFilters()}
 	<Button variant="outline" href={clearedFiltersHref(page.url, FILTER_PARAMS)}>

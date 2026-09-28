@@ -4,7 +4,8 @@ import { actorFromEvent } from '$lib/server/actor';
 import { listProgramRows } from '$lib/server/directory/read';
 import { toPageError } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
-import type { PageServerLoad } from './$types';
+import { createProgramAction, loadCreateProgramForm } from './create-form.server';
+import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async (event) => {
 	const table = readTableQuery(event.url);
@@ -21,15 +22,24 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	try {
-		const result = await listProgramRows(ctx, query);
+		const [result, create] = await Promise.all([
+			listProgramRows(ctx, query),
+			loadCreateProgramForm(event, ctx)
+		]);
 
 		return {
 			rows: result.items,
 			total: result.total,
 			filtered: query.status !== null || query.level !== null || query.q !== null,
-			canWrite: can(ctx, 'programs.write')
+			canWrite: can(ctx, 'programs.write'),
+			/** Окно «Новая программа»; `null` — заводить нельзя. */
+			create
 		};
 	} catch (error) {
 		toPageError(error);
 	}
+};
+
+export const actions: Actions = {
+	create: createProgramAction
 };

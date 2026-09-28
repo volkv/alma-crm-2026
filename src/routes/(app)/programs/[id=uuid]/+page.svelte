@@ -18,9 +18,24 @@
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import RankingPlace from '$lib/components/stats/ranking-place.svelte';
 	import { formatDate } from '$lib/format';
+	import { openWhenRequested } from '$lib/components/create-dialog/create-dialog.svelte';
+	import CreateVersionDialog from './create-version-dialog.svelte';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	// `?create` в адресе открывает окно новой версии сразу — так на него ведут
+	// ссылки с других экранов; параметр затем уходит, чтобы обновление не
+	// открыло окно снова.
+	let versionOpen = $state(false);
+
+	openWhenRequested(
+		() => data.createVersion?.openOnLoad ?? false,
+		() => (versionOpen = true)
+	);
+
+	// Номера версий выдаёт сервис по порядку; список идёт от новой к старой.
+	const nextVersion = $derived((data.versions[0]?.version ?? 0) + 1);
 </script>
 
 <svelte:head><title>{data.program.code} — Альма CRM</title></svelte:head>
@@ -43,13 +58,22 @@
 				<PencilIcon aria-hidden="true" />
 				Изменить
 			</Button>
-			<Button href={resolve('/(app)/programs/[id=uuid]/versions/new', { id: data.program.id })}>
+			<Button onclick={() => (versionOpen = true)}>
 				<PlusIcon aria-hidden="true" />
 				Добавить версию
 			</Button>
 		{/if}
 	{/snippet}
 </Header>
+
+{#if data.createVersion !== null}
+	<CreateVersionDialog
+		bind:open={versionOpen}
+		create={data.createVersion}
+		programName={data.program.name}
+		{nextVersion}
+	/>
+{/if}
 
 <Breadcrumbs
 	items={[{ label: 'Программы', href: resolve('/(app)/programs') }, { label: data.program.name }]}

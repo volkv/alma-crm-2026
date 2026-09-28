@@ -8,6 +8,7 @@
 	import LayersIcon from '@lucide/svelte/icons/layers';
 	import UploadIcon from '@lucide/svelte/icons/upload';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { openWhenRequested } from '$lib/components/create-dialog/create-dialog.svelte';
 	import ColumnsMenu from '$lib/components/data-table/columns-menu.svelte';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
@@ -34,9 +35,22 @@
 		type StatSnapshotListItem
 	} from '$lib/contracts/stats';
 	import { formatDate, formatDateTime, formatNumber, pluralize } from '$lib/format';
+	import ImportDialog from './import-dialog.svelte';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	/**
+	 * Окно загрузки файла. С других экранов раздела сюда ведёт ссылка
+	 * `?create` — окно открывается сразу, а параметр уходит из адреса, чтобы
+	 * обновление страницы не открывало его снова.
+	 */
+	let importOpen = $state(false);
+
+	openWhenRequested(
+		() => data.importForm?.openOnLoad ?? false,
+		() => (importOpen = true)
+	);
 
 	const SOURCE_OPTIONS: readonly FieldOption[] = STAT_SOURCES.map((source) => ({
 		value: source,
@@ -203,13 +217,19 @@
 				<LayersIcon aria-hidden="true" />
 				Собрать из результатов групп
 			</Button>
-			<Button href={resolve('/(app)/data/new')}>
+		{/if}
+		{#if data.importForm !== null}
+			<Button onclick={() => (importOpen = true)}>
 				<UploadIcon aria-hidden="true" />
 				Загрузить файл
 			</Button>
 		{/if}
 	{/snippet}
 </Header>
+
+{#if data.importForm !== null}
+	<ImportDialog bind:open={importOpen} importForm={data.importForm} />
+{/if}
 
 <div class="flex flex-col gap-4 p-4 sm:px-9 sm:py-6">
 	<SectionTabs />
@@ -222,8 +242,8 @@
 				description="Загрузите выгрузку в XLSX или CSV: система предложит сопоставление колонок, покажет ошибки построчно и посчитает показатели после подтверждения."
 			>
 				{#snippet action()}
-					{#if data.canImport}
-						<Button href={resolve('/(app)/data/new')}>Загрузить файл</Button>
+					{#if data.importForm !== null}
+						<Button onclick={() => (importOpen = true)}>Загрузить файл</Button>
 					{:else}
 						<p class="text-sm text-muted-foreground">
 							Загрузка данных доступна роли с правом «stats.import».

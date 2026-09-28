@@ -48,6 +48,8 @@ import { toActionFailure, toPageError } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import { getSetting } from '$lib/server/settings';
 import { passportActions } from '../passport/actions.server';
+import { createAffiliationAction, loadCreateAffiliation } from './create-affiliation.server';
+import { createSiteAction, loadCreateSite } from './create-site.server';
 import type { Actions, PageServerLoad } from './$types';
 
 /**
@@ -121,9 +123,20 @@ export const load: PageServerLoad = async (event) => {
 				: Promise.resolve(null)
 		]);
 
+		// Окна создания контакта и площадки: данные — только тем, у кого есть
+		// право, иначе кнопки нет и грузить нечего.
+		const [createAffiliation, createSite] = await Promise.all([
+			loadCreateAffiliation(event, ctx, organization.id, sites),
+			loadCreateSite(event, ctx, organization.id)
+		]);
+
 		return {
 			organization,
 			sites,
+			/** Окно «Добавить контакт»; `null` — назначать роли нельзя. */
+			createAffiliation,
+			/** Окно «Добавить площадку»; `null` — править организацию нельзя. */
+			createSite,
 			affiliations,
 			responsibles,
 			assignableUsers,
@@ -201,6 +214,9 @@ function editVersion(data: FormData): number | null {
 }
 
 export const actions: Actions = {
+	createAffiliation: createAffiliationAction,
+	createSite: createSiteAction,
+
 	archive: async (event) => {
 		try {
 			await archiveOrganization(actorFromEvent(event), event.params.id);

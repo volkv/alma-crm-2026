@@ -36,9 +36,31 @@
 	import { isAffiliationCurrent, type AffiliationView } from '$lib/contracts/directory';
 	import type { ResponsibleView } from '$lib/server/directory/responsibles';
 	import type { ResolvedPathname } from '$app/types';
+	import { openWhenRequested } from '$lib/components/create-dialog/create-dialog.svelte';
+	import CreateAffiliationDialog from './create-affiliation-dialog.svelte';
+	import CreateSiteDialog from './create-site-dialog.svelte';
+	import { PERSON_PARAM } from './create-params';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	/**
+	 * Окна «Добавить контакт» и «Добавить площадку». `?create=affiliation`
+	 * (с `&person=<id>` после заведения человека) и `?create=site` открывают
+	 * нужное сразу, а параметры уходят из адреса.
+	 */
+	let affiliationOpen = $state(false);
+	let siteOpen = $state(false);
+
+	openWhenRequested(
+		() => data.createAffiliation?.openOnLoad ?? false,
+		() => (affiliationOpen = true),
+		PERSON_PARAM
+	);
+	openWhenRequested(
+		() => data.createSite?.openOnLoad ?? false,
+		() => (siteOpen = true)
+	);
 
 	const siteNames = $derived(new Map(data.sites.map((site) => [site.id, site.name])));
 
@@ -539,27 +561,21 @@
 			/>
 
 			<ContactsList
-				organizationId={data.organization.id}
 				fromSite={isInstitution}
 				affiliations={data.affiliations}
 				{siteNames}
 				canRead={data.canReadPeople}
 				canWrite={data.canWritePeople}
 				today={data.today}
+				onadd={data.createAffiliation === null ? null : () => (affiliationOpen = true)}
 				onclose={askClose}
 			/>
 
 			<div data-tour="organization-sites">
 				<ContextSection title="Площадки">
 					{#snippet action()}
-						{#if data.canWrite}
-							<Button
-								variant="ghost"
-								size="sm"
-								href={resolve('/(app)/organizations/[id=uuid]/sites/new', {
-									id: data.organization.id
-								})}
-							>
+						{#if data.createSite !== null}
+							<Button variant="ghost" size="sm" onclick={() => (siteOpen = true)}>
 								<PlusIcon aria-hidden="true" />
 								Добавить
 							</Button>
@@ -647,3 +663,20 @@
 <form method="POST" action="?/releaseResponsible" bind:this={releaseForm} class="hidden">
 	<input type="hidden" name="responsibleId" value={releasing?.id ?? ''} />
 </form>
+
+{#if data.createAffiliation !== null}
+	<CreateAffiliationDialog
+		bind:open={affiliationOpen}
+		create={data.createAffiliation}
+		organizationId={data.organization.id}
+		organizationName={data.organization.shortName}
+	/>
+{/if}
+
+{#if data.createSite !== null}
+	<CreateSiteDialog
+		bind:open={siteOpen}
+		create={data.createSite}
+		organizationName={data.organization.shortName}
+	/>
+{/if}

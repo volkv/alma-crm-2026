@@ -480,7 +480,7 @@ export const SHOTS: readonly Frame[] = [
 	},
 	{
 		name: 'data-import',
-		path: '/data/new',
+		path: '/data?create',
 		role: 'admin',
 		caption: 'Мастер загрузки статистики: файл, период, режим',
 		waitFor: 'Загрузка'

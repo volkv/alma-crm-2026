@@ -4,7 +4,8 @@ import { actorFromEvent } from '$lib/server/actor';
 import { toPageError } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
 import { listSnapshots } from '$lib/server/stats/read';
-import type { PageServerLoad } from './$types';
+import type { Actions, PageServerLoad } from './$types';
+import { importFileAction, loadImportForm } from './import-form.server';
 
 /**
  * Список снимков данных. Состояние списка живёт в строке запроса, как во всех
@@ -35,9 +36,15 @@ export const load: PageServerLoad = async (event) => {
 			// Пустой список под фильтром и пустой раздел — разные состояния: в
 			// первом случае надо снять фильтр, во втором — загрузить первый файл.
 			filtered: query.status !== null || query.source !== null || query.q !== null,
-			canImport: can(ctx, 'stats.import')
+			canImport: can(ctx, 'stats.import'),
+			// Окно загрузки файла: `null` без права — тогда нет и кнопки.
+			importForm: loadImportForm(event, ctx)
 		};
 	} catch (error) {
 		toPageError(error);
 	}
+};
+
+export const actions: Actions = {
+	importFile: importFileAction
 };

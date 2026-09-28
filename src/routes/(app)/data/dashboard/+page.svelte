@@ -7,6 +7,7 @@
 	import DatabaseIcon from '@lucide/svelte/icons/database';
 	import DownloadIcon from '@lucide/svelte/icons/download';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { createHref } from '$lib/components/create-dialog/open-param';
 	import * as Table from '$lib/components/ui/table/index.js';
 	import { tableHref } from '$lib/components/data-table/query';
 	import EmptyState from '$lib/components/empty-state.svelte';
@@ -129,7 +130,7 @@
 			>
 				{#snippet action()}
 					{#if data.canImport}
-						<Button href={resolve('/(app)/data/new')}>Загрузить файл</Button>
+						<Button href={createHref(resolve('/(app)/data'))}>Загрузить файл</Button>
 					{:else}
 						<Button variant="outline" href={resolve('/(app)/data')}>К снимкам данных</Button>
 					{/if}

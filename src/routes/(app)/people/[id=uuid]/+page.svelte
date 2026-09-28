@@ -1,5 +1,6 @@
 <script lang="ts">
 	import { resolve } from '$app/paths';
+	import { openWhenRequested } from '$lib/components/create-dialog/create-dialog.svelte';
 	import PencilIcon from '@lucide/svelte/icons/pencil';
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import { Button } from '$lib/components/ui/button/index.js';
@@ -18,9 +19,18 @@
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatDate } from '$lib/format';
 	import { isAffiliationClosable, type PersonAffiliationView } from '$lib/contracts/directory';
+	import CreateAffiliationDialog from './create-affiliation-dialog.svelte';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
+
+	/** Окно «Добавить роль»: `?create` открывает его сразу и уходит из адреса. */
+	let createOpen = $state(false);
+
+	openWhenRequested(
+		() => data.createAffiliation?.openOnLoad ?? false,
+		() => (createOpen = true)
+	);
 
 	const fullName = $derived(
 		[data.person.lastName, data.person.firstName, data.person.middleName]
@@ -111,12 +121,8 @@
 	<section class="rounded-lg border border-border bg-surface" data-tour="person-affiliations">
 		<header class="flex items-center justify-between gap-3 border-b border-border px-4 py-3">
 			<h2 class="section-title">Роли в организациях</h2>
-			{#if data.canWrite}
-				<Button
-					variant="outline"
-					size="sm"
-					href={resolve('/(app)/people/[id=uuid]/affiliations/new', { id: data.person.id })}
-				>
+			{#if data.createAffiliation !== null}
+				<Button variant="outline" size="sm" onclick={() => (createOpen = true)}>
 					<PlusIcon aria-hidden="true" />
 					Добавить роль
 				</Button>
@@ -198,3 +204,7 @@
 	confirmLabel="Закрыть полномочия"
 	onconfirm={() => endForm?.requestSubmit()}
 />
+
+{#if data.createAffiliation !== null}
+	<CreateAffiliationDialog bind:open={createOpen} create={data.createAffiliation} {fullName} />
+{/if}

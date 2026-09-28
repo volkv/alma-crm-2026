@@ -6,9 +6,8 @@
 	import * as SegmentedControl from '$lib/components/ui/segmented-control/index.js';
 	import FieldInput from '$lib/components/form/field-input.svelte';
 	import FieldSelect from '$lib/components/form/field-select.svelte';
-	import FormActions from '$lib/components/form/form-actions.svelte';
 	import FormField from '$lib/components/form/form-field.svelte';
-	import FormDialog from '$lib/components/form-dialog.svelte';
+	import CreateDialog from '$lib/components/create-dialog/create-dialog.svelte';
 	import InlineHint from '$lib/components/inline-hint.svelte';
 	import OrganizationPicker from '$lib/components/interactions/organization-picker.svelte';
 	import type { LookupOption, OrganizationKind } from '$lib/contracts/directory';
@@ -222,22 +221,15 @@
 	const partyErrors = $derived($errors.parties?._errors ?? []);
 </script>
 
-<FormDialog
-	bind:open={
-		() => open,
-		(next) => {
-			open = next;
-			if (!next) clear();
-		}
-	}
+<CreateDialog
+	bind:open
 	title="Новое взаимодействие"
 	description="С кем ведётся работа и кто за неё отвечает. Остальное дополняют в карточке по ходу процесса."
+	formId="create-interaction-form"
+	submitLabel="Создать взаимодействие"
+	submitting={$submitting}
 	{dirty}
-	width="lg"
-	class="sm:max-w-[37rem]"
-	titleClass="text-lg font-semibold"
-	closeOnlyByButton
-	pinTop
+	onclose={clear}
 >
 	<form
 		id="create-interaction-form"
@@ -363,13 +355,4 @@
 			процесса. Площадки, контакты, сроки, программы, продукты и договор заполняют в карточке.
 		</InlineHint>
 	</form>
-
-	{#snippet footer()}
-		<FormActions
-			form="create-interaction-form"
-			submitting={$submitting}
-			submitLabel="Создать взаимодействие"
-			class="border-t-0 pt-0"
-		/>
-	{/snippet}
-</FormDialog>
+</CreateDialog>

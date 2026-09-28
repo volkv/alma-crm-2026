@@ -89,8 +89,8 @@ export const AUTOMATION_STEPS: readonly AutomationStep[] = [
 				title: 'Паспорт организации: реквизиты из ЕГРЮЛ по ИНН или названию (Dadata)',
 				result:
 					'Дифф «сейчас в карточке → из ЕГРЮЛ» в форме организации; сотрудник отмечает, что принять',
-				screen: 'organization-new',
-				where: 'Форма организации → паспорт',
+				screen: 'organizations',
+				where: 'Организации → «Добавить организацию» → паспорт',
 				status: 'ready'
 			},
 			{

@@ -368,17 +368,17 @@ exists (
 
 ### Вузы, площадки, контакты организаций
 
-| Действие                                 | Право                 | Роли    | Область | Канал                                                                                                                                  |
-| ---------------------------------------- | --------------------- | ------- | ------- | -------------------------------------------------------------------------------------------------------------------------------------- |
-| Список вузов                             | `organizations.read`  | все     | own     | `/organizations` load; `GET /api/v1/organizations`                                                                                     |
-| Карточка вуза                            | `organizations.read`  | все     | own     | `/organizations/[id]` load; `GET /api/v1/organizations/[id]`                                                                           |
-| Создать вуз                              | `organizations.write` | все     | —       | `/organizations/new` action `default`                                                                                                  |
-| Изменить, архивировать вуз               | `organizations.write` | все     | own     | `/organizations/[id]/edit`, actions `archive`, `restore`                                                                               |
-| Добавить вендора, сменить вид на вендора | `organizations.write` | `admin` | всё     | `/organizations/new`, `/organizations/[id]/edit`: остальным вид не предлагается, сервис отказывает `ForbiddenError` с записью в журнал |
-| Площадки                                 | `organizations.write` | все     | own     | `/organizations/[id]/sites/*`                                                                                                          |
-| Подсказка вузов и площадок               | `organizations.read`  | все     | own     | `GET /w/[workspace]/interactions/lookup?kind=organizations\|sites`                                                                     |
-| Договоры и их позиции                    | `organizations.read`  | все     | own     | блок карточки вуза; `GET /api/v1/contracts`                                                                                            |
-| Создать и править договор                | `organizations.write` | все     | own     | actions `saveContract`, `saveContractItem` карточки вуза                                                                               |
+| Действие                                 | Право                 | Роли    | Область | Канал                                                                                                                                               |
+| ---------------------------------------- | --------------------- | ------- | ------- | --------------------------------------------------------------------------------------------------------------------------------------------------- |
+| Список вузов                             | `organizations.read`  | все     | own     | `/organizations` load; `GET /api/v1/organizations`                                                                                                  |
+| Карточка вуза                            | `organizations.read`  | все     | own     | `/organizations/[id]` load; `GET /api/v1/organizations/[id]`                                                                                        |
+| Создать вуз                              | `organizations.write` | все     | —       | окно на `/organizations`, action `create` (из ЕГРЮЛ — `registryCreate`)                                                                             |
+| Изменить, архивировать вуз               | `organizations.write` | все     | own     | `/organizations/[id]/edit`, actions `archive`, `restore`                                                                                            |
+| Добавить вендора, сменить вид на вендора | `organizations.write` | `admin` | всё     | окно создания на `/organizations`, `/organizations/[id]/edit`: остальным вид не предлагается, сервис отказывает `ForbiddenError` с записью в журнал |
+| Площадки                                 | `organizations.write` | все     | own     | `/organizations/[id]/sites/*`                                                                                                                       |
+| Подсказка вузов и площадок               | `organizations.read`  | все     | own     | `GET /w/[workspace]/interactions/lookup?kind=organizations\|sites`                                                                                  |
+| Договоры и их позиции                    | `organizations.read`  | все     | own     | блок карточки вуза; `GET /api/v1/contracts`                                                                                                         |
+| Создать и править договор                | `organizations.write` | все     | own     | actions `saveContract`, `saveContractItem` карточки вуза                                                                                            |
 
 Созданный вуз сразу получает назначение на автора — иначе менеджер завёл бы карточку и тут же
 потерял её из виду. Оператор и вендор назначения не получают (раздел 1), поэтому вендора заводит
@@ -396,9 +396,9 @@ exists (
 | Действие                     | Право                              | Роли            | Область | Канал                                                                                                                                                                                                              |
 | ---------------------------- | ---------------------------------- | --------------- | ------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
 | Справочник направлений       | `directions.read`                  | все             | всё     | `/directions` список и карточка, подсказки, `GET /v1/directions`                                                                                                                                                   |
-| Правка направлений           | `directions.write`                 | `lead`, `admin` | всё     | `/directions/new`, `/[id]/edit`, архив и возврат, связь продукта с направлением                                                                                                                                    |
+| Правка направлений           | `directions.write`                 | `lead`, `admin` | всё     | окно создания на `/directions`, `/[id]/edit`, архив и возврат, связь продукта с направлением                                                                                                                       |
 | Продукты, программы, версии  | `products.read`, `programs.read`   | все             | всё     | `/products`, `/programs`                                                                                                                                                                                           |
-| Правка продуктов и программ  | `products.write`, `programs.write` | `lead`, `admin` | всё     | `/products/new`, `/programs/new`, `/[id]/edit`                                                                                                                                                                     |
+| Правка продуктов и программ  | `products.write`, `programs.write` | `lead`, `admin` | всё     | окна создания на `/products` и `/programs`, `/[id]/edit`                                                                                                                                                           |
 | Загрузка каталога из файла   | `directory.import`                 | `lead`, `admin` | own     | `/organizations/import/*`                                                                                                                                                                                          |
 | Строки файла загрузки        | `directory.import`                 | `lead`, `admin` | автор   | предпросмотр и `raw` строки загрузки                                                                                                                                                                               |
 | Назначение из колонки файла  | `responsibles.manage`              | `lead`, `admin` | own     | подтверждение импорта каталога                                                                                                                                                                                     |
@@ -491,14 +491,14 @@ exists (
 
 ### Люди и персональные данные
 
-| Действие                   | Право                    | Роли    | Область | Канал                                                      |
-| -------------------------- | ------------------------ | ------- | ------- | ---------------------------------------------------------- |
-| Список и карточка человека | `people.read`            | все     | own     | `/people`, `/people/[id]` load                             |
-| Контакты без маскирования  | `people.read_pii`        | все     | own     | тот же экран, `toPersonView`                               |
-| Заведение и правка         | `people.write`           | все     | own     | `/people/new`, `/people/[id]/edit`                         |
-| Аффилиации                 | `people.write`           | все     | own     | `/organizations/[id]/affiliations/new`                     |
-| Согласия и сроки хранения  | `people.manage_consents` | все     | own     | actions `recordConsent`, `withdrawConsent`, `setRetention` |
-| Обезличивание              | `people.anonymize`       | `admin` | own     | action `anonymize`                                         |
+| Действие                   | Право                    | Роли    | Область | Канал                                                                            |
+| -------------------------- | ------------------------ | ------- | ------- | -------------------------------------------------------------------------------- |
+| Список и карточка человека | `people.read`            | все     | own     | `/people`, `/people/[id]` load                                                   |
+| Контакты без маскирования  | `people.read_pii`        | все     | own     | тот же экран, `toPersonView`                                                     |
+| Заведение и правка         | `people.write`           | все     | own     | окно создания на `/people`, `/people/[id]/edit`                                  |
+| Аффилиации                 | `people.write`           | все     | own     | окна «Контакт» на карточках организации и человека (actions `createAffiliation`) |
+| Согласия и сроки хранения  | `people.manage_consents` | все     | own     | actions `recordConsent`, `withdrawConsent`, `setRetention`                       |
+| Обезличивание              | `people.anonymize`       | `admin` | own     | action `anonymize`                                                               |
 
 Обезличивание необратимо и затрагивает человека целиком, а не только тот вуз, где его увидел
 менеджер, — поэтому право остаётся у администратора.
@@ -584,13 +584,13 @@ exists (
 
 ### Данные об обучении и дашборд
 
-| Действие                    | Право          | Роли            | Область | Канал                                       |
-| --------------------------- | -------------- | --------------- | ------- | ------------------------------------------- |
-| Дашборд и показатели        | `stats.read`   | все             | own     | `/data/dashboard`, `/data/indicators`       |
-| Выгрузка дашборда xlsx      | `stats.read`   | все             | own     | `GET /data/export`                          |
-| Список и карточка снимка    | `stats.read`   | все             | own     | `/data`, `/data/[id]`                       |
-| Загрузка, маппинг, проверка | `stats.import` | `lead`, `admin` | всё     | `/data/new`, `/data/[id]/mapping`, `/check` |
-| Подтверждение и отклонение  | `stats.import` | `lead`, `admin` | всё     | actions `confirm`, `reject`                 |
+| Действие                    | Право          | Роли            | Область | Канал                                                    |
+| --------------------------- | -------------- | --------------- | ------- | -------------------------------------------------------- |
+| Дашборд и показатели        | `stats.read`   | все             | own     | `/data/dashboard`, `/data/indicators`                    |
+| Выгрузка дашборда xlsx      | `stats.read`   | все             | own     | `GET /data/export`                                       |
+| Список и карточка снимка    | `stats.read`   | все             | own     | `/data`, `/data/[id]`                                    |
+| Загрузка, маппинг, проверка | `stats.import` | `lead`, `admin` | всё     | окно загрузки на `/data`, `/data/[id]/mapping`, `/check` |
+| Подтверждение и отклонение  | `stats.import` | `lead`, `admin` | всё     | actions `confirm`, `reject`                              |
 
 `stats.import` уходит от КАМа: подтверждённый снимок меняет числа всем и сбрасывает общий кэш
 дашборда — это не работа по своему вузу. Сейчас право есть у `manager`.

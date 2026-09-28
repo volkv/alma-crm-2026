@@ -10,6 +10,7 @@ import { passportAvailability } from '$lib/server/enrichment/access';
 import { toActionFailure } from '$lib/server/http';
 import { createInteraction } from '$lib/server/interactions/write';
 import { can } from '$lib/server/rbac';
+import { wantsCreate } from '$lib/components/create-dialog/open-param';
 import type { ResponsibleOption } from './responsible';
 
 /**
@@ -18,8 +19,6 @@ import type { ResponsibleOption } from './responsible';
  * создания.
  */
 
-/** Параметр адреса, который открывает окно сразу — так ведёт карточка организации. */
-export const CREATE_PARAM = 'create';
 /** Организация, подставляемая в окно основной стороной. */
 export const ORGANIZATION_PARAM = 'organization';
 
@@ -117,7 +116,7 @@ export async function loadCreateForm(
 		presetKind: preset.kind,
 		presetRefused: preset.refused,
 		/** Открыть окно сразу: пришли по ссылке с карточки организации. */
-		openOnLoad: event.url.searchParams.has(CREATE_PARAM) || raw !== null,
+		openOnLoad: wantsCreate(event.url) || raw !== null,
 		registryAvailable: registry,
 		// Завести контрагента из поля формы можно тому, кто заводит организации;
 		// физическое лицо — ещё и человека.

@@ -4,7 +4,8 @@ import { actorFromEvent } from '$lib/server/actor';
 import { listOrganizationOptions, listPeople } from '$lib/server/directory/read';
 import { toPageError } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
-import type { PageServerLoad } from './$types';
+import { createPersonAction, loadCreatePerson } from './create-person.server';
+import type { Actions, PageServerLoad } from './$types';
 
 /**
  * Список людей. Поиск идёт и по ФИО, и по названию организации: человека чаще
@@ -25,9 +26,10 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	try {
-		const [result, organizations] = await Promise.all([
+		const [result, organizations, createPerson] = await Promise.all([
 			listPeople(ctx, query),
-			listOrganizationOptions(ctx)
+			listOrganizationOptions(ctx),
+			loadCreatePerson(event, ctx)
 		]);
 
 		return {
@@ -35,11 +37,16 @@ export const load: PageServerLoad = async (event) => {
 			total: result.total,
 			organizations,
 			filtered: query.organizationId !== null || query.retention !== null || query.q !== null,
-			canWrite: can(ctx, 'people.write'),
 			// Фильтр по сроку хранения показывают тому, кто за этот срок отвечает.
-			managesPii: can(ctx, 'people.manage_consents')
+			managesPii: can(ctx, 'people.manage_consents'),
+			/** Окно «Добавить контакт»; `null` — заводить людей нельзя. */
+			createPerson
 		};
 	} catch (error) {
 		toPageError(error);
 	}
+};
+
+export const actions: Actions = {
+	createPerson: createPersonAction
 };

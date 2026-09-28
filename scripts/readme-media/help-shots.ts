@@ -292,7 +292,7 @@ export const HELP_SHOTS: readonly Frame[] = [
 	},
 	{
 		name: 'user/data-1',
-		path: '/data/new',
+		path: '/data?create',
 		role: 'lead',
 		caption: 'Загрузка данных об обучении: файл, источник, режим и период',
 		waitFor: 'Загрузка'

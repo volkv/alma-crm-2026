@@ -7,6 +7,7 @@
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import UploadIcon from '@lucide/svelte/icons/upload';
 	import { Button } from '$lib/components/ui/button/index.js';
+	import { openWhenRequested } from '$lib/components/create-dialog/create-dialog.svelte';
 	import ColumnsMenu from '$lib/components/data-table/columns-menu.svelte';
 	import DataTable from '$lib/components/data-table/data-table.svelte';
 	import type { DataTableFeatures } from '$lib/components/data-table/features';
@@ -28,6 +29,8 @@
 	import StatusBadge from '$lib/components/status-badge.svelte';
 	import { formatNumber } from '$lib/format';
 	import type { OrganizationRow } from '$lib/contracts/directory';
+	import CreateDialog from './create-dialog.svelte';
+	import { MANUAL_PARAM, NAME_PARAM } from './create-params';
 	import type { PageProps } from './$types';
 
 	let { data }: PageProps = $props();
@@ -97,6 +100,21 @@
 		})
 	]);
 
+	/**
+	 * Окно «Новая организация». Ссылки с других экранов (быстрые действия
+	 * поиска, привязка человека) ведут сюда с `?create`, а на ручную форму —
+	 * ещё с `manual` и набранной строкой `name`: окно открывается сразу, а
+	 * параметры уходят из адреса, чтобы обновление страницы не открыло его снова.
+	 */
+	let createOpen = $state(false);
+
+	openWhenRequested(
+		() => data.create?.openOnLoad ?? false,
+		() => (createOpen = true),
+		MANUAL_PARAM,
+		NAME_PARAM
+	);
+
 	function open(row: OrganizationRow) {
 		return goto(resolve('/(app)/organizations/[id=uuid]', { id: row.organization.id }));
 	}
@@ -155,8 +173,8 @@
 				Импорт каталога
 			</Button>
 		{/if}
-		{#if data.canWrite}
-			<Button href={resolve('/organizations/new')}>
+		{#if data.create !== null}
+			<Button onclick={() => (createOpen = true)}>
 				<PlusIcon aria-hidden="true" />
 				Добавить организацию
 			</Button>
@@ -164,10 +182,21 @@
 	{/snippet}
 </Header>
 
+{#if data.create !== null}
+	<CreateDialog bind:open={createOpen} create={data.create} />
+{/if}
+
 {#snippet resetFilters()}
 	<Button variant="outline" href={clearedFiltersHref(page.url, FILTER_PARAMS)}>
 		<FilterXIcon aria-hidden="true" />
 		Сбросить фильтры
+	</Button>
+{/snippet}
+
+{#snippet addFirst()}
+	<Button onclick={() => (createOpen = true)}>
+		<PlusIcon aria-hidden="true" />
+		Добавить организацию
 	</Button>
 {/snippet}
 
@@ -196,7 +225,7 @@
 		columnsMenu={false}
 		ontable={(table) => (tableApi = table)}
 		emptyTitle={data.filtered ? 'Под фильтр ничего не подошло' : 'Организаций пока нет'}
-		emptyAction={data.filtered ? resetFilters : undefined}
+		emptyAction={data.filtered ? resetFilters : data.create !== null ? addFirst : undefined}
 		emptyDescription={data.filtered
 			? 'Смягчите условия или очистите поиск.'
 			: 'Добавьте первую организацию — с неё начинается взаимодействие.'}

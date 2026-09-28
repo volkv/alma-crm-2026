@@ -27,16 +27,15 @@
 	 * контекста на телефоне отодвигал площадки на несколько экранов.
 	 */
 	let {
-		organizationId,
 		fromSite,
 		affiliations,
 		siteNames,
 		canRead,
 		canWrite,
 		today,
+		onadd,
 		onclose
 	}: {
-		organizationId: string;
 		/** Подсказывать ли «Сведения» с сайта: раздел есть только у учебных заведений. */
 		fromSite: boolean;
 		affiliations: readonly AffiliationView[];
@@ -45,6 +44,8 @@
 		canWrite: boolean;
 		/** Сегодня по Москве: роль с прошедшей датой окончания уходит в прежние. */
 		today: string;
+		/** Открыть окно «Добавить контакт» у страницы; `null` — окна нет, и кнопки тоже. */
+		onadd: (() => void) | null;
 		/** Закрыть полномочия: подтверждение и форма — у страницы. */
 		onclose: (row: AffiliationView) => void;
 	} = $props();
@@ -134,12 +135,8 @@
 <div data-tour="organization-contacts">
 	<ContextSection title="Контакты">
 		{#snippet action()}
-			{#if canWrite}
-				<Button
-					variant="ghost"
-					size="sm"
-					href={resolve('/(app)/organizations/[id=uuid]/affiliations/new', { id: organizationId })}
-				>
+			{#if onadd !== null}
+				<Button variant="ghost" size="sm" onclick={onadd}>
 					<PlusIcon aria-hidden="true" />
 					Добавить
 				</Button>

@@ -14,6 +14,7 @@ import { toActionFailure, toPageError } from '$lib/server/http';
 import { listConsents, recordConsent, withdrawConsent } from '$lib/server/people/consents';
 import { anonymizePerson, setRetention } from '$lib/server/people/retention';
 import { can } from '$lib/server/rbac';
+import { createAffiliationAction, loadCreateAffiliation } from './create-affiliation.server';
 import type { Actions, PageServerLoad, RequestEvent } from './$types';
 
 /**
@@ -40,10 +41,11 @@ export const load: PageServerLoad = async (event) => {
 	const managesPii = can(ctx, 'people.manage_consents');
 
 	try {
-		const [person, affiliations, consents] = await Promise.all([
+		const [person, affiliations, consents, createAffiliation] = await Promise.all([
 			getPerson(ctx, event.params.id),
 			listPersonAffiliations(ctx, event.params.id),
-			managesPii ? listConsents(ctx, event.params.id) : []
+			managesPii ? listConsents(ctx, event.params.id) : [],
+			loadCreateAffiliation(event, ctx, event.params.id)
 		]);
 
 		const denial = anonymizeDenial(ctx);
@@ -58,7 +60,9 @@ export const load: PageServerLoad = async (event) => {
 			// одному праву, а кнопка в ней живёт по другому.
 			anonymize: { allowed: denial === null, reason: denial },
 			// Полномочия закрывают сегодняшним днём по Москве — по нему живёт процесс.
-			today: formatIsoDay()
+			today: formatIsoDay(),
+			/** Окно «Добавить роль»; `null` — назначать роли нельзя. */
+			createAffiliation
 		};
 	} catch (error) {
 		toPageError(error);
@@ -76,6 +80,8 @@ function done(event: RequestEvent, code: string): never {
 }
 
 export const actions: Actions = {
+	createAffiliation: createAffiliationAction,
+
 	endAffiliation: async (event) => {
 		const parsed = endAffiliationSchema.safeParse(
 			Object.fromEntries(await event.request.formData())

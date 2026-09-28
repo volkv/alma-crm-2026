@@ -6,9 +6,8 @@
 	import PlusIcon from '@lucide/svelte/icons/plus';
 	import TableIcon from '@lucide/svelte/icons/table';
 	import UserCogIcon from '@lucide/svelte/icons/user-cog';
-	import { onMount, tick, untrack } from 'svelte';
 	import { enhance } from '$app/forms';
-	import { goto, replaceState } from '$app/navigation';
+	import { goto } from '$app/navigation';
 	import { page } from '$app/state';
 	import { resolve } from '$app/paths';
 	import * as Dialog from '$lib/components/ui/dialog/index.js';
@@ -30,7 +29,8 @@
 	import ActiveSlices, { type ActiveSlice } from '$lib/components/filters/active-slices.svelte';
 	import OwnerFilter from '$lib/components/interactions/owner-filter.svelte';
 	import { toTimelineStages } from '$lib/components/interactions/timeline';
-	import { filterHref, withoutParam } from '$lib/components/directory/query';
+	import { filterHref } from '$lib/components/directory/query';
+	import { openWhenRequested } from '$lib/components/create-dialog/create-dialog.svelte';
 	import {
 		INTERACTION_LIST_STATE_LABELS,
 		INTERACTION_LIST_STATES,
@@ -266,18 +266,13 @@
 	 * `?create&organization=<id>` — окно открывается сразу, а параметры уходят
 	 * из адреса, чтобы обновление страницы не открывало его снова.
 	 */
-	let createOpen = $state(untrack(() => data.create?.openOnLoad ?? false));
+	let createOpen = $state(false);
 
-	onMount(async () => {
-		if (!page.url.searchParams.has('create') && !page.url.searchParams.has('organization')) {
-			return;
-		}
-
-		// `replaceState` до отметки готовности маршрутизатора отказывает — ближайший
-		// такт уже за ней (тот же приём — `directory/flash.svelte`).
-		await tick();
-		replaceState(withoutParam(page.url, 'create', 'organization'), page.state);
-	});
+	openWhenRequested(
+		() => data.create?.openOnLoad ?? false,
+		() => (createOpen = true),
+		'organization'
+	);
 
 	/**
 	 * Почему создать дело нельзя; `null` — можно. Без назначенного или без

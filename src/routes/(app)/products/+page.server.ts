@@ -4,7 +4,8 @@ import { actorFromEvent } from '$lib/server/actor';
 import { listProductRows } from '$lib/server/directory/read';
 import { toPageError } from '$lib/server/http';
 import { can } from '$lib/server/rbac';
-import type { PageServerLoad } from './$types';
+import { createProductAction, loadCreateProductForm } from './create-form.server';
+import type { Actions, PageServerLoad } from './$types';
 
 export const load: PageServerLoad = async (event) => {
 	const table = readTableQuery(event.url);
@@ -20,15 +21,24 @@ export const load: PageServerLoad = async (event) => {
 	const ctx = actorFromEvent(event);
 
 	try {
-		const result = await listProductRows(ctx, query);
+		const [result, create] = await Promise.all([
+			listProductRows(ctx, query),
+			loadCreateProductForm(event, ctx)
+		]);
 
 		return {
 			rows: result.items,
 			total: result.total,
 			filtered: query.status !== null || query.q !== null,
-			canWrite: can(ctx, 'products.write')
+			canWrite: can(ctx, 'products.write'),
+			/** Окно «Новый продукт»; `null` — заводить нельзя. */
+			create
 		};
 	} catch (error) {
 		toPageError(error);
 	}
+};
+
+export const actions: Actions = {
+	create: createProductAction
 };
