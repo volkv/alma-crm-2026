@@ -16,7 +16,7 @@
 </p>
 
 <p align="center">
-  <a href="https://alma.volkv.com/video-presentation.mp4"><img src="docs/media/video-poster.png" alt="Смотреть видеопрезентацию, 8:51" width="100%"></a>
+  <a href="https://alma.volkv.com/video-presentation.mp4"><img src="docs/media/video-poster.png" alt="Смотреть видеопрезентацию" width="100%"></a>
 </p>
 
 # Альма CRM
