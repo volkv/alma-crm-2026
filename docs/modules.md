@@ -495,8 +495,7 @@ export default defineConfig({ modules: [contracts, payment, learning, meetings, 
 слоты) и `tests/unit/platform/card-registry.test.ts` (действия карточки за проверкой
 `assertModuleActive`); интеграционный тест переключения, модулей, нужных стадиям, и отказа в загрузке документа вида
 выключенного модуля — `tests/integration/modules/workspace-modules.test.ts`.
-Новый модуль по духу быстрого режима (`AGENTS.md`) добавляет тест только на свой ключевой
-бизнес-инвариант — не на каждый слот.
+Новый модуль добавляет unit-тест на свой ключевой бизнес-инвариант — не на каждый слот.
 
 Частые ошибки при разработке модуля:
 
