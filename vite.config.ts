@@ -103,7 +103,7 @@ export default defineConfig({
 					name: 'integration',
 					environment: 'node',
 					include: ['tests/integration/**/*.test.ts'],
-					// PostgreSQL, Redis и MinIO — один набор на прогон; файл тестов берёт
+					// PostgreSQL, Redis и SeaweedFS — один набор на прогон; файл тестов берёт
 					// у них свою базу, свою логическую базу Redis и свой бакет.
 					globalSetup: './tests/integration/global-setup.ts',
 					// Pulling and booting a PostgreSQL container is far slower than a unit test.

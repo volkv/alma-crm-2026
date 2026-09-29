@@ -97,34 +97,32 @@ services:
         limits:
           memory: 128M
 
-  minio:
+  seaweedfs:
     restart: unless-stopped
-    # Neither the S3 API nor the console is published: the app reaches the
-    # storage over the compose network, and the console shows every document
-    # the system keeps. Look at it through an SSH tunnel to 9001 when needed.
+    # The S3 API is not published: the app reaches the storage over the
+    # compose network, and whoever holds its keys reads every document the
+    # system keeps.
     ports: !reset []
     # `!override` instead of merging: the defaults from the base file are for a
     # local stack, and a deployment must not silently fall back to them. `:?`
     # stops `docker compose up` with the message below when the variable is
     # missing from `.env`.
     environment: !override
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
     deploy:
       resources:
         limits:
           memory: 512M
 
-  minio-init:
+  seaweedfs-init:
     # No bucket for the end-to-end suite here: it never runs against a
     # deployment, and an empty bucket nobody writes to is one more thing to
     # explain during a backup.
-    command: !override
-      - mc alias set stack http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
-        mc mb --ignore-existing stack/lct-documents
     environment: !override
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:?set S3_ACCESS_KEY in .env}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:?set S3_SECRET_KEY in .env}
+      S3_BUCKETS: lct-documents
     deploy:
       resources:
         limits:
@@ -283,7 +281,7 @@ services:
     # `!override` replaces the development values from the base file instead of
     # merging with them, so nothing silently shadows `.env` — `environment` wins
     # over `env_file` in Compose. What stays here describes the shape of the
-    # deployment, not its secrets: the S3_* values below point at the MinIO of
+    # deployment, not its secrets: the S3_* values below point at the SeaweedFS of
     # this stack (the keys themselves are secrets and come from `.env`), and
     # BODY_SIZE_LIMIT has to clear the upload ceiling the code enforces
     # (MAX_DOCUMENT_SIZE_BYTES, 25 MiB) plus the multipart envelope — with the
@@ -322,7 +320,7 @@ services:
       # переменные названы здесь — иначе их нельзя было бы задать вовсе.
       SMTP_URL: ${SMTP_URL:-}
       SMTP_FROM: ${SMTP_FROM:-}
-      S3_ENDPOINT: http://minio:9000
+      S3_ENDPOINT: http://seaweedfs:8333
       S3_REGION: us-east-1
       S3_BUCKET: lct-documents
       S3_FORCE_PATH_STYLE: 'true'

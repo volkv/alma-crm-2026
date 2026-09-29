@@ -41,7 +41,7 @@ const SERVICES = [
 	'postgres',
 	'redis',
 	'gotenberg',
-	'minio',
+	'seaweedfs',
 	'keycloak',
 	// Почтовый сервер: уведомление о зависшем взаимодействии уходит по-настоящему,
 	// по SMTP, и проверка читает письмо из его API — «кнопка нажалась» доставку
@@ -93,4 +93,4 @@ compose('up', '-d', '--wait', '--build', ...SERVICES);
 
 // Бакеты: задача заводит их и выходит. У прогона свой (`lct-documents-e2e`) —
 // файлы проверок и файлы стенда не перемешиваются.
-compose('run', '--rm', 'minio-init');
+compose('run', '--rm', 'seaweedfs-init');

@@ -125,7 +125,7 @@ describe('parseConfig', () => {
 	});
 
 	it('rejects an S3 endpoint without a scheme', () => {
-		expect(() => parseConfig({ ...completeEnv, S3_ENDPOINT: 'minio:9000' })).toThrowError(
+		expect(() => parseConfig({ ...completeEnv, S3_ENDPOINT: 'seaweedfs:8333' })).toThrowError(
 			/S3_ENDPOINT/
 		);
 	});

@@ -1,7 +1,7 @@
 /**
  * Настоящее хранилище файлов для интеграционных тестов.
  *
- * MinIO поднимается один раз на прогон (`global-setup.ts`), а файл тестов
+ * SeaweedFS поднимается один раз на прогон (`global-setup.ts`), а файл тестов
  * получает в нём свой бакет — по той же причине, по какой так устроены
  * PostgreSQL и Redis: прогон не должен ни зависеть от того, что оставил
  * предыдущий, ни мешать соседнему, а контейнер на файл покупал это свойство
@@ -21,16 +21,19 @@ import {
 	ListObjectsV2Command,
 	S3Client
 } from '@aws-sdk/client-s3';
-import { MinioContainer, type StartedMinioContainer } from '@testcontainers/minio';
+import { GenericContainer, Wait } from 'testcontainers';
 
 /** Тот же образ, что в `docker-compose.yml`: тесты и стенд ходят в одну версию. */
-const IMAGE = 'quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z';
+const IMAGE = 'chrislusf/seaweedfs:4.48';
+
+/** Порт S3-шлюза внутри контейнера. */
+const S3_PORT = 8333;
 
 const REGION = 'us-east-1';
 const ACCESS_KEY = 'test-access-key';
 const SECRET_KEY = 'test-secret-key';
 
-/** Координаты поднятого MinIO: по ним заводится бакет файла тестов. */
+/** Координаты поднятого хранилища: по ним заводится бакет файла тестов. */
 export type StorageServer = {
 	endpoint: string;
 	region: string;
@@ -51,19 +54,44 @@ export type TestStorage = {
 	stop: () => Promise<void>;
 };
 
-/** MinIO на весь прогон. Бакетов не заводит — их заводят файлы тестов. */
+/**
+ * SeaweedFS на весь прогон — с теми же ключами запуска, что в
+ * `docker-compose.yml`. Бакетов не заводит — их заводят файлы тестов.
+ */
 export async function startStorageServer(): Promise<{
 	server: StorageServer;
 	stop: () => Promise<void>;
 }> {
-	const container: StartedMinioContainer = await new MinioContainer(IMAGE)
-		.withUsername(ACCESS_KEY)
-		.withPassword(SECRET_KEY)
+	const container = await new GenericContainer(IMAGE)
+		.withCommand([
+			'server',
+			'-s3',
+			'-ip.bind=0.0.0.0',
+			'-master.telemetry=false',
+			'-s3.autoCreateBucket=false',
+			'-s3.port.iceberg=0',
+			'-s3.port.lance=0'
+		])
+		.withEnvironment({ AWS_ACCESS_KEY_ID: ACCESS_KEY, AWS_SECRET_ACCESS_KEY: SECRET_KEY })
+		.withExposedPorts(S3_PORT)
+		// Готовность — та же, что у compose: мастер, сервер томов и шлюз вместе.
+		// Шлюз сам по себе отвечает раньше, чем мастер выбран, и первое чтение
+		// в этом окне падает с 500.
+		.withHealthCheck({
+			test: [
+				'CMD-SHELL',
+				'curl -sf http://127.0.0.1:9333/cluster/healthz && curl -sf http://127.0.0.1:8080/healthz && curl -sf http://127.0.0.1:8333/healthz'
+			],
+			interval: 1_000,
+			timeout: 3_000,
+			retries: 120
+		})
+		.withWaitStrategy(Wait.forHealthCheck())
 		.start();
 
 	return {
 		server: {
-			endpoint: container.getConnectionUrl(),
+			endpoint: `http://${container.getHost()}:${container.getMappedPort(S3_PORT)}`,
 			region: REGION,
 			accessKey: ACCESS_KEY,
 			secretKey: SECRET_KEY
@@ -90,7 +118,7 @@ export async function startTestStorage({
 		credentials: { accessKeyId: server.accessKey, secretAccessKey: server.secretKey }
 	});
 
-	// Бакет заводит установка, а не приложение: на стенде это делает `minio-init`
+	// Бакет заводит установка, а не приложение: на стенде это делает `seaweedfs-init`
 	// из compose, здесь — эта строка.
 	await client.send(new CreateBucketCommand({ Bucket: bucket }));
 

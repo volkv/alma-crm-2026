@@ -309,8 +309,8 @@
     <element xsi:type="archimate:Node" name="redis:8-alpine" id="id-node-redis">
       <documentation>Сессии, счётчики, подписки и замки; том `redis-data`.</documentation>
     </element>
-    <element xsi:type="archimate:Node" name="minio (S3-совместимое хранилище)" id="id-node-minio">
-      <documentation>Файлы документов; том `minio-data`. Консоль наружу не публикуется — при необходимости туннель.</documentation>
+    <element xsi:type="archimate:Node" name="seaweedfs (S3-совместимое хранилище)" id="id-node-seaweedfs">
+      <documentation>Файлы документов; том `seaweedfs-data`. Наружу не публикуется ни S3 API, ни веб-интерфейсы.</documentation>
     </element>
     <element xsi:type="archimate:Node" name="keycloak:26.7.4" id="id-node-keycloak">
       <documentation>Realm `lct` импортируется из файла: пересозданный контейнер поднимается ровно тем, что записано в `keycloak/realm-lct.json`.</documentation>
@@ -345,7 +345,7 @@
     <element xsi:type="archimate:Artifact" name="keycloak/realm-lct.json" id="id-art-realm">
       <documentation>Клиент, роли и демонстрационные записи realm; пароль читается из `SEED_DEMO_PASSWORD`.</documentation>
     </element>
-    <element xsi:type="archimate:Artifact" name="Тома: postgres-data, redis-data, minio-data" id="id-art-volumes">
+    <element xsi:type="archimate:Artifact" name="Тома: postgres-data, redis-data, seaweedfs-data" id="id-art-volumes">
       <documentation>Живут вне образа: документы и данные обязаны переживать пересборку.</documentation>
     </element>
     <element xsi:type="archimate:Node" name="app · реплика (возможность, не проверено)" id="id-node-replica">
@@ -554,7 +554,7 @@
     <element xsi:type="archimate:ServingRelationship" id="id-rel-177" source="id-tsvc-db" target="id-node-app"/>
     <element xsi:type="archimate:RealizationRelationship" id="id-rel-178" source="id-node-redis" target="id-tsvc-cache"/>
     <element xsi:type="archimate:ServingRelationship" id="id-rel-179" source="id-tsvc-cache" target="id-node-app"/>
-    <element xsi:type="archimate:RealizationRelationship" id="id-rel-180" source="id-node-minio" target="id-tsvc-files"/>
+    <element xsi:type="archimate:RealizationRelationship" id="id-rel-180" source="id-node-seaweedfs" target="id-tsvc-files"/>
     <element xsi:type="archimate:ServingRelationship" id="id-rel-181" source="id-tsvc-files" target="id-node-app"/>
     <element xsi:type="archimate:RealizationRelationship" id="id-rel-182" source="id-node-keycloak" target="id-tsvc-oidc"/>
     <element xsi:type="archimate:ServingRelationship" id="id-rel-183" source="id-tsvc-oidc" target="id-node-app"/>
@@ -567,7 +567,7 @@
     <element xsi:type="archimate:AssignmentRelationship" id="id-rel-190" source="id-node-keycloak" target="id-art-realm"/>
     <element xsi:type="archimate:AssignmentRelationship" id="id-rel-191" source="id-node-postgres" target="id-art-volumes"/>
     <element xsi:type="archimate:AssignmentRelationship" id="id-rel-192" source="id-node-redis" target="id-art-volumes"/>
-    <element xsi:type="archimate:AssignmentRelationship" id="id-rel-193" source="id-node-minio" target="id-art-volumes"/>
+    <element xsi:type="archimate:AssignmentRelationship" id="id-rel-193" source="id-node-seaweedfs" target="id-art-volumes"/>
     <element xsi:type="archimate:RealizationRelationship" id="id-rel-194" source="id-art-image" target="id-app-crm"/>
     <element xsi:type="archimate:AssociationRelationship" id="id-rel-195" source="id-node-replica" target="id-net-compose"/>
     <element xsi:type="archimate:ServingRelationship" id="id-rel-196" source="id-node-replica" target="id-node-nginx"/>
@@ -1081,7 +1081,7 @@
             <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c051" source="id-view-technology-o016" target="id-view-technology-o024" archimateRelationship="id-rel-178"/>
             <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c065" source="id-view-technology-o016" target="id-view-technology-o036" archimateRelationship="id-rel-192"/>
           </child>
-          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o017" archimateElement="id-node-minio">
+          <child xsi:type="archimate:DiagramObject" id="id-view-technology-o017" archimateElement="id-node-seaweedfs">
             <bounds x="760" y="50" width="350" height="70"/>
             <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c053" source="id-view-technology-o017" target="id-view-technology-o025" archimateRelationship="id-rel-180"/>
             <sourceConnection xsi:type="archimate:Connection" id="id-view-technology-c066" source="id-view-technology-o017" target="id-view-technology-o036" archimateRelationship="id-rel-193"/>
@@ -1160,7 +1160,7 @@
       </child>
       <child xsi:type="archimate:Note" id="id-view-technology-n037" textAlignment="1" fillColor="#fffde7">
         <bounds x="2180" y="470" width="330" height="250"/>
-        <content>Порты стенда сдвинуты, чтобы стек не спорил с уже запущенными на машине службами: postgres 55432, redis 56379, keycloak 58080, minio 59000/59001, gotenberg 3001, mailpit 8025, имитаторы 58081 и 58082, приложение 3000. На развёртывании наружу публикуются только приложение и Keycloak, и только на 127.0.0.1.</content>
+        <content>Порты стенда сдвинуты, чтобы стек не спорил с уже запущенными на машине службами: postgres 55432, redis 56379, keycloak 58080, seaweedfs 59000, gotenberg 3001, mailpit 8025, имитаторы 58081 и 58082, приложение 3000. На развёртывании наружу публикуются только приложение и Keycloak, и только на 127.0.0.1.</content>
       </child>
       <child xsi:type="archimate:Note" id="id-view-technology-n038" textAlignment="1" fillColor="#fffde7">
         <bounds x="2180" y="740" width="330" height="190"/>

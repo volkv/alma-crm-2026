@@ -130,10 +130,10 @@ export default defineConfig({
 			OIDC_PUBLIC_URL: 'http://localhost:58080',
 			OIDC_CLIENT_ID: 'lct-crm',
 			OIDC_CLIENT_SECRET: 'lct-crm-dev-secret',
-			// Хранилище — тот же MinIO из `docker-compose.yml`, но свой бакет:
+			// Хранилище — тот же SeaweedFS из `docker-compose.yml`, но свой бакет:
 			// объекты прогона не должны мешаться с файлами стенда, а стенд
 			// переживает `docker compose down` без `-v` вместе с ними. Бакет
-			// заводит `minio-init`, которого запускает `pnpm run test:e2e`.
+			// заводит `seaweedfs-init`, которого запускает `pnpm run test:e2e`.
 			S3_ENDPOINT: 'http://localhost:59000',
 			S3_REGION: 'us-east-1',
 			S3_BUCKET: 'lct-documents-e2e',

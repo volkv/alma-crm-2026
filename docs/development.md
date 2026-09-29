@@ -47,29 +47,29 @@
 
 ## Скрипты
 
-| Скрипт                      | Что делает                                                                                                                                         |
-| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- |
-| `pnpm dev`                  | Dev-сервер Vite на http://localhost:5173 с HMR                                                                                                     |
-| `pnpm build`                | Production-сборка в `build/` (adapter-node)                                                                                                        |
-| `pnpm preview`              | Просмотр production-сборки через Vite                                                                                                              |
-| `pnpm run check`            | `svelte-check` — типы в `.ts` и `.svelte`                                                                                                          |
-| `pnpm run lint`             | ESLint + проверка форматирования Prettier                                                                                                          |
-| `pnpm run format`           | Форматирование всего репозитория                                                                                                                   |
-| `pnpm run test:unit`        | Модульные тесты (`tests/unit`), Vitest, без внешних сервисов                                                                                       |
-| `pnpm run test:integration` | Интеграционные тесты: PostgreSQL, Redis и MinIO — в testcontainers, `gotenberg` из compose; в системе нужны `pdftotext` и `pdfinfo` (проверка PDF) |
-| `pnpm run test:e2e`         | Поднимает `postgres`, `redis`, `gotenberg`, `minio`, `keycloak` и имитаторы `mock-cms`/`mock-lms`, заводит бакеты и гоняет Playwright по `e2e/`    |
-| `pnpm run docs:pdf`         | Комплект документации в `dist/docs-pdf/`: PDF на каждый документ и общий файл; нужна служба `gotenberg`                                            |
-| `pnpm run db:generate`      | Генерирует SQL-миграцию по изменениям схемы в `drizzle/`                                                                                           |
-| `pnpm run db:migrate`       | Применяет миграции из `drizzle/` к базе из `DATABASE_URL` и приводит каталог прав к коду                                                           |
-| `pnpm run db:seed`          | Заливает демонстрационные данные; с `--if-demo` — только при `DEMO_MODE=true`                                                                      |
-| `pnpm run mocks:cms`        | Имитатор сайта заказчика: приём заявок и приём снимков статуса                                                                                     |
-| `pnpm run mocks:lms`        | Имитатор системы обучения: учебные группы и их результаты                                                                                          |
-| `pnpm run db:studio`        | Drizzle Studio — браузер по данным                                                                                                                 |
-| `pnpm run check:audit`      | `pnpm audit --prod --audit-level=high` — уязвимости уровня high и выше в `dependencies`                                                            |
-| `pnpm run check:docker`     | `docker build .` — образ должен собираться                                                                                                         |
-| `pnpm run check:security`   | Сканеры контейнерами: semgrep по коду, Trivy по зависимостям и образу, SBOM в CycloneDX — см. [`security.md`](security.md)                         |
-| `pnpm run check:fast`       | Быстрый круг: lint → check → unit; без Docker и без сборки                                                                                         |
-| `pnpm run check:all`        | Полный гейт: audit → lint → check → unit → integration → e2e (со сборкой) → образ                                                                  |
+| Скрипт                      | Что делает                                                                                                                                             |
+| --------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `pnpm dev`                  | Dev-сервер Vite на http://localhost:5173 с HMR                                                                                                         |
+| `pnpm build`                | Production-сборка в `build/` (adapter-node)                                                                                                            |
+| `pnpm preview`              | Просмотр production-сборки через Vite                                                                                                                  |
+| `pnpm run check`            | `svelte-check` — типы в `.ts` и `.svelte`                                                                                                              |
+| `pnpm run lint`             | ESLint + проверка форматирования Prettier                                                                                                              |
+| `pnpm run format`           | Форматирование всего репозитория                                                                                                                       |
+| `pnpm run test:unit`        | Модульные тесты (`tests/unit`), Vitest, без внешних сервисов                                                                                           |
+| `pnpm run test:integration` | Интеграционные тесты: PostgreSQL, Redis и SeaweedFS — в testcontainers, `gotenberg` из compose; в системе нужны `pdftotext` и `pdfinfo` (проверка PDF) |
+| `pnpm run test:e2e`         | Поднимает `postgres`, `redis`, `gotenberg`, `seaweedfs`, `keycloak` и имитаторы `mock-cms`/`mock-lms`, заводит бакеты и гоняет Playwright по `e2e/`    |
+| `pnpm run docs:pdf`         | Комплект документации в `dist/docs-pdf/`: PDF на каждый документ и общий файл; нужна служба `gotenberg`                                                |
+| `pnpm run db:generate`      | Генерирует SQL-миграцию по изменениям схемы в `drizzle/`                                                                                               |
+| `pnpm run db:migrate`       | Применяет миграции из `drizzle/` к базе из `DATABASE_URL` и приводит каталог прав к коду                                                               |
+| `pnpm run db:seed`          | Заливает демонстрационные данные; с `--if-demo` — только при `DEMO_MODE=true`                                                                          |
+| `pnpm run mocks:cms`        | Имитатор сайта заказчика: приём заявок и приём снимков статуса                                                                                         |
+| `pnpm run mocks:lms`        | Имитатор системы обучения: учебные группы и их результаты                                                                                              |
+| `pnpm run db:studio`        | Drizzle Studio — браузер по данным                                                                                                                     |
+| `pnpm run check:audit`      | `pnpm audit --prod --audit-level=high` — уязвимости уровня high и выше в `dependencies`                                                                |
+| `pnpm run check:docker`     | `docker build .` — образ должен собираться                                                                                                             |
+| `pnpm run check:security`   | Сканеры контейнерами: semgrep по коду, Trivy по зависимостям и образу, SBOM в CycloneDX — см. [`security.md`](security.md)                             |
+| `pnpm run check:fast`       | Быстрый круг: lint → check → unit; без Docker и без сборки                                                                                             |
+| `pnpm run check:all`        | Полный гейт: audit → lint → check → unit → integration → e2e (со сборкой) → образ                                                                      |
 
 `check:fast` гоняем в цикле правки, `check:all` — перед тем, как считать работу законченной.
 
@@ -868,7 +868,7 @@ pnpm run test:unit
 pnpm exec vitest --project unit          # watch-режим
 ```
 
-**Интеграционные** (`tests/integration`) — поднимают настоящие PostgreSQL 17, Redis 8 и MinIO через
+**Интеграционные** (`tests/integration`) — поднимают настоящие PostgreSQL 17, Redis 8 и SeaweedFS через
 testcontainers, применяют миграции из `drizzle/` и работают с реальными хранилищами. Настоящий
 Keycloak с `keycloak/realm-lct.json` поднимает только e2e-прогон.
 
@@ -896,15 +896,15 @@ Keycloak с `keycloak/realm-lct.json` поднимает только e2e-про
 которым проверка смотрит на хранилище со стороны, а не глазами проверяемого кода. Из compose
 остаётся один `gotenberg` — он тяжёлый, и поднимать его прогоном ради выгрузки в PDF стоит дороже, чем держать
 один на машину. Нужен запущенный Docker; первый прогон тянет образы `postgres:17-alpine`,
-`redis:8-alpine` и `quay.io/minio/minio`.
+`redis:8-alpine` и `chrislusf/seaweedfs`.
 
 ```bash
 pnpm run test:integration
 ```
 
 **E2E** (`e2e`) — Playwright, только chromium. Стек поднимает `e2e/stack.ts`: сервисы из compose
-(`postgres`, `redis`, `gotenberg`, `minio`, `keycloak` и имитаторы `mock-cms`/`mock-lms`) и
-`minio-init` (бакеты). Затем Playwright собирает приложение и запускает `node build/index.js` на
+(`postgres`, `redis`, `gotenberg`, `seaweedfs`, `keycloak` и имитаторы `mock-cms`/`mock-lms`) и
+`seaweedfs-init` (бакеты). Затем Playwright собирает приложение и запускает `node build/index.js` на
 порту `E2E_PORT` (по умолчанию 4173). Переменные окружения для этого сервера заданы прямо в
 `playwright.config.ts`, чтобы прогон был одинаковым на любой машине разработчика. Бакет у прогона
 свой (`lct-documents-e2e`): файлы стенда и файлы проверок не должны перемешиваться.
@@ -977,12 +977,12 @@ PostgreSQL из compose и логическую базу Redis под номер
 
 Что остаётся общим даже у разных копий:
 
-| Общее                                         | Чем это грозит                                                                   |
-| --------------------------------------------- | -------------------------------------------------------------------------------- |
-| Keycloak на 58080 и его realm                 | сетап переписывает пароли и роли учётных записей — соседний прогон входит следом |
-| Имитаторы `mock-cms` 58081 и `mock-lms` 58082 | состояние имитатора общее: спеки обмена параллельно не гонять                    |
-| Mailpit 1025/8025                             | ящик общий: спеки почты параллельно не гонять                                    |
-| PostgreSQL 55432, Redis 56379, MinIO 59000    | сервер один, состояние разведено по имени базы, номеру базы Redis и бакету       |
+| Общее                                          | Чем это грозит                                                                   |
+| ---------------------------------------------- | -------------------------------------------------------------------------------- |
+| Keycloak на 58080 и его realm                  | сетап переписывает пароли и роли учётных записей — соседний прогон входит следом |
+| Имитаторы `mock-cms` 58081 и `mock-lms` 58082  | состояние имитатора общее: спеки обмена параллельно не гонять                    |
+| Mailpit 1025/8025                              | ящик общий: спеки почты параллельно не гонять                                    |
+| PostgreSQL 55432, Redis 56379, SeaweedFS 59000 | сервер один, состояние разведено по имени базы, номеру базы Redis и бакету       |
 
 То есть «параллельно» — это про спеки, которые не трогают обмен и почту. Остальное идёт по очереди,
 и на общей машине проще обернуть прогон замком: `flock /tmp/lct-e2e.lock pnpm run test:e2e`.
@@ -993,14 +993,14 @@ PostgreSQL из compose и логическую базу Redis под номер
 браузере — отдельно от разработки (`pnpm dev`, порт 5173) и от e2e (порты 4173–4177, своя база на
 запуск). Стенд стоит на production-сборке (`pnpm build` + `node build/index.js`), в своей рабочей
 копии на зафиксированном коммите, со своими портом, базой PostgreSQL, логической базой Redis и
-бакетом MinIO:
+бакетом SeaweedFS:
 
 | Что                   | Значение по умолчанию                                                                                                    |
 | --------------------- | ------------------------------------------------------------------------------------------------------------------------ |
 | Порт приложения       | `3000` — уже разрешён в `keycloak/realm-lct.json` умолчанием `CRM_ORIGIN` из `docker-compose.yml`, менять realm не нужно |
 | База PostgreSQL       | `lct_walk`, в том же контейнере `postgres` (порт 55432), что у разработки                                                |
 | Логическая база Redis | `15` — e2e занимает 10–14, разработка без номера — 0                                                                     |
-| Бакет MinIO           | `lct-documents-walk`                                                                                                     |
+| Бакет SeaweedFS       | `lct-documents-walk`                                                                                                     |
 | Имитаторы CMS / LMS   | свои: `lct-walk-mock-cms` на 58181, `lct-walk-mock-lms` на 58182                                                         |
 
 Keycloak и Gotenberg — тот же общий стек `docker-compose.yml`, что и у разработки; `stand.sh`

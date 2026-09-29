@@ -24,7 +24,7 @@ services:
     ports: !reset []
   mailpit:
     ports: !reset []
-  minio:
+  seaweedfs:
     ports: !reset []
   mock-cms:
     ports: !reset []

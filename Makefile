@@ -7,9 +7,9 @@
 
 SHELL := /bin/sh
 
-# Стек без `app`. `minio-init` идёт отдельной строкой: это одноразовая задача
+# Стек без `app`. `seaweedfs-init` идёт отдельной строкой: это одноразовая задача
 # (заводит бакеты и выходит), а не служба, которую ждут по проверке здоровья.
-INFRA := postgres redis keycloak gotenberg mailpit minio mock-cms mock-lms
+INFRA := postgres redis keycloak gotenberg mailpit seaweedfs mock-cms mock-lms
 
 # Те сервисы стека, образ которых собирается здесь, а не тянется готовым:
 # имитаторы систем заказчика, их исходники лежат в `mocks/`.
@@ -33,7 +33,7 @@ node_modules/.modules.yaml: package.json pnpm-lock.yaml
 ## down — погасить все контейнеры стека
 #
 # Без списка сервисов: гасится всё из `docker-compose.yml`, включая `app`, если
-# он поднимался. Томы (`postgres-data`, `redis-data`, `minio-data`) остаются —
+# он поднимался. Томы (`postgres-data`, `redis-data`, `seaweedfs-data`) остаются —
 # база и файлы переживают перезапуск; чтобы снести и их, нужен `down -v`.
 #
 # Dev-сервер это не трогает: он живёт на хосте, его гасит Ctrl+C.
@@ -53,7 +53,7 @@ upgrade: .env
 ## infra — контейнеры стека, кроме `app`
 infra: .env
 	docker compose up -d --wait $(INFRA)
-	docker compose run --rm minio-init
+	docker compose run --rm seaweedfs-init
 
 ## db — миграции и, при DEMO_MODE=true, демонстрационные данные
 #

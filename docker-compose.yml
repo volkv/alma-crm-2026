@@ -143,48 +143,78 @@ services:
       timeout: 5s
       retries: 10
 
-  # Object storage for uploaded and generated documents. The image comes from
-  # quay.io: MinIO publishes its releases there, and the tag is pinned like
-  # every other image in the stack.
-  minio:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
-    command: ['server', '/data', '--console-address', ':9001']
+  # Object storage for uploaded and generated documents: SeaweedFS in a single
+  # container — master, volume server, filer and the S3 gateway the app talks
+  # to. The tag is pinned like every other image in the stack.
+  seaweedfs:
+    image: chrislusf/seaweedfs:4.48
+    # The master reports cluster statistics to seaweedfs.com unless told not
+    # to, and a stack meant for a closed network calls no one. The Iceberg and
+    # Lance catalogs of the gateway are not used and stay closed. A bucket is
+    # created by `seaweedfs-init` only: with auto-creation on, a mistyped
+    # S3_BUCKET would quietly get a fresh empty bucket instead of an error.
+    command:
+      - server
+      - -s3
+      - -ip.bind=0.0.0.0
+      - -master.telemetry=false
+      - -s3.autoCreateBucket=false
+      - -s3.port.iceberg=0
+      - -s3.port.lance=0
     environment:
-      # A single-node MinIO has one pair of keys, so the root pair is also the
-      # pair the app signs its requests with. Defaults are good enough for a
-      # local stack; a stand passes its own through the environment, and the
-      # production overlay refuses to start without them.
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-lct}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-lct-secret-key}
-    # 9000 is the S3 API, 9001 the web console; host ports are shifted the same
-    # way as PostgreSQL and Redis, because 9000 is a popular port.
+      # The gateway turns this pair into its only identity; without it every
+      # request is answered 403. The app signs its requests with the same pair.
+      # Defaults are good enough for a local stack; a stand passes its own
+      # through the environment, and the production overlay refuses to start
+      # without them.
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY:-lct}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY:-lct-secret-key}
+    # 8333 is the S3 API; the host port is shifted the same way as PostgreSQL
+    # and Redis. The filer and master UIs are not published: they have no
+    # sign-in and show every document the system keeps.
     ports:
-      - '59000:9000'
-      - '59001:9001'
+      - '59000:8333'
     volumes:
-      - minio-data:/data
+      - seaweedfs-data:/data
     healthcheck:
-      test: ['CMD', 'curl', '--silent', '--fail', 'http://localhost:9000/minio/health/live']
+      # All three, not the gateway alone: after a restart the gateway answers
+      # `/healthz` while the master is still electing itself, and the first
+      # read of an object in that window fails with 500.
+      test:
+        [
+          'CMD-SHELL',
+          'curl -sf http://127.0.0.1:9333/cluster/healthz && curl -sf http://127.0.0.1:8080/healthz && curl -sf http://127.0.0.1:8333/healthz'
+        ]
       interval: 5s
       timeout: 5s
-      retries: 20
+      retries: 30
 
   # Creates the buckets and exits. Bucket creation is part of installing the
-  # stack, not of running it: the app only ever reads and writes objects, and
-  # its keys are not meant to be able to create or drop a bucket. The second
-  # bucket belongs to the end-to-end suite — `pnpm run test:e2e` runs against
-  # the same MinIO and must not mix its objects with the stand's.
-  minio-init:
-    image: quay.io/minio/minio:RELEASE.2025-09-07T16-13-09Z
+  # stack, not of running it: the app only ever reads and writes objects. The
+  # second bucket belongs to the end-to-end suite — `pnpm run test:e2e` runs
+  # against the same storage and must not mix its objects with the stand's.
+  # 409 with BucketAlreadyOwnedByYou is the second run finding its own bucket;
+  # any other answer stops the job, and the app does not start.
+  seaweedfs-init:
+    image: chrislusf/seaweedfs:4.48
     entrypoint: ['sh', '-c']
     command:
-      - mc alias set stack http://minio:9000 "$$MINIO_ROOT_USER" "$$MINIO_ROOT_PASSWORD" &&
-        mc mb --ignore-existing stack/lct-documents stack/lct-documents-e2e
+      - |
+        for bucket in $$S3_BUCKETS; do
+          code=$$(curl -s -o /tmp/answer -w '%{http_code}' --aws-sigv4 aws:amz:us-east-1:s3 \
+            --user "$$S3_ACCESS_KEY:$$S3_SECRET_KEY" -X PUT "http://seaweedfs:8333/$$bucket")
+          case $$code in
+            200) echo "bucket $$bucket created" ;;
+            409) grep -q BucketAlreadyOwnedByYou /tmp/answer || { cat /tmp/answer; exit 1; } ;;
+            *) echo "bucket $$bucket: HTTP $$code"; cat /tmp/answer; exit 1 ;;
+          esac
+        done
     environment:
-      MINIO_ROOT_USER: ${S3_ACCESS_KEY:-lct}
-      MINIO_ROOT_PASSWORD: ${S3_SECRET_KEY:-lct-secret-key}
+      S3_ACCESS_KEY: ${S3_ACCESS_KEY:-lct}
+      S3_SECRET_KEY: ${S3_SECRET_KEY:-lct-secret-key}
+      S3_BUCKETS: lct-documents lct-documents-e2e
     depends_on:
-      minio:
+      seaweedfs:
         condition: service_healthy
 
   # Imitators of the customer's systems: the CMS of the public site and the
@@ -391,15 +421,15 @@ services:
       TRUST_PROXY: 'false'
       # Hosts inside the network the server may reach on its own: the two
       # imitators, by their compose names, and nothing else. Everything else
-      # inside this network — Keycloak, MinIO, the database — is exactly what an
+      # inside this network — Keycloak, SeaweedFS, the database — is exactly what an
       # address typed into the integrations screen must not be able to reach.
       # Pinned rather than read from `.env`: the developer's `.env` lists the
       # loopback of the host, which inside this container is the app itself.
       OUTBOUND_ALLOWED_HOSTS: 'mock-cms,mock-lms'
-      # Object storage. Inside the compose network MinIO answers on its own
-      # name; path style is the only addressing that works there, because
-      # `bucket.minio` resolves nowhere.
-      S3_ENDPOINT: http://minio:9000
+      # Object storage. Inside the compose network the gateway answers on the
+      # service name; path style is the only addressing that works there,
+      # because `bucket.seaweedfs` resolves nowhere.
+      S3_ENDPOINT: http://seaweedfs:8333
       S3_REGION: us-east-1
       S3_BUCKET: lct-documents
       S3_ACCESS_KEY: ${S3_ACCESS_KEY:-lct}
@@ -426,7 +456,7 @@ services:
         condition: service_healthy
       # Not `service_healthy`: the job creates the buckets and exits, and the
       # app must not start against a storage without them.
-      minio-init:
+      seaweedfs-init:
         condition: service_completed_successfully
 
 volumes:
@@ -434,4 +464,4 @@ volumes:
   redis-data:
   # Uploaded and generated documents. Lives outside the image: it must survive
   # a rebuild, and `docker compose down` without `-v` must not take it away.
-  minio-data:
+  seaweedfs-data:

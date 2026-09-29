@@ -1,7 +1,7 @@
 /**
  * Службы интеграционных тестов: один набор на весь прогон.
  *
- * PostgreSQL 17, Redis 8 и MinIO поднимаются здесь — раз на `vitest run`, а не
+ * PostgreSQL 17, Redis 8 и SeaweedFS поднимаются здесь — раз на `vitest run`, а не
  * на каждый файл тестов. Подъём и остановка тройки стоят около пяти секунд, и
  * помноженные на четыре десятка файлов они и составляли большую часть прогона,
  * не проверяя при этом ничего.
@@ -38,7 +38,7 @@ const migrationsFolder = fileURLToPath(new URL('../../drizzle', import.meta.url)
 const TEMPLATE_DATABASE = 'lct_template';
 
 export async function setup(project: TestProject): Promise<() => Promise<void>> {
-	// Параллельно: Redis и MinIO поднимаются заметно быстрее PostgreSQL и на
+	// Параллельно: Redis и SeaweedFS поднимаются заметно быстрее PostgreSQL и на
 	// общем времени прогона не сказываются.
 	const [postgresContainer, redisContainer, storage] = await Promise.all([
 		new PostgreSqlContainer('postgres:17-alpine').start(),

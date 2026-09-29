@@ -43,7 +43,7 @@ describe('адресат исходящего запроса', () => {
 		'https://0177.0.0.1/hook',
 		'https://2130706433/hook',
 		'https://keycloak:8080/realms/lct',
-		'https://minio:9000/lct'
+		'https://seaweedfs:8333/lct'
 	];
 
 	it('отвергает все двенадцать адресов внутрь установки', async () => {

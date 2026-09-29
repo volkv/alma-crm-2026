@@ -16,39 +16,39 @@ marked, superforms) лежит в `devDependencies`, но его код уезж
 
 ## Среда выполнения
 
-| Что        | Версия             | Лицензия                        | Где закреплено                                      |
-| ---------- | ------------------ | ------------------------------- | --------------------------------------------------- |
-| Node.js    | 24                 | MIT                             | `.nvmrc`, `engines.node`, `node:24-alpine` в образе |
-| pnpm       | 10.26.2            | MIT                             | `packageManager` в `package.json`                   |
-| PostgreSQL | 17                 | PostgreSQL                      | `docker-compose.yml`, образ `postgres:17-alpine`    |
-| Redis      | 8                  | AGPL-3.0 (сервис, не линкуется) | `docker-compose.yml`, образ `redis:8-alpine`        |
-| Keycloak   | 26.7.4             | Apache-2.0                      | `docker-compose.yml`, `keycloak/realm-lct.json`     |
-| Gotenberg  | 8                  | MIT                             | `docker-compose.yml`, конвертация DOCX → PDF        |
-| MinIO      | RELEASE.2025-09-07 | AGPL-3.0 (сервис, не линкуется) | `docker-compose.yml`, хранилище файлов              |
-| Mailpit    | 1.31.1             | MIT                             | `docker-compose.yml`, ловит почту стенда и прогона  |
+| Что        | Версия  | Лицензия                        | Где закреплено                                      |
+| ---------- | ------- | ------------------------------- | --------------------------------------------------- |
+| Node.js    | 24      | MIT                             | `.nvmrc`, `engines.node`, `node:24-alpine` в образе |
+| pnpm       | 10.26.2 | MIT                             | `packageManager` в `package.json`                   |
+| PostgreSQL | 17      | PostgreSQL                      | `docker-compose.yml`, образ `postgres:17-alpine`    |
+| Redis      | 8       | AGPL-3.0 (сервис, не линкуется) | `docker-compose.yml`, образ `redis:8-alpine`        |
+| Keycloak   | 26.7.4  | Apache-2.0                      | `docker-compose.yml`, `keycloak/realm-lct.json`     |
+| Gotenberg  | 8       | MIT                             | `docker-compose.yml`, конвертация DOCX → PDF        |
+| SeaweedFS  | 4.48    | Apache-2.0                      | `docker-compose.yml`, S3-хранилище файлов           |
+| Mailpit    | 1.31.1  | MIT                             | `docker-compose.yml`, ловит почту стенда и прогона  |
 
-Службы стоят рядом отдельными контейнерами и в код приложения не линкуются: с Redis, MinIO и
+Службы стоят рядом отдельными контейнерами и в код приложения не линкуются: с Redis, SeaweedFS и
 Keycloak приложение говорит по сети своим клиентом, и их лицензия к лицензии продукта отношения не
 имеет.
 
 ## Серверные библиотеки (`dependencies`)
 
-| Пакет                            | Версия   | Лицензия        | Зачем                                                              |
-| -------------------------------- | -------- | --------------- | ------------------------------------------------------------------ |
-| `zod`                            | 4.6.2    | MIT             | контракты: одна схема проверяет форму, тело запроса API и OpenAPI  |
-| `drizzle-orm`                    | 0.45.2   | Apache-2.0      | запросы и схема базы на TypeScript, SQL-first                      |
-| `drizzle-zod`                    | 0.8.3    | Apache-2.0      | схемы Zod из таблиц Drizzle                                        |
-| `postgres`                       | 3.4.9    | Unlicense       | драйвер PostgreSQL, на котором работает Drizzle                    |
-| `ioredis`                        | 6.0.0    | MIT             | Redis: сессии, лимиты, очередь доставки, кэш чтений                |
-| `oauth4webapi`                   | 3.8.8    | MIT             | OIDC-вход: Authorization Code + PKCE, проверка id-токена по ключам |
-| `@aws-sdk/client-s3`             | 3.1134.0 | Apache-2.0      | S3-совместимое хранилище файлов документов (в поставке — MinIO)    |
-| `docxtemplater`                  | 3.69.3   | MIT             | сборка DOCX по шаблону из `templates/`                             |
-| `pizzip`                         | 3.2.0    | MIT или GPL-3.0 | zip-контейнер DOCX, которым пользуется `docxtemplater`             |
-| `exceljs`                        | 4.4.0    | MIT             | запись книг `.xlsx`: выгрузки, списки выбора в шаблоне LMS         |
-| `xlsx` (SheetJS)                 | 0.20.3   | Apache-2.0      | чтение загруженных книг и запись формата `.xls`                    |
-| `nodemailer`                     | 10.0.10  | MIT-0           | отправка уведомлений по SMTP                                       |
-| `@asteasolutions/zod-to-openapi` | 9.1.0    | MIT             | документ OpenAPI 3.1 из тех же схем Zod, что проверяют запросы     |
-| `swagger-ui-dist`                | 5.32.15  | Apache-2.0      | Swagger UI на `/api/docs`, отдаётся с нашего же адреса             |
+| Пакет                            | Версия   | Лицензия        | Зачем                                                               |
+| -------------------------------- | -------- | --------------- | ------------------------------------------------------------------- |
+| `zod`                            | 4.6.2    | MIT             | контракты: одна схема проверяет форму, тело запроса API и OpenAPI   |
+| `drizzle-orm`                    | 0.45.2   | Apache-2.0      | запросы и схема базы на TypeScript, SQL-first                       |
+| `drizzle-zod`                    | 0.8.3    | Apache-2.0      | схемы Zod из таблиц Drizzle                                         |
+| `postgres`                       | 3.4.9    | Unlicense       | драйвер PostgreSQL, на котором работает Drizzle                     |
+| `ioredis`                        | 6.0.0    | MIT             | Redis: сессии, лимиты, очередь доставки, кэш чтений                 |
+| `oauth4webapi`                   | 3.8.8    | MIT             | OIDC-вход: Authorization Code + PKCE, проверка id-токена по ключам  |
+| `@aws-sdk/client-s3`             | 3.1134.0 | Apache-2.0      | S3-совместимое хранилище файлов документов (в поставке — SeaweedFS) |
+| `docxtemplater`                  | 3.69.3   | MIT             | сборка DOCX по шаблону из `templates/`                              |
+| `pizzip`                         | 3.2.0    | MIT или GPL-3.0 | zip-контейнер DOCX, которым пользуется `docxtemplater`              |
+| `exceljs`                        | 4.4.0    | MIT             | запись книг `.xlsx`: выгрузки, списки выбора в шаблоне LMS          |
+| `xlsx` (SheetJS)                 | 0.20.3   | Apache-2.0      | чтение загруженных книг и запись формата `.xls`                     |
+| `nodemailer`                     | 10.0.10  | MIT-0           | отправка уведомлений по SMTP                                        |
+| `@asteasolutions/zod-to-openapi` | 9.1.0    | MIT             | документ OpenAPI 3.1 из тех же схем Zod, что проверяют запросы      |
+| `swagger-ui-dist`                | 5.32.15  | Apache-2.0      | Swagger UI на `/api/docs`, отдаётся с нашего же адреса              |
 
 `xlsx` ставится не из реестра npm, а с `https://cdn.sheetjs.com/xlsx-0.20.3/xlsx-0.20.3.tgz` —
 так распространяет свой пакет сам SheetJS начиная с версии 0.20. Адрес закреплён в `package.json`
@@ -91,23 +91,22 @@ Keycloak приложение говорит по сети своим клиен
 
 Эти пакеты не попадают ни в образ, ни в `build/`.
 
-| Пакет                         | Версия  | Лицензия   | Зачем                                              |
-| ----------------------------- | ------- | ---------- | -------------------------------------------------- |
-| `vitest`                      | 5.0.0   | MIT        | модульные и интеграционные тесты                   |
-| `testcontainers`              | 12.1.0  | MIT        | настоящие PostgreSQL, Redis и MinIO на время теста |
-| `@testcontainers/postgresql`  | 12.1.0  | MIT        | контейнер PostgreSQL для тестов                    |
-| `@testcontainers/redis`       | 12.1.0  | MIT        | контейнер Redis для тестов                         |
-| `@testcontainers/minio`       | 12.1.0  | MIT        | контейнер MinIO для тестов                         |
-| `@playwright/test`            | 1.63.0  | Apache-2.0 | e2e против собранного приложения, chromium         |
-| `eslint`                      | 10.10.0 | MIT        | статические правила                                |
-| `@eslint/js`                  | 10.0.1  | MIT        | базовый набор правил ESLint                        |
-| `typescript-eslint`           | 8.70.0  | MIT        | правила ESLint по типам                            |
-| `eslint-plugin-svelte`        | 3.23.0  | MIT        | правила ESLint для `.svelte`                       |
-| `eslint-config-prettier`      | 10.1.8  | MIT        | снятие правил ESLint, спорящих с форматированием   |
-| `prettier`                    | 3.9.6   | MIT        | форматирование                                     |
-| `prettier-plugin-svelte`      | 4.1.1   | MIT        | форматирование `.svelte`                           |
-| `prettier-plugin-tailwindcss` | 0.8.1   | MIT        | порядок классов Tailwind                           |
-| `svelte-check`                | 4.7.6   | MIT        | типы внутри `.svelte`                              |
+| Пакет                         | Версия  | Лицензия   | Зачем                                                  |
+| ----------------------------- | ------- | ---------- | ------------------------------------------------------ |
+| `vitest`                      | 5.0.0   | MIT        | модульные и интеграционные тесты                       |
+| `testcontainers`              | 12.1.0  | MIT        | настоящие PostgreSQL, Redis и SeaweedFS на время теста |
+| `@testcontainers/postgresql`  | 12.1.0  | MIT        | контейнер PostgreSQL для тестов                        |
+| `@testcontainers/redis`       | 12.1.0  | MIT        | контейнер Redis для тестов                             |
+| `@playwright/test`            | 1.63.0  | Apache-2.0 | e2e против собранного приложения, chromium             |
+| `eslint`                      | 10.10.0 | MIT        | статические правила                                    |
+| `@eslint/js`                  | 10.0.1  | MIT        | базовый набор правил ESLint                            |
+| `typescript-eslint`           | 8.70.0  | MIT        | правила ESLint по типам                                |
+| `eslint-plugin-svelte`        | 3.23.0  | MIT        | правила ESLint для `.svelte`                           |
+| `eslint-config-prettier`      | 10.1.8  | MIT        | снятие правил ESLint, спорящих с форматированием       |
+| `prettier`                    | 3.9.6   | MIT        | форматирование                                         |
+| `prettier-plugin-svelte`      | 4.1.1   | MIT        | форматирование `.svelte`                               |
+| `prettier-plugin-tailwindcss` | 0.8.1   | MIT        | порядок классов Tailwind                               |
+| `svelte-check`                | 4.7.6   | MIT        | типы внутри `.svelte`                                  |
 
 Сканеры безопасности (`semgrep`, `trivy`) в `package.json` не ставятся вовсе: они работают
 контейнерами, версии закреплены в `scripts/security-scan.sh` ([`security.md`](security.md)).
@@ -132,6 +131,6 @@ OFL-1.1 (шрифт) и `MIT OR GPL-3.0` у `pizzip` — из двух вари�
 под копилефтом (GPL, AGPL, SSPL), которые линковались бы в приложение, среди прямых зависимостей
 нет. Сам продукт — под [MIT](../LICENSE).
 
-AGPL-службы (Redis, MinIO) стоят отдельными сетевыми сервисами и в код не линкуются, поэтому их
+AGPL-службы (Redis) стоят отдельными сетевыми сервисами и в код не линкуются, поэтому их
 лицензия на лицензию продукта не распространяется. Полную сверку лицензий по всему дереву
 зависимостей не проводили — это отдельная работа поверх SBOM.

@@ -535,7 +535,7 @@ PNG и PDF, а клик по столбцу воронки не открывае
 
 Модульный монолит на SvelteKit: страницы, формы и API — одно приложение, одни сервисы, один контекст
 прав. Источник истины — PostgreSQL; Redis держит сессии и счётчики; Gotenberg превращает HTML и DOCX
-в PDF; MinIO хранит файлы; Keycloak отвечает за вход.
+в PDF; SeaweedFS хранит файлы по протоколу S3; Keycloak отвечает за вход.
 
 ```mermaid
 flowchart LR
@@ -564,7 +564,7 @@ flowchart LR
     PG[("PostgreSQL 17<br/>Drizzle ORM · миграции")]
     R[("Redis 8<br/>сессии · лимиты")]
     G["Gotenberg<br/>HTML/DOCX → PDF"]
-    F[("MinIO<br/>файлы документов")]
+    F[("SeaweedFS (S3)<br/>файлы документов")]
 
     B --> H
     CMS --> API
@@ -680,18 +680,18 @@ git clone https://github.com/volkv/alma-crm-2026.git && cd alma-crm-2026
 docker compose up --build
 ```
 
-Поднимаются приложение, PostgreSQL 17, Redis 8, Keycloak, Gotenberg, MinIO и два имитатора
+Поднимаются приложение, PostgreSQL 17, Redis 8, Keycloak, Gotenberg, SeaweedFS и два имитатора
 систем заказчика. Миграции применяются автоматически, демонстрационные данные заливаются при первом
 старте.
 
-| Адрес                          | Что там                                |
-| ------------------------------ | -------------------------------------- |
-| http://localhost:3000          | приложение                             |
-| http://localhost:3000/api/docs | Swagger UI                             |
-| http://localhost:58080/admin   | Keycloak — каталог учётных записей     |
-| http://localhost:59001         | MinIO — файлы документов               |
-| http://localhost:58081         | `mock-cms` — имитатор CMS сайта        |
-| http://localhost:58082         | `mock-lms` — имитатор системы обучения |
+| Адрес                          | Что там                                 |
+| ------------------------------ | --------------------------------------- |
+| http://localhost:3000          | приложение                              |
+| http://localhost:3000/api/docs | Swagger UI                              |
+| http://localhost:58080/admin   | Keycloak — каталог учётных записей      |
+| http://localhost:59000         | SeaweedFS — S3 API хранилища документов |
+| http://localhost:58081         | `mock-cms` — имитатор CMS сайта         |
+| http://localhost:58082         | `mock-lms` — имитатор системы обучения  |
 
 Имитаторы показывают своё состояние страницей: что они приняли, что отправили и чем им ответили, —
 и там же кнопка, которой сцену запускают: «Отправить заявку в CRM» у сайта, «Отправить результат в
@@ -739,7 +739,7 @@ CRM» у системы обучения. Ту же заявку подают к
 
 ```bash
 cp .env.example .env                                   # значения совпадают с compose
-docker compose up -d postgres redis gotenberg minio minio-init keycloak  # только инфраструктура
+docker compose up -d postgres redis gotenberg seaweedfs seaweedfs-init keycloak  # только инфраструктура
 pnpm install
 pnpm run db:migrate
 pnpm run db:seed
@@ -812,7 +812,7 @@ pnpm run check:all
 ```
 
 Один гейт локально: аудит зависимостей → lint → типы → unit → интеграционные тесты (PostgreSQL,
-Redis и MinIO поднимает testcontainers, Gotenberg берётся из compose) → сборка и e2e против
+Redis и SeaweedFS поднимает testcontainers, Gotenberg берётся из compose) → сборка и e2e против
 собранного приложения → сборка образа. Сканеры безопасности — отдельной командой
 `pnpm run check:security` (semgrep по коду, Trivy по зависимостям и по образу, SBOM в CycloneDX —
 [`docs/security.md`](docs/security.md)).

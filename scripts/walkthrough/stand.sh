@@ -2,7 +2,7 @@
 #
 # Стенд для ручного прохода сценариев: отдельная рабочая копия на
 # зафиксированном коммите, изолированная от разработки и от e2e — свой порт,
-# своя база PostgreSQL, свой номер базы Redis, свой бакет MinIO и свои
+# своя база PostgreSQL, свой номер базы Redis, свой бакет SeaweedFS и свои
 # имитаторы CMS/LMS. Keycloak и Gotenberg — общий стек `docker-compose.yml`, тот
 # же, что у разработки и у e2e; общая база и Redis у них тоже, но стенд живёт в
 # собственном имени базы и собственной логической базе Redis, поэтому им есть
@@ -46,9 +46,9 @@ STAND_S3_ACCESS_KEY=lct
 STAND_S3_SECRET_KEY=lct-secret-key
 
 # Сервисы общего стека, которые нужны стенду. Без `app` (стенд запускает свой
-# процесс на хосте, не контейнером), без `minio-init` (одноразовая задача,
+# процесс на хосте, не контейнером), без `seaweedfs-init` (одноразовая задача,
 # заводится отдельным вызовом ниже) и без имитаторов — у стенда свои.
-INFRA_SERVICES=(postgres redis keycloak gotenberg mailpit minio)
+INFRA_SERVICES=(postgres redis keycloak gotenberg mailpit seaweedfs)
 
 # Свои имитаторы стенда: порты на хосте, образ и имена контейнеров. Порты —
 # рядом с общими 58081/58082, но не они: общие остаются за разработкой и e2e.
@@ -207,16 +207,13 @@ ensure_database() {
 ensure_bucket() {
 	local copy="$1"
 
-	# Обычный запуск minio-init — те же два бакета, что и у разработки
-	# (`lct-documents`, `lct-documents-e2e`); `--ignore-existing` внутри его
-	# собственной команды делает повтор безопасным.
-	compose "$copy" run --rm minio-init >/dev/null
-
-	# Свой бакет стенда — тем же образом (`mc` внутри образа minio), но другой
-	# командой поверх того же сервиса: заводить отдельный сервис в
-	# docker-compose.yml ради одного бакета незачем, а compose — не моя область.
-	compose "$copy" run --rm --entrypoint sh minio-init -c \
-		"mc alias set walk http://minio:9000 '${STAND_S3_ACCESS_KEY}' '${STAND_S3_SECRET_KEY}' && mc mb --ignore-existing walk/${STAND_BUCKET}" >/dev/null
+	# Тот же `seaweedfs-init`, что у разработки, со списком бакетов длиннее на
+	# бакет стенда: два общих (`lct-documents`, `lct-documents-e2e`) и свой.
+	# Уже заведённый бакет задача принимает, поэтому повтор безопасен.
+	compose "$copy" run --rm \
+		-e S3_ACCESS_KEY="${STAND_S3_ACCESS_KEY}" -e S3_SECRET_KEY="${STAND_S3_SECRET_KEY}" \
+		-e S3_BUCKETS="lct-documents lct-documents-e2e ${STAND_BUCKET}" \
+		seaweedfs-init >/dev/null
 
 	log "Бакет ${STAND_BUCKET} готов"
 }
