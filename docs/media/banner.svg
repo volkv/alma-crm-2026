@@ -9,6 +9,10 @@
       <stop offset="0.5" stop-color="#60a5fa" stop-opacity="0.9"/>
       <stop offset="1" stop-color="#60a5fa" stop-opacity="0"/>
     </linearGradient>
+    <linearGradient id="mark" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#3b82f6"/>
+      <stop offset="1" stop-color="#1d4ed8"/>
+    </linearGradient>
     <pattern id="grid" width="40" height="40" patternUnits="userSpaceOnUse">
       <path d="M40 0H0V40" fill="none" stroke="#ffffff" stroke-opacity="0.05"/>
     </pattern>
@@ -47,8 +51,9 @@
 
   <!-- mark -->
   <g transform="translate(72 74)">
-    <rect width="108" height="108" rx="24" fill="#2563eb"/>
-    <path d="M30 30v48h22M67 30h11v48H67z" fill="none" stroke="#ffffff" stroke-width="10" stroke-linecap="round" stroke-linejoin="round"/>
+    <rect width="108" height="108" rx="27" fill="url(#mark)"/>
+    <rect x="1" y="1" width="106" height="106" rx="26" fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="2"/>
+    <path transform="scale(3.375)" d="M9.5 24.5 16 7.5l6.5 17M11.8 18.5h8.4" fill="none" stroke="#ffffff" stroke-width="3.25" stroke-linecap="round" stroke-linejoin="round"/>
   </g>
 
   <!-- wordmark -->
