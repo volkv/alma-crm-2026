@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="280" height="84" viewBox="0 0 280 84" role="img" aria-label="ВИДЕОПРЕЗЕНТАЦИЯ — 8:51 · весь процесс на стенде">
+  <rect x="1" y="1" width="278" height="82" rx="16" fill="#ea580c" stroke="#c2410c"/>
+  <circle cx="42" cy="42" r="20" fill="#ffffff"/><path d="M37 32v20l16-10z" fill="#ea580c"/>
+  <g font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" fill="#ffffff">
+    <text x="80" y="38" font-size="16" font-weight="800" letter-spacing="0.3">ВИДЕОПРЕЗЕНТАЦИЯ</text>
+    <text x="80" y="60" font-size="13" fill-opacity="0.85">8:51 · весь процесс на стенде</text>
+  </g>
+</svg>

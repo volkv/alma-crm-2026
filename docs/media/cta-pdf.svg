@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="280" height="84" viewBox="0 0 280 84" role="img" aria-label="ПРЕЗЕНТАЦИЯ PDF — колода для экспертов">
+  <rect x="1" y="1" width="278" height="82" rx="16" fill="#0f172a" stroke="#020617"/>
+  <g fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><path d="M28 20h18l10 10v34H28z"/><path d="M46 20v10h10"/><path d="M34 42h16M34 50h16"/></g>
+  <g font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" fill="#ffffff">
+    <text x="80" y="38" font-size="16" font-weight="800" letter-spacing="0.3">ПРЕЗЕНТАЦИЯ PDF</text>
+    <text x="80" y="60" font-size="13" fill-opacity="0.85">колода для экспертов</text>
+  </g>
+</svg>

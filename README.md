@@ -3,17 +3,21 @@
 </p>
 
 <p align="center">
-  <a href="https://alma.volkv.com"><img src="docs/media/cta-demo.svg" alt="Открыть демо-стенд alma.volkv.com" height="64"></a>
-  &nbsp;
-  <a href="https://alma.volkv.com/api/docs"><img src="docs/media/cta-api.svg" alt="Документация API" height="64"></a>
+  <a href="https://alma.volkv.com"><img src="docs/media/cta-stand.svg" alt="Стенд — alma.volkv.com" height="84"></a>
+  <a href="https://alma.volkv.com/presentation.pdf"><img src="docs/media/cta-pdf.svg" alt="Презентация PDF" height="84"></a>
+  <a href="https://alma.volkv.com/video-presentation.mp4"><img src="docs/media/cta-video.svg" alt="Видеопрезентация" height="84"></a>
 </p>
 
 <p align="center">
-  <a href="https://alma.volkv.com/video-presentation.mp4"><b>Видеопрезентация</b></a> ·
-  <a href="https://alma.volkv.com/presentation.pdf"><b>Презентация (PDF)</b></a> ·
-  <a href="https://alma.volkv.com"><b>Стенд</b></a> ·
-  <a href="https://alma.volkv.com/api/docs"><b>API</b></a> ·
-  <a href="https://alma.volkv.com/help"><b>Справка</b></a>
+  <a href="https://alma.volkv.com/api/docs">API (Swagger)</a> ·
+  <a href="https://alma.volkv.com/help">Справка</a> ·
+  <a href="https://alma.volkv.com/mock-cms/">Имитатор сайта</a> ·
+  <a href="https://alma.volkv.com/mock-lms/">Имитатор LMS</a> ·
+  <a href="docs/product.md">Подробное описание</a>
+</p>
+
+<p align="center">
+  <a href="https://alma.volkv.com/video-presentation.mp4"><img src="docs/media/video-poster.png" alt="Смотреть видеопрезентацию, 8:51" width="100%"></a>
 </p>
 
 # Альма CRM

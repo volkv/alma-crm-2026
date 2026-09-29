@@ -1,0 +1,8 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="280" height="84" viewBox="0 0 280 84" role="img" aria-label="СТЕНД — alma.volkv.com · вход в клик">
+  <rect x="1" y="1" width="278" height="82" rx="16" fill="#2563eb" stroke="#1e40af"/>
+  <g fill="none" stroke="#ffffff" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><rect x="22" y="26" width="40" height="28" rx="4"/><path d="M34 62h16M42 54v8"/></g>
+  <g font-family="Inter, -apple-system, 'Segoe UI', Helvetica, Arial, sans-serif" fill="#ffffff">
+    <text x="80" y="38" font-size="16" font-weight="800" letter-spacing="0.3">СТЕНД</text>
+    <text x="80" y="60" font-size="13" fill-opacity="0.85">alma.volkv.com · вход в клик</text>
+  </g>
+</svg>
