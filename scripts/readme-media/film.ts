@@ -13,7 +13,7 @@
  * остановить запуск до первого открытого браузера.
  */
 import { execFile } from 'node:child_process';
-import { mkdir, mkdtemp, rm, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, readFile, rm, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
@@ -203,11 +203,63 @@ function words(line: string): number {
 	return line.split(/\s+/u).filter((word) => /\p{L}|\p{N}/u.test(word)).length;
 }
 
-/** Сколько секунд читается реплика сцены вслух. */
-function readingSeconds(narration: readonly string[]): number {
-	const total = narration.reduce((sum, line) => sum + words(line), 0);
+/**
+ * Длительности начитанных реплик: секунды звучания по имени сцены.
+ *
+ * Пока голоса нет, длину реплики даёт темп `WORDS_PER_MINUTE`. Когда реплики
+ * уже начитаны, сцене нужна их настоящая длина: живой голос читает не ровно
+ * сто сорок слов в минуту, и сцена по расчёту либо обрывает фразу, либо тянет
+ * лишнюю паузу.
+ */
+type Timing = ReadonlyMap<string, number>;
 
-	return (total / WORDS_PER_MINUTE) * 60 + TAIL_SECONDS;
+/**
+ * Длительности из файла `NARRATION_TIMING` — JSON `{ "<сцена>": секунды }`.
+ *
+ * Файл описывает проход целиком: сцена без длительности или длительность сцены,
+ * которой в проходе нет, — ошибка до запуска браузера. Иначе ролик молча снялся
+ * бы частью по голосу, частью по расчёту.
+ */
+async function narrationTiming<S>(scenes: readonly Scene<S>[]): Promise<Timing | null> {
+	const file = process.env.NARRATION_TIMING;
+
+	if (file === undefined || file === '') {
+		return null;
+	}
+
+	const raw: unknown = JSON.parse(await readFile(file, 'utf8'));
+
+	if (typeof raw !== 'object' || raw === null || Array.isArray(raw)) {
+		throw new Error(`${file}: ожидается объект «сцена → секунды»`);
+	}
+
+	const timing = new Map(Object.entries(raw));
+	const names = new Set(scenes.map((scene) => scene.name));
+
+	for (const name of names) {
+		const seconds = timing.get(name);
+
+		if (typeof seconds !== 'number' || !Number.isFinite(seconds) || seconds <= 0) {
+			throw new Error(`${file}: нет длительности реплики сцены «${name}»`);
+		}
+	}
+
+	for (const name of timing.keys()) {
+		if (!names.has(name)) {
+			throw new Error(`${file}: сцены «${name}» в проходе нет`);
+		}
+	}
+
+	return timing as Timing;
+}
+
+/** Сколько секунд сцена обязана длиться, чтобы её реплика прозвучала целиком. */
+function readingSeconds<S>(scene: Scene<S>, timing: Timing | null): number {
+	const spoken =
+		timing?.get(scene.name) ??
+		(scene.narration.reduce((sum, line) => sum + words(line), 0) / WORDS_PER_MINUTE) * 60;
+
+	return spoken + TAIL_SECONDS;
 }
 
 /** Пауза в долях такта: 1 — «дать прочитать», 0.5 — «не частить». */
@@ -619,7 +671,8 @@ async function record<S>(
 	scene: Scene<S>,
 	stand: S,
 	storage: Sessions,
-	directory: string
+	directory: string,
+	timing: Timing | null
 ): Promise<string> {
 	const context = await browser.newContext({
 		viewport: FRAME,
@@ -671,7 +724,7 @@ async function record<S>(
 
 		acted = (Date.now() - startedAt) / 1000;
 
-		const left = readingSeconds(scene.narration) * 1000 - (Date.now() - startedAt);
+		const left = readingSeconds(scene, timing) * 1000 - (Date.now() - startedAt);
 
 		if (left > 0) {
 			await page.waitForTimeout(left);
@@ -689,7 +742,7 @@ async function record<S>(
 	// Действие и реплика печатаются рядом: сцена, которую держит действие, а не
 	// текст, — первая, где искать лишние секунды ролика.
 	console.log(
-		`${scene.name}: действие ${acted.toFixed(1)} с, реплика ${readingSeconds(scene.narration).toFixed(1)} с`
+		`${scene.name}: действие ${acted.toFixed(1)} с, реплика ${readingSeconds(scene, timing).toFixed(1)} с`
 	);
 
 	// Файл дописывается при закрытии контекста, а не страницы.
@@ -721,16 +774,16 @@ export type Pass<S> = {
 };
 
 /** Список сцен с ролью и длиной реплики — без браузера и без стенда. */
-function list<S>(scenes: readonly Scene<S>[]): void {
+function list<S>(scenes: readonly Scene<S>[], timing: Timing | null): void {
 	for (const scene of scenes) {
-		const seconds = readingSeconds(scene.narration).toFixed(1);
+		const seconds = readingSeconds(scene, timing).toFixed(1);
 
 		console.log(
 			`${scene.name.padEnd(14)} ${scene.role.padEnd(8)} ${seconds.padStart(5)} с — ${scene.caption}`
 		);
 	}
 
-	const total = scenes.reduce((sum, scene) => sum + readingSeconds(scene.narration), 0);
+	const total = scenes.reduce((sum, scene) => sum + readingSeconds(scene, timing), 0);
 	const spoken = scenes.reduce(
 		(sum, scene) => sum + scene.narration.reduce((count, line) => count + words(line), 0),
 		0
@@ -743,12 +796,29 @@ function list<S>(scenes: readonly Scene<S>[]): void {
  * Снять проход целиком: сессии ролей, сцена за сценой, склейка, ключевые
  * кадры, `timecodes.json` и `subtitles.srt`, затем возврат стенда.
  *
- * С ключом `--list` печатает сцены и ничего не снимает. Возвращает сцены с их
- * местом в ролике, `null` — если ролик не снимался.
+ * С ключом `--list` печатает сцены и ничего не снимает, с `--narration` —
+ * реплики сцен в JSON, по которым их начитывают. Длина сцен берётся из
+ * `NARRATION_TIMING`, если он задан. Возвращает сцены с их местом в ролике,
+ * `null` — если ролик не снимался.
  */
 export async function film<S>(pass: Pass<S>): Promise<Mark<S>[] | null> {
-	if (process.argv.slice(2).includes('--list')) {
-		list(pass.scenes);
+	const flags = process.argv.slice(2);
+
+	if (flags.includes('--narration')) {
+		const scenes = pass.scenes.map((scene) => ({
+			scene: scene.name,
+			narration: scene.narration
+		}));
+
+		console.log(JSON.stringify({ scenes }, null, '\t'));
+
+		return null;
+	}
+
+	const timing = await narrationTiming(pass.scenes);
+
+	if (flags.includes('--list')) {
+		list(pass.scenes, timing);
 
 		return null;
 	}
@@ -774,7 +844,7 @@ export async function film<S>(pass: Pass<S>): Promise<Mark<S>[] | null> {
 		const parts: { scene: Scene<S>; file: string; seconds: number }[] = [];
 
 		for (const scene of pass.scenes) {
-			const file = await record(browser, scene, pass.stand, storage, work);
+			const file = await record(browser, scene, pass.stand, storage, work, timing);
 			const seconds = await durationOf(file);
 
 			parts.push({ scene, file, seconds });
