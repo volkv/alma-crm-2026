@@ -184,6 +184,15 @@ export const AUTOMATION_STEPS: readonly AutomationStep[] = [
 				screen: 'interactions',
 				where: `${CARD} → документы`,
 				status: 'ready'
+			},
+			{
+				kind: 'assist',
+				title: 'Пакет документов вузу письмом из карточки: PDF пакета контактным лицам стороны',
+				result:
+					'Пункт «Пакет документов отправлен» отмечается сам, в ленте дела — запись об отправке без адресов и имён; пакет, ушедший мимо системы, отмечают рукой',
+				screen: 'interactions',
+				where: `${CARD} → документы`,
+				status: 'ready'
 			}
 		]
 	},
