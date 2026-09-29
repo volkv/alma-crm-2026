@@ -117,7 +117,7 @@ docker compose up --build
 | [`docs/why-sveltekit.md`](docs/why-sveltekit.md)         | обоснование стека                                                    |
 | [`docs/libraries.md`](docs/libraries.md)                 | перечень библиотек: версии, лицензии                                 |
 
-Остальные документы лежат рядом, в [`docs/`](docs/). Документацию одним PDF собирает `pnpm run docs:pdf`.
+Остальные документы лежат рядом, в [`docs/`](docs/). Вся документация одним файлом — [PDF](https://alma.volkv.com/documentation.pdf), его собирает `pnpm run docs:pdf`.
 
 ## Стек
 
