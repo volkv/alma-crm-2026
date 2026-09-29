@@ -70,7 +70,7 @@
 	<Card.Header>
 		<!-- Заголовок страницы, а не карточки: на странице входа он единственный. -->
 		<h1 class="text-xl leading-snug font-semibold tracking-tight">Вход в Альма CRM</h1>
-		<Card.Description>От заявки вуза до подтверждённого результата</Card.Description>
+		<Card.Description>От первого контакта с вузом до подтверждённого результата</Card.Description>
 	</Card.Header>
 
 	<Card.Content class="flex flex-col gap-4">

@@ -504,6 +504,26 @@ export async function showCard(page: Page, body: string): Promise<void> {
 }
 
 /**
+ * Слайд презентации на весь кадр: PNG страницы колоды.
+ *
+ * Адрес — тот же, что у карточки, и так же не доходит до сервера. Кадр
+ * 16:10, слайд 16:9: слайд встаёт по ширине, сверху и снизу — тёмные поля.
+ */
+export async function showSlide(page: Page, file: string): Promise<void> {
+	const image = (await readFile(file)).toString('base64');
+	const body = `<!doctype html><html lang="ru"><head><meta charset="utf-8"><style>
+	html, body { margin: 0; height: 100%; background: #1c1d22; }
+	body { display: flex; align-items: center; justify-content: center; }
+	img { display: block; width: 100%; height: auto; }
+</style></head><body><img src="data:image/png;base64,${image}" alt=""></body></html>`;
+
+	await page.route(`${BASE_URL}${CARD_PATH}`, (route) =>
+		route.fulfill({ contentType: 'text/html; charset=utf-8', body })
+	);
+	await page.goto(`${BASE_URL}${CARD_PATH}`, { waitUntil: 'load' });
+}
+
+/**
  * Страница «скана» для вложения: заголовок и строки текста на светлом листе.
  *
  * Рисует её `ffmpeg`, которым и так собирается видео: заводить ради одного
@@ -796,6 +816,8 @@ function list<S>(scenes: readonly Scene<S>[], timing: Timing | null): void {
  * Снять проход целиком: сессии ролей, сцена за сценой, склейка, ключевые
  * кадры, `timecodes.json` и `subtitles.srt`, затем возврат стенда.
  *
+ * `--only=a,b` снимает только названные сцены — проверка сцены без прохода
+ * целиком; сцене, которой нужен итог предыдущих, это не поможет.
  * С ключом `--list` печатает сцены и ничего не снимает, с `--narration` —
  * реплики сцен в JSON, по которым их начитывают. Длина сцен берётся из
  * `NARRATION_TIMING`, если он задан. Возвращает сцены с их местом в ролике,
@@ -815,10 +837,20 @@ export async function film<S>(pass: Pass<S>): Promise<Mark<S>[] | null> {
 		return null;
 	}
 
+	const only = flags.find((flag) => flag.startsWith('--only='))?.slice('--only='.length);
+	const scenes =
+		only === undefined
+			? pass.scenes
+			: pass.scenes.filter((scene) => only.split(',').includes(scene.name));
+
+	if (only !== undefined && scenes.length !== only.split(',').length) {
+		throw new Error(`--only: в проходе нет части сцен из «${only}»`);
+	}
+
 	const timing = await narrationTiming(pass.scenes);
 
 	if (flags.includes('--list')) {
-		list(pass.scenes, timing);
+		list(scenes, timing);
 
 		return null;
 	}
@@ -843,7 +875,7 @@ export async function film<S>(pass: Pass<S>): Promise<Mark<S>[] | null> {
 
 		const parts: { scene: Scene<S>; file: string; seconds: number }[] = [];
 
-		for (const scene of pass.scenes) {
+		for (const scene of scenes) {
 			const file = await record(browser, scene, pass.stand, storage, work, timing);
 			const seconds = await durationOf(file);
 
