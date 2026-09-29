@@ -325,6 +325,14 @@ export async function beat(page: Page, times = 1): Promise<void> {
 	await page.waitForTimeout(Math.round(BEAT * times * pace));
 }
 
+/**
+ * Короткий показ, который темп сцены не растягивает: промежуточный экран, на
+ * котором не нужно задерживаться, — время реплики забирают паузы `beat`.
+ */
+export async function glance(page: Page, seconds: number): Promise<void> {
+	await page.waitForTimeout(Math.round(seconds * 1000));
+}
+
 /** Дождаться, что страница приложения ожила: SvelteKit закончил гидратацию. */
 export async function hydrated(page: Page): Promise<void> {
 	await page.locator('body[data-hydrated]').waitFor({ state: 'attached', timeout: WAIT });

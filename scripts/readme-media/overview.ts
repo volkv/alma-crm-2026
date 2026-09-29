@@ -59,6 +59,7 @@ import {
 	BASE_URL,
 	WAIT,
 	beat,
+	glance,
 	drawScan,
 	film,
 	hydrated,
@@ -535,8 +536,10 @@ async function meetingInvite(page: Page, crew: Crew): Promise<void> {
 	const meeting = page.getByRole('dialog');
 
 	await meeting.waitFor({ state: 'visible', timeout: WAIT });
+	await beat(page, 1);
 	await meeting.locator('#card-meeting-start').fill(MEETING.start);
 	await meeting.locator('#card-meeting-location').fill(MEETING.location);
+	await beat(page, 1);
 
 	for (const person of MEETING.invitees) {
 		await press(page, meeting.getByRole('checkbox', { name: new RegExp(person, 'u') }));
@@ -555,7 +558,8 @@ async function meetingInvite(page: Page, crew: Crew): Promise<void> {
 
 	await (await download).saveAs(invite);
 	await page.goto(`file://${invite}`, { waitUntil: 'load' });
-	await beat(page, 2);
+	// Файл — подтверждение, а не предмет рассказа: пара секунд, без растяжения.
+	await glance(page, 2);
 }
 
 /** Поимённый список к только что заведённому потоку: проверка файла, загрузка, передача. */
