@@ -105,7 +105,7 @@ export const passportActions = {
 			return fail(400, { message: firstIssue(parsed.error.issues), issues: [] });
 		}
 
-		return run(() => lookupSite(actorFromEvent(event), parsed.data.website));
+		return run(() => lookupSite(actorFromEvent(event), parsed.data.website, 'fresh'));
 	},
 
 	passportImport: async (event: RequestEvent) => {

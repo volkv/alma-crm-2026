@@ -590,8 +590,17 @@ function notFoundMessage(kind: LookupQueryKind): string {
  * Сайт называет форма — то, что сейчас стоит в поле «Сайт». Идти разрешено
  * только внутри его домена (`withinSite`), и каждый адрес проверяется правилом
  * исходящих адресов.
+ *
+ * `reading` выбирает вызывающий. `fresh` — кнопка «Перечитать»: её нажимают,
+ * чтобы прочитать сайт сейчас, и прежний отчёт из кэша, особенно неудачный,
+ * выглядел бы как неработающая кнопка. `cached` — формы, которым нужен уже
+ * прочитанный отчёт: сайт и квота тратятся, только когда в кэше пусто.
  */
-export async function lookupSite(ctx: ActorContext, website: string): Promise<IssuedPassport> {
+export async function lookupSite(
+	ctx: ActorContext,
+	website: string,
+	reading: 'fresh' | 'cached'
+): Promise<IssuedPassport> {
 	requirePermission(ctx, 'organizations.write');
 	const settings = await requireEnabled();
 	const origin = normalizeWebsite(website);
@@ -600,9 +609,6 @@ export async function lookupSite(ctx: ActorContext, website: string): Promise<Is
 		throw new ValidationError('Адрес сайта в карточке не разбирается');
 	}
 
-	// Кнопку нажимают, чтобы прочитать сайт сейчас: «Перечитать», вернувшее
-	// прежний отчёт из кэша, выглядело бы как неработающая кнопка — особенно
-	// когда в кэше лежит неудачное чтение. Кэш нужен прогреву и формам.
 	const report = await cachedSiteReport(
 		origin,
 		async () => {
@@ -610,7 +616,7 @@ export async function lookupSite(ctx: ActorContext, website: string): Promise<Is
 
 			return fetchSiteReport(origin, new Date().toISOString());
 		},
-		{ fresh: true }
+		{ fresh: reading === 'fresh' }
 	);
 
 	if (report === null) {

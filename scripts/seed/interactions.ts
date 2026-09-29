@@ -2771,6 +2771,13 @@ export const INTERACTION_SEED_SIZES = {
 	 */
 	handoverActs: ALL_INTERACTIONS.filter((seed) => needsSignedDocument(seed, 'materials_handover'))
 		.length,
+	/**
+	 * Пакеты стадии обмена: соглашение в DOCX и PDF у каждого дела, ушедшего с
+	 * неё вперёд. Пункт «Пакет документов собран» засчитывает только собранное
+	 * после входа на стадию, поэтому пакет собирается и у дела, чьё соглашение
+	 * лежит с заведения (`document`).
+	 */
+	packageAgreements: ALL_INTERACTIONS.filter((seed) => walksPast(seed, 'document_exchange')).length,
 	handovers: ALL_INTERACTIONS.filter((seed) => seed.handedTo !== undefined).length,
 	/**
 	 * Потоки обучения и их результаты: по одному на запись, дошедшую до стадии с
@@ -3860,11 +3867,11 @@ async function readPrimaryPartyId(db: Database, interactionId: string): Promise<
 
 /**
  * Собирает соглашение по шаблону. Недоступный Gotenberg не должен ронять
- * заливку: на машине без него стенд всё равно нужен — просто без документов.
- * Это единственное место набора, где ошибка не останавливает работу, и молчать
- * о ней нельзя.
+ * заливку: соглашение тогда собирается в одном DOCX, как акт передачи
+ * (`generateSignedDocument`), и сказать об этом нужно вслух. Без соглашения
+ * не обойтись: оно же — пакет стадии обмена, без которого дело с неё не уходит.
  */
-async function generateAgreement(ctx: ActorContext, interactionId: string): Promise<boolean> {
+async function generateAgreement(ctx: ActorContext, interactionId: string): Promise<void> {
 	const view = await getInteraction(ctx, interactionId);
 	const institution = view.parties.find((party) => party.partyRole === 'educational_institution');
 	const customer = view.parties.find((party) => party.partyRole === 'customer');
@@ -3880,37 +3887,36 @@ async function generateAgreement(ctx: ActorContext, interactionId: string): Prom
 		throw new Error(`Взаимодействию «${view.title}» не хватает данных для соглашения`);
 	}
 
+	const command = {
+		templateKey: 'agreement' as const,
+		interactionId,
+		title: `Соглашение — ${view.title}`,
+		data: {
+			city: 'Москва',
+			date: formatDate(new Date()),
+			operatorName: operator.organizationName,
+			operatorSigner: OPERATOR_SIGNER,
+			institutionName: institution.organizationName,
+			institutionSigner: INSTITUTION_SIGNER,
+			customerName: customer.organizationName,
+			periodStart: formatDate(view.agreementPeriodStart),
+			periodEnd: formatDate(view.agreementPeriodEnd),
+			programs: view.programs.map((program) => ({ name: program.name }))
+		}
+	};
+
 	try {
-		await generateDocument(ctx, {
-			templateKey: 'agreement',
-			interactionId,
-			title: `Соглашение — ${view.title}`,
-			formats: ['docx', 'pdf'],
-			data: {
-				city: 'Москва',
-				date: formatDate(new Date()),
-				operatorName: operator.organizationName,
-				operatorSigner: OPERATOR_SIGNER,
-				institutionName: institution.organizationName,
-				institutionSigner: INSTITUTION_SIGNER,
-				customerName: customer.organizationName,
-				periodStart: formatDate(view.agreementPeriodStart),
-				periodEnd: formatDate(view.agreementPeriodEnd),
-				programs: view.programs.map((program) => ({ name: program.name }))
-			}
-		});
-
-		return true;
+		await generateDocument(ctx, { ...command, formats: ['docx', 'pdf'] });
 	} catch (error) {
-		if (error instanceof DocumentConversionError) {
-			console.log(
-				`seed: соглашение для «${view.title}» не собрано — служба преобразования в PDF недоступна (${error.message})`
-			);
-
-			return false;
+		if (!(error instanceof DocumentConversionError)) {
+			throw error;
 		}
 
-		throw error;
+		console.log(
+			`seed: PDF соглашения для «${view.title}» не собран — служба преобразования в PDF недоступна (${error.message}); соглашение остаётся в DOCX`
+		);
+
+		await generateDocument(ctx, { ...command, formats: ['docx'] });
 	}
 }
 
@@ -4066,7 +4072,8 @@ async function applyState(
 	let generated = false;
 
 	if (seed.document === true) {
-		generated = await generateAgreement(ctx, interactionId);
+		await generateAgreement(ctx, interactionId);
+		generated = true;
 	}
 
 	if (seed.scanWithRevision === true) {

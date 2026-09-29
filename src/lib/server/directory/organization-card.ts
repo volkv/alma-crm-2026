@@ -499,7 +499,7 @@ export async function siteContactDraft(
 		throw new ValidationError('У организации не указан сайт: кандидатов в контакты брать неоткуда');
 	}
 
-	const site = (await lookupSite(ctx, organization.website)).passport.site;
+	const site = (await lookupSite(ctx, organization.website, 'cached')).passport.site;
 	const wanted = normalizePersonName(input.name);
 	const candidate = site?.contacts.find(
 		(row) => row.unit === input.unit && normalizePersonName(row.name) === wanted

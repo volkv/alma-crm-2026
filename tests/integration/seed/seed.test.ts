@@ -475,12 +475,15 @@ describe('сид', () => {
 		// DOCX и PDF, к одному делу приложен скан и его вторая редакция, у каждого
 		// дела, прошедшего подписание, лежит подписанный экземпляр с отметкой
 		// «Утверждён», а у завершённого обучения лица — документ об обучении.
-		// Сверх документов дел — по описанию в PDF у каждой программы.
+		// Дело, ушедшее со стадии обмена вперёд, собрало на ней пакет —
+		// соглашение в тех же двух форматах. Сверх документов дел — по описанию
+		// в PDF у каждой программы.
 		await expect(countRows(documents)).resolves.toBe(
 			INTERACTION_SEED_SIZES.documents * 2 +
 				INTERACTION_SEED_SIZES.scans +
 				INTERACTION_SEED_SIZES.signedAgreements +
 				INTERACTION_SEED_SIZES.handoverActs * 2 +
+				INTERACTION_SEED_SIZES.packageAgreements * 2 +
 				INTERACTION_SEED_SIZES.trainingDocuments +
 				DIRECTORY_SEED_SIZES.programMaterials
 		);

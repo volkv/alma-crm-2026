@@ -95,7 +95,7 @@ describe('раздел «Сведения» из кэша', () => {
 	});
 
 	it('находит прочитанное, как бы ни был записан адрес, и квоту не тратит', async () => {
-		await lookupSite(ctx, 'https://polytech.example.ru/sveden/common');
+		await lookupSite(ctx, 'https://polytech.example.ru/sveden/common', 'fresh');
 		consumeQuota.mockClear();
 		fetchSiteReport.mockClear();
 
