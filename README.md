@@ -5,7 +5,6 @@
 <p align="center">
   <a href="https://alma.volkv.com"><img src="docs/media/cta-stand.svg" alt="Стенд — alma.volkv.com" height="84"></a>
   <a href="https://alma.volkv.com/presentation.pdf"><img src="docs/media/cta-pdf.svg" alt="Презентация PDF" height="84"></a>
-  <a href="https://alma.volkv.com/video-presentation.mp4"><img src="docs/media/cta-video.svg" alt="Видеопрезентация" height="84"></a>
 </p>
 
 <p align="center">
@@ -30,6 +29,27 @@ CRM ИТ Школы Ростелекома для работы с вузами, 
 
 Решение команды **Wine Coding Team** для хакатона «Лидеры цифровой трансформации 2026», задача
 «Система контроля взаимодействия с учебными заведениями».
+
+## Быстрый запуск
+
+Нужны Docker 25+ с плагином Compose.
+
+```bash
+git clone https://github.com/volkv/alma-crm-2026.git && cd alma-crm-2026
+docker compose up --build
+```
+
+Поднимаются приложение, PostgreSQL, Redis, Keycloak, Gotenberg, SeaweedFS, почтовая ловушка Mailpit и два
+имитатора систем заказчика. Миграции применяются автоматически, демонстрационные данные заливаются при первом старте.
+
+- http://localhost:3000 — приложение, http://localhost:3000/api/docs — Swagger UI;
+- http://localhost:58081 — имитатор сайта, http://localhost:58082 — имитатор системы обучения;
+- http://localhost:58080/admin — Keycloak, администратор каталога `admin` / `admin` (переопределяется
+  `KEYCLOAK_ADMIN` и `KEYCLOAK_ADMIN_PASSWORD`);
+- http://localhost:8025 — Mailpit: вся исходящая почта стенда оседает здесь.
+
+Пустая база без демонстрационных записей: `DEMO_MODE=false docker compose up --build`.
+Остановить и удалить данные: `docker compose down -v`. Запуск для разработки — в [`docs/development.md`](docs/development.md).
 
 ## Демо-стенд
 
@@ -75,27 +95,6 @@ CRM ИТ Школы Ростелекома для работы с вузами, 
 - **Работа в закрытой сети** — экран «Статус системы» показывает связи установки; прогон без интернета проверяет это скриптом.
 
 Подробнее — в [подробном описании](docs/product.md).
-
-## Быстрый запуск
-
-Нужны Docker 25+ с плагином Compose.
-
-```bash
-git clone https://github.com/volkv/alma-crm-2026.git && cd alma-crm-2026
-docker compose up --build
-```
-
-Поднимаются приложение, PostgreSQL, Redis, Keycloak, Gotenberg, SeaweedFS, почтовая ловушка Mailpit и два
-имитатора систем заказчика. Миграции применяются автоматически, демонстрационные данные заливаются при первом старте.
-
-- http://localhost:3000 — приложение, http://localhost:3000/api/docs — Swagger UI;
-- http://localhost:58081 — имитатор сайта, http://localhost:58082 — имитатор системы обучения;
-- http://localhost:58080/admin — Keycloak, администратор каталога `admin` / `admin` (переопределяется
-  `KEYCLOAK_ADMIN` и `KEYCLOAK_ADMIN_PASSWORD`);
-- http://localhost:8025 — Mailpit: вся исходящая почта стенда оседает здесь.
-
-Пустая база без демонстрационных записей: `DEMO_MODE=false docker compose up --build`.
-Остановить и удалить данные: `docker compose down -v`. Запуск для разработки — в [`docs/development.md`](docs/development.md).
 
 ## Документация
 
