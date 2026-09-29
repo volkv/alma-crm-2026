@@ -89,6 +89,63 @@ const WORDS_PER_MINUTE = 140;
  */
 const TAIL_SECONDS = 1.2;
 
+/**
+ * Во сколько раз паузы `beat` сцены могут растянуться под её реплику.
+ *
+ * Потолок нужен сценам-слайдам: у них одно действие на всю реплику, и
+ * растяжение без предела превратило бы секундный такт в полминуты молчаливого
+ * ожидания внутри действия вместо ровного показа слайда.
+ */
+const PACE_MAX = 3;
+
+/**
+ * Темп текущей сцены и сумма её пауз в тактах без растяжения.
+ *
+ * Действие сцены короче её реплики: без растяжения оно заканчивалось раньше, и
+ * запись стояла на последнем кадре, пока голос договаривал, — картинка
+ * обгоняла звук. Растяжение пауз ведёт действие вдоль всей реплики.
+ */
+let pace = 1;
+let beaten = 0;
+
+/** Замер прошлой записи сцены: действие без растяжения и сумма пауз, секунды. */
+type Measured = { acted: number; beats: number };
+type Pacing = Map<string, Measured>;
+
+/**
+ * Замеры прошлой записи из `pacing.json` каталога прохода. Файла нет — проход
+ * снимается впервые, паузы идут без растяжения, а запись оставляет замеры для
+ * следующей.
+ */
+async function readPacing(file: string): Promise<Pacing> {
+	let raw: string;
+
+	try {
+		raw = await readFile(file, 'utf8');
+	} catch (failure) {
+		if ((failure as NodeJS.ErrnoException).code === 'ENOENT') {
+			return new Map();
+		}
+
+		throw failure;
+	}
+
+	return new Map(Object.entries(JSON.parse(raw) as Record<string, Measured>));
+}
+
+/** Темп сцены: паузы растягиваются так, чтобы действие заняло реплику целиком. */
+function paceFor<S>(scene: Scene<S>, timing: Timing | null, pacing: Pacing): number {
+	const measured = pacing.get(scene.name);
+
+	if (measured === undefined || measured.beats <= 0) {
+		return 1;
+	}
+
+	const room = readingSeconds(scene, timing) - TAIL_SECONDS - measured.acted;
+
+	return Math.min(PACE_MAX, 1 + Math.max(0, room) / measured.beats);
+}
+
 function requiredEnv(name: string, fallback?: string): string {
 	const value = process.env[name] ?? fallback;
 
@@ -264,7 +321,8 @@ function readingSeconds<S>(scene: Scene<S>, timing: Timing | null): number {
 
 /** Пауза в долях такта: 1 — «дать прочитать», 0.5 — «не частить». */
 export async function beat(page: Page, times = 1): Promise<void> {
-	await page.waitForTimeout(Math.round(BEAT * times));
+	beaten += (BEAT * times) / 1000;
+	await page.waitForTimeout(Math.round(BEAT * times * pace));
 }
 
 /** Дождаться, что страница приложения ожила: SvelteKit закончил гидратацию. */
@@ -689,8 +747,9 @@ async function record<S>(
 	stand: S,
 	storage: Sessions,
 	directory: string,
-	timing: Timing | null
-): Promise<string> {
+	timing: Timing | null,
+	pacing: Pacing
+): Promise<{ file: string; measured: Measured }> {
 	const context = await browser.newContext({
 		viewport: FRAME,
 		deviceScaleFactor: 1,
@@ -732,6 +791,9 @@ async function record<S>(
 		work: directory
 	};
 
+	pace = paceFor(scene, timing, pacing);
+	beaten = 0;
+
 	const startedAt = Date.now();
 	let acted: number;
 
@@ -759,8 +821,12 @@ async function record<S>(
 	// Действие и реплика печатаются рядом: сцена, которую держит действие, а не
 	// текст, — первая, где искать лишние секунды ролика.
 	console.log(
-		`${scene.name}: действие ${acted.toFixed(1)} с, реплика ${readingSeconds(scene, timing).toFixed(1)} с`
+		`${scene.name}: действие ${acted.toFixed(1)} с, реплика ${readingSeconds(scene, timing).toFixed(1)} с, темп ×${pace.toFixed(2)}`
 	);
+
+	// Замер без растяжения: следующая запись считает темп от него, а не от
+	// уже растянутого действия.
+	const measured = { acted: acted - beaten * (pace - 1), beats: beaten };
 
 	// Файл дописывается при закрытии контекста, а не страницы.
 	await context.close();
@@ -769,7 +835,7 @@ async function record<S>(
 
 	await toMp4(await video.path(), target);
 
-	return target;
+	return { file: target, measured };
 }
 
 export type Pass<S> = {
@@ -845,6 +911,8 @@ export async function film<S>(pass: Pass<S>): Promise<Mark<S>[] | null> {
 	}
 
 	const timing = await narrationTiming(pass.scenes);
+	const pacingFile = path.join(pass.output, 'pacing.json');
+	const pacing = await readPacing(pacingFile);
 
 	if (flags.includes('--list')) {
 		list(scenes, timing);
@@ -873,8 +941,21 @@ export async function film<S>(pass: Pass<S>): Promise<Mark<S>[] | null> {
 		const parts: { scene: Scene<S>; file: string; seconds: number }[] = [];
 
 		for (const scene of scenes) {
-			const file = await record(browser, scene, pass.stand, storage, work, timing);
+			const { file, measured } = await record(
+				browser,
+				scene,
+				pass.stand,
+				storage,
+				work,
+				timing,
+				pacing
+			);
 			const seconds = await durationOf(file);
+
+			pacing.set(scene.name, {
+				acted: Number(measured.acted.toFixed(2)),
+				beats: Number(measured.beats.toFixed(2))
+			});
 
 			parts.push({ scene, file, seconds });
 			console.log(`${scene.name}: ${seconds.toFixed(1)} с`);
@@ -943,6 +1024,11 @@ export async function film<S>(pass: Pass<S>): Promise<Mark<S>[] | null> {
 			'utf8'
 		);
 		await writeFile(path.join(pass.output, 'subtitles.srt'), subtitles(marks), 'utf8');
+		await writeFile(
+			pacingFile,
+			`${JSON.stringify(Object.fromEntries(pacing), null, '\t')}\n`,
+			'utf8'
+		);
 
 		console.log(`\n${target}`);
 		console.log(`длительность: ${timecode(offset)}\n`);
