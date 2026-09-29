@@ -354,8 +354,8 @@ export const HELP_SHOTS: readonly Frame[] = [
 		name: 'admin/access-1',
 		path: '/login',
 		role: 'anonymous',
-		caption: 'Вход и карточка демонстрационного стенда с тремя ролями',
-		waitFor: 'Войти'
+		caption: 'Форма входа с быстрым входом тремя ролями демонстрационного стенда',
+		waitFor: 'Демо-стенд: войти одной кнопкой'
 	},
 	{
 		name: 'admin/integrations-1',

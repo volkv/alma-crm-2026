@@ -325,8 +325,10 @@ export async function scroll(page: Page, distance: number, steps = 5): Promise<v
 }
 
 /**
- * Вход через каталог учётных записей: кнопка на нашей странице, форма Keycloak,
- * возврат в приложение. Другого входа в системе нет, и подделанная сессия
+ * Вход через каталог учётных записей: наша страница входа сама уводит на форму
+ * Keycloak, возврат в приложение. В кадре (`typed`) сцена начинается с формы
+ * каталога и нажимает кнопку роли в блоке быстрого входа демо-стенда — ту же,
+ * что нажимает зритель; вне кадра имя и пароль вводятся в поля. Другого входа в системе нет, и подделанная сессия
  * снимала бы систему, которой не существует.
  *
  * Браузер входа каждый раз чистый, поэтому сразу после возврата в приложение
@@ -339,27 +341,22 @@ export async function scroll(page: Page, distance: number, steps = 5): Promise<v
  */
 export async function signIn(page: Page, login: Role, typed: boolean): Promise<void> {
 	await page.goto(`${BASE_URL}/login`);
-
-	if (typed) {
-		await hydrated(page);
-		await beat(page, 1.2);
-	}
-
-	await press(page, page.getByRole('button', { name: 'Войти', exact: true }));
 	await page.waitForURL(/\/realms\/lct\/protocol\/openid-connect\/auth/, { timeout: WAIT });
 
 	if (typed) {
-		await beat(page, 0.5);
-		await page.locator('#username').click();
-		await page.locator('#username').pressSequentially(login, { delay: 110 });
+		// Кнопки роли дорисовывает скрипт темы каталога; пароль за ними — тот,
+		// с которым каталог заводил демо-записи.
+		const roleButton = page.locator(`[data-testid="demo-sign-in"] button[data-login="${login}"]`);
+
+		await roleButton.waitFor({ state: 'visible', timeout: WAIT });
+		await beat(page, 1.2);
+		await press(page, roleButton);
 	} else {
 		await page.locator('#username').fill(login);
+		await page.locator('#password').fill(PASSWORD);
+		await page.locator('#kc-login').click();
 	}
 
-	// Пароль вводится сразу целиком и в записи остаётся точками: показывать, как
-	// его набирают, ролику нечего.
-	await page.locator('#password').fill(PASSWORD);
-	await page.locator('#kc-login').click();
 	await page.waitForURL(`${BASE_URL}/`, { timeout: WAIT });
 
 	await hydrated(page);

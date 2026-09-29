@@ -68,8 +68,8 @@ async function waitForHydration(page: Page): Promise<void> {
 }
 
 /**
- * Вход тем же путём, что у человека: кнопка «Войти» приложения, форма
- * каталога за прокси (`/auth/`), возврат в приложение. Подсказки первого входа
+ * Вход тем же путём, что у человека: страница входа приложения сама уводит на
+ * форму каталога за прокси (`/auth/`), возврат в приложение. Подсказки первого входа
  * закрываются кнопкой «Позже».
  */
 async function signIn(
@@ -80,8 +80,6 @@ async function signIn(
 	const page = await context.newPage();
 
 	await page.goto('/login');
-	await waitForHydration(page);
-	await page.getByRole('button', { name: 'Войти', exact: true }).click();
 	await page.waitForURL(/\/auth\/realms\/lct\/protocol\/openid-connect\/auth/);
 	await page.locator('#username').fill(ROLES[role]);
 	await page.locator('#password').fill(PASSWORD);

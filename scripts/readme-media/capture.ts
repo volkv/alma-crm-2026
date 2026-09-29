@@ -124,8 +124,8 @@ async function skipOnboardingTour(page: Page): Promise<void> {
 }
 
 /**
- * Вход через каталог учётных записей: кнопка на нашей странице, форма Keycloak,
- * возврат в приложение.
+ * Вход через каталог учётных записей: наша страница входа сама уводит на форму
+ * Keycloak, дальше имя и пароль, возврат в приложение.
  *
  * Поля формы ищутся по идентификаторам (`#username`, `#password`), а не по
  * подписям: подписи Keycloak локализует, и realm стенда стоит на русском.
@@ -138,7 +138,6 @@ async function signIn(context: BrowserContext, login: string, keepTour: boolean)
 
 	try {
 		await page.goto(`${BASE_URL}/login`);
-		await page.getByRole('button', { name: 'Войти', exact: true }).click();
 		await page.waitForURL(/\/realms\/lct\/protocol\/openid-connect\/auth/);
 		await page.locator('#username').fill(login);
 		await page.locator('#password').fill(PASSWORD);

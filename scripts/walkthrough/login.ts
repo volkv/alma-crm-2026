@@ -47,7 +47,6 @@ async function main(): Promise<void> {
 		const page = await context.newPage();
 
 		await page.goto(`${baseUrl}/login`);
-		await page.getByRole('button', { name: 'Войти', exact: true }).click();
 		await page.waitForURL(/\/realms\/lct\/protocol\/openid-connect\/auth/);
 		await page.locator('#username').fill(role.login);
 		await page.locator('#password').fill(PASSWORD);

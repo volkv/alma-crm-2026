@@ -81,6 +81,8 @@ services:
       KC_HOSTNAME: http://localhost:58080
       # Placeholders of the realm file: `${VAR:default}` is expanded at import
       # time from the environment of this container (keycloak/README.md).
+      # KEYCLOAK_DEMO_PASSWORD is also read by the login theme: set, it shows
+      # the quick sign-in buttons of the three demo accounts on the form.
       #
       # CRM_ORIGIN is the address a browser opens the app at; it becomes a redirect
       # URI of the client. In the local stack it is the published port of the app,
@@ -344,16 +346,10 @@ services:
       # value belongs to the upload contract in the code, not to a deployment.
       BODY_SIZE_LIMIT: 27M
       # The local stack is the demo stand: the container seeds demo data after
-      # migrating and the sign-in page shows the buttons for the three demo
-      # accounts. `DEMO_MODE=false docker compose up -d --build app` turns both
-      # off; so does DEMO_MODE in a local .env, which Compose substitutes here —
+      # migrating and demo sessions get their limits.
+      # `DEMO_MODE=false docker compose up -d --build app` turns both off; so does DEMO_MODE in a local .env, which Compose substitutes here —
       # a developer's own setting is not something the stand should override.
       DEMO_MODE: ${DEMO_MODE:-true}
-      # Пароль демонстрационных записей на карточке входа: приложение его не
-      # проверяет, а повторяет то, что задано в каталоге. Умолчание — то же, что
-      # у KEYCLOAK_DEMO_PASSWORD выше; разойдутся они — карточка покажет пароль,
-      # которым не войти.
-      DEMO_PASSWORD_HINT: ${DEMO_PASSWORD_HINT:-lct-demo-2026}
       # The account directory. `OIDC_ISSUER_URL` is the address the server reads
       # the realm metadata from and the `iss` it checks every token against —
       # inside the network that is the container name. `OIDC_PUBLIC_URL` is where

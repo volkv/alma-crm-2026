@@ -13,10 +13,10 @@
 #   - no demo accounts: Keycloak imports the realm file alone, without
 #     `keycloak/demo-users.json`, so the only accounts are the ones the
 #     administrator creates, and every `crm-admin`/`crm-lead` among them gets
-#     the second factor (keycloak/README.md);
+#     the second factor (keycloak/README.md); without KEYCLOAK_DEMO_PASSWORD in
+#     its environment the login theme shows no quick sign-in buttons either;
 #   - no demo mode: DEMO_MODE is pinned to false here, whatever `.env` says —
-#     the seed then fills nothing, the sign-in page names no accounts, and there
-#     is no «Демо: заявка с сайта» button;
+#     the seed then fills nothing and there is no «Демо: заявка с сайта» button;
 #   - no imitators of the CMS and LMS and no Mailpit: the services are removed,
 #     not hidden behind a profile, so no `--profile` brings them back;
 #   - no bucket of the end-to-end suite.
@@ -144,7 +144,6 @@ services:
       REDIS_URL: redis://:${REDIS_PASSWORD:?set REDIS_PASSWORD in .env}@redis:6379
       OIDC_INTERNAL_URL: http://keycloak:8080/auth
       DEMO_MODE: 'false'
-      DEMO_PASSWORD_HINT: ''
       DEMO_CMS_TRIGGER_URL: ''
       SMTP_URL: ${SMTP_URL:-}
       SMTP_FROM: ${SMTP_FROM:-}

@@ -145,7 +145,6 @@ async function signIn(context: BrowserContext, login: string): Promise<void> {
 
 	try {
 		await page.goto(`${BASE_URL}/login`);
-		await page.getByRole('button', { name: 'Войти', exact: true }).click();
 		await page.waitForURL(/\/realms\/lct\/protocol\/openid-connect\/auth/);
 		await page.locator('#username').fill(login);
 		await page.locator('#password').fill(PASSWORD);

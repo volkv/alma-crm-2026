@@ -7,8 +7,8 @@
  *
  * Заголовок документа берётся из его же текста — из первого `#`: два списка
  * названий разошлись бы на первой переименованной странице. Исключение одно и
- * объявлено полем `title`: у README первый заголовок — обещание продукта, а не
- * имя документа, и в оглавлении комплекта от него никакой пользы.
+ * объявлено полем `title`: у подробного описания первый заголовок содержит название
+ * продукта, а в оглавлении комплекта нужно имя документа.
  */
 import type { HelpSectionKey } from '../../src/lib/help/article.ts';
 
@@ -60,7 +60,7 @@ const ARCHIMATE_VIEWS: readonly KitFigure[] = [
 ];
 
 export const KIT_DOCUMENTS: readonly KitDocument[] = [
-	{ kind: 'markdown', slug: 'readme', source: 'README.md', title: 'Обзор продукта (README)' },
+	{ kind: 'markdown', slug: 'product', source: 'docs/product.md', title: 'Обзор продукта' },
 	{
 		kind: 'markdown',
 		slug: 'architecture',

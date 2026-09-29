@@ -7,7 +7,7 @@ import { signInThroughDirectory } from './helpers/sign-in';
 /**
  * Вход глазами посетителя: без сессии внутрь не попасть, почту и пароль
  * спрашивает каталог учётных записей, после входа человек оказывается там, куда
- * шёл, а после выхода — снова у нашей страницы входа. Тесты нарочно берут
+ * шёл, а после выхода — снова у нашей страницы входа с объяснением. Тесты нарочно берут
  * обычный `test`, а не фикстуру с готовой сессией: проверяется именно то, что
  * фикстура для остальных обходит. Здесь же — то, что человек видит вместо
  * страницы: отказ и «нет такой записи» остаются внутри приложения.
@@ -21,14 +21,16 @@ import { signInThroughDirectory } from './helpers/sign-in';
  */
 test.describe.configure({ mode: 'serial' });
 
-test('без сессии любая страница приложения отправляет на вход', async ({ page }) => {
+test('без сессии любая страница приложения отправляет на форму каталога', async ({ page }) => {
 	await page.goto('/');
 
-	await expect(page).toHaveURL('/login?next=%2F');
+	// Страница входа приложения — не лишний шаг: сказать ей нечего, и она сама
+	// уводит на форму каталога.
+	await expect(page).toHaveURL(/\/realms\/lct\/protocol\/openid-connect\/auth/);
 	await expect(page.getByRole('heading', { level: 1 })).toHaveText('Вход в Альма CRM');
-	// Баннер администратора остаётся на странице — оговоркой под кнопкой.
-	await expect(page.getByTestId('login-banner')).toContainText('Для сотрудников ИТ Школы');
-	await expect(page.getByTestId('login-banner')).toContainText('Действия записываются в журнал.');
+	await expect(
+		page.getByText('От первого контакта с вузом до подтверждённого результата')
+	).toBeVisible();
 });
 
 test('вход через каталог открывает оболочку приложения', async ({ page }) => {
@@ -56,7 +58,7 @@ test('неверный пароль каталог объясняет сам и 
 	await expect(page).toHaveURL(/\/realms\/lct\//);
 
 	await page.goto('/');
-	await expect(page).toHaveURL('/login?next=%2F');
+	await expect(page).toHaveURL(/\/realms\/lct\/protocol\/openid-connect\/auth/);
 });
 
 test('адрес на чужой сайт в next никуда не уводит', async ({ page }) => {
@@ -91,9 +93,15 @@ test('выход возвращает к форме входа и закрыва
 	// Выход гасит и сессию каталога, поэтому браузер проходит через его адрес
 	// выхода и возвращается на нашу страницу входа.
 	await expect(page).toHaveURL(/\/login\?reason=signed-out/, { timeout: 15_000 });
+	// Здесь странице есть что сказать, и она остаётся: объяснение, кнопка входа
+	// и баннер администратора оговоркой под ней.
+	await expect(page.getByText('Вы вышли из системы')).toBeVisible();
+	await expect(page.getByRole('button', { name: 'Войти', exact: true })).toBeVisible();
+	await expect(page.getByTestId('login-banner')).toContainText('Для сотрудников ИТ Школы');
+	await expect(page.getByTestId('login-banner')).toContainText('Действия записываются в журнал.');
 
 	await page.goto('/ui-kit');
-	await expect(page).toHaveURL('/login?next=%2Fui-kit');
+	await expect(page).toHaveURL(/\/realms\/lct\/protocol\/openid-connect\/auth/);
 });
 
 test('отказ по правам остаётся внутри оболочки приложения', async ({ page }) => {

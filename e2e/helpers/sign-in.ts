@@ -2,8 +2,8 @@ import type { Page } from '@playwright/test';
 
 /**
  * Вход через каталог учётных записей — тем же путём, каким его проходит
- * человек: кнопка «Войти» на нашей странице, форма Keycloak, возврат в
- * приложение.
+ * человек: наша страница входа сама уводит на форму Keycloak, дальше имя и
+ * пароль, возврат в приложение.
  *
  * Обойти этот путь нельзя и не нужно: подделанная сессия проверяла бы систему,
  * которой не существует. Хелпер один на все файлы прогона — вход встречается и
@@ -19,7 +19,6 @@ export async function signInThroughDirectory(
 	options: { startAt?: string } = {}
 ): Promise<void> {
 	await page.goto(options.startAt ?? '/login');
-	await page.getByRole('button', { name: 'Войти', exact: true }).click();
 
 	await page.waitForURL(/\/realms\/lct\/protocol\/openid-connect\/auth/);
 	await page.locator('#username').fill(credentials.login);

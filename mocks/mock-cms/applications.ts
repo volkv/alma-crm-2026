@@ -28,15 +28,15 @@ const TEMPLATES: Record<ApplicationForm, ApplicationTemplate> = {
 			form: 'b2b',
 			applicant: {
 				kind: 'educational_institution',
-				name: 'Московский технический университет связи и информатики',
-				inn: '0000000096',
-				ogrn: '1260000000094',
+				name: 'Московский политехнический университет',
+				inn: '0000000089',
+				ogrn: '1260000000083',
 				educationLevel: 'vo'
 			},
 			contact: {
 				lastName: 'Кузьмина',
 				firstName: 'Наталья',
-				email: 'kuzmina@mtuci.example.org',
+				email: 'kuzmina@mospolytech.example.org',
 				phone: '+7 900 000-00-11',
 				position: 'Проректор по цифровому развитию'
 			},

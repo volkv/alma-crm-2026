@@ -255,8 +255,8 @@ export const SHOTS: readonly Frame[] = [
 		name: 'login',
 		path: '/login',
 		role: 'anonymous',
-		caption: 'Страница входа: кнопка в каталог учётных записей и карточка демонстрации',
-		waitFor: 'Войти',
+		caption: 'Форма входа каталога учётных записей: быстрый вход тремя ролями демо-стенда',
+		waitFor: 'Демо-стенд: войти одной кнопкой',
 		viewport: { width: 1100, height: 760 }
 	},
 	{

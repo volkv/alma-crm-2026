@@ -1,12 +1,9 @@
 import { redirect } from '@sveltejs/kit';
 import { fail } from '@sveltejs/kit';
-import { DEMO_ACCOUNTS } from '$lib/contracts/auth';
-import { demoPasswordHint } from '$lib/server/auth/demo-password';
 import { callbackUrl, rememberFlow } from '$lib/server/auth/flow';
 import { authorizationUrl, newLoginAttempt } from '$lib/server/auth/oidc';
 import { safeNextPath } from '$lib/server/auth/redirect';
 import { startLimitNotice } from '$lib/server/auth/start-limit';
-import { getConfig } from '$lib/server/config';
 import { clientAddress } from '$lib/server/http';
 import { getSetting } from '$lib/server/settings';
 import type { Actions, PageServerLoad } from './$types';
@@ -38,19 +35,9 @@ export const load: PageServerLoad = async (event) => {
 	]);
 
 	const reason = event.url.searchParams.get('reason');
-	const config = getConfig();
-	const demoMode = config.DEMO_MODE;
 
 	return {
 		banner,
-		// Список демонстрационных записей показывается только на стенде: вне
-		// демо-режима подсказывать чужие имена входа не за чем.
-		demoAccounts: demoMode ? DEMO_ACCOUNTS : [],
-		// Пароль стенда — тоже подсказка к чужой форме, и берётся он из
-		// окружения: приложение своих паролей не знает, а этот заводит импорт
-		// realm. Не задан — карточка просто не называет пароль
-		// (`$lib/server/auth/demo-password`).
-		demoPassword: demoPasswordHint(config.DEMO_PASSWORD_HINT, demoMode),
 		notice: reason === null ? null : (REASON_NOTICES[reason] ?? null),
 		rateLimited
 	};

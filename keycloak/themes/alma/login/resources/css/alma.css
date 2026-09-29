@@ -116,6 +116,8 @@
 
 .pf-v5-c-login__main-header {
 	border-top: 0;
+	/* Строка о системе (js/alma.js) встаёт под заголовком отдельной строкой. */
+	flex-wrap: wrap;
 }
 
 /* Заголовок карточки: полужирный, кегль интерфейса, а не тонкая капитель
@@ -207,6 +209,84 @@
 .login-pf .pf-v5-c-input-group .pf-v5-c-button.pf-m-control::after {
 	border: 1px solid var(--alma-control-border);
 	border-radius: inherit;
+}
+
+/* Строка о системе под заголовком — как подзаголовок карточки входа приложения. */
+.alma-tagline {
+	grid-column: 1 / -1;
+	flex-basis: 100%;
+	margin-top: 4px;
+	font-size: 14px;
+	line-height: 1.4;
+	text-align: left;
+	color: var(--pf-v5-global--Color--200);
+}
+
+/*
+ * Быстрый вход демонстрационного стенда (js/alma.js): спокойная плашка над
+ * формой, по кнопке на роль с именем входа и строка с общим паролем.
+ */
+.alma-demo {
+	display: flex;
+	flex-direction: column;
+	gap: 10px;
+	margin-bottom: 24px;
+	padding: 12px;
+	background: var(--alma-canvas);
+	border: 1px solid var(--alma-border);
+	border-radius: 8px;
+}
+
+.alma-demo__title {
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.alma-demo__buttons {
+	display: flex;
+	flex-direction: column;
+	gap: 6px;
+}
+
+.alma-demo__button.pf-v5-c-button {
+	display: flex;
+	align-items: center;
+	justify-content: space-between;
+	gap: 16px;
+	width: 100%;
+	padding: 8px 12px;
+	border-radius: 8px;
+	--pf-v5-c-button--m-secondary--Color: var(--alma-text);
+	--pf-v5-c-button--m-secondary--hover--Color: var(--alma-text);
+	--pf-v5-c-button--m-secondary--BackgroundColor: var(--alma-surface);
+}
+
+.alma-demo__button.pf-v5-c-button::after {
+	border-color: var(--alma-control-border);
+	border-radius: inherit;
+}
+
+.alma-demo__role {
+	font-size: 14px;
+	font-weight: 600;
+}
+
+.alma-demo__login,
+.alma-demo__password {
+	font-family: var(--alma-font);
+	font-size: 12px;
+	color: var(--pf-v5-global--Color--200);
+}
+
+.alma-demo__password {
+	font-weight: 600;
+	color: var(--alma-text);
+}
+
+.alma-demo__hint {
+	font-size: 12px;
+	line-height: 1.4;
+	color: var(--pf-v5-global--Color--200);
 }
 
 /* На узком экране страница не даёт полю карточки прижаться к краю экрана. */
