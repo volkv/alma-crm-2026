@@ -435,6 +435,32 @@ export async function deliverMessage(
 		return null;
 	}
 
+	// Сообщение адресовано экземпляру, для которого его поставили в очередь.
+	// После смены подключения очередь не уходит новому получателю: у него
+	// своя нумерация заявок и групп, и чужой снимок он принял бы как свой.
+	if (row.system !== 'cms' && row.system !== 'lms') {
+		throw new Error(`Исходящее сообщение ${row.id} без направления обмена: «${row.system}»`);
+	}
+
+	const connected = (await getExchangeSettings())[row.system].instance;
+
+	if (row.instance !== connected) {
+		await finish(
+			ctx,
+			row,
+			{
+				ok: false,
+				status: null,
+				error: `Сообщение поставлено для экземпляра «${row.instance}», а подключён «${connected}»: подключение сменилось, прежнему получателю отправить нечем, новому оно не адресовано`,
+				body: '',
+				temporary: false
+			},
+			null
+		);
+
+		return null;
+	}
+
 	const target = await targetFor(row);
 
 	if (target === null) {

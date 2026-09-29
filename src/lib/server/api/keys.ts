@@ -22,7 +22,7 @@ import { apiKeys, users } from '../db/schema';
 import { withTransaction } from '../db/transaction';
 import { NotFoundError, ValidationError } from '../errors';
 import { getExchangeSettings } from '../integrations/settings';
-import { requirePermission } from '../rbac';
+import { refuseDemoSession, requirePermission } from '../rbac';
 import type { AuthenticatedApiKey } from './types';
 
 /** Префикс ключа: по нему ключ узнают в логах и в утечках на публичных хостингах. */
@@ -108,11 +108,47 @@ async function exchangeBinding(
 	};
 }
 
+/**
+ * Демонстрационная сессия выпускает и отзывает ключи только демонстрационных
+ * учётных записей. Ключ действует правами владельца: выпущенный посетителем на
+ * штатного администратора отдал бы ему то, что демонстрации вычтено, а отзыв
+ * ключа машинного субъекта останавливает обмен с CMS и системой обучения до
+ * ночного сброса — для всех, кто придёт на стенд после.
+ */
+const NON_DEMO_KEY_REASON =
+	'На демонстрационном стенде посетитель выпускает и отзывает ключи только демонстрационных учётных записей: ключи штатных сотрудников и машинного субъекта обмена меняет штатный администратор';
+
+async function refuseDemoSessionOnForeignOwner(
+	ctx: ActorContext,
+	ownerIsDemo: boolean,
+	event: Parameters<typeof refuseDemoSession>[1]
+): Promise<void> {
+	if (!ownerIsDemo) {
+		await refuseDemoSession(ctx, event, NON_DEMO_KEY_REASON);
+	}
+}
+
 export async function createApiKey(
 	ctx: ActorContext,
 	input: CreateApiKeyInput
 ): Promise<CreatedApiKey> {
 	await requirePermission(ctx, 'api_keys.manage', { type: 'api_keys.created' });
+
+	if (ctx.user?.isDemo === true) {
+		const [target] = await getDb()
+			.select({ isDemo: users.isDemo })
+			.from(users)
+			.where(eq(users.id, input.ownerUserId))
+			.limit(1);
+
+		// Несуществующего владельца разбирает проверка ниже, в транзакции.
+		if (target !== undefined) {
+			await refuseDemoSessionOnForeignOwner(ctx, target.isDemo, {
+				type: 'api_keys.created',
+				subject: { type: 'user', id: input.ownerUserId }
+			});
+		}
+	}
 
 	const rawKey = generateApiKey();
 
@@ -161,6 +197,22 @@ export async function revokeApiKey(ctx: ActorContext, apiKeyId: string): Promise
 		type: 'api_keys.revoked',
 		subject: { type: 'api_key', id: apiKeyId }
 	});
+
+	if (ctx.user?.isDemo === true) {
+		const [target] = await getDb()
+			.select({ ownerIsDemo: users.isDemo })
+			.from(apiKeys)
+			.innerJoin(users, eq(users.id, apiKeys.ownerUserId))
+			.where(eq(apiKeys.id, apiKeyId))
+			.limit(1);
+
+		if (target !== undefined) {
+			await refuseDemoSessionOnForeignOwner(ctx, target.ownerIsDemo, {
+				type: 'api_keys.revoked',
+				subject: { type: 'api_key', id: apiKeyId }
+			});
+		}
+	}
 
 	return withTransaction(ctx, async (tx) => {
 		const [row] = await tx

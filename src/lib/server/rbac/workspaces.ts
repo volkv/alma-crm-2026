@@ -29,7 +29,7 @@ import { getDb } from '../db';
 import { interactions, roles, users, workspaceMembers, workspaces } from '../db/schema';
 import { withTransaction, type Tx } from '../db/transaction';
 import { ConflictError, NotFoundError, ValidationError } from '../errors';
-import { requirePermission } from './index';
+import { refuseDemoSession, requirePermission } from './index';
 
 /**
  * Роли, область которых — всё: им членство не нужно и ничего не даёт.
@@ -193,6 +193,39 @@ export async function listWorkspaceMemberships(ctx: ActorContext): Promise<{
 	};
 }
 
+/**
+ * Демонстрационная сессия меняет членство только демонстрационных учётных
+ * записей — тот же приём, что при выключении (`$lib/server/auth/users.ts`):
+ * исключённый из пространства сотрудник оператора перестаёт видеть свои вузы,
+ * и стенд ломается для всех, кто придёт после посетителя.
+ */
+async function refuseDemoSessionOnStaff(
+	ctx: ActorContext,
+	userId: string,
+	type: 'users.workspace_granted' | 'users.workspace_revoked'
+): Promise<void> {
+	if (ctx.user?.isDemo !== true) {
+		return;
+	}
+
+	const [target] = await getDb()
+		.select({ isDemo: users.isDemo })
+		.from(users)
+		.where(eq(users.id, userId))
+		.limit(1);
+
+	// Несуществующего пользователя разбирает сама команда.
+	if (target === undefined || target.isDemo) {
+		return;
+	}
+
+	await refuseDemoSession(
+		ctx,
+		{ type, subject: { type: 'user', id: userId } },
+		'На демонстрационном стенде посетитель меняет пространства только демонстрационных учётных записей: членство штатных сотрудников меняет штатный администратор'
+	);
+}
+
 async function readWorkspace(
 	tx: Tx,
 	key: string
@@ -221,6 +254,8 @@ export async function addWorkspaceMember(
 	});
 
 	const parsed = addWorkspaceMemberSchema.parse(input);
+
+	await refuseDemoSessionOnStaff(ctx, parsed.userId, 'users.workspace_granted');
 
 	await withTransaction(ctx, async (tx) => {
 		const workspace = await readWorkspace(tx, parsed.key);
@@ -298,6 +333,8 @@ export async function removeWorkspaceMember(
 	});
 
 	const parsed = removeWorkspaceMemberSchema.parse(input);
+
+	await refuseDemoSessionOnStaff(ctx, parsed.userId, 'users.workspace_revoked');
 
 	return withTransaction(ctx, async (tx) => {
 		const workspace = await readWorkspace(tx, parsed.key);

@@ -74,6 +74,9 @@ const LEARNING_CHECKLIST = [
 	{ key: 'classes_started', label: 'Занятия начаты' }
 ] as const;
 
+/** Насколько часы отправителя могут спешить относительно часов системы. */
+const CLOCK_SKEW_MS = 5 * 60_000;
+
 /** День отправки по часам отправителя: дата из `occurredAt`, как он её написал. */
 function senderDay(occurredAt: string): string {
 	return occurredAt.slice(0, 10);
@@ -239,6 +242,16 @@ export async function receiveLearningGroupResult(
 		throw new ForbiddenError(
 			`Экземпляр «${message.source.instance}» не совпадает с подключением обмена`
 		);
+	}
+
+	// Дата отправки — со слов отправителя, и сравнение ниже держится, только
+	// пока она не в будущем: иначе результат «из будущего» засчитал бы
+	// обучение, которое ещё идёт. Опорой служат часы CRM с допуском на
+	// рассинхрон.
+	if (Date.parse(message.occurredAt) > Date.now() + CLOCK_SKEW_MS) {
+		throw new ValidationError('Время отправки сообщения ещё не наступило', [
+			`occurredAt: ${message.occurredAt} позже текущего времени системы более чем на ${CLOCK_SKEW_MS / 60_000} мин — проверьте часы отправителя`
+		]);
 	}
 
 	// Обучение не может закончиться позже, чем о нём сообщили: дата окончания
