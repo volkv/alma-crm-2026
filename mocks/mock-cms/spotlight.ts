@@ -60,7 +60,7 @@ export function renderApplicationSpotlight(
 ): string {
 	if (application === null) {
 		return [
-			'<section id="application">',
+			'<section id="application" class="card spotlight error">',
 			`<h2>Заявка ${text(externalId)}</h2>`,
 			'<p>Имитатор такой заявки не помнит: её не отправляли с этой страницы, или имитатор перезапускали.</p>',
 			'</section>'
@@ -69,18 +69,18 @@ export function renderApplicationSpotlight(
 
 	const sent =
 		application.crmError !== null
-			? `<p><strong>Ошибка: заявка до CRM не дошла.</strong> ${text(application.crmError)}</p>`
+			? `<p><span class="status error">Ошибка</span> <strong>Заявка до CRM не дошла.</strong> ${text(application.crmError)}</p>`
 			: application.crmResult !== null
-				? `<p><strong>Отправлено.</strong> ${text(RESULT_LABELS[application.crmResult] ?? application.crmResult)} (код ${text(application.crmStatus)}).</p>`
+				? `<p><span class="status ok">Отправлено</span> <strong>${text(RESULT_LABELS[application.crmResult] ?? application.crmResult)}</strong> (код ${text(application.crmStatus)}).</p>`
 				: application.sentAt === null
 					? '<p>Карточку завёл статус из CRM: с этой формы заявку не отправляли.</p>'
 					: `<p>CRM ответила кодом ${text(application.crmStatus)}.</p>`;
 
 	const statuses =
 		application.statuses.length === 0
-			? '<p>Статусов из CRM пока нет: CRM присылает снимок после приёма и после каждого изменения, видного заявителю. Обновите страницу через несколько секунд.</p>'
+			? '<p class="empty">Статусов из CRM пока нет: CRM присылает снимок после приёма и после каждого изменения, видного заявителю. Обновите страницу через несколько секунд.</p>'
 			: [
-					'<table border="1" cellpadding="4">',
+					'<div class="table-wrap"><table>',
 					'<thead><tr><th>Когда</th><th>Статус заявки</th><th>Стадия</th></tr></thead>',
 					'<tbody>',
 					...[...application.statuses].reverse().map((status) => {
@@ -89,14 +89,14 @@ export function renderApplicationSpotlight(
 						return `<tr><td>${text(status.at)}</td><td>${text(STATUS_LABELS[code] ?? code)}</td><td>${text(stageName(status.data))}</td></tr>`;
 					}),
 					'</tbody>',
-					'</table>'
+					'</table></div>'
 				].join('\n');
 
 	return [
-		'<section id="application">',
+		`<section id="application" class="card spotlight ${application.crmError === null ? 'ok' : 'error'}">`,
 		`<h2>Заявка ${text(application.externalId)}</h2>`,
 		sent,
-		'<ul>',
+		'<ul class="facts">',
 		`<li>Заявитель: ${application.applicant === null ? 'из набора формы' : text(application.applicant)}</li>`,
 		`<li>Набор: ${text(application.form)}, ревизия ${text(application.revision)}, отправлена ${text(application.sentAt)}</li>`,
 		application.interactionId === null
@@ -106,6 +106,71 @@ export function renderApplicationSpotlight(
 		'<h3>Статус на сайте</h3>',
 		statuses,
 		`<p><a href="./?application=${encodeURIComponent(application.externalId)}">Обновить</a> · <a href="./">Вся страница имитатора</a></p>`,
+		'</section>'
+	].join('\n');
+}
+
+/** Заявка в списке страницы: без имени заявителя — страница открыта всем. */
+export type OverviewApplication = {
+	externalId: string;
+	form: string | null;
+	revision: number | null;
+	sentAt: string | null;
+	crmStatus: number | null;
+	crmResult: string | null;
+	crmError: string | null;
+	statuses: readonly { data: Record<string, unknown> }[];
+};
+
+function delivery(application: OverviewApplication): string {
+	if (application.crmError !== null) {
+		return '<span class="status error">Не дошла</span>';
+	}
+
+	if (application.crmResult !== null) {
+		return `<span class="status ok">Принята</span> <span class="small">код ${text(application.crmStatus)}</span>`;
+	}
+
+	return application.sentAt === null
+		? '<span class="status">Заведена статусом CRM</span>'
+		: `<span class="status">Код ${text(application.crmStatus)}</span>`;
+}
+
+/** Заявки сайта: ключ, набор, дошла ли до CRM и последний статус из неё. */
+export function renderApplicationsOverview(applications: readonly OverviewApplication[]): string {
+	const body =
+		applications.length === 0
+			? '<p class="empty">Заявок пока нет: отправьте форму ниже.</p>'
+			: [
+					'<div class="table-wrap"><table class="cards">',
+					'<thead><tr><th>Заявка</th><th>Набор</th><th>Ревизия</th><th>Отправлена</th><th>В CRM</th><th>Статус на сайте</th><th>Стадия</th></tr></thead>',
+					'<tbody>',
+					...[...applications].reverse().map((application) => {
+						const last = application.statuses.at(-1)?.data;
+						const code = last === undefined ? null : String(last.applicationStatus ?? '');
+						const key = encodeURIComponent(application.externalId);
+
+						return [
+							'<tr>',
+							`<td data-label="Заявка"><a href="./?application=${key}"><b>${text(application.externalId)}</b></a></td>`,
+							`<td data-label="Набор">${text(application.form)}</td>`,
+							`<td class="num" data-label="Ревизия">${text(application.revision)}</td>`,
+							`<td class="nowrap" data-label="Отправлена">${text(application.sentAt)}</td>`,
+							`<td data-label="В CRM">${delivery(application)}</td>`,
+							`<td data-label="Статус на сайте">${code === null ? '—' : text(STATUS_LABELS[code] ?? code)}</td>`,
+							`<td data-label="Стадия">${last === undefined ? '—' : text(stageName(last))}</td>`,
+							'</tr>'
+						].join('');
+					}),
+					'</tbody>',
+					'</table></div>'
+				].join('\n');
+
+	return [
+		'<section class="card">',
+		`<h2>Заявки с сайта (${applications.length})</h2>`,
+		'<p class="small">Свежие сверху. Ключ заявки открывает её карточку со статусами из CRM.</p>',
+		body,
 		'</section>'
 	].join('\n');
 }

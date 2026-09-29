@@ -32,6 +32,10 @@ export type ControlOptions = {
 	name: string;
 	/** Заголовок страницы состояния. */
 	title: string;
+	/** Что делает имитатор, одной-двумя фразами для зрителя страницы. */
+	intro: string;
+	/** Короткая метка системы в шапке страницы: `LMS`, `CMS`. */
+	mark: string;
 	journal: Journal;
 	scenario: Scenario;
 	/** Снимок объектов сервиса: заявки у CMS, группы у LMS. */
@@ -46,6 +50,11 @@ export type ControlOptions = {
 	 * незачем (`docs/security.md`).
 	 */
 	pageObjects?: () => unknown;
+	/**
+	 * Объекты страницы для человека — таблица, уже экранированная сервисом; не
+	 * задано — они видны только JSON в технических подробностях.
+	 */
+	overview?: () => string;
 	/** Забыть всё, что сервис накопил: объекты и журнал. */
 	forget: () => void;
 	/** Настройки, по которым видно, настроен ли обмен со стендом. */
@@ -132,6 +141,9 @@ export function controlRoutes(options: ControlOptions): MockRoute[] {
 					spotlight: options.spotlight?.(request.url.searchParams) ?? null,
 					name,
 					title,
+					intro: options.intro,
+					mark: options.mark,
+					overview: options.overview?.() ?? null,
 					scenario: scenario.read(),
 					objects: pageObjects(),
 					journal: journal.list(),

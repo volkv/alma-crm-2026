@@ -22,7 +22,7 @@ import {
 	APPLICATION_PROGRAMS,
 	type ApplicationForm
 } from './applications.ts';
-import { renderApplicationSpotlight } from './spotlight.ts';
+import { renderApplicationsOverview, renderApplicationSpotlight } from './spotlight.ts';
 import { CONTROL_HEADER, controlAllowed, controlRoutes } from '../shared/control.ts';
 import { crmIssue, postToCrm, type CrmCall, type CrmTarget } from '../shared/crm.ts';
 import { buildEnvelope, parseEnvelope, type Envelope } from '../shared/envelope.ts';
@@ -585,7 +585,10 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 			...triggers,
 			...controlRoutes({
 				name: 'mock-cms',
-				title: 'Имитатор CMS сайта — не настоящая система',
+				title: 'Имитатор сайта (CMS)',
+				mark: 'CMS',
+				intro:
+					'Изображает сайт с формой заявки: отправляет заявку в CRM и принимает от неё снимки статуса, которые видит заявитель.',
 				journal,
 				scenario,
 				controlToken,
@@ -636,6 +639,7 @@ export async function startMockCms(options: MockCmsOptions = {}): Promise<MockSe
 						}))
 					}))
 				}),
+				overview: () => renderApplicationsOverview([...applications.values()]),
 				// Карточка своей заявки над формой: после отправки кнопка ведёт сюда
 				// с ключом заявки в строке запроса.
 				spotlight: (query) => {

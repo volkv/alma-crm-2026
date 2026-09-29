@@ -69,10 +69,10 @@ const STAND = {
 	/** Вуз, которого руководитель передаёт другому менеджеру. */
 	institution: { query: 'МТУСИ', name: 'МТУСИ' },
 	/**
-	 * Профильное подразделение вуза заявки с сайта (заявку подаёт МТУСИ):
-	 * площадка вида «Подразделение» в карточке вуза.
+	 * Профильное подразделение вуза заявки с сайта (заявку подаёт Московский
+	 * Политех): площадка вида «Подразделение» в карточке вуза.
 	 */
-	department: 'Кафедра информационной безопасности'
+	department: 'Факультет информационных технологий'
 } as const;
 
 /**
@@ -779,10 +779,7 @@ export async function showHandedOver(page: Page): Promise<void> {
  * Возвращает ключ заведённой группы: по нему проход может продолжить работу с
  * этим потоком на той же карточке.
  */
-export async function runLearningGroup(
-	page: Page,
-	options: { offscreen?: boolean } = {}
-): Promise<string> {
+export async function runLearningGroup(page: Page): Promise<string> {
 	await openInteraction(page, STAND.classes.query, 'ведение занятий');
 
 	// Адрес карточки запоминается: со страницы имитатора возвращаются сюда,
@@ -825,26 +822,21 @@ export async function runLearningGroup(
 	await beat(page, 1.2);
 
 	// Вторая сторона: числа потока присылает сама система обучения — со
-	// своей страницы, тем же триггером, что и по расписанию. С `offscreen`
-	// страница имитатора открывается вне записи: зрителю важен итог в
-	// карточке, а не форма, которой мы подменяем чужую систему.
-	const lms = options.offscreen === true ? await offscreenPage(page) : page;
-
-	await visit(lms, '/mock-lms/', 'Имитатор системы обучения', { standalone: true });
-	await lms.locator('input[name="groupExternalId"]').fill(group);
+	// своей страницы, тем же триггером, что и по расписанию.
+	await visit(page, '/mock-lms/', 'Имитатор системы обучения', { standalone: true });
+	await pointAt(page, page.getByText(group).first());
+	await beat(page, 1);
+	await page.locator('input[name="groupExternalId"]').fill(group);
 	// План потока ещё впереди, а итог с датой окончания позже дня отправки CRM
 	// не принимает: поток завершён досрочно, сегодняшним днём.
-	await lms.locator('select[name="finish"]').selectOption('завершили сегодня');
-
-	if (options.offscreen === true) {
-		await lms.getByRole('button', { name: 'Отправить результат в CRM' }).click();
-		await lms.waitForLoadState('load');
-		await lms.context().close();
-	} else {
-		await beat(page, 0.5);
-		await press(page, page.getByRole('button', { name: 'Отправить результат в CRM' }));
-		await beat(page, 1);
-	}
+	await page.locator('select[name="finish"]').selectOption('завершили сегодня');
+	await beat(page, 0.5);
+	await press(page, page.getByRole('button', { name: 'Отправить результат в CRM' }));
+	await page
+		.getByText('CRM приняла результат')
+		.first()
+		.waitFor({ state: 'visible', timeout: WAIT });
+	await beat(page, 1.6);
 
 	await page.goto(card, { waitUntil: 'load' });
 	await hydrated(page);
@@ -933,17 +925,6 @@ export async function reportAndExport(
 	// нажатием, после которого ничего не происходит.
 	await page.goto(`file://${pdf}`, { waitUntil: 'load' });
 	await beat(page, 2.4);
-}
-
-/** Страница в отдельном контексте того же браузера: её действия в ролик не попадают. */
-async function offscreenPage(page: Page): Promise<Page> {
-	const browser = page.context().browser();
-
-	if (browser === null) {
-		throw new Error('Страница записи без браузера: отдельный контекст открыть не из чего');
-	}
-
-	return (await browser.newContext({ locale: 'ru-RU' })).newPage();
 }
 
 /**

@@ -13,7 +13,7 @@
  */
 import { courseForProgram, stableGroupId } from './groups.ts';
 import { moodleRest, moodleToken, readParams } from './moodle.ts';
-import { renderResultSpotlight, type SentResult } from './spotlight.ts';
+import { renderGroupsOverview, renderResultSpotlight, type SentResult } from './spotlight.ts';
 import { controlRoutes } from '../shared/control.ts';
 import { crmIssue, postToCrm, type CrmTarget } from '../shared/crm.ts';
 import { buildEnvelope, parseEnvelope, SCHEMA_VERSION, type Envelope } from '../shared/envelope.ts';
@@ -584,7 +584,10 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 			...triggers,
 			...controlRoutes({
 				name: 'mock-lms',
-				title: 'Имитатор системы обучения — не настоящая система',
+				title: 'Имитатор системы обучения (LMS)',
+				mark: 'LMS',
+				intro:
+					'Принимает от CRM заявки на учебные группы и заводит группы, а по окончании потока возвращает в CRM итог: сколько зачислено, завершили и отчислено.',
 				journal,
 				scenario,
 				controlToken: options.controlToken ?? null,
@@ -598,7 +601,7 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 							{
 								name: 'requestExternalId',
 								label: 'Ключ заявки CRM',
-								hint: 'crm-group-<взаимодействие>-<поток>; список заведённых групп — ниже'
+								hint: 'crm-group-<взаимодействие>-<поток>; список заведённых групп — выше'
 							},
 							{
 								name: 'groupExternalId',
@@ -616,6 +619,7 @@ export async function startMockLms(options: MockLmsOptions = {}): Promise<MockSe
 					}
 				],
 				objects: () => ({ groups: [...groups.values()] }),
+				overview: () => renderGroupsOverview([...groups.values()]),
 				// Карточка отправленного результата над формой: после отправки кнопка
 				// ведёт сюда с ключом события в строке запроса.
 				spotlight: (query) => {

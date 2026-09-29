@@ -9,7 +9,7 @@ import { createServer, type IncomingMessage, type Server, type ServerResponse } 
 import type { AddressInfo } from 'node:net';
 import type { Journal } from './journal.ts';
 import type { Scenario } from './scenario.ts';
-import { escapeHtml } from './state-page.ts';
+import { escapeHtml, PAGE_STYLE } from './state-page.ts';
 
 /**
  * Предел тела одного сообщения — 1 МиБ, как в контракте обмена (раздел 2).
@@ -74,11 +74,20 @@ export function formProblem(status: number, message: string): MockReply {
 		status,
 		html: `<!doctype html>
 <html lang="ru">
-<head><meta charset="utf-8"><title>Ошибка: заявка не отправлена</title></head>
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Ошибка: заявка не отправлена</title>
+${PAGE_STYLE}
+</head>
 <body>
+<main>
+<section class="card spotlight error">
 <h1>Ошибка: не отправлено</h1>
 <p>${escapeHtml(message)}</p>
 <p><a href="./">Вернуться к странице имитатора</a></p>
+</section>
+</main>
 </body>
 </html>
 `

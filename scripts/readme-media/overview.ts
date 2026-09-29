@@ -76,7 +76,7 @@ import {
 	type Scene,
 	type Sessions
 } from './film.ts';
-import { draftMention, openInbox, sendComment, unreadMention } from './shots.ts';
+import { draftMention, openInbox, sendComment } from './shots.ts';
 
 /**
  * Куда складывается готовый обзор.
@@ -132,10 +132,8 @@ const SIGNED_COPY = {
 
 /** Дело, которое менеджер заводит вручную в начале прохода. */
 const NEW_INTERACTION = {
-	title: 'НГУ: подготовка DevOps-инженеров, 2026/2027',
-	institution: 'НГУ',
-	/** Как организацию называет выдача ЕГРЮЛ. */
-	registryName: 'НОВОСИБИРСКИЙ ГОСУДАРСТВЕННЫЙ УНИВЕРСИТЕТ'
+	title: 'СПбПУ: подготовка аналитиков данных, 2026/2027',
+	institution: 'СПбПУ'
 } as const;
 
 /** Руководитель демо-стенда — адресат ответа в чате дела. */
@@ -743,16 +741,17 @@ async function createInteraction(page: Page): Promise<void> {
 	await press(page, institution);
 	await institution.pressSequentially(NEW_INTERACTION.institution, { delay: 90 });
 
-	// Вуза в справочнике нет — окно предлагает организации из ЕГРЮЛ, и первая
-	// из них добавляется в справочник одним нажатием, с реквизитами реестра.
-	const found = dialog.getByText(NEW_INTERACTION.registryName).first();
+	// Вуз — из справочника: строка выдачи по краткому наименованию.
+	const found = dialog
+		.locator('li button')
+		.filter({ hasText: NEW_INTERACTION.institution })
+		.first();
 
 	await found.waitFor({ state: 'visible', timeout: WAIT });
 	await pointAt(page, found);
-	await beat(page, 0.8);
-	await press(page, dialog.locator('button', { hasText: 'Добавить' }).first());
+	await beat(page, 0.6);
+	await press(page, found);
 	await beat(page, 1);
-	await pointAt(page, dialog.getByText(/^Запись встанет в пространстве/u));
 	await beat(page, 1);
 	await press(page, dialog.getByRole('button', { name: 'Создать взаимодействие' }));
 	await page.waitForURL(/\/interactions\/[0-9a-f-]{36}/u, { timeout: WAIT });
@@ -767,8 +766,9 @@ async function createInteraction(page: Page): Promise<void> {
  */
 async function chat(page: Page, stand: Stand): Promise<void> {
 	await visit(page, `/interactions/${stand.interactionId}`, 'Все стадии процесса');
-	await unreadMention(page);
-	await pointAt(page, page.getByRole('button', { name: /^Уведомления: / }).first());
+	// Упоминание уже прочитано в открытой карточке — в колокольчике оно
+	// остаётся в списке с переходом к делу.
+	await pointAt(page, page.getByRole('button', { name: /^Уведомления/u }).first());
 	await openInbox(page);
 	await beat(page, 1.2);
 	await page.keyboard.press('Escape');
@@ -947,7 +947,7 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 		caption: 'Новое дело вручную',
 		narration: [
 			'Работу с вузом начинает менеджер: он находит вуз и заводит дело.',
-			'Если вуза ещё нет в справочнике, он находится в ЕГРЮЛ и добавляется одним нажатием, с реквизитами из реестра.',
+			'Вуз выбирается из справочника, а если его там нет — находится в ЕГРЮЛ и добавляется одним нажатием, с реквизитами из реестра.',
 			'Достаточно названия и учебного заведения — остальное дополняется в карточке по ходу процесса.',
 			'Дело встаёт на первую стадию — поиск контактных лиц.'
 		],
@@ -1074,12 +1074,13 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 		narration: [
 			'Ещё одно дело — на стадии «Ведение занятий».',
 			'Поток отправляют в систему обучения кнопкой из карточки.',
-			'Когда система обучения присылает итог, в карточке появляются числа — сколько зачислено, завершили и отчислены, — и эта запись подтверждает стадию вместо слов сотрудника.',
+			'На стенде систему обучения изображает имитатор: группа в нём уже заведена, и он отправляет итог потока.',
+			'В карточке появляются числа — сколько зачислено, завершили и отчислены, — и эта запись подтверждает стадию вместо слов сотрудника.',
 			'Список слушателей загружается файлом, проверяется построчно и уходит в систему обучения.',
 			'Обучение — один из этапов: дальше процесс ведёт актуализацию материалов, повышение квалификации преподавателей и контроль исполнения.'
 		],
 		play: async (page, _stand, crew) => {
-			const group = await runLearningGroup(page, { offscreen: true });
+			const group = await runLearningGroup(page);
 
 			await roster(page, group, crew);
 		}
@@ -1210,8 +1211,10 @@ const SCENES: readonly Scene<OverviewStand>[] = [
 		'Поставка — Docker Compose, сорок три операции API описаны по OpenAPI.'
 	]),
 	slide('performance', 'performance', 'Слайд: нагрузка', [
-		'Замер двадцать восьмого сентября, одна копия на шестнадцати ядрах: при пятидесяти пользователях девяносто пять процентов запросов пяти операций ТЗ укладываются в треть секунды, и из восьми тысяч двухсот пятидесяти ни один не превысил секунду.',
-		'Десять отчётов одновременно: экран — 0,3 секунды, Excel — 0,55, PDF — 1,7.'
+		'Нагрузку проверяли на двух компьютерах и на VPS-стенде.',
+		'При пятидесяти одновременных пользователях девяносто пять процентов запросов укладываются в две десятых секунды, и ни один из восьми с половиной тысяч не превысил секунду.',
+		'Десять отчётов одновременно: экран — две десятых секунды, Excel — четыре десятых.',
+		'По расчёту, сотне пользователей хватит сервера на девять ядер и двенадцать гигабайт памяти.'
 	]),
 	{
 		name: 'help',
