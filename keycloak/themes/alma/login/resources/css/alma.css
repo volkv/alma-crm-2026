@@ -44,6 +44,9 @@
 	   панели, WCAG 1.4.11 для края контрола. */
 	--alma-control-border: #797e8b;
 	--alma-text: #101828;
+	/* Слабый текст и заливка наведения — `muted-foreground` и `surface-muted`. */
+	--alma-muted: #434b5a;
+	--alma-hover: #f4f4f5;
 	/* Главное действие — как `--accent-*` приложения: белая полужирная подпись
 	   на `#e8470f` (WCAG 2 3.93:1, APCA Lc 71), наведение и нажатие темнее. */
 	--alma-primary: #e8470f;
@@ -70,6 +73,8 @@
 	--alma-surface: #1b2332;
 	--alma-border: #323a49;
 	--alma-text: #e8e8ee;
+	--alma-muted: #b5b7c0;
+	--alma-hover: #262e3d;
 	--alma-primary: #ffa789;
 	--alma-primary-hover: #ffd3c4;
 	--alma-primary-active: #ffede7;
@@ -82,15 +87,52 @@
 	color: var(--alma-text);
 }
 
-/* Шапка: знак и название словом вместо стандартной надписи капителью. */
+/*
+ * Раскладка страницы — как у страницы входа приложения (`(auth)/+layout.svelte`):
+ * одна колонка шириной в карточку (`max-w-md`, 28rem) по центру экрана, над
+ * карточкой знак с названием, между ними 24px. Сетка keycloak.v2 шире карточки
+ * (500–544px против 448px) и прижимает карточку к левому краю своей колонки, а
+ * шапку центрирует по всей ширине — знак над карточкой из-за этого съезжает
+ * вправо. Здесь сетка заменена колонкой, и оба блока — одной ширины.
+ */
+.pf-v5-c-login {
+	min-height: 100vh;
+	display: flex;
+	align-items: center;
+	justify-content: center;
+	padding: 40px 16px;
+}
+
+.pf-v5-c-login__container {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 24px;
+	width: 100%;
+	max-width: 28rem;
+	padding: 0;
+	margin: 0;
+}
+
+.pf-v5-c-login__header {
+	width: 100%;
+	margin: 0;
+	padding: 0;
+}
+
+/* Шапка: знак и название словом вместо стандартной надписи капителью — тот
+   же лок-ап, что `AlmaLogo` приложения: знак 40px, зазор 10px, 18px полужирным. */
 #kc-header-wrapper {
 	display: flex;
 	align-items: center;
 	justify-content: center;
-	gap: 12px;
-	font-size: 22px;
-	font-weight: 700;
-	letter-spacing: normal;
+	gap: 10px;
+	margin: 0;
+	padding: 0;
+	font-size: 18px;
+	line-height: 1.3;
+	font-weight: 600;
+	letter-spacing: -0.01em;
 	text-transform: none;
 	color: var(--alma-text) !important;
 }
@@ -103,32 +145,82 @@
 	background: url('../img/alma-mark.svg') no-repeat center / contain;
 }
 
-/* Карточка: спокойная граница вместо тяжёлой тени, ширина как у карточки
-   входа приложения (`max-w-md`, 28rem). */
+/* Карточка — как `Card` приложения: граница вместо тени, радиус 12px, поля и
+   шаг между блоками по 24px (у keycloak.v2 — до 48px по бокам). */
 .pf-v5-c-login__main {
 	--pf-v5-c-login__main--BoxShadow: none;
-	max-width: 28rem;
+	/* keycloak.v2 даёт последнему блоку карточки нижний отступ 64px — нижнее
+	   поле здесь задаёт сама карточка. */
+	--pf-v5-c-login__main-footer--PaddingBottom: 0;
 	width: 100%;
+	max-width: none;
+	margin: 0;
+	padding: 24px 0;
+	display: flex;
+	flex-direction: column;
+	gap: 24px;
 	background: var(--alma-surface);
 	border: 1px solid var(--alma-border);
 	border-radius: 12px;
+	color: var(--alma-text);
+}
+
+.pf-v5-c-login__main-header,
+.pf-v5-c-login__main-body,
+.pf-v5-c-login__main-footer {
+	margin: 0;
+	padding: 0 24px;
 }
 
 .pf-v5-c-login__main-header {
+	display: flex;
+	flex-direction: column;
+	align-items: stretch;
+	gap: 6px;
 	border-top: 0;
-	/* Строка о системе (js/alma.js) встаёт под заголовком отдельной строкой. */
-	flex-wrap: wrap;
 }
 
-/* Заголовок карточки: полужирный, кегль интерфейса, а не тонкая капитель
-   `pf-m-3xl` темы по умолчанию. Слева, а не по центру — как у одностолбцовой
-   формы. */
+/* Подвал keycloak.v2 (регистрация, внешние провайдеры) на этом realm пуст, но
+   занимал бы шаг колонки пустым местом. */
+.pf-v5-c-login__main-footer:not(:has(*)) {
+	display: none;
+}
+
+/* Заголовок карточки — как у страницы входа приложения: 20px полужирным, слева,
+   а не тонкая капитель `pf-m-3xl` темы по умолчанию. */
 #kc-page-title {
+	margin: 0;
 	font-family: var(--alma-font);
-	font-size: 22px;
-	line-height: 1.3;
-	font-weight: 700;
+	font-size: 20px;
+	line-height: 1.375;
+	font-weight: 600;
+	letter-spacing: -0.01em;
 	text-align: left;
+}
+
+/* Форма: поля и кнопка с шагом 16px, подпись поля — 14px средним весом, как
+   `Label` приложения. */
+#kc-form-login.pf-v5-c-form {
+	--pf-v5-c-form--GridGap: 16px;
+}
+
+.pf-v5-c-form__label {
+	font-size: 14px;
+	font-weight: 500;
+}
+
+.pf-v5-c-form__group-label.pf-v5-u-pb-xs {
+	padding-bottom: 6px !important;
+}
+
+#kc-form-login .pf-v5-c-form__actions {
+	margin: 0;
+	padding-top: 8px !important;
+}
+
+#kc-form-login .pf-v5-c-form__actions > .pf-v5-c-button {
+	width: 100%;
+	margin: 0;
 }
 
 .pf-v5-c-button {
@@ -143,6 +235,8 @@
 }
 
 .pf-v5-c-button.pf-m-primary {
+	min-height: 40px;
+	font-size: 14px;
 	font-weight: 600;
 	border-radius: 8px;
 }
@@ -170,10 +264,15 @@
 	--pf-v5-c-form-control--focus--after--BorderBottomColor: transparent;
 	--pf-v5-c-form-control--m-expanded--after--BorderBottomWidth: 0;
 	--pf-v5-c-form-control--BackgroundColor: transparent;
+	/* Высота и кегль — как у `Input` приложения (`h-control`, 36px; 14px). */
+	--pf-v5-c-form-control--FontSize: 14px;
+	--pf-v5-c-form-control--inset--base: 10px;
+	min-height: 36px;
 	border-radius: 8px;
 }
 
-.pf-v5-c-form-control::before {
+.pf-v5-c-form-control::before,
+.pf-v5-c-form-control > :is(input, select, textarea) {
 	border-radius: inherit;
 }
 
@@ -202,7 +301,16 @@
 	border-inline-start: 0;
 }
 
+/* Фон кнопки — прозрачный, как у поля: у keycloak.v2 в тёмной теме это серая
+   плашка, и контрол выглядел склеенным из двух разных деталей. */
 .login-pf .pf-v5-c-input-group .pf-v5-c-button.pf-m-control {
+	--pf-v5-c-button--m-control--BackgroundColor: transparent;
+	--pf-v5-c-button--m-control--hover--BackgroundColor: var(--alma-hover);
+	--pf-v5-c-button--m-control--focus--BackgroundColor: var(--alma-hover);
+	--pf-v5-c-button--m-control--active--BackgroundColor: var(--alma-hover);
+	--pf-v5-c-button--m-control--Color: var(--alma-muted);
+	--pf-v5-c-button--m-control--hover--Color: var(--alma-text);
+	min-width: 40px;
 	border-radius: 0 8px 8px 0;
 }
 
@@ -213,13 +321,40 @@
 
 /* Строка о системе под заголовком — как подзаголовок карточки входа приложения. */
 .alma-tagline {
-	grid-column: 1 / -1;
-	flex-basis: 100%;
-	margin-top: 4px;
+	margin: 0;
 	font-size: 14px;
 	line-height: 1.4;
 	text-align: left;
-	color: var(--pf-v5-global--Color--200);
+	color: var(--alma-muted);
+}
+
+/*
+ * Подпись каталога внизу карточки (js/alma.js): форму показывает Keycloak, а
+ * не приложение, и человек видит это на каждой странице каталога — входа,
+ * второго фактора, ошибки.
+ */
+.pf-v5-c-login__main > .alma-provider {
+	display: flex;
+	align-items: flex-start;
+	gap: 6px;
+	margin: 0 24px;
+	padding: 16px 0 0;
+	border-top: 1px solid var(--alma-border);
+	font-size: 12px;
+	line-height: 1.4;
+	color: var(--alma-muted);
+}
+
+.alma-provider svg {
+	flex-shrink: 0;
+	width: 14px;
+	height: 14px;
+	margin-top: 1px;
+}
+
+.alma-provider strong {
+	font-weight: 600;
+	color: var(--alma-text);
 }
 
 /*
@@ -230,7 +365,7 @@
 	display: flex;
 	flex-direction: column;
 	gap: 10px;
-	margin-bottom: 24px;
+	margin-bottom: 20px;
 	padding: 12px;
 	background: var(--alma-canvas);
 	border: 1px solid var(--alma-border);
@@ -275,7 +410,7 @@
 .alma-demo__password {
 	font-family: var(--alma-font);
 	font-size: 12px;
-	color: var(--pf-v5-global--Color--200);
+	color: var(--alma-muted);
 }
 
 .alma-demo__password {
@@ -286,7 +421,7 @@
 .alma-demo__hint {
 	font-size: 12px;
 	line-height: 1.4;
-	color: var(--pf-v5-global--Color--200);
+	color: var(--alma-muted);
 }
 
 /* На узком экране страница не даёт полю карточки прижаться к краю экрана. */

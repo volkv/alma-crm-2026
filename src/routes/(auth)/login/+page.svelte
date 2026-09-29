@@ -71,14 +71,14 @@
 		{:else}
 			<!-- Единственное действие страницы, поэтому кнопка во всю ширину и на
 			     ступень крупнее обычной. Строка под ней заранее объясняет, почему
-			     почту и пароль спросит другая страница. -->
+			     почту и пароль спросит другая страница — форма Keycloak. -->
 			<form bind:this={loginForm} method="POST" action={loginAction} class="flex flex-col gap-2">
 				<Button type="submit" size="lg" class="w-full">
 					<LogInIcon aria-hidden="true" />
 					Войти
 				</Button>
 				<p class="text-center text-xs text-muted-foreground">
-					Почту и пароль рабочей учётной записи спросит следующий шаг
+					Почту и пароль спросит Keycloak — единый каталог учётных записей
 				</p>
 			</form>
 

@@ -1,12 +1,14 @@
 /*
- * Дополнения формы входа Альма CRM поверх разметки keycloak.v2: строка о
- * системе под заголовком и — только на демонстрационном стенде — быстрый вход
- * тремя учётными записями стенда.
+ * Дополнения формы входа Альма CRM поверх разметки keycloak.v2: подпись
+ * «Авторизация через Keycloak» внизу карточки на каждой странице каталога,
+ * строка о системе под заголовком и — только на демонстрационном стенде —
+ * быстрый вход тремя учётными записями стенда.
  *
- * Разметку каталога скрипт не подменяет: он работает только на странице имени
- * и пароля (`#kc-form-login` с полем `#username`) и на любой другой странице
- * (второй фактор, ошибки, смена пароля) ничего не делает. Без скрипта форма
- * остаётся обычной формой входа.
+ * Разметку каталога скрипт не подменяет. Строка о системе и быстрый вход
+ * появляются только на странице имени и пароля (`#kc-form-login` с полем
+ * `#username`); на остальных (второй фактор, ошибки, смена пароля) скрипт
+ * добавляет лишь подпись каталога. Без скрипта форма остаётся обычной формой
+ * входа.
  *
  * Пароль приходит мета-тегом `alma-demo-password` из `theme.properties`, то есть
  * из переменной контейнера каталога, по которой импорт заводит демонстрационные
@@ -37,6 +39,13 @@
 
 		return node;
 	}
+
+	/* Ключ, 14px, `currentColor` — тот же рисунок, что `key-round` у иконок приложения. */
+	var KEY_ICON =
+		'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 24 24" fill="none" stroke="currentColor" ' +
+		'stroke-width="2" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">' +
+		'<path d="M2.586 17.414A2 2 0 0 0 2 18.828V21a1 1 0 0 0 1 1h3a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h1a1 1 0 0 0 1-1v-1a1 1 0 0 1 1-1h.172a2 2 0 0 0 1.414-.586l.814-.814a6.5 6.5 0 1 0-4-4z"/>' +
+		'<circle cx="16.5" cy="7.5" r=".5" fill="currentColor"/></svg>';
 
 	function demoPassword() {
 		var meta = document.querySelector('meta[name="alma-demo-password"]');
@@ -113,7 +122,28 @@
 		form.insertAdjacentElement('beforebegin', panel);
 	}
 
+	function addProvider() {
+		var card = document.querySelector('.pf-v5-c-login__main');
+
+		if (card === null) {
+			return;
+		}
+
+		var line = element('p', 'alma-provider');
+		line.setAttribute('data-testid', 'identity-provider');
+		line.insertAdjacentHTML('afterbegin', KEY_ICON);
+
+		var text = element('span');
+		text.appendChild(document.createTextNode('Авторизация через '));
+		text.appendChild(element('strong', '', 'Keycloak'));
+		text.appendChild(document.createTextNode(' — единый каталог учётных записей'));
+		line.appendChild(text);
+		card.appendChild(line);
+	}
+
 	function enhance() {
+		addProvider();
+
 		var form = document.getElementById('kc-form-login');
 
 		if (form === null || document.getElementById('username') === null) {
