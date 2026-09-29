@@ -413,7 +413,9 @@
 	color: var(--alma-muted);
 }
 
+/* Пароль переписывают вручную — перенос по дефису превратил бы его в два слова. */
 .alma-demo__password {
+	white-space: nowrap;
 	font-weight: 600;
 	color: var(--alma-text);
 }
