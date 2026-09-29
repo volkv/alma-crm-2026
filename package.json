@@ -29,7 +29,8 @@
 		"check:security": "bash scripts/security-scan.sh",
 		"check:dast": "bash scripts/dast/dast-scan.sh",
 		"check:fast": "pnpm run lint && pnpm run check && pnpm run test:unit",
-		"check:all": "pnpm run check:audit && pnpm run check:fast && pnpm run test:integration && pnpm run test:e2e && pnpm run check:docker"
+		"check:all": "pnpm run check:audit && pnpm run check:fast && pnpm run build",
+		"check:full": "pnpm run check:all && pnpm run test:integration && pnpm run test:e2e && pnpm run check:docker"
 	},
 	"dependencies": {
 		"@asteasolutions/zod-to-openapi": "^9.1.0",
